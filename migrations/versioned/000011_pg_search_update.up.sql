@@ -1,0 +1,18 @@
+-- Migration 000011: Update pg_search extension to latest version
+-- Equivalent to: psql -c 'ALTER EXTENSION pg_search UPDATE;'
+
+DO $$
+BEGIN
+    IF current_setting('app.skip_embedding', true) = 'true' THEN
+        RAISE NOTICE 'Skipping pg_search update (app.skip_embedding=true)';
+        RETURN;
+    END IF;
+
+    -- pg_search is optional (not available on hosted Postgres such as Supabase)
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_search') THEN
+        ALTER EXTENSION pg_search UPDATE;
+        RAISE NOTICE 'pg_search updated';
+    ELSE
+        RAISE NOTICE 'pg_search extension not installed; skipping update';
+    END IF;
+END $$;
