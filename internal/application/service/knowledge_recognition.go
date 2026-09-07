@@ -25,9 +25,12 @@ func (s *knowledgeService) GetRecognitionConfig(ctx context.Context, kbID string
 	if cfg == nil {
 		cfg = types.DefaultContractRecognitionConfig()
 		// 发票知识库的默认配置含内置类型归类规则与 5 枚举。
-		// 判断方式：KB 名含"发票"（发票/合同向导创建时命名固定）或识别配置已存在。
+		// 制度知识库的默认配置含内置类型归类规则与 6 枚举。
+		// 判断方式：KB 名含"发票"/"制度"（向导创建时命名固定）或识别配置已存在。
 		if strings.Contains(kb.Name, "发票") {
 			cfg = types.DefaultInvoiceRecognitionConfig()
+		} else if strings.Contains(kb.Name, "制度") {
+			cfg = types.DefaultRegulationRecognitionConfig()
 		}
 	}
 	// 分类列表为空时自动填充（发票：5 枚举；合同：现有合同类型）；非空时也
@@ -55,10 +58,14 @@ func (s *knowledgeService) GetRecognitionConfig(ctx context.Context, kbID string
 }
 
 // existingTypesFor returns the module type list for a KB: the invoice enum for
-// invoice KBs, or the distinct contract types seen in the KB for contract KBs.
+// invoice KBs, the regulation enum for regulation KBs, or the distinct contract
+// types seen in the KB for contract KBs.
 func (s *knowledgeService) existingTypesFor(ctx context.Context, kb *types.KnowledgeBase) []string {
 	if strings.Contains(kb.Name, "发票") {
 		return []string{"专用发票", "普通发票", "医疗收据", "财政收据", "其它票据"}
+	}
+	if strings.Contains(kb.Name, "制度") {
+		return []string{"人事管理", "财务管理", "生产管理", "行政管理", "安全管理", "其它制度"}
 	}
 	cts, err := s.ListContractTypes(ctx, kb.ID)
 	if err != nil || len(cts) == 0 {

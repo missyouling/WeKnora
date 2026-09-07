@@ -82,6 +82,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.DeleteInvoicePage)
 		// 合同字段提取 — 与发票提取同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContract)
+		// 制度字段提取 — 与发票提取同权限矩阵（写操作）
+		kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractRegulation)
 		// 按页重新提取合同 — 与 extract-contract 同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContractPage)
 		// 按页删除合同记录 — 与 extract-contract 同权限矩阵（写操作）
@@ -230,6 +232,9 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 	kb.GET("/:id/invoice-tax-rates", g.Viewer(), g.KBAccessRead("id"), handler.ListInvoiceTaxRates)
 		// 合同级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读）
 		kb.GET("/:id/contracts", g.Viewer(), g.KBAccessRead("id"), handler.ListContractRecords)
+		// 制度级聚合列表 + 制度类型列表 — Viewer+ 且对 KB 有 read 权限（只读）
+		kb.GET("/:id/regulations", g.Viewer(), g.KBAccessRead("id"), handler.ListRegulationRecords)
+		kb.GET("/:id/regulation-types", g.Viewer(), g.KBAccessRead("id"), handler.ListRegulationTypes)
 		// 识别规则配置（发票/合同管理页"识别规则"设置面板）— 读 Viewer+，写 Editor+（KB 写权限）
 		kb.GET("/:id/recognition-config", g.Viewer(), g.KBAccessRead("id"), handler.GetRecognitionConfig)
 		kb.PUT("/:id/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.SaveRecognitionConfig)

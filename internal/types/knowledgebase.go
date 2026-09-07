@@ -783,6 +783,27 @@ func DefaultContractRecognitionConfig() *RecognitionConfig {
 	}
 }
 
+// DefaultRegulationRecognitionConfig returns the built-in regulation
+// recognition defaults: a common include-rule (捞回兜底), keyword type
+// classification rules and the 6-type enum.
+func DefaultRegulationRecognitionConfig() *RecognitionConfig {
+	return &RecognitionConfig{
+		Enabled: true,
+		IncludeRules: []RecognitionRule{
+			{ID: "reg-include", Name: "含制度关键字", MatchType: "keyword",
+				Keywords: []string{"制度", "管理办法", "管理规定", "第一条", "本制度"}, Logic: "OR", Enabled: true},
+		},
+		TypeRules: []TypeClassifyRule{
+			{ID: "reg-renshi", Pattern: "人事|员工|考勤|绩效|薪酬|招聘|培训|转岗|任职|请假|人力", Type: "人事管理", Priority: 1, Enabled: true},
+			{ID: "reg-caiwu", Pattern: "财务|报销|预算|资金|付款", Type: "财务管理", Priority: 2, Enabled: true},
+			{ID: "reg-shengchan", Pattern: "生产|车间|工艺|质量|设备|作业", Type: "生产管理", Priority: 3, Enabled: true},
+			{ID: "reg-xingzheng", Pattern: "行政|办公|档案|会议|印章|公文|接待", Type: "行政管理", Priority: 4, Enabled: true},
+			{ID: "reg-anquan", Pattern: "安全|消防|环保|应急|危化", Type: "安全管理", Priority: 5, Enabled: true},
+		},
+		Types: []string{"人事管理", "财务管理", "生产管理", "行政管理", "安全管理", "其它制度"},
+	}
+}
+
 // Scan implements the sql.Scanner interface, used to convert database value to ExtractConfig
 func (e *ExtractConfig) Scan(value interface{}) error {
 	if value == nil {

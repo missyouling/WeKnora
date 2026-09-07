@@ -24,6 +24,8 @@ func localizeDeleteReason(reason string) string {
 		return "非合同"
 	case "not_invoice":
 		return "非发票"
+	case "not_regulation":
+		return "非制度"
 	default:
 		return reason
 	}
@@ -136,6 +138,8 @@ func (s *knowledgeService) RestoreDeletedKnowledge(ctx context.Context, id strin
 			kind = "invoice"
 		case "not_contract":
 			kind = "contract"
+		case "not_regulation":
+			kind = "regulation"
 		}
 	}
 	switch kind {
@@ -152,6 +156,13 @@ func (s *knowledgeService) RestoreDeletedKnowledge(ctx context.Context, id strin
 		meta["extract_error"] = "人工入库待编辑，请补充字段"
 		if _, ok := meta["contracts"]; !ok {
 			meta["contracts"] = []any{}
+		}
+	case "regulation", "not_regulation":
+		meta["kind"] = "regulation"
+		meta["extract_status"] = "manual"
+		meta["extract_error"] = "人工入库待编辑，请补充字段"
+		if _, ok := meta["regulations"]; !ok {
+			meta["regulations"] = []any{}
 		}
 	default:
 		// Unknown kind: restore as-is, only clear auto-delete markers.

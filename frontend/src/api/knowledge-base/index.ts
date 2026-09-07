@@ -524,6 +524,40 @@ export function listContractTypes(kbId: string) {
 }
 
 /**
+ * 触发制度字段提取：后端读取已解析文本并调用提取模型（复用知识库的
+ * summary_model_id），将结果写入 custom_metadata。
+ */
+export function extractRegulation(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-regulation`, {}, { timeout: 600000 });
+}
+
+/**
+ * 制度级聚合列表：服务端全字段搜索、类型/编制日期筛选、排序与分页。
+ */
+export function listRegulationRecords(kbId: string, params: {
+  q?: string;
+  reg_type?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/regulations?${q.toString()}`);
+}
+
+/**
+ * 制度类型列表：返回该知识库下所有制度出现过的去重制度类型（含数量），
+ * 用于制度类型筛选下拉框自动加载。
+ */
+export function listRegulationTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/regulation-types`);
+}
+
+/**
  * 识别规则配置（发票/合同管理页"识别规则"设置面板）：
  * 包含判定规则（模型判非但规则命中 → 认定为该类型）与类型归类规则。
  */

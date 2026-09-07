@@ -762,6 +762,101 @@ func (h *KnowledgeBaseHandler) ListContractRecords(c *gin.Context) {
 	})
 }
 
+// ListRegulationRecords godoc
+// @Summary      制度级聚合列表
+// @Description  返回知识库下所有已提取制度的聚合列表（一行一份制度），服务端完成全字段搜索、类型/提取状态/编制日期筛选、排序与分页。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id        path  string  true  "知识库ID"
+// @Param        q         query string  false "全字段搜索词"
+// @Param        reg_type  query string  false "制度类型枚举"
+// @Param        status    query string  false "提取状态"
+// @Param        date_from query string  false "编制日期起 YYYY-MM-DD"
+// @Param        date_to   query string  false "编制日期止 YYYY-MM-DD"
+// @Param        page      query int     false "页码"
+// @Param        page_size query int     false "每页条数"
+// @Success      200  {object}  map[string]interface{}  "聚合列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/regulations [get]
+func (h *KnowledgeBaseHandler) ListRegulationRecords(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	kb, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	_ = kb
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	filter := types.RegulationListFilter{
+		Keyword:  c.Query("q"),
+		RegType:  c.Query("reg_type"),
+		Status:   c.Query("status"),
+		DateFrom: c.Query("date_from"),
+		DateTo:   c.Query("date_to"),
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	result, err := h.knowledgeService.ListRegulationRecords(effCtx, kbID, filter)
+	if err != nil {
+		logger.Error(ctx, "Failed to list regulation records", err)
+		c.Error(apperrors.NewInternalServerError("list regulation records failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
+}
+
+// ListRegulationTypes godoc
+// @Summary      制度类型列表
+// @Description  返回知识库下所有制度出现过的去重制度类型（含数量），用于制度类型筛选下拉自动加载。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "知识库ID"
+// @Success      200 {object} map[string]interface{} "制度类型列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/regulation-types [get]
+func (h *KnowledgeBaseHandler) ListRegulationTypes(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	_, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	rates, err := h.knowledgeService.ListRegulationTypes(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list regulation types", err)
+		c.Error(apperrors.NewInternalServerError("list regulation types failed: " + err.Error()))
+		return
+	}
+	if rates == nil {
+		rates = []types.RegulationTypeCount{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rates})
+}
+
 // ListContractTypes godoc
 // @Summary      合同类型列表
 // @Description  返回知识库下所有合同出现过的去重合同类型（含数量），用于合同类型筛选下拉自动加载。

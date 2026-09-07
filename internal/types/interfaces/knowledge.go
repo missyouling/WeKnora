@@ -105,6 +105,19 @@ type KnowledgeService interface {
 	// auto-generated contract numbers (HT-YYYYMMDD-NNN) for the current date in
 	// the knowledge base, so newly generated numbers stay unique across files.
 	MaxAutoContractSeq(ctx context.Context, kbID string) (int, error)
+	// ListRegulationRecords returns the regulation-level aggregated list of a
+	// knowledge base: every extracted regulation flattened into its own row
+	// (de-duplication is handled at the knowledge-file upload layer by file
+	// hash), filtered/searched/sorted/paginated server-side.
+	ListRegulationRecords(ctx context.Context, kbID string, filter types.RegulationListFilter) (*types.RegulationListResult, error)
+	// ListRegulationTypes returns the distinct regulation types that appear
+	// across all regulations in a knowledge base, powering the regulation-type
+	// filter dropdown.
+	ListRegulationTypes(ctx context.Context, kbID string) ([]types.RegulationTypeCount, error)
+	// MaxAutoRegulationSeq returns the highest trailing sequence number among
+	// auto-generated regulation numbers (ZD-YYYYMMDD-NNN) for the current date in
+	// the knowledge base, so newly generated numbers stay unique across files.
+	MaxAutoRegulationSeq(ctx context.Context, kbID string) (int, error)
 	// GetRecognitionConfig returns the KB-level document recognition rules
 	// (include-judgement + type classification). Invoice KBs fall back to the
 	// built-in keyword rules when none are stored yet.

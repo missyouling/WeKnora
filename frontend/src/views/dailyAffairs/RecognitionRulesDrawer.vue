@@ -4,7 +4,7 @@
       :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onResizeStart">
       <div class="rr-resize-line" />
     </div>
-    <t-drawer :visible="visible" :header="`识别规则 · ${moduleName}`" :size="drawerWidth" :footer="false"
+    <t-drawer :visible="visible" :header="`识别规则 · ${moduleName}`" :size="String(drawerWidth)" :footer="false"
       destroy-on-close class="recognition-rules-drawer" @close="onClose">
       <div class="rr-body">
         <div class="rr-hint">规则命中即认定；类型按优先级匹配覆盖模型结果。</div>

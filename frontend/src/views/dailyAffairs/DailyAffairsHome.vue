@@ -45,19 +45,20 @@
           </div>
         </div>
 
-        <!-- 制度管理（占位） -->
-        <div class="da-card" @click="onPlaceholder('制度管理')">
+        <!-- 制度管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goRegulations">
           <div class="da-card-icon da-card-icon--policy">
             <t-icon name="file" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
               <span>制度管理</span>
-              <t-tag theme="default" variant="light" size="small">开发中</t-tag>
+              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
-            <p class="da-card-desc">公司规章制度、流程文件的发布、版本与检索管理</p>
+            <p class="da-card-desc">上传制度文件，自动识别制度编号、类型、版本与编制信息并归档管理</p>
             <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
+              <span class="da-card-link">进入管理</span>
+              <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
         </div>
@@ -95,6 +96,10 @@ const goInvoices = () => {
 
 const goContracts = () => {
   router.push('/platform/daily-affairs/contracts')
+}
+
+const goRegulations = () => {
+  router.push('/platform/daily-affairs/regulations')
 }
 
 const onPlaceholder = (name: string) => {
