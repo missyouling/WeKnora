@@ -16,6 +16,10 @@ type RegulationExtractionItem struct {
 	EffectiveDate  string `json:"effective_date"`   // 生效日期 YYYY-MM-DD
 	Confidentiality string `json:"confidentiality"` // 密级
 	Remark         string `json:"remark"`           // 备注
+	CompiledBy     string `json:"compiled_by"`      // 编制（编制人）
+	ReviewedBy     string `json:"reviewed_by"`      // 审核（审核人）
+	ApprovedBy     string `json:"approved_by"`      // 批准（批准人）
+	Summary        string `json:"summary"`          // 摘要
 	// Page is always 1 for regulations (one file = one regulation).
 	Page int `json:"page"`
 }
@@ -34,6 +38,10 @@ type RegulationRecord struct {
 	EffectiveDate  string   `json:"effective_date"`
 	Confidentiality string  `json:"confidentiality"`
 	Remark         string   `json:"remark"`
+	CompiledBy     string   `json:"compiled_by"`
+	ReviewedBy     string   `json:"reviewed_by"`
+	ApprovedBy     string   `json:"approved_by"`
+	Summary        string   `json:"summary"`
 	KnowledgeID    string   `json:"knowledge_id"`
 	KnowledgeTitle string   `json:"knowledge_title"`
 	FileName       string   `json:"file_name"`

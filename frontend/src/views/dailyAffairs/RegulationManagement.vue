@@ -127,9 +127,21 @@
               <div v-if="colVisible('version')" class="cell cell-version">
                 <span class="row-text">{{ row.version }}</span>
               </div>
+              <!-- 页数 -->
+              <div v-if="colVisible('pageCount')" class="cell cell-pageCount">
+                <span class="row-text">{{ row.pageCount }}</span>
+              </div>
               <!-- 编制日期 -->
               <div v-if="colVisible('issueDate')" class="cell cell-issueDate">
                 <span class="row-mono">{{ row.issueDate }}</span>
+              </div>
+              <!-- 生效日期 -->
+              <div v-if="colVisible('effectiveDate')" class="cell cell-effectiveDate">
+                <span class="row-mono">{{ row.effectiveDate }}</span>
+              </div>
+              <!-- 适用范围 -->
+              <div v-if="colVisible('scope')" class="cell cell-scope">
+                <span class="row-text" :title="row.scope">{{ row.scope }}</span>
               </div>
               <!-- 状态（提取进程，绿色 loading 动态） -->
               <div v-if="colVisible('extractStatus')" class="cell cell-extractStatus">
@@ -161,21 +173,25 @@
               <div v-if="colVisible('dept')" class="cell cell-dept">
                 <span class="row-text" :title="row.dept">{{ row.dept }}</span>
               </div>
-              <!-- 页数 -->
-              <div v-if="colVisible('pageCount')" class="cell cell-pageCount">
-                <span class="row-text">{{ row.pageCount }}</span>
-              </div>
               <!-- 修改次数 -->
               <div v-if="colVisible('modifyCount')" class="cell cell-modifyCount">
                 <span class="row-text">{{ row.modifyCount }}</span>
               </div>
-              <!-- 适用范围 -->
-              <div v-if="colVisible('scope')" class="cell cell-scope">
-                <span class="row-text" :title="row.scope">{{ row.scope }}</span>
+              <!-- 编制 -->
+              <div v-if="colVisible('compiledBy')" class="cell cell-compiledBy">
+                <span class="row-text" :title="row.compiledBy">{{ row.compiledBy }}</span>
               </div>
-              <!-- 生效日期 -->
-              <div v-if="colVisible('effectiveDate')" class="cell cell-effectiveDate">
-                <span class="row-mono">{{ row.effectiveDate }}</span>
+              <!-- 审核 -->
+              <div v-if="colVisible('reviewedBy')" class="cell cell-reviewedBy">
+                <span class="row-text" :title="row.reviewedBy">{{ row.reviewedBy }}</span>
+              </div>
+              <!-- 批准 -->
+              <div v-if="colVisible('approvedBy')" class="cell cell-approvedBy">
+                <span class="row-text" :title="row.approvedBy">{{ row.approvedBy }}</span>
+              </div>
+              <!-- 摘要 -->
+              <div v-if="colVisible('summary')" class="cell cell-summary">
+                <span class="row-text" :title="row.summary">{{ row.summary }}</span>
               </div>
               <!-- 密级 -->
               <div v-if="colVisible('confidentiality')" class="cell cell-confidentiality">
@@ -332,6 +348,15 @@
                   <t-form-item label="修改次数" label-width="110px">
                     <t-input v-model="editForm.modify_count" placeholder="" />
                   </t-form-item>
+                  <t-form-item label="编制" label-width="110px">
+                    <t-input v-model="editForm.compiled_by" placeholder="" />
+                  </t-form-item>
+                  <t-form-item label="审核" label-width="110px">
+                    <t-input v-model="editForm.reviewed_by" placeholder="" />
+                  </t-form-item>
+                  <t-form-item label="批准" label-width="110px">
+                    <t-input v-model="editForm.approved_by" placeholder="" />
+                  </t-form-item>
                 </div>
               </div>
 
@@ -348,6 +373,15 @@
                   <t-form-item label="密级" label-width="110px">
                     <t-select v-model="editForm.confidentiality" :options="CONFIDENTIALITY_OPTIONS" clearable
                       placeholder="选择密级" style="width: 100%" />
+                  </t-form-item>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">摘要</div>
+                <div class="field-grid field-grid--full">
+                  <t-form-item label="摘要" label-width="110px">
+                    <t-textarea v-model="editForm.summary" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
                   </t-form-item>
                 </div>
               </div>
@@ -476,19 +510,23 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: 'regName', label: '制度名称', default: true, w: '1.8fr' },
   { key: 'regType', label: '制度类型', default: true, w: '1fr' },
   { key: 'version', label: '版本', default: true, w: '0.7fr' },
+  { key: 'pageCount', label: '页数', default: true, w: '0.7fr' },
   { key: 'issueDate', label: '编制日期', default: true, w: '1.1fr' },
+  { key: 'effectiveDate', label: '生效日期', default: true, w: '1.1fr' },
+  { key: 'scope', label: '适用范围', default: true, w: '1.6fr' },
   { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
   { key: 'dept', label: '编制部门', default: false, w: '1.3fr' },
-  { key: 'pageCount', label: '页数', default: false, w: '0.7fr' },
   { key: 'modifyCount', label: '修改次数', default: false, w: '0.8fr' },
-  { key: 'scope', label: '适用范围', default: false, w: '1.6fr' },
-  { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
+  { key: 'compiledBy', label: '编制', default: false, w: '1fr' },
+  { key: 'reviewedBy', label: '审核', default: false, w: '1fr' },
+  { key: 'approvedBy', label: '批准', default: false, w: '1fr' },
+  { key: 'summary', label: '摘要', default: false, w: '2fr' },
   { key: 'confidentiality', label: '密级', default: false, w: '0.8fr' },
   { key: 'remark', label: '备注', default: false, w: '1.4fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
-const COLUMN_STORAGE_KEY = 'weknora-regulation-list-columns'
+const COLUMN_STORAGE_KEY = 'weknora-regulation-list-columns-v2'
 
 const kbId = ref('')
 const loading = ref(true)
@@ -521,6 +559,10 @@ interface RegulationItem {
   effective_date?: string
   confidentiality?: string
   remark?: string
+  compiled_by?: string
+  reviewed_by?: string
+  approved_by?: string
+  summary?: string
   page?: number
 }
 
@@ -545,6 +587,10 @@ interface RegulationRow extends Record<string, any> {
   effectiveDate?: string
   confidentiality?: string
   remark?: string
+  compiledBy?: string
+  reviewedBy?: string
+  approvedBy?: string
+  summary?: string
   page?: number
   multiIndex?: string
   tags?: any[]
@@ -857,6 +903,10 @@ const mapRegulationRecord = (r: any): RegulationRow => ({
   effectiveDate: r.effective_date || '',
   confidentiality: r.confidentiality || '',
   remark: r.remark || '',
+  compiledBy: r.compiled_by || '',
+  reviewedBy: r.reviewed_by || '',
+  approvedBy: r.approved_by || '',
+  summary: r.summary || '',
   page: Number(r.page) || 0,
 })
 
@@ -907,6 +957,10 @@ const parseCustomMetadata = (item: KnowledgeItem): RegulationRow[] => {
     effectiveDate: ct.effective_date || '',
     confidentiality: ct.confidentiality || '',
     remark: ct.remark || '',
+    compiledBy: ct.compiled_by || '',
+    reviewedBy: ct.reviewed_by || '',
+    approvedBy: ct.approved_by || '',
+    summary: ct.summary || '',
     page: Number(ct.page) || 0,
   }))
 }
@@ -1256,6 +1310,10 @@ const fillEditForm = () => {
     effective_date: r.effectiveDate || '',
     confidentiality: r.confidentiality || '',
     remark: r.remark || '',
+    compiled_by: r.compiledBy || '',
+    reviewed_by: r.reviewedBy || '',
+    approved_by: r.approvedBy || '',
+    summary: r.summary || '',
   }
   editFormSnapshot = JSON.stringify(editForm.value)
   autoSaveDirty = true
@@ -1292,6 +1350,10 @@ const saveEditForm = async () => {
       effective_date: editForm.value.effective_date || '',
       confidentiality: editForm.value.confidentiality || '',
       remark: editForm.value.remark || '',
+      compiled_by: editForm.value.compiled_by || '',
+      reviewed_by: editForm.value.reviewed_by || '',
+      approved_by: editForm.value.approved_by || '',
+      summary: editForm.value.summary || '',
     }
     const nowPage = now.page && now.page >= 1 ? now.page : 0
     let targetIdx = -1
@@ -1502,6 +1564,10 @@ const catalogValueOf = (row: RegulationRow, key: string): string => {
     case 'effectiveDate': return row.effectiveDate || ''
     case 'confidentiality': return row.confidentiality || ''
     case 'remark': return row.remark || ''
+    case 'compiledBy': return row.compiledBy || ''
+    case 'reviewedBy': return row.reviewedBy || ''
+    case 'approvedBy': return row.approvedBy || ''
+    case 'summary': return row.summary || ''
     case 'extractStatus': { const s = statusOf(row).label; return s === '--' ? '' : s }
     case 'tags': return rowTags(row).map((t: any) => t.name).join('、')
     case 'fileName': return row.fileName || ''

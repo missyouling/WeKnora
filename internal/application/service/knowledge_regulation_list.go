@@ -123,6 +123,10 @@ func (s *knowledgeService) ListRegulationRecords(ctx context.Context, kbID strin
 					EffectiveDate:  r.EffectiveDate,
 					Confidentiality: r.Confidentiality,
 					Remark:         r.Remark,
+					CompiledBy:     r.CompiledBy,
+					ReviewedBy:     r.ReviewedBy,
+					ApprovedBy:     r.ApprovedBy,
+					Summary:        r.Summary,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,
@@ -230,6 +234,7 @@ func regulationRecordMatchKeyword(r types.RegulationRecord, kw string) bool {
 	fields := []string{
 		r.RegNo, r.RegName, r.RegType, r.Dept, r.Version, r.IssueDate,
 		r.PageCount, r.ModifyCount, r.Scope, r.EffectiveDate, r.Confidentiality, r.Remark,
+		r.CompiledBy, r.ReviewedBy, r.ApprovedBy, r.Summary,
 		r.FileName, r.KnowledgeTitle, r.ExtractStatus, r.ExtractError,
 	}
 	for _, f := range fields {
