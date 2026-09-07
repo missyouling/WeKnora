@@ -2349,6 +2349,29 @@ type regulationCustomMetadata struct {
 	ExtractError  string                              `json:"extract_error"`
 }
 
+// awardPunishCustomMetadata is the persisted shape written into a knowledge
+// entry's custom_metadata by ExtractAwardPunish. The frontend reads exactly
+// these keys to render the award/punish management list.
+type awardPunishCustomMetadata struct {
+	Kind          string                             `json:"kind"`
+	Records       []types.AwardPunishExtractionItem  `json:"records"`
+	ExtractStatus string                             `json:"extract_status"`
+	ExtractError  string                             `json:"extract_error"`
+}
+
+// awardPunishBatchesHaveText reports whether any extraction batch carries usable
+// text. A scanned document (no text layer) yields only empty batches; without
+// this guard the extract endpoint would judge it not-award/punish and
+// auto-delete a legitimate scanned notice.
+func awardPunishBatchesHaveText(batches []string) bool {
+	for _, b := range batches {
+		if strings.TrimSpace(b) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // regulationBatchesHaveText reports whether any extraction batch carries usable
 // text. A scanned document (no text layer) yields only empty batches; without
 // this guard the extract endpoint would judge it not-a-regulation and
@@ -2613,6 +2636,261 @@ func (h *KnowledgeHandler) ExtractRegulation(c *gin.Context) {
 			"kind":            meta.Kind,
 			"extract_status":  meta.ExtractStatus,
 			"regulations":     meta.Regulations,
+		},
+	})
+}
+
+// ExtractAwardPunish godoc
+// @Summary      提取奖惩字段
+// @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取奖惩字段（按当事人拆分多条记录）并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "提取成功"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-award-punish [post]
+func (h *KnowledgeHandler) ExtractAwardPunish(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to extract award/punish fields"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for award/punish extraction", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	if knowledge.ParseStatus != types.ParseStatusCompleted {
+		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
+		return
+	}
+	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
+	var curAPMeta awardPunishCustomMetadata
+	_ = json.Unmarshal(knowledge.CustomMetadata, &curAPMeta)
+	if curAPMeta.ExtractStatus == "manual" {
+		logger.Infof(ctx, "Award/punish extraction skipped: knowledge %s is manual intake", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "待补录记录，无需重复提取",
+			"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "manual", "removed": false},
+		})
+		return
+	}
+
+	modelID := strings.TrimSpace(kb.SummaryModelID)
+	if modelID == "" {
+		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
+		return
+	}
+	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load extraction model", err)
+		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
+		return
+	}
+
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list chunks for award/punish extraction", err)
+		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
+		return
+	}
+	batches := service.BuildAwardPunishExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
+	// failed 让用户人工处理（配合删除历史）。
+	if !awardPunishBatchesHaveText(batches) {
+		noTextMeta, jerr := json.Marshal(awardPunishCustomMetadata{
+			Kind:          "award_punish",
+			ExtractStatus: "failed",
+			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+		})
+		if jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
+			}
+		}
+		logger.Warnf(ctx, "Award/punish extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "document has no extractable text (possible scanned document), file kept",
+			"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "failed", "removed": false},
+		})
+		return
+	}
+	merged := &service.AwardPunishExtractionResult{Kind: "award_punish"}
+	var extractErr error
+	sawRecord := false
+	for i, batch := range batches {
+		if strings.TrimSpace(batch) == "" {
+			continue
+		}
+		batchRes, berr := service.ExtractAwardPunishesFromContent(effCtx, chatModel, batch)
+		if berr != nil {
+			if i == 0 && len(merged.Records) == 0 {
+				extractErr = berr
+				break
+			}
+			logger.Warnf(ctx, "Award/punish extraction batch %d failed (non-fatal): %v", i+1, berr)
+			continue
+		}
+		if batchRes == nil || batchRes.Kind == "not_award_punish" {
+			continue
+		}
+		sawRecord = true
+		merged.Records = append(merged.Records, batchRes.Records...)
+	}
+	if !sawRecord {
+		merged.Kind = "not_award_punish"
+	}
+	if extractErr != nil {
+		if failMeta, jerr := json.Marshal(awardPunishCustomMetadata{
+			Kind:          "award_punish",
+			ExtractStatus: "failed",
+			ExtractError:  "award/punish extraction failed: " + extractErr.Error(),
+		}); jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist award/punish extraction failed-state: %v", serr)
+			}
+		}
+		logger.Error(ctx, "Award/punish extraction model call failed", extractErr)
+		c.Error(errors.NewInternalServerError("award/punish extraction failed: " + extractErr.Error()))
+		return
+	}
+	extracted := merged
+	// 自动编号去重：无文号的奖惩按当天已有最大序号 +1 顺序递增（跨文件唯一）
+	autoSeq, seqErr := h.kgService.MaxAutoAwardPunishSeq(effCtx, kbID)
+	if seqErr != nil {
+		logger.Warnf(ctx, "Failed to compute auto award/punish seq for %s: %v", kbID, seqErr)
+	}
+	service.NormalizeAwardPunishExtractionResult(extracted, autoSeq)
+
+	meta := awardPunishCustomMetadata{
+		Kind:          extracted.Kind,
+		Records:       extracted.Records,
+		ExtractStatus: "success",
+		ExtractError:  extracted.ExtractError,
+	}
+	// 自定义识别规则：奖惩类型归类（用户可配置关键词/正则 → 奖惩类型），
+	// 按模型提取出的奖惩类型字段匹配，命中则覆盖模型结果。
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		for i := range meta.Records {
+			if t := service.ClassifyTypeFromRules(meta.Records[i].ApType, recCfg); t != "" {
+				meta.Records[i].ApType = t
+			}
+		}
+	}
+	if extracted.Kind == "not_award_punish" {
+		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为奖惩，置 manual 待补录，
+		// 不自动删除（解决"该是奖惩却没入库"的误判）。
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
+				meta.Kind = "award_punish"
+				meta.Records = []types.AwardPunishExtractionItem{}
+				meta.ExtractStatus = "manual"
+				meta.ExtractError = "识别规则命中，已认定为奖惩，请编辑补录字段"
+				if raw, merr := json.Marshal(meta); merr == nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+						logger.Warnf(ctx, "Failed to persist rule-rescued award/punish meta: %v", serr)
+					}
+				}
+				logger.Infof(ctx, "Award/punish rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"message": "识别规则命中，已认定为奖惩，请在列表中编辑补录字段",
+					"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "manual", "removed": false},
+				})
+				return
+			}
+		}
+		meta.ExtractStatus = "not_award_punish"
+		if meta.ExtractError == "" {
+			meta.ExtractError = "document does not look like an award/punish notice"
+		}
+		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
+		// 恢复，再次判定非奖惩不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
+		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "系统判定非奖惩文件，但该文件已被人工恢复，已保留待人工处理"
+			logger.Warnf(ctx, "Award/punish re-extraction judged non-award/punish but row was restored before; keeping file %s", knowledgeID)
+		} else {
+			// 非奖惩文件不能存在于奖惩知识库 → 提取判定后自动删除该文件（保留物理文件，
+			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
+			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_award_punish"); delErr != nil {
+				logger.Warnf(ctx, "auto-delete non-award/punish knowledge failed: %v", delErr)
+			} else {
+				logger.Infof(ctx, "auto-deleted non-award/punish knowledge, ID: %s", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success":  true,
+					"message":  "非奖惩文件已移至删除历史，可在删除历史中恢复",
+					"data":     map[string]interface{}{"removed": true, "kind": "not_award_punish"},
+				})
+				return
+			}
+		}
+	}
+	// 空提取守卫：标记为奖惩但没有可用记录（空数组或全部空字段）→ failed 可重试
+	if meta.Kind == "award_punish" {
+		if len(meta.Records) == 0 {
+			meta.ExtractStatus = "failed"
+			if meta.ExtractError == "" {
+				meta.ExtractError = "提取未返回任何奖惩记录，请重试"
+			}
+		} else if service.AwardPunishRecordsAllEmpty(meta.Records) {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "提取结果字段为空，请重试"
+		}
+	}
+
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+		logger.Error(ctx, "Failed to persist award/punish extraction result", err)
+		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
+		return
+	}
+
+	logger.Infof(ctx, "Award/punish extraction succeeded, knowledge ID: %s, kind: %s, records: %d",
+		knowledgeID, meta.Kind, len(meta.Records))
+	if meta.ExtractStatus == "failed" {
+		logger.Warnf(ctx, "Award/punish extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
+		c.Error(errors.NewInternalServerError(meta.ExtractError))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message":  "Award/punish extraction succeeded",
+		"data": map[string]interface{}{
+			"knowledge_id":    knowledgeID,
+			"kind":            meta.Kind,
+			"extract_status":  meta.ExtractStatus,
+			"records":         meta.Records,
 		},
 	})
 }

@@ -558,6 +558,42 @@ export function listRegulationTypes(kbId: string) {
 }
 
 /**
+ * 奖惩字段提取：复用知识库配置的摘要模型（summary_model_id），按当事人
+ * 拆分多条奖惩记录，将结果写入 custom_metadata。
+ */
+export function extractAwardPunish(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-award-punish`, {}, { timeout: 600000 });
+}
+
+/**
+ * 奖惩级聚合列表：服务端全字段搜索、奖惩类型/状态/签发日期筛选、排序与分页
+ * （一个当事人一条记录，同一文件多个当事人共享文号）。
+ */
+export function listAwardPunishRecords(kbId: string, params: {
+  q?: string;
+  ap_type?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/award-punish-records?${q.toString()}`);
+}
+
+/**
+ * 奖惩类型列表：返回该知识库下所有奖惩出现过的去重奖惩类型（含数量），
+ * 用于奖惩类型筛选下拉框自动加载。
+ */
+export function listAwardPunishTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/award-punish-types`);
+}
+
+/**
  * 识别规则配置（发票/合同管理页"识别规则"设置面板）：
  * 包含判定规则（模型判非但规则命中 → 认定为该类型）与类型归类规则。
  */

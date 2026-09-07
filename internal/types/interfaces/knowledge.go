@@ -118,6 +118,18 @@ type KnowledgeService interface {
 	// auto-generated regulation numbers (ZD-YYYYMMDD-NNN) for the current date in
 	// the knowledge base, so newly generated numbers stay unique across files.
 	MaxAutoRegulationSeq(ctx context.Context, kbID string) (int, error)
+	// ListAwardPunishRecords returns the award/punish-level aggregated list of a
+	// knowledge base: every extracted record (one per person) flattened into its
+	// own row (de-duplication is handled at the knowledge-file upload layer by
+	// file hash), filtered/searched/sorted/paginated server-side.
+	ListAwardPunishRecords(ctx context.Context, kbID string, filter types.AwardPunishListFilter) (*types.AwardPunishListResult, error)
+	// ListAwardPunishTypes returns the distinct award/punish types that appear
+	// across all records in a knowledge base, powering the type filter dropdown.
+	ListAwardPunishTypes(ctx context.Context, kbID string) ([]types.AwardPunishTypeCount, error)
+	// MaxAutoAwardPunishSeq returns the highest trailing sequence number among
+	// auto-generated 文号 (JC-YYYYMMDD-NNN) for the current date in the knowledge
+	// base, so newly generated numbers stay unique across files.
+	MaxAutoAwardPunishSeq(ctx context.Context, kbID string) (int, error)
 	// GetRecognitionConfig returns the KB-level document recognition rules
 	// (include-judgement + type classification). Invoice KBs fall back to the
 	// built-in keyword rules when none are stored yet.

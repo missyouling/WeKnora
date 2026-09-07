@@ -857,6 +857,101 @@ func (h *KnowledgeBaseHandler) ListRegulationTypes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rates})
 }
 
+// ListAwardPunishRecords godoc
+// @Summary      奖惩记录列表
+// @Description  返回奖惩知识库聚合列表：每个当事人一条记录，支持全字段搜索、奖惩类型/状态筛选、签发日期区间过滤、服务端分页（按源文件哈希去重，文号不去重）。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id         path  string  true  "知识库ID"
+// @Param        q          query string  false "全字段搜索关键词"
+// @Param        ap_type    query string  false "奖惩类型筛选"
+// @Param        status     query string  false "提取状态筛选"
+// @Param        date_from  query string  false "签发日期起 YYYY-MM-DD"
+// @Param        date_to    query string  false "签发日期止 YYYY-MM-DD"
+// @Param        page       query int     false "页码，默认1"
+// @Param        page_size  query int     false "每页数量，默认20"
+// @Success      200 {object} map[string]interface{} "奖惩记录列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/award-punish-records [get]
+func (h *KnowledgeBaseHandler) ListAwardPunishRecords(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	kb, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	_ = kb
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	filter := types.AwardPunishListFilter{
+		Keyword:  c.Query("q"),
+		ApType:   c.Query("ap_type"),
+		Status:   c.Query("status"),
+		DateFrom: c.Query("date_from"),
+		DateTo:   c.Query("date_to"),
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	result, err := h.knowledgeService.ListAwardPunishRecords(effCtx, kbID, filter)
+	if err != nil {
+		logger.Error(ctx, "Failed to list award/punish records", err)
+		c.Error(apperrors.NewInternalServerError("list award/punish records failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
+}
+
+// ListAwardPunishTypes godoc
+// @Summary      奖惩类型列表
+// @Description  返回知识库下所有奖惩出现过的去重奖惩类型（含数量），用于奖惩类型筛选下拉自动加载。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "知识库ID"
+// @Success      200 {object} map[string]interface{} "奖惩类型列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/award-punish-types [get]
+func (h *KnowledgeBaseHandler) ListAwardPunishTypes(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	_, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	rates, err := h.knowledgeService.ListAwardPunishTypes(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list award/punish types", err)
+		c.Error(apperrors.NewInternalServerError("list award/punish types failed: " + err.Error()))
+		return
+	}
+	if rates == nil {
+		rates = []types.AwardPunishTypeCount{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rates})
+}
+
 // ListContractTypes godoc
 // @Summary      合同类型列表
 // @Description  返回知识库下所有合同出现过的去重合同类型（含数量），用于合同类型筛选下拉自动加载。

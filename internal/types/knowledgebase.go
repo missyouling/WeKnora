@@ -804,6 +804,25 @@ func DefaultRegulationRecognitionConfig() *RecognitionConfig {
 	}
 }
 
+// DefaultAwardPunishRecognitionConfig returns the built-in recognition rules for
+// an award/punish knowledge base: one include rule plus keyword type rules that
+// map notice content onto the 4-type enum (处罚/奖励/通报/其它奖惩).
+func DefaultAwardPunishRecognitionConfig() *RecognitionConfig {
+	return &RecognitionConfig{
+		Enabled: true,
+		IncludeRules: []RecognitionRule{
+			{ID: "ap-include", Name: "含奖惩关键字", MatchType: "keyword",
+				Keywords: []string{"奖惩", "处罚", "奖励", "通报", "罚款", "警告", "表彰", "嘉奖", "处分"}, Logic: "OR", Enabled: true},
+		},
+		TypeRules: []TypeClassifyRule{
+			{ID: "ap-chufa", Pattern: "处罚|罚款|警告|处分|批评|扣款|记过|通报批评", Type: "处罚", Priority: 1, Enabled: true},
+			{ID: "ap-jiangli", Pattern: "奖励|表彰|嘉奖|表扬|奖金|评优|晋级", Type: "奖励", Priority: 2, Enabled: true},
+			{ID: "ap-tongbao", Pattern: "通报", Type: "通报", Priority: 3, Enabled: true},
+		},
+		Types: []string{"处罚", "奖励", "通报", "其它奖惩"},
+	}
+}
+
 // Scan implements the sql.Scanner interface, used to convert database value to ExtractConfig
 func (e *ExtractConfig) Scan(value interface{}) error {
 	if value == nil {

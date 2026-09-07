@@ -63,19 +63,20 @@
           </div>
         </div>
 
-        <!-- 奖惩管理（占位） -->
-        <div class="da-card" @click="onPlaceholder('奖惩管理')">
+        <!-- 奖惩管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goAwardPunish">
           <div class="da-card-icon da-card-icon--reward">
             <t-icon name="medal" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
               <span>奖惩管理</span>
-              <t-tag theme="default" variant="light" size="small">开发中</t-tag>
+              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
-            <p class="da-card-desc">员工奖惩记录登记、查询与统计分析</p>
+            <p class="da-card-desc">上传奖惩通报，自动识别文号、类型、当事人与处罚决定并归档管理</p>
             <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
+              <span class="da-card-link">进入管理</span>
+              <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
         </div>
@@ -100,6 +101,10 @@ const goContracts = () => {
 
 const goRegulations = () => {
   router.push('/platform/daily-affairs/regulations')
+}
+
+const goAwardPunish = () => {
+  router.push('/platform/daily-affairs/award-punish')
 }
 
 const onPlaceholder = (name: string) => {
