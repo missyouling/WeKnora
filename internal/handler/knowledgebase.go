@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -692,6 +693,179 @@ func (h *KnowledgeBaseHandler) ListInvoiceTaxRates(c *gin.Context) {
 		rates = []types.InvoiceTaxRateCount{}
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rates})
+}
+
+// ListContractRecords godoc
+// @Summary      合同级聚合列表
+// @Description  返回知识库下所有已提取合同的聚合列表（一行一份合同），服务端完成全字段搜索、类型/履约状态/签订日期筛选、排序、分页与金额聚合。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id             path  string  true  "知识库ID"
+// @Param        q              query string  false "全字段搜索词"
+// @Param        contract_type  query string  false "合同类型枚举"
+// @Param        fulfill_status query string  false "履约状态"
+// @Param        status         query string  false "提取状态"
+// @Param        date_from      query string  false "签订日期起 YYYY-MM-DD"
+// @Param        date_to        query string  false "签订日期止 YYYY-MM-DD"
+// @Param        page           query int     false "页码"
+// @Param        page_size      query int     false "每页条数"
+// @Success      200  {object}  map[string]interface{}  "聚合列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/contracts [get]
+func (h *KnowledgeBaseHandler) ListContractRecords(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	kb, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	_ = kb
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	filter := types.ContractListFilter{
+		Keyword:       c.Query("q"),
+		ContractType:  c.Query("contract_type"),
+		FulfillStatus: c.Query("fulfill_status"),
+		Status:        c.Query("status"),
+		DateFrom:      c.Query("date_from"),
+		DateTo:        c.Query("date_to"),
+		Page:          page,
+		PageSize:      pageSize,
+	}
+
+	result, err := h.knowledgeService.ListContractRecords(effCtx, kbID, filter)
+	if err != nil {
+		logger.Error(ctx, "Failed to list contract records", err)
+		c.Error(apperrors.NewInternalServerError("list contract records failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"data":       result.Data,
+		"total":      result.Total,
+		"sum_amount": result.SumAmount,
+		"sum_tax":    result.SumTax,
+		"sum_total":  result.SumTotal,
+		"page":       result.Page,
+		"page_size":  result.PageSize,
+	})
+}
+
+// ListContractTypes godoc
+// @Summary      合同类型列表
+// @Description  返回知识库下所有合同出现过的去重合同类型（含数量），用于合同类型筛选下拉自动加载。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "知识库ID"
+// @Success      200 {object} map[string]interface{} "合同类型列表"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/contract-types [get]
+func (h *KnowledgeBaseHandler) ListContractTypes(c *gin.Context) {
+	ctx := c.Request.Context()
+	_, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	types_, err := h.knowledgeService.ListContractTypes(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list contract types", err)
+		c.Error(apperrors.NewInternalServerError("list contract types failed: " + err.Error()))
+		return
+	}
+	if types_ == nil {
+		types_ = []types.ContractTypeCount{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": types_})
+}
+
+// SaveRecognitionConfig godoc
+// @Summary      保存识别规则配置
+// @Description  持久化知识库级文档识别规则（包含判定规则 + 类型归类规则）。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id    path  string                true  "知识库ID"
+// @Param        body  body  types.RecognitionConfig  true  "识别规则配置"
+// @Success      200  {object}  map[string]interface{}  "保存成功"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/recognition-config [put]
+func (h *KnowledgeBaseHandler) SaveRecognitionConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+	_, kbID, effectiveTenantID, permission, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(apperrors.NewForbiddenError("No permission to edit recognition config"))
+		return
+	}
+	var cfg types.RecognitionConfig
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.Error(apperrors.NewBadRequestError("invalid recognition config body: " + err.Error()))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	if err := h.knowledgeService.SaveRecognitionConfig(effCtx, kbID, &cfg); err != nil {
+		logger.Error(ctx, "Failed to save recognition config", err)
+		c.Error(apperrors.NewInternalServerError("save recognition config failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Saved recognition config for KB %s (rules=%d, typeRules=%d)", kbID, len(cfg.IncludeRules), len(cfg.TypeRules))
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "识别规则已保存"})
+}
+
+// ReassessRecognition godoc
+// @Summary      按规则重新评估删除历史
+// @Description  用当前包含判定规则重新评估删除历史中的记录：命中的自动恢复为待补录记录（重新入库显示在列表），未命中的保留在删除历史。返回恢复数量。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id  path  string  true  "知识库ID"
+// @Success      200  {object}  map[string]interface{}  "恢复数量"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/recognition/reassess [post]
+func (h *KnowledgeBaseHandler) ReassessRecognition(c *gin.Context) {
+	ctx := c.Request.Context()
+	_, kbID, effectiveTenantID, permission, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(apperrors.NewForbiddenError("No permission to reassess recognition"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	restored, err := h.knowledgeService.ReassessRecognition(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to reassess recognition", err)
+		c.Error(apperrors.NewInternalServerError("reassess recognition failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Recognition reassess for KB %s restored %d rows", kbID, restored)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("重新评估完成，恢复 %d 条记录", restored),
+		"data":    map[string]interface{}{"restored": restored},
+	})
 }
 
 // ListKnowledgeBases godoc

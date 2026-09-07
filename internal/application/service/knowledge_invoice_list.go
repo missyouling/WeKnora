@@ -18,10 +18,11 @@ import (
 // invoiceMetadata 与 handler.invoiceCustomMetadata 对齐，用于从 custom_metadata
 // 反序列化发票提取结果。
 type invoiceMetadata struct {
-	Kind          string                  `json:"kind"`
-	Invoices      []InvoiceExtractionItem `json:"invoices"`
-	ExtractStatus string                  `json:"extract_status"`
-	ExtractError  string                  `json:"extract_error"`
+	Kind             string                  `json:"kind"`
+	Invoices         []InvoiceExtractionItem `json:"invoices"`
+	ExtractStatus    string                  `json:"extract_status"`
+	ExtractError     string                  `json:"extract_error"`
+	AutoDeletedCount int                     `json:"auto_deleted_count"`
 }
 
 // ListInvoiceRecords 实现发票级聚合列表。步骤：
@@ -78,7 +79,13 @@ func (s *knowledgeService) ListInvoiceRecords(ctx context.Context, kbID string, 
 				continue
 			}
 			var meta invoiceMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" || len(meta.Invoices) == 0 {
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				continue
+			}
+			// 旧版恢复行兜底：meta 无 kind 但保留 auto_deleted_count（曾被自动删除后
+			// 人工恢复）→ 视作待补录占位行，避免这类记录刷新后从列表消失。
+			legacyManual := meta.Kind != "invoice" && meta.AutoDeletedCount > 0
+			if meta.Kind != "invoice" && !legacyManual {
 				continue
 			}
 			tags := make([]string, 0, len(k.Tags))
@@ -86,6 +93,28 @@ func (s *knowledgeService) ListInvoiceRecords(ctx context.Context, kbID string, 
 				if t != nil && t.Name != "" {
 					tags = append(tags, t.Name)
 				}
+			}
+			// 人工入库占位行：恢复（重新入库）后 extract_status=manual，字段待用户
+			// 编辑补录 —— 列表必须立即显示该记录（用户可点开编辑）。
+			// 同时兜底：提取/保存后仍无任何有效字段（success + 全空）的记录同样
+			// 显示为待补录占位，避免"打开弹窗未编辑→自动保存空字段"后记录从列表消失。
+			if invoiceItemsAllBlank(meta.Invoices) &&
+				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+				records = append(records, types.InvoiceRecord{
+					KnowledgeID:    k.ID,
+					KnowledgeTitle: k.Title,
+					FileName:       k.FileName,
+					FileType:       k.FileType,
+					Tags:           tags,
+					ExtractStatus:  "manual",
+					ExtractError:   meta.ExtractError,
+					KBID:           k.KnowledgeBaseID,
+					CreatedAt:      k.CreatedAt,
+				})
+				continue
+			}
+			if len(meta.Invoices) == 0 {
+				continue
 			}
 			for _, inv := range meta.Invoices {
 					// 过滤"空提取"记录：LLM 提取失败返回的空对象（无发票号且无任何
@@ -211,6 +240,19 @@ func (s *knowledgeService) ListInvoiceRecords(ctx context.Context, kbID string, 
 		Page:      filter.Page,
 		PageSize:  filter.PageSize,
 	}, nil
+}
+
+// invoiceItemsAllBlank 判断提取列表是否完全没有有效数据（空数组或每项都为空提取）。
+func invoiceItemsAllBlank(invs []InvoiceExtractionItem) bool {
+	if len(invs) == 0 {
+		return true
+	}
+	for _, inv := range invs {
+		if !invoiceExtractionItemBlank(inv) {
+			return false
+		}
+	}
+	return true
 }
 
 // invoiceExtractionItemBlank 判断发票提取项是否为"空提取"（LLM 提取失败返回

@@ -809,6 +809,77 @@ func (r *knowledgeRepository) HardDeleteKnowledge(ctx context.Context, tenantID 
 		Delete(&types.Knowledge{}).Error
 }
 
+// GetDeletedKnowledgeByID returns a soft-deleted knowledge row (Unscoped).
+// Used by the delete-history restore / purge flows.
+func (r *knowledgeRepository) GetDeletedKnowledgeByID(
+	ctx context.Context,
+	tenantID uint64,
+	id string,
+) (*types.Knowledge, error) {
+	var knowledge types.Knowledge
+	if err := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NOT NULL", tenantID, id).
+		First(&knowledge).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrKnowledgeNotFound
+		}
+		return nil, err
+	}
+	return &knowledge, nil
+}
+
+// ListDeletedKnowledge lists soft-deleted knowledge rows that carry the
+// auto-delete history marker (custom_metadata.auto_deleted='true'), newest
+// first. These are the "删除历史" rows of the invoice / contract modules.
+func (r *knowledgeRepository) ListDeletedKnowledge(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	page, pageSize int,
+	keyword string,
+) ([]*types.Knowledge, int64, error) {
+	var knowledges []*types.Knowledge
+	query := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NOT NULL", tenantID, kbID)
+	// JSON 过滤按数据库方言：Postgres 用 ->'auto_deleted'，SQLite/其它用 json_extract。
+	isPostgres := r.db.Dialector.Name() == "postgres"
+	if isPostgres {
+		query = query.Where("custom_metadata->>'auto_deleted' = 'true'")
+	} else {
+		query = query.Where("json_extract(custom_metadata, '$.auto_deleted') = 'true'")
+	}
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("(file_name LIKE ? OR title LIKE ?)", like, like)
+	}
+	var total int64
+	if err := query.Model(&types.Knowledge{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Order("deleted_at DESC, updated_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&knowledges).Error; err != nil {
+		return nil, 0, err
+	}
+	return knowledges, total, nil
+}
+
+// RestoreDeletedKnowledgeRow clears the soft-delete tombstone and puts the row
+// back into a parseable pending state (Unscoped update so GORM's default
+// deleted_at filter does not swallow the row). It does NOT touch
+// custom_metadata — the caller clears the auto-delete markers afterwards.
+func (r *knowledgeRepository) RestoreDeletedKnowledgeRow(ctx context.Context, tenantID uint64, id string) error {
+	return r.db.Unscoped().WithContext(ctx).
+		Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
+		Updates(map[string]interface{}{
+			"deleted_at":    nil,
+			"parse_status":  types.ParseStatusPending,
+			"error_message": "",
+			"updated_at":    time.Now(),
+		}).Error
+}
+
 // HardDeleteKnowledgeList is the batch counterpart of HardDeleteKnowledge.
 func (r *knowledgeRepository) HardDeleteKnowledgeList(ctx context.Context, tenantID uint64, ids []string) error {
 	if len(ids) == 0 {

@@ -27,19 +27,20 @@
           </div>
         </div>
 
-        <!-- 合同管理（占位） -->
-        <div class="da-card" @click="onPlaceholder('合同管理')">
+        <!-- 合同管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goContracts">
           <div class="da-card-icon da-card-icon--contract">
             <t-icon name="file-copy" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
               <span>合同管理</span>
-              <t-tag theme="default" variant="light" size="small">开发中</t-tag>
+              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
-            <p class="da-card-desc">合同归档、到期提醒、关键条款检索与统一管理</p>
+            <p class="da-card-desc">上传合同文件，自动识别合同编号、类型、双方主体与金额等字段并归档管理</p>
             <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
+              <span class="da-card-link">进入管理</span>
+              <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
         </div>
@@ -90,6 +91,10 @@ const router = useRouter()
 
 const goInvoices = () => {
   router.push('/platform/daily-affairs/invoices')
+}
+
+const goContracts = () => {
+  router.push('/platform/daily-affairs/contracts')
 }
 
 const onPlaceholder = (name: string) => {
@@ -155,8 +160,6 @@ const onPlaceholder = (name: string) => {
   }
 
   &.da-card--enabled {
-    border-color: var(--td-brand-color);
-
     .da-card-link {
       color: var(--td-brand-color);
     }

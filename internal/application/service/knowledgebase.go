@@ -536,6 +536,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 			config.AutoTagConfig.Normalize()
 			kb.AutoTagConfig = config.AutoTagConfig
 		}
+		if config.RecognitionConfig != nil {
+			kb.RecognitionConfig = config.RecognitionConfig
+		}
 		// Update indexing strategy — syncs to ExtractConfig for backward compat
 		if config.IndexingStrategy != nil {
 			if !config.IndexingStrategy.HasAnyIndexing() {

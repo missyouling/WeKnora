@@ -80,6 +80,20 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractInvoicePage)
 		// 按页删除发票记录 — 与 extract-invoice 同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.DeleteInvoicePage)
+		// 合同字段提取 — 与发票提取同权限矩阵（写操作）
+		kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContract)
+		// 按页重新提取合同 — 与 extract-contract 同权限矩阵（写操作）
+		kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContractPage)
+		// 按页删除合同记录 — 与 extract-contract 同权限矩阵（写操作）
+		kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.DeleteContractPage)
+		// 删除历史（自动删除的非合同/非发票记录）：列表为只读（Viewer+），恢复/永久删除为写操作
+		kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), handler.ListDeletedKnowledge)
+		kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.RestoreDeletedKnowledge)
+		kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.PurgeDeletedKnowledge)
+		// 删除历史源文件预览：必须走 KB 作用域路由（URL 携带 KB id），
+		// 不能走 /knowledge/:id/preview —— 该路由的 KBID 解析中间件对软删记录
+		// 查询 deleted_at IS NULL 必然 404，永远到不了 include_deleted 分支。
+		kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), handler.PreviewDeletedKnowledgeFile)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
 		kbRead.GET("/folders", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledgeFolders)
 		kb.PUT("/folders", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.RenameKnowledgeFolder)
@@ -214,6 +228,14 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 		// 发票级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读）
 		kb.GET("/:id/invoices", g.Viewer(), g.KBAccessRead("id"), handler.ListInvoiceRecords)
 	kb.GET("/:id/invoice-tax-rates", g.Viewer(), g.KBAccessRead("id"), handler.ListInvoiceTaxRates)
+		// 合同级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读）
+		kb.GET("/:id/contracts", g.Viewer(), g.KBAccessRead("id"), handler.ListContractRecords)
+		// 识别规则配置（发票/合同管理页"识别规则"设置面板）— 读 Viewer+，写 Editor+（KB 写权限）
+		kb.GET("/:id/recognition-config", g.Viewer(), g.KBAccessRead("id"), handler.GetRecognitionConfig)
+		kb.PUT("/:id/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.SaveRecognitionConfig)
+		// 按识别规则重新评估删除历史 — 写操作，与保存规则同权限矩阵
+		kb.POST("/:id/recognition/reassess", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ReassessRecognition)
+	kb.GET("/:id/contract-types", g.Viewer(), g.KBAccessRead("id"), handler.ListContractTypes)
 		// 更新/删除知识库 — 两层正交鉴权，缺一不可：
 		//   OwnedKBOrAdmin  管「租户内」归属：非创建者的 Contributor 改不了
 		//                   同事的 KB（跨租户 KB 在此走 lookup=NotFound → 交给

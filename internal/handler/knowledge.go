@@ -1615,6 +1615,50 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 		return
 	}
 
+	// 删除历史抽屉预览：?include_deleted=1 允许预览被系统自动删除（软删）但仍保留
+	// 物理源文件的记录。仅限同租户 owner 校验（共享 KB 的历史预览暂不支持）。
+	if c.Query("include_deleted") == "1" {
+		tenantID := c.GetUint64(types.TenantIDContextKey.String())
+		if tenantID == 0 {
+			c.Error(errors.NewUnauthorizedError("Unauthorized"))
+			return
+		}
+		effCtx := context.WithValue(ctx, types.TenantIDContextKey, tenantID)
+		knowledge, err := h.kgService.GetDeletedKnowledgeByID(effCtx, id)
+		if err != nil {
+			c.Error(errors.NewNotFoundError("Knowledge not found"))
+			return
+		}
+		if knowledge.TenantID != tenantID {
+			c.Error(errors.NewForbiddenError("Forbidden"))
+			return
+		}
+		file, filename, ferr := h.kgService.GetDeletedKnowledgeFile(effCtx, id)
+		if ferr != nil {
+			logger.ErrorWithFields(ctx, ferr, nil)
+			c.Error(errors.NewInternalServerError("Failed to retrieve file").WithDetails(ferr.Error()))
+			return
+		}
+		defer file.Close()
+		contentType, inline := secutils.SafeContentTypeByFilename(filename)
+		c.Header("Content-Type", contentType)
+		c.Header("X-Content-Type-Options", "nosniff")
+		disposition := "inline"
+		if !inline {
+			disposition = "attachment"
+		}
+		c.Header("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
+		c.Header("Cache-Control", "private, max-age=3600")
+		c.Stream(func(w io.Writer) bool {
+			if _, err := io.Copy(w, file); err != nil {
+				logger.Errorf(ctx, "Failed to stream preview: %v", err)
+				return false
+			}
+			return false
+		})
+		return
+	}
+
 	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
 		c.Error(err)
@@ -1639,6 +1683,70 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 	c.Header("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
 	c.Header("Cache-Control", "private, max-age=3600")
 
+	c.Stream(func(w io.Writer) bool {
+		if _, err := io.Copy(w, file); err != nil {
+			logger.Errorf(ctx, "Failed to stream preview: %v", err)
+			return false
+		}
+		return false
+	})
+}
+
+// PreviewDeletedKnowledgeFile godoc
+// @Summary      预览已删除（删除历史）知识文件的源文件
+// @Description  返回被系统自动删除（软删、保留物理源文件）的知识条目关联的原始文件，供删除历史抽屉查看。
+//               挂载在 KB 作用域路由下（URL 携带 KB id），避免走 /knowledge/:id 路由的
+//               deleted_at IS NULL 知识解析中间件（软删记录无法通过该守卫）。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      application/pdf,image/jpeg,image/png,text/plain
+// @Param        id             path  string  true  "知识库ID"
+// @Param        knowledgeId    path  string  true  "知识ID"
+// @Success      200  {file}    file    "文件内容"
+// @Failure      400  {object}  errors.AppError  "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/preview-deleted [get]
+func (h *KnowledgeHandler) PreviewDeletedKnowledgeFile(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	id := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if id == "" {
+		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		return
+	}
+
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.Error(errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, tenantID)
+	knowledge, err := h.kgService.GetDeletedKnowledgeByID(effCtx, id)
+	if err != nil {
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.TenantID != tenantID {
+		c.Error(errors.NewForbiddenError("Forbidden"))
+		return
+	}
+	file, filename, ferr := h.kgService.GetDeletedKnowledgeFile(effCtx, id)
+	if ferr != nil {
+		logger.ErrorWithFields(ctx, ferr, nil)
+		c.Error(errors.NewInternalServerError("Failed to retrieve file").WithDetails(ferr.Error()))
+		return
+	}
+	defer file.Close()
+	contentType, inline := secutils.SafeContentTypeByFilename(filename)
+	c.Header("Content-Type", contentType)
+	c.Header("X-Content-Type-Options", "nosniff")
+	disposition := "inline"
+	if !inline {
+		disposition = "attachment"
+	}
+	c.Header("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
+	c.Header("Cache-Control", "private, max-age=3600")
 	c.Stream(func(w io.Writer) bool {
 		if _, err := io.Copy(w, file); err != nil {
 			logger.Errorf(ctx, "Failed to stream preview: %v", err)
@@ -1924,6 +2032,472 @@ type invoiceCustomMetadata struct {
 	ExtractError  string                      `json:"extract_error"`
 }
 
+// contractCustomMetadata is the persisted shape written into a knowledge
+// entry's custom_metadata by ExtractContract. The frontend reads exactly
+// these keys to render the contract management list.
+type contractCustomMetadata struct {
+	Kind          string                          `json:"kind"`
+	Contracts     []service.ContractExtractionItem `json:"contracts"`
+	ExtractStatus string                          `json:"extract_status"`
+	ExtractError  string                          `json:"extract_error"`
+}
+
+// contractBatchesHaveText reports whether any extraction batch carries usable
+// text. A scanned document (no text layer) yields only empty batches; without
+// this guard the extract endpoint would judge it not-a-contract and auto-delete
+// a legitimate scanned contract.
+func contractBatchesHaveText(batches []string) bool {
+	for _, b := range batches {
+		if strings.TrimSpace(b) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// invoiceBatchesHaveText is the invoice-side twin of contractBatchesHaveText.
+func invoiceBatchesHaveText(batches []string) bool {
+	for _, b := range batches {
+		if strings.TrimSpace(b) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// autoDeleteCount reads the auto_deleted_count marker from a knowledge row's
+// custom_metadata (0 when absent). It powers the restore→re-extract→still
+// not-a-document anti-loop guard.
+func (h *KnowledgeHandler) autoDeleteCount(ctx context.Context, knowledge *types.Knowledge) int {
+	if knowledge == nil || len(knowledge.CustomMetadata) == 0 {
+		return 0
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(knowledge.CustomMetadata, &meta); err != nil {
+		return 0
+	}
+	if c, ok := meta["auto_deleted_count"].(float64); ok {
+		return int(c)
+	}
+	return 0
+}
+
+// ExtractContract godoc
+// @Summary      提取合同字段
+// @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取合同字段并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "提取成功"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-contract [post]
+func (h *KnowledgeHandler) ExtractContract(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to extract contract fields"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for contract extraction", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	if knowledge.ParseStatus != types.ParseStatusCompleted {
+		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
+		return
+	}
+	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
+	var curContractMeta contractCustomMetadata
+	_ = json.Unmarshal(knowledge.CustomMetadata, &curContractMeta)
+	if curContractMeta.ExtractStatus == "manual" {
+		logger.Infof(ctx, "Contract extraction skipped: knowledge %s is manual intake", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "待补录记录，无需重复提取",
+			"data":    map[string]interface{}{"kind": "contract", "extract_status": "manual", "removed": false},
+		})
+		return
+	}
+
+	modelID := strings.TrimSpace(kb.SummaryModelID)
+	if modelID == "" {
+		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
+		return
+	}
+	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load extraction model", err)
+		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
+		return
+	}
+
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list chunks for contract extraction", err)
+		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
+		return
+	}
+	// 分批提取：超长多合同文档单次 LLM 调用不可靠，按 chunk 分批独立调用后合并，
+	// Normalize 时按文件内合同编号去重。
+	batches := service.BuildContractExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
+	// failed 让用户人工处理（配合删除历史，避免"监测检测合同"这类扫描件被误删）。
+	if !contractBatchesHaveText(batches) {
+		noTextMeta, jerr := json.Marshal(contractCustomMetadata{
+			Kind:          "contract",
+			ExtractStatus: "failed",
+			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+		})
+		if jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
+			}
+		}
+		logger.Warnf(ctx, "Contract extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "document has no extractable text (possible scanned document), file kept",
+			"data":    map[string]interface{}{"kind": "contract", "extract_status": "failed", "removed": false},
+		})
+		return
+	}
+	merged := &service.ContractExtractionResult{Kind: "contract"}
+	var extractErr error
+	sawContract := false
+	for i, batch := range batches {
+		if strings.TrimSpace(batch) == "" {
+			continue
+		}
+		batchRes, berr := service.ExtractContractsFromContent(effCtx, chatModel, batch)
+		if berr != nil {
+			if i == 0 && len(merged.Contracts) == 0 {
+				extractErr = berr
+				break
+			}
+			logger.Warnf(ctx, "Contract extraction batch %d failed (non-fatal): %v", i+1, berr)
+			continue
+		}
+		if batchRes == nil || batchRes.Kind == "not_contract" {
+			continue
+		}
+		sawContract = true
+		merged.Contracts = append(merged.Contracts, batchRes.Contracts...)
+	}
+	if !sawContract {
+		merged.Kind = "not_contract"
+	}
+	if extractErr != nil {
+		if failMeta, jerr := json.Marshal(contractCustomMetadata{
+			Kind:          "contract",
+			ExtractStatus: "failed",
+			ExtractError:  "contract extraction failed: " + extractErr.Error(),
+		}); jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
+			}
+		}
+		logger.Error(ctx, "Contract extraction model call failed", extractErr)
+		c.Error(errors.NewInternalServerError("contract extraction failed: " + extractErr.Error()))
+		return
+	}
+	extracted := merged
+	// 自动编号去重：无合同编号的合同按当天已有最大序号 +1 顺序递增（跨文件唯一）
+	autoSeq, seqErr := h.kgService.MaxAutoContractSeq(effCtx, kbID)
+	if seqErr != nil {
+		logger.Warnf(ctx, "Failed to compute auto contract seq for %s: %v", kbID, seqErr)
+	}
+	service.NormalizeContractExtractionResult(extracted, autoSeq)
+
+	meta := contractCustomMetadata{
+		Kind:          extracted.Kind,
+		Contracts:     extracted.Contracts,
+		ExtractStatus: "success",
+		ExtractError:  extracted.ExtractError,
+	}
+	// 自定义识别规则：合同类型归类（用户可配置关键词/正则 → 合同类型），
+	// 按模型提取出的合同类型字段匹配，命中则覆盖模型结果。
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		for i := range meta.Contracts {
+			if t := service.ClassifyTypeFromRules(meta.Contracts[i].ContractType, recCfg); t != "" {
+				meta.Contracts[i].ContractType = t
+			}
+		}
+	}
+	if extracted.Kind == "not_contract" {
+		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为合同，置 manual 待补录，
+		// 不自动删除（解决"该是合同却没入库"的误判）。
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
+				meta.Kind = "contract"
+				meta.Contracts = []service.ContractExtractionItem{}
+				meta.ExtractStatus = "manual"
+				meta.ExtractError = "识别规则命中，已认定为合同，请编辑补录字段"
+				if raw, merr := json.Marshal(meta); merr == nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+						logger.Warnf(ctx, "Failed to persist rule-rescued contract meta: %v", serr)
+					}
+				}
+				logger.Infof(ctx, "Contract rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"message": "识别规则命中，已认定为合同，请在列表中编辑补录字段",
+					"data":    map[string]interface{}{"kind": "contract", "extract_status": "manual", "removed": false},
+				})
+				return
+			}
+		}
+		meta.ExtractStatus = "not_contract"
+		if meta.ExtractError == "" {
+			meta.ExtractError = "document does not look like a contract"
+		}
+		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
+		// 恢复，再次判定非合同不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
+		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "系统判定非合同文件，但该文件已被人工恢复，已保留待人工处理"
+			logger.Warnf(ctx, "Contract re-extraction judged non-contract but row was restored before; keeping file %s", knowledgeID)
+		} else {
+			// 非合同文件不能存在于合同知识库 → 提取判定后自动删除该文件（保留物理文件，
+			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
+			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_contract"); delErr != nil {
+				logger.Warnf(ctx, "auto-delete non-contract knowledge failed: %v", delErr)
+			} else {
+				logger.Infof(ctx, "auto-deleted non-contract knowledge, ID: %s", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success":  true,
+					"message":  "非合同文件已移至删除历史，可在删除历史中恢复",
+					"data":     map[string]interface{}{"removed": true, "kind": "not_contract"},
+				})
+				return
+			}
+		}
+	}
+	// 空提取守卫：标记为合同但没有可用合同（空数组或全部空字段）→ failed 可重试
+	if meta.Kind == "contract" {
+		if len(meta.Contracts) == 0 {
+			meta.ExtractStatus = "failed"
+			if meta.ExtractError == "" {
+				meta.ExtractError = "提取未返回任何合同，请重试"
+			}
+		} else if service.ContractsAllEmpty(meta.Contracts) {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "提取结果字段为空，请重试"
+		}
+	}
+
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+		logger.Error(ctx, "Failed to persist contract extraction result", err)
+		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
+		return
+	}
+
+	logger.Infof(ctx, "Contract extraction succeeded, knowledge ID: %s, kind: %s, contracts: %d",
+		knowledgeID, meta.Kind, len(meta.Contracts))
+	if meta.ExtractStatus == "failed" {
+		logger.Warnf(ctx, "Contract extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
+		c.Error(errors.NewInternalServerError(meta.ExtractError))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message":  "Contract extraction succeeded",
+		"data": map[string]interface{}{
+			"knowledge_id":    knowledgeID,
+			"kind":            meta.Kind,
+			"extract_status":  meta.ExtractStatus,
+			"contracts":       meta.Contracts,
+		},
+	})
+}
+
+// GetRecognitionConfig godoc
+// @Summary      获取识别规则配置
+// @Description  返回知识库级文档识别规则（包含判定规则 + 类型归类规则），发票/合同管理页的设置面板读取。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id  path  string  true  "知识库ID"
+// @Success      200  {object}  types.RecognitionConfig  "识别规则配置"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/recognition-config [get]
+func (h *KnowledgeBaseHandler) GetRecognitionConfig(c *gin.Context) {
+	ctx := c.Request.Context()
+	_, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	cfg, err := h.knowledgeService.GetRecognitionConfig(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get recognition config", err)
+		c.Error(errors.NewInternalServerError("get recognition config failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": cfg})
+}
+
+// ListDeletedKnowledge godoc
+// @Summary      删除历史列表
+// @Description  返回知识库中所有被系统自动删除（判定非合同/非发票）且保留源文件的记录，供"删除历史"抽屉查看、恢复、永久删除。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id        path  string  true  "知识库ID"
+// @Param        page      query int     false "页码"
+// @Param        page_size query int     false "每页数量"
+// @Param        q         query string  false "按文件名/标题搜索"
+// @Success      200  {object}  types.DeletedKnowledgePage  "删除历史列表"
+// @Failure      403  {object}  errors.AppError             "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/deleted-knowledge [get]
+func (h *KnowledgeHandler) ListDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to list deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	result, err := h.kgService.ListDeletedKnowledge(effCtx, kbID, page, pageSize, c.Query("q"))
+	if err != nil {
+		logger.Error(ctx, "Failed to list deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("list deleted knowledge failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// RestoreDeletedKnowledge godoc
+// @Summary      恢复自动删除的记录
+// @Description  把被系统自动删除（非合同/非发票）的记录恢复回知识库并重新解析提取；再次判定非该类文档时不再自动删除（防循环）。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "恢复成功"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/restore [post]
+func (h *KnowledgeHandler) RestoreDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to restore deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	if _, err := h.kgService.RestoreDeletedKnowledge(effCtx, knowledgeID); err != nil {
+		logger.Error(ctx, "Failed to restore deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("restore deleted knowledge failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Restored auto-deleted knowledge %s", knowledgeID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "已重新入库，请在列表中编辑补录字段",
+		"data":    map[string]interface{}{"knowledge_id": knowledgeID},
+	})
+}
+
+// PurgeDeletedKnowledge godoc
+// @Summary      永久删除历史记录
+// @Description  永久删除一条删除历史记录（DB 硬删 + 物理源文件删除），不可恢复。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "永久删除成功"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/purge [post]
+func (h *KnowledgeHandler) PurgeDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to purge deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	if err := h.kgService.PurgeDeletedKnowledge(effCtx, knowledgeID); err != nil {
+		logger.Error(ctx, "Failed to purge deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("purge deleted knowledge failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Purged auto-deleted knowledge %s permanently", knowledgeID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Knowledge purged permanently",
+		"data":    map[string]interface{}{"knowledge_id": knowledgeID},
+	})
+}
+
 // ExtractInvoice godoc
 // @Summary      提取发票字段
 // @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取发票字段并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
@@ -1972,6 +2546,18 @@ func (h *KnowledgeHandler) ExtractInvoice(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
+	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
+	var curInvoiceMeta invoiceCustomMetadata
+	_ = json.Unmarshal(knowledge.CustomMetadata, &curInvoiceMeta)
+	if curInvoiceMeta.ExtractStatus == "manual" {
+		logger.Infof(ctx, "Invoice extraction skipped: knowledge %s is manual intake", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "待补录记录，无需重复提取",
+			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
+		})
+		return
+	}
 
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
@@ -1994,6 +2580,27 @@ func (h *KnowledgeHandler) ExtractInvoice(c *gin.Context) {
 	// 分批提取：超长多发票文档（18/22 张）单次 LLM 调用不可靠（智谱 500 /
 	// 输出截断），按 chunk 分批独立调用后合并，Normalize 时按发票号去重。
 	batches := service.BuildInvoiceExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不自动删除，保留文件并标记
+	// failed 让用户人工处理。
+	if !invoiceBatchesHaveText(batches) {
+		noTextMeta, jerr := json.Marshal(invoiceCustomMetadata{
+			Kind:          "invoice",
+			ExtractStatus: "failed",
+			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+		})
+		if jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
+			}
+		}
+		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "document has no extractable text (possible scanned document), file kept",
+			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "failed", "removed": false},
+		})
+		return
+	}
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
 	sawInvoice := false
@@ -2046,23 +2653,68 @@ func (h *KnowledgeHandler) ExtractInvoice(c *gin.Context) {
 		ExtractStatus: "success",
 		ExtractError:  extracted.ExtractError,
 	}
+	// 自定义识别规则：类型归类（用户可配置关键词/正则 → 发票类型），
+	// 按模型提取出的发票类型字段匹配，命中则覆盖内置关键字判定。
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		fullText := strings.Join(batches, "\n")
+		for i := range meta.Invoices {
+			if t := service.ClassifyTypeFromRules(meta.Invoices[i].InvoiceType, recCfg); t != "" {
+				meta.Invoices[i].InvoiceType = t
+			} else if meta.Invoices[i].InvoiceType == "" {
+				// 模型未识别出类型时，用全文兜底归类（避免"其它票据"误归类）
+				if t := service.ClassifyTypeFromRules(fullText, recCfg); t != "" {
+					meta.Invoices[i].InvoiceType = t
+				}
+			}
+		}
+	}
 	if extracted.Kind == "not_invoice" {
+		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
+		// 不自动删除（避免"该是发票却没入库"）。
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
+				meta.Kind = "invoice"
+				meta.Invoices = []service.InvoiceExtractionItem{}
+				meta.ExtractStatus = "manual"
+				meta.ExtractError = "识别规则命中，已认定为发票，请编辑补录字段"
+				if raw, merr := json.Marshal(meta); merr == nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+						logger.Warnf(ctx, "Failed to persist rule-rescued invoice meta: %v", serr)
+					}
+				}
+				logger.Infof(ctx, "Invoice rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"message": "识别规则命中，已认定为发票，请在列表中编辑补录字段",
+					"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
+				})
+				return
+			}
+		}
 		meta.ExtractStatus = "not_invoice"
 		if meta.ExtractError == "" {
 			meta.ExtractError = "document does not look like an invoice"
 		}
-		// 需求：非发票文件不能存在于发票知识库 → 提取判定后自动删除该文件
-		// （含解析 chunks），前端据此提示"已自动移除非发票文件"。
-		if delErr := h.kgService.DeleteKnowledge(effCtx, knowledgeID); delErr != nil {
-			logger.Warnf(ctx, "auto-delete non-invoice knowledge failed: %v", delErr)
+		// 防循环：auto_deleted_count >= 1（曾被自动删除后人工恢复）→ 不再自动删除，
+		// 改为 failed 保留。
+		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "系统判定非发票文件，但该文件已被人工恢复，已保留待人工处理"
+			logger.Warnf(ctx, "Invoice re-extraction judged non-invoice but row was restored before; keeping file %s", knowledgeID)
 		} else {
-			logger.Infof(ctx, "auto-deleted non-invoice knowledge, ID: %s", knowledgeID)
-			c.JSON(http.StatusOK, gin.H{
-				"success":  true,
-				"message":  "document is not an invoice and has been removed",
-				"data":     map[string]interface{}{"removed": true, "kind": "not_invoice"},
-			})
-			return
+			// 需求：非发票文件不能存在于发票知识库 → 提取判定后自动删除该文件
+			// （保留物理文件写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）。
+			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_invoice"); delErr != nil {
+				logger.Warnf(ctx, "auto-delete non-invoice knowledge failed: %v", delErr)
+			} else {
+				logger.Infof(ctx, "auto-deleted non-invoice knowledge, ID: %s", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success":  true,
+					"message":  "非发票文件已移至删除历史，可在删除历史中恢复",
+					"data":     map[string]interface{}{"removed": true, "kind": "not_invoice"},
+				})
+				return
+			}
 		}
 	}
 	// Extraction-result guard: a model reply marked as invoice but carrying no
@@ -2368,6 +3020,262 @@ func (h *KnowledgeHandler) DeleteInvoicePage(c *gin.Context) {
 		"message":     "Invoice record deleted",
 		"deleted_file": false,
 		"data":        meta.Invoices,
+	})
+}
+
+// ExtractContractPage godoc
+// @Summary      按页重新提取合同
+// @Description  对该知识文档中指定的第 N 份合同（合同按文档内出现顺序编号，即提取结果中的 page）单独重新提取，仅替换该份合同的数据，不影响同文件其它合同。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Param        body         body  object  true  "{\"page\":1}"
+// @Success      200  {object}  map[string]interface{}  "更新后的合同"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-contract-page [post]
+func (h *KnowledgeHandler) ExtractContractPage(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to extract contract fields"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		var req struct {
+			Page int `json:"page"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			logger.Warn(ctx, "extract-contract-page: failed to decode body", err)
+		} else if req.Page >= 1 {
+			page = req.Page
+		}
+	}
+	if page < 1 {
+		c.Error(errors.NewBadRequestError("page must be a positive integer"))
+		return
+	}
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for contract page extraction", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	if knowledge.ParseStatus != types.ParseStatusCompleted {
+		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
+		return
+	}
+	var meta contractCustomMetadata
+	if err := json.Unmarshal(knowledge.CustomMetadata, &meta); err != nil || meta.Kind != "contract" || len(meta.Contracts) == 0 {
+		c.Error(errors.NewBadRequestError("no contract extraction data, please run single-file extraction first"))
+		return
+	}
+	if page > len(meta.Contracts) {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("page %d out of range (1-%d)", page, len(meta.Contracts))))
+		return
+	}
+
+	modelID := strings.TrimSpace(kb.SummaryModelID)
+	if modelID == "" {
+		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
+		return
+	}
+	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load extraction model", err)
+		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
+		return
+	}
+
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list chunks for contract page extraction", err)
+		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
+		return
+	}
+	content := service.BuildContractExtractionContent(knowledge.FileName, knowledge.Description, chunks)
+	res, err := service.ExtractContractPageFromContent(effCtx, chatModel, content, page)
+	if err != nil {
+		logger.Error(ctx, "Contract page extraction model call failed", err)
+		c.Error(errors.NewInternalServerError("contract page extraction failed: " + err.Error()))
+		return
+	}
+	prevNo := meta.Contracts[page-1].ContractNo
+	service.NormalizeContractExtractionResult(res, 0)
+	if res == nil || res.Kind == "not_contract" || len(res.Contracts) == 0 {
+		c.Error(errors.NewBadRequestError("unable to re-extract this contract, please try single-file extraction"))
+		return
+	}
+
+	upd := res.Contracts[0]
+	upd.Page = page // 保持原页码
+	// 保留原合同编号，避免单页重新提取时自动编号漂移产生新号
+	if prevNo != "" {
+		upd.ContractNo = prevNo
+	}
+	meta.Contracts[page-1] = upd
+	metaBytes, jerr := json.Marshal(meta)
+	if jerr != nil {
+		logger.Error(ctx, "Failed to encode contract page extraction result", jerr)
+		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaBytes)); err != nil {
+		logger.Error(ctx, "Failed to persist contract page extraction result", err)
+		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Contract page extraction succeeded",
+		"data":    upd,
+	})
+}
+
+// DeleteContractPage godoc
+// @Summary      删除指定合同记录
+// @Description  按合同页码从 custom_metadata.contracts 中移除该份合同；若该文档仅剩这一份合同，则整份文档一并删除。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Param        request      body  object       true  "page：合同页码（文档内出现顺序，从 1 开始）"
+// @Success      200  {object}  map[string]interface{}  "deleted_file: 是否整份删除"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/delete-contract-page [post]
+func (h *KnowledgeHandler) DeleteContractPage(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	_ = kb
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to delete contract records"))
+		return
+	}
+	if err := h.requireKBOwnershipOrAdmin(c, kbID); err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		var req struct {
+			Page int `json:"page"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			logger.Warn(ctx, "delete-contract-page: failed to decode body", err)
+		} else if req.Page >= 1 {
+			page = req.Page
+		}
+	}
+	if page < 1 {
+		c.Error(errors.NewBadRequestError("page must be a positive integer"))
+		return
+	}
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for contract page delete", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	var meta contractCustomMetadata
+	if err := json.Unmarshal(knowledge.CustomMetadata, &meta); err != nil || meta.Kind != "contract" || len(meta.Contracts) == 0 {
+		c.Error(errors.NewBadRequestError("no contract extraction data to delete"))
+		return
+	}
+	if page > len(meta.Contracts) {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("page %d out of range (1-%d)", page, len(meta.Contracts))))
+		return
+	}
+
+	// 移除该份合同
+	targetIdx := -1
+	for i, ct := range meta.Contracts {
+		if i == page-1 || ct.Page == page {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		targetIdx = page - 1
+	}
+	meta.Contracts = append(meta.Contracts[:targetIdx], meta.Contracts[targetIdx+1:]...)
+	// 后续合同页码前移，保持页码=文档内出现顺序
+	for i := range meta.Contracts {
+		meta.Contracts[i].Page = i + 1
+	}
+
+	// 删空：整份文档一并删除
+	if len(meta.Contracts) == 0 {
+		if _, err := h.enqueueKnowledgeListDelete(effCtx, effectiveTenantID, []string{knowledgeID}); err != nil {
+			logger.Error(ctx, "Failed to enqueue knowledge delete after removing last contract", err)
+			c.Error(errors.NewInternalServerError("failed to schedule delete: " + err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success":     true,
+			"message":     "Contract removed, source file scheduled for deletion",
+			"deleted_file": true,
+		})
+		return
+	}
+
+	metaBytes, jerr := json.Marshal(meta)
+	if jerr != nil {
+		logger.Error(ctx, "Failed to encode contract metadata after delete", jerr)
+		c.Error(errors.NewInternalServerError("failed to encode metadata"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaBytes)); err != nil {
+		logger.Error(ctx, "Failed to persist contract metadata after delete", err)
+		c.Error(errors.NewInternalServerError("failed to save metadata: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"message":     "Contract record deleted",
+		"deleted_file": false,
+		"data":        meta.Contracts,
 	})
 }
 

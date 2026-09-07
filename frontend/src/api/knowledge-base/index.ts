@@ -382,6 +382,13 @@ export function previewKnowledgeFile(id: string) {
   return getDown(`/api/v1/knowledge/${id}/preview`);
 }
 
+/** 删除历史预览：读取被系统自动删除（软删）但仍保留源文件的记录。
+ * 必须走 KB 作用域路由（URL 携带 KB id）——/knowledge/:id/preview 的知识解析
+ * 中间件对软删记录（deleted_at IS NOT NULL）必然 404。 */
+export function previewDeletedKnowledgeFile(kbId: string, id: string) {
+  return getDown(`/api/v1/knowledge-bases/${kbId}/knowledge/${id}/preview-deleted`);
+}
+
 /** @param idsQueryString - query string with ids (e.g. ids=xxx&ids=yyy) */
 export function batchQueryKnowledge(idsQueryString: string, kbId?: string, agentId?: string, agentSourceTenantId?: string) {
   let qs = idsQueryString;
@@ -475,6 +482,95 @@ export function extractInvoicePage(kbId: string, knowledgeId: string, page: numb
  */
 export function deleteInvoicePage(kbId: string, knowledgeId: string, page: number) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-invoice-page`, { page }, { timeout: 120000 });
+}
+
+/**
+ * 触发合同字段提取：后端读取已解析文本并调用提取模型（复用知识库的
+ * summary_model_id），将结果写入 custom_metadata。
+ * 幂等：对同一 knowledge 重复调用会覆盖写，返回当前提取结果。
+ */
+export function extractContract(kbId: string, knowledgeId: string) {
+  // 长超时：多份合同文档提取需 LLM 生成超长 JSON，30s 默认超时会
+  // 导致前端取消请求 → 后端 context canceled → 提取失败。
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract`, {}, { timeout: 600000 });
+}
+
+/**
+ * 合同级聚合列表：服务端全字段搜索、类型/履约状态/签订日期筛选、
+ * 排序、分页并返回金额聚合（sum_amount/sum_total）。
+ */
+export function listContractRecords(kbId: string, params: {
+  q?: string;
+  contract_type?: string;
+  fulfill_status?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/contracts?${q.toString()}`);
+}
+
+/**
+ * 合同类型列表：返回该知识库下所有合同出现过的去重合同类型（含数量），
+ * 用于合同类型筛选下拉框自动加载。
+ */
+export function listContractTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/contract-types`);
+}
+
+/**
+ * 识别规则配置（发票/合同管理页"识别规则"设置面板）：
+ * 包含判定规则（模型判非但规则命中 → 认定为该类型）与类型归类规则。
+ */
+export function getRecognitionConfig(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/recognition-config`);
+}
+
+export function saveRecognitionConfig(kbId: string, cfg: Record<string, unknown>) {
+  return put(`/api/v1/knowledge-bases/${kbId}/recognition-config`, cfg);
+}
+
+/** 用当前包含判定规则重新评估删除历史：命中的自动恢复为待补录记录。 */
+export function reassessRecognition(kbId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/recognition/reassess`, {});
+}
+
+/**
+ * 按页重新提取合同：只重新提取该知识文档中第 page 份合同（合同按文档内
+ * 出现顺序编号），仅替换该份合同数据，不影响同文件其它合同。
+ */
+export function extractContractPage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract-page`, { page }, { timeout: 600000 });
+}
+
+/**
+ * 按页删除合同记录：从该文档的合同数组中移除第 page 份；若文档仅剩该份合同，
+ * 则整份文档一并删除（后端返回 deleted_file=true）。
+ */
+export function deleteContractPage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-contract-page`, { page }, { timeout: 120000 });
+}
+
+// ---- 删除历史（非合同/非发票自动删除记录的查看/恢复/永久删除）----
+
+/** 删除历史列表：知识库内被系统自动删除（判定非合同/非发票）且保留源文件的记录 */
+export function listDeletedKnowledge(kbId: string, params: { page?: number; page_size?: number; q?: string } = {}) {
+  return get(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge`, params);
+}
+
+/** 恢复自动删除的记录：恢复回知识库并重新解析提取（再次判定非该类文档时不再自动删除，防循环） */
+export function restoreDeletedKnowledge(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge/${knowledgeId}/restore`, {}, { timeout: 120000 });
+}
+
+/** 永久删除历史记录：DB 硬删 + 物理源文件删除，不可恢复 */
+export function purgeDeletedKnowledge(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge/${knowledgeId}/purge`, {}, { timeout: 120000 });
 }
 
 export function updateKnowledgeSummary(knowledgeId: string, description: string) {

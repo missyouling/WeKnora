@@ -654,6 +654,36 @@ func normalizeTargetFolderPath(ctx context.Context, folderPath string) (string, 
 	return types.NormalizeKnowledgeFolderPath(safe), nil
 }
 
+// GetDeletedKnowledgeFile retrieves the physical file of a soft-deleted
+// (auto-deleted) knowledge row — used by the 删除历史 drawer to preview source
+// files that were kept after an auto-delete. Reads the row unscoped.
+func (s *knowledgeService) GetDeletedKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error) {
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	knowledge, err := s.repo.GetDeletedKnowledgeByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, "", err
+	}
+	// Manual knowledge stores content in Metadata — stream it directly as a .md file.
+	if knowledge.IsManual() {
+		meta, err := knowledge.ManualMetadata()
+		if err != nil {
+			return nil, "", err
+		}
+		content := ""
+		if meta != nil {
+			content = meta.Content
+		}
+		filename := sanitizeManualDownloadFilename(knowledge.Title)
+		return io.NopCloser(strings.NewReader(content)), filename, nil
+	}
+	kb, _ := s.kbService.GetKnowledgeBaseByID(ctx, knowledge.KnowledgeBaseID)
+	file, err := s.resolveFileServiceForPath(ctx, kb, knowledge.FilePath).GetFile(ctx, knowledge.FilePath)
+	if err != nil {
+		return nil, "", err
+	}
+	return file, knowledge.FileName, nil
+}
+
 // GetKnowledgeFile retrieves the physical file associated with a knowledge entry
 func (s *knowledgeService) GetKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error) {
 	// Get knowledge record

@@ -109,6 +109,9 @@ type KnowledgeBase struct {
 	QuestionGenerationConfig *QuestionGenerationConfig `yaml:"question_generation_config" json:"question_generation_config" gorm:"column:question_generation_config;type:json"`
 	// AutoTagConfig controls asynchronous association of existing tags after parsing.
 	AutoTagConfig *AutoTagConfig `yaml:"auto_tag_config" json:"auto_tag_config" gorm:"type:json"`
+	// RecognitionConfig stores user-customizable document recognition rules
+	// (invoice/contract include-judgement + type classification) per KB.
+	RecognitionConfig *RecognitionConfig `yaml:"recognition_config" json:"recognition_config" gorm:"column:recognition_config;type:json"`
 	// WikiConfig stores wiki-specific configuration (only for wiki type knowledge bases)
 	WikiConfig *WikiConfig `yaml:"wiki_config"             json:"wiki_config"             gorm:"column:wiki_config;type:json"`
 	// IndexingStrategy controls which indexing pipelines are active for this knowledge base.
@@ -160,6 +163,9 @@ type KnowledgeBaseConfig struct {
 	WikiConfig *WikiConfig `yaml:"wiki_config"             json:"wiki_config"`
 	// AutoTagConfig controls optional automatic association of existing KB tags.
 	AutoTagConfig *AutoTagConfig `yaml:"auto_tag_config" json:"auto_tag_config"`
+	// RecognitionConfig stores user-customizable document recognition rules
+	// (invoice/contract include-judgement + type classification).
+	RecognitionConfig *RecognitionConfig `yaml:"recognition_config" json:"recognition_config"`
 	// IndexingStrategy controls which indexing pipelines are active.
 	// nil means "no change" when updating (preserves existing strategy).
 	IndexingStrategy *IndexingStrategy `yaml:"indexing_strategy"       json:"indexing_strategy"`
@@ -686,6 +692,95 @@ type ExtractConfig struct {
 // Value implements the driver.Valuer interface, used to convert ExtractConfig to database value
 func (e ExtractConfig) Value() (driver.Value, error) {
 	return json.Marshal(e)
+}
+
+// RecognitionRule 文档识别"包含判定"规则：命中即认定文件属于该类型（发票/合同）。
+// MatchType 支持 keyword（Keywords 关键词，Logic 决定 AND/OR）与 regex（Regex 正则）。
+type RecognitionRule struct {
+	ID        string   `yaml:"id"        json:"id"`
+	Name      string   `yaml:"name"      json:"name"`
+	MatchType string   `yaml:"match_type" json:"match_type"` // keyword | regex
+	Keywords  []string `yaml:"keywords"  json:"keywords,omitempty"`
+	Logic     string   `yaml:"logic"     json:"logic,omitempty"` // AND | OR（多个关键词之间）
+	Regex     string   `yaml:"regex"     json:"regex,omitempty"`
+	Enabled   bool     `yaml:"enabled"   json:"enabled"`
+}
+
+// TypeClassifyRule 发票类型/合同类型归类规则：Pattern（关键词或正则）命中 → 归为 Type。
+// IsRegex 为 true 时 Pattern 按正则匹配；否则按包含匹配。Priority 越小越优先。
+type TypeClassifyRule struct {
+	ID       string `yaml:"id"       json:"id"`
+	Pattern  string `yaml:"pattern"  json:"pattern"`
+	IsRegex  bool   `yaml:"is_regex" json:"is_regex"`
+	Type     string `yaml:"type"     json:"type"`
+	Priority int    `yaml:"priority" json:"priority"`
+	Enabled  bool   `yaml:"enabled"  json:"enabled"`
+}
+
+// RecognitionConfig 知识库级文档识别配置（发票知识库/合同知识库各一份）。
+type RecognitionConfig struct {
+	// Enabled 总开关：关闭后所有规则不生效（回到纯模型判定）。
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// IncludeRules 包含判定规则：任一规则命中（规则内按 AND/OR）→ 认定为该类型文档，
+	// 用于"模型判非但规则命中"时的捞回，避免漏入库/误删。
+	IncludeRules []RecognitionRule `yaml:"include_rules" json:"include_rules,omitempty"`
+	// TypeRules 类型归类规则：按 Priority 顺序匹配，第一个命中生效。
+	// 发票默认预置内置关键字（通行费→普通发票 等）；合同默认空。
+	TypeRules []TypeClassifyRule `yaml:"type_rules" json:"type_rules,omitempty"`
+	// Types 分类列表（发票/合同的类型枚举，支持增删改查）。类型归类规则的目标
+	// 从该列表选择；发票默认 5 枚举，合同为空时自动从现有合同类型加载。
+	Types []string `yaml:"types" json:"types,omitempty"`
+}
+
+// Value implements driver.Valuer for RecognitionConfig.
+func (r RecognitionConfig) Value() (driver.Value, error) { return json.Marshal(r) }
+
+// Scan implements sql.Scanner for RecognitionConfig.
+func (r *RecognitionConfig) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	b, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(b, r)
+}
+
+// DefaultInvoiceRecognitionConfig returns the built-in invoice recognition
+// defaults: a common include-rule (捞回兜底), the keyword type-classification
+// rules mirroring NormalizeInvoiceTypeFromTicket, and the 5-type enum.
+func DefaultInvoiceRecognitionConfig() *RecognitionConfig {
+	return &RecognitionConfig{
+		Enabled: true,
+		IncludeRules: []RecognitionRule{
+			{ID: "inv-include", Name: "含发票关键字", MatchType: "keyword",
+				Keywords: []string{"发票", "发票号码", "价税合计"}, Logic: "OR", Enabled: true},
+		},
+		TypeRules: []TypeClassifyRule{
+			{ID: "inv-tongxing", Pattern: "通行费", Type: "普通发票", Priority: 1, Enabled: true},
+			{ID: "inv-zhuan", Pattern: "专用", Type: "专用发票", Priority: 2, Enabled: true},
+			{ID: "inv-yiliao", Pattern: "医疗", Type: "医疗收据", Priority: 3, Enabled: true},
+			{ID: "inv-caizheng", Pattern: "财政", Type: "财政收据", Priority: 4, Enabled: true},
+			{ID: "inv-putong", Pattern: "普通", Type: "普通发票", Priority: 5, Enabled: true},
+		},
+		Types: []string{"专用发票", "普通发票", "医疗收据", "财政收据", "其它票据"},
+	}
+}
+
+// DefaultContractRecognitionConfig returns the built-in contract recognition
+// defaults: a common include-rule (捞回兜底). Type rules and the type list are
+// empty — the contract type list auto-loads from existing contracts.
+func DefaultContractRecognitionConfig() *RecognitionConfig {
+	return &RecognitionConfig{
+		Enabled: true,
+		IncludeRules: []RecognitionRule{
+			{ID: "ctr-include", Name: "含合同关键字", MatchType: "keyword",
+				Keywords: []string{"合同", "协议", "甲方", "乙方"}, Logic: "OR", Enabled: true},
+		},
+		TypeRules: nil,
+		Types:     nil,
+	}
 }
 
 // Scan implements the sql.Scanner interface, used to convert database value to ExtractConfig

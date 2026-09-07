@@ -93,6 +93,29 @@ type KnowledgeService interface {
 	// invoices in a knowledge base (invoice-level rate + all item-level rates),
 	// powering the tax-rate filter dropdown.
 	ListInvoiceTaxRates(ctx context.Context, kbID string) ([]types.InvoiceTaxRateCount, error)
+	// ListContractRecords returns the contract-level aggregated list of a knowledge
+	// base: every extracted contract flattened into its own row (de-duplication is
+	// handled at the knowledge-file upload layer by file hash), filtered/searched/
+	// sorted/paginated server-side with contract-amount aggregates.
+	ListContractRecords(ctx context.Context, kbID string, filter types.ContractListFilter) (*types.ContractListResult, error)
+	// ListContractTypes returns the distinct contract types that appear across
+	// all contracts in a knowledge base, powering the contract-type filter dropdown.
+	ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error)
+	// MaxAutoContractSeq returns the highest trailing sequence number among
+	// auto-generated contract numbers (HT-YYYYMMDD-NNN) for the current date in
+	// the knowledge base, so newly generated numbers stay unique across files.
+	MaxAutoContractSeq(ctx context.Context, kbID string) (int, error)
+	// GetRecognitionConfig returns the KB-level document recognition rules
+	// (include-judgement + type classification). Invoice KBs fall back to the
+	// built-in keyword rules when none are stored yet.
+	GetRecognitionConfig(ctx context.Context, kbID string) (*types.RecognitionConfig, error)
+	// SaveRecognitionConfig persists the KB-level recognition rules.
+	SaveRecognitionConfig(ctx context.Context, kbID string, cfg *types.RecognitionConfig) error
+	// ReassessRecognition re-runs include-judgement rules against the retained
+	// auto-deleted rows of the KB. Rows hit by an enabled rule are restored as
+	// manual (待补录) records so they re-appear in the list for manual editing.
+	// Returns the number of rows restored.
+	ReassessRecognition(ctx context.Context, kbID string) (int, error)
 	// ListKnowledgeFolderTree returns the folder hierarchy derived from the
 	// folder_path of every knowledge entry in a knowledge base, with per-folder
 	// document counts. It powers the document sidebar tree.
@@ -110,10 +133,33 @@ type KnowledgeService interface {
 	RenameKnowledgeFolder(ctx context.Context, kbID string, from string, to string) (int64, error)
 	// DeleteKnowledge deletes knowledge by ID.
 	DeleteKnowledge(ctx context.Context, id string) error
+	// AutoDeleteKnowledge deletes a knowledge row judged not to belong in its
+	// knowledge base (not_contract / not_invoice). It keeps the physical file
+	// and records auto-delete history markers so the delete-history drawer can
+	// list, preview, restore and purge the row.
+	AutoDeleteKnowledge(ctx context.Context, id, reason string) error
+	// ListDeletedKnowledge returns the auto-deleted rows of a knowledge base.
+	ListDeletedKnowledge(
+		ctx context.Context,
+		kbID string,
+		page, pageSize int,
+		keyword string,
+	) (*types.DeletedKnowledgePage, error)
+	// RestoreDeletedKnowledge brings an auto-deleted row back and re-enqueues
+	// parsing; front-end polling then triggers extraction automatically.
+	RestoreDeletedKnowledge(ctx context.Context, id string) (*types.Knowledge, error)
+	// PurgeDeletedKnowledge permanently removes an auto-deleted row and its
+	// retained physical file.
+	PurgeDeletedKnowledge(ctx context.Context, id string) error
 	// DeleteKnowledgeList deletes multiple knowledge entries by IDs.
 	DeleteKnowledgeList(ctx context.Context, ids []string) error
 	// GetKnowledgeFile retrieves the file associated with the knowledge.
 	GetKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error)
+	// GetDeletedKnowledgeFile retrieves the retained physical file of a
+	// soft-deleted (auto-deleted) row, for the delete-history preview drawer.
+	GetDeletedKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error)
+	// GetDeletedKnowledgeByID returns one soft-deleted (auto-deleted) row by ID.
+	GetDeletedKnowledgeByID(ctx context.Context, id string) (*types.Knowledge, error)
 	// UpdateKnowledge updates knowledge information.
 	UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error
 	// SaveInvoiceCustomMetadata persists invoice extraction metadata without the
@@ -342,6 +388,19 @@ type KnowledgeRepository interface {
 	HardDeleteKnowledge(ctx context.Context, tenantID uint64, id string) error
 	// HardDeleteKnowledgeList is the batch counterpart of HardDeleteKnowledge.
 	HardDeleteKnowledgeList(ctx context.Context, tenantID uint64, ids []string) error
+	// GetDeletedKnowledgeByID returns a soft-deleted knowledge row (Unscoped).
+	GetDeletedKnowledgeByID(ctx context.Context, tenantID uint64, id string) (*types.Knowledge, error)
+	// ListDeletedKnowledge lists soft-deleted rows carrying the auto-delete marker.
+	ListDeletedKnowledge(
+		ctx context.Context,
+		tenantID uint64,
+		kbID string,
+		page, pageSize int,
+		keyword string,
+	) ([]*types.Knowledge, int64, error)
+	// RestoreDeletedKnowledgeRow clears the soft-delete tombstone and resets the
+	// row to pending so it can be re-parsed.
+	RestoreDeletedKnowledgeRow(ctx context.Context, tenantID uint64, id string) error
 	// SearchKnowledgeInScopes searches knowledge items by keyword within the given (tenant_id, kb_id) scopes (own + shared).
 	SearchKnowledgeInScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
 	// ListIDsByTagIDs returns all knowledge IDs that have any of the specified tag IDs (OR semantics).

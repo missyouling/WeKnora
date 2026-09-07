@@ -119,7 +119,59 @@ func deleteExtractedImages(
 }
 
 // DeleteKnowledge deletes a knowledge entry and all related resources
+// (including the physical file). Regular manual delete path.
 func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error {
+	return s.deleteKnowledgeInternal(ctx, id, false, "")
+}
+
+// AutoDeleteKnowledge deletes a knowledge entry that was judged not to belong
+// in its knowledge base (not_contract / not_invoice). Unlike DeleteKnowledge
+// it KEEPS the physical source file and records auto-delete history markers in
+// custom_metadata, so the "删除历史" drawer can list, preview and restore the
+// row without requiring the user to re-upload the file.
+func (s *knowledgeService) AutoDeleteKnowledge(ctx context.Context, id, reason string) error {
+	if err := s.markAutoDeleteHistory(ctx, id, reason); err != nil {
+		logger.Warnf(ctx, "AutoDeleteKnowledge failed to record delete history for %s: %v", id, err)
+	}
+	return s.deleteKnowledgeInternal(ctx, id, true, reason)
+}
+
+// markAutoDeleteHistory writes auto_deleted / deleted_reason / auto_deleted_at /
+// auto_deleted_count into the knowledge row's custom_metadata before the row is
+// soft-deleted. The count increments on every auto-delete and is NOT reset on
+// restore, which powers the anti-loop guard in the extract handlers.
+func (s *knowledgeService) markAutoDeleteHistory(ctx context.Context, id, reason string) error {
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	var meta map[string]any
+	_ = json.Unmarshal(knowledge.CustomMetadata, &meta)
+	if meta == nil {
+		meta = make(map[string]any)
+	}
+	count := 0
+	if c, ok := meta["auto_deleted_count"].(float64); ok {
+		count = int(c)
+	}
+	meta["auto_deleted"] = true
+	meta["auto_deleted_reason"] = reason
+	meta["auto_deleted_at"] = time.Now().Format(time.RFC3339)
+	meta["auto_deleted_count"] = count + 1
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateKnowledgeColumn(ctx, id, "custom_metadata", types.JSON(raw))
+}
+
+// deleteKnowledgeInternal is the shared delete pipeline.
+//   - keepFile=false: normal delete — physical file is removed too.
+//   - keepFile=true:  auto-delete — the row and all derived resources
+//     (chunks / embeddings / graph) are removed, but the physical source file
+//     is kept so the row can be restored or previewed from the delete history.
+func (s *knowledgeService) deleteKnowledgeInternal(ctx context.Context, id string, keepFile bool, reason string) error {
 	// Get the knowledge entry
 	knowledge, err := s.repo.GetKnowledgeByID(ctx, ctx.Value(types.TenantIDContextKey).(uint64), id)
 	if err != nil {
@@ -249,16 +301,25 @@ func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error
 
 	// Best-effort physical cleanup. Errors here only leak storage; they must not
 	// fail the delete now that the row is already gone.
-	if knowledge.FilePath != "" {
+	// Auto-delete (keepFile=true) deliberately SKIPS dropping the physical file:
+	// the delete-history drawer needs it for preview and one-click restore.
+	if !keepFile && knowledge.FilePath != "" {
 		if err := kbFileSvc.DeleteFile(ctx, knowledge.FilePath); err != nil {
 			logger.GetLogger(ctx).WithField("error", err).Errorf("DeleteKnowledge delete file failed")
 		}
 	}
+	if keepFile {
+		logger.Infof(ctx, "AutoDeleteKnowledge kept source file %s for delete history (reason=%s)", knowledge.FilePath, reason)
+	}
 	deleteExtractedImages(ctx, kbFileSvc, knowledgeResourceOwners(s.resourceCatalog, knowledge.ID), imageURLs)
-	tenantInfo := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
-	tenantInfo.StorageUsed -= knowledge.StorageSize
-	if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantInfo.ID, -knowledge.StorageSize); err != nil {
-		logger.GetLogger(ctx).WithField("error", err).Errorf("DeleteKnowledge update tenant storage used failed")
+	// 存储用量：自动删除（keepFile）时物理文件仍在，不扣减存储占用；
+	// 正常删除才释放文件所占存储。
+	if !keepFile {
+		tenantInfo := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
+		tenantInfo.StorageUsed -= knowledge.StorageSize
+		if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantInfo.ID, -knowledge.StorageSize); err != nil {
+			logger.GetLogger(ctx).WithField("error", err).Errorf("DeleteKnowledge update tenant storage used failed")
+		}
 	}
 	recordKBActivity(ctx, s.audit, tenantID, knowledge.KnowledgeBaseID, types.AuditActionKnowledgeDeleted,
 		"knowledge", knowledge.ID, types.AuditOutcomeSuccess,
