@@ -2742,13 +2742,32 @@ func (h *KnowledgeHandler) ExtractAwardPunish(c *gin.Context) {
 		return
 	}
 	merged := &service.AwardPunishExtractionResult{Kind: "award_punish"}
+	// 措施库约束：提取时 measure 仅从配置的措施列表中选取（用户自定义 + 默认兜底）
+	extractMeasures := make([]string, 0, 16)
+	measureSeen := map[string]bool{}
+	if measureCfg, merr := h.kgService.GetRecognitionConfig(effCtx, kbID); merr == nil {
+		for _, m := range measureCfg.Measures {
+			if n := strings.TrimSpace(m.Name); n != "" && !measureSeen[n] {
+				measureSeen[n] = true
+				extractMeasures = append(extractMeasures, n)
+			}
+		}
+	}
+	if len(extractMeasures) == 0 {
+		for _, m := range types.DefaultAwardPunishRecognitionConfig().Measures {
+			if n := strings.TrimSpace(m.Name); n != "" && !measureSeen[n] {
+				measureSeen[n] = true
+				extractMeasures = append(extractMeasures, n)
+			}
+		}
+	}
 	var extractErr error
 	sawRecord := false
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractAwardPunishesFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractAwardPunishesFromContent(effCtx, chatModel, batch, extractMeasures)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
@@ -2787,6 +2806,10 @@ func (h *KnowledgeHandler) ExtractAwardPunish(c *gin.Context) {
 		logger.Warnf(ctx, "Failed to compute auto award/punish seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeAwardPunishExtractionResult(extracted, autoSeq)
+	// 措施二次清洗：仅保留措施库命中的选项，避免 LLM 输出库外自由文本
+	for i := range extracted.Records {
+		extracted.Records[i].Measure = service.FilterMeasuresByLibrary(extracted.Records[i].Measure, extractMeasures)
+	}
 
 	meta := awardPunishCustomMetadata{
 		Kind:          extracted.Kind,

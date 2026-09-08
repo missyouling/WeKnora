@@ -27,7 +27,7 @@ type AwardPunishExtractionResult struct {
 // awardPunishExtractionSystemPrompt instructs the model to return strict JSON
 // with the award/punish fields. A notice may carry several persons — the model
 // must emit one record per person.
-const awardPunishExtractionSystemPrompt = `你是一个专业的公司奖惩通报文档信息提取助手。你的任务是从文档文本中识别并提取奖惩记录的关键字段信息。
+const awardPunishExtractionSystemPromptTemplate = `你是一个专业的公司奖惩通报文档信息提取助手。你的任务是从文档文本中识别并提取奖惩记录的关键字段信息。
 
 规则：
 1. 只提取文本中真实存在的信息，不要编造任何字段。
@@ -37,17 +37,70 @@ const awardPunishExtractionSystemPrompt = `你是一个专业的公司奖惩通�
 5. ap_title 为标题：通常是文档标题（如"关于对汪艳、王郑红违规行为及质管部手机管理问题的处罚通报"）；无法识别时返回空字符串。
 6. ap_type 只从以下枚举中选择：处罚、奖励、通报、其它奖惩。根据处理内容判断：含「处罚」「罚款」「警告」「处分」「批评」「扣款」「记过」→处罚；含「奖励」「表彰」「嘉奖」「表扬」「奖金」「评优」「晋级」→奖励；文档为纯通报/通知性质（无具体奖惩决定）→通报；都不明确时用「其它奖惩」。
 7. person 为当事人姓名（多个用"、"分隔，如"汪艳、王郑红"）；dept 为当事人所属部门（多个用"、"分隔）；position 为岗位（多个用"、"分隔）；无法识别时返回空字符串。
-8. measure 为措施（如"经济罚款、书面警告""取消年度评优资格"，简要概括所有当事人的处理决定）；basis 为依据（如"依据《AD-018奖惩制度》"，可含制度名）；无法识别时返回空字符串。
-9. signer 为签发人（如"廖宏"）；sign_date 为签发日期（YYYY-MM-DD 格式）；effective_date 为生效日期（YYYY-MM-DD 格式，通常与签发日期相同或见"自发布之日起生效"）；无法识别时返回空字符串。
-10. remark 为备注（如整改要求、附加说明）；summary 为摘要（用 2-4 句话概括通报目的、违规事实与处理结果）；无法识别时返回空字符串。
-11. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
+8. measure 仅从以下措施列表中选择原文明确提及的措施，可多选，用"、"分隔（如"经济处罚、书面警告"）；原文未提及列表中任何措施时返回空字符串。禁止把具体处罚细节（金额、重量、扣款方式、期限等）写入 measure，此类细节请写入 remark。措施列表：%s
+9. basis 为依据（如"依据《AD-018奖惩制度》"，可含制度名）；无法识别时返回空字符串。
+10. signer 为签发人（如"廖宏"）；sign_date 为签发日期（YYYY-MM-DD 格式）；effective_date 为生效日期（YYYY-MM-DD 格式，通常与签发日期相同或见"自发布之日起生效"）；无法识别时返回空字符串。
+11. remark 为备注（如整改要求、附加说明、具体处理决定细节）；summary 为摘要（用 2-4 句话概括通报目的、违规事实与处理结果）；无法识别时返回空字符串。
+12. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 输出格式：
 {"kind":"award_punish","records":[{"ap_no":"","ap_title":"","ap_type":"","person":"","dept":"","position":"","measure":"","basis":"","signer":"","sign_date":"","effective_date":"","remark":"","summary":""}]}
 
 示例（一份通报处罚两人，合并为一条记录，person 用"、"分隔多个当事人）：
 {"kind":"award_punish","records":[
-{"ap_no":"星达行政字〔2026〕11号","ap_title":"关于对汪艳、王郑红违规行为的处罚通报","ap_type":"处罚","person":"汪艳、王郑红","dept":"仓库、质管部","position":"仓库主管","measure":"经济罚款、书面警告；王郑红另取消年度评优资格","basis":"依据《AD-018奖惩制度》","signer":"廖宏","sign_date":"2026-07-02","effective_date":"","remark":"","summary":"汪艳因重复操作失误被处以经济罚款200元并给予书面警告；王郑红因夜班玩手机、睡觉被处以经济罚款300元、书面警告并取消年度评优资格。"}]}`
+{"ap_no":"星达行政字〔2026〕11号","ap_title":"关于对汪艳、王郑红违规行为的处罚通报","ap_type":"处罚","person":"汪艳、王郑红","dept":"仓库、质管部","position":"仓库主管","measure":"经济处罚、书面警告","basis":"依据《AD-018奖惩制度》","signer":"廖宏","sign_date":"2026-07-02","effective_date":"","remark":"汪艳罚款200元，王郑红罚款300元并取消年度评优资格","summary":"汪艳因重复操作失误被处以经济罚款200元并给予书面警告；王郑红因夜班玩手机、睡觉被处以经济罚款300元、书面警告并取消年度评优资格。"}]}`
+
+// buildAwardPunishExtractionSystemPrompt renders the extraction prompt with the
+// configured measure options so measure only holds choices from the library.
+func buildAwardPunishExtractionSystemPrompt(measures []string) string {
+	if len(measures) == 0 {
+		measures = []string{"书面警告", "经济处罚", "通报批评", "记过", "扣款", "取消评优资格", "降职", "停职检查", "通报表扬", "嘉奖", "记功", "奖金", "晋升", "评优评先"}
+	}
+	return fmt.Sprintf(awardPunishExtractionSystemPromptTemplate, strings.Join(measures, "、"))
+}
+
+// FilterMeasuresByLibrary keeps only measure parts that match the configured
+// measure library (fallback: built-in defaults). It normalizes free-text LLM
+// output like "扣除工资、书面警告" down to the library entries actually hit
+// ("书面警告"), so the edit drawer's multi-select never shows out-of-library
+// values as selected choices.
+func FilterMeasuresByLibrary(measure string, measures []string) string {
+	if strings.TrimSpace(measure) == "" {
+		return ""
+	}
+	if len(measures) == 0 {
+		for _, m := range types.DefaultAwardPunishRecognitionConfig().Measures {
+			if n := strings.TrimSpace(m.Name); n != "" {
+				measures = append(measures, n)
+			}
+		}
+	}
+	parts := strings.FieldsFunc(measure, func(r rune) bool {
+		return r == '、' || r == ',' || r == '，' || r == ';' || r == '；' || r == '/'
+	})
+	seen := map[string]bool{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		for _, m := range measures {
+			m = strings.TrimSpace(m)
+			if m == "" {
+				continue
+			}
+			if strings.Contains(p, m) || strings.Contains(m, p) {
+				if !seen[m] {
+					seen[m] = true
+					out = append(out, m)
+				}
+				break
+			}
+		}
+	}
+	return strings.Join(out, "、")
+}
 
 // BuildAwardPunishExtractionContent assembles the document text sent to the model.
 func BuildAwardPunishExtractionContent(name, summary string, chunks []*types.Chunk) string {
@@ -75,15 +128,16 @@ func BuildAwardPunishExtractionContent(name, summary string, chunks []*types.Chu
 }
 
 // ExtractAwardPunishesFromContent calls the configured chat model and parses its
-// strict-JSON reply into an AwardPunishExtractionResult.
-func ExtractAwardPunishesFromContent(ctx context.Context, model chat.Chat, content string) (*AwardPunishExtractionResult, error) {
+// strict-JSON reply into an AwardPunishExtractionResult. measures constrains the
+// measure field to choices from the award/punish measure library.
+func ExtractAwardPunishesFromContent(ctx context.Context, model chat.Chat, content string, measures []string) (*AwardPunishExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &AwardPunishExtractionResult{Kind: "not_award_punish", ExtractError: "no text content to extract"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
 	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "award_punish_extract", ""), []chat.Message{
-		{Role: "system", Content: awardPunishExtractionSystemPrompt},
+		{Role: "system", Content: buildAwardPunishExtractionSystemPrompt(measures)},
 		{Role: "user", Content: userPrompt},
 	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
 	if err != nil {
