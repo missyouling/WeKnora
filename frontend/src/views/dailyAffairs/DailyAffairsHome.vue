@@ -17,7 +17,6 @@
           <div class="da-card-body">
             <div class="da-card-title">
               <span>发票管理</span>
-              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
             <p class="da-card-desc">上传发票文件，自动识别发票号码、金额、销方购方等字段并归档管理</p>
             <div class="da-card-footer">
@@ -35,7 +34,6 @@
           <div class="da-card-body">
             <div class="da-card-title">
               <span>合同管理</span>
-              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
             <p class="da-card-desc">上传合同文件，自动识别合同编号、类型、双方主体与金额等字段并归档管理</p>
             <div class="da-card-footer">
@@ -48,12 +46,11 @@
         <!-- 制度管理（已实现） -->
         <div class="da-card da-card--enabled" @click="goRegulations">
           <div class="da-card-icon da-card-icon--policy">
-            <t-icon name="file" size="24px" />
+            <t-icon name="book" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
               <span>制度管理</span>
-              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
             <p class="da-card-desc">上传制度文件，自动识别制度编号、类型、版本与编制信息并归档管理</p>
             <div class="da-card-footer">
@@ -66,16 +63,83 @@
         <!-- 奖惩管理（已实现） -->
         <div class="da-card da-card--enabled" @click="goAwardPunish">
           <div class="da-card-icon da-card-icon--reward">
-            <t-icon name="medal" size="24px" />
+            <t-icon name="certificate" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
               <span>奖惩管理</span>
-              <t-tag theme="success" variant="light" size="small">已上线</t-tag>
             </div>
             <p class="da-card-desc">上传奖惩通报，自动识别文号、类型、当事人与处罚决定并归档管理</p>
             <div class="da-card-footer">
               <span class="da-card-link">进入管理</span>
+              <t-icon name="chevron-right" size="16px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 水电气管理（占位） -->
+        <div class="da-card da-card--placeholder" @click="onPlaceholder('水电气管理')">
+          <div class="da-card-icon da-card-icon--utility">
+            <t-icon name="dashboard" size="24px" />
+          </div>
+          <div class="da-card-body">
+            <div class="da-card-title">
+              <span>水电气管理</span>
+            </div>
+            <p class="da-card-desc">水、电、燃气等能源费用登记与台账管理</p>
+            <div class="da-card-footer">
+              <span class="da-card-link">敬请期待</span>
+              <t-icon name="chevron-right" size="16px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 车队管理（占位） -->
+        <div class="da-card da-card--placeholder" @click="onPlaceholder('车队管理')">
+          <div class="da-card-icon da-card-icon--fleet">
+            <t-icon name="vehicle" size="24px" />
+          </div>
+          <div class="da-card-body">
+            <div class="da-card-title">
+              <span>车队管理</span>
+            </div>
+            <p class="da-card-desc">车辆信息、维保、油卡与驾驶员台账管理</p>
+            <div class="da-card-footer">
+              <span class="da-card-link">敬请期待</span>
+              <t-icon name="chevron-right" size="16px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 食堂管理（占位） -->
+        <div class="da-card da-card--placeholder" @click="onPlaceholder('食堂管理')">
+          <div class="da-card-icon da-card-icon--canteen">
+            <t-icon name="fork" size="24px" />
+          </div>
+          <div class="da-card-body">
+            <div class="da-card-title">
+              <span>食堂管理</span>
+            </div>
+            <p class="da-card-desc">食堂采购、供餐与卫生检查记录管理</p>
+            <div class="da-card-footer">
+              <span class="da-card-link">敬请期待</span>
+              <t-icon name="chevron-right" size="16px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 宿舍管理（占位） -->
+        <div class="da-card da-card--placeholder" @click="onPlaceholder('宿舍管理')">
+          <div class="da-card-icon da-card-icon--dorm">
+            <t-icon name="home" size="24px" />
+          </div>
+          <div class="da-card-body">
+            <div class="da-card-title">
+              <span>宿舍管理</span>
+            </div>
+            <p class="da-card-desc">宿舍分配、入住退宿与设施报修管理</p>
+            <div class="da-card-footer">
+              <span class="da-card-link">敬请期待</span>
               <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
@@ -174,6 +238,16 @@ const onPlaceholder = (name: string) => {
       color: var(--td-brand-color);
     }
   }
+
+  &.da-card--placeholder {
+    border-style: dashed;
+
+    &:hover {
+      border-color: var(--td-component-border);
+      box-shadow: none;
+      transform: translateY(-2px);
+    }
+  }
 }
 
 .da-card-icon {
@@ -200,6 +274,22 @@ const onPlaceholder = (name: string) => {
 
   &.da-card-icon--reward {
     background: linear-gradient(135deg, #ef4444, #dc2626);
+  }
+
+  &.da-card-icon--utility {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+  }
+
+  &.da-card-icon--fleet {
+    background: linear-gradient(135deg, #64748b, #475569);
+  }
+
+  &.da-card-icon--canteen {
+    background: linear-gradient(135deg, #f97316, #c2410c);
+  }
+
+  &.da-card-icon--dorm {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
   }
 }
 

@@ -478,8 +478,8 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: 'apTitle', label: '标题', default: true, w: '1.8fr' },
   { key: 'apType', label: '奖惩类型', default: true, w: '1fr' },
   { key: 'person', label: '当事人', default: true, w: '1fr' },
-  { key: 'dept', label: '部门', default: true, w: '1.3fr' },
-  { key: 'position', label: '岗位', default: true, w: '0.7fr' },
+  { key: 'dept', label: '部门', default: false, w: '1.3fr' },
+  { key: 'position', label: '岗位', default: false, w: '0.7fr' },
   { key: 'signDate', label: '签发日期', default: true, w: '1.1fr' },
   { key: 'signer', label: '签发人', default: true, w: '0.8fr' },
   { key: 'measure', label: '措施', default: true, w: '1.2fr' },
@@ -491,7 +491,7 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: 'remark', label: '备注', default: false, w: '1.4fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
-const COLUMN_STORAGE_KEY = 'weknora-awardPunish-list-columns-v3'
+const COLUMN_STORAGE_KEY = 'weknora-awardPunish-list-columns-v4'
 
 const kbId = ref('')
 const loading = ref(true)
