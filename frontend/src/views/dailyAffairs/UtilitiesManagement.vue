@@ -34,6 +34,8 @@
       <t-tabs v-model="activeTab" class="utilities-tabs" @change="onTabChange">
         <t-tab-panel value="electricity" label="电费">
           <div v-if="kbId" class="electricity-panel">
+            <!-- ================= 列表视图 ================= -->
+            <template v-if="!detailMode">
             <!-- 筛选工具栏 -->
             <div class="doc-filter-bar">
               <div class="doc-filter-bar__leading">
@@ -75,16 +77,12 @@
                 <t-button variant="outline" size="small" @click="loadFiles(true)">
                   <template #icon><t-icon name="refresh" size="14px" /></template>
                 </t-button>
-                <t-tooltip content="设置" placement="bottom">
-                  <t-button variant="outline" size="small" @click="settingsVisible = true">
-                    <template #icon><t-icon name="setting" size="14px" /></template>
-                  </t-button>
-                </t-tooltip>
-                <t-tooltip content="删除历史" placement="bottom">
-                  <t-button variant="outline" size="small" @click="historyVisible = true">
-                    <template #icon><t-icon name="history" size="14px" /></template>
-                  </t-button>
-                </t-tooltip>
+                <t-button variant="outline" size="small" @click="settingsVisible = true" title="设置">
+                  <template #icon><t-icon name="setting" size="14px" /></template>
+                </t-button>
+                <t-button variant="outline" size="small" @click="historyVisible = true" title="删除历史">
+                  <template #icon><t-icon name="history" size="14px" /></template>
+                </t-button>
               </div>
             </div>
 
@@ -106,6 +104,20 @@
                     {{ pendingLabel(pf) }}
                   </t-tag>
                   <span class="pending-name">{{ pf.file_name }}</span>
+                </div>
+                <div v-if="groupHeaderCols.has" class="doc-list-group-header" :style="gridStyle" role="row">
+                  <div class="cell cell-check"></div>
+                  <div v-if="groupHeaderCols.plain" class="cell cell-group cell-group--plain" :style="{ gridColumn: `span ${groupHeaderCols.plain}` }"></div>
+                  <div v-if="groupHeaderCols.industrial" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.industrial}` }">
+                    <span class="group-label">工商业电费</span>
+                    <span class="group-count">{{ groupHeaderCols.industrial }}</span>
+                  </div>
+                  <div v-if="groupHeaderCols.residential" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.residential}` }">
+                    <span class="group-label">居民电费</span>
+                    <span class="group-count">{{ groupHeaderCols.residential }}</span>
+                  </div>
+                  <div class="cell cell-extractStatus"></div>
+                  <div class="cell cell-tags"></div>
                 </div>
                 <div class="doc-list-header" :style="gridStyle" role="row">
                   <div class="cell cell-check" role="columnheader" @click.stop>
@@ -181,6 +193,259 @@
                 <template #icon><t-icon name="delete" size="14px" /></template>
                 删除
               </t-button>
+            </div>
+            </template>
+
+            <!-- ================= 详情视图（分层菜单 + 内容区） ================= -->
+            <div v-else class="bill-detail-layout">
+              <!-- 面包屑 -->
+              <div class="bill-detail-head">
+                <t-button variant="text" size="small" @click="exitDetail">
+                  <template #icon><t-icon name="chevron-left" size="15px" /></template>
+                  账单列表
+                </t-button>
+                <span class="bill-detail-title">{{ currentRow?.fileName || '账单详情' }}</span>
+                <t-tag v-if="currentStatus.label !== '--'" size="small" :theme="currentStatus.theme"
+                  variant="light-outline" class="row-status-tag">
+                  <template v-if="currentStatus.icon" #icon>
+                    <t-icon :name="currentStatus.icon" :class="{ 'icon-spin': currentStatus.spin }" />
+                  </template>
+                  {{ currentStatus.label }}
+                </t-tag>
+              </div>
+              <div class="bill-detail-body">
+                <!-- 左侧分层菜单 -->
+                <aside class="bill-nav">
+                  <div v-for="m in BILL_MENUS" :key="m.key" class="bill-nav-group">
+                    <template v-if="m.group">
+                      <div class="bill-nav-group-title">{{ m.label }}</div>
+                      <div v-for="child in m.children" :key="child.key" class="bill-nav-item bill-nav-item--child"
+                        :class="{ active: activeMenu === child.key }" @click="activeMenu = child.key">
+                        {{ child.label }}
+                      </div>
+                    </template>
+                    <div v-else class="bill-nav-item" :class="{ active: activeMenu === m.key }" @click="activeMenu = m.key">
+                      {{ m.label }}
+                    </div>
+                  </div>
+                </aside>
+                <!-- 右侧内容区 -->
+                <div class="bill-content">
+                  <!-- 账单概况（概览页：基础信息 / 本期电量 / 本期电费 / 缴费截止 / 账单概况 / 用能分析） -->
+                  <template v-if="activeMenu === 'overview'">
+                    <!-- 1 基础信息 -->
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">基础信息</span>
+                        <t-button variant="outline" size="small" @click="openStaticEdit('overview')">
+                          <template #icon><t-icon name="edit-1" size="14px" /></template>
+                          编辑
+                        </t-button>
+                      </div>
+                      <div class="overview-static">
+                        <div class="ov-item" v-for="f in OVERVIEW_STATIC" :key="f.key">
+                          <span class="ov-label">{{ f.label }}</span>
+                          <span class="ov-value" :title="String(editForm[f.key] ?? '')">{{ ovText(f) }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 2-4 三大数据卡片 -->
+                    <div class="overview-metrics">
+                      <div class="metric-card">
+                        <div class="metric-label">本期电量</div>
+                        <div class="metric-value">{{ fmtKwh(metricKwh) }}<span class="metric-unit">千瓦时</span></div>
+                      </div>
+                      <div class="metric-card">
+                        <div class="metric-label">本期电费</div>
+                        <div class="metric-value">{{ fmtMoney(metricFee) }}<span class="metric-unit">元</span></div>
+                      </div>
+                      <div class="metric-card">
+                        <div class="metric-label">缴费截止日期</div>
+                        <div class="metric-value metric-value--date">{{ metricDue }}</div>
+                      </div>
+                    </div>
+
+                    <!-- 5 账单概况 -->
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">账单概况</span>
+                        <span class="bill-card-hint">金额由各子项计算</span>
+                      </div>
+                      <div class="overview-summary">
+                        <div class="os-table">
+                          <div class="os-row os-row--head">
+                            <span>项目</span><span>金额（元）</span><span>说明</span>
+                          </div>
+                          <div class="os-row" v-for="r in overviewRows" :key="r.key">
+                            <span class="os-name">{{ r.label }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtMoney(r.value) }}</span>
+                            <span class="os-desc">{{ r.desc }}</span>
+                          </div>
+                          <div class="os-row os-row--total">
+                            <span>本期电费</span>
+                            <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtMoney(overviewTotal) }}</span>
+                            <span class="os-desc">
+                              账单标称 {{ fmtMoney(Number(editForm.total_amount) || 0) }}
+                              <t-tag v-if="overviewDiff" size="small" theme="warning" variant="light" class="os-diff">
+                                差异 {{ fmtMoney(overviewDiff) }}
+                              </t-tag>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 6 用能分析 -->
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">用能分析</span>
+                      </div>
+                      <div class="energy-analysis">
+                        <div class="ea-grid">
+                          <div class="ea-item">
+                            <span class="ea-label">本期电量环比</span>
+                            <strong class="ea-value">{{ momText }}</strong>
+                          </div>
+                          <div class="ea-item">
+                            <span class="ea-label">峰谷比例</span>
+                            <strong class="ea-value">{{ peakValleyText }}</strong>
+                          </div>
+                          <div class="ea-item">
+                            <span class="ea-label">功率因数</span>
+                            <strong class="ea-value">{{ pfText }}</strong>
+                          </div>
+                          <div class="ea-item">
+                            <span class="ea-label">最大需量</span>
+                            <strong class="ea-value">{{ demandText }}</strong>
+                          </div>
+                          <div class="ea-item">
+                            <span class="ea-label">平均电价</span>
+                            <strong class="ea-value">{{ avgPriceText }}</strong>
+                          </div>
+                        </div>
+                        <div class="ea-chart">
+                          <div v-for="bar in energyBars" :key="bar.key" class="ea-bar-col">
+                            <div class="ea-bar-track">
+                              <div class="ea-bar" :style="{ height: bar.pct + '%' }"></div>
+                            </div>
+                            <span class="ea-bar-label">{{ bar.label }}</span>
+                            <span class="ea-bar-value">{{ bar.value }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 工商业电量明细 -->
+                  <template v-else-if="activeMenu === 'industrial-meter'">
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">电量明细 · 工商业</span>
+                        <span class="bill-card-hint">点击行可在抽屉编辑电量，自动保存</span>
+                      </div>
+                      <div class="meter-table">
+                        <div class="meter-row meter-head">
+                          <span>时段</span><span>计费电量（千瓦时）</span><span>占比</span>
+                        </div>
+                        <div v-for="(r, i) in industrialMeterRows" :key="r.key" class="meter-row" @click="openMeterEdit(i, 'industrial')">
+                          <span>{{ r.label }}</span><span class="row-mono">{{ fmtKwh(r.value) }}</span>
+                          <span class="row-mono">{{ meterPct(r.value, industrialMeterTotal) }}</span>
+                        </div>
+                        <div class="meter-row meter-total">
+                          <span>合计</span><span class="row-mono">{{ fmtKwh(industrialMeterTotal) }}</span><span>100%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <!-- 居民电量明细 -->
+                  <template v-else-if="activeMenu === 'residential-meter'">
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">电量明细 · 居民</span>
+                        <span class="bill-card-hint">账单仅提供居民目录电量合计</span>
+                      </div>
+                      <div class="meter-table">
+                        <div class="meter-row meter-head">
+                          <span>项目</span><span>计费电量（千瓦时）</span><span>占比</span>
+                        </div>
+                        <div v-for="(r, i) in residentialMeterRows" :key="r.key" class="meter-row" @click="openMeterEdit(i, 'residential')">
+                          <span>{{ r.label }}</span><span class="row-mono">{{ fmtKwh(r.value) }}</span>
+                          <span class="row-mono">100%</span>
+                        </div>
+                        <div class="meter-row meter-total">
+                          <span>合计</span><span class="row-mono">{{ fmtKwh(residentialMeterTotal) }}</span><span>100%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 费用子项通用表格 -->
+                  <template v-else-if="feeMenuOf(activeMenu)">
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">{{ menuLabel(activeMenu) }}</span>
+                        <span class="bill-card-hint">共 {{ feeRowsOf(activeMenu).length }} 项，点击行编辑，自动保存</span>
+                      </div>
+                      <div class="fee-group-table">
+                        <div class="fg-row fg-head">
+                          <span>费用组成</span><span>时段</span><span>计费电量</span><span>计费标准</span><span>电费（元）</span>
+                        </div>
+                        <div v-for="(it, i) in feeRowsOf(activeMenu)" :key="i" class="fg-row" @click="openFeeItemEdit(activeMenu, i)">
+                          <span class="fg-name" :title="it.name">{{ it.name }}</span>
+                          <span>{{ it.period || '--' }}</span>
+                          <span class="row-mono">{{ it.qty ? fmtKwh(it.qty) : '' }}</span>
+                          <span class="row-mono">{{ it.rate ? fmtRate(it.rate) : '' }}</span>
+                          <span class="row-mono" :class="{ 'os-neg': it.fee < 0 }">{{ it.fee || it.fee === 0 ? fmtMoney(it.fee) : '' }}</span>
+                        </div>
+                        <div v-if="!feeRowsOf(activeMenu).length" class="fg-empty">暂无数据</div>
+                        <div v-if="feeRowsOf(activeMenu).length" class="fg-row fg-total">
+                          <span>小计</span><span></span><span></span><span></span>
+                          <span class="row-mono" :class="{ 'os-neg': feeSubtotalOf(activeMenu) < 0 }">{{ fmtMoney(feeSubtotalOf(activeMenu)) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 输配容（需）量电费 -->
+                  <template v-else-if="activeMenu === 'capacity'">
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">输配容（需）量电费</span>
+                        <t-button variant="outline" size="small" @click="openStaticEdit('capacity')">
+                          <template #icon><t-icon name="edit-1" size="14px" /></template>
+                          编辑
+                        </t-button>
+                      </div>
+                      <div class="capacity-grid">
+                        <div class="cap-item" v-for="f in CAPACITY_FIELDS" :key="f.key">
+                          <span class="cap-label">{{ f.label }}</span>
+                          <span class="cap-value">{{ fmtField(editForm[f.key], f.type) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- 功率因素调整电费 -->
+                  <template v-else-if="activeMenu === 'pf-adjust'">
+                    <div class="bill-card">
+                      <div class="bill-card-head">
+                        <span class="bill-card-title">功率因素调整电费</span>
+                        <t-button variant="outline" size="small" @click="openStaticEdit('pf')">
+                          <template #icon><t-icon name="edit-1" size="14px" /></template>
+                          编辑
+                        </t-button>
+                      </div>
+                      <div class="capacity-grid">
+                        <div class="cap-item" v-for="f in PF_FIELDS" :key="f.key">
+                          <span class="cap-label">{{ f.label }}</span>
+                          <span class="cap-value">{{ fmtField(editForm[f.key], f.type) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
             </div>
           </div>
         </t-tab-panel>
@@ -274,6 +539,78 @@
       </div>
     </t-drawer>
 
+    <!-- 电量明细编辑抽屉 -->
+    <t-drawer :visible="meterEditVisible" :header="'编辑电量 · ' + meterEditTitle" :size="'420px'" :footer="false"
+      destroy-on-close @close="meterEditVisible = false">
+      <div class="edit-drawer-body">
+        <div class="edit-field" v-for="f in meterEditFields" :key="f.key">
+          <label class="edit-label">{{ f.label }}</label>
+          <t-input :model-value="String(meterEditForm[f.key] ?? '')" type="number" size="small"
+            @update:model-value="(v: string) => (meterEditForm[f.key] = Number(v) || 0)" />
+        </div>
+        <div class="auto-save-tip">修改后自动保存</div>
+      </div>
+    </t-drawer>
+
+    <!-- 费用行编辑抽屉 -->
+    <t-drawer :visible="feeItemEditVisible" :header="'编辑费用 · ' + feeItemEditName" :size="'460px'" :footer="false"
+      destroy-on-close @close="feeItemEditVisible = false">
+      <div class="edit-drawer-body">
+        <div class="edit-field">
+          <label class="edit-label">费用类别</label>
+          <t-input :model-value="feeItemEditForm.category ?? ''" size="small" disabled />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">费用组成</label>
+          <t-input :model-value="feeItemEditForm.name ?? ''" size="small" disabled />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">分时时段</label>
+          <t-input :model-value="feeItemEditForm.period ?? ''" size="small" disabled />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">计费电量（千瓦时）</label>
+          <t-input :model-value="String(feeItemEditForm.qty ?? '')" type="number" size="small"
+            @update:model-value="(v: string) => { feeItemEditForm.qty = Number(v) || 0; recalcFeeItem() }" />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">计费标准（元/千瓦时）</label>
+          <t-input :model-value="String(feeItemEditForm.rate ?? '')" type="number" size="small"
+            @update:model-value="(v: string) => { feeItemEditForm.rate = Number(v) || 0; recalcFeeItem() }" />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">电费（元）</label>
+          <t-input :model-value="String(feeItemEditForm.fee ?? '')" type="number" size="small" disabled
+            :placeholder="feeItemEditableFee ? '' : '非电量×标准项，金额保持解析值'" />
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">说明</label>
+          <div class="edit-note">{{ feeItemEditableFee ? '电费 = 电量 × 标准，自动计算' : '该费用项无法由电量×标准推导（返还/调整类），金额保留账单原值' }}</div>
+        </div>
+        <div class="auto-save-tip">修改后自动保存</div>
+      </div>
+    </t-drawer>
+
+    <!-- 静态字段编辑抽屉 -->
+    <t-drawer :visible="staticEditVisible" :header="staticEditTitle" :size="'520px'" :footer="false"
+      destroy-on-close @close="staticEditVisible = false">
+      <div class="edit-drawer-body">
+        <div class="field-grid">
+          <div v-for="f in staticEditFields" :key="f.key" class="field-grid-item">
+            <label class="field-label">{{ f.label }}</label>
+            <t-input v-if="f.type === 'text'" :model-value="String(staticEditForm[f.key] ?? '')" size="small"
+              @update:model-value="(v: string) => (staticEditForm[f.key] = v)" />
+            <t-date-picker v-else-if="f.type === 'date'" :model-value="String(staticEditForm[f.key] ?? '')" size="small"
+              format="YYYY-MM-DD" value-type="YYYY-MM-DD" clearable
+              @change="(v: any) => (staticEditForm[f.key] = v || '')" />
+            <t-input v-else :model-value="String(staticEditForm[f.key] ?? '')" type="number" size="small"
+              @update:model-value="(v: string) => (staticEditForm[f.key] = Number(v) || 0)" />
+          </div>
+        </div>
+        <div class="auto-save-tip">修改后自动保存</div>
+      </div>
+    </t-drawer>
+
     <!-- 标签编辑 -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
       :tag-list="tagList" :selected-tags="tagTargetTags" :can-manage="true" @confirm="onTagEditConfirm"
@@ -351,18 +688,32 @@ import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
-const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v1'
+const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v3'
+const COLUMN_STORAGE_VERSION = 3
 
-interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string }
+interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: 'industrial' | 'residential' }
 const FALLBACK_COLUMNS: ColDef[] = [
-  { key: 'bill_period_start', label: '账单周期起', fieldType: 'date', default: true, w: '1.2fr' },
-  { key: 'account_no', label: '户号', fieldType: 'text', default: true, w: '1fr' },
-  { key: 'account_name', label: '户名', fieldType: 'text', default: true, w: '1.4fr' },
-  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: true, w: '1fr' },
+  { key: 'bill_period_start', label: '账单周期', fieldType: 'date', default: true, w: '1fr' },
   { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr' },
   { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: true, w: '0.9fr' },
-  { key: 'power_factor', label: '功率因数', fieldType: 'number', default: true, w: '0.8fr' },
+  // 工商业电费分组
+  { key: 'market_amount', label: '市场化购电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
+  { key: 'line_amount', label: '上网环节线损费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
+  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
+  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
+  { key: 'govI_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'industrial' },
+  // 居民电费分组
+  { key: 'catalog_amount', label: '目录电费', fieldType: 'amount', default: true, w: '1fr', group: 'residential' },
+  { key: 'govR_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'residential' },
+  // 独立字段
+  { key: 'capacity_fee', label: '输配容（需）量电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  { key: 'pf_adjust_amount', label: '功率因素调整电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  // 其它可选字段
+  { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1fr' },
+  { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
+  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: false, w: '1fr' },
+  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '0.9fr' },
+  { key: 'power_factor', label: '功率因数', fieldType: 'number', default: false, w: '0.8fr' },
   { key: 'bill_period_end', label: '账单周期止', fieldType: 'date', default: false, w: '1.2fr' },
   { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: false, w: '0.9fr' },
   { key: 'supply_unit', label: '供电服务单位', fieldType: 'text', default: false, w: '1.2fr' },
@@ -370,7 +721,6 @@ const FALLBACK_COLUMNS: ColDef[] = [
   { key: 'due_date', label: '交费截止', fieldType: 'date', default: false, w: '1.1fr' },
   { key: 'industrial_amount', label: '工商业电费', fieldType: 'amount', default: false, w: '1fr' },
   { key: 'residential_amount', label: '居民电费', fieldType: 'amount', default: false, w: '1fr' },
-  { key: 'pf_adjust_amount', label: '功率因数调整电费', fieldType: 'amount', default: false, w: '1.2fr' },
   { key: 'grand_total', label: '合计', fieldType: 'amount', default: false, w: '1fr' },
   { key: 'address', label: '用电地址', fieldType: 'text', default: false, w: '1.6fr' },
   { key: 'market_attr', label: '市场化属性', fieldType: 'text', default: false, w: '1fr' },
@@ -383,7 +733,6 @@ const FALLBACK_COLUMNS: ColDef[] = [
   { key: 'reactive_kwh', label: '正向无功电量', fieldType: 'number', default: false, w: '0.9fr' },
   { key: 'capacity', label: '容量', fieldType: 'number', default: false, w: '0.8fr' },
   { key: 'capacity_price', label: '容量电价', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'capacity_fee', label: '输配容量电费', fieldType: 'amount', default: false, w: '1fr' },
   { key: 'demand', label: '需量值', fieldType: 'number', default: false, w: '0.8fr' },
   { key: 'pf_standard', label: '功率因数标准', fieldType: 'number', default: false, w: '1fr' },
   { key: 'adjust_ratio', label: '调整系数', fieldType: 'number', default: false, w: '0.9fr' },
@@ -408,8 +757,11 @@ function loadStoredColumns(): string[] {
   try {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => columnDefs.value.some(c => c.key === k))
+      const obj = JSON.parse(raw)
+      // 带版本校验：旧版本或结构不符时采用新默认集
+      if (obj && obj.v === COLUMN_STORAGE_VERSION && Array.isArray(obj.keys) && obj.keys.length) {
+        return obj.keys.filter((k: string) => columnDefs.value.some(c => c.key === k))
+      }
     }
   } catch { /* ignore */ }
   return columnDefs.value.filter(c => c.default).map(c => c.key)
@@ -417,7 +769,7 @@ function loadStoredColumns(): string[] {
 function selectAllColumns() { visibleColKeys.value = columnDefs.value.map(c => c.key) }
 function resetColumns() { visibleColKeys.value = columnDefs.value.filter(c => c.default).map(c => c.key) }
 function persistColumns() {
-  try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
+  try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify({ v: COLUMN_STORAGE_VERSION, keys: visibleColKeys.value })) } catch { /* ignore */ }
 }
 watch(visibleColKeys, () => persistColumns(), { deep: true })
 
@@ -426,13 +778,22 @@ const loadFieldConfigs = async () => {
     const res: any = await listUtilityFieldConfigs('electricity')
     const list = res?.data || res
     if (Array.isArray(list) && list.length) {
-      columnDefs.value = list.map((c: any) => ({
-        key: c.field_key,
-        label: c.label,
-        fieldType: c.field_type || 'text',
-        default: !!c.default_visible,
-        w: colWidth(c.field_key),
-      }))
+      const fromServer = list.map((c: any) => {
+        const fb = FALLBACK_COLUMNS.find(f => f.key === c.field_key)
+        return {
+          key: c.field_key,
+          // 内置字段以新默认集的标签/默认显隐为准；自定义字段沿用后端配置
+          label: fb ? fb.label : c.label,
+          fieldType: c.field_type || 'text',
+          default: fb ? fb.default : !!c.default_visible,
+          w: colWidth(c.field_key),
+          group: fb?.group,
+        }
+      })
+      // 后端配置缺内置字段时合并补全，保证新增默认字段可用
+      const keys = new Set(fromServer.map((c: any) => c.key))
+      const merged = [...fromServer, ...FALLBACK_COLUMNS.filter(f => !keys.has(f.key))]
+      columnDefs.value = merged
       // 默认列变更后重算可见列（保留用户已存储的偏好，仅当存储为空时使用新默认）
       visibleColKeys.value = loadStoredColumns()
     }
@@ -440,9 +801,19 @@ const loadFieldConfigs = async () => {
 }
 function colWidth(key: string): string {
   if (['account_name', 'address', 'supply_unit'].includes(key)) return '1.6fr'
-  if (['bill_period_start', 'bill_period_end', 'due_date', 'print_date', 'pf_adjust_amount'].includes(key)) return '1.2fr'
+  if (['bill_period_start', 'bill_period_end', 'due_date', 'print_date', 'pf_adjust_amount', 'capacity_fee'].includes(key)) return '1.2fr'
+  if (['govI_amount', 'govR_amount'].includes(key)) return '1.1fr'
   return '1fr'
 }
+
+// 分组表头（工商业/居民）
+const groupHeaderCols = computed(() => {
+  const cols = visibleColDefs.value
+  const industrial = cols.filter(c => c.group === 'industrial').length
+  const residential = cols.filter(c => c.group === 'residential').length
+  const plain = cols.length - industrial - residential
+  return { industrial, residential, plain, has: industrial > 0 || residential > 0 }
+})
 
 // ---- 列表 ----
 interface Row {
@@ -718,6 +1089,9 @@ let feeItemsSnapshot = ''
 
 const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
 
+const currentStatus = computed<{ label: string; theme: string; icon?: string; spin?: boolean }>(() =>
+  currentRow.value ? statusOf(currentRow.value) : { label: '--', theme: 'default' })
+
 const fieldValue = (cfg: ColDef) => editForm.value?.[cfg.key] ?? ''
 const setFieldValue = (cfg: ColDef, v: any) => {
   if (v === undefined || v === null) return
@@ -731,9 +1105,13 @@ const summaryLines = computed(() => {
 
 const openDetail = async (row: Row) => {
   currentRow.value = row
-  detailVisible.value = true
-  summaryExpanded.value = true
-  feeExpanded.value = false
+  await loadEditForm(row)
+  // 电费账单 → 进入分层详情视图
+  detailMode.value = true
+  activeMenu.value = 'overview'
+}
+
+const loadEditForm = async (row: Row) => {
   autoSaveDirty = false
   try {
     const res: any = await getKnowledgeDetails(row.knowledgeId)
@@ -742,12 +1120,12 @@ const openDetail = async (row: Row) => {
     const records = Array.isArray(meta.records) ? meta.records : []
     const idx = Math.max(0, (row.page || 1) - 1)
     const item = records[idx] || row.item || {}
-    editForm.value = { ...item }
+    editForm.value = { ...item, fee_items: Array.isArray(item.fee_items) ? item.fee_items.map((f: any) => ({ ...f })) : [] }
     editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
   } catch {
-    editForm.value = { ...row.item }
+    editForm.value = { ...row.item, fee_items: Array.isArray(row.item?.fee_items) ? row.item.fee_items.map((f: any) => ({ ...f })) : [] }
     editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
@@ -757,6 +1135,303 @@ const openDetail = async (row: Row) => {
 const closeDetail = () => {
   detailVisible.value = false
   currentRow.value = null
+}
+
+// ---- 详情视图（分层菜单） ----
+const detailMode = ref(false)
+const activeMenu = ref('overview')
+
+interface BillMenu { key: string; label: string; group?: boolean; children?: { key: string; label: string }[] }
+const BILL_MENUS: BillMenu[] = [
+  { key: 'overview', label: '账单概况' },
+  {
+    key: 'industrial', label: '工商业电费', group: true, children: [
+      { key: 'industrial-meter', label: '电量明细' },
+      { key: 'industrial-market', label: '市场化购电费' },
+      { key: 'industrial-line', label: '上网环节线损费' },
+      { key: 'industrial-trans', label: '输配电量电费' },
+      { key: 'industrial-sys', label: '系统运行费' },
+      { key: 'industrial-gov', label: '政府基金及附加' },
+    ],
+  },
+  {
+    key: 'residential', label: '居民电费', group: true, children: [
+      { key: 'residential-meter', label: '电量明细' },
+      { key: 'residential-catalog', label: '目录电费' },
+      { key: 'residential-gov', label: '政府性基金及附加' },
+    ],
+  },
+  { key: 'capacity', label: '输配容（需）量电费' },
+  { key: 'pf-adjust', label: '功率因素调整电费' },
+]
+
+const exitDetail = () => {
+  detailMode.value = false
+  activeMenu.value = 'overview'
+  loadFiles(true)
+}
+
+const FEE_MENU_MAP: Record<string, (it: any) => boolean> = {
+  'industrial-market': (it) => (it.category || '').includes('市场化购电'),
+  'industrial-line': (it) => (it.category || '').includes('上网环节线损'),
+  'industrial-trans': (it) => (it.category || '').includes('输配电量'),
+  'industrial-sys': (it) => (it.category || '').includes('系统运行'),
+  'industrial-gov': (it) => (it.category || '').includes('政府性基金') && Number(it.qty || 0) >= 100000 && !(it.name || '').includes('功率因数'),
+  'residential-catalog': (it) => (it.category || '').includes('目录电费'),
+  'residential-gov': (it) => (it.category || '').includes('政府性基金') && Number(it.qty || 0) < 100000 && !(it.name || '').includes('功率因数'),
+  'pf-adjust': (it) => (it.category || '').includes('功率因数') || (it.name || '').includes('功率因数'),
+}
+const feeMenuOf = (key: string) => key in FEE_MENU_MAP
+const feeRowsOf = (key: string) => (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
+const feeSubtotalOf = (key: string) => Math.round(feeRowsOf(key).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
+const menuLabel = (key: string) => {
+  for (const m of BILL_MENUS) {
+    if (m.children) {
+      const c = m.children.find(x => x.key === key)
+      if (c) return c.label
+    }
+  }
+  return key
+}
+
+// 概况静态字段
+const OVERVIEW_STATIC = [
+  { key: 'account_no', label: '户号', type: 'text' },
+  { key: 'account_name', label: '户名', type: 'text' },
+  { key: 'customer_type', label: '用电类别', type: 'text' },
+  { key: 'voltage_level', label: '电压等级', type: 'text' },
+  { key: 'address', label: '地址', type: 'text' },
+  { key: 'supply_unit', label: '供电单位', type: 'text' },
+  { key: 'bill_period_start', label: '账单周期起', type: 'date' },
+  { key: 'bill_period_end', label: '账单周期止', type: 'date' },
+  { key: 'market_flag', label: '市场化属性', type: 'text' },
+  { key: 'pay_deadline', label: '交费截止', type: 'date' },
+]
+
+// 容需量字段
+const CAPACITY_FIELDS = [
+  { key: 'capacity', label: '合同容量（kVA）', type: 'number' },
+  { key: 'demand', label: '需量（kW）', type: 'number' },
+  { key: 'capacity_price', label: '容量电价（元/kVA）', type: 'number' },
+  { key: 'capacity_fee', label: '输配容量电费（元）', type: 'number' },
+]
+
+// 功率因数字段
+const PF_FIELDS = [
+  { key: 'power_factor', label: '功率因数', type: 'number' },
+  { key: 'pf_standard', label: '考核标准', type: 'number' },
+  { key: 'adjust_coefficient', label: '调整系数', type: 'number' },
+  { key: 'pf_adjust_amount', label: '调整电费（元）', type: 'number' },
+]
+
+const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
+
+const overviewRows = computed(() => {
+  const edit = editForm.value
+  const market = sumFee(feeRowsOf('industrial-market'))
+  const line = sumFee(feeRowsOf('industrial-line'))
+  const trans = sumFee(feeRowsOf('industrial-trans'))
+  const sys = sumFee(feeRowsOf('industrial-sys'))
+  const govI = sumFee(feeRowsOf('industrial-gov'))
+  const catalog = sumFee(feeRowsOf('residential-catalog'))
+  const govR = sumFee(feeRowsOf('residential-gov'))
+  const capacity = Number(edit.capacity_fee) || 0
+  const pf = Number(edit.pf_adjust_amount) || 0
+  const industrial = Math.round((market + line + trans + sys + govI) * 100) / 100
+  const residential = Math.round((catalog + govR) * 100) / 100
+  return [
+    { key: 'market', label: '市场化购电费', value: market, desc: `${feeRowsOf('industrial-market').length} 项` },
+    { key: 'line', label: '上网环节线损费', value: line, desc: `${feeRowsOf('industrial-line').length} 项` },
+    { key: 'trans', label: '输配电量电费', value: trans, desc: `${feeRowsOf('industrial-trans').length} 项` },
+    { key: 'sys', label: '系统运行费', value: sys, desc: `${feeRowsOf('industrial-sys').length} 项` },
+    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, desc: `${feeRowsOf('industrial-gov').length} 项` },
+    { key: 'industrial', label: '工商业电费小计', value: industrial, desc: '上述五项之和' },
+    { key: 'catalog', label: '目录电费（居民）', value: catalog, desc: `${feeRowsOf('residential-catalog').length} 项` },
+    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, desc: `${feeRowsOf('residential-gov').length} 项` },
+    { key: 'residential', label: '居民电费小计', value: residential, desc: '上述两项之和' },
+    { key: 'capacity', label: '输配容（需）量电费', value: capacity, desc: '容量 × 容量电价' },
+    { key: 'pf', label: '功率因数调整电费', value: pf, desc: '账单调整值' },
+  ]
+})
+const overviewTotal = computed(() => {
+  const industrial = overviewRows.value.find(r => r.key === 'industrial')?.value || 0
+  const residential = overviewRows.value.find(r => r.key === 'residential')?.value || 0
+  const capacity = overviewRows.value.find(r => r.key === 'capacity')?.value || 0
+  const pf = overviewRows.value.find(r => r.key === 'pf')?.value || 0
+  return Math.round((industrial + residential + capacity + pf) * 100) / 100
+})
+const overviewDiff = computed(() => {
+  const nominal = Number(editForm.value.total_amount) || 0
+  if (!nominal) return 0
+  return Math.round((overviewTotal.value - nominal) * 100) / 100
+})
+
+// ---- 概览页指标卡（数据均来自子项计算 / 提取字段，非直接填充汇总） ----
+const metricKwh = computed(() => Number(editForm.value.total_kwh) || 0)
+const metricFee = computed(() => overviewTotal.value)
+const metricDue = computed(() => {
+  const v = editForm.value.due_date || editForm.value.pay_deadline
+  return v ? String(v).slice(0, 10) : '—'
+})
+const ovText = (f: { key: string; label: string }) => {
+  const v = editForm.value[f.key]
+  if (v === null || v === undefined || v === '') return ''
+  if (f.key === 'bill_period_start' || f.key === 'bill_period_end') return String(v).slice(0, 7)
+  return String(v)
+}
+// 用能分析
+const momText = computed(() => {
+  const prev = Number(editForm.value.prev_kwh) || 0
+  const cur = Number(editForm.value.total_kwh) || 0
+  if (!prev || !cur) return '—'
+  const pct = Math.round(((cur - prev) / prev) * 1000) / 10
+  return `${pct > 0 ? '+' : ''}${pct}%`
+})
+const peakValleyText = computed(() => {
+  const peak = (Number(editForm.value.deep_peak_kwh) || 0) + (Number(editForm.value.peak_kwh) || 0)
+  const valley = Number(editForm.value.valley_kwh) || 0
+  if (!peak && !valley) return '—'
+  return `${peak}:${valley}`
+})
+const pfText = computed(() => {
+  const v = editForm.value.power_factor
+  return v === null || v === undefined || v === '' ? '—' : String(v)
+})
+const demandText = computed(() => {
+  const v = Number(editForm.value.demand) || 0
+  return v ? `${fmtKwh(v)} kW` : '—'
+})
+const avgPriceText = computed(() => {
+  const v = editForm.value.avg_price
+  if (v !== null && v !== undefined && v !== '') return String(Number(v))
+  const cur = Number(editForm.value.total_kwh) || 0
+  if (!cur) return '—'
+  return String(Math.round((metricFee.value / cur) * 10000) / 10000)
+})
+const energyBars = computed(() => {
+  const raw = [
+    { key: 'deep_peak', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
+    { key: 'peak', label: '峰', v: Number(editForm.value.peak_kwh) || 0 },
+    { key: 'flat', label: '平', v: Number(editForm.value.flat_kwh) || 0 },
+    { key: 'valley', label: '谷', v: Number(editForm.value.valley_kwh) || 0 },
+  ]
+  const max = Math.max(...raw.map(b => b.v), 1)
+  return raw.map(b => ({ ...b, pct: Math.max(Math.round((b.v / max) * 100), 2) }))
+})
+
+// 电量明细
+const industrialMeterRows = computed(() => [
+  { key: 'deep_peak_kwh', label: '尖峰', value: Number(editForm.value.deep_peak_kwh) || 0 },
+  { key: 'peak_kwh', label: '峰', value: Number(editForm.value.peak_kwh) || 0 },
+  { key: 'flat_kwh', label: '平', value: Number(editForm.value.flat_kwh) || 0 },
+  { key: 'valley_kwh', label: '谷', value: Number(editForm.value.valley_kwh) || 0 },
+])
+const industrialMeterTotal = computed(() => industrialMeterRows.value.reduce((s, r) => s + r.value, 0))
+const residentialMeterRows = computed(() => [
+  { key: 'residential_kwh', label: '目录电量', value: Number(editForm.value.residential_kwh) || 0 },
+])
+const residentialMeterTotal = computed(() => residentialMeterRows.value.reduce((s, r) => s + r.value, 0))
+const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(1)}%` : '--')
+
+// 电量明细编辑
+const meterEditVisible = ref(false)
+const meterEditForm = ref<Record<string, any>>({})
+const meterEditTitle = ref('')
+const meterEditFields = ref<{ key: string; label: string }[]>([])
+const openMeterEdit = (idx: number, group: 'industrial' | 'residential') => {
+  if (group === 'industrial') {
+    const r = industrialMeterRows.value[idx]
+    meterEditTitle.value = `工商业 · ${r.label}时段`
+    meterEditFields.value = [{ key: r.key, label: `${r.label}时段电量（千瓦时）` }]
+    meterEditForm.value = { [r.key]: Number(editForm.value[r.key]) || 0 }
+  } else {
+    const r = residentialMeterRows.value[idx]
+    meterEditTitle.value = `居民 · ${r.label}`
+    meterEditFields.value = [{ key: r.key, label: `${r.label}（千瓦时）` }]
+    meterEditForm.value = { [r.key]: Number(editForm.value[r.key]) || 0 }
+  }
+  meterEditVisible.value = true
+}
+watch(meterEditForm, () => {
+  if (!meterEditVisible.value || !autoSaveDirty) return
+  const k = meterEditFields.value[0]?.key
+  if (!k) return
+  editForm.value[k] = Number(meterEditForm.value[k]) || 0
+}, { deep: true })
+
+// 费用行编辑
+const feeItemEditVisible = ref(false)
+const feeItemEditForm = ref<Record<string, any>>({})
+const feeItemEditName = ref('')
+let feeItemEditTarget = ''
+let feeItemEditIdx = -1
+const feeItemEditableFee = computed(() => {
+  const qty = Number(feeItemEditForm.value.qty) || 0
+  const rate = Number(feeItemEditForm.value.rate) || 0
+  return qty > 0 && rate > 0
+})
+const recalcFeeItem = () => {
+  const qty = Number(feeItemEditForm.value.qty) || 0
+  const rate = Number(feeItemEditForm.value.rate) || 0
+  if (qty > 0 && rate > 0) feeItemEditForm.value.fee = Math.round(qty * rate * 100) / 100
+}
+const openFeeItemEdit = (menuKey: string, idx: number) => {
+  const list = feeRowsOf(menuKey)
+  const it = list[idx]
+  feeItemEditTarget = menuKey
+  feeItemEditName.value = it?.name || '费用项'
+  feeItemEditForm.value = { ...it }
+  feeItemEditIdx = (editForm.value.fee_items || []).indexOf(it)
+  feeItemEditVisible.value = true
+}
+watch(feeItemEditForm, () => {
+  if (!feeItemEditVisible.value || !autoSaveDirty) return
+  if (feeItemEditIdx < 0) return
+  const items = editForm.value.fee_items || []
+  if (feeItemEditIdx >= items.length) return
+  Object.keys(feeItemEditForm.value).forEach(k => { items[feeItemEditIdx][k] = feeItemEditForm.value[k] })
+}, { deep: true })
+
+// 静态字段编辑（概况 / 容需量 / 功率因数）
+const staticEditVisible = ref(false)
+const staticEditForm = ref<Record<string, any>>({})
+const staticEditTitle = ref('')
+const staticEditFields = ref<{ key: string; label: string; type: string }[]>([])
+const openStaticEdit = (scope: 'overview' | 'capacity' | 'pf') => {
+  if (scope === 'overview') {
+    staticEditTitle.value = '编辑账单概况'
+    staticEditFields.value = OVERVIEW_STATIC
+  } else if (scope === 'capacity') {
+    staticEditTitle.value = '编辑输配容（需）量电费'
+    staticEditFields.value = CAPACITY_FIELDS
+  } else {
+    staticEditTitle.value = '编辑功率因素调整电费'
+    staticEditFields.value = PF_FIELDS
+  }
+  const form: Record<string, any> = {}
+  staticEditFields.value.forEach(f => {
+    if (f.type === 'number') form[f.key] = Number(editForm.value[f.key]) || 0
+    else form[f.key] = editForm.value[f.key] ?? ''
+  })
+  staticEditForm.value = form
+  staticEditVisible.value = true
+}
+watch(staticEditForm, () => {
+  if (!staticEditVisible.value || !autoSaveDirty) return
+  staticEditFields.value.forEach(f => {
+    editForm.value[f.key] = staticEditForm.value[f.key]
+  })
+}, { deep: true })
+
+const fmtField = (v: any, type: string) => {
+  if (v === undefined || v === null || v === '') return ''
+  if (type === 'number') return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
+  return String(v)
+}
+const fmtRate = (v: any) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 
 const onFieldEdited = () => { /* 数值字段 change 即进入自动保存流程 */ }
@@ -970,7 +1645,31 @@ const fmtMoney = (v: any) => {
   const n = Number(v) || 0
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+const feeItemsOf = (row: Row): any[] => (Array.isArray(row.item?.fee_items) ? row.item.fee_items : [])
+const sumFeeBy = (row: Row, pred: (it: any) => boolean): number =>
+  Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100
+const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {
+  const v = sumFeeBy(row, pred)
+  return v === 0 ? '' : String(v)
+}
 const cellText = (row: Row, key: string): string => {
+  if (key === 'bill_period_start') {
+    const raw = row.item?.[key]
+    if (!raw) return ''
+    return String(raw).slice(0, 7)
+  }
+  if (key === 'market_amount') return feeTextOf(row, it => String(it.category || '').includes('市场化购电'))
+  if (key === 'line_amount') return feeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
+  if (key === 'trans_amount') return feeTextOf(row, it => String(it.category || '').includes('输配电量'))
+  if (key === 'sys_amount') return feeTextOf(row, it => String(it.category || '').includes('系统运行'))
+  if (key === 'govI_amount') return feeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) >= 100000 && !String(it.name || '').includes('功率因数'))
+  if (key === 'catalog_amount') return feeTextOf(row, it => String(it.category || '').includes('目录电费'))
+  if (key === 'govR_amount') return feeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) < 100000 && !String(it.name || '').includes('功率因数'))
+  if (key === 'pf_adjust_amount') {
+    const direct = row.item?.[key]
+    if (direct !== null && direct !== undefined && direct !== '') return String(direct)
+    return feeTextOf(row, it => String(it.name || '').includes('功率因数'))
+  }
   const v = row.item?.[key]
   if (v === null || v === undefined || v === '') return ''
   if (typeof v === 'number') {
@@ -1088,6 +1787,150 @@ onBeforeUnmount(() => { stopPolling() })
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
+.doc-list-view {
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 9px;
+  overflow: visible;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.doc-list-group-header,
+.doc-list-header,
+.doc-list-row {
+  display: grid;
+  align-items: center;
+  padding: 0 16px;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.doc-list-group-header {
+  height: 28px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-container);
+  border-bottom: 1px solid var(--td-component-stroke);
+
+  .cell-group {
+    justify-content: flex-start;
+    gap: 6px;
+
+    .group-label {
+      color: var(--td-brand-color);
+    }
+
+    .group-count {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--td-text-color-placeholder);
+    }
+  }
+}
+
+.doc-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 40px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border-bottom: 1px solid var(--td-component-stroke);
+
+  .cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.doc-list-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-list-row {
+  position: relative;
+  min-height: 52px;
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  border-bottom: 1px solid var(--td-component-stroke);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &:hover:not(.selected) {
+    background: var(--td-bg-color-secondarycontainer);
+  }
+
+  &.selected {
+    background: var(--td-brand-color-1);
+  }
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &:first-child {
+    padding-left: 0;
+  }
+
+  &:last-child {
+    padding-right: 0;
+  }
+}
+
+.cell-check {
+  justify-content: flex-start;
+}
+
+.cell-extractStatus {
+  justify-content: flex-start;
+}
+
+.cell-tags {
+  justify-content: flex-start;
+  gap: 4px;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.row-mono,
+.row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-mono {
+  font-family: var(--app-font-family);
+}
+
+.row-status-tag {
+  white-space: nowrap;
+}
+
+.row-tag {
+  white-space: nowrap;
 }
 
 .doc-pending-row {
@@ -1307,5 +2150,454 @@ onBeforeUnmount(() => { stopPolling() })
 @keyframes t-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ===== 电费账单详情视图（分层菜单） ===== */
+.bill-detail-layout {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 168px);
+  min-height: 420px;
+}
+
+.bill-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 10px;
+
+  .bill-detail-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 420px;
+  }
+}
+
+.bill-detail-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+
+.bill-nav {
+  width: 190px;
+  flex-shrink: 0;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  padding: 8px 6px;
+  overflow-y: auto;
+  background: var(--td-bg-color-container);
+
+  .bill-nav-group-title {
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+    padding: 10px 10px 6px;
+    font-weight: 600;
+  }
+
+  .bill-nav-item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--td-text-color-primary);
+    cursor: pointer;
+    margin-bottom: 2px;
+    transition: background-color .15s, color .15s;
+
+    &:hover {
+      background: var(--td-bg-color-container-hover);
+    }
+
+    &.active {
+      background: var(--td-brand-color-light);
+      color: var(--td-brand-color);
+      font-weight: 600;
+    }
+
+    &--child {
+      padding-left: 24px;
+      font-size: 13px;
+    }
+  }
+}
+
+.bill-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  padding: 16px;
+}
+
+.bill-card {
+  margin-bottom: 16px;
+
+  .bill-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+
+    .bill-card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+    }
+
+    .bill-card-hint {
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+      margin-left: auto;
+    }
+  }
+}
+
+/* 概况 */
+.overview-static {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  margin-bottom: 16px;
+
+  .ov-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--td-component-stroke);
+    border-right: 1px solid var(--td-component-stroke);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+
+    &:nth-child(3n) { border-right: none; }
+
+    .ov-label {
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+    }
+
+    .ov-value {
+      font-size: 13px;
+      color: var(--td-text-color-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}
+
+/* 概览页指标卡 */
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+
+  .metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 8px;
+    background: var(--td-bg-color-container);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+
+    .metric-label {
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+    }
+
+    .metric-value {
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--td-brand-color);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+
+      .metric-unit {
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--td-text-color-secondary);
+        margin-left: 6px;
+      }
+
+      &--date {
+        font-size: 18px;
+        color: var(--td-text-color-primary);
+      }
+    }
+  }
+}
+
+/* 用能分析 */
+.energy-analysis {
+  .ea-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+
+    .ea-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border: 1px solid var(--td-component-stroke);
+      border-radius: 8px;
+      background: var(--td-bg-color-container);
+
+      .ea-label {
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+      }
+
+      .ea-value {
+        font-size: 16px;
+        color: var(--td-text-color-primary);
+        font-variant-numeric: tabular-nums;
+      }
+    }
+  }
+
+  .ea-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 24px;
+    height: 150px;
+    padding: 12px 14px;
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 8px;
+
+    .ea-bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      height: 100%;
+      min-width: 0;
+
+      .ea-bar-track {
+        flex: 1;
+        width: 100%;
+        max-width: 64px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        background: var(--td-bg-color-container-hover);
+        border-radius: 4px 4px 0 0;
+        overflow: hidden;
+      }
+
+      .ea-bar {
+        width: 100%;
+        background: linear-gradient(180deg, var(--td-brand-color) 0%, var(--td-brand-color-3) 100%);
+        border-radius: 4px 4px 0 0;
+        transition: height 0.3s ease;
+      }
+
+      .ea-bar-label {
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+      }
+
+      .ea-bar-value {
+        font-size: 11px;
+        color: var(--td-text-color-placeholder);
+        font-variant-numeric: tabular-nums;
+      }
+    }
+  }
+}
+
+.overview-summary {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+
+  .os-head {
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    border-bottom: 1px solid var(--td-component-stroke);
+    background: var(--td-bg-color-container-hover);
+  }
+
+  .os-table {
+    .os-row {
+      display: grid;
+      grid-template-columns: 240px 160px 1fr;
+      gap: 8px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--td-component-stroke);
+      font-size: 13px;
+      align-items: center;
+
+      &:last-child { border-bottom: none; }
+
+      &--head {
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+        background: var(--td-bg-color-container-hover);
+      }
+
+      &--total {
+        background: var(--td-brand-color-light);
+        font-weight: 600;
+
+        .os-name { color: var(--td-brand-color); }
+      }
+
+      .os-name { color: var(--td-text-color-primary); }
+      .os-amount { font-variant-numeric: tabular-nums; }
+      .os-desc { font-size: 12px; color: var(--td-text-color-secondary); }
+
+      .os-neg { color: var(--td-error-color); }
+      .os-diff { margin-left: 6px; }
+    }
+  }
+}
+
+/* 电量明细 */
+.meter-table {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  overflow: hidden;
+
+  .meter-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--td-component-stroke);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color .15s;
+
+    &:last-child { border-bottom: none; }
+
+    &:hover { background: var(--td-bg-color-container-hover); }
+
+    &.meter-head {
+      background: var(--td-bg-color-container-hover);
+      color: var(--td-text-color-secondary);
+      font-size: 12px;
+      cursor: default;
+    }
+
+    &.meter-total {
+      background: var(--td-brand-color-light);
+      font-weight: 600;
+      cursor: default;
+    }
+  }
+}
+
+/* 费用子项表格 */
+.fee-group-table {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  overflow: hidden;
+
+  .fg-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1.2fr 1.2fr 1.2fr;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--td-component-stroke);
+    font-size: 13px;
+    align-items: center;
+    cursor: pointer;
+    transition: background-color .15s;
+
+    &:last-child { border-bottom: none; }
+
+    &:hover { background: var(--td-bg-color-container-hover); }
+
+    &.fg-head {
+      background: var(--td-bg-color-container-hover);
+      color: var(--td-text-color-secondary);
+      font-size: 12px;
+      cursor: default;
+    }
+
+    &.fg-total {
+      background: var(--td-brand-color-light);
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .fg-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .fg-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 13px;
+  }
+}
+
+/* 容需量 / 功率因数 */
+.capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+
+  .cap-item {
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .cap-label {
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+    }
+
+    .cap-value {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+/* 编辑抽屉 */
+.edit-drawer-body {
+  padding: 8px 2px 24px;
+}
+
+.edit-field {
+  margin-bottom: 16px;
+
+  .edit-label {
+    display: block;
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    margin-bottom: 6px;
+  }
+
+  .edit-note {
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    line-height: 1.5;
+  }
 }
 </style>

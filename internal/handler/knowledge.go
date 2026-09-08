@@ -27,6 +27,7 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 // KnowledgeHandler processes HTTP requests related to knowledge resources
@@ -40,6 +41,7 @@ type KnowledgeHandler struct {
 	spanRepo          repository.KnowledgeSpanRepository
 	chunkService      interfaces.ChunkService
 	modelService      interfaces.ModelService
+	db                *gorm.DB
 }
 
 // NewKnowledgeHandler creates a new knowledge handler instance
@@ -53,6 +55,7 @@ func NewKnowledgeHandler(
 	spanRepo repository.KnowledgeSpanRepository,
 	chunkService interfaces.ChunkService,
 	modelService interfaces.ModelService,
+	db *gorm.DB,
 ) *KnowledgeHandler {
 	return &KnowledgeHandler{
 		cfg:               cfg,
@@ -64,6 +67,7 @@ func NewKnowledgeHandler(
 		spanRepo:          spanRepo,
 		chunkService:      chunkService,
 		modelService:      modelService,
+		db:                db,
 	}
 }
 

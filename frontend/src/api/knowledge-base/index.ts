@@ -918,3 +918,20 @@ export function updateUtilityMeterRecord(id: string, payload: Record<string, unk
 export function deleteUtilityMeterRecord(id: string) {
   return del(`/api/v1/utilities/meter-records/${id}`);
 }
+
+/** 分时电价规则：尖峰平谷月份设定 + 各时段单价 */
+export function listUtilityTariffRules(category = 'electricity') {
+  return get(`/api/v1/utilities/tariff-rules?category=${category}`);
+}
+
+export function createUtilityTariffRule(category: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/utilities/tariff-rules?category=${category}`, payload);
+}
+
+export function updateUtilityTariffRule(id: string, category: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/tariff-rules/${id}?category=${category}`, payload);
+}
+
+export function deleteUtilityTariffRule(id: string, category = 'electricity') {
+  return del(`/api/v1/utilities/tariff-rules/${id}?category=${category}`);
+}

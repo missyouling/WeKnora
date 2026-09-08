@@ -58,84 +58,89 @@
             </div>
           </div>
           <div v-if="!loading && !displayRows.length" class="meter-empty">
-            <t-empty description="暂无数据" />
+            <t-icon name="search-error" size="40px" class="meter-empty-icon" />
+            <span class="meter-empty-text">暂无数据</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 编辑抽屉（可拖动调整宽度，宽度记忆） -->
-    <t-drawer
-      :visible="drawerVisible"
-      :header="drawerTitle"
-      :size="drawerWidth"
-      :footer="false"
-      :close-on-overlay-click="true"
-      @update:visible="(v: boolean) => (drawerVisible = v)"
-      @mousedown="onDrawerMouseDown"
-      @mousemove="onDrawerMouseMove"
-      @mouseup="onDrawerMouseUp"
-    >
-      <div class="meter-drawer-body">
-        <div class="setting-row">
-          <div class="setting-info">
-            <label>月份 <span class="required">*</span></label>
-            <p class="desc">格式 YYYY-MM，同类型同月份唯一</p>
+    <!-- 编辑抽屉（Teleport 到 body，避免 t-tabs 隐藏面板内渲染异常；可拖动调宽，宽度记忆） -->
+    <teleport to="body">
+      <t-drawer
+        :visible="drawerVisible"
+        :header="drawerTitle"
+        :size="drawerWidth"
+        :footer="false"
+        :close-on-overlay-click="true"
+        destroy-on-close
+        @close="onDrawerClose"
+        @update:visible="(v: boolean) => (drawerVisible = v)"
+        @mousedown="onDrawerMouseDown"
+        @mousemove="onDrawerMouseMove"
+        @mouseup="onDrawerMouseUp"
+      >
+        <div class="meter-drawer-body">
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>月份 <span class="required">*</span></label>
+              <p class="desc">格式 YYYY-MM，同类型同月份唯一</p>
+            </div>
+            <div class="setting-control">
+              <t-date-picker v-model="form.month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
+            </div>
           </div>
-          <div class="setting-control">
-            <t-date-picker v-model="form.month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>表计明细</label>
+              <p class="desc">用量 = 期末 − 期初，金额 = 用量 × 单价，自动汇总</p>
+            </div>
+            <div class="setting-control">
+              <div v-for="(it, idx) in form.items" :key="idx" class="meter-item-row">
+                <t-input v-model="it.meter_name" placeholder="表名" class="meter-name-input" />
+                <t-input v-model="it.start_reading" type="number" placeholder="期初" class="meter-num-input" @change="recalc" />
+                <t-input v-model="it.end_reading" type="number" placeholder="期末" class="meter-num-input" @change="recalc" />
+                <t-input v-model="it.unit_price" type="number" placeholder="单价" class="meter-num-input" @change="recalc" />
+                <span class="meter-calc">{{ fmtNum(usageOf(it)) }}</span>
+                <span class="meter-calc">{{ fmtMoney(amountOf(it)) }}</span>
+                <t-button variant="text" size="small" @click="removeItem(idx)">
+                  <template #icon><t-icon name="delete" size="16px" /></template>
+                </t-button>
+              </div>
+              <div class="meter-item-actions">
+                <t-button variant="text" size="small" @click="addItem">
+                  <template #icon><t-icon name="add" size="16px" /></template>
+                  添加表计
+                </t-button>
+              </div>
+              <div class="meter-totals">
+                <span>表计 {{ form.items.length }} 个</span>
+                <span>总用量 {{ fmtNum(formTotalUsage) }}</span>
+                <span>总金额 {{ fmtMoney(formTotalAmount) }} 元</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>备注</label>
+            </div>
+            <div class="setting-control">
+              <t-textarea v-model="form.remark" :maxlength="500" placeholder="选填" />
+            </div>
           </div>
         </div>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <label>表计明细</label>
-            <p class="desc">用量 = 期末 − 期初，金额 = 用量 × 单价，自动汇总</p>
-          </div>
-          <div class="setting-control">
-            <div v-for="(it, idx) in form.items" :key="idx" class="meter-item-row">
-              <t-input v-model="it.meter_name" placeholder="表名" class="meter-name-input" />
-              <t-input v-model="it.start_reading" type="number" placeholder="期初" class="meter-num-input" @change="recalc" />
-              <t-input v-model="it.end_reading" type="number" placeholder="期末" class="meter-num-input" @change="recalc" />
-              <t-input v-model="it.unit_price" type="number" placeholder="单价" class="meter-num-input" @change="recalc" />
-              <span class="meter-calc">{{ fmtNum(usageOf(it)) }}</span>
-              <span class="meter-calc">{{ fmtMoney(amountOf(it)) }}</span>
-              <t-button variant="text" size="small" @click="removeItem(idx)">
-                <template #icon><t-icon name="delete" size="16px" /></template>
-              </t-button>
-            </div>
-            <div class="meter-item-actions">
-              <t-button variant="text" size="small" @click="addItem">
-                <template #icon><t-icon name="add" size="16px" /></template>
-                添加表计
-              </t-button>
-            </div>
-            <div class="meter-totals">
-              <span>表计 {{ form.items.length }} 个</span>
-              <span>总用量 {{ fmtNum(formTotalUsage) }}</span>
-              <span>总金额 {{ fmtMoney(formTotalAmount) }} 元</span>
-            </div>
-          </div>
+        <div class="meter-drawer-footer">
+          <t-button variant="outline" size="small" @click="drawerVisible = false">取消</t-button>
+          <t-button theme="primary" size="small" :loading="saving" @click="save">
+            <template #icon><t-icon name="check" size="14px" /></template>
+            保存
+          </t-button>
         </div>
-
-        <div class="setting-row">
-          <div class="setting-info">
-            <label>备注</label>
-          </div>
-          <div class="setting-control">
-            <t-textarea v-model="form.remark" :maxlength="500" placeholder="选填" />
-          </div>
-        </div>
-      </div>
-
-      <div class="meter-drawer-footer">
-        <t-button variant="outline" size="small" @click="drawerVisible = false">取消</t-button>
-        <t-button theme="primary" size="small" :loading="saving" @click="save">
-          <template #icon><t-icon name="check" size="14px" /></template>
-          保存
-        </t-button>
-      </div>
-    </t-drawer>
+      </t-drawer>
+    </teleport>
   </div>
 </template>
 
@@ -280,6 +285,10 @@ const openCreate = () => {
   drawerVisible.value = true
 }
 
+const onDrawerClose = () => {
+  drawerVisible.value = false
+}
+
 const openEdit = (row: any) => {
   editingId.value = row.id
   form.value = {
@@ -385,6 +394,103 @@ onMounted(() => {
   padding-top: 4px;
 }
 
+/* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
+.doc-list-view {
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 9px;
+  overflow: visible;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.doc-list-header,
+.doc-list-row {
+  display: grid;
+  align-items: center;
+  padding: 0 16px;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.doc-list-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 40px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border-bottom: 1px solid var(--td-component-stroke);
+  border-radius: 8px 8px 0 0;
+
+  .cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.doc-list-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-list-row {
+  position: relative;
+  min-height: 52px;
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  border-bottom: 1px solid var(--td-component-stroke);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &:hover {
+    background: var(--td-bg-color-secondarycontainer);
+  }
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &:first-child {
+    padding-left: 0;
+  }
+
+  &:last-child {
+    padding-right: 0;
+  }
+}
+
+.cell-actions {
+  justify-content: flex-end;
+}
+
+.row-mono,
+.row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-mono {
+  font-family: var(--app-font-family);
+}
+
 .meter-summary-row {
   display: flex;
   gap: 24px;
@@ -403,6 +509,20 @@ onMounted(() => {
 
 .meter-empty {
   padding: 40px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--td-text-color-placeholder);
+
+  .meter-empty-icon {
+    color: var(--td-text-color-placeholder);
+  }
+
+  .meter-empty-text {
+    font-size: 13px;
+    color: var(--td-text-color-placeholder);
+  }
 }
 
 .meter-drawer-body {

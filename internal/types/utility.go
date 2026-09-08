@@ -143,3 +143,24 @@ type UtilityBillListResult struct {
 	Page     int                 `json:"page"`
 	PageSize int                 `json:"page_size"`
 }
+
+// UtilityTariffRule 分时电价规则：按月份配置尖峰平谷单价，
+// 零售交易电费 = 时段电量 × 对应时段单价（不同月份可不同计价方式）。
+type UtilityTariffRule struct {
+	ID           string     `gorm:"primaryKey" json:"id"`
+	TenantID     int64      `gorm:"index" json:"tenant_id"`
+	Category     string     `gorm:"index" json:"category"` // electricity | water | gas
+	Name         string     `json:"name"`                  // 规则名称，如「7-8月尖峰分时」
+	Months       string     `json:"months"`                // 适用月份，逗号分隔 "7,8"；空串表示不限定
+	DeepPeakRate float64    `gorm:"numeric(18,4)" json:"deep_peak_rate"`
+	PeakRate     float64    `gorm:"numeric(18,4)" json:"peak_rate"`
+	FlatRate     float64    `gorm:"numeric(18,4)" json:"flat_rate"`
+	ValleyRate   float64    `gorm:"numeric(18,4)" json:"valley_rate"`
+	IsDefault    bool       `gorm:"column:is_default" json:"is_default"` // 无匹配月份时兜底
+	SortOrder    int        `json:"sort_order"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	DeletedAt    *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (UtilityTariffRule) TableName() string { return "utility_tariff_rules" }

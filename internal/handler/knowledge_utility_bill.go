@@ -174,6 +174,21 @@ func (h *KnowledgeHandler) ExtractUtilityBill(c *gin.Context) {
 	extracted := merged
 	service.NormalizeUtilityBillExtractionResult(extracted)
 
+	// 电费金额重算：提取只填基础要素（计费电量/计费标准），
+	// 子项电费按 电量×标准 计算，零售交易电费按分时电价规则单价计算。
+	if h.db != nil {
+		var tariffRules []types.UtilityTariffRule
+		if rerr := h.db.WithContext(effCtx).
+			Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", effectiveTenantID, "electricity").
+			Order("is_default DESC, sort_order ASC").Find(&tariffRules).Error; rerr == nil {
+			for i := range extracted.Records {
+				service.RecalculateUtilityBillFees(&extracted.Records[i], tariffRules)
+			}
+		} else {
+			logger.Warnf(ctx, "load utility tariff rules failed (fees use extracted values): %v", rerr)
+		}
+	}
+
 	meta := utilityBillCustomMetadata{
 		Kind:          extracted.Kind,
 		Records:       extracted.Records,

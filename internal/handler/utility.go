@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -333,6 +334,187 @@ func (h *UtilityHandler) DeleteUtilityMeterRecord(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "记录已删除"})
+}
+
+// ---------------------------------------------------------------------------
+// 分时电价规则（尖峰平谷月份设定 + 各时段单价）
+// ---------------------------------------------------------------------------
+
+// ListUtilityTariffRules godoc
+// @Summary      分时电价规则列表
+// @Description  按分类返回分时电价规则（默认返回空数组）。
+// @Router       /utilities/tariff-rules [get]
+func (h *UtilityHandler) ListUtilityTariffRules(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	var rules []types.UtilityTariffRule
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Order("is_default DESC, sort_order ASC, created_at ASC").
+		Find(&rules).Error; err != nil {
+		logger.Errorf(ctx, "list utility tariff rules failed: %v", err)
+		c.Error(errors.NewInternalServerError("list tariff rules failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rules})
+}
+
+func normalizeTariffRule(r *types.UtilityTariffRule, category string, tenantID uint64) error {
+	r.Category = category
+	r.Name = strings.TrimSpace(r.Name)
+	r.Months = strings.TrimSpace(r.Months)
+	// 校验月份：1-12 逗号分隔
+	if r.Months != "" {
+		for _, m := range strings.Split(r.Months, ",") {
+			m = strings.TrimSpace(m)
+			if m == "" {
+				continue
+			}
+			mm := 0
+			fmt.Sscanf(m, "%d", &mm)
+			if mm < 1 || mm > 12 {
+				return errors.NewBadRequestError("months 须为 1-12 的逗号分隔数字")
+			}
+		}
+	}
+	if r.DeepPeakRate < 0 || r.PeakRate < 0 || r.FlatRate < 0 || r.ValleyRate < 0 {
+		return errors.NewBadRequestError("单价不能为负数")
+	}
+	if r.Name == "" {
+		r.Name = "分时电价规则"
+	}
+	return nil
+}
+
+// CreateUtilityTariffRule godoc
+// @Summary      新增分时电价规则
+// @Description  保存尖峰平谷月份设定与各时段单价；is_default 为兜底规则（同分类唯一）。
+// @Router       /utilities/tariff-rules [post]
+func (h *UtilityHandler) CreateUtilityTariffRule(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	var req types.UtilityTariffRule
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if err := normalizeTariffRule(&req, category, tenantID); err != nil {
+		c.Error(err)
+		return
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	req.DeletedAt = nil
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if req.IsDefault {
+			if err := tx.Model(&types.UtilityTariffRule{}).
+				Where("tenant_id = ? AND category = ? AND is_default = ? AND deleted_at IS NULL", tenantID, category, true).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&req).Error
+	})
+	if err != nil {
+		logger.Errorf(ctx, "create utility tariff rule failed: %v", err)
+		c.Error(errors.NewInternalServerError("create tariff rule failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateUtilityTariffRule godoc
+// @Summary      更新分时电价规则
+// @Router       /utilities/tariff-rules/:id [put]
+func (h *UtilityHandler) UpdateUtilityTariffRule(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.UtilityTariffRule
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if err := normalizeTariffRule(&req, category, tenantID); err != nil {
+		c.Error(err)
+		return
+	}
+	now := timeNowUTC()
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if req.IsDefault {
+			if err := tx.Model(&types.UtilityTariffRule{}).
+				Where("tenant_id = ? AND category = ? AND is_default = ? AND id <> ? AND deleted_at IS NULL", tenantID, category, true, id).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		res := tx.Model(&types.UtilityTariffRule{}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			Updates(map[string]interface{}{
+				"name":            req.Name,
+				"months":          req.Months,
+				"deep_peak_rate":  req.DeepPeakRate,
+				"peak_rate":       req.PeakRate,
+				"flat_rate":       req.FlatRate,
+				"valley_rate":     req.ValleyRate,
+				"is_default":      req.IsDefault,
+				"sort_order":      req.SortOrder,
+				"updated_at":      now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errors.NewNotFoundError("规则不存在")
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Errorf(ctx, "update utility tariff rule failed: %v", err)
+		c.Error(errors.NewInternalServerError("update tariff rule failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "规则已更新"})
+}
+
+// DeleteUtilityTariffRule godoc
+// @Summary      删除分时电价规则
+// @Router       /utilities/tariff-rules/:id [delete]
+func (h *UtilityHandler) DeleteUtilityTariffRule(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	res := h.db.WithContext(ctx).Model(&types.UtilityTariffRule{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete utility tariff rule failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete tariff rule failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("规则不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "规则已删除"})
 }
 
 // ---------------------------------------------------------------------------

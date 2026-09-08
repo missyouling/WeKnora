@@ -47,6 +47,42 @@
           <div v-if="!fields.length" class="us-empty">暂无字段配置</div>
         </div>
 
+        <!-- 分时电价（仅电费） -->
+        <div v-if="props.category === 'electricity'" class="us-section">
+          <div class="us-section-head">
+            <span class="us-section-title">分时电价</span>
+            <span class="us-state">零售交易电费按规则单价计算</span>
+            <span class="us-spacer" />
+            <t-button variant="outline" size="small" @click="addTariff">
+              <template #icon><t-icon name="add" size="14px" /></template>
+              新增规则
+            </t-button>
+          </div>
+          <div class="us-hint">按月份设定尖峰平谷单价，零售交易电费 = 时段电量 × 对应单价。不同月份可不同计价，如 7、8 月尖峰与峰分开计价，其它月份尖峰与峰同价（填相同值）；无匹配月份时使用默认规则。</div>
+          <div v-if="!tariffs.length" class="us-empty">暂无分时电价规则，零售交易电费按账单提取标准计算</div>
+          <div v-for="(t, i) in tariffs" :key="t.id" class="us-tariff-row">
+            <div class="us-tariff-main">
+              <t-input v-model="t.name" placeholder="规则名" size="small" class="us-tariff-name" />
+              <t-select v-model="t.monthsArr" multiple size="small" class="us-tariff-months" :options="MONTH_OPTS"
+                placeholder="适用月份" @change="syncTariffMonths(i)" />
+              <div class="us-tariff-rates">
+                <label>尖</label><t-input v-model="t.deep_peak_rate" type="number" size="small" class="us-rate-input" />
+                <label>峰</label><t-input v-model="t.peak_rate" type="number" size="small" class="us-rate-input" />
+                <label>平</label><t-input v-model="t.flat_rate" type="number" size="small" class="us-rate-input" />
+                <label>谷</label><t-input v-model="t.valley_rate" type="number" size="small" class="us-rate-input" />
+              </div>
+            </div>
+            <div class="us-tariff-side">
+              <t-tooltip content="无匹配月份时兜底">
+                <t-switch v-model="t.is_default" size="small" />
+              </t-tooltip>
+              <t-button variant="text" size="small" shape="square" @click="removeTariff(i)">
+                <template #icon><t-icon name="delete" size="15px" /></template>
+              </t-button>
+            </div>
+          </div>
+        </div>
+
         <!-- 包含判定 -->
         <div class="us-section">
           <div class="us-section-head">
@@ -98,6 +134,10 @@ import {
   saveUtilityFieldConfigs,
   getRecognitionConfig,
   saveRecognitionConfig,
+  listUtilityTariffRules,
+  createUtilityTariffRule,
+  updateUtilityTariffRule,
+  deleteUtilityTariffRule,
 } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -124,12 +164,27 @@ const LOGIC_OPTS = [
   { label: '全部（AND）', value: 'AND' },
   { label: '任一（OR）', value: 'OR' },
 ]
+const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ label: `${i + 1}月`, value: String(i + 1) }))
 
 interface FieldItem { field_key: string; label: string; field_type: string; default_visible: boolean; sort_order: number; is_custom: boolean }
 interface IncludeRule { id: string; name: string; match_type: 'keyword' | 'regex'; keywords?: string[]; logic?: 'AND' | 'OR'; regex?: string; enabled: boolean }
+interface TariffRule {
+  id: string
+  name: string
+  months: string
+  monthsArr: string[]
+  deep_peak_rate: string | number
+  peak_rate: string | number
+  flat_rate: string | number
+  valley_rate: string | number
+  is_default: boolean
+  sort_order: number
+  _new?: boolean
+}
 
 const fields = ref<FieldItem[]>([])
 const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: true, include_rules: [] })
+const tariffs = ref<TariffRule[]>([])
 const keywordsText = ref<string[]>([])
 const saving = ref(false)
 
@@ -176,6 +231,23 @@ const addIncludeRule = () => {
   keywordsText.value.push('')
 }
 
+const syncTariffMonths = (i: number) => {
+  tariffs.value[i].months = (tariffs.value[i].monthsArr || []).join(',')
+}
+const addTariff = () => {
+  tariffs.value.push({
+    id: uid(), name: '', months: '', monthsArr: [], deep_peak_rate: '', peak_rate: '', flat_rate: '', valley_rate: '',
+    is_default: tariffs.value.length === 0, sort_order: tariffs.value.length, _new: true,
+  })
+}
+const removeTariff = (i: number) => {
+  const t = tariffs.value[i]
+  if (!t._new && t.id) {
+    deleteUtilityTariffRule(t.id, 'electricity').catch(() => { /* 保存流程兜底 */ })
+  }
+  tariffs.value.splice(i, 1)
+}
+
 const addField = () => {
   let n = 1
   const keys = new Set(fields.value.map(f => f.field_key))
@@ -201,6 +273,22 @@ const refreshOrder = () => {
   fields.value.forEach((f, i) => { f.sort_order = i })
 }
 
+// 电费内置字段（后端配置缺失时合并补全，保证新默认字段可在设置中管理）
+const BUILTIN_ELECTRICITY_FIELDS: { key: string; label: string; type: string; default: boolean }[] = [
+  { key: 'bill_period_start', label: '账单周期', type: 'date', default: true },
+  { key: 'total_kwh', label: '本期电量', type: 'number', default: true },
+  { key: 'total_amount', label: '本期电费', type: 'amount', default: true },
+  { key: 'market_amount', label: '市场化购电费', type: 'amount', default: true },
+  { key: 'line_amount', label: '上网环节线损费', type: 'amount', default: true },
+  { key: 'trans_amount', label: '输配电费', type: 'amount', default: true },
+  { key: 'sys_amount', label: '系统运行费', type: 'amount', default: true },
+  { key: 'govI_amount', label: '政府性基金及附加（工商业）', type: 'amount', default: true },
+  { key: 'catalog_amount', label: '目录电费', type: 'amount', default: true },
+  { key: 'govR_amount', label: '政府性基金及附加（居民）', type: 'amount', default: true },
+  { key: 'capacity_fee', label: '输配容（需）量电费', type: 'amount', default: true },
+  { key: 'pf_adjust_amount', label: '功率因素调整电费', type: 'amount', default: true },
+]
+
 const load = async () => {
   try {
     const res: any = await listUtilityFieldConfigs(props.category)
@@ -209,8 +297,19 @@ const load = async () => {
       field_key: c.field_key, label: c.label, field_type: c.field_type || 'text',
       default_visible: !!c.default_visible, sort_order: Number(c.sort_order) || 0, is_custom: !!c.is_custom,
     }))
-    // 内置字段（非 custom）不允许删除
-  } catch {
+    // 电费：合并后端缺失的内置字段，保证新默认字段可见可配
+    if (props.category === 'electricity') {
+      const keys = new Set(fields.value.map(f => f.field_key))
+      const missing = BUILTIN_ELECTRICITY_FIELDS.filter(f => !keys.has(f.key))
+      if (missing.length) {
+        const maxOrder = fields.value.reduce((m, f) => Math.max(m, f.sort_order || 0), 0)
+        fields.value.push(...missing.map((f, i) => ({
+          field_key: f.key, label: f.label, field_type: f.type,
+          default_visible: f.default, sort_order: maxOrder + i + 1, is_custom: false,
+        })))
+      }
+    }
+  } catch (e: any) {
     fields.value = []
   }
   try {
@@ -231,6 +330,21 @@ const load = async () => {
   } catch {
     cfg.value = { enabled: true, include_rules: [] }
     keywordsText.value = []
+  }
+  if (props.category === 'electricity') {
+    try {
+      const res: any = await listUtilityTariffRules('electricity')
+      const list = res?.data || res
+      tariffs.value = (Array.isArray(list) ? list : []).map((t: any) => ({
+        id: t.id, name: t.name || '', months: t.months || '', monthsArr: (t.months || '').split(',').filter(Boolean),
+        deep_peak_rate: t.deep_peak_rate ?? '', peak_rate: t.peak_rate ?? '', flat_rate: t.flat_rate ?? '',
+        valley_rate: t.valley_rate ?? '', is_default: !!t.is_default, sort_order: Number(t.sort_order) || 0,
+      }))
+    } catch {
+      tariffs.value = []
+    }
+  } else {
+    tariffs.value = []
   }
 }
 
@@ -257,6 +371,21 @@ const onSave = async () => {
         logic: r.logic, regex: r.regex, enabled: r.enabled,
       })),
     })
+    if (props.category === 'electricity') {
+      const toNum = (v: string | number) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
+      for (const t of tariffs.value) {
+        const payload: Record<string, unknown> = {
+          name: t.name || '分时电价规则', months: t.months, deep_peak_rate: toNum(t.deep_peak_rate),
+          peak_rate: toNum(t.peak_rate), flat_rate: toNum(t.flat_rate), valley_rate: toNum(t.valley_rate),
+          is_default: !!t.is_default, sort_order: t.sort_order,
+        }
+        if (t._new || !t.id) {
+          await createUtilityTariffRule('electricity', payload)
+        } else {
+          await updateUtilityTariffRule(t.id, 'electricity', payload)
+        }
+      }
+    }
     MessagePlugin.success('设置已保存')
     emit('changed')
     onClose()
@@ -388,6 +517,46 @@ const onSave = async () => {
     display: flex;
     gap: 4px;
     align-items: center;
+  }
+}
+
+.us-tariff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--td-component-stroke);
+
+  &:last-child { border-bottom: none; }
+
+  .us-tariff-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .us-tariff-name { width: 110px; }
+    .us-tariff-months { width: 170px; }
+
+    .us-tariff-rates {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      label {
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+      }
+
+      .us-rate-input { width: 86px; }
+    }
+  }
+
+  .us-tariff-side {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 }
 
