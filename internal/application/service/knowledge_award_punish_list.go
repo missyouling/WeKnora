@@ -119,7 +119,6 @@ func (s *knowledgeService) ListAwardPunishRecords(ctx context.Context, kbID stri
 					Person:         r.Person,
 					Dept:           r.Dept,
 					Position:       r.Position,
-					Amount:         r.Amount,
 					Measure:        r.Measure,
 					Basis:          r.Basis,
 					Signer:         r.Signer,
@@ -233,7 +232,7 @@ func awardPunishDateInRange(date, from, to string) bool {
 func awardPunishRecordMatchKeyword(r types.AwardPunishRecord, kw string) bool {
 	fields := []string{
 		r.ApNo, r.ApTitle, r.ApType, r.Person, r.Dept, r.Position,
-		r.Amount, r.Measure, r.Basis, r.Signer, r.SignDate, r.EffectiveDate,
+		r.Measure, r.Basis, r.Signer, r.SignDate, r.EffectiveDate,
 		r.Remark, r.Summary,
 		r.FileName, r.KnowledgeTitle, r.ExtractStatus, r.ExtractError,
 	}

@@ -4,7 +4,7 @@
     <div class="header">
       <div class="header-title">
         <h2>奖惩管理</h2>
-        <p class="header-subtitle">上传奖惩文件，自动识别文号、类型、双方主体与金额等字段并归档，支持查询、编辑、打印、下载与删除</p>
+        <p class="header-subtitle">上传奖惩文件，自动识别文号、类型、当事人与措施等字段并归档，支持查询、编辑、打印、下载与删除</p>
       </div>
       <div class="header-actions">
         <t-button v-if="kbId" theme="primary" @click="triggerUpload">
@@ -111,88 +111,75 @@
                 <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
                   :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
               </div>
-              <!-- 文号（奖惩一份文件一份，不显示页码标签） -->
-              <div v-if="colVisible('apNo')" class="cell cell-apNo">
-                <span class="row-awardPunish-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
-              </div>
-              <!-- 标题（待补录占位行回退显示文件名） -->
-              <div v-if="colVisible('apTitle')" class="cell cell-apTitle">
-                <span class="row-text" :title="row.apTitle || row.fileName">{{ row.apTitle || row.fileName }}</span>
-              </div>
-              <!-- 奖惩类型 -->
-              <div v-if="colVisible('apType')" class="cell cell-apType">
-                <span class="row-text" :title="row.apType">{{ row.apType }}</span>
-              </div>
-              <!-- 岗位 -->
-              <div v-if="colVisible('position')" class="cell cell-position">
-                <span class="row-text">{{ row.position }}</span>
-              </div>
-              <!-- 金额 -->
-              <div v-if="colVisible('amount')" class="cell cell-amount">
-                <span class="row-text">{{ row.amount }}</span>
-              </div>
-              <!-- 签发日期 -->
-              <div v-if="colVisible('signDate')" class="cell cell-signDate">
-                <span class="row-mono">{{ row.signDate }}</span>
-              </div>
-              <!-- 生效日期 -->
-              <div v-if="colVisible('effectiveDate')" class="cell cell-effectiveDate">
-                <span class="row-mono">{{ row.effectiveDate }}</span>
-              </div>
-              <!-- 依据 -->
-              <div v-if="colVisible('basis')" class="cell cell-basis">
-                <span class="row-text" :title="row.basis">{{ row.basis }}</span>
-              </div>
-              <!-- 状态（提取进程，绿色 loading 动态） -->
-              <div v-if="colVisible('extractStatus')" class="cell cell-extractStatus">
-                <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
-                  variant="light-outline" class="row-status-tag">
-                  <template v-if="statusOf(row).icon" #icon>
-                    <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
-                  </template>
-                  {{ statusOf(row).label }}
-                </t-tag>
-                <span v-else class="row-muted">--</span>
-              </div>
-              <!-- 标签（显示 1 个 + N） -->
-              <div v-if="colVisible('tags')" class="cell cell-tags" @click.stop>
-                <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
-                  placement="top">
-                  <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                    <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
-                      {{ rowTags(row)[0].name }}
-                    </t-tag>
-                    <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
-                  </div>
-                </t-tooltip>
-                <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                  <span class="row-tag-add">+ 标签</span>
-                </span>
-              </div>
-              <!-- 部门 -->
-              <div v-if="colVisible('dept')" class="cell cell-dept">
-                <span class="row-text" :title="row.dept">{{ row.dept }}</span>
-              </div>
-              <!-- 措施 -->
-              <div v-if="colVisible('measure')" class="cell cell-measure">
-                <span class="row-text">{{ row.measure }}</span>
-              </div>
-              <!-- 当事人 -->
-              <div v-if="colVisible('person')" class="cell cell-person">
-                <span class="row-text" :title="row.person">{{ row.person }}</span>
-              </div>
-              <!-- 摘要 -->
-              <div v-if="colVisible('summary')" class="cell cell-summary">
-                <span class="row-text" :title="row.summary">{{ row.summary }}</span>
-              </div>
-              <!-- 签发人 -->
-              <div v-if="colVisible('signer')" class="cell cell-signer">
-                <span class="row-text">{{ row.signer }}</span>
-              </div>
-              <!-- 备注 -->
-              <div v-if="colVisible('remark')" class="cell cell-remark">
-                <span class="row-text" :title="row.remark">{{ row.remark }}</span>
-              </div>
+                            <!-- 数据列（与表头同源 v-for，顺序自动对齐） -->
+              <template v-for="col in visibleColDefs" :key="col.key">
+                <div v-if="col.key === 'apNo'" class="cell cell-apNo">
+                  <span class="row-awardPunish-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
+                </div>
+                <div v-else-if="col.key === 'apTitle'" class="cell cell-apTitle">
+                  <span class="row-text" :title="row.apTitle || row.fileName">{{ row.apTitle || row.fileName }}</span>
+                </div>
+                <div v-else-if="col.key === 'apType'" class="cell cell-apType">
+                  <span class="row-text" :title="row.apType">{{ row.apType }}</span>
+                </div>
+                <div v-else-if="col.key === 'person'" class="cell cell-person">
+                  <span class="row-text" :title="row.person">{{ row.person }}</span>
+                </div>
+                <div v-else-if="col.key === 'dept'" class="cell cell-dept">
+                  <span class="row-text" :title="row.dept">{{ row.dept }}</span>
+                </div>
+                <div v-else-if="col.key === 'position'" class="cell cell-position">
+                  <span class="row-text">{{ row.position }}</span>
+                </div>
+                <div v-else-if="col.key === 'signDate'" class="cell cell-signDate">
+                  <span class="row-mono">{{ row.signDate }}</span>
+                </div>
+                <div v-else-if="col.key === 'signer'" class="cell cell-signer">
+                  <span class="row-text">{{ row.signer }}</span>
+                </div>
+                <div v-else-if="col.key === 'measure'" class="cell cell-measure">
+                  <span class="row-text">{{ row.measure }}</span>
+                </div>
+                <div v-else-if="col.key === 'summary'" class="cell cell-summary">
+                  <span class="row-text" :title="row.summary">{{ row.summary }}</span>
+                </div>
+                <div v-else-if="col.key === 'extractStatus'" class="cell cell-extractStatus">
+                  <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
+                    variant="light-outline" class="row-status-tag">
+                    <template v-if="statusOf(row).icon" #icon>
+                      <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
+                    </template>
+                    {{ statusOf(row).label }}
+                  </t-tag>
+                  <span v-else class="row-muted">--</span>
+                </div>
+                <div v-else-if="col.key === 'tags'" class="cell cell-tags" @click.stop>
+                  <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
+                    placement="top">
+                    <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
+                      <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                        {{ rowTags(row)[0].name }}
+                      </t-tag>
+                      <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
+                    </div>
+                  </t-tooltip>
+                  <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
+                    <span class="row-tag-add">+ 标签</span>
+                  </span>
+                </div>
+                <div v-else-if="col.key === 'basis'" class="cell cell-basis">
+                  <span class="row-text" :title="row.basis">{{ row.basis }}</span>
+                </div>
+                <div v-else-if="col.key === 'effectiveDate'" class="cell cell-effectiveDate">
+                  <span class="row-mono">{{ row.effectiveDate }}</span>
+                </div>
+                <div v-else-if="col.key === 'remark'" class="cell cell-remark">
+                  <span class="row-text" :title="row.remark">{{ row.remark }}</span>
+                </div>
+                <div v-else-if="col.key === 'fileName'" class="cell cell-fileName">
+                  <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+                </div>
+              </template>
               <!-- 文件名 -->
               <div v-if="colVisible('fileName')" class="cell cell-fileName">
                 <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
@@ -333,9 +320,6 @@
                   <t-form-item label="签发日期" label-width="110px">
                     <t-date-picker v-model="editForm.sign_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
                       allow-input style="width: 100%" />
-                  </t-form-item>
-                  <t-form-item label="金额" label-width="110px">
-                    <t-input v-model="editForm.amount" placeholder="" />
                   </t-form-item>
                   <t-form-item label="措施" label-width="110px">
                     <t-input v-model="editForm.measure" placeholder="" />
@@ -494,20 +478,19 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: 'apType', label: '奖惩类型', default: true, w: '1fr' },
   { key: 'person', label: '当事人', default: true, w: '1fr' },
   { key: 'dept', label: '部门', default: true, w: '1.3fr' },
+  { key: 'position', label: '岗位', default: true, w: '0.7fr' },
   { key: 'signDate', label: '签发日期', default: true, w: '1.1fr' },
+  { key: 'signer', label: '签发人', default: true, w: '0.8fr' },
+  { key: 'measure', label: '措施', default: true, w: '1.2fr' },
+  { key: 'summary', label: '摘要', default: true, w: '2fr' },
   { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
-  { key: 'position', label: '岗位', default: false, w: '0.7fr' },
-  { key: 'amount', label: '金额', default: false, w: '0.7fr' },
-  { key: 'measure', label: '措施', default: false, w: '0.8fr' },
   { key: 'basis', label: '依据', default: false, w: '1.6fr' },
-  { key: 'signer', label: '签发人', default: false, w: '0.8fr' },
   { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
   { key: 'remark', label: '备注', default: false, w: '1.4fr' },
-  { key: 'summary', label: '摘要', default: false, w: '2fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
-const COLUMN_STORAGE_KEY = 'weknora-awardPunish-list-columns-v2'
+const COLUMN_STORAGE_KEY = 'weknora-awardPunish-list-columns-v3'
 
 const kbId = ref('')
 const loading = ref(true)
@@ -534,7 +517,6 @@ interface AwardPunishItem {
   dept?: string
   position?: string
   sign_date?: string
-  amount?: string
   measure?: string
   basis?: string
   effective_date?: string
@@ -562,7 +544,6 @@ interface AwardPunishRow extends Record<string, any> {
   dept?: string
   position?: string
   signDate?: string
-  amount?: string
   measure?: string
   basis?: string
   effectiveDate?: string
@@ -876,7 +857,6 @@ const mapAwardPunishRecord = (r: any): AwardPunishRow => ({
   dept: r.dept || '',
   position: r.position || '',
   signDate: r.sign_date || '',
-  amount: r.amount || '',
   measure: r.measure || '',
   basis: r.basis || '',
   effectiveDate: r.effective_date || '',
@@ -928,7 +908,6 @@ const parseCustomMetadata = (item: KnowledgeItem): AwardPunishRow[] => {
     dept: ct.dept || '',
     position: ct.position || '',
     signDate: ct.sign_date || '',
-    amount: ct.amount || '',
     measure: ct.measure || '',
     basis: ct.basis || '',
     effectiveDate: ct.effective_date || '',
@@ -946,7 +925,7 @@ const numOrUndef = (v: any): number | undefined => {
   return Number.isFinite(n) ? n : undefined
 }
 
-// 过滤/搜索/去重已由后端奖惩级接口完成，前端直接使用返回的分金额据；
+// 过滤/搜索/去重已由后端奖惩级接口完成，前端直接使用返回的分页数据；
 // 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
 const pendingRows = computed<AwardPunishRow[]>(() => pendingFiles.value.map((k) => {
   const ps = k.parse_status || ''
@@ -1279,8 +1258,7 @@ const fillEditForm = () => {
     dept: r.dept || '',
     position: r.position || '',
     sign_date: r.signDate || '',
-    amount: r.amount || '',
-    measure: r.measure || '',
+      measure: r.measure || '',
     basis: r.basis || '',
     effective_date: r.effectiveDate || '',
     signer: r.signer || '',
@@ -1317,8 +1295,7 @@ const saveEditForm = async () => {
       dept: editForm.value.dept || '',
       position: editForm.value.position || '',
       sign_date: editForm.value.sign_date || '',
-      amount: editForm.value.amount || '',
-      measure: editForm.value.measure || '',
+        measure: editForm.value.measure || '',
       basis: editForm.value.basis || '',
       effective_date: editForm.value.effective_date || '',
       signer: editForm.value.signer || '',
@@ -1359,7 +1336,6 @@ const saveEditForm = async () => {
         dept: updated.dept,
         position: updated.position,
         signDate: updated.sign_date,
-        amount: updated.amount,
         measure: updated.measure,
         basis: updated.basis,
         effectiveDate: updated.effective_date,
@@ -1531,7 +1507,6 @@ const catalogValueOf = (row: AwardPunishRow, key: string): string => {
     case 'position': return row.position || ''
     case 'signDate': return row.signDate || ''
     case 'dept': return row.dept || ''
-    case 'amount': return row.amount || ''
     case 'measure': return row.measure || ''
     case 'basis': return row.basis || ''
     case 'effectiveDate': return row.effectiveDate || ''

@@ -12,7 +12,6 @@ type AwardPunishExtractionItem struct {
 	Person        string `json:"person"`          // 当事人
 	Dept          string `json:"dept"`            // 部门
 	Position      string `json:"position"`        // 岗位
-	Amount        string `json:"amount"`          // 金额（罚款/奖励金额，文本）
 	Measure       string `json:"measure"`         // 措施（书面警告/经济罚款/嘉奖等）
 	Basis         string `json:"basis"`           // 依据（制度依据原文）
 	Signer        string `json:"signer"`          // 签发人
@@ -34,7 +33,6 @@ type AwardPunishRecord struct {
 	Person        string   `json:"person"`
 	Dept          string   `json:"dept"`
 	Position      string   `json:"position"`
-	Amount        string   `json:"amount"`
 	Measure       string   `json:"measure"`
 	Basis         string   `json:"basis"`
 	Signer        string   `json:"signer"`
