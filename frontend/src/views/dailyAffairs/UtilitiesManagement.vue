@@ -109,11 +109,11 @@
                   <div class="cell cell-check"></div>
                   <div v-if="groupHeaderCols.plain" class="cell cell-group cell-group--plain" :style="{ gridColumn: `span ${groupHeaderCols.plain}` }"></div>
                   <div v-if="groupHeaderCols.industrial" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.industrial}` }">
-                    <span class="group-label">工商业电费</span>
+                    <span class="group-label">工商业用电</span>
                     <span class="group-count">{{ groupHeaderCols.industrial }}</span>
                   </div>
                   <div v-if="groupHeaderCols.residential" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.residential}` }">
-                    <span class="group-label">居民电费</span>
+                    <span class="group-label">居民用电</span>
                     <span class="group-count">{{ groupHeaderCols.residential }}</span>
                   </div>
                   <div class="cell cell-extractStatus"></div>
@@ -154,15 +154,19 @@
                         {{ statusOf(row).label }}
                       </t-tag>
                     </div>
-                    <div class="cell cell-tags">
-                      <t-tag v-for="(t, ti) in rowTags(row).slice(0, 2)" :key="ti" size="small" variant="light"
-                        theme="primary" class="row-tag">
-                        {{ t.name || t }}
-                      </t-tag>
-                      <t-tag v-if="rowTags(row).length > 2" size="small" variant="light" class="row-tag">+{{ rowTags(row).length - 2 }}</t-tag>
-                      <t-button v-if="rowTags(row).length" variant="text" size="small" class="row-tag-btn" @click.stop="openTagEdit(row)">
-                        <template #icon><t-icon name="edit-1" size="13px" /></template>
-                      </t-button>
+                    <div class="cell cell-tags" @click.stop>
+                      <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
+                        placement="top">
+                        <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
+                          <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                            {{ rowTags(row)[0].name }}
+                          </t-tag>
+                          <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
+                        </div>
+                      </t-tooltip>
+                      <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
+                        <span class="row-tag-add">+ 标签</span>
+                      </span>
                     </div>
                   </div>
                   <div v-if="listLoading" class="list-loading">
@@ -688,26 +692,27 @@ import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
-const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v3'
-const COLUMN_STORAGE_VERSION = 3
+const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v4'
+const COLUMN_STORAGE_VERSION = 4
 
 interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: 'industrial' | 'residential' }
 const FALLBACK_COLUMNS: ColDef[] = [
+  // 严格按用户表头设计：两个账单周期 → 独立列（无分组）
   { key: 'bill_period_start', label: '账单周期', fieldType: 'date', default: true, w: '1fr' },
-  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr' },
-  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr' },
-  // 工商业电费分组
+  { key: 'bill_period_range', label: '账单周期', fieldType: 'text', default: true, w: '1.6fr' },
+  { key: 'pf_adjust_amount', label: '功率因素调整电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  { key: 'capacity_fee', label: '输配容（需）量电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  // 工商业用电分组
+  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr', group: 'industrial' },
+  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
   { key: 'market_amount', label: '市场化购电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
   { key: 'line_amount', label: '上网环节线损费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
   { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
   { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
   { key: 'govI_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'industrial' },
-  // 居民电费分组
+  // 居民用电分组
   { key: 'catalog_amount', label: '目录电费', fieldType: 'amount', default: true, w: '1fr', group: 'residential' },
   { key: 'govR_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'residential' },
-  // 独立字段
-  { key: 'capacity_fee', label: '输配容（需）量电费', fieldType: 'amount', default: true, w: '1.2fr' },
-  { key: 'pf_adjust_amount', label: '功率因素调整电费', fieldType: 'amount', default: true, w: '1.2fr' },
   // 其它可选字段
   { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1fr' },
   { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
@@ -793,6 +798,13 @@ const loadFieldConfigs = async () => {
       // 后端配置缺内置字段时合并补全，保证新增默认字段可用
       const keys = new Set(fromServer.map((c: any) => c.key))
       const merged = [...fromServer, ...FALLBACK_COLUMNS.filter(f => !keys.has(f.key))]
+      // 严格按内置默认集排序（用户要求的列顺序），自定义字段排在最后
+      const orderMap = new Map(FALLBACK_COLUMNS.map((f, i) => [f.key, i]))
+      merged.sort((a: any, b: any) => {
+        const ia = orderMap.has(a.key) ? orderMap.get(a.key)! : FALLBACK_COLUMNS.length
+        const ib = orderMap.has(b.key) ? orderMap.get(b.key)! : FALLBACK_COLUMNS.length
+        return ia - ib
+      })
       columnDefs.value = merged
       // 默认列变更后重算可见列（保留用户已存储的偏好，仅当存储为空时使用新默认）
       visibleColKeys.value = loadStoredColumns()
@@ -801,6 +813,7 @@ const loadFieldConfigs = async () => {
 }
 function colWidth(key: string): string {
   if (['account_name', 'address', 'supply_unit'].includes(key)) return '1.6fr'
+  if (['bill_period_range'].includes(key)) return '1.6fr'
   if (['bill_period_start', 'bill_period_end', 'due_date', 'print_date', 'pf_adjust_amount', 'capacity_fee'].includes(key)) return '1.2fr'
   if (['govI_amount', 'govR_amount'].includes(key)) return '1.1fr'
   return '1fr'
@@ -1658,6 +1671,12 @@ const cellText = (row: Row, key: string): string => {
     if (!raw) return ''
     return String(raw).slice(0, 7)
   }
+  if (key === 'bill_period_range') {
+    const s = row.item?.bill_period_start
+    const e = row.item?.bill_period_end
+    if (!s && !e) return ''
+    return [String(s || '').slice(0, 10), String(e || '').slice(0, 10)].filter(Boolean).join('~')
+  }
   if (key === 'market_amount') return feeTextOf(row, it => String(it.category || '').includes('市场化购电'))
   if (key === 'line_amount') return feeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
   if (key === 'trans_amount') return feeTextOf(row, it => String(it.category || '').includes('输配电量'))
@@ -1721,6 +1740,130 @@ onBeforeUnmount(() => { stopPolling() })
   .header-actions {
     display: flex;
     gap: 8px;
+  }
+}
+
+/* ---- 筛选工具栏（与合同管理一致） ---- */
+.doc-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  &__leading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  .doc-filter-field {
+    display: flex;
+    align-items: center;
+
+    &--search {
+      min-width: 220px;
+    }
+
+    &--wide {
+      min-width: 260px;
+    }
+
+    .doc-search {
+      width: 220px;
+    }
+
+    .doc-date-range {
+      width: 260px;
+    }
+  }
+}
+
+/* ---- 字段筛选弹层 ---- */
+:global(.utility-field-popup) {
+  padding: 0 !important;
+}
+
+.field-popup-content {
+  width: 240px;
+  padding: 12px;
+  box-sizing: border-box;
+
+  .field-popup-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+
+    .field-popup-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+    }
+
+    .field-popup-actions {
+      display: flex;
+      gap: 0;
+    }
+  }
+
+  .field-popup-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+}
+
+/* ---- 标签列（与合同管理一致） ---- */
+.row-tag-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  cursor: pointer;
+
+  .row-tag {
+    max-width: 110px;
+
+    :deep(.t-tag__text) {
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+    }
+  }
+}
+
+.row-tag-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: 10px;
+}
+
+.row-tag-add {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 999px;
+  padding: 0 6px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: var(--td-brand-color);
+    color: var(--td-brand-color);
+    border-style: solid;
   }
 }
 

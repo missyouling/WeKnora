@@ -394,6 +394,46 @@ onMounted(() => {
   padding-top: 4px;
 }
 
+/* 筛选工具栏（与合同管理一致） */
+.doc-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  &__leading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  &__trailing {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .doc-filter-field {
+    display: flex;
+    align-items: center;
+
+    &--search {
+      min-width: 220px;
+    }
+
+    .doc-search {
+      width: 220px;
+    }
+
+    .doc-date-picker {
+      width: 140px;
+    }
+  }
+}
+
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
 .doc-list-view {
   width: 100%;
