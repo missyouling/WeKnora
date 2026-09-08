@@ -77,8 +77,8 @@
           </div>
         </div>
 
-        <!-- 水电气管理（占位） -->
-        <div class="da-card da-card--placeholder" @click="onPlaceholder('水电气管理')">
+        <!-- 水电气管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goUtilities">
           <div class="da-card-icon da-card-icon--utility">
             <t-icon name="dashboard" size="24px" />
           </div>
@@ -86,9 +86,9 @@
             <div class="da-card-title">
               <span>水电气管理</span>
             </div>
-            <p class="da-card-desc">水、电、燃气等能源费用登记与台账管理</p>
+            <p class="da-card-desc">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
             <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
+              <span class="da-card-link">进入管理</span>
               <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
@@ -169,6 +169,10 @@ const goRegulations = () => {
 
 const goAwardPunish = () => {
   router.push('/platform/daily-affairs/award-punish')
+}
+
+const goUtilities = () => {
+  router.push('/platform/daily-affairs/utilities')
 }
 
 const onPlaceholder = (name: string) => {

@@ -86,6 +86,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractRegulation)
 		// 奖惩字段提取 — 与发票提取同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractAwardPunish)
+		// 电费账单字段提取 — 与发票提取同权限矩阵（写操作）
+		kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractUtilityBill)
 		// 按页重新提取合同 — 与 extract-contract 同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContractPage)
 		// 按页删除合同记录 — 与 extract-contract 同权限矩阵（写操作）
@@ -240,6 +242,8 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 		// 奖惩级聚合列表 + 奖惩类型列表 — Viewer+ 且对 KB 有 read 权限（只读）
 		kb.GET("/:id/award-punish-records", g.Viewer(), g.KBAccessRead("id"), handler.ListAwardPunishRecords)
 		kb.GET("/:id/award-punish-types", g.Viewer(), g.KBAccessRead("id"), handler.ListAwardPunishTypes)
+		// 电费账单级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读）
+		kb.GET("/:id/utility-bill-records", g.Viewer(), g.KBAccessRead("id"), handler.ListUtilityBillRecords)
 		// 识别规则配置（发票/合同管理页"识别规则"设置面板）— 读 Viewer+，写 Editor+（KB 写权限）
 		kb.GET("/:id/recognition-config", g.Viewer(), g.KBAccessRead("id"), handler.GetRecognitionConfig)
 		kb.PUT("/:id/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.SaveRecognitionConfig)
@@ -303,6 +307,24 @@ func RegisterKnowledgeBaseActivityRoutes(r *gin.RouterGroup, auditHandler *handl
 // Tags are KB metadata: Viewer reads, Contributor writes. Per-KB
 // ownership granularity for tags is out of scope for PR 2; this is
 // purely role-based.
+// RegisterUtilityRoutes 水电气管理：字段配置（电费/水费/气费）与水/气月度记录 CRUD。
+// 电费账单提取与记录列表挂在知识库路由（RegisterKnowledgeRoutes），本组仅承载
+// 与知识库无关的配置与手动录入数据。
+func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	ut := g.apiKeyGroup(r.Group("/utilities"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		ut.GET("/field-configs", g.Viewer(), handler.ListUtilityFieldConfigs)
+		ut.POST("/field-configs", g.Contributor(), handler.SaveUtilityFieldConfigs)
+		ut.GET("/meter-records", g.Viewer(), handler.ListUtilityMeterRecords)
+		ut.POST("/meter-records", g.Contributor(), handler.CreateUtilityMeterRecord)
+		ut.PUT("/meter-records/:id", g.Contributor(), handler.UpdateUtilityMeterRecord)
+		ut.DELETE("/meter-records/:id", g.Contributor(), handler.DeleteUtilityMeterRecord)
+	}
+}
+
 func RegisterKnowledgeTagRoutes(r *gin.RouterGroup, tagHandler *handler.TagHandler, g *rbacGuards) {
 	if tagHandler == nil {
 		return

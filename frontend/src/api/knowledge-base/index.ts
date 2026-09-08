@@ -860,3 +860,61 @@ export function batchReparseKnowledge(kbId: string, ids: string[], processConfig
     process_config: processConfig,
   });
 }
+
+// ---- 水电气管理（电费账单提取 + 字段配置 + 水/气月度记录） ----
+
+/** 电费账单字段提取：复用知识库 summary_model_id 提取四组字段写入 custom_metadata */
+export function extractUtilityBill(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-utility-bill`, {}, { timeout: 600000 });
+}
+
+/** 电费账单记录列表（每份账单一条） */
+export function listUtilityBillRecords(kbId: string, params: {
+  q?: string;
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  if (params.status) query.set('status', params.status);
+  if (params.page && params.page > 1) query.set('page', String(params.page));
+  if (params.page_size) query.set('page_size', String(params.page_size));
+  const qs = query.toString();
+  return get(`/api/v1/knowledge-bases/${kbId}/utility-bill-records${qs ? `?${qs}` : ''}`);
+}
+
+/** 字段配置列表（electricity/water/gas） */
+export function listUtilityFieldConfigs(category: string) {
+  return get(`/api/v1/utilities/field-configs?category=${category}`);
+}
+
+/** 保存字段配置（整组覆盖） */
+export function saveUtilityFieldConfigs(category: string, configs: Record<string, unknown>[]) {
+  return post(`/api/v1/utilities/field-configs?category=${category}`, configs);
+}
+
+/** 水/气月度记录列表 */
+export function listUtilityMeterRecords(params: { category: string; month?: string; q?: string } = { category: 'water' }) {
+  const query = new URLSearchParams();
+  query.set('category', params.category);
+  if (params.month) query.set('month', params.month);
+  if (params.q) query.set('q', params.q);
+  return get(`/api/v1/utilities/meter-records?${query.toString()}`);
+}
+
+export function createUtilityMeterRecord(payload: Record<string, unknown>) {
+  return post('/api/v1/utilities/meter-records', payload);
+}
+
+export function updateUtilityMeterRecord(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/meter-records/${id}`, payload);
+}
+
+export function deleteUtilityMeterRecord(id: string) {
+  return del(`/api/v1/utilities/meter-records/${id}`);
+}

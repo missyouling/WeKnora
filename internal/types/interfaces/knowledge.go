@@ -126,6 +126,11 @@ type KnowledgeService interface {
 	// ListAwardPunishTypes returns the distinct award/punish types that appear
 	// across all records in a knowledge base, powering the type filter dropdown.
 	ListAwardPunishTypes(ctx context.Context, kbID string) ([]types.AwardPunishTypeCount, error)
+	// ListUtilityBillRecords returns the utility-bill aggregated list of a
+	// knowledge base: one row per extracted bill (de-duplication handled at the
+	// knowledge-file upload layer by file hash), filtered/searched/sorted/
+	// paginated server-side.
+	ListUtilityBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.UtilityBillListResult, error)
 	// MaxAutoAwardPunishSeq returns the highest trailing sequence number among
 	// auto-generated 文号 (JC-YYYYMMDD-NNN) for the current date in the knowledge
 	// base, so newly generated numbers stay unique across files.
