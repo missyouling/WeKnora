@@ -86,14 +86,6 @@
               </div>
             </div>
 
-            <!-- 汇总行（选中时统计选中） -->
-            <div v-if="summary.total" class="utility-summary-row" :class="{ 'with-toolbar': selectedRowKeys.length }">
-              <span>共 {{ summary.total }} 条</span>
-              <span>本期电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
-              <span>本期电费 {{ fmtMoney(summaryAmount) }} 元</span>
-              <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
-            </div>
-
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
               <div class="doc-list-view">
@@ -175,6 +167,13 @@
                   <div v-else-if="!rows.length && !pendingFiles.length" class="list-empty">
                     <t-empty description="暂无数据" />
                   </div>
+                </div>
+                <!-- 底部汇总（表格底部左侧） -->
+                <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
+                  <span>共 {{ summary.total }} 条</span>
+                  <span>本期电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
+                  <span>本期电费 {{ fmtMoney(summaryAmount) }} 元</span>
+                  <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
                 </div>
               </div>
             </div>
@@ -1894,6 +1893,15 @@ onBeforeUnmount(() => { stopPolling() })
   flex: 1;
   min-height: 0;
 
+  /* 去掉 tab 导航下边框（搜索组件上方的横线） */
+  :deep(.t-tabs__nav) {
+    border-bottom: none;
+  }
+
+  :deep(.t-tabs__nav-wrap::after) {
+    display: none;
+  }
+
   :deep(.t-tabs__content) {
     flex: 1;
     min-height: 0;
@@ -1907,15 +1915,17 @@ onBeforeUnmount(() => { stopPolling() })
   gap: 8px;
 }
 
-.utility-summary-row {
+/* 底部汇总行（表格底部左侧） */
+.doc-list-footer-summary {
   display: flex;
   gap: 24px;
   align-items: center;
   padding: 8px 16px;
   font-size: 13px;
   color: var(--td-text-color-secondary);
-  border-bottom: 1px solid var(--td-component-stroke);
+  border-top: 1px solid var(--td-component-stroke);
   background: var(--td-bg-color-container);
+  border-radius: 0 0 9px 9px;
 
   &.with-toolbar {
     padding-bottom: 48px;
@@ -1930,6 +1940,7 @@ onBeforeUnmount(() => { stopPolling() })
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  border-radius: 9px;
 }
 
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
@@ -1939,7 +1950,7 @@ onBeforeUnmount(() => { stopPolling() })
   box-sizing: border-box;
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
-  overflow: visible;
+  overflow: hidden;
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }

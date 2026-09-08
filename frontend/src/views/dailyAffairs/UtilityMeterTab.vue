@@ -65,15 +65,15 @@
       </div>
     </div>
 
-    <!-- 编辑抽屉（Teleport 到 body，避免 t-tabs 隐藏面板内渲染异常；可拖动调宽，宽度记忆） -->
+    <!-- 编辑抽屉（v-if 挂载 + Teleport 到 body：仅打开时渲染，避免 t-tabs 面板内预渲染导致的误显示/无法关闭） -->
     <teleport to="body">
       <t-drawer
-        :visible="drawerVisible"
+        v-if="drawerVisible"
+        :visible="true"
         :header="drawerTitle"
         :size="drawerWidth"
         :footer="false"
         :close-on-overlay-click="true"
-        destroy-on-close
         @close="onDrawerClose"
         @update:visible="(v: boolean) => (drawerVisible = v)"
         @mousedown="onDrawerMouseDown"

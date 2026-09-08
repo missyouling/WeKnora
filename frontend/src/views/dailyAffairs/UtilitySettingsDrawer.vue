@@ -5,7 +5,8 @@
       <div class="us-resize-line" />
     </div>
     <t-drawer :visible="visible" :header="`设置 · ${title}`" :size="String(drawerWidth)" :footer="false"
-      destroy-on-close class="utility-settings-drawer" @close="onClose">
+      destroy-on-close class="utility-settings-drawer" @close="onClose"
+      @update:visible="(v: boolean) => (v || onClose())">
       <div class="us-body">
         <!-- 字段配置 -->
         <div class="us-section">
