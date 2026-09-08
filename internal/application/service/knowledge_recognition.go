@@ -57,6 +57,25 @@ func (s *knowledgeService) GetRecognitionConfig(ctx context.Context, kbID string
 		}
 	}
 	cfg.Types = merged
+	// 奖惩知识库措施库为空时合并默认预置措施（不持久化），
+	// 保证抽屉措施多选与措施管理面板始终有可选内容。
+	if strings.Contains(kb.Name, "奖惩") {
+		defaults := types.DefaultAwardPunishRecognitionConfig().Measures
+		names := map[string]struct{}{}
+		for _, m := range cfg.Measures {
+			if m.Name != "" {
+				names[m.Name] = struct{}{}
+			}
+		}
+		for _, m := range defaults {
+			if m.Name == "" {
+				continue
+			}
+			if _, ok := names[m.Name]; !ok {
+				cfg.Measures = append(cfg.Measures, m)
+			}
+		}
+	}
 	return cfg, nil
 }
 

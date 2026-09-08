@@ -79,7 +79,7 @@
           <t-button variant="outline" size="small" @click="applyFilter">
             <template #icon><t-icon name="refresh" size="14px" /></template>
           </t-button>
-          <t-tooltip content="识别规则" placement="bottom">
+          <t-tooltip content="设置" placement="bottom">
             <t-button variant="outline" size="small" @click="recognitionVisible = true">
               <template #icon><t-icon name="setting" size="14px" /></template>
             </t-button>
@@ -322,7 +322,8 @@
                       allow-input style="width: 100%" />
                   </t-form-item>
                   <t-form-item label="措施" label-width="110px">
-                    <t-input v-model="editForm.measure" placeholder="" />
+                    <t-select :value="measureArray" multiple :options="measureOptions" filterable clearable
+                      placeholder="选择措施" style="width: 100%" @change="(v: string[]) => editForm.measure = (v || []).join(',')" />
                   </t-form-item>
                   <t-form-item label="当事人" label-width="110px">
                     <t-input v-model="editForm.person" placeholder="" />
@@ -580,6 +581,30 @@ const keyword = ref('')
 const filterApType = ref('')
 const filterFulfillStatus = ref('')
 const apTypeOptions = ref<Array<{ value: string; label: string }>>([])
+const measureList = ref<{ name: string; type: string }[]>([])
+
+// 措施多选：editForm.measure 以逗号分隔字符串存储，多选组件用数组适配
+const measureArray = computed(() =>
+  String(editForm.value.measure || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)
+)
+const measureOptions = computed(() => {
+  const t = String(editForm.value.ap_type || '').trim()
+  const opts = measureList.value
+    .filter(m => !m.type || !t || m.type === t)
+    .map(m => ({ label: m.name, value: m.name }))
+  const names = new Set(opts.map(o => o.value))
+  measureArray.value.forEach(v => { if (!names.has(v)) opts.push({ label: v, value: v }) })
+  return opts
+})
+const loadMeasures = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await getRecognitionConfig(kbId.value)
+    const c = res?.data || res
+    const arr = Array.isArray(c?.measures) ? c.measures : []
+    measureList.value = arr.filter((m: any) => m?.name).map((m: any) => ({ name: m.name, type: m.type || '' }))
+  } catch { /* 措施加载失败不阻塞 */ }
+}
 const dateRange = ref<Array<string>>([])
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
@@ -684,6 +709,7 @@ const loadKb = async () => {
       loadDrawerWidth()
       await loadTags()
       await loadApTypes()
+      await loadMeasures()
       await cleanNonAwardPunishFiles()
       await loadFiles()
       startPolling()
@@ -701,6 +727,7 @@ const onKbCreated = async (kb: any) => {
     loadDrawerWidth()
     await loadTags()
     await loadApTypes()
+    await loadMeasures()
     await cleanNonAwardPunishFiles()
     await loadFiles()
     startPolling()
@@ -722,6 +749,7 @@ const cleanNonAwardPunishFiles = async () => {
       await batchDeleteKnowledge(kbId.value, bad.map((b: any) => b.id))
       MessagePlugin.warning(`已移除 ${bad.length} 个非奖惩文件（旧数据清理）`)
       loadApTypes()
+      loadMeasures()
     }
   } catch { /* 清理失败静默，下轮重试 */ }
   finally { cleaningNonAwardPunish = false }
@@ -795,6 +823,7 @@ const onTagManageChanged = () => {
 // 识别规则保存后：刷新奖惩类型选项（含新增分类）+ 重新加载列表
 const onRecognitionChanged = () => {
   loadApTypes()
+  loadMeasures()
   loadFiles(true)
 }
 
@@ -1107,6 +1136,7 @@ const probeExtract = async () => {
         if (r?.data?.removed) {
           MessagePlugin.info(`「${item.file_name || item.title}」不是奖惩文件，已移至删除历史，可在删除历史中恢复`)
           loadApTypes()
+      loadMeasures()
         }
       } catch {
         extractFailed.value.add(item.id)
@@ -1451,22 +1481,14 @@ const handleBatchPrint = async () => {
           mergedPages++
           continue
         }
-        // 奖惩打印整个源文件（一份奖惩可能多页，如盖章扫描件）
+        // 奖惩直接打印整个源文件（一份奖惩可能多页，如盖章扫描件），不做页抽取
         const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
-        const amount = pdf.getAmount()
         const pages = await out.copyPages(pdf, pdf.getPageIndices())
         pages.forEach(p => out.addPage(p))
         mergedPages += pages.length
-        if (amount > 1) notes.push(`${r.apNo || r.fileName}（共 ${amount} 页）`)
+        if (pdf.getPageCount() > 1) notes.push(`${r.apNo || r.fileName}（共 ${pdf.getPageCount()} 页）`)
       } catch {
-        notes.push(`${r.apNo || r.fileName}（页抽取失败，已并入整文件）`)
-        try {
-          const src = await blob.arrayBuffer()
-          const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
-          const pages = await out.copyPages(pdf, pdf.getPageIndices())
-          pages.forEach(p => out.addPage(p))
-          mergedPages += pages.length
-        } catch { /* 整文件也失败则跳过 */ }
+        notes.push(`${r.apNo || r.fileName}（该文件无法合并，可单独打印）`)
       }
     }
     if (mergedPages === 0) {

@@ -730,6 +730,15 @@ type RecognitionConfig struct {
 	// Types 分类列表（发票/合同的类型枚举，支持增删改查）。类型归类规则的目标
 	// 从该列表选择；发票默认 5 枚举，合同为空时自动从现有合同类型加载。
 	Types []string `yaml:"types" json:"types,omitempty"`
+	// Measures 措施库（仅奖惩知识库使用）：抽屉编辑措施字段多选时加载，
+	// 支持按奖惩类型分组（处罚/奖励/其它奖惩），可增删改查。
+	Measures []MeasureItem `yaml:"measures" json:"measures,omitempty"`
+}
+
+// MeasureItem 奖惩措施条目：名称 + 所属奖惩类型。
+type MeasureItem struct {
+	Name string `yaml:"name" json:"name"`
+	Type string `yaml:"type" json:"type,omitempty"`
 }
 
 // Value implements driver.Valuer for RecognitionConfig.
@@ -820,6 +829,15 @@ func DefaultAwardPunishRecognitionConfig() *RecognitionConfig {
 			{ID: "ap-tongbao", Pattern: "通报", Type: "通报", Priority: 3, Enabled: true},
 		},
 		Types: []string{"处罚", "奖励", "通报", "其它奖惩"},
+		Measures: []MeasureItem{
+			{Name: "书面警告", Type: "处罚"}, {Name: "经济处罚", Type: "处罚"},
+			{Name: "通报批评", Type: "处罚"}, {Name: "记过", Type: "处罚"},
+			{Name: "扣款", Type: "处罚"}, {Name: "取消评优资格", Type: "处罚"},
+			{Name: "降职", Type: "处罚"}, {Name: "停职检查", Type: "处罚"},
+			{Name: "通报表扬", Type: "奖励"}, {Name: "嘉奖", Type: "奖励"},
+			{Name: "记功", Type: "奖励"}, {Name: "奖金", Type: "奖励"},
+			{Name: "晋升", Type: "奖励"}, {Name: "评优评先", Type: "奖励"},
+		},
 	}
 }
 

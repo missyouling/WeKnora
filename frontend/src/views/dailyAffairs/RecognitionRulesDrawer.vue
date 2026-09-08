@@ -4,7 +4,7 @@
       :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onResizeStart">
       <div class="rr-resize-line" />
     </div>
-    <t-drawer :visible="visible" :header="`识别规则 · ${moduleName}`" :size="String(drawerWidth)" :footer="false"
+    <t-drawer :visible="visible" :header="`设置 · ${moduleName}`" :size="String(drawerWidth)" :footer="false"
       destroy-on-close class="recognition-rules-drawer" @close="onClose">
       <div class="rr-body">
         <div class="rr-hint">规则命中即认定；类型按优先级匹配覆盖模型结果。</div>
@@ -104,6 +104,34 @@
           </div>
         </div>
 
+        <!-- 措施管理（奖惩） -->
+        <div v-if="moduleName === '奖惩'" class="rr-section">
+          <div class="rr-section-head">
+            <span class="rr-section-title">措施管理</span>
+            <span class="rr-state">编辑记录时多选加载</span>
+          </div>
+          <div class="rr-type-list">
+            <div v-for="(m, i) in cfg.measures" :key="i" class="rr-type-chip">
+              <t-select v-model="cfg.measures[i].type" size="small" class="rr-measure-type" :options="measureTypeOptions"
+                filterable clearable placeholder="类型" />
+              <t-input v-model="cfg.measures[i].name" size="small" class="rr-type-name" />
+              <t-button variant="text" size="small" shape="square" class="rr-del" :title="'删除措施'"
+                @click="removeMeasure(i)">
+                <template #icon><t-icon name="close" size="14px" /></template>
+              </t-button>
+            </div>
+            <div class="rr-type-chip rr-type-add">
+              <t-select v-model="newMeasureType" size="small" class="rr-measure-type" :options="measureTypeOptions"
+                filterable clearable placeholder="类型" />
+              <t-input v-model="newMeasure" size="small" class="rr-type-name" placeholder="新增措施" @enter="addMeasure" />
+              <t-button variant="outline" size="small" @click="addMeasure">
+                <template #icon><t-icon name="add" size="14px" /></template>
+                新增
+              </t-button>
+            </div>
+          </div>
+        </div>
+
         <div class="rr-actions">
           <t-button theme="default" variant="outline" :loading="reassessing" @click="onReassess">
             <template #icon><t-icon name="refresh" size="15px" /></template>
@@ -146,9 +174,11 @@ interface RecognitionConfig {
   include_rules: RecognitionRule[]
   type_rules: TypeClassifyRule[]
   types: string[]
+  measures: MeasureItem[]
 }
+interface MeasureItem { name: string; type: string }
 
-const props = defineProps<{ visible: boolean; kbId: string; moduleName: '发票' | '合同' }>()
+const props = defineProps<{ visible: boolean; kbId: string; moduleName: '发票' | '合同' | '制度' | '奖惩' }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'changed'): void }>()
 
 const MATCH_TYPE_OPTS = [
@@ -168,14 +198,19 @@ const REGEX_EXAMPLES = [
 
 const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
-const cfg = ref<RecognitionConfig>({ enabled: true, include_rules: [], type_rules: [], types: [] })
+const cfg = ref<RecognitionConfig>({ enabled: true, include_rules: [], type_rules: [], types: [], measures: [] })
 const keywordsText = ref<string[]>([])
 const saving = ref(false)
 const reassessing = ref(false)
 const newType = ref('')
+const newMeasure = ref('')
+const newMeasureType = ref('')
 const regexTipVisible = ref(false)
 
 const typeOptions = computed(() =>
+  (cfg.value.types || []).filter(Boolean).map(t => ({ label: t, value: t }))
+)
+const measureTypeOptions = computed(() =>
   (cfg.value.types || []).filter(Boolean).map(t => ({ label: t, value: t }))
 )
 
@@ -208,6 +243,9 @@ const normalize = (c: RecognitionConfig): RecognitionConfig => ({
     priority: Number(r.priority) > 0 ? Number(r.priority) : i + 1, enabled: r.enabled !== false,
   })),
   types: Array.isArray(c?.types) ? c.types.filter(Boolean) : [],
+  measures: Array.isArray(c?.measures) ? c.measures.map((m: any) => ({
+    name: m.name || '', type: m.type || '',
+  })).filter((m: MeasureItem) => m.name) : [],
 })
 
 const load = async () => {
@@ -216,7 +254,7 @@ const load = async () => {
     const c = res?.data || res
     cfg.value = normalize(c)
   } catch {
-    cfg.value = { enabled: true, include_rules: [], type_rules: [], types: [] }
+    cfg.value = { enabled: true, include_rules: [], type_rules: [], types: [], measures: [] }
     keywordsText.value = []
   }
 }
@@ -250,6 +288,19 @@ const onTypeRenamed = (oldType: string, newTypeVal: string, i: number) => {
     return
   }
   cfg.value.type_rules.forEach(r => { if (r.type === oldType) r.type = v })
+  cfg.value.measures.forEach(m => { if (m.type === oldType) m.type = v })
+}
+
+const addMeasure = () => {
+  const name = (newMeasure.value || '').trim()
+  if (!name) return
+  if (cfg.value.measures.some(m => m.name === name)) { MessagePlugin.warning('该措施已存在'); return }
+  cfg.value.measures.push({ name, type: newMeasureType.value || '' })
+  newMeasure.value = ''
+  newMeasureType.value = ''
+}
+const removeMeasure = (i: number) => {
+  cfg.value.measures.splice(i, 1)
 }
 
 const onSave = async () => {
@@ -263,6 +314,7 @@ const onSave = async () => {
         .filter(r => r.pattern && r.type)
         .map(r => ({ ...r, priority: Number(r.priority) > 0 ? Number(r.priority) : 1 })),
       types: (cfg.value.types || []).filter(Boolean),
+      measures: (cfg.value.measures || []).filter(m => m.name).map(m => ({ name: m.name, type: m.type || '' })),
     }
     await saveRecognitionConfig(props.kbId, payload as any)
     MessagePlugin.success('已保存')
@@ -367,6 +419,7 @@ onBeforeUnmount(() => {
 .rr-type-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 4px; }
 .rr-type-chip { display: flex; align-items: center; gap: 2px; border: 1px solid var(--td-component-border, #e7e7e7); border-radius: 6px; padding: 2px 2px 2px 8px; background: var(--td-bg-color-container, #fff); }
 .rr-type-name { width: 110px; }
+.rr-measure-type { width: 96px; }
 .rr-type-chip .rr-del { width: 24px; }
 .rr-type-add { border-style: dashed; }
 .rr-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }

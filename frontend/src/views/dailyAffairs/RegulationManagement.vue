@@ -79,7 +79,7 @@
           <t-button variant="outline" size="small" @click="applyFilter">
             <template #icon><t-icon name="refresh" size="14px" /></template>
           </t-button>
-          <t-tooltip content="识别规则" placement="bottom">
+          <t-tooltip content="设置" placement="bottom">
             <t-button variant="outline" size="small" @click="recognitionVisible = true">
               <template #icon><t-icon name="setting" size="14px" /></template>
             </t-button>
