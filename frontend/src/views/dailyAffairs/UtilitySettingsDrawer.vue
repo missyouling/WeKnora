@@ -148,42 +148,69 @@
     <!-- 字段分组管理抽屉 -->
     <t-drawer v-if="groupEditVisible" :visible="true" :header="`字段 · ${groupEditLabel}`" :size="'520px'" :footer="false"
       :close-on-overlay-click="true" @close="groupEditVisible = false" @update:visible="(v: boolean) => (v || (groupEditVisible = false))">
-      <div class="us-hint">{{ isRowGroup ? '行标题对应菜单列表的行；可改名、排序、增删，删除行仅隐藏不影响历史数据。' : '字段对应菜单列表的列；默认显示控制列显隐，保存后自动同步到菜单。' }}</div>
-      <div v-if="!isRowGroup" class="us-field-head">
-        <span style="flex: 1.4">字段名</span>
-        <span style="flex: 0.9">类型</span>
-        <span style="flex: 0.7">默认显示</span>
-        <span style="flex: 0.9">排序</span>
-        <span style="flex: 0.5">操作</span>
+      <div class="us-hint">列字段对应菜单列表的列；默认显示控制列显隐。行字段对应菜单列表的行标题，可改名、排序、增删，删除行仅隐藏不影响历史数据。</div>
+      <div class="us-group-tabs">
+        <span class="us-group-tab" :class="{ active: groupTab === 'cols' }" @click="groupTab = 'cols'">列字段配置</span>
+        <span v-if="hasRowGroup" class="us-group-tab" :class="{ active: groupTab === 'rows' }" @click="groupTab = 'rows'">行字段配置</span>
       </div>
-      <div v-else class="us-field-head us-field-head--row">
-        <span style="flex: 2.4">行标题</span>
-        <span style="flex: 0.9">排序</span>
-        <span style="flex: 0.5">操作</span>
-      </div>
-      <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
-        <t-input v-model="f.label" size="small" class="us-field-label" placeholder="行标题" @change="saveGroupFields" />
-        <t-select v-if="!isRowGroup" v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
-        <t-switch v-if="!isRowGroup" v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
-        <div class="us-field-order">
-          <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
-            <template #icon><t-icon name="arrow-up" size="14px" /></template>
-          </t-button>
-          <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
-            <template #icon><t-icon name="arrow-down" size="14px" /></template>
-          </t-button>
+      <!-- 列字段配置 -->
+      <template v-if="groupTab === 'cols'">
+        <div class="us-field-head">
+          <span style="flex: 1.4">字段名</span>
+          <span style="flex: 0.9">类型</span>
+          <span style="flex: 0.7">默认显示</span>
+          <span style="flex: 0.9">排序</span>
+          <span style="flex: 0.5">操作</span>
         </div>
-        <div class="us-field-del">
-          <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
-            <template #icon><t-icon name="delete" size="15px" /></template>
-          </t-button>
+        <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
+          <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="saveGroupFields" />
+          <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+          <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
+          <div class="us-field-order">
+            <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+              <template #icon><t-icon name="arrow-up" size="14px" /></template>
+            </t-button>
+            <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
+              <template #icon><t-icon name="arrow-down" size="14px" /></template>
+            </t-button>
+          </div>
+          <div class="us-field-del">
+            <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+              <template #icon><t-icon name="delete" size="15px" /></template>
+            </t-button>
+          </div>
         </div>
-      </div>
-      <div v-if="!groupFields.length" class="us-empty">暂无{{ isRowGroup ? '行' : '字段' }}，点击下方新增</div>
+        <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
+      </template>
+      <!-- 行字段配置 -->
+      <template v-else>
+        <div class="us-field-head us-field-head--row">
+          <span style="flex: 2.4">行标题</span>
+          <span style="flex: 0.9">排序</span>
+          <span style="flex: 0.5">操作</span>
+        </div>
+        <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-field-row">
+          <t-input v-model="f.label" size="small" class="us-field-label" placeholder="行标题" @change="saveGroupFields" />
+          <div class="us-field-order">
+            <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+              <template #icon><t-icon name="arrow-up" size="14px" /></template>
+            </t-button>
+            <t-button variant="text" size="small" shape="square" :disabled="i === rowFields.length - 1" @click="moveGroupField(i, 1)">
+              <template #icon><t-icon name="arrow-down" size="14px" /></template>
+            </t-button>
+          </div>
+          <div class="us-field-del">
+            <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+              <template #icon><t-icon name="delete" size="15px" /></template>
+            </t-button>
+          </div>
+        </div>
+        <div v-if="!rowFields.length" class="us-empty">暂无行，点击下方新增</div>
+      </template>
       <div class="us-actions">
         <t-button variant="outline" size="small" @click="addGroupField">
           <template #icon><t-icon name="add" size="14px" /></template>
-          {{ isRowGroup ? '新增行' : '新增字段' }}
+          {{ groupTab === 'rows' ? '新增行' : '新增字段' }}
         </t-button>
         <t-button size="small" @click="groupEditVisible = false">完成</t-button>
       </div>
@@ -249,11 +276,13 @@ const GROUP_DEFS = [
   { key: 'pf', label: '功率因素调整' },
   { key: 'meter', label: '电量明细（工商业）' },
   { key: 'resident-meter', label: '电量明细（居民）' },
-  { key: 'meter-rows', label: '电量明细行（工商业）' },
-  { key: 'resident-meter-rows', label: '电量明细行（居民）' },
 ]
-// 行配置分组：仅行标题（名称/排序/增删），无类型与默认显示
-const ROW_GROUPS = new Set(['meter-rows', 'resident-meter-rows'])
+// 有行标题的列分组 → 行配置分组（行字段配置 tab 的数据来源）
+const ROW_GROUP_MAP: Record<string, string> = {
+  meter: 'meter-rows',
+  'resident-meter': 'resident-meter-rows',
+  overview: 'overview-rows',
+}
 
 const accounts = ref<BasicAccount[]>([])
 const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: true, include_rules: [] })
@@ -266,7 +295,7 @@ const groups = computed(() => {
 })
 const groupFieldCount = (key: string) => groupCounts.value[key] ?? 0
 const groupCounts = ref<Record<string, number>>({})
-const isRowGroup = computed(() => ROW_GROUPS.has(groupEditKey.value))
+const hasRowGroup = computed(() => !!ROW_GROUP_MAP[groupEditKey.value])
 
 const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
@@ -372,30 +401,46 @@ const confirmDeleteAcc = async () => {
 const groupEditVisible = ref(false)
 const groupEditLabel = ref('')
 const groupEditKey = ref('')
+const groupTab = ref<'cols' | 'rows'>('cols')
 const groupFields = ref<FieldItem[]>([])
+const rowFields = ref<FieldItem[]>([])
+const toFieldItem = (c: any): FieldItem => ({
+  field_key: c.field_key, label: c.label || c.field_key,
+  field_type: c.field_type || 'text', default_visible: !!c.default_visible,
+  sort_order: Number(c.sort_order) || 0, is_custom: !!c.is_custom,
+})
 const openGroupEdit = async (key: string) => {
   const g = GROUP_DEFS.find(x => x.key === key)
   groupEditLabel.value = g ? g.label : '通用字段'
   groupEditKey.value = key
+  groupTab.value = 'cols'
   groupFields.value = []
+  rowFields.value = []
   groupEditVisible.value = true
   try {
     const res: any = await listUtilityFieldConfigsByGroup(props.category, key)
     const list = res?.data || res
-    groupFields.value = (Array.isArray(list) ? list : []).map((c: any) => ({
-      field_key: c.field_key, label: c.label || c.field_key,
-      field_type: c.field_type || 'text', default_visible: !!c.default_visible,
-      sort_order: Number(c.sort_order) || 0, is_custom: !!c.is_custom,
-    }))
+    groupFields.value = (Array.isArray(list) ? list : []).map(toFieldItem)
   } catch { groupFields.value = [] }
+  const rg = ROW_GROUP_MAP[key]
+  if (rg) {
+    try {
+      const res2: any = await listUtilityFieldConfigsByGroup(props.category, rg)
+      const list2 = res2?.data || res2
+      rowFields.value = (Array.isArray(list2) ? list2 : []).map(toFieldItem)
+    } catch { rowFields.value = [] }
+  }
 }
 const saveGroupFields = () => {
   if (saving.value) return
   saving.value = true
-  saveUtilityFieldConfigs(props.category, groupFields.value.map((f, i) => ({
-    field_key: f.field_key, label: f.label.trim(), field_type: f.field_type,
+  const isRow = groupTab.value === 'rows' && hasRowGroup.value
+  const target = isRow ? ROW_GROUP_MAP[groupEditKey.value] : groupEditKey.value
+  const src = isRow ? rowFields.value : groupFields.value
+  saveUtilityFieldConfigs(props.category, src.map((f, i) => ({
+    field_key: f.field_key, label: f.label.trim(), field_type: f.field_type || 'text',
     default_visible: !!f.default_visible, sort_order: i, is_custom: !!f.is_custom,
-  })), groupEditKey.value)
+  })), target)
     .then(() => {
       loadGroupCounts()
       emit('changed')
@@ -404,34 +449,40 @@ const saveGroupFields = () => {
     .finally(() => { saving.value = false })
 }
 const addGroupField = () => {
+  const isRow = groupTab.value === 'rows' && hasRowGroup.value
+  const list = isRow ? rowFields.value : groupFields.value
   let n = 1
-  const keys = new Set(groupFields.value.map(f => f.field_key))
+  const keys = new Set(list.map(f => f.field_key))
   while (keys.has(`custom_${n}`)) n++
   const key = `custom_${n}`
-  groupFields.value.push({
-    field_key: key, label: isRowGroup.value ? `新行${n}` : '自定义字段', field_type: 'text',
-    default_visible: false, sort_order: groupFields.value.length, is_custom: true,
+  list.push({
+    field_key: key, label: isRow ? `新行${n}` : '自定义字段', field_type: 'text',
+    default_visible: false, sort_order: list.length, is_custom: true,
   })
   saveGroupFields()
 }
 const removeGroupField = (i: number) => {
-  const f = groupFields.value[i]
+  const isRow = groupTab.value === 'rows' && hasRowGroup.value
+  const list = isRow ? rowFields.value : groupFields.value
+  const f = list[i]
   MessagePlugin.confirm(`停用「${f.label}」？历史记录保留原数据，新上传不再显示。`, {
     theme: 'warning', confirmBtn: '停用', cancelBtn: '取消',
   }).then((ok) => {
     if (!ok) return
-    groupFields.value.splice(i, 1)
-    groupFields.value.forEach((x, j) => { x.sort_order = j })
+    list.splice(i, 1)
+    list.forEach((x, j) => { x.sort_order = j })
     saveGroupFields()
   })
 }
 const moveGroupField = (i: number, dir: number) => {
+  const isRow = groupTab.value === 'rows' && hasRowGroup.value
+  const list = isRow ? rowFields.value : groupFields.value
   const j = i + dir
-  if (j < 0 || j >= groupFields.value.length) return
-  const tmp = groupFields.value[i]
-  groupFields.value[i] = groupFields.value[j]
-  groupFields.value[j] = tmp
-  groupFields.value.forEach((x, k) => { x.sort_order = k })
+  if (j < 0 || j >= list.length) return
+  const tmp = list[i]
+  list[i] = list[j]
+  list[j] = tmp
+  list.forEach((x, k) => { x.sort_order = k })
   saveGroupFields()
 }
 
@@ -662,6 +713,36 @@ watch(() => props.visible, (v) => {
 .us-field-head {
   border-bottom: 1px solid var(--td-component-stroke);
   margin-bottom: 4px;
+}
+
+.us-group-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 10px;
+  padding: 2px;
+  background: var(--td-bg-color-secondarycontainer);
+  border-radius: 6px;
+  width: fit-content;
+}
+
+.us-group-tab {
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    color: var(--td-brand-color);
+  }
+
+  &.active {
+    color: var(--td-brand-color);
+    background: var(--td-bg-color-container);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    font-weight: 500;
+  }
 }
 
 .us-field-row {

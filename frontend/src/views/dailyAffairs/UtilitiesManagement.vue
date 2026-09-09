@@ -263,7 +263,7 @@
                         <span class="bill-card-title">基础信息</span>
                       </div>
                       <div class="overview-static">
-                        <div class="ov-item" v-for="f in BASIC_INFO_FIELDS" :key="f.key">
+                        <div class="ov-item" v-for="f in overviewRowConfigs" :key="f.key">
                           <span class="ov-label">{{ f.label }}</span>
                           <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '—' }}</span>
                         </div>
@@ -1362,7 +1362,15 @@ const BASIC_INFO_FIELDS = [
   { key: 'supply_unit', label: '供电服务单位' },
   { key: 'address', label: '用电地址' },
 ]
-const OVERVIEW_STATIC = BASIC_INFO_FIELDS.map(f => ({ ...f, type: 'text' }))
+// 基础信息行配置（设置 → 账单概况 → 行字段配置 驱动；未配置时用内置字段兜底）
+const overviewRowConfigs = computed(() => {
+  const list = allFieldConfigs.value.filter((c: any) => c.group === 'overview-rows' && c.deleted_at == null)
+  if (!list.length) return BASIC_INFO_FIELDS
+  return [...list]
+    .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
+    .map((c: any) => ({ key: c.field_key, label: c.label || c.field_key }))
+})
+const OVERVIEW_STATIC = computed(() => overviewRowConfigs.value.map(f => ({ ...f, type: 'text' })))
 // 基本户多账户：账单按户号自动匹配，匹配失败用默认户
 const basicAccounts = ref<any[]>([])
 const currentAccount = computed(() => {
@@ -1816,7 +1824,7 @@ const staticEditFields = ref<{ key: string; label: string; type: string }[]>([])
 const openStaticEdit = (scope: 'overview' | 'capacity' | 'pf') => {
   if (scope === 'overview') {
     staticEditTitle.value = '编辑账单概况'
-    staticEditFields.value = OVERVIEW_STATIC
+    staticEditFields.value = OVERVIEW_STATIC.value
   } else if (scope === 'capacity') {
     staticEditTitle.value = '编辑输配容（需）量电费'
     staticEditFields.value = CAPACITY_FIELDS

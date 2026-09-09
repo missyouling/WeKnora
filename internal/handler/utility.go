@@ -73,7 +73,7 @@ func (h *UtilityHandler) ListUtilityFieldConfigs(c *gin.Context) {
 
 // mergeGroupDefaults 将全量字段配置按分组补齐默认：DB 有数据的组保留 DB 数据，空组用默认字段填充。
 func (h *UtilityHandler) mergeGroupDefaults(cfgs []types.UtilityFieldConfig) []types.UtilityFieldConfig {
-	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows"}
+	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows"}
 	dbMap := make(map[string][]types.UtilityFieldConfig)
 	for _, c := range cfgs {
 		dbMap[c.Group] = append(dbMap[c.Group], c)
@@ -699,6 +699,17 @@ func electricityDefaultGroupFields(group string) []utilityFieldDef {
 		return []utilityFieldDef{
 			{"定比0.015", "定比0.015", "text", true, g},
 		}
+	case "overview-rows":
+		// 账单概况-基础信息行（field_key 为数据字段名，label 可改名；渲染 basicInfo[key]）
+		return []utilityFieldDef{
+			{"account_no", "户号", "text", true, g},
+			{"account_name", "户名", "text", true, g},
+			{"usage_category", "用电类别", "text", true, g},
+			{"voltage_level", "电压等级", "text", true, g},
+			{"market_attr", "市场化属性", "text", true, g},
+			{"supply_unit", "供电服务单位", "text", true, g},
+			{"address", "用电地址", "text", true, g},
+		}
 	default:
 		return nil
 	}
@@ -719,7 +730,7 @@ func utilityDefaultFieldConfigs(tenantID uint64, category, group string) []types
 	case "electricity":
 		if group == "" {
 			// 不传 group：返回全部组默认（概况 + 各费用菜单列 + 明细 + 行配置）
-			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows"}
+			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows"}
 			for _, g := range groups {
 				defs = append(defs, electricityDefaultGroupFields(g)...)
 			}
