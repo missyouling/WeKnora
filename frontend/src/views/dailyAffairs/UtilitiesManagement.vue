@@ -149,14 +149,6 @@
                         </template>
                         {{ statusOf(row).label }}
                       </t-tag>
-                      <t-popconfirm v-if="row.extractStatus === 'failed'" theme="warning" content="重新解析并提取该账单？"
-                        :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                        @confirm="retryExtract(row)">
-                        <t-button variant="outline" size="small" class="row-retry-btn" @click.stop>
-                          <template #icon><t-icon name="refresh" size="14px" /></template>
-                          重试
-                        </t-button>
-                      </t-popconfirm>
                     </div>
                     <div class="cell cell-tags" @click.stop>
                       <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
@@ -1143,24 +1135,6 @@ const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
-// ---- 提取失败重试 ----
-const retryExtract = async (row: any) => {
-  const kid = row.knowledgeId
-  if (!kid || extractInFlight.value.has(kid)) return
-  extractInFlight.value.add(kid)
-  extractFailed.value.delete(kid)
-  try {
-    await extractUtilityBill(kbId.value!, kid)
-    MessagePlugin.success('已重新触发提取')
-    setTimeout(() => { loadFiles(true) }, 1200)
-  } catch (e: any) {
-    extractFailed.value.add(kid)
-    MessagePlugin.error(e?.message || '重新提取失败')
-  } finally {
-    extractInFlight.value.delete(kid)
-  }
-}
-
 // ---- KB ----
 const loadKb = async () => {
   try {
@@ -2034,13 +2008,9 @@ const handleReExtract = async () => {
   extractInFlight.value.add(r.knowledgeId)
   extractFailed.value.delete(r.knowledgeId)
   try {
-    if (r.kind === 'pending') {
-      // 提取失败行：解析已完成，仅重新触发字段提取
-      await extractUtilityBill(kbId.value!, r.knowledgeId)
-    } else {
-      await reparseKnowledge(r.knowledgeId)
-    }
-    MessagePlugin.success(`已触发「${r.fileName}」重新提取`)
+    // 与合同管理一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
+    await reparseKnowledge(r.knowledgeId)
+    MessagePlugin.success(`已触发「${r.fileName}」重新解析与提取`)
     setTimeout(() => loadFiles(true), 1500)
   } catch (e: any) {
     extractFailed.value.add(r.knowledgeId)
@@ -2698,7 +2668,6 @@ onBeforeUnmount(() => { stopPolling() })
 .batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
 .batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
-.row-retry-btn { margin-left: 6px; height: 24px !important; padding: 0 6px !important; }
 
 .utility-detail-drawer {
   padding: 4px 0 24px;
