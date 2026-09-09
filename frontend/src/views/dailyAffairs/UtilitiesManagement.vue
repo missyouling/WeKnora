@@ -1115,16 +1115,19 @@ const onFileInputChange = async (e: Event) => {
   if (!files.length || !kbId.value) return
   for (const f of files) {
     try {
-      const res: any = await uploadKnowledgeFile(kbId.value, f)
+      const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
       const knowledge = res?.data || res
       const kid = knowledge?.id || knowledge?.knowledge_id
       MessagePlugin.success(`已上传 ${f.name}，等待解析`)
-      if (kid) {
-        // 解析完成后轮询自动提取
-        extractingSet.add(kid)
-      }
+      // 解析完成后由轮询自动触发提取，无需在此登记
+      void kid
     } catch (e2: any) {
-      MessagePlugin.error(`${f.name} 上传失败：${e2?.message || ''}`)
+      const msg = e2?.message || ''
+      if (msg.includes('already exists') || msg.includes('文件重复')) {
+        MessagePlugin.warning(`${f.name} 已存在，忽略重复上传`)
+      } else {
+        MessagePlugin.error(`${f.name} 上传失败：${msg}`)
+      }
     }
   }
   setTimeout(() => loadFiles(true), 1500)
