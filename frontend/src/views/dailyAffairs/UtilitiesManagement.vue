@@ -121,10 +121,10 @@
                 <div class="doc-list-body">
                   <div v-for="row in displayRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
                     :class="{ selected: selectedRowKeys.includes(row.rowKey), 'is-pending': row.kind === 'pending' }" role="row"
-                    @click="row.kind !== 'pending' && openDetail(row)">
+                    @click="handleRowClick(row)">
                     <div class="cell cell-check" @click.stop>
                       <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                        :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
+                        :disabled="row.kind === 'pending' && row.extractStatus !== 'failed'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
                     </div>
                     <template v-if="row.kind === 'pending'">
                       <div class="cell cell-pending-name" :title="row.fileName">
@@ -152,8 +152,9 @@
                       <t-popconfirm v-if="row.extractStatus === 'failed'" theme="warning" content="重新解析并提取该账单？"
                         :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                         @confirm="retryExtract(row)">
-                        <t-button variant="text" size="small" class="row-retry-btn" @click.stop>
+                        <t-button variant="outline" size="small" class="row-retry-btn" @click.stop>
                           <template #icon><t-icon name="refresh" size="14px" /></template>
+                          重试
                         </t-button>
                       </t-popconfirm>
                     </div>
@@ -209,11 +210,11 @@
                         重新提取
                       </t-button>
                     </t-popconfirm>
-                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
+                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
                       <template #icon><t-icon name="edit" size="14px" /></template>
                       编辑数据
                     </t-button>
-                    <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
                       <template #icon><t-icon name="print" size="14px" /></template>
                       打印
                     </t-button>
@@ -975,10 +976,10 @@ const summaryAmount = computed(() => {
   const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
   return target.reduce((s, r) => s + (Number(r.item?.total_amount) || 0), 0)
 })
-const selectedRows = computed(() => rows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
+const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
-const selectableRows = computed(() => rows.value.filter(r => r.kind !== 'pending'))
+const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || r.extractStatus === 'failed'))
 const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
 const someSelected = computed(() => selectedRowKeys.value.length > 0 && !isAllSelected.value)
 
@@ -988,6 +989,14 @@ function toggleSelectAll(checked: boolean) {
 function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
   else selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== key)
+}
+// 行点击：提取失败行切换选中，其余打开详情
+const handleRowClick = (row: Row) => {
+  if (row.kind === 'pending') {
+    if (row.extractStatus === 'failed') toggleRow(row.rowKey, !selectedRowKeys.value.includes(row.rowKey))
+    return
+  }
+  openDetail(row)
 }
 
 const mapRow = (r: any): Row => ({
@@ -2021,17 +2030,23 @@ const handleBatchEdit = () => {
 const handleReExtract = async () => {
   const row = selectedRows.value
   if (row.length !== 1) { MessagePlugin.info('重新提取仅支持单选'); return }
-  extractInFlight.value.add(row[0].knowledgeId)
-  extractFailed.value.delete(row[0].knowledgeId)
+  const r = row[0]
+  extractInFlight.value.add(r.knowledgeId)
+  extractFailed.value.delete(r.knowledgeId)
   try {
-    await reparseKnowledge(row[0].knowledgeId)
-    MessagePlugin.success(`已触发「${row[0].fileName}」重新解析与提取`)
+    if (r.kind === 'pending') {
+      // 提取失败行：解析已完成，仅重新触发字段提取
+      await extractUtilityBill(kbId.value!, r.knowledgeId)
+    } else {
+      await reparseKnowledge(r.knowledgeId)
+    }
+    MessagePlugin.success(`已触发「${r.fileName}」重新提取`)
     setTimeout(() => loadFiles(true), 1500)
   } catch (e: any) {
-    extractFailed.value.add(row[0].knowledgeId)
+    extractFailed.value.add(r.knowledgeId)
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    extractInFlight.value.delete(row[0].knowledgeId)
+    extractInFlight.value.delete(r.knowledgeId)
   }
 }
 
@@ -2683,7 +2698,7 @@ onBeforeUnmount(() => { stopPolling() })
 .batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
 .batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
-.row-retry-btn { margin-left: 4px; height: 24px !important; padding: 0 4px !important; }
+.row-retry-btn { margin-left: 6px; height: 24px !important; padding: 0 6px !important; }
 
 .utility-detail-drawer {
   padding: 4px 0 24px;
