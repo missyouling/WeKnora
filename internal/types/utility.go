@@ -88,6 +88,8 @@ type UtilityBillExtractionItem struct {
 	FlatKwh     float64 `json:"flat_kwh"`      // 平电量
 	ValleyKwh   float64 `json:"valley_kwh"`    // 谷电量
 	ReactiveKwh float64 `json:"reactive_kwh"`  // 正向无功电量
+	// 电量明细表（账单原表逐行：示数类型/上期/本期/倍率/抄见/变损/线损/加减/计费电量）
+	MeterReadings []UtilityMeterReading `json:"meter_readings"`
 	// 容需量
 	Capacity      float64 `json:"capacity"`       // 容量 kVA
 	CapacityPrice float64 `json:"capacity_price"` // 容量电价
@@ -107,8 +109,22 @@ type UtilityBillFeeItem struct {
 	Period    string  `json:"period"`     // 分时时段 尖峰/峰/平/谷
 	Qty       float64 `json:"qty"`        // 计费电量
 	Rate      float64 `json:"rate"`       // 计费标准
-	Fee       float64 `json:"fee"`        // 电费
-	FeeAmount float64 `json:"fee_amount"` // 电费（别名，兼容）
+	Fee       float64 `json:"fee"`        // 电费（按 电量×标准/分时规则 计算值）
+	BillFee   float64 `json:"fee_amount"` // 账单标称电费（账单原值，提取保留，不被重算覆盖）
+}
+
+// UtilityMeterReading 电量明细行（与账单「电量明细」表一致）：
+// 示数类型/上期示数/本期示数/倍率/抄见电量/变损/线损/加减/计费电量。
+type UtilityMeterReading struct {
+	MeterType  string  `json:"meter_type"`  // 示数类型 正向有功（总）/正向有功（尖峰）/正向有功（峰）/正向有功（平）/正向有功（谷）/正向无功（总）
+	Prev       float64 `json:"prev"`        // 上期示数
+	Curr       float64 `json:"curr"`        // 本期示数
+	Multiplier float64 `json:"multiplier"`  // 倍率
+	ReadingKwh float64 `json:"reading_kwh"` // 抄见电量
+	TransLoss  float64 `json:"trans_loss"`  // 变损
+	LineLoss   float64 `json:"line_loss"`   // 线损
+	Adjust     float64 `json:"adjust"`      // 加减
+	BillKwh    float64 `json:"bill_kwh"`    // 计费电量
 }
 
 // UtilityBillRecord 电费账单列表行（聚合 KB custom_metadata 生成）。

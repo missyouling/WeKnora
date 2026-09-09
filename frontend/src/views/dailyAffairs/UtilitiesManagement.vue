@@ -292,8 +292,12 @@
                             <span class="os-name">{{ r.label }}</span>
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
                             <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtRate6(r.value) }}</span>
-                            <span class="os-qty">—</span>
-                            <span class="os-state">—</span>
+                            <span class="os-amount">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
+                            <span class="os-state">
+                              <t-tag v-if="r.billFee" :theme="Math.abs(r.value - r.billFee) < 0.01 ? 'success' : 'danger'" variant="light" size="small">
+                                {{ Math.abs(r.value - r.billFee) < 0.01 ? '正常' : '异常' }}
+                              </t-tag>
+                            </span>
                           </div>
                           <div class="os-row os-row--total">
                             <span>本期电费</span>
@@ -361,18 +365,26 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">电量明细 · 工商业</span>
-                        <span class="bill-card-hint">点击行可在抽屉编辑电量，自动保存</span>
+                        <span class="bill-card-hint">点击行可编辑，自动保存</span>
                       </div>
                       <div class="meter-table">
                         <div class="meter-row meter-head">
-                          <span>时段</span><span>计费电量（千瓦时）</span><span>占比</span>
+                          <span>示数类型</span><span>上期示数</span><span>本期示数</span><span>倍率</span><span>抄见电量</span><span>变损</span><span>线损</span><span>加减</span><span>计费电量</span>
                         </div>
-                        <div v-for="(r, i) in industrialMeterRows" :key="r.key" class="meter-row" @click="openMeterEdit(i, 'industrial')">
-                          <span>{{ r.label }}</span><span class="row-mono">{{ fmtKwh(r.value) }}</span>
-                          <span class="row-mono">{{ meterPct(r.value, industrialMeterTotal) }}</span>
+                        <div v-for="(r, i) in meterRows" :key="r.meter_type || i" class="meter-row" @click="openMeterEdit(i)">
+                          <span class="meter-type">{{ r.meter_type }}</span>
+                          <span class="row-mono">{{ r.prev || r.prev === 0 ? fmtKwh(r.prev) : '' }}</span>
+                          <span class="row-mono">{{ r.curr || r.curr === 0 ? fmtKwh(r.curr) : '' }}</span>
+                          <span class="row-mono">{{ r.multiplier || r.multiplier === 0 ? fmtRate6(r.multiplier) : '' }}</span>
+                          <span class="row-mono">{{ r.reading_kwh || r.reading_kwh === 0 ? fmtKwh(r.reading_kwh) : '' }}</span>
+                          <span class="row-mono">{{ r.trans_loss || r.trans_loss === 0 ? fmtKwh(r.trans_loss) : '' }}</span>
+                          <span class="row-mono">{{ r.line_loss || r.line_loss === 0 ? fmtKwh(r.line_loss) : '' }}</span>
+                          <span class="row-mono">{{ r.adjust || r.adjust === 0 ? fmtKwh(r.adjust) : '' }}</span>
+                          <span class="row-mono">{{ r.bill_kwh ? fmtKwh(r.bill_kwh) : '' }}</span>
                         </div>
                         <div class="meter-row meter-total">
-                          <span>合计</span><span class="row-mono">{{ fmtKwh(industrialMeterTotal) }}</span><span>100%</span>
+                          <span>合计</span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                          <span class="row-mono">{{ fmtKwh(meterTotal) }}</span>
                         </div>
                       </div>
                     </div>
@@ -386,14 +398,13 @@
                       </div>
                       <div class="meter-table">
                         <div class="meter-row meter-head">
-                          <span>项目</span><span>计费电量（千瓦时）</span><span>占比</span>
+                          <span>项目</span><span>计费电量（千瓦时）</span>
                         </div>
-                        <div v-for="(r, i) in residentialMeterRows" :key="r.key" class="meter-row" @click="openMeterEdit(i, 'residential')">
-                          <span>{{ r.label }}</span><span class="row-mono">{{ fmtKwh(r.value) }}</span>
-                          <span class="row-mono">100%</span>
+                        <div class="meter-row">
+                          <span>居民目录电量</span><span class="row-mono">{{ fmtKwh(residentMeterKwh) }}</span>
                         </div>
                         <div class="meter-row meter-total">
-                          <span>合计</span><span class="row-mono">{{ fmtKwh(residentialMeterTotal) }}</span><span>100%</span>
+                          <span>合计</span><span class="row-mono">{{ fmtKwh(residentMeterKwh) }}</span>
                         </div>
                       </div>
                     </div>
@@ -412,7 +423,7 @@
                         </div>
                         <div v-for="(it, i) in feeRowsOf(activeMenu)" :key="i" class="fg-row" @click="openFeeItemEdit(activeMenu, i)">
                           <span class="fg-name" :title="it.name">{{ it.name }}</span>
-                          <span>{{ it.period || '--' }}</span>
+                          <span>{{ it.period }}</span>
                           <span class="row-mono">{{ it.qty ? fmtKwh(it.qty) : '' }}</span>
                           <span class="row-mono">{{ it.rate ? fmtRate(it.rate) : '' }}</span>
                           <span class="row-mono" :class="{ 'os-neg': it.fee < 0 }">{{ it.fee || it.fee === 0 ? fmtRate6(it.fee) : '' }}</span>
@@ -1252,6 +1263,7 @@ const PF_FIELDS = [
 
 const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const sumQty = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.qty) || 0), 0) * 10) / 10
+const sumBillFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee_amount) || 0), 0) * 100) / 100
 
 const overviewRows = computed(() => {
   const edit = editForm.value
@@ -1264,27 +1276,36 @@ const overviewRows = computed(() => {
   const govR = sumFee(feeRowsOf('residential-gov'))
   const capacity = Number(edit.capacity_fee) || 0
   const pf = Number(edit.pf_adjust_amount) || 0
+  const marketBill = sumBillFee(feeRowsOf('industrial-market'))
+  const lineBill = sumBillFee(feeRowsOf('industrial-line'))
+  const transBill = sumBillFee(feeRowsOf('industrial-trans'))
+  const sysBill = sumBillFee(feeRowsOf('industrial-sys'))
+  const govIBill = sumBillFee(feeRowsOf('industrial-gov'))
+  const catalogBill = sumBillFee(feeRowsOf('residential-catalog'))
+  const govRBill = sumBillFee(feeRowsOf('residential-gov'))
   const industrial = Math.round((market + line + trans + sys + govI) * 100) / 100
   const residential = Math.round((catalog + govR) * 100) / 100
+  const industrialBill = Math.round((marketBill + lineBill + transBill + sysBill + govIBill) * 100) / 100
+  const residentialBill = Math.round((catalogBill + govRBill) * 100) / 100
   const m = (key: string) => sumQty(feeRowsOf(key))
   return [
-    { key: 'market', label: '市场化购电费', value: market, qty: m('industrial-market'), menuKey: 'industrial-market' },
-    { key: 'line', label: '上网环节线损费', value: line, qty: m('industrial-line'), menuKey: 'industrial-line' },
-    { key: 'trans', label: '输配电量电费', value: trans, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
-    { key: 'sys', label: '系统运行费', value: sys, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
-    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', value: industrial, qty: -1, menuKey: '', total: true },
-    { key: 'catalog', label: '目录电费（居民）', value: catalog, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
-    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', value: residential, qty: -1, menuKey: '', total: true },
-    { key: 'capacity', label: '输配容（需）量电费', value: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
-    { key: 'pf', label: '功率因数调整电费', value: pf, qty: -1, menuKey: 'pf-adjust' },
+    { key: 'market', label: '市场化购电费', value: market, billFee: marketBill, qty: m('industrial-market'), menuKey: 'industrial-market' },
+    { key: 'line', label: '上网环节线损费', value: line, billFee: lineBill, qty: m('industrial-line'), menuKey: 'industrial-line' },
+    { key: 'trans', label: '输配电量电费', value: trans, billFee: transBill, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
+    { key: 'sys', label: '系统运行费', value: sys, billFee: sysBill, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
+    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, billFee: govIBill, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
+    { key: 'industrial', label: '工商业电费小计', value: industrial, billFee: industrialBill, qty: -1, menuKey: '', total: true },
+    { key: 'catalog', label: '目录电费（居民）', value: catalog, billFee: catalogBill, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
+    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, billFee: govRBill, qty: m('residential-gov'), menuKey: 'residential-gov' },
+    { key: 'residential', label: '居民电费小计', value: residential, billFee: residentialBill, qty: -1, menuKey: '', total: true },
+    { key: 'capacity', label: '输配容（需）量电费', value: capacity, billFee: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
+    { key: 'pf', label: '功率因数调整电费', value: pf, billFee: pf, qty: -1, menuKey: 'pf-adjust' },
   ]
 })
 const qtyLabelOf = (r: any) => {
-  if (r.qty < 0) return '—'
-  if (r.key === 'capacity') return r.qty ? `${fmtKwh(r.qty)} kVA` : '—'
-  return r.qty ? `${fmtKwh(r.qty)} 千瓦时` : '—'
+  if (r.qty < 0) return ''
+  if (r.key === 'capacity') return r.qty ? `${fmtKwh(r.qty)} kVA` : ''
+  return r.qty ? `${fmtKwh(r.qty)} 千瓦时` : ''
 }
 const gotoMenu = (key: string) => {
   if (!key) return
@@ -1299,7 +1320,7 @@ const overviewTotal = computed(() => {
 })
 // 账单电费（解析提取）与汇总对比
 const billTotal = computed(() => Number(editForm.value.total_amount) || 0)
-const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : '—'))
+const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
 const billTotalOk = computed(() => {
   if (!billTotal.value) return true
   return Math.abs(overviewTotal.value - billTotal.value) < 0.01
@@ -1466,43 +1487,73 @@ watch([detailMode, activeMenu, () => currentRow.value, energyCompareRows], () =>
 onBeforeUnmount(() => { energyChart?.dispose(); energyChart = null })
 
 // 电量明细
-const industrialMeterRows = computed(() => [
-  { key: 'deep_peak_kwh', label: '尖峰', value: Number(editForm.value.deep_peak_kwh) || 0 },
-  { key: 'peak_kwh', label: '峰', value: Number(editForm.value.peak_kwh) || 0 },
-  { key: 'flat_kwh', label: '平', value: Number(editForm.value.flat_kwh) || 0 },
-  { key: 'valley_kwh', label: '谷', value: Number(editForm.value.valley_kwh) || 0 },
-])
-const industrialMeterTotal = computed(() => industrialMeterRows.value.reduce((s, r) => s + r.value, 0))
-const residentialMeterRows = computed(() => [
-  { key: 'residential_kwh', label: '目录电量', value: Number(editForm.value.residential_kwh) || 0 },
-])
-const residentialMeterTotal = computed(() => residentialMeterRows.value.reduce((s, r) => s + r.value, 0))
+const META_ORDER = ['正向有功（总）', '正向有功（尖峰）', '正向有功（峰）', '正向有功（平）', '正向有功（谷）', '正向无功（总）']
+// 电量明细：账单「电量明细」表逐行（示数类型/上期/本期/倍率/抄见/变损/线损/加减/计费电量）
+const meterRows = computed(() => {
+  let list: any[]
+  const mr = editForm.value.meter_readings
+  if (Array.isArray(mr) && mr.length) {
+    list = mr
+  } else {
+    // 旧数据兜底：仅计费电量有值
+    const e = editForm.value
+    const row = (meter_type: string, bill_kwh: number) => ({ meter_type, prev: 0, curr: 0, multiplier: 1, reading_kwh: 0, trans_loss: 0, line_loss: 0, adjust: 0, bill_kwh: Number(bill_kwh) || 0 })
+    list = [
+      row('正向有功（总）', e.total_kwh),
+      row('正向有功（尖峰）', e.deep_peak_kwh),
+      row('正向有功（峰）', e.peak_kwh),
+      row('正向有功（平）', e.flat_kwh),
+      row('正向有功（谷）', e.valley_kwh),
+      row('正向无功（总）', e.reactive_kwh),
+    ]
+  }
+  return [...list].sort((a, b) => {
+    const ia = META_ORDER.indexOf(a.meter_type)
+    const ib = META_ORDER.indexOf(b.meter_type)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+})
+const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
+const residentMeterKwh = computed(() => sumQty(feeRowsOf('residential-catalog')))
 const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(2)}%` : '--')
 
-// 电量明细编辑
+// 电量明细编辑（9 字段）
 const meterEditVisible = ref(false)
 const meterEditForm = ref<Record<string, any>>({})
 const meterEditTitle = ref('')
 const meterEditFields = ref<{ key: string; label: string }[]>([])
-const openMeterEdit = (idx: number, group: 'industrial' | 'residential') => {
-  if (group === 'industrial') {
-    const r = industrialMeterRows.value[idx]
-    meterEditTitle.value = `工商业 · ${r.label}时段`
-    meterEditFields.value = [{ key: r.key, label: `${r.label}时段电量（千瓦时）` }]
-    meterEditForm.value = { [r.key]: Number(editForm.value[r.key]) || 0 }
-  } else {
-    const r = residentialMeterRows.value[idx]
-    meterEditTitle.value = `居民 · ${r.label}`
-    meterEditFields.value = [{ key: r.key, label: `${r.label}（千瓦时）` }]
-    meterEditForm.value = { [r.key]: Number(editForm.value[r.key]) || 0 }
-  }
+let meterEditIdx = -1
+const openMeterEdit = (idx: number) => {
+  const r = meterRows.value[idx]
+  if (!r) return
+  meterEditTitle.value = r.meter_type || '电量明细'
+  meterEditFields.value = [
+    { key: 'prev', label: '上期示数' },
+    { key: 'curr', label: '本期示数' },
+    { key: 'multiplier', label: '倍率' },
+    { key: 'reading_kwh', label: '抄见电量' },
+    { key: 'trans_loss', label: '变损' },
+    { key: 'line_loss', label: '线损' },
+    { key: 'adjust', label: '加减' },
+    { key: 'bill_kwh', label: '计费电量' },
+  ]
+  meterEditForm.value = { ...r }
+  meterEditIdx = idx
   meterEditVisible.value = true
 }
 watch(meterEditForm, () => {
   if (!meterEditVisible.value || !autoSaveDirty) return
-  const k = meterEditFields.value[0]?.key
-  if (!k) return
-  editForm.value[k] = Number(meterEditForm.value[k]) || 0
+  if (meterEditIdx < 0) return
+  let list = editForm.value.meter_readings
+  if (!Array.isArray(list)) {
+    list = []
+    editForm.value.meter_readings = list
+  }
+  if (meterEditIdx >= list.length) {
+    const r = meterRows.value[meterEditIdx]
+    list[meterEditIdx] = { meter_type: r?.meter_type || `行${meterEditIdx + 1}`, prev: 0, curr: 0, multiplier: 1, reading_kwh: 0, trans_loss: 0, line_loss: 0, adjust: 0, bill_kwh: 0 }
+  }
+  Object.keys(meterEditForm.value).forEach(k => { list[meterEditIdx][k] = meterEditForm.value[k] })
 }, { deep: true })
 
 // 费用行编辑
@@ -1605,6 +1656,7 @@ const saveEditForm = async () => {
       if (v !== undefined) updated[c.key] = v
     })
     updated.fee_items = Array.isArray(editForm.value.fee_items) ? editForm.value.fee_items : []
+    updated.meter_readings = Array.isArray(editForm.value.meter_readings) ? editForm.value.meter_readings : []
     updated.remark = editForm.value.remark || ''
     if (records[idx]) records[idx] = { ...records[idx], ...updated }
     else records.push({ ...updated })
@@ -1804,23 +1856,30 @@ const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {
   const v = sumFeeBy(row, pred)
   return v === 0 ? '' : String(v)
 }
+// 列表费用列展示账单标称金额（fee_amount），与账单概况「账单电费」一致
+const sumBillFeeBy = (row: Row, pred: (it: any) => boolean): number =>
+  Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee_amount) || 0), 0) * 100) / 100
+const billFeeTextOf = (row: Row, pred: (it: any) => boolean): string => {
+  const v = sumBillFeeBy(row, pred)
+  return v === 0 ? '' : String(v)
+}
 const cellText = (row: Row, key: string): string => {
   if (key === 'bill_period') {
     const raw = row.item?.bill_period_start || row.item?.bill_period_end
     if (!raw) return ''
     return String(raw).slice(0, 7)
   }
-  if (key === 'market_amount') return feeTextOf(row, it => String(it.category || '').includes('市场化购电'))
-  if (key === 'line_amount') return feeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
-  if (key === 'trans_amount') return feeTextOf(row, it => String(it.category || '').includes('输配电量'))
-  if (key === 'sys_amount') return feeTextOf(row, it => String(it.category || '').includes('系统运行'))
-  if (key === 'govI_amount') return feeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) >= 100000 && !String(it.name || '').includes('功率因数'))
-  if (key === 'catalog_amount') return feeTextOf(row, it => String(it.category || '').includes('目录电费'))
-  if (key === 'govR_amount') return feeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) < 100000 && !String(it.name || '').includes('功率因数'))
+  if (key === 'market_amount') return billFeeTextOf(row, it => String(it.category || '').includes('市场化购电'))
+  if (key === 'line_amount') return billFeeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
+  if (key === 'trans_amount') return billFeeTextOf(row, it => String(it.category || '').includes('输配电量'))
+  if (key === 'sys_amount') return billFeeTextOf(row, it => String(it.category || '').includes('系统运行'))
+  if (key === 'govI_amount') return billFeeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) >= 100000 && !String(it.name || '').includes('功率因数'))
+  if (key === 'catalog_amount') return billFeeTextOf(row, it => String(it.category || '').includes('目录电费'))
+  if (key === 'govR_amount') return billFeeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) < 100000 && !String(it.name || '').includes('功率因数'))
   if (key === 'pf_adjust_amount') {
     const direct = row.item?.[key]
     if (direct !== null && direct !== undefined && direct !== '') return String(direct)
-    return feeTextOf(row, it => String(it.name || '').includes('功率因数'))
+    return billFeeTextOf(row, it => String(it.name || '').includes('功率因数'))
   }
   const v = row.item?.[key]
   if (v === null || v === undefined || v === '') return ''
@@ -2808,15 +2867,16 @@ onBeforeUnmount(() => { stopPolling() })
 .meter-table {
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: auto;
 
   .meter-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1.2fr repeat(8, minmax(0, 0.75fr));
     gap: 8px;
     padding: 10px 14px;
     border-bottom: 1px solid var(--td-component-stroke);
     font-size: 13px;
+    min-width: 900px;
     cursor: pointer;
     transition: background-color .15s;
 
