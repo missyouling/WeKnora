@@ -170,8 +170,8 @@
                 <!-- 底部汇总（表格底部左侧；选中时按选中统计并避让浮动工具栏） -->
                 <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
                   <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
-                  <span>本期电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
-                  <span>本期电费 {{ fmtMoney(summaryAmount) }} 元</span>
+                  <span>电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
+                  <span>电费 {{ fmtMoney(summaryAmount) }} 元</span>
                   <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
                 </div>
               </div>
@@ -795,25 +795,25 @@ const COLUMN_STORAGE_VERSION = 4
 interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: 'industrial' | 'residential' }
 const FALLBACK_COLUMNS: ColDef[] = [
   // 默认字段
-  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.2fr' },
-  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr' },
-  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'capacity_fee', label: '基本电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'market_amount', label: '购电电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'line_amount', label: '线损费用', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.1fr' },
+  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '1.15fr' },
+  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1.25fr' },
+  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  { key: 'capacity_fee', label: '基本电费', fieldType: 'amount', default: true, w: '1.15fr' },
+  { key: 'market_amount', label: '购电电费', fieldType: 'amount', default: true, w: '1.2fr' },
+  { key: 'line_amount', label: '线损费用', fieldType: 'amount', default: true, w: '1.15fr' },
+  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1.15fr' },
+  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1.2fr' },
   { key: 'govI_amount', label: '附加费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'catalog_amount', label: '目录电费（居民）', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'govR_amount', label: '附加费（居民）', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'catalog_amount', label: '目录电费（居民）', fieldType: 'amount', default: true, w: '1.3fr' },
+  { key: 'govR_amount', label: '附加费（居民）', fieldType: 'amount', default: true, w: '1.15fr' },
   // 详细字段
-  { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1fr' },
+  { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1.1fr' },
   { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
-  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: false, w: '1fr' },
-  { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: false, w: '0.9fr' },
-  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '0.8fr' },
+  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: false, w: '1.2fr' },
+  { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: false, w: '1.1fr' },
+  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '1.1fr' },
+  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '1fr' },
 ]
 
 const activeTab = ref<'electricity' | 'water' | 'gas'>('electricity')
@@ -830,7 +830,7 @@ const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
 const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')} 1fr 1.2fr`,
+  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')} 72px 88px`,
 }))
 
 function loadStoredColumns(): string[] {
@@ -923,9 +923,8 @@ const loadFieldConfigs = async () => {
   } catch { /* 字段配置加载失败用内置默认 */ }
 }
 function colWidth(key: string): string {
-  if (['account_name'].includes(key)) return '1.6fr'
-  if (['bill_period'].includes(key)) return '1.2fr'
-  return '1fr'
+  const fb = FALLBACK_COLUMNS.find(f => f.key === key)
+  return fb ? fb.w : '1fr'
 }
 
 // ---- 列表 ----
