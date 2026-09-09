@@ -280,26 +280,23 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">账单概况</span>
+                        <span class="bill-card-hint">点击行查看明细</span>
                       </div>
                       <div class="overview-summary">
                         <div class="os-table">
                           <div class="os-row os-row--head">
-                            <span>项目</span><span>金额（元）</span><span>说明</span>
+                            <span>费用组成</span><span>计费数量</span><span>电费</span>
                           </div>
-                          <div class="os-row" v-for="r in overviewRows" :key="r.key">
+                          <div class="os-row" :class="{ 'os-row--link': r.menuKey, 'os-row--total': r.total }"
+                            v-for="r in overviewRows" :key="r.key" @click="gotoMenu(r.menuKey)">
                             <span class="os-name">{{ r.label }}</span>
+                            <span class="os-qty">{{ qtyLabelOf(r) }}</span>
                             <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtMoney(r.value) }}</span>
-                            <span class="os-desc">{{ r.desc }}</span>
                           </div>
                           <div class="os-row os-row--total">
                             <span>本期电费</span>
+                            <span class="os-qty">—</span>
                             <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtMoney(overviewTotal) }}</span>
-                            <span class="os-desc">
-                              账单标称 {{ fmtMoney(Number(editForm.total_amount) || 0) }}
-                              <t-tag v-if="overviewDiff" size="small" theme="warning" variant="light" class="os-diff">
-                                差异 {{ fmtMoney(overviewDiff) }}
-                              </t-tag>
-                            </span>
                           </div>
                         </div>
                       </div>
@@ -1246,6 +1243,7 @@ const PF_FIELDS = [
 ]
 
 const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
+const sumQty = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.qty) || 0), 0) * 10) / 10
 
 const overviewRows = computed(() => {
   const edit = editForm.value
@@ -1260,20 +1258,30 @@ const overviewRows = computed(() => {
   const pf = Number(edit.pf_adjust_amount) || 0
   const industrial = Math.round((market + line + trans + sys + govI) * 100) / 100
   const residential = Math.round((catalog + govR) * 100) / 100
+  const m = (key: string) => sumQty(feeRowsOf(key))
   return [
-    { key: 'market', label: '市场化购电费', value: market, desc: `${feeRowsOf('industrial-market').length} 项` },
-    { key: 'line', label: '上网环节线损费', value: line, desc: `${feeRowsOf('industrial-line').length} 项` },
-    { key: 'trans', label: '输配电量电费', value: trans, desc: `${feeRowsOf('industrial-trans').length} 项` },
-    { key: 'sys', label: '系统运行费', value: sys, desc: `${feeRowsOf('industrial-sys').length} 项` },
-    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, desc: `${feeRowsOf('industrial-gov').length} 项` },
-    { key: 'industrial', label: '工商业电费小计', value: industrial, desc: '上述五项之和' },
-    { key: 'catalog', label: '目录电费（居民）', value: catalog, desc: `${feeRowsOf('residential-catalog').length} 项` },
-    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, desc: `${feeRowsOf('residential-gov').length} 项` },
-    { key: 'residential', label: '居民电费小计', value: residential, desc: '上述两项之和' },
-    { key: 'capacity', label: '输配容（需）量电费', value: capacity, desc: '容量 × 容量电价' },
-    { key: 'pf', label: '功率因数调整电费', value: pf, desc: '账单调整值' },
+    { key: 'market', label: '市场化购电费', value: market, qty: m('industrial-market'), menuKey: 'industrial-market' },
+    { key: 'line', label: '上网环节线损费', value: line, qty: m('industrial-line'), menuKey: 'industrial-line' },
+    { key: 'trans', label: '输配电量电费', value: trans, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
+    { key: 'sys', label: '系统运行费', value: sys, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
+    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
+    { key: 'industrial', label: '工商业电费小计', value: industrial, qty: -1, menuKey: '', total: true },
+    { key: 'catalog', label: '目录电费（居民）', value: catalog, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
+    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, qty: m('residential-gov'), menuKey: 'residential-gov' },
+    { key: 'residential', label: '居民电费小计', value: residential, qty: -1, menuKey: '', total: true },
+    { key: 'capacity', label: '输配容（需）量电费', value: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
+    { key: 'pf', label: '功率因数调整电费', value: pf, qty: -1, menuKey: 'pf-adjust' },
   ]
 })
+const qtyLabelOf = (r: any) => {
+  if (r.qty < 0) return '—'
+  if (r.key === 'capacity') return r.qty ? `${fmtKwh(r.qty)} kVA` : '—'
+  return r.qty ? `${fmtKwh(r.qty)} 千瓦时` : '—'
+}
+const gotoMenu = (key: string) => {
+  if (!key) return
+  activeMenu.value = key
+}
 const overviewTotal = computed(() => {
   const industrial = overviewRows.value.find(r => r.key === 'industrial')?.value || 0
   const residential = overviewRows.value.find(r => r.key === 'residential')?.value || 0
@@ -2561,16 +2569,23 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 概况 */
 .overview-static {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 18px 24px;
-  padding: 8px 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  padding: 16px 18px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
 
   .ov-item {
     display: flex;
     flex-direction: column;
     gap: 5px;
     min-width: 0;
+    flex: 1 1 calc(25% - 28px);
+
+    &:nth-child(n + 5) {
+      flex-basis: calc(33.333% - 28px);
+    }
 
     .ov-label {
       font-size: 12px;
@@ -2730,7 +2745,7 @@ onBeforeUnmount(() => { stopPolling() })
   .os-table {
     .os-row {
       display: grid;
-      grid-template-columns: 240px 160px 1fr;
+      grid-template-columns: 1fr 140px 120px;
       gap: 8px;
       padding: 8px 14px;
       border-bottom: 1px solid var(--td-component-stroke);
@@ -2745,6 +2760,17 @@ onBeforeUnmount(() => { stopPolling() })
         background: var(--td-bg-color-container-hover);
       }
 
+      &--link {
+        cursor: pointer;
+        transition: background-color .15s;
+
+        &:hover {
+          background: var(--td-bg-color-container-hover);
+
+          .os-name { color: var(--td-brand-color); }
+        }
+      }
+
       &--total {
         background: var(--td-brand-color-light);
         font-weight: 600;
@@ -2753,7 +2779,8 @@ onBeforeUnmount(() => { stopPolling() })
       }
 
       .os-name { color: var(--td-text-color-primary); }
-      .os-amount { font-variant-numeric: tabular-nums; }
+      .os-qty { font-size: 12px; color: var(--td-text-color-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+      .os-amount { text-align: right; font-variant-numeric: tabular-nums; }
       .os-desc { font-size: 12px; color: var(--td-text-color-secondary); }
 
       .os-neg { color: var(--td-error-color); }
