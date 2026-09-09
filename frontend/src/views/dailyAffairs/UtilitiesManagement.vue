@@ -126,20 +126,15 @@
                       <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
                         :disabled="row.kind === 'pending' && !['failed', 'parse_failed'].includes(row.extractStatus)" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
                     </div>
-                    <template v-if="row.kind === 'pending'">
-                      <div class="cell cell-pending-name" :title="row.fileName">
-                        <span class="row-text">{{ row.fileName }}</span>
+                    <template v-for="col in visibleColDefs" :key="col.key">
+                      <div class="cell" :class="`cell-${col.key}`">
+                        <!-- 进行中/失败行：文件名显示在第一列，其余列留空，保证与表头对齐（与发票模块一致） -->
+                        <span v-if="row.kind === 'pending' && col.key === visibleColDefs[0]?.key" class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+                        <span v-else-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.key)">
+                          {{ cellText(row, col.key) }}
+                        </span>
+                        <span v-else class="row-text" :title="cellText(row, col.key)">{{ cellText(row, col.key) }}</span>
                       </div>
-                    </template>
-                    <template v-else>
-                      <template v-for="col in visibleColDefs" :key="col.key">
-                        <div class="cell" :class="`cell-${col.key}`">
-                          <span v-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.key)">
-                            {{ cellText(row, col.key) }}
-                          </span>
-                          <span v-else class="row-text" :title="cellText(row, col.key)">{{ cellText(row, col.key) }}</span>
-                        </div>
-                      </template>
                     </template>
                     <div class="cell cell-extractStatus">
                       <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
