@@ -148,18 +148,23 @@
     <!-- 字段分组管理抽屉 -->
     <t-drawer v-if="groupEditVisible" :visible="true" :header="`字段 · ${groupEditLabel}`" :size="'520px'" :footer="false"
       :close-on-overlay-click="true" @close="groupEditVisible = false" @update:visible="(v: boolean) => (v || (groupEditVisible = false))">
-      <div class="us-hint">字段对应菜单列表的列；默认显示控制列显隐，保存后自动同步到菜单。</div>
-      <div class="us-field-head">
+      <div class="us-hint">{{ isRowGroup ? '行标题对应菜单列表的行；可改名、排序、增删，删除行仅隐藏不影响历史数据。' : '字段对应菜单列表的列；默认显示控制列显隐，保存后自动同步到菜单。' }}</div>
+      <div v-if="!isRowGroup" class="us-field-head">
         <span style="flex: 1.4">字段名</span>
         <span style="flex: 0.9">类型</span>
         <span style="flex: 0.7">默认显示</span>
         <span style="flex: 0.9">排序</span>
         <span style="flex: 0.5">操作</span>
       </div>
+      <div v-else class="us-field-head us-field-head--row">
+        <span style="flex: 2.4">行标题</span>
+        <span style="flex: 0.9">排序</span>
+        <span style="flex: 0.5">操作</span>
+      </div>
       <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
-        <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="saveGroupFields" />
-        <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
-        <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
+        <t-input v-model="f.label" size="small" class="us-field-label" placeholder="行标题" @change="saveGroupFields" />
+        <t-select v-if="!isRowGroup" v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+        <t-switch v-if="!isRowGroup" v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
         <div class="us-field-order">
           <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
             <template #icon><t-icon name="arrow-up" size="14px" /></template>
@@ -174,11 +179,11 @@
           </t-button>
         </div>
       </div>
-      <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
+      <div v-if="!groupFields.length" class="us-empty">暂无{{ isRowGroup ? '行' : '字段' }}，点击下方新增</div>
       <div class="us-actions">
         <t-button variant="outline" size="small" @click="addGroupField">
           <template #icon><t-icon name="add" size="14px" /></template>
-          新增字段
+          {{ isRowGroup ? '新增行' : '新增字段' }}
         </t-button>
         <t-button size="small" @click="groupEditVisible = false">完成</t-button>
       </div>
@@ -244,7 +249,11 @@ const GROUP_DEFS = [
   { key: 'pf', label: '功率因素调整' },
   { key: 'meter', label: '电量明细（工商业）' },
   { key: 'resident-meter', label: '电量明细（居民）' },
+  { key: 'meter-rows', label: '电量明细行（工商业）' },
+  { key: 'resident-meter-rows', label: '电量明细行（居民）' },
 ]
+// 行配置分组：仅行标题（名称/排序/增删），无类型与默认显示
+const ROW_GROUPS = new Set(['meter-rows', 'resident-meter-rows'])
 
 const accounts = ref<BasicAccount[]>([])
 const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: true, include_rules: [] })
@@ -257,6 +266,7 @@ const groups = computed(() => {
 })
 const groupFieldCount = (key: string) => groupCounts.value[key] ?? 0
 const groupCounts = ref<Record<string, number>>({})
+const isRowGroup = computed(() => ROW_GROUPS.has(groupEditKey.value))
 
 const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
@@ -397,8 +407,9 @@ const addGroupField = () => {
   let n = 1
   const keys = new Set(groupFields.value.map(f => f.field_key))
   while (keys.has(`custom_${n}`)) n++
+  const key = `custom_${n}`
   groupFields.value.push({
-    field_key: `custom_${n}`, label: '自定义字段', field_type: 'text',
+    field_key: key, label: isRowGroup.value ? `新行${n}` : '自定义字段', field_type: 'text',
     default_visible: false, sort_order: groupFields.value.length, is_custom: true,
   })
   saveGroupFields()

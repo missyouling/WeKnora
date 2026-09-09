@@ -107,14 +107,6 @@
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
               <div class="doc-list-view">
-                <!-- 进行中的文件状态行（解析中/提取中/待提取） -->
-                <div v-for="pf in pendingFiles" :key="pf.id" class="doc-pending-row">
-                  <t-tag size="small" theme="warning" variant="light-outline" class="row-status-tag">
-                    <template #icon><t-icon name="loading" class="icon-spin" /></template>
-                    {{ pendingLabel(pf) }}
-                  </t-tag>
-                  <span class="pending-name">{{ pf.file_name }}</span>
-                </div>
                 <div class="doc-list-header" :style="gridStyle" role="row">
                   <div class="cell cell-check" role="columnheader" @click.stop>
                     <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
@@ -127,19 +119,27 @@
                   <div class="cell cell-tags" role="columnheader">标签</div>
                 </div>
                 <div class="doc-list-body">
-                  <div v-for="row in rows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
-                    :class="{ selected: selectedRowKeys.includes(row.rowKey) }" role="row" @click="openDetail(row)">
+                  <div v-for="row in displayRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
+                    :class="{ selected: selectedRowKeys.includes(row.rowKey), 'is-pending': row.kind === 'pending' }" role="row"
+                    @click="row.kind !== 'pending' && openDetail(row)">
                     <div class="cell cell-check" @click.stop>
                       <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
                         :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
                     </div>
-                    <template v-for="col in visibleColDefs" :key="col.key">
-                      <div class="cell" :class="`cell-${col.key}`">
-                        <span v-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.key)">
-                          {{ cellText(row, col.key) }}
-                        </span>
-                        <span v-else class="row-text" :title="cellText(row, col.key)">{{ cellText(row, col.key) }}</span>
+                    <template v-if="row.kind === 'pending'">
+                      <div class="cell cell-pending-name" :title="row.fileName">
+                        <span class="row-text">{{ row.fileName }}</span>
                       </div>
+                    </template>
+                    <template v-else>
+                      <template v-for="col in visibleColDefs" :key="col.key">
+                        <div class="cell" :class="`cell-${col.key}`">
+                          <span v-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.key)">
+                            {{ cellText(row, col.key) }}
+                          </span>
+                          <span v-else class="row-text" :title="cellText(row, col.key)">{{ cellText(row, col.key) }}</span>
+                        </div>
+                      </template>
                     </template>
                     <div class="cell cell-extractStatus">
                       <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
@@ -160,7 +160,7 @@
                           <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
                         </div>
                       </t-tooltip>
-                      <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
+                      <span v-else class="row-tag-chips is-clickable" @click="row.kind !== 'pending' && openTagEdit(row)">
                         <span class="row-tag-add">+ 标签</span>
                       </span>
                     </div>
@@ -305,9 +305,10 @@
                             <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtRate6(overviewTotal) }}</span>
                             <span class="os-amount">{{ billTotalText }}</span>
                             <span class="os-state">
-                              <t-tag :theme="billTotalOk ? 'success' : 'danger'" variant="light" size="small">
-                                {{ billTotalOk ? '正常' : '异常' }}
-                              </t-tag>
+                              <t-tooltip v-if="!billTotalOk" content="差值 {{ fmtRate6(overviewDiff) }}：子项计算含容需量/力调，提取值若为旧口径则不含，重提取后一致" placement="top">
+                                <t-tag theme="danger" variant="light" size="small">异常</t-tag>
+                              </t-tooltip>
+                              <t-tag v-else theme="success" variant="light" size="small">正常</t-tag>
                             </span>
                           </div>
                         </div>
@@ -960,6 +961,20 @@ const mapRow = (r: any): Row => ({
   page: r.page,
 })
 
+// 进行中文件（解析中/提取中/待提取）合并进列表行，与合同模块一致
+const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
+  rowKey: `pending-${pf.id}`,
+  knowledgeId: pf.id,
+  fileName: pf.file_name || pf.title || '',
+  extractStatus: pendingLabel(pf),
+  extractError: pf.custom_metadata?.extract_error || '',
+  kind: 'pending',
+  item: {},
+  tags: [],
+  page: 0,
+})))
+const displayRows = computed(() => [...pendingRows.value, ...rows.value])
+
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
   if (reset) {
@@ -1015,8 +1030,8 @@ const onListScroll = () => {
 
 // ---- 状态行 ----
 const STATUS_MAP: Record<string, { label: string; theme: any; icon?: string; spin?: boolean }> = {
-  parsing: { label: '解析中', theme: 'warning', icon: 'loading', spin: true },
-  extracting: { label: '提取中', theme: 'warning', icon: 'loading', spin: true },
+  parsing: { label: '解析中', theme: 'primary', icon: 'loading', spin: true },
+  extracting: { label: '提取中', theme: 'primary', icon: 'loading', spin: true },
   pending: { label: '待提取', theme: 'default' },
   success: { label: '提取完成', theme: 'success', icon: 'check-circle' },
   manual: { label: '待补录', theme: 'warning', icon: 'edit-1' },
@@ -1029,10 +1044,10 @@ const statusOf = (row: Row) => {
 }
 const pendingLabel = (pf: any) => {
   const ps = pf.parse_status || ''
-  if (ps === 'parsing' || ps === 'pending') return '解析中'
+  if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
   const meta = pf.custom_metadata || {}
-  if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return '提取中'
-  return '待提取'
+  if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
+  return 'pending'
 }
 
 // 轮询：解析完成后自动触发提取；提取中动态刷新状态
@@ -1356,8 +1371,16 @@ const PF_FIELDS = [
 // 居民电量明细行（项目/本期电量/比例/加减/计费电量）
 const residentialRows = computed(() => {
   const list = editForm.value.residential_readings
-  if (Array.isArray(list) && list.length) return list
-  return [{ project: '居民目录电量', kwh: residentMeterKwh.value, ratio: 1, adjust: 0, bill_kwh: residentMeterKwh.value }]
+  const arr = Array.isArray(list) && list.length
+    ? list
+    : [{ project: '居民目录电量', kwh: residentMeterKwh.value, ratio: 1, adjust: 0, bill_kwh: residentMeterKwh.value }]
+  const cfgs = residentRowConfigs.value
+  if (!cfgs.length) return arr
+  return cfgs.map(cfg => {
+    const hit = arr.find(r => matchRow(r, cfg))
+    if (hit) return { ...hit, project: cfg.label }
+    return { project: cfg.label, kwh: '', ratio: '', adjust: '', bill_kwh: '' }
+  })
 })
 const residentialKwhTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.kwh) || 0), 0))
 const residentialBillTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
@@ -1424,15 +1447,15 @@ const overviewTotal = computed(() => {
   const pf = overviewRows.value.find(r => r.key === 'pf')?.value || 0
   return Math.round((industrial + residential + capacity + pf) * 100) / 100
 })
-// 账单电费（解析提取）与汇总对比
-const billTotal = computed(() => Number(editForm.value.total_amount) || 0)
+// 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
+const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
 const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
 const billTotalOk = computed(() => {
   if (!billTotal.value) return true
   return Math.abs(overviewTotal.value - billTotal.value) < 0.01
 })
 const overviewDiff = computed(() => {
-  const nominal = Number(editForm.value.total_amount) || 0
+  const nominal = billTotal.value
   if (!nominal) return 0
   return Math.round((overviewTotal.value - nominal) * 100) / 100
 })
@@ -1456,7 +1479,7 @@ const ovText = (f: { key: string; label: string }) => {
 }
 // 用能分析
 const momText = computed(() => {
-  const prev = Number(editForm.value.prev_kwh) || 0
+  const prev = prevEnergy.value.exists ? prevEnergy.value.total : 0
   const cur = Number(editForm.value.total_kwh) || 0
   if (!prev || !cur) return '—'
   const pct = Math.round(((cur - prev) / prev) * 1000) / 10
@@ -1548,7 +1571,11 @@ let energyChart: echarts.ECharts | null = null
 const renderEnergyChart = async () => {
   await nextTick()
   const el = energyChartRef.value
-  if (!el) return
+  // 容器未渲染或尺寸为 0（v-if 切换/布局未稳定）时延迟重试
+  if (!el || !el.clientWidth) {
+    if (detailMode.value && activeMenu.value === 'overview') setTimeout(renderEnergyChart, 80)
+    return
+  }
   if (!energyChart) energyChart = echarts.init(el)
   const rows = energyCompareRows.value
   const prevExists = prevEnergy.value.exists
@@ -1587,13 +1614,29 @@ const renderEnergyChart = async () => {
     ],
   })
 }
-watch([detailMode, activeMenu, () => currentRow.value, energyCompareRows], () => {
+watch([detailMode, activeMenu, () => currentRow.value, energyCompareRows, () => editForm.value], () => {
   if (detailMode.value && activeMenu.value === 'overview') renderEnergyChart()
+}, { deep: true })
+// 关闭详情时销毁实例，避免 v-if 重建后图表挂载到旧容器不显示
+watch(detailMode, (v) => {
+  if (!v) { energyChart?.dispose(); energyChart = null }
 })
 onBeforeUnmount(() => { energyChart?.dispose(); energyChart = null })
 
 // 电量明细
 const META_ORDER = ['正向有功（总）', '正向有功（尖峰）', '正向有功（峰）', '正向有功（平）', '正向有功（谷）', '正向无功（总）']
+// 行配置：按设置中「电量明细行」分组渲染（field_key=默认行文本，label 可改名）
+const rowConfigsOf = (group: string) => {
+  const list = allFieldConfigs.value.filter((c: any) => c.group === group && c.deleted_at == null)
+  return [...list].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
+}
+const meterRowConfigs = computed(() => rowConfigsOf('meter-rows'))
+const residentRowConfigs = computed(() => rowConfigsOf('resident-meter-rows'))
+const matchRow = (row: any, cfg: any) => {
+  const t = row?.meter_type || row?.project || ''
+  if (!t) return false
+  return t === cfg.field_key || t === cfg.label || t.includes(cfg.field_key) || cfg.field_key.includes(t)
+}
 // 电量明细：账单「电量明细」表逐行（示数类型/上期/本期/倍率/抄见/变损/线损/加减/计费电量）
 const meterRows = computed(() => {
   let list: any[]
@@ -1613,10 +1656,18 @@ const meterRows = computed(() => {
       row('正向无功（总）', e.reactive_kwh),
     ]
   }
-  return [...list].sort((a, b) => {
-    const ia = META_ORDER.indexOf(a.meter_type)
-    const ib = META_ORDER.indexOf(b.meter_type)
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  const cfgs = meterRowConfigs.value
+  if (!cfgs.length) {
+    return [...list].sort((a, b) => {
+      const ia = META_ORDER.indexOf(a.meter_type)
+      const ib = META_ORDER.indexOf(b.meter_type)
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+    })
+  }
+  return cfgs.map(cfg => {
+    const hit = list.find(m => matchRow(m, cfg))
+    if (hit) return { ...hit, meter_type: cfg.label }
+    return { meter_type: cfg.label, prev: '', curr: '', multiplier: '', reading_kwh: '', trans_loss: '', line_loss: '', adjust: '', bill_kwh: '' }
   })
 })
 const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
@@ -1637,7 +1688,7 @@ const openMeterEdit = (idx: number) => {
   if (r.multiplier === undefined || r.multiplier === null || Number(r.multiplier) === 0) {
     r.multiplier = ratio || 1
   }
-  meterEditTitle.value = r.meter_type || '电量明细'
+  meterEditTitle.value = r.meter_type || meterRowConfigs.value[idx]?.label || '电量明细'
   meterEditFields.value = [
     { key: 'prev', label: '上期示数' },
     { key: 'curr', label: '本期示数' },
@@ -1660,11 +1711,14 @@ watch(meterEditForm, () => {
     list = []
     editForm.value.meter_readings = list
   }
-  if (meterEditIdx >= list.length) {
-    const r = meterRows.value[meterEditIdx]
-    list[meterEditIdx] = { meter_type: r?.meter_type || `行${meterEditIdx + 1}`, prev: 0, curr: 0, multiplier: 1, reading_kwh: 0, trans_loss: 0, line_loss: 0, adjust: 0, bill_kwh: 0 }
+  const cfg = meterRowConfigs.value[meterEditIdx]
+  const title = meterEditForm.value.meter_type || cfg?.label || cfg?.field_key || `行${meterEditIdx + 1}`
+  let row = list.find((m: any) => matchRow(m, { field_key: title, label: title }))
+  if (!row) {
+    row = { meter_type: title, prev: 0, curr: 0, multiplier: 1, reading_kwh: 0, trans_loss: 0, line_loss: 0, adjust: 0, bill_kwh: 0 }
+    list.push(row)
   }
-  Object.keys(meterEditForm.value).forEach(k => { list[meterEditIdx][k] = meterEditForm.value[k] })
+  Object.keys(meterEditForm.value).forEach(k => { row[k] = meterEditForm.value[k] })
 }, { deep: true })
 
 // 费用行编辑
@@ -1768,9 +1822,14 @@ watch(detailEditForm, () => {
   if (detailEditTarget === 'resident') {
     let list = editForm.value.residential_readings
     if (!Array.isArray(list)) { list = []; editForm.value.residential_readings = list }
-    if (detailEditIdx >= list.length) list[detailEditIdx] = { project: '', kwh: 0, ratio: 0, adjust: 0, bill_kwh: 0 }
-    Object.keys(detailEditForm.value).forEach(k => { list[detailEditIdx][k] = detailEditForm.value[k] })
-    const row = list[detailEditIdx]
+    const cfg = residentRowConfigs.value[detailEditIdx]
+    const title = detailEditForm.value.project || cfg?.label || cfg?.field_key || `行${detailEditIdx + 1}`
+    let row = list.find((r: any) => matchRow(r, { field_key: title, label: title }))
+    if (!row) {
+      row = { project: title, kwh: 0, ratio: 0, adjust: 0, bill_kwh: 0 }
+      list.push(row)
+    }
+    Object.keys(detailEditForm.value).forEach(k => { row[k] = detailEditForm.value[k] })
     let ratio = Number(row.ratio) || 0
     if (ratio > 1) ratio = ratio / 100
     row.ratio = Math.round(ratio * 10000) / 10000
