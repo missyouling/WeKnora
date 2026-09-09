@@ -247,8 +247,8 @@
                       </div>
                       <div class="overview-static">
                         <div class="ov-item" v-for="f in BASIC_INFO_FIELDS" :key="f.key">
-                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '—' }}</span>
                           <span class="ov-label">{{ f.label }}</span>
+                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '—' }}</span>
                         </div>
                       </div>
                     </div>
@@ -285,18 +285,26 @@
                       <div class="overview-summary">
                         <div class="os-table">
                           <div class="os-row os-row--head">
-                            <span>费用组成</span><span>计费数量</span><span>电费</span>
+                            <span>费用组成</span><span class="os-qty">计费数量</span><span class="os-amount">电费</span><span class="os-amount">账单电费</span><span class="os-state">对比状态</span>
                           </div>
                           <div class="os-row" :class="{ 'os-row--link': r.menuKey, 'os-row--total': r.total }"
                             v-for="r in overviewRows" :key="r.key" @click="gotoMenu(r.menuKey)">
                             <span class="os-name">{{ r.label }}</span>
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
-                            <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtMoney(r.value) }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtRate6(r.value) }}</span>
+                            <span class="os-qty">—</span>
+                            <span class="os-state">—</span>
                           </div>
                           <div class="os-row os-row--total">
                             <span>本期电费</span>
                             <span class="os-qty">—</span>
-                            <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtMoney(overviewTotal) }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtRate6(overviewTotal) }}</span>
+                            <span class="os-amount">{{ billTotalText }}</span>
+                            <span class="os-state">
+                              <t-tag :theme="billTotalOk ? 'success' : 'danger'" variant="light" size="small">
+                                {{ billTotalOk ? '正常' : '异常' }}
+                              </t-tag>
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -335,9 +343,9 @@
                           <div class="ea-compare-row" v-for="r in energyCompareRows" :key="r.key">
                             <span class="ea-c-label">{{ r.label }}</span>
                             <span class="ea-c-num">{{ fmtKwh(r.cur) }}</span>
-                            <span class="ea-c-num">{{ r.curPct }}%</span>
+                            <span class="ea-c-num">{{ r.curPct.toFixed(2) }}%</span>
                             <span class="ea-c-num">{{ prevEnergy.exists ? fmtKwh(r.prev) : '—' }}</span>
-                            <span class="ea-c-num">{{ prevEnergy.exists ? r.prevPct + '%' : '—' }}</span>
+                            <span class="ea-c-num">{{ prevEnergy.exists ? r.prevPct.toFixed(2) + '%' : '—' }}</span>
                             <span class="ea-c-num" :class="{ 'ea-c-up': r.delta > 0, 'ea-c-down': r.delta < 0 }">
                               {{ prevEnergy.exists ? (r.delta > 0 ? '+' : '') + r.delta + '%' : '—' }}
                             </span>
@@ -407,7 +415,7 @@
                           <span>{{ it.period || '--' }}</span>
                           <span class="row-mono">{{ it.qty ? fmtKwh(it.qty) : '' }}</span>
                           <span class="row-mono">{{ it.rate ? fmtRate(it.rate) : '' }}</span>
-                          <span class="row-mono" :class="{ 'os-neg': it.fee < 0 }">{{ it.fee || it.fee === 0 ? fmtMoney(it.fee) : '' }}</span>
+                          <span class="row-mono" :class="{ 'os-neg': it.fee < 0 }">{{ it.fee || it.fee === 0 ? fmtRate6(it.fee) : '' }}</span>
                         </div>
                         <div v-if="!feeRowsOf(activeMenu).length" class="fg-empty">暂无数据</div>
                         <div v-if="feeRowsOf(activeMenu).length" class="fg-row fg-total">
@@ -1289,6 +1297,13 @@ const overviewTotal = computed(() => {
   const pf = overviewRows.value.find(r => r.key === 'pf')?.value || 0
   return Math.round((industrial + residential + capacity + pf) * 100) / 100
 })
+// 账单电费（解析提取）与汇总对比
+const billTotal = computed(() => Number(editForm.value.total_amount) || 0)
+const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : '—'))
+const billTotalOk = computed(() => {
+  if (!billTotal.value) return true
+  return Math.abs(overviewTotal.value - billTotal.value) < 0.01
+})
 const overviewDiff = computed(() => {
   const nominal = Number(editForm.value.total_amount) || 0
   if (!nominal) return 0
@@ -1376,7 +1391,7 @@ const prevEnergy = computed(() => {
 const energyCompareRows = computed(() => {
   const curTotal = metricKwh.value
   const prevTotal = prevEnergy.value.total
-  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 1000) / 10 : 0)
+  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 10000) / 100 : 0)
   const cur = [
     { key: 'deep', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
     { key: 'peak', label: '峰', v: Number(editForm.value.peak_kwh) || 0 },
@@ -1462,7 +1477,7 @@ const residentialMeterRows = computed(() => [
   { key: 'residential_kwh', label: '目录电量', value: Number(editForm.value.residential_kwh) || 0 },
 ])
 const residentialMeterTotal = computed(() => residentialMeterRows.value.reduce((s, r) => s + r.value, 0))
-const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(1)}%` : '--')
+const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(2)}%` : '--')
 
 // 电量明细编辑
 const meterEditVisible = ref(false)
@@ -1775,6 +1790,12 @@ const fmtKwh = (v: any) => {
 const fmtMoney = (v: any) => {
   const n = Number(v) || 0
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+/** 明细电费/单价：最多 6 位小数，去尾 0 */
+const fmtRate6 = (v: any) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 const feeItemsOf = (row: Row): any[] => (Array.isArray(row.item?.fee_items) ? row.item.fee_items : [])
 const sumFeeBy = (row: Row, pred: (it: any) => boolean): number =>
@@ -2569,9 +2590,9 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 概况 */
 .overview-static {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 28px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 24px;
   padding: 16px 18px;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
@@ -2579,18 +2600,12 @@ onBeforeUnmount(() => { stopPolling() })
   .ov-item {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
     min-width: 0;
-    flex: 1 1 calc(25% - 28px);
-
-    &:nth-child(n + 5) {
-      flex-basis: calc(33.333% - 28px);
-    }
 
     .ov-label {
       font-size: 12px;
       color: var(--td-text-color-secondary);
-      order: 2;
     }
 
     .ov-value {
@@ -2600,7 +2615,6 @@ onBeforeUnmount(() => { stopPolling() })
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      order: 1;
     }
   }
 }
@@ -2745,7 +2759,7 @@ onBeforeUnmount(() => { stopPolling() })
   .os-table {
     .os-row {
       display: grid;
-      grid-template-columns: 1fr 140px 120px;
+      grid-template-columns: 1fr 130px 110px 110px 84px;
       gap: 8px;
       padding: 8px 14px;
       border-bottom: 1px solid var(--td-component-stroke);
@@ -2781,6 +2795,7 @@ onBeforeUnmount(() => { stopPolling() })
       .os-name { color: var(--td-text-color-primary); }
       .os-qty { font-size: 12px; color: var(--td-text-color-secondary); text-align: right; font-variant-numeric: tabular-nums; }
       .os-amount { text-align: right; font-variant-numeric: tabular-nums; }
+      .os-state { text-align: center; }
       .os-desc { font-size: 12px; color: var(--td-text-color-secondary); }
 
       .os-neg { color: var(--td-error-color); }

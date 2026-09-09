@@ -57,7 +57,7 @@
               新增字段
             </t-button>
           </div>
-          <div class="us-hint">默认显示控制列表列显隐；修改保存后列表字段自动刷新。</div>
+          <div class="us-hint">默认显示控制列表列显隐；输入完成后失焦自动保存。</div>
           <div class="us-field-head">
             <span style="flex: 1.4">字段名</span>
             <span style="flex: 0.9">类型</span>
@@ -66,9 +66,9 @@
             <span style="flex: 0.5">操作</span>
           </div>
           <div v-for="(f, i) in fields" :key="f.field_key" class="us-field-row">
-            <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" />
-            <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" />
-            <t-switch v-model="f.default_visible" size="small" class="us-field-visible" />
+            <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="scheduleSave" />
+            <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="scheduleSave" />
+            <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="scheduleSave" />
             <div class="us-field-order">
               <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveField(i, -1)">
                 <template #icon><t-icon name="arrow-up" size="14px" /></template>
@@ -101,19 +101,19 @@
           <div v-if="!tariffs.length" class="us-empty">暂无分时电价规则，零售交易电费按账单提取标准计算</div>
           <div v-for="(t, i) in tariffs" :key="t.id" class="us-tariff-row">
             <div class="us-tariff-main">
-              <t-input v-model="t.name" placeholder="规则名" size="small" class="us-tariff-name" />
+              <t-input v-model="t.name" placeholder="规则名" size="small" class="us-tariff-name" @change="scheduleSave" />
               <t-select v-model="t.monthsArr" multiple size="small" class="us-tariff-months" :options="MONTH_OPTS"
                 placeholder="适用月份" @change="syncTariffMonths(i)" />
               <div class="us-tariff-rates">
-                <label>尖</label><t-input v-model="t.deep_peak_rate" type="number" size="small" class="us-rate-input" />
-                <label>峰</label><t-input v-model="t.peak_rate" type="number" size="small" class="us-rate-input" />
-                <label>平</label><t-input v-model="t.flat_rate" type="number" size="small" class="us-rate-input" />
-                <label>谷</label><t-input v-model="t.valley_rate" type="number" size="small" class="us-rate-input" />
+                <label>尖</label><t-input v-model="t.deep_peak_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
+                <label>峰</label><t-input v-model="t.peak_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
+                <label>平</label><t-input v-model="t.flat_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
+                <label>谷</label><t-input v-model="t.valley_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
               </div>
             </div>
             <div class="us-tariff-side">
               <t-tooltip content="无匹配月份时兜底">
-                <t-switch v-model="t.is_default" size="small" />
+                <t-switch v-model="t.is_default" size="small" @change="scheduleSave" />
               </t-tooltip>
               <t-button variant="text" size="small" shape="square" @click="removeTariff(i)">
                 <template #icon><t-icon name="delete" size="15px" /></template>
@@ -126,7 +126,7 @@
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">包含判定</span>
-            <t-switch v-model="cfg.enabled" size="small" />
+            <t-switch v-model="cfg.enabled" size="small" @change="scheduleSave" />
             <span class="us-state">{{ cfg.enabled ? '生效' : '停用' }}</span>
             <span class="us-spacer" />
             <t-button variant="outline" size="small" @click="addIncludeRule">
@@ -138,16 +138,16 @@
           <div v-if="!cfg.include_rules.length" class="us-empty">暂无规则，模型判定为准</div>
           <div v-for="(r, i) in cfg.include_rules" :key="r.id" class="us-row">
             <div class="us-row-main">
-              <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" />
-              <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" />
+              <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" @change="scheduleSave" />
+              <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" @change="scheduleSave" />
               <t-textarea v-if="r.match_type === 'keyword'" v-model="keywordsText[i]" placeholder="关键词，逗号分隔"
                 :autosize="{ minRows: 1, maxRows: 2 }" size="small" class="us-keywords" @change="syncKeywords(i)" />
-              <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" />
-              <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" />
+              <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" @change="scheduleSave" />
+              <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" @change="scheduleSave" />
             </div>
             <div class="us-row-side">
-              <t-switch v-model="r.enabled" size="small" />
-              <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1)">
+              <t-switch v-model="r.enabled" size="small" @change="scheduleSave" />
+              <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1); scheduleSave()">
                 <template #icon><t-icon name="delete" size="15px" /></template>
               </t-button>
             </div>
@@ -264,20 +264,24 @@ onBeforeUnmount(() => {
 const syncKeywords = (i: number) => {
   const t = keywordsText.value[i] || ''
   cfg.value.include_rules[i].keywords = t.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
+  scheduleSave()
 }
 const addIncludeRule = () => {
   cfg.value.include_rules.push({ id: uid(), name: '', match_type: 'keyword', keywords: [], logic: 'OR', regex: '', enabled: true })
   keywordsText.value.push('')
+  scheduleSave()
 }
 
 const syncTariffMonths = (i: number) => {
   tariffs.value[i].months = (tariffs.value[i].monthsArr || []).join(',')
+  scheduleSave()
 }
 const addTariff = () => {
   tariffs.value.push({
     id: uid(), name: '', months: '', monthsArr: [], deep_peak_rate: '', peak_rate: '', flat_rate: '', valley_rate: '',
     is_default: tariffs.value.length === 0, sort_order: tariffs.value.length, _new: true,
   })
+  scheduleSave()
 }
 const removeTariff = (i: number) => {
   const t = tariffs.value[i]
@@ -285,6 +289,7 @@ const removeTariff = (i: number) => {
     deleteUtilityTariffRule(t.id, 'electricity').catch(() => { /* 保存流程兜底 */ })
   }
   tariffs.value.splice(i, 1)
+  scheduleSave()
 }
 
 const addField = () => {
@@ -295,10 +300,12 @@ const addField = () => {
     field_key: `custom_${n}`, label: '自定义字段', field_type: 'text',
     default_visible: false, sort_order: fields.value.length, is_custom: true,
   })
+  scheduleSave()
 }
 const removeField = (i: number) => {
   fields.value.splice(i, 1)
   refreshOrder()
+  scheduleSave()
 }
 const moveField = (i: number, dir: number) => {
   const j = i + dir
@@ -307,6 +314,7 @@ const moveField = (i: number, dir: number) => {
   fields.value[i] = fields.value[j]
   fields.value[j] = tmp
   refreshOrder()
+  scheduleSave()
 }
 const refreshOrder = () => {
   fields.value.forEach((f, i) => { f.sort_order = i })
@@ -481,9 +489,7 @@ const persistAll = async () => {
   }
 }
 
-// 深度监听：字段/规则/电价任一改动 → 防抖自动保存
-watch([fields, cfg, tariffs], () => { scheduleSave() }, { deep: true })
-// 关闭抽屉前落盘最后改动
+// 输入/改动通过 @change 触发 scheduleSave；关闭抽屉前落盘最后改动
 watch(() => props.visible, (v) => {
   if (!v) {
     clearTimeout(saveTimer)
