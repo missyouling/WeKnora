@@ -244,12 +244,11 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">基础信息</span>
-                        <span class="bill-card-hint">基本户信息 · 设置中维护</span>
                       </div>
                       <div class="overview-static">
                         <div class="ov-item" v-for="f in BASIC_INFO_FIELDS" :key="f.key">
+                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '—' }}</span>
                           <span class="ov-label">{{ f.label }}</span>
-                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '' }}</span>
                         </div>
                       </div>
                     </div>
@@ -281,7 +280,6 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">账单概况</span>
-                        <span class="bill-card-hint">金额由各子项计算</span>
                       </div>
                       <div class="overview-summary">
                         <div class="os-table">
@@ -311,6 +309,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">用能分析</span>
+                        <span v-if="!prevEnergy.exists" class="bill-card-hint">暂无上期账单数据</span>
                       </div>
                       <div class="energy-analysis">
                         <div class="ea-grid">
@@ -319,16 +318,8 @@
                             <strong class="ea-value">{{ momText }}</strong>
                           </div>
                           <div class="ea-item">
-                            <span class="ea-label">峰谷比例</span>
-                            <strong class="ea-value">{{ peakValleyText }}</strong>
-                          </div>
-                          <div class="ea-item">
                             <span class="ea-label">功率因数</span>
                             <strong class="ea-value">{{ pfText }}</strong>
-                          </div>
-                          <div class="ea-item">
-                            <span class="ea-label">最大需量</span>
-                            <strong class="ea-value">{{ demandText }}</strong>
                           </div>
                           <div class="ea-item">
                             <span class="ea-label">平均电价</span>
@@ -337,6 +328,23 @@
                         </div>
                         <div class="ea-chart">
                           <div ref="energyChartRef" class="ea-echart"></div>
+                        </div>
+                        <!-- 分时电量占比对比 -->
+                        <div class="ea-compare">
+                          <div class="ea-compare-row ea-compare-head">
+                            <span>时段</span><span>本期电量</span><span>本期占比</span>
+                            <span>上期电量</span><span>上期占比</span><span>占比变化</span>
+                          </div>
+                          <div class="ea-compare-row" v-for="r in energyCompareRows" :key="r.key">
+                            <span class="ea-c-label">{{ r.label }}</span>
+                            <span class="ea-c-num">{{ fmtKwh(r.cur) }}</span>
+                            <span class="ea-c-num">{{ r.curPct }}%</span>
+                            <span class="ea-c-num">{{ prevEnergy.exists ? fmtKwh(r.prev) : '—' }}</span>
+                            <span class="ea-c-num">{{ prevEnergy.exists ? r.prevPct + '%' : '—' }}</span>
+                            <span class="ea-c-num" :class="{ 'ea-c-up': r.delta > 0, 'ea-c-down': r.delta < 0 }">
+                              {{ prevEnergy.exists ? (r.delta > 0 ? '+' : '') + r.delta + '%' : '—' }}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -894,11 +902,24 @@ const loadFiles = async (reset = false) => {
     rows.value = [...rows.value, ...fresh]
     hasMore.value = rows.value.length < total
     if (hasMore.value) page.value += 1
+    loadAllRecords()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '列表加载失败')
   } finally {
     listLoading.value = false
     loadingMore.value = false
+  }
+}
+
+// 全量电费记录（概览上期对比数据源）
+const allRecords = ref<any[]>([])
+const loadAllRecords = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await listUtilityBillRecords(kbId.value, { page: 1, page_size: 500 })
+    allRecords.value = Array.isArray(res?.data || res?.list) ? (res.data || res.list) : []
+  } catch {
+    allRecords.value = []
   }
 }
 
@@ -1323,7 +1344,55 @@ const energyBars = computed(() => {
   return raw.map(b => ({ ...b, pct: Math.max(Math.round((b.v / max) * 100), 2) }))
 })
 
-// ---- 用能分析 ECharts（分时电量柱状图） ----
+// ---- 上期分时数据（按账单周期取最近上一期） ----
+const prevEnergy = computed(() => {
+  const curStart = editForm.value.bill_period_start || ''
+  const prevs = allRecords.value
+    .map(r => r.item || {})
+    .filter(m => m.bill_period_start && String(m.bill_period_start) < curStart)
+    .sort((a: any, b: any) => String(b.bill_period_start).localeCompare(String(a.bill_period_start)))
+  const p = prevs[0] || {}
+  const exists = !!p.bill_period_start
+  return {
+    exists,
+    period: exists ? String(p.bill_period_start).slice(0, 7) : '',
+    deep: Number(p.deep_peak_kwh) || 0,
+    peak: Number(p.peak_kwh) || 0,
+    flat: Number(p.flat_kwh) || 0,
+    valley: Number(p.valley_kwh) || 0,
+    total: Number(p.total_kwh) || 0,
+  }
+})
+
+// 分时占比对比表
+const energyCompareRows = computed(() => {
+  const curTotal = metricKwh.value
+  const prevTotal = prevEnergy.value.total
+  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 1000) / 10 : 0)
+  const cur = [
+    { key: 'deep', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
+    { key: 'peak', label: '峰', v: Number(editForm.value.peak_kwh) || 0 },
+    { key: 'flat', label: '平', v: Number(editForm.value.flat_kwh) || 0 },
+    { key: 'valley', label: '谷', v: Number(editForm.value.valley_kwh) || 0 },
+  ]
+  const prev = {
+    deep: prevEnergy.value.deep, peak: prevEnergy.value.peak,
+    flat: prevEnergy.value.flat, valley: prevEnergy.value.valley,
+  }
+  return cur.map(c => {
+    const pv = prev[c.key] || 0
+    const curPct = pct(c.v, curTotal)
+    const prevPct = pct(pv, prevTotal)
+    return {
+      key: c.key, label: c.label,
+      cur: c.v, curPct,
+      prev: pv, prevPct,
+      delta: prevEnergy.value.exists ? Math.round((curPct - prevPct) * 10) / 10 : 0,
+    }
+  })
+})
+
+// ---- 用能分析 ECharts（分时电量占比对比：本期 vs 上期） ----
 const energyChartRef = ref<HTMLDivElement | null>(null)
 let energyChart: echarts.ECharts | null = null
 const renderEnergyChart = async () => {
@@ -1331,31 +1400,44 @@ const renderEnergyChart = async () => {
   const el = energyChartRef.value
   if (!el) return
   if (!energyChart) energyChart = echarts.init(el)
-  const bars = energyBars.value
+  const rows = energyCompareRows.value
+  const prevExists = prevEnergy.value.exists
+  const pctLabel = (p: any) => `${p.value}%`
   energyChart.setOption({
-    grid: { left: 8, right: 8, top: 26, bottom: 4, containLabel: true },
-    tooltip: { trigger: 'axis', formatter: (ps: any) => {
-      const p = Array.isArray(ps) ? ps[0] : ps
-      return `${p.name}时段：${fmtKwh(Number(p.value) || 0)}`
-    } },
+    grid: { left: 8, right: 8, top: 30, bottom: 4, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (ps: any) => {
+        const arr = Array.isArray(ps) ? ps : [ps]
+        return arr.map((p: any) => `${p.seriesName}：${p.value}%`).join('<br/>')
+      },
+    },
+    legend: { data: ['本期占比', '上期占比'], top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 12, color: '#57606a' } },
     xAxis: {
-      type: 'category', data: bars.map(b => b.label),
+      type: 'category', data: rows.map(r => r.label),
       axisLine: { lineStyle: { color: '#d0d7de' } }, axisLabel: { color: '#57606a', fontSize: 12 },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
+      axisLabel: { color: '#57606a', fontSize: 12, formatter: '{value}%' },
       splitLine: { lineStyle: { color: '#eaeef2' } },
-      axisLabel: { color: '#57606a', fontSize: 12 },
     },
-    series: [{
-      type: 'bar', data: bars.map(b => b.v), barWidth: 30,
-      itemStyle: { color: '#0052d9', borderRadius: [4, 4, 0, 0] },
-      label: { show: true, position: 'top', color: '#57606a', fontSize: 11, formatter: (p: any) => fmtKwh(Number(p.value) || 0) },
-    }],
+    series: [
+      {
+        name: '本期占比', type: 'bar', data: rows.map(r => r.curPct), barWidth: 22,
+        itemStyle: { color: '#0052d9', borderRadius: [3, 3, 0, 0] },
+        label: { show: true, position: 'top', color: '#57606a', fontSize: 10, formatter: pctLabel },
+      },
+      {
+        name: '上期占比', type: 'bar', data: rows.map(r => (prevExists ? r.prevPct : null)), barWidth: 22,
+        itemStyle: { color: '#9ab6e8', borderRadius: [3, 3, 0, 0] },
+        label: { show: prevExists, position: 'top', color: '#57606a', fontSize: 10, formatter: pctLabel },
+      },
+    ],
   })
 }
-watch([detailMode, activeMenu, () => currentRow.value, energyBars], () => {
+watch([detailMode, activeMenu, () => currentRow.value, energyCompareRows], () => {
   if (detailMode.value && activeMenu.value === 'overview') renderEnergyChart()
 })
 onBeforeUnmount(() => { energyChart?.dispose(); energyChart = null })
@@ -2480,34 +2562,30 @@ onBeforeUnmount(() => { stopPolling() })
 /* 概况 */
 .overview-static {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px 24px;
+  padding: 8px 4px;
 
   .ov-item {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--td-component-stroke);
-    border-right: 1px solid var(--td-component-stroke);
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
-
-    &:nth-child(3n) { border-right: none; }
 
     .ov-label {
       font-size: 12px;
       color: var(--td-text-color-secondary);
+      order: 2;
     }
 
     .ov-value {
-      font-size: 13px;
+      font-size: 15px;
+      font-weight: 600;
       color: var(--td-text-color-primary);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      order: 1;
     }
   }
 }
@@ -2568,7 +2646,7 @@ onBeforeUnmount(() => { stopPolling() })
 .energy-analysis {
   .ea-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 12px;
     margin-bottom: 16px;
 
@@ -2599,11 +2677,40 @@ onBeforeUnmount(() => { stopPolling() })
     padding: 8px 10px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
+    margin-bottom: 14px;
 
     .ea-echart {
       width: 100%;
       height: 100%;
     }
+  }
+
+  /* 分时占比对比表 */
+  .ea-compare {
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 8px;
+    overflow: hidden;
+
+    .ea-compare-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+      padding: 8px 14px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--td-component-stroke);
+
+      &:last-child { border-bottom: none; }
+    }
+
+    .ea-compare-head {
+      background: var(--td-bg-color-container-hover);
+      color: var(--td-text-color-secondary);
+      font-weight: 500;
+    }
+
+    .ea-c-label { font-weight: 500; color: var(--td-text-color-primary); }
+    .ea-c-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ea-c-up { color: var(--td-error-color); }
+    .ea-c-down { color: var(--td-success-color); }
   }
 }
 
