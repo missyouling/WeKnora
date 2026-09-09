@@ -394,17 +394,24 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">电量明细 · 居民</span>
-                        <span class="bill-card-hint">账单仅提供居民目录电量合计</span>
+                        <span class="bill-card-hint">计费电量 = 本期电量 × 比例 + 加减，点击行编辑，自动保存</span>
                       </div>
-                      <div class="meter-table">
-                        <div class="meter-row meter-head">
-                          <span>项目</span><span>计费电量（千瓦时）</span>
+                      <div class="detail-table cols-5">
+                        <div class="fg-row fg-head">
+                          <span>项目</span><span>本期电量</span><span>比例</span><span>加减</span><span>计费电量</span>
                         </div>
-                        <div class="meter-row">
-                          <span>居民目录电量</span><span class="row-mono">{{ fmtKwh(residentMeterKwh) }}</span>
+                        <div v-for="(r, i) in residentialRows" :key="i" class="fg-row" @click="openDetailEdit('resident', i)">
+                          <span class="fg-name" :title="r.project">{{ r.project }}</span>
+                          <span class="row-mono">{{ r.kwh ? fmtKwh(r.kwh) : '' }}</span>
+                          <span class="row-mono">{{ r.ratio ? fmtRate6(r.ratio) : '' }}</span>
+                          <span class="row-mono">{{ r.adjust || r.adjust === 0 ? fmtKwh(r.adjust) : '' }}</span>
+                          <span class="row-mono">{{ r.bill_kwh ? fmtKwh(r.bill_kwh) : '' }}</span>
                         </div>
-                        <div class="meter-row meter-total">
-                          <span>合计</span><span class="row-mono">{{ fmtKwh(residentMeterKwh) }}</span>
+                        <div v-if="!residentialRows.length" class="fg-empty">暂无数据</div>
+                        <div v-if="residentialRows.length" class="fg-row fg-total">
+                          <span>合计</span>
+                          <span class="row-mono">{{ fmtKwh(residentialKwhTotal) }}</span><span></span><span></span>
+                          <span class="row-mono">{{ fmtKwh(residentialBillTotal) }}</span>
                         </div>
                       </div>
                     </div>
@@ -442,16 +449,23 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">输配容（需）量电费</span>
-                        <t-button variant="outline" size="small" @click="openStaticEdit('capacity')">
-                          <template #icon><t-icon name="edit-1" size="14px" /></template>
-                          编辑
-                        </t-button>
+                        <span class="bill-card-hint">点击行编辑，自动保存</span>
                       </div>
-                      <div class="capacity-grid">
-                        <div class="cap-item" v-for="f in CAPACITY_FIELDS" :key="f.key">
-                          <span class="cap-label">{{ f.label }}</span>
-                          <span class="cap-value">{{ fmtField(editForm[f.key], f.type) }}</span>
+                      <div class="detail-table cols-8">
+                        <div class="fg-row fg-head">
+                          <span>需量值</span><span>需量电价</span><span>输配需量电费</span><span>月每千伏安用电量</span><span>折扣需量电费</span><span>容量</span><span>容量电价</span><span>输配容量电费</span>
                         </div>
+                        <div v-for="(r, i) in capacityRows" :key="i" class="fg-row" @click="openDetailEdit('capacity', i)">
+                          <span class="row-mono">{{ r.demand || r.demand === 0 ? fmtRate6(r.demand) : '' }}</span>
+                          <span class="row-mono">{{ r.demand_price || r.demand_price === 0 ? fmtRate6(r.demand_price) : '' }}</span>
+                          <span class="row-mono">{{ r.demand_fee || r.demand_fee === 0 ? fmtRate6(r.demand_fee) : '' }}</span>
+                          <span class="row-mono">{{ r.kwh_per_kva || r.kwh_per_kva === 0 ? fmtRate6(r.kwh_per_kva) : '' }}</span>
+                          <span class="row-mono">{{ r.discount_demand_fee || r.discount_demand_fee === 0 ? fmtRate6(r.discount_demand_fee) : '' }}</span>
+                          <span class="row-mono">{{ r.capacity || r.capacity === 0 ? fmtRate6(r.capacity) : '' }}</span>
+                          <span class="row-mono">{{ r.capacity_price || r.capacity_price === 0 ? fmtRate6(r.capacity_price) : '' }}</span>
+                          <span class="row-mono">{{ r.capacity_fee || r.capacity_fee === 0 ? fmtRate6(r.capacity_fee) : '' }}</span>
+                        </div>
+                        <div v-if="!capacityRows.length" class="fg-empty">暂无数据</div>
                       </div>
                     </div>
                   </template>
@@ -461,16 +475,23 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">功率因素调整电费</span>
-                        <t-button variant="outline" size="small" @click="openStaticEdit('pf')">
-                          <template #icon><t-icon name="edit-1" size="14px" /></template>
-                          编辑
-                        </t-button>
+                        <span class="bill-card-hint">点击行编辑，自动保存</span>
                       </div>
-                      <div class="capacity-grid">
-                        <div class="cap-item" v-for="f in PF_FIELDS" :key="f.key">
-                          <span class="cap-label">{{ f.label }}</span>
-                          <span class="cap-value">{{ fmtField(editForm[f.key], f.type) }}</span>
+                      <div class="detail-table cols-8">
+                        <div class="fg-row fg-head">
+                          <span>项目</span><span>功率因素实际值</span><span>功率因素标准</span><span>调整系数</span><span>参与调整有功电量</span><span>参与调整无功电量</span><span>参与调整电费金额</span><span>功率因素调整电费</span>
                         </div>
+                        <div v-for="(r, i) in pfRows" :key="i" class="fg-row" @click="openDetailEdit('pf', i)">
+                          <span class="fg-name" :title="r.project">{{ r.project }}</span>
+                          <span class="row-mono">{{ r.power_factor || r.power_factor === 0 ? fmtRate6(r.power_factor) : '' }}</span>
+                          <span class="row-mono">{{ r.pf_standard || r.pf_standard === 0 ? fmtRate6(r.pf_standard) : '' }}</span>
+                          <span class="row-mono">{{ r.adjust_ratio || r.adjust_ratio === 0 ? fmtRate6(r.adjust_ratio) : '' }}</span>
+                          <span class="row-mono">{{ r.pf_active_kwh || r.pf_active_kwh === 0 ? fmtKwh(r.pf_active_kwh) : '' }}</span>
+                          <span class="row-mono">{{ r.pf_reactive_kwh || r.pf_reactive_kwh === 0 ? fmtKwh(r.pf_reactive_kwh) : '' }}</span>
+                          <span class="row-mono">{{ r.pf_fee_base || r.pf_fee_base === 0 ? fmtRate6(r.pf_fee_base) : '' }}</span>
+                          <span class="row-mono" :class="{ 'os-neg': r.adjust_fee < 0 }">{{ r.adjust_fee || r.adjust_fee === 0 ? fmtRate6(r.adjust_fee) : '' }}</span>
+                        </div>
+                        <div v-if="!pfRows.length" class="fg-empty">暂无数据</div>
                       </div>
                     </div>
                   </template>
@@ -580,6 +601,20 @@
           <label class="edit-label">{{ f.label }}</label>
           <t-input :model-value="String(meterEditForm[f.key] ?? '')" type="number" size="small"
             @update:model-value="(v: string) => (meterEditForm[f.key] = Number(v) || 0)" />
+        </div>
+        <div class="auto-save-tip">修改后自动保存</div>
+      </div>
+    </t-drawer>
+
+    <!-- 明细列表通用编辑抽屉（居民电量/容需量/功率因素） -->
+    <t-drawer v-if="detailEditVisible" :visible="true" :header="detailEditTitle" :size="'460px'" :footer="false"
+      :close-on-overlay-click="true" @close="detailEditVisible = false"
+      @update:visible="(v: boolean) => (detailEditVisible = v)">
+      <div class="edit-drawer-body">
+        <div class="edit-field" v-for="f in detailEditFields" :key="f.key">
+          <label class="edit-label">{{ f.label }}</label>
+          <t-input :model-value="String(detailEditForm[f.key] ?? '')" :type="f.type === 'text' ? 'text' : 'number'" size="small"
+            @update:model-value="(v: string) => (detailEditForm[f.key] = f.type === 'text' ? v : Number(v) || 0)" />
         </div>
         <div class="auto-save-tip">修改后自动保存</div>
       </div>
@@ -1207,7 +1242,7 @@ const FEE_MENU_MAP: Record<string, (it: any) => boolean> = {
   'residential-gov': (it) => (it.category || '').includes('政府性基金') && Number(it.qty || 0) < 100000 && !(it.name || '').includes('功率因数'),
   'pf-adjust': (it) => (it.category || '').includes('功率因数') || (it.name || '').includes('功率因数'),
 }
-const feeMenuOf = (key: string) => key in FEE_MENU_MAP
+const feeMenuOf = (key: string) => key in FEE_MENU_MAP && key !== 'pf-adjust' // pf-adjust 独立明细列表
 const feeRowsOf = (key: string) => (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
 const feeSubtotalOf = (key: string) => Math.round(feeRowsOf(key).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const menuLabel = (key: string) => {
@@ -1245,21 +1280,43 @@ const loadBasicInfo = async () => {
   } catch { /* 未配置时留空 */ }
 }
 
-// 容需量字段
+// 容需量字段（编辑抽屉）
 const CAPACITY_FIELDS = [
-  { key: 'capacity', label: '合同容量（kVA）', type: 'number' },
-  { key: 'demand', label: '需量（kW）', type: 'number' },
+  { key: 'demand', label: '需量值（kW）', type: 'number' },
+  { key: 'demand_price', label: '需量电价（元/kW）', type: 'number' },
+  { key: 'demand_fee', label: '输配需量电费（元）', type: 'number' },
+  { key: 'kwh_per_kva', label: '月每千伏安用电量（kWh/kVA）', type: 'number' },
+  { key: 'discount_demand_fee', label: '折扣需量电费（元）', type: 'number' },
+  { key: 'capacity', label: '容量（kVA）', type: 'number' },
   { key: 'capacity_price', label: '容量电价（元/kVA）', type: 'number' },
   { key: 'capacity_fee', label: '输配容量电费（元）', type: 'number' },
 ]
 
-// 功率因数字段
+// 功率因数字段（编辑抽屉）
 const PF_FIELDS = [
-  { key: 'power_factor', label: '功率因数', type: 'number' },
-  { key: 'pf_standard', label: '考核标准', type: 'number' },
-  { key: 'adjust_coefficient', label: '调整系数', type: 'number' },
-  { key: 'pf_adjust_amount', label: '调整电费（元）', type: 'number' },
+  { key: 'project', label: '项目', type: 'text' },
+  { key: 'power_factor', label: '功率因素实际值', type: 'number' },
+  { key: 'pf_standard', label: '功率因素标准', type: 'number' },
+  { key: 'adjust_ratio', label: '调整系数', type: 'number' },
+  { key: 'pf_active_kwh', label: '参与调整有功电量（kWh）', type: 'number' },
+  { key: 'pf_reactive_kwh', label: '参与调整无功电量（kvarh）', type: 'number' },
+  { key: 'pf_fee_base', label: '参与调整电费金额（元）', type: 'number' },
+  { key: 'adjust_fee', label: '功率因素调整电费（元）', type: 'number' },
 ]
+
+// 居民电量明细行（项目/本期电量/比例/加减/计费电量）
+const residentialRows = computed(() => {
+  const list = editForm.value.residential_readings
+  if (Array.isArray(list) && list.length) return list
+  return [{ project: '居民目录电量', kwh: residentMeterKwh.value, ratio: 1, adjust: 0, bill_kwh: residentMeterKwh.value }]
+})
+const residentialKwhTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.kwh) || 0), 0))
+const residentialBillTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
+const capacityRow = computed(() => editForm.value.capacity_detail || null)
+const pfRow = computed(() => editForm.value.pf_detail || null)
+// 列表展示行（容量/功率因数均为单行）
+const capacityRows = computed(() => (capacityRow.value ? [capacityRow.value] : []))
+const pfRows = computed(() => (pfRow.value ? [pfRow.value] : []))
 
 const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const sumQty = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.qty) || 0), 0) * 10) / 10
@@ -1620,6 +1677,60 @@ watch(staticEditForm, () => {
   })
 }, { deep: true })
 
+// 明细列表通用编辑抽屉（居民电量 / 容需量 / 功率因素）
+const detailEditVisible = ref(false)
+const detailEditForm = ref<Record<string, any>>({})
+const detailEditTitle = ref('')
+const detailEditFields = ref<{ key: string; label: string; type: string }[]>([])
+let detailEditTarget: 'resident' | 'capacity' | 'pf' = 'resident'
+let detailEditIdx = -1
+const openDetailEdit = (target: 'resident' | 'capacity' | 'pf', idx = 0) => {
+  detailEditTarget = target
+  detailEditIdx = idx
+  if (target === 'resident') {
+    const r = residentialRows.value[idx] || {}
+    detailEditTitle.value = '编辑居民电量明细'
+    detailEditFields.value = [
+      { key: 'project', label: '项目', type: 'text' },
+      { key: 'kwh', label: '本期电量（千瓦时）', type: 'number' },
+      { key: 'ratio', label: '比例（0-1）', type: 'number' },
+      { key: 'adjust', label: '加减（千瓦时）', type: 'number' },
+      { key: 'bill_kwh', label: '计费电量（千瓦时）', type: 'number' },
+    ]
+    detailEditForm.value = { ...r }
+  } else if (target === 'capacity') {
+    detailEditTitle.value = '编辑输配容（需）量电费'
+    detailEditFields.value = CAPACITY_FIELDS
+    detailEditForm.value = { ...(capacityRow.value || {}) }
+  } else {
+    detailEditTitle.value = '编辑功率因素调整电费'
+    detailEditFields.value = PF_FIELDS
+    detailEditForm.value = { ...(pfRow.value || {}) }
+  }
+  detailEditVisible.value = true
+}
+watch(detailEditForm, () => {
+  if (!detailEditVisible.value || !autoSaveDirty) return
+  if (detailEditTarget === 'resident') {
+    let list = editForm.value.residential_readings
+    if (!Array.isArray(list)) { list = []; editForm.value.residential_readings = list }
+    if (detailEditIdx >= list.length) list[detailEditIdx] = { project: '', kwh: 0, ratio: 0, adjust: 0, bill_kwh: 0 }
+    Object.keys(detailEditForm.value).forEach(k => { list[detailEditIdx][k] = detailEditForm.value[k] })
+    const row = list[detailEditIdx]
+    let ratio = Number(row.ratio) || 0
+    if (ratio > 1) ratio = ratio / 100
+    row.ratio = Math.round(ratio * 10000) / 10000
+    row.bill_kwh = Math.round(((Number(row.kwh) || 0) * ratio + (Number(row.adjust) || 0)) * 100) / 100
+  } else if (detailEditTarget === 'capacity') {
+    const d = { ...(editForm.value.capacity_detail || {}), ...detailEditForm.value }
+    if (d.demand > 0 && d.demand_price > 0) d.demand_fee = Math.round(d.demand * d.demand_price * 100) / 100
+    if (d.capacity > 0 && d.capacity_price > 0) d.capacity_fee = Math.round(d.capacity * d.capacity_price * 100) / 100
+    editForm.value.capacity_detail = d
+  } else {
+    editForm.value.pf_detail = { ...(editForm.value.pf_detail || {}), ...detailEditForm.value }
+  }
+}, { deep: true })
+
 const fmtField = (v: any, type: string) => {
   if (v === undefined || v === null || v === '') return ''
   if (type === 'number') return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
@@ -1657,6 +1768,9 @@ const saveEditForm = async () => {
     })
     updated.fee_items = Array.isArray(editForm.value.fee_items) ? editForm.value.fee_items : []
     updated.meter_readings = Array.isArray(editForm.value.meter_readings) ? editForm.value.meter_readings : []
+    updated.residential_readings = Array.isArray(editForm.value.residential_readings) ? editForm.value.residential_readings : []
+    if (editForm.value.capacity_detail) updated.capacity_detail = editForm.value.capacity_detail
+    if (editForm.value.pf_detail) updated.pf_detail = editForm.value.pf_detail
     updated.remark = editForm.value.remark || ''
     if (records[idx]) records[idx] = { ...records[idx], ...updated }
     else records.push({ ...updated })
@@ -2938,6 +3052,62 @@ onBeforeUnmount(() => { stopPolling() })
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
+
+  .fg-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 13px;
+  }
+}
+
+/* 明细列表（居民电量/容需量/功率因素） */
+.detail-table {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  overflow-x: auto;
+
+  .fg-row {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--td-component-stroke);
+    font-size: 13px;
+    align-items: center;
+    min-width: 620px;
+    cursor: pointer;
+    transition: background-color .15s;
+
+    &:last-child { border-bottom: none; }
+
+    &:hover { background: var(--td-bg-color-container-hover); }
+
+    &.fg-head {
+      background: var(--td-bg-color-container-hover);
+      color: var(--td-text-color-secondary);
+      font-size: 12px;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    &.fg-total {
+      background: var(--td-brand-color-light);
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .fg-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &.cols-8 .fg-row {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    min-width: 1120px;
   }
 
   .fg-empty {

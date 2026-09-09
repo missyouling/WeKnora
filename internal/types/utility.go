@@ -97,6 +97,10 @@ type UtilityBillExtractionItem struct {
 	Demand        float64 `json:"demand"`         // 需量值
 	PfStandard    float64 `json:"pf_standard"`    // 功率因数标准
 	AdjustRatio   float64 `json:"adjust_ratio"`   // 调整系数
+	// 明细（账单原表）：居民电量明细 / 输配容（需）量 / 功率因素调整
+	ResidentialReadings []UtilityResidentialReading `json:"residential_readings"` // 居民电量明细（项目/本期电量/比例/加减/计费电量）
+	CapacityDetail      *UtilityCapacityDetail       `json:"capacity_detail"`     // 输配容（需）量电费明细
+	PfDetail            *UtilityPfAdjustDetail       `json:"pf_detail"`           // 功率因素调整电费明细
 	// 费用明细（可编辑，总账联动）
 	FeeItems []UtilityBillFeeItem `json:"fee_items"`
 	Remark   string               `json:"remark"`
@@ -125,6 +129,40 @@ type UtilityMeterReading struct {
 	LineLoss   float64 `json:"line_loss"`   // 线损
 	Adjust     float64 `json:"adjust"`      // 加减
 	BillKwh    float64 `json:"bill_kwh"`    // 计费电量
+}
+
+// UtilityResidentialReading 居民电量明细行：项目/本期电量/比例/加减/计费电量，
+// 计费电量 = 本期电量 × 比例 + 加减。
+type UtilityResidentialReading struct {
+	Project string  `json:"project"`  // 项目 居民目录电量等
+	Kwh     float64 `json:"kwh"`      // 本期电量
+	Ratio   float64 `json:"ratio"`    // 比例
+	Adjust  float64 `json:"adjust"`   // 加减
+	BillKwh float64 `json:"bill_kwh"` // 计费电量（= Kwh×Ratio+Adjust）
+}
+
+// UtilityCapacityDetail 输配容（需）量电费明细（账单原表，单行）。
+type UtilityCapacityDetail struct {
+	Demand       float64 `json:"demand"`              // 需量值 kW
+	DemandPrice  float64 `json:"demand_price"`        // 需量电价 元/kW
+	DemandFee    float64 `json:"demand_fee"`          // 输配需量电费（= 需量值×需量电价）
+	KwhPerKva    float64 `json:"kwh_per_kva"`         // 月每千伏安用电量 kWh/kVA
+	DiscountFee  float64 `json:"discount_demand_fee"` // 折扣需量电费
+	Capacity     float64 `json:"capacity"`            // 容量 kVA
+	CapacityPrice float64 `json:"capacity_price"`     // 容量电价 元/kVA
+	CapacityFee  float64 `json:"capacity_fee"`        // 输配容量电费（= 容量×容量电价）
+}
+
+// UtilityPfAdjustDetail 功率因素调整电费明细（账单原表，单行）。
+type UtilityPfAdjustDetail struct {
+	Project     string  `json:"project"`      // 项目 功率因数调整电费
+	PowerFactor float64 `json:"power_factor"` // 功率因素实际值
+	Standard    float64 `json:"pf_standard"`  // 功率因素标准
+	AdjustRatio float64 `json:"adjust_ratio"` // 调整系数
+	ActiveKwh   float64 `json:"pf_active_kwh"`   // 参与调整有功电量
+	ReactiveKwh float64 `json:"pf_reactive_kwh"` // 参与调整无功电量
+	FeeBase     float64 `json:"pf_fee_base"`     // 参与调整电费金额
+	AdjustFee   float64 `json:"adjust_fee"`      // 功率因素调整电费
 }
 
 // UtilityBillRecord 电费账单列表行（聚合 KB custom_metadata 生成）。
