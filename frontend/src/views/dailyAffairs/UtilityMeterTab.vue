@@ -24,13 +24,6 @@
       </div>
     </div>
 
-    <!-- 汇总行（选中时统计选中） -->
-    <div v-if="rows.length" class="meter-summary-row">
-      <span>共 {{ displayRows.length }} 条</span>
-      <span>总用量 {{ fmtNum(sumUsage) }} 吨/m³</span>
-      <span>总金额 {{ fmtMoney(sumAmount) }} 元</span>
-    </div>
-
     <!-- 列表（自绘 grid，数据少时只包裹记录行，超出滚动） -->
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
       <div class="doc-list-view">
@@ -239,8 +232,6 @@ const applyKeyword = () => {
     : rows.value
 }
 
-const sumUsage = computed(() => displayRows.value.reduce((s, r) => s + (Number(r.total_usage) || 0), 0))
-const sumAmount = computed(() => displayRows.value.reduce((s, r) => s + (Number(r.total_amount) || 0), 0))
 
 // ---- 抽屉 ----
 const drawerVisible = ref(false)
@@ -529,17 +520,6 @@ onMounted(() => {
 
 .row-mono {
   font-family: var(--app-font-family);
-}
-
-.meter-summary-row {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  padding: 8px 16px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  border-bottom: 1px solid var(--td-component-stroke);
-  background: var(--td-bg-color-container);
 }
 
 .meter-list-scroll {

@@ -172,9 +172,9 @@
                     <t-empty description="暂无数据" />
                   </div>
                 </div>
-                <!-- 底部汇总（表格底部左侧） -->
+                <!-- 底部汇总（表格底部左侧；选中时按选中统计并避让浮动工具栏） -->
                 <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
-                  <span>共 {{ summary.total }} 条</span>
+                  <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
                   <span>本期电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
                   <span>本期电费 {{ fmtMoney(summaryAmount) }} 元</span>
                   <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
@@ -182,25 +182,47 @@
               </div>
             </div>
 
-            <!-- 浮动工具栏（选中时显示，自动避让汇总行） -->
-            <div v-if="selectedRowKeys.length" class="floating-toolbar">
-              <t-button variant="outline" size="small" @click="handleBatchEdit">
-                <template #icon><t-icon name="edit-1" size="14px" /></template>
-                编辑
-              </t-button>
-              <t-button variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleReExtract">
-                <template #icon><t-icon name="refresh" size="14px" /></template>
-                重新提取
-              </t-button>
-              <t-button variant="outline" size="small" @click="handleBatchPrint">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                打印
-              </t-button>
-              <t-button variant="outline" size="small" @click="handleBatchDelete">
-                <template #icon><t-icon name="delete" size="14px" /></template>
-                删除
-              </t-button>
-            </div>
+            <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏，避免浮于弹窗之上） -->
+            <transition name="batch-bar-fade">
+              <div v-if="selectedRowKeys.length && !printVisible" class="doc-batch-bar-fixed" role="region">
+                <div class="batch-bar-inner">
+                  <div class="batch-bar-left">
+                    <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
+                    <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+                      清除
+                    </t-button>
+                  </div>
+                  <div class="batch-bar-actions">
+                    <t-popconfirm theme="warning"
+                      :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
+                      :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                      @confirm="handleReExtract">
+                      <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                        <template #icon><t-icon name="refresh" size="14px" /></template>
+                        重新提取
+                      </t-button>
+                    </t-popconfirm>
+                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
+                      <template #icon><t-icon name="edit" size="14px" /></template>
+                      编辑数据
+                    </t-button>
+                    <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+                      <template #icon><t-icon name="print" size="14px" /></template>
+                      打印
+                    </t-button>
+                    <t-popconfirm theme="warning"
+                      :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
+                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                      @confirm="handleBatchDelete">
+                      <t-button theme="danger" variant="outline" size="small" @click.stop>
+                        <template #icon><t-icon name="delete" size="14px" /></template>
+                        删除记录
+                      </t-button>
+                    </t-popconfirm>
+                  </div>
+                </div>
+              </div>
+            </transition>
             </template>
 
             <!-- ================= 详情视图（分层菜单 + 内容区） ================= -->
@@ -291,11 +313,22 @@
                             v-for="r in overviewRows" :key="r.key" @click="gotoMenu(r.menuKey)">
                             <span class="os-name">{{ r.label }}</span>
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
-                            <span class="os-amount" :class="{ 'os-neg': r.value < 0 }">{{ fmtRate6(r.value) }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }">
+                              <template v-if="feeEditingKey === r.key">
+                                <t-input v-model="feeEditValue" size="small" class="os-fee-input" @click.stop
+                                  @blur="commitFeeOverride(r)" @enter="commitFeeOverride(r)" />
+                              </template>
+                              <template v-else>
+                                <t-tooltip v-if="hasFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
+                                  <span class="os-fee-val os-fee-val--manual" @click.stop="startFeeEdit(r)">{{ fmtRate6(r.displayValue) }}</span>
+                                </t-tooltip>
+                                <span v-else class="os-fee-val" @click.stop="startFeeEdit(r)">{{ fmtRate6(r.displayValue) }}</span>
+                              </template>
+                            </span>
                             <span class="os-amount">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
                             <span class="os-state">
-                              <t-tag v-if="r.billFee" :theme="Math.abs(r.value - r.billFee) < 0.01 ? 'success' : 'danger'" variant="light" size="small">
-                                {{ Math.abs(r.value - r.billFee) < 0.01 ? '正常' : '异常' }}
+                              <t-tag v-if="r.billFee" :theme="feeClose(r.displayValue, r.billFee) ? 'success' : 'danger'" variant="light" size="small">
+                                {{ feeClose(r.displayValue, r.billFee) ? '正常' : '异常' }}
                               </t-tag>
                             </span>
                           </div>
@@ -936,6 +969,8 @@ const summaryAmount = computed(() => {
   return target.reduce((s, r) => s + (Number(r.item?.total_amount) || 0), 0)
 })
 const selectedRows = computed(() => rows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
+const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
+const clearSelection = () => { selectedRowKeys.value = [] }
 const selectableRows = computed(() => rows.value.filter(r => r.kind !== 'pending'))
 const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
 const someSelected = computed(() => selectedRowKeys.value.length > 0 && !isAllSelected.value)
@@ -1232,11 +1267,13 @@ const loadEditForm = async (row: Row) => {
     const records = Array.isArray(meta.records) ? meta.records : []
     const idx = Math.max(0, (row.page || 1) - 1)
     const item = records[idx] || row.item || {}
+    feeOverrides.value = (item.overview_overrides && typeof item.overview_overrides === 'object') ? { ...item.overview_overrides } : {}
     editForm.value = { ...item, fee_items: Array.isArray(item.fee_items) ? item.fee_items.map((f: any) => ({ ...f })) : [] }
     editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
   } catch {
+    feeOverrides.value = {}
     editForm.value = { ...row.item, fee_items: Array.isArray(row.item?.fee_items) ? row.item.fee_items.map((f: any) => ({ ...f })) : [] }
     editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
@@ -1417,18 +1454,22 @@ const overviewRows = computed(() => {
   const industrialBill = Math.round((marketBill + lineBill + transBill + sysBill + govIBill) * 100) / 100
   const residentialBill = Math.round((catalogBill + govRBill) * 100) / 100
   const m = (key: string) => sumQty(feeRowsOf(key))
+  const withOv = (key: string, value: number) => {
+    const ov = feeOverrides.value[key]
+    return { value, displayValue: ov !== undefined ? ov : value }
+  }
   return [
-    { key: 'market', label: '市场化购电费', value: market, billFee: marketBill, qty: m('industrial-market'), menuKey: 'industrial-market' },
-    { key: 'line', label: '上网环节线损费', value: line, billFee: lineBill, qty: m('industrial-line'), menuKey: 'industrial-line' },
-    { key: 'trans', label: '输配电量电费', value: trans, billFee: transBill, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
-    { key: 'sys', label: '系统运行费', value: sys, billFee: sysBill, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
-    { key: 'govI', label: '政府基金及附加（工商业）', value: govI, billFee: govIBill, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', value: industrial, billFee: industrialBill, qty: -1, menuKey: '', total: true },
-    { key: 'catalog', label: '目录电费（居民）', value: catalog, billFee: catalogBill, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
-    { key: 'govR', label: '政府性基金及附加（居民）', value: govR, billFee: govRBill, qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', value: residential, billFee: residentialBill, qty: -1, menuKey: '', total: true },
-    { key: 'capacity', label: '输配容（需）量电费', value: capacity, billFee: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
-    { key: 'pf', label: '功率因数调整电费', value: pf, billFee: pf, qty: -1, menuKey: 'pf-adjust' },
+    { key: 'market', label: '市场化购电费', ...withOv('market', market), billFee: marketBill, qty: m('industrial-market'), menuKey: 'industrial-market' },
+    { key: 'line', label: '上网环节线损费', ...withOv('line', line), billFee: lineBill, qty: m('industrial-line'), menuKey: 'industrial-line' },
+    { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), billFee: transBill, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
+    { key: 'sys', label: '系统运行费', ...withOv('sys', sys), billFee: sysBill, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
+    { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), billFee: govIBill, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
+    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), billFee: industrialBill, qty: -1, menuKey: '', total: true },
+    { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), billFee: catalogBill, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
+    { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), billFee: govRBill, qty: m('residential-gov'), menuKey: 'residential-gov' },
+    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), billFee: residentialBill, qty: -1, menuKey: '', total: true },
+    { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), billFee: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
+    { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), billFee: pf, qty: -1, menuKey: 'pf-adjust' },
   ]
 })
 const qtyLabelOf = (r: any) => {
@@ -1441,10 +1482,11 @@ const gotoMenu = (key: string) => {
   activeMenu.value = key
 }
 const overviewTotal = computed(() => {
-  const industrial = overviewRows.value.find(r => r.key === 'industrial')?.value || 0
-  const residential = overviewRows.value.find(r => r.key === 'residential')?.value || 0
-  const capacity = overviewRows.value.find(r => r.key === 'capacity')?.value || 0
-  const pf = overviewRows.value.find(r => r.key === 'pf')?.value || 0
+  const vals = overviewRows.value
+  const industrial = vals.find(r => r.key === 'industrial')?.displayValue || 0
+  const residential = vals.find(r => r.key === 'residential')?.displayValue || 0
+  const capacity = vals.find(r => r.key === 'capacity')?.displayValue || 0
+  const pf = vals.find(r => r.key === 'pf')?.displayValue || 0
   return Math.round((industrial + residential + capacity + pf) * 100) / 100
 })
 // 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
@@ -1452,7 +1494,7 @@ const billTotal = computed(() => Number(editForm.value.grand_total) || Number(ed
 const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
 const billTotalOk = computed(() => {
   if (!billTotal.value) return true
-  return Math.abs(overviewTotal.value - billTotal.value) < 0.01
+  return feeClose(overviewTotal.value, billTotal.value)
 })
 const overviewDiff = computed(() => {
   const nominal = billTotal.value
@@ -1885,6 +1927,7 @@ const saveEditForm = async () => {
     if (editForm.value.capacity_detail) updated.capacity_detail = editForm.value.capacity_detail
     if (editForm.value.pf_detail) updated.pf_detail = editForm.value.pf_detail
     updated.remark = editForm.value.remark || ''
+    updated.overview_overrides = { ...feeOverrides.value }
     if (records[idx]) records[idx] = { ...records[idx], ...updated }
     else records.push({ ...updated })
     // 总账按明细重算：仅当费用明细实际变化时
@@ -2040,10 +2083,6 @@ const closePrint = () => {
 const handleBatchDelete = async () => {
   const rowsSel = selectedRows.value
   if (!rowsSel.length) return
-  const confirm = await MessagePlugin.confirm(`确认删除选中的 ${rowsSel.length} 条账单记录？源文件将移入删除历史。`, {
-    confirmBtn: '删除', cancelBtn: '取消',
-  })
-  if (!confirm) return
   try {
     for (const r of rowsSel) {
       // 删除记录 = 删除知识文件（软删进删除历史）
@@ -2077,6 +2116,28 @@ const fmtRate6 = (v: any) => {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 const feeItemsOf = (row: Row): any[] => (Array.isArray(row.item?.fee_items) ? row.item.fee_items : [])
+
+// ---- 账单概况：容差判定 + 电费列手动覆盖 ----
+/** 计算值与账单提取值对比：允许 ±0.02 元（四舍五入误差）判为正常 */
+const feeClose = (a: number, b: number) => Math.abs(a - b) <= 0.02
+/** 手动覆盖的计算值（key → 金额），保存到记录 overview_overrides；重提取后重置 */
+const feeOverrides = ref<Record<string, number>>({})
+const feeEditingKey = ref('')
+const feeEditValue = ref('')
+const startFeeEdit = (r: any) => {
+  feeEditingKey.value = r.key
+  feeEditValue.value = String(r.displayValue ?? '')
+}
+const commitFeeOverride = async (r: any) => {
+  feeEditingKey.value = ''
+  if (feeEditValue.value === '') return
+  const v = Number(feeEditValue.value)
+  if (!Number.isFinite(v)) return
+  feeOverrides.value = { ...feeOverrides.value, [r.key]: Math.round(v * 100) / 100 }
+  autoSaveDirty = true
+  await saveEditForm()
+}
+const hasFeeOverride = (key: string) => feeOverrides.value[key] !== undefined
 const sumFeeBy = (row: Row, pred: (it: any) => boolean): number =>
   Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {
@@ -2575,19 +2636,22 @@ onBeforeUnmount(() => { stopPolling() })
   padding: 40px 0;
 }
 
-.floating-toolbar {
-  position: absolute;
-  right: 24px;
-  bottom: 24px;
-  display: flex;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
-  z-index: 20;
+/* ---- 底部浮动工具栏（复刻合同管理模块） ---- */
+.doc-batch-bar-fixed {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
+  width: 100%; max-width: 700px; padding: 0 4px; box-sizing: border-box;
 }
+.batch-bar-inner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 12px; background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke); border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+.batch-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+.batch-bar-count { font-size: 13px; font-weight: 500; color: var(--td-text-color-secondary); white-space: nowrap; }
+.batch-bar-clear { flex-shrink: 0; padding: 0 6px !important; height: 28px !important; font-size: 12px; color: var(--td-text-color-secondary) !important; &:hover { color: var(--td-brand-color) !important; } }
+.batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
+.batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
 
 .utility-detail-drawer {
   padding: 4px 0 24px;
@@ -3086,6 +3150,9 @@ onBeforeUnmount(() => { stopPolling() })
 
       .os-neg { color: var(--td-error-color); }
       .os-diff { margin-left: 6px; }
+      .os-fee-val { cursor: text; border-radius: 4px; padding: 1px 4px; margin-right: -4px; &:hover { background: var(--td-bg-color-container-hover); } }
+      .os-fee-val--manual { color: var(--td-brand-color); text-decoration: underline dashed 1px; text-underline-offset: 3px; }
+      .os-fee-input { width: 96px; text-align: right; }
     }
   }
 }
