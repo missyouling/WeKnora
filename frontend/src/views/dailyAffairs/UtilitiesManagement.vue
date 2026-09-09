@@ -149,6 +149,13 @@
                         </template>
                         {{ statusOf(row).label }}
                       </t-tag>
+                      <t-popconfirm v-if="row.extractStatus === 'failed'" theme="warning" content="重新解析并提取该账单？"
+                        :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                        @confirm="retryExtract(row)">
+                        <t-button variant="text" size="small" class="row-retry-btn" @click.stop>
+                          <template #icon><t-icon name="refresh" size="14px" /></template>
+                        </t-button>
+                      </t-popconfirm>
                     </div>
                     <div class="cell cell-tags" @click.stop>
                       <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
@@ -313,16 +320,16 @@
                             v-for="r in overviewRows" :key="r.key" @click="gotoMenu(r.menuKey)">
                             <span class="os-name">{{ r.label }}</span>
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
-                            <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }">
+                            <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }" @click.stop="feeEditingKey !== r.key && startFeeEdit(r)">
                               <template v-if="feeEditingKey === r.key">
                                 <t-input v-model="feeEditValue" size="small" class="os-fee-input" @click.stop
                                   @blur="commitFeeOverride(r)" @enter="commitFeeOverride(r)" />
                               </template>
                               <template v-else>
                                 <t-tooltip v-if="hasFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
-                                  <span class="os-fee-val os-fee-val--manual" @click.stop="startFeeEdit(r)">{{ fmtRate6(r.displayValue) }}</span>
+                                  <span class="os-fee-val os-fee-val--manual">{{ fmtRate6(r.displayValue) }}</span>
                                 </t-tooltip>
-                                <span v-else class="os-fee-val" @click.stop="startFeeEdit(r)">{{ fmtRate6(r.displayValue) }}</span>
+                                <span v-else class="os-fee-val">{{ fmtRate6(r.displayValue) }}</span>
                               </template>
                             </span>
                             <span class="os-amount">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
@@ -1081,6 +1088,7 @@ const pendingLabel = (pf: any) => {
   const ps = pf.parse_status || ''
   if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
   const meta = pf.custom_metadata || {}
+  if (meta.extract_status === 'failed') return 'failed'
   if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
   return 'pending'
 }
@@ -1096,11 +1104,12 @@ const startPolling = () => {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
       const arr = Array.isArray(data) ? data : []
-      // 进行中文件（解析中/提取中/待提取）
+      // 进行中/失败文件（解析中/提取中/待提取/提取失败）
       pendingFiles.value = arr.filter((it: any) => {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
         return ps === 'parsing' || ps === 'pending' ||
+          meta.extract_status === 'failed' ||
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
           (meta.extract_status == null && ps === 'completed' && !meta.kind)
       })
@@ -1123,6 +1132,24 @@ const startPolling = () => {
 }
 const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+// ---- 提取失败重试 ----
+const retryExtract = async (row: any) => {
+  const kid = row.knowledgeId
+  if (!kid || extractInFlight.value.has(kid)) return
+  extractInFlight.value.add(kid)
+  extractFailed.value.delete(kid)
+  try {
+    await extractUtilityBill(kbId.value!, kid)
+    MessagePlugin.success('已重新触发提取')
+    setTimeout(() => { loadFiles(true) }, 1200)
+  } catch (e: any) {
+    extractFailed.value.add(kid)
+    MessagePlugin.error(e?.message || '重新提取失败')
+  } finally {
+    extractInFlight.value.delete(kid)
+  }
 }
 
 // ---- KB ----
@@ -1618,7 +1645,11 @@ const renderEnergyChart = async () => {
     if (detailMode.value && activeMenu.value === 'overview') setTimeout(renderEnergyChart, 80)
     return
   }
-  if (!energyChart) energyChart = echarts.init(el)
+  if (!energyChart || energyChart.getDom() !== el) {
+    // 容器因 v-if 切换重建（如从明细菜单返回概览）时，旧实例仍挂在已销毁容器上，需重建
+    energyChart?.dispose()
+    energyChart = echarts.init(el)
+  }
   const rows = energyCompareRows.value
   const prevExists = prevEnergy.value.exists
   const pctLabel = (p: any) => `${p.value}%`
@@ -2652,6 +2683,7 @@ onBeforeUnmount(() => { stopPolling() })
 .batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
 .batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
+.row-retry-btn { margin-left: 4px; height: 24px !important; padding: 0 4px !important; }
 
 .utility-detail-drawer {
   padding: 4px 0 24px;
