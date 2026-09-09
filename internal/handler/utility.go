@@ -73,7 +73,7 @@ func (h *UtilityHandler) ListUtilityFieldConfigs(c *gin.Context) {
 
 // mergeGroupDefaults 将全量字段配置按分组补齐默认：DB 有数据的组保留 DB 数据，空组用默认字段填充。
 func (h *UtilityHandler) mergeGroupDefaults(cfgs []types.UtilityFieldConfig) []types.UtilityFieldConfig {
-	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows"}
+	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
 	dbMap := make(map[string][]types.UtilityFieldConfig)
 	for _, c := range cfgs {
 		dbMap[c.Group] = append(dbMap[c.Group], c)
@@ -710,6 +710,51 @@ func electricityDefaultGroupFields(group string) []utilityFieldDef {
 			{"supply_unit", "供电服务单位", "text", true, g},
 			{"address", "用电地址", "text", true, g},
 		}
+	case "market-rows":
+		// 市场化购电费明细行（field_key 为默认行文本，label 可改名）
+		return []utilityFieldDef{
+			{"偏差电费", "偏差电费", "text", true, g},
+			{"零售交易电费", "零售交易电费", "text", true, g},
+			{"绿电交易电费(省间)", "绿电交易电费(省间)", "text", true, g},
+			{"绿电交易电费(省内)", "绿电交易电费(省内)", "text", true, g},
+			{"绿电环境价值电费(省外)", "绿电环境价值电费(省外)", "text", true, g},
+			{"零售损益分摊电费", "零售损益分摊电费", "text", true, g},
+		}
+	case "trans-rows":
+		// 输配电量电费明细行
+		return []utilityFieldDef{
+			{"零售输配电费", "零售输配电费", "text", true, g},
+		}
+	case "sys-rows":
+		// 系统运行费明细行
+		return []utilityFieldDef{
+			{"辅助服务费用", "辅助服务费用", "text", true, g},
+			{"抽水蓄能容量电费", "抽水蓄能容量电费", "text", true, g},
+			{"新能源机制差价分摊电费", "新能源机制差价分摊电费", "text", true, g},
+			{"上网环节线损代理采购损益", "上网环节线损代理采购损益", "text", true, g},
+			{"电价交叉补贴新增损益", "电价交叉补贴新增损益", "text", true, g},
+			{"其他系统运行费用", "其他系统运行费用", "text", true, g},
+			{"煤电容量电费", "煤电容量电费", "text", true, g},
+			{"燃气机组容量电费", "燃气机组容量电费", "text", true, g},
+		}
+	case "gov-industrial-rows":
+		// 政府基金及附加（工商业）明细行
+		return []utilityFieldDef{
+			{"小型水库移民后期扶持资金(地方)", "小型水库移民后期扶持资金(地方)", "text", true, g},
+			{"农网还贷", "农网还贷", "text", true, g},
+			{"库区移民基金", "库区移民基金", "text", true, g},
+			{"国家重大水利工程建设基金", "国家重大水利工程建设基金", "text", true, g},
+			{"可再生能源附加", "可再生能源附加", "text", true, g},
+		}
+	case "gov-residential-rows":
+		// 政府基金及附加（居民）明细行
+		return []utilityFieldDef{
+			{"小型水库移民后期扶持资金(地方)", "小型水库移民后期扶持资金(地方)", "text", true, g},
+			{"农网还贷", "农网还贷", "text", true, g},
+			{"库区移民基金", "库区移民基金", "text", true, g},
+			{"国家重大水利工程建设基金", "国家重大水利工程建设基金", "text", true, g},
+			{"可再生能源附加", "可再生能源附加", "text", true, g},
+		}
 	default:
 		return nil
 	}
@@ -730,7 +775,7 @@ func utilityDefaultFieldConfigs(tenantID uint64, category, group string) []types
 	case "electricity":
 		if group == "" {
 			// 不传 group：返回全部组默认（概况 + 各费用菜单列 + 明细 + 行配置）
-			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows"}
+			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
 			for _, g := range groups {
 				defs = append(defs, electricityDefaultGroupFields(g)...)
 			}

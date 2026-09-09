@@ -1339,7 +1339,29 @@ const FEE_MENU_MAP: Record<string, (it: any) => boolean> = {
   'pf-adjust': (it) => (it.category || '').includes('功率因数') || (it.name || '').includes('功率因数'),
 }
 const feeMenuOf = (key: string) => key in FEE_MENU_MAP && key !== 'pf-adjust' // pf-adjust 独立明细列表
-const feeRowsOf = (key: string) => (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
+// 费用菜单 → 行配置分组（行字段配置驱动各费用表格的行）
+const ROW_GROUP_OF_MENU: Record<string, string> = {
+  'industrial-market': 'market-rows',
+  'industrial-trans': 'trans-rows',
+  'industrial-sys': 'sys-rows',
+  'industrial-gov': 'gov-industrial-rows',
+  'residential-gov': 'gov-residential-rows',
+}
+const feeRowsOf = (key: string) => {
+  const list = (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
+  const rg = ROW_GROUP_OF_MENU[key]
+  const cfgs = rg ? rowConfigsOf(rg) : []
+  if (!cfgs.length) return list // 无行配置 → 原样展示提取结果
+  // 按行配置过滤 + 排序 + 改名（未配置的行隐藏）
+  return cfgs.map((cfg: any) => {
+    const hit = list.find((it: any) => {
+      const n = it.name || ''
+      return n === cfg.field_key || n === cfg.label || n.includes(cfg.field_key) || cfg.field_key.includes(n)
+    })
+    if (!hit) return null
+    return { ...hit, name: cfg.label }
+  }).filter(Boolean)
+}
 const feeSubtotalOf = (key: string) => Math.round(feeRowsOf(key).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const menuLabel = (key: string) => {
   for (const m of BILL_MENUS) {

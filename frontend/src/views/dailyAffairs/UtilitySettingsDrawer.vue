@@ -282,6 +282,11 @@ const ROW_GROUP_MAP: Record<string, string> = {
   meter: 'meter-rows',
   'resident-meter': 'resident-meter-rows',
   overview: 'overview-rows',
+  market: 'market-rows',
+  trans: 'trans-rows',
+  sys: 'sys-rows',
+  'gov-industrial': 'gov-industrial-rows',
+  'gov-residential': 'gov-residential-rows',
 }
 
 const accounts = ref<BasicAccount[]>([])
