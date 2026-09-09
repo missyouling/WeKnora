@@ -124,7 +124,7 @@
                     @click="handleRowClick(row)">
                     <div class="cell cell-check" @click.stop>
                       <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                        :disabled="row.kind === 'pending' && row.extractStatus !== 'failed'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
+                        :disabled="row.kind === 'pending' && !['failed', 'parse_failed'].includes(row.extractStatus)" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
                     </div>
                     <template v-if="row.kind === 'pending'">
                       <div class="cell cell-pending-name" :title="row.fileName">
@@ -971,7 +971,7 @@ const summaryAmount = computed(() => {
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
-const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || r.extractStatus === 'failed'))
+const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || ['failed', 'parse_failed'].includes(r.extractStatus)))
 const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
 const someSelected = computed(() => selectedRowKeys.value.length > 0 && !isAllSelected.value)
 
@@ -982,10 +982,10 @@ function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
   else selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== key)
 }
-// 行点击：提取失败行切换选中，其余打开详情
+// 行点击：提取/解析失败行切换选中，其余打开详情
 const handleRowClick = (row: Row) => {
   if (row.kind === 'pending') {
-    if (row.extractStatus === 'failed') toggleRow(row.rowKey, !selectedRowKeys.value.includes(row.rowKey))
+    if (['failed', 'parse_failed'].includes(row.extractStatus)) toggleRow(row.rowKey, !selectedRowKeys.value.includes(row.rowKey))
     return
   }
   openDetail(row)
@@ -1071,14 +1071,15 @@ const onListScroll = () => {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) loadFiles()
 }
 
-// ---- 状态行 ----
+// ---- 状态行（与发票模块一致：绿色 loading 动态样式） ----
 const STATUS_MAP: Record<string, { label: string; theme: any; icon?: string; spin?: boolean }> = {
   parsing: { label: '解析中', theme: 'primary', icon: 'loading', spin: true },
   extracting: { label: '提取中', theme: 'primary', icon: 'loading', spin: true },
-  pending: { label: '待提取', theme: 'default' },
-  success: { label: '提取完成', theme: 'success', icon: 'check-circle' },
+  pending: { label: '待提取', theme: 'primary', icon: 'loading', spin: true },
+  success: { label: '提取成功', theme: 'success' },
   manual: { label: '待补录', theme: 'warning', icon: 'edit-1' },
-  failed: { label: '提取失败', theme: 'danger', icon: 'error-circle' },
+  parse_failed: { label: '解析失败', theme: 'danger', icon: 'close-circle' },
+  failed: { label: '提取失败', theme: 'danger', icon: 'close-circle' },
 }
 const statusOf = (row: Row) => {
   const st = row.extractStatus || ''
@@ -1088,7 +1089,10 @@ const statusOf = (row: Row) => {
 const pendingLabel = (pf: any) => {
   const ps = pf.parse_status || ''
   if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
+  if (ps === 'failed') return 'parse_failed'
   const meta = pf.custom_metadata || {}
+  // 提取进行中以前端 Set 为准（与发票模块 extractInFlight 一致）
+  if (extractingSet.has(pf.id)) return 'extracting'
   if (meta.extract_status === 'failed') return 'failed'
   if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
   return 'pending'
@@ -1105,11 +1109,11 @@ const startPolling = () => {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
       const arr = Array.isArray(data) ? data : []
-      // 进行中/失败文件（解析中/提取中/待提取/提取失败）
+      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）
       pendingFiles.value = arr.filter((it: any) => {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
-        return ps === 'parsing' || ps === 'pending' ||
+        return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
           meta.extract_status === 'failed' ||
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
           (meta.extract_status == null && ps === 'completed' && !meta.kind)
@@ -1129,7 +1133,7 @@ const startPolling = () => {
         }
       }
     } catch { /* 轮询失败静默 */ }
-  }, 4000)
+  }, 3000)
 }
 const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -1178,7 +1182,6 @@ const onFileInputChange = async (e: Event) => {
       const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
       const knowledge = res?.data || res
       const kid = knowledge?.id || knowledge?.knowledge_id
-      MessagePlugin.success(`已上传 ${f.name}，等待解析`)
       // 解析完成后由轮询自动触发提取，无需在此登记
       void kid
     } catch (e2: any) {
@@ -1190,6 +1193,7 @@ const onFileInputChange = async (e: Event) => {
       }
     }
   }
+  MessagePlugin.success(`已上传 ${files.length} 个文件，正在解析...`)
   setTimeout(() => loadFiles(true), 1500)
 }
 
