@@ -5,119 +5,48 @@
       <div class="us-resize-line" />
     </div>
     <t-drawer v-if="visible" :visible="true" :header="`设置 · ${title}`" :size="`${drawerWidth}px`" :footer="false"
-      class="utility-settings-drawer" @close="onClose"
+      class="utility-settings-drawer" :close-on-overlay-click="true" @close="onClose"
       @update:visible="(v: boolean) => (v || onClose())">
       <div class="us-body">
-        <!-- 基本户信息（仅电费） -->
+        <!-- 基本户（仅电费） -->
         <div v-if="props.category === 'electricity'" class="us-section">
           <div class="us-section-head">
-            <span class="us-section-title">基本户信息</span>
-            <span class="us-state">账单概览基础信息直接读取</span>
+            <span class="us-section-title">基本户</span>
+            <span class="us-state">账单按户号自动匹配，匹配失败用默认户</span>
+            <span class="us-spacer" />
+            <t-button variant="outline" size="small" @click="openAccEdit(null)">
+              <template #icon><t-icon name="add" size="14px" /></template>
+              新增基本户
+            </t-button>
           </div>
-          <div class="us-basic-grid">
-            <div class="us-basic-item">
-              <label>户号</label>
-              <t-input v-model="basicInfo.account_no" size="small" placeholder="户号" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item">
-              <label>户名</label>
-              <t-input v-model="basicInfo.account_name" size="small" placeholder="户名" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item">
-              <label>用电类别</label>
-              <t-input v-model="basicInfo.usage_category" size="small" placeholder="用电类别" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item">
-              <label>电压等级</label>
-              <t-input v-model="basicInfo.voltage_level" size="small" placeholder="电压等级" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item">
-              <label>市场化属性</label>
-              <t-input v-model="basicInfo.market_attr" size="small" placeholder="市场化属性" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item">
-              <label>供电服务单位</label>
-              <t-input v-model="basicInfo.supply_unit" size="small" placeholder="供电服务单位" @change="autosaveBasicInfo" />
-            </div>
-            <div class="us-basic-item us-basic-item--wide">
-              <label>用电地址</label>
-              <t-input v-model="basicInfo.address" size="small" placeholder="用电地址" @change="autosaveBasicInfo" />
+          <div v-if="!accounts.length" class="us-empty">暂无基本户，点击新增</div>
+          <div class="us-card-grid">
+            <div v-for="a in accounts" :key="a.id" class="us-card" @click="openAccEdit(a)">
+              <div class="us-card-head">
+                <span class="us-card-title">{{ a.name || '未命名户' }}</span>
+                <span v-if="a.is_default" class="us-card-tag">默认</span>
+              </div>
+              <div class="us-card-line">户号：{{ a.account_no || '—' }}</div>
+              <div class="us-card-line">电能表：{{ a.meter_no || '—' }}</div>
+              <div class="us-card-line">倍率：{{ a.ratio ? a.ratio : '—' }}</div>
             </div>
           </div>
         </div>
 
-        <!-- 字段配置 -->
+        <!-- 字段配置（按分组卡片） -->
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">字段配置</span>
-            <span class="us-state">列表与编辑表单按此加载</span>
-            <span class="us-spacer" />
-            <t-button variant="outline" size="small" @click="addField">
-              <template #icon><t-icon name="add" size="14px" /></template>
-              新增字段
-            </t-button>
+            <span class="us-state">分组管理各菜单列字段，保存后自动同步</span>
           </div>
-          <div class="us-hint">默认显示控制列表列显隐；输入完成后失焦自动保存。</div>
-          <div class="us-field-head">
-            <span style="flex: 1.4">字段名</span>
-            <span style="flex: 0.9">类型</span>
-            <span style="flex: 0.7">默认显示</span>
-            <span style="flex: 0.8">排序</span>
-            <span style="flex: 0.5">操作</span>
-          </div>
-          <div v-for="(f, i) in fields" :key="f.field_key" class="us-field-row">
-            <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="scheduleSave" />
-            <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="scheduleSave" />
-            <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="scheduleSave" />
-            <div class="us-field-order">
-              <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveField(i, -1)">
-                <template #icon><t-icon name="arrow-up" size="14px" /></template>
-              </t-button>
-              <t-button variant="text" size="small" shape="square" :disabled="i === fields.length - 1" @click="moveField(i, 1)">
-                <template #icon><t-icon name="arrow-down" size="14px" /></template>
-              </t-button>
-            </div>
-            <div class="us-field-del">
-              <t-button v-if="f.is_custom" variant="text" size="small" shape="square" @click="removeField(i)">
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
-            </div>
-          </div>
-          <div v-if="!fields.length" class="us-empty">暂无字段配置</div>
-        </div>
-
-        <!-- 分时电价（仅电费） -->
-        <div v-if="props.category === 'electricity'" class="us-section">
-          <div class="us-section-head">
-            <span class="us-section-title">分时电价</span>
-            <span class="us-state">零售交易电费按规则单价计算</span>
-            <span class="us-spacer" />
-            <t-button variant="outline" size="small" @click="addTariff">
-              <template #icon><t-icon name="add" size="14px" /></template>
-              新增规则
-            </t-button>
-          </div>
-          <div class="us-hint">按月份设定尖峰平谷单价，零售交易电费 = 时段电量 × 对应单价。不同月份可不同计价，如 7、8 月尖峰与峰分开计价，其它月份尖峰与峰同价（填相同值）；无匹配月份时使用默认规则。</div>
-          <div v-if="!tariffs.length" class="us-empty">暂无分时电价规则，零售交易电费按账单提取标准计算</div>
-          <div v-for="(t, i) in tariffs" :key="t.id" class="us-tariff-row">
-            <div class="us-tariff-main">
-              <t-input v-model="t.name" placeholder="规则名" size="small" class="us-tariff-name" @change="scheduleSave" />
-              <t-select v-model="t.monthsArr" multiple size="small" class="us-tariff-months" :options="MONTH_OPTS"
-                placeholder="适用月份" @change="syncTariffMonths(i)" />
-              <div class="us-tariff-rates">
-                <label>尖</label><t-input v-model="t.deep_peak_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
-                <label>峰</label><t-input v-model="t.peak_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
-                <label>平</label><t-input v-model="t.flat_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
-                <label>谷</label><t-input v-model="t.valley_rate" type="number" size="small" class="us-rate-input" @change="scheduleSave" />
+          <div class="us-hint">点击分组卡片管理字段：新增、删除、排序、默认显示；删除字段不影响历史记录数据。</div>
+          <div class="us-card-grid">
+            <div v-for="g in groups" :key="g.key" class="us-card" @click="openGroupEdit(g.key)">
+              <div class="us-card-head">
+                <span class="us-card-title">{{ g.label }}</span>
               </div>
-            </div>
-            <div class="us-tariff-side">
-              <t-tooltip content="无匹配月份时兜底">
-                <t-switch v-model="t.is_default" size="small" @change="scheduleSave" />
-              </t-tooltip>
-              <t-button variant="text" size="small" shape="square" @click="removeTariff(i)">
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
+              <div class="us-card-line">{{ groupFieldCount(g.key) }} 个字段</div>
+              <div class="us-card-line us-card-action">点击管理</div>
             </div>
           </div>
         </div>
@@ -134,7 +63,7 @@
               添加
             </t-button>
           </div>
-          <div class="us-hint">模型判定非账单但规则命中 → 认定为账单，置待补录。默认关键词：电费账单、电量、电费、千瓦时。</div>
+          <div class="us-hint">模型判定非账单但规则命中 → 认定为账单，置待补录。</div>
           <div v-if="!cfg.include_rules.length" class="us-empty">暂无规则，模型判定为准</div>
           <div v-for="(r, i) in cfg.include_rules" :key="r.id" class="us-row">
             <div class="us-row-main">
@@ -155,6 +84,105 @@
         </div>
       </div>
     </t-drawer>
+
+    <!-- 基本户编辑抽屉 -->
+    <t-drawer v-if="accEditVisible" :visible="true" :header="accForm.id ? '编辑基本户' : '新增基本户'" :size="'480px'" :footer="false"
+      :close-on-overlay-click="true" @close="accEditVisible = false" @update:visible="(v: boolean) => (v || (accEditVisible = false))">
+      <div class="us-basic-grid">
+        <div class="us-basic-item">
+          <label>名称</label>
+          <t-input v-model="accForm.name" size="small" placeholder="自定义名称" />
+        </div>
+        <div class="us-basic-item">
+          <label>户号</label>
+          <t-input v-model="accForm.account_no" size="small" placeholder="户号" />
+        </div>
+        <div class="us-basic-item">
+          <label>户名</label>
+          <t-input v-model="accForm.account_name" size="small" placeholder="户名" />
+        </div>
+        <div class="us-basic-item">
+          <label>用电类别</label>
+          <t-input v-model="accForm.usage_category" size="small" placeholder="用电类别" />
+        </div>
+        <div class="us-basic-item">
+          <label>电压等级</label>
+          <t-input v-model="accForm.voltage_level" size="small" placeholder="电压等级" />
+        </div>
+        <div class="us-basic-item">
+          <label>市场化属性</label>
+          <t-input v-model="accForm.market_attr" size="small" placeholder="市场化属性" />
+        </div>
+        <div class="us-basic-item">
+          <label>供电服务单位</label>
+          <t-input v-model="accForm.supply_unit" size="small" placeholder="供电服务单位" />
+        </div>
+        <div class="us-basic-item">
+          <label>电能表编号</label>
+          <t-input v-model="accForm.meter_no" size="small" placeholder="电能表编号" />
+        </div>
+        <div class="us-basic-item">
+          <label>倍率</label>
+          <t-input v-model="accForm.ratio" type="number" size="small" placeholder="倍率" />
+        </div>
+        <div class="us-basic-item us-basic-item--wide">
+          <label>用电地址</label>
+          <t-input v-model="accForm.address" size="small" placeholder="用电地址" />
+        </div>
+      </div>
+      <div class="us-basic-foot">
+        <label class="us-default-label">
+          <t-checkbox v-model="accForm.is_default" size="small">设为默认户</t-checkbox>
+        </label>
+        <t-button v-if="accForm.id" variant="text" theme="danger" size="small" @click="confirmDeleteAcc">
+          <template #icon><t-icon name="delete" size="15px" /></template>
+          删除
+        </t-button>
+      </div>
+      <div class="us-actions">
+        <t-button variant="outline" size="small" @click="accEditVisible = false">取消</t-button>
+        <t-button size="small" @click="saveAcc">保存</t-button>
+      </div>
+    </t-drawer>
+
+    <!-- 字段分组管理抽屉 -->
+    <t-drawer v-if="groupEditVisible" :visible="true" :header="`字段 · ${groupEditLabel}`" :size="'520px'" :footer="false"
+      :close-on-overlay-click="true" @close="groupEditVisible = false" @update:visible="(v: boolean) => (v || (groupEditVisible = false))">
+      <div class="us-hint">字段对应菜单列表的列；默认显示控制列显隐，保存后自动同步到菜单。</div>
+      <div class="us-field-head">
+        <span style="flex: 1.4">字段名</span>
+        <span style="flex: 0.9">类型</span>
+        <span style="flex: 0.7">默认显示</span>
+        <span style="flex: 0.9">排序</span>
+        <span style="flex: 0.5">操作</span>
+      </div>
+      <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
+        <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="saveGroupFields" />
+        <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+        <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
+        <div class="us-field-order">
+          <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+            <template #icon><t-icon name="arrow-up" size="14px" /></template>
+          </t-button>
+          <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
+            <template #icon><t-icon name="arrow-down" size="14px" /></template>
+          </t-button>
+        </div>
+        <div class="us-field-del">
+          <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+            <template #icon><t-icon name="delete" size="15px" /></template>
+          </t-button>
+        </div>
+      </div>
+      <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
+      <div class="us-actions">
+        <t-button variant="outline" size="small" @click="addGroupField">
+          <template #icon><t-icon name="add" size="14px" /></template>
+          新增字段
+        </t-button>
+        <t-button size="small" @click="groupEditVisible = false">完成</t-button>
+      </div>
+    </t-drawer>
   </div>
 </template>
 
@@ -164,14 +192,13 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityFieldConfigs,
   saveUtilityFieldConfigs,
+  listUtilityFieldConfigsByGroup,
   getRecognitionConfig,
   saveRecognitionConfig,
-  listUtilityTariffRules,
-  createUtilityTariffRule,
-  updateUtilityTariffRule,
-  getUtilityBasicInfo,
-  saveUtilityBasicInfo,
-  deleteUtilityTariffRule,
+  listUtilityBasicAccounts,
+  createUtilityBasicAccount,
+  updateUtilityBasicAccount,
+  deleteUtilityBasicAccount,
 } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -198,34 +225,38 @@ const LOGIC_OPTS = [
   { label: '全部（AND）', value: 'AND' },
   { label: '任一（OR）', value: 'OR' },
 ]
-const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ label: `${i + 1}月`, value: String(i + 1) }))
 
 interface FieldItem { field_key: string; label: string; field_type: string; default_visible: boolean; sort_order: number; is_custom: boolean }
 interface IncludeRule { id: string; name: string; match_type: 'keyword' | 'regex'; keywords?: string[]; logic?: 'AND' | 'OR'; regex?: string; enabled: boolean }
-interface TariffRule {
-  id: string
-  name: string
-  months: string
-  monthsArr: string[]
-  deep_peak_rate: string | number
-  peak_rate: string | number
-  flat_rate: string | number
-  valley_rate: string | number
-  is_default: boolean
-  sort_order: number
-  _new?: boolean
-}
+interface BasicAccount { id?: string; name: string; account_no: string; account_name: string; usage_category: string; voltage_level: string; market_attr: string; supply_unit: string; address: string; meter_no: string; ratio: number | string; is_default: boolean }
 
-const fields = ref<FieldItem[]>([])
+// 电费字段配置分组（对应各费用菜单）
+const GROUP_DEFS = [
+  { key: 'overview', label: '账单概况' },
+  { key: 'market', label: '市场化购电费' },
+  { key: 'line', label: '上网环节线损费' },
+  { key: 'trans', label: '输配电量电费' },
+  { key: 'sys', label: '系统运行费' },
+  { key: 'gov-industrial', label: '政府基金及附加（工商业）' },
+  { key: 'catalog', label: '目录电费（居民）' },
+  { key: 'gov-residential', label: '政府基金及附加（居民）' },
+  { key: 'capacity', label: '输配容（需）量' },
+  { key: 'pf', label: '功率因素调整' },
+  { key: 'meter', label: '电量明细（工商业）' },
+  { key: 'resident-meter', label: '电量明细（居民）' },
+]
+
+const accounts = ref<BasicAccount[]>([])
 const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: true, include_rules: [] })
-const tariffs = ref<TariffRule[]>([])
 const keywordsText = ref<string[]>([])
 const saving = ref(false)
-// 基本户信息（电费）
-const basicInfo = ref({
-  account_no: '', account_name: '', usage_category: '', voltage_level: '',
-  market_attr: '', supply_unit: '', address: '',
+
+const groups = computed(() => {
+  if (props.category === 'electricity') return GROUP_DEFS
+  return [{ key: '', label: '通用字段' }]
 })
+const groupFieldCount = (key: string) => groupCounts.value[key] ?? 0
+const groupCounts = ref<Record<string, number>>({})
 
 const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
@@ -233,11 +264,11 @@ const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).sli
 const DRAWER_WIDTH_KEY = 'weknora-utility-settings-drawer-width'
 const drawerWidth = ref(loadWidth())
 function loadWidth(): number {
-  try { return Number(localStorage.getItem(DRAWER_WIDTH_KEY)) || 760 } catch { return 760 }
+  try { return Number(localStorage.getItem(DRAWER_WIDTH_KEY)) || 820 } catch { return 820 }
 }
 let resizing = false
 let startX = 0
-let startW = 760
+let startW = 820
 const onResizeStart = (e: MouseEvent) => {
   resizing = true
   startX = e.clientX
@@ -272,110 +303,147 @@ const addIncludeRule = () => {
   scheduleSave()
 }
 
-const syncTariffMonths = (i: number) => {
-  tariffs.value[i].months = (tariffs.value[i].monthsArr || []).join(',')
-  scheduleSave()
+// ---- 基本户 ----
+const loadAccounts = async () => {
+  if (props.category !== 'electricity') return
+  try {
+    const res: any = await listUtilityBasicAccounts('electricity')
+    accounts.value = (res?.data || res || []).map((a: any) => ({
+      id: a.id, name: a.name || '', account_no: a.account_no || '', account_name: a.account_name || '',
+      usage_category: a.usage_category || '', voltage_level: a.voltage_level || '',
+      market_attr: a.market_attr || '', supply_unit: a.supply_unit || '', address: a.address || '',
+      meter_no: a.meter_no || '', ratio: a.ratio ?? '', is_default: !!a.is_default,
+    }))
+  } catch { accounts.value = [] }
 }
-const addTariff = () => {
-  tariffs.value.push({
-    id: uid(), name: '', months: '', monthsArr: [], deep_peak_rate: '', peak_rate: '', flat_rate: '', valley_rate: '',
-    is_default: tariffs.value.length === 0, sort_order: tariffs.value.length, _new: true,
-  })
-  scheduleSave()
+const emptyAcc = (): BasicAccount => ({
+  name: '', account_no: '', account_name: '', usage_category: '', voltage_level: '',
+  market_attr: '', supply_unit: '', address: '', meter_no: '', ratio: '', is_default: false,
+})
+const accEditVisible = ref(false)
+const accForm = ref<BasicAccount>(emptyAcc())
+const openAccEdit = (a: BasicAccount | null) => {
+  accForm.value = a ? { ...a } : emptyAcc()
+  accEditVisible.value = true
 }
-const removeTariff = (i: number) => {
-  const t = tariffs.value[i]
-  if (!t._new && t.id) {
-    deleteUtilityTariffRule(t.id, 'electricity').catch(() => { /* 保存流程兜底 */ })
+const saveAcc = async () => {
+  const payload = { ...accForm.value, ratio: Number(accForm.value.ratio) || 0 }
+  try {
+    if (accForm.value.id) {
+      await updateUtilityBasicAccount(accForm.value.id, 'electricity', payload)
+    } else {
+      await createUtilityBasicAccount('electricity', payload)
+    }
+    MessagePlugin.success('已保存')
+    accEditVisible.value = false
+    await loadAccounts()
+    emit('changed')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
   }
-  tariffs.value.splice(i, 1)
-  scheduleSave()
 }
-
-const addField = () => {
-  let n = 1
-  const keys = new Set(fields.value.map(f => f.field_key))
-  while (keys.has(`custom_${n}`)) n++
-  fields.value.push({
-    field_key: `custom_${n}`, label: '自定义字段', field_type: 'text',
-    default_visible: false, sort_order: fields.value.length, is_custom: true,
+const confirmDeleteAcc = async () => {
+  const ok = await MessagePlugin.confirm('删除该基本户？历史账单记录保留原数据。', {
+    theme: 'warning', confirmBtn: '删除', cancelBtn: '取消',
   })
-  scheduleSave()
+  if (!ok) return
+  try {
+    await deleteUtilityBasicAccount(accForm.value.id!, 'electricity')
+    MessagePlugin.success('已删除')
+    accEditVisible.value = false
+    await loadAccounts()
+    emit('changed')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '删除失败')
+  }
 }
-const removeField = (i: number) => {
-  fields.value.splice(i, 1)
-  refreshOrder()
-  scheduleSave()
+
+// ---- 字段分组管理 ----
+const groupEditVisible = ref(false)
+const groupEditLabel = ref('')
+const groupEditKey = ref('')
+const groupFields = ref<FieldItem[]>([])
+const openGroupEdit = async (key: string) => {
+  const g = GROUP_DEFS.find(x => x.key === key)
+  groupEditLabel.value = g ? g.label : '通用字段'
+  groupEditKey.value = key
+  groupFields.value = []
+  groupEditVisible.value = true
+  try {
+    const res: any = await listUtilityFieldConfigsByGroup(props.category, key)
+    const list = res?.data || res
+    groupFields.value = (Array.isArray(list) ? list : []).map((c: any) => ({
+      field_key: c.field_key, label: c.label || c.field_key,
+      field_type: c.field_type || 'text', default_visible: !!c.default_visible,
+      sort_order: Number(c.sort_order) || 0, is_custom: !!c.is_custom,
+    }))
+  } catch { groupFields.value = [] }
 }
-const moveField = (i: number, dir: number) => {
+const saveGroupFields = () => {
+  if (saving.value) return
+  saving.value = true
+  saveUtilityFieldConfigs(props.category, groupFields.value.map((f, i) => ({
+    field_key: f.field_key, label: f.label.trim(), field_type: f.field_type,
+    default_visible: !!f.default_visible, sort_order: i, is_custom: !!f.is_custom,
+  })), groupEditKey.value)
+    .then(() => {
+      loadGroupCounts()
+      emit('changed')
+    })
+    .catch((e: any) => MessagePlugin.error(e?.message || '保存失败'))
+    .finally(() => { saving.value = false })
+}
+const addGroupField = () => {
+  let n = 1
+  const keys = new Set(groupFields.value.map(f => f.field_key))
+  while (keys.has(`custom_${n}`)) n++
+  groupFields.value.push({
+    field_key: `custom_${n}`, label: '自定义字段', field_type: 'text',
+    default_visible: false, sort_order: groupFields.value.length, is_custom: true,
+  })
+  saveGroupFields()
+}
+const removeGroupField = (i: number) => {
+  const f = groupFields.value[i]
+  MessagePlugin.confirm(`停用「${f.label}」？历史记录保留原数据，新上传不再显示。`, {
+    theme: 'warning', confirmBtn: '停用', cancelBtn: '取消',
+  }).then((ok) => {
+    if (!ok) return
+    groupFields.value.splice(i, 1)
+    groupFields.value.forEach((x, j) => { x.sort_order = j })
+    saveGroupFields()
+  })
+}
+const moveGroupField = (i: number, dir: number) => {
   const j = i + dir
-  if (j < 0 || j >= fields.value.length) return
-  const tmp = fields.value[i]
-  fields.value[i] = fields.value[j]
-  fields.value[j] = tmp
-  refreshOrder()
-  scheduleSave()
-}
-const refreshOrder = () => {
-  fields.value.forEach((f, i) => { f.sort_order = i })
+  if (j < 0 || j >= groupFields.value.length) return
+  const tmp = groupFields.value[i]
+  groupFields.value[i] = groupFields.value[j]
+  groupFields.value[j] = tmp
+  groupFields.value.forEach((x, k) => { x.sort_order = k })
+  saveGroupFields()
 }
 
-// 电费内置字段（后端配置缺失时合并补全，保证新默认字段可在设置中管理）
-const BUILTIN_ELECTRICITY_FIELDS: { key: string; label: string; type: string; default: boolean }[] = [
-  { key: 'bill_period', label: '账单周期', type: 'text', default: true },
-  { key: 'total_kwh', label: '本期电量', type: 'number', default: true },
-  { key: 'total_amount', label: '本期电费', type: 'number', default: true },
-  { key: 'pf_adjust_amount', label: '力调电费', type: 'number', default: true },
-  { key: 'capacity_fee', label: '基本电费', type: 'number', default: true },
-  { key: 'market_amount', label: '购电电费', type: 'number', default: true },
-  { key: 'line_amount', label: '线损费用', type: 'number', default: true },
-  { key: 'trans_amount', label: '输配电费', type: 'number', default: true },
-  { key: 'sys_amount', label: '系统运行费', type: 'number', default: true },
-  { key: 'govI_amount', label: '附加费', type: 'number', default: true },
-  { key: 'catalog_amount', label: '目录电费（居民）', type: 'number', default: true },
-  { key: 'govR_amount', label: '附加费（居民）', type: 'number', default: true },
-  { key: 'account_no', label: '户号', type: 'text', default: false },
-  { key: 'account_name', label: '户名', type: 'text', default: false },
-  { key: 'usage_category', label: '用电类别', type: 'text', default: false },
-  { key: 'voltage_level', label: '电压等级', type: 'text', default: false },
-  { key: 'avg_price', label: '平均电价', type: 'number', default: false },
-  { key: 'power_factor', label: '功率因素', type: 'number', default: false },
-]
-
-const load = async () => {
+// ---- 分组字段计数 ----
+const loadGroupCounts = async () => {
+  if (props.category !== 'electricity') return
   try {
     const res: any = await listUtilityFieldConfigs(props.category)
-    const list = res?.data || res
-    // 仅保留内置字段与自定义字段，过滤历史废弃字段；label/默认显隐以新内置集为准
-    const builtinKeys = new Set(BUILTIN_ELECTRICITY_FIELDS.map(f => f.key))
-    fields.value = (Array.isArray(list) ? list : [])
-      .filter((c: any) => c.is_custom || builtinKeys.has(c.field_key))
-      .map((c: any) => {
-        const b = BUILTIN_ELECTRICITY_FIELDS.find(f => f.key === c.field_key)
-        return {
-          field_key: c.field_key,
-          label: b ? b.label : c.label,
-          field_type: c.field_type || 'text',
-          default_visible: b ? b.default : !!c.default_visible,
-          sort_order: Number(c.sort_order) || 0,
-          is_custom: !!c.is_custom,
-        }
-      })
-    // 电费：合并后端缺失的内置字段，保证新默认字段可见可配
-    if (props.category === 'electricity') {
-      const keys = new Set(fields.value.map(f => f.field_key))
-      const missing = BUILTIN_ELECTRICITY_FIELDS.filter(f => !keys.has(f.key))
-      if (missing.length) {
-        const maxOrder = fields.value.reduce((m, f) => Math.max(m, f.sort_order || 0), 0)
-        fields.value.push(...missing.map((f, i) => ({
-          field_key: f.key, label: f.label, field_type: f.type,
-          default_visible: f.default, sort_order: maxOrder + i + 1, is_custom: false,
-        })))
-      }
-    }
-  } catch (e: any) {
-    fields.value = []
-  }
+    const list = res?.data || res || []
+    const counts: Record<string, number> = {}
+    const keys = new Set<string>()
+    ;(Array.isArray(list) ? list : []).forEach((c: any) => {
+      const g = c.group || ''
+      counts[g] = (counts[g] || 0) + 1
+      keys.add(c.field_key)
+    })
+    groupCounts.value = counts
+    void keys
+  } catch { /* ignore */ }
+}
+
+// ---- 加载 ----
+const load = async () => {
   try {
     const res: any = await getRecognitionConfig(props.kbId)
     const c = res?.data || res
@@ -395,55 +463,15 @@ const load = async () => {
     cfg.value = { enabled: true, include_rules: [] }
     keywordsText.value = []
   }
-  if (props.category === 'electricity') {
-    try {
-      const res: any = await listUtilityTariffRules('electricity')
-      const list = res?.data || res
-      tariffs.value = (Array.isArray(list) ? list : []).map((t: any) => ({
-        id: t.id, name: t.name || '', months: t.months || '', monthsArr: (t.months || '').split(',').filter(Boolean),
-        deep_peak_rate: t.deep_peak_rate ?? '', peak_rate: t.peak_rate ?? '', flat_rate: t.flat_rate ?? '',
-        valley_rate: t.valley_rate ?? '', is_default: !!t.is_default, sort_order: Number(t.sort_order) || 0,
-      }))
-    } catch {
-      tariffs.value = []
-    }
-  } else {
-    tariffs.value = []
-  }
-  await loadBasicInfo()
+  await loadAccounts()
+  await loadGroupCounts()
 }
 
 watch(() => props.visible, (v) => { if (v) load() })
 
-// ---- 基本户信息：加载 + 防抖自动保存 ----
-const loadBasicInfo = async () => {
-  if (props.category !== 'electricity') return
-  try {
-    const res: any = await getUtilityBasicInfo('electricity')
-    const d = res?.data || {}
-    Object.assign(basicInfo.value, {
-      account_no: d.account_no || '', account_name: d.account_name || '',
-      usage_category: d.usage_category || '', voltage_level: d.voltage_level || '',
-      market_attr: d.market_attr || '', supply_unit: d.supply_unit || '', address: d.address || '',
-    })
-  } catch { /* 未配置时保持空 */ }
-}
-let basicInfoTimer: ReturnType<typeof setTimeout> | undefined
-const autosaveBasicInfo = () => {
-  clearTimeout(basicInfoTimer)
-  basicInfoTimer = setTimeout(async () => {
-    try {
-      await saveUtilityBasicInfo('electricity', { ...basicInfo.value })
-      MessagePlugin.success('基本户信息已保存')
-    } catch (e: any) {
-      MessagePlugin.error(e?.message || '保存失败')
-    }
-  }, 800)
-}
-
 const onClose = () => emit('update:visible', false)
 
-// ---- 自动保存：字段/规则/电价变更防抖持久化 ----
+// ---- 自动保存：包含判定防抖持久化 ----
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 const scheduleSave = () => {
   clearTimeout(saveTimer)
@@ -451,13 +479,8 @@ const scheduleSave = () => {
 }
 const persistAll = async () => {
   if (saving.value) return
-  if (fields.value.some(f => !f.label.trim())) return
   saving.value = true
   try {
-    await saveUtilityFieldConfigs(props.category, fields.value.map((f, i) => ({
-      field_key: f.field_key, label: f.label.trim(), field_type: f.field_type,
-      default_visible: !!f.default_visible, sort_order: i, is_custom: !!f.is_custom,
-    })))
     await saveRecognitionConfig(props.kbId, {
       enabled: cfg.value.enabled,
       include_rules: cfg.value.include_rules.map(r => ({
@@ -466,21 +489,6 @@ const persistAll = async () => {
         logic: r.logic, regex: r.regex, enabled: r.enabled,
       })),
     })
-    if (props.category === 'electricity') {
-      const toNum = (v: string | number) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
-      for (const t of tariffs.value) {
-        const payload: Record<string, unknown> = {
-          name: t.name || '分时电价规则', months: t.months, deep_peak_rate: toNum(t.deep_peak_rate),
-          peak_rate: toNum(t.peak_rate), flat_rate: toNum(t.flat_rate), valley_rate: toNum(t.valley_rate),
-          is_default: !!t.is_default, sort_order: t.sort_order,
-        }
-        if (t._new || !t.id) {
-          await createUtilityTariffRule('electricity', payload)
-        } else {
-          await updateUtilityTariffRule(t.id, 'electricity', payload)
-        }
-      }
-    }
     emit('changed')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -489,7 +497,7 @@ const persistAll = async () => {
   }
 }
 
-// 输入/改动通过 @change 触发 scheduleSave；关闭抽屉前落盘最后改动
+// 关闭抽屉前落盘最后改动
 watch(() => props.visible, (v) => {
   if (!v) {
     clearTimeout(saveTimer)
@@ -570,6 +578,66 @@ watch(() => props.visible, (v) => {
   border-radius: 6px;
 }
 
+/* 卡片网格（基本户 / 字段分组） */
+.us-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.us-card {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all .15s;
+
+  &:hover {
+    border-color: var(--td-brand-color);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+    transform: translateY(-1px);
+  }
+
+  .us-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+
+    .us-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .us-card-tag {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--td-brand-color);
+      border: 1px solid var(--td-brand-color);
+      border-radius: 4px;
+      padding: 0 5px;
+      line-height: 16px;
+    }
+  }
+
+  .us-card-line {
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+    line-height: 1.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .us-card-action {
+    color: var(--td-brand-color);
+  }
+}
+
 .us-field-head,
 .us-field-row {
   display: flex;
@@ -589,7 +657,7 @@ watch(() => props.visible, (v) => {
   .us-field-label { flex: 1.4; }
   .us-field-type { flex: 0.9; }
   .us-field-visible { flex: 0.7; justify-content: flex-start; }
-  .us-field-order { flex: 0.8; display: flex; gap: 2px; }
+  .us-field-order { flex: 0.9; display: flex; gap: 2px; }
   .us-field-del { flex: 0.5; }
 }
 
@@ -621,54 +689,16 @@ watch(() => props.visible, (v) => {
   }
 }
 
-.us-tariff-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--td-component-stroke);
-
-  &:last-child { border-bottom: none; }
-
-  .us-tariff-main {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-
-    .us-tariff-name { width: 110px; }
-    .us-tariff-months { width: 170px; }
-
-    .us-tariff-rates {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-
-      label {
-        font-size: 12px;
-        color: var(--td-text-color-secondary);
-      }
-
-      .us-rate-input { width: 86px; }
-    }
-  }
-
-  .us-tariff-side {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-}
-
 .us-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding-top: 12px;
   border-top: 1px solid var(--td-component-stroke);
+  margin-top: 12px;
 }
 
-/* 基本户信息 */
+/* 基本户信息表单 */
 .us-basic-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -684,9 +714,16 @@ watch(() => props.visible, (v) => {
     font-size: 12px;
     color: var(--td-text-color-secondary);
   }
+
+  &.us-basic-item--wide {
+    grid-column: 1 / -1;
+  }
 }
 
-.us-basic-item--wide {
-  grid-column: 1 / -1;
+.us-basic-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
 }
 </style>

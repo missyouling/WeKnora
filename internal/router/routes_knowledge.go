@@ -318,6 +318,10 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	{
 		ut.GET("/field-configs", g.Viewer(), handler.ListUtilityFieldConfigs)
 		ut.POST("/field-configs", g.Contributor(), handler.SaveUtilityFieldConfigs)
+		ut.GET("/basic-accounts", g.Viewer(), handler.ListUtilityBasicAccounts)
+		ut.POST("/basic-accounts", g.Contributor(), handler.CreateUtilityBasicAccount)
+		ut.PUT("/basic-accounts/:id", g.Contributor(), handler.UpdateUtilityBasicAccount)
+		ut.DELETE("/basic-accounts/:id", g.Contributor(), handler.DeleteUtilityBasicAccount)
 		ut.GET("/basic-info", g.Viewer(), handler.GetUtilityBasicInfo)
 		ut.PUT("/basic-info", g.Contributor(), handler.SaveUtilityBasicInfo)
 		ut.GET("/meter-records", g.Viewer(), handler.ListUtilityMeterRecords)

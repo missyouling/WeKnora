@@ -375,7 +375,7 @@
                           <span class="meter-type">{{ r.meter_type }}</span>
                           <span class="row-mono">{{ r.prev || r.prev === 0 ? fmtKwh(r.prev) : '' }}</span>
                           <span class="row-mono">{{ r.curr || r.curr === 0 ? fmtKwh(r.curr) : '' }}</span>
-                          <span class="row-mono">{{ r.multiplier || r.multiplier === 0 ? fmtRate6(r.multiplier) : '' }}</span>
+                          <span class="row-mono">{{ displayMultiplier(r) }}</span>
                           <span class="row-mono">{{ r.reading_kwh || r.reading_kwh === 0 ? fmtKwh(r.reading_kwh) : '' }}</span>
                           <span class="row-mono">{{ r.trans_loss || r.trans_loss === 0 ? fmtKwh(r.trans_loss) : '' }}</span>
                           <span class="row-mono">{{ r.line_loss || r.line_loss === 0 ? fmtKwh(r.line_loss) : '' }}</span>
@@ -426,18 +426,19 @@
                       </div>
                       <div class="fee-group-table">
                         <div class="fg-row fg-head">
-                          <span>费用组成</span><span>时段</span><span>计费电量</span><span>计费标准</span><span>电费（元）</span>
+                          <span v-for="c in feeGroupCols(activeMenu)" :key="c.field_key">{{ c.label }}</span>
                         </div>
                         <div v-for="(it, i) in feeRowsOf(activeMenu)" :key="i" class="fg-row" @click="openFeeItemEdit(activeMenu, i)">
-                          <span class="fg-name" :title="it.name">{{ it.name }}</span>
-                          <span>{{ it.period }}</span>
-                          <span class="row-mono">{{ it.qty ? fmtKwh(it.qty) : '' }}</span>
-                          <span class="row-mono">{{ it.rate ? fmtRate(it.rate) : '' }}</span>
-                          <span class="row-mono" :class="{ 'os-neg': it.fee < 0 }">{{ it.fee || it.fee === 0 ? fmtRate6(it.fee) : '' }}</span>
+                          <span v-for="c in feeGroupCols(activeMenu)" :key="c.field_key"
+                            :class="{ 'fg-name': c.field_key === 'name', 'row-mono': c.field_type !== 'text', 'os-neg': c.field_key === 'fee' && Number(it.fee) < 0 }"
+                            :title="c.field_key === 'name' ? it.name : ''">
+                            {{ feeCellText(it, c) }}
+                          </span>
                         </div>
                         <div v-if="!feeRowsOf(activeMenu).length" class="fg-empty">暂无数据</div>
                         <div v-if="feeRowsOf(activeMenu).length" class="fg-row fg-total">
-                          <span>小计</span><span></span><span></span><span></span>
+                          <span>小计</span>
+                          <span v-for="c in feeGroupCols(activeMenu).slice(1)" :key="c.field_key" />
                           <span class="row-mono" :class="{ 'os-neg': feeSubtotalOf(activeMenu) < 0 }">{{ fmtMoney(feeSubtotalOf(activeMenu)) }}</span>
                         </div>
                       </div>
@@ -747,7 +748,7 @@ import {
   listUtilityFieldConfigs,
   previewKnowledgeFile,
   reparseKnowledge,
-  getUtilityBasicInfo,
+  listUtilityBasicAccounts,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -823,11 +824,43 @@ function persistColumns() {
 }
 watch(visibleColKeys, () => persistColumns(), { deep: true })
 
+const allFieldConfigs = ref<any[]>([])
+// 费用菜单默认列（分组字段配置缺省时兜底）
+const DEFAULT_FEE_COLS = [
+  { field_key: 'name', label: '费用组成', field_type: 'text' },
+  { field_key: 'period', label: '时段', field_type: 'text' },
+  { field_key: 'qty', label: '计费电量', field_type: 'number' },
+  { field_key: 'rate', label: '计费标准', field_type: 'number' },
+  { field_key: 'fee', label: '电费', field_type: 'amount' },
+]
+// 分组菜单列：按字段配置（group + 默认显示）渲染，设置中增删改后自动同步
+const feeGroupCols = (group: string) => {
+  const list = allFieldConfigs.value.filter((c: any) => c.group === group && c.deleted_at == null)
+  if (!list.length) return DEFAULT_FEE_COLS
+  const cols = list.filter((c: any) => c.default_visible).sort((a: any, b: any) => a.sort_order - b.sort_order)
+  if (!cols.length) return list.sort((a: any, b: any) => a.sort_order - b.sort_order)
+  return cols
+}
+const feeCellText = (it: any, col: any) => {
+  const v = it[col.field_key]
+  if (col.field_type === 'number') return v || v === 0 ? fmtRate6(v) : ''
+  if (col.field_type === 'amount') return v || v === 0 ? fmtMoney(v) : ''
+  if (v === undefined || v === null || v === '') return ''
+  return String(v)
+}
+// 电量明细倍率：提取值缺失时引用基本户倍率
+const displayMultiplier = (r: any) => {
+  if (r.multiplier !== undefined && r.multiplier !== null && Number(r.multiplier) !== 0) return fmtRate6(r.multiplier)
+  const ratio = Number(currentAccount.value?.ratio) || 0
+  return ratio ? fmtRate6(ratio) : ''
+}
+
 const loadFieldConfigs = async () => {
   try {
     const res: any = await listUtilityFieldConfigs('electricity')
     const list = res?.data || res
     if (Array.isArray(list) && list.length) {
+      allFieldConfigs.value = list
       // 仅保留内置默认集字段与用户自定义字段，过滤历史废弃字段
       const validKeys = new Set(FALLBACK_COLUMNS.map(f => f.key))
       const fromServer = list
@@ -1267,17 +1300,30 @@ const BASIC_INFO_FIELDS = [
   { key: 'address', label: '用电地址' },
 ]
 const OVERVIEW_STATIC = BASIC_INFO_FIELDS.map(f => ({ ...f, type: 'text' }))
-const basicInfo = ref<Record<string, string>>({})
+// 基本户多账户：账单按户号自动匹配，匹配失败用默认户
+const basicAccounts = ref<any[]>([])
+const currentAccount = computed(() => {
+  const no = (editForm.value.account_no || '').trim()
+  if (no) {
+    const m = basicAccounts.value.find((a: any) => a.account_no === no)
+    if (m) return m
+  }
+  return basicAccounts.value.find((a: any) => a.is_default) || basicAccounts.value[0] || null
+})
+const basicInfo = computed<Record<string, any>>(() => {
+  const a = currentAccount.value || {}
+  return {
+    account_no: a.account_no || '', account_name: a.account_name || '',
+    usage_category: a.usage_category || '', voltage_level: a.voltage_level || '',
+    market_attr: a.market_attr || '', supply_unit: a.supply_unit || '', address: a.address || '',
+    meter_no: a.meter_no || '',
+  }
+})
 const loadBasicInfo = async () => {
   try {
-    const res: any = await getUtilityBasicInfo('electricity')
-    const d = res?.data || {}
-    basicInfo.value = {
-      account_no: d.account_no || '', account_name: d.account_name || '',
-      usage_category: d.usage_category || '', voltage_level: d.voltage_level || '',
-      market_attr: d.market_attr || '', supply_unit: d.supply_unit || '', address: d.address || '',
-    }
-  } catch { /* 未配置时留空 */ }
+    const res: any = await listUtilityBasicAccounts('electricity')
+    basicAccounts.value = (res?.data || res || [])
+  } catch { basicAccounts.value = [] }
 }
 
 // 容需量字段（编辑抽屉）
@@ -1583,6 +1629,11 @@ let meterEditIdx = -1
 const openMeterEdit = (idx: number) => {
   const r = meterRows.value[idx]
   if (!r) return
+  // 倍率缺失时以基本户倍率为默认
+  const ratio = Number(currentAccount.value?.ratio) || 0
+  if (r.multiplier === undefined || r.multiplier === null || Number(r.multiplier) === 0) {
+    r.multiplier = ratio || 1
+  }
   meterEditTitle.value = r.meter_type || '电量明细'
   meterEditFields.value = [
     { key: 'prev', label: '上期示数' },

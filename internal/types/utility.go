@@ -6,10 +6,13 @@ import (
 
 // UtilityFieldConfig 水电气字段配置：电费/水费/气费三个分类各自的字段集，
 // 列表列、字段选择器、抽屉表单均由该配置驱动（字段可增删改、自定义）。
+// Group 用于电费按费用分组管理（market/line/trans/sys/gov-industrial/catalog/gov-residential/capacity/pf/meter/resident-meter/overview），
+// 每组字段对应一个费用菜单的列定义，设置后自动同步到对应菜单。
 type UtilityFieldConfig struct {
 	ID             string     `gorm:"primaryKey" json:"id"`
 	TenantID       int64      `gorm:"index" json:"tenant_id"`
 	Category       string     `gorm:"index" json:"category"` // electricity | water | gas
+	Group          string     `gorm:"index" json:"group"`    // 电费分组 key，水气为空串
 	FieldKey       string     `json:"field_key"`
 	Label          string     `json:"label"`
 	FieldType      string     `json:"field_type"` // text | number | amount | date
@@ -235,3 +238,27 @@ type UtilityBasicInfo struct {
 }
 
 func (UtilityBasicInfo) TableName() string { return "utility_basic_info" }
+
+// UtilityBasicAccount 电费基本户（多户）：每户一条，可自定义名称，
+// 账单解析后按户号自动匹配；倍率用于工商业电量明细倍率引用，电能表编号仅档案展示。
+type UtilityBasicAccount struct {
+	ID            string     `gorm:"primaryKey" json:"id"`
+	TenantID      int64      `gorm:"index" json:"tenant_id"`
+	Category      string     `gorm:"index" json:"category"` // electricity
+	Name          string     `json:"name"`                  // 自定义名称（卡片标题）
+	AccountNo     string     `json:"account_no"`            // 户号
+	AccountName   string     `json:"account_name"`          // 户名
+	UsageCategory string     `json:"usage_category"`        // 用电类别
+	VoltageLevel  string     `json:"voltage_level"`         // 电压等级
+	MarketAttr    string     `json:"market_attr"`           // 市场化属性
+	SupplyUnit    string     `json:"supply_unit"`           // 供电服务单位
+	Address       string     `json:"address"`               // 用电地址
+	MeterNo       string     `json:"meter_no"`              // 电能表编号
+	Ratio         float64    `gorm:"numeric(18,4)" json:"ratio"` // 倍率
+	IsDefault     bool       `gorm:"column:is_default" json:"is_default"` // 默认户（兜底）
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeletedAt     *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (UtilityBasicAccount) TableName() string { return "utility_basic_accounts" }

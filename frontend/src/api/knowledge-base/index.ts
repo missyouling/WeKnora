@@ -893,12 +893,35 @@ export function listUtilityFieldConfigs(category: string) {
   return get(`/api/v1/utilities/field-configs?category=${category}`);
 }
 
-/** 保存字段配置（整组覆盖） */
-export function saveUtilityFieldConfigs(category: string, configs: Record<string, unknown>[]) {
-  return post(`/api/v1/utilities/field-configs?category=${category}`, configs);
+/** 保存字段配置（整组覆盖；传 group 时仅覆盖该分组） */
+export function saveUtilityFieldConfigs(category: string, configs: Record<string, unknown>[], group?: string) {
+  const g = group ? `&group=${group}` : '';
+  return post(`/api/v1/utilities/field-configs?category=${category}${g}`, configs);
 }
 
-/** 基本户信息（电费，按分类各一份） */
+/** 按分组获取字段配置（电费分组：market/line/trans/sys/gov-industrial/catalog/gov-residential/capacity/pf/meter/resident-meter/overview） */
+export function listUtilityFieldConfigsByGroup(category: string, group: string) {
+  return get(`/api/v1/utilities/field-configs?category=${category}&group=${group}`);
+}
+
+/** 基本户列表（电费多户） */
+export function listUtilityBasicAccounts(category = 'electricity') {
+  return get(`/api/v1/utilities/basic-accounts?category=${category}`);
+}
+
+export function createUtilityBasicAccount(category: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/utilities/basic-accounts?category=${category}`, payload);
+}
+
+export function updateUtilityBasicAccount(id: string, category: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/basic-accounts/${id}?category=${category}`, payload);
+}
+
+export function deleteUtilityBasicAccount(id: string, category = 'electricity') {
+  return del(`/api/v1/utilities/basic-accounts/${id}?category=${category}`);
+}
+
+/** 基本户信息（兼容：默认户） */
 export function getUtilityBasicInfo(category: string) {
   return get(`/api/v1/utilities/basic-info?category=${category}`);
 }

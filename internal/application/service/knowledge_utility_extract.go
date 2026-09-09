@@ -249,74 +249,17 @@ func NormalizeUtilityBillExtractionResult(extracted *UtilityBillExtractionResult
 	}
 }
 
-// utilityBillMonthOf extracts "MM" from a YYYY-MM-DD bill period start.
-func utilityBillMonthOf(periodStart string) string {
-	if len(periodStart) < 7 {
-		return ""
-	}
-	return strings.TrimPrefix(periodStart[5:7], "0")
-}
-
-// tariffRuleContainsMonth reports whether the rule's months list (e.g. "7,8")
-// contains the given month "8".
-func tariffRuleContainsMonth(months, month string) bool {
-	for _, m := range strings.Split(months, ",") {
-		if strings.TrimSpace(m) == month {
-			return true
-		}
-	}
-	return false
-}
-
 // RecalculateUtilityBillFees 重算电费金额。核心原则：提取只填充基础要素
 // （计费电量、计费标准），各子项电费一律计算得出，确保数据准确：
-//  1. 零售交易电费（分时计价）：按账单月份匹配分时电价规则，fee = 时段电量 × 规则单价；
-//  2. 其它「电量 × 标准」类行：fee = round(qty × rate, 2)；
-//  3. 特殊项（返还/偏差/功率因数调整等 qty=0 或 rate=0 的）保持提取值，仅参与汇总。
-func RecalculateUtilityBillFees(item *types.UtilityBillExtractionItem, rules []types.UtilityTariffRule) {
+//  1. 电量 × 计费标准 类行：fee = round(qty × rate, 2)，rate 取提取值（可手动修正）；
+//  2. 特殊项（返还/偏差/功率因数调整等 qty=0 或 rate=0 的）保持提取值，仅参与汇总。
+func RecalculateUtilityBillFees(item *types.UtilityBillExtractionItem) {
 	if item == nil {
 		return
 	}
-	month := utilityBillMonthOf(item.BillPeriodStart)
-	var rule *types.UtilityTariffRule
-	if month != "" {
-		for i := range rules {
-			if rules[i].Months != "" && tariffRuleContainsMonth(rules[i].Months, month) {
-				rule = &rules[i]
-				break
-			}
-		}
-	}
-	if rule == nil {
-		for i := range rules {
-			if rules[i].IsDefault {
-				rule = &rules[i]
-				break
-			}
-		}
-	}
 	for i := range item.FeeItems {
 		f := &item.FeeItems[i]
-		// 分时零售交易：优先用分时电价规则单价
-		if rule != nil && strings.Contains(f.Name, "零售交易电费") && f.Period != "" {
-			var rate float64
-			switch f.Period {
-			case "尖峰":
-				rate = rule.DeepPeakRate
-			case "峰":
-				rate = rule.PeakRate
-			case "平":
-				rate = rule.FlatRate
-			case "谷":
-				rate = rule.ValleyRate
-			}
-			if rate > 0 {
-				f.Rate = rate
-				f.Fee = math.Round(f.Qty*rate*100) / 100
-				continue
-			}
-		}
-		// 一般乘法行
+		// 一般乘法行：电费 = 计费电量 × 计费标准（提取的 rate 为准）
 		if f.Rate != 0 && f.Qty != 0 {
 			f.Fee = math.Round(f.Qty*f.Rate*100) / 100
 		}

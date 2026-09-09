@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -37,7 +38,7 @@ func utilityTenantID(c *gin.Context) (uint64, error) {
 
 // ListUtilityFieldConfigs godoc
 // @Summary      获取字段配置
-// @Description  按分类返回字段配置（electricity/water/gas），未配置时返回内置默认字段。
+// @Description  按分类返回字段配置（electricity/water/gas），支持 group 过滤（电费分组）；未配置时返回内置默认字段。
 // @Router       /utilities/field-configs [get]
 func (h *UtilityHandler) ListUtilityFieldConfigs(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -46,25 +47,30 @@ func (h *UtilityHandler) ListUtilityFieldConfigs(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("category is required (electricity/water/gas)"))
 		return
 	}
+	group := strings.TrimSpace(c.Query("group"))
 	tenantID, _ := utilityTenantID(c)
 	var cfgs []types.UtilityFieldConfig
-	if err := h.db.WithContext(ctx).
-		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
-		Order("sort_order ASC, created_at ASC").
+	q := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category)
+	if group != "" {
+		q = q.Where(`"group" = ?`, group)
+	}
+	if err := q.Order("sort_order ASC, created_at ASC").
 		Find(&cfgs).Error; err != nil {
 		logger.Errorf(ctx, "list utility field configs failed: %v", err)
 		c.Error(errors.NewInternalServerError("list field configs failed"))
 		return
 	}
 	if len(cfgs) == 0 {
-		cfgs = utilityDefaultFieldConfigs(tenantID, category)
+		// 未配置时返回默认字段；group 为空返回全部组默认（兼容旧调用返回概况组）
+		cfgs = utilityDefaultFieldConfigs(tenantID, category, group)
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": cfgs})
 }
 
 // SaveUtilityFieldConfigs godoc
 // @Summary      保存字段配置
-// @Description  整组覆盖保存某分类的字段配置（先删后插，事务内完成）。
+// @Description  整组覆盖保存某分类的字段配置（先删后插，事务内完成）；传 group 时仅覆盖该分组。
 // @Router       /utilities/field-configs [post]
 func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -73,6 +79,7 @@ func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("category is required (electricity/water/gas)"))
 		return
 	}
+	group := strings.TrimSpace(c.Query("group"))
 	tenantID, _ := utilityTenantID(c)
 	var req []types.UtilityFieldConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,8 +91,11 @@ func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 		return
 	}
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("tenant_id = ? AND category = ?", tenantID, category).
-			Delete(&types.UtilityFieldConfig{}).Error; err != nil {
+		del := tx.Where("tenant_id = ? AND category = ?", tenantID, category)
+		if group != "" {
+			del = del.Where(`"group" = ?`, group)
+		}
+		if err := del.Delete(&types.UtilityFieldConfig{}).Error; err != nil {
 			return err
 		}
 		now := timeNowUTC()
@@ -94,6 +104,7 @@ func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 			cfg.ID = uuid.NewString()
 			cfg.TenantID = int64(tenantID)
 			cfg.Category = category
+			cfg.Group = group
 			cfg.FieldKey = strings.TrimSpace(cfg.FieldKey)
 			cfg.Label = strings.TrimSpace(cfg.Label)
 			if cfg.FieldKey == "" || cfg.Label == "" {
@@ -547,80 +558,132 @@ func computeMeterRecord(r *types.UtilityMeterRecord) {
 func round2(v float64) float64 {
 	return float64(int64(v*100+0.5)) / 100
 }
-func utilityDefaultFieldConfigs(tenantID uint64, category string) []types.UtilityFieldConfig {
-	now := timeNowUTC()
-	var defs []struct {
-		key   string
-		label string
-		typ   string
-		def   bool
+// electricityDefaultGroupFields 返回电费某一分组的默认字段集。
+func electricityDefaultGroupFields(group string) []utilityFieldDef {
+	g := group
+	switch group {
+	case "overview":
+		return []utilityFieldDef{
+			{"bill_period_start", "账单周期起", "date", true, g},
+			{"bill_period_end", "账单周期止", "date", false, g},
+			{"account_no", "户号", "text", true, g},
+			{"account_name", "户名", "text", true, g},
+			{"usage_category", "用电类别", "text", true, g},
+			{"voltage_level", "电压等级", "text", false, g},
+			{"market_attr", "市场化属性", "text", false, g},
+			{"supply_unit", "供电服务单位", "text", false, g},
+			{"address", "用电地址", "text", false, g},
+			{"meter_no", "电能表编号", "text", false, g},
+			{"total_kwh", "本期电量", "number", true, g},
+			{"total_amount", "本期电费", "amount", true, g},
+			{"prev_kwh", "上期电量", "number", false, g},
+			{"mom_change", "环比", "text", false, g},
+			{"avg_price", "平均电价", "number", true, g},
+			{"power_factor", "功率因数", "number", true, g},
+			{"due_date", "交费截止", "date", false, g},
+			{"industrial_amount", "工商业电费", "amount", false, g},
+			{"residential_amount", "居民电费", "amount", false, g},
+			{"pf_adjust_amount", "功率因数调整电费", "amount", false, g},
+			{"grand_total", "合计", "amount", false, g},
+			{"deep_peak_kwh", "尖峰电量", "number", false, g},
+			{"peak_kwh", "峰电量", "number", false, g},
+			{"flat_kwh", "平电量", "number", false, g},
+			{"valley_kwh", "谷电量", "number", false, g},
+			{"reactive_kwh", "正向无功电量", "number", false, g},
+			{"print_date", "账单打印日期", "date", false, g},
+		}
+	case "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential":
+		return []utilityFieldDef{
+			{"name", "费用组成", "text", true, g},
+			{"period", "时段", "text", true, g},
+			{"qty", "计费电量", "number", true, g},
+			{"rate", "计费标准", "number", true, g},
+			{"fee", "电费", "amount", true, g},
+		}
+	case "capacity":
+		return []utilityFieldDef{
+			{"demand", "需量值", "number", true, g},
+			{"demand_price", "需量电价", "number", true, g},
+			{"demand_fee", "输配需量电费", "amount", true, g},
+			{"kwh_per_kva", "月每千伏安用电量", "number", true, g},
+			{"discount_demand_fee", "折扣需量电费", "amount", true, g},
+			{"capacity", "容量", "number", true, g},
+			{"capacity_price", "容量电价", "number", true, g},
+			{"capacity_fee", "输配容量电费", "amount", true, g},
+		}
+	case "pf":
+		return []utilityFieldDef{
+			{"project", "项目", "text", true, g},
+			{"power_factor", "功率因素实际值", "number", true, g},
+			{"pf_standard", "功率因素标准", "number", true, g},
+			{"adjust_ratio", "调整系数", "number", true, g},
+			{"pf_active_kwh", "参与调整有功电量", "number", true, g},
+			{"pf_reactive_kwh", "参与调整无功电量", "number", true, g},
+			{"pf_fee_base", "参与调整电费金额", "amount", true, g},
+			{"adjust_fee", "功率因素调整电费", "amount", true, g},
+		}
+	case "meter":
+		return []utilityFieldDef{
+			{"meter_type", "示数类型", "text", true, g},
+			{"prev", "上期示数", "number", true, g},
+			{"curr", "本期示数", "number", true, g},
+			{"multiplier", "倍率", "number", true, g},
+			{"reading_kwh", "抄见电量", "number", true, g},
+			{"trans_loss", "变损", "number", true, g},
+			{"line_loss", "线损", "number", true, g},
+			{"adjust", "加减", "number", true, g},
+			{"bill_kwh", "计费电量", "number", true, g},
+		}
+	case "resident-meter":
+		return []utilityFieldDef{
+			{"project", "项目", "text", true, g},
+			{"kwh", "本期电量", "number", true, g},
+			{"ratio", "比例", "number", true, g},
+			{"adjust", "加减", "number", true, g},
+			{"bill_kwh", "计费电量", "number", true, g},
+		}
+	default:
+		return nil
 	}
+}
+
+type utilityFieldDef struct {
+	key   string
+	label string
+	typ   string
+	def   bool
+	group string
+}
+
+func utilityDefaultFieldConfigs(tenantID uint64, category, group string) []types.UtilityFieldConfig {
+	now := timeNowUTC()
+	var defs []utilityFieldDef
 	switch category {
 	case "electricity":
-		defs = []struct {
-			key   string
-			label string
-			typ   string
-			def   bool
-		}{
-			{"bill_period_start", "账单周期起", "date", true},
-			{"bill_period_end", "账单周期止", "date", false},
-			{"account_no", "户号", "text", true},
-			{"account_name", "户名", "text", true},
-			{"usage_category", "用电类别", "text", true},
-			{"voltage_level", "电压等级", "text", false},
-			{"supply_unit", "供电服务单位", "text", false},
-			{"total_kwh", "本期电量", "number", true},
-			{"total_amount", "本期电费", "amount", true},
-			{"mom_change", "环比", "text", false},
-			{"avg_price", "平均电价", "number", true},
-			{"power_factor", "功率因数", "number", true},
-			{"due_date", "交费截止", "date", false},
-			{"industrial_amount", "工商业电费", "amount", false},
-			{"residential_amount", "居民电费", "amount", false},
-			{"pf_adjust_amount", "功率因数调整电费", "amount", false},
-			{"grand_total", "合计", "amount", false},
-			{"address", "用电地址", "text", false},
-			{"market_attr", "市场化属性", "text", false},
-			{"print_date", "账单打印日期", "date", false},
-			{"prev_kwh", "上期电量", "number", false},
-			{"deep_peak_kwh", "尖峰电量", "number", false},
-			{"peak_kwh", "峰电量", "number", false},
-			{"flat_kwh", "平电量", "number", false},
-			{"valley_kwh", "谷电量", "number", false},
-			{"reactive_kwh", "正向无功电量", "number", false},
-			{"capacity", "容量", "number", false},
-			{"capacity_price", "容量电价", "number", false},
-			{"capacity_fee", "输配容量电费", "amount", false},
-			{"demand", "需量值", "number", false},
-			{"pf_standard", "功率因数标准", "number", false},
-			{"adjust_ratio", "调整系数", "number", false},
+		if group == "" {
+			// 不传 group：返回全部组默认（概况 + 各费用菜单列 + 明细）
+			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter"}
+			for _, g := range groups {
+				defs = append(defs, electricityDefaultGroupFields(g)...)
+			}
+			break
 		}
+		defs = electricityDefaultGroupFields(group)
 	case "water":
-		defs = []struct {
-			key   string
-			label string
-			typ   string
-			def   bool
-		}{
-			{"month", "月份", "text", true},
-			{"meter_count", "表计数", "number", true},
-			{"total_usage", "总用量", "number", true},
-			{"total_amount", "总金额", "amount", true},
-			{"remark", "备注", "text", true},
+		defs = []utilityFieldDef{
+			{"month", "月份", "text", true, ""},
+			{"meter_count", "表计数", "number", true, ""},
+			{"total_usage", "总用量", "number", true, ""},
+			{"total_amount", "总金额", "amount", true, ""},
+			{"remark", "备注", "text", true, ""},
 		}
 	case "gas":
-		defs = []struct {
-			key   string
-			label string
-			typ   string
-			def   bool
-		}{
-			{"month", "月份", "text", true},
-			{"meter_count", "表计数", "number", true},
-			{"total_usage", "总用量", "number", true},
-			{"total_amount", "总金额", "amount", true},
-			{"remark", "备注", "text", true},
+		defs = []utilityFieldDef{
+			{"month", "月份", "text", true, ""},
+			{"meter_count", "表计数", "number", true, ""},
+			{"total_usage", "总用量", "number", true, ""},
+			{"total_amount", "总金额", "amount", true, ""},
+			{"remark", "备注", "text", true, ""},
 		}
 	}
 	out := make([]types.UtilityFieldConfig, 0, len(defs))
@@ -629,6 +692,7 @@ func utilityDefaultFieldConfigs(tenantID uint64, category string) []types.Utilit
 			ID:             uuid.NewString(),
 			TenantID:       int64(tenantID),
 			Category:       category,
+			Group:          d.group,
 			FieldKey:       d.key,
 			Label:          d.label,
 			FieldType:      d.typ,
@@ -643,12 +707,254 @@ func utilityDefaultFieldConfigs(tenantID uint64, category string) []types.Utilit
 }
 
 // ---------------------------------------------------------------------------
-// 基本户信息（电费）
+// 基本户信息（电费，支持多户）
 // ---------------------------------------------------------------------------
 
+// migrateLegacyBasicInfo 惰性迁移：旧 utility_basic_info 单条记录迁移为新表首个默认户。
+func (h *UtilityHandler) migrateLegacyBasicInfo(ctx context.Context, tenantID uint64, category string) error {
+	var cnt int64
+	if err := h.db.WithContext(ctx).Model(&types.UtilityBasicAccount{}).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return nil
+	}
+	var legacy types.UtilityBasicInfo
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ?", tenantID, category).
+		First(&legacy).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		return err
+	}
+	if legacy.AccountNo == "" && legacy.AccountName == "" {
+		return nil
+	}
+	now := timeNowUTC()
+	return h.db.WithContext(ctx).Create(&types.UtilityBasicAccount{
+		ID:            uuid.NewString(),
+		TenantID:      int64(tenantID),
+		Category:      category,
+		Name:          "默认户",
+		AccountNo:     legacy.AccountNo,
+		AccountName:   legacy.AccountName,
+		UsageCategory: legacy.UsageCategory,
+		VoltageLevel:  legacy.VoltageLevel,
+		MarketAttr:    legacy.MarketAttr,
+		SupplyUnit:    legacy.SupplyUnit,
+		Address:       legacy.Address,
+		IsDefault:     true,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error
+}
+
+// ListUtilityBasicAccounts godoc
+// @Summary      基本户列表
+// @Description  按分类返回电费基本户列表（每户含自定义名称/户号/电能表编号/倍率/是否默认户）。
+// @Router       /utilities/basic-accounts [get]
+func (h *UtilityHandler) ListUtilityBasicAccounts(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	if err := h.migrateLegacyBasicInfo(ctx, tenantID, category); err != nil {
+		logger.Errorf(ctx, "migrate legacy basic info failed: %v", err)
+	}
+	var accs []types.UtilityBasicAccount
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Order("is_default DESC, created_at ASC").
+		Find(&accs).Error; err != nil {
+		logger.Errorf(ctx, "list utility basic accounts failed: %v", err)
+		c.Error(errors.NewInternalServerError("list basic accounts failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": accs})
+}
+
+// CreateUtilityBasicAccount godoc
+// @Summary      新增基本户
+// @Description  新增一个电费基本户；首个账户自动设为默认户，显式设默认时清除其它默认。
+// @Router       /utilities/basic-accounts [post]
+func (h *UtilityHandler) CreateUtilityBasicAccount(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	var req types.UtilityBasicAccount
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Category = category
+	req.AccountNo = strings.TrimSpace(req.AccountNo)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		req.Name = req.AccountNo
+	}
+	if req.Name == "" {
+		req.Name = "未命名户"
+	}
+	var cnt int64
+	if err := h.db.WithContext(ctx).Model(&types.UtilityBasicAccount{}).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Count(&cnt).Error; err != nil {
+		logger.Errorf(ctx, "count basic accounts failed: %v", err)
+		c.Error(errors.NewInternalServerError("count basic accounts failed"))
+		return
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	if cnt == 0 {
+		req.IsDefault = true
+	}
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if req.IsDefault {
+			if err := tx.Model(&types.UtilityBasicAccount{}).
+				Where("tenant_id = ? AND category = ? AND is_default = ? AND deleted_at IS NULL", tenantID, category, true).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&req).Error
+	})
+	if err != nil {
+		logger.Errorf(ctx, "create utility basic account failed: %v", err)
+		c.Error(errors.NewInternalServerError("create basic account failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateUtilityBasicAccount godoc
+// @Summary      更新基本户
+// @Description  更新基本户信息；设为默认户时清除其它默认。
+// @Router       /utilities/basic-accounts/:id [put]
+func (h *UtilityHandler) UpdateUtilityBasicAccount(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.UtilityBasicAccount
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.AccountNo = strings.TrimSpace(req.AccountNo)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		req.Name = req.AccountNo
+	}
+	if req.Name == "" {
+		req.Name = "未命名户"
+	}
+	now := timeNowUTC()
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if req.IsDefault {
+			if err := tx.Model(&types.UtilityBasicAccount{}).
+				Where("tenant_id = ? AND category = ? AND is_default = ? AND id <> ? AND deleted_at IS NULL", tenantID, category, true, id).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		res := tx.Model(&types.UtilityBasicAccount{}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			Updates(map[string]interface{}{
+				"name":           req.Name,
+				"account_no":     req.AccountNo,
+				"account_name":   req.AccountName,
+				"usage_category": req.UsageCategory,
+				"voltage_level":  req.VoltageLevel,
+				"market_attr":    req.MarketAttr,
+				"supply_unit":    req.SupplyUnit,
+				"address":        req.Address,
+				"meter_no":       req.MeterNo,
+				"ratio":          req.Ratio,
+				"is_default":     req.IsDefault,
+				"updated_at":     now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errors.NewNotFoundError("基本户不存在")
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Errorf(ctx, "update utility basic account failed: %v", err)
+		c.Error(errors.NewInternalServerError("update basic account failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// DeleteUtilityBasicAccount godoc
+// @Summary      删除基本户
+// @Description  删除基本户；若删除的是默认户且仍有其它户，默认转移到剩余第一个。
+// @Router       /utilities/basic-accounts/:id [delete]
+func (h *UtilityHandler) DeleteUtilityBasicAccount(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var target types.UtilityBasicAccount
+	if err := h.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		First(&target).Error; err != nil {
+		c.Error(errors.NewNotFoundError("基本户不存在"))
+		return
+	}
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&types.UtilityBasicAccount{}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).
+			Update("deleted_at", timeNowUTC()).Error; err != nil {
+			return err
+		}
+		if target.IsDefault {
+			var next types.UtilityBasicAccount
+			if err := tx.WithContext(ctx).
+				Where("tenant_id = ? AND category = ? AND id <> ? AND deleted_at IS NULL", tenantID, category, id).
+				Order("created_at ASC").First(&next).Error; err == nil {
+				return tx.Model(&types.UtilityBasicAccount{}).
+					Where("id = ?", next.ID).
+					Update("is_default", true).Error
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Errorf(ctx, "delete utility basic account failed: %v", err)
+		c.Error(errors.NewInternalServerError("delete basic account failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
 // GetUtilityBasicInfo godoc
-// @Summary      获取基本户信息
-// @Description  按分类返回电费基本户信息（户号/户名/用电类别/电压等级/市场化属性/供电服务单位/用电地址），未配置时返回空对象。
+// @Summary      获取基本户信息（兼容：返回默认户）
+// @Description  按分类返回电费默认基本户信息，未配置时返回空对象。
 // @Router       /utilities/basic-info [get]
 func (h *UtilityHandler) GetUtilityBasicInfo(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -658,9 +964,13 @@ func (h *UtilityHandler) GetUtilityBasicInfo(c *gin.Context) {
 		return
 	}
 	tenantID, _ := utilityTenantID(c)
-	var info types.UtilityBasicInfo
+	if err := h.migrateLegacyBasicInfo(ctx, tenantID, category); err != nil {
+		logger.Errorf(ctx, "migrate legacy basic info failed: %v", err)
+	}
+	var info types.UtilityBasicAccount
 	err := h.db.WithContext(ctx).
-		Where("tenant_id = ? AND category = ?", tenantID, category).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Order("is_default DESC, created_at ASC").
 		First(&info).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -675,8 +985,8 @@ func (h *UtilityHandler) GetUtilityBasicInfo(c *gin.Context) {
 }
 
 // SaveUtilityBasicInfo godoc
-// @Summary      保存基本户信息
-// @Description  整组覆盖保存某分类的基本户信息（按租户+分类 upsert）。
+// @Summary      保存基本户信息（兼容：写入/更新默认户）
+// @Description  整组覆盖保存某分类的默认基本户信息（无默认户时新建）。
 // @Router       /utilities/basic-info [put]
 func (h *UtilityHandler) SaveUtilityBasicInfo(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -686,22 +996,61 @@ func (h *UtilityHandler) SaveUtilityBasicInfo(c *gin.Context) {
 		return
 	}
 	tenantID, _ := utilityTenantID(c)
-	var req types.UtilityBasicInfo
+	var req types.UtilityBasicAccount
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
 		return
 	}
-	req.TenantID = int64(tenantID)
+	if err := h.migrateLegacyBasicInfo(ctx, tenantID, category); err != nil {
+		logger.Errorf(ctx, "migrate legacy basic info failed: %v", err)
+	}
 	req.Category = category
 	req.AccountNo = strings.TrimSpace(req.AccountNo)
-	req.AccountName = strings.TrimSpace(req.AccountName)
-	req.UsageCategory = strings.TrimSpace(req.UsageCategory)
-	req.VoltageLevel = strings.TrimSpace(req.VoltageLevel)
-	req.MarketAttr = strings.TrimSpace(req.MarketAttr)
-	req.SupplyUnit = strings.TrimSpace(req.SupplyUnit)
-	req.Address = strings.TrimSpace(req.Address)
-	req.UpdatedAt = timeNowUTC()
-	if err := h.db.WithContext(ctx).Save(&req).Error; err != nil {
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		req.Name = "默认户"
+	}
+	var existing types.UtilityBasicAccount
+	err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Order("is_default DESC, created_at ASC").
+		First(&existing).Error
+	now := timeNowUTC()
+	if err == gorm.ErrRecordNotFound {
+		req.ID = uuid.NewString()
+		req.TenantID = int64(tenantID)
+		req.IsDefault = true
+		req.CreatedAt = now
+		req.UpdatedAt = now
+		if cerr := h.db.WithContext(ctx).Create(&req).Error; cerr != nil {
+			logger.Errorf(ctx, "save utility basic info failed: %v", cerr)
+			c.Error(errors.NewInternalServerError("save basic info failed: " + cerr.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+		return
+	}
+	if err != nil {
+		logger.Errorf(ctx, "save utility basic info failed: %v", err)
+		c.Error(errors.NewInternalServerError("save basic info failed"))
+		return
+	}
+	if err := h.db.WithContext(ctx).Model(&types.UtilityBasicAccount{}).
+		Where("id = ? AND tenant_id = ?", existing.ID, tenantID).
+		Updates(map[string]interface{}{
+			"name":           req.Name,
+			"account_no":     req.AccountNo,
+			"account_name":   req.AccountName,
+			"usage_category": req.UsageCategory,
+			"voltage_level":  req.VoltageLevel,
+			"market_attr":    req.MarketAttr,
+			"supply_unit":    req.SupplyUnit,
+			"address":        req.Address,
+			"meter_no":       req.MeterNo,
+			"ratio":          req.Ratio,
+			"is_default":     true,
+			"updated_at":     now,
+		}).Error; err != nil {
 		logger.Errorf(ctx, "save utility basic info failed: %v", err)
 		c.Error(errors.NewInternalServerError("save basic info failed: " + err.Error()))
 		return
