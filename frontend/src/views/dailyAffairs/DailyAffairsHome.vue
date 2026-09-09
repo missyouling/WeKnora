@@ -77,14 +77,14 @@
           </div>
         </div>
 
-        <!-- 水电气管理（已实现） -->
+        <!-- 能耗管理（已实现） -->
         <div class="da-card da-card--enabled" @click="goUtilities">
-          <div class="da-card-icon da-card-icon--utility">
-            <t-icon name="dashboard" size="24px" />
+          <div class="da-card-icon da-card-icon--energy">
+            <t-icon name="chart-bubble" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
-              <span>水电气管理</span>
+              <span>能耗管理</span>
             </div>
             <p class="da-card-desc">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
             <div class="da-card-footer">
@@ -282,6 +282,10 @@ const onPlaceholder = (name: string) => {
 
   &.da-card-icon--utility {
     background: linear-gradient(135deg, #0ea5e9, #0369a1);
+  }
+
+  &.da-card-icon--energy {
+    background: linear-gradient(135deg, #22c55e, #15803d);
   }
 
   &.da-card-icon--fleet {

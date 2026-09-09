@@ -641,3 +641,70 @@ func utilityDefaultFieldConfigs(tenantID uint64, category string) []types.Utilit
 	}
 	return out
 }
+
+// ---------------------------------------------------------------------------
+// 基本户信息（电费）
+// ---------------------------------------------------------------------------
+
+// GetUtilityBasicInfo godoc
+// @Summary      获取基本户信息
+// @Description  按分类返回电费基本户信息（户号/户名/用电类别/电压等级/市场化属性/供电服务单位/用电地址），未配置时返回空对象。
+// @Router       /utilities/basic-info [get]
+func (h *UtilityHandler) GetUtilityBasicInfo(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity/water/gas)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	var info types.UtilityBasicInfo
+	err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ?", tenantID, category).
+		First(&info).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{}})
+			return
+		}
+		logger.Errorf(ctx, "get utility basic info failed: %v", err)
+		c.Error(errors.NewInternalServerError("get basic info failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": info})
+}
+
+// SaveUtilityBasicInfo godoc
+// @Summary      保存基本户信息
+// @Description  整组覆盖保存某分类的基本户信息（按租户+分类 upsert）。
+// @Router       /utilities/basic-info [put]
+func (h *UtilityHandler) SaveUtilityBasicInfo(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" {
+		c.Error(errors.NewBadRequestError("category is required (electricity/water/gas)"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	var req types.UtilityBasicInfo
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.TenantID = int64(tenantID)
+	req.Category = category
+	req.AccountNo = strings.TrimSpace(req.AccountNo)
+	req.AccountName = strings.TrimSpace(req.AccountName)
+	req.UsageCategory = strings.TrimSpace(req.UsageCategory)
+	req.VoltageLevel = strings.TrimSpace(req.VoltageLevel)
+	req.MarketAttr = strings.TrimSpace(req.MarketAttr)
+	req.SupplyUnit = strings.TrimSpace(req.SupplyUnit)
+	req.Address = strings.TrimSpace(req.Address)
+	req.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&req).Error; err != nil {
+		logger.Errorf(ctx, "save utility basic info failed: %v", err)
+		c.Error(errors.NewInternalServerError("save basic info failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}

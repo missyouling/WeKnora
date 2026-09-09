@@ -898,6 +898,16 @@ export function saveUtilityFieldConfigs(category: string, configs: Record<string
   return post(`/api/v1/utilities/field-configs?category=${category}`, configs);
 }
 
+/** 基本户信息（电费，按分类各一份） */
+export function getUtilityBasicInfo(category: string) {
+  return get(`/api/v1/utilities/basic-info?category=${category}`);
+}
+
+/** 保存基本户信息 */
+export function saveUtilityBasicInfo(category: string, data: Record<string, unknown>) {
+  return put(`/api/v1/utilities/basic-info?category=${category}`, data);
+}
+
 /** 水/气月度记录列表 */
 export function listUtilityMeterRecords(params: { category: string; month?: string; q?: string } = { category: 'water' }) {
   const query = new URLSearchParams();

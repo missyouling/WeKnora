@@ -164,3 +164,20 @@ type UtilityTariffRule struct {
 }
 
 func (UtilityTariffRule) TableName() string { return "utility_tariff_rules" }
+
+// UtilityBasicInfo 电费基本户信息：按租户+分类各一份（全局配置），
+// 账单概览-基础信息直接读取此处，不再依赖每次解析提取。
+type UtilityBasicInfo struct {
+	TenantID      int64     `gorm:"primaryKey" json:"tenant_id"`
+	Category      string    `gorm:"primaryKey" json:"category"` // electricity
+	AccountNo     string    `json:"account_no"`                 // 户号
+	AccountName   string    `json:"account_name"`               // 户名
+	UsageCategory string    `json:"usage_category"`             // 用电类别
+	VoltageLevel  string    `json:"voltage_level"`              // 电压等级
+	MarketAttr    string    `json:"market_attr"`                // 市场化属性
+	SupplyUnit    string    `json:"supply_unit"`                // 供电服务单位
+	Address       string    `json:"address"`                    // 用电地址
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+func (UtilityBasicInfo) TableName() string { return "utility_basic_info" }

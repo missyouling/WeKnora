@@ -4,10 +4,48 @@
       :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onResizeStart">
       <div class="us-resize-line" />
     </div>
-    <t-drawer :visible="visible" :header="`设置 · ${title}`" :size="String(drawerWidth)" :footer="false"
-      destroy-on-close class="utility-settings-drawer" @close="onClose"
+    <t-drawer v-if="visible" :visible="true" :header="`设置 · ${title}`" :size="`${drawerWidth}px`" :footer="false"
+      class="utility-settings-drawer" @close="onClose"
       @update:visible="(v: boolean) => (v || onClose())">
       <div class="us-body">
+        <!-- 基本户信息（仅电费） -->
+        <div v-if="props.category === 'electricity'" class="us-section">
+          <div class="us-section-head">
+            <span class="us-section-title">基本户信息</span>
+            <span class="us-state">账单概览基础信息直接读取</span>
+          </div>
+          <div class="us-basic-grid">
+            <div class="us-basic-item">
+              <label>户号</label>
+              <t-input v-model="basicInfo.account_no" size="small" placeholder="户号" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item">
+              <label>户名</label>
+              <t-input v-model="basicInfo.account_name" size="small" placeholder="户名" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item">
+              <label>用电类别</label>
+              <t-input v-model="basicInfo.usage_category" size="small" placeholder="用电类别" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item">
+              <label>电压等级</label>
+              <t-input v-model="basicInfo.voltage_level" size="small" placeholder="电压等级" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item">
+              <label>市场化属性</label>
+              <t-input v-model="basicInfo.market_attr" size="small" placeholder="市场化属性" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item">
+              <label>供电服务单位</label>
+              <t-input v-model="basicInfo.supply_unit" size="small" placeholder="供电服务单位" @change="autosaveBasicInfo" />
+            </div>
+            <div class="us-basic-item us-basic-item--wide">
+              <label>用电地址</label>
+              <t-input v-model="basicInfo.address" size="small" placeholder="用电地址" @change="autosaveBasicInfo" />
+            </div>
+          </div>
+        </div>
+
         <!-- 字段配置 -->
         <div class="us-section">
           <div class="us-section-head">
@@ -115,13 +153,6 @@
             </div>
           </div>
         </div>
-
-        <div class="us-actions">
-          <t-button theme="primary" :loading="saving" @click="onSave">
-            <template #icon><t-icon name="check" size="15px" /></template>
-            保存
-          </t-button>
-        </div>
       </div>
     </t-drawer>
   </div>
@@ -138,6 +169,8 @@ import {
   listUtilityTariffRules,
   createUtilityTariffRule,
   updateUtilityTariffRule,
+  getUtilityBasicInfo,
+  saveUtilityBasicInfo,
   deleteUtilityTariffRule,
 } from '@/api/knowledge-base'
 
@@ -148,8 +181,8 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'changed'): void }>()
 
-const CATEGORY_TITLE: Record<string, string> = { electricity: '电费', water: '水费', gas: '气费' }
-const title = computed(() => CATEGORY_TITLE[props.category] || '水电气')
+const CATEGORY_TITLE: Record<string, string> = { electricity: '能耗', water: '水费', gas: '气费' }
+const title = computed(() => CATEGORY_TITLE[props.category] || '能耗')
 
 const FIELD_TYPE_OPTS = [
   { label: '文本', value: 'text' },
@@ -188,6 +221,11 @@ const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: t
 const tariffs = ref<TariffRule[]>([])
 const keywordsText = ref<string[]>([])
 const saving = ref(false)
+// 基本户信息（电费）
+const basicInfo = ref({
+  account_no: '', account_name: '', usage_category: '', voltage_level: '',
+  market_attr: '', supply_unit: '', address: '',
+})
 
 const uid = () => `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
@@ -276,28 +314,45 @@ const refreshOrder = () => {
 
 // 电费内置字段（后端配置缺失时合并补全，保证新默认字段可在设置中管理）
 const BUILTIN_ELECTRICITY_FIELDS: { key: string; label: string; type: string; default: boolean }[] = [
-  { key: 'bill_period_start', label: '账单周期', type: 'date', default: true },
+  { key: 'bill_period', label: '账单周期', type: 'text', default: true },
   { key: 'total_kwh', label: '本期电量', type: 'number', default: true },
-  { key: 'total_amount', label: '本期电费', type: 'amount', default: true },
-  { key: 'market_amount', label: '市场化购电费', type: 'amount', default: true },
-  { key: 'line_amount', label: '上网环节线损费', type: 'amount', default: true },
-  { key: 'trans_amount', label: '输配电费', type: 'amount', default: true },
-  { key: 'sys_amount', label: '系统运行费', type: 'amount', default: true },
-  { key: 'govI_amount', label: '政府性基金及附加（工商业）', type: 'amount', default: true },
-  { key: 'catalog_amount', label: '目录电费', type: 'amount', default: true },
-  { key: 'govR_amount', label: '政府性基金及附加（居民）', type: 'amount', default: true },
-  { key: 'capacity_fee', label: '输配容（需）量电费', type: 'amount', default: true },
-  { key: 'pf_adjust_amount', label: '功率因素调整电费', type: 'amount', default: true },
+  { key: 'total_amount', label: '本期电费', type: 'number', default: true },
+  { key: 'pf_adjust_amount', label: '力调电费', type: 'number', default: true },
+  { key: 'capacity_fee', label: '基本电费', type: 'number', default: true },
+  { key: 'market_amount', label: '购电电费', type: 'number', default: true },
+  { key: 'line_amount', label: '线损费用', type: 'number', default: true },
+  { key: 'trans_amount', label: '输配电费', type: 'number', default: true },
+  { key: 'sys_amount', label: '系统运行费', type: 'number', default: true },
+  { key: 'govI_amount', label: '附加费', type: 'number', default: true },
+  { key: 'catalog_amount', label: '目录电费（居民）', type: 'number', default: true },
+  { key: 'govR_amount', label: '附加费（居民）', type: 'number', default: true },
+  { key: 'account_no', label: '户号', type: 'text', default: false },
+  { key: 'account_name', label: '户名', type: 'text', default: false },
+  { key: 'usage_category', label: '用电类别', type: 'text', default: false },
+  { key: 'voltage_level', label: '电压等级', type: 'text', default: false },
+  { key: 'avg_price', label: '平均电价', type: 'number', default: false },
+  { key: 'power_factor', label: '功率因素', type: 'number', default: false },
 ]
 
 const load = async () => {
   try {
     const res: any = await listUtilityFieldConfigs(props.category)
     const list = res?.data || res
-    fields.value = (Array.isArray(list) ? list : []).map((c: any) => ({
-      field_key: c.field_key, label: c.label, field_type: c.field_type || 'text',
-      default_visible: !!c.default_visible, sort_order: Number(c.sort_order) || 0, is_custom: !!c.is_custom,
-    }))
+    // 仅保留内置字段与自定义字段，过滤历史废弃字段；label/默认显隐以新内置集为准
+    const builtinKeys = new Set(BUILTIN_ELECTRICITY_FIELDS.map(f => f.key))
+    fields.value = (Array.isArray(list) ? list : [])
+      .filter((c: any) => c.is_custom || builtinKeys.has(c.field_key))
+      .map((c: any) => {
+        const b = BUILTIN_ELECTRICITY_FIELDS.find(f => f.key === c.field_key)
+        return {
+          field_key: c.field_key,
+          label: b ? b.label : c.label,
+          field_type: c.field_type || 'text',
+          default_visible: b ? b.default : !!c.default_visible,
+          sort_order: Number(c.sort_order) || 0,
+          is_custom: !!c.is_custom,
+        }
+      })
     // 电费：合并后端缺失的内置字段，保证新默认字段可见可配
     if (props.category === 'electricity') {
       const keys = new Set(fields.value.map(f => f.field_key))
@@ -347,17 +402,48 @@ const load = async () => {
   } else {
     tariffs.value = []
   }
+  await loadBasicInfo()
 }
 
 watch(() => props.visible, (v) => { if (v) load() })
 
+// ---- 基本户信息：加载 + 防抖自动保存 ----
+const loadBasicInfo = async () => {
+  if (props.category !== 'electricity') return
+  try {
+    const res: any = await getUtilityBasicInfo('electricity')
+    const d = res?.data || {}
+    Object.assign(basicInfo.value, {
+      account_no: d.account_no || '', account_name: d.account_name || '',
+      usage_category: d.usage_category || '', voltage_level: d.voltage_level || '',
+      market_attr: d.market_attr || '', supply_unit: d.supply_unit || '', address: d.address || '',
+    })
+  } catch { /* 未配置时保持空 */ }
+}
+let basicInfoTimer: ReturnType<typeof setTimeout> | undefined
+const autosaveBasicInfo = () => {
+  clearTimeout(basicInfoTimer)
+  basicInfoTimer = setTimeout(async () => {
+    try {
+      await saveUtilityBasicInfo('electricity', { ...basicInfo.value })
+      MessagePlugin.success('基本户信息已保存')
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '保存失败')
+    }
+  }, 800)
+}
+
 const onClose = () => emit('update:visible', false)
 
-const onSave = async () => {
-  if (fields.value.some(f => !f.label.trim())) {
-    MessagePlugin.warning('字段名不能为空')
-    return
-  }
+// ---- 自动保存：字段/规则/电价变更防抖持久化 ----
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+const scheduleSave = () => {
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => { persistAll() }, 800)
+}
+const persistAll = async () => {
+  if (saving.value) return
+  if (fields.value.some(f => !f.label.trim())) return
   saving.value = true
   try {
     await saveUtilityFieldConfigs(props.category, fields.value.map((f, i) => ({
@@ -387,15 +473,23 @@ const onSave = async () => {
         }
       }
     }
-    MessagePlugin.success('设置已保存')
     emit('changed')
-    onClose()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     saving.value = false
   }
 }
+
+// 深度监听：字段/规则/电价任一改动 → 防抖自动保存
+watch([fields, cfg, tariffs], () => { scheduleSave() }, { deep: true })
+// 关闭抽屉前落盘最后改动
+watch(() => props.visible, (v) => {
+  if (!v) {
+    clearTimeout(saveTimer)
+    persistAll()
+  }
+})
 </script>
 
 <style lang="less" scoped>
@@ -566,5 +660,27 @@ const onSave = async () => {
   justify-content: flex-end;
   padding-top: 12px;
   border-top: 1px solid var(--td-component-stroke);
+}
+
+/* 基本户信息 */
+.us-basic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.us-basic-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  label {
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+  }
+}
+
+.us-basic-item--wide {
+  grid-column: 1 / -1;
 }
 </style>

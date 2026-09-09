@@ -4,8 +4,8 @@
       :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onResizeStart">
       <div class="dh-resize-line" />
     </div>
-    <t-drawer :visible="visible" header="删除历史" :size="`${drawerWidth}px`" :footer="false" destroy-on-close
-      class="deleted-history-drawer" @close="onClose">
+    <t-drawer v-if="visible" :visible="true" header="删除历史" :size="`${drawerWidth}px`" :footer="false"
+      class="deleted-history-drawer" @close="onClose" @update:visible="(v: boolean) => (v || onClose())">
       <div class="dh-body">
         <!-- 上半：列表（懒加载 + 垂直滚动） -->
         <div class="dh-list-region">

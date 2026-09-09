@@ -3,8 +3,8 @@
     <!-- 顶部 -->
     <div class="header">
       <div class="header-title">
-        <h2>水电气管理</h2>
-        <p class="header-subtitle">电费账单自动解析归档；水费、气费按月手动录入，支持多表计自动汇总</p>
+        <h2>能耗管理</h2>
+        <p class="header-subtitle">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
       </div>
       <div class="header-actions" v-if="activeTab === 'electricity'">
         <t-button v-if="kbId" theme="primary" @click="triggerUpload">
@@ -31,8 +31,22 @@
 
     <!-- 主界面 -->
     <div v-else class="utilities-main">
-      <t-tabs v-model="activeTab" class="utilities-tabs" @change="onTabChange">
-        <t-tab-panel value="electricity" label="电费">
+      <div class="utilities-layout">
+        <!-- 侧边栏菜单 -->
+        <div class="utilities-sidebar">
+          <div class="utilities-side-item" :class="{ active: activeTab === 'electricity' }" @click="switchTab('electricity')">
+            <t-icon name="chart-bubble" size="16px" /><span>电费</span>
+          </div>
+          <div class="utilities-side-item" :class="{ active: activeTab === 'water' }" @click="switchTab('water')">
+            <t-icon name="dashboard" size="16px" /><span>水费</span>
+          </div>
+          <div class="utilities-side-item" :class="{ active: activeTab === 'gas' }" @click="switchTab('gas')">
+            <t-icon name="windy" size="16px" /><span>气费</span>
+          </div>
+        </div>
+        <!-- 内容区 -->
+        <div class="utilities-content">
+          <template v-if="activeTab === 'electricity'">
           <div v-if="kbId" class="electricity-panel">
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
@@ -52,7 +66,7 @@
                   </t-date-range-picker>
                 </div>
                 <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-                  overlay-inner-class="utility-field-popup">
+                  overlay-inner-class="contract-field-popup">
                   <t-button variant="outline" size="small">
                     <template #icon><t-icon name="view-list" size="14px" /></template>
                     字段
@@ -74,15 +88,19 @@
                     </div>
                   </template>
                 </t-popup>
-                <t-button variant="outline" size="small" @click="loadFiles(true)">
+                <t-button variant="outline" size="small" @click="applyFilter">
                   <template #icon><t-icon name="refresh" size="14px" /></template>
                 </t-button>
-                <t-button variant="outline" size="small" @click="settingsVisible = true" title="设置">
-                  <template #icon><t-icon name="setting" size="14px" /></template>
-                </t-button>
-                <t-button variant="outline" size="small" @click="historyVisible = true" title="删除历史">
-                  <template #icon><t-icon name="history" size="14px" /></template>
-                </t-button>
+                <t-tooltip content="设置" placement="bottom">
+                  <t-button variant="outline" size="small" @click="settingsVisible = true">
+                    <template #icon><t-icon name="setting" size="14px" /></template>
+                  </t-button>
+                </t-tooltip>
+                <t-tooltip content="删除历史" placement="bottom">
+                  <t-button variant="outline" size="small" @click="historyVisible = true">
+                    <template #icon><t-icon name="history" size="14px" /></template>
+                  </t-button>
+                </t-tooltip>
               </div>
             </div>
 
@@ -96,20 +114,6 @@
                     {{ pendingLabel(pf) }}
                   </t-tag>
                   <span class="pending-name">{{ pf.file_name }}</span>
-                </div>
-                <div v-if="groupHeaderCols.has" class="doc-list-group-header" :style="gridStyle" role="row">
-                  <div class="cell cell-check"></div>
-                  <div v-if="groupHeaderCols.plain" class="cell cell-group cell-group--plain" :style="{ gridColumn: `span ${groupHeaderCols.plain}` }"></div>
-                  <div v-if="groupHeaderCols.industrial" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.industrial}` }">
-                    <span class="group-label">工商业用电</span>
-                    <span class="group-count">{{ groupHeaderCols.industrial }}</span>
-                  </div>
-                  <div v-if="groupHeaderCols.residential" class="cell cell-group" :style="{ gridColumn: `span ${groupHeaderCols.residential}` }">
-                    <span class="group-label">居民用电</span>
-                    <span class="group-count">{{ groupHeaderCols.residential }}</span>
-                  </div>
-                  <div class="cell cell-extractStatus"></div>
-                  <div class="cell cell-tags"></div>
                 </div>
                 <div class="doc-list-header" :style="gridStyle" role="row">
                   <div class="cell cell-check" role="columnheader" @click.stop>
@@ -240,20 +244,17 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">基础信息</span>
-                        <t-button variant="outline" size="small" @click="openStaticEdit('overview')">
-                          <template #icon><t-icon name="edit-1" size="14px" /></template>
-                          编辑
-                        </t-button>
+                        <span class="bill-card-hint">基本户信息 · 设置中维护</span>
                       </div>
                       <div class="overview-static">
-                        <div class="ov-item" v-for="f in OVERVIEW_STATIC" :key="f.key">
+                        <div class="ov-item" v-for="f in BASIC_INFO_FIELDS" :key="f.key">
                           <span class="ov-label">{{ f.label }}</span>
-                          <span class="ov-value" :title="String(editForm[f.key] ?? '')">{{ ovText(f) }}</span>
+                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '' }}</span>
                         </div>
                       </div>
                     </div>
 
-                    <!-- 2-4 三大数据卡片 -->
+                    <!-- 2-5 四大数据卡片 -->
                     <div class="overview-metrics">
                       <div class="metric-card">
                         <div class="metric-label">本期电量</div>
@@ -264,10 +265,17 @@
                         <div class="metric-value">{{ fmtMoney(metricFee) }}<span class="metric-unit">元</span></div>
                       </div>
                       <div class="metric-card">
+                        <div class="metric-label">账单周期</div>
+                        <div class="metric-value metric-value--date">{{ metricPeriod }}</div>
+                      </div>
+                      <div class="metric-card">
                         <div class="metric-label">缴费截止日期</div>
                         <div class="metric-value metric-value--date">{{ metricDue }}</div>
                       </div>
                     </div>
+
+                    <!-- 6-7 账单概况 / 用能分析（一行两卡片） -->
+                    <div class="overview-two-col">
 
                     <!-- 5 账单概况 -->
                     <div class="bill-card">
@@ -328,15 +336,10 @@
                           </div>
                         </div>
                         <div class="ea-chart">
-                          <div v-for="bar in energyBars" :key="bar.key" class="ea-bar-col">
-                            <div class="ea-bar-track">
-                              <div class="ea-bar" :style="{ height: bar.pct + '%' }"></div>
-                            </div>
-                            <span class="ea-bar-label">{{ bar.label }}</span>
-                            <span class="ea-bar-value">{{ bar.value }}</span>
-                          </div>
+                          <div ref="energyChartRef" class="ea-echart"></div>
                         </div>
                       </div>
+                    </div>
                     </div>
                   </template>
 
@@ -451,19 +454,21 @@
               </div>
             </div>
           </div>
-        </t-tab-panel>
-        <t-tab-panel value="water" label="水费">
-          <UtilityMeterTab category="water" />
-        </t-tab-panel>
-        <t-tab-panel value="gas" label="气费">
-          <UtilityMeterTab category="gas" />
-        </t-tab-panel>
-      </t-tabs>
+          </template>
+          <template v-else-if="activeTab === 'water'">
+            <UtilityMeterTab category="water" />
+          </template>
+          <template v-else>
+            <UtilityMeterTab category="gas" />
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- 详情抽屉 -->
-    <t-drawer :visible="detailVisible" :header="detailTitle" :size="String(drawerWidth)" :footer="false"
-      :close-on-overlay-click="true" destroy-on-close @close="closeDetail">
+    <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" :size="`${drawerWidth}px`" :footer="false"
+      :close-on-overlay-click="true" @close="closeDetail"
+      @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
         <!-- 摘要 -->
         <section class="detail-block">
@@ -543,8 +548,9 @@
     </t-drawer>
 
     <!-- 电量明细编辑抽屉 -->
-    <t-drawer :visible="meterEditVisible" :header="'编辑电量 · ' + meterEditTitle" :size="'420px'" :footer="false"
-      destroy-on-close @close="meterEditVisible = false">
+    <t-drawer v-if="meterEditVisible" :visible="true" :header="'编辑电量 · ' + meterEditTitle" :size="'420px'" :footer="false"
+      @close="meterEditVisible = false"
+      @update:visible="(v: boolean) => (meterEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field" v-for="f in meterEditFields" :key="f.key">
           <label class="edit-label">{{ f.label }}</label>
@@ -556,8 +562,9 @@
     </t-drawer>
 
     <!-- 费用行编辑抽屉 -->
-    <t-drawer :visible="feeItemEditVisible" :header="'编辑费用 · ' + feeItemEditName" :size="'460px'" :footer="false"
-      destroy-on-close @close="feeItemEditVisible = false">
+    <t-drawer v-if="feeItemEditVisible" :visible="true" :header="'编辑费用 · ' + feeItemEditName" :size="'460px'" :footer="false"
+      @close="feeItemEditVisible = false"
+      @update:visible="(v: boolean) => (feeItemEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field">
           <label class="edit-label">费用类别</label>
@@ -595,8 +602,9 @@
     </t-drawer>
 
     <!-- 静态字段编辑抽屉 -->
-    <t-drawer :visible="staticEditVisible" :header="staticEditTitle" :size="'520px'" :footer="false"
-      destroy-on-close @close="staticEditVisible = false">
+    <t-drawer v-if="staticEditVisible" :visible="true" :header="staticEditTitle" :size="'520px'" :footer="false"
+      @close="staticEditVisible = false"
+      @update:visible="(v: boolean) => (staticEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="field-grid">
           <div v-for="f in staticEditFields" :key="f.key" class="field-grid-item">
@@ -623,16 +631,15 @@
     <KbTagManageDrawer v-if="kbId" v-model:visible="tagManageVisible" :kb-id="kbId" :is-faq="false"
       @changed="onTagManageChanged" />
 
-    <!-- 删除历史 -->
-    <DeletedKnowledgeDrawer v-if="kbId" v-model:visible="historyVisible" :kb-id="kbId" :module-name="'电费'"
-      @changed="loadFiles(true)" />
-
-    <!-- 设置（字段配置 + 包含判定） -->
-    <UtilitySettingsDrawer v-if="kbId" v-model:visible="settingsVisible" :kb-id="kbId" category="electricity"
-      @changed="onSettingsChanged" />
-
     <!-- 初始化向导 -->
     <UtilitiesKbWizard v-model:visible="wizardVisible" @created="onKbCreated" />
+
+    <!-- 设置 -->
+    <UtilitySettingsDrawer :visible="settingsVisible" :kb-id="kbId || ''" category="electricity"
+      @update:visible="settingsVisible = $event" @changed="onSettingsChanged" />
+
+    <!-- 删除历史 -->
+    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="能耗" />
 
     <!-- 打印预览弹窗 -->
     <teleport to="body">
@@ -667,6 +674,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
+import * as echarts from 'echarts'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -680,6 +688,7 @@ import {
   listUtilityFieldConfigs,
   previewKnowledgeFile,
   reparseKnowledge,
+  getUtilityBasicInfo,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -691,61 +700,39 @@ import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
-const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v4'
+const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v5'
 const COLUMN_STORAGE_VERSION = 4
 
 interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: 'industrial' | 'residential' }
 const FALLBACK_COLUMNS: ColDef[] = [
-  // 严格按用户表头设计：两个账单周期 → 独立列（无分组）
-  { key: 'bill_period_start', label: '账单周期', fieldType: 'date', default: true, w: '1fr' },
-  { key: 'bill_period_range', label: '账单周期', fieldType: 'text', default: true, w: '1.6fr' },
-  { key: 'pf_adjust_amount', label: '功率因素调整电费', fieldType: 'amount', default: true, w: '1.2fr' },
-  { key: 'capacity_fee', label: '输配容（需）量电费', fieldType: 'amount', default: true, w: '1.2fr' },
-  // 工商业用电分组
-  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr', group: 'industrial' },
-  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
-  { key: 'market_amount', label: '市场化购电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
-  { key: 'line_amount', label: '上网环节线损费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
-  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
-  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1fr', group: 'industrial' },
-  { key: 'govI_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'industrial' },
-  // 居民用电分组
-  { key: 'catalog_amount', label: '目录电费', fieldType: 'amount', default: true, w: '1fr', group: 'residential' },
-  { key: 'govR_amount', label: '政府性基金及附加', fieldType: 'amount', default: true, w: '1.1fr', group: 'residential' },
-  // 其它可选字段
+  // 默认字段
+  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.2fr' },
+  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '0.9fr' },
+  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'capacity_fee', label: '基本电费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'market_amount', label: '购电电费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'line_amount', label: '线损费用', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'govI_amount', label: '附加费', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'catalog_amount', label: '目录电费（居民）', fieldType: 'amount', default: true, w: '1fr' },
+  { key: 'govR_amount', label: '附加费（居民）', fieldType: 'amount', default: true, w: '1fr' },
+  // 详细字段
   { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1fr' },
   { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
   { key: 'usage_category', label: '用电类别', fieldType: 'text', default: false, w: '1fr' },
-  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'power_factor', label: '功率因数', fieldType: 'number', default: false, w: '0.8fr' },
-  { key: 'bill_period_end', label: '账单周期止', fieldType: 'date', default: false, w: '1.2fr' },
   { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: false, w: '0.9fr' },
-  { key: 'supply_unit', label: '供电服务单位', fieldType: 'text', default: false, w: '1.2fr' },
-  { key: 'mom_change', label: '环比', fieldType: 'text', default: false, w: '0.8fr' },
-  { key: 'due_date', label: '交费截止', fieldType: 'date', default: false, w: '1.1fr' },
-  { key: 'industrial_amount', label: '工商业电费', fieldType: 'amount', default: false, w: '1fr' },
-  { key: 'residential_amount', label: '居民电费', fieldType: 'amount', default: false, w: '1fr' },
-  { key: 'grand_total', label: '合计', fieldType: 'amount', default: false, w: '1fr' },
-  { key: 'address', label: '用电地址', fieldType: 'text', default: false, w: '1.6fr' },
-  { key: 'market_attr', label: '市场化属性', fieldType: 'text', default: false, w: '1fr' },
-  { key: 'print_date', label: '账单打印日期', fieldType: 'date', default: false, w: '1.2fr' },
-  { key: 'prev_kwh', label: '上期电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'deep_peak_kwh', label: '尖峰电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'peak_kwh', label: '峰电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'flat_kwh', label: '平电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'valley_kwh', label: '谷电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'reactive_kwh', label: '正向无功电量', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'capacity', label: '容量', fieldType: 'number', default: false, w: '0.8fr' },
-  { key: 'capacity_price', label: '容量电价', fieldType: 'number', default: false, w: '0.9fr' },
-  { key: 'demand', label: '需量值', fieldType: 'number', default: false, w: '0.8fr' },
-  { key: 'pf_standard', label: '功率因数标准', fieldType: 'number', default: false, w: '1fr' },
-  { key: 'adjust_ratio', label: '调整系数', fieldType: 'number', default: false, w: '0.9fr' },
+  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '0.9fr' },
+  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '0.8fr' },
 ]
 
 const activeTab = ref<'electricity' | 'water' | 'gas'>('electricity')
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
+const settingsVisible = ref(false)
+const historyVisible = ref(false)
 const fileInputRef = ref<HTMLInputElement>()
 
 // 字段配置（来自后端 /utilities/field-configs?category=electricity，动态加载）
@@ -782,7 +769,11 @@ const loadFieldConfigs = async () => {
     const res: any = await listUtilityFieldConfigs('electricity')
     const list = res?.data || res
     if (Array.isArray(list) && list.length) {
-      const fromServer = list.map((c: any) => {
+      // 仅保留内置默认集字段与用户自定义字段，过滤历史废弃字段
+      const validKeys = new Set(FALLBACK_COLUMNS.map(f => f.key))
+      const fromServer = list
+        .filter((c: any) => validKeys.has(c.field_key) || !!c.is_custom)
+        .map((c: any) => {
         const fb = FALLBACK_COLUMNS.find(f => f.key === c.field_key)
         return {
           key: c.field_key,
@@ -811,21 +802,10 @@ const loadFieldConfigs = async () => {
   } catch { /* 字段配置加载失败用内置默认 */ }
 }
 function colWidth(key: string): string {
-  if (['account_name', 'address', 'supply_unit'].includes(key)) return '1.6fr'
-  if (['bill_period_range'].includes(key)) return '1.6fr'
-  if (['bill_period_start', 'bill_period_end', 'due_date', 'print_date', 'pf_adjust_amount', 'capacity_fee'].includes(key)) return '1.2fr'
-  if (['govI_amount', 'govR_amount'].includes(key)) return '1.1fr'
+  if (['account_name'].includes(key)) return '1.6fr'
+  if (['bill_period'].includes(key)) return '1.2fr'
   return '1fr'
 }
-
-// 分组表头（工商业/居民）
-const groupHeaderCols = computed(() => {
-  const cols = visibleColDefs.value
-  const industrial = cols.filter(c => c.group === 'industrial').length
-  const residential = cols.filter(c => c.group === 'residential').length
-  const plain = cols.length - industrial - residential
-  return { industrial, residential, plain, has: industrial > 0 || residential > 0 }
-})
 
 // ---- 列表 ----
 interface Row {
@@ -1020,10 +1000,6 @@ const onKbCreated = async (kb: any) => {
     startPolling()
   }
 }
-const onSettingsChanged = () => {
-  loadFieldConfigs()
-  loadFiles(true)
-}
 
 // ---- 上传 ----
 const triggerUpload = () => fileInputRef.value?.click()
@@ -1121,6 +1097,7 @@ const openDetail = async (row: Row) => {
   // 电费账单 → 进入分层详情视图
   detailMode.value = true
   activeMenu.value = 'overview'
+  loadBasicInfo()
 }
 
 const loadEditForm = async (row: Row) => {
@@ -1207,18 +1184,29 @@ const menuLabel = (key: string) => {
 }
 
 // 概况静态字段
-const OVERVIEW_STATIC = [
-  { key: 'account_no', label: '户号', type: 'text' },
-  { key: 'account_name', label: '户名', type: 'text' },
-  { key: 'customer_type', label: '用电类别', type: 'text' },
-  { key: 'voltage_level', label: '电压等级', type: 'text' },
-  { key: 'address', label: '地址', type: 'text' },
-  { key: 'supply_unit', label: '供电单位', type: 'text' },
-  { key: 'bill_period_start', label: '账单周期起', type: 'date' },
-  { key: 'bill_period_end', label: '账单周期止', type: 'date' },
-  { key: 'market_flag', label: '市场化属性', type: 'text' },
-  { key: 'pay_deadline', label: '交费截止', type: 'date' },
+// 基本户信息（概览基础信息直接读取，设置中维护，概览不可编辑）
+const BASIC_INFO_FIELDS = [
+  { key: 'account_no', label: '户号' },
+  { key: 'account_name', label: '户名' },
+  { key: 'usage_category', label: '用电类别' },
+  { key: 'voltage_level', label: '电压等级' },
+  { key: 'market_attr', label: '市场化属性' },
+  { key: 'supply_unit', label: '供电服务单位' },
+  { key: 'address', label: '用电地址' },
 ]
+const OVERVIEW_STATIC = BASIC_INFO_FIELDS.map(f => ({ ...f, type: 'text' }))
+const basicInfo = ref<Record<string, string>>({})
+const loadBasicInfo = async () => {
+  try {
+    const res: any = await getUtilityBasicInfo('electricity')
+    const d = res?.data || {}
+    basicInfo.value = {
+      account_no: d.account_no || '', account_name: d.account_name || '',
+      usage_category: d.usage_category || '', voltage_level: d.voltage_level || '',
+      market_attr: d.market_attr || '', supply_unit: d.supply_unit || '', address: d.address || '',
+    }
+  } catch { /* 未配置时留空 */ }
+}
 
 // 容需量字段
 const CAPACITY_FIELDS = [
@@ -1281,6 +1269,10 @@ const overviewDiff = computed(() => {
 // ---- 概览页指标卡（数据均来自子项计算 / 提取字段，非直接填充汇总） ----
 const metricKwh = computed(() => Number(editForm.value.total_kwh) || 0)
 const metricFee = computed(() => overviewTotal.value)
+const metricPeriod = computed(() => {
+  const v = editForm.value.bill_period_start || editForm.value.bill_period_end
+  return v ? String(v).slice(0, 7) : '—'
+})
 const metricDue = computed(() => {
   const v = editForm.value.due_date || editForm.value.pay_deadline
   return v ? String(v).slice(0, 10) : '—'
@@ -1330,6 +1322,43 @@ const energyBars = computed(() => {
   const max = Math.max(...raw.map(b => b.v), 1)
   return raw.map(b => ({ ...b, pct: Math.max(Math.round((b.v / max) * 100), 2) }))
 })
+
+// ---- 用能分析 ECharts（分时电量柱状图） ----
+const energyChartRef = ref<HTMLDivElement | null>(null)
+let energyChart: echarts.ECharts | null = null
+const renderEnergyChart = async () => {
+  await nextTick()
+  const el = energyChartRef.value
+  if (!el) return
+  if (!energyChart) energyChart = echarts.init(el)
+  const bars = energyBars.value
+  energyChart.setOption({
+    grid: { left: 8, right: 8, top: 26, bottom: 4, containLabel: true },
+    tooltip: { trigger: 'axis', formatter: (ps: any) => {
+      const p = Array.isArray(ps) ? ps[0] : ps
+      return `${p.name}时段：${fmtKwh(Number(p.value) || 0)}`
+    } },
+    xAxis: {
+      type: 'category', data: bars.map(b => b.label),
+      axisLine: { lineStyle: { color: '#d0d7de' } }, axisLabel: { color: '#57606a', fontSize: 12 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: '#eaeef2' } },
+      axisLabel: { color: '#57606a', fontSize: 12 },
+    },
+    series: [{
+      type: 'bar', data: bars.map(b => b.v), barWidth: 30,
+      itemStyle: { color: '#0052d9', borderRadius: [4, 4, 0, 0] },
+      label: { show: true, position: 'top', color: '#57606a', fontSize: 11, formatter: (p: any) => fmtKwh(Number(p.value) || 0) },
+    }],
+  })
+}
+watch([detailMode, activeMenu, () => currentRow.value, energyBars], () => {
+  if (detailMode.value && activeMenu.value === 'overview') renderEnergyChart()
+})
+onBeforeUnmount(() => { energyChart?.dispose(); energyChart = null })
 
 // 电量明细
 const industrialMeterRows = computed(() => [
@@ -1665,16 +1694,10 @@ const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {
   return v === 0 ? '' : String(v)
 }
 const cellText = (row: Row, key: string): string => {
-  if (key === 'bill_period_start') {
-    const raw = row.item?.[key]
+  if (key === 'bill_period') {
+    const raw = row.item?.bill_period_start || row.item?.bill_period_end
     if (!raw) return ''
     return String(raw).slice(0, 7)
-  }
-  if (key === 'bill_period_range') {
-    const s = row.item?.bill_period_start
-    const e = row.item?.bill_period_end
-    if (!s && !e) return ''
-    return [String(s || '').slice(0, 10), String(e || '').slice(0, 10)].filter(Boolean).join('~')
   }
   if (key === 'market_amount') return feeTextOf(row, it => String(it.category || '').includes('市场化购电'))
   if (key === 'line_amount') return feeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
@@ -1701,6 +1724,16 @@ const cellText = (row: Row, key: string): string => {
 
 // ---- Tab 切换 ----
 const onTabChange = () => { /* 子组件自行加载 */ }
+const switchTab = (tab: 'electricity' | 'water' | 'gas') => {
+  if (activeTab.value === tab) return
+  activeTab.value = tab
+  onTabChange()
+}
+// 设置变更后：重载字段配置并刷新列表
+const onSettingsChanged = async () => {
+  await loadFieldConfigs()
+  loadFiles(true)
+}
 
 onMounted(() => { loadKb() })
 onBeforeUnmount(() => { stopPolling() })
@@ -1779,8 +1812,8 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
-/* ---- 字段筛选弹层 ---- */
-:global(.utility-field-popup) {
+/* ---- 字段筛选弹层（复用合同管理样式） ---- */
+:global(.contract-field-popup) {
   padding: 0 !important;
 }
 
@@ -1889,23 +1922,54 @@ onBeforeUnmount(() => { stopPolling() })
   flex-direction: column;
 }
 
-.utilities-tabs {
+.utilities-layout {
   flex: 1;
   min-height: 0;
+  display: flex;
+  gap: 12px;
+}
 
-  /* 去掉 tab 导航下边框（搜索组件上方的横线） */
-  :deep(.t-tabs__nav) {
-    border-bottom: none;
-  }
+.utilities-sidebar {
+  width: 112px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 9px;
+}
 
-  :deep(.t-tabs__nav-wrap::after) {
-    display: none;
-  }
+.utilities-side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
 
-  :deep(.t-tabs__content) {
-    flex: 1;
-    min-height: 0;
-  }
+.utilities-side-item:hover {
+  background: var(--td-bg-color-container-hover);
+  color: var(--td-text-color-primary);
+}
+
+.utilities-side-item.active {
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  font-weight: 500;
+}
+
+.utilities-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .electricity-panel {
@@ -2451,7 +2515,7 @@ onBeforeUnmount(() => { stopPolling() })
 /* 概览页指标卡 */
 .overview-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 12px;
 
@@ -2492,6 +2556,14 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
+/* 账单概况 + 用能分析 一行两卡片 */
+.overview-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 /* 用能分析 */
 .energy-analysis {
   .ea-grid {
@@ -2523,52 +2595,14 @@ onBeforeUnmount(() => { stopPolling() })
   }
 
   .ea-chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 24px;
-    height: 150px;
-    padding: 12px 14px;
+    height: 220px;
+    padding: 8px 10px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
 
-    .ea-bar-col {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
+    .ea-echart {
+      width: 100%;
       height: 100%;
-      min-width: 0;
-
-      .ea-bar-track {
-        flex: 1;
-        width: 100%;
-        max-width: 64px;
-        display: flex;
-        align-items: flex-end;
-        justify-content: center;
-        background: var(--td-bg-color-container-hover);
-        border-radius: 4px 4px 0 0;
-        overflow: hidden;
-      }
-
-      .ea-bar {
-        width: 100%;
-        background: linear-gradient(180deg, var(--td-brand-color) 0%, var(--td-brand-color-3) 100%);
-        border-radius: 4px 4px 0 0;
-        transition: height 0.3s ease;
-      }
-
-      .ea-bar-label {
-        font-size: 12px;
-        color: var(--td-text-color-secondary);
-      }
-
-      .ea-bar-value {
-        font-size: 11px;
-        color: var(--td-text-color-placeholder);
-        font-variant-numeric: tabular-nums;
-      }
     }
   }
 }
