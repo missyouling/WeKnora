@@ -706,6 +706,7 @@ func (h *KnowledgeBaseHandler) ListUtilityBillRecords(c *gin.Context) {
 		Status:   c.Query("status"),
 		DateFrom: c.Query("date_from"),
 		DateTo:   c.Query("date_to"),
+		Kind:     c.Query("kind"),
 		Page:     page,
 		PageSize: pageSize,
 	}
@@ -714,6 +715,66 @@ func (h *KnowledgeBaseHandler) ListUtilityBillRecords(c *gin.Context) {
 	if err != nil {
 		logger.Error(ctx, "Failed to list utility bill records", err)
 		c.Error(apperrors.NewInternalServerError("list utility bill records failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
+}
+
+// ListSolarBillRecords godoc
+// @Summary      光伏账单记录列表
+// @Description  聚合返回该知识库下所有光伏账单记录（kind=solar_bill，与电费共库），支持关键字/日期/状态筛选、分页。
+// @Tags         知识库
+// @Accept       json
+// @Produce      json
+// @Param        id          path   string  true  "知识库ID"
+// @Param        q           query  string  false "关键字（全字段搜索）"
+// @Param        date_from   query  string  false "账单周期起始日（YYYY-MM-DD）"
+// @Param        date_to     query  string  false "账单周期截止日（YYYY-MM-DD）"
+// @Param        status      query  string  false "状态"
+// @Param        page        query  int     false "页码"
+// @Param        page_size   query  int     false "每页数量"
+// @Success      200  {object}  types.SolarBillListResult "记录列表"
+// @Failure      403  {object}  errors.AppError      "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/solar-bill-records [get]
+func (h *KnowledgeBaseHandler) ListSolarBillRecords(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	_, kbID, effectiveTenantID, _, err := h.validateAndGetKnowledgeBase(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	filter := types.UtilityBillListFilter{
+		Keyword:  c.Query("q"),
+		Status:   c.Query("status"),
+		DateFrom: c.Query("date_from"),
+		DateTo:   c.Query("date_to"),
+		Page:     page,
+		PageSize: pageSize,
+	}
+
+	result, err := h.knowledgeService.ListSolarBillRecords(effCtx, kbID, filter)
+	if err != nil {
+		logger.Error(ctx, "Failed to list solar bill records", err)
+		c.Error(apperrors.NewInternalServerError("list solar bill records failed: " + err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

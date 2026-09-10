@@ -88,6 +88,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractAwardPunish)
 		// 电费账单字段提取 — 与发票提取同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractUtilityBill)
+		// 光伏账单字段提取 — 与发票提取同权限矩阵（写操作，与电费共库）
+		kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractSolarBill)
 		// 按页重新提取合同 — 与 extract-contract 同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContractPage)
 		// 按页删除合同记录 — 与 extract-contract 同权限矩阵（写操作）
@@ -244,6 +246,8 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 		kb.GET("/:id/award-punish-types", g.Viewer(), g.KBAccessRead("id"), handler.ListAwardPunishTypes)
 		// 电费账单级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读）
 		kb.GET("/:id/utility-bill-records", g.Viewer(), g.KBAccessRead("id"), handler.ListUtilityBillRecords)
+		// 光伏账单级聚合列表 — Viewer+ 且对 KB 有 read 权限（只读，与电费共库）
+		kb.GET("/:id/solar-bill-records", g.Viewer(), g.KBAccessRead("id"), handler.ListSolarBillRecords)
 		// 识别规则配置（发票/合同管理页"识别规则"设置面板）— 读 Viewer+，写 Editor+（KB 写权限）
 		kb.GET("/:id/recognition-config", g.Viewer(), g.KBAccessRead("id"), handler.GetRecognitionConfig)
 		kb.PUT("/:id/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.SaveRecognitionConfig)

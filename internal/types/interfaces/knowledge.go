@@ -131,6 +131,9 @@ type KnowledgeService interface {
 	// knowledge-file upload layer by file hash), filtered/searched/sorted/
 	// paginated server-side.
 	ListUtilityBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.UtilityBillListResult, error)
+	// ListSolarBillRecords returns the paginated solar-bill list of one KB
+	// (shares the KB with utility bills, kind=solar_bill).
+	ListSolarBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.SolarBillListResult, error)
 	// MaxAutoAwardPunishSeq returns the highest trailing sequence number among
 	// auto-generated 文号 (JC-YYYYMMDD-NNN) for the current date in the knowledge
 	// base, so newly generated numbers stay unique across files.

@@ -183,12 +183,89 @@ type UtilityBillRecord struct {
 	Item           UtilityBillExtractionItem   `json:"item"`
 }
 
-// UtilityBillListFilter 电费账单列表筛选。
+// SolarBillRecord 光伏账单列表行（聚合 KB custom_metadata 生成；与电费共库，kind=solar_bill 区分）。
+type SolarBillRecord struct {
+	RowKey         string                    `json:"row_key"`
+	KnowledgeID    string                    `json:"knowledge_id"`
+	KnowledgeTitle string                    `json:"knowledge_title"`
+	FileName       string                    `json:"file_name"`
+	FileType       string                    `json:"file_type"`
+	Tags           []string                  `json:"tags"`
+	ExtractStatus  string                    `json:"extract_status"`
+	ExtractError   string                    `json:"extract_error"`
+	KBID           string                    `json:"kb_id"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	Item           SolarBillExtractionItem   `json:"item"`
+}
+
+// SolarBillExtractionItem 光伏发电账单提取字段（国网光伏账单：基础信息/发电量/上网关口/发电关口明细）。
+type SolarBillExtractionItem struct {
+	// 基础信息
+	BillPeriodStart string `json:"bill_period_start"` // 账单周期起 2026-08-01
+	BillPeriodEnd   string `json:"bill_period_end"`   // 账单周期止 2026-08-31
+	AccountNo       string `json:"account_no"`        // 发电户号
+	AccountName     string `json:"account_name"`      // 户名
+	SupplyUnit      string `json:"supply_unit"`       // 服务单位
+	Address         string `json:"address"`           // 发电地址
+	TaxpayerType    string `json:"taxpayer_type"`     // 纳税人类型
+	ConsumptionMode string `json:"consumption_mode"`  // 消纳方式 自发自用余电上网
+	VoltageLevel    string `json:"voltage_level"`     // 并网电压等级 交流380V
+	GenerationMode  string `json:"generation_mode"`   // 发电方式 光伏发电
+	// 概览
+	GenerationKwh   float64 `json:"generation_kwh"`   // 发电量 千瓦时
+	GridKwh         float64 `json:"grid_kwh"`         // 上网电量 千瓦时
+	SettlementAmount float64 `json:"settlement_amount"` // 结算金额 元
+	MomChange       string  `json:"mom_change"`       // 本期上网电量环比 +99.13%
+	CumulativeKwh   float64 `json:"cumulative_kwh"`   // 年累计上网电量 千瓦时
+	TaxRate         string  `json:"tax_rate"`         // 税率 13%
+	TaxAmount       float64 `json:"tax_amount"`       // 税额 元
+	// 关口明细（1 个上网关口 + N 个发电关口）
+	Gateways []SolarGateway `json:"gateways"`
+	Remark   string         `json:"remark"`
+}
+
+// SolarGateway 光伏账单关口明细（上网关口 / 发电关口）。
+type SolarGateway struct {
+	GatewayType string          `json:"gateway_type"` // 上网关口 | 发电关口
+	MeterNo     string          `json:"meter_no"`     // 电能表编号
+	ProjectName string          `json:"project_name"` // 项目名称（如 1.4MW 屋顶分布式光伏发电项目）
+	Readings    []SolarReading  `json:"readings"`     // 电量明细（示数类型/上期/本期/倍率/抄见/计费）
+	Fees        []SolarFeeItem  `json:"fees"`         // 电费明细（类别/电量/电价/电费）
+}
+
+// SolarReading 光伏电量明细行（与账单「本期电量明细」表一致）。
+type SolarReading struct {
+	MeterType  string  `json:"meter_type"`  // 示数类型 反向有功（总）
+	Prev       float64 `json:"prev"`        // 上期示数
+	Curr       float64 `json:"curr"`        // 本期示数
+	Multiplier float64 `json:"multiplier"`  // 倍率
+	ReadingKwh float64 `json:"reading_kwh"` // 抄见电量
+	BillKwh    float64 `json:"bill_kwh"`    // 计费电量
+}
+
+// SolarFeeItem 光伏电费明细行（与账单「本期电费明细」表一致）。
+type SolarFeeItem struct {
+	Category string  `json:"category"` // 类别 分布式上网电费 | 分布式电源发电补助
+	Qty      float64 `json:"qty"`      // 电量
+	Rate     float64 `json:"rate"`     // 电价
+	Fee      float64 `json:"fee"`      // 电费（= 电量×电价）
+}
+
+// SolarBillListResult 光伏账单列表分页结果。
+type SolarBillListResult struct {
+	Data     []SolarBillRecord `json:"data"`
+	Total    int               `json:"total"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"page_size"`
+}
+
+// UtilityBillListFilter 电费/光伏账单列表筛选。
 type UtilityBillListFilter struct {
 	Keyword  string `json:"keyword" form:"q"`
 	DateFrom string `json:"date_from" form:"date_from"`
 	DateTo   string `json:"date_to" form:"date_to"`
 	Status   string `json:"status" form:"status"`
+	Kind     string `json:"kind" form:"kind"` // utility_bill | solar_bill，默认 utility_bill
 	Page     int    `json:"page" form:"page"`
 	PageSize int    `json:"page_size" form:"page_size"`
 }
