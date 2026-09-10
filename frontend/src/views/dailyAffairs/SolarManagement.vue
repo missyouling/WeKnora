@@ -415,29 +415,20 @@
       :close-on-overlay-click="true" @close="closeDetail"
       @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
-        <!-- 摘要 -->
-        <section class="detail-block">
-          <div class="detail-block-title" @click="summaryExpanded = !summaryExpanded">
-            <span>摘要</span>
-            <t-icon :name="summaryExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="detail-block-caret" />
-          </div>
-          <div v-if="summaryExpanded" class="detail-block-content">
-            <div class="summary-lines">{{ summaryLines || '暂无摘要' }}</div>
-          </div>
-        </section>
-
         <!-- 字段编辑 -->
         <section class="detail-block">
           <div class="detail-block-title">账单字段</div>
           <div class="detail-block-content">
             <div class="field-grid">
-              <div v-for="f in detailFields" :key="f.key" class="field-grid-item">
+              <div v-for="f in detailFields" :key="f.key" class="field-grid-item" :class="{ 'field-grid-item--full': f.key === 'remark' }">
                 <label class="field-label">{{ f.label }}</label>
-                <t-input :model-value="String(detailForm[f.key] ?? '')" :type="f.type === 'number' ? 'number' : 'text'" size="small"
+                <t-textarea v-if="f.key === 'remark'" :model-value="String(detailForm[f.key] ?? '')"
+                  :autosize="{ minRows: 3, maxRows: 6 }"
+                  @update:model-value="(v: string) => { detailForm[f.key] = v }" />
+                <t-input v-else :model-value="String(detailForm[f.key] ?? '')" :type="f.type === 'number' ? 'number' : 'text'" size="small"
                   @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }" />
               </div>
             </div>
-            <div class="auto-save-tip">修改后点击保存生效</div>
             <div class="edit-drawer-footer">
               <t-button theme="primary" size="small" @click="saveDetailFields">保存</t-button>
             </div>
@@ -480,7 +471,6 @@
             @update:model-value="(v: string) => { feeEditForm.fee = Number(v) || 0 }" />
         </div>
         <div class="edit-note">电费 = 计费数量 × 电价，自动计算；补助类（0 元）保留原值</div>
-        <div class="auto-save-tip">修改后点击保存生效</div>
         <div class="edit-drawer-footer">
           <t-button theme="primary" size="small" @click="saveFeeEdit">保存</t-button>
         </div>
@@ -904,7 +894,6 @@ const onFileInputChange = async (e: Event) => {
 const detailVisible = ref(false)
 const detailMode = ref(false)
 const currentRow = ref<Row | null>(null)
-const summaryExpanded = ref(true)
 const activeMenu = ref<'overview' | 'grid-fee' | 'subsidy-fee' | 'meter'>('overview')
 const detailForm = ref<Record<string, any>>({})
 
@@ -942,19 +931,12 @@ const detailFields = computed(() => [
 const openDetail = async (row: Row) => {
   currentRow.value = row
   detailForm.value = { ...(row.item || {}) }
-  summaryExpanded.value = true
   detailVisible.value = true
-  // 加载摘要（知识库 summary）
-  try {
-    const kd: any = await getKnowledgeDetails(row.knowledgeId)
-    summaryLines.value = kd?.data?.summary || kd?.summary || ''
-  } catch { summaryLines.value = '' }
   try {
     const pv: any = await previewKnowledgeFile(row.knowledgeId)
     printUrl.value = pv?.data?.url || pv?.url || ''
   } catch { printUrl.value = '' }
 }
-const summaryLines = ref('')
 const closeDetail = () => {
   detailVisible.value = false
 }
@@ -1642,8 +1624,8 @@ onBeforeUnmount(() => { stopPolling() })
 .summary-lines { font-size: 13px; line-height: 1.7; color: var(--td-text-color-primary); white-space: pre-wrap; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .field-grid-item { display: flex; flex-direction: column; gap: 4px; }
+.field-grid-item--full { grid-column: 1 / -1; }
 .field-label { font-size: 12px; color: var(--td-text-color-secondary); }
-.auto-save-tip { margin-top: 12px; font-size: 12px; color: var(--td-text-color-secondary); }
 
 /* 编辑抽屉 */
 .edit-drawer-body { display: flex; flex-direction: column; gap: 14px; }

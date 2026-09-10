@@ -576,17 +576,6 @@
       :close-on-overlay-click="true" @close="closeDetail"
       @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
-        <!-- 摘要 -->
-        <section class="detail-block">
-          <div class="detail-block-title" @click="summaryExpanded = !summaryExpanded">
-            <span>摘要</span>
-            <t-icon :name="summaryExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="detail-block-caret" />
-          </div>
-          <div v-if="summaryExpanded" class="detail-block-content">
-            <div class="summary-lines">{{ summaryLines || '暂无摘要' }}</div>
-          </div>
-        </section>
-
         <!-- 字段编辑 -->
         <section class="detail-block">
           <div class="detail-block-title">账单字段</div>
@@ -603,7 +592,6 @@
                   @update:model-value="(v: string) => setFieldValue(cfg, v)" />
               </div>
             </div>
-<div class="auto-save-tip">修改后点击保存生效</div>
           </div>
         </section>
 
@@ -638,7 +626,6 @@
               </t-button>
               <span class="fee-total">合计 {{ fmtMoney(feeTotal) }} 元</span>
             </div>
-<div class="auto-save-tip">明细编辑后点击保存，总账按明细重算</div>
           </div>
         </section>
 
@@ -663,7 +650,6 @@
           <t-input :model-value="String(meterEditForm[f.key] ?? '')" type="number" size="small"
             @update:model-value="(v: string) => (meterEditForm[f.key] = Number(v) || 0)" />
         </div>
-        <div class="auto-save-tip">修改后点击保存生效</div>
         <div class="edit-drawer-footer">
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
@@ -680,7 +666,6 @@
           <t-input :model-value="String(detailEditForm[f.key] ?? '')" :type="f.type === 'text' ? 'text' : 'number'" size="small"
             @update:model-value="(v: string) => (detailEditForm[f.key] = f.type === 'text' ? v : Number(v) || 0)" />
         </div>
-        <div class="auto-save-tip">修改后点击保存生效</div>
         <div class="edit-drawer-footer">
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
@@ -723,7 +708,6 @@
           <label class="edit-label">说明</label>
           <div class="edit-note">{{ feeItemEditableFee ? '电费 = 电量 × 标准，自动计算' : '该费用项无法由电量×标准推导（返还/调整类），金额保留账单原值' }}</div>
         </div>
-        <div class="auto-save-tip">修改后点击保存生效</div>
         <div class="edit-drawer-footer">
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
@@ -747,7 +731,6 @@
               @update:model-value="(v: string) => (staticEditForm[f.key] = Number(v) || 0)" />
           </div>
         </div>
-        <div class="auto-save-tip">修改后点击保存生效</div>
         <div class="edit-drawer-footer">
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
@@ -1294,7 +1277,6 @@ const detailVisible = ref(false)
 const currentRow = ref<Row | null>(null)
 const editForm = ref<Record<string, any>>({})
 const detailFieldDefs = computed(() => columnDefs.value)
-const summaryExpanded = ref(true)
 const feeExpanded = ref(false)
 const autoSaving = ref(false)
 let autoSaveDirty = false
@@ -1311,11 +1293,6 @@ const setFieldValue = (cfg: ColDef, v: any) => {
   if (v === undefined || v === null) return
   editForm.value[cfg.key] = v
 }
-
-const summaryLines = computed(() => {
-  const d = currentRow.value?.item?.remark || ''
-  return d ? d.replace(/-(?=[^\s-])/g, '\n-').trim() : ''
-})
 
 const openDetail = async (row: Row) => {
   currentRow.value = row
@@ -1558,10 +1535,10 @@ const overviewRows = computed(() => {
     { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), ...withBillOv('trans', transBill), qty: m('industrial-trans'), menuKey: 'industrial-trans' },
     { key: 'sys', label: '系统运行费', ...withOv('sys', sys), ...withBillOv('sys', sysBill), qty: m('industrial-sys'), menuKey: 'industrial-sys' },
     { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), ...withBillOv('govI', govIBill), qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), billFee: industrialBill, ovBillKey: '', qty: -1, menuKey: '', total: true },
+    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), ...withBillOv('industrial', industrialBill), qty: -1, menuKey: '', total: true },
     { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), ...withBillOv('catalog', catalogBill), qty: m('residential-catalog'), menuKey: 'residential-catalog' },
     { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), ...withBillOv('govR', govRBill), qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), billFee: residentialBill, ovBillKey: '', qty: -1, menuKey: '', total: true },
+    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), ...withBillOv('residential', residentialBill), qty: -1, menuKey: '', total: true },
     { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), ...withBillOv('capacity', capacity), qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
     { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), ...withBillOv('pf', pf), qty: -1, menuKey: 'pf-adjust' },
   ]
@@ -2932,11 +2909,6 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
-.auto-save-tip {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--td-text-color-placeholder);
-}
 
 .summary-lines {
   font-size: 13px;
