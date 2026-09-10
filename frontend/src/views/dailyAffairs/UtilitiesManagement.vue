@@ -305,25 +305,25 @@
                             v-for="r in overviewRows" :key="r.key" @click="gotoMenu(r.menuKey)">
                             <span class="os-name">{{ r.label }}</span>
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
-                            <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }" @click.stop="feeEditingKey !== r.key && startFeeEdit(r)">
+                            <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }" @click.stop="!r.total && feeEditingKey !== r.key && startFeeEdit(r)">
                               <template v-if="feeEditingKey === r.key">
                                 <t-input v-model="feeEditValue" size="small" class="os-fee-input" @click.stop
                                   @blur="commitFeeOverride(r)" @enter="commitFeeOverride(r)" />
                               </template>
                               <template v-else>
-                                <t-tooltip v-if="hasFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
+                                <t-tooltip v-if="!r.total && hasFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
                                   <span class="os-fee-val os-fee-val--manual">{{ fmtRate6(r.displayValue) }}</span>
                                 </t-tooltip>
-                                <span v-else class="os-fee-val">{{ fmtRate6(r.displayValue) }}</span>
+                                <span v-else class="os-fee-val" :class="{ 'os-fee-val--manual': r.total }">{{ fmtRate6(r.displayValue) }}</span>
                               </template>
                             </span>
-                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="billFeeEditingKey !== r.ovBillKey && startBillFeeEdit(r)">
+                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="!r.total && billFeeEditingKey !== r.ovBillKey && startBillFeeEdit(r)">
                               <template v-if="billFeeEditingKey === r.ovBillKey">
                                 <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
                                   @blur="commitBillFeeOverride(r)" @enter="commitBillFeeOverride(r)" />
                               </template>
                               <template v-else>
-                                <t-tooltip v-if="hasBillFeeOverride(r.ovBillKey)" content="手动修改，重提取后重置" placement="top">
+                                <t-tooltip v-if="!r.total && hasBillFeeOverride(r.ovBillKey)" content="手动修改，重提取后重置" placement="top">
                                   <span class="os-fee-val os-fee-val--manual">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
                                 </t-tooltip>
                                 <span v-else class="os-fee-val">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
@@ -339,18 +339,7 @@
                             <span>本期电费</span>
                             <span class="os-qty">—</span>
                             <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtRate6(overviewTotal) }}</span>
-                            <span class="os-amount" :class="{ 'os-neg': Number(billTotalText) < 0 }" @click.stop="billFeeEditingKey !== '__bill_total' && startBillFeeEdit({ ovBillKey: '__bill_total' })">
-                              <template v-if="billFeeEditingKey === '__bill_total'">
-                                <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
-                                  @blur="commitBillFeeOverride({ ovBillKey: '__bill_total' })" @enter="commitBillFeeOverride({ ovBillKey: '__bill_total' })" />
-                              </template>
-                              <template v-else>
-                                <t-tooltip v-if="hasBillFeeOverride('__bill_total')" content="手动修改，重提取后重置" placement="top">
-                                  <span class="os-fee-val os-fee-val--manual">{{ billTotalText }}</span>
-                                </t-tooltip>
-                                <span v-else class="os-fee-val">{{ billTotalText }}</span>
-                              </template>
-                            </span>
+                            <span class="os-amount" :class="{ 'os-neg': Number(billTotalText) < 0 }">{{ billTotalText }}</span>
                             <span class="os-state">
                               <t-tooltip v-if="!billTotalOk" content="差值 {{ fmtRate6(overviewDiff) }}：子项计算含容需量/力调，提取值若为旧口径则不含，重提取后一致" placement="top">
                                 <t-tag theme="danger" variant="light" size="small">异常</t-tag>
@@ -1515,11 +1504,15 @@ const overviewRows = computed(() => {
   const govIBill = sumBillFee(feeRowsOf('industrial-gov'))
   const catalogBill = sumBillFee(feeRowsOf('residential-catalog'))
   const govRBill = sumBillFee(feeRowsOf('residential-gov'))
-  // 工商业小计 = 市场化+线损+输配量+系统+政府基金(工商业)+输配容(需)量电费（与账单口径一致）
-  const industrial = Math.round((market + line + trans + sys + govI + capacity) * 100) / 100
-  const residential = Math.round((catalog + govR) * 100) / 100
-  const industrialBill = Math.round((marketBill + lineBill + transBill + sysBill + govIBill + capacity) * 100) / 100
-  const residentialBill = Math.round((catalogBill + govRBill) * 100) / 100
+  // 工商业小计 = 市场化+线损+输配量+系统+政府基金(工商业)+输配容(需)量电费（子项手动覆盖后随动）
+  const ovOf = (key: string, value: number) => {
+    const ov = feeOverrides.value[key]
+    return ov !== undefined ? ov : value
+  }
+  const industrial = Math.round((ovOf('market', market) + ovOf('line', line) + ovOf('trans', trans) + ovOf('sys', sys) + ovOf('govI', govI) + ovOf('capacity', capacity)) * 100) / 100
+  const residential = Math.round((ovOf('catalog', catalog) + ovOf('govR', govR)) * 100) / 100
+  const industrialBill = Math.round((ovOf('bill:market', marketBill) + ovOf('bill:line', lineBill) + ovOf('bill:trans', transBill) + ovOf('bill:sys', sysBill) + ovOf('bill:govI', govIBill) + ovOf('bill:capacity', capacity)) * 100) / 100
+  const residentialBill = Math.round((ovOf('bill:catalog', catalogBill) + ovOf('bill:govR', govRBill)) * 100) / 100
   const m = (key: string) => sumQty(feeRowsOf(key))
   const withOv = (key: string, value: number) => {
     const ov = feeOverrides.value[key]
@@ -1535,10 +1528,10 @@ const overviewRows = computed(() => {
     { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), ...withBillOv('trans', transBill), qty: m('industrial-trans'), menuKey: 'industrial-trans' },
     { key: 'sys', label: '系统运行费', ...withOv('sys', sys), ...withBillOv('sys', sysBill), qty: m('industrial-sys'), menuKey: 'industrial-sys' },
     { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), ...withBillOv('govI', govIBill), qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), ...withBillOv('industrial', industrialBill), qty: -1, menuKey: '', total: true },
+    { key: 'industrial', label: '工商业电费小计', value: industrial, displayValue: industrial, billFee: industrialBill, qty: -1, menuKey: '', total: true },
     { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), ...withBillOv('catalog', catalogBill), qty: m('residential-catalog'), menuKey: 'residential-catalog' },
     { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), ...withBillOv('govR', govRBill), qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), ...withBillOv('residential', residentialBill), qty: -1, menuKey: '', total: true },
+    { key: 'residential', label: '居民电费小计', value: residential, displayValue: residential, billFee: residentialBill, qty: -1, menuKey: '', total: true },
     { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), ...withBillOv('capacity', capacity), qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
     { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), ...withBillOv('pf', pf), qty: -1, menuKey: 'pf-adjust' },
   ]
@@ -1562,14 +1555,9 @@ const overviewTotal = computed(() => {
 })
 // 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
 const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
-const billTotalText = computed(() => {
-  const ov = feeOverrides.value['__bill_total']
-  const v = ov !== undefined ? ov : billTotal.value
-  return v ? fmtRate6(v) : ''
-})
+const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
 const billTotalOk = computed(() => {
-  const ov = feeOverrides.value['__bill_total']
-  const v = ov !== undefined ? ov : billTotal.value
+  const v = billTotal.value
   if (!v) return true
   return feeClose(overviewTotal.value, v)
 })
