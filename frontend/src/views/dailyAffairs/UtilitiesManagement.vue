@@ -1696,7 +1696,7 @@ const prevEnergy = computed(() => {
   }
 })
 
-// 分时占比对比表（本期占比 = 时段电量 ÷ 本期总电量 × 100%；上期同理）
+// 分时占比对比表（本期占比 = 时段电量 ÷ 本期总电量 × 100%；尖/峰/谷按公式，平段取余量，保证四舍五入后合计 100%）
 const energyCompareRows = computed(() => {
   const curTotal = Number(editForm.value.total_kwh) || 0
   const prevTotal = prevEnergy.value.total
@@ -1711,10 +1711,19 @@ const energyCompareRows = computed(() => {
     deep: prevEnergy.value.deep, peak: prevEnergy.value.peak,
     flat: prevEnergy.value.flat, valley: prevEnergy.value.valley,
   }
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const curPcts = cur.map(c => ({ key: c.key, pct: pct(c.v, curTotal) }))
+  const prevPcts = cur.map(c => ({ key: c.key, pct: prevTotal ? pct(prev[c.key] || 0, prevTotal) : 0 }))
+  const sumExcl = (arr: { key: string; pct: number }[], excl: string) =>
+    arr.filter(a => a.key !== excl).reduce((s, a) => s + a.pct, 0)
+  const curFlat = curTotal ? Math.max(0, round2(100 - sumExcl(curPcts, 'flat'))) : 0
+  const prevFlat = prevTotal ? Math.max(0, round2(100 - sumExcl(prevPcts, 'flat'))) : 0
+  const curPctOf = (key: string) => (key === 'flat' ? curFlat : curPcts.find(p => p.key === key)!.pct)
+  const prevPctOf = (key: string) => (key === 'flat' ? prevFlat : prevPcts.find(p => p.key === key)!.pct)
   return cur.map(c => {
     const pv = prev[c.key] || 0
-    const curPct = pct(c.v, curTotal)
-    const prevPct = pct(pv, prevTotal)
+    const curPct = curPctOf(c.key)
+    const prevPct = prevPctOf(c.key)
     return {
       key: c.key, label: c.label,
       cur: c.v, curPct,
