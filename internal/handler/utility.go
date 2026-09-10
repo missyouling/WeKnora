@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -132,6 +133,8 @@ func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("too many field configs (max 100)"))
 		return
 	}
+	// 引用检测：本次保存被移除的字段 key 是否仍被历史记录引用（仅提示，不影响保存；删除配置不删历史数据）
+	referenced := h.referencedFieldKeys(ctx, tenantID, category, group, req)
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		del := tx.Where("tenant_id = ? AND category = ?", tenantID, category)
 		if group != "" {
@@ -169,7 +172,101 @@ func (h *UtilityHandler) SaveUtilityFieldConfigs(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("save field configs failed: " + err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "字段配置已保存"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "字段配置已保存", "referenced": referenced})
+}
+
+// referencedFieldKeys 统计被本次保存移除的字段 key 在历史记录（knowledges.custom_metadata.records[].item）中被引用的次数。
+// 兼容历史双层 custom_metadata 写法；仅提示用，不阻断保存。
+func (h *UtilityHandler) referencedFieldKeys(ctx context.Context, tenantID uint64, category, group string, req []types.UtilityFieldConfig) map[string]int {
+	result := map[string]int{}
+	var old []types.UtilityFieldConfig
+	q := h.db.WithContext(ctx).Where("tenant_id = ? AND category = ?", int64(tenantID), category)
+	if group != "" {
+		q = q.Where(`"group" = ?`, group)
+	}
+	if err := q.Find(&old).Error; err != nil || len(old) == 0 {
+		return result
+	}
+	oldKeys := map[string]bool{}
+	for _, o := range old {
+		oldKeys[o.FieldKey] = true
+	}
+	newKeys := map[string]bool{}
+	for _, r := range req {
+		newKeys[strings.TrimSpace(r.FieldKey)] = true
+	}
+	var removed []string
+	for k := range oldKeys {
+		if !newKeys[k] {
+			removed = append(removed, k)
+		}
+	}
+	if len(removed) == 0 {
+		return result
+	}
+	var rows []struct {
+		CustomMetadata json.RawMessage `json:"custom_metadata"`
+	}
+	if err := h.db.WithContext(ctx).Table("knowledges").
+		Where("tenant_id = ? AND deleted_at IS NULL", int64(tenantID)).
+		Select("custom_metadata").Scan(&rows).Error; err != nil {
+		return result
+	}
+	for _, row := range rows {
+		for _, rec := range utilityMetaRecords(row.CustomMetadata) {
+			// 兼容两种记录结构：{item:{...}} 包装层（发票/合同）与 直接记录（电费：顶层 key + fee_items[]）
+			var item map[string]json.RawMessage
+			itemRaw := rec["item"]
+			if len(itemRaw) > 0 {
+				if err := json.Unmarshal(itemRaw, &item); err != nil {
+					continue
+				}
+			} else {
+				item = rec
+			}
+			for _, k := range removed {
+				if _, ok := item[k]; ok {
+					result[k]++
+					continue
+				}
+				// 电费/光伏：费用明细子项（fee_items[]）中出现的列字段视为被引用
+				if fi, ok := item["fee_items"]; ok && len(fi) > 0 {
+					var fis []map[string]json.RawMessage
+					if err := json.Unmarshal(fi, &fis); err == nil {
+						for _, fiItem := range fis {
+							if _, ok2 := fiItem[k]; ok2 {
+								result[k]++
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
+// utilityMetaRecords 从 custom_metadata JSON 中提取 records 数组，兼容双层 {custom_metadata:{records}} 历史写法。
+func utilityMetaRecords(raw json.RawMessage) []map[string]json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var meta struct {
+		Records []map[string]json.RawMessage `json:"records"`
+	}
+	if err := json.Unmarshal(raw, &meta); err == nil && len(meta.Records) > 0 {
+		return meta.Records
+	}
+	var wrapped struct {
+		CustomMetadata struct {
+			Records []map[string]json.RawMessage `json:"records"`
+		} `json:"custom_metadata"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err == nil {
+		return wrapped.CustomMetadata.Records
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

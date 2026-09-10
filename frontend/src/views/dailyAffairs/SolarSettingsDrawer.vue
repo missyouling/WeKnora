@@ -254,18 +254,23 @@ const onClose = () => {
   position: fixed;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 8px;
   z-index: 2100;
   cursor: col-resize;
-  &:hover .us-resize-line, .us-resize-line:hover {
-    background: var(--td-brand-color);
-  }
+  display: flex;
+  align-items: center;
+  justify-content: center;
   .us-resize-line {
     width: 2px;
-    height: 100%;
-    margin-left: 2px;
-    background: var(--td-component-stroke);
-    transition: background 0.2s;
+    height: 40px;
+    border-radius: 1px;
+    background: var(--td-brand-color);
+    opacity: 0;
+    transition: opacity 0.15s ease, height 0.15s ease;
+  }
+  &:hover .us-resize-line, .us-resize-line:hover {
+    opacity: 1;
+    height: 80px;
   }
 }
 .us-body { display: flex; flex-direction: column; gap: 16px; }

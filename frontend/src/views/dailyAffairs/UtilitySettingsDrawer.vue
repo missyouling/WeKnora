@@ -157,7 +157,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import {
   listUtilityFieldConfigs,
   saveUtilityFieldConfigs,
@@ -312,21 +312,25 @@ const openGroupEdit = async (key: string) => {
     } catch { rowFields.value = [] }
   }
 }
-const saveGroupFields = () => {
-  if (saving.value) return
+const saveGroupFields = (): Promise<any> => {
+  if (saving.value) return Promise.resolve(null)
   saving.value = true
   const isRow = groupTab.value === 'rows' && hasRowGroup.value
   const target = isRow ? ROW_GROUP_MAP[groupEditKey.value] : groupEditKey.value
   const src = isRow ? rowFields.value : groupFields.value
-  saveUtilityFieldConfigs(props.category, src.map((f, i) => ({
+  return saveUtilityFieldConfigs(props.category, src.map((f, i) => ({
     field_key: f.field_key, label: f.label.trim(), field_type: f.field_type || 'text',
     default_visible: !!f.default_visible, sort_order: i, is_custom: !!f.is_custom,
   })), target)
-    .then(() => {
+    .then((res: any) => {
       loadGroupCounts()
       emit('changed')
+      return res || {}
     })
-    .catch((e: any) => MessagePlugin.error(e?.message || '保存失败'))
+    .catch((e: any) => {
+      MessagePlugin.error(e?.message || '保存失败')
+      return null
+    })
     .finally(() => { saving.value = false })
 }
 const addGroupField = () => {
@@ -346,13 +350,31 @@ const removeGroupField = (i: number) => {
   const isRow = groupTab.value === 'rows' && hasRowGroup.value
   const list = isRow ? rowFields.value : groupFields.value
   const f = list[i]
-  MessagePlugin.confirm(`停用「${f.label}」？历史记录保留原数据，新上传不再显示。`, {
-    theme: 'warning', confirmBtn: '停用', cancelBtn: '取消',
-  }).then((ok) => {
-    if (!ok) return
-    list.splice(i, 1)
-    list.forEach((x, j) => { x.sort_order = j })
-    saveGroupFields()
+  if (!f) return
+  const key = f.field_key
+  const label = f.label
+  let dlg: any = null
+  dlg = DialogPlugin.confirm({
+    header: '删除字段',
+    body: `删除「${label}」？历史记录保留原数据，新上传不再显示。`,
+    theme: 'warning',
+    confirmBtn: '删除',
+    cancelBtn: '取消',
+    onConfirm: async () => {
+      try {
+        list.splice(i, 1)
+        list.forEach((x, j) => { x.sort_order = j })
+        const res: any = await saveGroupFields()
+        const refs = (res && res.referenced) || {}
+        const n = refs[key]
+        if (n) MessagePlugin.warning(`「${label}」已被 ${n} 条历史记录引用，已停用（历史保留，新上传不再显示）`)
+        else MessagePlugin.success(`「${label}」已删除`)
+      } catch {
+        MessagePlugin.error('删除失败')
+      }
+      if (dlg) dlg.destroy()
+    },
+    onClose: () => { if (dlg) dlg.destroy() },
   })
 }
 const moveGroupField = (i: number, dir: number) => {
@@ -454,23 +476,25 @@ watch(() => props.visible, (v) => {
   position: fixed;
   top: 0;
   bottom: 0;
-  z-index: 3100;
   width: 8px;
+  z-index: 3100;
   cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 
   .us-resize-line {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 3px;
     width: 2px;
+    height: 40px;
+    border-radius: 1px;
     background: var(--td-brand-color);
     opacity: 0;
-    transition: opacity .2s;
+    transition: opacity 0.15s ease, height 0.15s ease;
   }
 
   &:hover .us-resize-line {
-    opacity: .6;
+    opacity: 1;
+    height: 80px;
   }
 }
 

@@ -56,12 +56,6 @@
             <!-- 筛选工具栏 -->
             <div class="doc-filter-bar">
               <div class="doc-filter-bar__leading">
-                <div class="doc-filter-field doc-filter-field--search">
-                  <t-input v-model="keyword" placeholder="搜索全部字段" clearable class="doc-search doc-filter-field__control"
-                    @enter="applyFilter" @clear="applyFilter">
-                    <template #prefixIcon><t-icon name="search" size="16px" /></template>
-                  </t-input>
-                </div>
                 <div class="doc-filter-field doc-filter-field--wide">
                   <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
                     placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
@@ -316,7 +310,18 @@
                                 <span v-else class="os-fee-val">{{ fmtRate6(r.displayValue) }}</span>
                               </template>
                             </span>
-                            <span class="os-amount">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="billFeeEditingKey !== r.key && startBillFeeEdit(r)">
+                              <template v-if="billFeeEditingKey === r.key">
+                                <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
+                                  @blur="commitBillFeeOverride(r)" @enter="commitBillFeeOverride(r)" />
+                              </template>
+                              <template v-else>
+                                <t-tooltip v-if="hasBillFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
+                                  <span class="os-fee-val os-fee-val--manual">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
+                                </t-tooltip>
+                                <span v-else class="os-fee-val">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
+                              </template>
+                            </span>
                             <span class="os-state">
                               <t-tag v-if="r.billFee" :theme="feeClose(r.displayValue, r.billFee) ? 'success' : 'danger'" variant="light" size="small">
                                 {{ feeClose(r.displayValue, r.billFee) ? '正常' : '异常' }}
@@ -327,7 +332,18 @@
                             <span>本期电费</span>
                             <span class="os-qty">—</span>
                             <span class="os-amount" :class="{ 'os-neg': overviewTotal < 0 }">{{ fmtRate6(overviewTotal) }}</span>
-                            <span class="os-amount">{{ billTotalText }}</span>
+                            <span class="os-amount" :class="{ 'os-neg': Number(billTotalText) < 0 }" @click.stop="billFeeEditingKey !== '__bill_total' && startBillFeeEdit({ ovBillKey: '__bill_total' })">
+                              <template v-if="billFeeEditingKey === '__bill_total'">
+                                <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
+                                  @blur="commitBillFeeOverride({ ovBillKey: '__bill_total' })" @enter="commitBillFeeOverride({ ovBillKey: '__bill_total' })" />
+                              </template>
+                              <template v-else>
+                                <t-tooltip v-if="hasBillFeeOverride('__bill_total')" content="手动修改，重提取后重置" placement="top">
+                                  <span class="os-fee-val os-fee-val--manual">{{ billTotalText }}</span>
+                                </t-tooltip>
+                                <span v-else class="os-fee-val">{{ billTotalText }}</span>
+                              </template>
+                            </span>
                             <span class="os-state">
                               <t-tooltip v-if="!billTotalOk" content="差值 {{ fmtRate6(overviewDiff) }}：子项计算含容需量/力调，提取值若为旧口径则不含，重提取后一致" placement="top">
                                 <t-tag theme="danger" variant="light" size="small">异常</t-tag>
@@ -961,7 +977,6 @@ const listLoading = ref(false)
 const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
-const keyword = ref('')
 const monthFilter = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
@@ -1037,7 +1052,6 @@ const loadFiles = async (reset = false) => {
   else loadingMore.value = true
   try {
     const res: any = await listUtilityBillRecords(kbId.value, {
-      q: keyword.value || undefined,
       date_from: monthFilter.value ? `${monthFilter.value}-01` : undefined,
       date_to: monthFilter.value ? `${monthFilter.value}-31` : undefined,
       page: page.value,
@@ -1516,18 +1530,22 @@ const overviewRows = computed(() => {
     const ov = feeOverrides.value[key]
     return { value, displayValue: ov !== undefined ? ov : value }
   }
+  const withBillOv = (key: string, value: number) => {
+    const ov = feeOverrides.value[`bill:${key}`]
+    return { billFee: ov !== undefined ? ov : value, ovBillKey: `bill:${key}` }
+  }
   return [
-    { key: 'market', label: '市场化购电费', ...withOv('market', market), billFee: marketBill, qty: m('industrial-market'), menuKey: 'industrial-market' },
-    { key: 'line', label: '上网环节线损费', ...withOv('line', line), billFee: lineBill, qty: m('industrial-line'), menuKey: 'industrial-line' },
-    { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), billFee: transBill, qty: m('industrial-trans'), menuKey: 'industrial-trans' },
-    { key: 'sys', label: '系统运行费', ...withOv('sys', sys), billFee: sysBill, qty: m('industrial-sys'), menuKey: 'industrial-sys' },
-    { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), billFee: govIBill, qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), billFee: industrialBill, qty: -1, menuKey: '', total: true },
-    { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), billFee: catalogBill, qty: m('residential-catalog'), menuKey: 'residential-catalog' },
-    { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), billFee: govRBill, qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), billFee: residentialBill, qty: -1, menuKey: '', total: true },
-    { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), billFee: capacity, qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
-    { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), billFee: pf, qty: -1, menuKey: 'pf-adjust' },
+    { key: 'market', label: '市场化购电费', ...withOv('market', market), ...withBillOv('market', marketBill), qty: m('industrial-market'), menuKey: 'industrial-market' },
+    { key: 'line', label: '上网环节线损费', ...withOv('line', line), ...withBillOv('line', lineBill), qty: m('industrial-line'), menuKey: 'industrial-line' },
+    { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), ...withBillOv('trans', transBill), qty: m('industrial-trans'), menuKey: 'industrial-trans' },
+    { key: 'sys', label: '系统运行费', ...withOv('sys', sys), ...withBillOv('sys', sysBill), qty: m('industrial-sys'), menuKey: 'industrial-sys' },
+    { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), ...withBillOv('govI', govIBill), qty: m('industrial-gov'), menuKey: 'industrial-gov' },
+    { key: 'industrial', label: '工商业电费小计', ...withOv('industrial', industrial), billFee: industrialBill, ovBillKey: '', qty: -1, menuKey: '', total: true },
+    { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), ...withBillOv('catalog', catalogBill), qty: m('residential-catalog'), menuKey: 'residential-catalog' },
+    { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), ...withBillOv('govR', govRBill), qty: m('residential-gov'), menuKey: 'residential-gov' },
+    { key: 'residential', label: '居民电费小计', ...withOv('residential', residential), billFee: residentialBill, ovBillKey: '', qty: -1, menuKey: '', total: true },
+    { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), ...withBillOv('capacity', capacity), qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
+    { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), ...withBillOv('pf', pf), qty: -1, menuKey: 'pf-adjust' },
   ]
 })
 const qtyLabelOf = (r: any) => {
@@ -1549,10 +1567,16 @@ const overviewTotal = computed(() => {
 })
 // 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
 const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
-const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
+const billTotalText = computed(() => {
+  const ov = feeOverrides.value['__bill_total']
+  const v = ov !== undefined ? ov : billTotal.value
+  return v ? fmtRate6(v) : ''
+})
 const billTotalOk = computed(() => {
-  if (!billTotal.value) return true
-  return feeClose(overviewTotal.value, billTotal.value)
+  const ov = feeOverrides.value['__bill_total']
+  const v = ov !== undefined ? ov : billTotal.value
+  if (!v) return true
+  return feeClose(overviewTotal.value, v)
 })
 const overviewDiff = computed(() => {
   const nominal = billTotal.value
@@ -2295,6 +2319,31 @@ const commitFeeOverride = async (r: any) => {
   await saveEditForm()
 }
 const hasFeeOverride = (key: string) => feeOverrides.value[key] !== undefined
+
+/** 账单电费列手动编辑（与电费列同机制，存 overview_overrides；重提取后重置） */
+const billFeeEditingKey = ref('')
+const billFeeEditValue = ref('')
+const startBillFeeEdit = (r: any) => {
+  billFeeEditingKey.value = r.ovBillKey
+  const cur = r.ovBillKey === '__bill_total'
+    ? (feeOverrides.value['__bill_total'] !== undefined ? feeOverrides.value['__bill_total'] : billTotal.value)
+    : (feeOverrides.value[r.ovBillKey] !== undefined ? feeOverrides.value[r.ovBillKey] : (r.billFee ?? ''))
+  billFeeEditValue.value = String(cur ?? '')
+  nextTick(() => {
+    const el = document.querySelector('.os-fee-input input') as HTMLInputElement | null
+    el?.focus()
+  })
+}
+const commitBillFeeOverride = async (r: any) => {
+  billFeeEditingKey.value = ''
+  if (billFeeEditValue.value === '') return
+  const v = Number(billFeeEditValue.value)
+  if (!Number.isFinite(v)) return
+  feeOverrides.value = { ...feeOverrides.value, [r.ovBillKey]: Math.round(v * 100) / 100 }
+  autoSaveDirty = true
+  await saveEditForm()
+}
+const hasBillFeeOverride = (key: string) => feeOverrides.value[key] !== undefined
 const sumFeeBy = (row: Row, pred: (it: any) => boolean): number =>
   Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100
 const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {

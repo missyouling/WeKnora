@@ -36,12 +36,6 @@
         <!-- 筛选工具栏 -->
         <div class="doc-filter-bar">
           <div class="doc-filter-bar__leading">
-            <div class="doc-filter-field doc-filter-field--search">
-              <t-input v-model="keyword" placeholder="搜索全部字段" clearable class="doc-search doc-filter-field__control"
-                @enter="applyFilter" @clear="applyFilter">
-                <template #prefixIcon><t-icon name="search" size="16px" /></template>
-              </t-input>
-            </div>
             <div class="doc-filter-field doc-filter-field--wide">
               <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
                 placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
@@ -440,7 +434,8 @@
               <div v-for="f in detailFields" :key="f.key" class="field-grid-item">
                 <label class="field-label">{{ f.label }}</label>
                 <t-input :model-value="String(detailForm[f.key] ?? '')" :type="f.type === 'number' ? 'number' : 'text'" size="small"
-                  @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }" />
+                  @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }"
+                  @blur="saveDetailField(f)" />
               </div>
             </div>
             <div class="auto-save-tip">修改后自动保存</div>
@@ -565,21 +560,26 @@ const COLUMN_STORAGE_VERSION = 1
 
 interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string }
 const FALLBACK_COLUMNS: ColDef[] = [
-  // 默认字段
+  // 默认字段（按用户指定顺序）
   { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.2fr' },
   { key: 'generation_kwh', label: '发电量', fieldType: 'number', default: true, w: '1.1fr' },
   { key: 'grid_kwh', label: '上网电量', fieldType: 'number', default: true, w: '1.1fr' },
   { key: 'settlement_amount', label: '结算金额', fieldType: 'amount', default: true, w: '1.2fr' },
+  { key: 'cumulative_kwh', label: '年累计', fieldType: 'number', default: true, w: '1.1fr' },
+  { key: 'meter_prev', label: '上期示数', fieldType: 'number', default: true, w: '1.1fr' },
+  { key: 'meter_curr', label: '本期示数', fieldType: 'number', default: true, w: '1.1fr' },
+  { key: 'meter_ratio', label: '倍率', fieldType: 'text', default: true, w: '0.9fr' },
+  { key: 'meter_reading', label: '抄见电量', fieldType: 'number', default: true, w: '1.1fr' },
+  { key: 'meter_bill', label: '计费电量', fieldType: 'number', default: true, w: '1.1fr' },
   // 详细字段
+  { key: 'tax_rate', label: '税率', fieldType: 'text', default: false, w: '0.8fr' },
+  { key: 'tax_amount', label: '税额', fieldType: 'amount', default: false, w: '1fr' },
   { key: 'account_no', label: '发电户号', fieldType: 'text', default: false, w: '1.2fr' },
   { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
-  { key: 'supply_unit', label: '服务单位', fieldType: 'text', default: false, w: '1.3fr' },
   { key: 'voltage_level', label: '并网电压', fieldType: 'text', default: false, w: '1.1fr' },
   { key: 'consumption_mode', label: '消纳方式', fieldType: 'text', default: false, w: '1.2fr' },
   { key: 'generation_mode', label: '发电方式', fieldType: 'text', default: false, w: '1.1fr' },
-  { key: 'cumulative_kwh', label: '年累计', fieldType: 'number', default: false, w: '1.1fr' },
-  { key: 'tax_rate', label: '税率', fieldType: 'text', default: false, w: '0.8fr' },
-  { key: 'tax_amount', label: '税额', fieldType: 'amount', default: false, w: '1fr' },
+  { key: 'supply_unit', label: '服务单位', fieldType: 'text', default: false, w: '1.3fr' },
 ]
 
 const kbId = ref('')
@@ -636,7 +636,6 @@ const listLoading = ref(false)
 const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
-const keyword = ref('')
 const monthFilter = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
@@ -696,9 +695,18 @@ const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
 })))
 const displayRows = computed(() => [...pendingRows.value, ...rows.value])
 
+const meterReading = (row: Row) => {
+  const g = row.item?.gateways?.[0]
+  return g?.readings?.[0] || null
+}
 const cellText = (row: Row, key: string): string => {
   if (row.kind === 'pending') return ''
   if (key === 'bill_period') return metricPeriodOf(row.item)
+  if (key === 'meter_prev') { const r = meterReading(row); return r?.prev !== undefined && r?.prev !== null && r?.prev !== '' ? fmtKwh(Number(r.prev)) : '' }
+  if (key === 'meter_curr') { const r = meterReading(row); return r?.curr !== undefined && r?.curr !== null && r?.curr !== '' ? fmtKwh(Number(r.curr)) : '' }
+  if (key === 'meter_ratio') return displayMultiplier(meterReading(row))
+  if (key === 'meter_reading') { const r = meterReading(row); return r?.reading_kwh !== undefined && r?.reading_kwh !== null && r?.reading_kwh !== '' ? fmtKwh(Number(r.reading_kwh)) : '' }
+  if (key === 'meter_bill') { const r = meterReading(row); return r?.bill_kwh !== undefined && r?.bill_kwh !== null && r?.bill_kwh !== '' ? fmtKwh(Number(r.bill_kwh)) : '' }
   const v = row.item?.[key]
   if (v === undefined || v === null || v === '') return ''
   const col = columnDefs.value.find(c => c.key === key)
@@ -730,7 +738,6 @@ const loadFiles = async (reset = false) => {
   else loadingMore.value = true
   try {
     const res: any = await listSolarBillRecords(kbId.value, {
-      q: keyword.value || undefined,
       date_from: monthFilter.value ? `${monthFilter.value}-01` : undefined,
       date_to: monthFilter.value ? `${monthFilter.value}-31` : undefined,
       page: page.value,
@@ -938,9 +945,35 @@ const openDetail = async (row: Row) => {
 }
 const summaryLines = ref('')
 const closeDetail = () => {
-  // 自动保存字段编辑
+  // 自动保存字段编辑（失焦已逐字段保存，此处兜底未失焦的改动）
   if (currentRow.value) saveDetailFields()
   detailVisible.value = false
+}
+// 字段失焦自动保存（与合同/发票一致；数字字段清洗后仅更新该字段）
+const saveDetailField = async (f: any) => {
+  if (!currentRow.value || !kbId.value) return
+  const key = f.key
+  if (f.type === 'number') {
+    const n = Number(detailForm.value[key])
+    detailForm.value[key] = Number.isFinite(n) ? n : 0
+  }
+  try {
+    const kid = currentRow.value.knowledgeId
+    const kd: any = await getKnowledgeDetails(kid)
+    let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+    meta.kind = 'solar_bill'
+    meta.records = meta.records || []
+    if (meta.records.length) {
+      meta.records[0] = { ...(meta.records[0] || {}), [key]: detailForm.value[key] }
+    } else {
+      meta.records = [{ ...detailForm.value, gateways: currentRow.value.item?.gateways || [] }]
+    }
+    await updateKnowledgeMetadata(kid, { custom_metadata: meta })
+    currentRow.value.item = { ...(currentRow.value.item || {}), ...detailForm.value }
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  }
 }
 const saveDetailFields = async () => {
   if (!currentRow.value || !kbId.value) return
@@ -1304,39 +1337,62 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 列表 */
 .doc-list-scroll {
-  flex: 1;
-  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 100%;
+  min-width: 0;
   overflow-y: auto;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 .doc-list-view { display: flex; flex-direction: column; }
 .doc-list-header, .doc-list-row {
   display: grid;
   align-items: center;
-  padding: 0 12px;
-  min-height: 42px;
+  padding: 0 16px;
+  min-width: 100%;
+  box-sizing: border-box;
 }
 .doc-list-header {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 5;
+  height: 40px;
   background: var(--td-bg-color-secondarycontainer);
   border-bottom: 1px solid var(--td-component-stroke);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  .cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 .doc-list-row {
+  position: relative;
+  min-height: 52px;
   border-bottom: 1px solid var(--td-component-stroke);
   cursor: pointer;
   font-size: 13px;
-  &:hover { background: var(--td-bg-color-container-hover); }
-  &.selected { background: var(--td-brand-color-light); }
+  color: var(--td-text-color-primary);
+  transition: background-color 0.2s ease;
+  &:last-child { border-bottom: 0; }
+  &:hover { background: var(--td-bg-color-secondarycontainer); }
+  &.selected { background: var(--td-brand-color-1); }
   &.is-pending { cursor: default; }
 }
-.cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cell-check { display: flex; align-items: center; justify-content: center; }
 .cell-extractStatus { display: flex; align-items: center; justify-content: center; }
 .cell-tags { display: flex; align-items: center; }

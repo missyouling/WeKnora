@@ -3,12 +3,6 @@
     <!-- 工具栏 -->
     <div class="doc-filter-bar">
       <div class="doc-filter-bar__leading">
-        <div class="doc-filter-field doc-filter-field--search">
-          <t-input v-model="keyword" placeholder="搜索月份或备注" clearable class="doc-search doc-filter-field__control"
-            @enter="load" @clear="load">
-            <template #prefixIcon><t-icon name="search" size="16px" /></template>
-          </t-input>
-        </div>
         <div class="doc-filter-field">
           <t-date-picker v-model="month" placeholder="月份" format="YYYY-MM" value-type="YYYY-MM" clearable class="doc-date-picker doc-filter-field__control" @change="load" />
         </div>
@@ -208,7 +202,6 @@ function colWidth(key: string): string {
 const rows = ref<any[]>([])
 const displayRows = ref<any[]>([])
 const loading = ref(true)
-const keyword = ref('')
 const month = ref<string | undefined>(undefined)
 const listScrollRef = ref<HTMLElement>()
 
@@ -217,19 +210,12 @@ const load = async () => {
   try {
     const res: any = await listUtilityMeterRecords({ category: props.category, month: month.value || undefined })
     rows.value = (res?.data || res || []) as any[]
-    applyKeyword()
+    displayRows.value = rows.value
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载失败')
   } finally {
     loading.value = false
   }
-}
-
-const applyKeyword = () => {
-  const kw = keyword.value.trim().toLowerCase()
-  displayRows.value = kw
-    ? rows.value.filter(r => String(r.month).toLowerCase().includes(kw) || String(r.remark || '').toLowerCase().includes(kw))
-    : rows.value
 }
 
 
@@ -430,11 +416,6 @@ onMounted(() => {
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  overflow: visible;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .doc-list-header,
@@ -456,7 +437,6 @@ onMounted(() => {
   color: var(--td-text-color-secondary);
   background: var(--td-bg-color-secondarycontainer);
   border-bottom: 1px solid var(--td-component-stroke);
-  border-radius: 8px 8px 0 0;
 
   .cell {
     white-space: nowrap;
@@ -523,8 +503,14 @@ onMounted(() => {
 }
 
 .meter-list-scroll {
+  flex: 0 1 auto;
   max-height: calc(100vh - 320px);
+  min-width: 0;
   overflow-y: auto;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 9px;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .meter-empty {
