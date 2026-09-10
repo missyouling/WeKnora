@@ -155,61 +155,79 @@
       </div>
       <!-- 列字段配置 -->
       <template v-if="groupTab === 'cols'">
-        <div class="us-field-head">
-          <span class="us-fc-label">字段名</span>
-          <span class="us-fc-type">类型</span>
-          <span class="us-fc-visible">默认显示</span>
-          <span class="us-fc-order">排序</span>
-          <span class="us-fc-del">操作</span>
-        </div>
-        <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
-          <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="saveGroupFields" />
-          <t-select v-model="f.field_type" size="small" class="us-field-type" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
-          <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
-          <div class="us-field-order">
-            <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
-              <template #icon><t-icon name="arrow-up" size="14px" /></template>
-            </t-button>
-            <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
-              <template #icon><t-icon name="arrow-down" size="14px" /></template>
-            </t-button>
+        <div class="us-cfg">
+          <div class="us-cfg-head">
+            <span class="us-col-label">字段名</span>
+            <span class="us-col-type">类型</span>
+            <span class="us-col-visible">默认显示</span>
+            <span class="us-col-order">排序</span>
+            <span class="us-col-del">操作</span>
           </div>
-          <div class="us-field-del">
-            <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
-              <template #icon><t-icon name="delete" size="15px" /></template>
-            </t-button>
+          <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-cfg-row">
+            <div class="us-cell us-col-label">
+              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" @change="saveGroupFields" />
+            </div>
+            <div class="us-cell us-col-type">
+              <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+            </div>
+            <div class="us-cell us-col-visible">
+              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" @change="saveGroupFields" />
+            </div>
+            <div class="us-cell us-col-order">
+              <div class="us-cell-order">
+                <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+                  <template #icon><t-icon name="arrow-up" size="14px" /></template>
+                </t-button>
+                <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
+                  <template #icon><t-icon name="arrow-down" size="14px" /></template>
+                </t-button>
+              </div>
+            </div>
+            <div class="us-cell us-col-del">
+              <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+                <template #icon><t-icon name="delete" size="15px" /></template>
+              </t-button>
+            </div>
           </div>
+          <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
         </div>
-        <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
       </template>
       <!-- 行字段配置（与列字段同 5 列，类型固定文本） -->
       <template v-else>
-        <div class="us-field-head">
-          <span class="us-fc-label">字段名</span>
-          <span class="us-fc-type">类型</span>
-          <span class="us-fc-visible">默认显示</span>
-          <span class="us-fc-order">排序</span>
-          <span class="us-fc-del">操作</span>
-        </div>
-        <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-field-row">
-          <t-input v-model="f.label" size="small" class="us-field-label" placeholder="行标题" @change="saveGroupFields" />
-          <span class="us-fixed-type">文本</span>
-          <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
-          <div class="us-field-order">
-            <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
-              <template #icon><t-icon name="arrow-up" size="14px" /></template>
-            </t-button>
-            <t-button variant="text" size="small" shape="square" :disabled="i === rowFields.length - 1" @click="moveGroupField(i, 1)">
-              <template #icon><t-icon name="arrow-down" size="14px" /></template>
-            </t-button>
+        <div class="us-cfg">
+          <div class="us-cfg-head">
+            <span class="us-col-label">字段名</span>
+            <span class="us-col-type">类型</span>
+            <span class="us-col-visible">默认显示</span>
+            <span class="us-col-order">排序</span>
+            <span class="us-col-del">操作</span>
           </div>
-          <div class="us-field-del">
-            <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
-              <template #icon><t-icon name="delete" size="15px" /></template>
-            </t-button>
+          <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-cfg-row">
+            <div class="us-cell us-col-label">
+              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="行标题" @change="saveGroupFields" />
+            </div>
+            <div class="us-cell us-col-type"><span class="us-fixed-type">文本</span></div>
+            <div class="us-cell us-col-visible">
+              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" @change="saveGroupFields" />
+            </div>
+            <div class="us-cell us-col-order">
+              <div class="us-cell-order">
+                <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+                  <template #icon><t-icon name="arrow-up" size="14px" /></template>
+                </t-button>
+                <t-button variant="text" size="small" shape="square" :disabled="i === rowFields.length - 1" @click="moveGroupField(i, 1)">
+                  <template #icon><t-icon name="arrow-down" size="14px" /></template>
+                </t-button>
+              </div>
+            </div>
+            <div class="us-cell us-col-del">
+              <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+                <template #icon><t-icon name="delete" size="15px" /></template>
+              </t-button>
+            </div>
           </div>
+          <div v-if="!rowFields.length" class="us-empty">暂无行，点击下方新增</div>
         </div>
-        <div v-if="!rowFields.length" class="us-empty">暂无行，点击下方新增</div>
       </template>
       <div class="us-actions">
         <t-button variant="outline" size="small" @click="addGroupField">
@@ -709,39 +727,98 @@ watch(() => props.visible, (v) => {
   }
 }
 
-.us-field-head,
-.us-field-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 4px;
+/* 字段配置表：table-layout fixed，固定列宽，标题与内容逐列居中 */
+.us-cfg {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
   font-size: 12px;
   color: var(--td-text-color-secondary);
 }
 
-.us-field-head {
-  border-bottom: 1px solid var(--td-component-stroke);
-  margin-bottom: 4px;
+.us-cfg-head,
+.us-cfg-row {
+  display: table-row;
+}
 
-  span {
+.us-cfg-head {
+  > span {
+    display: table-cell;
+    vertical-align: middle;
     text-align: center;
+    padding: 6px 2px;
+    border-bottom: 1px solid var(--td-component-stroke);
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
 }
 
-/* 列宽与行内容一致（字段名 / 类型 / 默认显示 / 排序 / 操作） */
-.us-fc-label { flex: 1.4; }
-.us-fc-type { flex: 0.9; }
-.us-fc-visible { flex: 0.7; }
-.us-fc-order { flex: 0.9; }
-.us-fc-del { flex: 0.5; }
+.us-cfg-row {
+  > .us-cell {
+    display: table-cell;
+    vertical-align: middle;
+    text-align: center;
+    padding: 3px 2px;
+    overflow: hidden;
+  }
+}
+
+/* 固定列宽（字段名 / 类型 / 默认显示 / 排序 / 操作） */
+.us-col-label { width: 30%; }
+.us-col-type { width: 20%; }
+.us-col-visible { width: 16%; }
+.us-col-order { width: 21%; }
+.us-col-del { width: 13%; }
+
+/* 输入框 / 下拉框：不超出单元格，文本居中 */
+.us-cfg-input,
+.us-cfg-select {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.us-cfg-input {
+  :deep(input) {
+    text-align: center;
+    padding: 0 4px;
+  }
+}
+
+.us-cfg-select {
+  :deep(.t-select__single) {
+    justify-content: center;
+  }
+
+  :deep(.t-select__wrap) {
+    width: 100%;
+  }
+}
+
+/* 开关：保持固有宽度不拉长，单元格内居中 */
+.us-cfg-switch {
+  display: inline-flex;
+  width: auto !important;
+  min-width: 0 !important;
+  margin: 0 auto;
+}
+
+/* 排序按钮组 / 删除按钮：居中且不换行 */
+.us-cell-order {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
 .us-fixed-type {
-  flex: 0.9;
-  text-align: center;
+  display: inline-block;
   color: var(--td-text-color-secondary);
   font-size: 12px;
+  line-height: 24px;
 }
 
 .us-group-tabs {
@@ -771,38 +848,6 @@ watch(() => props.visible, (v) => {
     background: var(--td-bg-color-container);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
     font-weight: 500;
-  }
-}
-
-.us-field-row {
-  .us-field-label {
-    flex: 1.4;
-
-    :deep(input) { text-align: center; }
-  }
-
-  .us-field-type {
-    flex: 0.9;
-
-    :deep(.t-select__single) { justify-content: center; }
-  }
-
-  .us-field-visible {
-    flex: 0.7;
-    justify-content: center;
-  }
-
-  .us-field-order {
-    flex: 0.9;
-    display: flex;
-    justify-content: center;
-    gap: 2px;
-  }
-
-  .us-field-del {
-    flex: 0.5;
-    display: flex;
-    justify-content: center;
   }
 }
 
