@@ -1347,19 +1347,30 @@ const ROW_GROUP_OF_MENU: Record<string, string> = {
   'industrial-gov': 'gov-industrial-rows',
   'residential-gov': 'gov-residential-rows',
 }
+// 分时时段（仅括号内为这些时段时，配置 key 才拆分为 名称+时段；如"零售交易电费(尖峰)"）
+const ROW_PERIODS = ['尖峰', '峰', '平', '谷']
+const normRowName = (s: string) => (s || '').trim().replace(/[（(]/g, '(').replace(/[）)]/g, ')')
+const parseRowKey = (k: string) => {
+  const m = /^(.+?)\(([^)]+)\)$/.exec(k || '')
+  if (m && ROW_PERIODS.includes(m[2])) return { name: m[1], period: m[2] }
+  return { name: k || '', period: '' }
+}
 const feeRowsOf = (key: string) => {
   const list = (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
   const rg = ROW_GROUP_OF_MENU[key]
   const cfgs = (rg ? rowConfigsOf(rg) : []).filter((c: any) => c.default_visible !== false)
   if (!cfgs.length) return list // 无行配置 → 原样展示提取结果
-  // 按行配置过滤 + 排序 + 改名（未配置的行隐藏）
+  // 按行配置过滤 + 排序 + 改名（未配置的行隐藏；分时子项按 名称(时段) 一一对应）
   return cfgs.map((cfg: any) => {
+    const want = parseRowKey(cfg.field_key)
     const hit = list.find((it: any) => {
-      const n = it.name || ''
-      return n === cfg.field_key || n === cfg.label || n.includes(cfg.field_key) || cfg.field_key.includes(n)
+      const n = normRowName(it.name)
+      const p = (it.period || '').trim()
+      if (want.period) return n === normRowName(want.name) && p === want.period
+      return n === normRowName(want.name)
     })
     if (!hit) return null
-    return { ...hit, name: cfg.label }
+    return { ...hit, name: cfg.label || cfg.field_key }
   }).filter(Boolean)
 }
 const feeSubtotalOf = (key: string) => Math.round(feeRowsOf(key).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
@@ -1466,7 +1477,11 @@ const capacityRows = computed(() => (capacityRow.value ? [capacityRow.value] : [
 const pfRows = computed(() => (pfRow.value ? [pfRow.value] : []))
 
 const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
-const sumQty = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.qty) || 0), 0) * 10) / 10
+// 类别计费数量：取该类别行中最大计费电量（子项分时段的 qty 各为其段电量，类别口径用整表电量代表值）
+const sumQty = (arr: any[]) => {
+  if (!arr.length) return 0
+  return Math.round(Math.max(...arr.map((it: any) => Number(it.qty) || 0)) * 10) / 10
+}
 const sumBillFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee_amount) || 0), 0) * 100) / 100
 
 const overviewRows = computed(() => {
@@ -1487,9 +1502,10 @@ const overviewRows = computed(() => {
   const govIBill = sumBillFee(feeRowsOf('industrial-gov'))
   const catalogBill = sumBillFee(feeRowsOf('residential-catalog'))
   const govRBill = sumBillFee(feeRowsOf('residential-gov'))
-  const industrial = Math.round((market + line + trans + sys + govI) * 100) / 100
+  // 工商业小计 = 市场化+线损+输配量+系统+政府基金(工商业)+输配容(需)量电费（与账单口径一致）
+  const industrial = Math.round((market + line + trans + sys + govI + capacity) * 100) / 100
   const residential = Math.round((catalog + govR) * 100) / 100
-  const industrialBill = Math.round((marketBill + lineBill + transBill + sysBill + govIBill) * 100) / 100
+  const industrialBill = Math.round((marketBill + lineBill + transBill + sysBill + govIBill + capacity) * 100) / 100
   const residentialBill = Math.round((catalogBill + govRBill) * 100) / 100
   const m = (key: string) => sumQty(feeRowsOf(key))
   const withOv = (key: string, value: number) => {
@@ -1523,9 +1539,9 @@ const overviewTotal = computed(() => {
   const vals = overviewRows.value
   const industrial = vals.find(r => r.key === 'industrial')?.displayValue || 0
   const residential = vals.find(r => r.key === 'residential')?.displayValue || 0
-  const capacity = vals.find(r => r.key === 'capacity')?.displayValue || 0
+  // 容量电费已计入工商业小计，功率因数调整电费单独计
   const pf = vals.find(r => r.key === 'pf')?.displayValue || 0
-  return Math.round((industrial + residential + capacity + pf) * 100) / 100
+  return Math.round((industrial + residential + pf) * 100) / 100
 })
 // 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
 const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
