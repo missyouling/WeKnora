@@ -1739,6 +1739,9 @@ const renderEnergyChart = async () => {
     // 容器因 v-if 切换重建（如从明细菜单返回概览）时，旧实例仍挂在已销毁容器上，需重建
     energyChart?.dispose()
     energyChart = echarts.init(el)
+  } else {
+    // 容器尺寸变化（如概览布局调整）后同步图表尺寸
+    energyChart.resize()
   }
   const rows = energyCompareRows.value
   const prevExists = prevEnergy.value.exists
@@ -2236,6 +2239,11 @@ const feeEditValue = ref('')
 const startFeeEdit = (r: any) => {
   feeEditingKey.value = r.key
   feeEditValue.value = String(r.displayValue ?? '')
+  // 显示编辑框后自动聚焦：用户未先点击输入框直接点击外部时也能触发失焦保存
+  nextTick(() => {
+    const el = document.querySelector('.os-fee-input input') as HTMLInputElement | null
+    el?.focus()
+  })
 }
 const commitFeeOverride = async (r: any) => {
   feeEditingKey.value = ''
@@ -3120,6 +3128,8 @@ onBeforeUnmount(() => { stopPolling() })
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: stretch;
+  flex: 1;
+  min-height: 0;
 
   > .bill-card {
     display: flex;
