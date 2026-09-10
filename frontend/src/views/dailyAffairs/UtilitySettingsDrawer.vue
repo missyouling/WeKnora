@@ -156,11 +156,11 @@
       <!-- 列字段配置 -->
       <template v-if="groupTab === 'cols'">
         <div class="us-field-head">
-          <span style="flex: 1.4">字段名</span>
-          <span style="flex: 0.9">类型</span>
-          <span style="flex: 0.7">默认显示</span>
-          <span style="flex: 0.9">排序</span>
-          <span style="flex: 0.5">操作</span>
+          <span class="us-fc-label">字段名</span>
+          <span class="us-fc-type">类型</span>
+          <span class="us-fc-visible">默认显示</span>
+          <span class="us-fc-order">排序</span>
+          <span class="us-fc-del">操作</span>
         </div>
         <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-field-row">
           <t-input v-model="f.label" size="small" class="us-field-label" placeholder="字段名" @change="saveGroupFields" />
@@ -182,15 +182,19 @@
         </div>
         <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
       </template>
-      <!-- 行字段配置 -->
+      <!-- 行字段配置（与列字段同 5 列，类型固定文本） -->
       <template v-else>
-        <div class="us-field-head us-field-head--row">
-          <span style="flex: 2.4">行标题</span>
-          <span style="flex: 0.9">排序</span>
-          <span style="flex: 0.5">操作</span>
+        <div class="us-field-head">
+          <span class="us-fc-label">字段名</span>
+          <span class="us-fc-type">类型</span>
+          <span class="us-fc-visible">默认显示</span>
+          <span class="us-fc-order">排序</span>
+          <span class="us-fc-del">操作</span>
         </div>
         <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-field-row">
           <t-input v-model="f.label" size="small" class="us-field-label" placeholder="行标题" @change="saveGroupFields" />
+          <span class="us-fixed-type">文本</span>
+          <t-switch v-model="f.default_visible" size="small" class="us-field-visible" @change="saveGroupFields" />
           <div class="us-field-order">
             <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
               <template #icon><t-icon name="arrow-up" size="14px" /></template>
@@ -709,7 +713,7 @@ watch(() => props.visible, (v) => {
 .us-field-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   padding: 6px 4px;
   font-size: 12px;
   color: var(--td-text-color-secondary);
@@ -718,6 +722,26 @@ watch(() => props.visible, (v) => {
 .us-field-head {
   border-bottom: 1px solid var(--td-component-stroke);
   margin-bottom: 4px;
+
+  span {
+    text-align: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}
+
+/* 列宽与行内容一致（字段名 / 类型 / 默认显示 / 排序 / 操作） */
+.us-fc-label { flex: 1.4; }
+.us-fc-type { flex: 0.9; }
+.us-fc-visible { flex: 0.7; }
+.us-fc-order { flex: 0.9; }
+.us-fc-del { flex: 0.5; }
+.us-fixed-type {
+  flex: 0.9;
+  text-align: center;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
 }
 
 .us-group-tabs {
@@ -751,11 +775,35 @@ watch(() => props.visible, (v) => {
 }
 
 .us-field-row {
-  .us-field-label { flex: 1.4; }
-  .us-field-type { flex: 0.9; }
-  .us-field-visible { flex: 0.7; justify-content: flex-start; }
-  .us-field-order { flex: 0.9; display: flex; gap: 2px; }
-  .us-field-del { flex: 0.5; }
+  .us-field-label {
+    flex: 1.4;
+
+    :deep(input) { text-align: center; }
+  }
+
+  .us-field-type {
+    flex: 0.9;
+
+    :deep(.t-select__single) { justify-content: center; }
+  }
+
+  .us-field-visible {
+    flex: 0.7;
+    justify-content: center;
+  }
+
+  .us-field-order {
+    flex: 0.9;
+    display: flex;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .us-field-del {
+    flex: 0.5;
+    display: flex;
+    justify-content: center;
+  }
 }
 
 .us-row {

@@ -1350,7 +1350,7 @@ const ROW_GROUP_OF_MENU: Record<string, string> = {
 const feeRowsOf = (key: string) => {
   const list = (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
   const rg = ROW_GROUP_OF_MENU[key]
-  const cfgs = rg ? rowConfigsOf(rg) : []
+  const cfgs = (rg ? rowConfigsOf(rg) : []).filter((c: any) => c.default_visible !== false)
   if (!cfgs.length) return list // 无行配置 → 原样展示提取结果
   // 按行配置过滤 + 排序 + 改名（未配置的行隐藏）
   return cfgs.map((cfg: any) => {
@@ -1384,9 +1384,9 @@ const BASIC_INFO_FIELDS = [
   { key: 'supply_unit', label: '供电服务单位' },
   { key: 'address', label: '用电地址' },
 ]
-// 基础信息行配置（设置 → 账单概况 → 行字段配置 驱动；未配置时用内置字段兜底）
+// 基础信息行配置（设置 → 账单概况 → 行字段配置 驱动；未配置时用内置字段兜底；关闭默认显示的行隐藏）
 const overviewRowConfigs = computed(() => {
-  const list = allFieldConfigs.value.filter((c: any) => c.group === 'overview-rows' && c.deleted_at == null)
+  const list = allFieldConfigs.value.filter((c: any) => c.group === 'overview-rows' && c.deleted_at == null && c.default_visible !== false)
   if (!list.length) return BASIC_INFO_FIELDS
   return [...list]
     .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
@@ -1714,8 +1714,8 @@ const rowConfigsOf = (group: string) => {
   const list = allFieldConfigs.value.filter((c: any) => c.group === group && c.deleted_at == null)
   return [...list].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
 }
-const meterRowConfigs = computed(() => rowConfigsOf('meter-rows'))
-const residentRowConfigs = computed(() => rowConfigsOf('resident-meter-rows'))
+const meterRowConfigs = computed(() => rowConfigsOf('meter-rows').filter((c: any) => c.default_visible !== false))
+const residentRowConfigs = computed(() => rowConfigsOf('resident-meter-rows').filter((c: any) => c.default_visible !== false))
 const matchRow = (row: any, cfg: any) => {
   const t = row?.meter_type || row?.project || ''
   if (!t) return false
