@@ -3131,7 +3131,7 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
-/* 账单概况 + 用能分析 一行两卡片（等高；用能分析内容均匀分布，无底部空白） */
+/* 账单概况 + 用能分析 一行两卡片（等高；组件自然紧凑排列，底部允许留白） */
 .overview-two-col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3147,8 +3147,7 @@ onBeforeUnmount(() => { stopPolling() })
   }
 
   > .bill-card:nth-child(2) {
-    justify-content: space-between;
-
+    /* 组件间保持自然间距，不强行撑开 */
     .ea-chart {
       height: 210px;
       margin-bottom: 14px;
