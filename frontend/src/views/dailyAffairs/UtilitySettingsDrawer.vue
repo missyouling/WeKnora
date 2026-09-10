@@ -8,31 +8,6 @@
       class="utility-settings-drawer" :close-on-overlay-click="true" @close="onClose"
       @update:visible="(v: boolean) => (v || onClose())">
       <div class="us-body">
-        <!-- 基本户（仅电费） -->
-        <div v-if="props.category === 'electricity'" class="us-section">
-          <div class="us-section-head">
-            <span class="us-section-title">基本户</span>
-            <span class="us-state">账单按户号自动匹配，匹配失败用默认户</span>
-            <span class="us-spacer" />
-            <t-button variant="outline" size="small" @click="openAccEdit(null)">
-              <template #icon><t-icon name="add" size="14px" /></template>
-              新增基本户
-            </t-button>
-          </div>
-          <div v-if="!accounts.length" class="us-empty">暂无基本户，点击新增</div>
-          <div class="us-card-grid">
-            <div v-for="a in accounts" :key="a.id" class="us-card" @click="openAccEdit(a)">
-              <div class="us-card-head">
-                <span class="us-card-title">{{ a.name || '未命名户' }}</span>
-                <span v-if="a.is_default" class="us-card-tag">默认</span>
-              </div>
-              <div class="us-card-line">户号：{{ a.account_no || '—' }}</div>
-              <div class="us-card-line">电能表：{{ a.meter_no || '—' }}</div>
-              <div class="us-card-line">倍率：{{ a.ratio ? a.ratio : '—' }}</div>
-            </div>
-          </div>
-        </div>
-
         <!-- 字段配置（按分组卡片） -->
         <div class="us-section">
           <div class="us-section-head">
@@ -82,66 +57,6 @@
             </div>
           </div>
         </div>
-      </div>
-    </t-drawer>
-
-    <!-- 基本户编辑抽屉 -->
-    <t-drawer v-if="accEditVisible" :visible="true" :header="accForm.id ? '编辑基本户' : '新增基本户'" :size="'480px'" :footer="false"
-      :close-on-overlay-click="true" @close="accEditVisible = false" @update:visible="(v: boolean) => (v || (accEditVisible = false))">
-      <div class="us-basic-grid">
-        <div class="us-basic-item">
-          <label>名称</label>
-          <t-input v-model="accForm.name" size="small" placeholder="自定义名称" />
-        </div>
-        <div class="us-basic-item">
-          <label>户号</label>
-          <t-input v-model="accForm.account_no" size="small" placeholder="户号" />
-        </div>
-        <div class="us-basic-item">
-          <label>户名</label>
-          <t-input v-model="accForm.account_name" size="small" placeholder="户名" />
-        </div>
-        <div class="us-basic-item">
-          <label>用电类别</label>
-          <t-input v-model="accForm.usage_category" size="small" placeholder="用电类别" />
-        </div>
-        <div class="us-basic-item">
-          <label>电压等级</label>
-          <t-input v-model="accForm.voltage_level" size="small" placeholder="电压等级" />
-        </div>
-        <div class="us-basic-item">
-          <label>市场化属性</label>
-          <t-input v-model="accForm.market_attr" size="small" placeholder="市场化属性" />
-        </div>
-        <div class="us-basic-item">
-          <label>供电服务单位</label>
-          <t-input v-model="accForm.supply_unit" size="small" placeholder="供电服务单位" />
-        </div>
-        <div class="us-basic-item">
-          <label>电能表编号</label>
-          <t-input v-model="accForm.meter_no" size="small" placeholder="电能表编号" />
-        </div>
-        <div class="us-basic-item">
-          <label>倍率</label>
-          <t-input v-model="accForm.ratio" type="number" size="small" placeholder="倍率" />
-        </div>
-        <div class="us-basic-item us-basic-item--wide">
-          <label>用电地址</label>
-          <t-input v-model="accForm.address" size="small" placeholder="用电地址" />
-        </div>
-      </div>
-      <div class="us-basic-foot">
-        <label class="us-default-label">
-          <t-checkbox v-model="accForm.is_default" size="small">设为默认户</t-checkbox>
-        </label>
-        <t-button v-if="accForm.id" variant="text" theme="danger" size="small" @click="confirmDeleteAcc">
-          <template #icon><t-icon name="delete" size="15px" /></template>
-          删除
-        </t-button>
-      </div>
-      <div class="us-actions">
-        <t-button variant="outline" size="small" @click="accEditVisible = false">取消</t-button>
-        <t-button size="small" @click="saveAcc">保存</t-button>
       </div>
     </t-drawer>
 
@@ -249,10 +164,6 @@ import {
   listUtilityFieldConfigsByGroup,
   getRecognitionConfig,
   saveRecognitionConfig,
-  listUtilityBasicAccounts,
-  createUtilityBasicAccount,
-  updateUtilityBasicAccount,
-  deleteUtilityBasicAccount,
 } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -282,7 +193,6 @@ const LOGIC_OPTS = [
 
 interface FieldItem { field_key: string; label: string; field_type: string; default_visible: boolean; sort_order: number; is_custom: boolean }
 interface IncludeRule { id: string; name: string; match_type: 'keyword' | 'regex'; keywords?: string[]; logic?: 'AND' | 'OR'; regex?: string; enabled: boolean }
-interface BasicAccount { id?: string; name: string; account_no: string; account_name: string; usage_category: string; voltage_level: string; market_attr: string; supply_unit: string; address: string; meter_no: string; ratio: number | string; is_default: boolean }
 
 // 电费字段配置分组（对应各费用菜单）
 const GROUP_DEFS = [
@@ -303,7 +213,6 @@ const GROUP_DEFS = [
 const ROW_GROUP_MAP: Record<string, string> = {
   meter: 'meter-rows',
   'resident-meter': 'resident-meter-rows',
-  overview: 'overview-rows',
   market: 'market-rows',
   trans: 'trans-rows',
   sys: 'sys-rows',
@@ -312,7 +221,6 @@ const ROW_GROUP_MAP: Record<string, string> = {
   'gov-residential': 'gov-residential-rows',
 }
 
-const accounts = ref<BasicAccount[]>([])
 const cfg = ref<{ enabled: boolean; include_rules: IncludeRule[] }>({ enabled: true, include_rules: [] })
 const keywordsText = ref<string[]>([])
 const saving = ref(false)
@@ -368,61 +276,6 @@ const addIncludeRule = () => {
   cfg.value.include_rules.push({ id: uid(), name: '', match_type: 'keyword', keywords: [], logic: 'OR', regex: '', enabled: true })
   keywordsText.value.push('')
   scheduleSave()
-}
-
-// ---- 基本户 ----
-const loadAccounts = async () => {
-  if (props.category !== 'electricity') return
-  try {
-    const res: any = await listUtilityBasicAccounts('electricity')
-    accounts.value = (res?.data || res || []).map((a: any) => ({
-      id: a.id, name: a.name || '', account_no: a.account_no || '', account_name: a.account_name || '',
-      usage_category: a.usage_category || '', voltage_level: a.voltage_level || '',
-      market_attr: a.market_attr || '', supply_unit: a.supply_unit || '', address: a.address || '',
-      meter_no: a.meter_no || '', ratio: a.ratio ?? '', is_default: !!a.is_default,
-    }))
-  } catch { accounts.value = [] }
-}
-const emptyAcc = (): BasicAccount => ({
-  name: '', account_no: '', account_name: '', usage_category: '', voltage_level: '',
-  market_attr: '', supply_unit: '', address: '', meter_no: '', ratio: '', is_default: false,
-})
-const accEditVisible = ref(false)
-const accForm = ref<BasicAccount>(emptyAcc())
-const openAccEdit = (a: BasicAccount | null) => {
-  accForm.value = a ? { ...a } : emptyAcc()
-  accEditVisible.value = true
-}
-const saveAcc = async () => {
-  const payload = { ...accForm.value, ratio: Number(accForm.value.ratio) || 0 }
-  try {
-    if (accForm.value.id) {
-      await updateUtilityBasicAccount(accForm.value.id, 'electricity', payload)
-    } else {
-      await createUtilityBasicAccount('electricity', payload)
-    }
-    MessagePlugin.success('已保存')
-    accEditVisible.value = false
-    await loadAccounts()
-    emit('changed')
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  }
-}
-const confirmDeleteAcc = async () => {
-  const ok = await MessagePlugin.confirm('删除该基本户？历史账单记录保留原数据。', {
-    theme: 'warning', confirmBtn: '删除', cancelBtn: '取消',
-  })
-  if (!ok) return
-  try {
-    await deleteUtilityBasicAccount(accForm.value.id!, 'electricity')
-    MessagePlugin.success('已删除')
-    accEditVisible.value = false
-    await loadAccounts()
-    emit('changed')
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
 }
 
 // ---- 字段分组管理 ----
@@ -553,7 +406,6 @@ const load = async () => {
     cfg.value = { enabled: true, include_rules: [] }
     keywordsText.value = []
   }
-  await loadAccounts()
   await loadGroupCounts()
 }
 
@@ -887,34 +739,5 @@ watch(() => props.visible, (v) => {
   padding-top: 12px;
   border-top: 1px solid var(--td-component-stroke);
   margin-top: 12px;
-}
-
-/* 基本户信息表单 */
-.us-basic-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-}
-
-.us-basic-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  label {
-    font-size: 12px;
-    color: var(--td-text-color-secondary);
-  }
-
-  &.us-basic-item--wide {
-    grid-column: 1 / -1;
-  }
-}
-
-.us-basic-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 14px;
 }
 </style>

@@ -255,30 +255,23 @@
                 </aside>
                 <!-- 右侧内容区 -->
                 <div class="bill-content">
-                  <!-- 账单概况（概览页：基础信息 / 本期电量 / 本期电费 / 缴费截止 / 账单概况 / 用能分析） -->
+                  <!-- 账单概况（概览页：本期电量 / 本期电费 / 缴费截止 / 账单概况 / 用能分析） -->
                   <template v-if="activeMenu === 'overview'">
-                    <!-- 1 基础信息 -->
-                    <div class="bill-card">
-                      <div class="bill-card-head">
-                        <span class="bill-card-title">基础信息</span>
-                      </div>
-                      <div class="overview-static">
-                        <div class="ov-item" v-for="f in overviewRowConfigs" :key="f.key">
-                          <span class="ov-label">{{ f.label }}</span>
-                          <span class="ov-value" :title="String(basicInfo[f.key] ?? '')">{{ basicInfo[f.key] ?? '—' }}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- 2-5 四大数据卡片 -->
+                    <!-- 四大数据卡片 -->
                     <div class="overview-metrics">
-                      <div class="metric-card">
+                      <div class="metric-card" :title="metricKwhTip">
                         <div class="metric-label">本期电量</div>
                         <div class="metric-value">{{ fmtKwh(metricKwh) }}<span class="metric-unit">千瓦时</span></div>
+                        <span class="ea-delta" :class="metricKwhDeltaClass" v-if="prevEnergy.exists">
+                          <span class="ea-arrow">{{ metricKwhDeltaArrow }}</span><span class="ea-sub">{{ metricKwhDeltaSub }}</span>
+                        </span>
                       </div>
-                      <div class="metric-card">
+                      <div class="metric-card" :title="metricFeeTip">
                         <div class="metric-label">本期电费</div>
                         <div class="metric-value">{{ fmtMoney(metricFee) }}<span class="metric-unit">元</span></div>
+                        <span class="ea-delta" :class="metricFeeDeltaClass" v-if="prevEnergy.exists">
+                          <span class="ea-arrow">{{ metricFeeDeltaArrow }}</span><span class="ea-sub">{{ metricFeeDeltaSub }}</span>
+                        </span>
                       </div>
                       <div class="metric-card">
                         <div class="metric-label">账单周期</div>
@@ -789,7 +782,6 @@ import {
   listUtilityFieldConfigs,
   previewKnowledgeFile,
   reparseKnowledge,
-  listUtilityBasicAccounts,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -889,11 +881,10 @@ const feeCellText = (it: any, col: any) => {
   if (v === undefined || v === null || v === '') return ''
   return String(v)
 }
-// 电量明细倍率：提取值缺失时引用基本户倍率
+// 电量明细倍率：仅使用提取值
 const displayMultiplier = (r: any) => {
   if (r.multiplier !== undefined && r.multiplier !== null && Number(r.multiplier) !== 0) return fmtRate6(r.multiplier)
-  const ratio = Number(currentAccount.value?.ratio) || 0
-  return ratio ? fmtRate6(ratio) : ''
+  return ''
 }
 
 const loadFieldConfigs = async () => {
@@ -1275,7 +1266,6 @@ const openDetail = async (row: Row) => {
   // 电费账单 → 进入分层详情视图
   detailMode.value = true
   activeMenu.value = 'overview'
-  loadBasicInfo()
 }
 
 const loadEditForm = async (row: Row) => {
@@ -1395,52 +1385,6 @@ const menuLabel = (key: string) => {
     }
   }
   return key
-}
-
-// 概况静态字段
-// 基本户信息（概览基础信息直接读取，设置中维护，概览不可编辑）
-const BASIC_INFO_FIELDS = [
-  { key: 'account_no', label: '户号' },
-  { key: 'account_name', label: '户名' },
-  { key: 'usage_category', label: '用电类别' },
-  { key: 'voltage_level', label: '电压等级' },
-  { key: 'market_attr', label: '市场化属性' },
-  { key: 'supply_unit', label: '供电服务单位' },
-  { key: 'address', label: '用电地址' },
-]
-// 基础信息行配置（设置 → 账单概况 → 行字段配置 驱动；未配置时用内置字段兜底；关闭默认显示的行隐藏）
-const overviewRowConfigs = computed(() => {
-  const list = allFieldConfigs.value.filter((c: any) => c.group === 'overview-rows' && c.deleted_at == null && c.default_visible !== false)
-  if (!list.length) return BASIC_INFO_FIELDS
-  return [...list]
-    .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
-    .map((c: any) => ({ key: c.field_key, label: c.label || c.field_key }))
-})
-const OVERVIEW_STATIC = computed(() => overviewRowConfigs.value.map(f => ({ ...f, type: 'text' })))
-// 基本户多账户：账单按户号自动匹配，匹配失败用默认户
-const basicAccounts = ref<any[]>([])
-const currentAccount = computed(() => {
-  const no = (editForm.value.account_no || '').trim()
-  if (no) {
-    const m = basicAccounts.value.find((a: any) => a.account_no === no)
-    if (m) return m
-  }
-  return basicAccounts.value.find((a: any) => a.is_default) || basicAccounts.value[0] || null
-})
-const basicInfo = computed<Record<string, any>>(() => {
-  const a = currentAccount.value || {}
-  return {
-    account_no: a.account_no || '', account_name: a.account_name || '',
-    usage_category: a.usage_category || '', voltage_level: a.voltage_level || '',
-    market_attr: a.market_attr || '', supply_unit: a.supply_unit || '', address: a.address || '',
-    meter_no: a.meter_no || '',
-  }
-})
-const loadBasicInfo = async () => {
-  try {
-    const res: any = await listUtilityBasicAccounts('electricity')
-    basicAccounts.value = (res?.data || res || [])
-  } catch { basicAccounts.value = [] }
 }
 
 // 容需量字段（编辑抽屉）
@@ -1602,6 +1546,41 @@ const metricDue = computed(() => {
   const v = editForm.value.due_date || editForm.value.pay_deadline
   return v ? String(v).slice(0, 10) : '—'
 })
+// 指标卡环比（本期电量 / 本期电费，均与上期对比）
+const metricKwhDelta = computed(() => {
+  if (!prevEnergy.value.exists) return 0
+  return metricKwh.value - prevEnergy.value.total
+})
+const metricKwhDeltaArrow = computed(() => (metricKwhDelta.value > 0 ? '↑' : metricKwhDelta.value < 0 ? '↓' : '—'))
+const metricKwhDeltaClass = computed(() => (metricKwhDelta.value > 0 ? 'ea-delta--up' : metricKwhDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
+const metricKwhDeltaSub = computed(() => {
+  if (metricKwhDelta.value === 0) return '持平'
+  const sign = metricKwhDelta.value > 0 ? '+' : '-'
+  return `${sign}${fmtKwh(Math.abs(metricKwhDelta.value))} 千瓦时`
+})
+const metricKwhTip = computed(() => {
+  if (!prevEnergy.value.exists) return '暂无上期数据'
+  const cur = metricKwh.value, prev = prevEnergy.value.total
+  const pct = prev ? ((cur - prev) / prev) * 100 : 0
+  return `本期电量 ${fmtKwh(cur)} 千瓦时，上期 ${fmtKwh(prev)} 千瓦时\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
+})
+const metricFeeDelta = computed(() => {
+  if (!prevEnergy.value.exists) return 0
+  return metricFee.value - prevEnergy.value.fee
+})
+const metricFeeDeltaArrow = computed(() => (metricFeeDelta.value > 0 ? '↑' : metricFeeDelta.value < 0 ? '↓' : '—'))
+const metricFeeDeltaClass = computed(() => (metricFeeDelta.value > 0 ? 'ea-delta--up' : metricFeeDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
+const metricFeeDeltaSub = computed(() => {
+  if (metricFeeDelta.value === 0) return '持平'
+  const sign = metricFeeDelta.value > 0 ? '+' : '-'
+  return `${sign}${fmtMoney(Math.abs(metricFeeDelta.value))} 元`
+})
+const metricFeeTip = computed(() => {
+  if (!prevEnergy.value.exists) return '暂无上期数据'
+  const cur = metricFee.value, prev = prevEnergy.value.fee
+  const pct = prev ? ((cur - prev) / prev) * 100 : 0
+  return `本期电费 ${fmtMoney(cur)} 元，上期 ${fmtMoney(prev)} 元\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
+})
 const ovText = (f: { key: string; label: string }) => {
   const v = editForm.value[f.key]
   if (v === null || v === undefined || v === '') return ''
@@ -1716,16 +1695,16 @@ const prevEnergy = computed(() => {
     flat: Number(p.flat_kwh) || 0,
     valley: Number(p.valley_kwh) || 0,
     total: Number(p.total_kwh) || 0,
+    fee: Number(p.total_amount) || Number(p.grand_total) || 0,
     power_factor: p.power_factor === null || p.power_factor === undefined || p.power_factor === '' ? 0 : Number(p.power_factor),
     avg_price: p.avg_price === null || p.avg_price === undefined || p.avg_price === '' ? 0 : Number(p.avg_price),
   }
 })
 
-// 分时占比对比表（占比分母为四时段电量之和，保证尖峰平谷合计 100%）
+// 分时占比对比表（分母=账单总电量，与账单印刷口径一致；平段取余量保证合计 100%）
 const energyCompareRows = computed(() => {
-  const curSum = [editForm.value.deep_peak_kwh, editForm.value.peak_kwh, editForm.value.flat_kwh, editForm.value.valley_kwh]
-    .reduce((s, v) => s + (Number(v) || 0), 0)
-  const prevSum = prevEnergy.value.deep + prevEnergy.value.peak + prevEnergy.value.flat + prevEnergy.value.valley
+  const curTotal = Number(editForm.value.total_kwh) || 0
+  const prevTotal = prevEnergy.value.total
   const pct = (v: number, total: number) => (total ? Math.round((v / total) * 10000) / 100 : 0)
   const cur = [
     { key: 'deep', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
@@ -1737,17 +1716,23 @@ const energyCompareRows = computed(() => {
     deep: prevEnergy.value.deep, peak: prevEnergy.value.peak,
     flat: prevEnergy.value.flat, valley: prevEnergy.value.valley,
   }
-  return cur.map(c => {
+  const rows = cur.map(c => {
     const pv = prev[c.key] || 0
-    const curPct = pct(c.v, curSum)
-    const prevPct = pct(pv, prevSum)
     return {
       key: c.key, label: c.label,
-      cur: c.v, curPct,
-      prev: pv, prevPct,
-      delta: prevEnergy.value.exists ? Math.round((curPct - prevPct) * 10) / 10 : 0,
+      cur: c.v, curPct: pct(c.v, curTotal),
+      prev: pv, prevPct: pct(pv, prevTotal),
+      delta: 0,
     }
   })
+  // 平段占比 = 100 − 尖 − 峰 − 谷（合计恒为 100%）
+  const curOthers = rows.filter(r => r.key !== 'flat').reduce((s, r) => s + r.curPct, 0)
+  const prevOthers = rows.filter(r => r.key !== 'flat').reduce((s, r) => s + r.prevPct, 0)
+  const flat = rows.find(r => r.key === 'flat')!
+  flat.curPct = Math.round((100 - curOthers) * 100) / 100
+  flat.prevPct = Math.round((100 - prevOthers) * 100) / 100
+  rows.forEach(r => { r.delta = prevTotal ? Math.round((r.curPct - r.prevPct) * 10) / 10 : 0 })
+  return rows
 })
 
 // ---- 用能分析 ECharts（分时电量占比对比：本期 vs 上期） ----
@@ -1875,11 +1860,6 @@ let meterEditIdx = -1
 const openMeterEdit = (idx: number) => {
   const r = meterRows.value[idx]
   if (!r) return
-  // 倍率缺失时以基本户倍率为默认
-  const ratio = Number(currentAccount.value?.ratio) || 0
-  if (r.multiplier === undefined || r.multiplier === null || Number(r.multiplier) === 0) {
-    r.multiplier = ratio || 1
-  }
   meterEditTitle.value = r.meter_type || meterRowConfigs.value[idx]?.label || '电量明细'
   meterEditFields.value = [
     { key: 'prev', label: '上期示数' },
@@ -1951,11 +1931,8 @@ const staticEditVisible = ref(false)
 const staticEditForm = ref<Record<string, any>>({})
 const staticEditTitle = ref('')
 const staticEditFields = ref<{ key: string; label: string; type: string }[]>([])
-const openStaticEdit = (scope: 'overview' | 'capacity' | 'pf') => {
-  if (scope === 'overview') {
-    staticEditTitle.value = '编辑账单概况'
-    staticEditFields.value = OVERVIEW_STATIC.value
-  } else if (scope === 'capacity') {
+const openStaticEdit = (scope: 'capacity' | 'pf') => {
+  if (scope === 'capacity') {
     staticEditTitle.value = '编辑输配容（需）量电费'
     staticEditFields.value = CAPACITY_FIELDS
   } else {
@@ -3055,11 +3032,27 @@ onBeforeUnmount(() => { stopPolling() })
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
   background: var(--td-bg-color-container);
-  padding: 16px;
+  padding: 16px 16px 0;
+
+  /* 卡片间间距统一用 margin-top，最后一张卡贴底，与左侧菜单底边线对齐 */
+  > * + * {
+    margin-top: 16px;
+  }
 }
 
 .bill-card {
-  margin-bottom: 16px;
+  margin-bottom: 0;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--td-bg-color-container);
+  transition: box-shadow .2s, transform .2s, border-color .2s;
+
+  &:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+    border-color: var(--td-brand-color);
+  }
 
   .bill-card-head {
     display: flex;
@@ -3081,37 +3074,6 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
-/* 概况 */
-.overview-static {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px 24px;
-  padding: 16px 18px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-
-  .ov-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-
-    .ov-label {
-      font-size: 12px;
-      color: var(--td-text-color-secondary);
-    }
-
-    .ov-value {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--td-text-color-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-}
-
 /* 概览页指标卡 */
 .overview-metrics {
   display: grid;
@@ -3128,6 +3090,13 @@ onBeforeUnmount(() => { stopPolling() })
     border-radius: 8px;
     background: var(--td-bg-color-container);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: box-shadow .2s, transform .2s, border-color .2s;
+
+    &:hover {
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      transform: translateY(-2px);
+      border-color: var(--td-brand-color);
+    }
 
     .metric-label {
       font-size: 12px;
@@ -3161,7 +3130,6 @@ onBeforeUnmount(() => { stopPolling() })
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 12px;
   align-items: stretch;
 
   > .bill-card {
@@ -3202,6 +3170,13 @@ onBeforeUnmount(() => { stopPolling() })
       border: 1px solid var(--td-component-stroke);
       border-radius: 8px;
       background: var(--td-bg-color-container);
+      transition: box-shadow .2s, transform .2s, border-color .2s;
+
+      &:hover {
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+        transform: translateY(-2px);
+        border-color: var(--td-brand-color);
+      }
 
       .ea-label {
         font-size: 12px;
