@@ -60,10 +60,11 @@
                   </t-input>
                 </div>
                 <div class="doc-filter-field doc-filter-field--wide">
-                  <t-date-range-picker v-model="dateRange" placeholder="账单周期" class="doc-date-range doc-filter-field__control"
-                    clearable allow-input @change="applyFilter">
+                  <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
+                    placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
+                    @change="applyFilter">
                     <template #prefixIcon><t-icon name="time" size="16px" /></template>
-                  </t-date-range-picker>
+                  </t-date-picker>
                 </div>
                 <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
                   overlay-inner-class="contract-field-popup">
@@ -891,8 +892,15 @@ const loadFieldConfigs = async () => {
       allFieldConfigs.value = list
       // 仅保留内置默认集字段与用户自定义字段，过滤历史废弃字段
       const validKeys = new Set(FALLBACK_COLUMNS.map(f => f.key))
+      // 后端按 group 存储（overview / overview-rows 等多份同 key 配置），列表字段按 field_key 去重，避免重复显示
+      const seenKeys = new Set<string>()
       const fromServer = list
-        .filter((c: any) => validKeys.has(c.field_key) || !!c.is_custom)
+        .filter((c: any) => {
+          if (!(validKeys.has(c.field_key) || !!c.is_custom)) return false
+          if (seenKeys.has(c.field_key)) return false
+          seenKeys.add(c.field_key)
+          return true
+        })
         .map((c: any) => {
         const fb = FALLBACK_COLUMNS.find(f => f.key === c.field_key)
         return {
@@ -947,7 +955,7 @@ const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
 const keyword = ref('')
-const dateRange = ref<Array<string>>([])
+const monthFilter = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
 const extractFailed = ref<Set<string>>(new Set())
@@ -1023,8 +1031,8 @@ const loadFiles = async (reset = false) => {
   try {
     const res: any = await listUtilityBillRecords(kbId.value, {
       q: keyword.value || undefined,
-      date_from: dateRange.value?.[0] || undefined,
-      date_to: dateRange.value?.[1] || undefined,
+      date_from: monthFilter.value ? `${monthFilter.value}-01` : undefined,
+      date_to: monthFilter.value ? `${monthFilter.value}-31` : undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     })
@@ -3127,7 +3135,13 @@ onBeforeUnmount(() => { stopPolling() })
         font-size: 16px;
         color: var(--td-text-color-primary);
       }
+
     }
+
+    /* 指标卡环比：增长红 / 减少绿（与用能分析卡一致） */
+    .ea-delta--up { color: var(--td-error-color); }
+    .ea-delta--down { color: var(--td-success-color); }
+    .ea-delta--flat { color: var(--td-text-color-secondary); }
   }
 }
 
