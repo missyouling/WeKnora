@@ -3131,8 +3131,8 @@ onBeforeUnmount(() => { stopPolling() })
     justify-content: space-between;
 
     .ea-chart {
-      height: 170px;
-      margin-bottom: 0;
+      height: 210px;
+      margin-bottom: 14px;
     }
   }
 }
