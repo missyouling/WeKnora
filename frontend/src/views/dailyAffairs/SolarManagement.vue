@@ -411,7 +411,11 @@
     </div>
 
     <!-- 详情抽屉 -->
-    <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" size="560px" :footer="false"
+    <div v-if="detailVisible" class="us-resize-handle" :style="{ right: `${detailWidth}px` }" role="separator"
+      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDetailResizeStart">
+      <div class="us-resize-line" />
+    </div>
+    <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" :size="`${detailWidth}px`" :footer="false"
       :close-on-overlay-click="true" @close="closeDetail"
       @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
@@ -884,7 +888,34 @@ const onFileInputChange = async (e: Event) => {
       }
       // 解析完成后由轮询自动触发提取
     } catch (e2: any) {
-      MessagePlugin.error(`上传「${f.name}」失败：${e2?.message || '未知错误'}`)
+      const msg = e2?.message || ''
+      if (msg.includes('already exists') || msg.includes('文件重复')) {
+        // 重复上传：若知识库中已有同名文件但尚未成为光伏记录（未打标/未提取），
+        // 自动补打标 bill_kind=solar，由轮询自动重新提取，避免文件"存在但列表不可见"
+        const dup = e2?.response?.data?.data
+        const dupId = dup?.id || dup?.knowledge_id
+        let recovered = false
+        if (dupId) {
+          try {
+            const kd: any = await getKnowledgeDetails(dupId)
+            let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+            if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+            const kind = meta?.kind || ''
+            if (kind !== 'solar_bill') {
+              await updateKnowledgeMetadata(dupId, { custom_metadata: { ...meta, bill_kind: 'solar' } })
+              recovered = true
+            }
+          } catch { /* 恢复失败则仅提示已存在 */ }
+        }
+        if (recovered) {
+          MessagePlugin.warning(`${f.name} 已存在，已自动补齐并重新提取`)
+          loadFiles(true)
+        } else {
+          MessagePlugin.warning(`${f.name} 已存在，忽略重复上传`)
+        }
+      } else {
+        MessagePlugin.error(`上传「${f.name}」失败：${msg}`)
+      }
     }
   }
   await loadFiles(true)
@@ -896,6 +927,25 @@ const detailMode = ref(false)
 const currentRow = ref<Row | null>(null)
 const activeMenu = ref<'overview' | 'grid-fee' | 'subsidy-fee' | 'meter'>('overview')
 const detailForm = ref<Record<string, any>>({})
+
+const DETAIL_WIDTH_KEY = 'weknora-solar-detail-width'
+const detailWidth = ref(Number(localStorage.getItem(DETAIL_WIDTH_KEY)) || 560)
+const onDetailResizeStart = (e: MouseEvent) => {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = detailWidth.value
+  const onMove = (ev: MouseEvent) => {
+    const w = Math.min(960, Math.max(480, startW - (ev.clientX - startX)))
+    detailWidth.value = w
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    try { localStorage.setItem(DETAIL_WIDTH_KEY, String(detailWidth.value)) } catch { /* ignore */ }
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
 
 const it = computed(() => currentRow.value?.item || {})
 const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
@@ -1607,6 +1657,29 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 详情抽屉 */
 .utility-detail-drawer { display: flex; flex-direction: column; gap: 16px; }
+.us-resize-handle {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 2100;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  .us-resize-line {
+    width: 2px;
+    height: 40px;
+    border-radius: 1px;
+    background: var(--td-brand-color);
+    opacity: 0;
+    transition: opacity 0.15s ease, height 0.15s ease;
+  }
+  &:hover .us-resize-line, .us-resize-line:hover {
+    opacity: 1;
+    height: 80px;
+  }
+}
 .detail-block { border: 1px solid var(--td-component-stroke); border-radius: 6px; overflow: hidden; }
 .detail-block-title {
   display: flex;
