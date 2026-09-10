@@ -696,13 +696,14 @@ const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
 })))
 const displayRows = computed(() => [...pendingRows.value, ...rows.value])
 
-const cellText = (row: Row, col: ColDef) => {
+const cellText = (row: Row, key: string): string => {
   if (row.kind === 'pending') return ''
-  const v = row.item?.[col.key]
-  if (col.key === 'bill_period') return metricPeriodOf(row.item)
+  if (key === 'bill_period') return metricPeriodOf(row.item)
+  const v = row.item?.[key]
   if (v === undefined || v === null || v === '') return ''
-  if (col.fieldType === 'number') return fmtKwh(Number(v))
-  if (col.fieldType === 'amount') return fmtMoney(Number(v))
+  const col = columnDefs.value.find(c => c.key === key)
+  if (col?.fieldType === 'number') return fmtKwh(Number(v))
+  if (col?.fieldType === 'amount') return fmtMoney(Number(v))
   return String(v)
 }
 const metricPeriodOf = (it: any) => {
