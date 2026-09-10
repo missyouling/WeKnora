@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
@@ -292,8 +292,7 @@
                         <span class="bill-card-title">账单概况</span>
                         <span class="bill-card-hint">点击行查看明细</span>
                       </div>
-                      <div class="overview-summary">
-                        <div class="os-table">
+                      <div class="os-table">
                           <div class="os-row os-row--head">
                             <span>费用组成</span><span class="os-qty">计费数量</span><span class="os-amount">电费</span><span class="os-amount">账单电费</span><span class="os-state">对比状态</span>
                           </div>
@@ -333,7 +332,6 @@
                             </span>
                           </div>
                         </div>
-                      </div>
                     </div>
 
                     <!-- 6 用能分析 -->
@@ -342,8 +340,7 @@
                         <span class="bill-card-title">用能分析</span>
                         <span v-if="!prevEnergy.exists" class="bill-card-hint">暂无上期账单数据</span>
                       </div>
-                      <div class="energy-analysis">
-                        <div class="ea-grid">
+                      <div class="ea-grid">
                           <div class="ea-item" :title="momTip">
                             <span class="ea-label">本期电量环比</span>
                             <strong class="ea-value">{{ momText }}</strong>
@@ -387,7 +384,6 @@
                           </div>
                         </div>
                       </div>
-                    </div>
                     </div>
                   </template>
 
@@ -1601,12 +1597,11 @@ const momDelta = computed(() => {
   if (!prev || !cur) return 0
   return cur - prev
 })
-const momDeltaArrow = computed(() => (momDelta.value > 0 ? '↑' : momDelta.value < 0 ? '↓' : '—'))
+const momDeltaArrow = computed(() => (momDelta.value > 0 ? '↑' : momDelta.value < 0 ? '↓' : ''))
 const momDeltaClass = computed(() => (momDelta.value > 0 ? 'ea-delta--up' : momDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
 const momDeltaSub = computed(() => {
   if (momDelta.value === 0) return '持平'
-  const sign = momDelta.value > 0 ? '+' : '-'
-  return `${sign}${fmtKwh(Math.abs(momDelta.value))} 千瓦时`
+  return `${fmtKwh(Math.abs(momDelta.value))} 千瓦时`
 })
 const momTip = computed(() => {
   const cur = Number(editForm.value.total_kwh) || 0
@@ -1631,9 +1626,9 @@ const pfDelta = computed(() => {
   if (!cur && !prev) return 0
   return Math.round((cur - prev) * 1000) / 1000
 })
-const pfDeltaArrow = computed(() => (pfDelta.value > 0 ? '↑' : pfDelta.value < 0 ? '↓' : '—'))
+const pfDeltaArrow = computed(() => (pfDelta.value > 0 ? '↑' : pfDelta.value < 0 ? '↓' : ''))
 const pfDeltaClass = computed(() => (pfDelta.value > 0 ? 'ea-delta--up' : pfDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const pfDeltaSub = computed(() => (pfDelta.value === 0 ? '持平' : `${pfDelta.value > 0 ? '+' : ''}${pfDelta.value.toFixed(2)}`))
+const pfDeltaSub = computed(() => (pfDelta.value === 0 ? '持平' : `${Math.abs(pfDelta.value).toFixed(2)}`))
 const pfTip = computed(() => {
   const cur = Number(editForm.value.power_factor) || 0
   const prev = Number(prevEnergy.value.power_factor) || 0
@@ -1657,9 +1652,9 @@ const avgPriceDelta = computed(() => {
   if (!cur && !prev) return 0
   return Math.round((cur - prev) * 10000) / 10000
 })
-const avgDeltaArrow = computed(() => (avgPriceDelta.value > 0 ? '↑' : avgPriceDelta.value < 0 ? '↓' : '—'))
+const avgDeltaArrow = computed(() => (avgPriceDelta.value > 0 ? '↑' : avgPriceDelta.value < 0 ? '↓' : ''))
 const avgDeltaClass = computed(() => (avgPriceDelta.value > 0 ? 'ea-delta--up' : avgPriceDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const avgDeltaSub = computed(() => (avgPriceDelta.value === 0 ? '持平' : `${avgPriceDelta.value > 0 ? '+' : ''}${avgPriceDelta.value.toFixed(4)} 元/千瓦时`))
+const avgDeltaSub = computed(() => (avgPriceDelta.value === 0 ? '持平' : `${Math.abs(avgPriceDelta.value).toFixed(4)} 元/千瓦时`))
 const avgTip = computed(() => {
   const cur = Number(avgPriceText.value) || 0
   const prev = prevEnergy.value.avg_price
@@ -1701,7 +1696,7 @@ const prevEnergy = computed(() => {
   }
 })
 
-// 分时占比对比表（分母=账单总电量，与账单印刷口径一致；平段取余量保证合计 100%）
+// 分时占比对比表（本期占比 = 时段电量 ÷ 本期总电量 × 100%；上期同理）
 const energyCompareRows = computed(() => {
   const curTotal = Number(editForm.value.total_kwh) || 0
   const prevTotal = prevEnergy.value.total
@@ -1716,23 +1711,17 @@ const energyCompareRows = computed(() => {
     deep: prevEnergy.value.deep, peak: prevEnergy.value.peak,
     flat: prevEnergy.value.flat, valley: prevEnergy.value.valley,
   }
-  const rows = cur.map(c => {
+  return cur.map(c => {
     const pv = prev[c.key] || 0
+    const curPct = pct(c.v, curTotal)
+    const prevPct = pct(pv, prevTotal)
     return {
       key: c.key, label: c.label,
-      cur: c.v, curPct: pct(c.v, curTotal),
-      prev: pv, prevPct: pct(pv, prevTotal),
-      delta: 0,
+      cur: c.v, curPct,
+      prev: pv, prevPct,
+      delta: prevTotal ? Math.round((curPct - prevPct) * 10) / 10 : 0,
     }
   })
-  // 平段占比 = 100 − 尖 − 峰 − 谷（合计恒为 100%）
-  const curOthers = rows.filter(r => r.key !== 'flat').reduce((s, r) => s + r.curPct, 0)
-  const prevOthers = rows.filter(r => r.key !== 'flat').reduce((s, r) => s + r.prevPct, 0)
-  const flat = rows.find(r => r.key === 'flat')!
-  flat.curPct = Math.round((100 - curOthers) * 100) / 100
-  flat.prevPct = Math.round((100 - prevOthers) * 100) / 100
-  rows.forEach(r => { r.delta = prevTotal ? Math.round((r.curPct - r.prevPct) * 10) / 10 : 0 })
-  return rows
 })
 
 // ---- 用能分析 ECharts（分时电量占比对比：本期 vs 上期） ----
@@ -2955,8 +2944,8 @@ onBeforeUnmount(() => { stopPolling() })
 .bill-detail-layout {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 168px);
-  min-height: 420px;
+  flex: 1;
+  min-height: 0;
 }
 
 .bill-detail-head {
@@ -3029,6 +3018,8 @@ onBeforeUnmount(() => { stopPolling() })
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
   background: var(--td-bg-color-container);
@@ -3044,13 +3035,12 @@ onBeforeUnmount(() => { stopPolling() })
   margin-bottom: 0;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
-  padding: 16px;
+  padding: 14px 16px;
   background: var(--td-bg-color-container);
-  transition: box-shadow .2s, transform .2s, border-color .2s;
+  transition: box-shadow .2s, border-color .2s;
 
   &:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    transform: translateY(-2px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     border-color: var(--td-brand-color);
   }
 
@@ -3058,7 +3048,7 @@ onBeforeUnmount(() => { stopPolling() })
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
 
     .bill-card-title {
       font-size: 15px;
@@ -3079,22 +3069,21 @@ onBeforeUnmount(() => { stopPolling() })
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 
   .metric-card {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 16px;
+    gap: 2px;
+    padding: 8px 12px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
     background: var(--td-bg-color-container);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-    transition: box-shadow .2s, transform .2s, border-color .2s;
+    transition: box-shadow .2s, border-color .2s;
 
     &:hover {
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-      transform: translateY(-2px);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
       border-color: var(--td-brand-color);
     }
 
@@ -3104,7 +3093,7 @@ onBeforeUnmount(() => { stopPolling() })
     }
 
     .metric-value {
-      font-size: 26px;
+      font-size: 20px;
       font-weight: 600;
       color: var(--td-brand-color);
       font-variant-numeric: tabular-nums;
@@ -3118,14 +3107,14 @@ onBeforeUnmount(() => { stopPolling() })
       }
 
       &--date {
-        font-size: 18px;
+        font-size: 16px;
         color: var(--td-text-color-primary);
       }
     }
   }
 }
 
-/* 账单概况 + 用能分析 一行两卡片（等高，底部边线对齐） */
+/* 账单概况 + 用能分析 一行两卡片（等高；用能分析内容均匀分布，无底部空白） */
 .overview-two-col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3135,46 +3124,38 @@ onBeforeUnmount(() => { stopPolling() })
   > .bill-card {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+  }
 
-    .overview-summary,
-    .energy-analysis {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
+  > .bill-card:nth-child(2) {
+    justify-content: space-between;
 
-      .os-table,
-      .ea-chart,
-      .ea-compare {
-        flex-shrink: 0;
-      }
-
-      .ea-chart { flex: 0 0 auto; }
-      .ea-compare { flex: 1 1 auto; }
+    .ea-chart {
+      height: 170px;
+      margin-bottom: 0;
     }
   }
 }
 
 /* 用能分析 */
-.energy-analysis {
-  .ea-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    margin-bottom: 16px;
+.ea-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
 
     .ea-item {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 12px 14px;
+      gap: 2px;
+      padding: 6px 10px;
       border: 1px solid var(--td-component-stroke);
       border-radius: 8px;
       background: var(--td-bg-color-container);
-      transition: box-shadow .2s, transform .2s, border-color .2s;
+      transition: box-shadow .2s, border-color .2s;
 
       &:hover {
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-        transform: translateY(-2px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
         border-color: var(--td-brand-color);
       }
 
@@ -3184,7 +3165,7 @@ onBeforeUnmount(() => { stopPolling() })
       }
 
       .ea-value {
-        font-size: 16px;
+        font-size: 14px;
         color: var(--td-text-color-primary);
         font-variant-numeric: tabular-nums;
       }
@@ -3207,11 +3188,10 @@ onBeforeUnmount(() => { stopPolling() })
   }
 
   .ea-chart {
-    height: 220px;
-    padding: 8px 10px;
+    padding: 6px 10px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
 
     .ea-echart {
       width: 100%;
@@ -3228,7 +3208,7 @@ onBeforeUnmount(() => { stopPolling() })
     .ea-compare-row {
       display: grid;
       grid-template-columns: 0.7fr 1.15fr 1fr 1.15fr 1fr 1fr;
-      padding: 8px 14px;
+      padding: 5px 12px;
       font-size: 12px;
       white-space: nowrap;
       border-bottom: 1px solid var(--td-component-stroke);
@@ -3248,30 +3228,22 @@ onBeforeUnmount(() => { stopPolling() })
     .ea-c-up { color: var(--td-error-color); }
     .ea-c-down { color: var(--td-success-color); }
   }
-}
 
-.overview-summary {
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
+/* 账单概况表（卡片较窄，横向滚动保证数据完整） */
+.os-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 440px;
+  overflow-x: auto;
 
-  .os-head {
-    padding: 10px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
+  .os-row {
+    display: grid;
+    grid-template-columns: 1fr 90px 80px 80px 60px;
+    gap: 8px;
+    padding: 5px 12px;
     border-bottom: 1px solid var(--td-component-stroke);
-    background: var(--td-bg-color-container-hover);
-  }
-
-  .os-table {
-    .os-row {
-      display: grid;
-      grid-template-columns: 1fr 130px 110px 110px 84px;
-      gap: 8px;
-      padding: 8px 14px;
-      border-bottom: 1px solid var(--td-component-stroke);
-      font-size: 13px;
-      align-items: center;
+    font-size: 12px;
+    align-items: center;
 
       &:last-child { border-bottom: none; }
 
@@ -3310,7 +3282,6 @@ onBeforeUnmount(() => { stopPolling() })
       .os-fee-val { cursor: text; border-radius: 4px; padding: 1px 4px; margin-right: -4px; &:hover { background: var(--td-bg-color-container-hover); } }
       .os-fee-val--manual { color: var(--td-brand-color); text-decoration: underline dashed 1px; text-underline-offset: 3px; }
       .os-fee-input { width: 96px; text-align: right; }
-    }
   }
 }
 
