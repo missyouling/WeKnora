@@ -18,35 +18,35 @@
           <div class="ba-grid">
             <div class="ba-item">
               <label class="ba-label">户号</label>
-              <t-input v-model="account.account_no" size="small" placeholder="发电户号" @blur="saveAccount" />
+              <t-input v-model="account.account_no" size="small" placeholder="发电户号" />
             </div>
             <div class="ba-item">
               <label class="ba-label">户名</label>
-              <t-input v-model="account.account_name" size="small" placeholder="户名" @blur="saveAccount" />
+              <t-input v-model="account.account_name" size="small" placeholder="户名" />
             </div>
             <div class="ba-item">
               <label class="ba-label">服务单位</label>
-              <t-input v-model="account.supply_unit" size="small" placeholder="服务单位" @blur="saveAccount" />
+              <t-input v-model="account.supply_unit" size="small" placeholder="服务单位" />
             </div>
             <div class="ba-item">
               <label class="ba-label">并网电压</label>
-              <t-input v-model="account.voltage_level" size="small" placeholder="并网电压等级" @blur="saveAccount" />
+              <t-input v-model="account.voltage_level" size="small" placeholder="并网电压等级" />
             </div>
             <div class="ba-item">
               <label class="ba-label">消纳方式</label>
-              <t-input v-model="account.consumption_mode" size="small" placeholder="消纳方式" @blur="saveAccount" />
+              <t-input v-model="account.consumption_mode" size="small" placeholder="消纳方式" />
             </div>
             <div class="ba-item">
               <label class="ba-label">发电方式</label>
-              <t-input v-model="account.generation_mode" size="small" placeholder="发电方式" @blur="saveAccount" />
+              <t-input v-model="account.generation_mode" size="small" placeholder="发电方式" />
             </div>
             <div class="ba-item ba-item--full">
               <label class="ba-label">发电地址</label>
-              <t-input v-model="account.address" size="small" placeholder="发电地址" @blur="saveAccount" />
+              <t-input v-model="account.address" size="small" placeholder="发电地址" />
             </div>
             <div class="ba-item">
               <label class="ba-label">纳税人类型</label>
-              <t-input v-model="account.taxpayer_type" size="small" placeholder="纳税人类型" @blur="saveAccount" />
+              <t-input v-model="account.taxpayer_type" size="small" placeholder="纳税人类型" />
             </div>
           </div>
         </div>
@@ -55,7 +55,7 @@
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">字段配置</span>
-            <span class="us-state">分组管理明细列字段，保存后自动同步</span>
+            <span class="us-state">分组管理明细列字段，修改后点击保存生效</span>
           </div>
           <div class="us-hint">点击分组卡片管理字段：新增、删除、排序、默认显示；删除字段不影响历史记录数据。</div>
           <div class="us-card-grid">
@@ -68,13 +68,18 @@
             </div>
           </div>
         </div>
+
+        <!-- 手动保存 -->
+        <div class="us-save-bar">
+          <t-button theme="primary" size="small" @click="saveAccount">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
     <!-- 字段分组管理抽屉 -->
     <t-drawer v-if="groupEditVisible" :visible="true" :header="`字段 · ${groupEditLabel}`" size="560px" :footer="false"
       :close-on-overlay-click="true" @close="groupEditVisible = false" @update:visible="(v: boolean) => (v || (groupEditVisible = false))">
-      <div class="us-hint">列字段对应明细菜单的列；默认显示控制列显隐。</div>
+      <div class="us-hint">列字段对应明细菜单的列；默认显示控制列显隐，修改后点击保存生效。</div>
       <div class="us-cfg">
         <div class="us-cfg-head">
           <span class="us-col-label">字段名</span>
@@ -85,13 +90,13 @@
         </div>
         <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-cfg-row">
           <div class="us-cell us-col-label">
-            <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" @blur="saveGroupFields" />
+            <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" />
           </div>
           <div class="us-cell us-col-type">
-            <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+            <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" />
           </div>
           <div class="us-cell us-col-visible">
-            <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" @change="saveGroupFields" />
+            <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
           </div>
           <div class="us-cell us-col-order">
             <div class="us-cell-order">
@@ -112,10 +117,13 @@
         <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
       </div>
       <div class="us-actions">
-        <t-button variant="text" size="small" @click="addGroupField">
+        <t-button variant="outline" size="small" @click="addGroupField">
           <template #icon><t-icon name="add" size="14px" /></template>
           新增字段
         </t-button>
+        <span class="us-actions-spacer" />
+        <t-button variant="outline" size="small" @click="groupEditVisible = false">取消</t-button>
+        <t-button size="small" @click="saveGroupEdit">保存</t-button>
       </div>
     </t-drawer>
   </div>
@@ -179,6 +187,7 @@ watch(() => props.visible, (v) => {
 
 const saveAccount = () => {
   try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account.value)) } catch { /* ignore */ }
+  MessagePlugin.success('已保存')
   emit('changed')
 }
 
@@ -208,13 +217,16 @@ const saveGroupFields = () => {
   persistCfg(cfg)
   emit('changed')
 }
+const saveGroupEdit = () => {
+  saveGroupFields()
+  MessagePlugin.success('已保存')
+  groupEditVisible.value = false
+}
 const addGroupField = () => {
   groupFields.value.push({ field_key: `custom_${Date.now()}`, label: '新字段', field_type: 'text', default_visible: false, sort_order: groupFields.value.length })
-  saveGroupFields()
 }
 const removeGroupField = (i: number) => {
   groupFields.value.splice(i, 1)
-  saveGroupFields()
 }
 const moveGroupField = (i: number, dir: number) => {
   const j = i + dir
@@ -222,7 +234,6 @@ const moveGroupField = (i: number, dir: number) => {
   const tmp = groupFields.value[i]
   groupFields.value[i] = groupFields.value[j]
   groupFields.value[j] = tmp
-  saveGroupFields()
 }
 
 // 拖动调整宽度（与删除历史抽屉一致）
@@ -337,5 +348,15 @@ const onClose = () => {
 .us-cfg-input, .us-cfg-select { width: 100%; max-width: 100%; }
 .us-cfg-switch { display: inline-flex; }
 .us-cell-order { display: inline-flex; gap: 2px; align-items: center; }
-.us-actions { margin-top: 12px; }
+.us-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; border-top: 1px solid var(--td-component-stroke); }
+
+.us-actions-spacer { flex: 1; }
+
+.us-save-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--td-component-stroke);
+  margin-top: 8px;
+}
 </style>

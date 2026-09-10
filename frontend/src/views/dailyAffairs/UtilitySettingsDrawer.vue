@@ -12,7 +12,7 @@
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">字段配置</span>
-            <span class="us-state">分组管理各菜单列字段，保存后自动同步</span>
+            <span class="us-state">分组管理各菜单列字段，修改后点击保存生效</span>
           </div>
           <div class="us-hint">点击分组卡片管理字段：新增、删除、排序、默认显示；删除字段不影响历史记录数据。</div>
           <div class="us-card-grid">
@@ -30,7 +30,7 @@
         <div class="us-section">
           <div class="us-section-head">
             <span class="us-section-title">包含判定</span>
-            <t-switch v-model="cfg.enabled" size="small" @change="scheduleSave" />
+            <t-switch v-model="cfg.enabled" size="small" />
             <span class="us-state">{{ cfg.enabled ? '生效' : '停用' }}</span>
             <span class="us-spacer" />
             <t-button variant="outline" size="small" @click="addIncludeRule">
@@ -42,20 +42,25 @@
           <div v-if="!cfg.include_rules.length" class="us-empty">暂无规则，模型判定为准</div>
           <div v-for="(r, i) in cfg.include_rules" :key="r.id" class="us-row">
             <div class="us-row-main">
-              <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" @change="scheduleSave" />
-              <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" @change="scheduleSave" />
+              <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" />
+              <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" />
               <t-textarea v-if="r.match_type === 'keyword'" v-model="keywordsText[i]" placeholder="关键词，逗号分隔"
                 :autosize="{ minRows: 1, maxRows: 2 }" size="small" class="us-keywords" @change="syncKeywords(i)" />
-              <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" @change="scheduleSave" />
-              <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" @change="scheduleSave" />
+              <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" />
+              <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" />
             </div>
             <div class="us-row-side">
-              <t-switch v-model="r.enabled" size="small" @change="scheduleSave" />
-              <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1); scheduleSave()">
+              <t-switch v-model="r.enabled" size="small" />
+              <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1)">
                 <template #icon><t-icon name="delete" size="15px" /></template>
               </t-button>
             </div>
           </div>
+        </div>
+
+        <!-- 手动保存 -->
+        <div class="us-save-bar">
+          <t-button theme="primary" size="small" :loading="saving" @click="persistAll">保存</t-button>
         </div>
       </div>
     </t-drawer>
@@ -80,13 +85,13 @@
           </div>
           <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-cfg-row">
             <div class="us-cell us-col-label">
-              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" @change="saveGroupFields" />
+              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" />
             </div>
             <div class="us-cell us-col-type">
-              <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" @change="saveGroupFields" />
+              <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" />
             </div>
             <div class="us-cell us-col-visible">
-              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" @change="saveGroupFields" />
+              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
             </div>
             <div class="us-cell us-col-order">
               <div class="us-cell-order">
@@ -119,11 +124,11 @@
           </div>
           <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-cfg-row">
             <div class="us-cell us-col-label">
-              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="行标题" @change="saveGroupFields" />
+              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="行标题" />
             </div>
             <div class="us-cell us-col-type"><span class="us-fixed-type">文本</span></div>
             <div class="us-cell us-col-visible">
-              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" @change="saveGroupFields" />
+              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
             </div>
             <div class="us-cell us-col-order">
               <div class="us-cell-order">
@@ -149,7 +154,9 @@
           <template #icon><t-icon name="add" size="14px" /></template>
           {{ groupTab === 'rows' ? '新增行' : '新增字段' }}
         </t-button>
-        <t-button size="small" @click="groupEditVisible = false">完成</t-button>
+        <span class="us-actions-spacer" />
+        <t-button variant="outline" size="small" @click="groupEditVisible = false">取消</t-button>
+        <t-button size="small" :loading="saving" @click="saveGroupEdit">保存</t-button>
       </div>
     </t-drawer>
   </div>
@@ -270,12 +277,10 @@ onBeforeUnmount(() => {
 const syncKeywords = (i: number) => {
   const t = keywordsText.value[i] || ''
   cfg.value.include_rules[i].keywords = t.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
-  scheduleSave()
 }
 const addIncludeRule = () => {
   cfg.value.include_rules.push({ id: uid(), name: '', match_type: 'keyword', keywords: [], logic: 'OR', regex: '', enabled: true })
   keywordsText.value.push('')
-  scheduleSave()
 }
 
 // ---- 字段分组管理 ----
@@ -333,6 +338,10 @@ const saveGroupFields = (): Promise<any> => {
     })
     .finally(() => { saving.value = false })
 }
+const saveGroupEdit = async () => {
+  await saveGroupFields()
+  groupEditVisible.value = false
+}
 const addGroupField = () => {
   const isRow = groupTab.value === 'rows' && hasRowGroup.value
   const list = isRow ? rowFields.value : groupFields.value
@@ -344,7 +353,6 @@ const addGroupField = () => {
     field_key: key, label: isRow ? `新行${n}` : '自定义字段', field_type: 'text',
     default_visible: false, sort_order: list.length, is_custom: true,
   })
-  saveGroupFields()
 }
 const removeGroupField = (i: number) => {
   const isRow = groupTab.value === 'rows' && hasRowGroup.value
@@ -386,7 +394,6 @@ const moveGroupField = (i: number, dir: number) => {
   list[i] = list[j]
   list[j] = tmp
   list.forEach((x, k) => { x.sort_order = k })
-  saveGroupFields()
 }
 
 // ---- 分组字段计数 ----
@@ -435,12 +442,7 @@ watch(() => props.visible, (v) => { if (v) load() })
 
 const onClose = () => emit('update:visible', false)
 
-// ---- 自动保存：包含判定防抖持久化 ----
-let saveTimer: ReturnType<typeof setTimeout> | undefined
-const scheduleSave = () => {
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => { persistAll() }, 800)
-}
+// ---- 手动保存：点击「保存」按钮统一持久化 ----
 const persistAll = async () => {
   if (saving.value) return
   saving.value = true
@@ -453,6 +455,7 @@ const persistAll = async () => {
         logic: r.logic, regex: r.regex, enabled: r.enabled,
       })),
     })
+    MessagePlugin.success('已保存')
     emit('changed')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -460,14 +463,6 @@ const persistAll = async () => {
     saving.value = false
   }
 }
-
-// 关闭抽屉前落盘最后改动
-watch(() => props.visible, (v) => {
-  if (!v) {
-    clearTimeout(saveTimer)
-    persistAll()
-  }
-})
 </script>
 
 <style lang="less" scoped>
@@ -763,5 +758,17 @@ watch(() => props.visible, (v) => {
   padding-top: 12px;
   border-top: 1px solid var(--td-component-stroke);
   margin-top: 12px;
+}
+
+.us-actions-spacer {
+  flex: 1;
+}
+
+.us-save-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--td-component-stroke);
+  margin-top: 8px;
 }
 </style>

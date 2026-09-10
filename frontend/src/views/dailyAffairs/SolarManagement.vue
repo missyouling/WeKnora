@@ -331,7 +331,7 @@
               <div class="bill-card">
                 <div class="bill-card-head">
                   <span class="bill-card-title">上网电费明细</span>
-                  <span class="bill-card-hint">电费 = 电量 × 电价，自动计算；点击行编辑，自动保存</span>
+                  <span class="bill-card-hint">电费 = 电量 × 电价，自动计算；点击行编辑</span>
                 </div>
                 <div class="fee-group-table">
                   <div class="fg-row fg-head">
@@ -358,7 +358,7 @@
               <div class="bill-card">
                 <div class="bill-card-head">
                   <span class="bill-card-title">发电补助明细</span>
-                  <span class="bill-card-hint">点击行编辑，自动保存</span>
+                  <span class="bill-card-hint">点击行编辑</span>
                 </div>
                 <div class="fee-group-table">
                   <div class="fg-row fg-head">
@@ -434,11 +434,13 @@
               <div v-for="f in detailFields" :key="f.key" class="field-grid-item">
                 <label class="field-label">{{ f.label }}</label>
                 <t-input :model-value="String(detailForm[f.key] ?? '')" :type="f.type === 'number' ? 'number' : 'text'" size="small"
-                  @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }"
-                  @blur="saveDetailField(f)" />
+                  @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }" />
               </div>
             </div>
-            <div class="auto-save-tip">修改后自动保存</div>
+            <div class="auto-save-tip">修改后点击保存生效</div>
+            <div class="edit-drawer-footer">
+              <t-button theme="primary" size="small" @click="saveDetailFields">保存</t-button>
+            </div>
           </div>
         </section>
 
@@ -478,7 +480,10 @@
             @update:model-value="(v: string) => { feeEditForm.fee = Number(v) || 0 }" />
         </div>
         <div class="edit-note">电费 = 计费数量 × 电价，自动计算；补助类（0 元）保留原值</div>
-        <div class="auto-save-tip">修改后自动保存</div>
+        <div class="auto-save-tip">修改后点击保存生效</div>
+        <div class="edit-drawer-footer">
+          <t-button theme="primary" size="small" @click="saveFeeEdit">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
@@ -543,6 +548,7 @@ import {
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractSolarBill,
+  reparseKnowledge,
   listSolarBillRecords,
   previewKnowledgeFile,
 } from '@/api/knowledge-base'
@@ -950,8 +956,6 @@ const openDetail = async (row: Row) => {
 }
 const summaryLines = ref('')
 const closeDetail = () => {
-  // 自动保存字段编辑（失焦已逐字段保存，此处兜底未失焦的改动）
-  if (currentRow.value) saveDetailFields()
   detailVisible.value = false
 }
 // 字段失焦自动保存（与合同/发票一致；数字字段清洗后仅更新该字段）
@@ -1071,16 +1075,49 @@ const recalcFeeEdit = () => {
     feeEditForm.value.fee = Math.round(qty * rate * 100) / 100
   }
 }
+const saveFeeEdit = async () => {
+  if (!currentRow.value || !kbId.value || !feeEditTarget.value) return
+  const { group, index } = feeEditTarget.value
+  const gws = (it.value.gateways || []).filter((g: any) =>
+    group === 'grid' ? g.gateway_type === '上网关口' : g.gateway_type === '发电关口')
+  let cursor = 0
+  let gw: any = null
+  let feeIdx = -1
+  for (const g of gws) {
+    const fees = Array.isArray(g.fees) ? g.fees : []
+    if (index < cursor + fees.length) { gw = g; feeIdx = index - cursor; break }
+    cursor += fees.length
+  }
+  if (!gw || feeIdx < 0) return
+  if (!Array.isArray(gw.fees)) gw.fees = []
+  gw.fees[feeIdx] = { ...(gw.fees[feeIdx] || {}), ...feeEditForm.value }
+  try {
+    const kid = currentRow.value.knowledgeId
+    const kd: any = await getKnowledgeDetails(kid)
+    let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+    meta.kind = 'solar_bill'
+    meta.records = meta.records || []
+    if (meta.records.length) meta.records[0] = { ...(meta.records[0] || {}), gateways: it.value.gateways }
+    else meta.records = [{ ...detailForm.value, gateways: it.value.gateways }]
+    await updateKnowledgeMetadata(kid, { custom_metadata: meta })
+    currentRow.value.item = { ...currentRow.value.item, gateways: [...(it.value.gateways || [])] }
+    MessagePlugin.success('已保存')
+    feeEditVisible.value = false
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  }
+}
 
 // ---- 浮动工具栏 ----
 const handleReExtract = async () => {
   const row = selectedSingle.value
   if (!row || !kbId.value) return
   try {
-    await extractSolarBill(kbId.value, row.knowledgeId)
-    MessagePlugin.success('已重新提取')
-    clearSelection()
-    loadFiles(true)
+    // 与电费/合同一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
+    await reparseKnowledge(row.knowledgeId)
+    MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
+    setTimeout(() => loadFiles(true), 1500)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '重新提取失败')
   }
@@ -1610,6 +1647,13 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 编辑抽屉 */
 .edit-drawer-body { display: flex; flex-direction: column; gap: 14px; }
+
+.edit-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--td-component-stroke);
+}
 .edit-field { display: flex; flex-direction: column; gap: 4px; }
 .edit-label { font-size: 12px; color: var(--td-text-color-secondary); }
 .edit-note { font-size: 12px; color: var(--td-text-color-secondary); line-height: 1.6; }

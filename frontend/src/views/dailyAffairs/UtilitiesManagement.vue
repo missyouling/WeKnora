@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
@@ -419,7 +419,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">电量明细 · 工商业</span>
-                        <span class="bill-card-hint">点击行可编辑，自动保存</span>
+<span class="bill-card-hint">点击行可编辑</span>
                       </div>
                       <div class="meter-table">
                         <div class="meter-row meter-head">
@@ -448,7 +448,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">电量明细 · 居民</span>
-                        <span class="bill-card-hint">计费电量 = 本期电量 × 定比 + 加减，点击行编辑，自动保存</span>
+<span class="bill-card-hint">计费电量 = 本期电量 × 定比 + 加减，点击行编辑</span>
                       </div>
                       <div class="meter-table">
                         <div class="meter-row meter-head">
@@ -479,7 +479,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">{{ menuLabel(activeMenu) }}</span>
-                        <span class="bill-card-hint">共 {{ feeRowsOf(activeMenu).length }} 项，点击行编辑，自动保存</span>
+<span class="bill-card-hint">共 {{ feeRowsOf(activeMenu).length }} 项，点击行编辑</span>
                       </div>
                       <div class="fee-group-table">
                         <div class="fg-row fg-head">
@@ -507,7 +507,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">输配容（需）量电费</span>
-                        <span class="bill-card-hint">点击行编辑，自动保存</span>
+<span class="bill-card-hint">点击行编辑</span>
                       </div>
                       <div class="detail-table cols-8">
                         <div class="fg-row fg-head">
@@ -533,7 +533,7 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">功率因素调整电费</span>
-                        <span class="bill-card-hint">点击行编辑，自动保存</span>
+<span class="bill-card-hint">点击行编辑</span>
                       </div>
                       <div class="detail-table cols-8">
                         <div class="fg-row fg-head">
@@ -603,7 +603,7 @@
                   @update:model-value="(v: string) => setFieldValue(cfg, v)" />
               </div>
             </div>
-            <div class="auto-save-tip">字段修改后将自动保存{{ autoSaving ? '（保存中...）' : '' }}</div>
+<div class="auto-save-tip">修改后点击保存生效</div>
           </div>
         </section>
 
@@ -638,7 +638,7 @@
               </t-button>
               <span class="fee-total">合计 {{ fmtMoney(feeTotal) }} 元</span>
             </div>
-            <div class="auto-save-tip">明细编辑后自动保存，总账按明细重算</div>
+<div class="auto-save-tip">明细编辑后点击保存，总账按明细重算</div>
           </div>
         </section>
 
@@ -663,7 +663,10 @@
           <t-input :model-value="String(meterEditForm[f.key] ?? '')" type="number" size="small"
             @update:model-value="(v: string) => (meterEditForm[f.key] = Number(v) || 0)" />
         </div>
-        <div class="auto-save-tip">修改后自动保存</div>
+        <div class="auto-save-tip">修改后点击保存生效</div>
+        <div class="edit-drawer-footer">
+          <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
@@ -677,7 +680,10 @@
           <t-input :model-value="String(detailEditForm[f.key] ?? '')" :type="f.type === 'text' ? 'text' : 'number'" size="small"
             @update:model-value="(v: string) => (detailEditForm[f.key] = f.type === 'text' ? v : Number(v) || 0)" />
         </div>
-        <div class="auto-save-tip">修改后自动保存</div>
+        <div class="auto-save-tip">修改后点击保存生效</div>
+        <div class="edit-drawer-footer">
+          <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
@@ -717,7 +723,10 @@
           <label class="edit-label">说明</label>
           <div class="edit-note">{{ feeItemEditableFee ? '电费 = 电量 × 标准，自动计算' : '该费用项无法由电量×标准推导（返还/调整类），金额保留账单原值' }}</div>
         </div>
-        <div class="auto-save-tip">修改后自动保存</div>
+        <div class="auto-save-tip">修改后点击保存生效</div>
+        <div class="edit-drawer-footer">
+          <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
@@ -738,7 +747,10 @@
               @update:model-value="(v: string) => (staticEditForm[f.key] = Number(v) || 0)" />
           </div>
         </div>
-        <div class="auto-save-tip">修改后自动保存</div>
+        <div class="auto-save-tip">修改后点击保存生效</div>
+        <div class="edit-drawer-footer">
+          <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </t-drawer>
 
@@ -1285,7 +1297,6 @@ const detailFieldDefs = computed(() => columnDefs.value)
 const summaryExpanded = ref(true)
 const feeExpanded = ref(false)
 const autoSaving = ref(false)
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 let autoSaveDirty = false
 let editFormSnapshot = ''
 let feeItemsSnapshot = ''
@@ -2078,13 +2089,7 @@ const fmtRate = (v: any) => {
 
 const onFieldEdited = () => { /* 数值字段 change 即进入自动保存流程 */ }
 
-watch(editForm, () => {
-  if (!autoSaveDirty || !currentRow.value) return
-  if (JSON.stringify(editForm.value) === editFormSnapshot) return
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { saveEditForm() }, 1200)
-}, { deep: true })
-
+// 保存方式：详情/编辑抽屉手动保存（点击「保存」按钮持久化）；行内编辑失焦保存走 commitFeeOverride/commitBillFeeOverride
 const saveEditForm = async () => {
   const now = currentRow.value
   if (!now) return
@@ -3566,6 +3571,13 @@ onBeforeUnmount(() => { stopPolling() })
 /* 编辑抽屉 */
 .edit-drawer-body {
   padding: 8px 2px 24px;
+}
+
+.edit-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--td-component-stroke);
 }
 
 .edit-field {
