@@ -968,3 +968,30 @@ export function updateUtilityTariffRule(id: string, category: string, payload: R
 export function deleteUtilityTariffRule(id: string, category = 'electricity') {
   return del(`/api/v1/utilities/tariff-rules/${id}?category=${category}`);
 }
+
+// ---- 光伏账单管理（与电费共用「日常事务-电费」知识库，kind=solar_bill 隔离） ----
+
+/** 光伏账单字段提取：复用知识库 summary_model_id 提取光伏字段写入 custom_metadata */
+export function extractSolarBill(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-solar-bill`, {}, { timeout: 600000 });
+}
+
+/** 光伏账单记录列表（每份账单一条） */
+export function listSolarBillRecords(kbId: string, params: {
+  q?: string;
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  if (params.status) query.set('status', params.status);
+  if (params.page && params.page > 1) query.set('page', String(params.page));
+  if (params.page_size) query.set('page_size', String(params.page_size));
+  const qs = query.toString();
+  return get(`/api/v1/knowledge-bases/${kbId}/solar-bill-records${qs ? `?${qs}` : ''}`);
+}

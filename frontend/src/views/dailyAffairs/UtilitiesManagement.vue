@@ -37,6 +37,9 @@
           <div class="utilities-side-item" :class="{ active: activeTab === 'electricity' }" @click="switchTab('electricity')">
             <t-icon name="chart-bubble" size="16px" /><span>电费</span>
           </div>
+          <div class="utilities-side-item" :class="{ active: activeTab === 'solar' }" @click="switchTab('solar')">
+            <t-icon name="chart-radar" size="16px" /><span>光伏</span>
+          </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'water' }" @click="switchTab('water')">
             <t-icon name="dashboard" size="16px" /><span>水费</span>
           </div>
@@ -535,8 +538,11 @@
           <template v-else-if="activeTab === 'water'">
             <UtilityMeterTab category="water" />
           </template>
-          <template v-else>
+          <template v-else-if="activeTab === 'gas'">
             <UtilityMeterTab category="gas" />
+          </template>
+          <template v-else-if="activeTab === 'solar'">
+            <SolarManagement />
           </template>
         </div>
       </div>
@@ -785,6 +791,7 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import UtilityMeterTab from './UtilityMeterTab.vue'
+import SolarManagement from './SolarManagement.vue'
 import UtilitySettingsDrawer from './UtilitySettingsDrawer.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 
@@ -817,7 +824,7 @@ const FALLBACK_COLUMNS: ColDef[] = [
   { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '1fr' },
 ]
 
-const activeTab = ref<'electricity' | 'water' | 'gas'>('electricity')
+const activeTab = ref<'electricity' | 'water' | 'gas' | 'solar'>('electricity')
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
@@ -1110,10 +1117,12 @@ const startPolling = () => {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
       const arr = Array.isArray(data) ? data : []
-      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）
+      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）；跳过光伏文件（共享知识库）
       pendingFiles.value = arr.filter((it: any) => {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
+        if (meta.kind && meta.kind !== 'utility_bill') return false
+        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'electricity') return false
         return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
           meta.extract_status === 'failed' ||
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
@@ -1123,6 +1132,8 @@ const startPolling = () => {
       for (const it of arr) {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
+        if (meta.kind && meta.kind !== 'utility_bill') continue
+        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'electricity') continue
         if (ps === 'completed' && !meta.kind && !meta.extract_status && !extractingSet.has(it.id)) {
           extractingSet.add(it.id)
           try {
@@ -1180,7 +1191,8 @@ const onFileInputChange = async (e: Event) => {
   if (!files.length || !kbId.value) return
   for (const f of files) {
     try {
-      const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
+      // 上传时打标 bill_kind=electricity，与光伏文件在共享知识库中互不干扰
+      const res: any = await uploadKnowledgeFile(kbId.value, { file: f, metadata: JSON.stringify({ bill_kind: 'electricity' }) })
       const knowledge = res?.data || res
       const kid = knowledge?.id || knowledge?.knowledge_id
       // 解析完成后由轮询自动触发提取，无需在此登记
@@ -2316,7 +2328,7 @@ const cellText = (row: Row, key: string): string => {
 
 // ---- Tab 切换 ----
 const onTabChange = () => { /* 子组件自行加载 */ }
-const switchTab = (tab: 'electricity' | 'water' | 'gas') => {
+const switchTab = (tab: 'electricity' | 'water' | 'gas' | 'solar') => {
   if (activeTab.value === tab) return
   activeTab.value = tab
   onTabChange()
