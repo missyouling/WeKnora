@@ -168,14 +168,14 @@
                     <t-empty description="暂无数据" />
                   </div>
                 </div>
-                <!-- 底部汇总（表格底部左侧；选中时按选中统计并避让浮动工具栏） -->
-                <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
-                  <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
-                  <span>电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
-                  <span>电费 {{ fmtMoney(summaryAmount) }} 元</span>
-                  <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
-                </div>
               </div>
+            </div>
+            <!-- 底部汇总（列表容器外固定显示，不随内容滚动；选中时按选中统计并避让浮动工具栏） -->
+            <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
+              <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
+              <span>电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
+              <span>电费 {{ fmtMoney(summaryAmount) }} 元</span>
+              <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
             </div>
 
             <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏，避免浮于弹窗之上） -->
@@ -2571,20 +2571,18 @@ onBeforeUnmount(() => { stopPolling() })
   gap: 8px;
 }
 
-/* 底部汇总行（表格底部左侧） */
+/* 底部汇总行（表格底部左侧，固定于滚动容器外；与合同管理 doc-summary-bar 一致） */
 .doc-list-footer-summary {
   display: flex;
   gap: 24px;
   align-items: center;
-  padding: 8px 16px;
+  padding: 6px 2px 0;
   font-size: 13px;
   color: var(--td-text-color-secondary);
-  border-top: 1px solid var(--td-component-stroke);
-  background: var(--td-bg-color-container);
-  border-radius: 0 0 9px 9px;
+  flex-shrink: 0;
 
   &.with-toolbar {
-    padding-bottom: 48px;
+    margin-bottom: 56px;
   }
 
   .summary-selected {
@@ -2593,10 +2591,15 @@ onBeforeUnmount(() => { stopPolling() })
 }
 
 .doc-list-scroll {
-  flex: 1;
-  min-height: 0;
+  /* 高度随内容自适应：1 条包 1 条，多条向下扩展；超出容器后内部滚动，容器底边不撑大页面（与合同管理一致） */
+  flex: 0 1 auto;
+  max-height: 100%;
+  min-width: 0;
   overflow-y: auto;
+  border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
@@ -2604,11 +2607,6 @@ onBeforeUnmount(() => { stopPolling() })
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  overflow: hidden;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .doc-list-group-header,
