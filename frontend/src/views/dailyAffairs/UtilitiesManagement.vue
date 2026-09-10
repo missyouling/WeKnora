@@ -423,24 +423,27 @@
                     <div class="bill-card">
                       <div class="bill-card-head">
                         <span class="bill-card-title">电量明细 · 居民</span>
-                        <span class="bill-card-hint">计费电量 = 本期电量 × 比例 + 加减，点击行编辑，自动保存</span>
+                        <span class="bill-card-hint">计费电量 = 本期电量 × 定比 + 加减，点击行编辑，自动保存</span>
                       </div>
-                      <div class="detail-table cols-5">
-                        <div class="fg-row fg-head">
-                          <span>项目</span><span>本期电量</span><span>比例</span><span>加减</span><span>计费电量</span>
+                      <div class="meter-table">
+                        <div class="meter-row meter-head">
+                          <span>示数类型</span><span>上期示数</span><span>本期示数</span><span>倍率</span><span>抄见电量</span><span>变损</span><span>线损</span><span>加减</span><span>计费电量</span>
                         </div>
-                        <div v-for="(r, i) in residentialRows" :key="i" class="fg-row" @click="openDetailEdit('resident', i)">
-                          <span class="fg-name" :title="r.project">{{ r.project }}</span>
-                          <span class="row-mono">{{ r.kwh ? fmtKwh(r.kwh) : '' }}</span>
-                          <span class="row-mono">{{ r.ratio ? fmtRate6(r.ratio) : '' }}</span>
+                        <div v-for="(r, i) in residentMeterRows" :key="i" class="meter-row" @click="openResidentMeterEdit(i)">
+                          <span class="meter-type">{{ r.meter_type }}</span>
+                          <span class="row-mono">{{ r.prev || r.prev === 0 ? fmtKwh(r.prev) : '' }}</span>
+                          <span class="row-mono">{{ r.curr || r.curr === 0 ? fmtKwh(r.curr) : '' }}</span>
+                          <span class="row-mono">{{ r.multiplier || r.multiplier === 0 ? fmtKwh(r.multiplier) : '' }}</span>
+                          <span class="row-mono">{{ r.reading_kwh || r.reading_kwh === 0 ? fmtKwh(r.reading_kwh) : '' }}</span>
+                          <span class="row-mono">{{ r.trans_loss || r.trans_loss === 0 ? fmtKwh(r.trans_loss) : '' }}</span>
+                          <span class="row-mono">{{ r.line_loss || r.line_loss === 0 ? fmtKwh(r.line_loss) : '' }}</span>
                           <span class="row-mono">{{ r.adjust || r.adjust === 0 ? fmtKwh(r.adjust) : '' }}</span>
                           <span class="row-mono">{{ r.bill_kwh ? fmtKwh(r.bill_kwh) : '' }}</span>
                         </div>
-                        <div v-if="!residentialRows.length" class="fg-empty">暂无数据</div>
-                        <div v-if="residentialRows.length" class="fg-row fg-total">
-                          <span>合计</span>
-                          <span class="row-mono">{{ fmtKwh(residentialKwhTotal) }}</span><span></span><span></span>
-                          <span class="row-mono">{{ fmtKwh(residentialBillTotal) }}</span>
+                        <div v-if="!residentMeterRows.length" class="fg-empty">暂无数据</div>
+                        <div v-if="residentMeterRows.length" class="meter-row meter-total">
+                          <span>合计</span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                          <span class="row-mono">{{ fmtKwh(residentBillTotal) }}</span>
                         </div>
                       </div>
                     </div>
@@ -1345,6 +1348,7 @@ const ROW_GROUP_OF_MENU: Record<string, string> = {
   'industrial-trans': 'trans-rows',
   'industrial-sys': 'sys-rows',
   'industrial-gov': 'gov-industrial-rows',
+  'residential-catalog': 'catalog-rows',
   'residential-gov': 'gov-residential-rows',
 }
 // 分时时段（仅括号内为这些时段时，配置 key 才拆分为 名称+时段；如"零售交易电费(尖峰)"）
@@ -1454,22 +1458,44 @@ const PF_FIELDS = [
   { key: 'adjust_fee', label: '功率因素调整电费（元）', type: 'number' },
 ]
 
-// 居民电量明细行（项目/本期电量/比例/加减/计费电量）
-const residentialRows = computed(() => {
+// 居民电量明细（与工商业电量明细一致 9 列；行=定比0.015，计费电量=本期电量×定比+加减，差异可手动修改）
+const residentMeterRows = computed(() => {
+  const totalKwh = Number(editForm.value.total_kwh) || 0
   const list = editForm.value.residential_readings
-  const arr = Array.isArray(list) && list.length
-    ? list
-    : [{ project: '居民目录电量', kwh: residentMeterKwh.value, ratio: 1, adjust: 0, bill_kwh: residentMeterKwh.value }]
+  const arr = Array.isArray(list) && list.length ? list : []
+  const build = (cfgLabel: string, hit: any) => {
+    const ratio = Number(hit?.ratio) || 0.015
+    const adjust = Number(hit?.adjust) || 0
+    const autoBill = totalKwh > 0 ? Math.round((totalKwh * ratio + adjust) * 100) / 100 : 0
+    const bill = hit?.bill_kwh_manual ? (Number(hit.bill_kwh) || 0) : autoBill
+    return { meter_type: cfgLabel, prev: '', curr: '', multiplier: '', reading_kwh: '', trans_loss: '', line_loss: '', adjust, bill_kwh: bill }
+  }
   const cfgs = residentRowConfigs.value
-  if (!cfgs.length) return arr
-  return cfgs.map(cfg => {
-    const hit = arr.find(r => matchRow(r, cfg))
-    if (hit) return { ...hit, project: cfg.label }
-    return { project: cfg.label, kwh: '', ratio: '', adjust: '', bill_kwh: '' }
+  if (!cfgs.length) {
+    return [build('定比0.015', arr[0] || { ratio: 0.015, adjust: 0, bill_kwh: 0 })]
+  }
+  return cfgs.map((cfg: any, ci: number) => {
+    const hit = arr[ci] || arr[0] || null
+    return build(cfg.label || cfg.field_key, hit)
   })
 })
-const residentialKwhTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.kwh) || 0), 0))
-const residentialBillTotal = computed(() => residentialRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
+const residentBillTotal = computed(() => residentMeterRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
+const residentMeterEditIdx = ref(-1)
+let residentEditSnapshot = ''
+const openResidentMeterEdit = (idx: number) => {
+  const r = residentMeterRows.value[idx] || {}
+  residentMeterEditIdx.value = idx
+  detailEditTarget = 'resident'
+  detailEditIdx = idx
+  detailEditTitle.value = '编辑居民电量明细'
+  detailEditFields.value = [
+    { key: 'adjust', label: '加减（千瓦时）', type: 'number' },
+    { key: 'bill_kwh', label: '计费电量（千瓦时）', type: 'number' },
+  ]
+  detailEditForm.value = { adjust: r.adjust ?? 0, bill_kwh: r.bill_kwh ?? 0 }
+  residentEditSnapshot = JSON.stringify(detailEditForm.value)
+  detailEditVisible.value = true
+}
 const capacityRow = computed(() => editForm.value.capacity_detail || null)
 const pfRow = computed(() => editForm.value.pf_detail || null)
 // 列表展示行（容量/功率因数均为单行）
@@ -1771,7 +1797,6 @@ const meterRows = computed(() => {
   })
 })
 const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
-const residentMeterKwh = computed(() => sumQty(feeRowsOf('residential-catalog')))
 const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(2)}%` : '--')
 
 // 电量明细编辑（9 字段）
@@ -1895,18 +1920,7 @@ let detailEditIdx = -1
 const openDetailEdit = (target: 'resident' | 'capacity' | 'pf', idx = 0) => {
   detailEditTarget = target
   detailEditIdx = idx
-  if (target === 'resident') {
-    const r = residentialRows.value[idx] || {}
-    detailEditTitle.value = '编辑居民电量明细'
-    detailEditFields.value = [
-      { key: 'project', label: '项目', type: 'text' },
-      { key: 'kwh', label: '本期电量（千瓦时）', type: 'number' },
-      { key: 'ratio', label: '比例（0-1）', type: 'number' },
-      { key: 'adjust', label: '加减（千瓦时）', type: 'number' },
-      { key: 'bill_kwh', label: '计费电量（千瓦时）', type: 'number' },
-    ]
-    detailEditForm.value = { ...r }
-  } else if (target === 'capacity') {
+  if (target === 'capacity') {
     detailEditTitle.value = '编辑输配容（需）量电费'
     detailEditFields.value = CAPACITY_FIELDS
     detailEditForm.value = { ...(capacityRow.value || {}) }
@@ -1922,18 +1936,20 @@ watch(detailEditForm, () => {
   if (detailEditTarget === 'resident') {
     let list = editForm.value.residential_readings
     if (!Array.isArray(list)) { list = []; editForm.value.residential_readings = list }
-    const cfg = residentRowConfigs.value[detailEditIdx]
-    const title = detailEditForm.value.project || cfg?.label || cfg?.field_key || `行${detailEditIdx + 1}`
-    let row = list.find((r: any) => matchRow(r, { field_key: title, label: title }))
+    const cfg = residentRowConfigs.value[residentMeterEditIdx.value >= 0 ? residentMeterEditIdx.value : detailEditIdx]
+    const title = cfg?.label || cfg?.field_key || '定比0.015'
+    let row = list[0] || list.find((r: any) => matchRow(r, { field_key: title, label: title }))
     if (!row) {
-      row = { project: title, kwh: 0, ratio: 0, adjust: 0, bill_kwh: 0 }
+      row = { project: title, kwh: Number(editForm.value.total_kwh) || 0, ratio: 0.015, adjust: 0, bill_kwh: 0 }
       list.push(row)
     }
-    Object.keys(detailEditForm.value).forEach(k => { row[k] = detailEditForm.value[k] })
-    let ratio = Number(row.ratio) || 0
-    if (ratio > 1) ratio = ratio / 100
-    row.ratio = Math.round(ratio * 10000) / 10000
-    row.bill_kwh = Math.round(((Number(row.kwh) || 0) * ratio + (Number(row.adjust) || 0)) * 100) / 100
+    if (JSON.stringify(detailEditForm.value) !== residentEditSnapshot) {
+      if (detailEditForm.value.adjust !== undefined) row.adjust = detailEditForm.value.adjust
+      if (detailEditForm.value.bill_kwh !== undefined) {
+        row.bill_kwh = detailEditForm.value.bill_kwh
+        row.bill_kwh_manual = true
+      }
+    }
   } else if (detailEditTarget === 'capacity') {
     const d = { ...(editForm.value.capacity_detail || {}), ...detailEditForm.value }
     if (d.demand > 0 && d.demand_price > 0) d.demand_fee = Math.round(d.demand * d.demand_price * 100) / 100

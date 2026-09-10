@@ -308,6 +308,7 @@ const ROW_GROUP_MAP: Record<string, string> = {
   trans: 'trans-rows',
   sys: 'sys-rows',
   'gov-industrial': 'gov-industrial-rows',
+  catalog: 'catalog-rows',
   'gov-residential': 'gov-residential-rows',
 }
 

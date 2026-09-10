@@ -73,7 +73,7 @@ func (h *UtilityHandler) ListUtilityFieldConfigs(c *gin.Context) {
 
 // mergeGroupDefaults 将全量字段配置按分组补齐默认：DB 有数据的组保留 DB 数据，空组用默认字段填充。
 func (h *UtilityHandler) mergeGroupDefaults(cfgs []types.UtilityFieldConfig) []types.UtilityFieldConfig {
-	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
+	allGroups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "catalog-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
 	dbMap := make(map[string][]types.UtilityFieldConfig)
 	for _, c := range cfgs {
 		dbMap[c.Group] = append(dbMap[c.Group], c)
@@ -677,10 +677,15 @@ func electricityDefaultGroupFields(group string) []utilityFieldDef {
 			{"bill_kwh", "计费电量", "number", true, g},
 		}
 	case "resident-meter":
+		// 居民电量明细列（与工商业电量明细一致 9 列；行数据由前端按 定比行 映射渲染）
 		return []utilityFieldDef{
-			{"project", "项目", "text", true, g},
-			{"kwh", "本期电量", "number", true, g},
-			{"ratio", "比例", "number", true, g},
+			{"meter_type", "示数类型", "text", true, g},
+			{"prev", "上期示数", "number", true, g},
+			{"curr", "本期示数", "number", true, g},
+			{"multiplier", "倍率", "number", true, g},
+			{"reading_kwh", "抄见电量", "number", true, g},
+			{"trans_loss", "变损", "number", true, g},
+			{"line_loss", "线损", "number", true, g},
 			{"adjust", "加减", "number", true, g},
 			{"bill_kwh", "计费电量", "number", true, g},
 		}
@@ -698,6 +703,11 @@ func electricityDefaultGroupFields(group string) []utilityFieldDef {
 		// 居民电量明细行
 		return []utilityFieldDef{
 			{"定比0.015", "定比0.015", "text", true, g},
+		}
+	case "catalog-rows":
+		// 目录电费（居民）明细行
+		return []utilityFieldDef{
+			{"基础电费", "基础电费", "text", true, g},
 		}
 	case "overview-rows":
 		// 账单概况-基础信息行（field_key 为数据字段名，label 可改名；渲染 basicInfo[key]）
@@ -794,7 +804,7 @@ func utilityDefaultFieldConfigs(tenantID uint64, category, group string) []types
 	case "electricity":
 		if group == "" {
 			// 不传 group：返回全部组默认（概况 + 各费用菜单列 + 明细 + 行配置）
-			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
+			groups := []string{"overview", "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential", "capacity", "pf", "meter", "resident-meter", "meter-rows", "resident-meter-rows", "catalog-rows", "overview-rows", "market-rows", "trans-rows", "sys-rows", "gov-industrial-rows", "gov-residential-rows"}
 			for _, g := range groups {
 				defs = append(defs, electricityDefaultGroupFields(g)...)
 			}
