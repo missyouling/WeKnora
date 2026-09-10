@@ -3131,14 +3131,12 @@ onBeforeUnmount(() => { stopPolling() })
   }
 }
 
-/* 账单概况 + 用能分析 一行两卡片（等高；组件自然紧凑排列，底部允许留白） */
+/* 账单概况 + 用能分析 一行两卡片（彼此等高、底边齐平；不撑满底层容器，底部自然留白） */
 .overview-two-col {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: stretch;
-  flex: 1;
-  min-height: 0;
 
   > .bill-card {
     display: flex;
