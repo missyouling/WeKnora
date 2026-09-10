@@ -20,9 +20,9 @@ const solarBillExtractMaxContentRunes = 60000
 
 // SolarBillExtractionResult is the strict-JSON shape the model must return.
 type SolarBillExtractionResult struct {
-	Kind         string                         `json:"kind"` // "solar_bill" | "not_solar_bill"
+	Kind         string                          `json:"kind"` // "solar_bill" | "not_solar_bill"
 	Records      []types.SolarBillExtractionItem `json:"records"`
-	ExtractError string                         `json:"extract_error"`
+	ExtractError string                          `json:"extract_error"`
 }
 
 // solarBillExtractionSystemPrompt instructs the model to extract all fields
@@ -101,35 +101,83 @@ func SolarBillBatchesHaveText(batches []string) bool {
 	return false
 }
 
+// tryParseSolarBillJSON 尝试把模型原始输出解析为提取结果；成功返回 true。
+func tryParseSolarBillJSON(raw string, parsed *SolarBillExtractionResult) bool {
+	cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(raw)
+	if err := common.ParseLLMJsonResponse(cleaned, parsed); err == nil {
+		return true
+	}
+	return false
+}
+
 // ExtractSolarBillsFromContent calls the configured chat model and parses
 // its strict-JSON reply into a SolarBillExtractionResult.
+// 与电费提取一致：智谱等供应商对长输入+大输出偶发返回空 content，
+// 采用"流式优先、多次重试"策略（无 Format 流式 → 无 Format 非流式 → json_object 非流式 → 无 Format 流式），
+// 且不传 max_tokens（智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空）。
 func ExtractSolarBillsFromContent(ctx context.Context, model chat.Chat, content string) (*SolarBillExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &SolarBillExtractionResult{Kind: "not_solar_bill"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	opts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking}
-	opts.Format = json.RawMessage(solarBillExtractionOutputSchema)
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "solar_bill_extract", ""), []chat.Message{
+	llmCtx := types.WithLLMCallMetadata(ctx, "solar_bill_extract", "")
+	messages := []chat.Message{
 		{Role: "system", Content: solarBillExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, opts)
-	if err != nil {
-		return nil, fmt.Errorf("extract solar bill fields: %w", err)
 	}
-	var parsed SolarBillExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(result.Content)
-		if cleaned != result.Content {
-			if err2 := common.ParseLLMJsonResponse(cleaned, &parsed); err2 == nil {
-				return &parsed, nil
+	mkOpts := func() *chat.ChatOptions {
+		return &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	}
+	var lastErr error
+	var lastRaw string
+	attempts := []struct {
+		label string
+		run   func() (string, error)
+	}{
+		{"stream-free", func() (string, error) {
+			return chatStreamCollect(llmCtx, model, messages, mkOpts())
+		}},
+		{"nonstream-free", func() (string, error) {
+			resp, err := model.Chat(llmCtx, messages, mkOpts())
+			if err != nil {
+				return "", err
 			}
-		}
-		logger.Warnf(ctx, "solar bill extraction raw response (first 20000 chars): %s", truncateForLog(result.Content, 20000))
-		return nil, fmt.Errorf("parse solar bill extraction response: %w", err)
+			return resp.Content, nil
+		}},
+		{"nonstream-jsonobject", func() (string, error) {
+			opts := mkOpts()
+			opts.Format = json.RawMessage(solarBillExtractionOutputSchema)
+			resp, err := model.Chat(llmCtx, messages, opts)
+			if err != nil {
+				return "", err
+			}
+			return resp.Content, nil
+		}},
+		{"stream-free-2", func() (string, error) {
+			return chatStreamCollect(llmCtx, model, messages, mkOpts())
+		}},
 	}
-	return &parsed, nil
+	for i, a := range attempts {
+		raw, err := a.run()
+		if err != nil {
+			lastErr = err
+			logger.Warnf(ctx, "solar bill extraction attempt %d (%s) error: %v", i+1, a.label, err)
+			continue
+		}
+		var parsed SolarBillExtractionResult
+		if tryParseSolarBillJSON(raw, &parsed) {
+			return &parsed, nil
+		}
+		lastRaw = raw
+		lastErr = fmt.Errorf("unparseable response (len=%d)", len(raw))
+		logger.Warnf(ctx, "solar bill extraction attempt %d (%s) unparseable (len=%d)", i+1, a.label, len(raw))
+	}
+	logger.Warnf(ctx, "solar bill extraction raw response (first 20000 chars): %s", truncateForLog(lastRaw, 20000))
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable response")
+	}
+	return nil, fmt.Errorf("parse solar bill extraction response: %w", lastErr)
 }
 
 // NormalizeSolarBillExtractionResult normalizes one record per bill and

@@ -794,24 +794,25 @@ const startPolling = () => {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
       const arr = Array.isArray(data) ? data : []
-      // 光伏相关文件：解析中/待提取/提取失败/提取中 + 已解析完成未提取（仅捕获光伏文档，电费文档由电费页处理）
+      // 光伏相关文件：仅处理打标 bill_kind=solar 或已提取 kind=solar_bill 的文件，
+      // 电费文件（bill_kind=electricity / kind=utility_bill / 无标记）一律跳过
       pendingFiles.value = arr.filter((it: any) => {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
-        if (meta.kind && meta.kind !== 'solar_bill') return false
-        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'solar') return false
+        if (meta.kind === 'utility_bill') return false
+        if (meta.bill_kind && meta.bill_kind !== 'solar') return false
         return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
           meta.extract_status === 'failed' ||
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
-          (meta.extract_status == null && ps === 'completed' && !meta.kind && it.metadata?.bill_kind === 'solar')
+          (meta.extract_status == null && ps === 'completed' && meta.bill_kind === 'solar')
       })
-      // 已解析完成但尚未提取的文件自动触发提取
+      // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取
       for (const it of arr) {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
-        if (meta.kind && meta.kind !== 'solar_bill') continue
-        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'solar') continue
-        if (ps === 'completed' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
+        if (meta.kind === 'utility_bill') continue
+        if (meta.bill_kind && meta.bill_kind !== 'solar') continue
+        if (ps === 'completed' && meta.bill_kind === 'solar' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
           extractInFlight.value.add(it.id)
           try {
             await extractSolarBill(kbId.value, it.id)
@@ -864,8 +865,19 @@ const onFileInputChange = async (e: Event) => {
   if (!files.length || !kbId.value) return
   for (const f of files) {
     try {
-      // 上传时打标 bill_kind=solar，与电费文件在共享知识库中互不干扰
-      await uploadKnowledgeFile(kbId.value, { file: f, metadata: JSON.stringify({ bill_kind: 'solar' }) })
+      // 上传后立即打标 bill_kind=solar（custom_metadata，列表接口可靠返回），
+      // 与电费文件在共享知识库中互不干扰
+      const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
+      const kid = res?.data?.id || res?.id
+      if (kid) {
+        try {
+          const kd: any = await getKnowledgeDetails(kid)
+          let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+          // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
+          if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+          await updateKnowledgeMetadata(kid, { custom_metadata: { ...meta, bill_kind: 'solar' } })
+        } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
+      }
       // 解析完成后由轮询自动触发提取
     } catch (e2: any) {
       MessagePlugin.error(`上传「${f.name}」失败：${e2?.message || '未知错误'}`)
@@ -934,7 +946,9 @@ const saveDetailFields = async () => {
   try {
     const kid = currentRow.value.knowledgeId
     const kd: any = await getKnowledgeDetails(kid)
-    const meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+    let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+    // 兼容历史双层结构：{custom_metadata: {...}} 取内层再保存
+    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
     meta.kind = 'solar_bill'
     meta.records = meta.records || []
     if (meta.records.length) {

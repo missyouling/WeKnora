@@ -13,11 +13,25 @@ import (
 // utilityBillMetadata mirrors the persisted custom_metadata shape for a
 // knowledge row in the utility-bill KB.
 type utilityBillMetadata struct {
-	Kind             string                           `json:"kind"`
+	Kind             string                            `json:"kind"`
 	Records          []types.UtilityBillExtractionItem `json:"records"`
-	ExtractStatus    string                           `json:"extract_status"`
-	ExtractError     string                           `json:"extract_error"`
-	AutoDeletedCount int                              `json:"auto_deleted_count"`
+	ExtractStatus    string                            `json:"extract_status"`
+	ExtractError     string                            `json:"extract_error"`
+	AutoDeletedCount int                               `json:"auto_deleted_count"`
+}
+
+// unmarshalBillMetadata 解析知识行 custom_metadata。
+// 兼容历史双层结构：若顶层仅有 custom_metadata 键（早期前端打标写入的
+// {"custom_metadata": {...}}），自动取内层再解析，避免 kind 判定落空。
+func unmarshalBillMetadata(raw []byte, out interface{}) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return err
+	}
+	if inner, ok := probe["custom_metadata"]; ok && len(probe) == 1 {
+		return json.Unmarshal(inner, out)
+	}
+	return json.Unmarshal(raw, out)
 }
 
 // ListUtilityBillRecords returns the paginated utility-bill list of one KB.
@@ -72,7 +86,7 @@ func (s *knowledgeService) ListUtilityBillRecords(ctx context.Context, kbID stri
 				continue
 			}
 			var meta utilityBillMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+			if err := unmarshalBillMetadata(k.CustomMetadata, &meta); err != nil {
 				continue
 			}
 			legacyManual := meta.Kind != wantKind && meta.AutoDeletedCount > 0
@@ -213,7 +227,7 @@ func (s *knowledgeService) ListSolarBillRecords(ctx context.Context, kbID string
 				continue
 			}
 			var meta solarBillMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+			if err := unmarshalBillMetadata(k.CustomMetadata, &meta); err != nil {
 				continue
 			}
 			legacyManual := meta.Kind != "solar_bill" && meta.AutoDeletedCount > 0
@@ -308,11 +322,11 @@ func (s *knowledgeService) ListSolarBillRecords(ctx context.Context, kbID string
 // solarBillMetadata mirrors the persisted custom_metadata shape for a
 // knowledge row in the shared utility/solar KB.
 type solarBillMetadata struct {
-	Kind             string                         `json:"kind"`
+	Kind             string                          `json:"kind"`
 	Records          []types.SolarBillExtractionItem `json:"records"`
-	ExtractStatus    string                         `json:"extract_status"`
-	ExtractError     string                         `json:"extract_error"`
-	AutoDeletedCount int                            `json:"auto_deleted_count"`
+	ExtractStatus    string                          `json:"extract_status"`
+	ExtractError     string                          `json:"extract_error"`
+	AutoDeletedCount int                             `json:"auto_deleted_count"`
 }
 
 func solarBillItemsAllBlank(recs []types.SolarBillExtractionItem) bool {

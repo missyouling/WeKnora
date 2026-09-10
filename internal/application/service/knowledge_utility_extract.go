@@ -20,9 +20,9 @@ const utilityBillExtractMaxContentRunes = 60000
 
 // UtilityBillExtractionResult is the strict-JSON shape the model must return.
 type UtilityBillExtractionResult struct {
-	Kind         string                         `json:"kind"` // "utility_bill" | "not_utility_bill"
+	Kind         string                            `json:"kind"` // "utility_bill" | "not_utility_bill"
 	Records      []types.UtilityBillExtractionItem `json:"records"`
-	ExtractError string                         `json:"extract_error"`
+	ExtractError string                            `json:"extract_error"`
 }
 
 // utilityBillExtractionSystemPrompt instructs the model to extract all four
@@ -140,37 +140,112 @@ func splitTextBatches(content string, batchSize, maxRunes int) []string {
 	return batches
 }
 
+// tryParseUtilityBillJSON 尝试把模型原始输出解析为提取结果；成功返回 true。
+func tryParseUtilityBillJSON(raw string, parsed *UtilityBillExtractionResult) bool {
+	cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(raw)
+	if err := common.ParseLLMJsonResponse(cleaned, parsed); err == nil {
+		return true
+	}
+	return false
+}
+
+// chatStreamCollect 以流式方式收集模型完整回复。
+// 部分兼容供应商（如智谱）对超长输出的非流式请求偶发返回空 content，
+// 而流式（SSE）稳定，因此作为提取的兜底路径之一。
+// 仅聚合 Answer 类型内容；Thinking 块（思考过程）不参与拼接，避免污染 JSON。
+func chatStreamCollect(ctx context.Context, model chat.Chat, messages []chat.Message, opts *chat.ChatOptions) (string, error) {
+	ch, err := model.ChatStream(ctx, messages, opts)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	done := false
+	for resp := range ch {
+		if resp.ResponseType == types.ResponseTypeAnswer && resp.Content != "" {
+			sb.WriteString(resp.Content)
+		}
+		if resp.Done {
+			done = true
+		}
+	}
+	if !done {
+		return "", fmt.Errorf("stream ended without done")
+	}
+	return sb.String(), nil
+}
+
 // ExtractUtilityBillsFromContent calls the configured chat model and parses
 // its strict-JSON reply into a UtilityBillExtractionResult.
+// 智谱等兼容供应商对"长输入 + 大输出"的请求偶发返回空 content（含 json_object
+// 模式与思考模型 Answer 为空），因此采用"流式优先、多次重试"策略：
+//  1. 无 Format 流式（SSE，最稳定）→ 2) 无 Format 非流式 → 3) json_object 非流式 → 4) 无 Format 流式
+//
+// 任一次返回可解析的 JSON 即成功。
+// 注意：智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空 content，
+// 因此 MaxTokens 恒为 0（不发送该字段），由供应商使用默认上限。
 func ExtractUtilityBillsFromContent(ctx context.Context, model chat.Chat, content string) (*UtilityBillExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &UtilityBillExtractionResult{Kind: "not_utility_bill"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	opts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking}
-	// 强制 json_object 模式：模型必须输出合法 JSON，显著降低长输出中的格式错误
-	opts.Format = json.RawMessage(utilityBillExtractionOutputSchema)
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "utility_bill_extract", ""), []chat.Message{
+	llmCtx := types.WithLLMCallMetadata(ctx, "utility_bill_extract", "")
+	messages := []chat.Message{
 		{Role: "system", Content: utilityBillExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, opts)
-	if err != nil {
-		return nil, fmt.Errorf("extract utility bill fields: %w", err)
 	}
-	var parsed UtilityBillExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		// 容错：模型偶发输出 Markdown 修饰（反引号/代码围栏），剥离后重试
-		cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(result.Content)
-		if cleaned != result.Content {
-			if err2 := common.ParseLLMJsonResponse(cleaned, &parsed); err2 == nil {
-				return &parsed, nil
+	mkOpts := func() *chat.ChatOptions {
+		return &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	}
+	var lastErr error
+	var lastRaw string
+	attempts := []struct {
+		label string
+		run   func() (string, error)
+	}{
+		{"stream-free", func() (string, error) {
+			return chatStreamCollect(llmCtx, model, messages, mkOpts())
+		}},
+		{"nonstream-free", func() (string, error) {
+			resp, err := model.Chat(llmCtx, messages, mkOpts())
+			if err != nil {
+				return "", err
 			}
-		}
-		logger.Warnf(ctx, "utility bill extraction raw response (first 20000 chars): %s", truncateForLog(result.Content, 20000))
-		return nil, fmt.Errorf("parse utility bill extraction response: %w", err)
+			return resp.Content, nil
+		}},
+		{"nonstream-jsonobject", func() (string, error) {
+			opts := mkOpts()
+			opts.Format = json.RawMessage(utilityBillExtractionOutputSchema)
+			resp, err := model.Chat(llmCtx, messages, opts)
+			if err != nil {
+				return "", err
+			}
+			return resp.Content, nil
+		}},
+		{"stream-free-2", func() (string, error) {
+			return chatStreamCollect(llmCtx, model, messages, mkOpts())
+		}},
 	}
-	return &parsed, nil
+	for i, a := range attempts {
+		raw, err := a.run()
+		if err != nil {
+			lastErr = err
+			logger.Warnf(ctx, "utility bill extraction attempt %d (%s) error: %v", i+1, a.label, err)
+			continue
+		}
+		var parsed UtilityBillExtractionResult
+		if tryParseUtilityBillJSON(raw, &parsed) {
+			return &parsed, nil
+		}
+		lastRaw = raw
+		lastErr = fmt.Errorf("unparseable response (len=%d)", len(raw))
+		logger.Warnf(ctx, "utility bill extraction attempt %d (%s) unparseable (len=%d)", i+1, a.label, len(raw))
+	}
+	logger.Warnf(ctx, "utility bill extraction raw response (first 20000 chars): %s", truncateForLog(lastRaw, 20000))
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable response")
+	}
+	return nil, fmt.Errorf("parse utility bill extraction response: %w", lastErr)
 }
 
 func truncateForLog(s string, n int) string {
@@ -219,8 +294,8 @@ func NormalizeUtilityBillExtractionResult(extracted *UtilityBillExtractionResult
 				Qty:      f.Qty,
 				Rate:     f.Rate,
 				Fee:      f.Fee,
-				    BillFee:  f.BillFee,
-				}
+				BillFee:  f.BillFee,
+			}
 			if it.Name == "" && it.Fee == 0 && it.Qty == 0 && it.Category == "" {
 				continue
 			}

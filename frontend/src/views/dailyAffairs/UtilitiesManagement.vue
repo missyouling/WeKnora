@@ -1117,24 +1117,25 @@ const startPolling = () => {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
       const arr = Array.isArray(data) ? data : []
-      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）；跳过光伏文件（共享知识库）
+      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）；
+      // 仅处理打标 bill_kind=electricity 或已提取 kind=utility_bill 的文件，光伏文件（solar）一律跳过
       pendingFiles.value = arr.filter((it: any) => {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
-        if (meta.kind && meta.kind !== 'utility_bill') return false
-        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'electricity') return false
+        if (meta.kind === 'solar_bill') return false
+        if (meta.bill_kind && meta.bill_kind !== 'electricity') return false
         return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
           meta.extract_status === 'failed' ||
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
-          (meta.extract_status == null && ps === 'completed' && !meta.kind)
+          (meta.extract_status == null && ps === 'completed' && meta.bill_kind === 'electricity')
       })
-      // 已解析完成但尚未提取的文件自动触发提取
+      // 已解析完成且已打标 electricity 但尚未提取的文件自动触发提取
       for (const it of arr) {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
-        if (meta.kind && meta.kind !== 'utility_bill') continue
-        if (it.metadata?.bill_kind && it.metadata.bill_kind !== 'electricity') continue
-        if (ps === 'completed' && !meta.kind && !meta.extract_status && !extractingSet.has(it.id)) {
+        if (meta.kind === 'solar_bill') continue
+        if (meta.bill_kind && meta.bill_kind !== 'electricity') continue
+        if (ps === 'completed' && meta.bill_kind === 'electricity' && !meta.kind && !meta.extract_status && !extractingSet.has(it.id)) {
           extractingSet.add(it.id)
           try {
             await extractUtilityBill(kbId.value, it.id)
@@ -1191,12 +1192,20 @@ const onFileInputChange = async (e: Event) => {
   if (!files.length || !kbId.value) return
   for (const f of files) {
     try {
-      // 上传时打标 bill_kind=electricity，与光伏文件在共享知识库中互不干扰
-      const res: any = await uploadKnowledgeFile(kbId.value, { file: f, metadata: JSON.stringify({ bill_kind: 'electricity' }) })
+      // 上传后立即打标 bill_kind=electricity（custom_metadata），与光伏文件在共享知识库中互不干扰
+      const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
       const knowledge = res?.data || res
       const kid = knowledge?.id || knowledge?.knowledge_id
-      // 解析完成后由轮询自动触发提取，无需在此登记
-      void kid
+      if (kid) {
+        try {
+          const kd: any = await getKnowledgeDetails(kid)
+          let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+          // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
+          if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+          await updateKnowledgeMetadata(kid, { custom_metadata: { ...meta, bill_kind: 'electricity' } })
+        } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
+      }
+      // 解析完成后由轮询自动触发提取
     } catch (e2: any) {
       const msg = e2?.message || ''
       if (msg.includes('already exists') || msg.includes('文件重复')) {
@@ -2052,7 +2061,9 @@ const saveEditForm = async () => {
   try {
     const res: any = await getKnowledgeDetails(now.knowledgeId)
     const detail = res?.data || res
-    const meta = detail?.custom_metadata || {}
+    let meta = detail?.custom_metadata || {}
+    // 兼容历史双层结构：{custom_metadata: {...}} 取内层再保存
+    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
     const records = Array.isArray(meta.records) ? [...meta.records] : []
     const idx = Math.max(0, (now.page || 1) - 1)
     const updated: Record<string, any> = {}
