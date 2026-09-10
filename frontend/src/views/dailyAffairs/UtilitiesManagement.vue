@@ -2648,6 +2648,8 @@ onBeforeUnmount(() => { stopPolling() })
   flex-direction: column;
   height: 100%;
   gap: 8px;
+  padding: 16px 24px;
+  box-sizing: border-box;
 }
 
 /* 底部汇总行（表格底部左侧，固定于滚动容器外；与合同管理 doc-summary-bar 一致） */
