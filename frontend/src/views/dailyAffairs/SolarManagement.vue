@@ -3,7 +3,7 @@
     <!-- 顶部 -->
     <div class="header">
       <div class="header-title">
-        <h2>光伏</h2>
+        <h2>光伏账单</h2>
         <p class="header-subtitle">光伏发电账单自动解析归档，与电费共用「日常事务-电费」知识库</p>
       </div>
       <div class="header-actions">
@@ -923,6 +923,11 @@ const detailFields = computed(() => [
   { key: 'settlement_amount', label: '结算金额（元）', type: 'number' },
   { key: 'mom_change', label: '本期上网环比', type: 'text' },
   { key: 'cumulative_kwh', label: '年累计上网（千瓦时）', type: 'number' },
+  { key: 'meter_prev', label: '上期示数', type: 'number' },
+  { key: 'meter_curr', label: '本期示数', type: 'number' },
+  { key: 'meter_ratio', label: '倍率', type: 'number' },
+  { key: 'meter_reading', label: '抄见电量（千瓦时）', type: 'number' },
+  { key: 'meter_bill', label: '计费电量（千瓦时）', type: 'number' },
   { key: 'tax_rate', label: '税率', type: 'text' },
   { key: 'tax_amount', label: '税额（元）', type: 'number' },
   { key: 'remark', label: '备注', type: 'text' },
@@ -1248,7 +1253,7 @@ const fmtRate6 = (v: any) => {
   if (v === undefined || v === null || v === '') return ''
   const n = Number(v)
   if (Number.isNaN(n)) return ''
-  return String(Math.round(n * 1000000) / 1000000)
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 
 onMounted(() => { loadKb() })
@@ -1397,7 +1402,7 @@ onBeforeUnmount(() => { stopPolling() })
 .cell-extractStatus { display: flex; align-items: center; justify-content: center; }
 .cell-tags { display: flex; align-items: center; }
 .row-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-mono { font-family: 'JetBrains Mono', Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-mono { font-family: var(--app-font-family); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-status-tag { min-width: 64px; justify-content: center; }
 .row-tag-chips { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
 .row-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
@@ -1411,16 +1416,13 @@ onBeforeUnmount(() => { stopPolling() })
 /* 底部汇总 */
 .doc-list-footer-summary {
   display: flex;
+  gap: 24px;
   align-items: center;
-  gap: 16px;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 6px 2px 0;
+  font-size: 13px;
   color: var(--td-text-color-secondary);
-  border: 1px solid var(--td-component-stroke);
-  border-top: none;
-  border-radius: 0 0 6px 6px;
-  background: var(--td-bg-color-container);
-  &.with-toolbar { padding-bottom: 56px; }
+  flex-shrink: 0;
+  &.with-toolbar { margin-bottom: 56px; }
   .summary-selected { color: var(--td-brand-color); }
 }
 

@@ -6,12 +6,6 @@
         <h2>能耗管理</h2>
         <p class="header-subtitle">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
       </div>
-      <div class="header-actions" v-if="activeTab === 'electricity'">
-        <t-button v-if="kbId" theme="primary" @click="triggerUpload">
-          <template #icon><t-icon name="upload" /></template>
-          上传电费账单
-        </t-button>
-      </div>
       <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
         @change="onFileInputChange" />
     </div>
@@ -51,6 +45,19 @@
         <div class="utilities-content">
           <template v-if="activeTab === 'electricity'">
           <div v-if="kbId" class="electricity-panel">
+            <!-- 模块标题区（与光伏页一致） -->
+            <div class="header">
+              <div class="header-title">
+                <h2>电费账单</h2>
+                <p class="header-subtitle">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
+              </div>
+              <div class="header-actions">
+                <t-button v-if="kbId" theme="primary" @click="triggerUpload">
+                  <template #icon><t-icon name="upload" /></template>
+                  上传电费账单
+                </t-button>
+              </div>
+            </div>
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
             <!-- 筛选工具栏 -->
@@ -310,13 +317,13 @@
                                 <span v-else class="os-fee-val">{{ fmtRate6(r.displayValue) }}</span>
                               </template>
                             </span>
-                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="billFeeEditingKey !== r.key && startBillFeeEdit(r)">
-                              <template v-if="billFeeEditingKey === r.key">
+                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="billFeeEditingKey !== r.ovBillKey && startBillFeeEdit(r)">
+                              <template v-if="billFeeEditingKey === r.ovBillKey">
                                 <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
                                   @blur="commitBillFeeOverride(r)" @enter="commitBillFeeOverride(r)" />
                               </template>
                               <template v-else>
-                                <t-tooltip v-if="hasBillFeeOverride(r.key)" content="手动修改，重提取后重置" placement="top">
+                                <t-tooltip v-if="hasBillFeeOverride(r.ovBillKey)" content="手动修改，重提取后重置" placement="top">
                                   <span class="os-fee-val os-fee-val--manual">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
                                 </t-tooltip>
                                 <span v-else class="os-fee-val">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
