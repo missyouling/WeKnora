@@ -537,6 +537,65 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("load meter rates failed"))
 		return
 	}
+
+	// 目标月份已存在其它 record（不同表计）：items 迁移合并到目标 record，避免 uq 唯一约束冲突
+	if len(otherRecs) > 0 {
+		target := &otherRecs[0]
+		var targetItems []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", target.ID).Find(&targetItems).Error; err != nil {
+			logger.Errorf(ctx, "query target meter record items failed: %v", err)
+			c.Error(errors.NewInternalServerError("query target meter record items failed"))
+			return
+		}
+		merged := append(targetItems, req.Items...)
+		target.Items = merged
+		computeMeterRecordWithRates(target, rates)
+		// merged 为拷贝切片，需把计算后的 rate/usage/amount 同步回 req.Items 再落库
+		base := len(targetItems)
+		for i := range req.Items {
+			m := merged[base+i]
+			req.Items[i].Rate = m.Rate
+			req.Items[i].Usage = m.Usage
+			req.Items[i].Amount = m.Amount
+		}
+		err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("record_id = ?", id).Delete(&types.UtilityMeterItem{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&types.UtilityMeterRecord{}).
+				Where("id = ? AND tenant_id = ?", id, tenantID).
+				Update("deleted_at", now).Error; err != nil {
+				return err
+			}
+			for i := range req.Items {
+				it := &req.Items[i]
+				it.ID = uuid.NewString()
+				it.RecordID = target.ID
+				it.CreatedAt = now
+				it.UpdatedAt = now
+				if err := tx.Create(it).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Model(&types.UtilityMeterRecord{}).
+				Where("id = ? AND tenant_id = ?", target.ID, tenantID).
+				Updates(map[string]interface{}{
+					"meter_count":  target.MeterCount,
+					"total_usage":  target.TotalUsage,
+					"total_amount": target.TotalAmount,
+					"updated_at":   now,
+				}).Error
+		})
+		if err != nil {
+			logger.Errorf(ctx, "migrate meter record failed: %v", err)
+			c.Error(errors.NewInternalServerError("update meter record failed: " + err.Error()))
+			return
+		}
+		target.Items = merged
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": target})
+		return
+	}
+
 	computeMeterRecordWithRates(&req, rates)
 	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&types.UtilityMeterRecord{}).
