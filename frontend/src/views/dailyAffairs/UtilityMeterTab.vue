@@ -626,6 +626,7 @@ const drawerVisible = ref(false)
 const saving = ref(false)
 const editingRecordId = ref('')
 const editingItemId = ref('')
+const editingOriginalMonth = ref('') // 编辑行原月份（改月时仅迁移该行）
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
 const form = ref<{ month: string; meterId: string; readingDate: string; reader: string; recordDate: string; startReading: number; endReading: number; unitPrice: number; remark: string }>({
@@ -687,6 +688,7 @@ const onMeterChange = () => {
 const openCreate = () => {
   editingRecordId.value = ''
   editingItemId.value = ''
+  editingOriginalMonth.value = ''
   lastRecordId.value = ''
   recordItems.value = []
   form.value = {
@@ -728,6 +730,7 @@ const openEditSelected = () => {
 const openEdit = (row: any) => {
   editingRecordId.value = row.record_id
   editingItemId.value = row.item_id
+  editingOriginalMonth.value = row.month
   const rec = rowsOfRecord(row.record_id)
   recordItems.value = rec.map((r: any) => ({
     item_id: r.item_id,
@@ -782,28 +785,59 @@ const save = async () => {
       remark: form.value.remark || '',
     }
     const isNew = !editingItemId.value
-    if (editingItemId.value) {      // 更新：整 record 全量提交，替换编辑行、保留其它行
-      const items = recordItems.value.map((it: any) => {
-        if (it.item_id === editingItemId.value) return editedItem
-        return {
-          meter_id: it.meter_id,
-          reading_date: it.reading_date || '',
-          reader: it.reader || '',
-          start_reading: it.start_reading,
-          end_reading: it.end_reading,
-          unit_price: it.unit_price,
-          remark: it.remark || '',
-        }
-      })
-      await updateUtilityMeterRecord(editingRecordId.value, {
-        category: props.category,
-        month: form.value.month,
-        record_date: form.value.recordDate || today,
-        remark: '',
-        items,
-      })
-      MessagePlugin.success('已保存')
-      lastRecordId.value = ''
+    if (editingItemId.value) {
+      // 单行改月份：仅迁移该行到目标月，其它行保留原月（不整月搬家）
+      const monthChanged = form.value.month !== editingOriginalMonth.value
+      if (monthChanged && recordItems.value.length > 1) {
+        const others = recordItems.value.filter((it: any) => it.item_id !== editingItemId.value)
+        await updateUtilityMeterRecord(editingRecordId.value, {
+          category: props.category,
+          month: editingOriginalMonth.value,
+          record_date: form.value.recordDate || today,
+          remark: '',
+          items: others.map((it: any) => ({
+            meter_id: it.meter_id,
+            reading_date: it.reading_date || '',
+            reader: it.reader || '',
+            start_reading: Number(it.start_reading) || 0,
+            end_reading: Number(it.end_reading) || 0,
+            unit_price: Number(it.unit_price) || 0,
+            remark: it.remark || '',
+          })),
+        })
+        await createUtilityMeterRecord({
+          category: props.category,
+          month: form.value.month,
+          record_date: form.value.recordDate || today,
+          remark: '',
+          items: [editedItem],
+        })
+        MessagePlugin.success('已保存')
+        lastRecordId.value = ''
+      } else {
+        // 更新：整 record 全量提交，替换编辑行、保留其它行
+        const items = recordItems.value.map((it: any) => {
+          if (it.item_id === editingItemId.value) return editedItem
+          return {
+            meter_id: it.meter_id,
+            reading_date: it.reading_date || '',
+            reader: it.reader || '',
+            start_reading: it.start_reading,
+            end_reading: it.end_reading,
+            unit_price: it.unit_price,
+            remark: it.remark || '',
+          }
+        })
+        await updateUtilityMeterRecord(editingRecordId.value, {
+          category: props.category,
+          month: form.value.month,
+          record_date: form.value.recordDate || today,
+          remark: '',
+          items,
+        })
+        MessagePlugin.success('已保存')
+        lastRecordId.value = ''
+      }
     } else if (lastRecordId.value) {
       // 连续录入后续条：同月 record 追加 item（同月唯一，后端要求 update）
       const existing = rowsOfRecord(lastRecordId.value)
