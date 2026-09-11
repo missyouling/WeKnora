@@ -343,6 +343,33 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	}
 }
 
+// RegisterBillingRoutes 租户费用核算：租户/分时电表/月度账单（电费比例分摊+宿舍定额+水费）。
+func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	bl := g.apiKeyGroup(r.Group("/billing"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		bl.GET("/tenants", g.Viewer(), handler.ListBillingTenants)
+		bl.POST("/tenants", g.Contributor(), handler.CreateBillingTenant)
+		bl.GET("/tenants/:id", g.Viewer(), handler.GetBillingTenant)
+		bl.PUT("/tenants/:id", g.Contributor(), handler.UpdateBillingTenant)
+		bl.DELETE("/tenants/:id", g.Contributor(), handler.DeleteBillingTenant)
+		bl.GET("/tenants/:id/meters", g.Viewer(), handler.ListBillingTimeMeters)
+		bl.POST("/tenants/:id/meters", g.Contributor(), handler.CreateBillingTimeMeter)
+		bl.PUT("/meters/:id", g.Contributor(), handler.UpdateBillingTimeMeter)
+		bl.DELETE("/meters/:id", g.Contributor(), handler.DeleteBillingTimeMeter)
+		bl.GET("/meters/:id/readings", g.Viewer(), handler.GetBillingTimeReading)
+		bl.PUT("/meters/:id/readings", g.Contributor(), handler.SaveBillingTimeReading)
+		bl.PUT("/tenants/:id/items", g.Contributor(), handler.SaveBillingTenantItems)
+		bl.PUT("/tenants/:id/refs", g.Contributor(), handler.SaveBillingTenantRefs)
+		bl.GET("/tenants/:id/records", g.Viewer(), handler.ListBillingRecords)
+		bl.POST("/tenants/:id/records", g.Contributor(), handler.GenerateBillingRecord)
+		bl.GET("/records/:id", g.Viewer(), handler.GetBillingRecord)
+		bl.DELETE("/records/:id", g.Contributor(), handler.DeleteBillingRecord)
+	}
+}
+
 func RegisterKnowledgeTagRoutes(r *gin.RouterGroup, tagHandler *handler.TagHandler, g *rbacGuards) {
 	if tagHandler == nil {
 		return

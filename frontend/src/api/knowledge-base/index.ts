@@ -1016,3 +1016,73 @@ export function listSolarBillRecords(kbId: string, params: {
   const qs = query.toString();
   return get(`/api/v1/knowledge-bases/${kbId}/solar-bill-records${qs ? `?${qs}` : ''}`);
 }
+
+// ---- 租户费用核算（电费按市电账单子项比例分摊 + 宿舍定额 + 水费按表计） ----
+
+export function listBillingTenants() {
+  return get('/api/v1/billing/tenants');
+}
+
+export function createBillingTenant(payload: Record<string, unknown>) {
+  return post('/api/v1/billing/tenants', payload);
+}
+
+export function getBillingTenant(id: string) {
+  return get(`/api/v1/billing/tenants/${id}`);
+}
+
+export function updateBillingTenant(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${id}`, payload);
+}
+
+export function deleteBillingTenant(id: string) {
+  return del(`/api/v1/billing/tenants/${id}`);
+}
+
+export function listBillingTimeMeters(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/meters`);
+}
+
+export function createBillingTimeMeter(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/meters`, payload);
+}
+
+export function updateBillingTimeMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/meters/${id}`, payload);
+}
+
+export function deleteBillingTimeMeter(id: string) {
+  return del(`/api/v1/billing/meters/${id}`);
+}
+
+export function getBillingTimeReading(meterId: string, month: string) {
+  return get(`/api/v1/billing/meters/${meterId}/readings?month=${month}`);
+}
+
+export function saveBillingTimeReading(meterId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/meters/${meterId}/readings`, payload);
+}
+
+export function saveBillingTenantItems(tenantId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${tenantId}/items`, payload);
+}
+
+export function saveBillingTenantRefs(tenantId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${tenantId}/refs`, payload);
+}
+
+export function listBillingRecords(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/records`);
+}
+
+export function generateBillingRecord(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/records`, payload, { timeout: 300000 });
+}
+
+export function getBillingRecord(id: string) {
+  return get(`/api/v1/billing/records/${id}`);
+}
+
+export function deleteBillingRecord(id: string) {
+  return del(`/api/v1/billing/records/${id}`);
+}

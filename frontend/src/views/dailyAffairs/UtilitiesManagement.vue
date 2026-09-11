@@ -34,6 +34,9 @@
           <div class="utilities-side-item" :class="{ active: activeTab === 'solar' }" @click="switchTab('solar')">
             <t-icon name="chart-radar" size="16px" /><span>光伏账单</span>
           </div>
+          <div class="utilities-side-item" :class="{ active: activeTab === 'billing' }" @click="switchTab('billing')">
+            <t-icon name="usergroup" size="16px" /><span>租户核算</span>
+          </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'electric-meter' }" @click="switchTab('electric-meter')">
             <t-icon name="thunder" size="16px" /><span>电费</span>
           </div>
@@ -562,6 +565,9 @@
           <template v-else-if="activeTab === 'solar'">
             <SolarManagement />
           </template>
+          <template v-else-if="activeTab === 'billing'">
+            <TenantBilling />
+          </template>
         </div>
       </div>
     </div>
@@ -805,6 +811,7 @@ import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vu
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import UtilityMeterTab from './UtilityMeterTab.vue'
 import SolarManagement from './SolarManagement.vue'
+import TenantBilling from './TenantBilling.vue'
 import UtilitySettingsDrawer from './UtilitySettingsDrawer.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 
@@ -837,7 +844,7 @@ const FALLBACK_COLUMNS: ColDef[] = [
   { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '1fr' },
 ]
 
-const activeTab = ref<'electricity' | 'water' | 'gas' | 'solar'>('electricity')
+const activeTab = ref<'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing'>('electricity')
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
@@ -2371,7 +2378,7 @@ const cellText = (row: Row, key: string): string => {
 
 // ---- Tab 切换 ----
 const onTabChange = () => { /* 子组件自行加载 */ }
-const switchTab = (tab: 'electricity' | 'water' | 'gas' | 'solar') => {
+const switchTab = (tab: 'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing') => {
   if (activeTab.value === tab) return
   activeTab.value = tab
   onTabChange()
