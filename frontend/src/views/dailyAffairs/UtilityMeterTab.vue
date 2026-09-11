@@ -407,14 +407,6 @@
         </div>
         <div class="meter-print-footer">
           <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
-          <t-button variant="outline" size="small" :disabled="!printUrl" @click="downloadCatalogPdf">
-            <template #icon><t-icon name="download" size="14px" /></template>
-            下载
-          </t-button>
-          <t-button theme="primary" size="small" :disabled="!printUrl" @click="doPrint">
-            <template #icon><t-icon name="print" size="14px" /></template>
-            打印
-          </t-button>
         </div>
       </div>
     </div>
@@ -1009,25 +1001,6 @@ const closePrint = () => {
   printVisible.value = false
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
 }
-const downloadCatalogPdf = () => {
-  if (!printUrl.value) return
-  const a = document.createElement('a')
-  a.href = printUrl.value
-  a.download = `${categoryLabel.value}目录_${Date.now()}.pdf`
-  a.click()
-}
-const doPrint = () => {
-  if (!printUrl.value) return
-  const w = window.open('', '_blank')
-  if (!w) {
-    MessagePlugin.warning('浏览器拦截了打印窗口，请允许弹窗后重试')
-    return
-  }
-  w.document.write(`<iframe src="${printUrl.value}" style="width:100%;height:100%;border:none"></iframe>`)
-  w.document.title = `${categoryLabel.value}目录`
-  w.document.close()
-  setTimeout(() => { w.focus(); w.print() }, 400)
-}
 
 // ---- 水表配置设置抽屉 ----
 const settingsVisible = ref(false)
@@ -1258,6 +1231,10 @@ onBeforeUnmount(() => {
 
 <style lang="less" scoped>
 .utility-meter-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   padding-top: 4px;
 }
 
@@ -1416,9 +1393,8 @@ onBeforeUnmount(() => {
 }
 
 .meter-list-scroll {
-  flex: 0 1 auto;
-  max-height: calc(100vh - 320px);
-  min-width: 0;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
