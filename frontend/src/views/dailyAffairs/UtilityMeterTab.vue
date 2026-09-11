@@ -11,6 +11,10 @@
           <t-select v-model="filters.meterId" :placeholder="meterLabel" clearable filterable class="doc-filter-select doc-filter-field__control"
             :options="meterFilterOptions" @change="load" />
         </div>
+        <div class="doc-filter-field">
+          <t-select v-model="filters.useUnit" placeholder="使用单位" clearable filterable class="doc-filter-select doc-filter-field__control"
+            :options="useUnitOptions" @change="load" />
+        </div>
         <t-button variant="outline" size="small" @click="load">
           <template #icon><t-icon name="refresh" size="14px" /></template>
         </t-button>
@@ -504,9 +508,14 @@ const meters = ref<any[]>([])
 const rows = ref<any[]>([]) // 展开后的扁平行
 const displayRows = ref<any[]>([])
 const loading = ref(true)
-const filters = ref<{ month?: string; meterId?: string }>({ month: undefined, meterId: undefined })
+const filters = ref<{ month?: string; meterId?: string; useUnit?: string }>({ month: undefined, meterId: undefined, useUnit: undefined })
 
 const meterFilterOptions = computed(() => meters.value.filter(m => m.enabled).map(m => ({ label: m.alias, value: m.id })))
+const useUnitOptions = computed(() => {
+  const set = new Set<string>()
+  meters.value.forEach((m: any) => { if (m.use_unit) set.add(m.use_unit) })
+  return Array.from(set).map(v => ({ label: v, value: v }))
+})
 const meterSearch = ref('')
 const filteredMeters = computed(() => {
   const kw = meterSearch.value.trim().toLowerCase()
@@ -579,6 +588,7 @@ const applyFilters = () => {
   let list = rows.value
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
   if (filters.value.meterId) list = list.filter(r => r.meter_id === filters.value.meterId)
+  if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
   displayRows.value = list
 }
 
@@ -680,7 +690,7 @@ const meterGridCols = computed(() => {
 const onMeterChange = () => {
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
-    if (!form.value.reader) form.value.reader = currentMeter.value.manager || ''
+    form.value.reader = currentMeter.value.manager || form.value.reader || ''
   }
 }
 
