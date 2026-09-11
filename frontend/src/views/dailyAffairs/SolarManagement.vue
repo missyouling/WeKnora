@@ -639,6 +639,7 @@ const hasMore = ref(true)
 const monthFilter = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
+const taggingInFlight = ref<Set<string>>(new Set())
 const listScrollRef = ref<HTMLElement>()
 
 const summaryUsage = computed(() => {
@@ -814,12 +815,22 @@ const startPolling = () => {
           meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
           (meta.extract_status == null && ps === 'completed' && meta.bill_kind === 'solar')
       })
-      // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取
+      // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取；
+      // 文件名含「光伏」但未打标未提取的自动补打标后提取（自愈，避免上传打标失败导致列表不可见）
       for (const it of arr) {
         const ps = it.parse_status
         const meta = it.custom_metadata || {}
         if (meta.kind === 'utility_bill') continue
         if (meta.bill_kind && meta.bill_kind !== 'solar') continue
+        const isSolarName = /光伏/.test(it.file_name || '')
+        if (ps === 'completed' && isSolarName && !meta.kind && !meta.bill_kind && !meta.extract_status && !taggingInFlight.value.has(it.id)) {
+          taggingInFlight.value.add(it.id)
+          try {
+            await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar' } })
+          } catch { /* 打标失败下轮重试 */ } finally {
+            taggingInFlight.value.delete(it.id)
+          }
+        }
         if (ps === 'completed' && meta.bill_kind === 'solar' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
           extractInFlight.value.add(it.id)
           try {
@@ -884,7 +895,7 @@ const onFileInputChange = async (e: Event) => {
           // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
           if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
           await updateKnowledgeMetadata(kid, { custom_metadata: { ...meta, bill_kind: 'solar' } })
-        } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
+        } catch { /* 打标失败则文件保持未标记，轮询会自动补打标并提取 */ console.warn('[solar] 上传后打标失败，交由轮询自愈', f.name) }
       }
       // 解析完成后由轮询自动触发提取
     } catch (e2: any) {
