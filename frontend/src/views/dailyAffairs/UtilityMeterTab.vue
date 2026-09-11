@@ -129,10 +129,12 @@
     </transition>
 
     <!-- 编辑/新增抽屉 -->
-    <div v-if="drawerVisible" class="doc-drawer-resize-handle" :style="{ right: drawerWidth }" role="separator"
-      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
-      <div class="doc-drawer-resize-line" />
-    </div>
+    <teleport to="body">
+      <div v-if="drawerVisible" class="doc-drawer-resize-handle" :style="{ right: drawerWidth }" role="separator"
+        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
+        <div class="doc-drawer-resize-line" />
+      </div>
+    </teleport>
     <teleport to="body">
       <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
         :close-on-overlay-click="true" destroy-on-close class="meter-record-drawer"
@@ -216,10 +218,12 @@
     </teleport>
 
     <!-- 设置抽屉 -->
-    <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
-      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
-      <div class="doc-drawer-resize-line" />
-    </div>
+    <teleport to="body">
+      <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
+        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
+        <div class="doc-drawer-resize-line" />
+      </div>
+    </teleport>
     <teleport to="body">
       <t-drawer v-if="settingsVisible" :visible="true" :header="meterLabel + '配置'" :size="settingsWidth" :footer="false"
         :close-on-overlay-click="true" destroy-on-close class="meter-settings-drawer"
@@ -271,7 +275,7 @@
             <div class="form-grid">
               <div class="form-item">
                 <label>别名 <span class="required">*</span></label>
-                <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+                <t-input ref="meterAliasInput" v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
               </div>
               <div class="form-item">
                 <label>表号</label>
@@ -361,7 +365,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
@@ -542,6 +546,7 @@ const drawerVisible = ref(false)
 const saving = ref(false)
 const editingRecordId = ref('')
 const editingItemId = ref('')
+const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
 const form = ref<{ month: string; meterId: string; startReading: number; endReading: number; unitPrice: number; remark: string }>({
   month: '', meterId: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '',
@@ -572,6 +577,7 @@ const onMeterChange = () => {
 const openCreate = () => {
   editingRecordId.value = ''
   editingItemId.value = ''
+  lastRecordId.value = ''
   recordItems.value = []
   form.value = { month: '', meterId: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '' }
   drawerVisible.value = true
@@ -585,8 +591,11 @@ const prevMonthOf = (month: string) => {
   if (m === 1) return `${y - 1}-12`
   return `${y}-${String(m - 1).padStart(2, '0')}`
 }
+// 连续录入时跳过自动填充（起度/单价由保存逻辑显式写入）
+const skipAutoFill = ref(false)
 watch([() => form.value.month, () => form.value.meterId], () => {
   if (editingItemId.value) return // 编辑模式不填充
+  if (skipAutoFill.value) { skipAutoFill.value = false; return } // 连续录入：已显式设置
   if (!form.value.month || !form.value.meterId) return
   const ends = meterMonthEnds.value.get(form.value.meterId)
   const prevEnd = ends?.get(prevMonthOf(form.value.month))
@@ -636,7 +645,7 @@ const save = async () => {
     return
   }
   if (!form.value.meterId) {
-    MessagePlugin.warning('请选择水表')
+    MessagePlugin.warning(`请选择${meterLabel}`)
     return
   }
   saving.value = true
@@ -648,8 +657,8 @@ const save = async () => {
       unit_price: Number(form.value.unitPrice) || 0,
       remark: form.value.remark || '',
     }
-    if (editingItemId.value) {
-      // 更新：整 record 全量提交，替换编辑行、保留其它行
+    const isNew = !editingItemId.value
+    if (editingItemId.value) {      // 更新：整 record 全量提交，替换编辑行、保留其它行
       const items = recordItems.value.map((it: any) => {
         if (it.item_id === editingItemId.value) return editedItem
         return {
@@ -667,17 +676,60 @@ const save = async () => {
         items,
       })
       MessagePlugin.success('已保存')
+      lastRecordId.value = ''
+    } else if (lastRecordId.value) {
+      // 连续录入后续条：同月 record 追加 item（同月唯一，后端要求 update）
+      const existing = rowsOfRecord(lastRecordId.value)
+      const items = [
+        ...existing.map((r: any) => ({
+          meter_id: r.meter_id,
+          start_reading: Number(r.start_reading) || 0,
+          end_reading: Number(r.end_reading) || 0,
+          unit_price: Number(r.unit_price) || 0,
+          remark: r.remark || '',
+        })),
+        editedItem,
+      ]
+      await updateUtilityMeterRecord(lastRecordId.value, {
+        category: props.category,
+        month: form.value.month,
+        remark: '',
+        items,
+      })
+      MessagePlugin.success('已新增')
     } else {
-      await createUtilityMeterRecord({
+      const res: any = await createUtilityMeterRecord({
         category: props.category,
         month: form.value.month,
         remark: '',
         items: [editedItem],
       })
+      const rec = res?.data?.data || res?.data || res
+      lastRecordId.value = rec?.id || ''
       MessagePlugin.success('已新增')
     }
-    drawerVisible.value = false
-    clearSelection()
+    const nextMeter = (() => {
+      if (!isNew) return undefined
+      const enabled = meters.value.filter((m: any) => m.enabled)
+      const idx = enabled.findIndex((m: any) => m.id === form.value.meterId)
+      return idx >= 0 ? enabled[idx + 1] : undefined
+    })()
+    if (nextMeter) {
+      // 连续录入：抽屉不关闭，按启用表顺序切到下一张，起度=上一条止度、单价=上一条单价、月份复用
+      skipAutoFill.value = true
+      form.value.meterId = nextMeter.id
+      form.value.startReading = Number(form.value.endReading) || 0
+      form.value.endReading = 0
+      form.value.unitPrice = Number(form.value.unitPrice) || 0
+      form.value.remark = ''
+      editingRecordId.value = ''
+      editingItemId.value = ''
+      recordItems.value = []
+    } else {
+      drawerVisible.value = false
+      clearSelection()
+      lastRecordId.value = ''
+    }
     await load()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -802,6 +854,7 @@ const settingsVisible = ref(false)
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
+const meterAliasInput = ref()
 const settingsWidth = ref<string>(loadSettingsWidth())
 function loadSettingsWidth(): string {
   try {
@@ -838,11 +891,12 @@ const openMeterForm = (m: any) => {
     remark: m.remark || '',
     enabled: m.enabled !== false,
   } : {
-    id: '', alias: '', meter_no: '', rate: 1, default_unit_price: 0,
+    id: '', alias: '', meter_no: nextMeterNo(), rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
   meterFormVisible.value = true
+  nextTick(() => { if (!m) (meterAliasInput.value as any)?.focus?.() })
 }
 
 const saveMeter = async () => {
@@ -866,20 +920,51 @@ const saveMeter = async () => {
       remark: meterForm.value.remark || '',
       enabled: meterForm.value.enabled !== false,
     }
-    if (meterForm.value.id) {
+    const isEdit = !!meterForm.value.id
+    if (isEdit) {
       await updateUtilityMeter(meterForm.value.id, payload)
       MessagePlugin.success('已保存')
     } else {
       await createUtilityMeter(payload)
       MessagePlugin.success('已新增')
     }
-    meterFormVisible.value = false
     await loadMetersOnly()
+    if (isEdit) {
+      // 编辑保存后关闭
+      meterFormVisible.value = false
+    } else {
+      // 连续新增：保持表单展开，表号自动递增，清空其余字段并聚焦别名
+      meterForm.value = {
+        id: '',
+        alias: '',
+        meter_no: nextMeterNo(),
+        rate: '',
+        default_unit_price: '',
+        use_unit: '',
+        manager: '',
+        contact: '',
+        meter_mode: 'manual',
+        install_date: '',
+        remark: '',
+        enabled: true,
+      }
+      meterFormVisible.value = true
+      nextTick(() => { (meterAliasInput.value as any)?.focus?.() })
+    }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     savingMeter.value = false
   }
+}
+const meterNoPrefix = () => (props.category === 'water' ? 'W' : props.category === 'electricity' ? 'E' : 'G')
+const nextMeterNo = () => {
+  let max = 0
+  for (const m of meters.value) {
+    const mm = String(m.meter_no || '').match(/^[A-Za-z]*(\d+)$/)
+    if (mm) max = Math.max(max, parseInt(mm[1], 10))
+  }
+  return meterNoPrefix() + String(max + 1).padStart(3, '0')
 }
 
 const toggleEnabled = async (m: any, v: any) => {
@@ -939,7 +1024,7 @@ const onDrawerResizeStart = (e: MouseEvent) => {
 }
 const onDrawerResizeMove = (e: MouseEvent) => {
   if (!dragging) return
-  drawerWidth.value = clampWidth(startW + (startX - e.clientX), 480) + 'px'
+  drawerWidth.value = clampWidth(startW + (e.clientX - startX), 480) + 'px'
 }
 const onDrawerResizeEnd = () => {
   if (!dragging) return
@@ -962,7 +1047,7 @@ const onSettingsResizeStart = (e: MouseEvent) => {
 }
 const onSettingsResizeMove = (e: MouseEvent) => {
   if (!draggingS) return
-  settingsWidth.value = clampWidth(startWS + (startXS - e.clientX), 520) + 'px'
+  settingsWidth.value = clampWidth(startWS + (e.clientX - startXS), 520) + 'px'
 }
 const onSettingsResizeEnd = () => {
   if (!draggingS) return
@@ -1195,13 +1280,13 @@ onBeforeUnmount(() => {
   &.is-batch-visible { margin-bottom: 72px; }
 }
 
-/* 抽屉 resize 手柄（发票管理同款） */
+/* 抽屉 resize 手柄（发票管理同款，teleport 到 body 避免被抽屉遮罩遮挡） */
 .doc-drawer-resize-handle {
   position: fixed;
   top: 0;
   bottom: 0;
   width: 8px;
-  z-index: 2001;
+  z-index: 2200;
   cursor: col-resize;
   display: flex;
   align-items: center;
