@@ -35,7 +35,7 @@
             <t-icon name="chart-radar" size="16px" /><span>光伏账单</span>
           </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'electric-meter' }" @click="switchTab('electric-meter')">
-            <t-icon name="bolt" size="16px" /><span>电费</span>
+            <t-icon name="thunder" size="16px" /><span>电费</span>
           </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'water' }" @click="switchTab('water')">
             <t-icon name="dashboard" size="16px" /><span>水费</span>

@@ -73,6 +73,7 @@
               <span v-else-if="col.key === 'meter'" class="row-text" :title="row.meter_alias">{{ row.meter_alias }}</span>
               <span v-else-if="col.key === 'start_reading'" class="row-mono">{{ fmtNum(row.start_reading) }}</span>
               <span v-else-if="col.key === 'end_reading'" class="row-mono">{{ fmtNum(row.end_reading) }}</span>
+              <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
               <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
               <span v-else-if="col.key === 'unit_price'" class="row-mono">{{ fmtNum(row.unit_price) }}</span>
               <span v-else-if="col.key === 'amount'" class="row-mono">{{ fmtMoney(row.amount) }}</span>
@@ -87,11 +88,11 @@
       </div>
     </div>
 
-    <!-- 底部汇总（列表容器外固定显示；选中时按选中统计并避让浮动工具栏） -->
-    <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedKeys.size }">
-      <span>共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-      <span>总用量 {{ fmtNum(summaryUsage) }} {{ unitLabel }}</span>
-      <span>总金额 {{ fmtMoney(summaryAmount) }} 元</span>
+    <!-- 底部汇总（列表容器外固定显示；选中时按选中统计并避让浮动工具栏，样式与发票管理一致） -->
+    <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
+      <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
+      <span class="doc-summary-item">总用量 <span class="doc-summary-val">{{ fmtNum(summaryUsage) }}</span> {{ unitLabel }}</span>
+      <span class="doc-summary-item">总金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
     </div>
 
     <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏） -->
@@ -128,10 +129,14 @@
     </transition>
 
     <!-- 编辑/新增抽屉 -->
+    <div v-if="drawerVisible" class="doc-drawer-resize-handle" :style="{ right: drawerWidth }" role="separator"
+      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
+      <div class="doc-drawer-resize-line" />
+    </div>
     <teleport to="body">
       <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
-        :close-on-overlay-click="true" @close="onDrawerClose" @update:visible="(v: boolean) => (drawerVisible = v)"
-        @mousedown="onDrawerMouseDown" @mousemove="onDrawerMouseMove" @mouseup="onDrawerMouseUp">
+        :close-on-overlay-click="true" destroy-on-close class="meter-record-drawer"
+        @close="onDrawerClose" @update:visible="(v: boolean) => (drawerVisible = v)">
         <div class="meter-drawer-body">
           <div class="setting-row">
             <div class="setting-info">
@@ -156,7 +161,7 @@
           <div class="setting-row">
             <div class="setting-info">
               <label>起度 / 止度</label>
-              <p class="desc">用水量 =（止度 − 起度）× 倍率</p>
+              <p class="desc">{{ usageLabel }} =（止度 − 起度）× 倍率</p>
             </div>
             <div class="setting-control">
               <div class="reading-row">
@@ -184,8 +189,8 @@
             </div>
             <div class="setting-control">
               <div class="calc-row">
-                <span>用水量 <b class="calc-val">{{ fmtNum(formUsage) }}</b> {{ unitLabel }}</span>
-                <span>水费 <b class="calc-val">{{ fmtMoney(formAmount) }}</b> 元</span>
+                <span>{{ usageLabel }} <b class="calc-val">{{ fmtNum(formUsage) }}</b> {{ unitLabel }}</span>
+                <span>{{ categoryLabel }} <b class="calc-val">{{ fmtMoney(formAmount) }}</b> 元</span>
               </div>
             </div>
           </div>
@@ -210,12 +215,15 @@
       </t-drawer>
     </teleport>
 
-    <!-- 水表配置设置抽屉 -->
+    <!-- 设置抽屉 -->
+    <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
+      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
+      <div class="doc-drawer-resize-line" />
+    </div>
     <teleport to="body">
       <t-drawer v-if="settingsVisible" :visible="true" :header="meterLabel + '配置'" :size="settingsWidth" :footer="false"
-        :close-on-overlay-click="true" @close="settingsVisible = false"
-        @update:visible="(v: boolean) => (settingsVisible = v)"
-        @mousedown="onSettingsMouseDown" @mousemove="onSettingsMouseMove" @mouseup="onSettingsMouseUp">
+        :close-on-overlay-click="true" destroy-on-close class="meter-settings-drawer"
+        @close="settingsVisible = false" @update:visible="(v: boolean) => (settingsVisible = v)">
         <div class="meter-settings-body">
           <div class="settings-head">
             <span class="settings-desc">{{ meterLabel }}配置：开启的显示在录入选择中，关闭后不影响已有记录</span>
@@ -383,6 +391,7 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'meter', label: meterLabel.value, default: true, w: '1.2fr' },
   { key: 'start_reading', label: '起度', default: true, w: '0.9fr' },
   { key: 'end_reading', label: '止度', default: true, w: '0.9fr' },
+  { key: 'rate', label: '倍率', default: true, w: '0.7fr' },
   { key: 'usage', label: usageLabel.value, default: true, w: '1fr' },
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr' },
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
@@ -457,6 +466,7 @@ const load = async () => {
           meter_alias: meter?.alias || it.meter_name || '未配置',
           start_reading: it.start_reading,
           end_reading: it.end_reading,
+          rate: meter?.rate ?? it.rate ?? '',
           usage: it.usage,
           unit_price: it.unit_price,
           amount: it.amount,
@@ -733,6 +743,7 @@ const catalogValueOf = (r: any, key: string): string => {
     case 'meter': return r.meter_alias
     case 'start_reading': return fmtNum(r.start_reading)
     case 'end_reading': return fmtNum(r.end_reading)
+    case 'rate': return fmtNum(r.rate)
     case 'usage': return `${fmtNum(r.usage)} ${unitLabel.value}`
     case 'unit_price': return fmtNum(r.unit_price)
     case 'amount': return `${fmtMoney(r.amount)} 元`
@@ -793,7 +804,11 @@ const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
 const settingsWidth = ref<string>(loadSettingsWidth())
 function loadSettingsWidth(): string {
-  try { return localStorage.getItem('weknora-utility-meter-settings-width') || '680px' } catch { return '680px' }
+  try {
+    const v = parseInt(localStorage.getItem('weknora-utility-meter-settings-width') || '')
+    if (!Number.isNaN(v)) return clampWidth(v, 520) + 'px'
+  } catch { /* ignore */ }
+  return '680px'
 }
 
 const openSettings = async () => {
@@ -898,55 +913,64 @@ const loadMetersOnly = async () => {
 // ---- 抽屉宽度拖动 ----
 const drawerWidth = ref<string>(loadDrawerWidth())
 function loadDrawerWidth(): string {
-  try { return localStorage.getItem(`weknora-utility-${props.category}-drawer-width`) || '640px' } catch { return '640px' }
+  try {
+    const v = parseInt(localStorage.getItem(`weknora-utility-${props.category}-drawer-width`) || '')
+    if (!Number.isNaN(v)) return clampWidth(v, 480) + 'px'
+  } catch { /* ignore */ }
+  return '640px'
 }
 let dragging = false
 let startX = 0
 let startW = 640
-const onDrawerMouseDown = (e: MouseEvent) => {
-  const rect = (e.target as HTMLElement).closest('.t-drawer__header')
-  if (!rect) return
-  const x = window.innerWidth - (e.clientX || 0)
-  if (x > 0 && x < 20) {
-    dragging = true
-    startX = e.clientX
-    startW = parseInt(drawerWidth.value) || 640
-  }
-}
-const onDrawerMouseMove = (e: MouseEvent) => {
-  if (!dragging) return
-  const w = Math.min(1000, Math.max(480, startW + (startX - e.clientX)))
-  drawerWidth.value = w + 'px'
-}
-const onDrawerMouseUp = () => {
-  if (dragging) {
-    dragging = false
-    try { localStorage.setItem(`weknora-utility-${props.category}-drawer-width`, drawerWidth.value) } catch { /* ignore */ }
-  }
-}
 let draggingS = false
 let startXS = 0
 let startWS = 680
-const onSettingsMouseDown = (e: MouseEvent) => {
-  const rect = (e.target as HTMLElement).closest('.t-drawer__header')
-  if (!rect) return
-  const x = window.innerWidth - (e.clientX || 0)
-  if (x > 0 && x < 20) {
-    draggingS = true
-    startXS = e.clientX
-    startWS = parseInt(settingsWidth.value) || 680
-  }
+const clampWidth = (w: number, min: number) => Math.min(Math.floor(window.innerWidth * 0.95), Math.max(min, w))
+
+// 记录抽屉宽度拖动（发票管理同款：独立手柄 + document 监听）
+const onDrawerResizeStart = (e: MouseEvent) => {
+  e.preventDefault()
+  dragging = true
+  startX = e.clientX
+  startW = parseInt(drawerWidth.value) || 640
+  document.addEventListener('mousemove', onDrawerResizeMove)
+  document.addEventListener('mouseup', onDrawerResizeEnd)
+  document.body.style.cursor = 'col-resize'
 }
-const onSettingsMouseMove = (e: MouseEvent) => {
+const onDrawerResizeMove = (e: MouseEvent) => {
+  if (!dragging) return
+  drawerWidth.value = clampWidth(startW + (startX - e.clientX), 480) + 'px'
+}
+const onDrawerResizeEnd = () => {
+  if (!dragging) return
+  dragging = false
+  document.removeEventListener('mousemove', onDrawerResizeMove)
+  document.removeEventListener('mouseup', onDrawerResizeEnd)
+  document.body.style.cursor = ''
+  try { localStorage.setItem(`weknora-utility-${props.category}-drawer-width`, drawerWidth.value) } catch { /* ignore */ }
+}
+
+// 设置抽屉宽度拖动
+const onSettingsResizeStart = (e: MouseEvent) => {
+  e.preventDefault()
+  draggingS = true
+  startXS = e.clientX
+  startWS = parseInt(settingsWidth.value) || 680
+  document.addEventListener('mousemove', onSettingsResizeMove)
+  document.addEventListener('mouseup', onSettingsResizeEnd)
+  document.body.style.cursor = 'col-resize'
+}
+const onSettingsResizeMove = (e: MouseEvent) => {
   if (!draggingS) return
-  const w = Math.min(1000, Math.max(520, startWS + (startXS - e.clientX)))
-  settingsWidth.value = w + 'px'
+  settingsWidth.value = clampWidth(startWS + (startXS - e.clientX), 520) + 'px'
 }
-const onSettingsMouseUp = () => {
-  if (draggingS) {
-    draggingS = false
-    try { localStorage.setItem('weknora-utility-meter-settings-width', settingsWidth.value) } catch { /* ignore */ }
-  }
+const onSettingsResizeEnd = () => {
+  if (!draggingS) return
+  draggingS = false
+  document.removeEventListener('mousemove', onSettingsResizeMove)
+  document.removeEventListener('mouseup', onSettingsResizeEnd)
+  document.body.style.cursor = ''
+  try { localStorage.setItem('weknora-utility-meter-settings-width', settingsWidth.value) } catch { /* ignore */ }
 }
 
 const fmtNum = (v: any) => {
@@ -959,6 +983,12 @@ const fmtMoney = (v: any) => {
 }
 
 onMounted(() => { load() })
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', onDrawerResizeMove)
+  document.removeEventListener('mouseup', onDrawerResizeEnd)
+  document.removeEventListener('mousemove', onSettingsResizeMove)
+  document.removeEventListener('mouseup', onSettingsResizeEnd)
+})
 </script>
 
 <style lang="less" scoped>
@@ -1150,26 +1180,41 @@ onMounted(() => { load() })
 }
 
 /* 底部汇总（与电费/光伏一致） */
-.doc-list-footer-summary {
+.doc-summary-bar {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 8px 16px;
-  font-size: 12px;
+  gap: 16px;
+  padding: 0 2px;
+  font-size: 13px;
   color: var(--td-text-color-secondary);
-  border: 1px solid var(--td-component-stroke);
-  border-top: 0;
-  border-radius: 0 0 9px 9px;
-  background: var(--td-bg-color-container);
-  transition: padding-bottom 0.2s ease;
-
-  &.with-toolbar {
-    padding-bottom: 56px;
+  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
+  .doc-summary-item {
+    display: inline-flex; align-items: baseline; gap: 6px;
+    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
+  &.is-batch-visible { margin-bottom: 72px; }
+}
 
-  .summary-selected {
-    color: var(--td-brand-color);
+/* 抽屉 resize 手柄（发票管理同款） */
+.doc-drawer-resize-handle {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 2001;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  .doc-drawer-resize-line {
+    width: 2px;
+    height: 40px;
+    border-radius: 1px;
+    background: var(--td-brand-color);
+    opacity: 0;
+    transition: opacity 0.15s ease, height 0.15s ease;
   }
+  &:hover .doc-drawer-resize-line { opacity: 1; height: 80px; }
 }
 
 /* 浮动工具栏（与电费/合同一致） */
