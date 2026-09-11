@@ -58,6 +58,7 @@ type UtilityMeterItem struct {
 	StartReading float64   `gorm:"numeric(18,2)" json:"start_reading"`
 	EndReading   float64   `gorm:"numeric(18,2)" json:"end_reading"`
 	UnitPrice    float64   `gorm:"numeric(18,2)" json:"unit_price"`
+	Subsidy      float64   `gorm:"numeric(18,2)" json:"subsidy"` // 补差金额，可正负，计入 amount
 	Usage        float64   `gorm:"numeric(18,2)" json:"usage"`
 	Amount       float64   `gorm:"numeric(18,2)" json:"amount"`
 	Remark       string    `gorm:"type:text" json:"remark"`

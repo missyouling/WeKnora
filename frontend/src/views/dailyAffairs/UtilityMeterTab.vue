@@ -76,6 +76,7 @@
               <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
               <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
               <span v-else-if="col.key === 'unit_price'" class="row-mono">{{ fmtNum(row.unit_price) }}</span>
+              <span v-else-if="col.key === 'subsidy'" class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ fmtMoney(row.subsidy) }}</span>
               <span v-else-if="col.key === 'amount'" class="row-mono">{{ fmtMoney(row.amount) }}</span>
               <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
               <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
@@ -192,6 +193,10 @@
               <label>单价 <span class="required">*</span></label>
               <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
               <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtNum(currentMeter?.default_unit_price) }} 不同</p>
+            </div>
+            <div class="rec-field">
+              <label>补差</label>
+              <t-input v-model.number="form.subsidy" type="number" placeholder="补差金额，可为负" />
             </div>
             <div class="rec-field">
               <label>{{ categoryLabel }}（自动计算）</label>
@@ -447,6 +452,7 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'rate', label: '倍率', default: true, w: '0.7fr' },
   { key: 'usage', label: usageLabel.value, default: true, w: '1fr' },
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr' },
+  { key: 'subsidy', label: '补差', default: true, w: '0.8fr' },
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
   { key: 'remark', label: '备注', default: true, w: '2fr' },
   // 详细字段：抄表信息与表计档案参数
@@ -545,6 +551,7 @@ const load = async () => {
           rate: meter?.rate ?? it.rate ?? '',
           usage: it.usage,
           unit_price: it.unit_price,
+          subsidy: it.subsidy,
           amount: it.amount,
           remark: it.remark || '',
         })
@@ -621,8 +628,8 @@ const editingItemId = ref('')
 const editingOriginalMonth = ref('') // 编辑行原月份（改月时仅迁移该行）
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
-const form = ref<{ month: string; meterId: string; readingDate: string; reader: string; recordDate: string; startReading: number; endReading: number; unitPrice: number; remark: string }>({
-  month: '', meterId: '', readingDate: '', reader: '', recordDate: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '',
+const form = ref<{ month: string; meterId: string; readingDate: string; reader: string; recordDate: string; startReading: number; endReading: number; unitPrice: number; subsidy: number; remark: string }>({
+  month: '', meterId: '', readingDate: '', reader: '', recordDate: '', startReading: 0, endReading: 0, unitPrice: 0, subsidy: 0, remark: '',
 })
 const today = (() => {
   const d = new Date()
@@ -644,7 +651,7 @@ const meterEditOptions = computed(() => {
 const currentMeter = computed(() => meters.value.find((m: any) => m.id === form.value.meterId))
 const formRate = computed(() => Number(currentMeter.value?.rate) > 0 ? Number(currentMeter.value?.rate) : 1)
 const formUsage = computed(() => Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * formRate.value * 100) / 100)
-const formAmount = computed(() => Math.round(formUsage.value * Number(form.value.unitPrice) * 100) / 100)
+const formAmount = computed(() => Math.round((formUsage.value * Number(form.value.unitPrice) + (Number(form.value.subsidy) || 0)) * 100) / 100)
 
 // ---- 录入校验：差异标红提醒不拦截，止度<起度（起度>止度）标红且保存拦截；起度=止度视为当月无用量，合法 ----
 const readingInvalid = computed(() => {
@@ -685,7 +692,7 @@ const openCreate = () => {
   recordItems.value = []
   form.value = {
     month: '', meterId: '', readingDate: today, reader: '', recordDate: today,
-    startReading: 0, endReading: 0, unitPrice: 0, remark: '',
+    startReading: 0, endReading: 0, unitPrice: 0, subsidy: 0, remark: '',
   }
   drawerVisible.value = true
 }
@@ -732,6 +739,7 @@ const openEdit = (row: any) => {
     start_reading: Number(r.start_reading) || 0,
     end_reading: Number(r.end_reading) || 0,
     unit_price: Number(r.unit_price) || 0,
+    subsidy: Number(r.subsidy) || 0,
     remark: r.remark || '',
   }))
   form.value = {
@@ -743,6 +751,7 @@ const openEdit = (row: any) => {
     startReading: Number(row.start_reading) || 0,
     endReading: Number(row.end_reading) || 0,
     unitPrice: Number(row.unit_price) || 0,
+    subsidy: Number(row.subsidy) || 0,
     remark: row.remark || '',
   }
   drawerVisible.value = true
@@ -774,6 +783,7 @@ const save = async () => {
       start_reading: Number(form.value.startReading) || 0,
       end_reading: Number(form.value.endReading) || 0,
       unit_price: Number(form.value.unitPrice) || 0,
+      subsidy: Number(form.value.subsidy) || 0,
       remark: form.value.remark || '',
     }
     const isNew = !editingItemId.value
@@ -794,6 +804,7 @@ const save = async () => {
             start_reading: Number(it.start_reading) || 0,
             end_reading: Number(it.end_reading) || 0,
             unit_price: Number(it.unit_price) || 0,
+            subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
           })),
         })
@@ -817,6 +828,7 @@ const save = async () => {
             start_reading: it.start_reading,
             end_reading: it.end_reading,
             unit_price: it.unit_price,
+            subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
           }
         })
@@ -841,6 +853,7 @@ const save = async () => {
           start_reading: Number(r.start_reading) || 0,
           end_reading: Number(r.end_reading) || 0,
           unit_price: Number(r.unit_price) || 0,
+          subsidy: Number(r.subsidy) || 0,
           remark: r.remark || '',
         })),
         editedItem,
@@ -962,6 +975,7 @@ const catalogValueOf = (r: any, key: string): string => {
     case 'rate': return fmtNum(r.rate)
     case 'usage': return `${fmtNum(r.usage)} ${unitLabel.value}`
     case 'unit_price': return fmtNum(r.unit_price)
+    case 'subsidy': return r.subsidy === '' || r.subsidy == null ? '' : fmtMoney(r.subsidy)
     case 'amount': return `${fmtMoney(r.amount)} 元`
     case 'reading_date': return r.reading_date || ''
     case 'reader': return r.reader || ''
@@ -1391,6 +1405,8 @@ onBeforeUnmount(() => {
 .row-mono {
   font-family: var(--app-font-family);
 }
+
+.os-neg { color: var(--td-error-color, #d54941); }
 
 .meter-list-scroll {
   flex: 1;

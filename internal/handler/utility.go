@@ -1022,13 +1022,13 @@ func timeNowUTC() time.Time {
 	return time.Now().UTC()
 }
 
-// computeMeterItem calculates usage = end - start, amount = usage * unit price.
+// computeMeterItem calculates usage = end - start, amount = usage * unit price + subsidy.
 func computeMeterItem(it *types.UtilityMeterItem, rate float64) {
 	if rate <= 0 {
 		rate = 1
 	}
 	it.Usage = round2((it.EndReading - it.StartReading) * rate)
-	it.Amount = round2(it.Usage * it.UnitPrice)
+	it.Amount = round2(it.Usage*it.UnitPrice + it.Subsidy)
 }
 
 // loadMeterRates 返回该分类下所有表计配置 id→倍率 映射，供记录子行计算用量。
