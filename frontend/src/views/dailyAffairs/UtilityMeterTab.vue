@@ -312,7 +312,7 @@
                     <t-button variant="text" size="small" @click="openMeterForm(m)">
                       <template #icon><t-icon name="edit" size="15px" /></template>
                     </t-button>
-                    <t-popconfirm theme="warning" :content="`确定删除{{ meterLabel }}「${m.alias}」吗？`"
+                    <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                       @confirm="deleteMeter(m)">
                       <t-button variant="text" size="small" @click.stop>
