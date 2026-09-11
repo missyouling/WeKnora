@@ -932,11 +932,12 @@ export function saveUtilityBasicInfo(category: string, data: Record<string, unkn
 }
 
 /** 水/气月度记录列表 */
-export function listUtilityMeterRecords(params: { category: string; month?: string; q?: string } = { category: 'water' }) {
+export function listUtilityMeterRecords(params: { category: string; month?: string; q?: string; meter_id?: string } = { category: 'water' }) {
   const query = new URLSearchParams();
   query.set('category', params.category);
   if (params.month) query.set('month', params.month);
   if (params.q) query.set('q', params.q);
+  if (params.meter_id) query.set('meter_id', params.meter_id);
   return get(`/api/v1/utilities/meter-records?${query.toString()}`);
 }
 
@@ -950,6 +951,26 @@ export function updateUtilityMeterRecord(id: string, payload: Record<string, unk
 
 export function deleteUtilityMeterRecord(id: string) {
   return del(`/api/v1/utilities/meter-records/${id}`);
+}
+
+// ---- 水/气表计配置（utility_meters） ----
+export function listUtilityMeters(params: { category: string; enabled?: boolean } = { category: 'water' }) {
+  const query = new URLSearchParams();
+  query.set('category', params.category);
+  if (params.enabled) query.set('enabled', 'true');
+  return get(`/api/v1/utilities/meters?${query.toString()}`);
+}
+
+export function createUtilityMeter(payload: Record<string, unknown>) {
+  return post('/api/v1/utilities/meters', payload);
+}
+
+export function updateUtilityMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/meters/${id}`, payload);
+}
+
+export function deleteUtilityMeter(id: string) {
+  return del(`/api/v1/utilities/meters/${id}`);
 }
 
 /** 分时电价规则：尖峰平谷月份设定 + 各时段单价 */

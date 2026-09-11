@@ -45,9 +45,11 @@ type UtilityMeterRecord struct {
 func (UtilityMeterRecord) TableName() string { return "utility_meter_records" }
 
 // UtilityMeterItem 表计子行：期初/期末读数、单价，用量与金额由后端自动计算。
+// MeterID 关联 UtilityMeter（水表/气表配置），别名/倍率取自配置。
 type UtilityMeterItem struct {
 	ID           string    `gorm:"primaryKey" json:"id"`
 	RecordID     string    `gorm:"index" json:"record_id"`
+	MeterID      string    `gorm:"index" json:"meter_id"`
 	MeterName    string    `json:"meter_name"`
 	StartReading float64   `gorm:"numeric(18,2)" json:"start_reading"`
 	EndReading   float64   `gorm:"numeric(18,2)" json:"end_reading"`
@@ -60,6 +62,30 @@ type UtilityMeterItem struct {
 }
 
 func (UtilityMeterItem) TableName() string { return "utility_meter_items" }
+
+// UtilityMeter 水表/气表配置：别名、表号、倍率、默认单价等基本参数。
+// Enabled=false 时列表水表筛选中隐藏，已引用该表的记录不受影响。
+type UtilityMeter struct {
+	ID               string     `gorm:"primaryKey" json:"id"`
+	TenantID         int64      `gorm:"index" json:"tenant_id"`
+	Category         string     `gorm:"index" json:"category"` // water | gas
+	Alias            string     `json:"alias"`
+	MeterNo          string     `json:"meter_no"`
+	Rate             float64    `gorm:"numeric(12,4)" json:"rate"`
+	DefaultUnitPrice float64    `gorm:"numeric(18,4)" json:"default_unit_price"`
+	UseUnit          string     `json:"use_unit"`
+	Manager          string     `json:"manager"`
+	Contact          string     `json:"contact"`
+	MeterMode        string     `json:"meter_mode"` // auto | manual
+	InstallDate      string     `json:"install_date"`
+	Remark           string     `gorm:"type:text" json:"remark"`
+	Enabled          bool       `json:"enabled"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	DeletedAt        *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (UtilityMeter) TableName() string { return "utility_meters" }
 
 // UtilityBillExtractionItem 电费账单提取字段（国网标准账单，四组全量）。
 type UtilityBillExtractionItem struct {

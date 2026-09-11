@@ -287,6 +287,7 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 	tenantID, _ := utilityTenantID(c)
 	q := strings.TrimSpace(c.Query("q"))
 	month := strings.TrimSpace(c.Query("month"))
+	meterID := strings.TrimSpace(c.Query("meter_id"))
 
 	query := h.db.WithContext(ctx).Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category)
 	if month != "" {
@@ -294,6 +295,10 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 	}
 	if q != "" {
 		query = query.Where("month LIKE ? OR remark LIKE ?", "%"+q+"%", "%"+q+"%")
+	}
+	if meterID != "" {
+		query = query.Where("id IN (?)", h.db.WithContext(ctx).Model(&types.UtilityMeterItem{}).
+			Select("record_id").Where("meter_id = ?", meterID))
 	}
 	var records []types.UtilityMeterRecord
 	if err := query.Order("month DESC, created_at DESC").Find(&records).Error; err != nil {
@@ -308,7 +313,12 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 			records[i].Items = items
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": records})
+	// 一并返回该分类表计配置，供前端映射别名/倍率/启用状态
+	var meters []types.UtilityMeter
+	_ = h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Order("created_at ASC").Find(&meters).Error
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"records": records, "meters": meters}})
 }
 
 // CreateUtilityMeterRecord godoc
@@ -351,8 +361,18 @@ func (h *UtilityHandler) CreateUtilityMeterRecord(c *gin.Context) {
 	req.TenantID = int64(tenantID)
 	req.CreatedAt = now
 	req.UpdatedAt = now
-	computeMeterRecord(&req)
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := h.validateMeterItems(ctx, tenantID, req.Category, req.Items); err != nil {
+		c.Error(err)
+		return
+	}
+	rates, err := h.loadMeterRates(ctx, tenantID, req.Category)
+	if err != nil {
+		logger.Errorf(ctx, "load meter rates failed: %v", err)
+		c.Error(errors.NewInternalServerError("load meter rates failed"))
+		return
+	}
+	computeMeterRecordWithRates(&req, rates)
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&req).Error; err != nil {
 			return err
 		}
@@ -362,7 +382,6 @@ func (h *UtilityHandler) CreateUtilityMeterRecord(c *gin.Context) {
 			it.RecordID = req.ID
 			it.CreatedAt = now
 			it.UpdatedAt = now
-			computeMeterItem(it)
 			if err := tx.Create(it).Error; err != nil {
 				return err
 			}
@@ -415,8 +434,18 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 	}
 
 	now := timeNowUTC()
-	computeMeterRecord(&req)
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := h.validateMeterItems(ctx, tenantID, req.Category, req.Items); err != nil {
+		c.Error(err)
+		return
+	}
+	rates, err := h.loadMeterRates(ctx, tenantID, req.Category)
+	if err != nil {
+		logger.Errorf(ctx, "load meter rates failed: %v", err)
+		c.Error(errors.NewInternalServerError("load meter rates failed"))
+		return
+	}
+	computeMeterRecordWithRates(&req, rates)
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&types.UtilityMeterRecord{}).
 			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 			Updates(map[string]interface{}{
@@ -442,7 +471,6 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 			it.RecordID = id
 			it.CreatedAt = now
 			it.UpdatedAt = now
-			computeMeterItem(it)
 			if err := tx.Create(it).Error; err != nil {
 				return err
 			}
@@ -484,6 +512,172 @@ func (h *UtilityHandler) DeleteUtilityMeterRecord(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "记录已删除"})
+}
+
+// ---------------------------------------------------------------------------
+// 水/气表计配置（utility_meters）
+// ---------------------------------------------------------------------------
+
+// ListUtilityMeters godoc
+// @Summary      表计配置列表
+// @Description  按分类返回水表/气表配置，支持 enabled 过滤（默认全部，enabled=true 仅启用）。
+// @Router       /utilities/meters [get]
+func (h *UtilityHandler) ListUtilityMeters(c *gin.Context) {
+	ctx := c.Request.Context()
+	category := strings.TrimSpace(c.Query("category"))
+	if category == "" || (category != "water" && category != "gas") {
+		c.Error(errors.NewBadRequestError("category must be water or gas"))
+		return
+	}
+	tenantID, _ := utilityTenantID(c)
+	onlyEnabled := c.Query("enabled") == "true"
+	query := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category)
+	if onlyEnabled {
+		query = query.Where("enabled = ?", true)
+	}
+	var meters []types.UtilityMeter
+	if err := query.Order("created_at ASC").Find(&meters).Error; err != nil {
+		logger.Errorf(ctx, "list utility meters failed: %v", err)
+		c.Error(errors.NewInternalServerError("list meters failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": meters})
+}
+
+// CreateUtilityMeter godoc
+// @Summary      新增表计配置
+// @Description  创建水表/气表配置；别名必填。
+// @Router       /utilities/meters [post]
+func (h *UtilityHandler) CreateUtilityMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	var req types.UtilityMeter
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Category = strings.TrimSpace(req.Category)
+	req.Alias = strings.TrimSpace(req.Alias)
+	if req.Category != "water" && req.Category != "gas" {
+		c.Error(errors.NewBadRequestError("category must be water or gas"))
+		return
+	}
+	if req.Alias == "" {
+		c.Error(errors.NewBadRequestError("别名不能为空"))
+		return
+	}
+	if req.Rate <= 0 {
+		req.Rate = 1
+	}
+	if req.MeterMode == "" {
+		req.MeterMode = "manual"
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
+		logger.Errorf(ctx, "create utility meter failed: %v", err)
+		c.Error(errors.NewInternalServerError("create meter failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateUtilityMeter godoc
+// @Summary      更新表计配置
+// @Description  更新水表/气表配置；已引用该表的记录不受影响（仅后续录入引用新参数）。
+// @Router       /utilities/meters/:id [put]
+func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.UtilityMeter
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Alias = strings.TrimSpace(req.Alias)
+	if req.Alias == "" {
+		c.Error(errors.NewBadRequestError("别名不能为空"))
+		return
+	}
+	if req.Rate <= 0 {
+		req.Rate = 1
+	}
+	if req.MeterMode == "" {
+		req.MeterMode = "manual"
+	}
+	var cnt int64
+	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Count(&cnt).Error; err != nil {
+		logger.Errorf(ctx, "check utility meter failed: %v", err)
+		c.Error(errors.NewInternalServerError("check meter failed"))
+		return
+	}
+	if cnt == 0 {
+		c.Error(errors.NewNotFoundError("表计不存在"))
+		return
+	}
+	now := timeNowUTC()
+	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+		Where("id = ? AND tenant_id = ?", id, tenantID).
+		Updates(map[string]interface{}{
+			"alias":              req.Alias,
+			"meter_no":           req.MeterNo,
+			"rate":               req.Rate,
+			"default_unit_price": req.DefaultUnitPrice,
+			"use_unit":           req.UseUnit,
+			"manager":            req.Manager,
+			"contact":            req.Contact,
+			"meter_mode":         req.MeterMode,
+			"install_date":       req.InstallDate,
+			"remark":             req.Remark,
+			"enabled":            req.Enabled,
+			"updated_at":         now,
+		}).Error; err != nil {
+		logger.Errorf(ctx, "update utility meter failed: %v", err)
+		c.Error(errors.NewInternalServerError("update meter failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// DeleteUtilityMeter godoc
+// @Summary      删除表计配置
+// @Description  删除水表/气表配置；若已有月度记录引用该表计则禁止删除。
+// @Router       /utilities/meters/:id [delete]
+func (h *UtilityHandler) DeleteUtilityMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var cnt int64
+	if err := h.db.WithContext(ctx).Model(&types.UtilityMeterItem{}).
+		Where("meter_id = ?", id).Count(&cnt).Error; err != nil {
+		logger.Errorf(ctx, "check meter reference failed: %v", err)
+		c.Error(errors.NewInternalServerError("check meter reference failed"))
+		return
+	}
+	if cnt > 0 {
+		c.Error(errors.NewBadRequestError("该表计已有记录，不能删除"))
+		return
+	}
+	res := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete utility meter failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete meter failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("表计不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
 }
 
 // ---------------------------------------------------------------------------
@@ -676,22 +870,65 @@ func timeNowUTC() time.Time {
 }
 
 // computeMeterItem calculates usage = end - start, amount = usage * unit price.
-func computeMeterItem(it *types.UtilityMeterItem) {
-	it.Usage = round2(it.EndReading - it.StartReading)
+func computeMeterItem(it *types.UtilityMeterItem, rate float64) {
+	if rate <= 0 {
+		rate = 1
+	}
+	it.Usage = round2((it.EndReading - it.StartReading) * rate)
 	it.Amount = round2(it.Usage * it.UnitPrice)
 }
 
-// computeMeterRecord recalculates meter_count / total_usage / total_amount.
-func computeMeterRecord(r *types.UtilityMeterRecord) {
+// loadMeterRates 返回该分类下所有表计配置 id→倍率 映射，供记录子行计算用量。
+func (h *UtilityHandler) loadMeterRates(ctx context.Context, tenantID uint64, category string) (map[string]float64, error) {
+	var meters []types.UtilityMeter
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Find(&meters).Error; err != nil {
+		return nil, err
+	}
+	m := make(map[string]float64, len(meters))
+	for i := range meters {
+		rate := meters[i].Rate
+		if rate <= 0 {
+			rate = 1
+		}
+		m[meters[i].ID] = rate
+	}
+	return m, nil
+}
+
+// validateMeterItems 校验子行表计引用：meter_id 必须存在于配置且同一记录内不重复；
+// 未引用配置的旧数据（meter_id 为空）放行以兼容存量记录。
+func (h *UtilityHandler) validateMeterItems(ctx context.Context, tenantID uint64, category string, items []types.UtilityMeterItem) error {
+	seen := map[string]bool{}
+	for _, it := range items {
+		if it.MeterID == "" {
+			continue
+		}
+		if seen[it.MeterID] {
+			return errors.NewBadRequestError("同一月份不能重复录入同一表计")
+		}
+		seen[it.MeterID] = true
+	}
+	return nil
+}
+
+// computeMeterRecordWithRates 按表计配置倍率计算用量与金额并汇总。
+func computeMeterRecordWithRates(r *types.UtilityMeterRecord, rates map[string]float64) {
 	var usage, amount float64
 	for i := range r.Items {
-		computeMeterItem(&r.Items[i])
+		computeMeterItem(&r.Items[i], rates[r.Items[i].MeterID])
 		usage += r.Items[i].Usage
 		amount += r.Items[i].Amount
 	}
 	r.MeterCount = len(r.Items)
 	r.TotalUsage = round2(usage)
 	r.TotalAmount = round2(amount)
+}
+
+// computeMeterRecord recalculates meter_count / total_usage / total_amount.
+func computeMeterRecord(r *types.UtilityMeterRecord) {
+	computeMeterRecordWithRates(r, nil)
 }
 
 func round2(v float64) float64 {
