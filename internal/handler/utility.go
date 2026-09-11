@@ -343,16 +343,93 @@ func (h *UtilityHandler) CreateUtilityMeterRecord(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("month is required (YYYY-MM)"))
 		return
 	}
-	var cnt int64
-	if err := h.db.WithContext(ctx).Model(&types.UtilityMeterRecord{}).
+	// 同月 record 已存在 → 校验表计去重后追加 items；否则新建 record（同月可含多表计，同一表计同月唯一）
+	var existing types.UtilityMeterRecord
+	existingFound := true
+	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ? AND category = ? AND month = ? AND deleted_at IS NULL", tenantID, req.Category, req.Month).
-		Count(&cnt).Error; err != nil {
-		logger.Errorf(ctx, "check meter record duplicate failed: %v", err)
-		c.Error(errors.NewInternalServerError("check duplicate failed"))
-		return
+		Order("created_at ASC").First(&existing).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			logger.Errorf(ctx, "query meter record failed: %v", err)
+			c.Error(errors.NewInternalServerError("query meter record failed"))
+			return
+		}
+		existingFound = false
 	}
-	if cnt > 0 {
-		c.Error(errors.NewBadRequestError("该月记录已存在，可编辑原记录"))
+	if existingFound {
+		var existingItems []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", existing.ID).Find(&existingItems).Error; err != nil {
+			logger.Errorf(ctx, "query meter record items failed: %v", err)
+			c.Error(errors.NewInternalServerError("query meter record items failed"))
+			return
+		}
+		seen := map[string]bool{}
+		for _, it := range existingItems {
+			if it.MeterID != "" {
+				seen[it.MeterID] = true
+			}
+		}
+		for _, it := range req.Items {
+			if it.MeterID == "" {
+				continue
+			}
+			if seen[it.MeterID] {
+				c.Error(errors.NewBadRequestError("该表计该月记录已存在，可编辑原记录"))
+				return
+			}
+			seen[it.MeterID] = true
+		}
+		if err := h.validateMeterItems(ctx, tenantID, req.Category, req.Items); err != nil {
+			c.Error(err)
+			return
+		}
+		now := timeNowUTC()
+		for i := range req.Items {
+			it := &req.Items[i]
+			it.ID = uuid.NewString()
+			it.RecordID = existing.ID
+			it.CreatedAt = now
+			it.UpdatedAt = now
+		}
+		merged := append(existingItems, req.Items...)
+		existing.Items = merged
+		rates, err := h.loadMeterRates(ctx, tenantID, req.Category)
+		if err != nil {
+			logger.Errorf(ctx, "load meter rates failed: %v", err)
+			c.Error(errors.NewInternalServerError("load meter rates failed"))
+			return
+		}
+		computeMeterRecordWithRates(&existing, rates)
+		// merged 是 append 的拷贝切片，需把计算后的 rate/usage/amount 同步回 req.Items 再落库
+		base := len(existingItems)
+		for i := range req.Items {
+			m := merged[base+i]
+			req.Items[i].Rate = m.Rate
+			req.Items[i].Usage = m.Usage
+			req.Items[i].Amount = m.Amount
+		}
+		err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			for i := range req.Items {
+				if err := tx.Create(&req.Items[i]).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Model(&types.UtilityMeterRecord{}).
+				Where("id = ? AND tenant_id = ?", existing.ID, tenantID).
+				Updates(map[string]interface{}{
+					"meter_count":  existing.MeterCount,
+					"total_usage":  existing.TotalUsage,
+					"total_amount": existing.TotalAmount,
+					"updated_at":   now,
+				}).Error
+		})
+		if err != nil {
+			logger.Errorf(ctx, "append meter record failed: %v", err)
+			c.Error(errors.NewInternalServerError("append meter record failed: " + err.Error()))
+			return
+		}
+		existing.Items = merged
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": existing})
 		return
 	}
 
@@ -419,18 +496,34 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("month is required (YYYY-MM)"))
 		return
 	}
-	// 月份唯一性（排除自身）
-	var cnt int64
-	if err := h.db.WithContext(ctx).Model(&types.UtilityMeterRecord{}).
+	// 同月同表唯一性（排除自身）：同月其它 record 已含相同表计则拦截，不同表计可共存
+	var otherRecs []types.UtilityMeterRecord
+	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ? AND category = ? AND month = ? AND id <> ? AND deleted_at IS NULL", tenantID, req.Category, req.Month, id).
-		Count(&cnt).Error; err != nil {
+		Find(&otherRecs).Error; err != nil {
 		logger.Errorf(ctx, "check meter record duplicate failed: %v", err)
 		c.Error(errors.NewInternalServerError("check duplicate failed"))
 		return
 	}
-	if cnt > 0 {
-		c.Error(errors.NewBadRequestError("该月记录已存在，可编辑原记录"))
-		return
+	for _, o := range otherRecs {
+		var oItems []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", o.ID).Find(&oItems).Error; err != nil {
+			logger.Errorf(ctx, "query meter record items failed: %v", err)
+			c.Error(errors.NewInternalServerError("query meter record items failed"))
+			return
+		}
+		oc := map[string]bool{}
+		for _, it := range oItems {
+			if it.MeterID != "" {
+				oc[it.MeterID] = true
+			}
+		}
+		for _, it := range req.Items {
+			if it.MeterID != "" && oc[it.MeterID] {
+				c.Error(errors.NewBadRequestError("该表计该月记录已存在，可编辑原记录"))
+				return
+			}
+		}
 	}
 
 	now := timeNowUTC()

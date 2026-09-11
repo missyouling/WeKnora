@@ -180,12 +180,12 @@
             <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
               <label>起度 <span class="required">*</span></label>
               <t-input v-model.number="form.startReading" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-              <p v-if="readingInvalid" class="field-error-text">止度必须大于起度</p>
+              <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
             </div>
             <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
               <label>止度 <span class="required">*</span></label>
               <t-input v-model.number="form.endReading" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-              <p v-if="readingInvalid" class="field-error-text">止度必须大于起度</p>
+              <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
             </div>
 
             <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
@@ -653,11 +653,11 @@ const formRate = computed(() => Number(currentMeter.value?.rate) > 0 ? Number(cu
 const formUsage = computed(() => Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * formRate.value * 100) / 100)
 const formAmount = computed(() => Math.round(formUsage.value * Number(form.value.unitPrice) * 100) / 100)
 
-// ---- 录入校验：差异标红提醒不拦截，止度≤起度标红且保存拦截 ----
+// ---- 录入校验：差异标红提醒不拦截，止度<起度（起度>止度）标红且保存拦截；起度=止度视为当月无用量，合法 ----
 const readingInvalid = computed(() => {
   const s = Number(form.value.startReading) || 0
   const e = Number(form.value.endReading) || 0
-  return e > 0 && e <= s
+  return s > e
 })
 const duplicateWarning = computed(() => {
   if (editingItemId.value) return false
@@ -767,7 +767,7 @@ const save = async () => {
     return
   }
   if (readingInvalid.value) {
-    MessagePlugin.error('止度必须大于起度')
+    MessagePlugin.error('止度不得小于起度')
     return
   }
   saving.value = true
