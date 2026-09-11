@@ -16,12 +16,29 @@
         </t-button>
       </div>
       <div class="doc-filter-bar__trailing">
-        <t-dropdown :options="fieldMenuOptions" @click="onFieldMenuClick">
+        <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
+          overlay-inner-class="meter-field-popup">
           <t-button variant="outline" size="small">
             <template #icon><t-icon name="view-list" size="14px" /></template>
             字段
           </t-button>
-        </t-dropdown>
+          <template #content>
+            <div class="field-popup-content">
+              <div class="field-popup-head">
+                <span class="field-popup-title">显示字段</span>
+                <div class="field-popup-actions">
+                  <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
+                  <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
+                </div>
+              </div>
+              <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
+                <t-checkbox v-for="col in COLUMN_DEFS" :key="col.key" :value="col.key" class="field-popup-item">
+                  {{ col.label }}
+                </t-checkbox>
+              </t-checkbox-group>
+            </div>
+          </template>
+        </t-popup>
         <t-button variant="outline" size="small" @click="openSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
@@ -37,13 +54,20 @@
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
       <div class="doc-list-view">
         <div class="doc-list-header" :style="gridStyle" role="row">
+          <div class="cell cell-check" role="columnheader" @click.stop>
+            <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
+              :disabled="!displayRows.length" title="全选" @change="toggleSelectAll" />
+          </div>
           <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
             {{ col.label }}
           </div>
         </div>
         <div class="doc-list-body">
           <div v-for="row in displayRows" :key="row.item_id || row.key" class="doc-list-row"
-            :class="{ 'row-selected': selectedKeys.has(row.key) }" :style="gridStyle" role="row" @click="toggleSelect(row)">
+            :class="{ 'row-selected': selectedKeys.has(row.key) }" :style="gridStyle" role="row" @click="onRowClick(row)">
+            <div class="cell cell-check" @click.stop>
+              <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(row.key)" @change="(v: any) => toggleSelect(row, v)" />
+            </div>
             <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
               <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
               <span v-else-if="col.key === 'meter'" class="row-text" :title="row.meter_alias">{{ row.meter_alias }}</span>
@@ -188,13 +212,13 @@
 
     <!-- 水表配置设置抽屉 -->
     <teleport to="body">
-      <t-drawer v-if="settingsVisible" :visible="true" header="水表配置" :size="settingsWidth" :footer="false"
+      <t-drawer v-if="settingsVisible" :visible="true" :header="meterLabel + '配置'" :size="settingsWidth" :footer="false"
         :close-on-overlay-click="true" @close="settingsVisible = false"
         @update:visible="(v: boolean) => (settingsVisible = v)"
         @mousedown="onSettingsMouseDown" @mousemove="onSettingsMouseMove" @mouseup="onSettingsMouseUp">
         <div class="meter-settings-body">
           <div class="settings-head">
-            <span class="settings-desc">{{ categoryLabel }}表配置：开启的显示在录入选择中，关闭后不影响已有记录</span>
+            <span class="settings-desc">{{ meterLabel }}配置：开启的显示在录入选择中，关闭后不影响已有记录</span>
             <t-button theme="primary" size="small" @click="openMeterForm(null)">
               <template #icon><t-icon name="add" /></template>
               新增{{ meterLabel }}
@@ -203,7 +227,7 @@
 
           <div v-if="!meters.length && !meterFormVisible" class="meter-empty">
             <t-icon name="setting" size="40px" class="meter-empty-icon" />
-            <span class="meter-empty-text">暂无水表，点击新增{{ meterLabel }}开始配置</span>
+            <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
           </div>
 
           <div v-for="m in meters" :key="m.id" class="meter-card">
@@ -329,7 +353,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
@@ -344,13 +368,13 @@ import {
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
 const props = defineProps<{
-  category: 'water' | 'gas'
+  category: 'water' | 'gas' | 'electricity'
 }>()
 
-const categoryLabel = computed(() => (props.category === 'water' ? '水费' : '气费'))
-const meterLabel = computed(() => (props.category === 'water' ? '水表' : '气表'))
-const unitLabel = computed(() => (props.category === 'water' ? '吨' : 'm³'))
-const usageLabel = computed(() => (props.category === 'water' ? '用水量' : '用气量'))
+const categoryLabel = computed(() => (props.category === 'water' ? '水费' : props.category === 'electricity' ? '电费' : '气费'))
+const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
+const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.category === 'electricity' ? '千瓦时' : 'm³'))
+const usageLabel = computed(() => (props.category === 'water' ? '用水量' : props.category === 'electricity' ? '用电量' : '用气量'))
 
 // ---- 列定义 ----
 interface ColDef { key: string; label: string; default: boolean; w: string }
@@ -364,11 +388,11 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
   { key: 'remark', label: '备注', default: true, w: '2fr' },
 ]
-const STORAGE_KEY = computed(() => `weknora-utility-${props.category}-columns-v2`)
+const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v2`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
 const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleKeys.value.includes(c.key)))
 const gridStyle = computed(() => ({
-  gridTemplateColumns: `${visibleColDefs.value.map(c => c.w).join(' ')}`,
+  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
 }))
 
 function loadStoredKeys(): string[] {
@@ -376,25 +400,26 @@ function loadStoredKeys(): string[] {
     const raw = localStorage.getItem(STORAGE_KEY.value)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr
+      if (Array.isArray(arr) && arr.length) {
+        // 仅保留本组件认识的字段，避免跨页面污染
+        const valid = arr.filter(k => COLUMN_DEFS.some(c => c.key === k))
+        if (valid.length) return valid
+      }
     }
   } catch { /* ignore */ }
   return COLUMN_DEFS.filter(c => c.default).map(c => c.key)
 }
 
-const fieldMenuOptions = computed(() => COLUMN_DEFS.map(c => ({
-  content: c.label,
-  value: c.key,
-  checkable: true,
-  checked: visibleKeys.value.includes(c.key),
-})))
-const onFieldMenuClick = (e: any) => {
-  const key = e?.value as string
-  if (visibleKeys.value.includes(key)) {
-    visibleKeys.value = visibleKeys.value.filter(k => k !== key)
-  } else {
-    visibleKeys.value = [...visibleKeys.value, key]
-  }
+const fieldPopupVisible = ref(false)
+const selectAllColumns = () => {
+  visibleKeys.value = COLUMN_DEFS.map(c => c.key)
+  persistColumns()
+}
+const resetColumns = () => {
+  visibleKeys.value = COLUMN_DEFS.filter(c => c.default).map(c => c.key)
+  persistColumns()
+}
+const persistColumns = () => {
   try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ }
 }
 
@@ -440,6 +465,15 @@ const load = async () => {
       }
     }
     rows.value = flat
+    // 构建 表计→月份→止度 索引（新增记录时上月止度自动填充起度）
+    const idx = new Map<string, Map<string, number>>()
+    for (const r of flat) {
+      if (!r.meter_id) continue
+      let m = idx.get(r.meter_id)
+      if (!m) { m = new Map(); idx.set(r.meter_id, m) }
+      m.set(r.month, Number(r.end_reading) || 0)
+    }
+    meterMonthEnds.value = idx
     applyFilters()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载失败')
@@ -471,12 +505,25 @@ const summaryAmount = computed(() => {
   return Math.round(arr.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100
 })
 
-const toggleSelect = (row: any) => {
+const toggleSelect = (row: any, checked: any) => {
   const key = row.key
   const next = new Set(selectedKeys.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
+  if (checked) next.add(key)
+  else next.delete(key)
   selectedKeys.value = next
+}
+const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every(r => selectedKeys.value.has(r.key)))
+const someSelected = computed(() => displayRows.value.some(r => selectedKeys.value.has(r.key)) && !isAllSelected.value)
+const toggleSelectAll = (checked: any) => {
+  const next = new Set(selectedKeys.value)
+  if (checked) displayRows.value.forEach(r => next.add(r.key))
+  else displayRows.value.forEach(r => next.delete(r.key))
+  selectedKeys.value = next
+}
+// 单击行：单选该行并打开编辑抽屉（与发票管理一致）
+const onRowClick = (row: any) => {
+  selectedKeys.value = new Set([row.key])
+  openEdit(row)
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
 
@@ -519,6 +566,26 @@ const openCreate = () => {
   form.value = { month: '', meterId: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '' }
   drawerVisible.value = true
 }
+
+// ---- 新增记录：上月止度自动填充本月起度 ----
+const meterMonthEnds = ref<Map<string, Map<string, number>>>(new Map())
+const prevMonthOf = (month: string) => {
+  const [y, m] = month.split('-').map(Number)
+  if (!y || !m) return ''
+  if (m === 1) return `${y - 1}-12`
+  return `${y}-${String(m - 1).padStart(2, '0')}`
+}
+watch([() => form.value.month, () => form.value.meterId], () => {
+  if (editingItemId.value) return // 编辑模式不填充
+  if (!form.value.month || !form.value.meterId) return
+  const ends = meterMonthEnds.value.get(form.value.meterId)
+  const prevEnd = ends?.get(prevMonthOf(form.value.month))
+  if (prevEnd) {
+    form.value.startReading = prevEnd
+  } else {
+    form.value.startReading = 0
+  }
+})
 
 const openEditSelected = () => {
   const row = selectedRows.value[0]
@@ -935,6 +1002,21 @@ onMounted(() => { load() })
   }
 }
 
+.field-popup-content {
+  width: 240px;
+  padding: 12px;
+  box-sizing: border-box;
+  .field-popup-head {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+    .field-popup-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
+    .field-popup-actions { display: flex; gap: 0; }
+  }
+  .field-popup-list {
+    display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto;
+    .field-popup-item { display: flex; align-items: center; }
+  }
+}
+
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
 .doc-list-view {
   width: 100%;
@@ -1014,6 +1096,18 @@ onMounted(() => { load() })
     padding-right: 0;
   }
 }
+
+.cell-check {
+  justify-content: center;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: transparent;
+  padding: 0;
+}
+
+.doc-list-check :deep(.t-checkbox__label) { display: none !important; width: 0 !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; }
+.doc-list-check :deep(.t-checkbox__input-wrapper) { margin: 0; }
 
 .row-mono,
 .row-text {

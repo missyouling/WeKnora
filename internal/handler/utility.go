@@ -280,8 +280,8 @@ func utilityMetaRecords(raw json.RawMessage) []map[string]json.RawMessage {
 func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 	ctx := c.Request.Context()
 	category := strings.TrimSpace(c.Query("category"))
-	if category == "" || (category != "water" && category != "gas") {
-		c.Error(errors.NewBadRequestError("category must be water or gas"))
+	if category == "" || (category != "water" && category != "gas" && category != "electricity") {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
 		return
 	}
 	tenantID, _ := utilityTenantID(c)
@@ -335,8 +335,8 @@ func (h *UtilityHandler) CreateUtilityMeterRecord(c *gin.Context) {
 	}
 	req.Category = strings.TrimSpace(req.Category)
 	req.Month = strings.TrimSpace(req.Month)
-	if req.Category != "water" && req.Category != "gas" {
-		c.Error(errors.NewBadRequestError("category must be water or gas"))
+	if req.Category != "water" && req.Category != "gas" && req.Category != "electricity" {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
 		return
 	}
 	if req.Month == "" || len(req.Month) != 7 {
@@ -411,8 +411,8 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 	}
 	req.Category = strings.TrimSpace(req.Category)
 	req.Month = strings.TrimSpace(req.Month)
-	if req.Category != "water" && req.Category != "gas" {
-		c.Error(errors.NewBadRequestError("category must be water or gas"))
+	if req.Category != "water" && req.Category != "gas" && req.Category != "electricity" {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
 		return
 	}
 	if req.Month == "" || len(req.Month) != 7 {
@@ -525,8 +525,8 @@ func (h *UtilityHandler) DeleteUtilityMeterRecord(c *gin.Context) {
 func (h *UtilityHandler) ListUtilityMeters(c *gin.Context) {
 	ctx := c.Request.Context()
 	category := strings.TrimSpace(c.Query("category"))
-	if category == "" || (category != "water" && category != "gas") {
-		c.Error(errors.NewBadRequestError("category must be water or gas"))
+	if category == "" || (category != "water" && category != "gas" && category != "electricity") {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
 		return
 	}
 	tenantID, _ := utilityTenantID(c)
@@ -559,8 +559,8 @@ func (h *UtilityHandler) CreateUtilityMeter(c *gin.Context) {
 	}
 	req.Category = strings.TrimSpace(req.Category)
 	req.Alias = strings.TrimSpace(req.Alias)
-	if req.Category != "water" && req.Category != "gas" {
-		c.Error(errors.NewBadRequestError("category must be water or gas"))
+	if req.Category != "water" && req.Category != "gas" && req.Category != "electricity" {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
 		return
 	}
 	if req.Alias == "" {

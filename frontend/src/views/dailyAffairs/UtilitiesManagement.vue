@@ -1,10 +1,10 @@
-<template>
+﻿<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
       <div class="header-title">
         <h2>能耗管理</h2>
-        <p class="header-subtitle">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
+        <p class="header-subtitle">市电、光伏账单自动解析归档；电、水、气按表计录入自动汇总</p>
       </div>
       <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
         @change="onFileInputChange" />
@@ -29,10 +29,13 @@
         <!-- 侧边栏菜单 -->
         <div class="utilities-sidebar">
           <div class="utilities-side-item" :class="{ active: activeTab === 'electricity' }" @click="switchTab('electricity')">
-            <t-icon name="chart-bubble" size="16px" /><span>电费</span>
+            <t-icon name="chart-bubble" size="16px" /><span>市电账单</span>
           </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'solar' }" @click="switchTab('solar')">
-            <t-icon name="chart-radar" size="16px" /><span>光伏</span>
+            <t-icon name="chart-radar" size="16px" /><span>光伏账单</span>
+          </div>
+          <div class="utilities-side-item" :class="{ active: activeTab === 'electric-meter' }" @click="switchTab('electric-meter')">
+            <t-icon name="bolt" size="16px" /><span>电费</span>
           </div>
           <div class="utilities-side-item" :class="{ active: activeTab === 'water' }" @click="switchTab('water')">
             <t-icon name="dashboard" size="16px" /><span>水费</span>
@@ -48,8 +51,8 @@
             <!-- 模块标题区（与光伏页一致） -->
             <div class="header">
               <div class="header-title">
-                <h2>电费账单</h2>
-                <p class="header-subtitle">电费账单自动解析归档；水费、气费按月录入多表计自动汇总</p>
+                <h2>市电账单</h2>
+                <p class="header-subtitle">市电、光伏账单自动解析归档；电、水、气按表计录入自动汇总</p>
               </div>
               <div class="header-actions">
                 <t-button v-if="kbId" theme="primary" @click="triggerUpload">
@@ -552,6 +555,9 @@
           </template>
           <template v-else-if="activeTab === 'gas'">
             <UtilityMeterTab category="gas" />
+          </template>
+          <template v-else-if="activeTab === 'electric-meter'">
+            <UtilityMeterTab category="electricity" />
           </template>
           <template v-else-if="activeTab === 'solar'">
             <SolarManagement />
