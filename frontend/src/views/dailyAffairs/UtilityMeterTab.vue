@@ -8,7 +8,7 @@
             class="doc-date-picker doc-filter-field__control" @change="load" />
         </div>
         <div class="doc-filter-field">
-          <t-select v-model="filters.meterId" :placeholder="meterLabel" clearable class="doc-filter-select doc-filter-field__control"
+          <t-select v-model="filters.meterId" :placeholder="meterLabel" clearable filterable class="doc-filter-select doc-filter-field__control"
             :options="meterFilterOptions" @change="load" />
         </div>
         <t-button variant="outline" size="small" @click="load">
@@ -77,6 +77,11 @@
               <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
               <span v-else-if="col.key === 'unit_price'" class="row-mono">{{ fmtNum(row.unit_price) }}</span>
               <span v-else-if="col.key === 'amount'" class="row-mono">{{ fmtMoney(row.amount) }}</span>
+              <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
+              <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
+              <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtNum(row.default_unit_price) }}</span>
+              <span v-else-if="col.key === 'meter_mode'" class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
+              <span v-else-if="col.key === 'install_date'" class="row-mono">{{ row.install_date || '' }}</span>
               <span v-else class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
             </div>
           </div>
@@ -140,68 +145,44 @@
         :close-on-overlay-click="true" destroy-on-close class="meter-record-drawer"
         @close="onDrawerClose" @update:visible="(v: boolean) => (drawerVisible = v)">
         <div class="meter-drawer-body">
-          <div class="setting-row">
-            <div class="setting-info">
+          <div class="rec-grid">
+            <div class="rec-field">
               <label>月份 <span class="required">*</span></label>
-              <p class="desc">格式 YYYY-MM，同{{ meterLabel }}同月份唯一</p>
-            </div>
-            <div class="setting-control">
               <t-date-picker v-model="form.month" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
+              <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
             </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-info">
+            <div class="rec-field">
               <label>{{ meterLabel }} <span class="required">*</span></label>
-              <p class="desc">选择{{ meterLabel }}配置，默认单价自动带入</p>
-            </div>
-            <div class="setting-control">
               <t-select v-model="form.meterId" :placeholder="'选择' + meterLabel" :options="meterEditOptions" filterable @change="onMeterChange" />
+              <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
             </div>
-          </div>
 
-          <div class="setting-row">
-            <div class="setting-info">
-              <label>起度 / 止度</label>
-              <p class="desc">{{ usageLabel }} =（止度 − 起度）× 倍率</p>
-            </div>
-            <div class="setting-control">
+            <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
+              <label>起度 / 止度 <span class="required">*</span></label>
               <div class="reading-row">
-                <t-input v-model.number="form.startReading" type="number" placeholder="起度" class="reading-input" />
+                <t-input v-model.number="form.startReading" type="number" placeholder="起度" class="reading-input" :status="readingInvalid ? 'error' : ''" />
                 <span class="reading-sep">→</span>
-                <t-input v-model.number="form.endReading" type="number" placeholder="止度" class="reading-input" />
+                <t-input v-model.number="form.endReading" type="number" placeholder="止度" class="reading-input" :status="readingInvalid ? 'error' : ''" />
               </div>
+              <p v-if="readingInvalid" class="field-error-text">止度必须大于起度</p>
             </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-info">
+            <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
               <label>单价 <span class="required">*</span></label>
-              <p class="desc">元/{{ unitLabel }}，默认取自{{ meterLabel }}配置</p>
+              <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
+              <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtNum(currentMeter?.default_unit_price) }} 不同</p>
             </div>
-            <div class="setting-control">
-              <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" />
-            </div>
-          </div>
 
-          <div class="setting-row">
-            <div class="setting-info">
+            <div class="rec-field rec-field--wide">
               <label>计算结果</label>
-              <p class="desc">自动计算，不可手动修改</p>
-            </div>
-            <div class="setting-control">
               <div class="calc-row">
+                <span class="calc-rate">倍率 {{ fmtNum(formRate) }}×</span>
                 <span>{{ usageLabel }} <b class="calc-val">{{ fmtNum(formUsage) }}</b> {{ unitLabel }}</span>
                 <span>{{ categoryLabel }} <b class="calc-val">{{ fmtMoney(formAmount) }}</b> 元</span>
               </div>
             </div>
-          </div>
 
-          <div class="setting-row">
-            <div class="setting-info">
+            <div class="rec-field rec-field--wide">
               <label>备注</label>
-            </div>
-            <div class="setting-control">
               <t-textarea v-model="form.remark" :maxlength="500" placeholder="选填" />
             </div>
           </div>
@@ -242,30 +223,32 @@
             <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
           </div>
 
-          <div v-for="m in meters" :key="m.id" class="meter-card">
-            <div class="meter-card-head">
-              <span class="meter-card-name">{{ m.alias }}</span>
-              <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
-              <span class="meter-card-actions">
-                <t-button variant="text" size="small" @click="openMeterForm(m)">
-                  <template #icon><t-icon name="edit" size="15px" /></template>
-                </t-button>
-                <t-popconfirm theme="warning" :content="`确定删除{{ meterLabel }}「${m.alias}」吗？`"
-                  :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                  @confirm="deleteMeter(m)">
-                  <t-button variant="text" size="small" @click.stop>
-                    <template #icon><t-icon name="delete" size="15px" /></template>
+          <div class="meter-grid" :style="{ gridTemplateColumns: meterGridCols }">
+            <div v-for="m in meters" :key="m.id" class="meter-card">
+              <div class="meter-card-head">
+                <span class="meter-card-name">{{ m.alias }}</span>
+                <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
+                <span class="meter-card-actions">
+                  <t-button variant="text" size="small" @click="openMeterForm(m)">
+                    <template #icon><t-icon name="edit" size="15px" /></template>
                   </t-button>
-                </t-popconfirm>
-              </span>
-            </div>
-            <div class="meter-card-grid">
-              <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-              <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
-              <div class="meter-card-item"><span class="k">默认单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
-              <div class="meter-card-item"><span class="k">使用单位</span><span class="v">{{ m.use_unit || '—' }}</span></div>
-              <div class="meter-card-item"><span class="k">抄表方式</span><span class="v">{{ m.meter_mode === 'auto' ? '自动抄表' : '手动抄表' }}</span></div>
-              <div class="meter-card-item"><span class="k">安装日期</span><span class="v">{{ m.install_date || '—' }}</span></div>
+                  <t-popconfirm theme="warning" :content="`确定删除{{ meterLabel }}「${m.alias}」吗？`"
+                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                    @confirm="deleteMeter(m)">
+                    <t-button variant="text" size="small" @click.stop>
+                      <template #icon><t-icon name="delete" size="15px" /></template>
+                    </t-button>
+                  </t-popconfirm>
+                </span>
+              </div>
+              <div class="meter-card-grid">
+                <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
+                <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
+                <div class="meter-card-item"><span class="k">默认单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
+                <div class="meter-card-item"><span class="k">使用单位</span><span class="v">{{ m.use_unit || '—' }}</span></div>
+                <div class="meter-card-item"><span class="k">抄表方式</span><span class="v">{{ m.meter_mode === 'auto' ? '自动抄表' : '手动抄表' }}</span></div>
+                <div class="meter-card-item"><span class="k">安装日期</span><span class="v">{{ m.install_date || '—' }}</span></div>
+              </div>
             </div>
           </div>
 
@@ -400,6 +383,12 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr' },
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
   { key: 'remark', label: '备注', default: true, w: '2fr' },
+  // 详细字段：表计档案参数
+  { key: 'meter_no', label: '表号', default: false, w: '1fr' },
+  { key: 'use_unit', label: '使用单位', default: false, w: '1.2fr' },
+  { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr' },
+  { key: 'meter_mode', label: '抄表方式', default: false, w: '0.9fr' },
+  { key: 'install_date', label: '安装日期', default: false, w: '1.1fr' },
 ]
 const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v2`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
@@ -468,6 +457,11 @@ const load = async () => {
           month: rec.month,
           meter_id: it.meter_id,
           meter_alias: meter?.alias || it.meter_name || '未配置',
+          meter_no: meter?.meter_no || '',
+          use_unit: meter?.use_unit || '',
+          default_unit_price: meter?.default_unit_price ?? '',
+          meter_mode: meter?.meter_mode || '',
+          install_date: meter?.install_date || '',
           start_reading: it.start_reading,
           end_reading: it.end_reading,
           rate: meter?.rate ?? it.rate ?? '',
@@ -568,6 +562,30 @@ const formRate = computed(() => Number(currentMeter.value?.rate) > 0 ? Number(cu
 const formUsage = computed(() => Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * formRate.value * 100) / 100)
 const formAmount = computed(() => Math.round(formUsage.value * Number(form.value.unitPrice) * 100) / 100)
 
+// ---- 录入校验：差异标红提醒不拦截，止度≤起度标红且保存拦截 ----
+const readingInvalid = computed(() => {
+  const s = Number(form.value.startReading) || 0
+  const e = Number(form.value.endReading) || 0
+  return e > 0 && e <= s
+})
+const duplicateWarning = computed(() => {
+  if (editingItemId.value) return false
+  if (!form.value.month || !form.value.meterId) return false
+  return meterMonthEnds.value.get(form.value.meterId)?.has(form.value.month) || false
+})
+const unitPriceDiff = computed(() => {
+  const up = Number(form.value.unitPrice)
+  const def = Number(currentMeter.value?.default_unit_price)
+  return !!form.value.meterId && up > 0 && def > 0 && up !== def
+})
+// 设置抽屉表计卡片网格列数（随抽屉宽度自适应）
+const meterGridCols = computed(() => {
+  const w = parseInt(settingsWidth.value) || 680
+  if (w >= 980) return 'repeat(3, minmax(0, 1fr))'
+  if (w >= 660) return 'repeat(2, minmax(0, 1fr))'
+  return 'repeat(1, minmax(0, 1fr))'
+})
+
 const onMeterChange = () => {
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
@@ -646,6 +664,10 @@ const save = async () => {
   }
   if (!form.value.meterId) {
     MessagePlugin.warning(`请选择${meterLabel}`)
+    return
+  }
+  if (readingInvalid.value) {
+    MessagePlugin.error('止度必须大于起度')
     return
   }
   saving.value = true
@@ -1024,7 +1046,7 @@ const onDrawerResizeStart = (e: MouseEvent) => {
 }
 const onDrawerResizeMove = (e: MouseEvent) => {
   if (!dragging) return
-  drawerWidth.value = clampWidth(startW + (e.clientX - startX), 480) + 'px'
+  drawerWidth.value = clampWidth(startW + (startX - e.clientX), 480) + 'px'
 }
 const onDrawerResizeEnd = () => {
   if (!dragging) return
@@ -1047,7 +1069,7 @@ const onSettingsResizeStart = (e: MouseEvent) => {
 }
 const onSettingsResizeMove = (e: MouseEvent) => {
   if (!draggingS) return
-  settingsWidth.value = clampWidth(startWS + (e.clientX - startXS), 520) + 'px'
+  settingsWidth.value = clampWidth(startWS + (startXS - e.clientX), 520) + 'px'
 }
 const onSettingsResizeEnd = () => {
   if (!draggingS) return
@@ -1359,6 +1381,46 @@ onBeforeUnmount(() => {
   padding: 4px 0 24px;
 }
 
+/* 新增/编辑记录：两列紧凑布局 */
+.rec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
+}
+.rec-field {
+  min-width: 0;
+
+  label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .reading-row { display: flex; align-items: center; gap: 8px; }
+  .reading-input { flex: 1; }
+  .reading-sep { color: var(--td-text-color-placeholder); flex: 0 0 auto; }
+  .field-error-text {
+    font-size: 12px;
+    color: var(--td-error-color);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+}
+.rec-field--wide {
+  grid-column: 1 / -1;
+}
+.calc-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 30px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+  .calc-rate { color: var(--td-brand-color); }
+  .calc-val { color: var(--td-text-color-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+}
+
 .setting-row {
   display: flex;
   align-items: flex-start;
@@ -1440,6 +1502,11 @@ onBeforeUnmount(() => {
 }
 
 /* 水表配置抽屉 */
+.meter-grid {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
 .meter-settings-body {
   padding: 4px 0 24px;
 }
@@ -1460,8 +1527,8 @@ onBeforeUnmount(() => {
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
   padding: 12px 14px;
-  margin-bottom: 12px;
   background: var(--td-bg-color-container);
+  min-width: 0;
 
   .meter-card-head {
     display: flex;
