@@ -846,12 +846,14 @@ const save = async () => {
       return idx >= 0 ? enabled[idx + 1] : undefined
     })()
     if (nextMeter) {
-      // 连续录入：抽屉不关闭，按启用表顺序切到下一张，起度=上一条止度、单价=上一条单价、
-      // 抄表日期=第一条、抄表人=下张表管理人员、月份复用
+      // 连续录入：抽屉不关闭，按启用表顺序切到下一张，月份复用、抄表日期=第一条、
+      // 起度=下一张表自身上月止度（无则空）、单价=上一条、抄表人=下张表管理人员
       skipAutoFill.value = true
       form.value.meterId = nextMeter.id
       form.value.reader = nextMeter.manager || ''
-      form.value.startReading = Number(form.value.endReading) || 0
+      const nextEnds = meterMonthEnds.value.get(nextMeter.id)
+      const prevEnd = nextEnds?.get(prevMonthOf(form.value.month))
+      form.value.startReading = prevEnd ? Number(prevEnd) : 0
       form.value.endReading = 0
       form.value.unitPrice = Number(form.value.unitPrice) || 0
       form.value.remark = ''
@@ -935,7 +937,15 @@ const catalogValueOf = (r: any, key: string): string => {
     case 'usage': return `${fmtNum(r.usage)} ${unitLabel.value}`
     case 'unit_price': return fmtNum(r.unit_price)
     case 'amount': return `${fmtMoney(r.amount)} 元`
-    default: return String(r.remark ?? '')
+    case 'reading_date': return r.reading_date || ''
+    case 'reader': return r.reader || ''
+    case 'meter_no': return r.meter_no || ''
+    case 'use_unit': return r.use_unit || ''
+    case 'default_unit_price': return r.default_unit_price === '' || r.default_unit_price == null ? '' : fmtNum(r.default_unit_price)
+    case 'meter_mode': return r.meter_mode === 'auto' ? '自动抄表' : r.meter_mode === 'manual' ? '手动抄表' : (r.meter_mode || '')
+    case 'install_date': return r.install_date || ''
+    case 'remark': return r.remark || ''
+    default: return ''
   }
 }
 
