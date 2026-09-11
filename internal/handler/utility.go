@@ -450,6 +450,7 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 			Updates(map[string]interface{}{
 				"month":        req.Month,
+				"record_date":  req.RecordDate,
 				"meter_count":  req.MeterCount,
 				"total_usage":  req.TotalUsage,
 				"total_amount": req.TotalAmount,
@@ -913,11 +914,16 @@ func (h *UtilityHandler) validateMeterItems(ctx context.Context, tenantID uint64
 	return nil
 }
 
-// computeMeterRecordWithRates 按表计配置倍率计算用量与金额并汇总。
+// computeMeterRecordWithRates 按表计配置倍率计算用量与金额并汇总；倍率快照写入子行。
 func computeMeterRecordWithRates(r *types.UtilityMeterRecord, rates map[string]float64) {
 	var usage, amount float64
 	for i := range r.Items {
-		computeMeterItem(&r.Items[i], rates[r.Items[i].MeterID])
+		rate := rates[r.Items[i].MeterID]
+		if rate <= 0 {
+			rate = 1
+		}
+		r.Items[i].Rate = rate
+		computeMeterItem(&r.Items[i], rate)
 		usage += r.Items[i].Usage
 		amount += r.Items[i].Amount
 	}

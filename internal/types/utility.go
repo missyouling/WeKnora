@@ -32,6 +32,7 @@ type UtilityMeterRecord struct {
 	TenantID    int64              `gorm:"index" json:"tenant_id"`
 	Category    string             `gorm:"index" json:"category"` // water | gas
 	Month       string             `gorm:"index" json:"month"`    // 2026-08
+	RecordDate  string             `json:"record_date"`           // 录入日期 YYYY-MM-DD
 	MeterCount  int                `json:"meter_count"`
 	TotalUsage  float64            `gorm:"numeric(18,2)" json:"total_usage"`
 	TotalAmount float64            `gorm:"numeric(18,2)" json:"total_amount"`
@@ -45,12 +46,15 @@ type UtilityMeterRecord struct {
 func (UtilityMeterRecord) TableName() string { return "utility_meter_records" }
 
 // UtilityMeterItem 表计子行：期初/期末读数、单价，用量与金额由后端自动计算。
-// MeterID 关联 UtilityMeter（水表/气表配置），别名/倍率取自配置。
+// MeterID 关联 UtilityMeter（水表/气表配置）；Rate 为录入时的倍率快照，不随配置变更。
 type UtilityMeterItem struct {
 	ID           string    `gorm:"primaryKey" json:"id"`
 	RecordID     string    `gorm:"index" json:"record_id"`
 	MeterID      string    `gorm:"index" json:"meter_id"`
 	MeterName    string    `json:"meter_name"`
+	ReadingDate  string    `json:"reading_date"` // 抄表日期 YYYY-MM-DD
+	Reader       string    `json:"reader"`       // 抄表人（默认取表计配置管理人员）
+	Rate         float64   `gorm:"numeric(12,4)" json:"rate"`
 	StartReading float64   `gorm:"numeric(18,2)" json:"start_reading"`
 	EndReading   float64   `gorm:"numeric(18,2)" json:"end_reading"`
 	UnitPrice    float64   `gorm:"numeric(18,2)" json:"unit_price"`

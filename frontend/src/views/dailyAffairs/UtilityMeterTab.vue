@@ -77,6 +77,8 @@
               <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
               <span v-else-if="col.key === 'unit_price'" class="row-mono">{{ fmtNum(row.unit_price) }}</span>
               <span v-else-if="col.key === 'amount'" class="row-mono">{{ fmtMoney(row.amount) }}</span>
+              <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
+              <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
               <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
               <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
               <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtNum(row.default_unit_price) }}</span>
@@ -157,28 +159,44 @@
               <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
             </div>
 
+            <div class="rec-field">
+              <label>抄表日期</label>
+              <t-date-picker v-model="form.readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
+            </div>
+            <div class="rec-field">
+              <label>抄表人</label>
+              <t-input v-model="form.reader" placeholder="默认取表计管理人员" />
+            </div>
+
+            <div class="rec-field">
+              <label>录入日期</label>
+              <div class="readonly-val">{{ form.recordDate || today }}</div>
+            </div>
+            <div class="rec-field">
+              <label>倍率</label>
+              <div class="readonly-val">{{ fmtNum(formRate) }}×</div>
+            </div>
+
             <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
-              <label>起度 / 止度 <span class="required">*</span></label>
-              <div class="reading-row">
-                <t-input v-model.number="form.startReading" type="number" placeholder="起度" class="reading-input" :status="readingInvalid ? 'error' : ''" />
-                <span class="reading-sep">→</span>
-                <t-input v-model.number="form.endReading" type="number" placeholder="止度" class="reading-input" :status="readingInvalid ? 'error' : ''" />
-              </div>
+              <label>起度 <span class="required">*</span></label>
+              <t-input v-model.number="form.startReading" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
               <p v-if="readingInvalid" class="field-error-text">止度必须大于起度</p>
             </div>
+            <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
+              <label>止度 <span class="required">*</span></label>
+              <t-input v-model.number="form.endReading" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+              <p v-if="readingInvalid" class="field-error-text">止度必须大于起度</p>
+            </div>
+
             <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
               <label>单价 <span class="required">*</span></label>
               <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
               <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtNum(currentMeter?.default_unit_price) }} 不同</p>
             </div>
-
-            <div class="rec-field rec-field--wide">
-              <label>计算结果</label>
-              <div class="calc-row">
-                <span class="calc-rate">倍率 {{ fmtNum(formRate) }}×</span>
-                <span>{{ usageLabel }} <b class="calc-val">{{ fmtNum(formUsage) }}</b> {{ unitLabel }}</span>
-                <span>{{ categoryLabel }} <b class="calc-val">{{ fmtMoney(formAmount) }}</b> 元</span>
-              </div>
+            <div class="rec-field">
+              <label>{{ categoryLabel }}（自动计算）</label>
+              <div class="calc-val-lg">{{ fmtMoney(formAmount) }} 元</div>
+              <p class="field-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
             </div>
 
             <div class="rec-field rec-field--wide">
@@ -190,10 +208,7 @@
 
         <div class="meter-drawer-footer">
           <t-button variant="outline" size="small" @click="drawerVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="saving" @click="save">
-            <template #icon><t-icon name="check" size="14px" /></template>
-            保存
-          </t-button>
+          <t-button theme="primary" size="small" :loading="saving" @click="save">保存</t-button>
         </div>
       </t-drawer>
     </teleport>
@@ -218,99 +233,158 @@
             </t-button>
           </div>
 
+          <div v-if="meters.length" class="meter-search">
+            <t-input v-model="meterSearch" placeholder="搜索别名 / 表号" clearable>
+              <template #prefix-icon><t-icon name="search" size="14px" /></template>
+            </t-input>
+          </div>
+
           <div v-if="!meters.length && !meterFormVisible" class="meter-empty">
             <t-icon name="setting" size="40px" class="meter-empty-icon" />
             <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
           </div>
 
           <div class="meter-grid" :style="{ gridTemplateColumns: meterGridCols }">
-            <div v-for="m in meters" :key="m.id" class="meter-card">
-              <div class="meter-card-head">
-                <span class="meter-card-name">{{ m.alias }}</span>
-                <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
-                <span class="meter-card-actions">
-                  <t-button variant="text" size="small" @click="openMeterForm(m)">
-                    <template #icon><t-icon name="edit" size="15px" /></template>
-                  </t-button>
-                  <t-popconfirm theme="warning" :content="`确定删除{{ meterLabel }}「${m.alias}」吗？`"
-                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                    @confirm="deleteMeter(m)">
-                    <t-button variant="text" size="small" @click.stop>
-                      <template #icon><t-icon name="delete" size="15px" /></template>
-                    </t-button>
-                  </t-popconfirm>
-                </span>
+            <!-- 新增表计：表单展开在网格顶部 -->
+            <div v-if="meterFormVisible && !meterForm.id" class="meter-form">
+              <div class="meter-form-title">新增{{ meterLabel }}</div>
+              <div class="form-grid">
+                <div class="form-item">
+                  <label>别名 <span class="required">*</span></label>
+                  <t-input ref="meterAliasInput" v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+                </div>
+                <div class="form-item">
+                  <label>表号</label>
+                  <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                </div>
+                <div class="form-item">
+                  <label>倍率</label>
+                  <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                </div>
+                <div class="form-item">
+                  <label>默认单价</label>
+                  <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
+                </div>
+                <div class="form-item">
+                  <label>使用单位</label>
+                  <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                </div>
+                <div class="form-item">
+                  <label>管理人员</label>
+                  <t-input v-model="meterForm.manager" placeholder="选填" />
+                </div>
+                <div class="form-item">
+                  <label>联系方式</label>
+                  <t-input v-model="meterForm.contact" placeholder="选填" />
+                </div>
+                <div class="form-item">
+                  <label>抄表方式</label>
+                  <t-radio-group v-model="meterForm.meter_mode">
+                    <t-radio-button value="auto">自动抄表</t-radio-button>
+                    <t-radio-button value="manual">手动抄表</t-radio-button>
+                  </t-radio-group>
+                </div>
+                <div class="form-item">
+                  <label>安装日期</label>
+                  <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                </div>
+                <div class="form-item">
+                  <label>启用</label>
+                  <t-switch v-model="meterForm.enabled" />
+                </div>
               </div>
-              <div class="meter-card-grid">
-                <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-                <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
-                <div class="meter-card-item"><span class="k">默认单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
-                <div class="meter-card-item"><span class="k">使用单位</span><span class="v">{{ m.use_unit || '—' }}</span></div>
-                <div class="meter-card-item"><span class="k">抄表方式</span><span class="v">{{ m.meter_mode === 'auto' ? '自动抄表' : '手动抄表' }}</span></div>
-                <div class="meter-card-item"><span class="k">安装日期</span><span class="v">{{ m.install_date || '—' }}</span></div>
+              <div class="form-item form-item--full">
+                <label>备注</label>
+                <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
+              </div>
+              <div class="meter-form-actions">
+                <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
               </div>
             </div>
-          </div>
 
-          <!-- 水表新增/编辑表单 -->
-          <div v-if="meterFormVisible" class="meter-form">
-            <div class="meter-form-title">{{ meterForm.id ? '编辑' + meterLabel : '新增' + meterLabel }}</div>
-            <div class="form-grid">
-              <div class="form-item">
-                <label>别名 <span class="required">*</span></label>
-                <t-input ref="meterAliasInput" v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+            <template v-for="m in filteredMeters" :key="m.id">
+              <div class="meter-card">
+                <div class="meter-card-head">
+                  <span class="meter-card-name">{{ m.alias }}</span>
+                  <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
+                  <span class="meter-card-actions">
+                    <t-button variant="text" size="small" @click="openMeterForm(m)">
+                      <template #icon><t-icon name="edit" size="15px" /></template>
+                    </t-button>
+                    <t-popconfirm theme="warning" :content="`确定删除{{ meterLabel }}「${m.alias}」吗？`"
+                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                      @confirm="deleteMeter(m)">
+                      <t-button variant="text" size="small" @click.stop>
+                        <template #icon><t-icon name="delete" size="15px" /></template>
+                      </t-button>
+                    </t-popconfirm>
+                  </span>
+                </div>
+                <div class="meter-card-grid">
+                  <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
+                  <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
+                  <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
+                </div>
               </div>
-              <div class="form-item">
-                <label>表号</label>
-                <t-input v-model="meterForm.meter_no" placeholder="选填" />
+              <!-- 编辑表计：表单展开在当前卡片下方 -->
+              <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form">
+                <div class="meter-form-title">编辑{{ meterLabel }}</div>
+                <div class="form-grid">
+                  <div class="form-item">
+                    <label>别名 <span class="required">*</span></label>
+                    <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+                  </div>
+                  <div class="form-item">
+                    <label>表号</label>
+                    <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                  </div>
+                  <div class="form-item">
+                    <label>倍率</label>
+                    <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                  </div>
+                  <div class="form-item">
+                    <label>默认单价</label>
+                    <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
+                  </div>
+                  <div class="form-item">
+                    <label>使用单位</label>
+                    <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                  </div>
+                  <div class="form-item">
+                    <label>管理人员</label>
+                    <t-input v-model="meterForm.manager" placeholder="选填" />
+                  </div>
+                  <div class="form-item">
+                    <label>联系方式</label>
+                    <t-input v-model="meterForm.contact" placeholder="选填" />
+                  </div>
+                  <div class="form-item">
+                    <label>抄表方式</label>
+                    <t-radio-group v-model="meterForm.meter_mode">
+                      <t-radio-button value="auto">自动抄表</t-radio-button>
+                      <t-radio-button value="manual">手动抄表</t-radio-button>
+                    </t-radio-group>
+                  </div>
+                  <div class="form-item">
+                    <label>安装日期</label>
+                    <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                  </div>
+                  <div class="form-item">
+                    <label>启用</label>
+                    <t-switch v-model="meterForm.enabled" />
+                  </div>
+                </div>
+                <div class="form-item form-item--full">
+                  <label>备注</label>
+                  <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
+                </div>
+                <div class="meter-form-actions">
+                  <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                  <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+                </div>
               </div>
-              <div class="form-item">
-                <label>倍率</label>
-                <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-              </div>
-              <div class="form-item">
-                <label>默认单价</label>
-                <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
-              </div>
-              <div class="form-item">
-                <label>使用单位</label>
-                <t-input v-model="meterForm.use_unit" placeholder="选填" />
-              </div>
-              <div class="form-item">
-                <label>管理人员</label>
-                <t-input v-model="meterForm.manager" placeholder="选填" />
-              </div>
-              <div class="form-item">
-                <label>联系方式</label>
-                <t-input v-model="meterForm.contact" placeholder="选填" />
-              </div>
-              <div class="form-item">
-                <label>抄表方式</label>
-                <t-radio-group v-model="meterForm.meter_mode">
-                  <t-radio-button value="auto">自动抄表</t-radio-button>
-                  <t-radio-button value="manual">手动抄表</t-radio-button>
-                </t-radio-group>
-              </div>
-              <div class="form-item">
-                <label>安装日期</label>
-                <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-              </div>
-              <div class="form-item">
-                <label>启用</label>
-                <t-switch v-model="meterForm.enabled" />
-              </div>
-            </div>
-            <div class="form-item form-item--full">
-              <label>备注</label>
-              <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-            </div>
-            <div class="meter-form-actions">
-              <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-              <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">
-                <template #icon><t-icon name="check" size="14px" /></template>
-                保存
-              </t-button>
-            </div>
+            </template>
           </div>
         </div>
       </t-drawer>
@@ -383,7 +457,9 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr' },
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
   { key: 'remark', label: '备注', default: true, w: '2fr' },
-  // 详细字段：表计档案参数
+  // 详细字段：抄表信息与表计档案参数
+  { key: 'reading_date', label: '抄表日期', default: false, w: '1fr' },
+  { key: 'reader', label: '抄表人', default: false, w: '1fr' },
   { key: 'meter_no', label: '表号', default: false, w: '1fr' },
   { key: 'use_unit', label: '使用单位', default: false, w: '1.2fr' },
   { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr' },
@@ -433,6 +509,13 @@ const loading = ref(true)
 const filters = ref<{ month?: string; meterId?: string }>({ month: undefined, meterId: undefined })
 
 const meterFilterOptions = computed(() => meters.value.filter(m => m.enabled).map(m => ({ label: m.alias, value: m.id })))
+const meterSearch = ref('')
+const filteredMeters = computed(() => {
+  const kw = meterSearch.value.trim().toLowerCase()
+  if (!kw) return meters.value
+  return meters.value.filter((m: any) =>
+    (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
+})
 
 const load = async () => {
   loading.value = true
@@ -455,6 +538,9 @@ const load = async () => {
           item_id: it.id,
           key: `${rec.id}__${it.id}`,
           month: rec.month,
+          record_date: rec.record_date || '',
+          reading_date: it.reading_date || '',
+          reader: it.reader || '',
           meter_id: it.meter_id,
           meter_alias: meter?.alias || it.meter_name || '未配置',
           meter_no: meter?.meter_no || '',
@@ -542,9 +628,14 @@ const editingRecordId = ref('')
 const editingItemId = ref('')
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
-const form = ref<{ month: string; meterId: string; startReading: number; endReading: number; unitPrice: number; remark: string }>({
-  month: '', meterId: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '',
+const form = ref<{ month: string; meterId: string; readingDate: string; reader: string; recordDate: string; startReading: number; endReading: number; unitPrice: number; remark: string }>({
+  month: '', meterId: '', readingDate: '', reader: '', recordDate: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '',
 })
+const today = (() => {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+})()
 const drawerTitle = computed(() => (editingItemId.value ? '编辑' + categoryLabel.value + '记录' : '新增' + categoryLabel.value + '记录'))
 
 const meterEditOptions = computed(() => {
@@ -589,6 +680,7 @@ const meterGridCols = computed(() => {
 const onMeterChange = () => {
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
+    if (!form.value.reader) form.value.reader = currentMeter.value.manager || ''
   }
 }
 
@@ -597,7 +689,10 @@ const openCreate = () => {
   editingItemId.value = ''
   lastRecordId.value = ''
   recordItems.value = []
-  form.value = { month: '', meterId: '', startReading: 0, endReading: 0, unitPrice: 0, remark: '' }
+  form.value = {
+    month: '', meterId: '', readingDate: today, reader: '', recordDate: today,
+    startReading: 0, endReading: 0, unitPrice: 0, remark: '',
+  }
   drawerVisible.value = true
 }
 
@@ -637,6 +732,8 @@ const openEdit = (row: any) => {
   recordItems.value = rec.map((r: any) => ({
     item_id: r.item_id,
     meter_id: r.meter_id,
+    reading_date: r.reading_date || '',
+    reader: r.reader || '',
     start_reading: Number(r.start_reading) || 0,
     end_reading: Number(r.end_reading) || 0,
     unit_price: Number(r.unit_price) || 0,
@@ -645,6 +742,9 @@ const openEdit = (row: any) => {
   form.value = {
     month: row.month,
     meterId: row.meter_id || '',
+    readingDate: row.reading_date || today,
+    reader: row.reader || '',
+    recordDate: row.record_date || today,
     startReading: Number(row.start_reading) || 0,
     endReading: Number(row.end_reading) || 0,
     unitPrice: Number(row.unit_price) || 0,
@@ -674,6 +774,8 @@ const save = async () => {
   try {
     const editedItem = {
       meter_id: form.value.meterId,
+      reading_date: form.value.readingDate || '',
+      reader: form.value.reader || '',
       start_reading: Number(form.value.startReading) || 0,
       end_reading: Number(form.value.endReading) || 0,
       unit_price: Number(form.value.unitPrice) || 0,
@@ -685,6 +787,8 @@ const save = async () => {
         if (it.item_id === editingItemId.value) return editedItem
         return {
           meter_id: it.meter_id,
+          reading_date: it.reading_date || '',
+          reader: it.reader || '',
           start_reading: it.start_reading,
           end_reading: it.end_reading,
           unit_price: it.unit_price,
@@ -694,6 +798,7 @@ const save = async () => {
       await updateUtilityMeterRecord(editingRecordId.value, {
         category: props.category,
         month: form.value.month,
+        record_date: form.value.recordDate || today,
         remark: '',
         items,
       })
@@ -705,6 +810,8 @@ const save = async () => {
       const items = [
         ...existing.map((r: any) => ({
           meter_id: r.meter_id,
+          reading_date: r.reading_date || '',
+          reader: r.reader || '',
           start_reading: Number(r.start_reading) || 0,
           end_reading: Number(r.end_reading) || 0,
           unit_price: Number(r.unit_price) || 0,
@@ -715,6 +822,7 @@ const save = async () => {
       await updateUtilityMeterRecord(lastRecordId.value, {
         category: props.category,
         month: form.value.month,
+        record_date: form.value.recordDate || today,
         remark: '',
         items,
       })
@@ -723,6 +831,7 @@ const save = async () => {
       const res: any = await createUtilityMeterRecord({
         category: props.category,
         month: form.value.month,
+        record_date: form.value.recordDate || today,
         remark: '',
         items: [editedItem],
       })
@@ -737,9 +846,11 @@ const save = async () => {
       return idx >= 0 ? enabled[idx + 1] : undefined
     })()
     if (nextMeter) {
-      // 连续录入：抽屉不关闭，按启用表顺序切到下一张，起度=上一条止度、单价=上一条单价、月份复用
+      // 连续录入：抽屉不关闭，按启用表顺序切到下一张，起度=上一条止度、单价=上一条单价、
+      // 抄表日期=第一条、抄表人=下张表管理人员、月份复用
       skipAutoFill.value = true
       form.value.meterId = nextMeter.id
+      form.value.reader = nextMeter.manager || ''
       form.value.startReading = Number(form.value.endReading) || 0
       form.value.endReading = 0
       form.value.unitPrice = Number(form.value.unitPrice) || 0
@@ -784,9 +895,12 @@ const handleDelete = async () => {
         await updateUtilityMeterRecord(recordId, {
           category: props.category,
           month: remaining[0].month,
+          record_date: remaining[0].record_date || '',
           remark: '',
           items: remaining.map((r: any) => ({
             meter_id: r.meter_id,
+            reading_date: r.reading_date || '',
+            reader: r.reader || '',
             start_reading: Number(r.start_reading) || 0,
             end_reading: Number(r.end_reading) || 0,
             unit_price: Number(r.unit_price) || 0,
@@ -1410,6 +1524,32 @@ onBeforeUnmount(() => {
 .rec-field--wide {
   grid-column: 1 / -1;
 }
+.readonly-val {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  background: var(--td-bg-color-component);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-default);
+  padding: 0 10px;
+}
+.calc-val-lg {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--td-brand-color);
+  font-variant-numeric: tabular-nums;
+}
+.field-hint {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
+}
 .calc-row {
   display: flex;
   align-items: center;
@@ -1498,7 +1638,6 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid var(--td-component-stroke);
 }
 
 /* 水表配置抽屉 */
@@ -1506,6 +1645,9 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   align-items: start;
+}
+.meter-search {
+  margin-bottom: 12px;
 }
 .meter-settings-body {
   padding: 4px 0 24px;
@@ -1526,7 +1668,7 @@ onBeforeUnmount(() => {
 .meter-card {
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--td-bg-color-container);
   min-width: 0;
 
@@ -1577,7 +1719,8 @@ onBeforeUnmount(() => {
 }
 
 .meter-form {
-  margin-top: 16px;
+  margin-top: 0;
+  grid-column: 1 / -1;
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
   padding: 14px;
