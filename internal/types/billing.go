@@ -62,10 +62,11 @@ type BillingTimeReading struct {
 
 func (BillingTimeReading) TableName() string { return "billing_time_meter_readings" }
 
-// BillingTenantItem 分摊子项开关（市电账单各费用子项是否参与分摊）。
+// BillingTenantItem 分摊子项开关（市电账单各费用子项是否参与分摊，按子项名 name 粒度）。
 type BillingTenantItem struct {
 	ID              string    `gorm:"primaryKey" json:"id"`
 	BillingTenantID string    `gorm:"index" json:"billing_tenant_id"`
+	Category        string    `json:"category"` // 大类（如 (1)市场化购电费），用于 UI 分组
 	ItemKey         string    `json:"item_key"`
 	ItemName        string    `json:"item_name"`
 	Enabled         bool      `json:"enabled"`

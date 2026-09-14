@@ -105,10 +105,18 @@
               <template #icon><t-icon name="edit" size="14px" /></template>
               编辑
             </t-button>
-            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
-              <template #icon><t-icon name="print" size="14px" /></template>
-              打印
-            </t-button>
+            <t-dropdown @click="onPrintMenu">
+              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy">
+                <template #icon><t-icon name="print" size="14px" /></template>
+                打印
+              </t-button>
+              <template #dropdown>
+                <t-dropdown-menu>
+                  <t-dropdown-item value="catalog" :disabled="!printableRows.length">打印清单</t-dropdown-item>
+                  <t-dropdown-item value="detail" :disabled="selectedRows.length !== 1">打印详情</t-dropdown-item>
+                </t-dropdown-menu>
+              </template>
+            </t-dropdown>
             <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedKeys.size} 条账单吗？`"
               :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
               @confirm="handleDelete">
@@ -142,33 +150,34 @@
 
           <div v-for="group in readingGroups" :key="group.type" class="reading-group">
             <div class="reading-group-title">{{ group.title }}</div>
-            <div class="reading-meters">
-              <div v-for="m in group.meters" :key="m.id" class="reading-card">
+            <div v-if="group.meters.length" class="reading-cards">
+              <div v-for="m in group.meters" :key="m.id" class="reading-card" :class="{ 'card-invalid': meterInvalid(m.id) }">
                 <div class="reading-card-head">
-                  <span>{{ m.name }}</span>
-                  <span class="reading-card-rate">倍率 {{ m.rate }}</span>
+                  <span class="reading-card-name">{{ m.name }}</span>
+                  <span class="reading-card-rate">×{{ m.rate }}</span>
                 </div>
-                <div class="reading-grid">
-                  <div v-for="p in periods" :key="p.key" class="reading-cell">
-                    <div class="reading-cell-label">{{ p.label }}</div>
-                    <div class="reading-cell-inputs">
-                      <t-input-number :model-value="rdVal(m.id, p.key + '_prev')" size="small" theme="normal" placeholder="起度"
-                        @update:model-value="(v: number | string) => setRdVal(m.id, p.key + '_prev', v)" />
-                      <t-input-number :model-value="rdVal(m.id, p.key + '_curr')" size="small" theme="normal" placeholder="止度"
-                        @update:model-value="(v: number | string) => setRdVal(m.id, p.key + '_curr', v)" />
-                    </div>
+                <div class="reading-card-rows">
+                  <div v-for="p in periods" :key="p.key" class="reading-row" :class="{ 'row-invalid': rdInvalid(m.id, p.key) }">
+                    <span class="rr-label">{{ p.label }}</span>
+                    <t-input class="rr-input" :model-value="rdVal(m.id, p.key + '_prev')" type="number" size="small"
+                      placeholder="起度" :status="rdInvalid(m.id, p.key) ? 'error' : ''"
+                      @update:model-value="(v: string) => setRdVal(m.id, p.key + '_prev', v)" />
+                    <span class="rr-sep">~</span>
+                    <t-input class="rr-input" :model-value="rdVal(m.id, p.key + '_curr')" type="number" size="small"
+                      placeholder="止度" :status="rdInvalid(m.id, p.key) ? 'error' : ''"
+                      @update:model-value="(v: string) => setRdVal(m.id, p.key + '_curr', v)" />
                   </div>
                 </div>
-                <div class="reading-card-total">电量 {{ meterKwh(m, readingForm[m.id] || {}) }}</div>
+                <div class="reading-card-total">电量 <span class="row-mono">{{ meterKwh(m, readingForm[m.id] || {}) }}</span></div>
               </div>
-              <div v-if="!group.meters.length" class="meter-empty">暂无{{ group.title }}，请先在设置中新增</div>
             </div>
+            <div v-else class="meter-empty">暂无{{ group.title }}，请先在设置中新增</div>
           </div>
 
           <div v-if="periodTotals" class="reading-summary">
-            <span>星达合计 {{ fmtKwh(periodTotals.star) }} 千瓦时</span>
-            <span>工业合计 {{ fmtKwh(periodTotals.sub) }} 千瓦时</span>
-            <span>线损 {{ fmtKwh(periodTotals.loss) }} 千瓦时</span>
+            <span>星达合计 <b class="row-mono">{{ fmtKwh(periodTotals.star) }}</b> 千瓦时</span>
+            <span>工业合计 <b class="row-mono">{{ fmtKwh(periodTotals.sub) }}</b> 千瓦时</span>
+            <span>线损 <b class="row-mono">{{ fmtKwh(periodTotals.loss) }}</b> 千瓦时</span>
           </div>
           <p class="field-hint">线损 = 星达分表合计 − 工业分表合计，按工业分表分时占比自动分摊</p>
         </div>
@@ -290,29 +299,53 @@
           </t-tab-panel>
           <t-tab-panel value="items" label="分摊子项">
             <div class="settings-panel">
-              <div class="item-list">
-                <div class="item-row item-row--head">
-                  <span class="item-name">子项名称</span>
-                  <span class="item-op">分摊</span>
+              <div class="item-groups">
+                <div v-for="g in itemGroups" :key="g.category" class="item-group" @click="openItemGroup(g)">
+                  <div class="item-group-info">
+                    <span class="item-group-name">{{ g.category }}</span>
+                    <span class="item-group-count">{{ g.enabledCount }}/{{ g.items.length }}</span>
+                  </div>
+                  <t-icon name="chevron-right" class="item-group-arrow" />
                 </div>
-                <div v-for="(it, i) in itemsForm" :key="i" class="item-row">
-                  <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
-                  <span class="item-op">
-                    <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
-                    <t-icon name="delete" class="op danger" @click="removeItem(it)" />
-                  </span>
-                </div>
-                <div v-if="!itemsForm.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
-              </div>
-              <div class="item-actions">
-                <t-button variant="outline" size="small" @click="addItemRow">
-                  <template #icon><t-icon name="add" /></template>新增
-                </t-button>
-                <span class="field-hint">关闭的子项不参与分摊；居民/目录类默认关闭</span>
+                <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
               </div>
             </div>
           </t-tab-panel>
         </t-tabs>
+      </t-drawer>
+    </teleport>
+
+    <!-- 分摊子项二级抽屉（大类内子项开关） -->
+    <teleport to="body">
+      <div v-if="itemsVisible" class="doc-drawer-resize-handle" :style="{ right: itemsWidth }" role="separator"
+        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onItemsResizeStart">
+        <div class="doc-drawer-resize-line" />
+      </div>
+    </teleport>
+    <teleport to="body">
+      <t-drawer v-if="itemsVisible" :visible="true" :header="activeItemGroup?.category || '分摊子项'" :size="itemsWidth"
+        :footer="false" :close-on-overlay-click="true" destroy-on-close class="tenant-items-drawer"
+        @close="itemsVisible = false" @update:visible="(v: boolean) => (itemsVisible = v)">
+        <div class="item-list">
+          <div class="item-row item-row--head">
+            <span class="item-name">子项名称</span>
+            <span class="item-op">分摊</span>
+          </div>
+          <div v-for="(it, i) in activeItemItems" :key="i" class="item-row">
+            <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
+            <span class="item-op">
+              <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+              <t-icon name="delete" class="op danger" @click="removeItem(it)" />
+            </span>
+          </div>
+          <div v-if="!activeItemItems.length" class="item-empty">暂无子项</div>
+        </div>
+        <div class="item-actions">
+          <t-button variant="outline" size="small" @click="addItemRow">
+            <template #icon><t-icon name="add" /></template>新增子项
+          </t-button>
+          <span class="field-hint">关闭的子项不参与分摊；居民/目录类默认关闭</span>
+        </div>
       </t-drawer>
     </teleport>
 
@@ -567,10 +600,11 @@ const openEditSelected = () => {
   if (r) openReadingDrawer(r.month)
 }
 
-// ---- 浮动工具栏：打印目录 / 删除 ----
+// ---- 浮动工具栏：打印清单 / 打印详情 / 删除 ----
 const catalogBusy = ref(false)
+const printableRows = computed(() => (selectedKeys.value.size ? selectedRows.value : displayRows.value))
 const handlePrint = async () => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
+  const arr = printableRows.value
   if (!arr.length) return
   catalogBusy.value = true
   try {
@@ -585,6 +619,38 @@ const handlePrint = async () => {
       rows: arr,
     })
     showPrint(`${arr[0].month} 账单目录（${arr.length} 条）`, bytes)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '打印生成失败')
+  } finally {
+    catalogBusy.value = false
+  }
+}
+const onPrintMenu = (data: any) => {
+  if (data?.value === 'catalog') handlePrint()
+  else if (data?.value === 'detail') printSelectedDetail()
+}
+const printSelectedDetail = async () => {
+  const r = selectedRows.value[0]
+  if (!r) return
+  catalogBusy.value = true
+  try {
+    const res: any = await getBillingRecord(r.id)
+    const rec = res.data.record
+    const items = res.data.items || []
+    const columns: CatalogColumn[] = [
+      { key: 'name', label: '项目', value: (r: any) => r.name },
+      { key: 'period', label: '时段', value: (r: any) => r.period || '—' },
+      { key: 'qty', label: '电量', value: (r: any) => fmtKwh(r.qty) },
+      { key: 'rate', label: '单价', value: (r: any) => fmtRate(r.rate) },
+      { key: 'fee', label: '费用（元）', value: (r: any) => fmtMoney(r.fee) },
+    ]
+    const totalRow = { name: '合计', period: '', qty: 0, rate: 0, fee: rec.total_fee }
+    const bytes = await generateCatalogPdf({
+      title: `${rec.month} 租户电费账单明细`,
+      columns,
+      rows: [...items, totalRow],
+    })
+    showPrint(`${rec.month} 电费账单详情`, bytes)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '打印生成失败')
   } finally {
@@ -607,7 +673,7 @@ const handleDelete = async () => {
 
 // ---- 新增记录抽屉（分时读数） ----
 const readingVisible = ref(false)
-const readingWidth = ref('760px')
+const readingWidth = ref('820px')
 const savingReadings = ref(false)
 const readingMonth = ref('')
 const readingTitle = computed(() => (readingMonth.value ? `${readingMonth.value} 分时读数` : '新增记录'))
@@ -631,6 +697,7 @@ const openReadingDrawer = async (month: string) => {
     return
   }
   readingMonth.value = month || currentMonth()
+  readingWidth.value = `${Math.min(920, Math.floor(window.innerWidth * 0.94))}px`
   readingVisible.value = true
   await loadMetersForReading()
   await loadReadings()
@@ -681,9 +748,25 @@ const rdVal = (id: string, key: string): number => {
   const f = readingForm.value[id]
   return f ? Number(f[key]) || 0 : 0
 }
-const setRdVal = (id: string, key: string, v: number | string) => {
+const setRdVal = (id: string, key: string, v: string) => {
   if (!readingForm.value[id]) readingForm.value[id] = {}
   readingForm.value[id][key] = Number(v) || 0
+}
+const rdInvalid = (id: string, p: string): boolean => {
+  const f = readingForm.value[id]
+  if (!f) return false
+  const prev = Number(f[p + '_prev']) || 0
+  const curr = Number(f[p + '_curr']) || 0
+  return curr > 0 && prev > 0 && curr < prev
+}
+const meterInvalid = (id: string): boolean => {
+  const f = readingForm.value[id]
+  if (!f) return false
+  return periods.some(p => {
+    const prev = Number(f[p.key + '_prev']) || 0
+    const curr = Number(f[p.key + '_curr']) || 0
+    return curr > 0 && prev > 0 && curr < prev
+  })
 }
 
 const periodTotals = computed(() => {
@@ -759,7 +842,7 @@ const detail = ref<any>(null)
 const tenantForm = ref({ name: '', remark: '' })
 const settingForm = ref({ dorm_price: 1, water_price: 5.22, bill_kb_id: '' })
 const savingBase = ref(false)
-const itemsForm = ref<{ item_key: string; item_name: string; enabled: boolean }[]>([])
+const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
 
 const openSettings = async () => {
   if (!activeTenantId.value) {
@@ -785,7 +868,9 @@ const loadDetail = async () => {
     }
     starMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'star')
     subMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'sub')
-    itemsForm.value = (d.items || []).map((it: any) => ({ item_key: it.item_key, item_name: it.item_name, enabled: it.enabled }))
+    itemsForm.value = (d.items || []).map((it: any) => ({
+      category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
+    }))
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载租户详情失败')
   }
@@ -811,7 +896,32 @@ const saveTenantBase = async () => {
   }
 }
 
-// ---- 分摊子项 ----
+// ---- 分摊子项（大类分组 + 子项开关） ----
+const itemsVisible = ref(false)
+const itemsWidth = ref('460px')
+const activeItemGroup = ref<any>(null)
+
+const itemGroups = computed(() => {
+  const g: Record<string, any[]> = {}
+  itemsForm.value.forEach((it) => {
+    const cat = it.category || '其他费用'
+    ;(g[cat] = g[cat] || []).push(it)
+  })
+  return Object.entries(g).map(([category, items]) => ({
+    category,
+    items,
+    enabledCount: items.filter((i: any) => i.enabled).length,
+  }))
+})
+const activeItemItems = computed(() => {
+  const g = activeItemGroup.value
+  if (!g) return []
+  return itemsForm.value.filter((it) => (it.category || '其他费用') === g.category)
+})
+const openItemGroup = (g: any) => {
+  activeItemGroup.value = g
+  itemsVisible.value = true
+}
 const toggleItem = async (it: any, v: boolean) => {
   it.enabled = !!v
   await saveItems()
@@ -821,7 +931,10 @@ const removeItem = async (it: any) => {
   await saveItems()
 }
 const addItemRow = () => {
-  itemsForm.value.push({ item_key: '', item_name: '自定义子项', enabled: true })
+  itemsForm.value.push({
+    category: activeItemGroup.value?.category || '其他费用',
+    item_key: '', item_name: '自定义子项', enabled: true,
+  })
   saveItems()
 }
 const saveItems = async () => {
@@ -829,7 +942,10 @@ const saveItems = async () => {
   try {
     const items = itemsForm.value
       .filter((it: any) => it.item_name.trim())
-      .map((it: any) => ({ item_key: it.item_name.trim(), item_name: it.item_name.trim(), enabled: !!it.enabled }))
+      .map((it: any) => ({
+        category: it.category || '其他费用',
+        item_key: it.item_name.trim(), item_name: it.item_name.trim(), enabled: !!it.enabled,
+      }))
     await saveBillingTenantItems(activeTenantId.value, { items })
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存子项失败')
@@ -987,8 +1103,9 @@ const doBrowserPrint = () => {
 const onResize = (e: MouseEvent, widthRef: { value: string }) => {
   const startX = e.clientX
   const startW = parseFloat(widthRef.value)
+  const maxW = Math.min(1100, Math.floor(window.innerWidth * 0.95))
   const move = (ev: MouseEvent) => {
-    const w = Math.min(1100, Math.max(520, startW + (startX - ev.clientX)))
+    const w = Math.min(maxW, Math.max(520, startW + (startX - ev.clientX)))
     widthRef.value = `${w}px`
   }
   const up = () => {
@@ -1000,6 +1117,7 @@ const onResize = (e: MouseEvent, widthRef: { value: string }) => {
 }
 const onReadingResizeStart = (e: MouseEvent) => onResize(e, readingWidth)
 const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth)
+const onItemsResizeStart = (e: MouseEvent) => onResize(e, itemsWidth)
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth)
 
 // ---- 知识库列表 ----
@@ -1248,62 +1366,80 @@ onMounted(() => {
 .batch-bar-fade-enter-from,
 .batch-bar-fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(6px); }
 
-/* 读数抽屉 */
+/* 读数抽屉（每表一卡：尖峰平谷 4 行起止度录入，复用电力表计输入风格） */
 .reading-body { padding: 4px 0 24px; }
 .reading-month-field { margin-bottom: 16px; }
 .reading-group {
-  .reading-group-title { font-size: 13px; font-weight: 600; margin: 4px 0 10px; }
-  .reading-meters {
+  margin-bottom: 18px;
+  .reading-group-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .reading-cards {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
-    margin-bottom: 16px;
-    .reading-card {
-      border: 1px solid var(--td-component-border);
-      border-radius: 8px;
-      padding: 12px;
-      .reading-card-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-        font-size: 13px;
-        font-weight: 500;
-        .reading-card-rate { font-size: 12px; color: var(--td-text-color-secondary); font-weight: 400; }
+  }
+  .reading-card {
+    border: 1px solid var(--td-component-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    &.card-invalid { border-color: var(--td-error-color); background: var(--td-error-color-1, rgba(213, 73, 65, 0.04)); }
+    .reading-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      .reading-card-name { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
+      .reading-card-rate { font-size: 12px; color: var(--td-text-color-secondary); }
+    }
+    .reading-card-rows { display: flex; flex-direction: column; gap: 6px; }
+    .reading-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      &.row-invalid {
+        .rr-label { color: var(--td-error-color); }
+        :deep(.t-input) { border-color: var(--td-error-color); }
       }
-      .reading-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-        .reading-cell {
-          .reading-cell-label { font-size: 12px; color: var(--td-text-color-secondary); margin-bottom: 4px; }
-          .reading-cell-inputs { display: flex; gap: 6px; }
-        }
-      }
-      .reading-card-total {
-        margin-top: 10px;
+      .rr-label {
+        flex: 0 0 22px;
         font-size: 12px;
         color: var(--td-text-color-secondary);
-        text-align: right;
+        text-align: center;
       }
+      .rr-input {
+        flex: 1;
+        :deep(.t-input__inner) { text-align: center; }
+      }
+      .rr-sep { flex: 0 0 auto; color: var(--td-text-color-placeholder); font-size: 12px; }
     }
-    .meter-empty {
-      grid-column: span 2;
-      padding: 24px;
-      text-align: center;
-      color: var(--td-text-color-placeholder);
+    .reading-card-total {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--td-component-stroke);
       font-size: 12px;
-      border: 1px dashed var(--td-component-border);
-      border-radius: 8px;
+      color: var(--td-text-color-secondary);
+      .row-mono { color: var(--td-text-color-primary); font-weight: 600; margin-left: 4px; }
     }
+  }
+  .meter-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 12px;
+    border: 1px dashed var(--td-component-border);
+    border-radius: 8px;
   }
 }
 .reading-summary {
   display: flex;
   gap: 24px;
   font-size: 13px;
-  color: var(--td-text-color-primary);
+  color: var(--td-text-color-secondary);
   padding: 10px 0 0;
+  b { color: var(--td-text-color-primary); font-weight: 600; }
 }
 .field-hint { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; line-height: 1.4; }
 .meter-drawer-footer {
@@ -1393,6 +1529,33 @@ onMounted(() => {
   }
 }
 
+/* 分摊子项大类分组列表 */
+.item-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  .item-group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border: 1px solid var(--td-component-border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    &:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
+    .item-group-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      .item-group-name { font-size: 13px; font-weight: 500; color: var(--td-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .item-group-count { font-size: 12px; color: var(--td-text-color-secondary); font-variant-numeric: tabular-nums; }
+    }
+    .item-group-arrow { color: var(--td-text-color-placeholder); }
+  }
+  .item-empty { padding: 24px; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
+}
 .item-list {
   border: 1px solid var(--td-component-border);
   border-radius: 8px;

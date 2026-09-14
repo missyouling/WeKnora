@@ -428,6 +428,7 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Items []struct {
+			Category string `json:"category"`
 			ItemKey  string `json:"item_key"`
 			ItemName string `json:"item_name"`
 			Enabled  bool   `json:"enabled"`
@@ -438,18 +439,21 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 		return
 	}
 	now := timeNowUTC()
+	seenKey := make(map[string]bool, len(req.Items))
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("billing_tenant_id = ?", id).Delete(&types.BillingTenantItem{}).Error; err != nil {
 			return err
 		}
 		for i, it := range req.Items {
 			key := strings.TrimSpace(it.ItemKey)
-			if key == "" {
+			if key == "" || seenKey[key] {
 				continue
 			}
+			seenKey[key] = true
 			item := types.BillingTenantItem{
 				ID: uuid.NewString(), BillingTenantID: id,
-				ItemKey: key, ItemName: it.ItemName, Enabled: it.Enabled,
+				Category: strings.TrimSpace(it.Category),
+				ItemKey:  key, ItemName: it.ItemName, Enabled: it.Enabled,
 				Sort: i, CreatedAt: now, UpdatedAt: now,
 			}
 			if item.ItemName == "" {
@@ -729,13 +733,13 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	// 5.1 FeeItems 子项(按时段单价/计费基数×单价)
 	catRows := groupFeeItems(feeItems)
 	for _, cat := range catRows {
-		if !enabled[cat.Name] {
-			continue
-		}
-		// 大类(category)开关控制;子项(name)分组,可同名多行(按时段)。
+		// 子项(name)开关控制:大类下同名子项可多行(分时时段)。
 		// 同一子项内:分时行按时段电量×时段单价;非分时行按计费基数×单价;
 		// 无电量无单价但带金额的固定项(返还类)按分摊比例计算。
 		for _, sg := range groupFeeItemsByName(cat.Rows) {
+			if !enabled[sg.Name] {
+				continue
+			}
 			fee := 0.0
 			hasPeriod := false
 			rateByPeriod := make(map[string]float64, 4)
@@ -1023,40 +1027,54 @@ func (h *BillingHandler) loadEnabledItems(ctx context.Context, tenantID string) 
 	return m
 }
 
-// ensureDefaultItems 首次生成账单时按账单 FeeItems 自动初始化分摊子项：
+// ensureDefaultItems 首次生成账单时按账单 FeeItems 自动初始化分摊子项(子项级)：
 // 工商业类默认启用，居民/目录类默认关闭；基本电费、力调电费默认启用。
 func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string, feeItems []types.UtilityBillFeeItem) map[string]bool {
-	names := make([]string, 0)
-	seen := make(map[string]bool, 8)
-	enabled := make(map[string]bool, 8)
-	add := func(name string, on bool) {
-		if name == "" || seen[name] {
+	type row struct {
+		cat  string
+		name string
+		on   bool
+	}
+	var rows []row
+	seen := make(map[string]bool, 32)
+	add := func(cat, name string, on bool) {
+		if name == "" {
+			return
+		}
+		// 按子项名全局去重(同一子项可能出现在多个大类/多个时段行),保证 item_key 唯一
+		if seen[name] {
 			return
 		}
 		seen[name] = true
-		names = append(names, name)
-		enabled[name] = on
+		rows = append(rows, row{cat: cat, name: name, on: on})
 	}
 	for _, f := range feeItems {
 		cat := strings.TrimSpace(f.Category)
 		if cat == "" {
 			cat = "其他费用"
 		}
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			name = cat
+		}
 		// 居民/目录电费按宿舍定额单列，不参与比例分摊
 		on := !strings.Contains(cat, "居民") && !strings.Contains(cat, "目录电费")
-		add(cat, on)
+		add(cat, name, on)
 	}
-	add("基本电费", true)
-	add("力调电费", true)
-	if len(names) == 0 {
+	add("基本电费", "基本电费", true)
+	add("力调电费", "力调电费", true)
+	enabled := make(map[string]bool, len(rows))
+	if len(rows) == 0 {
 		return enabled
 	}
-	items := make([]types.BillingTenantItem, 0, len(names))
+	items := make([]types.BillingTenantItem, 0, len(rows))
 	now := timeNowUTC()
-	for i, name := range names {
+	for i, r := range rows {
+		enabled[r.name] = r.on
 		items = append(items, types.BillingTenantItem{
 			ID: uuid.NewString(), BillingTenantID: tenantID,
-			ItemKey: name, ItemName: name, Enabled: enabled[name], Sort: i, CreatedAt: now, UpdatedAt: now,
+			Category: r.cat, ItemKey: r.name, ItemName: r.name,
+			Enabled: r.on, Sort: i, CreatedAt: now, UpdatedAt: now,
 		})
 	}
 	if err := h.db.WithContext(ctx).Create(&items).Error; err != nil {
@@ -1065,26 +1083,44 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 	return enabled
 }
 
-// syncMissingItems 账单大类比已有开关新增时，自动补充新子项（居民/目录默认关闭，其余默认启用），并入库。
+// syncMissingItems 账单子项比已有开关新增时，自动补充新子项（居民/目录默认关闭，其余默认启用），并入库。
 func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, feeItems []types.UtilityBillFeeItem, enabled map[string]bool) map[string]bool {
 	now := timeNowUTC()
 	var created []types.BillingTenantItem
 	sort := 0
+	add := func(cat, name string) {
+		if name == "" {
+			return
+		}
+		// 按子项名全局去重,保证 item_key 唯一
+		if enabled[name] {
+			return
+		}
+		on := !strings.Contains(cat, "居民") && !strings.Contains(cat, "目录电费")
+		created = append(created, types.BillingTenantItem{
+			ID: uuid.NewString(), BillingTenantID: tenantID,
+			Category: cat, ItemKey: name, ItemName: name,
+			Enabled: on, Sort: sort, CreatedAt: now, UpdatedAt: now,
+		})
+		enabled[name] = on
+		sort++
+	}
 	for _, f := range feeItems {
 		cat := strings.TrimSpace(f.Category)
 		if cat == "" {
 			cat = "其他费用"
 		}
-		if enabled[cat] {
-			continue
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			name = cat
 		}
-		on := !strings.Contains(cat, "居民") && !strings.Contains(cat, "目录电费")
-		created = append(created, types.BillingTenantItem{
-			ID: uuid.NewString(), BillingTenantID: tenantID,
-			ItemKey: cat, ItemName: cat, Enabled: on, Sort: sort, CreatedAt: now, UpdatedAt: now,
-		})
-		enabled[cat] = on
-		sort++
+		add(cat, name)
+	}
+	if _, ok := enabled["基本电费"]; !ok {
+		add("基本电费", "基本电费")
+	}
+	if _, ok := enabled["力调电费"]; !ok {
+		add("力调电费", "力调电费")
 	}
 	if len(created) > 0 {
 		if err := h.db.WithContext(ctx).Create(&created).Error; err != nil {
