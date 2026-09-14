@@ -501,16 +501,10 @@
                       <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
                       <span class="item-op">
                         <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
-                        <t-icon name="delete" class="op danger" @click="removeItem(it)" />
                       </span>
                     </div>
                     <div v-if="!g.items.length" class="item-empty">暂无子项</div>
-                    <div class="item-actions">
-                      <t-button variant="outline" size="small" @click="addItemRow(g.category)">
-                        <template #icon><t-icon name="add" /></template>新增子项
-                      </t-button>
-                      <span class="field-hint">关闭的子项不参与分摊；居民/目录类默认关闭</span>
-                    </div>
+                    <p class="field-hint item-hint">子项引用自市电账单，不支持新增与删除</p>
                   </div>
                 </div>
                 <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
@@ -1094,17 +1088,6 @@ const toggleItem = async (it: any, v: boolean) => {
   it.enabled = !!v
   await saveItems()
 }
-const removeItem = async (it: any) => {
-  itemsForm.value = itemsForm.value.filter(x => x !== it)
-  await saveItems()
-}
-const addItemRow = (category: string) => {
-  itemsForm.value.push({
-    category: category || '其他费用',
-    item_key: '', item_name: '自定义子项', enabled: true,
-  })
-  saveItems()
-}
 const saveItems = async () => {
   if (!activeTenantId.value) return
   try {
@@ -1622,7 +1605,9 @@ onMounted(() => {
   .settings-header-actions { display: flex; align-items: center; gap: 8px; }
 }
 .settings-tabs { height: 100%; }
-.settings-panel { padding: 4px 0 24px; }
+.tenant-settings-drawer :deep(.t-drawer__body) { overflow-y: auto; }
+.settings-tabs :deep(.t-tabs__content) { height: calc(100% - 48px); overflow-y: auto; }
+.settings-panel { padding: 4px 0 40px; }
 .rec-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1771,6 +1756,7 @@ onMounted(() => {
       border-top: 1px solid var(--td-component-stroke);
       padding: 10px 12px;
       .item-list { border: none; border-radius: 0; }
+      .item-hint { margin-top: 10px; }
     }
   }
   .item-empty { padding: 24px; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
@@ -1780,10 +1766,10 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   .item-row {
-    display: grid;
-    grid-template-columns: 1fr 80px;
+    display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: 16px;
     padding: 8px 12px;
     border-bottom: 1px solid var(--td-component-stroke);
     &:last-child { border-bottom: none; }
@@ -1792,17 +1778,10 @@ onMounted(() => {
       color: var(--td-text-color-secondary);
       background: var(--td-bg-color-secondarycontainer);
     }
-    .item-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .item-op { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+    .item-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .item-op { flex-shrink: 0; }
   }
   .item-empty { padding: 24px; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
-}
-.item-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
 }
 
 .op { cursor: pointer; color: var(--td-text-color-secondary); transition: color 0.2s; &:hover { color: var(--td-brand-color); } &.danger:hover { color: var(--td-error-color); } }
