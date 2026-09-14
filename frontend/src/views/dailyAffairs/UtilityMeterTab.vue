@@ -182,16 +182,53 @@
               <div class="readonly-val">{{ fmtNum(formRate) }}×</div>
             </div>
 
-            <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
-              <label>起度 <span class="required">*</span></label>
-              <t-input v-model.number="form.startReading" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-              <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
-            </div>
-            <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
-              <label>止度 <span class="required">*</span></label>
-              <t-input v-model.number="form.endReading" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-              <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
-            </div>
+            <template v-if="isTimeMeter">
+              <div class="rec-field rec-field--wide">
+                <label>尖 <span class="required">*</span></label>
+                <div class="rec-period-pair">
+                  <t-input v-model.number="form.deepPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
+                  <span class="rec-period-sep">→</span>
+                  <t-input v-model.number="form.deepCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+                </div>
+              </div>
+              <div class="rec-field rec-field--wide">
+                <label>峰 <span class="required">*</span></label>
+                <div class="rec-period-pair">
+                  <t-input v-model.number="form.peakPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
+                  <span class="rec-period-sep">→</span>
+                  <t-input v-model.number="form.peakCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+                </div>
+              </div>
+              <div class="rec-field rec-field--wide">
+                <label>平 <span class="required">*</span></label>
+                <div class="rec-period-pair">
+                  <t-input v-model.number="form.flatPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
+                  <span class="rec-period-sep">→</span>
+                  <t-input v-model.number="form.flatCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+                </div>
+              </div>
+              <div class="rec-field rec-field--wide">
+                <label>谷 <span class="required">*</span></label>
+                <div class="rec-period-pair">
+                  <t-input v-model.number="form.valleyPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
+                  <span class="rec-period-sep">→</span>
+                  <t-input v-model.number="form.valleyCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+                </div>
+                <p v-if="readingInvalid" class="field-error-text">各时段止度不得小于起度</p>
+              </div>
+            </template>
+            <template v-else>
+              <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
+                <label>起度 <span class="required">*</span></label>
+                <t-input v-model.number="form.startReading" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
+                <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
+              </div>
+              <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
+                <label>止度 <span class="required">*</span></label>
+                <t-input v-model.number="form.endReading" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
+                <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
+              </div>
+            </template>
 
             <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
               <label>单价 <span class="required">*</span></label>
@@ -264,11 +301,19 @@
                 </div>
                 <div class="form-item">
                   <label>表号</label>
-                  <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                  <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
                 </div>
                 <div class="form-item">
-                  <label>表类型</label>
+                  <label>类型</label>
+                  <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
+                </div>
+                <div class="form-item">
+                  <label>用途</label>
                   <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                </div>
+                <div class="form-item">
+                  <label>归属单位</label>
+                  <t-input v-model="meterForm.owner_unit" placeholder="选填" />
                 </div>
                 <div class="form-item">
                   <label>倍率</label>
@@ -336,9 +381,10 @@
                 </div>
                 <div class="meter-card-grid">
                   <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-                  <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ meterKindLabel(m.meter_kind) }}</span></div>
+                  <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span></div>
                   <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
                   <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
+                  <div v-if="m.owner_unit" class="meter-card-item"><span class="k">归属</span><span class="v">{{ m.owner_unit }}</span></div>
                 </div>
               </div>
               <!-- 编辑表计：表单展开在当前卡片下方 -->
@@ -351,11 +397,19 @@
                   </div>
                   <div class="form-item">
                     <label>表号</label>
-                    <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                    <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
                   </div>
                   <div class="form-item">
-                    <label>表类型</label>
+                    <label>类型</label>
+                    <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
+                  </div>
+                  <div class="form-item">
+                    <label>用途</label>
                     <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                  </div>
+                  <div class="form-item">
+                    <label>归属单位</label>
+                    <t-input v-model="meterForm.owner_unit" placeholder="选填" />
                   </div>
                   <div class="form-item">
                     <label>倍率</label>
@@ -566,6 +620,14 @@ const load = async () => {
           install_date: meter?.install_date || '',
           start_reading: it.start_reading,
           end_reading: it.end_reading,
+          deep_prev: it.deep_prev,
+          deep_curr: it.deep_curr,
+          peak_prev: it.peak_prev,
+          peak_curr: it.peak_curr,
+          flat_prev: it.flat_prev,
+          flat_curr: it.flat_curr,
+          valley_prev: it.valley_prev,
+          valley_curr: it.valley_curr,
           rate: meter?.rate ?? it.rate ?? '',
           usage: it.usage,
           unit_price: it.unit_price,
@@ -647,9 +709,21 @@ const editingItemId = ref('')
 const editingOriginalMonth = ref('') // 编辑行原月份（改月时仅迁移该行）
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
-const form = ref<{ month: string; meterId: string; readingDate: string; reader: string; recordDate: string; startReading: number; endReading: number; unitPrice: number; subsidy: number; remark: string }>({
-  month: '', meterId: '', readingDate: '', reader: '', recordDate: '', startReading: 0, endReading: 0, unitPrice: 0, subsidy: 0, remark: '',
+interface MeterForm {
+  month: string; meterId: string; readingDate: string; reader: string; recordDate: string
+  startReading: number; endReading: number
+  deepPrev: number; deepCurr: number; peakPrev: number; peakCurr: number
+  flatPrev: number; flatCurr: number; valleyPrev: number; valleyCurr: number
+  unitPrice: number; subsidy: number; remark: string
+}
+const emptyForm = (): MeterForm => ({
+  month: '', meterId: '', readingDate: '', reader: '', recordDate: '',
+  startReading: 0, endReading: 0,
+  deepPrev: 0, deepCurr: 0, peakPrev: 0, peakCurr: 0,
+  flatPrev: 0, flatCurr: 0, valleyPrev: 0, valleyCurr: 0,
+  unitPrice: 0, subsidy: 0, remark: '',
 })
+const form = ref<MeterForm>(emptyForm())
 const today = (() => {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, '0')
@@ -668,12 +742,29 @@ const meterEditOptions = computed(() => {
 })
 
 const currentMeter = computed(() => meters.value.find((m: any) => m.id === form.value.meterId))
+const isTimeMeter = computed(() => currentMeter.value?.meter_type === 'time')
 const formRate = computed(() => Number(currentMeter.value?.rate) > 0 ? Number(currentMeter.value?.rate) : 1)
-const formUsage = computed(() => Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * formRate.value * 100) / 100)
+const formUsage = computed(() => {
+  const rate = formRate.value
+  if (isTimeMeter.value) {
+    const d = Number(form.value.deepCurr) - Number(form.value.deepPrev)
+    const p = Number(form.value.peakCurr) - Number(form.value.peakPrev)
+    const f = Number(form.value.flatCurr) - Number(form.value.flatPrev)
+    const v = Number(form.value.valleyCurr) - Number(form.value.valleyPrev)
+    return Math.round((d + p + f + v) * rate * 100) / 100
+  }
+  return Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * rate * 100) / 100
+})
 const formAmount = computed(() => Math.round((formUsage.value * Number(form.value.unitPrice) + (Number(form.value.subsidy) || 0)) * 100) / 100)
 
 // ---- 录入校验：差异标红提醒不拦截，止度<起度（起度>止度）标红且保存拦截；起度=止度视为当月无用量，合法 ----
 const readingInvalid = computed(() => {
+  if (isTimeMeter.value) {
+    return Number(form.value.deepCurr) < Number(form.value.deepPrev) ||
+      Number(form.value.peakCurr) < Number(form.value.peakPrev) ||
+      Number(form.value.flatCurr) < Number(form.value.flatPrev) ||
+      Number(form.value.valleyCurr) < Number(form.value.valleyPrev)
+  }
   const s = Number(form.value.startReading) || 0
   const e = Number(form.value.endReading) || 0
   return s > e
@@ -697,6 +788,17 @@ const meterGridCols = computed(() => {
 })
 
 const onMeterChange = () => {
+  // 切换表计：清空读数，回填单价与抄表人
+  form.value.startReading = 0
+  form.value.endReading = 0
+  form.value.deepPrev = 0
+  form.value.deepCurr = 0
+  form.value.peakPrev = 0
+  form.value.peakCurr = 0
+  form.value.flatPrev = 0
+  form.value.flatCurr = 0
+  form.value.valleyPrev = 0
+  form.value.valleyCurr = 0
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
     form.value.reader = currentMeter.value.manager || form.value.reader || ''
@@ -709,10 +811,10 @@ const openCreate = () => {
   editingOriginalMonth.value = ''
   lastRecordId.value = ''
   recordItems.value = []
-  form.value = {
-    month: '', meterId: '', readingDate: today, reader: '', recordDate: today,
-    startReading: 0, endReading: 0, unitPrice: 0, subsidy: 0, remark: '',
-  }
+  const f = emptyForm()
+  f.readingDate = today
+  f.recordDate = today
+  form.value = f
   drawerVisible.value = true
 }
 
@@ -757,6 +859,14 @@ const openEdit = (row: any) => {
     reader: r.reader || '',
     start_reading: Number(r.start_reading) || 0,
     end_reading: Number(r.end_reading) || 0,
+    deep_prev: Number(r.deep_prev) || 0,
+    deep_curr: Number(r.deep_curr) || 0,
+    peak_prev: Number(r.peak_prev) || 0,
+    peak_curr: Number(r.peak_curr) || 0,
+    flat_prev: Number(r.flat_prev) || 0,
+    flat_curr: Number(r.flat_curr) || 0,
+    valley_prev: Number(r.valley_prev) || 0,
+    valley_curr: Number(r.valley_curr) || 0,
     unit_price: Number(r.unit_price) || 0,
     subsidy: Number(r.subsidy) || 0,
     remark: r.remark || '',
@@ -769,6 +879,14 @@ const openEdit = (row: any) => {
     recordDate: row.record_date || today,
     startReading: Number(row.start_reading) || 0,
     endReading: Number(row.end_reading) || 0,
+    deepPrev: Number(row.deep_prev) || 0,
+    deepCurr: Number(row.deep_curr) || 0,
+    peakPrev: Number(row.peak_prev) || 0,
+    peakCurr: Number(row.peak_curr) || 0,
+    flatPrev: Number(row.flat_prev) || 0,
+    flatCurr: Number(row.flat_curr) || 0,
+    valleyPrev: Number(row.valley_prev) || 0,
+    valleyCurr: Number(row.valley_curr) || 0,
     unitPrice: Number(row.unit_price) || 0,
     subsidy: Number(row.subsidy) || 0,
     remark: row.remark || '',
@@ -801,6 +919,14 @@ const save = async () => {
       reader: form.value.reader || '',
       start_reading: Number(form.value.startReading) || 0,
       end_reading: Number(form.value.endReading) || 0,
+      deep_prev: Number(form.value.deepPrev) || 0,
+      deep_curr: Number(form.value.deepCurr) || 0,
+      peak_prev: Number(form.value.peakPrev) || 0,
+      peak_curr: Number(form.value.peakCurr) || 0,
+      flat_prev: Number(form.value.flatPrev) || 0,
+      flat_curr: Number(form.value.flatCurr) || 0,
+      valley_prev: Number(form.value.valleyPrev) || 0,
+      valley_curr: Number(form.value.valleyCurr) || 0,
       unit_price: Number(form.value.unitPrice) || 0,
       subsidy: Number(form.value.subsidy) || 0,
       remark: form.value.remark || '',
@@ -822,6 +948,14 @@ const save = async () => {
             reader: it.reader || '',
             start_reading: Number(it.start_reading) || 0,
             end_reading: Number(it.end_reading) || 0,
+            deep_prev: Number(it.deep_prev) || 0,
+            deep_curr: Number(it.deep_curr) || 0,
+            peak_prev: Number(it.peak_prev) || 0,
+            peak_curr: Number(it.peak_curr) || 0,
+            flat_prev: Number(it.flat_prev) || 0,
+            flat_curr: Number(it.flat_curr) || 0,
+            valley_prev: Number(it.valley_prev) || 0,
+            valley_curr: Number(it.valley_curr) || 0,
             unit_price: Number(it.unit_price) || 0,
             subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
@@ -846,6 +980,14 @@ const save = async () => {
             reader: it.reader || '',
             start_reading: it.start_reading,
             end_reading: it.end_reading,
+            deep_prev: it.deep_prev,
+            deep_curr: it.deep_curr,
+            peak_prev: it.peak_prev,
+            peak_curr: it.peak_curr,
+            flat_prev: it.flat_prev,
+            flat_curr: it.flat_curr,
+            valley_prev: it.valley_prev,
+            valley_curr: it.valley_curr,
             unit_price: it.unit_price,
             subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
@@ -871,6 +1013,14 @@ const save = async () => {
           reader: r.reader || '',
           start_reading: Number(r.start_reading) || 0,
           end_reading: Number(r.end_reading) || 0,
+          deep_prev: Number(r.deep_prev) || 0,
+          deep_curr: Number(r.deep_curr) || 0,
+          peak_prev: Number(r.peak_prev) || 0,
+          peak_curr: Number(r.peak_curr) || 0,
+          flat_prev: Number(r.flat_prev) || 0,
+          flat_curr: Number(r.flat_curr) || 0,
+          valley_prev: Number(r.valley_prev) || 0,
+          valley_curr: Number(r.valley_curr) || 0,
           unit_price: Number(r.unit_price) || 0,
           subsidy: Number(r.subsidy) || 0,
           remark: r.remark || '',
@@ -907,14 +1057,17 @@ const save = async () => {
       // 连续录入：抽屉不关闭，按启用表顺序切到下一张，月份复用、抄表日期=第一条、
       // 起度=下一张表自身上月止度（无则空）、单价=上一条、抄表人=下张表管理人员
       skipAutoFill.value = true
-      form.value.meterId = nextMeter.id
-      form.value.reader = nextMeter.manager || ''
+      const f = emptyForm()
+      f.month = form.value.month
+      f.meterId = nextMeter.id
+      f.readingDate = form.value.readingDate || today
+      f.recordDate = form.value.recordDate || today
+      f.reader = nextMeter.manager || ''
       const nextEnds = meterMonthEnds.value.get(nextMeter.id)
       const prevEnd = nextEnds?.get(prevMonthOf(form.value.month))
-      form.value.startReading = prevEnd ? Number(prevEnd) : 0
-      form.value.endReading = 0
-      form.value.unitPrice = Number(form.value.unitPrice) || 0
-      form.value.remark = ''
+      f.startReading = prevEnd ? Number(prevEnd) : 0
+      f.unitPrice = Number(form.value.unitPrice) || 0
+      form.value = f
       editingRecordId.value = ''
       editingItemId.value = ''
       recordItems.value = []
@@ -963,6 +1116,14 @@ const handleDelete = async () => {
             reader: r.reader || '',
             start_reading: Number(r.start_reading) || 0,
             end_reading: Number(r.end_reading) || 0,
+            deep_prev: Number(r.deep_prev) || 0,
+            deep_curr: Number(r.deep_curr) || 0,
+            peak_prev: Number(r.peak_prev) || 0,
+            peak_curr: Number(r.peak_curr) || 0,
+            flat_prev: Number(r.flat_prev) || 0,
+            flat_curr: Number(r.flat_curr) || 0,
+            valley_prev: Number(r.valley_prev) || 0,
+            valley_curr: Number(r.valley_curr) || 0,
             unit_price: Number(r.unit_price) || 0,
             remark: r.remark || '',
           })),
@@ -1045,6 +1206,20 @@ const meterKindOptions = [
   { label: '生产', value: 'production' },
 ]
 const meterKindLabel = (k: string) => meterKindOptions.find(o => o.value === k)?.label || '宿舍'
+// 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
+const meterTypeOptions = computed(() => {
+  if (props.category === 'electricity') return [
+    { label: '普通', value: 'normal' },
+    { label: '分时', value: 'time' },
+  ]
+  if (props.category === 'water') return [
+    { label: '总表', value: 'total' },
+    { label: '分表', value: 'sub' },
+    { label: '消防', value: 'fire' },
+  ]
+  return [{ label: '普通', value: 'normal' }]
+})
+const meterTypeLabel = (t: string) => meterTypeOptions.value.find(o => o.value === t)?.label || '普通'
 const meterAliasInput = ref()
 const settingsWidth = ref<string>(loadSettingsWidth())
 function loadSettingsWidth(): string {
@@ -1072,7 +1247,9 @@ const openMeterForm = (m: any) => {
     id: m.id,
     alias: m.alias || '',
     meter_no: m.meter_no || '',
+    meter_type: m.meter_type || '',
     meter_kind: m.meter_kind || 'dorm',
+    owner_unit: m.owner_unit || '',
     rate: Number(m.rate) > 0 ? m.rate : 1,
     default_unit_price: Number(m.default_unit_price) || 0,
     use_unit: m.use_unit || '',
@@ -1083,7 +1260,8 @@ const openMeterForm = (m: any) => {
     remark: m.remark || '',
     enabled: m.enabled !== false,
   } : {
-    id: '', alias: '', meter_no: nextMeterNo(), meter_kind: 'dorm', rate: 1, default_unit_price: 0,
+    id: '', alias: '', meter_no: nextMeterNo(), meter_type: '',
+    meter_kind: 'dorm', owner_unit: '', rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
@@ -1102,7 +1280,9 @@ const saveMeter = async () => {
       category: props.category,
       alias: meterForm.value.alias.trim(),
       meter_no: meterForm.value.meter_no || '',
+      meter_type: meterForm.value.meter_type || '',
       meter_kind: meterForm.value.meter_kind || 'dorm',
+      owner_unit: meterForm.value.owner_unit || '',
       rate: Number(meterForm.value.rate) > 0 ? Number(meterForm.value.rate) : 1,
       default_unit_price: Number(meterForm.value.default_unit_price) || 0,
       use_unit: meterForm.value.use_unit || '',
@@ -1131,7 +1311,9 @@ const saveMeter = async () => {
         id: '',
         alias: '',
         meter_no: nextMeterNo(),
+        meter_type: '',
         meter_kind: 'dorm',
+        owner_unit: '',
         rate: '',
         default_unit_price: '',
         use_unit: '',
@@ -1586,6 +1768,22 @@ onBeforeUnmount(() => {
 }
 .rec-field--wide {
   grid-column: 1 / -1;
+}
+/* 分时电表：时段起/止并排，任意宽度不截断 */
+.rec-period-pair {
+  display: grid;
+  grid-template-columns: 1fr 24px 1fr;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  .t-input__wrap { width: 100%; min-width: 0; }
+}
+.rec-period-sep {
+  text-align: center;
+  color: var(--td-text-color-placeholder);
+  font-size: 13px;
+  user-select: none;
 }
 .readonly-val {
   min-height: 30px;

@@ -43,10 +43,6 @@
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" size="small" @click="openReadingDrawer('', 'meter')">
-          <template #icon><t-icon name="add" /></template>
-          新增记录
-        </t-button>
       </div>
     </div>
 
@@ -101,10 +97,6 @@
             <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">清除</t-button>
           </div>
           <div class="batch-bar-actions">
-            <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="openEditSelected">
-              <template #icon><t-icon name="edit" size="14px" /></template>
-              编辑
-            </t-button>
             <t-dropdown @click="onPrintMenu">
               <t-button theme="default" variant="outline" size="small" :loading="catalogBusy">
                 <template #icon><t-icon name="print" size="14px" /></template>
@@ -130,157 +122,7 @@
       </div>
     </transition>
 
-    <!-- ================= 新增记录抽屉（分时读数） ================= -->
-    <teleport to="body">
-      <div v-if="readingVisible" class="doc-drawer-resize-handle" :style="{ right: readingWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onReadingResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="readingVisible" :visible="true" :header="readingTitle" :size="readingWidth" :footer="false"
-        :close-on-overlay-click="true" destroy-on-close class="tenant-reading-drawer"
-        @close="readingVisible = false" @update:visible="(v: boolean) => (readingVisible = v)">
-        <div class="reading-body">
-          <div class="reading-type-switch">
-            <t-radio-group v-model="readingType" variant="default-filled" size="small">
-              <t-radio-button value="meter">电表</t-radio-button>
-              <t-radio-button value="water">水表</t-radio-button>
-            </t-radio-group>
-          </div>
-          <div v-if="readingType === 'meter'" class="rec-grid">
-            <div class="rec-field">
-              <label>月份 <span class="required">*</span></label>
-              <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
-            </div>
-            <div class="rec-field">
-              <label>电表 <span class="required">*</span></label>
-              <t-select v-model="curMeterId" :options="meterEditOptions" filterable placeholder="选择电表" @change="onMeterChange" />
-            </div>
-
-            <div class="rec-field">
-              <label>抄表日期</label>
-              <t-date-picker v-model="readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
-            </div>
-            <div class="rec-field">
-              <label>抄表人</label>
-              <t-input v-model="readingReader" placeholder="默认取表计管理人员" />
-            </div>
-
-            <div class="rec-field">
-              <label>录入日期</label>
-              <div class="readonly-val">{{ readingRecordDate || today }}</div>
-            </div>
-            <div class="rec-field">
-              <label>倍率</label>
-              <div class="readonly-val">{{ fmtNum(curMeter?.rate) }}×</div>
-            </div>
-          </div>
-
-          <div v-if="readingType === 'meter' && isTimeMeter" class="period-grid">
-            <div v-for="p in periods" :key="p.key" class="period-row" :class="{ 'row-invalid': rdCurInvalid(p.key) }">
-              <span class="period-label">{{ p.label }}</span>
-              <t-input class="period-input" :model-value="curForm[p.key + '_prev']" type="number" size="small"
-                placeholder="起度" :status="rdCurInvalid(p.key) ? 'error' : ''"
-                @update:model-value="(v: string) => setCurVal(p.key + '_prev', v)" />
-              <span class="rr-sep">~</span>
-              <t-input class="period-input" :model-value="curForm[p.key + '_curr']" type="number" size="small"
-                placeholder="止度" :status="rdCurInvalid(p.key) ? 'error' : ''"
-                @update:model-value="(v: string) => setCurVal(p.key + '_curr', v)" />
-              <span class="period-kwh">{{ fmtKwh(curPeriodKwh(p.key)) }} 千瓦时</span>
-            </div>
-          </div>
-          <div v-else-if="readingType === 'meter'" class="period-grid">
-            <div class="period-row" :class="{ 'row-invalid': rdCurInvalid('deep') }">
-              <span class="period-label">读数</span>
-              <t-input class="period-input" :model-value="curForm['deep_prev']" type="number" size="small"
-                placeholder="起度" :status="rdCurInvalid('deep') ? 'error' : ''"
-                @update:model-value="(v: string) => setCurVal('deep_prev', v)" />
-              <span class="rr-sep">~</span>
-              <t-input class="period-input" :model-value="curForm['deep_curr']" type="number" size="small"
-                placeholder="止度" :status="rdCurInvalid('deep') ? 'error' : ''"
-                @update:model-value="(v: string) => setCurVal('deep_curr', v)" />
-              <span class="period-kwh">{{ fmtKwh(curPeriodKwh('deep')) }} 千瓦时</span>
-            </div>
-          </div>
-
-          <!-- 水表抄表 -->
-          <div v-if="readingType === 'water'" class="rec-grid">
-            <div class="rec-field">
-              <label>月份 <span class="required">*</span></label>
-              <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
-            </div>
-            <div class="rec-field">
-              <label>水表 <span class="required">*</span></label>
-              <t-select v-model="curWaterMeterId" :options="waterMeterEditOptions" filterable placeholder="选择水表" @change="onWaterMeterChange" />
-            </div>
-            <div class="rec-field">
-              <label>抄表日期</label>
-              <t-date-picker v-model="readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
-            </div>
-            <div class="rec-field">
-              <label>抄表人</label>
-              <t-input v-model="readingReader" placeholder="默认取表计管理人员" />
-            </div>
-            <div class="rec-field">
-              <label>录入日期</label>
-              <div class="readonly-val">{{ readingRecordDate || today }}</div>
-            </div>
-            <div class="rec-field">
-              <label>倍率</label>
-              <div class="readonly-val">{{ fmtNum(curWaterMeter?.rate) }}×</div>
-            </div>
-            <div class="rec-field">
-              <label>起度 <span class="required">*</span></label>
-              <t-input v-model="waterForm.prev" type="number" size="small" placeholder="起度"
-                :status="Number(waterForm.curr) > 0 && Number(waterForm.curr) < Number(waterForm.prev) ? 'error' : ''" />
-            </div>
-            <div class="rec-field">
-              <label>止度 <span class="required">*</span></label>
-              <t-input v-model="waterForm.curr" type="number" size="small" placeholder="止度"
-                :status="Number(waterForm.curr) > 0 && Number(waterForm.curr) < Number(waterForm.prev) ? 'error' : ''" />
-            </div>
-            <div class="rec-field">
-              <label>单价（元/吨）</label>
-              <t-input v-model="waterForm.price" type="number" size="small" placeholder="默认取表计单价" />
-            </div>
-            <div class="rec-field">
-              <label>用水量</label>
-              <div class="readonly-val">{{ fmtKwh(waterUsage) }} 吨</div>
-            </div>
-            <div class="rec-field rec-field--wide">
-              <label>水费</label>
-              <div class="readonly-val">{{ fmtMoney(waterAmount) }} 元</div>
-            </div>
-          </div>
-
-          <div v-if="readingType === 'meter'" class="calc-val">
-            <span>{{ curMeter?.name || '' }}合计</span>
-            <b class="row-mono">{{ fmtKwh(curTotalKwh) }}</b>
-            <span>千瓦时</span>
-          </div>
-          <div v-else class="calc-val">
-            <span>{{ curWaterMeter?.name || '' }}合计</span>
-            <b class="row-mono">{{ fmtKwh(waterUsage) }}</b>
-            <span>吨</span>
-            <b class="row-mono">{{ fmtMoney(waterAmount) }}</b>
-            <span>元</span>
-          </div>
-
-          <div class="rec-field rec-field--wide">
-            <label>备注</label>
-            <t-textarea v-model="curForm.remark" :maxlength="500" placeholder="选填" />
-          </div>
-        </div>
-
-        <div class="meter-drawer-footer">
-          <t-button variant="outline" size="small" @click="readingVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="savingReadings" @click="readingType === 'water' ? saveWaterAndNext() : saveCurrentAndNext()">保存</t-button>
-        </div>
-      </t-drawer>
-    </teleport>
-
-    <!-- ================= 设置抽屉（租户管理 / 电表设置 / 分摊子项） ================= -->
+    <!-- ================= 设置抽屉（租户信息 / 分摊子项） ================= -->
     <teleport to="body">
       <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
         :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
@@ -419,323 +261,6 @@
               </div>
             </div>
           </t-tab-panel>
-          <t-tab-panel value="meters" label="电表设置">
-            <div class="settings-panel">
-              <div v-for="g in (meterGroups.length ? meterGroups : [{ owner: '', meters: [] }])" :key="g.owner || 'empty'" class="meter-section">
-                <div class="meter-section-head">
-                  <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
-                  <t-button variant="outline" size="small" @click="openAddMeter(g.owner)">
-                    <template #icon><t-icon name="add" /></template>新增
-                  </t-button>
-                </div>
-                <div class="meter-grid">
-                  <!-- 新增表计：表单展开在分组顶部 -->
-                  <div v-if="meterFormVisible && !meterForm.id && meterForm._group === g.owner" class="meter-form">
-                    <div class="meter-form-title">新增电表</div>
-                    <div class="form-grid">
-                      <div class="form-item">
-                        <label>别名 <span class="required">*</span></label>
-                        <t-input v-model="meterForm.name" placeholder="如：总表1 / 分表1" />
-                      </div>
-                      <div class="form-item">
-                        <label>表号</label>
-                        <t-input v-model="meterForm.meter_no" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>倍率</label>
-                        <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                      </div>
-                      <div class="form-item">
-                        <label>类型</label>
-                        <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                      </div>
-                      <div class="form-item">
-                        <label>归属单位</label>
-                        <t-input v-model="meterForm.owner_unit" placeholder="如：星达铜业" />
-                      </div>
-                      <div class="form-item">
-                        <label>使用单位</label>
-                        <t-input v-model="meterForm.use_unit" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>管理人员</label>
-                        <t-input v-model="meterForm.manager" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>联系方式</label>
-                        <t-input v-model="meterForm.contact" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>抄表方式</label>
-                        <t-radio-group v-model="meterForm.meter_mode">
-                          <t-radio-button value="auto">自动抄表</t-radio-button>
-                          <t-radio-button value="manual">手动抄表</t-radio-button>
-                        </t-radio-group>
-                      </div>
-                      <div class="form-item">
-                        <label>安装日期</label>
-                        <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                      </div>
-                      <div class="form-item form-item--full">
-                        <label>备注</label>
-                        <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-                      </div>
-                    </div>
-                    <div class="form-actions">
-                      <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-                      <t-button theme="primary" size="small" :loading="savingMeter" @click="submitMeter">保存</t-button>
-                    </div>
-                  </div>
-
-                  <template v-for="m in g.meters" :key="m.id">
-                    <div class="meter-card">
-                      <div class="meter-card-head">
-                        <span class="meter-card-name">{{ m.name }}</span>
-                        <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleMeter(m, v)" />
-                        <span class="meter-card-actions">
-                          <t-button variant="text" size="small" @click="openEditMeter(m)">
-                            <template #icon><t-icon name="edit" size="15px" /></template>
-                          </t-button>
-                          <t-popconfirm theme="warning" :content="`确定删除电表「${m.name}」吗？`"
-                            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                            @confirm="removeMeter(m)">
-                            <t-button variant="text" size="small" @click.stop>
-                              <template #icon><t-icon name="delete" size="15px" /></template>
-                            </t-button>
-                          </t-popconfirm>
-                        </span>
-                      </div>
-                      <div class="meter-card-grid">
-                        <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-                        <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
-                        <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ m.meter_kind === 'normal' ? '普通' : '分时' }}</span></div>
-                      </div>
-                    </div>
-                    <!-- 编辑表计：表单展开在当前卡片下方 -->
-                    <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form">
-                      <div class="meter-form-title">编辑电表</div>
-                      <div class="form-grid">
-                        <div class="form-item">
-                          <label>别名 <span class="required">*</span></label>
-                          <t-input v-model="meterForm.name" placeholder="如：总表1 / 分表1" />
-                        </div>
-                        <div class="form-item">
-                          <label>表号</label>
-                          <t-input v-model="meterForm.meter_no" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>倍率</label>
-                          <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                        </div>
-                        <div class="form-item">
-                          <label>类型</label>
-                          <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                        </div>
-                        <div class="form-item">
-                          <label>归属单位</label>
-                          <t-input v-model="meterForm.owner_unit" placeholder="如：星达铜业" />
-                        </div>
-                        <div class="form-item">
-                          <label>使用单位</label>
-                          <t-input v-model="meterForm.use_unit" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>管理人员</label>
-                          <t-input v-model="meterForm.manager" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>联系方式</label>
-                          <t-input v-model="meterForm.contact" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>抄表方式</label>
-                          <t-radio-group v-model="meterForm.meter_mode">
-                            <t-radio-button value="auto">自动抄表</t-radio-button>
-                            <t-radio-button value="manual">手动抄表</t-radio-button>
-                          </t-radio-group>
-                        </div>
-                        <div class="form-item">
-                          <label>安装日期</label>
-                          <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                        </div>
-                        <div class="form-item form-item--full">
-                          <label>备注</label>
-                          <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-                        </div>
-                      </div>
-                      <div class="form-actions">
-                        <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-                        <t-button theme="primary" size="small" :loading="savingMeter" @click="submitMeter">保存</t-button>
-                      </div>
-                    </div>
-                  </template>
-                  <div v-if="!g.meters.length && !(meterFormVisible && !meterForm.id && meterForm._group === g.owner)" class="meter-empty">暂无电表</div>
-                </div>
-              </div>
-            </div>
-          </t-tab-panel>
-          <t-tab-panel value="water-meters" label="水表设置">
-            <div class="settings-panel">
-              <div v-for="g in (waterMeterGroups.length ? waterMeterGroups : [{ owner: '', meters: [] }])" :key="g.owner || 'empty'" class="meter-section">
-                <div class="meter-section-head">
-                  <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
-                  <t-button variant="outline" size="small" @click="openAddWaterMeter(g.owner)">
-                    <template #icon><t-icon name="add" /></template>新增
-                  </t-button>
-                </div>
-                <div class="meter-grid">
-                  <div v-if="waterMeterFormVisible && !waterMeterForm.id && waterMeterForm._group === g.owner" class="meter-form">
-                    <div class="meter-form-title">新增水表</div>
-                    <div class="form-grid">
-                      <div class="form-item">
-                        <label>别名 <span class="required">*</span></label>
-                        <t-input v-model="waterMeterForm.name" placeholder="如：总表1 / 分表1" />
-                      </div>
-                      <div class="form-item">
-                        <label>表号</label>
-                        <t-input v-model="waterMeterForm.meter_no" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>倍率</label>
-                        <t-input v-model.number="waterMeterForm.rate" type="number" placeholder="默认 1" />
-                      </div>
-                      <div class="form-item">
-                        <label>类型</label>
-                        <t-select v-model="waterMeterForm.meter_kind" :options="waterMeterKindOptions" />
-                      </div>
-                      <div class="form-item">
-                        <label>默认单价（元/吨）</label>
-                        <t-input v-model.number="waterMeterForm.price" type="number" placeholder="如：5.22" />
-                      </div>
-                      <div class="form-item">
-                        <label>归属单位</label>
-                        <t-input v-model="waterMeterForm.owner_unit" placeholder="如：星达铜业" />
-                      </div>
-                      <div class="form-item">
-                        <label>使用单位</label>
-                        <t-input v-model="waterMeterForm.use_unit" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>管理人员</label>
-                        <t-input v-model="waterMeterForm.manager" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>联系方式</label>
-                        <t-input v-model="waterMeterForm.contact" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>抄表方式</label>
-                        <t-radio-group v-model="waterMeterForm.meter_mode">
-                          <t-radio-button value="auto">自动抄表</t-radio-button>
-                          <t-radio-button value="manual">手动抄表</t-radio-button>
-                        </t-radio-group>
-                      </div>
-                      <div class="form-item">
-                        <label>安装日期</label>
-                        <t-date-picker v-model="waterMeterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                      </div>
-                      <div class="form-item form-item--full">
-                        <label>备注</label>
-                        <t-textarea v-model="waterMeterForm.remark" :maxlength="500" placeholder="选填" />
-                      </div>
-                    </div>
-                    <div class="form-actions">
-                      <t-button variant="outline" size="small" @click="waterMeterFormVisible = false">取消</t-button>
-                      <t-button theme="primary" size="small" :loading="savingWaterMeter" @click="submitWaterMeter">保存</t-button>
-                    </div>
-                  </div>
-
-                  <template v-for="m in g.meters" :key="m.id">
-                    <div class="meter-card">
-                      <div class="meter-card-head">
-                        <span class="meter-card-name">{{ m.name }}</span>
-                        <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleWaterMeter(m, v)" />
-                        <span class="meter-card-actions">
-                          <t-button variant="text" size="small" @click="openEditWaterMeter(m)">
-                            <template #icon><t-icon name="edit" size="15px" /></template>
-                          </t-button>
-                          <t-popconfirm theme="warning" :content="`确定删除水表「${m.name}」吗？`"
-                            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                            @confirm="removeWaterMeter(m)">
-                            <t-button variant="text" size="small" @click.stop>
-                              <template #icon><t-icon name="delete" size="15px" /></template>
-                            </t-button>
-                          </t-popconfirm>
-                        </span>
-                      </div>
-                      <div class="meter-card-grid">
-                        <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-                        <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
-                        <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.price) }} 元</span></div>
-                        <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ waterMeterKindLabel(m.meter_kind) }}</span></div>
-                      </div>
-                    </div>
-                    <div v-if="waterMeterFormVisible && waterMeterForm.id === m.id" class="meter-form">
-                      <div class="meter-form-title">编辑水表</div>
-                      <div class="form-grid">
-                        <div class="form-item">
-                          <label>别名 <span class="required">*</span></label>
-                          <t-input v-model="waterMeterForm.name" placeholder="如：总表1 / 分表1" />
-                        </div>
-                        <div class="form-item">
-                          <label>表号</label>
-                          <t-input v-model="waterMeterForm.meter_no" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>倍率</label>
-                          <t-input v-model.number="waterMeterForm.rate" type="number" placeholder="默认 1" />
-                        </div>
-                        <div class="form-item">
-                          <label>类型</label>
-                          <t-select v-model="waterMeterForm.meter_kind" :options="waterMeterKindOptions" />
-                        </div>
-                        <div class="form-item">
-                          <label>默认单价（元/吨）</label>
-                          <t-input v-model.number="waterMeterForm.price" type="number" placeholder="如：5.22" />
-                        </div>
-                        <div class="form-item">
-                          <label>归属单位</label>
-                          <t-input v-model="waterMeterForm.owner_unit" placeholder="如：星达铜业" />
-                        </div>
-                        <div class="form-item">
-                          <label>使用单位</label>
-                          <t-input v-model="waterMeterForm.use_unit" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>管理人员</label>
-                          <t-input v-model="waterMeterForm.manager" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>联系方式</label>
-                          <t-input v-model="waterMeterForm.contact" placeholder="选填" />
-                        </div>
-                        <div class="form-item">
-                          <label>抄表方式</label>
-                          <t-radio-group v-model="waterMeterForm.meter_mode">
-                            <t-radio-button value="auto">自动抄表</t-radio-button>
-                            <t-radio-button value="manual">手动抄表</t-radio-button>
-                          </t-radio-group>
-                        </div>
-                        <div class="form-item">
-                          <label>安装日期</label>
-                          <t-date-picker v-model="waterMeterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                        </div>
-                        <div class="form-item form-item--full">
-                          <label>备注</label>
-                          <t-textarea v-model="waterMeterForm.remark" :maxlength="500" placeholder="选填" />
-                        </div>
-                      </div>
-                      <div class="form-actions">
-                        <t-button variant="outline" size="small" @click="waterMeterFormVisible = false">取消</t-button>
-                        <t-button theme="primary" size="small" :loading="savingWaterMeter" @click="submitWaterMeter">保存</t-button>
-                      </div>
-                    </div>
-                  </template>
-                  <div v-if="!g.meters.length && !(waterMeterFormVisible && !waterMeterForm.id && waterMeterForm._group === g.owner)" class="meter-empty">暂无水表</div>
-                </div>
-              </div>
-            </div>
-          </t-tab-panel>
           <t-tab-panel value="items" label="分摊子项">
             <div class="settings-panel">
               <div class="item-groups">
@@ -852,14 +377,10 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant, deleteBillingTenant,
-  listBillingTimeMeters, createBillingTimeMeter, updateBillingTimeMeter, deleteBillingTimeMeter,
-  getBillingTimeReading, saveBillingTimeReading,
-  listBillingWaterMeters, createBillingWaterMeter, updateBillingWaterMeter, deleteBillingWaterMeter,
-  getBillingWaterReading, saveBillingWaterReading, listBillingWaterReadings,
   saveBillingTenantItems,
   listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
   listKnowledgeBases,
-  listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords,
+  listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
@@ -1008,8 +529,8 @@ const loadAllData = async () => {
       listBillingRecords(tenantId),
       listUtilityMeterRecords({ category: 'electricity' }),
       listUtilityMeterRecords({ category: 'gas' }),
-      listBillingWaterMeters(tenantId),
-      listBillingWaterReadings({}),
+      listUtilityMeters({ category: 'water' }),
+      listUtilityMeterRecords({ category: 'water' }),
     )
     const [billRes, solarRes, recRes, elecRes, gasRes, wmRes, wrRes]: any[] = await Promise.all(tasks)
     utilityBills.value = Array.isArray(billRes?.data || billRes?.list) ? (billRes.data || billRes.list) : []
@@ -1017,15 +538,15 @@ const loadAllData = async () => {
     records.value = recRes?.data || []
     elecRows.value = flattenMeterRecords(elecRes)
     gasRows.value = flattenMeterRecords(gasRes)
-    waterMeters.value = wmRes?.data || []
-    waterReadings.value = wrRes?.data || []
+    waterMeters.value = Array.isArray(wmRes?.data) ? wmRes.data : (Array.isArray(wmRes) ? wmRes : [])
+    waterReadings.value = flattenWaterRecords(wrRes)
     buildRows()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载账单失败')
   }
 }
 
-// 水/气记录展平(与 UtilityMeterTab 一致)
+// 电/气记录展平(与 UtilityMeterTab 一致)
 const flattenMeterRecords = (res: any): any[] => {
   const recData = res?.data || {}
   const records = recData?.records || res?.records || []
@@ -1039,9 +560,39 @@ const flattenMeterRecords = (res: any): any[] => {
         month: rec.month,
         meter_id: it.meter_id,
         meter_kind: meter?.meter_kind || 'dorm',
+        meter_type: meter?.meter_type || '',
         use_unit: meter?.use_unit || (it as any).use_unit || '',
         usage: Number(it.usage) || 0,
         unit_price: Number(it.unit_price ?? meter?.default_unit_price) || 0,
+        amount: Number(it.amount) || 0,
+      })
+    }
+  }
+  return flat
+}
+
+// 水表记录展平(utility 数据源)：读取每个子行(表计/起止/用量/金额)
+const flattenWaterRecords = (res: any): any[] => {
+  const recData = res?.data || {}
+  const records = recData?.records || res?.records || []
+  const mets = Array.isArray(recData?.meters) ? recData.meters : []
+  const meterMap = new Map(mets.map((m: any) => [m.id, m]))
+  const flat: any[] = []
+  for (const rec of records) {
+    for (const it of (rec.items || [])) {
+      const meter = meterMap.get(it.meter_id) as any
+      flat.push({
+        month: rec.month,
+        meter_id: it.meter_id,
+        meter_kind: meter?.meter_kind || 'dorm',
+        meter_type: meter?.meter_type || 'sub',
+        owner_unit: meter?.owner_unit || '',
+        use_unit: meter?.use_unit || '',
+        rate: Number(meter?.rate) > 0 ? Number(meter?.rate) : 1,
+        start_reading: Number(it.start_reading) || 0,
+        end_reading: Number(it.end_reading) || 0,
+        usage: Number(it.usage) || 0,
+        unit_price: Number(it.unit_price) || 0,
         amount: Number(it.amount) || 0,
       })
     }
@@ -1063,29 +614,30 @@ const residentInfoOf = (bill: any) => {
   return { kwh, fee }
 }
 
-// 水表读数按 (meterId, month) 索引
+// 水表读数按 (meterId, month) 索引(utility 子行)
 const waterReadingMap = computed(() => {
   const m = new Map<string, any>()
   waterReadings.value.forEach((r: any) => m.set(`${r.meter_id}__${r.month}`, r))
   return m
 })
 
-// 汇总指定类型水表某月用量/费用；dormOnly=true 仅统计别名含"宿舍"的分表(宿舍用水)
+// 汇总指定层级/归属水表某月用量/费用：
+//   kind: total 总表 | sub 分表 | fire 消防(即 meter_type)
+//   owner: '' 全部 | 使用单位/归属单位匹配
+//   dormOnly: true 仅用途=宿舍；false 仅用途=生产(默认不含宿舍)
 const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
-    m.enabled !== false && m.meter_kind === kind &&
+    m.enabled !== false && (m.meter_type || 'sub') === kind &&
     (owner === '' || m.owner_unit === owner || m.use_unit === owner) &&
-    (dormOnly ? (m.name || '').includes('宿舍') : !(m.name || '').includes('宿舍')),
+    (dormOnly ? m.meter_kind === 'dorm' : m.meter_kind !== 'dorm'),
   )
   let usage = 0
   let fee = 0
   for (const m of meters) {
     const r = waterReadingMap.value.get(`${m.id}__${month}`)
     if (!r) continue
-    const u = Math.max(0, (Number(r.curr) || 0) - (Number(r.prev) || 0)) * (Number(m.rate) || 1)
-    const price = Number(r.price) > 0 ? Number(r.price) : (Number(m.price) || 0)
-    usage += u
-    fee += u * price
+    usage += Number(r.usage) || 0
+    fee += Number(r.amount) || 0
   }
   return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100 }
 }
@@ -1231,10 +783,6 @@ const onRowClick = (row: any) => {
   }
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
-const openEditSelected = () => {
-  const r = selectedRows.value[0]
-  if (r) openReadingDrawer(r.month)
-}
 
 // ---- 浮动工具栏：打印清单 / 打印详情 / 删除 ----
 const catalogBusy = ref(false)
@@ -1321,318 +869,6 @@ const loadDrawerWidth = (key: string, def: string) => {
   } catch { return def }
 }
 
-// ---- 新增记录抽屉（抄表记录：分时/普通电表单表连续录入） ----
-const readingVisible = ref(false)
-const readingWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.reading, '820px'))
-const savingReadings = ref(false)
-const readingMonth = ref('')
-const readingTitle = '新增抄表记录'
-const readingDate = ref('')
-const readingReader = ref('')
-const readingRecordDate = ref('')
-const curForm = ref<Record<string, any>>({ month: '', remark: '' })
-const curIdx = ref(0)
-const curMeterId = ref('')
-// 录入类型:meter 电表 | water 水表
-const readingType = ref<'meter' | 'water'>('meter')
-const periods = [
-  { key: 'deep', label: '尖' },
-  { key: 'peak', label: '峰' },
-  { key: 'flat', label: '平' },
-  { key: 'valley', label: '谷' },
-]
-const tenantName = computed(() => tenants.value.find((t: any) => t.id === activeTenantId.value)?.name || '')
-const enabledMeters = computed(() => allMeters.value.filter((m: any) => m.enabled))
-const readingQueue = computed(() => {
-  const g: Record<string, any[]> = {}
-  enabledMeters.value.forEach((m: any) => {
-    const owner = m.owner_unit || '未分组'
-    ;(g[owner] = g[owner] || []).push(m)
-  })
-  return Object.keys(g).sort((a, b) => (a === '星达铜业' ? -1 : b === '星达铜业' ? 1 : 0))
-    .flatMap(k => g[k])
-})
-const meterEditOptions = computed(() =>
-  readingQueue.value.map((m: any) => ({ label: `${m.owner_unit || ''} · ${m.name}`.replace(/^ · /, ''), value: m.id })),
-)
-const curMeter = computed(() => readingQueue.value.find((m: any) => m.id === curMeterId.value) || null)
-const isTimeMeter = computed(() => {
-  const m = curMeter.value
-  return !!m && (!m.meter_kind || m.meter_kind === 'time')
-})
-const today = new Date().toISOString().slice(0, 10)
-
-// ---- 水表抄表(单起止+单价,连续录入) ----
-const enabledWaterMeters = computed(() => allWaterMeters.value.filter((m: any) => m.enabled))
-const waterReadingQueue = computed(() => {
-  const g: Record<string, any[]> = {}
-  enabledWaterMeters.value.forEach((m: any) => {
-    const owner = m.owner_unit || '未分组'
-    ;(g[owner] = g[owner] || []).push(m)
-  })
-  return Object.keys(g).sort((a, b) => (a === '星达铜业' ? -1 : b === '星达铜业' ? 1 : 0))
-    .flatMap(k => g[k])
-})
-const waterMeterEditOptions = computed(() =>
-  waterReadingQueue.value.map((m: any) => ({ label: `${m.owner_unit || ''} · ${m.name}`.replace(/^ · /, ''), value: m.id })),
-)
-const curWaterIdx = ref(0)
-const curWaterMeterId = ref('')
-const waterForm = ref<{ prev: number; curr: number; price: number }>({ prev: 0, curr: 0, price: 0 })
-const curWaterMeter = computed(() => waterReadingQueue.value.find((m: any) => m.id === curWaterMeterId.value) || null)
-const waterUsage = computed(() => {
-  const m = curWaterMeter.value
-  if (!m) return 0
-  return Math.max(0, (Number(waterForm.value.curr) || 0) - (Number(waterForm.value.prev) || 0)) * (Number(m.rate) || 1)
-})
-const waterAmount = computed(() => Math.round(waterUsage.value * waterPrice.value * 100) / 100)
-const waterPrice = computed(() => {
-  const p = Number(waterForm.value.price)
-  if (p > 0) return p
-  return Number(curWaterMeter.value?.price) || 0
-})
-const loadWaterForm = async (m: any) => {
-  const form = { prev: 0, curr: 0, price: Number(m.price) || 0 }
-  try {
-    const cur: any = await getBillingWaterReading(m.id, readingMonth.value)
-    if (cur.data && Object.keys(cur.data).length) {
-      form.prev = Number(cur.data.prev) || 0
-      form.curr = Number(cur.data.curr) || 0
-      form.price = Number(cur.data.price) || form.price
-    }
-  } catch { /* ignore */ }
-  // 本月无记录,同表上月止度预填起度
-  if (!(form.prev > 0) && !(form.curr > 0)) {
-    try {
-      const prev: any = await getBillingWaterReading(m.id, prevMonthOf(readingMonth.value))
-      if (prev.data && Object.keys(prev.data).length) {
-        form.prev = Number(prev.data.curr) || 0
-      }
-    } catch { /* ignore */ }
-  }
-  readingReader.value = m.manager || ''
-  waterForm.value = form
-}
-const switchWaterTo = async (idx: number) => {
-  const q = waterReadingQueue.value
-  if (!q.length) return
-  const i = Math.max(0, Math.min(idx, q.length - 1))
-  curWaterIdx.value = i
-  curWaterMeterId.value = q[i].id
-  await loadWaterForm(q[i])
-}
-const onWaterMeterChange = async (id: string) => {
-  const q = waterReadingQueue.value
-  const i = q.findIndex((m: any) => m.id === id)
-  if (i >= 0) {
-    curWaterIdx.value = i
-    await loadWaterForm(q[i])
-  }
-}
-const saveWaterAndNext = async () => {
-  const m = curWaterMeter.value
-  if (!readingMonth.value) { MessagePlugin.warning('请选择月份'); return }
-  if (!m) { MessagePlugin.warning('请选择水表'); return }
-  const prev = Number(waterForm.value.prev) || 0
-  const curr = Number(waterForm.value.curr) || 0
-  if (curr < prev) { MessagePlugin.warning(`${m.name} 止度不得小于起度`); return }
-  savingReadings.value = true
-  try {
-    await saveBillingWaterReading(m.id, { month: readingMonth.value, prev, curr, price: waterPrice.value })
-    const q = waterReadingQueue.value
-    if (curWaterIdx.value + 1 < q.length) {
-      await switchWaterTo(curWaterIdx.value + 1)
-      return
-    }
-    MessagePlugin.success('读数已保存')
-    readingVisible.value = false
-    await loadAllData()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingReadings.value = false
-  }
-}
-
-const prevMonthOf = (month: string): string => {
-  const [y, mo] = month.split('-').map(Number)
-  return `${mo === 1 ? y - 1 : y}-${String(mo === 1 ? 12 : mo - 1).padStart(2, '0')}`
-}
-
-const openReadingDrawer = async (month: string, type: 'meter' | 'water' = 'meter') => {
-  if (!activeTenantId.value) {
-    MessagePlugin.warning('请先选择租户')
-    return
-  }
-  readingType.value = type
-  readingMonth.value = month || currentMonth()
-  readingDate.value = today
-  readingRecordDate.value = today
-  readingVisible.value = true
-  await loadMetersForReading()
-  if (type === 'water') {
-    await switchWaterTo(0)
-  } else {
-    await switchMeterTo(0)
-  }
-}
-
-const currentMonth = (): string => {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
-
-const loadMetersForReading = async () => {
-  try {
-    const res: any = await getBillingTenant(activeTenantId.value)
-    allMeters.value = res.data?.meters || []
-    allWaterMeters.value = res.data?.water_meters || []
-  } catch { /* ignore */ }
-}
-
-const loadMeterForm = async (m: any) => {
-  const form: Record<string, any> = { remark: '' }
-  if (m.meter_kind && m.meter_kind !== 'time') {
-    // 普通电表:单起止(复用 deep 字段)
-    form.deep_prev = 0
-    form.deep_curr = 0
-  } else {
-    periods.forEach(p => {
-      form[p.key + '_prev'] = 0
-      form[p.key + '_curr'] = 0
-    })
-  }
-  // 本月已有读数（编辑场景）
-  try {
-    const cur: any = await getBillingTimeReading(m.id, readingMonth.value)
-    if (cur.data && Object.keys(cur.data).length) {
-      if (m.meter_kind && m.meter_kind !== 'time') {
-        form.deep_prev = Number(cur.data.deep_prev) || 0
-        form.deep_curr = Number(cur.data.deep_curr) || 0
-      } else {
-        periods.forEach(p => {
-          form[p.key + '_prev'] = Number(cur.data[p.key + '_prev']) || 0
-          form[p.key + '_curr'] = Number(cur.data[p.key + '_curr']) || 0
-        })
-      }
-      form.remark = cur.data.remark || ''
-    }
-  } catch { /* ignore */ }
-  // 本月无记录时，用上月止度预填起度
-  const hasPrev = m.meter_kind && m.meter_kind !== 'time'
-    ? form.deep_prev > 0
-    : !!(form.deep_prev || form.peak_prev || form.flat_prev || form.valley_prev)
-  if (!hasPrev) {
-    try {
-      const prev: any = await getBillingTimeReading(m.id, prevMonthOf(readingMonth.value))
-      if (prev.data && Object.keys(prev.data).length) {
-        if (m.meter_kind && m.meter_kind !== 'time') {
-          form.deep_prev = Number(prev.data.deep_curr) || 0
-        } else {
-          periods.forEach(p => {
-            form[p.key + '_prev'] = Number(prev.data[p.key + '_curr']) || 0
-          })
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  readingReader.value = m.manager || ''
-  curForm.value = form
-}
-
-const switchMeterTo = async (idx: number) => {
-  const q = readingQueue.value
-  if (!q.length) return
-  const i = Math.max(0, Math.min(idx, q.length - 1))
-  curIdx.value = i
-  curMeterId.value = q[i].id
-  await loadMeterForm(q[i])
-}
-
-const onMeterChange = async (id: string) => {
-  const q = readingQueue.value
-  const i = q.findIndex((m: any) => m.id === id)
-  if (i >= 0) {
-    curIdx.value = i
-    await loadMeterForm(q[i])
-  }
-}
-
-const curPeriodKwh = (p: string): number => {
-  const m = curMeter.value
-  const f = curForm.value
-  if (!m || !f) return 0
-  return Math.max(0, (Number(f[p + '_curr']) || 0) - (Number(f[p + '_prev']) || 0)) * (m.rate || 1)
-}
-const curTotalKwh = computed(() => periods.reduce((s, p) => s + curPeriodKwh(p.key), 0))
-const setCurVal = (key: string, v: string) => {
-  curForm.value[key] = Number(v) || 0
-}
-const rdCurInvalid = (p: string): boolean => {
-  const f = curForm.value
-  if (!f) return false
-  const prev = Number(f[p + '_prev']) || 0
-  const curr = Number(f[p + '_curr']) || 0
-  return curr > 0 && prev > 0 && curr < prev
-}
-
-const saveCurrentAndNext = async () => {
-  const m = curMeter.value
-  if (!readingMonth.value) {
-    MessagePlugin.warning('请选择月份')
-    return
-  }
-  if (!m) {
-    MessagePlugin.warning('请选择电表')
-    return
-  }
-  // 止度不得小于起度
-  const checkKeys = m.meter_kind && m.meter_kind !== 'time' ? ['deep'] : periods.map((p: any) => p.key)
-  for (const k of checkKeys) {
-    const prev = Number(curForm.value[k + '_prev']) || 0
-    const curr = Number(curForm.value[k + '_curr']) || 0
-    if (curr < prev) {
-      MessagePlugin.warning(`${m.name} ${k === 'deep' ? '' : periods.find((p: any) => p.key === k)?.label + ' '}止度不得小于起度`)
-      return
-    }
-  }
-  savingReadings.value = true
-  try {
-    const { remark, ...reads } = curForm.value
-    // 普通电表只保留单起止(deep),其余时段清零
-    const payload = { month: readingMonth.value, ...reads, remark: remark || '' }
-    if (m.meter_kind && m.meter_kind !== 'time') {
-      payload.peak_prev = 0; payload.peak_curr = 0
-      payload.flat_prev = 0; payload.flat_curr = 0
-      payload.valley_prev = 0; payload.valley_curr = 0
-    }
-    await saveBillingTimeReading(m.id, payload)
-    const q = readingQueue.value
-    const hasNext = curIdx.value + 1 < q.length
-    if (hasNext) {
-      await switchMeterTo(curIdx.value + 1)
-      return
-    }
-    // 全部表已保存，有分时表则生成当月账单
-    const hasTimeMeter = enabledMeters.value.some((x: any) => !x.meter_kind || x.meter_kind === 'time')
-    MessagePlugin.success('读数已保存')
-    if (hasTimeMeter) {
-      try {
-        await generateBillingRecord(activeTenantId.value, { month: readingMonth.value })
-        MessagePlugin.success('账单已生成')
-      } catch (e: any) {
-        MessagePlugin.warning(e?.message || '账单生成失败，请检查分表读数与市电账单')
-      }
-    }
-    readingVisible.value = false
-    await loadRecords()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingReadings.value = false
-  }
-}
-
 // ---- 设置抽屉 ----
 const settingsVisible = ref(false)
 const settingsWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.settings, '860px'))
@@ -1641,7 +877,6 @@ const detail = ref<any>(null)
 const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
 
 const allocationOptions = [{ label: '按比例分摊', value: '按比例分摊' }]
-const meterKindOptions = [{ label: '分时', value: 'time' }, { label: '普通', value: 'normal' }]
 
 const openSettings = async () => {
   if (!activeTenantId.value) {
@@ -1651,7 +886,6 @@ const openSettings = async () => {
   settingsVisible.value = true
   settingsTab.value = 'tenant'
   tenantFormVisible.value = false
-  meterFormVisible.value = false
   await loadDetail()
 }
 
@@ -1661,8 +895,6 @@ const loadDetail = async () => {
     const res: any = await getBillingTenant(activeTenantId.value)
     detail.value = res.data
     const d = res.data
-    allMeters.value = d.meters || []
-    allWaterMeters.value = d.water_meters || []
     itemsForm.value = (d.items || []).map((it: any) => ({
       category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
     }))
@@ -1776,185 +1008,6 @@ const saveItems = async () => {
 }
 
 // ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
-const meterFormVisible = ref(false)
-const savingMeter = ref(false)
-const allMeters = ref<any[]>([])
-const meterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter_kind: 'time', owner_unit: '', use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '' })
-
-const emptyMeterForm = (ownerUnit: string) => ({
-  id: '', name: '', meter_no: '', rate: 1, meter_kind: 'time', owner_unit: ownerUnit || '',
-  use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '',
-  _group: ownerUnit || '',
-})
-const meterGroups = computed(() => {
-  const g: Record<string, any[]> = {}
-  allMeters.value.forEach((m: any) => {
-    const owner = m.owner_unit || '未分组'
-    ;(g[owner] = g[owner] || []).push(m)
-  })
-  return Object.entries(g).map(([owner, meters]) => ({ owner, meters }))
-})
-const openAddMeter = (ownerUnit: string) => {
-  meterForm.value = emptyMeterForm(ownerUnit)
-  meterFormVisible.value = true
-}
-const openEditMeter = (m: any) => {
-  meterForm.value = {
-    id: m.id, name: m.name || '', meter_no: m.meter_no || '',
-    rate: Number(m.rate) || 1, meter_kind: m.meter_kind === 'normal' ? 'normal' : 'time',
-    owner_unit: m.owner_unit || '', use_unit: m.use_unit || '',
-    manager: m.manager || '', contact: m.contact || '',
-    meter_mode: m.meter_mode === 'auto' ? 'auto' : 'manual',
-    install_date: m.install_date || '', remark: m.remark || '',
-  }
-  meterFormVisible.value = true
-}
-const submitMeter = async () => {
-  if (!meterForm.value.name.trim()) {
-    MessagePlugin.warning('请输入别名')
-    return
-  }
-  savingMeter.value = true
-  try {
-    const payload: Record<string, unknown> = {
-      name: meterForm.value.name.trim(),
-      meter_no: meterForm.value.meter_no,
-      meter_kind: meterForm.value.meter_kind || 'time',
-      owner_unit: meterForm.value.owner_unit,
-      use_unit: meterForm.value.use_unit,
-      manager: meterForm.value.manager,
-      contact: meterForm.value.contact,
-      meter_mode: meterForm.value.meter_mode || 'manual',
-      install_date: meterForm.value.install_date || null,
-      remark: meterForm.value.remark,
-      rate: Number(meterForm.value.rate) || 1,
-    }
-    if (meterForm.value.id) {
-      await updateBillingTimeMeter(meterForm.value.id, payload)
-    } else {
-      await createBillingTimeMeter(activeTenantId.value, payload)
-    }
-    meterFormVisible.value = false
-    MessagePlugin.success('已保存')
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingMeter.value = false
-  }
-}
-const toggleMeter = async (m: any, v: boolean) => {
-  try {
-    await updateBillingTimeMeter(m.id, { enabled: v })
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '操作失败')
-  }
-}
-const removeMeter = async (m: any) => {
-  try {
-    await deleteBillingTimeMeter(m.id)
-    MessagePlugin.success('已删除')
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
-}
-
-// ---- 水表 CRUD(复刻电表:按归属单位分组 + 内联表单 + 默认单价) ----
-const waterMeterFormVisible = ref(false)
-const savingWaterMeter = ref(false)
-const allWaterMeters = ref<any[]>([])
-const waterMeterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter_kind: 'total', owner_unit: '', use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '', price: 0 })
-
-const emptyWaterMeterForm = (ownerUnit: string) => ({
-  id: '', name: '', meter_no: '', rate: 1, meter_kind: 'total', owner_unit: ownerUnit || '',
-  use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '', price: 0,
-  _group: ownerUnit || '',
-})
-const waterMeterKindOptions = [
-  { label: '总表', value: 'total' },
-  { label: '分表', value: 'sub' },
-  { label: '消防', value: 'fire' },
-]
-const waterMeterKindLabel = (k: string) => waterMeterKindOptions.find(o => o.value === k)?.label || k
-const waterMeterGroups = computed(() => {
-  const g: Record<string, any[]> = {}
-  allWaterMeters.value.forEach((m: any) => {
-    const owner = m.owner_unit || '未分组'
-    ;(g[owner] = g[owner] || []).push(m)
-  })
-  return Object.entries(g).map(([owner, meters]) => ({ owner, meters }))
-})
-const openAddWaterMeter = (ownerUnit: string) => {
-  waterMeterForm.value = emptyWaterMeterForm(ownerUnit)
-  waterMeterFormVisible.value = true
-}
-const openEditWaterMeter = (m: any) => {
-  waterMeterForm.value = {
-    id: m.id, name: m.name || '', meter_no: m.meter_no || '',
-    rate: Number(m.rate) || 1, meter_kind: m.meter_kind || 'total',
-    owner_unit: m.owner_unit || '', use_unit: m.use_unit || '',
-    manager: m.manager || '', contact: m.contact || '',
-    meter_mode: m.meter_mode === 'auto' ? 'auto' : 'manual',
-    install_date: m.install_date || '', remark: m.remark || '',
-    price: Number(m.price) || 0,
-  }
-  waterMeterFormVisible.value = true
-}
-const submitWaterMeter = async () => {
-  if (!waterMeterForm.value.name.trim()) {
-    MessagePlugin.warning('请输入别名')
-    return
-  }
-  savingWaterMeter.value = true
-  try {
-    const payload: Record<string, unknown> = {
-      name: waterMeterForm.value.name.trim(),
-      meter_no: waterMeterForm.value.meter_no,
-      meter_kind: waterMeterForm.value.meter_kind || 'total',
-      owner_unit: waterMeterForm.value.owner_unit,
-      use_unit: waterMeterForm.value.use_unit,
-      manager: waterMeterForm.value.manager,
-      contact: waterMeterForm.value.contact,
-      meter_mode: waterMeterForm.value.meter_mode || 'manual',
-      install_date: waterMeterForm.value.install_date || null,
-      remark: waterMeterForm.value.remark,
-      rate: Number(waterMeterForm.value.rate) || 1,
-      price: Number(waterMeterForm.value.price) || 0,
-    }
-    if (waterMeterForm.value.id) {
-      await updateBillingWaterMeter(waterMeterForm.value.id, payload)
-    } else {
-      await createBillingWaterMeter(activeTenantId.value, payload)
-    }
-    waterMeterFormVisible.value = false
-    MessagePlugin.success('已保存')
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingWaterMeter.value = false
-  }
-}
-const toggleWaterMeter = async (m: any, v: boolean) => {
-  try {
-    await updateBillingWaterMeter(m.id, { enabled: v })
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '操作失败')
-  }
-}
-const removeWaterMeter = async (m: any) => {
-  try {
-    await deleteBillingWaterMeter(m.id)
-    MessagePlugin.success('已删除')
-    await loadDetail()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
-}
-
 // ---- 账单详情与打印 ----
 const recordVisible = ref(false)
 const recordWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.record, '760px'))
@@ -2033,7 +1086,6 @@ const onResize = (e: MouseEvent, widthRef: { value: string }, storageKey: string
   document.addEventListener('mousemove', move)
   document.addEventListener('mouseup', up)
 }
-const onReadingResizeStart = (e: MouseEvent) => onResize(e, readingWidth, DRAWER_W_KEYS.reading)
 const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAWER_W_KEYS.settings)
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 

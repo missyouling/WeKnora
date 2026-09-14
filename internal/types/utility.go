@@ -57,13 +57,22 @@ type UtilityMeterItem struct {
 	Rate         float64   `gorm:"numeric(12,4)" json:"rate"`
 	StartReading float64   `gorm:"numeric(18,2)" json:"start_reading"`
 	EndReading   float64   `gorm:"numeric(18,2)" json:"end_reading"`
-	UnitPrice    float64   `gorm:"numeric(18,2)" json:"unit_price"`
-	Subsidy      float64   `gorm:"numeric(18,2)" json:"subsidy"` // 补差金额，可正负，计入 amount
-	Usage        float64   `gorm:"numeric(18,2)" json:"usage"`
-	Amount       float64   `gorm:"numeric(18,2)" json:"amount"`
-	Remark       string    `gorm:"type:text" json:"remark"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	// 分时四时段起止读数（仅 meter_type=time 电表使用；普通表计用 Start/End）
+	DeepPrev    float64 `gorm:"numeric(18,2)" json:"deep_prev"`
+	DeepCurr    float64 `gorm:"numeric(18,2)" json:"deep_curr"`
+	PeakPrev    float64 `gorm:"numeric(18,2)" json:"peak_prev"`
+	PeakCurr    float64 `gorm:"numeric(18,2)" json:"peak_curr"`
+	FlatPrev    float64 `gorm:"numeric(18,2)" json:"flat_prev"`
+	FlatCurr    float64 `gorm:"numeric(18,2)" json:"flat_curr"`
+	ValleyPrev  float64 `gorm:"numeric(18,2)" json:"valley_prev"`
+	ValleyCurr  float64 `gorm:"numeric(18,2)" json:"valley_curr"`
+	UnitPrice   float64   `gorm:"numeric(18,2)" json:"unit_price"`
+	Subsidy     float64   `gorm:"numeric(18,2)" json:"subsidy"` // 补差金额，可正负，计入 amount
+	Usage       float64   `gorm:"numeric(18,2)" json:"usage"`
+	Amount      float64   `gorm:"numeric(18,2)" json:"amount"`
+	Remark      string    `gorm:"type:text" json:"remark"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func (UtilityMeterItem) TableName() string { return "utility_meter_items" }
@@ -73,10 +82,12 @@ func (UtilityMeterItem) TableName() string { return "utility_meter_items" }
 type UtilityMeter struct {
 	ID               string     `gorm:"primaryKey" json:"id"`
 	TenantID         int64      `gorm:"index" json:"tenant_id"`
-	Category         string     `gorm:"index" json:"category"` // water | gas
+	Category         string     `gorm:"index" json:"category"` // water | gas | electricity
 	Alias            string     `json:"alias"`
 	MeterNo          string     `json:"meter_no"`
-	MeterKind        string     `json:"meter_kind"` // dorm=宿舍 | production=生产(非宿舍)
+	MeterType        string     `json:"meter_type"` // 计量层级: 电表 normal|time; 水表 total|sub|fire; 气表 normal
+	MeterKind        string     `json:"meter_kind"` // 用途: dorm=宿舍 | production=生产(非宿舍)
+	OwnerUnit        string     `json:"owner_unit"` // 归属单位(分组)
 	Rate             float64    `gorm:"numeric(12,4)" json:"rate"`
 	DefaultUnitPrice float64    `gorm:"numeric(18,4)" json:"default_unit_price"`
 	UseUnit          string     `json:"use_unit"`

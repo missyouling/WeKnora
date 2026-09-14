@@ -1280,18 +1280,43 @@ func round6(v float64) float64 {
 func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName, month string) (periodMap, periodMap, error) {
 	star := make(periodMap, 4)
 	sub := make(periodMap, 4)
-	baseOwner := strings.TrimSpace(tenantName) // 兼容:旧数据 star 归属星达铜业
-	var meters []types.BillingTimeMeter
-	if err := h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL AND enabled = ?", tenantID, true).
+	baseOwner := strings.TrimSpace(tenantName)
+	// 分时电表统一从 utility_meters(category=electricity, meter_type=time) 读取
+	var meters []types.UtilityMeter
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND meter_type = ? AND deleted_at IS NULL AND enabled = ?", "electricity", "time", true).
 		Find(&meters).Error; err != nil {
 		return nil, nil, err
 	}
-		for _, m := range meters {
-		if m.MeterKind != "" && m.MeterKind != "time" {
-			continue // 普通电表不参与分时核算
+	if len(meters) == 0 {
+		return star, sub, nil
+	}
+	meterByID := make(map[string]types.UtilityMeter, len(meters))
+	for _, m := range meters {
+		meterByID[m.ID] = m
+	}
+	// 当月电费记录 → 分时子行
+	var recs []types.UtilityMeterRecord
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND month = ? AND deleted_at IS NULL", "electricity", month).
+		Find(&recs).Error; err != nil {
+		return nil, nil, err
+	}
+	itemByMeter := make(map[string]types.UtilityMeterItem, len(meterByID))
+	for i := range recs {
+		var items []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", recs[i].ID).Find(&items).Error; err != nil {
+			continue
 		}
-		var r types.BillingTimeReading
-		if err := h.db.WithContext(ctx).Where("meter_id = ? AND month = ?", m.ID, month).First(&r).Error; err != nil {
+		for _, it := range items {
+			if _, ok := meterByID[it.MeterID]; ok {
+				itemByMeter[it.MeterID] = it
+			}
+		}
+	}
+	for id, m := range meterByID {
+		r, ok := itemByMeter[id]
+		if !ok {
 			continue
 		}
 		rate := m.Rate
@@ -1304,7 +1329,7 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 		vl := round2((r.ValleyCurr - r.ValleyPrev) * rate)
 		owner := strings.TrimSpace(m.OwnerUnit)
 		switch {
-		case owner == "星达铜业":
+		case owner == "星达铜业" || owner == "重庆星达" || (owner == "" && (strings.Contains(m.Alias, "星达") || strings.Contains(m.UseUnit, "星达"))):
 			star["deep"] += dp
 			star["peak"] += pk
 			star["flat"] += fl
@@ -1314,11 +1339,6 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 			sub["peak"] += pk
 			sub["flat"] += fl
 			sub["valley"] += vl
-		case owner == "" && m.MeterType == "star":
-			star["deep"] += dp
-			star["peak"] += pk
-			star["flat"] += fl
-			star["valley"] += vl
 		case owner == "":
 			sub["deep"] += dp
 			sub["peak"] += pk

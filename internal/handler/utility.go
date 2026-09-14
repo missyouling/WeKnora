@@ -729,6 +729,7 @@ func (h *UtilityHandler) CreateUtilityMeter(c *gin.Context) {
 	if req.MeterKind != "production" {
 		req.MeterKind = "dorm"
 	}
+	req.MeterType = normalizeMeterType(req.Category, req.MeterType)
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
 	req.TenantID = int64(tenantID)
@@ -769,6 +770,7 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 	if req.MeterKind != "production" {
 		req.MeterKind = "dorm"
 	}
+	req.MeterType = normalizeMeterType(req.Category, req.MeterType)
 	var cnt int64
 	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
@@ -787,7 +789,9 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 		Updates(map[string]interface{}{
 			"alias":              req.Alias,
 			"meter_no":           req.MeterNo,
+			"meter_type":         req.MeterType,
 			"meter_kind":         req.MeterKind,
+			"owner_unit":         req.OwnerUnit,
 			"rate":               req.Rate,
 			"default_unit_price": req.DefaultUnitPrice,
 			"use_unit":           req.UseUnit,
@@ -1030,12 +1034,42 @@ func timeNowUTC() time.Time {
 }
 
 // computeMeterItem calculates usage = end - start, amount = usage * unit price + subsidy.
+// 分时电表(四时段字段任一非零)按四时段合计计算用量。
 func computeMeterItem(it *types.UtilityMeterItem, rate float64) {
 	if rate <= 0 {
 		rate = 1
 	}
-	it.Usage = round2((it.EndReading - it.StartReading) * rate)
+	if it.DeepCurr != 0 || it.DeepPrev != 0 || it.PeakCurr != 0 || it.PeakPrev != 0 ||
+		it.FlatCurr != 0 || it.FlatPrev != 0 || it.ValleyCurr != 0 || it.ValleyPrev != 0 {
+		d := (it.DeepCurr - it.DeepPrev) + (it.PeakCurr - it.PeakPrev) +
+			(it.FlatCurr - it.FlatPrev) + (it.ValleyCurr - it.ValleyPrev)
+		it.Usage = round2(d * rate)
+	} else {
+		it.Usage = round2((it.EndReading - it.StartReading) * rate)
+	}
 	it.Amount = round2(it.Usage*it.UnitPrice + it.Subsidy)
+}
+
+// normalizeMeterType 按类别归一化计量层级: 电表 normal|time(默认 normal), 水表 total|sub|fire(默认 sub), 气表 normal。
+func normalizeMeterType(category, t string) string {
+	t = strings.TrimSpace(t)
+	switch category {
+	case "electricity":
+		if t == "time" {
+			return "time"
+		}
+		return "normal"
+	case "water":
+		if t == "total" {
+			return "total"
+		}
+		if t == "fire" {
+			return "fire"
+		}
+		return "sub"
+	default: // gas
+		return "normal"
+	}
 }
 
 // loadMeterRates 返回该分类下所有表计配置 id→倍率 映射，供记录子行计算用量。
