@@ -726,6 +726,9 @@ func (h *UtilityHandler) CreateUtilityMeter(c *gin.Context) {
 	if req.MeterMode == "" {
 		req.MeterMode = "manual"
 	}
+	if req.MeterKind != "production" {
+		req.MeterKind = "dorm"
+	}
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
 	req.TenantID = int64(tenantID)
@@ -763,6 +766,9 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 	if req.MeterMode == "" {
 		req.MeterMode = "manual"
 	}
+	if req.MeterKind != "production" {
+		req.MeterKind = "dorm"
+	}
 	var cnt int64
 	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
@@ -781,6 +787,7 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 		Updates(map[string]interface{}{
 			"alias":              req.Alias,
 			"meter_no":           req.MeterNo,
+			"meter_kind":         req.MeterKind,
 			"rate":               req.Rate,
 			"default_unit_price": req.DefaultUnitPrice,
 			"use_unit":           req.UseUnit,

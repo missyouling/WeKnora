@@ -430,7 +430,7 @@
                 </div>
                 <div class="meter-grid">
                   <!-- 新增表计：表单展开在分组顶部 -->
-                  <div v-if="meterFormVisible && !meterForm.id && meterForm.owner_unit === g.owner" class="meter-form">
+                  <div v-if="meterFormVisible && !meterForm.id && meterForm._group === g.owner" class="meter-form">
                     <div class="meter-form-title">新增电表</div>
                     <div class="form-grid">
                       <div class="form-item">
@@ -569,7 +569,7 @@
                       </div>
                     </div>
                   </template>
-                  <div v-if="!g.meters.length && !(meterFormVisible && !meterForm.id && meterForm.owner_unit === g.owner)" class="meter-empty">暂无电表</div>
+                  <div v-if="!g.meters.length && !(meterFormVisible && !meterForm.id && meterForm._group === g.owner)" class="meter-empty">暂无电表</div>
                 </div>
               </div>
             </div>
@@ -584,7 +584,7 @@
                   </t-button>
                 </div>
                 <div class="meter-grid">
-                  <div v-if="waterMeterFormVisible && !waterMeterForm.id && waterMeterForm.owner_unit === g.owner" class="meter-form">
+                  <div v-if="waterMeterFormVisible && !waterMeterForm.id && waterMeterForm._group === g.owner" class="meter-form">
                     <div class="meter-form-title">新增水表</div>
                     <div class="form-grid">
                       <div class="form-item">
@@ -731,7 +731,7 @@
                       </div>
                     </div>
                   </template>
-                  <div v-if="!g.meters.length && !(waterMeterFormVisible && !waterMeterForm.id && waterMeterForm.owner_unit === g.owner)" class="meter-empty">暂无水表</div>
+                  <div v-if="!g.meters.length && !(waterMeterFormVisible && !waterMeterForm.id && waterMeterForm._group === g.owner)" class="meter-empty">暂无水表</div>
                 </div>
               </div>
             </div>
@@ -1038,6 +1038,7 @@ const flattenMeterRecords = (res: any): any[] => {
       flat.push({
         month: rec.month,
         meter_id: it.meter_id,
+        meter_kind: meter?.meter_kind || 'dorm',
         use_unit: meter?.use_unit || (it as any).use_unit || '',
         usage: Number(it.usage) || 0,
         unit_price: Number(it.unit_price ?? meter?.default_unit_price) || 0,
@@ -1112,8 +1113,8 @@ const buildRows = () => {
     const bill = billByMonth.get(month)
     const rec = recByMonth.get(month)
     const solarArr = solarByMonth.get(month) || []
-    // 宿舍电表(utility 电费页表,按使用单位)
-    const elecOf = (unit: string) => elecRows.value.filter(r => r.month === month && r.use_unit === unit)
+    // 宿舍电表(utility 电费页表,按使用单位+表类型宿舍)
+    const elecOf = (unit: string) => elecRows.value.filter(r => r.month === month && r.use_unit === unit && r.meter_kind === 'dorm')
     const dormOf = (unit: string) => {
       const arr = elecOf(unit)
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
@@ -1783,6 +1784,7 @@ const meterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter_kind
 const emptyMeterForm = (ownerUnit: string) => ({
   id: '', name: '', meter_no: '', rate: 1, meter_kind: 'time', owner_unit: ownerUnit || '',
   use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '',
+  _group: ownerUnit || '',
 })
 const meterGroups = computed(() => {
   const g: Record<string, any[]> = {}
@@ -1868,6 +1870,7 @@ const waterMeterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter
 const emptyWaterMeterForm = (ownerUnit: string) => ({
   id: '', name: '', meter_no: '', rate: 1, meter_kind: 'total', owner_unit: ownerUnit || '',
   use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '', price: 0,
+  _group: ownerUnit || '',
 })
 const waterMeterKindOptions = [
   { label: '总表', value: 'total' },

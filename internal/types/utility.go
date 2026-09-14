@@ -76,6 +76,7 @@ type UtilityMeter struct {
 	Category         string     `gorm:"index" json:"category"` // water | gas
 	Alias            string     `json:"alias"`
 	MeterNo          string     `json:"meter_no"`
+	MeterKind        string     `json:"meter_kind"` // dorm=宿舍 | production=生产(非宿舍)
 	Rate             float64    `gorm:"numeric(12,4)" json:"rate"`
 	DefaultUnitPrice float64    `gorm:"numeric(18,4)" json:"default_unit_price"`
 	UseUnit          string     `json:"use_unit"`

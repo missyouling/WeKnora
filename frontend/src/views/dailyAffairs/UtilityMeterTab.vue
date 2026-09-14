@@ -267,6 +267,10 @@
                   <t-input v-model="meterForm.meter_no" placeholder="选填" />
                 </div>
                 <div class="form-item">
+                  <label>表类型</label>
+                  <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                </div>
+                <div class="form-item">
                   <label>倍率</label>
                   <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
                 </div>
@@ -332,6 +336,7 @@
                 </div>
                 <div class="meter-card-grid">
                   <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
+                  <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ meterKindLabel(m.meter_kind) }}</span></div>
                   <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
                   <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
                 </div>
@@ -347,6 +352,10 @@
                   <div class="form-item">
                     <label>表号</label>
                     <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                  </div>
+                  <div class="form-item">
+                    <label>表类型</label>
+                    <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
                   </div>
                   <div class="form-item">
                     <label>倍率</label>
@@ -1031,6 +1040,11 @@ const settingsVisible = ref(false)
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
+const meterKindOptions = [
+  { label: '宿舍', value: 'dorm' },
+  { label: '生产', value: 'production' },
+]
+const meterKindLabel = (k: string) => meterKindOptions.find(o => o.value === k)?.label || '宿舍'
 const meterAliasInput = ref()
 const settingsWidth = ref<string>(loadSettingsWidth())
 function loadSettingsWidth(): string {
@@ -1058,6 +1072,7 @@ const openMeterForm = (m: any) => {
     id: m.id,
     alias: m.alias || '',
     meter_no: m.meter_no || '',
+    meter_kind: m.meter_kind || 'dorm',
     rate: Number(m.rate) > 0 ? m.rate : 1,
     default_unit_price: Number(m.default_unit_price) || 0,
     use_unit: m.use_unit || '',
@@ -1068,7 +1083,7 @@ const openMeterForm = (m: any) => {
     remark: m.remark || '',
     enabled: m.enabled !== false,
   } : {
-    id: '', alias: '', meter_no: nextMeterNo(), rate: 1, default_unit_price: 0,
+    id: '', alias: '', meter_no: nextMeterNo(), meter_kind: 'dorm', rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
@@ -1087,6 +1102,7 @@ const saveMeter = async () => {
       category: props.category,
       alias: meterForm.value.alias.trim(),
       meter_no: meterForm.value.meter_no || '',
+      meter_kind: meterForm.value.meter_kind || 'dorm',
       rate: Number(meterForm.value.rate) > 0 ? Number(meterForm.value.rate) : 1,
       default_unit_price: Number(meterForm.value.default_unit_price) || 0,
       use_unit: meterForm.value.use_unit || '',
@@ -1115,6 +1131,7 @@ const saveMeter = async () => {
         id: '',
         alias: '',
         meter_no: nextMeterNo(),
+        meter_kind: 'dorm',
         rate: '',
         default_unit_price: '',
         use_unit: '',
