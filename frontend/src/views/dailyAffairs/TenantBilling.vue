@@ -104,6 +104,15 @@
             <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">清除</t-button>
           </div>
           <div class="batch-bar-actions">
+            <t-popconfirm theme="warning"
+              :content="`确定生成所选 ${generatableRows.length} 个月度账单吗？同月已存在账单将重新计算覆盖`"
+              :confirm-btn="{ content: '生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }" placement="top"
+              @confirm="handleGenerate">
+              <t-button theme="primary" variant="outline" size="small" :disabled="!generatableRows.length" :loading="generateBusy" @click.stop>
+                <template #icon><t-icon name="refresh" size="14px" /></template>
+                生成账单
+              </t-button>
+            </t-popconfirm>
             <t-dropdown @click="onPrintMenu">
               <t-button theme="default" variant="outline" size="small" :loading="catalogBusy">
                 <template #icon><t-icon name="print" size="14px" /></template>
@@ -698,7 +707,7 @@ const buildRows = () => {
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
     }
     const gasOf = () => gasRows.value.filter(r => r.month === month)
-    const base: Record<string, any> = { id: `row-${month}`, month, unit: useUnit.value }
+    const base: Record<string, any> = { id: `row-${month}`, month, unit: useUnit.value, hasRec: !!rec }
 
     if (isOwnerView.value) {
       // ===== 星达(房东)视图 =====
@@ -817,6 +826,28 @@ const onRowClick = (row: any) => {
   }
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
+
+// ---- 生成月度账单（仅租户视图、所选行当月无账单记录） ----
+const generateBusy = ref(false)
+const generatableRows = computed(() => {
+  if (isOwnerView.value) return []
+  return selectedRows.value.filter((r: any) => !r.hasRec)
+})
+const handleGenerate = async () => {
+  if (!activeTenantId.value || !generatableRows.value.length) return
+  generateBusy.value = true
+  try {
+    for (const row of generatableRows.value) {
+      await generateBillingRecord(activeTenantId.value, { month: row.month })
+    }
+    MessagePlugin.success(`已生成 ${generatableRows.value.length} 个月度账单`)
+    await loadAllData()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '生成账单失败')
+  } finally {
+    generateBusy.value = false
+  }
+}
 
 // ---- 浮动工具栏：打印清单 / 打印详情 / 删除 ----
 const catalogBusy = ref(false)
