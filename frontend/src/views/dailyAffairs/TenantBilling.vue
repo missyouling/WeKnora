@@ -171,7 +171,7 @@
             </div>
           </div>
 
-          <div class="period-grid">
+          <div v-if="isTimeMeter" class="period-grid">
             <div v-for="p in periods" :key="p.key" class="period-row" :class="{ 'row-invalid': rdCurInvalid(p.key) }">
               <span class="period-label">{{ p.label }}</span>
               <t-input class="period-input" :model-value="curForm[p.key + '_prev']" type="number" size="small"
@@ -182,6 +182,19 @@
                 placeholder="止度" :status="rdCurInvalid(p.key) ? 'error' : ''"
                 @update:model-value="(v: string) => setCurVal(p.key + '_curr', v)" />
               <span class="period-kwh">{{ fmtKwh(curPeriodKwh(p.key)) }} 千瓦时</span>
+            </div>
+          </div>
+          <div v-else class="period-grid">
+            <div class="period-row" :class="{ 'row-invalid': rdCurInvalid('deep') }">
+              <span class="period-label">读数</span>
+              <t-input class="period-input" :model-value="curForm['deep_prev']" type="number" size="small"
+                placeholder="起度" :status="rdCurInvalid('deep') ? 'error' : ''"
+                @update:model-value="(v: string) => setCurVal('deep_prev', v)" />
+              <span class="rr-sep">~</span>
+              <t-input class="period-input" :model-value="curForm['deep_curr']" type="number" size="small"
+                placeholder="止度" :status="rdCurInvalid('deep') ? 'error' : ''"
+                @update:model-value="(v: string) => setCurVal('deep_curr', v)" />
+              <span class="period-kwh">{{ fmtKwh(curPeriodKwh('deep')) }} 千瓦时</span>
             </div>
           </div>
 
@@ -811,16 +824,12 @@ const handleDelete = async () => {
   }
 }
 
-// ---- 新增记录抽屉（分时读数：单表连续录入） ----
+// ---- 新增记录抽屉（抄表记录：分时/普通电表单表连续录入） ----
 const readingVisible = ref(false)
 const readingWidth = ref('820px')
 const savingReadings = ref(false)
 const readingMonth = ref('')
-const readingTitle = computed(() => {
-  if (!readingMonth.value) return '新增记录'
-  const total = readingQueue.value.length
-  return `${readingMonth.value} 分时读数${total ? `（${curIdx.value + 1}/${total}）` : ''}`
-})
+const readingTitle = '新增抄表记录'
 const readingDate = ref('')
 const readingReader = ref('')
 const readingRecordDate = ref('')
@@ -834,10 +843,10 @@ const periods = [
   { key: 'valley', label: '谷' },
 ]
 const tenantName = computed(() => tenants.value.find((t: any) => t.id === activeTenantId.value)?.name || '')
-const timeMeters = computed(() => allMeters.value.filter((m: any) => m.enabled && (!m.meter_kind || m.meter_kind === 'time')))
+const enabledMeters = computed(() => allMeters.value.filter((m: any) => m.enabled))
 const readingQueue = computed(() => {
   const g: Record<string, any[]> = {}
-  timeMeters.value.forEach((m: any) => {
+  enabledMeters.value.forEach((m: any) => {
     const owner = m.owner_unit || '未分组'
     ;(g[owner] = g[owner] || []).push(m)
   })
@@ -848,6 +857,10 @@ const meterEditOptions = computed(() =>
   readingQueue.value.map((m: any) => ({ label: `${m.owner_unit || ''} · ${m.name}`.replace(/^ · /, ''), value: m.id })),
 )
 const curMeter = computed(() => readingQueue.value.find((m: any) => m.id === curMeterId.value) || null)
+const isTimeMeter = computed(() => {
+  const m = curMeter.value
+  return !!m && (!m.meter_kind || m.meter_kind === 'time')
+})
 const today = new Date().toISOString().slice(0, 10)
 
 const prevMonthOf = (month: string): string => {
@@ -883,29 +896,47 @@ const loadMetersForReading = async () => {
 
 const loadMeterForm = async (m: any) => {
   const form: Record<string, any> = { remark: '' }
-  periods.forEach(p => {
-    form[p.key + '_prev'] = 0
-    form[p.key + '_curr'] = 0
-  })
+  if (m.meter_kind && m.meter_kind !== 'time') {
+    // 普通电表:单起止(复用 deep 字段)
+    form.deep_prev = 0
+    form.deep_curr = 0
+  } else {
+    periods.forEach(p => {
+      form[p.key + '_prev'] = 0
+      form[p.key + '_curr'] = 0
+    })
+  }
   // 本月已有读数（编辑场景）
   try {
     const cur: any = await getBillingTimeReading(m.id, readingMonth.value)
     if (cur.data && Object.keys(cur.data).length) {
-      periods.forEach(p => {
-        form[p.key + '_prev'] = Number(cur.data[p.key + '_prev']) || 0
-        form[p.key + '_curr'] = Number(cur.data[p.key + '_curr']) || 0
-      })
+      if (m.meter_kind && m.meter_kind !== 'time') {
+        form.deep_prev = Number(cur.data.deep_prev) || 0
+        form.deep_curr = Number(cur.data.deep_curr) || 0
+      } else {
+        periods.forEach(p => {
+          form[p.key + '_prev'] = Number(cur.data[p.key + '_prev']) || 0
+          form[p.key + '_curr'] = Number(cur.data[p.key + '_curr']) || 0
+        })
+      }
       form.remark = cur.data.remark || ''
     }
   } catch { /* ignore */ }
   // 本月无记录时，用上月止度预填起度
-  if (!form.deep_prev && !form.peak_prev && !form.flat_prev && !form.valley_prev) {
+  const hasPrev = m.meter_kind && m.meter_kind !== 'time'
+    ? form.deep_prev > 0
+    : !!(form.deep_prev || form.peak_prev || form.flat_prev || form.valley_prev)
+  if (!hasPrev) {
     try {
       const prev: any = await getBillingTimeReading(m.id, prevMonthOf(readingMonth.value))
       if (prev.data && Object.keys(prev.data).length) {
-        periods.forEach(p => {
-          form[p.key + '_prev'] = Number(prev.data[p.key + '_curr']) || 0
-        })
+        if (m.meter_kind && m.meter_kind !== 'time') {
+          form.deep_prev = Number(prev.data.deep_curr) || 0
+        } else {
+          periods.forEach(p => {
+            form[p.key + '_prev'] = Number(prev.data[p.key + '_curr']) || 0
+          })
+        }
       }
     } catch { /* ignore */ }
   }
@@ -960,31 +991,42 @@ const saveCurrentAndNext = async () => {
     return
   }
   // 止度不得小于起度
-  for (const p of periods) {
-    const prev = Number(curForm.value[p.key + '_prev']) || 0
-    const curr = Number(curForm.value[p.key + '_curr']) || 0
+  const checkKeys = m.meter_kind && m.meter_kind !== 'time' ? ['deep'] : periods.map((p: any) => p.key)
+  for (const k of checkKeys) {
+    const prev = Number(curForm.value[k + '_prev']) || 0
+    const curr = Number(curForm.value[k + '_curr']) || 0
     if (curr < prev) {
-      MessagePlugin.warning(`${m.name} ${p.label} 时段止度不得小于起度`)
+      MessagePlugin.warning(`${m.name} ${k === 'deep' ? '' : periods.find((p: any) => p.key === k)?.label + ' '}止度不得小于起度`)
       return
     }
   }
   savingReadings.value = true
   try {
     const { remark, ...reads } = curForm.value
-    await saveBillingTimeReading(m.id, { month: readingMonth.value, ...reads, remark: remark || '' })
+    // 普通电表只保留单起止(deep),其余时段清零
+    const payload = { month: readingMonth.value, ...reads, remark: remark || '' }
+    if (m.meter_kind && m.meter_kind !== 'time') {
+      payload.peak_prev = 0; payload.peak_curr = 0
+      payload.flat_prev = 0; payload.flat_curr = 0
+      payload.valley_prev = 0; payload.valley_curr = 0
+    }
+    await saveBillingTimeReading(m.id, payload)
     const q = readingQueue.value
     const hasNext = curIdx.value + 1 < q.length
     if (hasNext) {
       await switchMeterTo(curIdx.value + 1)
       return
     }
-    // 全部表已保存，生成当月账单
+    // 全部表已保存，有分时表则生成当月账单
+    const hasTimeMeter = enabledMeters.value.some((x: any) => !x.meter_kind || x.meter_kind === 'time')
     MessagePlugin.success('读数已保存')
-    try {
-      await generateBillingRecord(activeTenantId.value, { month: readingMonth.value })
-      MessagePlugin.success('账单已生成')
-    } catch (e: any) {
-      MessagePlugin.warning(e?.message || '账单生成失败，请检查分表读数与市电账单')
+    if (hasTimeMeter) {
+      try {
+        await generateBillingRecord(activeTenantId.value, { month: readingMonth.value })
+        MessagePlugin.success('账单已生成')
+      } catch (e: any) {
+        MessagePlugin.warning(e?.message || '账单生成失败，请检查分表读数与市电账单')
+      }
     }
     readingVisible.value = false
     await loadRecords()
