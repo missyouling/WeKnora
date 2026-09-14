@@ -450,7 +450,7 @@ func (h *BillingHandler) CreateBillingWaterMeter(c *gin.Context) {
 	var req struct {
 		Name        string  `json:"name"`
 		MeterNo     string  `json:"meter_no"`
-		MeterKind   string  `json:"meter_kind"` // total | industry | dorm | fire
+		MeterKind   string  `json:"meter_kind"` // total | sub | fire
 		OwnerUnit   string  `json:"owner_unit"`
 		UseUnit     string  `json:"use_unit"`
 		Manager     string  `json:"manager"`
@@ -472,7 +472,7 @@ func (h *BillingHandler) CreateBillingWaterMeter(c *gin.Context) {
 		return
 	}
 	switch req.MeterKind {
-	case "industry", "dorm", "fire":
+	case "sub", "fire":
 	default:
 		req.MeterKind = "total"
 	}
@@ -536,7 +536,7 @@ func (h *BillingHandler) UpdateBillingWaterMeter(c *gin.Context) {
 	}
 	m.MeterNo = req.MeterNo
 	switch req.MeterKind {
-	case "industry", "dorm", "fire", "total":
+	case "sub", "fire", "total":
 		m.MeterKind = req.MeterKind
 	}
 	m.OwnerUnit = req.OwnerUnit

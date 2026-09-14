@@ -83,7 +83,7 @@ type BillingWaterMeter struct {
 	BillingTenantID string     `gorm:"index" json:"billing_tenant_id"`
 	Name            string     `json:"name"`       // 别名
 	MeterNo         string     `json:"meter_no"`   // 表号
-	MeterKind       string     `json:"meter_kind"` // total | industry | dorm | fire 总表/工业/宿舍/消防
+	MeterKind       string     `json:"meter_kind"` // total | sub | fire 总表/分表/消防
 	OwnerUnit       string     `json:"owner_unit"` // 归属单位(动态分组)
 	UseUnit         string     `json:"use_unit"`   // 使用单位
 	Manager         string     `json:"manager"`    // 管理人员

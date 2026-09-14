@@ -1069,11 +1069,12 @@ const waterReadingMap = computed(() => {
   return m
 })
 
-// 汇总指定类型水表某月用量/费用
-const waterAgg = (kind: string, owner: string, month: string) => {
+// 汇总指定类型水表某月用量/费用；dormOnly=true 仅统计别名含"宿舍"的分表(宿舍用水)
+const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
     m.enabled !== false && m.meter_kind === kind &&
-    (owner === '' || m.owner_unit === owner || m.use_unit === owner),
+    (owner === '' || m.owner_unit === owner || m.use_unit === owner) &&
+    (dormOnly ? (m.name || '').includes('宿舍') : !(m.name || '').includes('宿舍')),
   )
   let usage = 0
   let fee = 0
@@ -1127,9 +1128,9 @@ const buildRows = () => {
       const res = residentInfoOf(bill?.item)
       const dorm = dormOf(OWNER_UNIT)
       const tenantDorm = dormOf(tenantName)
-      const wInd = waterAgg('total', OWNER_UNIT, month)
-      const wDorm = waterAgg('dorm', OWNER_UNIT, month)
-      const wFire = waterAgg('fire', OWNER_UNIT, month)
+      const wInd = waterAgg('sub', '', month)
+      const wDorm = waterAgg('sub', '', month, true)
+      const wFire = waterAgg('fire', '', month)
       const gas = gasOf()
       const indKwh = Math.round((totalKwh - (Number(rec?.total_kwh) || 0) - res.kwh - tenantDorm.kwh) * 100) / 100
       const indFee = Math.round((totalFee - (Number(rec?.industrial_fee) || 0) - res.fee) * 100) / 100
@@ -1156,8 +1157,8 @@ const buildRows = () => {
       const totalKwh = Number(bill?.item?.total_kwh) || 0
       const totalFee = Number(bill?.item?.grand_total ?? bill?.item?.total_amount) || 0
       const dorm = dormOf(tenantName)
-      const wInd = waterAgg('industry', tenantName, month)
-      const wDorm = waterAgg('dorm', tenantName, month)
+      const wInd = waterAgg('sub', tenantName, month)
+      const wDorm = waterAgg('sub', tenantName, month, true)
       const indKwh = Number(rec?.total_kwh) || 0
       const indFee = Number(rec?.industrial_fee) || 0
       Object.assign(base, {
@@ -1870,8 +1871,7 @@ const emptyWaterMeterForm = (ownerUnit: string) => ({
 })
 const waterMeterKindOptions = [
   { label: '总表', value: 'total' },
-  { label: '工业', value: 'industry' },
-  { label: '宿舍', value: 'dorm' },
+  { label: '分表', value: 'sub' },
   { label: '消防', value: 'fire' },
 ]
 const waterMeterKindLabel = (k: string) => waterMeterKindOptions.find(o => o.value === k)?.label || k
