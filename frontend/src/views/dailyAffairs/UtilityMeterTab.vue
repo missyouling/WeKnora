@@ -190,6 +190,11 @@
               <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
             </div>
             <div class="rec-field">
+              <label>使用单位</label>
+              <t-select v-model="form.useUnit" :options="useUnits.map(u => ({ label: u, value: u }))" filterable
+                :disabled="!!editingItemId" @change="onUseUnitChange" />
+            </div>
+            <div class="rec-field">
               <label>{{ meterLabel }} <span class="required">*</span></label>
               <t-select v-model="form.meterId" :placeholder="'选择' + meterLabel" :options="meterEditOptions" filterable @change="onMeterChange" />
               <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
@@ -773,14 +778,14 @@ const editingOriginalMeterId = ref('') // 编辑行原表计（改表时删除�
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
 interface MeterForm {
-  month: string; meterId: string; readingDate: string; reader: string; recordDate: string
+  month: string; useUnit: string; meterId: string; readingDate: string; reader: string; recordDate: string
   startReading: number; endReading: number
   deepPrev: number; deepCurr: number; peakPrev: number; peakCurr: number
   flatPrev: number; flatCurr: number; valleyPrev: number; valleyCurr: number
   unitPrice: number; subsidy: number; remark: string
 }
 const emptyForm = (): MeterForm => ({
-  month: '', meterId: '', readingDate: '', reader: '', recordDate: '',
+  month: '', useUnit: '', meterId: '', readingDate: '', reader: '', recordDate: '',
   startReading: 0, endReading: 0,
   deepPrev: 0, deepCurr: 0, peakPrev: 0, peakCurr: 0,
   flatPrev: 0, flatCurr: 0, valleyPrev: 0, valleyCurr: 0,
@@ -794,15 +799,52 @@ const today = (() => {
 })()
 const drawerTitle = computed(() => (editingItemId.value ? '编辑' + categoryLabel.value + '记录' : '新增' + categoryLabel.value + '记录'))
 
+// 系统内使用单位（去重，保持稳定顺序，默认取第一项）
+const useUnits = computed(() => {
+  const set = new Map<string, string>()
+  for (const m of meters.value as any[]) {
+    const u = (m.use_unit || '').trim()
+    if (u) set.set(u, u)
+  }
+  return Array.from(set.keys())
+})
+
+// 新增模式选项：按使用单位过滤 + 隐藏当月已录入的表计；编辑模式保留全量
 const meterEditOptions = computed(() => {
-  const opts = meters.value.filter(m => m.enabled).map((m: any) => ({ label: m.alias, value: m.id }))
-  // 编辑时若当前水表已停用，保留在选项中
+  const opts = meters.value.filter((m: any) => m.enabled).map((m: any) => ({ label: m.alias, value: m.id }))
+  if (!editingItemId.value) {
+    const u = (form.value.useUnit || '').trim()
+    const recorded = new Set<string>()
+    if (form.value.month) {
+      for (const m of meters.value as any[]) {
+        if (meterMonthEnds.value.get(m.id)?.has(form.value.month)) recorded.add(m.id)
+      }
+    }
+    return opts.filter(o => {
+      const m = meters.value.find((x: any) => x.id === o.value) as any
+      if (u && (m.use_unit || '').trim() !== u) return false
+      if (recorded.has(o.value)) return false
+      return true
+    })
+  }
+  // 编辑时若当前表计已停用，保留在选项中
   if (form.value.meterId && !meters.value.some((m: any) => m.id === form.value.meterId && m.enabled)) {
     const cur = meters.value.find((m: any) => m.id === form.value.meterId)
     if (cur) opts.push({ label: cur.alias, value: cur.id })
   }
   return opts
 })
+
+// 切换使用单位：清空表计选择（读数由表计 watch 重置）
+const onUseUnitChange = () => {
+  if (editingItemId.value) return
+  if (form.value.meterId) {
+    const cur = meters.value.find((m: any) => m.id === form.value.meterId) as any
+    if (cur && (cur.use_unit || '').trim() !== (form.value.useUnit || '').trim()) {
+      form.value.meterId = ''
+    }
+  }
+}
 
 const currentMeter = computed(() => meters.value.find((m: any) => m.id === form.value.meterId))
 const isTimeMeter = computed(() => currentMeter.value?.meter_type === 'time')
@@ -881,6 +923,7 @@ const openCreate = () => {
   const f = emptyForm()
   f.readingDate = today
   f.recordDate = today
+  f.useUnit = useUnits.value[0] || ''
   form.value = f
   drawerVisible.value = true
 }
@@ -941,6 +984,7 @@ const openEdit = (row: any) => {
   }))
   form.value = {
     month: row.month,
+    useUnit: (meters.value as any[]).find((m: any) => m.id === row.meter_id)?.use_unit || row.use_unit || '',
     meterId: row.meter_id || '',
     readingDate: row.reading_date || today,
     reader: row.reader || '',
@@ -1122,9 +1166,17 @@ const save = async () => {
     }
     const nextMeter = (() => {
       if (!isNew) return undefined
-      const enabled = meters.value.filter((m: any) => m.enabled)
-      const idx = enabled.findIndex((m: any) => m.id === form.value.meterId)
-      return idx >= 0 ? enabled[idx + 1] : undefined
+      // 连续录入：同使用单位、启用且当月未录入的表，按序找下一张（无则循环回第一张未录入的）
+      const u = (form.value.useUnit || '').trim()
+      const candidates = meters.value.filter((m: any) => {
+        if (!m.enabled) return false
+        if (u && (m.use_unit || '').trim() !== u) return false
+        return !meterMonthEnds.value.get(m.id)?.has(form.value.month)
+      })
+      if (!candidates.length) return undefined
+      const idx = candidates.findIndex((m: any) => m.id === form.value.meterId)
+      if (idx >= 0) return candidates[idx + 1] || candidates[0]
+      return candidates[0]
     })()
     if (nextMeter) {
       // 连续录入：抽屉不关闭，按启用表顺序切到下一张，月份复用、抄表日期=第一条、
@@ -1132,6 +1184,7 @@ const save = async () => {
       skipAutoFill.value = true
       const f = emptyForm()
       f.month = form.value.month
+      f.useUnit = form.value.useUnit
       f.meterId = nextMeter.id
       f.readingDate = form.value.readingDate || today
       f.recordDate = form.value.recordDate || today
