@@ -142,49 +142,64 @@
         :close-on-overlay-click="true" destroy-on-close class="tenant-reading-drawer"
         @close="readingVisible = false" @update:visible="(v: boolean) => (readingVisible = v)">
         <div class="reading-body">
-          <div class="rec-field reading-month-field">
-            <label>月份 <span class="required">*</span></label>
-            <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份"
-              @change="loadReadings" />
-          </div>
-
-          <div v-for="group in readingGroups" :key="group.owner" class="reading-group">
-            <div class="reading-group-title">{{ group.title }}</div>
-            <div v-if="group.meters.length" class="reading-cards">
-              <div v-for="m in group.meters" :key="m.id" class="reading-card" :class="{ 'card-invalid': meterInvalid(m.id) }">
-                <div class="reading-card-head">
-                  <span class="reading-card-name">{{ m.name }}</span>
-                  <span class="reading-card-rate">×{{ m.rate }}</span>
-                </div>
-                <div class="reading-card-rows">
-                  <div v-for="p in periods" :key="p.key" class="reading-row" :class="{ 'row-invalid': rdInvalid(m.id, p.key) }">
-                    <span class="rr-label">{{ p.label }}</span>
-                    <t-input class="rr-input" :model-value="rdVal(m.id, p.key + '_prev')" type="number" size="small"
-                      placeholder="起度" :status="rdInvalid(m.id, p.key) ? 'error' : ''"
-                      @update:model-value="(v: string) => setRdVal(m.id, p.key + '_prev', v)" />
-                    <span class="rr-sep">~</span>
-                    <t-input class="rr-input" :model-value="rdVal(m.id, p.key + '_curr')" type="number" size="small"
-                      placeholder="止度" :status="rdInvalid(m.id, p.key) ? 'error' : ''"
-                      @update:model-value="(v: string) => setRdVal(m.id, p.key + '_curr', v)" />
-                  </div>
-                </div>
-                <div class="reading-card-total">电量 <span class="row-mono">{{ meterKwh(m, readingForm[m.id] || {}) }}</span></div>
-              </div>
+          <div class="rec-grid">
+            <div class="rec-field">
+              <label>月份 <span class="required">*</span></label>
+              <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
             </div>
-            <div v-else class="meter-empty">暂无{{ group.title }}，请先在设置中新增</div>
+            <div class="rec-field">
+              <label>电表 <span class="required">*</span></label>
+              <t-select v-model="curMeterId" :options="meterEditOptions" filterable placeholder="选择电表" @change="onMeterChange" />
+            </div>
+
+            <div class="rec-field">
+              <label>抄表日期</label>
+              <t-date-picker v-model="readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
+            </div>
+            <div class="rec-field">
+              <label>抄表人</label>
+              <t-input v-model="readingReader" placeholder="默认取表计管理人员" />
+            </div>
+
+            <div class="rec-field">
+              <label>录入日期</label>
+              <div class="readonly-val">{{ readingRecordDate || today }}</div>
+            </div>
+            <div class="rec-field">
+              <label>倍率</label>
+              <div class="readonly-val">{{ fmtNum(curMeter?.rate) }}×</div>
+            </div>
           </div>
 
-          <div v-if="periodTotals" class="reading-summary">
-            <span>{{ baseGroupTitle }}合计 <b class="row-mono">{{ fmtKwh(periodTotals.star) }}</b> 千瓦时</span>
-            <span>{{ tenantName || '租户' }}合计 <b class="row-mono">{{ fmtKwh(periodTotals.sub) }}</b> 千瓦时</span>
-            <span>线损 <b class="row-mono">{{ fmtKwh(periodTotals.loss) }}</b> 千瓦时</span>
+          <div class="period-grid">
+            <div v-for="p in periods" :key="p.key" class="period-row" :class="{ 'row-invalid': rdCurInvalid(p.key) }">
+              <span class="period-label">{{ p.label }}</span>
+              <t-input class="period-input" :model-value="curForm[p.key + '_prev']" type="number" size="small"
+                placeholder="起度" :status="rdCurInvalid(p.key) ? 'error' : ''"
+                @update:model-value="(v: string) => setCurVal(p.key + '_prev', v)" />
+              <span class="rr-sep">~</span>
+              <t-input class="period-input" :model-value="curForm[p.key + '_curr']" type="number" size="small"
+                placeholder="止度" :status="rdCurInvalid(p.key) ? 'error' : ''"
+                @update:model-value="(v: string) => setCurVal(p.key + '_curr', v)" />
+              <span class="period-kwh">{{ fmtKwh(curPeriodKwh(p.key)) }} 千瓦时</span>
+            </div>
           </div>
-          <p class="field-hint">线损 = 总表合计 − 租户分表合计，按租户分表分时占比自动分摊</p>
+
+          <div class="calc-val">
+            <span>{{ curMeter?.name || '' }}合计</span>
+            <b class="row-mono">{{ fmtKwh(curTotalKwh) }}</b>
+            <span>千瓦时</span>
+          </div>
+
+          <div class="rec-field rec-field--wide">
+            <label>备注</label>
+            <t-textarea v-model="curForm.remark" :maxlength="500" placeholder="选填" />
+          </div>
         </div>
 
         <div class="meter-drawer-footer">
           <t-button variant="outline" size="small" @click="readingVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="savingReadings" @click="saveReadingsAndGenerate">保存</t-button>
+          <t-button theme="primary" size="small" :loading="savingReadings" @click="saveCurrentAndNext">保存</t-button>
         </div>
       </t-drawer>
     </teleport>
@@ -796,13 +811,22 @@ const handleDelete = async () => {
   }
 }
 
-// ---- 新增记录抽屉（分时读数） ----
+// ---- 新增记录抽屉（分时读数：单表连续录入） ----
 const readingVisible = ref(false)
 const readingWidth = ref('820px')
 const savingReadings = ref(false)
 const readingMonth = ref('')
-const readingTitle = computed(() => (readingMonth.value ? `${readingMonth.value} 分时读数` : '新增记录'))
-const readingForm = ref<Record<string, any>>({})
+const readingTitle = computed(() => {
+  if (!readingMonth.value) return '新增记录'
+  const total = readingQueue.value.length
+  return `${readingMonth.value} 分时读数${total ? `（${curIdx.value + 1}/${total}）` : ''}`
+})
+const readingDate = ref('')
+const readingReader = ref('')
+const readingRecordDate = ref('')
+const curForm = ref<Record<string, any>>({})
+const curIdx = ref(0)
+const curMeterId = ref('')
 const periods = [
   { key: 'deep', label: '尖' },
   { key: 'peak', label: '峰' },
@@ -810,16 +834,26 @@ const periods = [
   { key: 'valley', label: '谷' },
 ]
 const tenantName = computed(() => tenants.value.find((t: any) => t.id === activeTenantId.value)?.name || '')
-const baseGroupTitle = '星达铜业'
 const timeMeters = computed(() => allMeters.value.filter((m: any) => m.enabled && (!m.meter_kind || m.meter_kind === 'time')))
-const readingGroups = computed(() => {
+const readingQueue = computed(() => {
   const g: Record<string, any[]> = {}
   timeMeters.value.forEach((m: any) => {
     const owner = m.owner_unit || '未分组'
     ;(g[owner] = g[owner] || []).push(m)
   })
-  return Object.entries(g).map(([owner, meters]) => ({ owner, title: owner, meters }))
+  return Object.keys(g).sort((a, b) => (a === '星达铜业' ? -1 : b === '星达铜业' ? 1 : 0))
+    .flatMap(k => g[k])
 })
+const meterEditOptions = computed(() =>
+  readingQueue.value.map((m: any) => ({ label: `${m.owner_unit || ''} · ${m.name}`.replace(/^ · /, ''), value: m.id })),
+)
+const curMeter = computed(() => readingQueue.value.find((m: any) => m.id === curMeterId.value) || null)
+const today = new Date().toISOString().slice(0, 10)
+
+const prevMonthOf = (month: string): string => {
+  const [y, mo] = month.split('-').map(Number)
+  return `${mo === 1 ? y - 1 : y}-${String(mo === 1 ? 12 : mo - 1).padStart(2, '0')}`
+}
 
 const openReadingDrawer = async (month: string) => {
   if (!activeTenantId.value) {
@@ -828,9 +862,11 @@ const openReadingDrawer = async (month: string) => {
   }
   readingMonth.value = month || currentMonth()
   readingWidth.value = `${Math.min(920, Math.floor(window.innerWidth * 0.94))}px`
+  readingDate.value = today
+  readingRecordDate.value = today
   readingVisible.value = true
   await loadMetersForReading()
-  await loadReadings()
+  await switchMeterTo(0)
 }
 
 const currentMonth = (): string => {
@@ -845,107 +881,105 @@ const loadMetersForReading = async () => {
   } catch { /* ignore */ }
 }
 
-const loadReadings = async () => {
-  if (!readingMonth.value || !readingVisible.value) return
-  const meters = timeMeters.value
-  const form: Record<string, any> = {}
-  for (const m of meters) {
-    form[m.id] = { deep_prev: 0, deep_curr: 0, peak_prev: 0, peak_curr: 0, flat_prev: 0, flat_curr: 0, valley_prev: 0, valley_curr: 0 }
+const loadMeterForm = async (m: any) => {
+  const form: Record<string, any> = { remark: '' }
+  periods.forEach(p => {
+    form[p.key + '_prev'] = 0
+    form[p.key + '_curr'] = 0
+  })
+  // 本月已有读数（编辑场景）
+  try {
+    const cur: any = await getBillingTimeReading(m.id, readingMonth.value)
+    if (cur.data && Object.keys(cur.data).length) {
+      periods.forEach(p => {
+        form[p.key + '_prev'] = Number(cur.data[p.key + '_prev']) || 0
+        form[p.key + '_curr'] = Number(cur.data[p.key + '_curr']) || 0
+      })
+      form.remark = cur.data.remark || ''
+    }
+  } catch { /* ignore */ }
+  // 本月无记录时，用上月止度预填起度
+  if (!form.deep_prev && !form.peak_prev && !form.flat_prev && !form.valley_prev) {
     try {
-      const res: any = await getBillingTimeReading(m.id, readingMonth.value)
-      if (res.data) {
-        Object.assign(form[m.id], {
-          deep_prev: res.data.deep_prev, deep_curr: res.data.deep_curr,
-          peak_prev: res.data.peak_prev, peak_curr: res.data.peak_curr,
-          flat_prev: res.data.flat_prev, flat_curr: res.data.flat_curr,
-          valley_prev: res.data.valley_prev, valley_curr: res.data.valley_curr,
+      const prev: any = await getBillingTimeReading(m.id, prevMonthOf(readingMonth.value))
+      if (prev.data && Object.keys(prev.data).length) {
+        periods.forEach(p => {
+          form[p.key + '_prev'] = Number(prev.data[p.key + '_curr']) || 0
         })
       }
     } catch { /* ignore */ }
   }
-  readingForm.value = form
+  readingReader.value = m.manager || ''
+  curForm.value = form
 }
 
-const meterKwh = (m: any, f: any): string => {
-  const k = (p: string) => Math.max(0, (Number(f[p + '_curr']) || 0) - (Number(f[p + '_prev']) || 0)) * (m.rate || 1)
-  const total = periods.reduce((s, p) => s + k(p.key), 0)
-  return fmtKwh(total)
+const switchMeterTo = async (idx: number) => {
+  const q = readingQueue.value
+  if (!q.length) return
+  const i = Math.max(0, Math.min(idx, q.length - 1))
+  curIdx.value = i
+  curMeterId.value = q[i].id
+  await loadMeterForm(q[i])
 }
 
-const rdVal = (id: string, key: string): number => {
-  const f = readingForm.value[id]
-  return f ? Number(f[key]) || 0 : 0
+const onMeterChange = async (id: string) => {
+  const q = readingQueue.value
+  const i = q.findIndex((m: any) => m.id === id)
+  if (i >= 0) {
+    curIdx.value = i
+    await loadMeterForm(q[i])
+  }
 }
-const setRdVal = (id: string, key: string, v: string) => {
-  if (!readingForm.value[id]) readingForm.value[id] = {}
-  readingForm.value[id][key] = Number(v) || 0
+
+const curPeriodKwh = (p: string): number => {
+  const m = curMeter.value
+  const f = curForm.value
+  if (!m || !f) return 0
+  return Math.max(0, (Number(f[p + '_curr']) || 0) - (Number(f[p + '_prev']) || 0)) * (m.rate || 1)
 }
-const rdInvalid = (id: string, p: string): boolean => {
-  const f = readingForm.value[id]
+const curTotalKwh = computed(() => periods.reduce((s, p) => s + curPeriodKwh(p.key), 0))
+const setCurVal = (key: string, v: string) => {
+  curForm.value[key] = Number(v) || 0
+}
+const rdCurInvalid = (p: string): boolean => {
+  const f = curForm.value
   if (!f) return false
   const prev = Number(f[p + '_prev']) || 0
   const curr = Number(f[p + '_curr']) || 0
   return curr > 0 && prev > 0 && curr < prev
 }
-const meterInvalid = (id: string): boolean => {
-  const f = readingForm.value[id]
-  if (!f) return false
-  return periods.some(p => {
-    const prev = Number(f[p.key + '_prev']) || 0
-    const curr = Number(f[p.key + '_curr']) || 0
-    return curr > 0 && prev > 0 && curr < prev
-  })
-}
 
-const periodTotals = computed(() => {
-  const sum = (meters: any[]) => {
-    const t: Record<string, number> = { deep: 0, peak: 0, flat: 0, valley: 0 }
-    meters.forEach((m) => {
-      const f = readingForm.value[m.id] || {}
-      periods.forEach((p) => {
-        t[p.key] += Math.max(0, (Number(f[p.key + '_curr']) || 0) - (Number(f[p.key + '_prev']) || 0)) * (m.rate || 1)
-      })
-    })
-    return t
-  }
-  const base = sum(timeMeters.value.filter((m: any) => m.owner_unit === '星达铜业'))
-  const sub = sum(timeMeters.value.filter((m: any) => m.owner_unit && m.owner_unit !== '星达铜业' && m.owner_unit === tenantName.value))
-  const st = base.deep + base.peak + base.flat + base.valley
-  const sb = sub.deep + sub.peak + sub.flat + sub.valley
-  if (st === 0 && sb === 0) return null
-  return { star: st, sub: sb, loss: st - sb }
-})
-
-const saveReadingsAndGenerate = async () => {
+const saveCurrentAndNext = async () => {
+  const m = curMeter.value
   if (!readingMonth.value) {
     MessagePlugin.warning('请选择月份')
     return
   }
-  savingReadings.value = true
-  try {
-    const meters = timeMeters.value
-    if (!meters.length) {
-      MessagePlugin.warning('请先在设置中新增分时电表')
+  if (!m) {
+    MessagePlugin.warning('请选择电表')
+    return
+  }
+  // 止度不得小于起度
+  for (const p of periods) {
+    const prev = Number(curForm.value[p.key + '_prev']) || 0
+    const curr = Number(curForm.value[p.key + '_curr']) || 0
+    if (curr < prev) {
+      MessagePlugin.warning(`${m.name} ${p.label} 时段止度不得小于起度`)
       return
     }
-    for (const m of meters) {
-      const f = readingForm.value[m.id] || {}
-      // 止度不得小于起度
-      for (const p of periods) {
-        const prev = Number(f[p.key + '_prev']) || 0
-        const curr = Number(f[p.key + '_curr']) || 0
-        if (curr < prev) {
-          MessagePlugin.warning(`${m.name} ${p.label} 时段止度不得小于起度`)
-          return
-        }
-      }
+  }
+  savingReadings.value = true
+  try {
+    const { remark, ...reads } = curForm.value
+    await saveBillingTimeReading(m.id, { month: readingMonth.value, ...reads, remark: remark || '' })
+    const q = readingQueue.value
+    const hasNext = curIdx.value + 1 < q.length
+    if (hasNext) {
+      await switchMeterTo(curIdx.value + 1)
+      return
     }
-    for (const m of meters) {
-      const f = readingForm.value[m.id] || {}
-      await saveBillingTimeReading(m.id, { month: readingMonth.value, ...f })
-    }
+    // 全部表已保存，生成当月账单
     MessagePlugin.success('读数已保存')
-    // 自动生成当月账单
     try {
       await generateBillingRecord(activeTenantId.value, { month: readingMonth.value })
       MessagePlugin.success('账单已生成')
@@ -1511,80 +1545,57 @@ onMounted(() => {
 .batch-bar-fade-enter-from,
 .batch-bar-fade-leave-to { opacity: 0; transform: translateX(-50%) translateY(6px); }
 
-/* 读数抽屉（每表一卡：尖峰平谷 4 行起止度录入，复用电力表计输入风格） */
+/* 读数抽屉（单表连续录入：尖峰平谷 4 时段起止度，复刻电费新增记录样式） */
 .reading-body { padding: 4px 0 24px; }
-.reading-month-field { margin-bottom: 16px; }
-.reading-group {
-  margin-bottom: 18px;
-  .reading-group-title {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  .reading-cards {
+.period-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  border: 1px solid var(--td-component-border);
+  border-radius: 8px;
+  padding: 12px;
+  .period-row {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 12px;
-  }
-  .reading-card {
-    border: 1px solid var(--td-component-border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    &.card-invalid { border-color: var(--td-error-color); background: var(--td-error-color-1, rgba(213, 73, 65, 0.04)); }
-    .reading-card-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      .reading-card-name { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
-      .reading-card-rate { font-size: 12px; color: var(--td-text-color-secondary); }
+    grid-template-columns: 34px 1fr 18px 1fr 110px;
+    align-items: center;
+    gap: 8px;
+    &.row-invalid {
+      .period-label { color: var(--td-error-color); }
+      :deep(.t-input) { border-color: var(--td-error-color); }
     }
-    .reading-card-rows { display: flex; flex-direction: column; gap: 6px; }
-    .reading-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      &.row-invalid {
-        .rr-label { color: var(--td-error-color); }
-        :deep(.t-input) { border-color: var(--td-error-color); }
-      }
-      .rr-label {
-        flex: 0 0 22px;
-        font-size: 12px;
-        color: var(--td-text-color-secondary);
-        text-align: center;
-      }
-      .rr-input {
-        flex: 1;
-        :deep(.t-input__inner) { text-align: center; }
-      }
-      .rr-sep { flex: 0 0 auto; color: var(--td-text-color-placeholder); font-size: 12px; }
-    }
-    .reading-card-total {
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 1px dashed var(--td-component-stroke);
+    .period-label {
       font-size: 12px;
       color: var(--td-text-color-secondary);
-      .row-mono { color: var(--td-text-color-primary); font-weight: 600; margin-left: 4px; }
+      text-align: center;
     }
-  }
-  .meter-empty {
-    padding: 24px;
-    text-align: center;
-    color: var(--td-text-color-placeholder);
-    font-size: 12px;
-    border: 1px dashed var(--td-component-border);
-    border-radius: 8px;
+    .period-input {
+      :deep(.t-input__inner) { text-align: center; }
+    }
+    .rr-sep { color: var(--td-text-color-placeholder); font-size: 12px; text-align: center; }
+    .period-kwh { font-size: 12px; color: var(--td-text-color-secondary); text-align: right; font-variant-numeric: tabular-nums; }
   }
 }
-.reading-summary {
+.calc-val {
   display: flex;
-  gap: 24px;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--td-brand-color-light);
+  border-radius: 8px;
   font-size: 13px;
   color: var(--td-text-color-secondary);
-  padding: 10px 0 0;
-  b { color: var(--td-text-color-primary); font-weight: 600; }
+  .row-mono { color: var(--td-text-color-primary); font-weight: 600; font-size: 15px; }
+}
+.readonly-val {
+  height: 32px;
+  line-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--td-radius-default, 6px);
+  background: var(--td-bg-color-component);
+  color: var(--td-text-color-primary);
+  font-size: 14px;
 }
 .field-hint { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; line-height: 1.4; }
 .meter-drawer-footer {
