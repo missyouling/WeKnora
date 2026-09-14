@@ -991,35 +991,23 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("星达分表电量小于工业分表合计,请检查读数"))
 		return
 	}
-	// 线损按工业分表分时占比分摊
-	billPeriod := make(map[string]float64, 4)
-	if subTotal > 0 {
-		for _, p := range []string{"deep", "peak", "flat", "valley"} {
-			billPeriod[p] = round2(subPeriod[p] + lineLoss*subPeriod[p]/subTotal)
-		}
-	} else {
-		// 无工业分表读数时直接使用星达分表分时电量
-		for _, p := range []string{"deep", "peak", "flat", "valley"} {
-			billPeriod[p] = round2(starPeriod[p])
-		}
-	}
-	billBaseTotal := round2(starTotal) // 比例分子
 
-	// 2) 宿舍/水表引用读数（无显式引用时按使用单位=租户名自动匹配）
-	refs := h.loadMeterRefs(ctx, id)
+	// 2) 宿舍/水表引用读数（按使用单位=租户名自动匹配优先，显式引用兜底）
+	refs := h.loadRefsByUseUnit(ctx, tenant.Name)
 	if len(refs) == 0 {
-		refs = h.loadRefsByUseUnit(ctx, tenant.Name)
+		refs = h.loadMeterRefs(ctx, id)
 	}
 	dormKwh, dormFee, err := h.sumRefFee(ctx, refs, "electricity", req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	waterUsage, waterFee, err := h.sumRefFee(ctx, refs, "water", req.Month)
+	waterUsage, _, err := h.sumRefFee(ctx, refs, "water", req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
+	waterFee := round2(waterUsage * st.WaterPrice)
 
 	// 3) 市电账单
 	billItem, err := h.loadUtilityBillByMonth(ctx, st.BillKBID, req.Month)
@@ -1031,10 +1019,56 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("市电账单本期电量为空,无法计算比例"))
 		return
 	}
-	ratio := round6(billBaseTotal / billItem.TotalKwh)
+	ratio := round6(starTotal / billItem.TotalKwh)
 	billBase := round2(starTotal - dormKwh) // 非分时子项计费基数(星达分表-宿舍)
 	if billBase < 0 {
 		billBase = 0
+	}
+
+	// 3.1 市电账单四时段线损/加减（电量明细表），用于持睿工业分表计费电量折算
+	billLineLoss := make(map[string]float64, 4)
+	billAdjust := make(map[string]float64, 4)
+	for _, mr := range billItem.MeterReadings {
+		p := meterPeriodByType(mr.MeterType)
+		if p == "" {
+			continue
+		}
+		billLineLoss[p] = mr.LineLoss
+		billAdjust[p] = mr.Adjust
+	}
+	residKwh := 0.0
+	for _, rr := range billItem.ResidentialReadings {
+		residKwh += rr.Kwh
+	}
+	// 损耗/加减折算比例（与手工口径一致）：(星达分表总-宿舍) / (市电本期电量-居民定比电量)
+	lossRatio := ratio
+	if denom := billItem.TotalKwh - residKwh; denom > 0 && billBase > 0 {
+		lossRatio = billBase / denom
+	}
+	// 分时计费电量 = 三表抄见用电量 + 各时段线损折算 + 各时段加减折算
+	subBill := make(map[string]float64, 4)
+	for _, p := range []string{"deep", "peak", "flat", "valley"} {
+		subBill[p] = round2(subPeriod[p] + billLineLoss[p]*lossRatio + billAdjust[p]*lossRatio)
+	}
+	// 差额电量（星达总-三表合计）按各时段计费电量占分摊基数的比例分摊，末时段补差
+	billPeriod := make(map[string]float64, 4)
+	diffAssigned := 0.0
+	if subTotal > 0 && billBase > 0 {
+		ps := []string{"deep", "peak", "flat", "valley"}
+		for i, p := range ps {
+			if i == len(ps)-1 {
+				billPeriod[p] = round2(subBill[p] + (lineLoss - diffAssigned))
+				continue
+			}
+			d := lineLoss * subBill[p] / billBase
+			billPeriod[p] = round2(subBill[p] + d)
+			diffAssigned += d
+		}
+	} else {
+		// 无工业分表读数时直接使用星达分表分时电量
+		for _, p := range []string{"deep", "peak", "flat", "valley"} {
+			billPeriod[p] = round2(starPeriod[p])
+		}
 	}
 
 	// 4) 子项开关：首次自动初始化，账单新增大类时自动补充
@@ -1277,6 +1311,22 @@ func normalizePeriod(s string) string {
 	return ""
 }
 
+// meterPeriodByType 电量明细行「示数类型」→ 分时时段 key。
+// 注意先判「尖峰」再判「峰」(尖峰包含峰字)。
+func meterPeriodByType(meterType string) string {
+	switch {
+	case strings.Contains(meterType, "尖峰"):
+		return "deep"
+	case strings.Contains(meterType, "峰"):
+		return "peak"
+	case strings.Contains(meterType, "平"):
+		return "flat"
+	case strings.Contains(meterType, "谷"):
+		return "valley"
+	}
+	return ""
+}
+
 func round6(v float64) float64 {
 	return float64(int64(v*1000000+0.5)) / 1000000
 }
@@ -1389,7 +1439,19 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {
 	var refs []types.BillingTenantMeterRef
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&refs).Error
-	return refs
+	if len(refs) == 0 {
+		return refs
+	}
+	// 过滤已失效引用(迁移后旧表计 id 已不在 utility_meters),避免遮蔽按使用单位自动匹配
+	valid := make([]types.BillingTenantMeterRef, 0, len(refs))
+	for _, r := range refs {
+		var cnt int64
+		if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+			Where("id = ? AND deleted_at IS NULL", r.MeterID).Count(&cnt).Error; err == nil && cnt > 0 {
+			valid = append(valid, r)
+		}
+	}
+	return valid
 }
 
 // loadRefsByUseUnit 按使用单位(租户名)自动匹配宿舍电表与水表作为引用。
@@ -1407,7 +1469,10 @@ func (h *BillingHandler) loadRefsByUseUnit(ctx context.Context, useUnit string) 
 	}
 	refs := make([]types.BillingTenantMeterRef, 0, len(meters))
 	for _, m := range meters {
-		if m.Category == "electricity" || m.Category == "water" {
+		// 电表仅取宿舍用途(工业分时表由分时核算单独汇总);水表全部纳入
+		if m.Category == "water" {
+			refs = append(refs, types.BillingTenantMeterRef{ID: uuid.NewString(), Category: m.Category, MeterID: m.ID})
+		} else if m.Category == "electricity" && m.MeterKind == "dorm" {
 			refs = append(refs, types.BillingTenantMeterRef{ID: uuid.NewString(), Category: m.Category, MeterID: m.ID})
 		}
 	}
