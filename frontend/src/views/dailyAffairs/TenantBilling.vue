@@ -531,7 +531,6 @@
                       </span>
                     </div>
                     <div v-if="!g.items.length" class="item-empty">暂无子项</div>
-                    <p class="field-hint item-hint">子项引用自市电账单，不支持新增与删除</p>
                   </div>
                 </div>
                 <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
@@ -1819,7 +1818,6 @@ onMounted(() => {
     .item-group-body {
       border-top: 1px solid var(--td-component-stroke);
       padding: 10px 14px;
-      .item-hint { margin-top: 10px; }
     }
   }
   .item-empty { padding: 24px; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
