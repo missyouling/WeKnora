@@ -1063,6 +1063,35 @@ export function saveBillingTimeReading(meterId: string, payload: Record<string, 
   return put(`/api/v1/billing/meters/${meterId}/readings`, payload);
 }
 
+export function listBillingWaterMeters(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/water-meters`);
+}
+
+export function createBillingWaterMeter(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/water-meters`, payload);
+}
+
+export function updateBillingWaterMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/water-meters/${id}`, payload);
+}
+
+export function deleteBillingWaterMeter(id: string) {
+  return del(`/api/v1/billing/water-meters/${id}`);
+}
+
+export function getBillingWaterReading(meterId: string, month: string) {
+  return get(`/api/v1/billing/water-meters/${meterId}/readings?month=${month}`);
+}
+
+export function saveBillingWaterReading(meterId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/water-meters/${meterId}/readings`, payload);
+}
+
+export function listBillingWaterReadings(params: { month?: string } = {}) {
+  const qs = params.month ? `?month=${params.month}` : ''
+  return get(`/api/v1/billing/water-readings${qs}`);
+}
+
 export function saveBillingTenantItems(tenantId: string, payload: Record<string, unknown>) {
   return put(`/api/v1/billing/tenants/${tenantId}/items`, payload);
 }

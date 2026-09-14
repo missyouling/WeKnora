@@ -4,6 +4,10 @@
     <div class="doc-filter-bar">
       <div class="doc-filter-bar__leading">
         <div class="doc-filter-field">
+          <t-select v-model="useUnit" placeholder="使用单位" filterable class="doc-filter-select doc-filter-field__control"
+            :options="useUnitOptions" @change="onUseUnitChange" />
+        </div>
+        <div class="doc-filter-field">
           <t-select v-model="activeTenantId" placeholder="租户" filterable class="doc-filter-select doc-filter-field__control"
             :options="tenantOptions" @change="onTenantChange" />
         </div>
@@ -32,7 +36,7 @@
                 </div>
               </div>
               <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in COLUMN_DEFS" :key="col.key" :value="col.key" class="field-popup-item">
+                <t-checkbox v-for="col in activeColDefs" :key="col.key" :value="col.key" class="field-popup-item">
                   {{ col.label }}
                 </t-checkbox>
               </t-checkbox-group>
@@ -43,7 +47,7 @@
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" size="small" @click="openReadingDrawer('')">
+        <t-button theme="primary" size="small" @click="openReadingDrawer('', 'meter')">
           <template #icon><t-icon name="add" /></template>
           新增记录
         </t-button>
@@ -71,9 +75,9 @@
             <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
               <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
               <span v-else-if="col.key === 'ratio'" class="row-mono">{{ fmtRatio(row.ratio) }}</span>
-              <span v-else-if="col.key === 'total_fee'" class="row-mono strong">{{ fmtMoney(row.total_fee) }}</span>
-              <span v-else-if="['total_kwh', 'line_loss'].includes(col.key)" class="row-mono">{{ fmtKwh(row[col.key]) }}</span>
-              <span v-else-if="['industrial_fee', 'dorm_fee', 'water_fee', 'bill_total_amount'].includes(col.key)" class="row-mono">{{ fmtMoney(row[col.key]) }}</span>
+              <span v-else-if="col.key === 'ind_price'" class="row-mono">{{ fmtPrice(row.ind_price) }}</span>
+              <span v-else-if="MONEY_KEYS.includes(col.key)" class="row-mono strong">{{ fmtMoney(row[col.key]) }}</span>
+              <span v-else-if="KWH_KEYS.includes(col.key)" class="row-mono">{{ fmtKwh(row[col.key]) }}</span>
               <span v-else class="row-text" :title="String(row[col.key] ?? '')">{{ row[col.key] || '' }}</span>
             </div>
           </div>
@@ -88,8 +92,8 @@
     <!-- 底部汇总 -->
     <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
       <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-      <span class="doc-summary-item">星达电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
-      <span class="doc-summary-item">总应付 <span class="doc-summary-val">{{ fmtMoney(summaryFee) }}</span> 元</span>
+      <span class="doc-summary-item">总电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
+      <span class="doc-summary-item">总电费 <span class="doc-summary-val">{{ fmtMoney(summaryFee) }}</span> 元</span>
     </div>
 
     <!-- 底部浮动工具栏 -->
@@ -142,7 +146,13 @@
         :close-on-overlay-click="true" destroy-on-close class="tenant-reading-drawer"
         @close="readingVisible = false" @update:visible="(v: boolean) => (readingVisible = v)">
         <div class="reading-body">
-          <div class="rec-grid">
+          <div class="reading-type-switch">
+            <t-radio-group v-model="readingType" variant="default-filled" size="small">
+              <t-radio-button value="meter">电表</t-radio-button>
+              <t-radio-button value="water">水表</t-radio-button>
+            </t-radio-group>
+          </div>
+          <div v-if="readingType === 'meter'" class="rec-grid">
             <div class="rec-field">
               <label>月份 <span class="required">*</span></label>
               <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
@@ -171,7 +181,7 @@
             </div>
           </div>
 
-          <div v-if="isTimeMeter" class="period-grid">
+          <div v-if="readingType === 'meter' && isTimeMeter" class="period-grid">
             <div v-for="p in periods" :key="p.key" class="period-row" :class="{ 'row-invalid': rdCurInvalid(p.key) }">
               <span class="period-label">{{ p.label }}</span>
               <t-input class="period-input" :model-value="curForm[p.key + '_prev']" type="number" size="small"
@@ -184,7 +194,7 @@
               <span class="period-kwh">{{ fmtKwh(curPeriodKwh(p.key)) }} 千瓦时</span>
             </div>
           </div>
-          <div v-else class="period-grid">
+          <div v-else-if="readingType === 'meter'" class="period-grid">
             <div class="period-row" :class="{ 'row-invalid': rdCurInvalid('deep') }">
               <span class="period-label">读数</span>
               <t-input class="period-input" :model-value="curForm['deep_prev']" type="number" size="small"
@@ -198,10 +208,67 @@
             </div>
           </div>
 
-          <div class="calc-val">
+          <!-- 水表抄表 -->
+          <div v-if="readingType === 'water'" class="rec-grid">
+            <div class="rec-field">
+              <label>月份 <span class="required">*</span></label>
+              <t-date-picker v-model="readingMonth" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
+            </div>
+            <div class="rec-field">
+              <label>水表 <span class="required">*</span></label>
+              <t-select v-model="curWaterMeterId" :options="waterMeterEditOptions" filterable placeholder="选择水表" @change="onWaterMeterChange" />
+            </div>
+            <div class="rec-field">
+              <label>抄表日期</label>
+              <t-date-picker v-model="readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
+            </div>
+            <div class="rec-field">
+              <label>抄表人</label>
+              <t-input v-model="readingReader" placeholder="默认取表计管理人员" />
+            </div>
+            <div class="rec-field">
+              <label>录入日期</label>
+              <div class="readonly-val">{{ readingRecordDate || today }}</div>
+            </div>
+            <div class="rec-field">
+              <label>倍率</label>
+              <div class="readonly-val">{{ fmtNum(curWaterMeter?.rate) }}×</div>
+            </div>
+            <div class="rec-field">
+              <label>起度 <span class="required">*</span></label>
+              <t-input v-model="waterForm.prev" type="number" size="small" placeholder="起度"
+                :status="Number(waterForm.curr) > 0 && Number(waterForm.curr) < Number(waterForm.prev) ? 'error' : ''" />
+            </div>
+            <div class="rec-field">
+              <label>止度 <span class="required">*</span></label>
+              <t-input v-model="waterForm.curr" type="number" size="small" placeholder="止度"
+                :status="Number(waterForm.curr) > 0 && Number(waterForm.curr) < Number(waterForm.prev) ? 'error' : ''" />
+            </div>
+            <div class="rec-field">
+              <label>单价（元/吨）</label>
+              <t-input v-model="waterForm.price" type="number" size="small" placeholder="默认取表计单价" />
+            </div>
+            <div class="rec-field">
+              <label>用水量</label>
+              <div class="readonly-val">{{ fmtKwh(waterUsage) }} 吨/m³</div>
+            </div>
+            <div class="rec-field rec-field--wide">
+              <label>水费</label>
+              <div class="readonly-val">{{ fmtMoney(waterAmount) }} 元</div>
+            </div>
+          </div>
+
+          <div v-if="readingType === 'meter'" class="calc-val">
             <span>{{ curMeter?.name || '' }}合计</span>
             <b class="row-mono">{{ fmtKwh(curTotalKwh) }}</b>
             <span>千瓦时</span>
+          </div>
+          <div v-else class="calc-val">
+            <span>{{ curWaterMeter?.name || '' }}合计</span>
+            <b class="row-mono">{{ fmtKwh(waterUsage) }}</b>
+            <span>吨/m³</span>
+            <b class="row-mono">{{ fmtMoney(waterAmount) }}</b>
+            <span>元</span>
           </div>
 
           <div class="rec-field rec-field--wide">
@@ -212,7 +279,7 @@
 
         <div class="meter-drawer-footer">
           <t-button variant="outline" size="small" @click="readingVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="savingReadings" @click="saveCurrentAndNext">保存</t-button>
+          <t-button theme="primary" size="small" :loading="savingReadings" @click="readingType === 'water' ? saveWaterAndNext() : saveCurrentAndNext()">保存</t-button>
         </div>
       </t-drawer>
     </teleport>
@@ -537,6 +604,168 @@
               </div>
             </div>
           </t-tab-panel>
+          <t-tab-panel value="water-meters" label="水表设置">
+            <div class="settings-panel">
+              <div v-for="g in waterMeterGroups" :key="g.owner" class="meter-section">
+                <div class="meter-section-head">
+                  <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
+                  <t-button variant="outline" size="small" @click="openAddWaterMeter(g.owner)">
+                    <template #icon><t-icon name="add" /></template>新增
+                  </t-button>
+                </div>
+                <div class="meter-grid">
+                  <div v-if="waterMeterFormVisible && !waterMeterForm.id && waterMeterForm.owner_unit === g.owner" class="meter-form">
+                    <div class="meter-form-title">新增水表</div>
+                    <div class="form-grid">
+                      <div class="form-item">
+                        <label>别名 <span class="required">*</span></label>
+                        <t-input v-model="waterMeterForm.name" placeholder="如：总表1 / 分表1" />
+                      </div>
+                      <div class="form-item">
+                        <label>表号</label>
+                        <t-input v-model="waterMeterForm.meter_no" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>倍率</label>
+                        <t-input v-model.number="waterMeterForm.rate" type="number" placeholder="默认 1" />
+                      </div>
+                      <div class="form-item">
+                        <label>类型</label>
+                        <t-select v-model="waterMeterForm.meter_kind" :options="waterMeterKindOptions" />
+                      </div>
+                      <div class="form-item">
+                        <label>默认单价（元/吨）</label>
+                        <t-input v-model.number="waterMeterForm.price" type="number" placeholder="如：5.22" />
+                      </div>
+                      <div class="form-item">
+                        <label>归属单位</label>
+                        <t-input v-model="waterMeterForm.owner_unit" placeholder="如：星达铜业" />
+                      </div>
+                      <div class="form-item">
+                        <label>使用单位</label>
+                        <t-input v-model="waterMeterForm.use_unit" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>管理人员</label>
+                        <t-input v-model="waterMeterForm.manager" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>联系方式</label>
+                        <t-input v-model="waterMeterForm.contact" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>抄表方式</label>
+                        <t-radio-group v-model="waterMeterForm.meter_mode">
+                          <t-radio-button value="auto">自动抄表</t-radio-button>
+                          <t-radio-button value="manual">手动抄表</t-radio-button>
+                        </t-radio-group>
+                      </div>
+                      <div class="form-item">
+                        <label>安装日期</label>
+                        <t-date-picker v-model="waterMeterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                      </div>
+                      <div class="form-item form-item--full">
+                        <label>备注</label>
+                        <t-textarea v-model="waterMeterForm.remark" :maxlength="500" placeholder="选填" />
+                      </div>
+                    </div>
+                    <div class="form-actions">
+                      <t-button variant="outline" size="small" @click="waterMeterFormVisible = false">取消</t-button>
+                      <t-button theme="primary" size="small" :loading="savingWaterMeter" @click="submitWaterMeter">保存</t-button>
+                    </div>
+                  </div>
+
+                  <template v-for="m in g.meters" :key="m.id">
+                    <div class="meter-card">
+                      <div class="meter-card-head">
+                        <span class="meter-card-name">{{ m.name }}</span>
+                        <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleWaterMeter(m, v)" />
+                        <span class="meter-card-actions">
+                          <t-button variant="text" size="small" @click="openEditWaterMeter(m)">
+                            <template #icon><t-icon name="edit" size="15px" /></template>
+                          </t-button>
+                          <t-popconfirm theme="warning" :content="`确定删除水表「${m.name}」吗？`"
+                            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                            @confirm="removeWaterMeter(m)">
+                            <t-button variant="text" size="small" @click.stop>
+                              <template #icon><t-icon name="delete" size="15px" /></template>
+                            </t-button>
+                          </t-popconfirm>
+                        </span>
+                      </div>
+                      <div class="meter-card-grid">
+                        <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
+                        <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
+                        <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.price) }} 元</span></div>
+                        <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ waterMeterKindLabel(m.meter_kind) }}</span></div>
+                      </div>
+                    </div>
+                    <div v-if="waterMeterFormVisible && waterMeterForm.id === m.id" class="meter-form">
+                      <div class="meter-form-title">编辑水表</div>
+                      <div class="form-grid">
+                        <div class="form-item">
+                          <label>别名 <span class="required">*</span></label>
+                          <t-input v-model="waterMeterForm.name" placeholder="如：总表1 / 分表1" />
+                        </div>
+                        <div class="form-item">
+                          <label>表号</label>
+                          <t-input v-model="waterMeterForm.meter_no" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>倍率</label>
+                          <t-input v-model.number="waterMeterForm.rate" type="number" placeholder="默认 1" />
+                        </div>
+                        <div class="form-item">
+                          <label>类型</label>
+                          <t-select v-model="waterMeterForm.meter_kind" :options="waterMeterKindOptions" />
+                        </div>
+                        <div class="form-item">
+                          <label>默认单价（元/吨）</label>
+                          <t-input v-model.number="waterMeterForm.price" type="number" placeholder="如：5.22" />
+                        </div>
+                        <div class="form-item">
+                          <label>归属单位</label>
+                          <t-input v-model="waterMeterForm.owner_unit" placeholder="如：星达铜业" />
+                        </div>
+                        <div class="form-item">
+                          <label>使用单位</label>
+                          <t-input v-model="waterMeterForm.use_unit" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>管理人员</label>
+                          <t-input v-model="waterMeterForm.manager" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>联系方式</label>
+                          <t-input v-model="waterMeterForm.contact" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>抄表方式</label>
+                          <t-radio-group v-model="waterMeterForm.meter_mode">
+                            <t-radio-button value="auto">自动抄表</t-radio-button>
+                            <t-radio-button value="manual">手动抄表</t-radio-button>
+                          </t-radio-group>
+                        </div>
+                        <div class="form-item">
+                          <label>安装日期</label>
+                          <t-date-picker v-model="waterMeterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                        </div>
+                        <div class="form-item form-item--full">
+                          <label>备注</label>
+                          <t-textarea v-model="waterMeterForm.remark" :maxlength="500" placeholder="选填" />
+                        </div>
+                      </div>
+                      <div class="form-actions">
+                        <t-button variant="outline" size="small" @click="waterMeterFormVisible = false">取消</t-button>
+                        <t-button theme="primary" size="small" :loading="savingWaterMeter" @click="submitWaterMeter">保存</t-button>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-if="!g.meters.length && !(waterMeterFormVisible && !waterMeterForm.id && waterMeterForm.owner_unit === g.owner)" class="meter-empty">暂无水表</div>
+                </div>
+              </div>
+            </div>
+          </t-tab-panel>
         </t-tabs>
       </t-drawer>
     </teleport>
@@ -622,63 +851,134 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant, deleteBillingTenant,
   listBillingTimeMeters, createBillingTimeMeter, updateBillingTimeMeter, deleteBillingTimeMeter,
   getBillingTimeReading, saveBillingTimeReading,
+  listBillingWaterMeters, createBillingWaterMeter, updateBillingWaterMeter, deleteBillingWaterMeter,
+  getBillingWaterReading, saveBillingWaterReading, listBillingWaterReadings,
   saveBillingTenantItems,
   listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
+  listKnowledgeBases,
+  listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
-// ---- 列定义 ----
+// ---- 使用单位(房东/租户) ----
+const OWNER_UNIT = '重庆星达'
+const BILL_KB_NAME = '日常事务-电费'
+const useUnit = ref(OWNER_UNIT)
+const kbId = ref('')
+
+// ---- 列定义(按使用单位双视图) ----
 interface ColDef { key: string; label: string; default: boolean; w: string }
-const COLUMN_DEFS: ColDef[] = [
+const COL_DEFS_OWNER: ColDef[] = [
   { key: 'month', label: '账单周期', default: true, w: '0.8fr' },
-  { key: 'total_kwh', label: '星达电量', default: true, w: '1fr' },
-  { key: 'line_loss', label: '线损', default: true, w: '0.9fr' },
-  { key: 'ratio', label: '分摊比例', default: true, w: '0.9fr' },
-  { key: 'industrial_fee', label: '工业电费', default: true, w: '1fr' },
-  { key: 'dorm_fee', label: '宿舍电费', default: true, w: '1fr' },
-  { key: 'water_fee', label: '水费', default: true, w: '0.9fr' },
-  { key: 'total_fee', label: '总应付', default: true, w: '1.1fr' },
-  { key: 'bill_total_amount', label: '市电电费', default: false, w: '1fr' },
+  { key: 'unit', label: '使用单位', default: true, w: '0.9fr' },
+  { key: 'total_kwh', label: '总电量', default: true, w: '0.9fr' },
+  { key: 'total_fee', label: '总电费', default: true, w: '1fr' },
+  { key: 'solar_gen', label: '光伏发电量', default: true, w: '0.9fr' },
+  { key: 'solar_grid', label: '上网电量', default: true, w: '0.9fr' },
+  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '1fr' },
+  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr' },
+  { key: 'ind_fee', label: '电费（工业）', default: false, w: '1fr' },
+  { key: 'res_kwh', label: '电量（居民）', default: true, w: '0.9fr' },
+  { key: 'res_fee', label: '电费（居民）', default: false, w: '0.9fr' },
+  { key: 'dorm_kwh', label: '电量（宿舍）', default: true, w: '0.9fr' },
+  { key: 'dorm_fee', label: '电费（宿舍）', default: false, w: '0.9fr' },
+  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr' },
+  { key: 'water_ind_fee', label: '水费（工业）', default: false, w: '0.9fr' },
+  { key: 'water_dorm_usage', label: '用水量（宿舍）', default: true, w: '1fr' },
+  { key: 'water_dorm_fee', label: '水费（宿舍）', default: false, w: '0.9fr' },
+  { key: 'water_fire_usage', label: '用水量（消防）', default: true, w: '1fr' },
+  { key: 'water_fire_fee', label: '水费（消防）', default: false, w: '0.9fr' },
+  { key: 'gas_usage', label: '用气量', default: true, w: '0.9fr' },
+  { key: 'gas_fee', label: '气费', default: false, w: '0.9fr' },
   { key: 'remark', label: '备注', default: false, w: '1.5fr' },
 ]
-const STORAGE_KEY = 'weknora-tenant-billing-columns-v1'
-const visibleKeys = ref<string[]>(loadStoredKeys())
-const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleKeys.value.includes(c.key)))
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
-}))
+const COL_DEFS_TENANT: ColDef[] = [
+  { key: 'month', label: '账单周期', default: true, w: '0.8fr' },
+  { key: 'unit', label: '使用单位', default: true, w: '0.9fr' },
+  { key: 'total_kwh', label: '总电量（本期电量）', default: false, w: '0.9fr' },
+  { key: 'total_fee', label: '总电费（本期电费）', default: false, w: '1fr' },
+  { key: 'ratio', label: '分摊比例', default: false, w: '0.9fr' },
+  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr' },
+  { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr' },
+  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr' },
+  { key: 'dorm_kwh', label: '电量（居民）', default: true, w: '0.9fr' },
+  { key: 'dorm_fee', label: '电费（居民）', default: true, w: '0.9fr' },
+  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr' },
+  { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr' },
+  { key: 'water_dorm_usage', label: '用水量（居民）', default: true, w: '1fr' },
+  { key: 'water_dorm_fee', label: '水费（居民）', default: true, w: '0.9fr' },
+  { key: 'remark', label: '备注', default: false, w: '1.5fr' },
+]
+const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
+const activeColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEFS_TENANT))
+const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v2`)
+const visibleKeys = ref<string[]>([])
 function loadStoredKeys(): string[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(colStorageKey.value)
     if (raw) {
       const arr = JSON.parse(raw)
       if (Array.isArray(arr) && arr.length) {
-        const valid = arr.filter(k => COLUMN_DEFS.some(c => c.key === k))
+        const valid = arr.filter(k => activeColDefs.value.some(c => c.key === k))
         if (valid.length) return valid
       }
     }
   } catch { /* ignore */ }
-  return COLUMN_DEFS.filter(c => c.default).map(c => c.key)
+  return activeColDefs.value.filter(c => c.default).map(c => c.key)
 }
+const syncColumnKeys = () => { visibleKeys.value = loadStoredKeys() }
+syncColumnKeys()
+watch(useUnit, syncColumnKeys)
+const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
+const gridStyle = computed(() => ({
+  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
+}))
 const fieldPopupVisible = ref(false)
-const selectAllColumns = () => { visibleKeys.value = COLUMN_DEFS.map(c => c.key); persistColumns() }
-const resetColumns = () => { visibleKeys.value = COLUMN_DEFS.filter(c => c.default).map(c => c.key); persistColumns() }
-const persistColumns = () => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
+const selectAllColumns = () => { visibleKeys.value = activeColDefs.value.map(c => c.key); persistColumns() }
+const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c => c.default).map(c => c.key); persistColumns() }
+const persistColumns = () => { try { localStorage.setItem(colStorageKey.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
 
 // ---- 租户与账单 ----
 const loading = ref(false)
 const tenants = ref<any[]>([])
 const activeTenantId = ref('')
 const tenantOptions = computed(() => tenants.value.map(t => ({ label: t.name, value: t.id })))
+const useUnitOptions = computed(() => {
+  const units = new Set<string>([OWNER_UNIT])
+  tenants.value.forEach((t: any) => { if (t.name) units.add(t.name) })
+  return Array.from(units).map(v => ({ label: v, value: v }))
+})
 const filters = ref<{ month?: string }>({ month: undefined })
 const records = ref<any[]>([])
 const displayRows = ref<any[]>([])
+
+// ---- 数据源缓存(市电/光伏/水电气记录/水表) ----
+const utilityBills = ref<any[]>([])      // 市电账单 record(含 item)
+const solarBills = ref<any[]>([])        // 光伏 record
+const elecRows = ref<any[]>([])          // 电费页电表记录(宿舍表)
+const gasRows = ref<any[]>([])           // 气费记录
+const waterMeters = ref<any[]>([])       // 租户核算水表
+const waterReadings = ref<any[]>([])     // 租户核算水表读数
+
+const monthOfPeriod = (v: any): string => {
+  const s = String(v || '')
+  return s.length >= 7 ? s.slice(0, 7) : s
+}
+
+const loadKb = async () => {
+  try {
+    const res: any = await listKnowledgeBases()
+    const list = res?.data || res?.list || []
+    const found = Array.isArray(list) ? list.find((kb: any) => kb.name === BILL_KB_NAME) : null
+    kbId.value = found?.id || ''
+  } catch { /* ignore */ }
+}
 
 const loadTenants = async () => {
   loading.value = true
@@ -688,7 +988,7 @@ const loadTenants = async () => {
     if (tenants.value.length && !activeTenantId.value) {
       activeTenantId.value = tenants.value[0].id
     }
-    await loadRecords()
+    await loadAllData()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载租户失败')
   } finally {
@@ -696,28 +996,211 @@ const loadTenants = async () => {
   }
 }
 
-const loadRecords = async () => {
-  if (!activeTenantId.value) return
+// 并行加载所有数据源并计算行
+const loadAllData = async () => {
+  await loadKb()
+  const tenantId = activeTenantId.value
+  if (!tenantId) { records.value = []; displayRows.value = []; return }
   try {
-    const res: any = await listBillingRecords(activeTenantId.value)
-    records.value = res.data || []
-    let list = records.value
-    if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
-    displayRows.value = list
-    clearSelection()
+    const tasks: Promise<any>[] = []
+    if (kbId.value) {
+      tasks.push(listUtilityBillRecords(kbId.value, { page: 1, page_size: 500 }))
+      tasks.push(listSolarBillRecords(kbId.value, { page: 1, page_size: 500 }))
+    }
+    tasks.push(
+      listBillingRecords(tenantId),
+      listUtilityMeterRecords({ category: 'electricity' }),
+      listUtilityMeterRecords({ category: 'gas' }),
+      listBillingWaterMeters(tenantId),
+      listBillingWaterReadings({}),
+    )
+    const [billRes, solarRes, recRes, elecRes, gasRes, wmRes, wrRes]: any[] = await Promise.all(tasks)
+    utilityBills.value = Array.isArray(billRes?.data || billRes?.list) ? (billRes.data || billRes.list) : []
+    solarBills.value = Array.isArray(solarRes?.data || solarRes?.list) ? (solarRes.data || solarRes.list) : []
+    records.value = recRes?.data || []
+    elecRows.value = flattenMeterRecords(elecRes)
+    gasRows.value = flattenMeterRecords(gasRes)
+    waterMeters.value = wmRes?.data || []
+    waterReadings.value = wrRes?.data || []
+    buildRows()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载账单失败')
   }
 }
 
+// 水/气记录展平(与 UtilityMeterTab 一致)
+const flattenMeterRecords = (res: any): any[] => {
+  const recData = res?.data || {}
+  const records = recData?.records || res?.records || []
+  const mets = Array.isArray(recData?.meters) ? recData.meters : []
+  const meterMap = new Map(mets.map((m: any) => [m.id, m]))
+  const flat: any[] = []
+  for (const rec of records) {
+    for (const it of (rec.items || [])) {
+      const meter = meterMap.get(it.meter_id) as any
+      flat.push({
+        month: rec.month,
+        meter_id: it.meter_id,
+        use_unit: meter?.use_unit || (it as any).use_unit || '',
+        usage: Number(it.usage) || 0,
+        unit_price: Number(it.unit_price ?? meter?.default_unit_price) || 0,
+        amount: Number(it.amount) || 0,
+      })
+    }
+  }
+  return flat
+}
+
+const sumBy = (arr: any[], key: string): number => Math.round(arr.reduce((s, r) => s + (Number(r[key]) || 0), 0) * 100) / 100
+
+// 市电账单居民电量/电费
+const residentInfoOf = (bill: any) => {
+  const item = bill?.item || bill || {}
+  const rows = Array.isArray(item.residential_readings) ? item.residential_readings : []
+  const kwh = Math.round(rows.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0) * 100) / 100
+  const gov = (Array.isArray(item.fee_items) ? item.fee_items : [])
+    .filter((f: any) => String(f.category || '').includes('政府性基金') && Number(f.qty || 0) < 100000 && !String(f.name || '').includes('功率因数'))
+    .reduce((s: number, f: any) => s + (Number(f.fee) || 0), 0)
+  const fee = Math.round(((Number(item.catalog_amount) || 0) + (Number(gov) || 0)) * 100) / 100
+  return { kwh, fee }
+}
+
+// 水表读数按 (meterId, month) 索引
+const waterReadingMap = computed(() => {
+  const m = new Map<string, any>()
+  waterReadings.value.forEach((r: any) => m.set(`${r.meter_id}__${r.month}`, r))
+  return m
+})
+
+// 汇总指定类型水表某月用量/费用
+const waterAgg = (kind: string, owner: string, month: string) => {
+  const meters = waterMeters.value.filter((m: any) =>
+    m.enabled !== false && m.meter_kind === kind &&
+    (owner === '' || m.owner_unit === owner || m.use_unit === owner),
+  )
+  let usage = 0
+  let fee = 0
+  for (const m of meters) {
+    const r = waterReadingMap.value.get(`${m.id}__${month}`)
+    if (!r) continue
+    const u = Math.max(0, (Number(r.curr) || 0) - (Number(r.prev) || 0)) * (Number(m.rate) || 1)
+    const price = Number(r.price) > 0 ? Number(r.price) : (Number(m.price) || 0)
+    usage += u
+    fee += u * price
+  }
+  return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100 }
+}
+
+// 组装列表行
+const buildRows = () => {
+  const tenant = tenants.value.find((t: any) => t.id === activeTenantId.value)
+  const tenantName = tenant?.name || ''
+  const billByMonth = new Map<string, any>()
+  utilityBills.value.forEach((r: any) => { const m = monthOfPeriod(r.item?.bill_period_start || r.item?.bill_period_end || r.item?.bill_month); if (m) billByMonth.set(m, r) })
+  const solarByMonth = new Map<string, any>()
+  solarBills.value.forEach((r: any) => { const m = monthOfPeriod(r.item?.bill_period_start || r.item?.bill_period_end); if (m) { const arr = solarByMonth.get(m) || []; arr.push(r); solarByMonth.set(m, arr) } })
+  const recByMonth = new Map<string, any>()
+  records.value.forEach((r: any) => recByMonth.set(r.month, r))
+
+  const months = new Set<string>()
+  billByMonth.forEach((_, m) => months.add(m))
+  solarByMonth.forEach((_, m) => months.add(m))
+  recByMonth.forEach((_, m) => months.add(m))
+  elecRows.value.forEach(r => { if (r.month) months.add(r.month) })
+  gasRows.value.forEach(r => { if (r.month) months.add(r.month) })
+  waterReadings.value.forEach(r => { if (r.month) months.add(r.month) })
+
+  const list = Array.from(months).sort().reverse().map((month: string) => {
+    const bill = billByMonth.get(month)
+    const rec = recByMonth.get(month)
+    const solarArr = solarByMonth.get(month) || []
+    // 宿舍电表(utility 电费页表,按使用单位)
+    const elecOf = (unit: string) => elecRows.value.filter(r => r.month === month && r.use_unit === unit)
+    const dormOf = (unit: string) => {
+      const arr = elecOf(unit)
+      return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
+    }
+    const gasOf = () => gasRows.value.filter(r => r.month === month)
+    const base: Record<string, any> = { id: `row-${month}`, month, unit: useUnit.value }
+
+    if (isOwnerView.value) {
+      // ===== 星达(房东)视图 =====
+      const totalKwh = Number(bill?.item?.total_kwh) || 0
+      const totalFee = Number(bill?.item?.grand_total ?? bill?.item?.total_amount) || 0
+      const res = residentInfoOf(bill?.item)
+      const dorm = dormOf(OWNER_UNIT)
+      const tenantDorm = dormOf(tenantName)
+      const wInd = waterAgg('total', OWNER_UNIT, month)
+      const wDorm = waterAgg('dorm', OWNER_UNIT, month)
+      const wFire = waterAgg('fire', OWNER_UNIT, month)
+      const gas = gasOf()
+      const indKwh = Math.round((totalKwh - (Number(rec?.total_kwh) || 0) - res.kwh - tenantDorm.kwh) * 100) / 100
+      const indFee = Math.round((totalFee - (Number(rec?.industrial_fee) || 0) - res.fee) * 100) / 100
+      Object.assign(base, {
+        total_kwh: totalKwh,
+        total_fee: totalFee,
+        solar_gen: sumBy(solarArr.map((s: any) => ({ v: s.item?.generation_kwh })), 'v'),
+        solar_grid: sumBy(solarArr.map((s: any) => ({ v: s.item?.grid_kwh })), 'v'),
+        ind_kwh: indKwh,
+        ind_fee: indFee,
+        ind_price: indKwh > 0 ? Math.round(indFee / indKwh * 10000) / 10000 : 0,
+        res_kwh: res.kwh,
+        res_fee: res.fee,
+        dorm_kwh: dorm.kwh,
+        dorm_fee: dorm.fee,
+        water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
+        water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
+        water_fire_usage: wFire.usage, water_fire_fee: wFire.fee,
+        gas_usage: sumBy(gas, 'usage'),
+        gas_fee: sumBy(gas, 'amount'),
+      })
+    } else {
+      // ===== 持睿(租户)视图 =====
+      const totalKwh = Number(bill?.item?.total_kwh) || 0
+      const totalFee = Number(bill?.item?.grand_total ?? bill?.item?.total_amount) || 0
+      const dorm = dormOf(tenantName)
+      const wInd = waterAgg('industry', tenantName, month)
+      const wDorm = waterAgg('dorm', tenantName, month)
+      const indKwh = Number(rec?.total_kwh) || 0
+      const indFee = Number(rec?.industrial_fee) || 0
+      Object.assign(base, {
+        total_kwh: totalKwh,
+        total_fee: totalFee,
+        ratio: Number(rec?.ratio) || 0,
+        ind_kwh: indKwh,
+        ind_fee: indFee,
+        ind_price: indKwh > 0 ? Math.round(indFee / indKwh * 10000) / 10000 : 0,
+        dorm_kwh: dorm.kwh,
+        dorm_fee: dorm.fee,
+        water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
+        water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
+      })
+    }
+    base.remark = rec?.remark || ''
+    return base
+  })
+  displayRows.value = filters.value.month ? list.filter(r => r.month === filters.value.month) : list
+  clearSelection()
+}
+
+const loadRecords = async () => {
+  await loadAllData()
+}
+
 const onTenantChange = async () => {
   clearSelection()
-  await loadRecords()
+  await loadAllData()
+}
+
+const onUseUnitChange = () => {
+  clearSelection()
+  syncColumnKeys()
+  buildRows()
 }
 
 // ---- 汇总 ----
 const selectedKeys = ref<Set<string>>(new Set())
-const selectedRows = computed(() => records.value.filter(r => selectedKeys.value.has(r.id)))
+const selectedRows = computed(() => displayRows.value.filter(r => selectedKeys.value.has(r.id)))
 const summary = computed(() => ({ total: (selectedKeys.value.size ? selectedRows.value : displayRows.value).length }))
 const summaryKwh = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
@@ -743,7 +1226,10 @@ const toggleSelectAll = (checked: any) => {
 }
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.id])
-  openRecord(row)
+  if (!isOwnerView.value) {
+    const rec = records.value.find((r: any) => r.month === row.month)
+    if (rec) openRecord(rec)
+  }
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
 const openEditSelected = () => {
@@ -845,9 +1331,11 @@ const readingTitle = '新增抄表记录'
 const readingDate = ref('')
 const readingReader = ref('')
 const readingRecordDate = ref('')
-const curForm = ref<Record<string, any>>({})
+const curForm = ref<Record<string, any>>({ month: '', remark: '' })
 const curIdx = ref(0)
 const curMeterId = ref('')
+// 录入类型:meter 电表 | water 水表
+const readingType = ref<'meter' | 'water'>('meter')
 const periods = [
   { key: 'deep', label: '尖' },
   { key: 'peak', label: '峰' },
@@ -875,22 +1363,119 @@ const isTimeMeter = computed(() => {
 })
 const today = new Date().toISOString().slice(0, 10)
 
+// ---- 水表抄表(单起止+单价,连续录入) ----
+const enabledWaterMeters = computed(() => allWaterMeters.value.filter((m: any) => m.enabled))
+const waterReadingQueue = computed(() => {
+  const g: Record<string, any[]> = {}
+  enabledWaterMeters.value.forEach((m: any) => {
+    const owner = m.owner_unit || '未分组'
+    ;(g[owner] = g[owner] || []).push(m)
+  })
+  return Object.keys(g).sort((a, b) => (a === '星达铜业' ? -1 : b === '星达铜业' ? 1 : 0))
+    .flatMap(k => g[k])
+})
+const waterMeterEditOptions = computed(() =>
+  waterReadingQueue.value.map((m: any) => ({ label: `${m.owner_unit || ''} · ${m.name}`.replace(/^ · /, ''), value: m.id })),
+)
+const curWaterIdx = ref(0)
+const curWaterMeterId = ref('')
+const waterForm = ref<{ prev: number; curr: number; price: number }>({ prev: 0, curr: 0, price: 0 })
+const curWaterMeter = computed(() => waterReadingQueue.value.find((m: any) => m.id === curWaterMeterId.value) || null)
+const waterUsage = computed(() => {
+  const m = curWaterMeter.value
+  if (!m) return 0
+  return Math.max(0, (Number(waterForm.value.curr) || 0) - (Number(waterForm.value.prev) || 0)) * (Number(m.rate) || 1)
+})
+const waterAmount = computed(() => Math.round(waterUsage.value * waterPrice.value * 100) / 100)
+const waterPrice = computed(() => {
+  const p = Number(waterForm.value.price)
+  if (p > 0) return p
+  return Number(curWaterMeter.value?.price) || 0
+})
+const loadWaterForm = async (m: any) => {
+  const form = { prev: 0, curr: 0, price: Number(m.price) || 0 }
+  try {
+    const cur: any = await getBillingWaterReading(m.id, readingMonth.value)
+    if (cur.data && Object.keys(cur.data).length) {
+      form.prev = Number(cur.data.prev) || 0
+      form.curr = Number(cur.data.curr) || 0
+      form.price = Number(cur.data.price) || form.price
+    }
+  } catch { /* ignore */ }
+  // 本月无记录,同表上月止度预填起度
+  if (!(form.prev > 0) && !(form.curr > 0)) {
+    try {
+      const prev: any = await getBillingWaterReading(m.id, prevMonthOf(readingMonth.value))
+      if (prev.data && Object.keys(prev.data).length) {
+        form.prev = Number(prev.data.curr) || 0
+      }
+    } catch { /* ignore */ }
+  }
+  readingReader.value = m.manager || ''
+  waterForm.value = form
+}
+const switchWaterTo = async (idx: number) => {
+  const q = waterReadingQueue.value
+  if (!q.length) return
+  const i = Math.max(0, Math.min(idx, q.length - 1))
+  curWaterIdx.value = i
+  curWaterMeterId.value = q[i].id
+  await loadWaterForm(q[i])
+}
+const onWaterMeterChange = async (id: string) => {
+  const q = waterReadingQueue.value
+  const i = q.findIndex((m: any) => m.id === id)
+  if (i >= 0) {
+    curWaterIdx.value = i
+    await loadWaterForm(q[i])
+  }
+}
+const saveWaterAndNext = async () => {
+  const m = curWaterMeter.value
+  if (!readingMonth.value) { MessagePlugin.warning('请选择月份'); return }
+  if (!m) { MessagePlugin.warning('请选择水表'); return }
+  const prev = Number(waterForm.value.prev) || 0
+  const curr = Number(waterForm.value.curr) || 0
+  if (curr < prev) { MessagePlugin.warning(`${m.name} 止度不得小于起度`); return }
+  savingReadings.value = true
+  try {
+    await saveBillingWaterReading(m.id, { month: readingMonth.value, prev, curr, price: waterPrice.value })
+    const q = waterReadingQueue.value
+    if (curWaterIdx.value + 1 < q.length) {
+      await switchWaterTo(curWaterIdx.value + 1)
+      return
+    }
+    MessagePlugin.success('读数已保存')
+    readingVisible.value = false
+    await loadAllData()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  } finally {
+    savingReadings.value = false
+  }
+}
+
 const prevMonthOf = (month: string): string => {
   const [y, mo] = month.split('-').map(Number)
   return `${mo === 1 ? y - 1 : y}-${String(mo === 1 ? 12 : mo - 1).padStart(2, '0')}`
 }
 
-const openReadingDrawer = async (month: string) => {
+const openReadingDrawer = async (month: string, type: 'meter' | 'water' = 'meter') => {
   if (!activeTenantId.value) {
     MessagePlugin.warning('请先选择租户')
     return
   }
+  readingType.value = type
   readingMonth.value = month || currentMonth()
   readingDate.value = today
   readingRecordDate.value = today
   readingVisible.value = true
   await loadMetersForReading()
-  await switchMeterTo(0)
+  if (type === 'water') {
+    await switchWaterTo(0)
+  } else {
+    await switchMeterTo(0)
+  }
 }
 
 const currentMonth = (): string => {
@@ -902,6 +1487,7 @@ const loadMetersForReading = async () => {
   try {
     const res: any = await getBillingTenant(activeTenantId.value)
     allMeters.value = res.data?.meters || []
+    allWaterMeters.value = res.data?.water_meters || []
   } catch { /* ignore */ }
 }
 
@@ -1077,6 +1663,7 @@ const loadDetail = async () => {
     detail.value = res.data
     const d = res.data
     allMeters.value = d.meters || []
+    allWaterMeters.value = d.water_meters || []
     itemsForm.value = (d.items || []).map((it: any) => ({
       category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
     }))
@@ -1274,6 +1861,100 @@ const removeMeter = async (m: any) => {
   }
 }
 
+// ---- 水表 CRUD(复刻电表:按归属单位分组 + 内联表单 + 默认单价) ----
+const waterMeterFormVisible = ref(false)
+const savingWaterMeter = ref(false)
+const allWaterMeters = ref<any[]>([])
+const waterMeterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter_kind: 'total', owner_unit: '', use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '', price: 0 })
+
+const emptyWaterMeterForm = (ownerUnit: string) => ({
+  id: '', name: '', meter_no: '', rate: 1, meter_kind: 'total', owner_unit: ownerUnit || '',
+  use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '', price: 0,
+})
+const waterMeterKindOptions = [
+  { label: '总表', value: 'total' },
+  { label: '工业', value: 'industry' },
+  { label: '宿舍', value: 'dorm' },
+  { label: '消防', value: 'fire' },
+]
+const waterMeterKindLabel = (k: string) => waterMeterKindOptions.find(o => o.value === k)?.label || k
+const waterMeterGroups = computed(() => {
+  const g: Record<string, any[]> = {}
+  allWaterMeters.value.forEach((m: any) => {
+    const owner = m.owner_unit || '未分组'
+    ;(g[owner] = g[owner] || []).push(m)
+  })
+  return Object.entries(g).map(([owner, meters]) => ({ owner, meters }))
+})
+const openAddWaterMeter = (ownerUnit: string) => {
+  waterMeterForm.value = emptyWaterMeterForm(ownerUnit)
+  waterMeterFormVisible.value = true
+}
+const openEditWaterMeter = (m: any) => {
+  waterMeterForm.value = {
+    id: m.id, name: m.name || '', meter_no: m.meter_no || '',
+    rate: Number(m.rate) || 1, meter_kind: m.meter_kind || 'total',
+    owner_unit: m.owner_unit || '', use_unit: m.use_unit || '',
+    manager: m.manager || '', contact: m.contact || '',
+    meter_mode: m.meter_mode === 'auto' ? 'auto' : 'manual',
+    install_date: m.install_date || '', remark: m.remark || '',
+    price: Number(m.price) || 0,
+  }
+  waterMeterFormVisible.value = true
+}
+const submitWaterMeter = async () => {
+  if (!waterMeterForm.value.name.trim()) {
+    MessagePlugin.warning('请输入别名')
+    return
+  }
+  savingWaterMeter.value = true
+  try {
+    const payload: Record<string, unknown> = {
+      name: waterMeterForm.value.name.trim(),
+      meter_no: waterMeterForm.value.meter_no,
+      meter_kind: waterMeterForm.value.meter_kind || 'total',
+      owner_unit: waterMeterForm.value.owner_unit,
+      use_unit: waterMeterForm.value.use_unit,
+      manager: waterMeterForm.value.manager,
+      contact: waterMeterForm.value.contact,
+      meter_mode: waterMeterForm.value.meter_mode || 'manual',
+      install_date: waterMeterForm.value.install_date || null,
+      remark: waterMeterForm.value.remark,
+      rate: Number(waterMeterForm.value.rate) || 1,
+      price: Number(waterMeterForm.value.price) || 0,
+    }
+    if (waterMeterForm.value.id) {
+      await updateBillingWaterMeter(waterMeterForm.value.id, payload)
+    } else {
+      await createBillingWaterMeter(activeTenantId.value, payload)
+    }
+    waterMeterFormVisible.value = false
+    MessagePlugin.success('已保存')
+    await loadDetail()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  } finally {
+    savingWaterMeter.value = false
+  }
+}
+const toggleWaterMeter = async (m: any, v: boolean) => {
+  try {
+    await updateBillingWaterMeter(m.id, { enabled: v })
+    await loadDetail()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '操作失败')
+  }
+}
+const removeWaterMeter = async (m: any) => {
+  try {
+    await deleteBillingWaterMeter(m.id)
+    MessagePlugin.success('已删除')
+    await loadDetail()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '删除失败')
+  }
+}
+
 // ---- 账单详情与打印 ----
 const recordVisible = ref(false)
 const recordWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.record, '760px'))
@@ -1382,11 +2063,20 @@ const fmtRatio = (v: any): string => {
   if (v === '' || v == null || Number.isNaN(n)) return '—'
   return (n * 100).toFixed(2) + '%'
 }
+const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee']
+const KWH_KEYS = ['total_kwh', 'ind_kwh', 'res_kwh', 'dorm_kwh', 'water_ind_usage', 'water_dorm_usage', 'water_fire_usage', 'gas_usage', 'solar_gen', 'solar_grid']
+const printLoaded = ref(false)
 const cellText = (key: string, row: any): string => {
   if (key === 'ratio') return fmtRatio(row.ratio)
-  if (['total_kwh', 'line_loss'].includes(key)) return fmtKwh(row[key])
-  if (['industrial_fee', 'dorm_fee', 'water_fee', 'bill_total_amount', 'total_fee'].includes(key)) return fmtMoney(row[key])
+  if (key === 'ind_price') return fmtPrice(row.ind_price)
+  if (MONEY_KEYS.includes(key)) return fmtMoney(row[key])
+  if (KWH_KEYS.includes(key)) return fmtKwh(row[key])
   return row[key] || ''
+}
+const fmtPrice = (v: any): string => {
+  const n = Number(v)
+  if (v === '' || v == null || Number.isNaN(n) || n === 0) return '—'
+  return String(parseFloat(n.toFixed(4)))
 }
 
 onMounted(() => {
@@ -1600,6 +2290,7 @@ onMounted(() => {
 
 /* 读数抽屉（单表连续录入：尖峰平谷 4 时段起止度，复刻电费新增记录样式） */
 .reading-body { padding: 4px 0 24px; }
+.reading-type-switch { margin-bottom: 14px; }
 .period-grid {
   display: flex;
   flex-direction: column;

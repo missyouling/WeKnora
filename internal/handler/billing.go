@@ -89,14 +89,17 @@ func (h *BillingHandler) GetBillingTenant(c *gin.Context) {
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).Order("category ASC, created_at ASC").Find(&refs).Error
 	var meters []types.BillingTimeMeter
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("meter_type ASC, created_at ASC").Find(&meters).Error
+	var waterMeters []types.BillingWaterMeter
+	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("created_at ASC").Find(&waterMeters).Error
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"tenant":  t,
-			"setting": st,
-			"items":   items,
-			"refs":    refs,
-			"meters":  meters,
+			"tenant":       t,
+			"setting":      st,
+			"items":        items,
+			"refs":         refs,
+			"meters":       meters,
+			"water_meters": waterMeters,
 		},
 	})
 }
@@ -417,6 +420,246 @@ func (h *BillingHandler) DeleteBillingTimeMeter(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ---------------------------------------------------------------------------
+// 水表(总表/工业/宿舍/消防)
+// ---------------------------------------------------------------------------
+
+// ListBillingWaterMeters godoc
+// @Summary      水表列表
+// @Router       /billing/tenants/:id/water-meters [get]
+func (h *BillingHandler) ListBillingWaterMeters(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	var meters []types.BillingWaterMeter
+	if err := h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).
+		Order("created_at ASC").Find(&meters).Error; err != nil {
+		c.Error(errors.NewInternalServerError("list water meters failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": meters})
+}
+
+// CreateBillingWaterMeter godoc
+// @Summary      新增水表
+// @Router       /billing/tenants/:id/water-meters [post]
+func (h *BillingHandler) CreateBillingWaterMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	var req struct {
+		Name        string  `json:"name"`
+		MeterNo     string  `json:"meter_no"`
+		MeterKind   string  `json:"meter_kind"` // total | industry | dorm | fire
+		OwnerUnit   string  `json:"owner_unit"`
+		UseUnit     string  `json:"use_unit"`
+		Manager     string  `json:"manager"`
+		Contact     string  `json:"contact"`
+		MeterMode   string  `json:"meter_mode"`
+		InstallDate *string `json:"install_date"`
+		Remark      string  `json:"remark"`
+		Rate        float64 `json:"rate"`
+		Price       float64 `json:"price"`
+		Enabled     *bool   `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		c.Error(errors.NewBadRequestError("name is required"))
+		return
+	}
+	switch req.MeterKind {
+	case "industry", "dorm", "fire":
+	default:
+		req.MeterKind = "total"
+	}
+	if req.MeterMode != "auto" {
+		req.MeterMode = "manual"
+	}
+	m := types.BillingWaterMeter{
+		ID: uuid.NewString(), BillingTenantID: id,
+		Name: req.Name, MeterNo: req.MeterNo, MeterKind: req.MeterKind,
+		OwnerUnit: req.OwnerUnit, UseUnit: req.UseUnit,
+		Manager: req.Manager, Contact: req.Contact, MeterMode: req.MeterMode,
+		InstallDate: req.InstallDate, Remark: req.Remark,
+		Rate: req.Rate, Price: req.Price, Enabled: true,
+		CreatedAt: timeNowUTC(), UpdatedAt: timeNowUTC(),
+	}
+	if req.Enabled != nil {
+		m.Enabled = *req.Enabled
+	}
+	if m.Rate <= 0 {
+		m.Rate = 1
+	}
+	if err := h.db.WithContext(ctx).Create(&m).Error; err != nil {
+		c.Error(errors.NewInternalServerError("create water meter failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": m})
+}
+
+// UpdateBillingWaterMeter godoc
+// @Summary      更新水表
+// @Router       /billing/water-meters/:id [put]
+func (h *BillingHandler) UpdateBillingWaterMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	var req struct {
+		Name        string  `json:"name"`
+		MeterNo     string  `json:"meter_no"`
+		MeterKind   string  `json:"meter_kind"`
+		OwnerUnit   string  `json:"owner_unit"`
+		UseUnit     string  `json:"use_unit"`
+		Manager     string  `json:"manager"`
+		Contact     string  `json:"contact"`
+		MeterMode   string  `json:"meter_mode"`
+		InstallDate *string `json:"install_date"`
+		Remark      string  `json:"remark"`
+		Rate        float64 `json:"rate"`
+		Price       float64 `json:"price"`
+		Enabled     *bool   `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
+	var m types.BillingWaterMeter
+	if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&m).Error; err != nil {
+		c.Error(errors.NewNotFoundError("水表不存在"))
+		return
+	}
+	if strings.TrimSpace(req.Name) != "" {
+		m.Name = strings.TrimSpace(req.Name)
+	}
+	m.MeterNo = req.MeterNo
+	switch req.MeterKind {
+	case "industry", "dorm", "fire", "total":
+		m.MeterKind = req.MeterKind
+	}
+	m.OwnerUnit = req.OwnerUnit
+	m.UseUnit = req.UseUnit
+	m.Manager = req.Manager
+	m.Contact = req.Contact
+	if req.MeterMode == "auto" || req.MeterMode == "manual" {
+		m.MeterMode = req.MeterMode
+	}
+	m.InstallDate = req.InstallDate
+	m.Remark = req.Remark
+	if req.Rate > 0 {
+		m.Rate = req.Rate
+	}
+	if req.Price > 0 {
+		m.Price = req.Price
+	}
+	if req.Enabled != nil {
+		m.Enabled = *req.Enabled
+	}
+	m.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&m).Error; err != nil {
+		c.Error(errors.NewInternalServerError("update water meter failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": m})
+}
+
+// DeleteBillingWaterMeter godoc
+// @Summary      删除水表
+// @Router       /billing/water-meters/:id [delete]
+func (h *BillingHandler) DeleteBillingWaterMeter(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	now := timeNowUTC()
+	if err := h.db.WithContext(ctx).Model(&types.BillingWaterMeter{}).
+		Where("id = ?", id).Update("deleted_at", now).Error; err != nil {
+		c.Error(errors.NewInternalServerError("delete water meter failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// GetBillingWaterReading godoc
+// @Summary      水表某月读数
+// @Router       /billing/water-meters/:id/readings [get]
+func (h *BillingHandler) GetBillingWaterReading(c *gin.Context) {
+	ctx := c.Request.Context()
+	meterID := c.Param("id")
+	month := strings.TrimSpace(c.Query("month"))
+	var r types.BillingWaterReading
+	err := h.db.WithContext(ctx).Where("meter_id = ? AND month = ?", meterID, month).First(&r).Error
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": nil})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": r})
+}
+
+// ListBillingWaterReadings godoc
+// @Summary      水表读数列表(可按月份过滤)
+// @Router       /billing/water-readings [get]
+func (h *BillingHandler) ListBillingWaterReadings(c *gin.Context) {
+	ctx := c.Request.Context()
+	month := strings.TrimSpace(c.Query("month"))
+	var list []types.BillingWaterReading
+	q := h.db.WithContext(ctx)
+	if month != "" {
+		q = q.Where("month = ?", month)
+	}
+	if err := q.Order("month DESC, created_at ASC").Find(&list).Error; err != nil {
+		c.Error(errors.NewInternalServerError("list water readings failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
+}
+
+// SaveBillingWaterReading godoc
+// @Summary      保存水表读数(upsert)
+// @Router       /billing/water-meters/:id/readings [put]
+func (h *BillingHandler) SaveBillingWaterReading(c *gin.Context) {
+	ctx := c.Request.Context()
+	meterID := c.Param("id")
+	var req struct {
+		Month string  `json:"month"`
+		Prev  float64 `json:"prev"`
+		Curr  float64 `json:"curr"`
+		Price float64 `json:"price"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
+	req.Month = strings.TrimSpace(req.Month)
+	if len(req.Month) != 7 {
+		c.Error(errors.NewBadRequestError("month is required (YYYY-MM)"))
+		return
+	}
+	now := timeNowUTC()
+	var r types.BillingWaterReading
+	err := h.db.WithContext(ctx).Where("meter_id = ? AND month = ?", meterID, req.Month).First(&r).Error
+	if err == gorm.ErrRecordNotFound {
+		r = types.BillingWaterReading{
+			ID: uuid.NewString(), MeterID: meterID, Month: req.Month,
+			Prev: req.Prev, Curr: req.Curr, Price: req.Price,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := h.db.WithContext(ctx).Create(&r).Error; err != nil {
+			c.Error(errors.NewInternalServerError("save water reading failed"))
+			return
+		}
+	} else if err != nil {
+		c.Error(errors.NewInternalServerError("query water reading failed"))
+		return
+	} else {
+		r.Prev, r.Curr, r.Price = req.Prev, req.Curr, req.Price
+		r.UpdatedAt = now
+		if err := h.db.WithContext(ctx).Save(&r).Error; err != nil {
+			c.Error(errors.NewInternalServerError("save water reading failed"))
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": r})
 }
 
 // ---------------------------------------------------------------------------

@@ -77,6 +77,44 @@ type BillingTimeReading struct {
 
 func (BillingTimeReading) TableName() string { return "billing_time_meter_readings" }
 
+// BillingWaterMeter 水表(总表/工业/宿舍/消防),按归属单位动态分组,默认单价用于水费计算。
+type BillingWaterMeter struct {
+	ID              string     `gorm:"primaryKey" json:"id"`
+	BillingTenantID string     `gorm:"index" json:"billing_tenant_id"`
+	Name            string     `json:"name"`       // 别名
+	MeterNo         string     `json:"meter_no"`   // 表号
+	MeterKind       string     `json:"meter_kind"` // total | industry | dorm | fire 总表/工业/宿舍/消防
+	OwnerUnit       string     `json:"owner_unit"` // 归属单位(动态分组)
+	UseUnit         string     `json:"use_unit"`   // 使用单位
+	Manager         string     `json:"manager"`    // 管理人员
+	Contact         string     `json:"contact"`    // 联系方式
+	MeterMode       string     `json:"meter_mode"` // auto | manual 抄表方式
+	InstallDate     *string    `gorm:"type:date" json:"install_date"`
+	Remark          string     `gorm:"type:text" json:"remark"`
+	Rate            float64    `gorm:"numeric(12,4)" json:"rate"`
+	Price           float64    `gorm:"numeric(18,4)" json:"price"` // 默认单价 元/吨
+	Enabled         bool       `json:"enabled"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	DeletedAt       *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (BillingWaterMeter) TableName() string { return "billing_water_meters" }
+
+// BillingWaterReading 水表月度读数(单起止 + 单价)。
+type BillingWaterReading struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	MeterID   string    `gorm:"index" json:"meter_id"`
+	Month     string    `json:"month"` // YYYY-MM
+	Prev      float64   `gorm:"numeric(18,2)" json:"prev"`
+	Curr      float64   `gorm:"numeric(18,2)" json:"curr"`
+	Price     float64   `gorm:"numeric(18,4)" json:"price"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (BillingWaterReading) TableName() string { return "billing_water_meter_readings" }
+
 // BillingTenantItem 分摊子项开关（市电账单各费用子项是否参与分摊，按子项名 name 粒度）。
 type BillingTenantItem struct {
 	ID              string    `gorm:"primaryKey" json:"id"`
