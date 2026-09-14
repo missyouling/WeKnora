@@ -1033,7 +1033,7 @@ const saveItems = async () => {
       .filter((it: any) => it.item_name.trim())
       .map((it: any) => ({
         category: it.category || '其他费用',
-        item_key: it.item_name.trim(), item_name: it.item_name.trim(), enabled: !!it.enabled,
+        item_key: `${(it.category || '其他费用').trim()}|${it.item_name.trim()}`, item_name: it.item_name.trim(), enabled: !!it.enabled,
       }))
     await saveBillingTenantItems(activeTenantId.value, { items })
   } catch (e: any) {

@@ -1056,11 +1056,17 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	// 5.1 FeeItems 子项(按时段单价/计费基数×单价)
 	catRows := groupFeeItems(feeItems)
 	for _, cat := range catRows {
+		// 居民/目录电费(定比单列)子项不参与按比例分摊
+		if strings.Contains(cat.Name, "居民") || strings.Contains(cat.Name, "目录电费") {
+			continue
+		}
 		// 子项(name)开关控制:大类下同名子项可多行(分时时段)。
 		// 同一子项内:分时行按时段电量×时段单价;非分时行按计费基数×单价;
 		// 无电量无单价但带金额的固定项(返还类)按分摊比例计算。
 		for _, sg := range groupFeeItemsByName(cat.Rows) {
-			if !enabled[sg.Name] {
+			// 开关:新格式「大类|子项名」优先,兼容旧格式(子项名)
+			on := enabled[strings.TrimSpace(cat.Name)+"|"+sg.Name] || enabled[sg.Name]
+			if !on {
 				continue
 			}
 			fee := 0.0
@@ -1348,6 +1354,35 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 			// 其它归属单位(如其它租户分表)不计入当前租户核算
 		}
 	}
+	// 星达配电分表若为普通表(无分时读数),以当月抄表总用量补入 star 总电量(用于比例与基数)
+	var normals []types.UtilityMeter
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND meter_type = ? AND deleted_at IS NULL", "electricity", "normal").
+		Find(&normals).Error; err == nil {
+		normalItems := make(map[string]types.UtilityMeterItem, len(normals))
+		for i := range recs {
+			var items []types.UtilityMeterItem
+			if err := h.db.WithContext(ctx).Where("record_id = ?", recs[i].ID).Find(&items).Error; err != nil {
+				continue
+			}
+			for _, it := range items {
+				if _, ok := normalItems[it.MeterID]; !ok {
+					normalItems[it.MeterID] = it
+				}
+			}
+		}
+		for _, m := range normals {
+			owner := strings.TrimSpace(m.OwnerUnit)
+			isStar := owner == "星达铜业" || owner == "重庆星达" ||
+				(owner == "" && (strings.Contains(m.Alias, "星达") || strings.Contains(m.UseUnit, "星达")))
+			if !isStar || m.MeterKind == "dorm" {
+				continue
+			}
+			if it, ok := normalItems[m.ID]; ok {
+				star["flat"] += it.Usage
+			}
+		}
+	}
 	return star, sub, nil
 }
 
@@ -1382,9 +1417,16 @@ func (h *BillingHandler) loadRefsByUseUnit(ctx context.Context, useUnit string) 
 func (h *BillingHandler) loadEnabledItems(ctx context.Context, tenantID string) map[string]bool {
 	var items []types.BillingTenantItem
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&items).Error
-	m := make(map[string]bool, len(items))
+	m := make(map[string]bool, len(items)*2)
 	for _, it := range items {
 		m[it.ItemKey] = it.Enabled
+		if strings.Contains(it.ItemKey, "|") {
+			// 新格式「大类|子项名」→ 兼容按子项名查询
+			m[it.ItemKey[strings.LastIndex(it.ItemKey, "|")+1:]] = it.Enabled
+		} else if strings.TrimSpace(it.Category) != "" {
+			// 旧格式(子项名)→ 兼容按「大类|子项名」查询
+			m[strings.TrimSpace(it.Category)+"|"+it.ItemKey] = it.Enabled
+		}
 	}
 	return m
 }
@@ -1398,16 +1440,17 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 		on   bool
 	}
 	var rows []row
-	seen := make(map[string]bool, 32)
+	seen := make(map[string]bool, 64)
 	add := func(cat, name string, on bool) {
 		if name == "" {
 			return
 		}
-		// 按子项名全局去重(同一子项可能出现在多个大类/多个时段行),保证 item_key 唯一
-		if seen[name] {
+		// 按「大类|子项名」区分同名子项(如工商/居民政府基金同名),保证 item_key 唯一
+		key := strings.TrimSpace(cat) + "|" + name
+		if seen[key] {
 			return
 		}
-		seen[name] = true
+		seen[key] = true
 		rows = append(rows, row{cat: cat, name: name, on: on})
 	}
 	for _, f := range feeItems {
@@ -1425,17 +1468,19 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 	}
 	add("基本电费", "基本电费", true)
 	add("力调电费", "力调电费", true)
-	enabled := make(map[string]bool, len(rows))
+	enabled := make(map[string]bool, len(rows)*2)
 	if len(rows) == 0 {
 		return enabled
 	}
 	items := make([]types.BillingTenantItem, 0, len(rows))
 	now := timeNowUTC()
 	for i, r := range rows {
+		key := strings.TrimSpace(r.cat) + "|" + r.name
+		enabled[key] = r.on
 		enabled[r.name] = r.on
 		items = append(items, types.BillingTenantItem{
 			ID: uuid.NewString(), BillingTenantID: tenantID,
-			Category: r.cat, ItemKey: r.name, ItemName: r.name,
+			Category: r.cat, ItemKey: key, ItemName: r.name,
 			Enabled: r.on, Sort: i, CreatedAt: now, UpdatedAt: now,
 		})
 	}
@@ -1454,16 +1499,18 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 		if name == "" {
 			return
 		}
-		// 按子项名全局去重,保证 item_key 唯一
-		if enabled[name] {
+		key := strings.TrimSpace(cat) + "|" + name
+		// 按「大类|子项名」区分同名子项(工商/居民政府基金同名各自独立开关)
+		if _, ok := enabled[key]; ok {
 			return
 		}
 		on := !strings.Contains(cat, "居民") && !strings.Contains(cat, "目录电费")
 		created = append(created, types.BillingTenantItem{
 			ID: uuid.NewString(), BillingTenantID: tenantID,
-			Category: cat, ItemKey: name, ItemName: name,
+			Category: cat, ItemKey: key, ItemName: name,
 			Enabled: on, Sort: sort, CreatedAt: now, UpdatedAt: now,
 		})
+		enabled[key] = on
 		enabled[name] = on
 		sort++
 	}
