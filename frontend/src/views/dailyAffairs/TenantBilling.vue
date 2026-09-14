@@ -8,10 +8,6 @@
             :options="useUnitOptions" @change="onUseUnitChange" />
         </div>
         <div class="doc-filter-field">
-          <t-select v-model="activeTenantId" placeholder="租户" filterable class="doc-filter-select doc-filter-field__control"
-            :options="tenantOptions" @change="onTenantChange" />
-        </div>
-        <div class="doc-filter-field">
           <t-date-picker v-model="filters.month" mode="month" placeholder="账单月份" format="YYYY-MM" value-type="YYYY-MM"
             clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
         </div>
@@ -250,7 +246,7 @@
             </div>
             <div class="rec-field">
               <label>用水量</label>
-              <div class="readonly-val">{{ fmtKwh(waterUsage) }} 吨/m³</div>
+              <div class="readonly-val">{{ fmtKwh(waterUsage) }} 吨</div>
             </div>
             <div class="rec-field rec-field--wide">
               <label>水费</label>
@@ -266,7 +262,7 @@
           <div v-else class="calc-val">
             <span>{{ curWaterMeter?.name || '' }}合计</span>
             <b class="row-mono">{{ fmtKwh(waterUsage) }}</b>
-            <span>吨/m³</span>
+            <span>吨</span>
             <b class="row-mono">{{ fmtMoney(waterAmount) }}</b>
             <span>元</span>
           </div>
@@ -425,7 +421,7 @@
           </t-tab-panel>
           <t-tab-panel value="meters" label="电表设置">
             <div class="settings-panel">
-              <div v-for="g in meterGroups" :key="g.owner" class="meter-section">
+              <div v-for="g in (meterGroups.length ? meterGroups : [{ owner: '', meters: [] }])" :key="g.owner || 'empty'" class="meter-section">
                 <div class="meter-section-head">
                   <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
                   <t-button variant="outline" size="small" @click="openAddMeter(g.owner)">
@@ -578,35 +574,9 @@
               </div>
             </div>
           </t-tab-panel>
-          <t-tab-panel value="items" label="分摊子项">
-            <div class="settings-panel">
-              <div class="item-groups">
-                <div v-for="g in itemGroups" :key="g.category" class="item-group">
-                  <div class="item-group-head" @click="toggleItemGroup(g.category)">
-                    <span class="item-group-name">{{ g.category }}</span>
-                    <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
-                  </div>
-                  <div v-if="expandedItemGroup === g.category" class="item-group-body">
-                    <div class="item-row item-row--head">
-                      <span class="item-name">子项名称</span>
-                      <span class="item-op">分摊</span>
-                    </div>
-                    <div v-for="(it, i) in g.items" :key="i" class="item-row">
-                      <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
-                      <span class="item-op">
-                        <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
-                      </span>
-                    </div>
-                    <div v-if="!g.items.length" class="item-empty">暂无子项</div>
-                  </div>
-                </div>
-                <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
-              </div>
-            </div>
-          </t-tab-panel>
           <t-tab-panel value="water-meters" label="水表设置">
             <div class="settings-panel">
-              <div v-for="g in waterMeterGroups" :key="g.owner" class="meter-section">
+              <div v-for="g in (waterMeterGroups.length ? waterMeterGroups : [{ owner: '', meters: [] }])" :key="g.owner || 'empty'" class="meter-section">
                 <div class="meter-section-head">
                   <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
                   <t-button variant="outline" size="small" @click="openAddWaterMeter(g.owner)">
@@ -766,6 +736,33 @@
               </div>
             </div>
           </t-tab-panel>
+          <t-tab-panel value="items" label="分摊子项">
+            <div class="settings-panel">
+              <div class="item-groups">
+                <div v-for="g in itemGroups" :key="g.category" class="item-group">
+                  <div class="item-group-head" @click="toggleItemGroup(g.category)">
+                    <span class="item-group-name">{{ g.category }}</span>
+                    <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
+                  </div>
+                  <div v-if="expandedItemGroup === g.category" class="item-group-body">
+                    <div class="item-row item-row--head">
+                      <span class="item-name">子项名称</span>
+                      <span class="item-op">分摊</span>
+                    </div>
+                    <div v-for="(it, i) in g.items" :key="i" class="item-row">
+                      <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
+                      <span class="item-op">
+                        <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+                      </span>
+                    </div>
+                    <div v-if="!g.items.length" class="item-empty">暂无子项</div>
+                  </div>
+                </div>
+                <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
+              </div>
+            </div>
+          </t-tab-panel>
+          
         </t-tabs>
       </t-drawer>
     </teleport>
@@ -901,8 +898,8 @@ const COL_DEFS_OWNER: ColDef[] = [
 const COL_DEFS_TENANT: ColDef[] = [
   { key: 'month', label: '账单周期', default: true, w: '0.8fr' },
   { key: 'unit', label: '使用单位', default: true, w: '0.9fr' },
-  { key: 'total_kwh', label: '总电量（本期电量）', default: false, w: '0.9fr' },
-  { key: 'total_fee', label: '总电费（本期电费）', default: false, w: '1fr' },
+  { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr' },
+  { key: 'total_fee', label: '总电费', default: false, w: '1fr' },
   { key: 'ratio', label: '分摊比例', default: false, w: '0.9fr' },
   { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr' },
   { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr' },
