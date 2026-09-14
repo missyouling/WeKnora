@@ -4,13 +4,19 @@ import "time"
 
 // BillingTenant 费用核算租户（如持睿汽车）：电费按市电账单比例分摊 + 宿舍定额 + 水费按表计。
 type BillingTenant struct {
-	ID        string     `gorm:"primaryKey" json:"id"`
-	TenantID  int64      `gorm:"index" json:"tenant_id"`
-	Name      string     `json:"name"`
-	Remark    string     `gorm:"type:text" json:"remark"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `gorm:"index" json:"deleted_at"`
+	ID             string     `gorm:"primaryKey" json:"id"`
+	TenantID       int64      `gorm:"index" json:"tenant_id"`
+	Name           string     `json:"name"`
+	TenantNo       string     `json:"tenant_no"`       // 租户编号
+	AllocationMode string     `json:"allocation_mode"` // 分摊方式(默认按比例分摊)
+	LeaseStart     *string    `gorm:"type:date" json:"lease_start"` // 租赁日期
+	LeaseYears     int        `json:"lease_years"`     // 租赁年限
+	Contact        string     `json:"contact"`         // 单位联系人
+	Phone          string     `json:"phone"`           // 联系电话
+	Remark         string     `gorm:"type:text" json:"remark"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	DeletedAt      *time.Time `gorm:"index" json:"deleted_at"`
 }
 
 func (BillingTenant) TableName() string { return "billing_tenants" }
@@ -32,8 +38,17 @@ func (BillingTenantSetting) TableName() string { return "billing_tenant_settings
 type BillingTimeMeter struct {
 	ID              string     `gorm:"primaryKey" json:"id"`
 	BillingTenantID string     `gorm:"index" json:"billing_tenant_id"`
-	MeterType       string     `json:"meter_type"` // star | sub
-	Name            string     `json:"name"`
+	MeterType       string     `json:"meter_type"` // 兼容旧数据 star | sub,新逻辑按归属单位分组
+	Name            string     `json:"name"`       // 别名
+	MeterNo         string     `json:"meter_no"`   // 表号
+	MeterKind       string     `json:"meter_kind"` // time | normal 分时/普通
+	OwnerUnit       string     `json:"owner_unit"` // 归属单位(动态分组)
+	UseUnit         string     `json:"use_unit"`   // 使用单位
+	Manager         string     `json:"manager"`    // 管理人员
+	Contact         string     `json:"contact"`    // 联系方式
+	MeterMode       string     `json:"meter_mode"` // auto | manual 抄表方式
+	InstallDate     *string    `gorm:"type:date" json:"install_date"`
+	Remark          string     `gorm:"type:text" json:"remark"`
 	Rate            float64    `gorm:"numeric(12,4)" json:"rate"`
 	Enabled         bool       `json:"enabled"`
 	CreatedAt       time.Time  `json:"created_at"`

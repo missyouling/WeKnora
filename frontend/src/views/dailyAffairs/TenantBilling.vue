@@ -148,7 +148,7 @@
               @change="loadReadings" />
           </div>
 
-          <div v-for="group in readingGroups" :key="group.type" class="reading-group">
+          <div v-for="group in readingGroups" :key="group.owner" class="reading-group">
             <div class="reading-group-title">{{ group.title }}</div>
             <div v-if="group.meters.length" class="reading-cards">
               <div v-for="m in group.meters" :key="m.id" class="reading-card" :class="{ 'card-invalid': meterInvalid(m.id) }">
@@ -175,11 +175,11 @@
           </div>
 
           <div v-if="periodTotals" class="reading-summary">
-            <span>星达合计 <b class="row-mono">{{ fmtKwh(periodTotals.star) }}</b> 千瓦时</span>
-            <span>工业合计 <b class="row-mono">{{ fmtKwh(periodTotals.sub) }}</b> 千瓦时</span>
+            <span>{{ baseGroupTitle }}合计 <b class="row-mono">{{ fmtKwh(periodTotals.star) }}</b> 千瓦时</span>
+            <span>{{ tenantName || '租户' }}合计 <b class="row-mono">{{ fmtKwh(periodTotals.sub) }}</b> 千瓦时</span>
             <span>线损 <b class="row-mono">{{ fmtKwh(periodTotals.loss) }}</b> 千瓦时</span>
           </div>
-          <p class="field-hint">线损 = 星达分表合计 − 工业分表合计，按工业分表分时占比自动分摊</p>
+          <p class="field-hint">线损 = 总表合计 − 租户分表合计，按租户分表分时占比自动分摊</p>
         </div>
 
         <div class="meter-drawer-footer">
@@ -204,8 +204,6 @@
           <div class="settings-header">
             <span class="settings-header-title">设置</span>
             <div class="settings-header-actions">
-              <t-select v-model="activeTenantId" placeholder="租户" filterable class="settings-tenant-select"
-                :options="tenantOptions" @change="onTenantChange" />
               <t-button variant="outline" size="small" @click="openCreateTenant">
                 <template #icon><t-icon name="add" /></template>新增租户
               </t-button>
@@ -215,84 +213,272 @@
         <t-tabs v-model="settingsTab" class="settings-tabs">
           <t-tab-panel value="tenant" label="租户信息">
             <div class="settings-panel">
-              <div class="rec-grid">
-                <div class="rec-field">
-                  <label>租户名称</label>
-                  <t-input v-model="tenantForm.name" size="small" />
+              <div class="tenant-cards">
+                <!-- 新增租户表单：展开在网格顶部 -->
+                <div v-if="tenantFormVisible && !tenantForm.id" class="tenant-form">
+                  <div class="tenant-form-title">新增租户</div>
+                  <div class="form-grid">
+                    <div class="form-item">
+                      <label>租户名 <span class="required">*</span></label>
+                      <t-input v-model="tenantForm.name" placeholder="如：持睿汽车" />
+                    </div>
+                    <div class="form-item">
+                      <label>租户编号</label>
+                      <t-input v-model="tenantForm.tenant_no" placeholder="选填" />
+                    </div>
+                    <div class="form-item">
+                      <label>分摊方式</label>
+                      <t-select v-model="tenantForm.allocation_mode" :options="allocationOptions" />
+                    </div>
+                    <div class="form-item">
+                      <label>租赁日期</label>
+                      <t-date-picker v-model="tenantForm.lease_start" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                    </div>
+                    <div class="form-item">
+                      <label>租赁年限（年）</label>
+                      <t-input v-model.number="tenantForm.lease_years" type="number" placeholder="选填" />
+                    </div>
+                    <div class="form-item">
+                      <label>单位联系人</label>
+                      <t-input v-model="tenantForm.contact" placeholder="选填" />
+                    </div>
+                    <div class="form-item">
+                      <label>联系电话</label>
+                      <t-input v-model="tenantForm.phone" placeholder="选填" />
+                    </div>
+                    <div class="form-item form-item--full">
+                      <label>备注</label>
+                      <t-textarea v-model="tenantForm.remark" :maxlength="500" placeholder="选填" />
+                    </div>
+                  </div>
+                  <div class="form-actions">
+                    <t-button variant="outline" size="small" @click="tenantFormVisible = false">取消</t-button>
+                    <t-button theme="primary" size="small" :loading="savingTenant" @click="saveTenantForm">保存</t-button>
+                  </div>
                 </div>
-                <div class="rec-field">
-                  <label>备注</label>
-                  <t-input v-model="tenantForm.remark" size="small" />
-                </div>
-                <div class="rec-field">
-                  <label>宿舍电价（元/度）</label>
-                  <t-input-number v-model="settingForm.dorm_price" size="small" :min="0" :step="0.1" theme="column" />
-                </div>
-                <div class="rec-field">
-                  <label>水价（元/吨）</label>
-                  <t-input-number v-model="settingForm.water_price" size="small" :min="0" :step="0.01" theme="column" />
-                </div>
-                <div class="rec-field rec-field--wide">
-                  <label>市电账单知识库</label>
-                  <t-select v-model="settingForm.bill_kb_id" size="small" clearable filterable placeholder="选择市电账单知识库">
-                    <t-option v-for="kb in kbList" :key="kb.id" :value="kb.id" :label="kb.name" />
-                  </t-select>
-                </div>
-              </div>
-              <p class="field-hint">表计引用按使用单位自动匹配：宿舍电表与水表取「使用单位 = 租户名称」的表计</p>
-              <div class="panel-actions">
-                <t-button theme="primary" size="small" :loading="savingBase" @click="saveTenantBase">保存</t-button>
+
+                <template v-for="t in tenants" :key="t.id">
+                  <div class="tenant-card">
+                    <div class="tenant-card-head">
+                      <span class="tenant-card-name">{{ t.name }}</span>
+                      <span class="tenant-card-no">{{ t.tenant_no || '—' }}</span>
+                      <span class="tenant-card-actions">
+                        <t-button variant="text" size="small" @click="openTenantForm(t)">
+                          <template #icon><t-icon name="edit" size="15px" /></template>
+                        </t-button>
+                        <t-popconfirm theme="warning" :content="`确定删除租户「${t.name}」吗？`"
+                          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                          @confirm="removeTenant(t)">
+                          <t-button variant="text" size="small" @click.stop>
+                            <template #icon><t-icon name="delete" size="15px" /></template>
+                          </t-button>
+                        </t-popconfirm>
+                      </span>
+                    </div>
+                    <div class="tenant-card-grid">
+                      <div class="tenant-card-item"><span class="k">分摊方式</span><span class="v">{{ t.allocation_mode || '按比例分摊' }}</span></div>
+                      <div class="tenant-card-item"><span class="k">联系人</span><span class="v">{{ t.contact || '—' }}</span></div>
+                      <div class="tenant-card-item"><span class="k">联系电话</span><span class="v">{{ t.phone || '—' }}</span></div>
+                    </div>
+                  </div>
+                  <!-- 编辑租户表单：展开在当前卡片下方 -->
+                  <div v-if="tenantFormVisible && tenantForm.id === t.id" class="tenant-form">
+                    <div class="tenant-form-title">编辑租户</div>
+                    <div class="form-grid">
+                      <div class="form-item">
+                        <label>租户名 <span class="required">*</span></label>
+                        <t-input v-model="tenantForm.name" placeholder="如：持睿汽车" />
+                      </div>
+                      <div class="form-item">
+                        <label>租户编号</label>
+                        <t-input v-model="tenantForm.tenant_no" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>分摊方式</label>
+                        <t-select v-model="tenantForm.allocation_mode" :options="allocationOptions" />
+                      </div>
+                      <div class="form-item">
+                        <label>租赁日期</label>
+                        <t-date-picker v-model="tenantForm.lease_start" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                      </div>
+                      <div class="form-item">
+                        <label>租赁年限（年）</label>
+                        <t-input v-model.number="tenantForm.lease_years" type="number" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>单位联系人</label>
+                        <t-input v-model="tenantForm.contact" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>联系电话</label>
+                        <t-input v-model="tenantForm.phone" placeholder="选填" />
+                      </div>
+                      <div class="form-item form-item--full">
+                        <label>备注</label>
+                        <t-textarea v-model="tenantForm.remark" :maxlength="500" placeholder="选填" />
+                      </div>
+                    </div>
+                    <div class="form-actions">
+                      <t-button variant="outline" size="small" @click="tenantFormVisible = false">取消</t-button>
+                      <t-button theme="primary" size="small" :loading="savingTenant" @click="saveTenantForm">保存</t-button>
+                    </div>
+                  </div>
+                </template>
+                <div v-if="!tenants.length" class="meter-empty">暂无租户，点击右上角「新增租户」开始配置</div>
               </div>
             </div>
           </t-tab-panel>
           <t-tab-panel value="meters" label="电表设置">
             <div class="settings-panel">
-              <div class="meter-section">
+              <div v-for="g in meterGroups" :key="g.owner" class="meter-section">
                 <div class="meter-section-head">
-                  <span class="meter-section-title">星达分表</span>
-                  <t-button variant="outline" size="small" @click="openAddMeter('star')">
+                  <span class="meter-section-title">{{ g.owner || '未分组' }}</span>
+                  <t-button variant="outline" size="small" @click="openAddMeter(g.owner)">
                     <template #icon><t-icon name="add" /></template>新增
                   </t-button>
                 </div>
                 <div class="meter-grid">
-                  <div v-for="m in starMeters" :key="m.id" class="meter-card" :class="{ disabled: !m.enabled }">
-                    <div class="meter-card-head">
-                      <span class="meter-card-name">{{ m.name }}</span>
-                      <t-switch size="small" :model-value="!!m.enabled" @change="(v: boolean) => toggleMeter(m, v)" />
+                  <!-- 新增表计：表单展开在分组顶部 -->
+                  <div v-if="meterFormVisible && !meterForm.id && meterForm.owner_unit === g.owner" class="meter-form">
+                    <div class="meter-form-title">新增电表</div>
+                    <div class="form-grid">
+                      <div class="form-item">
+                        <label>别名 <span class="required">*</span></label>
+                        <t-input v-model="meterForm.name" placeholder="如：总表1 / 分表1" />
+                      </div>
+                      <div class="form-item">
+                        <label>表号</label>
+                        <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>倍率</label>
+                        <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                      </div>
+                      <div class="form-item">
+                        <label>类型</label>
+                        <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                      </div>
+                      <div class="form-item">
+                        <label>归属单位</label>
+                        <t-input v-model="meterForm.owner_unit" placeholder="如：星达铜业" />
+                      </div>
+                      <div class="form-item">
+                        <label>使用单位</label>
+                        <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>管理人员</label>
+                        <t-input v-model="meterForm.manager" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>联系方式</label>
+                        <t-input v-model="meterForm.contact" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>抄表方式</label>
+                        <t-radio-group v-model="meterForm.meter_mode">
+                          <t-radio-button value="auto">自动抄表</t-radio-button>
+                          <t-radio-button value="manual">手动抄表</t-radio-button>
+                        </t-radio-group>
+                      </div>
+                      <div class="form-item">
+                        <label>安装日期</label>
+                        <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                      </div>
+                      <div class="form-item form-item--full">
+                        <label>备注</label>
+                        <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
+                      </div>
                     </div>
-                    <div class="meter-card-meta">
-                      <span>倍率 {{ m.rate }}</span>
-                      <span class="meter-card-ops">
-                        <t-icon name="edit-1" class="op" @click="openEditMeter(m)" />
-                        <t-icon name="delete" class="op danger" @click="removeMeter(m)" />
-                      </span>
+                    <div class="form-actions">
+                      <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                      <t-button theme="primary" size="small" :loading="savingMeter" @click="submitMeter">保存</t-button>
                     </div>
                   </div>
-                  <div v-if="!starMeters.length" class="meter-empty">暂无星达分表</div>
-                </div>
-              </div>
-              <div class="meter-section">
-                <div class="meter-section-head">
-                  <span class="meter-section-title">工业分表</span>
-                  <t-button variant="outline" size="small" @click="openAddMeter('sub')">
-                    <template #icon><t-icon name="add" /></template>新增
-                  </t-button>
-                </div>
-                <div class="meter-grid">
-                  <div v-for="m in subMeters" :key="m.id" class="meter-card" :class="{ disabled: !m.enabled }">
-                    <div class="meter-card-head">
-                      <span class="meter-card-name">{{ m.name }}</span>
-                      <t-switch size="small" :model-value="!!m.enabled" @change="(v: boolean) => toggleMeter(m, v)" />
+
+                  <template v-for="m in g.meters" :key="m.id">
+                    <div class="meter-card">
+                      <div class="meter-card-head">
+                        <span class="meter-card-name">{{ m.name }}</span>
+                        <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleMeter(m, v)" />
+                        <span class="meter-card-actions">
+                          <t-button variant="text" size="small" @click="openEditMeter(m)">
+                            <template #icon><t-icon name="edit" size="15px" /></template>
+                          </t-button>
+                          <t-popconfirm theme="warning" :content="`确定删除电表「${m.name}」吗？`"
+                            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                            @confirm="removeMeter(m)">
+                            <t-button variant="text" size="small" @click.stop>
+                              <template #icon><t-icon name="delete" size="15px" /></template>
+                            </t-button>
+                          </t-popconfirm>
+                        </span>
+                      </div>
+                      <div class="meter-card-grid">
+                        <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
+                        <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
+                        <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ m.meter_kind === 'normal' ? '普通' : '分时' }}</span></div>
+                      </div>
                     </div>
-                    <div class="meter-card-meta">
-                      <span>倍率 {{ m.rate }}</span>
-                      <span class="meter-card-ops">
-                        <t-icon name="edit-1" class="op" @click="openEditMeter(m)" />
-                        <t-icon name="delete" class="op danger" @click="removeMeter(m)" />
-                      </span>
+                    <!-- 编辑表计：表单展开在当前卡片下方 -->
+                    <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form">
+                      <div class="meter-form-title">编辑电表</div>
+                      <div class="form-grid">
+                        <div class="form-item">
+                          <label>别名 <span class="required">*</span></label>
+                          <t-input v-model="meterForm.name" placeholder="如：总表1 / 分表1" />
+                        </div>
+                        <div class="form-item">
+                          <label>表号</label>
+                          <t-input v-model="meterForm.meter_no" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>倍率</label>
+                          <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                        </div>
+                        <div class="form-item">
+                          <label>类型</label>
+                          <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                        </div>
+                        <div class="form-item">
+                          <label>归属单位</label>
+                          <t-input v-model="meterForm.owner_unit" placeholder="如：星达铜业" />
+                        </div>
+                        <div class="form-item">
+                          <label>使用单位</label>
+                          <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>管理人员</label>
+                          <t-input v-model="meterForm.manager" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>联系方式</label>
+                          <t-input v-model="meterForm.contact" placeholder="选填" />
+                        </div>
+                        <div class="form-item">
+                          <label>抄表方式</label>
+                          <t-radio-group v-model="meterForm.meter_mode">
+                            <t-radio-button value="auto">自动抄表</t-radio-button>
+                            <t-radio-button value="manual">手动抄表</t-radio-button>
+                          </t-radio-group>
+                        </div>
+                        <div class="form-item">
+                          <label>安装日期</label>
+                          <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                        </div>
+                        <div class="form-item form-item--full">
+                          <label>备注</label>
+                          <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
+                        </div>
+                      </div>
+                      <div class="form-actions">
+                        <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                        <t-button theme="primary" size="small" :loading="savingMeter" @click="submitMeter">保存</t-button>
+                      </div>
                     </div>
-                  </div>
-                  <div v-if="!subMeters.length" class="meter-empty">暂无工业分表</div>
+                  </template>
+                  <div v-if="!g.meters.length && !(meterFormVisible && !meterForm.id && meterForm.owner_unit === g.owner)" class="meter-empty">暂无电表</div>
                 </div>
               </div>
             </div>
@@ -300,12 +486,32 @@
           <t-tab-panel value="items" label="分摊子项">
             <div class="settings-panel">
               <div class="item-groups">
-                <div v-for="g in itemGroups" :key="g.category" class="item-group" @click="openItemGroup(g)">
-                  <div class="item-group-info">
+                <div v-for="g in itemGroups" :key="g.category" class="item-group">
+                  <div class="item-group-head" @click="toggleItemGroup(g.category)">
                     <span class="item-group-name">{{ g.category }}</span>
                     <span class="item-group-count">{{ g.enabledCount }}/{{ g.items.length }}</span>
+                    <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
                   </div>
-                  <t-icon name="chevron-right" class="item-group-arrow" />
+                  <div v-if="expandedItemGroup === g.category" class="item-group-body">
+                    <div class="item-row item-row--head">
+                      <span class="item-name">子项名称</span>
+                      <span class="item-op">分摊</span>
+                    </div>
+                    <div v-for="(it, i) in g.items" :key="i" class="item-row">
+                      <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
+                      <span class="item-op">
+                        <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+                        <t-icon name="delete" class="op danger" @click="removeItem(it)" />
+                      </span>
+                    </div>
+                    <div v-if="!g.items.length" class="item-empty">暂无子项</div>
+                    <div class="item-actions">
+                      <t-button variant="outline" size="small" @click="addItemRow(g.category)">
+                        <template #icon><t-icon name="add" /></template>新增子项
+                      </t-button>
+                      <span class="field-hint">关闭的子项不参与分摊；居民/目录类默认关闭</span>
+                    </div>
+                  </div>
                 </div>
                 <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
               </div>
@@ -314,80 +520,6 @@
         </t-tabs>
       </t-drawer>
     </teleport>
-
-    <!-- 分摊子项二级抽屉（大类内子项开关） -->
-    <teleport to="body">
-      <div v-if="itemsVisible" class="doc-drawer-resize-handle" :style="{ right: itemsWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onItemsResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="itemsVisible" :visible="true" :header="activeItemGroup?.category || '分摊子项'" :size="itemsWidth"
-        :footer="false" :close-on-overlay-click="true" destroy-on-close class="tenant-items-drawer"
-        @close="itemsVisible = false" @update:visible="(v: boolean) => (itemsVisible = v)">
-        <div class="item-list">
-          <div class="item-row item-row--head">
-            <span class="item-name">子项名称</span>
-            <span class="item-op">分摊</span>
-          </div>
-          <div v-for="(it, i) in activeItemItems" :key="i" class="item-row">
-            <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
-            <span class="item-op">
-              <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
-              <t-icon name="delete" class="op danger" @click="removeItem(it)" />
-            </span>
-          </div>
-          <div v-if="!activeItemItems.length" class="item-empty">暂无子项</div>
-        </div>
-        <div class="item-actions">
-          <t-button variant="outline" size="small" @click="addItemRow">
-            <template #icon><t-icon name="add" /></template>新增子项
-          </t-button>
-          <span class="field-hint">关闭的子项不参与分摊；居民/目录类默认关闭</span>
-        </div>
-      </t-drawer>
-    </teleport>
-
-    <!-- 新增/编辑分时电表弹窗 -->
-    <t-dialog :visible="meterVisible" header="分时电表" width="420px" :footer="false" @close="meterVisible = false">
-      <div class="form-grid">
-        <div class="form-item">
-          <label>表名称</label>
-          <t-input v-model="meterForm.name" size="small" placeholder="如：星达总表1 / 分表1" />
-        </div>
-        <div class="form-item">
-          <label>倍率</label>
-          <t-input-number v-model="meterForm.rate" size="small" :min="1" theme="column" />
-        </div>
-      </div>
-      <div class="dialog-actions">
-        <t-button variant="outline" size="small" @click="meterVisible = false">取消</t-button>
-        <t-button theme="primary" size="small" :loading="savingMeter" @click="submitMeter">保存</t-button>
-      </div>
-    </t-dialog>
-
-    <!-- 新增租户弹窗 -->
-    <t-dialog v-model:visible="createVisible" header="新增租户" width="420px" :footer="false" @close="createVisible = false">
-      <div class="form-grid">
-        <div class="form-item">
-          <label>租户名称</label>
-          <t-input v-model="createForm.name" size="small" placeholder="如：持睿汽车" />
-        </div>
-        <div class="form-item">
-          <label>宿舍电价（元/度）</label>
-          <t-input-number v-model="createForm.dorm_price" size="small" :min="0" :step="0.1" theme="column" />
-        </div>
-        <div class="form-item">
-          <label>水价（元/吨）</label>
-          <t-input-number v-model="createForm.water_price" size="small" :min="0" :step="0.01" theme="column" />
-        </div>
-      </div>
-      <div class="dialog-actions">
-        <t-button variant="outline" size="small" @click="createVisible = false">取消</t-button>
-        <t-button theme="primary" size="small" :loading="creating" @click="submitCreate">创建</t-button>
-      </div>
-    </t-dialog>
 
     <!-- 账单详情抽屉 -->
     <teleport to="body">
@@ -473,13 +605,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant,
+  listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant, deleteBillingTenant,
   listBillingTimeMeters, createBillingTimeMeter, updateBillingTimeMeter, deleteBillingTimeMeter,
   getBillingTimeReading, saveBillingTimeReading,
   saveBillingTenantItems,
   listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
 } from '@/api/knowledge-base'
-import { listKnowledgeBases } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
 // ---- 列定义 ----
@@ -677,8 +808,6 @@ const readingWidth = ref('820px')
 const savingReadings = ref(false)
 const readingMonth = ref('')
 const readingTitle = computed(() => (readingMonth.value ? `${readingMonth.value} 分时读数` : '新增记录'))
-const starMeters = ref<any[]>([])
-const subMeters = ref<any[]>([])
 const readingForm = ref<Record<string, any>>({})
 const periods = [
   { key: 'deep', label: '尖' },
@@ -686,10 +815,17 @@ const periods = [
   { key: 'flat', label: '平' },
   { key: 'valley', label: '谷' },
 ]
-const readingGroups = computed(() => [
-  { type: 'star', title: '星达分表', meters: starMeters.value.filter((m: any) => m.enabled) },
-  { type: 'sub', title: '工业分表', meters: subMeters.value.filter((m: any) => m.enabled) },
-])
+const tenantName = computed(() => tenants.value.find((t: any) => t.id === activeTenantId.value)?.name || '')
+const baseGroupTitle = '星达铜业'
+const timeMeters = computed(() => allMeters.value.filter((m: any) => m.enabled && (!m.meter_kind || m.meter_kind === 'time')))
+const readingGroups = computed(() => {
+  const g: Record<string, any[]> = {}
+  timeMeters.value.forEach((m: any) => {
+    const owner = m.owner_unit || '未分组'
+    ;(g[owner] = g[owner] || []).push(m)
+  })
+  return Object.entries(g).map(([owner, meters]) => ({ owner, title: owner, meters }))
+})
 
 const openReadingDrawer = async (month: string) => {
   if (!activeTenantId.value) {
@@ -711,15 +847,13 @@ const currentMonth = (): string => {
 const loadMetersForReading = async () => {
   try {
     const res: any = await getBillingTenant(activeTenantId.value)
-    const d = res.data
-    starMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'star')
-    subMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'sub')
+    allMeters.value = res.data?.meters || []
   } catch { /* ignore */ }
 }
 
 const loadReadings = async () => {
   if (!readingMonth.value || !readingVisible.value) return
-  const meters = [...starMeters.value, ...subMeters.value].filter((m: any) => m.enabled)
+  const meters = timeMeters.value
   const form: Record<string, any> = {}
   for (const m of meters) {
     form[m.id] = { deep_prev: 0, deep_curr: 0, peak_prev: 0, peak_curr: 0, flat_prev: 0, flat_curr: 0, valley_prev: 0, valley_curr: 0 }
@@ -780,9 +914,9 @@ const periodTotals = computed(() => {
     })
     return t
   }
-  const star = sum(starMeters.value.filter((m: any) => m.enabled))
-  const sub = sum(subMeters.value.filter((m: any) => m.enabled))
-  const st = star.deep + star.peak + star.flat + star.valley
+  const base = sum(timeMeters.value.filter((m: any) => m.owner_unit === '星达铜业'))
+  const sub = sum(timeMeters.value.filter((m: any) => m.owner_unit && m.owner_unit !== '星达铜业' && m.owner_unit === tenantName.value))
+  const st = base.deep + base.peak + base.flat + base.valley
   const sb = sub.deep + sub.peak + sub.flat + sub.valley
   if (st === 0 && sb === 0) return null
   return { star: st, sub: sb, loss: st - sb }
@@ -795,7 +929,7 @@ const saveReadingsAndGenerate = async () => {
   }
   savingReadings.value = true
   try {
-    const meters = [...starMeters.value, ...subMeters.value].filter((m: any) => m.enabled)
+    const meters = timeMeters.value
     if (!meters.length) {
       MessagePlugin.warning('请先在设置中新增分时电表')
       return
@@ -835,14 +969,13 @@ const saveReadingsAndGenerate = async () => {
 
 // ---- 设置抽屉 ----
 const settingsVisible = ref(false)
-const settingsWidth = ref('680px')
+const settingsWidth = ref('860px')
 const settingsTab = ref('tenant')
-const kbList = ref<any[]>([])
 const detail = ref<any>(null)
-const tenantForm = ref({ name: '', remark: '' })
-const settingForm = ref({ dorm_price: 1, water_price: 5.22, bill_kb_id: '' })
-const savingBase = ref(false)
 const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
+
+const allocationOptions = [{ label: '按比例分摊', value: '按比例分摊' }]
+const meterKindOptions = [{ label: '分时', value: 'time' }, { label: '普通', value: 'normal' }]
 
 const openSettings = async () => {
   if (!activeTenantId.value) {
@@ -851,6 +984,8 @@ const openSettings = async () => {
   }
   settingsVisible.value = true
   settingsTab.value = 'tenant'
+  tenantFormVisible.value = false
+  meterFormVisible.value = false
   await loadDetail()
 }
 
@@ -860,14 +995,7 @@ const loadDetail = async () => {
     const res: any = await getBillingTenant(activeTenantId.value)
     detail.value = res.data
     const d = res.data
-    tenantForm.value = { name: d.tenant?.name || '', remark: d.tenant?.remark || '' }
-    settingForm.value = {
-      dorm_price: d.setting?.dorm_price || 1,
-      water_price: d.setting?.water_price || 5.22,
-      bill_kb_id: d.setting?.bill_kb_id || '',
-    }
-    starMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'star')
-    subMeters.value = (d.meters || []).filter((m: any) => m.meter_type === 'sub')
+    allMeters.value = d.meters || []
     itemsForm.value = (d.items || []).map((it: any) => ({
       category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
     }))
@@ -876,30 +1004,76 @@ const loadDetail = async () => {
   }
 }
 
-const saveTenantBase = async () => {
-  if (!activeTenantId.value) return
-  savingBase.value = true
+// ---- 租户卡片(多租户) ----
+const tenantFormVisible = ref(false)
+const savingTenant = ref(false)
+const tenantForm = ref({ id: '', name: '', tenant_no: '', allocation_mode: '按比例分摊', lease_start: '', lease_years: 0, contact: '', phone: '', remark: '' })
+
+const emptyTenantForm = () => ({ id: '', name: '', tenant_no: '', allocation_mode: '按比例分摊', lease_start: '', lease_years: 0, contact: '', phone: '', remark: '' })
+const openCreateTenant = async () => {
+  settingsVisible.value = true
+  settingsTab.value = 'tenant'
+  tenantForm.value = emptyTenantForm()
+  tenantFormVisible.value = true
+  await loadTenants()
+}
+const openTenantForm = (t: any) => {
+  tenantForm.value = {
+    id: t.id, name: t.name || '', tenant_no: t.tenant_no || '',
+    allocation_mode: t.allocation_mode || '按比例分摊', lease_start: t.lease_start || '',
+    lease_years: Number(t.lease_years) || 0, contact: t.contact || '', phone: t.phone || '', remark: t.remark || '',
+  }
+  tenantFormVisible.value = true
+}
+const saveTenantForm = async () => {
+  if (!tenantForm.value.name.trim()) {
+    MessagePlugin.warning('请输入租户名')
+    return
+  }
+  savingTenant.value = true
   try {
-    await updateBillingTenant(activeTenantId.value, {
-      name: tenantForm.value.name,
+    const payload: Record<string, unknown> = {
+      name: tenantForm.value.name.trim(),
+      tenant_no: tenantForm.value.tenant_no,
+      allocation_mode: tenantForm.value.allocation_mode || '按比例分摊',
+      lease_start: tenantForm.value.lease_start || null,
+      lease_years: Number(tenantForm.value.lease_years) || 0,
+      contact: tenantForm.value.contact,
+      phone: tenantForm.value.phone,
       remark: tenantForm.value.remark,
-      dorm_price: settingForm.value.dorm_price,
-      water_price: settingForm.value.water_price,
-      bill_kb_id: settingForm.value.bill_kb_id,
-    })
+    }
+    if (tenantForm.value.id) {
+      await updateBillingTenant(tenantForm.value.id, payload)
+    } else {
+      const res: any = await createBillingTenant(payload)
+      if (!activeTenantId.value) activeTenantId.value = res.data.id
+    }
     MessagePlugin.success('已保存')
+    tenantFormVisible.value = false
     await loadTenants()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
-    savingBase.value = false
+    savingTenant.value = false
+  }
+}
+const removeTenant = async (t: any) => {
+  try {
+    await deleteBillingTenant(t.id)
+    MessagePlugin.success('已删除')
+    if (activeTenantId.value === t.id) {
+      activeTenantId.value = ''
+      tenants.value = tenants.value.filter(x => x.id !== t.id)
+      if (tenants.value.length) activeTenantId.value = tenants.value[0].id
+    }
+    await loadTenants()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '删除失败')
   }
 }
 
-// ---- 分摊子项（大类分组 + 子项开关） ----
-const itemsVisible = ref(false)
-const itemsWidth = ref('460px')
-const activeItemGroup = ref<any>(null)
+// ---- 分摊子项（大类分组 + 内联展开 + 子项开关） ----
+const expandedItemGroup = ref('')
 
 const itemGroups = computed(() => {
   const g: Record<string, any[]> = {}
@@ -913,14 +1087,8 @@ const itemGroups = computed(() => {
     enabledCount: items.filter((i: any) => i.enabled).length,
   }))
 })
-const activeItemItems = computed(() => {
-  const g = activeItemGroup.value
-  if (!g) return []
-  return itemsForm.value.filter((it) => (it.category || '其他费用') === g.category)
-})
-const openItemGroup = (g: any) => {
-  activeItemGroup.value = g
-  itemsVisible.value = true
+const toggleItemGroup = (category: string) => {
+  expandedItemGroup.value = expandedItemGroup.value === category ? '' : category
 }
 const toggleItem = async (it: any, v: boolean) => {
   it.enabled = !!v
@@ -930,9 +1098,9 @@ const removeItem = async (it: any) => {
   itemsForm.value = itemsForm.value.filter(x => x !== it)
   await saveItems()
 }
-const addItemRow = () => {
+const addItemRow = (category: string) => {
   itemsForm.value.push({
-    category: activeItemGroup.value?.category || '其他费用',
+    category: category || '其他费用',
     item_key: '', item_name: '自定义子项', enabled: true,
   })
   saveItems()
@@ -952,34 +1120,65 @@ const saveItems = async () => {
   }
 }
 
-// ---- 分时电表 CRUD ----
-const meterVisible = ref(false)
+// ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
+const meterFormVisible = ref(false)
 const savingMeter = ref(false)
-const meterForm = ref({ id: '', name: '', rate: 1, meter_type: 'star' })
+const allMeters = ref<any[]>([])
+const meterForm = ref<any>({ id: '', name: '', meter_no: '', rate: 1, meter_kind: 'time', owner_unit: '', use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '' })
 
-const openAddMeter = (type: 'star' | 'sub') => {
-  meterForm.value = { id: '', name: '', rate: 1, meter_type: type }
-  meterVisible.value = true
+const emptyMeterForm = (ownerUnit: string) => ({
+  id: '', name: '', meter_no: '', rate: 1, meter_kind: 'time', owner_unit: ownerUnit || '',
+  use_unit: '', manager: '', contact: '', meter_mode: 'manual', install_date: '', remark: '',
+})
+const meterGroups = computed(() => {
+  const g: Record<string, any[]> = {}
+  allMeters.value.forEach((m: any) => {
+    const owner = m.owner_unit || '未分组'
+    ;(g[owner] = g[owner] || []).push(m)
+  })
+  return Object.entries(g).map(([owner, meters]) => ({ owner, meters }))
+})
+const openAddMeter = (ownerUnit: string) => {
+  meterForm.value = emptyMeterForm(ownerUnit)
+  meterFormVisible.value = true
 }
 const openEditMeter = (m: any) => {
-  meterForm.value = { id: m.id, name: m.name, rate: m.rate, meter_type: m.meter_type }
-  meterVisible.value = true
+  meterForm.value = {
+    id: m.id, name: m.name || '', meter_no: m.meter_no || '',
+    rate: Number(m.rate) || 1, meter_kind: m.meter_kind === 'normal' ? 'normal' : 'time',
+    owner_unit: m.owner_unit || '', use_unit: m.use_unit || '',
+    manager: m.manager || '', contact: m.contact || '',
+    meter_mode: m.meter_mode === 'auto' ? 'auto' : 'manual',
+    install_date: m.install_date || '', remark: m.remark || '',
+  }
+  meterFormVisible.value = true
 }
 const submitMeter = async () => {
   if (!meterForm.value.name.trim()) {
-    MessagePlugin.warning('请输入表名称')
+    MessagePlugin.warning('请输入别名')
     return
   }
   savingMeter.value = true
   try {
-    if (meterForm.value.id) {
-      await updateBillingTimeMeter(meterForm.value.id, { name: meterForm.value.name, rate: meterForm.value.rate })
-    } else {
-      await createBillingTimeMeter(activeTenantId.value, {
-        meter_type: meterForm.value.meter_type, name: meterForm.value.name, rate: meterForm.value.rate,
-      })
+    const payload: Record<string, unknown> = {
+      name: meterForm.value.name.trim(),
+      meter_no: meterForm.value.meter_no,
+      meter_kind: meterForm.value.meter_kind || 'time',
+      owner_unit: meterForm.value.owner_unit,
+      use_unit: meterForm.value.use_unit,
+      manager: meterForm.value.manager,
+      contact: meterForm.value.contact,
+      meter_mode: meterForm.value.meter_mode || 'manual',
+      install_date: meterForm.value.install_date || null,
+      remark: meterForm.value.remark,
+      rate: Number(meterForm.value.rate) || 1,
     }
-    meterVisible.value = false
+    if (meterForm.value.id) {
+      await updateBillingTimeMeter(meterForm.value.id, payload)
+    } else {
+      await createBillingTimeMeter(activeTenantId.value, payload)
+    }
+    meterFormVisible.value = false
     MessagePlugin.success('已保存')
     await loadDetail()
   } catch (e: any) {
@@ -1003,38 +1202,6 @@ const removeMeter = async (m: any) => {
     await loadDetail()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
-  }
-}
-
-// ---- 租户创建 ----
-const createVisible = ref(false)
-const creating = ref(false)
-const createForm = ref({ name: '', dorm_price: 1, water_price: 5.22 })
-
-const openCreateTenant = () => {
-  createForm.value = { name: '', dorm_price: 1, water_price: 5.22 }
-  createVisible.value = true
-}
-const submitCreate = async () => {
-  if (!createForm.value.name.trim()) {
-    MessagePlugin.warning('请输入租户名称')
-    return
-  }
-  creating.value = true
-  try {
-    const res: any = await createBillingTenant({
-      name: createForm.value.name.trim(),
-      dorm_price: createForm.value.dorm_price,
-      water_price: createForm.value.water_price,
-    })
-    createVisible.value = false
-    MessagePlugin.success('已创建')
-    activeTenantId.value = res.data.id
-    await loadTenants()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '创建失败')
-  } finally {
-    creating.value = false
   }
 }
 
@@ -1117,16 +1284,7 @@ const onResize = (e: MouseEvent, widthRef: { value: string }) => {
 }
 const onReadingResizeStart = (e: MouseEvent) => onResize(e, readingWidth)
 const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth)
-const onItemsResizeStart = (e: MouseEvent) => onResize(e, itemsWidth)
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth)
-
-// ---- 知识库列表 ----
-const loadKbs = async () => {
-  try {
-    const res: any = await listKnowledgeBases()
-    kbList.value = (res.data?.list || res.data || []).map((k: any) => ({ id: k.id, name: k.name }))
-  } catch { /* ignore */ }
-}
 
 // ---- 格式化 ----
 const fmtMoney = (v: any): string => {
@@ -1138,6 +1296,11 @@ const fmtKwh = (v: any): string => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return ''
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
+const fmtNum = (v: any): string => {
+  const n = Number(v)
+  if (v === '' || v == null || Number.isNaN(n)) return '—'
+  return String(parseFloat(n.toFixed(4)))
 }
 const fmtRate = (v: any): string => {
   const n = Number(v)
@@ -1158,7 +1321,6 @@ const cellText = (key: string, row: any): string => {
 
 onMounted(() => {
   loadTenants()
-  loadKbs()
 })
 </script>
 
@@ -1458,11 +1620,9 @@ onMounted(() => {
   width: 100%;
   .settings-header-title { font-size: 16px; font-weight: 600; }
   .settings-header-actions { display: flex; align-items: center; gap: 8px; }
-  .settings-tenant-select { width: 160px; }
 }
 .settings-tabs { height: 100%; }
 .settings-panel { padding: 4px 0 24px; }
-.panel-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
 .rec-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1481,6 +1641,55 @@ onMounted(() => {
 }
 .rec-field--wide { grid-column: 1 / -1; }
 
+/* 租户卡片(多租户) */
+.tenant-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  align-items: start;
+  .tenant-card {
+    border: 1px solid var(--td-component-border);
+    border-radius: 8px;
+    padding: 12px;
+    transition: all 0.2s;
+    &:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
+    .tenant-card-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      .tenant-card-name { font-size: 13px; font-weight: 600; }
+      .tenant-card-no { font-size: 12px; color: var(--td-text-color-secondary); }
+      .tenant-card-actions { margin-left: auto; display: flex; align-items: center; }
+    }
+    .tenant-card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 12px;
+      margin-top: 10px;
+      .tenant-card-item {
+        font-size: 12px;
+        display: flex;
+        gap: 6px;
+        min-width: 0;
+        .k { color: var(--td-text-color-secondary); flex-shrink: 0; }
+        .v { color: var(--td-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      }
+    }
+  }
+  .meter-empty { grid-column: span 2; }
+}
+
+/* 内联表单(租户/电表) */
+.tenant-form, .meter-form {
+  grid-column: span 2;
+  border: 1px solid var(--td-component-border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--td-bg-color-container);
+  .tenant-form-title, .meter-form-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+}
+
 .meter-section {
   margin-bottom: 20px;
   .meter-section-head {
@@ -1495,6 +1704,7 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+  align-items: start;
   .meter-card {
     border: 1px solid var(--td-component-border);
     border-radius: 8px;
@@ -1505,17 +1715,23 @@ onMounted(() => {
     .meter-card-head {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 8px;
       .meter-card-name { font-size: 13px; font-weight: 500; }
+      .meter-card-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
     }
-    .meter-card-meta {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--td-text-color-secondary);
-      .meter-card-ops { display: flex; gap: 8px; }
+    .meter-card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px 10px;
+      margin-top: 10px;
+      .meter-card-item {
+        font-size: 12px;
+        display: flex;
+        gap: 4px;
+        min-width: 0;
+        .k { color: var(--td-text-color-secondary); flex-shrink: 0; }
+        .v { color: var(--td-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      }
     }
   }
   .meter-empty {
@@ -1529,30 +1745,33 @@ onMounted(() => {
   }
 }
 
-/* 分摊子项大类分组列表 */
+/* 分摊子项大类分组(内联展开) */
 .item-groups {
   display: flex;
   flex-direction: column;
   gap: 8px;
   .item-group {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
     border: 1px solid var(--td-component-border);
     border-radius: 8px;
-    cursor: pointer;
-    transition: border-color 0.2s, box-shadow 0.2s;
-    &:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
-    .item-group-info {
+    overflow: hidden;
+    .item-group-head {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 10px;
-      min-width: 0;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      &:hover { background: var(--td-bg-color-secondarycontainer); }
       .item-group-name { font-size: 13px; font-weight: 500; color: var(--td-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .item-group-count { font-size: 12px; color: var(--td-text-color-secondary); font-variant-numeric: tabular-nums; }
+      .item-group-arrow { color: var(--td-text-color-placeholder); }
     }
-    .item-group-arrow { color: var(--td-text-color-placeholder); }
+    .item-group-body {
+      border-top: 1px solid var(--td-component-stroke);
+      padding: 10px 12px;
+      .item-list { border: none; border-radius: 0; }
+    }
   }
   .item-empty { padding: 24px; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
 }
@@ -1595,8 +1814,8 @@ onMounted(() => {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    label { font-size: 12px; color: var(--td-text-color-secondary); }
-    &.form-item--wide { grid-column: span 2; }
+    label { font-size: 12px; color: var(--td-text-color-secondary); .required { color: var(--td-error-color); } }
+    &.form-item--full { grid-column: span 2; }
   }
 }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

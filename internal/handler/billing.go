@@ -108,11 +108,15 @@ func (h *BillingHandler) CreateBillingTenant(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := billingTenantID(c)
 	var req struct {
-		Name      string  `json:"name"`
-		Remark    string  `json:"remark"`
-		DormPrice float64 `json:"dorm_price"`
-		WaterPrice float64 `json:"water_price"`
-		BillKBID  string  `json:"bill_kb_id"`
+		Name           string  `json:"name"`
+		TenantNo       string  `json:"tenant_no"`
+		AllocationMode string  `json:"allocation_mode"`
+		LeaseStart     *string `json:"lease_start"`
+		LeaseYears     int     `json:"lease_years"`
+		Contact        string  `json:"contact"`
+		Phone          string  `json:"phone"`
+		Remark         string  `json:"remark"`
+		BillKBID       string  `json:"bill_kb_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -123,20 +127,24 @@ func (h *BillingHandler) CreateBillingTenant(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("name is required"))
 		return
 	}
+	if strings.TrimSpace(req.AllocationMode) == "" {
+		req.AllocationMode = "按比例分摊"
+	}
+	kbID := strings.TrimSpace(req.BillKBID)
+	if kbID == "" {
+		kbID = h.defaultBillKBID(ctx)
+	}
 	t := types.BillingTenant{
 		ID: uuid.NewString(), TenantID: int64(tenantID), Name: req.Name,
-		Remark: req.Remark, CreatedAt: timeNowUTC(), UpdatedAt: timeNowUTC(),
+		TenantNo: req.TenantNo, AllocationMode: req.AllocationMode,
+		LeaseStart: req.LeaseStart, LeaseYears: req.LeaseYears,
+		Contact: req.Contact, Phone: req.Phone, Remark: req.Remark,
+		CreatedAt: timeNowUTC(), UpdatedAt: timeNowUTC(),
 	}
 	st := types.BillingTenantSetting{
 		ID: uuid.NewString(), BillingTenantID: t.ID,
-		DormPrice: req.DormPrice, WaterPrice: req.WaterPrice, BillKBID: req.BillKBID,
+		DormPrice: 1, WaterPrice: 5.22, BillKBID: kbID,
 		CreatedAt: timeNowUTC(), UpdatedAt: timeNowUTC(),
-	}
-	if st.DormPrice <= 0 {
-		st.DormPrice = 1
-	}
-	if st.WaterPrice <= 0 {
-		st.WaterPrice = 5.22
 	}
 	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&t).Error; err != nil {
@@ -151,6 +159,34 @@ func (h *BillingHandler) CreateBillingTenant(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": t})
 }
 
+// defaultBillKBID 市电账单知识库默认:名称含"市电"优先,其次"电费",最后取第一个。
+func (h *BillingHandler) defaultBillKBID(ctx context.Context) string {
+	type kb struct {
+		ID   string
+		Name string
+	}
+	var list []kb
+	if err := h.db.WithContext(ctx).Model(&types.KnowledgeBase{}).
+		Where("deleted_at IS NULL").Order("created_at ASC").Limit(200).Find(&list).Error; err != nil {
+		return ""
+	}
+	fallback := ""
+	for _, k := range list {
+		if fallback == "" {
+			fallback = k.ID
+		}
+		if strings.Contains(k.Name, "市电") {
+			return k.ID
+		}
+	}
+	for _, k := range list {
+		if strings.Contains(k.Name, "电费") {
+			return k.ID
+		}
+	}
+	return fallback
+}
+
 // UpdateBillingTenant godoc
 // @Summary      更新租户与核算参数
 // @Router       /billing/tenants/:id [put]
@@ -159,11 +195,15 @@ func (h *BillingHandler) UpdateBillingTenant(c *gin.Context) {
 	tenantID, _ := billingTenantID(c)
 	id := c.Param("id")
 	var req struct {
-		Name       string  `json:"name"`
-		Remark     string  `json:"remark"`
-		DormPrice  float64 `json:"dorm_price"`
-		WaterPrice float64 `json:"water_price"`
-		BillKBID   string  `json:"bill_kb_id"`
+		Name           string  `json:"name"`
+		TenantNo       string  `json:"tenant_no"`
+		AllocationMode string  `json:"allocation_mode"`
+		LeaseStart     *string `json:"lease_start"`
+		LeaseYears     int     `json:"lease_years"`
+		Contact        string  `json:"contact"`
+		Phone          string  `json:"phone"`
+		Remark         string  `json:"remark"`
+		BillKBID       string  `json:"bill_kb_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -174,9 +214,17 @@ func (h *BillingHandler) UpdateBillingTenant(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("租户不存在"))
 		return
 	}
-	if req.Name != "" {
+	if strings.TrimSpace(req.Name) != "" {
 		t.Name = strings.TrimSpace(req.Name)
 	}
+	t.TenantNo = req.TenantNo
+	if strings.TrimSpace(req.AllocationMode) != "" {
+		t.AllocationMode = req.AllocationMode
+	}
+	t.LeaseStart = req.LeaseStart
+	t.LeaseYears = req.LeaseYears
+	t.Contact = req.Contact
+	t.Phone = req.Phone
 	t.Remark = req.Remark
 	t.UpdatedAt = timeNowUTC()
 	var st types.BillingTenantSetting
@@ -185,13 +233,11 @@ func (h *BillingHandler) UpdateBillingTenant(c *gin.Context) {
 			ID: uuid.NewString(), BillingTenantID: id, CreatedAt: timeNowUTC(),
 		}
 	}
-	if req.DormPrice > 0 {
-		st.DormPrice = req.DormPrice
+	if strings.TrimSpace(req.BillKBID) != "" {
+		st.BillKBID = req.BillKBID
+	} else if strings.TrimSpace(st.BillKBID) == "" {
+		st.BillKBID = h.defaultBillKBID(ctx)
 	}
-	if req.WaterPrice > 0 {
-		st.WaterPrice = req.WaterPrice
-	}
-	st.BillKBID = req.BillKBID
 	st.UpdatedAt = timeNowUTC()
 	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&t).Error; err != nil {
@@ -249,17 +295,21 @@ func (h *BillingHandler) CreateBillingTimeMeter(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	var req struct {
-		MeterType string  `json:"meter_type"`
-		Name      string  `json:"name"`
-		Rate      float64 `json:"rate"`
-		Enabled   *bool   `json:"enabled"`
+		Name        string  `json:"name"`
+		MeterNo     string  `json:"meter_no"`
+		MeterKind   string  `json:"meter_kind"`
+		OwnerUnit   string  `json:"owner_unit"`
+		UseUnit     string  `json:"use_unit"`
+		Manager     string  `json:"manager"`
+		Contact     string  `json:"contact"`
+		MeterMode   string  `json:"meter_mode"`
+		InstallDate *string `json:"install_date"`
+		Remark      string  `json:"remark"`
+		Rate        float64 `json:"rate"`
+		Enabled     *bool   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
-		return
-	}
-	if req.MeterType != "star" && req.MeterType != "sub" {
-		c.Error(errors.NewBadRequestError("meter_type must be star or sub"))
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -267,9 +317,19 @@ func (h *BillingHandler) CreateBillingTimeMeter(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("name is required"))
 		return
 	}
+	if req.MeterKind != "normal" {
+		req.MeterKind = "time"
+	}
+	if req.MeterMode != "auto" {
+		req.MeterMode = "manual"
+	}
 	m := types.BillingTimeMeter{
-		ID: uuid.NewString(), BillingTenantID: id, MeterType: req.MeterType,
-		Name: req.Name, Rate: req.Rate, Enabled: true,
+		ID: uuid.NewString(), BillingTenantID: id,
+		Name: req.Name, MeterNo: req.MeterNo, MeterKind: req.MeterKind,
+		OwnerUnit: req.OwnerUnit, UseUnit: req.UseUnit,
+		Manager: req.Manager, Contact: req.Contact, MeterMode: req.MeterMode,
+		InstallDate: req.InstallDate, Remark: req.Remark,
+		Rate: req.Rate, Enabled: true,
 		CreatedAt: timeNowUTC(), UpdatedAt: timeNowUTC(),
 	}
 	if req.Enabled != nil {
@@ -292,9 +352,18 @@ func (h *BillingHandler) UpdateBillingTimeMeter(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	var req struct {
-		Name    string  `json:"name"`
-		Rate    float64 `json:"rate"`
-		Enabled *bool   `json:"enabled"`
+		Name        string  `json:"name"`
+		MeterNo     string  `json:"meter_no"`
+		MeterKind   string  `json:"meter_kind"`
+		OwnerUnit   string  `json:"owner_unit"`
+		UseUnit     string  `json:"use_unit"`
+		Manager     string  `json:"manager"`
+		Contact     string  `json:"contact"`
+		MeterMode   string  `json:"meter_mode"`
+		InstallDate *string `json:"install_date"`
+		Remark      string  `json:"remark"`
+		Rate        float64 `json:"rate"`
+		Enabled     *bool   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -305,9 +374,22 @@ func (h *BillingHandler) UpdateBillingTimeMeter(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("分时电表不存在"))
 		return
 	}
-	if req.Name != "" {
+	if strings.TrimSpace(req.Name) != "" {
 		m.Name = strings.TrimSpace(req.Name)
 	}
+	m.MeterNo = req.MeterNo
+	if req.MeterKind == "time" || req.MeterKind == "normal" {
+		m.MeterKind = req.MeterKind
+	}
+	m.OwnerUnit = req.OwnerUnit
+	m.UseUnit = req.UseUnit
+	m.Manager = req.Manager
+	m.Contact = req.Contact
+	if req.MeterMode == "auto" || req.MeterMode == "manual" {
+		m.MeterMode = req.MeterMode
+	}
+	m.InstallDate = req.InstallDate
+	m.Remark = req.Remark
 	if req.Rate > 0 {
 		m.Rate = req.Rate
 	}
@@ -649,8 +731,8 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		st.WaterPrice = 5.22
 	}
 
-	// 1) 分时读数：星达分表(star)合计、工业分表(sub)合计
-	starPeriod, subPeriod, err := h.loadPeriodKwh(ctx, id, req.Month)
+	// 1) 分时读数:总表(星达铜业)合计、租户分表合计
+	starPeriod, subPeriod, err := h.loadPeriodKwh(ctx, id, tenant.Name, req.Month)
 	if err != nil {
 		c.Error(err)
 		return
@@ -685,18 +767,16 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	if len(refs) == 0 {
 		refs = h.loadRefsByUseUnit(ctx, tenant.Name)
 	}
-	dormKwh, err := h.sumRefUsage(ctx, refs, "electricity", req.Month)
+	dormKwh, dormFee, err := h.sumRefFee(ctx, refs, "electricity", req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	waterUsage, err := h.sumRefUsage(ctx, refs, "water", req.Month)
+	waterUsage, waterFee, err := h.sumRefFee(ctx, refs, "water", req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	dormFee := round2(dormKwh * st.DormPrice)
-	waterFee := round2(waterUsage * st.WaterPrice)
 
 	// 3) 市电账单
 	billItem, err := h.loadUtilityBillByMonth(ctx, st.BillKBID, req.Month)
@@ -952,16 +1032,21 @@ func round6(v float64) float64 {
 	return float64(int64(v*1000000+0.5)) / 1000000
 }
 
-// loadPeriodKwh 汇总该月星达/工业分表各时段电量(读数差×倍率)。
-func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, month string) (periodMap, periodMap, error) {
+// loadPeriodKwh 汇总该月分时电表各时段电量(读数差×倍率)。
+// 总表组 = 归属单位「星达铜业」;分表组 = 归属单位 = 租户名。
+func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName, month string) (periodMap, periodMap, error) {
 	star := make(periodMap, 4)
 	sub := make(periodMap, 4)
+	baseOwner := strings.TrimSpace(tenantName) // 兼容:旧数据 star 归属星达铜业
 	var meters []types.BillingTimeMeter
 	if err := h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL AND enabled = ?", tenantID, true).
 		Find(&meters).Error; err != nil {
 		return nil, nil, err
 	}
-	for _, m := range meters {
+		for _, m := range meters {
+		if m.MeterKind != "" && m.MeterKind != "time" {
+			continue // 普通电表不参与分时核算
+		}
 		var r types.BillingTimeReading
 		if err := h.db.WithContext(ctx).Where("meter_id = ? AND month = ?", m.ID, month).First(&r).Error; err != nil {
 			continue
@@ -974,16 +1059,30 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, month stri
 		pk := round2((r.PeakCurr - r.PeakPrev) * rate)
 		fl := round2((r.FlatCurr - r.FlatPrev) * rate)
 		vl := round2((r.ValleyCurr - r.ValleyPrev) * rate)
-		if m.MeterType == "star" {
+		owner := strings.TrimSpace(m.OwnerUnit)
+		switch {
+		case owner == "星达铜业":
 			star["deep"] += dp
 			star["peak"] += pk
 			star["flat"] += fl
 			star["valley"] += vl
-		} else {
+		case owner != "" && owner == baseOwner:
 			sub["deep"] += dp
 			sub["peak"] += pk
 			sub["flat"] += fl
 			sub["valley"] += vl
+		case owner == "" && m.MeterType == "star":
+			star["deep"] += dp
+			star["peak"] += pk
+			star["flat"] += fl
+			star["valley"] += vl
+		case owner == "":
+			sub["deep"] += dp
+			sub["peak"] += pk
+			sub["flat"] += fl
+			sub["valley"] += vl
+		default:
+			// 其它归属单位(如其它租户分表)不计入当前租户核算
 		}
 	}
 	return star, sub, nil
@@ -1130,44 +1229,56 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 	return enabled
 }
 
-// sumRefUsage 汇总引用表计该月用量(按 usage 或 end-start)。
-func (h *BillingHandler) sumRefUsage(ctx context.Context, refs []types.BillingTenantMeterRef, category, month string) (float64, error) {
+// sumRefFee 汇总引用表计该月用量(按 usage 或 end-start)并按表计单价计算费用。
+// 宿舍/水费单价取电费/水费页面配置的表计默认单价;无单价表计费用按 0,用量照记。
+func (h *BillingHandler) sumRefFee(ctx context.Context, refs []types.BillingTenantMeterRef, category, month string) (float64, float64, error) {
 	meterIDs := make([]string, 0)
+	priceOf := make(map[string]float64)
 	for _, r := range refs {
-		if r.Category == category {
-			meterIDs = append(meterIDs, r.MeterID)
+		if r.Category != category {
+			continue
+		}
+		meterIDs = append(meterIDs, r.MeterID)
+		var m types.UtilityMeter
+		if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", r.MeterID).First(&m).Error; err == nil {
+			priceOf[r.MeterID] = m.DefaultUnitPrice
 		}
 	}
 	if len(meterIDs) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	var records []types.UtilityMeterRecord
 	if err := h.db.WithContext(ctx).
 		Where("category = ? AND month = ? AND deleted_at IS NULL", category, month).
 		Find(&records).Error; err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	set := make(map[string]bool, len(meterIDs))
 	for _, id := range meterIDs {
 		set[id] = true
 	}
 	total := 0.0
+	fee := 0.0
 	for i := range records {
 		var its []types.UtilityMeterItem
 		if err := h.db.WithContext(ctx).Where("record_id = ?", records[i].ID).Find(&its).Error; err != nil {
 			continue
 		}
 		for _, it := range its {
-			if set[it.MeterID] {
-				u := it.Usage
-				if u <= 0 && it.EndReading >= it.StartReading {
-					u = it.EndReading - it.StartReading
-				}
-				total += u
+			if !set[it.MeterID] {
+				continue
+			}
+			u := it.Usage
+			if u <= 0 && it.EndReading >= it.StartReading {
+				u = it.EndReading - it.StartReading
+			}
+			total += u
+			if p := priceOf[it.MeterID]; p > 0 {
+				fee += u * p
 			}
 		}
 	}
-	return round2(total), nil
+	return round2(total), round2(fee), nil
 }
 
 type feeCatGroup struct {
