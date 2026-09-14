@@ -83,9 +83,16 @@
 
     <!-- 底部汇总 -->
     <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-      <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-      <span class="doc-summary-item">总电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
-      <span class="doc-summary-item">总电费 <span class="doc-summary-val">{{ fmtMoney(summaryFee) }}</span> 元</span>
+      <template v-if="isOwnerView">
+        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
+        <span class="doc-summary-item">总电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
+        <span class="doc-summary-item">总电费 <span class="doc-summary-val">{{ fmtMoney(summaryFee) }}</span> 元</span>
+      </template>
+      <template v-else>
+        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条记录</span>
+        <span class="doc-summary-item">总应付电费 <span class="doc-summary-val">{{ fmtMoney(summaryPayableFee) }}</span> 元</span>
+        <span class="doc-summary-item">总应付水费 <span class="doc-summary-val">{{ fmtMoney(summaryWaterFee) }}</span> 元</span>
+      </template>
     </div>
 
     <!-- 底部浮动工具栏 -->
@@ -642,6 +649,25 @@ const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) 
   return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100 }
 }
 
+// 租户视图用水：按使用单位/归属单位 + 用途(宿舍/生产)匹配，不限定计量层级，
+// 以覆盖 normal 宿舍水表(持睿403~418)与 sub 分表(CRM01/02)两类数据源。
+const tenantWater = (owner: string, month: string, dormOnly = false) => {
+  const meters = waterMeters.value.filter((m: any) =>
+    m.enabled !== false &&
+    (m.owner_unit === owner || m.use_unit === owner) &&
+    (dormOnly ? m.meter_kind === 'dorm' : m.meter_kind !== 'dorm'),
+  )
+  let usage = 0
+  let fee = 0
+  for (const m of meters) {
+    const r = waterReadingMap.value.get(`${m.id}__${month}`)
+    if (!r) continue
+    usage += Number(r.usage) || 0
+    fee += Number(r.amount) || 0
+  }
+  return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100 }
+}
+
 // 组装列表行
 const buildRows = () => {
   const tenant = tenants.value.find((t: any) => t.id === activeTenantId.value)
@@ -710,8 +736,8 @@ const buildRows = () => {
       const totalKwh = Number(bill?.item?.total_kwh) || 0
       const totalFee = Number(bill?.item?.grand_total ?? bill?.item?.total_amount) || 0
       const dorm = dormOf(tenantName)
-      const wInd = waterAgg('sub', tenantName, month)
-      const wDorm = waterAgg('sub', tenantName, month, true)
+      const wInd = tenantWater(tenantName, month, false)
+      const wDorm = tenantWater(tenantName, month, true)
       const indKwh = Number(rec?.total_kwh) || 0
       const indFee = Number(rec?.industrial_fee) || 0
       Object.assign(base, {
@@ -760,6 +786,14 @@ const summaryKwh = computed(() => {
 const summaryFee = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return Math.round(arr.reduce((s, r) => s + (Number(r.total_fee) || 0), 0) * 100) / 100
+})
+const summaryPayableFee = computed(() => {
+  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
+  return Math.round(arr.reduce((s, r) => s + (Number(r.ind_fee) || 0) + (Number(r.dorm_fee) || 0), 0) * 100) / 100
+})
+const summaryWaterFee = computed(() => {
+  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
+  return Math.round(arr.reduce((s, r) => s + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0), 0) * 100) / 100
 })
 const toggleSelect = (row: any, checked: any) => {
   const next = new Set(selectedKeys.value)

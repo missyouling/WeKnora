@@ -37,8 +37,9 @@ type UtilityMeterRecord struct {
 	TotalUsage  float64            `gorm:"numeric(18,2)" json:"total_usage"`
 	TotalAmount float64            `gorm:"numeric(18,2)" json:"total_amount"`
 	Remark      string             `gorm:"type:text" json:"remark"`
-	Items       []UtilityMeterItem `gorm:"-" json:"items"`
-	CreatedAt   time.Time          `json:"created_at"`
+	Items         []UtilityMeterItem `gorm:"-" json:"items"`
+	DeleteItemIDs []string           `gorm:"-" json:"delete_item_ids"` // 显式删除的子行 ID（编辑保存不传则未提交行保留）
+	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt   time.Time          `json:"updated_at"`
 	DeletedAt   *time.Time         `gorm:"index" json:"deleted_at"`
 }

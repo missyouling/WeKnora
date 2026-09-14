@@ -597,15 +597,83 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 	}
 
 	computeMeterRecordWithRates(&req, rates)
+	// 安全 diff 更新：以 meter_id 对齐提交项与旧行；未提交且未显式删除的旧行保留，
+	// 避免编辑单行/连续录入时其它表计数据被静默清空；显式删除走 delete_item_ids。
+	var oldItems []types.UtilityMeterItem
+	if err := h.db.WithContext(ctx).Where("record_id = ?", id).Find(&oldItems).Error; err != nil {
+		logger.Errorf(ctx, "query meter record items failed: %v", err)
+		c.Error(errors.NewInternalServerError("query meter record items failed"))
+		return
+	}
+	oldByMeter := make(map[string]*types.UtilityMeterItem, len(oldItems))
+	for i := range oldItems {
+		oldByMeter[oldItems[i].MeterID] = &oldItems[i]
+	}
+	deleteSet := make(map[string]bool, len(req.DeleteItemIDs))
+	for _, d := range req.DeleteItemIDs {
+		if d != "" {
+			deleteSet[d] = true
+		}
+	}
+	submitted := make(map[string]bool, len(req.Items))
+	finalItems := make([]types.UtilityMeterItem, 0, len(oldItems)+len(req.Items))
+	var insertItems []types.UtilityMeterItem
+	for i := range req.Items {
+		it := &req.Items[i]
+		submitted[it.MeterID] = true
+		if old, ok := oldByMeter[it.MeterID]; ok && !deleteSet[old.ID] {
+			// 更新既有行（保留原 ID，前端 rows 的 item_id 继续有效）
+			old.MeterName = it.MeterName
+			old.ReadingDate = it.ReadingDate
+			old.Reader = it.Reader
+			old.Rate = it.Rate
+			old.StartReading = it.StartReading
+			old.EndReading = it.EndReading
+			old.DeepPrev = it.DeepPrev
+			old.DeepCurr = it.DeepCurr
+			old.PeakPrev = it.PeakPrev
+			old.PeakCurr = it.PeakCurr
+			old.FlatPrev = it.FlatPrev
+			old.FlatCurr = it.FlatCurr
+			old.ValleyPrev = it.ValleyPrev
+			old.ValleyCurr = it.ValleyCurr
+			old.UnitPrice = it.UnitPrice
+			old.Subsidy = it.Subsidy
+			old.Usage = it.Usage
+			old.Amount = it.Amount
+			old.Remark = it.Remark
+			old.UpdatedAt = now
+			finalItems = append(finalItems, *old)
+		} else {
+			it.ID = uuid.NewString()
+			it.RecordID = id
+			it.CreatedAt = now
+			it.UpdatedAt = now
+			finalItems = append(finalItems, *it)
+			insertItems = append(insertItems, *it)
+		}
+	}
+	for i := range oldItems {
+		o := oldItems[i]
+		if submitted[o.MeterID] || deleteSet[o.ID] {
+			continue
+		}
+		finalItems = append(finalItems, o)
+	}
+	rec := &types.UtilityMeterRecord{
+		ID: id, TenantID: int64(tenantID), Category: req.Category, Month: req.Month,
+		RecordDate: req.RecordDate, Remark: req.Remark, Items: finalItems,
+	}
+	computeMeterRecordWithRates(rec, rates)
 	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&types.UtilityMeterRecord{}).
 			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 			Updates(map[string]interface{}{
 				"month":        req.Month,
 				"record_date":  req.RecordDate,
-				"meter_count":  req.MeterCount,
-				"total_usage":  req.TotalUsage,
-				"total_amount": req.TotalAmount,
+				"meter_count":  rec.MeterCount,
+				"total_usage":  rec.TotalUsage,
+				"total_amount": rec.TotalAmount,
 				"remark":       req.Remark,
 				"updated_at":   now,
 			})
@@ -615,16 +683,30 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 		if res.RowsAffected == 0 {
 			return errors.NewNotFoundError("记录不存在")
 		}
-		if err := tx.Where("record_id = ?", id).Delete(&types.UtilityMeterItem{}).Error; err != nil {
-			return err
+		for i := range finalItems {
+			it := &finalItems[i]
+			if it.CreatedAt.Equal(now) {
+				if err := tx.Create(it).Error; err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Model(&types.UtilityMeterItem{}).Where("id = ?", it.ID).Updates(map[string]interface{}{
+					"meter_name": it.MeterName, "reading_date": it.ReadingDate, "reader": it.Reader,
+					"rate": it.Rate, "start_reading": it.StartReading, "end_reading": it.EndReading,
+					"deep_prev": it.DeepPrev, "deep_curr": it.DeepCurr,
+					"peak_prev": it.PeakPrev, "peak_curr": it.PeakCurr,
+					"flat_prev": it.FlatPrev, "flat_curr": it.FlatCurr,
+					"valley_prev": it.ValleyPrev, "valley_curr": it.ValleyCurr,
+					"unit_price": it.UnitPrice, "subsidy": it.Subsidy,
+					"usage": it.Usage, "amount": it.Amount, "remark": it.Remark,
+					"updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			}
 		}
-		for i := range req.Items {
-			it := &req.Items[i]
-			it.ID = uuid.NewString()
-			it.RecordID = id
-			it.CreatedAt = now
-			it.UpdatedAt = now
-			if err := tx.Create(it).Error; err != nil {
+		if len(req.DeleteItemIDs) > 0 {
+			if err := tx.Where("record_id = ? AND id IN ?", id, req.DeleteItemIDs).Delete(&types.UtilityMeterItem{}).Error; err != nil {
 				return err
 			}
 		}

@@ -67,31 +67,62 @@
           </div>
         </div>
         <div class="doc-list-body">
-          <div v-for="row in displayRows" :key="row.item_id || row.key" class="doc-list-row"
-            :class="{ 'row-selected': selectedKeys.has(row.key) }" :style="gridStyle" role="row" @click="onRowClick(row)">
-            <div class="cell cell-check" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(row.key)" @change="(v: any) => toggleSelect(row, v)" />
+          <template v-for="row in displayRows" :key="row.item_id || row.key">
+            <div class="doc-list-row"
+              :class="{ 'row-selected': selectedKeys.has(row.key) }" :style="gridStyle" role="row" @click="onRowClick(row)">
+              <div class="cell cell-check" @click.stop>
+                <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(row.key)" @change="(v: any) => toggleSelect(row, v)" />
+              </div>
+              <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
+                <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
+                <span v-else-if="col.key === 'meter'" class="row-text" :title="row.meter_alias">
+                  <span v-if="isTimeRow(row)" class="row-expand-toggle" @click.stop="toggleExpand(row)">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
+                  {{ row.meter_alias }}
+                </span>
+                <span v-else-if="col.key === 'start_reading'" class="row-mono">{{ fmtNum(row.start_reading) }}</span>
+                <span v-else-if="col.key === 'end_reading'" class="row-mono">{{ fmtNum(row.end_reading) }}</span>
+                <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
+                <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
+                <span v-else-if="col.key === 'unit_price'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtNum(row.unit_price) }}</span>
+                <span v-else-if="col.key === 'subsidy'" class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ isTimeRow(row) ? '—' : fmtMoney(row.subsidy) }}</span>
+                <span v-else-if="col.key === 'amount'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtMoney(row.amount) }}</span>
+                <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
+                <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
+                <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
+                <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
+                <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtNum(row.default_unit_price) }}</span>
+                <span v-else-if="col.key === 'meter_mode'" class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
+                <span v-else-if="col.key === 'install_date'" class="row-mono">{{ row.install_date || '' }}</span>
+                <span v-else class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
+              </div>
             </div>
-            <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
-              <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
-              <span v-else-if="col.key === 'meter'" class="row-text" :title="row.meter_alias">{{ row.meter_alias }}</span>
-              <span v-else-if="col.key === 'start_reading'" class="row-mono">{{ fmtNum(row.start_reading) }}</span>
-              <span v-else-if="col.key === 'end_reading'" class="row-mono">{{ fmtNum(row.end_reading) }}</span>
-              <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
-              <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
-              <span v-else-if="col.key === 'unit_price'" class="row-mono">{{ fmtNum(row.unit_price) }}</span>
-              <span v-else-if="col.key === 'subsidy'" class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ fmtMoney(row.subsidy) }}</span>
-              <span v-else-if="col.key === 'amount'" class="row-mono">{{ fmtMoney(row.amount) }}</span>
-              <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
-              <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
-              <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
-              <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
-              <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtNum(row.default_unit_price) }}</span>
-              <span v-else-if="col.key === 'meter_mode'" class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
-              <span v-else-if="col.key === 'install_date'" class="row-mono">{{ row.install_date || '' }}</span>
-              <span v-else class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
+            <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
+            <div v-if="isTimeRow(row) && expandedKeys.has(row.key)" class="doc-list-expand" :style="gridStyle">
+              <div class="expand-inner">
+                <div class="expand-grid">
+                  <div class="expand-cell expand-head">时段</div>
+                  <div class="expand-cell expand-head">起度</div>
+                  <div class="expand-cell expand-head">止度</div>
+                  <div class="expand-cell expand-head">倍率</div>
+                  <div class="expand-cell expand-head">时段电量</div>
+                </div>
+                <div v-for="p in periodsOf(row)" :key="p.name" class="expand-grid expand-grid--row">
+                  <div class="expand-cell expand-name">{{ p.name }}</div>
+                  <div class="expand-cell expand-mono">{{ fmtNum(p.prev) }}</div>
+                  <div class="expand-cell expand-mono">{{ fmtNum(p.curr) }}</div>
+                  <div class="expand-cell expand-mono">{{ fmtNum(row.rate) }}</div>
+                  <div class="expand-cell expand-mono">{{ fmtNum(p.usage) }} {{ unitLabel }}</div>
+                </div>
+                <div class="expand-grid expand-grid--row expand-grid--total">
+                  <div class="expand-cell expand-name">合计</div>
+                  <div class="expand-cell expand-mono" />
+                  <div class="expand-cell expand-mono" />
+                  <div class="expand-cell expand-mono" />
+                  <div class="expand-cell expand-mono">{{ fmtNum(row.usage) }} {{ unitLabel }}</div>
+                </div>
+              </div>
             </div>
-          </div>
+          </template>
           <div v-if="!loading && !displayRows.length" class="meter-empty">
             <t-icon name="search-error" size="40px" class="meter-empty-icon" />
             <span class="meter-empty-text">暂无数据</span>
@@ -239,9 +270,14 @@
               <label>补差</label>
               <t-input v-model.number="form.subsidy" type="number" placeholder="补差金额，可为负" />
             </div>
-            <div class="rec-field">
+            <div class="rec-field" v-if="!isTimeMeter">
               <label>{{ categoryLabel }}（自动计算）</label>
               <div class="calc-val-lg">{{ fmtMoney(formAmount) }} 元</div>
+              <p class="field-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
+            </div>
+            <div class="rec-field" v-else>
+              <label>电费</label>
+              <div class="readonly-val">按租户分摊核算</div>
               <p class="field-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
             </div>
 
@@ -614,6 +650,7 @@ const load = async () => {
           meter_id: it.meter_id,
           meter_alias: meter?.alias || it.meter_name || '未配置',
           meter_no: meter?.meter_no || '',
+          meter_type: meter?.meter_type || '',
           use_unit: meter?.use_unit || '',
           default_unit_price: meter?.default_unit_price ?? '',
           meter_mode: meter?.meter_mode || '',
@@ -678,6 +715,31 @@ const summaryAmount = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return Math.round(arr.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100
 })
+
+// ---- 分时表：行内四时段展开 ----
+const expandedKeys = ref<Set<string>>(new Set())
+const isTimeRow = (row: any) => row.meter_type === 'time'
+const periodsOf = (row: any) => {
+  const rate = Number(row.rate) > 0 ? Number(row.rate) : 1
+  const mk = (name: string, prev: number, curr: number) => ({
+    name,
+    prev: Number(prev) || 0,
+    curr: Number(curr) || 0,
+    usage: Math.round((Number(curr) - Number(prev)) * rate * 100) / 100,
+  })
+  return [
+    mk('尖', row.deep_prev, row.deep_curr),
+    mk('峰', row.peak_prev, row.peak_curr),
+    mk('平', row.flat_prev, row.flat_curr),
+    mk('谷', row.valley_prev, row.valley_curr),
+  ]
+}
+const toggleExpand = (row: any) => {
+  const next = new Set(expandedKeys.value)
+  if (next.has(row.key)) next.delete(row.key)
+  else next.add(row.key)
+  expandedKeys.value = next
+}
 
 const toggleSelect = (row: any, checked: any) => {
   const key = row.key
@@ -1110,6 +1172,7 @@ const handleDelete = async () => {
           month: remaining[0].month,
           record_date: remaining[0].record_date || '',
           remark: '',
+          delete_item_ids: Array.from(targetItemIds),
           items: remaining.map((r: any) => ({
             meter_id: r.meter_id,
             reading_date: r.reading_date || '',
@@ -1616,6 +1679,63 @@ onBeforeUnmount(() => {
 }
 
 .os-neg { color: var(--td-error-color, #d54941); }
+.row-dash { color: var(--td-text-color-placeholder); }
+.row-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+  &:hover { background: var(--td-bg-color-container-hover); color: var(--td-brand-color); }
+}
+
+/* 分时表行内四时段展开（参考电量明细布局） */
+.doc-list-expand {
+  display: contents;
+}
+.doc-list-expand .expand-inner {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  background: var(--td-bg-color-container-hover);
+  border-bottom: 1px solid var(--td-component-stroke);
+}
+.expand-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr 0.9fr 0.7fr 1.1fr;
+  min-width: 0;
+}
+.expand-grid--row {
+  border-top: 1px solid var(--td-component-stroke);
+}
+.expand-grid--row:hover { background: var(--td-bg-color-container); }
+.expand-grid--total {
+  border-top: 1px solid var(--td-component-stroke);
+  font-weight: 600;
+  background: var(--td-bg-color-container);
+}
+.expand-cell {
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expand-head {
+  color: var(--td-text-color-placeholder);
+  background: var(--td-bg-color-secondarycontainer);
+  font-weight: 600;
+}
+.expand-name { color: var(--td-text-color-primary); }
+.expand-mono { font-family: var(--app-font-family); color: var(--td-text-color-primary); }
 
 .meter-list-scroll {
   flex: 1;
