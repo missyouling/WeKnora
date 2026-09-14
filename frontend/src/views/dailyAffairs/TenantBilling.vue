@@ -1557,7 +1557,7 @@ onMounted(() => {
   padding: 12px;
   .period-row {
     display: grid;
-    grid-template-columns: 34px 1fr 18px 1fr 140px;
+    grid-template-columns: 34px minmax(0, 1fr) 18px minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
     &.row-invalid {
@@ -1573,7 +1573,7 @@ onMounted(() => {
       :deep(.t-input__inner) { text-align: center; }
     }
     .rr-sep { color: var(--td-text-color-placeholder); font-size: 12px; text-align: center; }
-    .period-kwh { font-size: 12px; color: var(--td-text-color-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .period-kwh { font-size: 12px; color: var(--td-text-color-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   }
 }
 .calc-val {
