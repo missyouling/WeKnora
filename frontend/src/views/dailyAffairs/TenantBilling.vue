@@ -517,7 +517,6 @@
                 <div v-for="g in itemGroups" :key="g.category" class="item-group">
                   <div class="item-group-head" @click="toggleItemGroup(g.category)">
                     <span class="item-group-name">{{ g.category }}</span>
-                    <span class="item-group-count">{{ g.enabledCount }}/{{ g.items.length }}</span>
                     <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
                   </div>
                   <div v-if="expandedItemGroup === g.category" class="item-group-body">
@@ -824,9 +823,23 @@ const handleDelete = async () => {
   }
 }
 
+// ---- 抽屉拖动调宽(宽度持久化) ----
+const DRAWER_W_KEYS = {
+  reading: 'tenant_reading_width',
+  settings: 'tenant_settings_width',
+  record: 'tenant_record_width',
+}
+const loadDrawerWidth = (key: string, def: string) => {
+  try {
+    const v = localStorage.getItem(key)
+    const n = v ? parseInt(v, 10) : 0
+    return n >= 520 && n <= 1100 ? `${n}px` : def
+  } catch { return def }
+}
+
 // ---- 新增记录抽屉（抄表记录：分时/普通电表单表连续录入） ----
 const readingVisible = ref(false)
-const readingWidth = ref('820px')
+const readingWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.reading, '820px'))
 const savingReadings = ref(false)
 const readingMonth = ref('')
 const readingTitle = '新增抄表记录'
@@ -874,7 +887,6 @@ const openReadingDrawer = async (month: string) => {
     return
   }
   readingMonth.value = month || currentMonth()
-  readingWidth.value = `${Math.min(920, Math.floor(window.innerWidth * 0.94))}px`
   readingDate.value = today
   readingRecordDate.value = today
   readingVisible.value = true
@@ -1039,7 +1051,7 @@ const saveCurrentAndNext = async () => {
 
 // ---- 设置抽屉 ----
 const settingsVisible = ref(false)
-const settingsWidth = ref('860px')
+const settingsWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.settings, '860px'))
 const settingsTab = ref('tenant')
 const detail = ref<any>(null)
 const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
@@ -1154,7 +1166,6 @@ const itemGroups = computed(() => {
   return Object.entries(g).map(([category, items]) => ({
     category,
     items,
-    enabledCount: items.filter((i: any) => i.enabled).length,
   }))
 })
 const toggleItemGroup = (category: string) => {
@@ -1266,7 +1277,7 @@ const removeMeter = async (m: any) => {
 
 // ---- 账单详情与打印 ----
 const recordVisible = ref(false)
-const recordWidth = ref('760px')
+const recordWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.record, '760px'))
 const recordDetail = ref<any>(null)
 const printVisible = ref(false)
 const printUrl = ref('')
@@ -1325,8 +1336,8 @@ const doBrowserPrint = () => {
   if (frame?.contentWindow) frame.contentWindow.print()
 }
 
-// ---- 抽屉拖动调宽 ----
-const onResize = (e: MouseEvent, widthRef: { value: string }) => {
+// ---- 抽屉拖动调宽(宽度持久化) ----
+const onResize = (e: MouseEvent, widthRef: { value: string }, storageKey: string) => {
   const startX = e.clientX
   const startW = parseFloat(widthRef.value)
   const maxW = Math.min(1100, Math.floor(window.innerWidth * 0.95))
@@ -1335,15 +1346,16 @@ const onResize = (e: MouseEvent, widthRef: { value: string }) => {
     widthRef.value = `${w}px`
   }
   const up = () => {
+    try { localStorage.setItem(storageKey, widthRef.value) } catch { /* ignore */ }
     document.removeEventListener('mousemove', move)
     document.removeEventListener('mouseup', up)
   }
   document.addEventListener('mousemove', move)
   document.addEventListener('mouseup', up)
 }
-const onReadingResizeStart = (e: MouseEvent) => onResize(e, readingWidth)
-const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth)
-const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth)
+const onReadingResizeStart = (e: MouseEvent) => onResize(e, readingWidth, DRAWER_W_KEYS.reading)
+const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAWER_W_KEYS.settings)
+const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 
 // ---- 格式化 ----
 const fmtMoney = (v: any): string => {
@@ -1802,7 +1814,6 @@ onMounted(() => {
       transition: border-color 0.2s, box-shadow 0.2s;
       &:hover { background: var(--td-bg-color-secondarycontainer); }
       .item-group-name { font-size: 13px; font-weight: 500; color: var(--td-text-color-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .item-group-count { font-size: 12px; color: var(--td-text-color-secondary); font-variant-numeric: tabular-nums; }
       .item-group-arrow { color: var(--td-text-color-placeholder); }
     }
     .item-group-body {
