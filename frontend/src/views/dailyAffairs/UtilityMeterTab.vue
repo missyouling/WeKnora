@@ -769,6 +769,7 @@ const saving = ref(false)
 const editingRecordId = ref('')
 const editingItemId = ref('')
 const editingOriginalMonth = ref('') // 编辑行原月份（改月时仅迁移该行）
+const editingOriginalMeterId = ref('') // 编辑行原表计（改表时删除原行避免产生空记录）
 const lastRecordId = ref('')
 const recordItems = ref<any[]>([]) // 当前编辑 record 的原始 items（编辑时保留其它行）
 interface MeterForm {
@@ -850,17 +851,20 @@ const meterGridCols = computed(() => {
 })
 
 const onMeterChange = () => {
-  // 切换表计：清空读数，回填单价与抄表人
-  form.value.startReading = 0
-  form.value.endReading = 0
-  form.value.deepPrev = 0
-  form.value.deepCurr = 0
-  form.value.peakPrev = 0
-  form.value.peakCurr = 0
-  form.value.flatPrev = 0
-  form.value.flatCurr = 0
-  form.value.valleyPrev = 0
-  form.value.valleyCurr = 0
+  // 切换表计：新增/连续录入模式清空读数便于录入；编辑模式仅回填单价与抄表人，
+  // 保留原读数（修正表号场景数据应跟随记录，而不是产生空记录）
+  if (!editingItemId.value) {
+    form.value.startReading = 0
+    form.value.endReading = 0
+    form.value.deepPrev = 0
+    form.value.deepCurr = 0
+    form.value.peakPrev = 0
+    form.value.peakCurr = 0
+    form.value.flatPrev = 0
+    form.value.flatCurr = 0
+    form.value.valleyPrev = 0
+    form.value.valleyCurr = 0
+  }
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
     form.value.reader = currentMeter.value.manager || form.value.reader || ''
@@ -871,6 +875,7 @@ const openCreate = () => {
   editingRecordId.value = ''
   editingItemId.value = ''
   editingOriginalMonth.value = ''
+  editingOriginalMeterId.value = ''
   lastRecordId.value = ''
   recordItems.value = []
   const f = emptyForm()
@@ -913,6 +918,7 @@ const openEdit = (row: any) => {
   editingRecordId.value = row.record_id
   editingItemId.value = row.item_id
   editingOriginalMonth.value = row.month
+  editingOriginalMeterId.value = row.meter_id || ''
   const rec = rowsOfRecord(row.record_id)
   recordItems.value = rec.map((r: any) => ({
     item_id: r.item_id,
@@ -1022,6 +1028,8 @@ const save = async () => {
             subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
           })),
+          // 该行迁往新月份：从原 record 删除
+          delete_item_ids: [editingItemId.value],
         })
         await createUtilityMeterRecord({
           category: props.category,
@@ -1055,12 +1063,15 @@ const save = async () => {
             remark: it.remark || '',
           }
         })
+        // 表计变更：删除原表计行，避免「新表新增 + 旧表残留」产生空记录
+        const meterChanged = !!editingOriginalMeterId.value && editingOriginalMeterId.value !== form.value.meterId
         await updateUtilityMeterRecord(editingRecordId.value, {
           category: props.category,
           month: form.value.month,
           record_date: form.value.recordDate || today,
           remark: '',
           items,
+          delete_item_ids: meterChanged ? [editingItemId.value] : [],
         })
         MessagePlugin.success('已保存')
         lastRecordId.value = ''
