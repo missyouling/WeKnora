@@ -1218,7 +1218,7 @@ const save = async () => {
       f.meterId = nextMeter.id
       f.readingDate = form.value.readingDate || today
       f.recordDate = form.value.recordDate || today
-      f.reader = nextMeter.manager || ''
+      f.reader = nextMeter.manager || form.value.reader || ''
       const nextEnds = meterMonthEnds.value.get(nextMeter.id)
       const prevEnd = nextEnds?.get(prevMonthOf(form.value.month))
       f.startReading = prevEnd ? Number(prevEnd) : 0
