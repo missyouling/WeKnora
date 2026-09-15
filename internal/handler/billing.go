@@ -1086,11 +1086,13 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		ps := []string{"deep", "peak", "flat", "valley"}
 		// 预汇总各表各时段使用电量
 		usageOf := make(map[string]map[string]float64, len(subRows))
+		totalUsage := 0.0
 		for _, mr := range subRows {
 			usageOf[mr.MeterID] = make(map[string]float64, 4)
 			for _, p := range ps {
 				pr := mr.Periods[p]
 				usageOf[mr.MeterID][p] = round2((pr.Curr - pr.Prev) * mr.Rate)
+				totalUsage += usageOf[mr.MeterID][p]
 			}
 		}
 		// 各时段已分摊差额(末时段补差)
@@ -1111,7 +1113,12 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				share := u / subUsageP
 				lossShare := round2(billLineLoss[p] * lossRatio * share)
 				adjShare := round2(billAdjust[p] * lossRatio * share)
-				bill := round2(u + lossShare + adjShare)
+				// 计费电量 = (星达分表总电量 - 宿舍电量) 按各表各时段使用电量占比分摊,
+				// 与费用计算计费基数(billBase)口径一致
+				bill := 0.0
+				if totalUsage > 0 {
+					bill = round2(billBase * u / totalUsage)
+				}
 				var diff float64
 				if mr.MeterID == subRows[len(subRows)-1].MeterID {
 					diff = round2(diffTotal - assigned)
