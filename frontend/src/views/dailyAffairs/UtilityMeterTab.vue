@@ -742,6 +742,11 @@ const applyFilters = () => {
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
   if (filters.value.kind) list = list.filter(r => (r.meter_kind === 'dorm') === (filters.value.kind === 'dorm'))
   if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
+  // 同一周期内默认排序：居民在前、工商业在后；跨月保持数据原序
+  list = [...list].sort((a, b) => {
+    if (a.month !== b.month) return 0
+    return (a.meter_kind === 'dorm' ? 0 : 1) - (b.meter_kind === 'dorm' ? 0 : 1)
+  })
   displayRows.value = list
 }
 
