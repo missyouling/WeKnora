@@ -1209,10 +1209,18 @@ const openRecord = async (r: any) => {
   }
 }
 
-// 直接打印明细页面（浏览器打印，默认纵向 A4；打印样式见 @media print）
+// 直接打印明细页面（浏览器打印，默认纵向 A4）
+// 长内容可多页分页：克隆明细到 body 顶层(脱离抽屉 fixed 容器)后打印,每个大项分组尽量不跨页
 const printRecord = () => {
   if (!recordDetail.value) return
+  const src = document.querySelector('.record-detail') as HTMLElement | null
+  if (!src) return
+  const clone = src.cloneNode(true) as HTMLElement
+  clone.id = 'rd-print-clone'
+  clone.style.cssText = 'position:absolute;left:0;top:0;width:100%;background:#fff;padding:16px;box-sizing:border-box;'
+  document.body.appendChild(clone)
   window.print()
+  setTimeout(() => { clone.remove() }, 200)
 }
 
 const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array) => {
@@ -1251,7 +1259,7 @@ const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAW
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 
 // ---- 账单明细分组（按大项排序 + 汇总） ----
-const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '零售损益', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
+const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
 const feeGroups = computed(() => {
   const items = (recordDetail.value?.items || []).filter((it: any) => it.category !== '水费')
   const map = new Map<string, any[]>()
@@ -1909,14 +1917,14 @@ onMounted(() => {
 </style>
 
 <style>
-/* 账单明细直接打印（纵向 A4）：只打印抽屉内的明细内容 */
+/* 账单明细直接打印（纵向 A4）：克隆节点脱离抽屉 fixed 容器，可多页分页 */
 @media print {
   @page { size: A4 portrait; margin: 12mm; }
   body * { visibility: hidden !important; }
-  .record-detail,
-  .record-detail * { visibility: visible !important; }
-  .record-detail {
-    position: fixed !important;
+  #rd-print-clone,
+  #rd-print-clone * { visibility: visible !important; }
+  #rd-print-clone {
+    position: absolute !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
@@ -1925,11 +1933,9 @@ onMounted(() => {
     background: #fff !important;
     padding: 0 !important;
   }
-  .record-overview { grid-template-columns: repeat(4, 1fr) !important; }
-  .tenant-record-drawer .t-drawer__header,
-  .tenant-record-drawer .t-drawer__footer,
-  .t-drawer__mask { display: none !important; }
-  .rd-print-title {
+  #rd-print-clone .record-overview { grid-template-columns: repeat(4, 1fr) !important; page-break-inside: avoid; }
+  #rd-print-clone .rd-fee-group { page-break-inside: avoid; break-inside: avoid; }
+  #rd-print-clone .rd-print-title {
     display: block !important;
     font-size: 16px;
     font-weight: 600;

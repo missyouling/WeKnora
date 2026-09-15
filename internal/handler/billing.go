@@ -1173,11 +1173,8 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 			if !on {
 				continue
 			}
-			// 零售损益分摊电费独立成组(手工口径:不并入市场化购电费小计)
+			// 子项大类严格跟随市电账单结构(零售损益分摊电费归属市场化购电费)
 			catName := cat.Name
-			if sg.Name == "零售损益分摊电费" {
-				catName = "零售损益分摊"
-			}
 			fee := 0.0
 			hasPeriod := false
 			rateByPeriod := make(map[string]float64, 4)
