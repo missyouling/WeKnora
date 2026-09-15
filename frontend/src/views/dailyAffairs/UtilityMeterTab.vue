@@ -1439,7 +1439,9 @@ const openMeterForm = (m: any) => {
     id: m.id,
     alias: m.alias || '',
     meter_no: m.meter_no || '',
-    meter_type: m.meter_type || '',
+    // 水表历史脏数据 normal 不在合法类型内,编辑时置空引导重选
+    meter_type: props.category === 'water' && !['total', 'sub', 'fire'].includes(m.meter_type)
+      ? '' : (m.meter_type || ''),
     meter_kind: m.meter_kind || defaultKind,
     owner_unit: m.owner_unit || '',
     rate: Number(m.rate) > 0 ? m.rate : 1,

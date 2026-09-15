@@ -730,7 +730,7 @@ const waterReadingMap = computed(() => {
 //   dormOnly: true 仅用途=宿舍；false 仅用途=生产(默认不含宿舍)
 const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
-    m.enabled !== false && (m.meter_type || 'sub') === kind &&
+    m.enabled !== false && (m.meter_type === 'normal' ? 'sub' : (m.meter_type || 'sub')) === kind &&
     (owner === '' || m.owner_unit === owner || m.use_unit === owner) &&
     (dormOnly ? m.meter_kind === 'dorm' : m.meter_kind !== 'dorm'),
   )
@@ -807,12 +807,23 @@ const buildRows = () => {
       const res = residentInfoOf(bill?.item)
       const dorm = dormOf(OWNER_UNIT)
       const tenantDorm = dormOf(tenantName)
-      const wInd = waterAgg('sub', '', month)
-      const wDorm = waterAgg('sub', '', month, true)
+      // 总表(星达自来水总表)、消防总表、持睿工业/居民用水
+      const totalMain = waterAgg('total', '', month)
       const wFire = waterAgg('fire', '', month)
+      const tInd = tenantWater(tenantName, month, false)
+      const tDorm = tenantWater(tenantName, month, true)
+      const wDorm = waterAgg('sub', OWNER_UNIT, month, true)
       const gas = gasOf()
-      const indKwh = Math.round((totalKwh - (Number(rec?.total_kwh) || 0) - res.kwh - tenantDorm.kwh) * 100) / 100
-      const indFee = Math.round((totalFee - (Number(rec?.industrial_fee) || 0) - res.fee) * 100) / 100
+      // 星达工业用电量 = 总电量 - 星达居民电量 - 持睿工业电量(星达分表总电量)
+      const indKwh = Math.round((totalKwh - res.kwh - (Number(rec?.total_kwh) || 0)) * 100) / 100
+      // 星达工业电费 = 总电费 - 持睿居民电费 - 持睿工业电费
+      const indFee = Math.round((totalFee - tenantDorm.fee - (Number(rec?.industrial_fee) || 0)) * 100) / 100
+      // 星达工业均价 = 星达工业电费 ÷ (总电量 - 持睿居民电量 - 持睿工业电量)
+      const priceDenom = totalKwh - tenantDorm.kwh - (Number(rec?.total_kwh) || 0)
+      const indPrice = priceDenom > 0 ? Math.round(indFee / priceDenom * 10000) / 10000 : 0
+      // 星达工业用水量 = 总表 + 消防 - 持睿工业 - 持睿居民
+      const wIndUsage = Math.round((totalMain.usage + wFire.usage - tInd.usage - tDorm.usage) * 100) / 100
+      const wIndFee = Math.round((totalMain.fee + wFire.fee - tInd.fee - tDorm.fee) * 100) / 100
       Object.assign(base, {
         total_kwh: totalKwh,
         total_fee: totalFee,
@@ -820,12 +831,12 @@ const buildRows = () => {
         solar_grid: sumBy(solarArr.map((s: any) => ({ v: s.item?.grid_kwh })), 'v'),
         ind_kwh: indKwh,
         ind_fee: indFee,
-        ind_price: indKwh > 0 ? Math.round(indFee / indKwh * 10000) / 10000 : 0,
+        ind_price: indPrice,
         res_kwh: res.kwh,
         res_fee: res.fee,
         dorm_kwh: dorm.kwh,
         dorm_fee: dorm.fee,
-        water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
+        water_ind_usage: wIndUsage, water_ind_fee: wIndFee,
         water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
         water_fire_usage: wFire.usage, water_fire_fee: wFire.fee,
         gas_usage: sumBy(gas, 'usage'),
