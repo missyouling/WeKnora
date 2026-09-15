@@ -884,7 +884,11 @@ func (h *BillingHandler) GetBillingRecord(c *gin.Context) {
 	}
 	var items []types.BillingRecordItem
 	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&items).Error
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items}})
+	var meters []types.BillingRecordMeter
+	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&meters).Error
+	var waters []types.BillingRecordWater
+	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&waters).Error
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items, "meters": meters, "waters": waters}})
 }
 
 // DeleteBillingRecord godoc
@@ -980,6 +984,8 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	// 分时电表逐表读数(用于账单电量明细卡片)
+	subRows := h.loadSubMeterRows(ctx, tenant.Name, req.Month)
 	starTotal := periodSum(starPeriod)
 	subTotal := periodSum(subPeriod)
 	if starTotal <= 0 {
@@ -1002,12 +1008,11 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
-	waterUsage, _, err := h.sumRefFee(ctx, refs, "water", req.Month)
+	waterRows, waterUsage, waterFee, err := h.loadWaterRows(ctx, refs, req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-	waterFee := round2(waterUsage * st.WaterPrice)
 
 	// 3) 市电账单
 	billItem, err := h.loadUtilityBillByMonth(ctx, st.BillKBID, req.Month)
@@ -1071,6 +1076,61 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		}
 	}
 
+	// 3.2 电量明细卡片:分时电表×时段(起度/止度/倍率/使用电量/损耗/加减电量/计费电量/差额分摊电量)
+	// 折算总量(线损折算、加减折算、差额分摊)按各时段各表使用电量占比分摊到表行,末时段补差保证合计一致。
+	now := timeNowUTC()
+	recordID := uuid.NewString()
+	var meterRows []types.BillingRecordMeter
+	meterSort := 0
+	if len(subRows) > 0 {
+		ps := []string{"deep", "peak", "flat", "valley"}
+		// 预汇总各表各时段使用电量
+		usageOf := make(map[string]map[string]float64, len(subRows))
+		for _, mr := range subRows {
+			usageOf[mr.MeterID] = make(map[string]float64, 4)
+			for _, p := range ps {
+				pr := mr.Periods[p]
+				usageOf[mr.MeterID][p] = round2((pr.Curr - pr.Prev) * mr.Rate)
+			}
+		}
+		// 各时段已分摊差额(末时段补差)
+		for _, p := range ps {
+			subBillP := 0.0
+			subUsageP := 0.0
+			for _, mr := range subRows {
+				subUsageP += usageOf[mr.MeterID][p]
+			}
+			if subUsageP <= 0 {
+				continue
+			}
+			subBillP = round2(subUsageP + billLineLoss[p]*lossRatio + billAdjust[p]*lossRatio)
+			diffTotal := round2(billPeriod[p] - subBillP)
+			assigned := 0.0
+			for _, mr := range subRows {
+				u := usageOf[mr.MeterID][p]
+				share := u / subUsageP
+				lossShare := round2(billLineLoss[p] * lossRatio * share)
+				adjShare := round2(billAdjust[p] * lossRatio * share)
+				bill := round2(u + lossShare + adjShare)
+				var diff float64
+				if mr.MeterID == subRows[len(subRows)-1].MeterID {
+					diff = round2(diffTotal - assigned)
+				} else {
+					diff = round2(diffTotal * share)
+					assigned += diff
+				}
+				pr := mr.Periods[p]
+				meterRows = append(meterRows, types.BillingRecordMeter{
+					ID: uuid.NewString(), RecordID: recordID, MeterName: mr.Name,
+					Period: periodLabel(p), Prev: pr.Prev, Curr: pr.Curr, Rate: mr.Rate,
+					Usage: u, LineLoss: lossShare, Adjust: adjShare,
+					BillKwh: bill, DiffKwh: diff, Sort: meterSort, CreatedAt: now,
+				})
+				meterSort++
+			}
+		}
+	}
+
 	// 4) 子项开关：首次自动初始化，账单新增大类时自动补充
 	feeItems := billItem.FeeItems
 	enabled := h.loadEnabledItems(ctx, id)
@@ -1081,8 +1141,6 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	}
 
 	// 5) 费用明细(固化)
-	now := timeNowUTC()
-	recordID := uuid.NewString()
 	var items []types.BillingRecordItem
 	sortNo := 0
 	industrialFee := 0.0
@@ -1148,7 +1206,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					f := round2(billPeriod[p] * rate)
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Name: sg.Name, Period: periodLabel(p),
+						Category: cat.Name, Name: sg.Name, Period: periodLabel(p),
 						Qty: billPeriod[p], Rate: rate, Fee: f, Sort: sortNo, CreatedAt: now,
 					})
 					sortNo++
@@ -1159,7 +1217,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					f := round2(billBase * flatRate)
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
+						Category: cat.Name, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
 					})
 					sortNo++
 					fee += f
@@ -1168,7 +1226,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(billBase * flatRate)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: cat.Name, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee = f
@@ -1177,7 +1235,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(billBase * flatRate0)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Name: sg.Name, Period: "平", Qty: billBase, Rate: flatRate0, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: cat.Name, Name: sg.Name, Period: "平", Qty: billBase, Rate: flatRate0, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee = f
@@ -1186,7 +1244,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(fixedFee * ratio)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Name: sg.Name, Period: "", Qty: 0, Rate: ratio, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: cat.Name, Name: sg.Name, Period: "", Qty: 0, Rate: ratio, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee += f
@@ -1195,21 +1253,23 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		}
 	}
 
-	// 5.2 基本电费 / 力调电费(按比例)
+	// 5.2 基本电费 / 功率因素调整电费(按比例)
 	if enabled["基本电费"] && billItem.CapacityFee != 0 {
 		f := round2(billItem.CapacityFee * ratio)
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "base",
-			Name: "基本电费", Period: "", Qty: ratio, Rate: billItem.CapacityFee, Fee: f, Sort: sortNo, CreatedAt: now,
+			Category: "基本电费", Name: "基本电费", Period: "", Qty: ratio, Rate: billItem.CapacityFee, Fee: f, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
 		industrialFee += f
 	}
-	if enabled["力调电费"] && billItem.PfAdjustAmount != 0 {
+	// 力调电费统一命名「功率因素调整电费」,兼容旧开关「力调电费」
+	pfOn := enabled["功率因素调整电费"] || enabled["力调电费"] || enabled["功率因素调整电费|功率因素调整电费"]
+	if pfOn && billItem.PfAdjustAmount != 0 {
 		f := round2(billItem.PfAdjustAmount * ratio)
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "pf",
-			Name: "力调电费", Period: "", Qty: ratio, Rate: billItem.PfAdjustAmount, Fee: f, Sort: sortNo, CreatedAt: now,
+			Category: "功率因素调整电费", Name: "功率因素调整电费", Period: "", Qty: ratio, Rate: billItem.PfAdjustAmount, Fee: f, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
 		industrialFee += f
@@ -1219,14 +1279,15 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	if dormFee != 0 {
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "dorm",
-			Name: "宿舍电费", Period: "", Qty: dormKwh, Rate: st.DormPrice, Fee: dormFee, Sort: sortNo, CreatedAt: now,
+			Category: "居民电费", Name: "宿舍电费", Period: "", Qty: dormKwh, Rate: st.DormPrice, Fee: dormFee, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
 	}
-	if waterFee != 0 {
+	// 水费清单(逐表)
+	for _, wr := range waterRows {
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "water",
-			Name: "水费", Period: "", Qty: waterUsage, Rate: st.WaterPrice, Fee: waterFee, Sort: sortNo, CreatedAt: now,
+			Category: "水费", Name: wr.MeterName, Period: "", Qty: wr.Usage, Rate: wr.Price, Fee: wr.Fee, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
 	}
@@ -1249,6 +1310,12 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordItem{}).Error; err != nil {
 				return err
 			}
+			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordMeter{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordWater{}).Error; err != nil {
+				return err
+			}
 			if err := tx.Delete(&old).Error; err != nil {
 				return err
 			}
@@ -1258,6 +1325,21 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		}
 		for _, it := range items {
 			if err := tx.Create(&it).Error; err != nil {
+				return err
+			}
+		}
+		for _, mr := range meterRows {
+			if err := tx.Create(&mr).Error; err != nil {
+				return err
+			}
+		}
+		for _, wr := range waterRows {
+			w := types.BillingRecordWater{
+				ID: uuid.NewString(), RecordID: recordID, MeterName: wr.MeterName,
+				MeterKind: wr.MeterKind, Prev: wr.Prev, Curr: wr.Curr, Rate: wr.Rate,
+				Usage: wr.Usage, Price: wr.Price, Fee: wr.Fee, Sort: wr.Sort, CreatedAt: now,
+			}
+			if err := tx.Create(&w).Error; err != nil {
 				return err
 			}
 		}
@@ -1436,8 +1518,148 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 	return star, sub, nil
 }
 
-func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {
-	var refs []types.BillingTenantMeterRef
+// subMeterRow 持睿分时电表逐表读数(用于账单电量明细卡片)。
+type subMeterRow struct {
+	MeterID string
+	Name    string
+	Rate    float64
+	Periods map[string]struct{ Prev, Curr float64 }
+}
+
+// loadSubMeterRows 加载参与计费的分时电表(归属单位=租户名或未填)当月逐表逐时段读数。
+func (h *BillingHandler) loadSubMeterRows(ctx context.Context, tenantName, month string) []subMeterRow {
+	baseOwner := strings.TrimSpace(tenantName)
+	var meters []types.UtilityMeter
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND meter_type = ? AND deleted_at IS NULL AND enabled = ?", "electricity", "time", true).
+		Find(&meters).Error; err != nil {
+		return nil
+	}
+	var recs []types.UtilityMeterRecord
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND month = ? AND deleted_at IS NULL", "electricity", month).
+		Find(&recs).Error; err != nil {
+		return nil
+	}
+	itemByMeter := make(map[string]types.UtilityMeterItem)
+	for i := range recs {
+		var items []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", recs[i].ID).Find(&items).Error; err != nil {
+			continue
+		}
+		for _, it := range items {
+			itemByMeter[it.MeterID] = it
+		}
+	}
+	rows := make([]subMeterRow, 0, len(meters))
+	for _, m := range meters {
+		owner := strings.TrimSpace(m.OwnerUnit)
+		if owner != "" && owner != baseOwner {
+			continue
+		}
+		r, ok := itemByMeter[m.ID]
+		if !ok {
+			continue
+		}
+		rate := m.Rate
+		if rate <= 0 {
+			rate = 1
+		}
+		rows = append(rows, subMeterRow{
+			MeterID: m.ID, Name: m.Alias, Rate: rate,
+			Periods: map[string]struct{ Prev, Curr float64 }{
+				"deep":   {r.DeepPrev, r.DeepCurr},
+				"peak":   {r.PeakPrev, r.PeakCurr},
+				"flat":   {r.FlatPrev, r.FlatCurr},
+				"valley": {r.ValleyPrev, r.ValleyCurr},
+			},
+		})
+	}
+	return rows
+}
+
+// waterRow 账单水费逐表行。
+type waterRow struct {
+	MeterID   string
+	MeterName string
+	MeterKind string
+	Prev      float64
+	Curr      float64
+	Rate      float64
+	Usage     float64
+	Price     float64
+	Fee       float64
+	Sort      int
+}
+
+// loadWaterRows 汇总引用水表该月逐表用量与费用(单价取表计默认单价)。
+func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.BillingTenantMeterRef, month string) ([]waterRow, float64, float64, error) {
+	meterIDs := make([]string, 0)
+	meterOf := make(map[string]types.UtilityMeter)
+	for _, r := range refs {
+		if r.Category != "water" {
+			continue
+		}
+		meterIDs = append(meterIDs, r.MeterID)
+		var m types.UtilityMeter
+		if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", r.MeterID).First(&m).Error; err == nil {
+			meterOf[r.MeterID] = m
+		}
+	}
+	if len(meterIDs) == 0 {
+		return nil, 0, 0, nil
+	}
+	var records []types.UtilityMeterRecord
+	if err := h.db.WithContext(ctx).
+		Where("category = ? AND month = ? AND deleted_at IS NULL", "water", month).
+		Find(&records).Error; err != nil {
+		return nil, 0, 0, err
+	}
+	set := make(map[string]bool, len(meterIDs))
+	for _, id := range meterIDs {
+		set[id] = true
+	}
+	rows := make([]waterRow, 0, len(meterIDs))
+	total := 0.0
+	feeTotal := 0.0
+	sortNo := 0
+	for i := range records {
+		var its []types.UtilityMeterItem
+		if err := h.db.WithContext(ctx).Where("record_id = ?", records[i].ID).Find(&its).Error; err != nil {
+			continue
+		}
+		for _, it := range its {
+			if !set[it.MeterID] {
+				continue
+			}
+			m, ok := meterOf[it.MeterID]
+			if !ok {
+				continue
+			}
+			u := it.Usage
+			if u <= 0 && it.EndReading >= it.StartReading {
+				u = it.EndReading - it.StartReading
+			}
+			rate := m.Rate
+			if rate <= 0 {
+				rate = 1
+			}
+			price := m.DefaultUnitPrice
+			fee := round2(u * price)
+			rows = append(rows, waterRow{
+				MeterID: m.ID, MeterName: m.Alias, MeterKind: m.MeterType,
+				Prev: it.StartReading, Curr: it.EndReading, Rate: rate,
+				Usage: u, Price: price, Fee: fee, Sort: sortNo,
+			})
+			sortNo++
+			total += u
+			feeTotal += fee
+		}
+	}
+	return rows, round2(total), round2(feeTotal), nil
+}
+
+func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {	var refs []types.BillingTenantMeterRef
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&refs).Error
 	if len(refs) == 0 {
 		return refs
@@ -1532,7 +1754,7 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 		add(cat, name, on)
 	}
 	add("基本电费", "基本电费", true)
-	add("力调电费", "力调电费", true)
+	add("功率因素调整电费", "功率因素调整电费", true)
 	enabled := make(map[string]bool, len(rows)*2)
 	if len(rows) == 0 {
 		return enabled
@@ -1593,8 +1815,15 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 	if _, ok := enabled["基本电费"]; !ok {
 		add("基本电费", "基本电费")
 	}
-	if _, ok := enabled["力调电费"]; !ok {
-		add("力调电费", "力调电费")
+	if _, ok := enabled["功率因素调整电费"]; !ok {
+		if _, oldOK := enabled["力调电费"]; oldOK {
+			// 旧开关「力调电费」→ 迁移为新开关
+			key := "功率因素调整电费|功率因素调整电费"
+			enabled[key] = enabled["力调电费"]
+			enabled["功率因素调整电费"] = enabled["力调电费"]
+		} else {
+			add("功率因素调整电费", "功率因素调整电费")
+		}
 	}
 	if len(created) > 0 {
 		if err := h.db.WithContext(ctx).Create(&created).Error; err != nil {

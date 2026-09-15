@@ -172,6 +172,7 @@ type BillingRecordItem struct {
 	ID        string    `gorm:"primaryKey" json:"id"`
 	RecordID  string    `gorm:"index" json:"record_id"`
 	Kind      string    `json:"kind"` // fee | base | pf | dorm | water
+	Category  string    `json:"category"` // 大类名(如 (1)市场化购电费),用于明细分组展示
 	Name      string    `json:"name"`
 	Period    string    `json:"period"` // 尖峰/峰/平/谷
 	Qty       float64   `gorm:"numeric(18,2)" json:"qty"`
@@ -182,3 +183,41 @@ type BillingRecordItem struct {
 }
 
 func (BillingRecordItem) TableName() string { return "billing_record_items" }
+
+// BillingRecordMeter 账单电量明细行（表×时段）：起度/止度/倍率/使用电量/损耗/加减电量/计费电量/差额分摊电量。
+type BillingRecordMeter struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	RecordID  string    `gorm:"index" json:"record_id"`
+	MeterName string    `json:"meter_name"` // 表别名
+	Period    string    `json:"period"`     // 尖峰/峰/平/谷
+	Prev      float64   `gorm:"numeric(18,2)" json:"prev"`      // 起度
+	Curr      float64   `gorm:"numeric(18,2)" json:"curr"`      // 止度
+	Rate      float64   `gorm:"numeric(12,4)" json:"rate"`      // 倍率
+	Usage     float64   `gorm:"numeric(18,2)" json:"usage"`     // 使用电量
+	LineLoss  float64   `gorm:"numeric(18,2)" json:"line_loss"` // 损耗
+	Adjust    float64   `gorm:"numeric(18,2)" json:"adjust"`    // 加减电量
+	BillKwh   float64   `gorm:"numeric(18,2)" json:"bill_kwh"`  // 计费电量
+	DiffKwh   float64   `gorm:"numeric(18,2)" json:"diff_kwh"`  // 差额分摊电量
+	Sort      int       `json:"sort"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (BillingRecordMeter) TableName() string { return "billing_record_meters" }
+
+// BillingRecordWater 账单水费清单行（逐表）。
+type BillingRecordWater struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	RecordID  string    `gorm:"index" json:"record_id"`
+	MeterName string    `json:"meter_name"` // 表别名
+	MeterKind string    `json:"meter_kind"` // total | sub | fire
+	Prev      float64   `gorm:"numeric(18,2)" json:"prev"` // 起度
+	Curr      float64   `gorm:"numeric(18,2)" json:"curr"` // 止度
+	Rate      float64   `gorm:"numeric(12,4)" json:"rate"` // 倍率
+	Usage     float64   `gorm:"numeric(18,2)" json:"usage"`
+	Price     float64   `gorm:"numeric(18,4)" json:"price"` // 单价
+	Fee       float64   `gorm:"numeric(18,2)" json:"fee"`
+	Sort      int       `json:"sort"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (BillingRecordWater) TableName() string { return "billing_record_waters" }

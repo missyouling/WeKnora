@@ -43,6 +43,11 @@
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
+        <t-button theme="primary" variant="outline" size="small" :loading="generateBusy" :disabled="isOwnerView"
+          title="为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）" @click="handleGenerateAll">
+          <template #icon><t-icon name="refresh" size="14px" /></template>
+          生成账单
+        </t-button>
       </div>
     </div>
 
@@ -105,26 +110,18 @@
           </div>
           <div class="batch-bar-actions">
             <t-popconfirm theme="warning"
-              :content="`确定生成所选 ${generatableRows.length} 个月度账单吗？同月已存在账单将重新计算覆盖`"
-              :confirm-btn="{ content: '生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="handleGenerate">
-              <t-button theme="primary" variant="outline" size="small" :disabled="!generatableRows.length" :loading="generateBusy" @click.stop>
+              :content="`确定重新生成所选 ${regeneratableRows.length} 个月度账单吗？将按最新数据覆盖现有账单`"
+              :confirm-btn="{ content: '重新生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }" placement="top"
+              @confirm="handleRegenerate">
+              <t-button theme="primary" variant="outline" size="small" :disabled="!regeneratableRows.length" :loading="generateBusy" @click.stop>
                 <template #icon><t-icon name="refresh" size="14px" /></template>
-                生成账单
+                重新生成
               </t-button>
             </t-popconfirm>
-            <t-dropdown @click="onPrintMenu">
-              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                打印
-              </t-button>
-              <template #dropdown>
-                <t-dropdown-menu>
-                  <t-dropdown-item value="catalog" :disabled="!printableRows.length">打印清单</t-dropdown-item>
-                  <t-dropdown-item value="detail" :disabled="selectedRows.length !== 1">打印详情</t-dropdown-item>
-                </t-dropdown-menu>
-              </template>
-            </t-dropdown>
+            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" :disabled="!printableRows.length" @click="handlePrint">
+              <template #icon><t-icon name="print" size="14px" /></template>
+              打印清单
+            </t-button>
             <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedKeys.size} 条账单吗？`"
               :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
               @confirm="handleDelete">
@@ -317,9 +314,10 @@
     </teleport>
     <teleport to="body">
       <t-drawer v-if="recordVisible" :visible="true" :header="`${recordDetail?.record?.month || ''} 账单明细`" :size="recordWidth"
-        :footer="false" :close-on-overlay-click="true" destroy-on-close class="tenant-record-drawer"
+        :close-on-overlay-click="true" destroy-on-close class="tenant-record-drawer"
         @close="recordVisible = false" @update:visible="(v: boolean) => (recordVisible = v)">
         <div v-if="recordDetail" class="record-detail">
+          <div class="rd-print-title">{{ recordDetail.record.month }} 账单明细</div>
           <div class="record-overview">
             <div class="ro-item">
               <span class="ro-label">星达电量</span>
@@ -338,33 +336,128 @@
               <span class="ro-value row-mono">{{ fmtMoney(recordDetail.record.bill_total_amount) }}</span>
             </div>
           </div>
-          <div class="record-items">
-            <div class="record-items-head">
-              <span>项目</span>
-              <span>时段</span>
-              <span>电量</span>
-              <span>单价</span>
-              <span>费用</span>
+
+          <!-- 电量明细卡片（分时电表×时段） -->
+          <div v-if="recordDetail.meters?.length" class="rd-card">
+            <div class="rd-card-title">电量明细</div>
+            <div class="record-items rd-meter-grid">
+              <div class="record-items-head rd-meter-head">
+                <span>分时电表</span>
+                <span>起度</span>
+                <span>止度</span>
+                <span>倍率</span>
+                <span>使用电量</span>
+                <span>损耗</span>
+                <span>加减电量</span>
+                <span>计费电量</span>
+                <span>差额分摊电量</span>
+              </div>
+              <div v-for="(mr, i) in recordDetail.meters" :key="i" class="record-items-row rd-meter-row">
+                <span>{{ mr.meter_name }}<span class="rd-period">{{ mr.period }}</span></span>
+                <span class="row-mono">{{ fmtNum(mr.prev) }}</span>
+                <span class="row-mono">{{ fmtNum(mr.curr) }}</span>
+                <span class="row-mono">{{ fmtNum(mr.rate) }}</span>
+                <span class="row-mono">{{ fmtKwh(mr.usage) }}</span>
+                <span class="row-mono">{{ fmtKwh(mr.line_loss) }}</span>
+                <span class="row-mono">{{ fmtKwh(mr.adjust) }}</span>
+                <span class="row-mono">{{ fmtKwh(mr.bill_kwh) }}</span>
+                <span class="row-mono">{{ fmtKwh(mr.diff_kwh) }}</span>
+              </div>
+              <div class="record-items-row record-items-total rd-meter-row">
+                <span>汇总</span>
+                <span></span><span></span><span></span>
+                <span class="row-mono">{{ fmtKwh(recordMeterSum('usage')) }}</span>
+                <span class="row-mono">{{ fmtKwh(recordMeterSum('line_loss')) }}</span>
+                <span class="row-mono">{{ fmtKwh(recordMeterSum('adjust')) }}</span>
+                <span class="row-mono">{{ fmtKwh(recordMeterSum('bill_kwh')) }}</span>
+                <span class="row-mono">{{ fmtKwh(recordMeterSum('diff_kwh')) }}</span>
+              </div>
             </div>
-            <div v-for="(it, i) in recordDetail.items" :key="i" class="record-items-row" :class="{ 'os-neg': Number(it.fee) < 0 }">
-              <span>{{ it.name }}</span>
-              <span>{{ it.period || '—' }}</span>
-              <span class="row-mono">{{ fmtKwh(it.qty) }}</span>
-              <span class="row-mono">{{ fmtRate(it.rate) }}</span>
-              <span class="row-mono">{{ fmtMoney(it.fee) }}</span>
+          </div>
+
+          <!-- 费用明细（按大项分组+汇总） -->
+          <div class="rd-card">
+            <div class="rd-card-title">费用明细</div>
+            <div v-for="g in feeGroups" :key="g.category" class="rd-fee-group">
+              <div class="rd-fee-group-head">
+                <span class="rd-fee-group-name">{{ g.category }}</span>
+                <span class="rd-fee-group-sum">小计 {{ fmtMoney(g.sum) }}</span>
+              </div>
+              <div class="record-items">
+                <div class="record-items-head">
+                  <span>项目</span>
+                  <span>时段</span>
+                  <span>电量</span>
+                  <span>单价</span>
+                  <span>费用</span>
+                </div>
+                <div v-for="(it, i) in g.rows" :key="i" class="record-items-row" :class="{ 'os-neg': Number(it.fee) < 0 }">
+                  <span>{{ it.name }}</span>
+                  <span>{{ it.period || '—' }}</span>
+                  <span class="row-mono">{{ fmtKwh(it.qty) }}</span>
+                  <span class="row-mono">{{ fmtRate(it.rate) }}</span>
+                  <span class="row-mono">{{ fmtMoney(it.fee) }}</span>
+                </div>
+              </div>
             </div>
-            <div class="record-items-row record-items-total">
-              <span>合计</span>
-              <span></span>
-              <span></span>
-              <span></span>
-              <span class="row-mono">{{ fmtMoney(recordDetail.record.total_fee) }}</span>
+
+            <!-- 总电费清单及汇总 -->
+            <div class="rd-fee-group">
+              <div class="rd-fee-group-head">
+                <span class="rd-fee-group-name">总电费清单及汇总</span>
+                <span class="rd-fee-group-sum">合计 {{ fmtMoney(recordDetail.record.total_fee) }}</span>
+              </div>
+              <div class="record-items">
+                <div class="record-items-row">
+                  <span>工业电费（分摊）</span><span>—</span>
+                  <span class="row-mono">{{ fmtKwh(recordDetail.record.total_kwh) }}</span>
+                  <span class="row-mono">—</span>
+                  <span class="row-mono">{{ fmtMoney(recordDetail.record.industrial_fee) }}</span>
+                </div>
+                <div class="record-items-row">
+                  <span>宿舍电费</span><span>—</span>
+                  <span class="row-mono">{{ fmtKwh(recordDetail.record.dorm_kwh) }}</span>
+                  <span class="row-mono">{{ fmtRate(recordDetail.record.dorm_kwh ? recordDetail.record.dorm_fee / recordDetail.record.dorm_kwh : 0) }}</span>
+                  <span class="row-mono">{{ fmtMoney(recordDetail.record.dorm_fee) }}</span>
+                </div>
+                <div class="record-items-row">
+                  <span>水费</span><span>—</span>
+                  <span class="row-mono">{{ fmtKwh(recordDetail.record.water_usage) }}</span>
+                  <span class="row-mono">{{ fmtRate(recordDetail.record.water_usage ? recordDetail.record.water_fee / recordDetail.record.water_usage : 0) }}</span>
+                  <span class="row-mono">{{ fmtMoney(recordDetail.record.water_fee) }}</span>
+                </div>
+                <div class="record-items-row record-items-total">
+                  <span>合计</span><span></span><span></span><span></span>
+                  <span class="row-mono">{{ fmtMoney(recordDetail.record.total_fee) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 水费清单及汇总（逐表） -->
+            <div v-if="recordDetail.waters?.length" class="rd-fee-group">
+              <div class="rd-fee-group-head">
+                <span class="rd-fee-group-name">水费清单及汇总</span>
+                <span class="rd-fee-group-sum">小计 {{ fmtMoney(recordDetail.record.water_fee) }}</span>
+              </div>
+              <div class="record-items rd-water-grid">
+                <div class="record-items-head rd-water-head">
+                  <span>水表</span><span>起度</span><span>止度</span><span>用量</span><span>单价</span><span>水费</span>
+                </div>
+                <div v-for="(wr, i) in recordDetail.waters" :key="i" class="record-items-row rd-water-row">
+                  <span>{{ wr.meter_name }}</span>
+                  <span class="row-mono">{{ fmtNum(wr.prev) }}</span>
+                  <span class="row-mono">{{ fmtNum(wr.curr) }}</span>
+                  <span class="row-mono">{{ fmtKwh(wr.usage) }}</span>
+                  <span class="row-mono">{{ fmtRate(wr.price) }}</span>
+                  <span class="row-mono">{{ fmtMoney(wr.fee) }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
         <template #footer>
           <t-button variant="outline" size="small" @click="recordVisible = false">关闭</t-button>
-          <t-button theme="primary" size="small" :loading="printBusy" @click="printRecord">打印</t-button>
+          <t-button theme="primary" size="small" @click="printRecord">打印</t-button>
         </template>
       </t-drawer>
     </teleport>
@@ -557,6 +650,7 @@ const loadAllData = async () => {
     waterMeters.value = Array.isArray(wmRes?.data) ? wmRes.data : (Array.isArray(wmRes) ? wmRes : [])
     waterReadings.value = flattenWaterRecords(wrRes)
     buildRows()
+    autoGenerateReady()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载账单失败')
   }
@@ -707,7 +801,11 @@ const buildRows = () => {
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
     }
     const gasOf = () => gasRows.value.filter(r => r.month === month)
-    const base: Record<string, any> = { id: `row-${month}`, month, unit: useUnit.value, hasRec: !!rec }
+    const base: Record<string, any> = {
+      id: `row-${month}`, month, unit: useUnit.value, hasRec: !!rec,
+      billReady: !!bill,
+      readingReady: elecRows.value.some(r => r.month === month && r.meter_type === 'time'),
+    }
 
     if (isOwnerView.value) {
       // ===== 星达(房东)视图 =====
@@ -827,29 +925,88 @@ const onRowClick = (row: any) => {
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
 
-// ---- 生成月度账单（仅租户视图、所选行当月无账单记录） ----
+// ---- 生成月度账单（仅租户视图） ----
 const generateBusy = ref(false)
-const generatableRows = computed(() => {
+const regeneratableRows = computed(() => {
   if (isOwnerView.value) return []
-  return selectedRows.value.filter((r: any) => !r.hasRec)
+  return selectedRows.value.filter((r: any) => r.hasRec)
 })
-const handleGenerate = async () => {
-  if (!activeTenantId.value || !generatableRows.value.length) return
+// 手动生成：对当前筛选范围未生成账单且市电账单齐备的月份生成；缺项提示并拦截
+const handleGenerateAll = async () => {
+  if (isOwnerView.value) {
+    MessagePlugin.warning('仅租户视图可生成账单')
+    return
+  }
+  if (!activeTenantId.value) return
+  const pending = displayRows.value.filter((r: any) => !r.hasRec)
+  if (!pending.length) {
+    MessagePlugin.warning('当前月份均已生成账单，如需重算请选中记录使用「重新生成」')
+    return
+  }
+  const missingBill = pending.filter((r: any) => !r.billReady)
+  const missingReading = pending.filter((r: any) => r.billReady && !r.readingReady)
+  if (missingBill.length) {
+    MessagePlugin.error(`以下月份缺少市电账单，无法生成：${missingBill.map((r: any) => r.month).join('、')}`)
+    return
+  }
+  if (missingReading.length) {
+    MessagePlugin.error(`以下月份缺少星达分表读数，无法生成：${missingReading.map((r: any) => r.month).join('、')}`)
+    return
+  }
   generateBusy.value = true
   try {
-    for (const row of generatableRows.value) {
-      await generateBillingRecord(activeTenantId.value, { month: row.month })
+    const okMonths: string[] = []
+    const fail: string[] = []
+    for (const row of pending) {
+      try {
+        await generateBillingRecord(activeTenantId.value, { month: row.month })
+        okMonths.push(row.month)
+      } catch (e: any) {
+        fail.push(`${row.month}（${e?.message || '未知错误'}）`)
+      }
     }
-    MessagePlugin.success(`已生成 ${generatableRows.value.length} 个月度账单`)
+    if (okMonths.length) MessagePlugin.success(`已生成 ${okMonths.length} 个月度账单：${okMonths.join('、')}`)
+    if (fail.length) MessagePlugin.warning(`以下月份生成失败：${fail.join('；')}`)
     await loadAllData()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '生成账单失败')
   } finally {
     generateBusy.value = false
   }
 }
+// 浮动工具栏：重新生成（覆盖现有账单）
+const handleRegenerate = async () => {
+  if (!activeTenantId.value || !regeneratableRows.value.length) return
+  generateBusy.value = true
+  try {
+    const months = regeneratableRows.value.map((r: any) => r.month)
+    for (const month of months) {
+      await generateBillingRecord(activeTenantId.value, { month })
+    }
+    MessagePlugin.success(`已重新生成 ${months.length} 个月度账单`)
+    clearSelection()
+    await loadAllData()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '重新生成失败')
+  } finally {
+    generateBusy.value = false
+  }
+}
+// 数据齐全时默认自动生成（租户视图；缺市电账单或分时读数的月份跳过，交给手动生成）
+const autoGenAttempted = ref<Set<string>>(new Set())
+const autoGenerateReady = async () => {
+  if (isOwnerView.value || !activeTenantId.value) return
+  const pending = displayRows.value.filter((r: any) =>
+    !r.hasRec && r.billReady && r.readingReady && !autoGenAttempted.value.has(r.month))
+  if (!pending.length) return
+  autoGenAttempted.value = new Set([...autoGenAttempted.value, ...pending.map((r: any) => r.month)])
+  for (const row of pending) {
+    try {
+      await generateBillingRecord(activeTenantId.value, { month: row.month })
+    } catch { /* 缺项由手动生成提示 */ }
+  }
+  await loadAllData()
+}
 
-// ---- 浮动工具栏：打印清单 / 打印详情 / 删除 ----
+// ---- 浮动工具栏：打印清单 ----
 const catalogBusy = ref(false)
 const printableRows = computed(() => (selectedKeys.value.size ? selectedRows.value : displayRows.value))
 const handlePrint = async () => {
@@ -874,39 +1031,6 @@ const handlePrint = async () => {
     catalogBusy.value = false
   }
 }
-const onPrintMenu = (data: any) => {
-  if (data?.value === 'catalog') handlePrint()
-  else if (data?.value === 'detail') printSelectedDetail()
-}
-const printSelectedDetail = async () => {
-  const r = selectedRows.value[0]
-  if (!r) return
-  catalogBusy.value = true
-  try {
-    const res: any = await getBillingRecord(r.id)
-    const rec = res.data.record
-    const items = res.data.items || []
-    const columns: CatalogColumn[] = [
-      { key: 'name', label: '项目', value: (r: any) => r.name },
-      { key: 'period', label: '时段', value: (r: any) => r.period || '—' },
-      { key: 'qty', label: '电量', value: (r: any) => fmtKwh(r.qty) },
-      { key: 'rate', label: '单价', value: (r: any) => fmtRate(r.rate) },
-      { key: 'fee', label: '费用（元）', value: (r: any) => fmtMoney(r.fee) },
-    ]
-    const totalRow = { name: '合计', period: '', qty: 0, rate: 0, fee: rec.total_fee }
-    const bytes = await generateCatalogPdf({
-      title: `${rec.month} 租户电费账单明细`,
-      columns,
-      rows: [...items, totalRow],
-    })
-    showPrint(`${rec.month} 电费账单详情`, bytes)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '打印生成失败')
-  } finally {
-    catalogBusy.value = false
-  }
-}
-
 const handleDelete = async () => {
   const arr = selectedRows.value
   if (!arr.length) return
@@ -1079,7 +1203,6 @@ const recordWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.record, '760px'))
 const recordDetail = ref<any>(null)
 const printVisible = ref(false)
 const printUrl = ref('')
-const printBusy = ref(false)
 const printTitle = ref('')
 
 const openRecord = async (r: any) => {
@@ -1092,34 +1215,13 @@ const openRecord = async (r: any) => {
   }
 }
 
-const printRecord = async () => {
+// 直接打印明细页面（浏览器打印，默认纵向 A4；打印样式见 @media print）
+const printRecord = () => {
   if (!recordDetail.value) return
-  printBusy.value = true
-  try {
-    const rec = recordDetail.value.record
-    const items = recordDetail.value.items || []
-    const columns: CatalogColumn[] = [
-      { key: 'name', label: '项目', value: (r: any) => r.name },
-      { key: 'period', label: '时段', value: (r: any) => r.period || '—' },
-      { key: 'qty', label: '电量', value: (r: any) => fmtKwh(r.qty) },
-      { key: 'rate', label: '单价', value: (r: any) => fmtRate(r.rate) },
-      { key: 'fee', label: '费用（元）', value: (r: any) => fmtMoney(r.fee) },
-    ]
-    const totalRow = { name: '合计', period: '', qty: 0, rate: 0, fee: rec.total_fee }
-    const bytes = await generateCatalogPdf({
-      title: `${rec.month} 租户电费账单`,
-      columns,
-      rows: [...items, totalRow],
-    })
-    showPrint(`${rec.month} 租户电费账单`, bytes)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '打印生成失败')
-  } finally {
-    printBusy.value = false
-  }
+  window.print()
 }
 
-const showPrint = (title: string, bytes: ArrayBuffer) => {
+const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array) => {
   printTitle.value = title
   if (printUrl.value) URL.revokeObjectURL(printUrl.value)
   printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
@@ -1153,6 +1255,31 @@ const onResize = (e: MouseEvent, widthRef: { value: string }, storageKey: string
 }
 const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAWER_W_KEYS.settings)
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
+
+// ---- 账单明细分组（按大项排序 + 汇总） ----
+const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
+const feeGroups = computed(() => {
+  const items = (recordDetail.value?.items || []).filter((it: any) => it.category !== '水费')
+  const map = new Map<string, any[]>()
+  const order: string[] = []
+  for (const it of items) {
+    const cat = it.category || '其他费用'
+    if (!map.has(cat)) { map.set(cat, []); order.push(cat) }
+    map.get(cat)!.push(it)
+  }
+  order.sort((a, b) => {
+    const ia = FEE_CATEGORY_ORDER.findIndex(c => a.includes(c))
+    const ib = FEE_CATEGORY_ORDER.findIndex(c => b.includes(c))
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+  })
+  return order.map(cat => ({
+    category: cat,
+    rows: map.get(cat)!,
+    sum: Math.round(map.get(cat)!.reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100,
+  }))
+})
+const recordMeterSum = (key: string): number =>
+  Math.round((recordDetail.value?.meters || []).reduce((s: number, mr: any) => s + (Number(mr[key]) || 0), 0) * 100) / 100
 
 // ---- 格式化 ----
 const fmtMoney = (v: any): string => {
@@ -1704,6 +1831,48 @@ onMounted(() => {
       &.record-items-total { background: var(--td-brand-color-light); font-weight: 600; }
     }
   }
+
+  /* 明细分组卡片 */
+  .rd-card {
+    margin-bottom: 16px;
+    .rd-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: var(--td-text-color-primary);
+    }
+  }
+  .rd-fee-group {
+    border: 1px solid var(--td-component-border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    .rd-fee-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      background: var(--td-bg-color-secondarycontainer);
+      .rd-fee-group-name { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
+      .rd-fee-group-sum { font-size: 12px; color: var(--td-text-color-secondary); font-variant-numeric: tabular-nums; }
+    }
+    .record-items {
+      border: none;
+      border-radius: 0;
+      border-top: 1px solid var(--td-component-stroke);
+    }
+  }
+  .rd-meter-grid {
+    .rd-meter-head, .rd-meter-row {
+      grid-template-columns: 1.3fr 0.8fr 0.8fr 0.6fr 0.9fr 0.8fr 0.8fr 0.9fr 0.9fr;
+    }
+    .rd-period { color: var(--td-text-color-secondary); font-size: 12px; margin-left: 4px; }
+  }
+  .rd-water-grid {
+    .rd-water-head, .rd-water-row {
+      grid-template-columns: 1.3fr 0.9fr 0.9fr 1fr 1fr 1fr;
+    }
+  }
 }
 
 /* 打印预览 */
@@ -1740,4 +1909,35 @@ onMounted(() => {
     }
   }
 }
+</style>
+
+<style>
+/* 账单明细直接打印（纵向 A4）：只打印抽屉内的明细内容 */
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  body * { visibility: hidden !important; }
+  .record-detail,
+  .record-detail * { visibility: visible !important; }
+  .record-detail {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+  .record-overview { grid-template-columns: repeat(4, 1fr) !important; }
+  .tenant-record-drawer .t-drawer__header,
+  .tenant-record-drawer .t-drawer__footer,
+  .t-drawer__mask { display: none !important; }
+  .rd-print-title {
+    display: block !important;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+}
+.rd-print-title { display: none; }
 </style>
