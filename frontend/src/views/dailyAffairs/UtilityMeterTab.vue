@@ -331,8 +331,8 @@
             <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
           </div>
 
-          <div class="meter-grid" :style="{ gridTemplateColumns: meterGridCols }">
-            <!-- 新增表计：表单展开在网格顶部 -->
+          <div class="meter-table-wrap">
+            <!-- 新增表计：表单展开在顶部 -->
             <div v-if="meterFormVisible && !meterForm.id" class="meter-form">
               <div class="meter-form-title">新增{{ meterLabel }}</div>
               <div class="form-grid">
@@ -402,102 +402,107 @@
               </div>
             </div>
 
-            <template v-for="m in filteredMeters" :key="m.id">
-              <div class="meter-card">
-                <div class="meter-card-head">
-                  <span class="meter-card-name">{{ m.alias }}</span>
-                  <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
-                  <span class="meter-card-actions">
-                    <t-button variant="text" size="small" @click="openMeterForm(m)">
-                      <template #icon><t-icon name="edit" size="15px" /></template>
-                    </t-button>
-                    <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
-                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                      @confirm="deleteMeter(m)">
-                      <t-button variant="text" size="small" @click.stop>
-                        <template #icon><t-icon name="delete" size="15px" /></template>
-                      </t-button>
-                    </t-popconfirm>
-                  </span>
-                </div>
-                <div class="meter-card-grid">
-                  <div class="meter-card-item"><span class="k">表号</span><span class="v">{{ m.meter_no || '—' }}</span></div>
-                  <div class="meter-card-item"><span class="k">类型</span><span class="v">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span></div>
-                  <div class="meter-card-item"><span class="k">倍率</span><span class="v">{{ fmtNum(m.rate) }}</span></div>
-                  <div class="meter-card-item"><span class="k">单价</span><span class="v">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span></div>
-                  <div v-if="m.owner_unit" class="meter-card-item"><span class="k">归属</span><span class="v">{{ m.owner_unit }}</span></div>
-                </div>
+            <!-- 分组折叠表格:居民 / 工商业 -->
+            <div v-for="g in meterGroups" :key="g.key" class="meter-group">
+              <div class="meter-group-head" @click="toggleMeterGroup(g.key)">
+                <span class="meter-group-name">{{ g.label }}</span>
+                <span class="meter-group-count">{{ g.items.length }} 个</span>
+                <t-icon :name="collapsedMeterGroups.includes(g.key) ? 'chevron-right' : 'chevron-down'" class="meter-group-arrow" />
               </div>
-              <!-- 编辑表计：表单展开在当前卡片下方 -->
-              <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form">
-                <div class="meter-form-title">编辑{{ meterLabel }}</div>
-                <div class="form-grid">
-                  <div class="form-item">
-                    <label>别名 <span class="required">*</span></label>
-                    <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
-                  </div>
-                  <div class="form-item">
-                    <label>表号</label>
-                    <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
-                  </div>
-                  <div class="form-item">
-                    <label>类型</label>
-                    <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
-                  </div>
-                  <div class="form-item">
-                    <label>用途</label>
-                    <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                  </div>
-                  <div class="form-item">
-                    <label>归属单位</label>
-                    <t-input v-model="meterForm.owner_unit" placeholder="选填" />
-                  </div>
-                  <div class="form-item">
-                    <label>倍率</label>
-                    <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                  </div>
-                  <div class="form-item">
-                    <label>默认单价</label>
-                    <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
-                  </div>
-                  <div class="form-item">
-                    <label>使用单位</label>
-                    <t-input v-model="meterForm.use_unit" placeholder="选填" />
-                  </div>
-                  <div class="form-item">
-                    <label>管理人员</label>
-                    <t-input v-model="meterForm.manager" placeholder="选填" />
-                  </div>
-                  <div class="form-item">
-                    <label>联系方式</label>
-                    <t-input v-model="meterForm.contact" placeholder="选填" />
-                  </div>
-                  <div class="form-item">
-                    <label>抄表方式</label>
-                    <t-radio-group v-model="meterForm.meter_mode">
-                      <t-radio-button value="auto">自动抄表</t-radio-button>
-                      <t-radio-button value="manual">手动抄表</t-radio-button>
-                    </t-radio-group>
-                  </div>
-                  <div class="form-item">
-                    <label>安装日期</label>
-                    <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                  </div>
-                  <div class="form-item">
-                    <label>启用</label>
-                    <t-switch v-model="meterForm.enabled" />
-                  </div>
+              <div v-show="!collapsedMeterGroups.includes(g.key)" class="meter-table">
+                <div class="meter-table-head">
+                  <span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
                 </div>
-                <div class="form-item form-item--full">
-                  <label>备注</label>
-                  <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-                </div>
-                <div class="meter-form-actions">
-                  <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-                  <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
-                </div>
+                <template v-for="m in g.items" :key="m.id">
+                  <div class="meter-table-row">
+                    <span class="mtr-alias">{{ m.alias }}</span>
+                    <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
+                    <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
+                    <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
+                    <span class="mtr-mono">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span>
+                    <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
+                    <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
+                    <span class="meter-row-actions">
+                      <t-button variant="text" size="small" @click="openMeterForm(m)">编辑</t-button>
+                      <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
+                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                        @confirm="deleteMeter(m)">
+                        <t-button variant="text" size="small" @click.stop>删除</t-button>
+                      </t-popconfirm>
+                    </span>
+                  </div>
+                  <!-- 编辑表计：表单展开在当前行下方 -->
+                  <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form meter-form--inline">
+                    <div class="meter-form-title">编辑{{ meterLabel }}</div>
+                    <div class="form-grid">
+                      <div class="form-item">
+                        <label>别名 <span class="required">*</span></label>
+                        <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+                      </div>
+                      <div class="form-item">
+                        <label>表号</label>
+                        <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
+                      </div>
+                      <div class="form-item">
+                        <label>类型</label>
+                        <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
+                      </div>
+                      <div class="form-item">
+                        <label>用途</label>
+                        <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                      </div>
+                      <div class="form-item">
+                        <label>归属单位</label>
+                        <t-input v-model="meterForm.owner_unit" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>倍率</label>
+                        <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                      </div>
+                      <div class="form-item">
+                        <label>默认单价</label>
+                        <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
+                      </div>
+                      <div class="form-item">
+                        <label>使用单位</label>
+                        <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>管理人员</label>
+                        <t-input v-model="meterForm.manager" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>联系方式</label>
+                        <t-input v-model="meterForm.contact" placeholder="选填" />
+                      </div>
+                      <div class="form-item">
+                        <label>抄表方式</label>
+                        <t-radio-group v-model="meterForm.meter_mode">
+                          <t-radio-button value="auto">自动抄表</t-radio-button>
+                          <t-radio-button value="manual">手动抄表</t-radio-button>
+                        </t-radio-group>
+                      </div>
+                      <div class="form-item">
+                        <label>安装日期</label>
+                        <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
+                      </div>
+                      <div class="form-item">
+                        <label>启用</label>
+                        <t-switch v-model="meterForm.enabled" />
+                      </div>
+                    </div>
+                    <div class="form-item form-item--full">
+                      <label>备注</label>
+                      <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
+                    </div>
+                    <div class="meter-form-actions">
+                      <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                      <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+                    </div>
+                  </div>
+                </template>
               </div>
-            </template>
+            </div>
           </div>
         </div>
       </t-drawer>
@@ -627,6 +632,23 @@ const filteredMeters = computed(() => {
   return meters.value.filter((m: any) =>
     (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
 })
+// 设置抽屉分组折叠:居民(kind=dorm) / 工商业(其余全部)
+const collapsedMeterGroups = ref<string[]>([])
+const meterGroups = computed(() => {
+  const groups = [
+    { key: 'dorm', label: '居民', items: [] as any[] },
+    { key: 'other', label: '工商业', items: [] as any[] },
+  ]
+  for (const m of filteredMeters.value) {
+    ;(m.meter_kind === 'dorm' ? groups[0] : groups[1]).items.push(m)
+  }
+  return groups.filter(g => g.items.length)
+})
+const toggleMeterGroup = (key: string) => {
+  const i = collapsedMeterGroups.value.indexOf(key)
+  if (i >= 0) collapsedMeterGroups.value.splice(i, 1)
+  else collapsedMeterGroups.value.push(key)
+}
 
 const load = async () => {
   loading.value = true
@@ -884,13 +906,7 @@ const unitPriceDiff = computed(() => {
   const def = Number(currentMeter.value?.default_unit_price)
   return !!form.value.meterId && up > 0 && def > 0 && up !== def
 })
-// 设置抽屉表计卡片网格列数（随抽屉宽度自适应）
-const meterGridCols = computed(() => {
-  const w = parseInt(settingsWidth.value) || 680
-  if (w >= 980) return 'repeat(3, minmax(0, 1fr))'
-  if (w >= 660) return 'repeat(2, minmax(0, 1fr))'
-  return 'repeat(1, minmax(0, 1fr))'
-})
+// 设置抽屉表计按居民/工商业分组表格展示(原卡片网格列数逻辑移除)
 
 const onMeterChange = () => {
   // 切换表计：新增/连续录入模式清空读数便于录入；编辑模式仅回填单价与抄表人，
@@ -1329,10 +1345,10 @@ const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
 const meterKindOptions = [
-  { label: '宿舍', value: 'dorm' },
-  { label: '生产', value: 'production' },
+  { label: '居民', value: 'dorm' },
+  { label: '工商业', value: 'production' },
 ]
-const meterKindLabel = (k: string) => meterKindOptions.find(o => o.value === k)?.label || '宿舍'
+const meterKindLabel = (k: string) => meterKindOptions.find(o => o.value === k)?.label || '居民'
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
 const meterTypeOptions = computed(() => {
   if (props.category === 'electricity') return [
@@ -1370,12 +1386,14 @@ const openSettings = async () => {
 }
 
 const openMeterForm = (m: any) => {
+  // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
+  const defaultKind = props.category === 'water' ? 'production' : 'dorm'
   meterForm.value = m ? {
     id: m.id,
     alias: m.alias || '',
     meter_no: m.meter_no || '',
     meter_type: m.meter_type || '',
-    meter_kind: m.meter_kind || 'dorm',
+    meter_kind: m.meter_kind || defaultKind,
     owner_unit: m.owner_unit || '',
     rate: Number(m.rate) > 0 ? m.rate : 1,
     default_unit_price: Number(m.default_unit_price) || 0,
@@ -1388,7 +1406,7 @@ const openMeterForm = (m: any) => {
     enabled: m.enabled !== false,
   } : {
     id: '', alias: '', meter_no: nextMeterNo(), meter_type: '',
-    meter_kind: 'dorm', owner_unit: '', rate: 1, default_unit_price: 0,
+    meter_kind: defaultKind, owner_unit: '', rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
@@ -1439,7 +1457,7 @@ const saveMeter = async () => {
         alias: '',
         meter_no: nextMeterNo(),
         meter_type: '',
-        meter_kind: 'dorm',
+        meter_kind: props.category === 'water' ? 'production' : 'dorm',
         owner_unit: '',
         rate: '',
         default_unit_price: '',
@@ -2086,11 +2104,6 @@ onBeforeUnmount(() => {
 }
 
 /* 水表配置抽屉 */
-.meter-grid {
-  display: grid;
-  gap: 12px;
-  align-items: start;
-}
 .meter-search {
   margin-bottom: 12px;
 }
@@ -2110,54 +2123,95 @@ onBeforeUnmount(() => {
   }
 }
 
-.meter-card {
+.meter-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.meter-group {
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
-  padding: 10px 12px;
+  overflow: hidden;
   background: var(--td-bg-color-container);
-  min-width: 0;
 
-  .meter-card-head {
+  .meter-group-head {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    background: var(--td-bg-color-secondarycontainer);
+    user-select: none;
 
-    .meter-card-name {
-      font-size: 14px;
+    .meter-group-name {
+      font-size: 13px;
       font-weight: 600;
       color: var(--td-text-color-primary);
-      flex: 1;
     }
 
-    .meter-card-actions {
-      display: flex;
-      align-items: center;
-      gap: 2px;
+    .meter-group-count {
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+    }
+
+    .meter-group-arrow {
+      margin-left: auto;
+      color: var(--td-text-color-secondary);
+      transition: transform 0.2s;
     }
   }
 
-  .meter-card-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px 16px;
-
-    .meter-card-item {
-      display: flex;
+  .meter-table {
+    .meter-table-head,
+    .meter-table-row {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1.2fr 0.7fr 1.2fr 1fr 0.7fr 1.2fr;
       align-items: center;
       gap: 8px;
+      padding: 7px 12px;
       font-size: 12px;
+    }
 
-      .k {
-        color: var(--td-text-color-secondary);
-        flex: 0 0 auto;
-      }
+    .meter-table-head {
+      color: var(--td-text-color-secondary);
+      background: var(--td-bg-color-container);
+      border-bottom: 1px solid var(--td-component-stroke);
+    }
 
-      .v {
-        color: var(--td-text-color-primary);
+    .meter-table-row {
+      border-bottom: 1px solid var(--td-component-stroke);
+      color: var(--td-text-color-primary);
+
+      &:last-child { border-bottom: none; }
+
+      .mtr-alias {
+        font-weight: 500;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .mtr-mono {
+        font-variant-numeric: tabular-nums;
+        color: var(--td-text-color-primary);
+      }
+      .mtr-type {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--td-text-color-secondary);
+      }
+      .mtr-owner {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .meter-row-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        justify-content: flex-start;
       }
     }
   }
@@ -2170,6 +2224,15 @@ onBeforeUnmount(() => {
   border-radius: 9px;
   padding: 14px;
   background: var(--td-bg-color-secondarycontainer);
+
+  &.meter-form--inline {
+    margin: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    border-radius: 0;
+    grid-column: auto;
+  }
 
   .meter-form-title {
     font-size: 14px;
