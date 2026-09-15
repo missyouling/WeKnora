@@ -316,6 +316,10 @@
               <template #icon><t-icon name="add" /></template>
               新增{{ meterLabel }}
             </t-button>
+            <t-button variant="outline" size="small" @click="kindManageVisible = true">
+              <template #icon><t-icon name="setting" /></template>
+              用途管理
+            </t-button>
           </div>
 
           <div v-if="meters.length" class="meter-search">
@@ -404,8 +408,7 @@
             <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
               <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length">
 
-            <div v-if="activeGroupItems.length" class="meter-table">
-              <div class="meter-table-head">
+            <div v-if="activeGroupItems.length" class="meter-table">              <div class="meter-table-head">
                 <span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
               </div>
               <template v-for="m in activeGroupItems" :key="m.id">
@@ -500,11 +503,35 @@
                   </div>
                 </template>
               </div>
+              <div v-else class="meter-empty">
+                <t-icon name="setting" size="28px" class="meter-empty-icon" />
+                <span class="meter-empty-text">暂无{{ meterLabel }}</span>
+              </div>
               </t-tab-panel>
             </t-tabs>
           </div>
         </div>
       </t-drawer>
+
+      <!-- 用途管理:内置三项可改名,支持新增自定义用途 -->
+      <t-dialog v-model:visible="kindManageVisible" :header="'用途管理(' + meterLabel + ')'" :footer="false" width="480px">
+        <div class="kind-manage-body">
+          <p class="kind-manage-tip">内置用途(宿舍/公租房/工商业)驱动分摊计算,可改名不可删除;自定义用途仅分组展示,不参与租户核算计算。</p>
+          <div v-for="k in meterKinds" :key="k.value" class="kind-manage-row">
+            <t-input :model-value="k.label" size="small" @blur="(e: any) => renameKind(k.value, e.target.value)" @enter="(e: any) => renameKind(k.value, e.target.value)">
+              <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
+            </t-input>
+            <t-button v-if="!k.builtin" variant="text" size="small" @click="removeCustomKind(k.value)">
+              <template #icon><t-icon name="delete" size="15px" /></template>
+            </t-button>
+            <span v-else class="kind-builtin-tag">内置</span>
+          </div>
+          <t-button variant="outline" size="small" block @click="addCustomKind">
+            <template #icon><t-icon name="add" /></template>
+            新增用途
+          </t-button>
+        </div>
+      </t-dialog>
     </teleport>
 
     <!-- 打印预览弹窗 -->
@@ -619,8 +646,7 @@ const loading = ref(true)
 const filters = ref<{ month?: string; kind?: string; useUnit?: string }>({ month: undefined, kind: undefined, useUnit: undefined })
 
 const kindFilterOptions = computed(() => [
-  { label: '居民', value: 'dorm' },
-  { label: '工商业', value: 'other' },
+  ...meterKinds.value.map(k => ({ label: k.label, value: k.value })),
 ])
 
 const useUnitOptions = computed(() => {
@@ -635,18 +661,52 @@ const filteredMeters = computed(() => {
   return meters.value.filter((m: any) =>
     (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
 })
-// 设置抽屉分组标签:居民(kind=dorm) / 工商业(其余全部)
+// 用途体系:内置 宿舍/公租房/工商业 + 用户自定义(localStorage 持久化)
+// 内置 value 锁定(dorm/public/production 驱动租户核算计算),label 可改名;自定义用途仅分组展示、不参与租户核算计算
+const KIND_BUILTIN = [
+  { value: 'dorm', label: '宿舍', builtin: true },
+  { value: 'public', label: '公租房', builtin: true },
+  { value: 'production', label: '工商业', builtin: true },
+]
+const kindsStoreKey = 'weknora-utility-kinds'
+const loadCustomKinds = (): { value: string; label: string }[] => {
+  try {
+    const arr = JSON.parse(localStorage.getItem(kindsStoreKey) || '[]')
+    if (Array.isArray(arr)) return arr.filter((k: any) => k && k.value && k.label)
+  } catch { /* ignore */ }
+  return []
+}
+const customKinds = ref<{ value: string; label: string }[]>(loadCustomKinds())
+const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])
+const meterKindOptions = computed(() => meterKinds.value.map(k => ({ label: k.label, value: k.value })))
+const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || '未分类'
+const persistCustomKinds = () => {
+  try { localStorage.setItem(kindsStoreKey, JSON.stringify(customKinds.value)) } catch { /* ignore */ }
+}
+const addCustomKind = () => {
+  const n = customKinds.value.length + 1
+  customKinds.value.push({ value: `custom${n}`, label: `自定义${n}` })
+  persistCustomKinds()
+}
+const removeCustomKind = (value: string) => {
+  customKinds.value = customKinds.value.filter(k => k.value !== value)
+  persistCustomKinds()
+}
+const renameKind = (value: string, label: string) => {
+  const item = meterKinds.value.find(k => k.value === value)
+  if (item) { item.label = label.trim() || item.label; persistCustomKinds() }
+}
+
+// 设置抽屉分组标签:按用途配置动态生成(宿舍/公租房/工商业...),始终显示全部用途
 const meterGroups = computed(() => {
-  const groups = [
-    { key: 'dorm', label: '居民', items: [] as any[] },
-    { key: 'other', label: '工商业', items: [] as any[] },
-  ]
+  const groups = meterKinds.value.map(k => ({ key: k.value, label: k.label, items: [] as any[] }))
   for (const m of filteredMeters.value) {
-    ;(m.meter_kind === 'dorm' ? groups[0] : groups[1]).items.push(m)
+    const g = groups.find(g => g.key === m.meter_kind)
+    ;(g || groups[groups.length - 1]).items.push(m)
   }
-  return groups.filter(g => g.items.length)
+  return groups
 })
-const activeMeterGroup = ref<'dorm' | 'other'>('dorm')
+const activeMeterGroup = ref<string>('dorm')
 const activeGroupItems = computed(() => meterGroups.value.find(g => g.key === activeMeterGroup.value)?.items || [])
 watch(meterGroups, (gs) => {
   if (!gs.find(g => g.key === activeMeterGroup.value)) {
@@ -740,12 +800,13 @@ const load = async () => {
 const applyFilters = () => {
   let list = rows.value
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
-  if (filters.value.kind) list = list.filter(r => (r.meter_kind === 'dorm') === (filters.value.kind === 'dorm'))
+  if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
   if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
-  // 同一周期内默认排序：居民在前、工商业在后；跨月保持数据原序
+  // 同一周期内默认排序:按用途配置顺序(宿舍→公租房→工商业...);跨月保持数据原序
+  const order = new Map(meterKinds.value.map((k, i) => [k.value, i]))
   list = [...list].sort((a, b) => {
     if (a.month !== b.month) return 0
-    return (a.meter_kind === 'dorm' ? 0 : 1) - (b.meter_kind === 'dorm' ? 0 : 1)
+    return (order.get(a.meter_kind) ?? 99) - (order.get(b.meter_kind) ?? 99)
   })
   displayRows.value = list
 }
@@ -1388,12 +1449,8 @@ const closePrint = () => {
 const settingsVisible = ref(false)
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
+const kindManageVisible = ref(false)
 const meterForm = ref<any>({})
-const meterKindOptions = [
-  { label: '居民', value: 'dorm' },
-  { label: '工商业', value: 'production' },
-]
-const meterKindLabel = (k: string) => meterKindOptions.find(o => o.value === k)?.label || '居民'
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
 const meterTypeOptions = computed(() => {
   if (props.category === 'electricity') return [
@@ -2158,6 +2215,39 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 8px;
   padding-top: 12px;
+}
+
+/* 用途管理 */
+.kind-manage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.kind-manage-tip {
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 4px;
+}
+.kind-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kind-manage-row .t-input {
+  flex: 1;
+}
+.kind-value-tag {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  margin-right: 4px;
+}
+.kind-builtin-tag {
+  width: 32px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  flex-shrink: 0;
 }
 
 /* 水表配置抽屉 */

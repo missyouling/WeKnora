@@ -732,7 +732,8 @@ const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) 
   const meters = waterMeters.value.filter((m: any) =>
     m.enabled !== false && (m.meter_type === 'normal' ? 'sub' : (m.meter_type || 'sub')) === kind &&
     (owner === '' || m.owner_unit === owner || m.use_unit === owner) &&
-    (dormOnly ? m.meter_kind === 'dorm' : m.meter_kind !== 'dorm'),
+    // 公租房数据独立存在,不参与任何核算(宿舍侧仅统计 dorm,工业侧剔除 dorm/public)
+    (dormOnly ? m.meter_kind === 'dorm' : !['dorm', 'public'].includes(m.meter_kind)),
   )
   let usage = 0
   let fee = 0
@@ -751,7 +752,7 @@ const tenantWater = (owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
     m.enabled !== false &&
     (m.owner_unit === owner || m.use_unit === owner) &&
-    (dormOnly ? m.meter_kind === 'dorm' : m.meter_kind !== 'dorm'),
+    (dormOnly ? m.meter_kind === 'dorm' : !['dorm', 'public'].includes(m.meter_kind)),
   )
   let usage = 0
   let fee = 0
