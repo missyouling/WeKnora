@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="utility-meter-tab">
     <!-- 筛选工具栏（与电费/合同管理一致） -->
     <div class="doc-filter-bar">
@@ -354,7 +354,7 @@
                 </div>
                 <div class="form-item">
                   <label>归属单位</label>
-                  <t-input v-model="meterForm.owner_unit" placeholder="选填" />
+                  <t-input v-model="meterForm.owner_unit" placeholder="选填"  />
                 </div>
                 <div class="form-item">
                   <label>倍率</label>
@@ -366,7 +366,7 @@
                 </div>
                 <div class="form-item">
                   <label>使用单位</label>
-                  <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                  <t-input v-model="meterForm.use_unit" placeholder="选填"  />
                 </div>
                 <div class="form-item">
                   <label>管理人员</label>
@@ -402,71 +402,73 @@
               </div>
             </div>
 
-            <!-- 分组折叠表格:居民 / 工商业 -->
-            <div v-for="g in meterGroups" :key="g.key" class="meter-group">
-              <div class="meter-group-head" @click="toggleMeterGroup(g.key)">
-                <span class="meter-group-name">{{ g.label }}</span>
-                <span class="meter-group-count">{{ g.items.length }} 个</span>
-                <t-icon :name="collapsedMeterGroups.includes(g.key) ? 'chevron-right' : 'chevron-down'" class="meter-group-arrow" />
+            <!-- 分组标签:居民 / 工商业 -->
+            <div v-if="meterGroups.length" class="meter-tabs">
+              <div v-for="g in meterGroups" :key="g.key" :class="['meter-tab', { active: activeMeterGroup === g.key }]"
+                @click="activeMeterGroup = g.key">
+                {{ g.label }}<span class="meter-tab-count">{{ g.items.length }}</span>
               </div>
-              <div v-show="!collapsedMeterGroups.includes(g.key)" class="meter-table">
-                <div class="meter-table-head">
-                  <span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
-                </div>
-                <template v-for="m in g.items" :key="m.id">
-                  <div class="meter-table-row">
-                    <span class="mtr-alias">{{ m.alias }}</span>
-                    <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
-                    <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
-                    <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
-                    <span class="mtr-mono">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span>
-                    <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
+            </div>
+
+            <div v-if="activeGroupItems.length" class="meter-table">
+              <div class="meter-table-head">
+                <span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
+              </div>
+              <template v-for="m in activeGroupItems" :key="m.id">
+                <div class="meter-table-row" :class="{ editing: meterFormVisible && meterForm.id === m.id }" @click="toggleMeterEdit(m)">
+                  <span class="mtr-alias">{{ m.alias }}</span>
+                  <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
+                  <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
+                  <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
+                  <span class="mtr-mono">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span>
+                  <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
+                  <span class="mtr-switch" @click.stop>
                     <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
-                    <span class="meter-row-actions">
-                      <t-button variant="text" size="small" @click="openMeterForm(m)">编辑</t-button>
-                      <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
-                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                        @confirm="deleteMeter(m)">
-                        <t-button variant="text" size="small" @click.stop>删除</t-button>
-                      </t-popconfirm>
-                    </span>
-                  </div>
-                  <!-- 编辑表计：表单展开在当前行下方 -->
-                  <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form meter-form--inline">
-                    <div class="meter-form-title">编辑{{ meterLabel }}</div>
-                    <div class="form-grid">
-                      <div class="form-item">
-                        <label>别名 <span class="required">*</span></label>
-                        <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
-                      </div>
-                      <div class="form-item">
-                        <label>表号</label>
-                        <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
-                      </div>
-                      <div class="form-item">
-                        <label>类型</label>
-                        <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
-                      </div>
-                      <div class="form-item">
-                        <label>用途</label>
-                        <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                      </div>
-                      <div class="form-item">
-                        <label>归属单位</label>
-                        <t-input v-model="meterForm.owner_unit" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>倍率</label>
-                        <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                      </div>
-                      <div class="form-item">
-                        <label>默认单价</label>
-                        <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
-                      </div>
-                      <div class="form-item">
-                        <label>使用单位</label>
-                        <t-input v-model="meterForm.use_unit" placeholder="选填" />
-                      </div>
+                  </span>
+                  <span class="meter-row-actions" @click.stop>
+                    <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
+                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                      @confirm="deleteMeter(m)">
+                      <t-button variant="text" size="small" @click.stop>删除</t-button>
+                    </t-popconfirm>
+                  </span>
+                </div>
+                <!-- 编辑表计：点击行展开，再点折叠 -->
+                <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form meter-form--inline">
+                  <div class="meter-form-title">编辑{{ meterLabel }}</div>
+                  <div class="form-grid">
+                    <div class="form-item">
+                      <label>别名 <span class="required">*</span></label>
+                      <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
+                    </div>
+                    <div class="form-item">
+                      <label>表号</label>
+                      <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
+                    </div>
+                    <div class="form-item">
+                      <label>类型</label>
+                      <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
+                    </div>
+                    <div class="form-item">
+                      <label>用途</label>
+                      <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                    </div>
+                    <div class="form-item">
+                      <label>归属单位</label>
+                      <t-input v-model="meterForm.owner_unit" placeholder="选填"  />
+                    </div>
+                    <div class="form-item">
+                      <label>倍率</label>
+                      <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
+                    </div>
+                    <div class="form-item">
+                      <label>默认单价</label>
+                      <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
+                    </div>
+                    <div class="form-item">
+                      <label>使用单位</label>
+                      <t-input v-model="meterForm.use_unit" placeholder="选填"  />
+                    </div>
                       <div class="form-item">
                         <label>管理人员</label>
                         <t-input v-model="meterForm.manager" placeholder="选填" />
@@ -502,7 +504,6 @@
                   </div>
                 </template>
               </div>
-            </div>
           </div>
         </div>
       </t-drawer>
@@ -632,8 +633,7 @@ const filteredMeters = computed(() => {
   return meters.value.filter((m: any) =>
     (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
 })
-// 设置抽屉分组折叠:居民(kind=dorm) / 工商业(其余全部)
-const collapsedMeterGroups = ref<string[]>([])
+// 设置抽屉分组标签:居民(kind=dorm) / 工商业(其余全部)
 const meterGroups = computed(() => {
   const groups = [
     { key: 'dorm', label: '居民', items: [] as any[] },
@@ -644,10 +644,20 @@ const meterGroups = computed(() => {
   }
   return groups.filter(g => g.items.length)
 })
-const toggleMeterGroup = (key: string) => {
-  const i = collapsedMeterGroups.value.indexOf(key)
-  if (i >= 0) collapsedMeterGroups.value.splice(i, 1)
-  else collapsedMeterGroups.value.push(key)
+const activeMeterGroup = ref<'dorm' | 'other'>('dorm')
+const activeGroupItems = computed(() => meterGroups.value.find(g => g.key === activeMeterGroup.value)?.items || [])
+watch(meterGroups, (gs) => {
+  if (!gs.find(g => g.key === activeMeterGroup.value)) {
+    activeMeterGroup.value = (gs[0]?.key as any) || 'dorm'
+  }
+})
+// 点击行展开编辑，再次点击折叠
+const toggleMeterEdit = (m: any) => {
+  if (meterFormVisible.value && meterForm.value.id === m.id) {
+    meterFormVisible.value = false
+    return
+  }
+  openMeterForm(m)
 }
 
 const load = async () => {
@@ -1344,6 +1354,28 @@ const settingsVisible = ref(false)
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
+// 归属单位与使用单位默认一致：先填的字段同步到另一个，后手动修改互不覆盖
+let ownerTouched = false
+let useTouched = false
+let syncingUnits = false
+watch(() => meterForm.value.owner_unit, (v) => {
+  if (syncingUnits) return
+  ownerTouched = true
+  if (!useTouched) {
+    syncingUnits = true
+    meterForm.value.use_unit = v
+    syncingUnits = false
+  }
+}, { flush: 'sync' })
+watch(() => meterForm.value.use_unit, (v) => {
+  if (syncingUnits) return
+  useTouched = true
+  if (!ownerTouched) {
+    syncingUnits = true
+    meterForm.value.owner_unit = v
+    syncingUnits = false
+  }
+}, { flush: 'sync' })
 const meterKindOptions = [
   { label: '居民', value: 'dorm' },
   { label: '工商业', value: 'production' },
@@ -1388,6 +1420,9 @@ const openSettings = async () => {
 const openMeterForm = (m: any) => {
   // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
   const defaultKind = props.category === 'water' ? 'production' : 'dorm'
+  ownerTouched = false
+  useTouched = false
+  syncingUnits = true
   meterForm.value = m ? {
     id: m.id,
     alias: m.alias || '',
@@ -1410,6 +1445,7 @@ const openMeterForm = (m: any) => {
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
+  syncingUnits = false
   meterFormVisible.value = true
   nextTick(() => { if (!m) (meterAliasInput.value as any)?.focus?.() })
 }
@@ -1452,6 +1488,8 @@ const saveMeter = async () => {
       meterFormVisible.value = false
     } else {
       // 连续新增：保持表单展开，表号自动递增，清空其余字段并聚焦别名
+      ownerTouched = false
+      useTouched = false
       meterForm.value = {
         id: '',
         alias: '',
@@ -2129,90 +2167,110 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.meter-group {
+.meter-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+
+  .meter-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+
+    .meter-tab-count {
+      font-size: 12px;
+      color: var(--td-text-color-placeholder);
+    }
+
+    &.active {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+      background: var(--td-brand-color-light);
+      font-weight: 600;
+
+      .meter-tab-count {
+        color: var(--td-brand-color);
+      }
+    }
+  }
+}
+
+.meter-table {
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
   overflow: hidden;
   background: var(--td-bg-color-container);
 
-  .meter-group-head {
-    display: flex;
+  .meter-table-head,
+  .meter-table-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1.2fr 0.7fr 1.2fr 1fr 0.7fr 1.2fr;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    background: var(--td-bg-color-secondarycontainer);
-    user-select: none;
-
-    .meter-group-name {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--td-text-color-primary);
-    }
-
-    .meter-group-count {
-      font-size: 12px;
-      color: var(--td-text-color-secondary);
-    }
-
-    .meter-group-arrow {
-      margin-left: auto;
-      color: var(--td-text-color-secondary);
-      transition: transform 0.2s;
-    }
+    padding: 7px 12px;
+    font-size: 12px;
   }
 
-  .meter-table {
-    .meter-table-head,
-    .meter-table-row {
-      display: grid;
-      grid-template-columns: 1.4fr 1fr 1.2fr 0.7fr 1.2fr 1fr 0.7fr 1.2fr;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 12px;
-      font-size: 12px;
-    }
+  .meter-table-head {
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border-bottom: 1px solid var(--td-component-stroke);
+  }
 
-    .meter-table-head {
-      color: var(--td-text-color-secondary);
-      background: var(--td-bg-color-container);
-      border-bottom: 1px solid var(--td-component-stroke);
-    }
+  .meter-table-row {
+    border-bottom: 1px solid var(--td-component-stroke);
+    color: var(--td-text-color-primary);
+    cursor: pointer;
+    transition: background 0.15s;
 
-    .meter-table-row {
-      border-bottom: 1px solid var(--td-component-stroke);
+    &:hover { background: var(--td-bg-color-secondarycontainer); }
+    &.editing { background: var(--td-brand-color-light); }
+    &:last-child { border-bottom: none; }
+
+    .mtr-alias {
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mtr-mono {
+      font-variant-numeric: tabular-nums;
       color: var(--td-text-color-primary);
+    }
+    .mtr-type {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--td-text-color-secondary);
+    }
+    .mtr-owner {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mtr-switch {
+      display: flex;
+      align-items: center;
+      justify-self: start;
 
-      &:last-child { border-bottom: none; }
+      .t-switch { width: auto; }
+    }
 
-      .mtr-alias {
-        font-weight: 500;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .mtr-mono {
-        font-variant-numeric: tabular-nums;
-        color: var(--td-text-color-primary);
-      }
-      .mtr-type {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: var(--td-text-color-secondary);
-      }
-      .mtr-owner {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .meter-row-actions {
-        display: flex;
-        align-items: center;
-        gap: 2px;
-        justify-content: flex-start;
-      }
+    .meter-row-actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      justify-content: flex-start;
     }
   }
 }
