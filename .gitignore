@@ -69,3 +69,7 @@ frontend/.vite/
 frontend/dist/
 
 weknora-server.exe
+
+duckdb.dll
+server-boot.log.err
+weknora-server.exe~
