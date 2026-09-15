@@ -953,6 +953,8 @@ const openCreate = () => {
   const f = emptyForm()
   f.readingDate = today
   f.recordDate = today
+  // 默认月份=上月(如抄表日期 9 月 → 默认 2026-08)
+  f.month = prevMonthOf(today.slice(0, 7))
   f.useUnit = useUnits.value[0] || ''
   form.value = f
   drawerVisible.value = true
@@ -1051,6 +1053,11 @@ const save = async () => {
   }
   if (readingInvalid.value) {
     MessagePlugin.error('止度不得小于起度')
+    return
+  }
+  // 新增时重复校验：同月同表已有记录则拦截，避免重复录入
+  if (!editingItemId.value && !lastRecordId.value && duplicateWarning.value) {
+    MessagePlugin.warning(`该月该${meterLabel}已有记录，请在列表中选择该记录进行编辑`)
     return
   }
   saving.value = true
@@ -1402,6 +1409,8 @@ const openSettings = async () => {
 const openMeterForm = (m: any) => {
   // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
   const defaultKind = props.category === 'water' ? 'production' : 'dorm'
+  // 新增默认类型:电表/气表默认普通;水表类型(总表/分表/消防)由用户按需选择
+  const defaultType = props.category === 'water' ? '' : 'normal'
   meterForm.value = m ? {
     id: m.id,
     alias: m.alias || '',
@@ -1419,7 +1428,7 @@ const openMeterForm = (m: any) => {
     remark: m.remark || '',
     enabled: m.enabled !== false,
   } : {
-    id: '', alias: '', meter_no: nextMeterNo(), meter_type: '',
+    id: '', alias: '', meter_no: nextMeterNo(), meter_type: defaultType,
     meter_kind: defaultKind, owner_unit: '', rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
@@ -1470,7 +1479,7 @@ const saveMeter = async () => {
         id: '',
         alias: '',
         meter_no: nextMeterNo(),
-        meter_type: '',
+        meter_type: props.category === 'water' ? '' : 'normal',
         meter_kind: props.category === 'water' ? 'production' : 'dorm',
         owner_unit: '',
         rate: '',
