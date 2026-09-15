@@ -405,7 +405,7 @@
             <div class="rd-fee-group">
               <div class="rd-fee-group-head">
                 <span class="rd-fee-group-name">总电费清单及汇总</span>
-                <span class="rd-fee-group-sum">合计 {{ fmtMoney(recordDetail.record.total_fee) }}</span>
+                <span class="rd-fee-group-sum">合计 {{ fmtMoney(totalElecFee) }}</span>
               </div>
               <div class="record-items">
                 <div class="record-items-row">
@@ -420,15 +420,9 @@
                   <span class="row-mono">{{ fmtRate(recordDetail.record.dorm_kwh ? recordDetail.record.dorm_fee / recordDetail.record.dorm_kwh : 0) }}</span>
                   <span class="row-mono">{{ fmtMoney(recordDetail.record.dorm_fee) }}</span>
                 </div>
-                <div class="record-items-row">
-                  <span>水费</span><span>—</span>
-                  <span class="row-mono">{{ fmtKwh(recordDetail.record.water_usage) }}</span>
-                  <span class="row-mono">{{ fmtRate(recordDetail.record.water_usage ? recordDetail.record.water_fee / recordDetail.record.water_usage : 0) }}</span>
-                  <span class="row-mono">{{ fmtMoney(recordDetail.record.water_fee) }}</span>
-                </div>
                 <div class="record-items-row record-items-total">
                   <span>合计</span><span></span><span></span><span></span>
-                  <span class="row-mono">{{ fmtMoney(recordDetail.record.total_fee) }}</span>
+                  <span class="row-mono">{{ fmtMoney(totalElecFee) }}</span>
                 </div>
               </div>
             </div>
@@ -1257,7 +1251,7 @@ const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAW
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 
 // ---- 账单明细分组（按大项排序 + 汇总） ----
-const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
+const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '零售损益', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
 const feeGroups = computed(() => {
   const items = (recordDetail.value?.items || []).filter((it: any) => it.category !== '水费')
   const map = new Map<string, any[]>()
@@ -1280,6 +1274,9 @@ const feeGroups = computed(() => {
 })
 const recordMeterSum = (key: string): number =>
   Math.round((recordDetail.value?.meters || []).reduce((s: number, mr: any) => s + (Number(mr[key]) || 0), 0) * 100) / 100
+// 总电费 = 工业(分摊) + 宿舍,不含水费(水费归水费清单)
+const totalElecFee = computed(() =>
+  Math.round(((Number(recordDetail.value?.record?.total_fee) || 0) - (Number(recordDetail.value?.record?.water_fee) || 0)) * 100) / 100)
 
 // ---- 格式化 ----
 const fmtMoney = (v: any): string => {

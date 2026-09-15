@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -1172,6 +1173,11 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 			if !on {
 				continue
 			}
+			// 零售损益分摊电费独立成组(手工口径:不并入市场化购电费小计)
+			catName := cat.Name
+			if sg.Name == "零售损益分摊电费" {
+				catName = "零售损益分摊"
+			}
 			fee := 0.0
 			hasPeriod := false
 			rateByPeriod := make(map[string]float64, 4)
@@ -1217,7 +1223,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					f := round2(billPeriod[p] * rate)
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Category: cat.Name, Name: sg.Name, Period: periodLabel(p),
+						Category: catName, Name: sg.Name, Period: periodLabel(p),
 						Qty: billPeriod[p], Rate: rate, Fee: f, Sort: sortNo, CreatedAt: now,
 					})
 					sortNo++
@@ -1228,7 +1234,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					f := round2(billBase * flatRate)
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Category: cat.Name, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
+						Category: catName, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
 					})
 					sortNo++
 					fee += f
@@ -1237,7 +1243,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(billBase * flatRate)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: cat.Name, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: catName, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee = f
@@ -1246,7 +1252,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(billBase * flatRate0)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: cat.Name, Name: sg.Name, Period: "平", Qty: billBase, Rate: flatRate0, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: catName, Name: sg.Name, Period: "平", Qty: billBase, Rate: flatRate0, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee = f
@@ -1255,7 +1261,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				f := round2(fixedFee * ratio)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: cat.Name, Name: sg.Name, Period: "", Qty: 0, Rate: ratio, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: catName, Name: sg.Name, Period: "", Qty: 0, Rate: ratio, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
 				fee += f
@@ -1634,6 +1640,26 @@ func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.Billing
 	total := 0.0
 	feeTotal := 0.0
 	sortNo := 0
+	// 水费清单顺序:宿舍水表在上、分表(生产)在下,同组按别名
+	sortRows := func() {
+		sort.SliceStable(rows, func(i, j int) bool {
+			ki := 0
+			if rows[i].MeterKind != "dorm" {
+				ki = 1
+			}
+			kj := 0
+			if rows[j].MeterKind != "dorm" {
+				kj = 1
+			}
+			if ki != kj {
+				return ki < kj
+			}
+			return rows[i].MeterName < rows[j].MeterName
+		})
+		for i := range rows {
+			rows[i].Sort = i
+		}
+	}
 	for i := range records {
 		var its []types.UtilityMeterItem
 		if err := h.db.WithContext(ctx).Where("record_id = ?", records[i].ID).Find(&its).Error; err != nil {
@@ -1658,7 +1684,7 @@ func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.Billing
 			price := m.DefaultUnitPrice
 			fee := round2(u * price)
 			rows = append(rows, waterRow{
-				MeterID: m.ID, MeterName: m.Alias, MeterKind: m.MeterType,
+				MeterID: m.ID, MeterName: m.Alias, MeterKind: m.MeterKind,
 				Prev: it.StartReading, Curr: it.EndReading, Rate: rate,
 				Usage: u, Price: price, Fee: fee, Sort: sortNo,
 			})
@@ -1667,6 +1693,7 @@ func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.Billing
 			feeTotal += fee
 		}
 	}
+	sortRows()
 	return rows, round2(total), round2(feeTotal), nil
 }
 
