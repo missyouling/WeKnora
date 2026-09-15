@@ -190,6 +190,10 @@
               <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
             </div>
             <div class="rec-field">
+              <label>抄表日期</label>
+              <t-date-picker v-model="form.readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
+            </div>
+            <div class="rec-field">
               <label>使用单位</label>
               <t-select v-model="form.useUnit" :options="useUnits.map(u => ({ label: u, value: u }))" filterable
                 :disabled="!!editingItemId" @change="onUseUnitChange" />
@@ -201,21 +205,12 @@
             </div>
 
             <div class="rec-field">
-              <label>抄表日期</label>
-              <t-date-picker v-model="form.readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
-            </div>
-            <div class="rec-field">
               <label>抄表人</label>
               <t-input v-model="form.reader" placeholder="默认取表计管理人员" />
             </div>
-
             <div class="rec-field">
               <label>录入日期</label>
               <div class="readonly-val">{{ form.recordDate || today }}</div>
-            </div>
-            <div class="rec-field">
-              <label>倍率</label>
-              <div class="readonly-val">{{ fmtNum(formRate) }}×</div>
             </div>
 
             <template v-if="isTimeMeter">
@@ -266,6 +261,10 @@
               </div>
             </template>
 
+            <div class="rec-field">
+              <label>倍率</label>
+              <div class="readonly-val">{{ fmtNum(formRate) }}×</div>
+            </div>
             <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
               <label>单价 <span class="required">*</span></label>
               <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
@@ -845,26 +844,27 @@ const useUnits = computed(() => {
   return Array.from(set.keys())
 })
 
-// 新增模式选项：按使用单位过滤 + 隐藏当月已录入的表计；编辑模式保留全量
+// 新增/编辑模式选项：按使用单位过滤 + 新增时隐藏当月已录入的表计
 const meterEditOptions = computed(() => {
-  const opts = meters.value.filter((m: any) => m.enabled).map((m: any) => ({ label: m.alias, value: m.id }))
+  const u = (form.value.useUnit || '').trim()
+  const opts = meters.value
+    .filter((m: any) => {
+      if (!m.enabled) return false
+      if (u && (m.use_unit || '').trim() !== u) return false
+      return true
+    })
+    .map((m: any) => ({ label: m.alias, value: m.id }))
   if (!editingItemId.value) {
-    const u = (form.value.useUnit || '').trim()
     const recorded = new Set<string>()
     if (form.value.month) {
       for (const m of meters.value as any[]) {
         if (meterMonthEnds.value.get(m.id)?.has(form.value.month)) recorded.add(m.id)
       }
     }
-    return opts.filter(o => {
-      const m = meters.value.find((x: any) => x.id === o.value) as any
-      if (u && (m.use_unit || '').trim() !== u) return false
-      if (recorded.has(o.value)) return false
-      return true
-    })
+    return opts.filter(o => !recorded.has(o.value))
   }
-  // 编辑时若当前表计已停用，保留在选项中
-  if (form.value.meterId && !meters.value.some((m: any) => m.id === form.value.meterId && m.enabled)) {
+  // 编辑时若当前表计已停用或不在使用单位内，保留在选项中
+  if (form.value.meterId && !opts.some(o => o.value === form.value.meterId)) {
     const cur = meters.value.find((m: any) => m.id === form.value.meterId)
     if (cur) opts.push({ label: cur.alias, value: cur.id })
   }
@@ -1358,28 +1358,6 @@ const settingsVisible = ref(false)
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const meterForm = ref<any>({})
-// 归属单位与使用单位默认一致：先填的字段同步到另一个，后手动修改互不覆盖
-let ownerTouched = false
-let useTouched = false
-let syncingUnits = false
-watch(() => meterForm.value.owner_unit, (v) => {
-  if (syncingUnits) return
-  ownerTouched = true
-  if (!useTouched) {
-    syncingUnits = true
-    meterForm.value.use_unit = v
-    syncingUnits = false
-  }
-}, { flush: 'sync' })
-watch(() => meterForm.value.use_unit, (v) => {
-  if (syncingUnits) return
-  useTouched = true
-  if (!ownerTouched) {
-    syncingUnits = true
-    meterForm.value.owner_unit = v
-    syncingUnits = false
-  }
-}, { flush: 'sync' })
 const meterKindOptions = [
   { label: '居民', value: 'dorm' },
   { label: '工商业', value: 'production' },
@@ -1424,9 +1402,6 @@ const openSettings = async () => {
 const openMeterForm = (m: any) => {
   // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
   const defaultKind = props.category === 'water' ? 'production' : 'dorm'
-  ownerTouched = false
-  useTouched = false
-  syncingUnits = true
   meterForm.value = m ? {
     id: m.id,
     alias: m.alias || '',
@@ -1449,7 +1424,6 @@ const openMeterForm = (m: any) => {
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
-  syncingUnits = false
   meterFormVisible.value = true
   nextTick(() => { if (!m) (meterAliasInput.value as any)?.focus?.() })
 }
@@ -1993,6 +1967,14 @@ onBeforeUnmount(() => {
 .rec-field {
   min-width: 0;
 
+  /* 编辑框宽度统一：输入/选择/日期组件占满列宽 */
+  :deep(.t-input__wrap),
+  :deep(.t-select__wrap),
+  :deep(.t-date-picker) {
+    width: 100%;
+    min-width: 0;
+  }
+
   label {
     font-size: 13px;
     font-weight: 500;
@@ -2175,8 +2157,17 @@ onBeforeUnmount(() => {
   }
 
   :deep(.t-tabs__nav-item) {
-    padding: 0 12px;
     font-size: 13px;
+  }
+
+  /* 下划线贴合文字:消除 wrapper 左右内边距/外边距,标签间保留间距 */
+  :deep(.t-tabs__nav-item-wrapper) {
+    padding: 0;
+    margin: 0;
+  }
+
+  :deep(.t-tabs__nav-item:not(:first-child) .t-tabs__nav-item-wrapper) {
+    margin-left: 8px;
   }
 
   :deep(.t-tabs__content) {
