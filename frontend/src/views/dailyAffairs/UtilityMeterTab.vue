@@ -724,6 +724,11 @@ const load = async () => {
       m.set(r.month, Number(r.end_reading) || 0)
     }
     meterMonthEnds.value = idx
+    // 抄表人兜底：本地无记录时，取最近一次已保存记录的抄表人作为默认
+    if (!lastReader.value) {
+      const last = [...flat].reverse().find((r: any) => (r.reader || '').trim())
+      if (last?.reader) lastReader.value = last.reader
+    }
     applyFilters()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载失败')
@@ -832,6 +837,16 @@ const today = (() => {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 })()
+// 最近一次录入的抄表人：本地持久化，新增记录自动带出避免手动输入
+const lastReaderKey = 'weknora-utility-last-reader'
+const lastReader = ref<string>('')
+try { lastReader.value = localStorage.getItem(lastReaderKey) || '' } catch { /* ignore */ }
+const rememberReader = (r: string) => {
+  const v = (r || '').trim()
+  if (!v) return
+  lastReader.value = v
+  try { localStorage.setItem(lastReaderKey, v) } catch { /* ignore */ }
+}
 const drawerTitle = computed(() => (editingItemId.value ? '编辑' + categoryLabel.value + '记录' : '新增' + categoryLabel.value + '记录'))
 
 // 系统内使用单位（去重，保持稳定顺序，默认取第一项）
@@ -939,7 +954,8 @@ const onMeterChange = () => {
   }
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
-    form.value.reader = currentMeter.value.manager || form.value.reader || ''
+    // 抄表人：表计管理人员优先，未配置则沿用最近一次录入的抄表人
+    form.value.reader = currentMeter.value.manager || lastReader.value || form.value.reader || ''
   }
 }
 
@@ -956,6 +972,8 @@ const openCreate = () => {
   // 默认月份=上月(如抄表日期 9 月 → 默认 2026-08)
   f.month = prevMonthOf(today.slice(0, 7))
   f.useUnit = useUnits.value[0] || ''
+  // 抄表人默认沿用最近一次录入的抄表人，避免每次手动输入
+  f.reader = lastReader.value || ''
   form.value = f
   drawerVisible.value = true
 }
@@ -1225,7 +1243,7 @@ const save = async () => {
       f.meterId = nextMeter.id
       f.readingDate = form.value.readingDate || today
       f.recordDate = form.value.recordDate || today
-      f.reader = nextMeter.manager || form.value.reader || ''
+      f.reader = nextMeter.manager || lastReader.value || form.value.reader || ''
       const nextEnds = meterMonthEnds.value.get(nextMeter.id)
       const prevEnd = nextEnds?.get(prevMonthOf(form.value.month))
       f.startReading = prevEnd ? Number(prevEnd) : 0
@@ -1240,6 +1258,7 @@ const save = async () => {
       lastRecordId.value = ''
     }
     await load()
+    rememberReader(form.value.reader)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
