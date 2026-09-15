@@ -794,7 +794,7 @@ const buildRows = () => {
       const arr = elecOf(unit)
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
     }
-    const gasOf = () => gasRows.value.filter(r => r.month === month)
+    const gasOf = () => gasRows.value.filter(r => r.month === month && r.meter_kind !== 'public')
     const base: Record<string, any> = {
       id: `row-${month}`, month, unit: useUnit.value, hasRec: !!rec,
       billReady: !!bill,

@@ -808,7 +808,7 @@ func (h *UtilityHandler) CreateUtilityMeter(c *gin.Context) {
 	if req.MeterMode == "" {
 		req.MeterMode = "manual"
 	}
-	if req.MeterKind != "production" {
+	if req.MeterKind == "" {
 		req.MeterKind = "dorm"
 	}
 	req.MeterType = normalizeMeterType(req.Category, req.MeterType)
@@ -849,7 +849,7 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 	if req.MeterMode == "" {
 		req.MeterMode = "manual"
 	}
-	if req.MeterKind != "production" {
+	if req.MeterKind == "" {
 		req.MeterKind = "dorm"
 	}
 	req.MeterType = normalizeMeterType(req.Category, req.MeterType)
