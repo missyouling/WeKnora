@@ -1466,8 +1466,6 @@ const saveMeter = async () => {
       meterFormVisible.value = false
     } else {
       // 连续新增：保持表单展开，表号自动递增，清空其余字段并聚焦别名
-      ownerTouched = false
-      useTouched = false
       meterForm.value = {
         id: '',
         alias: '',
