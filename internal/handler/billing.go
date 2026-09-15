@@ -1159,6 +1159,10 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		if strings.Contains(cat.Name, "居民") || strings.Contains(cat.Name, "目录电费") {
 			continue
 		}
+		// 力调电费由 5.2 统一按「市电金额×分摊比例」计算，跳过账单原「功率因数/功率因素调整电费」大类，避免重复计费
+		if strings.Contains(cat.Name, "功率因数调整电费") || strings.Contains(cat.Name, "功率因素调整电费") {
+			continue
+		}
 		// 子项(name)开关控制:大类下同名子项可多行(分时时段)。
 		// 同一子项内:分时行按时段电量×时段单价;非分时行按计费基数×单价;
 		// 无电量无单价但带金额的固定项(返还类)按分摊比例计算。
