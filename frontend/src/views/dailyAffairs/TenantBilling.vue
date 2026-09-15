@@ -320,7 +320,7 @@
           <div class="rd-print-title">{{ recordDetail.record.month }} 账单明细</div>
           <div class="record-overview">
             <div class="ro-item">
-              <span class="ro-label">星达电量</span>
+              <span class="ro-label">使用电量</span>
               <span class="ro-value row-mono">{{ fmtKwh(recordDetail.record.total_kwh) }}</span>
             </div>
             <div class="ro-item">
@@ -461,14 +461,13 @@
       <div class="tenant-print-dialog">
         <div class="tenant-print-header">
           <span class="tenant-print-title">{{ printTitle }} 打印预览</span>
-          <div class="tenant-print-actions">
-            <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
-            <t-button theme="primary" size="small" @click="doBrowserPrint">打印</t-button>
-          </div>
         </div>
         <div class="tenant-print-body">
           <iframe v-if="printUrl" :src="printUrl" class="print-preview-frame" @load="printLoaded = true"></iframe>
           <div v-else class="print-preview-loading"><t-loading size="small" /></div>
+        </div>
+        <div class="tenant-print-footer">
+          <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
         </div>
       </div>
     </div>
@@ -1014,7 +1013,7 @@ const handlePrint = async () => {
       value: (r: any) => cellText(col.key, r),
     }))
     const bytes = await generateCatalogPdf({
-      title: `租户月度账单目录`,
+      title: `${useUnit.value}月度账单`,
       columns,
       rows: arr,
     })
@@ -1232,10 +1231,6 @@ const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array) => {
 const closePrint = () => {
   printVisible.value = false
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
-}
-const doBrowserPrint = () => {
-  const frame = document.querySelector('.tenant-print-body iframe') as HTMLIFrameElement
-  if (frame?.contentWindow) frame.contentWindow.print()
 }
 
 // ---- 抽屉拖动调宽(宽度持久化) ----
@@ -1900,17 +1895,21 @@ onMounted(() => {
     .tenant-print-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       padding: 10px 16px;
       border-bottom: 1px solid var(--td-component-stroke);
       .tenant-print-title { font-size: 14px; font-weight: 600; }
-      .tenant-print-actions { display: flex; gap: 8px; }
     }
     .tenant-print-body {
       flex: 1;
       min-height: 0;
       .print-preview-frame { width: 100%; height: 100%; border: none; }
       .print-preview-loading { height: 100%; display: flex; align-items: center; justify-content: center; }
+    }
+    .tenant-print-footer {
+      display: flex;
+      justify-content: flex-end;
+      padding: 10px 16px;
+      border-top: 1px solid var(--td-component-stroke);
     }
   }
 }

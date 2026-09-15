@@ -8,8 +8,8 @@
             class="doc-date-picker doc-filter-field__control" @change="load" />
         </div>
         <div class="doc-filter-field">
-          <t-select v-model="filters.meterId" :placeholder="meterLabel" clearable filterable class="doc-filter-select doc-filter-field__control"
-            :options="meterFilterOptions" @change="load" />
+          <t-select v-model="filters.kind" placeholder="表计类型" clearable class="doc-filter-select doc-filter-field__control"
+            :options="kindFilterOptions" @change="load" />
         </div>
         <div class="doc-filter-field">
           <t-select v-model="filters.useUnit" placeholder="使用单位" clearable filterable class="doc-filter-select doc-filter-field__control"
@@ -313,7 +313,6 @@
         @close="settingsVisible = false" @update:visible="(v: boolean) => (settingsVisible = v)">
         <div class="meter-settings-body">
           <div class="settings-head">
-            <span class="settings-desc">{{ meterLabel }}配置：开启的显示在录入选择中，关闭后不影响已有记录</span>
             <t-button theme="primary" size="small" @click="openMeterForm(null)">
               <template #icon><t-icon name="add" /></template>
               新增{{ meterLabel }}
@@ -402,13 +401,9 @@
               </div>
             </div>
 
-            <!-- 分组标签:居民 / 工商业 -->
-            <div v-if="meterGroups.length" class="meter-tabs">
-              <div v-for="g in meterGroups" :key="g.key" :class="['meter-tab', { active: activeMeterGroup === g.key }]"
-                @click="activeMeterGroup = g.key">
-                {{ g.label }}<span class="meter-tab-count">{{ g.items.length }}</span>
-              </div>
-            </div>
+            <!-- 分组标签:居民 / 工商业(复用租户核算设置标签样式) -->
+            <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
+              <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length">
 
             <div v-if="activeGroupItems.length" class="meter-table">
               <div class="meter-table-head">
@@ -429,7 +424,9 @@
                     <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                       @confirm="deleteMeter(m)">
-                      <t-button variant="text" size="small" @click.stop>删除</t-button>
+                      <t-button variant="text" size="small" @click.stop>
+                        <template #icon><t-icon name="delete" size="15px" /></template>
+                      </t-button>
                     </t-popconfirm>
                   </span>
                 </div>
@@ -504,6 +501,8 @@
                   </div>
                 </template>
               </div>
+              </t-tab-panel>
+            </t-tabs>
           </div>
         </div>
       </t-drawer>
@@ -618,9 +617,13 @@ const meters = ref<any[]>([])
 const rows = ref<any[]>([]) // 展开后的扁平行
 const displayRows = ref<any[]>([])
 const loading = ref(true)
-const filters = ref<{ month?: string; meterId?: string; useUnit?: string }>({ month: undefined, meterId: undefined, useUnit: undefined })
+const filters = ref<{ month?: string; kind?: string; useUnit?: string }>({ month: undefined, kind: undefined, useUnit: undefined })
 
-const meterFilterOptions = computed(() => meters.value.filter(m => m.enabled).map(m => ({ label: m.alias, value: m.id })))
+const kindFilterOptions = computed(() => [
+  { label: '居民', value: 'dorm' },
+  { label: '工商业', value: 'other' },
+])
+
 const useUnitOptions = computed(() => {
   const set = new Set<string>()
   meters.value.forEach((m: any) => { if (m.use_unit) set.add(m.use_unit) })
@@ -688,6 +691,7 @@ const load = async () => {
           meter_alias: meter?.alias || it.meter_name || '未配置',
           meter_no: meter?.meter_no || '',
           meter_type: meter?.meter_type || '',
+          meter_kind: meter?.meter_kind || 'other',
           use_unit: meter?.use_unit || '',
           default_unit_price: meter?.default_unit_price ?? '',
           meter_mode: meter?.meter_mode || '',
@@ -732,7 +736,7 @@ const load = async () => {
 const applyFilters = () => {
   let list = rows.value
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
-  if (filters.value.meterId) list = list.filter(r => r.meter_id === filters.value.meterId)
+  if (filters.value.kind) list = list.filter(r => (r.meter_kind === 'dorm') === (filters.value.kind === 'dorm'))
   if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
   displayRows.value = list
 }
@@ -2154,11 +2158,6 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
-
-  .settings-desc {
-    font-size: 12px;
-    color: var(--td-text-color-secondary);
-  }
 }
 
 .meter-table-wrap {
@@ -2167,41 +2166,21 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.meter-tabs {
-  display: flex;
-  gap: 6px;
+/* 分组标签:复用租户核算设置标签卡样式(选中绿色下划线) */
+.meter-settings-tabs {
   margin-bottom: 10px;
 
-  .meter-tab {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 16px;
+  :deep(.t-tabs__header) {
+    margin-bottom: 8px;
+  }
+
+  :deep(.t-tabs__nav-item) {
+    padding: 0 12px;
     font-size: 13px;
-    font-weight: 500;
-    color: var(--td-text-color-secondary);
-    background: var(--td-bg-color-container);
-    border: 1px solid var(--td-component-stroke);
-    border-radius: 8px;
-    cursor: pointer;
-    user-select: none;
-    transition: all 0.2s;
+  }
 
-    .meter-tab-count {
-      font-size: 12px;
-      color: var(--td-text-color-placeholder);
-    }
-
-    &.active {
-      color: var(--td-brand-color);
-      border-color: var(--td-brand-color);
-      background: var(--td-brand-color-light);
-      font-weight: 600;
-
-      .meter-tab-count {
-        color: var(--td-brand-color);
-      }
-    }
+  :deep(.t-tabs__content) {
+    overflow: visible;
   }
 }
 
