@@ -43,10 +43,11 @@
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" variant="outline" size="small" :loading="generateBusy" :disabled="isOwnerView"
-          title="为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）" @click="handleGenerateAll">
+        <t-button theme="primary" variant="outline" size="small" :loading="generateBusy"
+          :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）'"
+          @click="handleGenerateAll">
           <template #icon><t-icon name="refresh" size="14px" /></template>
-          生成账单
+          {{ isOwnerView ? '重新核算' : '生成账单' }}
         </t-button>
       </div>
     </div>
@@ -709,12 +710,12 @@ const flattenWaterRecords = (res: any): any[] => {
 const sumBy = (arr: any[], key: string): number => Math.round(arr.reduce((s, r) => s + (Number(r[key]) || 0), 0) * 100) / 100
 
 // 市电账单居民电量/电费
-// 电费(定比)= 账单提取 residential_amount(目录电费+政府性基金及附加)；
-// 旧账单无该字段时兜底 = catalog_amount + 政府性基金及附加(居民)
+// 电量(定比)= 账单提取 residential_readings 的定比电量原值 kwh(不取 bill_kwh:部分月份 bill_kwh 被算成 kwh×0.015)
+// 电费(定比)= 账单提取 residential_amount(目录电费+政府性基金及附加)；旧账单无该字段时兜底 = catalog_amount + 政府性基金及附加(居民)
 const residentInfoOf = (bill: any) => {
   const item = bill?.item || bill || {}
   const rows = Array.isArray(item.residential_readings) ? item.residential_readings : []
-  const kwh = Math.round(rows.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0) * 100) / 100
+  const kwh = Math.round(rows.reduce((s: number, r: any) => s + (Number(r.kwh) || 0), 0) * 100) / 100
   const gov = (Array.isArray(item.fee_items) ? item.fee_items : [])
     .filter((f: any) => String(f.category || '').includes('政府性基金') && Number(f.qty || 0) < 100000 && !String(f.name || '').includes('功率因数'))
     .reduce((s: number, f: any) => s + (Number(f.fee) || 0), 0)
@@ -947,10 +948,16 @@ const regeneratableRows = computed(() => {
   if (isOwnerView.value) return []
   return selectedRows.value.filter((r: any) => r.hasRec)
 })
-// 手动生成：对当前筛选范围未生成账单且市电账单齐备的月份生成；缺项提示并拦截
+// 星达视图：重新加载账单与表计数据并重新核算；租户视图：对未生成月份生成账单
 const handleGenerateAll = async () => {
   if (isOwnerView.value) {
-    MessagePlugin.warning('仅租户视图可生成账单')
+    generateBusy.value = true
+    try {
+      await loadAllData()
+      MessagePlugin.success('已重新核算')
+    } finally {
+      generateBusy.value = false
+    }
     return
   }
   if (!activeTenantId.value) return
