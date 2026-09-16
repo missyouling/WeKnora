@@ -561,7 +561,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
   createUtilityMeterRecord,
@@ -694,8 +694,25 @@ const addCustomKind = () => {
   persistCustomKinds()
 }
 const removeCustomKind = (value: string) => {
-  customKinds.value = customKinds.value.filter(k => k.value !== value)
-  persistCustomKinds()
+  // 引用检查:有表计正在使用该用途时禁止删除
+  const used = meters.value.filter(m => String(m.meter_kind) === value)
+  if (used.length) {
+    MessagePlugin.warning(`该用途已被 ${used.length} 个表计引用,请先删除或修改这些表计的用途后再删除`)
+    return
+  }
+  const item = meterKinds.value.find(k => k.value === value)
+  const dlg = DialogPlugin.confirm({
+    header: '删除用途',
+    body: `确定删除用途「${item?.label || value}」吗？删除后该用途的表计将归入未分类分组。`,
+    confirmBtn: { content: '删除', theme: 'danger' },
+    cancelBtn: { content: '取消' },
+    onConfirm: () => {
+      customKinds.value = customKinds.value.filter(k => k.value !== value)
+      persistCustomKinds()
+      dlg.destroy()
+    },
+    onClose: () => dlg.destroy(),
+  })
 }
 const renameKind = (value: string, label: string) => {
   const item = meterKinds.value.find(k => k.value === value)
