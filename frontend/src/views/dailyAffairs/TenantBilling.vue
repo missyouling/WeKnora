@@ -60,7 +60,9 @@
               :disabled="!displayRows.length" title="全选" @change="toggleSelectAll" />
           </div>
           <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-            {{ col.label }}
+            <t-tooltip :content="col.tip || ''" placement="top" :show-arrow="true" :destroy-on-close="false">
+              <span class="col-tip">{{ col.label }}</span>
+            </t-tooltip>
           </div>
         </div>
         <div class="doc-list-body">
@@ -493,51 +495,52 @@ const useUnit = ref(OWNER_UNIT)
 const kbId = ref('')
 
 // ---- 列定义(按使用单位双视图) ----
-interface ColDef { key: string; label: string; default: boolean; w: string }
+interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string }
 const COL_DEFS_OWNER: ColDef[] = [
-  { key: 'month', label: '账单周期', default: true, w: '0.8fr' },
-  { key: 'unit', label: '使用单位', default: true, w: '0.9fr' },
-  { key: 'total_kwh', label: '总电量', default: true, w: '0.9fr' },
-  { key: 'total_fee', label: '总电费', default: true, w: '1fr' },
-  { key: 'solar_gen', label: '光伏发电量', default: true, w: '0.9fr' },
-  { key: 'solar_grid', label: '上网电量', default: true, w: '0.9fr' },
-  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '1fr' },
-  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr' },
-  { key: 'ind_fee', label: '电费（工业）', default: false, w: '1fr' },
-  { key: 'res_kwh', label: '电量（定比）', default: true, w: '0.9fr' },
-  { key: 'res_fee', label: '电费（定比）', default: false, w: '0.9fr' },
-  { key: 'dorm_kwh', label: '电量（宿舍）', default: true, w: '0.9fr' },
-  { key: 'dorm_fee', label: '电费（宿舍）', default: false, w: '0.9fr' },
-  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr' },
-  { key: 'water_ind_fee', label: '水费（工业）', default: false, w: '0.9fr' },
-  { key: 'water_dorm_usage', label: '用水量（宿舍）', default: true, w: '1fr' },
-  { key: 'water_dorm_fee', label: '水费（宿舍）', default: false, w: '0.9fr' },
-  { key: 'water_fire_usage', label: '用水量（消防）', default: true, w: '1fr' },
-  { key: 'water_fire_fee', label: '水费（消防）', default: false, w: '0.9fr' },
-  { key: 'gas_usage', label: '用气量', default: true, w: '0.9fr' },
-  { key: 'gas_fee', label: '气费', default: false, w: '0.9fr' },
-  { key: 'remark', label: '备注', default: false, w: '1.5fr' },
+  { key: 'month', label: '账单周期', default: true, w: '0.8fr', tip: '账单月份' },
+  { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
+  { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr', tip: '市电账单本期电量(提取)' },
+  { key: 'total_fee', label: '总电费', default: false, w: '1fr', tip: '市电账单本期电费(提取)' },
+  { key: 'solar_gen', label: '光伏发电量', default: true, w: '0.9fr', tip: '光伏账单发电量(提取)' },
+  { key: 'solar_grid', label: '上网电量', default: true, w: '0.9fr', tip: '光伏账单上网电量(提取)' },
+  { key: 'solar_amount', label: '结算金额', default: false, w: '0.9fr', tip: '光伏账单结算金额(提取)' },
+  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '1fr', tip: '总电量 − 星达居民(定比) − 持睿工业(星达分表总电量)' },
+  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr', tip: '(总电费 − 持睿居民电费 − 持睿工业电费) ÷ (总电量 − 持睿居民电量 − 持睿工业电量)' },
+  { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr', tip: '用电量(工业) × 均价(工业)' },
+  { key: 'res_kwh', label: '电量（定比）', default: false, w: '0.9fr', tip: '账单提取 定比0.015×本期电量' },
+  { key: 'res_fee', label: '电费（定比）', default: false, w: '0.9fr', tip: '账单提取 居民电费(目录电费+政府性基金及附加)' },
+  { key: 'dorm_kwh', label: '电量（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的电表 本期用电量汇总' },
+  { key: 'dorm_fee', label: '电费（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的电表 本期电费汇总(电量×单价)' },
+  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr', tip: '自来水总表 − 消防 − 星达宿舍 − 持睿宿舍 − 持睿工业' },
+  { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr', tip: '用水量(工业) × 自来水总表单价' },
+  { key: 'water_dorm_usage', label: '用水量（宿舍）', default: true, w: '1fr', tip: '用途=宿舍的水表 本期用水量汇总' },
+  { key: 'water_dorm_fee', label: '水费（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的水表 本期水费汇总(用量×单价)' },
+  { key: 'water_fire_usage', label: '用水量（消防）', default: true, w: '1fr', tip: '水表类型=消防 本期用水量汇总' },
+  { key: 'water_fire_fee', label: '水费（消防）', default: true, w: '0.9fr', tip: '水表类型=消防 本期水费汇总(用量×单价)' },
+  { key: 'gas_usage', label: '用气量', default: true, w: '0.9fr', tip: '气表记录汇总(公租房除外)' },
+  { key: 'gas_fee', label: '气费', default: true, w: '0.9fr', tip: '气表记录费用汇总(用量×单价)' },
+  { key: 'remark', label: '备注', default: false, w: '1.5fr', tip: '手工填写' },
 ]
 const COL_DEFS_TENANT: ColDef[] = [
-  { key: 'month', label: '账单周期', default: true, w: '0.8fr' },
-  { key: 'unit', label: '使用单位', default: true, w: '0.9fr' },
-  { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr' },
-  { key: 'total_fee', label: '总电费', default: false, w: '1fr' },
-  { key: 'ratio', label: '分摊比例', default: false, w: '0.9fr' },
-  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr' },
-  { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr' },
-  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr' },
-  { key: 'dorm_kwh', label: '电量（居民）', default: true, w: '0.9fr' },
-  { key: 'dorm_fee', label: '电费（居民）', default: true, w: '0.9fr' },
-  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr' },
-  { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr' },
-  { key: 'water_dorm_usage', label: '用水量（居民）', default: true, w: '1fr' },
-  { key: 'water_dorm_fee', label: '水费（居民）', default: true, w: '0.9fr' },
-  { key: 'remark', label: '备注', default: false, w: '1.5fr' },
+  { key: 'month', label: '账单周期', default: true, w: '0.8fr', tip: '账单月份' },
+  { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
+  { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr', tip: '市电账单本期电量(提取)' },
+  { key: 'total_fee', label: '总电费', default: false, w: '1fr', tip: '市电账单本期电费(提取)' },
+  { key: 'ratio', label: '分摊比例', default: false, w: '0.9fr', tip: '星达分表总电量 ÷ 市电账单本期电量' },
+  { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr', tip: '持睿工业分表总电量(星达分表)' },
+  { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr', tip: '市电子项按分摊比例折算汇总' },
+  { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr', tip: '电费(工业) ÷ 用电量(工业)' },
+  { key: 'dorm_kwh', label: '电量（居民）', default: true, w: '0.9fr', tip: '持睿宿舍电表 用电量汇总' },
+  { key: 'dorm_fee', label: '电费（居民）', default: true, w: '0.9fr', tip: '持睿宿舍电表 电费汇总(电量×单价)' },
+  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr', tip: '持睿工业水表 用水量汇总' },
+  { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr', tip: '持睿工业水表 水费汇总(用量×单价)' },
+  { key: 'water_dorm_usage', label: '用水量（居民）', default: true, w: '1fr', tip: '持睿宿舍水表 用水量汇总' },
+  { key: 'water_dorm_fee', label: '水费（居民）', default: true, w: '0.9fr', tip: '持睿宿舍水表 水费汇总(用量×单价)' },
+  { key: 'remark', label: '备注', default: false, w: '1.5fr', tip: '手工填写' },
 ]
 const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
 const activeColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEFS_TENANT))
-const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v2`)
+const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
 const visibleKeys = ref<string[]>([])
 function loadStoredKeys(): string[] {
   try {
@@ -706,6 +709,8 @@ const flattenWaterRecords = (res: any): any[] => {
 const sumBy = (arr: any[], key: string): number => Math.round(arr.reduce((s, r) => s + (Number(r[key]) || 0), 0) * 100) / 100
 
 // 市电账单居民电量/电费
+// 电费(定比)= 账单提取 residential_amount(目录电费+政府性基金及附加)；
+// 旧账单无该字段时兜底 = catalog_amount + 政府性基金及附加(居民)
 const residentInfoOf = (bill: any) => {
   const item = bill?.item || bill || {}
   const rows = Array.isArray(item.residential_readings) ? item.residential_readings : []
@@ -713,7 +718,7 @@ const residentInfoOf = (bill: any) => {
   const gov = (Array.isArray(item.fee_items) ? item.fee_items : [])
     .filter((f: any) => String(f.category || '').includes('政府性基金') && Number(f.qty || 0) < 100000 && !String(f.name || '').includes('功率因数'))
     .reduce((s: number, f: any) => s + (Number(f.fee) || 0), 0)
-  const fee = Math.round(((Number(item.catalog_amount) || 0) + (Number(gov) || 0)) * 100) / 100
+  const fee = Math.round((Number(item.residential_amount) || (Number(item.catalog_amount) || 0) + (Number(gov) || 0)) * 100) / 100
   return { kwh, fee }
 }
 
@@ -835,6 +840,7 @@ const buildRows = () => {
         total_fee: totalFee,
         solar_gen: sumBy(solarArr.map((s: any) => ({ v: s.item?.generation_kwh })), 'v'),
         solar_grid: sumBy(solarArr.map((s: any) => ({ v: s.item?.grid_kwh })), 'v'),
+        solar_amount: sumBy(solarArr.map((s: any) => ({ v: s.item?.settlement_amount })), 'v'),
         ind_kwh: indKwh,
         ind_fee: indFee,
         ind_price: indPrice,
@@ -1324,7 +1330,7 @@ const fmtRatio = (v: any): string => {
   if (v === '' || v == null || Number.isNaN(n)) return '—'
   return (n * 100).toFixed(2) + '%'
 }
-const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee']
+const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee', 'solar_amount']
 const KWH_KEYS = ['total_kwh', 'ind_kwh', 'res_kwh', 'dorm_kwh', 'water_ind_usage', 'water_dorm_usage', 'water_fire_usage', 'gas_usage', 'solar_gen', 'solar_grid']
 const printLoaded = ref(false)
 const cellText = (key: string, row: any): string => {
@@ -1418,6 +1424,15 @@ onMounted(() => {
   background: var(--td-bg-color-secondarycontainer);
   border-bottom: 1px solid var(--td-component-stroke);
   .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-tip {
+    cursor: help;
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
 }
 .doc-list-body { display: flex; flex-direction: column; }
 .doc-list-row {

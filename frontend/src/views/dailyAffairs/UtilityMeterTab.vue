@@ -63,7 +63,9 @@
               :disabled="!displayRows.length" title="全选" @change="toggleSelectAll" />
           </div>
           <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-            {{ col.label }}
+            <t-tooltip :content="col.tip || ''" placement="top" :show-arrow="true" :destroy-on-close="false">
+              <span class="col-tip">{{ col.label }}</span>
+            </t-tooltip>
           </div>
         </div>
         <div class="doc-list-body">
@@ -582,26 +584,26 @@ const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.cat
 const usageLabel = computed(() => (props.category === 'water' ? '用水量' : props.category === 'electricity' ? '用电量' : '用气量'))
 
 // ---- 列定义 ----
-interface ColDef { key: string; label: string; default: boolean; w: string }
+interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string }
 const COLUMN_DEFS: ColDef[] = [
-  { key: 'month', label: '月份', default: true, w: '1fr' },
-  { key: 'meter', label: meterLabel.value, default: true, w: '1.2fr' },
-  { key: 'start_reading', label: '起度', default: true, w: '0.9fr' },
-  { key: 'end_reading', label: '止度', default: true, w: '0.9fr' },
-  { key: 'rate', label: '倍率', default: true, w: '0.7fr' },
-  { key: 'usage', label: usageLabel.value, default: true, w: '1fr' },
-  { key: 'unit_price', label: '单价', default: true, w: '0.9fr' },
-  { key: 'subsidy', label: '补差', default: true, w: '0.8fr' },
-  { key: 'amount', label: categoryLabel.value, default: true, w: '1fr' },
-  { key: 'remark', label: '备注', default: true, w: '2fr' },
+  { key: 'month', label: '月份', default: true, w: '1fr', tip: '抄表所属月份' },
+  { key: 'meter', label: meterLabel.value, default: true, w: '1.2fr', tip: '表计别名' },
+  { key: 'start_reading', label: '起度', default: true, w: '0.9fr', tip: '上期止度自动带入' },
+  { key: 'end_reading', label: '止度', default: true, w: '0.9fr', tip: '本期抄表读数(须 ≥ 起度)' },
+  { key: 'rate', label: '倍率', default: true, w: '0.7fr', tip: '表计配置倍率(不可修改)' },
+  { key: 'usage', label: usageLabel.value, default: true, w: '1fr', tip: `(止度 − 起度) × 倍率` },
+  { key: 'unit_price', label: '单价', default: true, w: '0.9fr', tip: '默认取表计配置单价' },
+  { key: 'subsidy', label: '补差', default: true, w: '0.8fr', tip: '手工填写,可为正负数' },
+  { key: 'amount', label: categoryLabel.value, default: true, w: '1fr', tip: `${usageLabel.value} × 单价 + 补差` },
+  { key: 'remark', label: '备注', default: true, w: '2fr', tip: '手工填写' },
   // 详细字段：抄表信息与表计档案参数
-  { key: 'reading_date', label: '抄表日期', default: false, w: '1fr' },
-  { key: 'reader', label: '抄表人', default: false, w: '1fr' },
-  { key: 'meter_no', label: '表号', default: false, w: '1fr' },
-  { key: 'use_unit', label: '使用单位', default: false, w: '1.2fr' },
-  { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr' },
-  { key: 'meter_mode', label: '抄表方式', default: false, w: '0.9fr' },
-  { key: 'install_date', label: '安装日期', default: false, w: '1.1fr' },
+  { key: 'reading_date', label: '抄表日期', default: false, w: '1fr', tip: '实际抄表日期' },
+  { key: 'reader', label: '抄表人', default: false, w: '1fr', tip: '默认取表计配置管理人员' },
+  { key: 'meter_no', label: '表号', default: false, w: '1fr', tip: '表计编号' },
+  { key: 'use_unit', label: '使用单位', default: false, w: '1.2fr', tip: '表计使用单位' },
+  { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr', tip: '表计配置单价' },
+  { key: 'meter_mode', label: '抄表方式', default: false, w: '0.9fr', tip: '自动抄表/手动抄表' },
+  { key: 'install_date', label: '安装日期', default: false, w: '1.1fr', tip: '表计安装日期' },
 ]
 const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v2`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
@@ -1794,6 +1796,15 @@ onBeforeUnmount(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .col-tip {
+    cursor: help;
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
   }
 }
 
