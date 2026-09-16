@@ -504,8 +504,8 @@ const COL_DEFS_OWNER: ColDef[] = [
   { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '1fr' },
   { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr' },
   { key: 'ind_fee', label: '电费（工业）', default: false, w: '1fr' },
-  { key: 'res_kwh', label: '电量（居民）', default: true, w: '0.9fr' },
-  { key: 'res_fee', label: '电费（居民）', default: false, w: '0.9fr' },
+  { key: 'res_kwh', label: '电量（定比）', default: true, w: '0.9fr' },
+  { key: 'res_fee', label: '电费（定比）', default: false, w: '0.9fr' },
   { key: 'dorm_kwh', label: '电量（宿舍）', default: true, w: '0.9fr' },
   { key: 'dorm_fee', label: '电费（宿舍）', default: false, w: '0.9fr' },
   { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr' },
@@ -737,13 +737,16 @@ const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) 
   )
   let usage = 0
   let fee = 0
+  let price = 0
   for (const m of meters) {
     const r = waterReadingMap.value.get(`${m.id}__${month}`)
     if (!r) continue
     usage += Number(r.usage) || 0
     fee += Number(r.amount) || 0
+    if (!price && Number(m.default_unit_price) > 0) price = Number(m.default_unit_price)
   }
-  return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100 }
+  if (!price && usage > 0) price = fee / usage
+  return { usage: Math.round(usage * 100) / 100, fee: Math.round(fee * 100) / 100, price }
 }
 
 // 租户视图用水：按使用单位/归属单位 + 用途(宿舍/生产)匹配，不限定计量层级，
@@ -817,14 +820,16 @@ const buildRows = () => {
       const gas = gasOf()
       // 星达工业用电量 = 总电量 - 星达居民电量 - 持睿工业电量(星达分表总电量)
       const indKwh = Math.round((totalKwh - res.kwh - (Number(rec?.total_kwh) || 0)) * 100) / 100
-      // 星达工业电费 = 总电费 - 持睿居民电费 - 持睿工业电费
-      const indFee = Math.round((totalFee - tenantDorm.fee - (Number(rec?.industrial_fee) || 0)) * 100) / 100
-      // 星达工业均价 = 星达工业电费 ÷ (总电量 - 持睿居民电量 - 持睿工业电量)
+      // 星达工业均价 = (总电费 - 持睿居民电费 - 持睿工业电费) ÷ (总电量 - 持睿居民电量 - 持睿工业电量)
       const priceDenom = totalKwh - tenantDorm.kwh - (Number(rec?.total_kwh) || 0)
-      const indPrice = priceDenom > 0 ? Math.round(indFee / priceDenom * 10000) / 10000 : 0
-      // 星达工业用水量 = 总表 + 消防 - 持睿工业 - 持睿居民
-      const wIndUsage = Math.round((totalMain.usage + wFire.usage - tInd.usage - tDorm.usage) * 100) / 100
-      const wIndFee = Math.round((totalMain.fee + wFire.fee - tInd.fee - tDorm.fee) * 100) / 100
+      const priceExact = priceDenom > 0 ? (totalFee - tenantDorm.fee - (Number(rec?.industrial_fee) || 0)) / priceDenom : 0
+      const indPrice = Math.round(priceExact * 10000) / 10000
+      // 星达工业电费 = 用电量(工业) × 均价(工业)（用未取整均价计算,列表自洽）
+      const indFee = Math.round(indKwh * priceExact * 100) / 100
+      // 星达工业用水量 = 星达自来水总表 - 消防总表 - 星达宿舍 - 持睿宿舍 - 持睿工业
+      const wIndUsage = Math.round((totalMain.usage - wFire.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
+      // 星达工业水费 = 工业用水量 × 星达自来水总表单价
+      const wIndFee = Math.round((wIndUsage * (totalMain.price || 0)) * 100) / 100
       Object.assign(base, {
         total_kwh: totalKwh,
         total_fee: totalFee,

@@ -129,8 +129,15 @@ export async function generateCatalogPdf(opts: {
     const maxLines = Math.max(...linesArr.map((ls) => ls.length))
     return Math.max(ROW_MIN_HEIGHT, maxLines * LINE_HEIGHT + CELL_PAD)
   })
-  const headerLines = columns.map((c, i) => wrapText(font, c.label, widths[i] - CELL_PAD * 2, HEADER_SIZE))
-  const headerMaxLines = Math.max(...headerLines.map((ls) => ls.length))
+  // 表头单行自适应：优先单行完整显示，列宽不足时缩小字号（下限 6），仍不足才换行兜底
+  const headerFonts = columns.map((c, i) => {
+    const availW = widths[i] - CELL_PAD * 2
+    let size = HEADER_SIZE
+    while (size > 6 && font.widthOfTextAtSize(c.label, size) > availW) size -= 0.5
+    const lines = wrapText(font, c.label, availW, size)
+    return { size, lines }
+  })
+  const headerMaxLines = Math.max(...headerFonts.map((h) => h.lines.length))
 
   let page = doc.addPage([PAGE_W, PAGE_H])
   let y = PAGE_H - MARGIN - TITLE_SIZE - 4
@@ -155,11 +162,11 @@ export async function generateCatalogPdf(opts: {
     page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, borderColor: COLOR_BORDER, borderWidth: 0.5 })
     columns.forEach((c, i) => {
       const w = widths[i]
-      const lines = headerLines[i]
+      const { size, lines } = headerFonts[i]
       const totalH = lines.length * LINE_HEIGHT
       const startY = y - h + (h - totalH) / 2
       lines.forEach((line, li) => {
-        page.drawText(line, { x: x + CELL_PAD, y: startY + totalH - (li + 1) * LINE_HEIGHT, size: HEADER_SIZE, font, color: COLOR_TEXT })
+        page.drawText(line, { x: x + CELL_PAD, y: startY + totalH - (li + 1) * LINE_HEIGHT, size, font, color: COLOR_TEXT })
       })
       x += w
     })
