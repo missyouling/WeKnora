@@ -973,6 +973,11 @@ export function deleteUtilityMeter(id: string) {
   return del(`/api/v1/utilities/meters/${id}`);
 }
 
+/** 表计配置拖动排序：按传入 id 顺序批量更新 sort_order */
+export function sortUtilityMeters(category: string, ids: string[]) {
+  return put('/api/v1/utilities/meters/sort', { category, ids });
+}
+
 /** 分时电价规则：尖峰平谷月份设定 + 各时段单价 */
 export function listUtilityTariffRules(category = 'electricity') {
   return get(`/api/v1/utilities/tariff-rules?category=${category}`);

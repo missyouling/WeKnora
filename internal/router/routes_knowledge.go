@@ -334,6 +334,7 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 		ut.DELETE("/meter-records/:id", g.Contributor(), handler.DeleteUtilityMeterRecord)
 		ut.GET("/meters", g.Viewer(), handler.ListUtilityMeters)
 		ut.POST("/meters", g.Contributor(), handler.CreateUtilityMeter)
+		ut.PUT("/meters/sort", g.Contributor(), handler.SortUtilityMeters)
 		ut.PUT("/meters/:id", g.Contributor(), handler.UpdateUtilityMeter)
 		ut.DELETE("/meters/:id", g.Contributor(), handler.DeleteUtilityMeter)
 		ut.GET("/tariff-rules", g.Viewer(), handler.ListUtilityTariffRules)

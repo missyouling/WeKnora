@@ -36,7 +36,7 @@
                 </div>
               </div>
               <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in COLUMN_DEFS" :key="col.key" :value="col.key" class="field-popup-item">
+                <t-checkbox v-for="col in categoryCols(COLUMN_DEFS)" :key="col.key" :value="col.key" class="field-popup-item">
                   {{ col.label }}
                 </t-checkbox>
               </t-checkbox-group>
@@ -85,7 +85,10 @@
                 <span v-else-if="col.key === 'end_reading'" class="row-mono">{{ fmtNum(row.end_reading) }}</span>
                 <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
                 <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
-                <span v-else-if="col.key === 'unit_price'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtNum(row.unit_price) }}</span>
+                <span v-else-if="col.key === 'unit_price'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtUnitPrice(row.unit_price) }}</span>
+                <span v-else-if="col.key === 'garbage_fee'" class="row-mono">{{ fmtMoney(row.garbage_fee) }}</span>
+                <span v-else-if="col.key === 'secondary_water_fee'" class="row-mono">{{ fmtMoney(row.secondary_water_fee) }}</span>
+                <span v-else-if="col.key === 'sewage_fee'" class="row-mono">{{ fmtMoney(row.sewage_fee) }}</span>
                 <span v-else-if="col.key === 'subsidy'" class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ isTimeRow(row) ? '—' : fmtMoney(row.subsidy) }}</span>
                 <span v-else-if="col.key === 'amount'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtMoney(row.amount) }}</span>
                 <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
@@ -272,6 +275,20 @@
               <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
               <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtNum(currentMeter?.default_unit_price) }} 不同</p>
             </div>
+            <template v-if="props.category === 'water'">
+              <div class="rec-field">
+                <label>垃圾处置费</label>
+                <t-input v-model.number="form.garbageFee" type="number" placeholder="默认 13 元/套" />
+              </div>
+              <div class="rec-field">
+                <label>二次供水费</label>
+                <t-input v-model.number="form.secondaryWaterFee" type="number" placeholder="选填" />
+              </div>
+              <div class="rec-field">
+                <label>污水处理费</label>
+                <t-input v-model.number="form.sewageFee" type="number" placeholder="选填" />
+              </div>
+            </template>
             <div class="rec-field">
               <label>补差</label>
               <t-input v-model.number="form.subsidy" type="number" placeholder="补差金额，可为负" />
@@ -410,11 +427,13 @@
             <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
               <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length">
 
-            <div v-if="activeGroupItems.length" class="meter-table">              <div class="meter-table-head">
-                <span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
+            <div v-if="activeGroupItems.length" ref="meterSortableRef" class="meter-table">
+              <div class="meter-table-head">
+                <span class="meter-drag-th"><t-icon name="move" size="14px" /></span><span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
               </div>
               <template v-for="m in activeGroupItems" :key="m.id">
-                <div class="meter-table-row" :class="{ editing: meterFormVisible && meterForm.id === m.id }" @click="toggleMeterEdit(m)">
+                <div class="meter-table-row" :data-id="m.id" :class="{ editing: meterFormVisible && meterForm.id === m.id }" @click="toggleMeterEdit(m)">
+                  <span class="meter-drag-handle" title="拖动排序" @click.stop><t-icon name="move" size="14px" /></span>
                   <span class="mtr-alias">{{ m.alias }}</span>
                   <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
                   <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
@@ -565,6 +584,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import Sortable from 'sortablejs'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
@@ -575,6 +595,7 @@ import {
   createUtilityMeter,
   updateUtilityMeter,
   deleteUtilityMeter,
+  sortUtilityMeters,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
@@ -588,7 +609,8 @@ const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.cat
 const usageLabel = computed(() => (props.category === 'water' ? '用水量' : props.category === 'electricity' ? '用电量' : '用气量'))
 
 // ---- 列定义 ----
-interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string }
+interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string; only?: 'water' }
+const categoryCols = (defs: ColDef[]) => defs.filter(c => !c.only || c.only === props.category)
 const COLUMN_DEFS: ColDef[] = [
   { key: 'month', label: '月份', default: true, w: '1fr', tip: '抄表所属月份' },
   { key: 'meter', label: meterLabel.value, default: true, w: '1.2fr', tip: '表计别名' },
@@ -597,8 +619,12 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'rate', label: '倍率', default: props.category !== 'gas', w: '0.7fr', tip: '表计配置倍率(不可修改)' },
   { key: 'usage', label: usageLabel.value, default: true, w: '1fr', tip: `(止度 − 起度) × 倍率` },
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr', tip: '默认取表计配置单价' },
+  // 水费附加费用（仅水费；电费/气费无此列）
+  { key: 'garbage_fee', label: '垃圾处置费', default: false, w: '0.9fr', tip: '水费附加,新增默认 13 元/套', only: 'water' },
+  { key: 'secondary_water_fee', label: '二次供水费', default: false, w: '0.9fr', tip: '水费附加,手工填写', only: 'water' },
+  { key: 'sewage_fee', label: '污水处理费', default: false, w: '0.9fr', tip: '水费附加,手工填写', only: 'water' },
   { key: 'subsidy', label: '补差', default: false, w: '0.8fr', tip: '手工填写,可为正负数' },
-  { key: 'amount', label: categoryLabel.value, default: true, w: '1fr', tip: `${usageLabel.value} × 单价 + 补差` },
+  { key: 'amount', label: categoryLabel.value, default: true, w: '1fr', tip: `${usageLabel.value} × 单价 + 附加费 + 补差` },
   { key: 'remark', label: '备注', default: false, w: '2fr', tip: '手工填写' },
   // 默认显示：抄表信息
   { key: 'reading_date', label: '抄表日期', default: true, w: '1fr', tip: '实际抄表日期' },
@@ -612,7 +638,7 @@ const COLUMN_DEFS: ColDef[] = [
 ]
 const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v3`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
-const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleKeys.value.includes(c.key)))
+const visibleColDefs = computed(() => categoryCols(COLUMN_DEFS).filter(c => visibleKeys.value.includes(c.key)))
 const gridStyle = computed(() => ({
   gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
 }))
@@ -624,21 +650,21 @@ function loadStoredKeys(): string[] {
       const arr = JSON.parse(raw)
       if (Array.isArray(arr) && arr.length) {
         // 仅保留本组件认识的字段，避免跨页面污染
-        const valid = arr.filter(k => COLUMN_DEFS.some(c => c.key === k))
+        const valid = arr.filter(k => categoryCols(COLUMN_DEFS).some(c => c.key === k))
         if (valid.length) return valid
       }
     }
   } catch { /* ignore */ }
-  return COLUMN_DEFS.filter(c => c.default).map(c => c.key)
+  return categoryCols(COLUMN_DEFS).filter(c => c.default).map(c => c.key)
 }
 
 const fieldPopupVisible = ref(false)
 const selectAllColumns = () => {
-  visibleKeys.value = COLUMN_DEFS.map(c => c.key)
+  visibleKeys.value = categoryCols(COLUMN_DEFS).map(c => c.key)
   persistColumns()
 }
 const resetColumns = () => {
-  visibleKeys.value = COLUMN_DEFS.filter(c => c.default).map(c => c.key)
+  visibleKeys.value = categoryCols(COLUMN_DEFS).filter(c => c.default).map(c => c.key)
   persistColumns()
 }
 const persistColumns = () => {
@@ -905,6 +931,7 @@ interface MeterForm {
   deepPrev: number; deepCurr: number; peakPrev: number; peakCurr: number
   flatPrev: number; flatCurr: number; valleyPrev: number; valleyCurr: number
   unitPrice: number; subsidy: number; remark: string
+  garbageFee: number; secondaryWaterFee: number; sewageFee: number
 }
 const emptyForm = (): MeterForm => ({
   month: '', useUnit: '', meterId: '', readingDate: '', reader: '', recordDate: '',
@@ -912,6 +939,7 @@ const emptyForm = (): MeterForm => ({
   deepPrev: 0, deepCurr: 0, peakPrev: 0, peakCurr: 0,
   flatPrev: 0, flatCurr: 0, valleyPrev: 0, valleyCurr: 0,
   unitPrice: 0, subsidy: 0, remark: '',
+  garbageFee: props.category === 'water' ? 13 : 0, secondaryWaterFee: 0, sewageFee: 0,
 })
 const form = ref<MeterForm>(emptyForm())
 const today = (() => {
@@ -993,7 +1021,13 @@ const formUsage = computed(() => {
   }
   return Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * rate * 100) / 100
 })
-const formAmount = computed(() => Math.round((formUsage.value * Number(form.value.unitPrice) + (Number(form.value.subsidy) || 0)) * 100) / 100)
+const formAmount = computed(() => {
+  const base = formUsage.value * Number(form.value.unitPrice)
+  const fees = props.category === 'water'
+    ? (Number(form.value.garbageFee) || 0) + (Number(form.value.secondaryWaterFee) || 0) + (Number(form.value.sewageFee) || 0)
+    : 0
+  return Math.round((base + fees + (Number(form.value.subsidy) || 0)) * 100) / 100
+})
 
 // ---- 录入校验：差异标红提醒不拦截，止度<起度（起度>止度）标红且保存拦截；起度=止度视为当月无用量，合法 ----
 const readingInvalid = computed(() => {
@@ -1111,6 +1145,9 @@ const openEdit = (row: any) => {
     valley_prev: Number(r.valley_prev) || 0,
     valley_curr: Number(r.valley_curr) || 0,
     unit_price: Number(r.unit_price) || 0,
+    garbage_fee: Number(r.garbage_fee) || 0,
+    secondary_water_fee: Number(r.secondary_water_fee) || 0,
+    sewage_fee: Number(r.sewage_fee) || 0,
     subsidy: Number(r.subsidy) || 0,
     remark: r.remark || '',
   }))
@@ -1132,6 +1169,9 @@ const openEdit = (row: any) => {
     valleyPrev: Number(row.valley_prev) || 0,
     valleyCurr: Number(row.valley_curr) || 0,
     unitPrice: Number(row.unit_price) || 0,
+    garbageFee: Number(row.garbage_fee) || 0,
+    secondaryWaterFee: Number(row.secondary_water_fee) || 0,
+    sewageFee: Number(row.sewage_fee) || 0,
     subsidy: Number(row.subsidy) || 0,
     remark: row.remark || '',
   }
@@ -1177,6 +1217,9 @@ const save = async () => {
       valley_prev: Number(form.value.valleyPrev) || 0,
       valley_curr: Number(form.value.valleyCurr) || 0,
       unit_price: Number(form.value.unitPrice) || 0,
+      garbage_fee: Number(form.value.garbageFee) || 0,
+      secondary_water_fee: Number(form.value.secondaryWaterFee) || 0,
+      sewage_fee: Number(form.value.sewageFee) || 0,
       subsidy: Number(form.value.subsidy) || 0,
       remark: form.value.remark || '',
     }
@@ -1206,6 +1249,9 @@ const save = async () => {
             valley_prev: Number(it.valley_prev) || 0,
             valley_curr: Number(it.valley_curr) || 0,
             unit_price: Number(it.unit_price) || 0,
+            garbage_fee: Number(it.garbage_fee) || 0,
+            secondary_water_fee: Number(it.secondary_water_fee) || 0,
+            sewage_fee: Number(it.sewage_fee) || 0,
             subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
           })),
@@ -1240,6 +1286,9 @@ const save = async () => {
             valley_prev: it.valley_prev,
             valley_curr: it.valley_curr,
             unit_price: it.unit_price,
+            garbage_fee: Number(it.garbage_fee) || 0,
+            secondary_water_fee: Number(it.secondary_water_fee) || 0,
+            sewage_fee: Number(it.sewage_fee) || 0,
             subsidy: Number(it.subsidy) || 0,
             remark: it.remark || '',
           }
@@ -1276,6 +1325,9 @@ const save = async () => {
           valley_prev: Number(r.valley_prev) || 0,
           valley_curr: Number(r.valley_curr) || 0,
           unit_price: Number(r.unit_price) || 0,
+          garbage_fee: Number(r.garbage_fee) || 0,
+          secondary_water_fee: Number(r.secondary_water_fee) || 0,
+          sewage_fee: Number(r.sewage_fee) || 0,
           subsidy: Number(r.subsidy) || 0,
           remark: r.remark || '',
         })),
@@ -1390,6 +1442,9 @@ const handleDelete = async () => {
             valley_prev: Number(r.valley_prev) || 0,
             valley_curr: Number(r.valley_curr) || 0,
             unit_price: Number(r.unit_price) || 0,
+            garbage_fee: Number(r.garbage_fee) || 0,
+            secondary_water_fee: Number(r.secondary_water_fee) || 0,
+            sewage_fee: Number(r.sewage_fee) || 0,
             remark: r.remark || '',
           })),
         })
@@ -1635,8 +1690,53 @@ const loadMetersOnly = async () => {
     const res: any = await listUtilityMeters({ category: props.category })
     const mets = res?.data || res || []
     meters.value = Array.isArray(mets) ? mets : []
+    sortMetersLocal()
   } catch { /* ignore */ }
 }
+
+// ---- 表计配置拖动排序（sort_order 持久化） ----
+const meterSortableRef = ref<HTMLElement | null>(null)
+let sortableInst: any = null
+const sortMetersLocal = () => {
+  meters.value = [...meters.value].sort((a: any, b: any) =>
+    (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0) ||
+    (a.created_at || '').localeCompare(b.created_at || ''))
+}
+const initMeterSortable = () => {
+  if (!meterSortableRef.value) return
+  if (sortableInst) { sortableInst.destroy(); sortableInst = null }
+  sortableInst = Sortable.create(meterSortableRef.value, {
+    draggable: '.meter-table-row',
+    handle: '.meter-drag-handle',
+    animation: 150,
+    ghostClass: 'meter-row-ghost',
+    onEnd: persistMeterSort,
+  })
+}
+const persistMeterSort = async () => {
+  const el = meterSortableRef.value
+  if (!el) return
+  const ids = [...el.querySelectorAll('.meter-table-row')]
+    .map(r => r.getAttribute('data-id')).filter(Boolean) as string[]
+  if (!ids.length) return
+  try {
+    await sortUtilityMeters(props.category, ids)
+    const order = new Map(ids.map((id, i) => [id, i]))
+    meters.value = [...meters.value].sort((a: any, b: any) =>
+      (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    MessagePlugin.success('排序已保存')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '排序保存失败')
+    await loadMetersOnly()
+  }
+}
+watch([activeMeterGroup, () => activeGroupItems.value], async () => {
+  await nextTick()
+  initMeterSortable()
+})
+onBeforeUnmount(() => {
+  if (sortableInst) { sortableInst.destroy(); sortableInst = null }
+})
 
 // ---- 抽屉宽度拖动 ----
 const drawerWidth = ref<string>(loadDrawerWidth())
@@ -1708,6 +1808,13 @@ const fmtNum = (v: any) => {
 const fmtMoney = (v: any) => {
   const n = Number(v) || 0
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
+}
+// 气费单价固定保留 2 位小数（如 3.40）；其它分类沿用 fmtNum
+const fmtUnitPrice = (v: any) => {
+  const n = Number(v)
+  if (v === '' || v == null || Number.isNaN(n)) return ''
+  if (props.category === 'gas') return n.toFixed(2)
+  return fmtNum(n)
 }
 
 onMounted(() => { load() })
@@ -2332,11 +2439,18 @@ onBeforeUnmount(() => {
   .meter-table-head,
   .meter-table-row {
     display: grid;
-    grid-template-columns: 1.4fr 1fr 1.2fr 0.7fr 1.2fr 1fr 0.7fr 1.2fr;
+    grid-template-columns: 0.4fr 1.4fr 1fr 1.2fr 0.7fr 1.2fr 1fr 0.7fr 1.2fr;
     align-items: center;
     gap: 8px;
     padding: 7px 12px;
     font-size: 12px;
+  }
+
+  .meter-drag-th {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-placeholder);
   }
 
   .meter-table-head {
@@ -2350,6 +2464,16 @@ onBeforeUnmount(() => {
     color: var(--td-text-color-primary);
     cursor: pointer;
     transition: background 0.15s;
+
+    .meter-drag-handle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--td-text-color-placeholder);
+      cursor: grab;
+
+      &:active { cursor: grabbing; }
+    }
 
     &:hover { background: var(--td-bg-color-secondarycontainer); }
     &.editing { background: var(--td-brand-color-light); }
@@ -2390,6 +2514,11 @@ onBeforeUnmount(() => {
       gap: 2px;
       justify-content: flex-start;
     }
+  }
+
+  .meter-row-ghost {
+    opacity: 0.45;
+    background: var(--td-brand-color-light);
   }
 }
 

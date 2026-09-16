@@ -317,7 +317,7 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 	var meters []types.UtilityMeter
 	_ = h.db.WithContext(ctx).
 		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
-		Order("created_at ASC").Find(&meters).Error
+		Order("sort_order ASC, created_at ASC").Find(&meters).Error
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"records": records, "meters": meters}})
 }
 
@@ -772,7 +772,7 @@ func (h *UtilityHandler) ListUtilityMeters(c *gin.Context) {
 		query = query.Where("enabled = ?", true)
 	}
 	var meters []types.UtilityMeter
-	if err := query.Order("created_at ASC").Find(&meters).Error; err != nil {
+	if err := query.Order("sort_order ASC, created_at ASC").Find(&meters).Error; err != nil {
 		logger.Errorf(ctx, "list utility meters failed: %v", err)
 		c.Error(errors.NewInternalServerError("list meters failed"))
 		return
@@ -924,6 +924,57 @@ func (h *UtilityHandler) DeleteUtilityMeter(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// SortUtilityMeters godoc
+// @Summary      表计配置排序
+// @Description  按传入 id 顺序批量更新表计 sort_order（拖动排序持久化）。
+// @Router       /utilities/meters/sort [put]
+func (h *UtilityHandler) SortUtilityMeters(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	var req struct {
+		Category string   `json:"category"`
+		IDs      []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if req.Category != "water" && req.Category != "gas" && req.Category != "electricity" {
+		c.Error(errors.NewBadRequestError("category must be water, gas or electricity"))
+		return
+	}
+	if len(req.IDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "无排序数据"})
+		return
+	}
+	// 去重并限制数量，避免注入超长排序
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		id = secutils.SanitizeForLog(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for i, id := range ids {
+			if err := tx.Model(&types.UtilityMeter{}).
+				Where("id = ? AND tenant_id = ? AND category = ? AND deleted_at IS NULL", id, tenantID, req.Category).
+				Update("sort_order", i).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Errorf(ctx, "sort utility meters failed: %v", err)
+		c.Error(errors.NewInternalServerError("sort meters failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "排序已保存"})
 }
 
 // ---------------------------------------------------------------------------
@@ -1115,8 +1166,9 @@ func timeNowUTC() time.Time {
 	return time.Now().UTC()
 }
 
-// computeMeterItem calculates usage = end - start, amount = usage * unit price + subsidy.
+// computeMeterItem calculates usage = end - start, amount = usage * unit price + 附加费 + subsidy.
 // 分时电表(四时段字段任一非零)按四时段合计计算用量。
+// 水费附加费（垃圾处置费/二次供水费/污水处理费）仅水费子行有值，计入金额；电/气为 0 不影响原计算。
 func computeMeterItem(it *types.UtilityMeterItem, rate float64) {
 	if rate <= 0 {
 		rate = 1
@@ -1129,7 +1181,7 @@ func computeMeterItem(it *types.UtilityMeterItem, rate float64) {
 	} else {
 		it.Usage = round2((it.EndReading - it.StartReading) * rate)
 	}
-	it.Amount = round2(it.Usage*it.UnitPrice + it.Subsidy)
+	it.Amount = round2(it.Usage*it.UnitPrice + it.GarbageFee + it.SecondaryWaterFee + it.SewageFee + it.Subsidy)
 }
 
 // normalizeMeterType 按类别归一化计量层级: 电表 normal|time(默认 normal), 水表 total|sub|fire(默认 sub), 气表 normal。

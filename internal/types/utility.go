@@ -68,6 +68,10 @@ type UtilityMeterItem struct {
 	ValleyPrev  float64 `gorm:"numeric(18,2)" json:"valley_prev"`
 	ValleyCurr  float64 `gorm:"numeric(18,2)" json:"valley_curr"`
 	UnitPrice   float64   `gorm:"numeric(18,2)" json:"unit_price"`
+	// 水费附加费用（仅 category=water 使用；电费/气费为 0）
+	GarbageFee        float64 `gorm:"numeric(18,2)" json:"garbage_fee"`         // 垃圾处置费（默认 13 元/套）
+	SecondaryWaterFee float64 `gorm:"numeric(18,2)" json:"secondary_water_fee"` // 二次供水费
+	SewageFee         float64 `gorm:"numeric(18,2)" json:"sewage_fee"`          // 污水处理费
 	Subsidy     float64   `gorm:"numeric(18,2)" json:"subsidy"` // 补差金额，可正负，计入 amount
 	Usage       float64   `gorm:"numeric(18,2)" json:"usage"`
 	Amount      float64   `gorm:"numeric(18,2)" json:"amount"`
@@ -97,6 +101,7 @@ type UtilityMeter struct {
 	MeterMode        string     `json:"meter_mode"` // auto | manual
 	InstallDate      string     `json:"install_date"`
 	Remark           string     `gorm:"type:text" json:"remark"`
+	SortOrder        int        `json:"sort_order"` // 表计配置拖动排序，越小越靠前
 	Enabled          bool       `json:"enabled"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
