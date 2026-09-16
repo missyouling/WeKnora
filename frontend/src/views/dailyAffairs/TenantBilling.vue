@@ -511,7 +511,7 @@ const COL_DEFS_OWNER: ColDef[] = [
   { key: 'res_fee', label: '电费（定比）', default: false, w: '0.9fr', tip: '账单提取 居民电费(目录电费+政府性基金及附加)' },
   { key: 'dorm_kwh', label: '电量（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的电表 本期用电量汇总' },
   { key: 'dorm_fee', label: '电费（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的电表 本期电费汇总(电量×单价)' },
-  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr', tip: '自来水总表 − 消防 − 星达宿舍 − 持睿宿舍 − 持睿工业' },
+  { key: 'water_ind_usage', label: '用水量（工业）', default: true, w: '1fr', tip: '自来水总表 − 星达宿舍 − 持睿宿舍 − 持睿工业' },
   { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr', tip: '用水量(工业) × 自来水总表单价' },
   { key: 'water_dorm_usage', label: '用水量（宿舍）', default: true, w: '1fr', tip: '用途=宿舍的水表 本期用水量汇总' },
   { key: 'water_dorm_fee', label: '水费（宿舍）', default: true, w: '0.9fr', tip: '用途=宿舍的水表 本期水费汇总(用量×单价)' },
@@ -831,8 +831,8 @@ const buildRows = () => {
       const indPrice = Math.round(priceExact * 10000) / 10000
       // 星达工业电费 = 用电量(工业) × 均价(工业)（用未取整均价计算,列表自洽）
       const indFee = Math.round(indKwh * priceExact * 100) / 100
-      // 星达工业用水量 = 星达自来水总表 - 消防总表 - 星达宿舍 - 持睿宿舍 - 持睿工业
-      const wIndUsage = Math.round((totalMain.usage - wFire.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
+      // 星达工业用水量 = 自来水总表 − 星达宿舍 − 持睿宿舍 − 持睿工业
+      const wIndUsage = Math.round((totalMain.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
       // 星达工业水费 = 工业用水量 × 星达自来水总表单价
       const wIndFee = Math.round((wIndUsage * (totalMain.price || 0)) * 100) / 100
       Object.assign(base, {
