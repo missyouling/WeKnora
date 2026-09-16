@@ -423,11 +423,12 @@
               </div>
             </div>
 
-            <!-- 分组标签:居民 / 工商业(复用租户核算设置标签样式) -->
+            <!-- 分组标签:宿舍 / 工商业 / 自定义用途(仅导航;表格在下方单一渲染,保证拖拽稳定) -->
             <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
-              <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length">
+              <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length" />
+            </t-tabs>
 
-            <div v-if="activeGroupItems.length" ref="meterSortableRef" class="meter-table">
+            <div v-if="activeGroupItems.length" :ref="setMeterSortableRef" class="meter-table">
               <div class="meter-table-head">
                 <span class="meter-drag-th"><t-icon name="move" size="14px" /></span><span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
               </div>
@@ -524,12 +525,10 @@
                   </div>
                 </template>
               </div>
-              <div v-else class="meter-empty">
-                <t-icon name="setting" size="28px" class="meter-empty-icon" />
-                <span class="meter-empty-text">暂无{{ meterLabel }}</span>
-              </div>
-              </t-tab-panel>
-            </t-tabs>
+            <div v-if="!activeGroupItems.length" class="meter-empty">
+              <t-icon name="setting" size="28px" class="meter-empty-icon" />
+              <span class="meter-empty-text">暂无{{ meterLabel }}</span>
+            </div>
           </div>
         </div>
       </t-drawer>
@@ -1695,7 +1694,11 @@ const loadMetersOnly = async () => {
 }
 
 // ---- 表计配置拖动排序（sort_order 持久化） ----
-const meterSortableRef = ref<HTMLElement | null>(null)
+// .meter-table 位于 t-tab-panel 内(懒渲染,同一时刻仅激活面板存在),直接 DOM 查询取当前面板容器
+const meterSortableEl = ref<HTMLElement | null>(null)
+const setMeterSortableRef = (el: any) => {
+  meterSortableEl.value = Array.isArray(el) ? (el[0] || null) : (el || null)
+}
 let sortableInst: any = null
 const sortMetersLocal = () => {
   meters.value = [...meters.value].sort((a: any, b: any) =>
@@ -1703,18 +1706,23 @@ const sortMetersLocal = () => {
     (a.created_at || '').localeCompare(b.created_at || ''))
 }
 const initMeterSortable = () => {
-  if (!meterSortableRef.value) return
+  const el = meterSortableEl.value || document.querySelector('.meter-table') as HTMLElement | null
+  if (!el) return
   if (sortableInst) { sortableInst.destroy(); sortableInst = null }
-  sortableInst = Sortable.create(meterSortableRef.value, {
-    draggable: '.meter-table-row',
-    handle: '.meter-drag-handle',
-    animation: 150,
-    ghostClass: 'meter-row-ghost',
-    onEnd: persistMeterSort,
-  })
+  try {
+    sortableInst = Sortable.create(el, {
+      draggable: '.meter-table-row',
+      handle: '.meter-drag-handle',
+      animation: 150,
+      ghostClass: 'meter-row-ghost',
+      onEnd: persistMeterSort,
+    })
+  } catch (e) {
+    console.error('[Sortable] init failed:', e)
+  }
 }
 const persistMeterSort = async () => {
-  const el = meterSortableRef.value
+  const el = meterSortableEl.value || document.querySelector('.meter-table') as HTMLElement | null
   if (!el) return
   const ids = [...el.querySelectorAll('.meter-table-row')]
     .map(r => r.getAttribute('data-id')).filter(Boolean) as string[]
@@ -1732,7 +1740,14 @@ const persistMeterSort = async () => {
 }
 watch([activeMeterGroup, () => activeGroupItems.value], async () => {
   await nextTick()
-  initMeterSortable()
+  setTimeout(initMeterSortable, 120)
+})
+// 设置抽屉 v-if 懒渲染:打开抽屉后 DOM 才存在,必须重新初始化拖拽
+watch(settingsVisible, async (v) => {
+  if (v) {
+    await nextTick()
+    setTimeout(initMeterSortable, 150)
+  }
 })
 onBeforeUnmount(() => {
   if (sortableInst) { sortableInst.destroy(); sortableInst = null }
@@ -1809,12 +1824,11 @@ const fmtMoney = (v: any) => {
   const n = Number(v) || 0
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
 }
-// 气费单价固定保留 2 位小数（如 3.40）；其它分类沿用 fmtNum
+// 单价统一保留最多三位小数,末尾 0 不显示(如 3.4 / 5.22 / 2.196)
 const fmtUnitPrice = (v: any) => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return ''
-  if (props.category === 'gas') return n.toFixed(2)
-  return fmtNum(n)
+  return String(Math.round(n * 1000) / 1000)
 }
 
 onMounted(() => { load() })
