@@ -291,7 +291,9 @@
             </template>
             <div class="rec-field">
               <label>补差</label>
-              <t-input v-model.number="form.subsidy" type="number" placeholder="补差金额，可为负" />
+              <!-- type=number 会导致负号输入被吞,改文本输入+数字键盘;聚焦全选方便直接覆盖;非法字符由 watch 过滤 -->
+              <t-input v-model="form.subsidy" type="text" inputmode="decimal" placeholder="补差金额，可为负"
+                @focus="(e: any) => { const t = e?.target || e; t?.select?.() }" />
             </div>
             <div class="rec-field" v-if="!isTimeMeter">
               <label>{{ categoryLabel }}（自动计算）</label>
@@ -937,10 +939,19 @@ const emptyForm = (): MeterForm => ({
   startReading: 0, endReading: 0,
   deepPrev: 0, deepCurr: 0, peakPrev: 0, peakCurr: 0,
   flatPrev: 0, flatCurr: 0, valleyPrev: 0, valleyCurr: 0,
-  unitPrice: 0, subsidy: 0, remark: '',
+  unitPrice: 0, subsidy: '', remark: '',
   garbageFee: props.category === 'water' ? 13 : 0, secondaryWaterFee: 0, sewageFee: 0,
 })
 const form = ref<MeterForm>(emptyForm())
+// 补差输入过滤:仅保留数字、负号(仅开头)、小数点(仅一个),直接输入 -0.16 不被吞
+watch(() => form.value.subsidy, (v) => {
+  if (typeof v === 'string' && /[^0-9.\-]/.test(v)) {
+    form.value.subsidy = v.replace(/[^0-9.\-]/g, '')
+  }
+  if (typeof v === 'string' && /(?!^)-|\.\d*\./.test(v)) {
+    form.value.subsidy = v.replace(/(?!^)-/g, '').replace(/(\..*)\./g, '$1')
+  }
+})
 const today = (() => {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, '0')
