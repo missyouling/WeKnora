@@ -515,10 +515,10 @@
         </div>
       </t-drawer>
 
-      <!-- 用途管理:内置三项可改名,支持新增自定义用途 -->
+      <!-- 用途管理:内置 宿舍/工商业 可改名;公租房及其它自定义可删改增 -->
       <t-dialog v-model:visible="kindManageVisible" :header="'用途管理(' + meterLabel + ')'" :footer="false" width="480px">
         <div class="kind-manage-body">
-          <p class="kind-manage-tip">内置用途(宿舍/公租房/工商业)驱动分摊计算,可改名不可删除;自定义用途仅分组展示,不参与租户核算计算。</p>
+          <p class="kind-manage-tip">内置用途(宿舍/工商业)驱动分摊计算,可改名不可删除;公租房及其它自定义用途可删除、可修改、可新增,仅分组展示不参与租户核算计算。</p>
           <div v-for="k in meterKinds" :key="k.value" class="kind-manage-row">
             <t-input :model-value="k.label" size="small" @blur="(e: any) => renameKind(k.value, e.target.value)" @enter="(e: any) => renameKind(k.value, e.target.value)">
               <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
@@ -663,20 +663,23 @@ const filteredMeters = computed(() => {
   return meters.value.filter((m: any) =>
     (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
 })
-// 用途体系:内置 宿舍/公租房/工商业 + 用户自定义(localStorage 持久化)
-// 内置 value 锁定(dorm/public/production 驱动租户核算计算),label 可改名;自定义用途仅分组展示、不参与租户核算计算
+// 用途体系:内置 宿舍/工商业(锁定 value 驱动租户核算计算,label 可改名) + 用户自定义
+// 公租房降为自定义用途(可删除/修改/新增),仅分组展示、不参与租户核算计算
 const KIND_BUILTIN = [
   { value: 'dorm', label: '宿舍', builtin: true },
-  { value: 'public', label: '公租房', builtin: true },
   { value: 'production', label: '工商业', builtin: true },
 ]
 const kindsStoreKey = 'weknora-utility-kinds'
 const loadCustomKinds = (): { value: string; label: string }[] => {
-  try {
-    const arr = JSON.parse(localStorage.getItem(kindsStoreKey) || '[]')
-    if (Array.isArray(arr)) return arr.filter((k: any) => k && k.value && k.label)
-  } catch { /* ignore */ }
-  return []
+  let arr: any[] = []
+  try { arr = JSON.parse(localStorage.getItem(kindsStoreKey) || '[]') } catch { /* ignore */ }
+  if (!Array.isArray(arr)) arr = []
+  const valid = arr.filter((k: any) => k && k.value && k.label && !KIND_BUILTIN.some(b => b.value === k.value))
+  // 兼容旧数据:公租房降为自定义用途,默认预置(可删除)
+  if (!valid.some(k => k.value === 'public')) {
+    valid.unshift({ value: 'public', label: '公租房' })
+  }
+  return valid
 }
 const customKinds = ref<{ value: string; label: string }[]>(loadCustomKinds())
 const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])

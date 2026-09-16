@@ -112,15 +112,6 @@
             <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">清除</t-button>
           </div>
           <div class="batch-bar-actions">
-            <t-popconfirm theme="warning"
-              :content="`确定重新生成所选 ${regeneratableRows.length} 个月度账单吗？将按最新数据覆盖现有账单`"
-              :confirm-btn="{ content: '重新生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="handleRegenerate">
-              <t-button theme="primary" variant="outline" size="small" :disabled="!regeneratableRows.length" :loading="generateBusy" @click.stop>
-                <template #icon><t-icon name="refresh" size="14px" /></template>
-                重新生成
-              </t-button>
-            </t-popconfirm>
             <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" :disabled="!printableRows.length" @click="handlePrint">
               <template #icon><t-icon name="print" size="14px" /></template>
               打印清单
@@ -944,10 +935,6 @@ const clearSelection = () => { selectedKeys.value = new Set() }
 
 // ---- 生成月度账单（仅租户视图） ----
 const generateBusy = ref(false)
-const regeneratableRows = computed(() => {
-  if (isOwnerView.value) return []
-  return selectedRows.value.filter((r: any) => r.hasRec)
-})
 // 星达视图：重新加载账单与表计数据并重新核算；租户视图：对未生成月份生成账单
 const handleGenerateAll = async () => {
   if (isOwnerView.value) {
@@ -991,24 +978,6 @@ const handleGenerateAll = async () => {
     if (okMonths.length) MessagePlugin.success(`已生成 ${okMonths.length} 个月度账单：${okMonths.join('、')}`)
     if (fail.length) MessagePlugin.warning(`以下月份生成失败：${fail.join('；')}`)
     await loadAllData()
-  } finally {
-    generateBusy.value = false
-  }
-}
-// 浮动工具栏：重新生成（覆盖现有账单）
-const handleRegenerate = async () => {
-  if (!activeTenantId.value || !regeneratableRows.value.length) return
-  generateBusy.value = true
-  try {
-    const months = regeneratableRows.value.map((r: any) => r.month)
-    for (const month of months) {
-      await generateBillingRecord(activeTenantId.value, { month })
-    }
-    MessagePlugin.success(`已重新生成 ${months.length} 个月度账单`)
-    clearSelection()
-    await loadAllData()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '重新生成失败')
   } finally {
     generateBusy.value = false
   }
