@@ -590,22 +590,23 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'meter', label: meterLabel.value, default: true, w: '1.2fr', tip: '表计别名' },
   { key: 'start_reading', label: '起度', default: true, w: '0.9fr', tip: '上期止度自动带入' },
   { key: 'end_reading', label: '止度', default: true, w: '0.9fr', tip: '本期抄表读数(须 ≥ 起度)' },
-  { key: 'rate', label: '倍率', default: true, w: '0.7fr', tip: '表计配置倍率(不可修改)' },
+  { key: 'rate', label: '倍率', default: props.category !== 'gas', w: '0.7fr', tip: '表计配置倍率(不可修改)' },
   { key: 'usage', label: usageLabel.value, default: true, w: '1fr', tip: `(止度 − 起度) × 倍率` },
   { key: 'unit_price', label: '单价', default: true, w: '0.9fr', tip: '默认取表计配置单价' },
-  { key: 'subsidy', label: '补差', default: true, w: '0.8fr', tip: '手工填写,可为正负数' },
+  { key: 'subsidy', label: '补差', default: false, w: '0.8fr', tip: '手工填写,可为正负数' },
   { key: 'amount', label: categoryLabel.value, default: true, w: '1fr', tip: `${usageLabel.value} × 单价 + 补差` },
-  { key: 'remark', label: '备注', default: true, w: '2fr', tip: '手工填写' },
-  // 详细字段：抄表信息与表计档案参数
-  { key: 'reading_date', label: '抄表日期', default: false, w: '1fr', tip: '实际抄表日期' },
-  { key: 'reader', label: '抄表人', default: false, w: '1fr', tip: '默认取表计配置管理人员' },
+  { key: 'remark', label: '备注', default: false, w: '2fr', tip: '手工填写' },
+  // 默认显示：抄表信息
+  { key: 'reading_date', label: '抄表日期', default: true, w: '1fr', tip: '实际抄表日期' },
+  { key: 'reader', label: '抄表人', default: true, w: '1fr', tip: '默认取表计配置管理人员' },
+  { key: 'use_unit', label: '使用单位', default: true, w: '1.2fr', tip: '表计使用单位' },
+  { key: 'meter_mode', label: '抄表方式', default: true, w: '0.9fr', tip: '自动抄表/手动抄表' },
+  // 详细字段：表计档案参数
   { key: 'meter_no', label: '表号', default: false, w: '1fr', tip: '表计编号' },
-  { key: 'use_unit', label: '使用单位', default: false, w: '1.2fr', tip: '表计使用单位' },
   { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr', tip: '表计配置单价' },
-  { key: 'meter_mode', label: '抄表方式', default: false, w: '0.9fr', tip: '自动抄表/手动抄表' },
   { key: 'install_date', label: '安装日期', default: false, w: '1.1fr', tip: '表计安装日期' },
 ]
-const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v2`)
+const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v3`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
 const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleKeys.value.includes(c.key)))
 const gridStyle = computed(() => ({

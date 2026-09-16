@@ -1284,12 +1284,14 @@ const totalElecFee = computed(() =>
 const fmtMoney = (v: any): string => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return ''
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const r = Math.round(n * 100) / 100
+  return Number.isInteger(r) ? String(r) : r.toFixed(2)
 }
 const fmtKwh = (v: any): string => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return ''
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+  const r = Math.round(n * 100) / 100
+  return Number.isInteger(r) ? String(r) : String(r)
 }
 const fmtNum = (v: any): string => {
   const n = Number(v)
