@@ -972,6 +972,21 @@ func (h *UtilityHandler) SortUtilityMeters(c *gin.Context) {
 				return err
 			}
 		}
+		// 未参与本次拖动的表计按现有顺序顺延编号,保证 sort_order 全局唯一,
+		// 新增记录下拉/列表与设置分组内的拖动顺序保持一致
+		var others []types.UtilityMeter
+		if err := tx.Where("tenant_id = ? AND category = ? AND deleted_at IS NULL AND id NOT IN ?", tenantID, req.Category, ids).
+			Order("sort_order ASC, created_at ASC").
+			Find(&others).Error; err != nil {
+			return err
+		}
+		for i := range others {
+			if err := tx.Model(&types.UtilityMeter{}).
+				Where("id = ? AND tenant_id = ?", others[i].ID, tenantID).
+				Update("sort_order", len(ids)+i).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

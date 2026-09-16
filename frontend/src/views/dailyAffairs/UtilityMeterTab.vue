@@ -1743,9 +1743,9 @@ const persistMeterSort = async () => {
   if (!ids.length) return
   try {
     await sortUtilityMeters(props.category, ids)
-    const order = new Map(ids.map((id, i) => [id, i]))
-    meters.value = [...meters.value].sort((a: any, b: any) =>
-      (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    // 重新加载表计:后端已把全局 sort_order 重整(未拖动分组顺延),
+    // 保证新增记录下拉顺序与设置分组内顺序一致
+    await loadMetersOnly()
     MessagePlugin.success('排序已保存')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '排序保存失败')
