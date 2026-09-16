@@ -638,6 +638,9 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 			old.ValleyPrev = it.ValleyPrev
 			old.ValleyCurr = it.ValleyCurr
 			old.UnitPrice = it.UnitPrice
+			old.GarbageFee = it.GarbageFee
+			old.SecondaryWaterFee = it.SecondaryWaterFee
+			old.SewageFee = it.SewageFee
 			old.Subsidy = it.Subsidy
 			old.Usage = it.Usage
 			old.Amount = it.Amount
@@ -697,7 +700,9 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 					"peak_prev": it.PeakPrev, "peak_curr": it.PeakCurr,
 					"flat_prev": it.FlatPrev, "flat_curr": it.FlatCurr,
 					"valley_prev": it.ValleyPrev, "valley_curr": it.ValleyCurr,
-					"unit_price": it.UnitPrice, "subsidy": it.Subsidy,
+					"unit_price": it.UnitPrice, "garbage_fee": it.GarbageFee,
+					"secondary_water_fee": it.SecondaryWaterFee, "sewage_fee": it.SewageFee,
+					"subsidy": it.Subsidy,
 					"usage": it.Usage, "amount": it.Amount, "remark": it.Remark,
 					"updated_at": now,
 				}).Error; err != nil {
