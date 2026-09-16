@@ -526,7 +526,7 @@ const COL_DEFS_TENANT: ColDef[] = [
   { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
   { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr', tip: '市电账单本期电量(提取)' },
   { key: 'total_fee', label: '总电费', default: false, w: '1fr', tip: '市电账单本期电费(提取)' },
-  { key: 'ratio', label: '分摊比例', default: false, w: '0.9fr', tip: '星达分表总电量 ÷ 市电账单本期电量' },
+  { key: 'ratio', label: '分摊比例', default: true, w: '0.9fr', tip: '星达分表总电量 ÷ 市电账单本期电量' },
   { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr', tip: '持睿工业分表总电量(星达分表)' },
   { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr', tip: '市电子项按分摊比例折算汇总' },
   { key: 'ind_price', label: '均价（工业）', default: true, w: '0.9fr', tip: '电费(工业) ÷ 用电量(工业)' },
