@@ -523,9 +523,13 @@
             <t-input :model-value="k.label" size="small" @blur="(e: any) => renameKind(k.value, e.target.value)" @enter="(e: any) => renameKind(k.value, e.target.value)">
               <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
             </t-input>
-            <t-button v-if="!k.builtin" variant="text" size="small" @click="removeCustomKind(k.value)">
-              <template #icon><t-icon name="delete" size="15px" /></template>
-            </t-button>
+            <t-popconfirm v-if="!k.builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？删除后该用途的表计将归入未分类分组。`"
+              :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+              @confirm="removeCustomKind(k.value)">
+              <t-button variant="text" size="small" @click.stop>
+                <template #icon><t-icon name="delete" size="15px" /></template>
+              </t-button>
+            </t-popconfirm>
             <span v-else class="kind-builtin-tag">内置</span>
           </div>
           <t-button variant="outline" size="small" block @click="addCustomKind">
@@ -561,7 +565,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
   createUtilityMeterRecord,
@@ -701,19 +705,8 @@ const removeCustomKind = (value: string) => {
     MessagePlugin.warning(`该用途已被 ${used.length} 个表计引用,请先删除或修改这些表计的用途后再删除`)
     return
   }
-  const item = meterKinds.value.find(k => k.value === value)
-  const dlg = DialogPlugin.confirm({
-    header: '删除用途',
-    body: `确定删除用途「${item?.label || value}」吗？删除后该用途的表计将归入未分类分组。`,
-    confirmBtn: { content: '删除', theme: 'danger' },
-    cancelBtn: { content: '取消' },
-    onConfirm: () => {
-      customKinds.value = customKinds.value.filter(k => k.value !== value)
-      persistCustomKinds()
-      dlg.destroy()
-    },
-    onClose: () => dlg.destroy(),
-  })
+  customKinds.value = customKinds.value.filter(k => k.value !== value)
+  persistCustomKinds()
 }
 const renameKind = (value: string, label: string) => {
   const item = meterKinds.value.find(k => k.value === value)
