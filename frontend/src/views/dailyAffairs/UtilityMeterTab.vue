@@ -95,7 +95,7 @@
                 <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
                 <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
                 <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
-                <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtNum(row.default_unit_price) }}</span>
+                <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtUnitPrice(row.default_unit_price) }}</span>
                 <span v-else-if="col.key === 'meter_mode'" class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
                 <span v-else-if="col.key === 'install_date'" class="row-mono">{{ row.install_date || '' }}</span>
                 <span v-else class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
@@ -273,7 +273,7 @@
             <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
               <label>单价 <span class="required">*</span></label>
               <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
-              <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtNum(currentMeter?.default_unit_price) }} 不同</p>
+              <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtUnitPrice(currentMeter?.default_unit_price) }} 不同</p>
             </div>
             <template v-if="props.category === 'water'">
               <div class="rec-field">
@@ -439,7 +439,7 @@
                   <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
                   <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
                   <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
-                  <span class="mtr-mono">{{ fmtNum(m.default_unit_price) }} 元/{{ unitLabel }}</span>
+                  <span class="mtr-mono">{{ fmtUnitPrice(m.default_unit_price) }} 元/{{ unitLabel }}</span>
                   <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
                   <span class="mtr-switch" @click.stop>
                     <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
@@ -617,7 +617,7 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'end_reading', label: '止度', default: true, w: '0.9fr', tip: '本期抄表读数(须 ≥ 起度)' },
   { key: 'rate', label: '倍率', default: props.category !== 'gas', w: '0.7fr', tip: '表计配置倍率(不可修改)' },
   { key: 'usage', label: usageLabel.value, default: true, w: '1fr', tip: `(止度 − 起度) × 倍率` },
-  { key: 'unit_price', label: '单价', default: true, w: '0.9fr', tip: '默认取表计配置单价' },
+  { key: 'unit_price', label: '单价', default: true, w: '1.2fr', tip: '默认取表计配置单价(最多三位小数)' },
   // 水费附加费用（仅水费；电费/气费无此列）
   { key: 'garbage_fee', label: '垃圾处置费', default: false, w: '0.9fr', tip: '水费附加,新增默认 13 元/套', only: 'water' },
   { key: 'secondary_water_fee', label: '二次供水费', default: false, w: '0.9fr', tip: '水费附加,手工填写', only: 'water' },
@@ -1473,7 +1473,7 @@ const catalogValueOf = (r: any, key: string): string => {
     case 'end_reading': return fmtNum(r.end_reading)
     case 'rate': return fmtNum(r.rate)
     case 'usage': return `${fmtNum(r.usage)} ${unitLabel.value}`
-    case 'unit_price': return fmtNum(r.unit_price)
+    case 'unit_price': return fmtUnitPrice(r.unit_price)
     case 'subsidy': return r.subsidy === '' || r.subsidy == null ? '' : fmtMoney(r.subsidy)
     case 'amount': return `${fmtMoney(r.amount)} 元`
     case 'reading_date': return r.reading_date || ''
