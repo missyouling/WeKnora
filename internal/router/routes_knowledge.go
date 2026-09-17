@@ -344,6 +344,35 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	}
 }
 
+// RegisterFleetRoutes 车队管理：车辆/驾驶员/油卡配置与 8 类记录（维保/加油/车险/轮胎/辅材/违章/请车/通行费）CRUD。
+func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	fl := g.apiKeyGroup(r.Group("/fleet"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		fl.GET("/vehicles", g.Viewer(), handler.ListFleetVehicles)
+		fl.POST("/vehicles", g.Contributor(), handler.CreateFleetVehicle)
+		fl.PUT("/vehicles/sort", g.Contributor(), handler.SortFleetVehicles)
+		fl.PUT("/vehicles/:id", g.Contributor(), handler.UpdateFleetVehicle)
+		fl.DELETE("/vehicles/:id", g.Contributor(), handler.DeleteFleetVehicle)
+		fl.GET("/drivers", g.Viewer(), handler.ListFleetDrivers)
+		fl.POST("/drivers", g.Contributor(), handler.CreateFleetDriver)
+		fl.PUT("/drivers/sort", g.Contributor(), handler.SortFleetDrivers)
+		fl.PUT("/drivers/:id", g.Contributor(), handler.UpdateFleetDriver)
+		fl.DELETE("/drivers/:id", g.Contributor(), handler.DeleteFleetDriver)
+		fl.GET("/fuel-cards", g.Viewer(), handler.ListFleetFuelCards)
+		fl.POST("/fuel-cards", g.Contributor(), handler.CreateFleetFuelCard)
+		fl.PUT("/fuel-cards/:id", g.Contributor(), handler.UpdateFleetFuelCard)
+		fl.DELETE("/fuel-cards/:id", g.Contributor(), handler.DeleteFleetFuelCard)
+		fl.GET("/records", g.Viewer(), handler.ListFleetRecords)
+		fl.POST("/records", g.Contributor(), handler.CreateFleetRecord)
+		fl.PUT("/records/:id", g.Contributor(), handler.UpdateFleetRecord)
+		fl.DELETE("/records/:id", g.Contributor(), handler.DeleteFleetRecord)
+		fl.GET("/summary", g.Viewer(), handler.GetFleetSummary)
+	}
+}
+
 // RegisterBillingRoutes 租户费用核算：租户/分时电表/月度账单（电费比例分摊+宿舍定额+水费）。
 func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, g *rbacGuards) {
 	if handler == nil {

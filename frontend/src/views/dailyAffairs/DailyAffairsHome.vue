@@ -94,8 +94,8 @@
           </div>
         </div>
 
-        <!-- 车队管理（占位） -->
-        <div class="da-card da-card--placeholder" @click="onPlaceholder('车队管理')">
+        <!-- 车队管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goFleet">
           <div class="da-card-icon da-card-icon--fleet">
             <t-icon name="vehicle" size="24px" />
           </div>
@@ -105,7 +105,7 @@
             </div>
             <p class="da-card-desc">车辆信息、维保、油卡与驾驶员台账管理</p>
             <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
+              <span class="da-card-link">进入管理</span>
               <t-icon name="chevron-right" size="16px" />
             </div>
           </div>
@@ -173,6 +173,10 @@ const goAwardPunish = () => {
 
 const goUtilities = () => {
   router.push('/platform/daily-affairs/utilities')
+}
+
+const goFleet = () => {
+  router.push('/platform/daily-affairs/fleet')
 }
 
 const onPlaceholder = (name: string) => {
