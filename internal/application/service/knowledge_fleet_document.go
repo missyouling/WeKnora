@@ -158,6 +158,20 @@ func fleetDocSystemPrompt(scope, certType string, fieldNames []string) string {
 	return sb.String()
 }
 
+// normalizeExtractionFields 兜底兼容模型把 JSON Schema 当模板输出的情况：
+// fields 内直接嵌 properties/required/type 包装时，从 properties 取真实字段值。
+func normalizeExtractionFields(fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return fields
+	}
+	if _, hasProps := fields["properties"]; hasProps {
+		if props, ok := fields["properties"].(map[string]any); ok && len(props) > 0 {
+			return props
+		}
+	}
+	return fields
+}
+
 // tryParseFleetDocJSON 尝试解析模型输出。
 func tryParseFleetDocJSON(raw string, parsed *FleetDocumentExtractionResult) bool {
 	cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(raw)
@@ -170,6 +184,7 @@ func tryParseFleetDocJSON(raw string, parsed *FleetDocumentExtractionResult) boo
 	if parsed.Fields == nil {
 		parsed.Fields = map[string]any{}
 	}
+	parsed.Fields = normalizeExtractionFields(parsed.Fields)
 	return true
 }
 

@@ -88,6 +88,8 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 		return r.Replace(cfg.PromptTemplate)
 	}
 
+	// 默认模式：fields 直接输出键值对骨架（严禁输出 schema 包装 properties/required/type），
+	// 避免模型把 JSON Schema 当模板、把值嵌套进 properties 导致解析不到。
 	var sb strings.Builder
 	sb.WriteString("你是一个档案信息提取助手。本文件证照类型已确定为「")
 	sb.WriteString(certType)
@@ -96,8 +98,19 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	sb.WriteString(kind)
 	sb.WriteString("\",\n  \"doc_type\": \"")
 	sb.WriteString(certType)
-	sb.WriteString("\",\n  \"vehicle_no\": \"车牌号（如没有则空字符串）\",\n  \"fields\": ")
-	sb.WriteString(schema)
+	sb.WriteString("\",\n  \"vehicle_no\": \"车牌号（如没有则空字符串）\",\n  \"fields\": {\n")
+	firstField := true
+	for _, f := range cfg.Fields {
+		if !f.Enabled || strings.TrimSpace(f.Name) == "" {
+			continue
+		}
+		if !firstField {
+			sb.WriteString(",\n")
+		}
+		firstField = false
+		sb.WriteString("    \"" + strings.TrimSpace(f.Name) + "\": \"…\"")
+	}
+	sb.WriteString("\n  }\n}")
 	if len(cfg.Fields) > 0 {
 		sb.WriteString("\n字段说明：\n")
 		for _, f := range cfg.Fields {
@@ -117,6 +130,7 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	sb.WriteString("注意：doc_type 必须严格等于「")
 	sb.WriteString(certType)
 	sb.WriteString("」，严禁修改为其它类型。")
+	sb.WriteString("fields 必须直接输出上面列出的字段名作为键的键值对，严禁再嵌套 properties/required/type 等 schema 包装结构。")
 	sb.WriteString("只提取上面 fields 中列出的字段：文档中真实出现的填值，未出现的内容填空字符串（数组填 []、数字填 0），不要输出未列出的额外字段。")
 	sb.WriteString("必须严格执行每个字段的「规则」：文档中出现规则中列举的同类表述时，统一归入该字段。")
 	return sb.String()
