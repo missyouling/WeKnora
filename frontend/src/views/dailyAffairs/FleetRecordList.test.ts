@@ -28,5 +28,13 @@ test('多文件同时进行时轮播展示：3 秒切换，单任务停止轮播
 })
 
 test('页面卸载时清理轮播定时器', () => {
-  assert.match(list, /stopPolling\(\); stopProgressTimer\(\)/)
+  assert.match(list, /stopPolling\(\)/)
+  assert.match(list, /stopProgressTimer\(\)/)
+})
+
+test('设置抽屉变更分类后同步刷新：监听全局事件重载分类，卸载时移除', () => {
+  assert.match(list, /addEventListener\('fleet-categories-changed', onCategoriesChanged\)/)
+  assert.match(list, /removeEventListener\('fleet-categories-changed', onCategoriesChanged\)/)
+  assert.match(list, /async function reloadCategories\(\)/)
+  assert.match(list, /function onCategoriesChanged\(\)/)
 })

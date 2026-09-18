@@ -844,15 +844,25 @@ async function loadBase() {
     const f = TYPES['fuel-charge']?.fields.find((x: any) => x.key === 'card_id')
     if (f) f.options = cards.value.map((c: any) => ({ label: c.card_no || c.alias, value: c.id }))
     if (isArchive.value) {
-      const [crv, crd, crm] = await Promise.all([
-        listFleetCategories({ scope: 'vehicle' }),
-        listFleetCategories({ scope: 'driver' }),
-        listFleetCategories({ scope: 'maintain' }),
-      ])
-      categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
+      await reloadCategories()
     }
   } catch { /* ignore */ }
 }
+
+// 只重载证照分类（上传弹窗类型选项、证照类型筛选框依赖 categories）
+async function reloadCategories() {
+  if (!isArchive.value) return
+  try {
+    const [crv, crd, crm] = await Promise.all([
+      listFleetCategories({ scope: 'vehicle' }),
+      listFleetCategories({ scope: 'driver' }),
+      listFleetCategories({ scope: 'maintain' }),
+    ])
+    categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
+  } catch { /* ignore */ }
+}
+// 设置抽屉（证照配置/提取规则）变更分类后同步刷新
+function onCategoriesChanged() { void reloadCategories() }
 
 async function loadRecords() {
   loading.value = true
@@ -948,8 +958,13 @@ onMounted(async () => {
   await Promise.all([loadBase(), ensureKb()])
   loadRecords()
   startPolling()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
-onBeforeUnmount(() => { stopPolling(); stopProgressTimer() })
+onBeforeUnmount(() => {
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+  stopPolling()
+  stopProgressTimer()
+})
 
 // ---------------------------------------------------------------------------
 // 列定义与字段选择器

@@ -29,6 +29,11 @@ test('上传任务携带所选证照类型：提取请求带 cert_type', () => {
   assert.match(dialog, /cert_type: certType/)
 })
 
+test('证照类型选项响应式：computed 依赖 props.typeOptions，分类加载/变更后实时更新（非一次性快照）', () => {
+  assert.match(dialog, /const typeOptions = computed\(/)
+  assert.match(dialog, /props\.typeOptions && props\.typeOptions\.length/)
+})
+
 test('任务进度实时上报：深度监听任务列表，emit progress 携带进行中任务', () => {
   assert.match(dialog, /\(e: 'progress', items: UploadProgressItem\[\]\)/)
   assert.match(dialog, /watch\(tasks, \(list\) => \{/)

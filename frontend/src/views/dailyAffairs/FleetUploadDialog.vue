@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata, listKnowledgeFiles } from '@/api/knowledge-base'
 
@@ -100,11 +100,9 @@ const dragOver = ref(false)
 const tasks = ref<UpTask[]>([])
 let taskSeq = 0
 
-const typeOptions = computedTypeOptions()
-
-function computedTypeOptions() {
-  return props.typeOptions && props.typeOptions.length ? props.typeOptions : []
-}
+// 证照类型选项必须响应式：父组件 uploadTypeOptions 随分类加载/设置变更更新，
+// 若用一次性求值会冻结为初始快照（分类尚未加载时只有内置类型，自定义类型缺失）
+const typeOptions = computed(() => (props.typeOptions && props.typeOptions.length ? props.typeOptions : []))
 
 // ---- 实时进度上报：任务状态/进度变化时把进行中的任务推给父组件工具栏 ----
 function emitProgress() {

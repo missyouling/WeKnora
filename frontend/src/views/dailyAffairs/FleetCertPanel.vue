@@ -265,10 +265,16 @@ async function onDrop(i: number) {
   try {
     await sortFleetCategories(group.value.scope, ids)
     MessagePlugin.success('顺序已保存')
+    notifyCategoriesChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '排序保存失败')
     load()
   }
+}
+
+// 分类变更后通知列表页刷新证照类型选项（上传弹窗 / 筛选框依赖 categories）
+function notifyCategoriesChanged() {
+  window.dispatchEvent(new CustomEvent('fleet-categories-changed'))
 }
 
 async function load() {
@@ -337,6 +343,7 @@ async function commitAdd() {
       categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
       addVisible.value = false
       MessagePlugin.success('证照类型已创建')
+      notifyCategoriesChanged()
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '创建失败')
@@ -393,6 +400,7 @@ async function commitEdit() {
       if (created?.id) {
         categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
         MessagePlugin.success('证照类型已创建')
+        notifyCategoriesChanged()
       }
     } else {
       await updateFleetCategory(item.id, { name, subs, enabled: item.enabled })
@@ -400,6 +408,7 @@ async function commitEdit() {
       const idx = list.findIndex((c: any) => c.id === item.id)
       if (idx >= 0) list[idx] = { ...list[idx], name, subs }
       MessagePlugin.success('已保存')
+      notifyCategoriesChanged()
     }
     editingId.value = ''
   } catch (e: any) {
@@ -417,7 +426,10 @@ async function toggleEnabled(item: any, v: boolean) {
       try {
         const res = await createFleetCategory({ scope: group.value.scope, name: item.name, subs: [] })
         const created = res.data || res
-        if (created?.id) categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
+        if (created?.id) {
+          categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
+          notifyCategoriesChanged()
+        }
       } catch { MessagePlugin.error('启用失败') }
     }
     return
@@ -427,6 +439,7 @@ async function toggleEnabled(item: any, v: boolean) {
     const list = categories.value[group.value.scope]
     const idx = list.findIndex((c: any) => c.id === item.id)
     if (idx >= 0) list[idx] = { ...list[idx], enabled: v }
+    notifyCategoriesChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   }
@@ -439,6 +452,7 @@ async function removeItem(item: any) {
     categories.value[group.value.scope] = (categories.value[group.value.scope] || []).filter((c: any) => c.id !== item.id)
     if (editingId.value === item.id) editingId.value = ''
     MessagePlugin.success('已删除')
+    notifyCategoriesChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
   }
