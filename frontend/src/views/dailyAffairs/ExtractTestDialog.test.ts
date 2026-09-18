@@ -8,8 +8,8 @@ const resultPanel = readFileSync(new URL('./TestResultPanel.vue', import.meta.ur
 
 test('测试弹窗为 80% 宽度并采用左右 5/12 + 7/12 分栏', () => {
   assert.match(dialog, /:width="'80%'"/)
-  assert.match(dialog, /<t-col :span="10">/)
-  assert.match(dialog, /<t-col :span="14">/)
+  assert.match(dialog, /<t-col :span="10" class="col-left">/)
+  assert.match(dialog, /<t-col :span="14" class="col-right">/)
 })
 
 test('左侧输入面板提供粘贴文本 / 选择知识库文件两种输入方式', () => {
@@ -47,11 +47,11 @@ test('测试期间禁用输入与操作按钮，完成后可保存', () => {
   assert.match(dialog, /saveExtractConfig/)
 })
 
-test('右侧结果面板：初始空态、测试中 loading、成功/失败 alert', () => {
+test('右侧结果面板：初始空态、测试中 loading、成功/失败 alert（简洁文案）', () => {
   assert.match(resultPanel, /t-empty/)
   assert.match(resultPanel, /t-loading/)
   assert.match(resultPanel, /t-alert v-if="error" theme="error"/)
-  assert.match(resultPanel, /theme="success" message="提取完成/)
+  assert.match(resultPanel, /theme="success" message="提取完成"/)
 })
 
 test('字段映射表三列：字段名称 / 提取结果 / 状态，状态三态标签', () => {
@@ -62,6 +62,18 @@ test('字段映射表三列：字段名称 / 提取结果 / 状态，状态三�
   assert.match(resultPanel, /未提取到/)
   assert.match(resultPanel, /格式异常/)
   assert.match(resultPanel, /theme: statusTheme\(row.status\)/)
+})
+
+test('字段名称与状态列宽固定，结果列自适应省略，表头不换行', () => {
+  assert.match(resultPanel, /colKey: 'name', title: '字段名称', width: 130/)
+  assert.match(resultPanel, /title: '状态',\s*\n\s*width: 96/)
+  assert.match(resultPanel, /white-space: nowrap/)
+  assert.match(resultPanel, /text-overflow: ellipsis/)
+})
+
+test('左侧输入面板限高并内部滚动，避免挤压右侧表格', () => {
+  assert.match(inputPanel, /max-height: 540px/)
+  assert.match(inputPanel, /overflow-y: auto/)
 })
 
 test('提供原始 JSON 与实际 Prompt 折叠面板，等宽只读展示', () => {

@@ -2,15 +2,14 @@
   <t-dialog :visible="visible" header="测试规则" :width="'80%'" :close-on-overlay-click="false" :footer="false"
     @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
     <div class="extract-test-layout">
+      <!-- 左 5/12：输入与原文预览（限高内滚）；右 7/12：提取结果 -->
       <t-row :gutter="24">
-        <!-- 左 5/12：输入与原文预览 -->
-        <t-col :span="10">
+        <t-col :span="10" class="col-left">
           <TestInputPanel v-model:source-mode="sourceMode" v-model:text="text" v-model:knowledge-id="knowledgeId"
             :files="files" :loading-files="loadingFiles" :original-text="originalText" :original-status="originalStatus"
             :disabled="testing" @reload-files="loadFiles" />
         </t-col>
-        <!-- 右 7/12：提取结果白盒 -->
-        <t-col :span="14">
+        <t-col :span="14" class="col-right">
           <TestResultPanel :testing="testing" :error="error" :success="success" :result="result" :fields="props.fields"
             :prompt-preview="previewPrompt" />
         </t-col>
@@ -225,14 +224,19 @@ watch(
 
 <style lang="less" scoped>
 .extract-test-layout {
-  min-height: 420px;
+  min-height: 400px;
+  /* 左列限高，内部滚动；右列与左列对齐等高 */
+  :deep(.col-left),
+  :deep(.col-right) {
+    height: 100%;
+  }
 }
 .test-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding-top: 16px;
+  padding-top: 14px;
   border-top: 1px solid var(--td-component-stroke);
-  margin-top: 16px;
+  margin-top: 14px;
 }
 </style>

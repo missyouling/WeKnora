@@ -3,7 +3,7 @@
     <!-- 输入方式 -->
     <t-tabs v-model="innerMode" class="input-tabs">
       <t-tab-panel value="text" label="粘贴文本">
-        <t-textarea v-model="innerText" class="input-area" :autosize="{ minRows: 8, maxRows: 14 }"
+        <t-textarea v-model="innerText" class="input-area" :autosize="{ minRows: 6, maxRows: 10 }"
           :disabled="disabled" placeholder="粘贴要测试的文档内容（VLM 识别出的原文或手工文本）" />
       </t-tab-panel>
       <t-tab-panel value="file" label="选择知识库文件">
@@ -29,7 +29,7 @@
         <t-tag v-else-if="originalStatus === 'empty'" size="small" theme="default" variant="light-outline">无可用原文</t-tag>
         <t-tag v-else size="small" theme="default" variant="light-outline">待选择</t-tag>
       </div>
-      <t-textarea :model-value="originalText" class="original-area" readonly :autosize="{ minRows: 5, maxRows: 12 }"
+      <t-textarea :model-value="originalText" class="original-area" readonly :autosize="{ minRows: 4, maxRows: 8 }"
         placeholder="选择知识库文件后，此处展示 VLM 识别出的原始文本内容" />
     </div>
   </div>
@@ -76,12 +76,15 @@ const fileOptions = computed(() =>
 .test-input-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
+  gap: 12px;
+  /* 限制最大高度，内部滚动，避免挤压右侧表格 */
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 .input-tabs {
   :deep(.t-tabs__nav) {
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
 }
 .input-area {
@@ -104,6 +107,7 @@ const fileOptions = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: none;
   .original-head {
     display: flex;
     align-items: center;

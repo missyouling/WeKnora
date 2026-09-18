@@ -10,16 +10,16 @@
 
     <!-- 测试完成 -->
     <template v-else>
-      <!-- 结果提示 -->
+      <!-- 结果提示：简洁一行 -->
       <t-alert v-if="error" theme="error" :message="error" close />
-      <t-alert v-else-if="result" theme="success" message="提取完成，以下为字段级映射结果（可对照配置字段校验）" close />
+      <t-alert v-else-if="result" theme="success" message="提取完成" close />
 
       <template v-if="result">
-        <!-- 字段映射表 -->
+        <!-- 字段映射表：字段名称/状态列宽固定，结果列自适应省略 -->
         <div class="table-card">
           <div class="table-head">
-            <span class="table-title">字段映射（共 {{ rows.length }} 个启用字段，命中 {{ hitCount }} 个）</span>
-            <span class="doc-type">证照类型：{{ result.doc_type || '-' }}</span>
+            <span class="table-title">字段映射（命中 {{ hitCount }}/{{ rows.length }}）</span>
+            <span class="doc-type">{{ result.doc_type || '-' }}</span>
           </div>
           <t-table :data="rows" :columns="columns" row-key="name" size="small" :bordered="false"
             :hover="true" table-layout="fixed" :pagination="null" :max-height="300" />
@@ -64,12 +64,12 @@ interface FieldRow {
 }
 
 const columns = computed(() => [
-  { colKey: 'name', title: '字段名称', width: 140, ellipsis: true },
+  { colKey: 'name', title: '字段名称', width: 130, ellipsis: true },
   { colKey: 'valueText', title: '提取结果', ellipsis: true },
   {
     colKey: 'status',
     title: '状态',
-    width: 110,
+    width: 96,
     align: 'center' as const,
     cell: (h: any, { row }: any) =>
       h('span', {}, [
@@ -131,7 +131,7 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
   min-height: 380px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   :deep(.t-loading) {
     border-radius: 6px;
   }
@@ -147,17 +147,29 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
+    gap: 12px;
+    padding: 7px 12px;
     background: var(--td-bg-color-container);
     border-bottom: 1px solid var(--td-component-stroke);
     .table-title {
       font-size: 13px;
       font-weight: 500;
+      white-space: nowrap;
     }
     .doc-type {
       font-size: 12px;
       color: var(--td-text-color-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+  }
+  /* 固定列宽：字段名称/状态不随内容挤压换行 */
+  :deep(.t-table__th-cell-content),
+  :deep(.t-table__td-cell) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 .detail-block {
@@ -165,7 +177,7 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
   border-radius: 6px;
   overflow: hidden;
   :deep(.t-collapse-panel__content) {
-    padding: 4px 12px 12px;
+    padding: 4px 12px 10px;
   }
 }
 .mono-area {
