@@ -69,6 +69,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 	// ingest 能力才能写内容，且仍受 KB 范围限制；清空 KB 只允许 full-access key。
 	kb := g.apiKeyGroup(r.Group("/knowledge-bases/:id/knowledge"), apiKeyIngest(apiKeyFullAccess()))
 	kbRead := kb.With(apiKeyRetrieve(apiKeyFullAccess()))
+	// 可配置提取规则（知识库级配置，独立路由组）
+	kbCfg := g.apiKeyGroup(r.Group("/knowledge-bases/:id/extract-config"), apiKeyIngest(apiKeyFullAccess()))
+	kbCfgRead := kbCfg.With(apiKeyRetrieve(apiKeyFullAccess()))
 	{
 		kb.POST("/file", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromFile)
 		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
@@ -90,6 +93,12 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractUtilityBill)
 		// 光伏账单字段提取 — 与发票提取同权限矩阵（写操作，与电费共库）
 		kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractSolarBill)
+		kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractFleetDocument)
+
+		// 可配置字段提取规则：GET 读取、POST 保存（版本化）、POST /test 沙箱测试
+		kbCfgRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.GetExtractConfig)
+		kbCfg.POST("", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.SaveExtractConfig)
+		kbCfg.POST("/test", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.TestExtractConfig)
 		// 按页重新提取合同 — 与 extract-contract 同权限矩阵（写操作）
 		kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.ExtractContractPage)
 		// 按页删除合同记录 — 与 extract-contract 同权限矩阵（写操作）
@@ -322,6 +331,10 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	{
 		ut.GET("/field-configs", g.Viewer(), handler.ListUtilityFieldConfigs)
 		ut.POST("/field-configs", g.Contributor(), handler.SaveUtilityFieldConfigs)
+		ut.GET("/kinds", g.Viewer(), handler.ListUtilityKinds)
+		ut.POST("/kinds", g.Contributor(), handler.CreateUtilityKind)
+		ut.PUT("/kinds/:id", g.Contributor(), handler.UpdateUtilityKind)
+		ut.DELETE("/kinds/:id", g.Contributor(), handler.DeleteUtilityKind)
 		ut.GET("/basic-accounts", g.Viewer(), handler.ListUtilityBasicAccounts)
 		ut.POST("/basic-accounts", g.Contributor(), handler.CreateUtilityBasicAccount)
 		ut.PUT("/basic-accounts/:id", g.Contributor(), handler.UpdateUtilityBasicAccount)
@@ -344,7 +357,7 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	}
 }
 
-// RegisterFleetRoutes 车队管理：车辆/驾驶员/油卡配置与 8 类记录（维保/加油/车险/轮胎/辅材/违章/请车/通行费）CRUD。
+// RegisterFleetRoutes 车队管理：车辆/驾驶员/油卡配置、档案分类/供应商/ETC、各类型记录 CRUD 与费用汇总。
 func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *rbacGuards) {
 	if handler == nil {
 		return
@@ -370,6 +383,19 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 		fl.PUT("/records/:id", g.Contributor(), handler.UpdateFleetRecord)
 		fl.DELETE("/records/:id", g.Contributor(), handler.DeleteFleetRecord)
 		fl.GET("/summary", g.Viewer(), handler.GetFleetSummary)
+		fl.GET("/categories", g.Viewer(), handler.ListFleetCategories)
+		fl.POST("/categories", g.Contributor(), handler.CreateFleetCategory)
+		fl.PUT("/categories/sort", g.Contributor(), handler.SortFleetCategories)
+		fl.PUT("/categories/:id", g.Contributor(), handler.UpdateFleetCategory)
+		fl.DELETE("/categories/:id", g.Contributor(), handler.DeleteFleetCategory)
+		fl.GET("/suppliers", g.Viewer(), handler.ListFleetSuppliers)
+		fl.POST("/suppliers", g.Contributor(), handler.CreateFleetSupplier)
+		fl.PUT("/suppliers/:id", g.Contributor(), handler.UpdateFleetSupplier)
+		fl.DELETE("/suppliers/:id", g.Contributor(), handler.DeleteFleetSupplier)
+		fl.GET("/etc-cards", g.Viewer(), handler.ListFleetETCCards)
+		fl.POST("/etc-cards", g.Contributor(), handler.CreateFleetETCCard)
+		fl.PUT("/etc-cards/:id", g.Contributor(), handler.UpdateFleetETCCard)
+		fl.DELETE("/etc-cards/:id", g.Contributor(), handler.DeleteFleetETCCard)
 	}
 }
 
