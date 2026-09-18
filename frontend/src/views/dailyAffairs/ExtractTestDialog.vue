@@ -1,5 +1,5 @@
 <template>
-  <t-dialog :visible="visible" header="测试规则" :width="'72%'" :close-on-overlay-click="false" :footer="false"
+  <t-dialog :visible="visible" header="测试规则" :width="'62%'" :close-on-overlay-click="false" :footer="false"
     :attach="'body'" @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
     <div class="extract-test-layout">
       <!-- 左 5/12：输入与原文预览（限高内滚）；右 7/12：提取结果 -->
@@ -249,6 +249,7 @@ watch(
 <style lang="less" scoped>
 .extract-test-layout {
   min-height: 400px;
+  overflow-x: hidden;
   /* 左列限高，内部滚动；右列与左列对齐等高 */
   :deep(.col-left),
   :deep(.col-right) {
@@ -260,7 +261,6 @@ watch(
   justify-content: flex-end;
   gap: 8px;
   padding-top: 14px;
-  border-top: 1px solid var(--td-component-stroke);
   margin-top: 14px;
 }
 </style>

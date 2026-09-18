@@ -10,31 +10,42 @@
 
     <!-- 测试完成 -->
     <template v-else>
-      <!-- 结果提示：简洁一行 -->
-      <t-alert v-if="error" theme="error" :message="error" close />
-      <t-alert v-else-if="result" theme="success" message="提取完成" close />
+      <!-- 结果提示：几秒后自动关闭 -->
+      <t-alert v-if="alertVisible && error" theme="error" :message="error" close @close="alertVisible = false" />
+      <t-alert v-else-if="alertVisible && result" theme="success" message="提取完成" close @close="alertVisible = false" />
 
       <template v-if="result">
-        <!-- 字段映射表：字段名称/状态列宽固定，结果列自适应省略 -->
-        <div class="table-card">
-          <div class="table-head">
-            <span class="table-title">字段映射（命中 {{ hitCount }}/{{ rows.length }}）</span>
-            <span class="doc-type">{{ result.doc_type || '-' }}</span>
+        <!-- 手风琴折叠：字段映射 / 原始 JSON / 实际 Prompt，窗口高度固定、面板内垂直滚动 -->
+        <div class="accordion-block">
+          <div class="acc-panel" :class="{ 'acc-open': activePanels[0] === 'map' }">
+            <div class="acc-head" @click="togglePanel('map')">
+              <t-icon :name="activePanels[0] === 'map' ? 'chevron-down' : 'chevron-right'" class="acc-icon" />
+              <span class="acc-title">字段映射（命中 {{ hitCount }}/{{ rows.length }}）</span>
+              <span class="acc-doc-type">{{ result.doc_type || '-' }}</span>
+            </div>
+            <div v-show="activePanels[0] === 'map'" class="acc-body">
+              <t-table :data="rows" :columns="columns" row-key="name" size="small" :bordered="false"
+                :hover="true" table-layout="fixed" :pagination="null" />
+            </div>
           </div>
-          <t-table :data="rows" :columns="columns" row-key="name" size="small" :bordered="false"
-            :hover="true" table-layout="fixed" :pagination="null" :max-height="300" />
-        </div>
-
-        <!-- 原始 JSON + 实际 Prompt -->
-        <div class="detail-block">
-          <t-collapse v-model="activePanels" :borderless="true">
-            <t-collapse-panel value="json" header="原始 JSON（模型返回）">
-              <t-textarea :model-value="rawJson" readonly class="mono-area" :autosize="{ minRows: 4, maxRows: 10 }" />
-            </t-collapse-panel>
-            <t-collapse-panel value="prompt" header="实际 Prompt（发送给大模型的完整文本）">
-              <t-textarea :model-value="promptPreview" readonly class="mono-area" :autosize="{ minRows: 8, maxRows: 16 }" />
-            </t-collapse-panel>
-          </t-collapse>
+          <div class="acc-panel" :class="{ 'acc-open': activePanels[0] === 'json' }">
+            <div class="acc-head" @click="togglePanel('json')">
+              <t-icon :name="activePanels[0] === 'json' ? 'chevron-down' : 'chevron-right'" class="acc-icon" />
+              <span class="acc-title">原始 JSON（模型返回）</span>
+            </div>
+            <div v-show="activePanels[0] === 'json'" class="acc-body">
+              <t-textarea :model-value="rawJson" readonly class="mono-area" :autosize="{ minRows: 4, maxRows: 12 }" />
+            </div>
+          </div>
+          <div class="acc-panel" :class="{ 'acc-open': activePanels[0] === 'prompt' }">
+            <div class="acc-head" @click="togglePanel('prompt')">
+              <t-icon :name="activePanels[0] === 'prompt' ? 'chevron-down' : 'chevron-right'" class="acc-icon" />
+              <span class="acc-title">实际 Prompt（发送给大模型的完整文本）</span>
+            </div>
+            <div v-show="activePanels[0] === 'prompt'" class="acc-body">
+              <t-textarea :model-value="promptPreview" readonly class="mono-area" :autosize="{ minRows: 8, maxRows: 18 }" />
+            </div>
+          </div>
         </div>
       </template>
     </template>
@@ -42,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import type { ExtractFieldConfig } from '@/api/fleet'
 
 const props = defineProps<{
@@ -54,7 +65,30 @@ const props = defineProps<{
   promptPreview: string
 }>()
 
-const activePanels = ref<string[]>([])
+// 手风琴：默认展开字段映射，同一时间只展开一个面板（自实现，避免 TDesign collapse 受控模式不稳定）
+const activePanels = ref<string[]>(['map'])
+function togglePanel(v: string) {
+  activePanels.value = activePanels.value[0] === v ? [] : [v]
+}
+
+// 结果提示自动关闭：测试完成数秒后隐藏
+const alertVisible = ref(false)
+let alertTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => [props.success, props.error],
+  () => {
+    if (props.success || props.error) {
+      alertVisible.value = true
+      if (alertTimer) clearTimeout(alertTimer)
+      alertTimer = setTimeout(() => {
+        alertVisible.value = false
+      }, 4000)
+    }
+  },
+)
+onBeforeUnmount(() => {
+  if (alertTimer) clearTimeout(alertTimer)
+})
 
 type RowStatus = 'ok' | 'missing' | 'format'
 interface FieldRow {
@@ -129,6 +163,11 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
 <style lang="less" scoped>
 .test-result-panel {
   min-height: 380px;
+  /* 窗口高度固定：面板内垂直滚动，不改变弹窗整体高度，避免底部横向滚动条 */
+  max-height: 460px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -139,45 +178,56 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
 .loading-placeholder {
   height: 380px;
 }
-.table-card {
+.accordion-block {
   border: 1px solid var(--td-component-stroke);
   border-radius: 6px;
   overflow: hidden;
-  .table-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 7px 12px;
-    background: var(--td-bg-color-container);
+  .acc-panel {
     border-bottom: 1px solid var(--td-component-stroke);
-    .table-title {
-      font-size: 13px;
-      font-weight: 500;
-      white-space: nowrap;
+    &:last-child {
+      border-bottom: none;
     }
-    .doc-type {
-      font-size: 12px;
-      color: var(--td-text-color-secondary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .acc-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      background: var(--td-bg-color-container);
+      &:hover {
+        background: var(--td-bg-color-container-hover);
+      }
+      .acc-icon {
+        font-size: 14px;
+        color: var(--td-text-color-secondary);
+        transition: transform 0.2s;
+      }
+      .acc-title {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--td-text-color-primary);
+        white-space: nowrap;
+      }
+      .acc-doc-type {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     }
-  }
-  /* 固定列宽：字段名称/状态不随内容挤压换行 */
-  :deep(.t-table__th-cell-content),
-  :deep(.t-table__td-cell) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-.detail-block {
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
-  overflow: hidden;
-  :deep(.t-collapse-panel__content) {
-    padding: 4px 12px 10px;
+    .acc-body {
+      padding: 4px 12px 10px;
+      /* 固定列宽：字段名称/状态不随内容挤压换行 */
+      :deep(.t-table__th-cell-content),
+      :deep(.t-table__td-cell) {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
   }
 }
 .mono-area {

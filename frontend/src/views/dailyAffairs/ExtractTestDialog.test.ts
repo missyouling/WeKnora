@@ -6,8 +6,8 @@ const dialog = readFileSync(new URL('./ExtractTestDialog.vue', import.meta.url),
 const inputPanel = readFileSync(new URL('./TestInputPanel.vue', import.meta.url), 'utf8')
 const resultPanel = readFileSync(new URL('./TestResultPanel.vue', import.meta.url), 'utf8')
 
-test('测试弹窗为 72% 宽度并采用左右 5/12 + 7/12 分栏（TDesign 12 栅格）', () => {
-  assert.match(dialog, /:width="'72%'"/)
+test('测试弹窗宽度收窄为 62% 并采用左右 5/12 + 7/12 分栏（TDesign 12 栅格）', () => {
+  assert.match(dialog, /:width="'62%'"/)
   assert.match(dialog, /<t-col :span="5" class="col-left">/)
   assert.match(dialog, /<t-col :span="7" class="col-right">/)
 })
@@ -23,7 +23,7 @@ test('输入方式：文件提取测试在前、文本提取测试在后', () =>
   assert.ok(fileIdx < textIdx, '文件提取测试位于文本提取测试之前')
 })
 
-test('左侧面板包含 VLM 识别原文区：识别中/识别完成/无可用原文/文本预览 状态标签，原文只读等宽', () => {
+test('左侧面板包含 VLM 识别原文区：识别中/识别完成/无可用原文/文本预览 状态标签，原文只读等宽且加大', () => {
   assert.match(inputPanel, /VLM 识别原文/)
   assert.match(inputPanel, /识别中/)
   assert.match(inputPanel, /识别完成/)
@@ -32,6 +32,8 @@ test('左侧面板包含 VLM 识别原文区：识别中/识别完成/无可用�
   assert.match(inputPanel, /original-area/)
   assert.match(inputPanel, /:model-value="originalText"/)
   assert.match(inputPanel, /font-family: 'JetBrains Mono'/)
+  // VLM 识别原文文本框适配加大
+  assert.match(inputPanel, /minRows: 8, maxRows: 14/)
 })
 
 test('文本提取测试：输入变化 500ms 防抖自动触发，切换标签不触发', () => {
@@ -83,27 +85,36 @@ test('测试期间禁用输入与操作按钮，完成后可保存', () => {
   assert.match(dialog, /saveExtractConfig/)
 })
 
-test('右侧结果面板：初始空态、测试中 loading、成功/失败 alert（简洁文案）', () => {
+test('右侧结果面板：初始空态、测试中 loading、成功/失败 alert（数秒后自动关闭）', () => {
   assert.match(resultPanel, /t-empty/)
   assert.match(resultPanel, /t-loading/)
-  assert.match(resultPanel, /t-alert v-if="error" theme="error"/)
-  assert.match(resultPanel, /theme="success" message="提取完成"/)
+  assert.match(resultPanel, /t-alert v-if="alertVisible && error" theme="error"/)
+  assert.match(resultPanel, /alertVisible && result" theme="success" message="提取完成"/)
+  assert.match(resultPanel, /setTimeout\(\(\) => \{/)
+  assert.match(resultPanel, /alertVisible\.value = false/)
+  assert.match(resultPanel, /\}, 4000\)/)
+  assert.match(resultPanel, /onBeforeUnmount/)
 })
 
-test('字段映射表三列：字段名称 / 提取结果 / 状态，状态三态标签', () => {
-  assert.match(resultPanel, /字段名称/)
-  assert.match(resultPanel, /提取结果/)
-  assert.match(resultPanel, /title: '状态'/)
-  assert.match(resultPanel, /已提取/)
-  assert.match(resultPanel, /未提取到/)
-  assert.match(resultPanel, /格式异常/)
-  assert.match(resultPanel, /theme: statusTheme\(row.status\)/)
+test('字段映射折叠进手风琴：与原始 JSON、实际 Prompt 同一 accordion-block，默认展开字段映射', () => {
+  assert.match(resultPanel, /accordion-block/)
+  assert.match(resultPanel, /togglePanel\('map'\)/)
+  assert.match(resultPanel, /togglePanel\('json'\)/)
+  assert.match(resultPanel, /togglePanel\('prompt'\)/)
+  assert.match(resultPanel, /activePanels\.value\[0\] === v \? \[\] : \[v\]/)
+  assert.match(resultPanel, /字段映射（命中 \{\{ hitCount \}\}/)
+  assert.match(resultPanel, /原始 JSON（模型返回）/)
+  assert.match(resultPanel, /实际 Prompt（发送给大模型的完整文本）/)
+  assert.match(resultPanel, /activePanels = ref/)
+  assert.match(resultPanel, /\['map'\]/)
 })
 
-test('字段名称与状态列宽固定，结果列自适应省略，表头不换行', () => {
+test('右列窗口高度固定：面板内垂直滚动、隐藏横向滚动条；字段名称与状态列宽固定', () => {
+  assert.match(resultPanel, /max-height: 460px/)
+  assert.match(resultPanel, /overflow-y: auto/)
+  assert.match(resultPanel, /overflow-x: hidden/)
   assert.match(resultPanel, /colKey: 'name', title: '字段名称', width: 130/)
   assert.match(resultPanel, /title: '状态',\s*\n\s*width: 96/)
-  assert.match(resultPanel, /white-space: nowrap/)
   assert.match(resultPanel, /text-overflow: ellipsis/)
 })
 
@@ -120,4 +131,10 @@ test('格式异常按字段数据类型判定：number 非数字、date 非日�
   assert.ok(resultPanel.includes(String.raw`\d{4}-\d{2}-\d{2}`))
   assert.match(resultPanel, /t === 'array'/)
   assert.match(resultPanel, /!Array\.isArray\(v\)/)
+})
+
+test('底部操作区无分隔横线、整体无横向滚动', () => {
+  assert.match(dialog, /\.test-footer \{/)
+  assert.ok(!/border-top/.test(dialog.split('.test-footer')[1].split('.extract-test-layout')[1] || ''), 'footer 不再有 border-top')
+  assert.match(dialog, /overflow-x: hidden/)
 })

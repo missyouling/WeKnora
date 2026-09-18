@@ -30,7 +30,7 @@
         <t-tag v-else-if="originalStatus === 'preview'" size="small" theme="primary" variant="light-outline">文本预览</t-tag>
         <t-tag v-else size="small" theme="default" variant="light-outline">待选择</t-tag>
       </div>
-      <t-textarea :model-value="originalText" class="original-area" readonly :autosize="{ minRows: 4, maxRows: 8 }"
+      <t-textarea :model-value="originalText" class="original-area" readonly :autosize="{ minRows: 8, maxRows: 14 }"
         placeholder="选择知识库文件后，此处展示 VLM 识别出的原始文本内容" />
     </div>
   </div>
@@ -82,8 +82,7 @@ const fileOptions = computed(() =>
   max-height: 540px;
   overflow-y: auto;
   padding-right: 4px;
-}
-.input-tabs {
+}.input-tabs {
   :deep(.t-tabs__nav) {
     margin-bottom: 10px;
   }
