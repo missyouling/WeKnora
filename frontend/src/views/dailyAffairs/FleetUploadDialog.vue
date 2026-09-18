@@ -5,9 +5,9 @@
       <!-- 证照类型选择 -->
       <div class="fu-type-row">
         <span class="fu-type-label">证照类型</span>
-        <t-select v-model="selectedType" :options="typeOptions" clearable placeholder="自动识别"
+        <t-select v-model="selectedType" :options="typeOptions" placeholder="请选择证照类型"
           class="fu-type-select" style="width: 220px" />
-        <span class="fu-type-tip">不选则由系统自动识别，提取完成后按所选类型归类</span>
+        <span class="fu-type-tip">必须选择证照类型，上传后按所选类型归类提取</span>
       </div>
 
       <!-- 拖拽/点击选择区 -->
@@ -114,6 +114,8 @@ function onDrop(e: DragEvent) {
 
 function addFiles(files: File[]) {
   if (!props.kbId) { MessagePlugin.warning('知识库尚未就绪'); return }
+  // 必选证照类型：避免模型自动判定误分类
+  if (!selectedType.value) { MessagePlugin.warning('请先选择证照类型'); return }
   const allowed = /\.(pdf|png|jpg|jpeg|webp|bmp)$/i
   for (const f of files) {
     if (!allowed.test(f.name)) { MessagePlugin.warning(`${f.name} 类型不支持，已跳过`); continue }
