@@ -735,7 +735,7 @@ function calcCertStatus(data: any): string {
 
 // 全部证照类型（文件维度）列：文件别名 / 证照类型 / 源文件 / 文件类型 / 上传状态 / 解析状态 / 提取状态 / 说明 / 上传时间 / 标签
 const FILE_UPLOAD_LABEL: Record<string, string> = { completed: '已完成', failed: '上传失败', pending: '上传中' }
-const FILE_PARSE_LABEL: Record<string, string> = { completed: '解析完成', parsing: '解析中', pending: '解析中', failed: '解析失败' }
+const FILE_PARSE_LABEL: Record<string, string> = { completed: '解析完成', parsing: '解析中', pending: '解析中', processing: '解析中', failed: '解析失败' }
 const FILE_EXTRACT_LABEL: Record<string, string> = { success: '提取完成', failed: '提取失败' }
 function fmtFileTime(v?: string) { return v ? String(v).replace('T', ' ').slice(0, 19) : '—' }
 
@@ -794,7 +794,7 @@ const isFileRow = (r: any) => isArchive.value && !filters.docType && r?.__file =
 function cellTitle(col: ColDef, row: any) {
   return typeof col.tip === 'function' ? String(col.tip(row) ?? '') : (col.tip || String(col.value(row) ?? ''))
 }
-const parseTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'parsing' || s === 'pending' ? 'warning' : 'default')
+const parseTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'parsing' || s === 'pending' || s === 'processing' ? 'warning' : 'default')
 const uploadTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'pending' ? 'warning' : 'default')
 const extractTagTheme = (r: any) => (r.extract_status === 'success' ? 'success' : r.extract_status === 'failed' ? 'danger' : r.parse_status === 'completed' ? 'warning' : 'default')
 
@@ -1501,7 +1501,8 @@ async function loadPending() {
       const ps = it.parse_status
       const meta2 = it.custom_metadata || {}
       if (meta2.extract_status === 'success' || meta2.extract_status === 'failed') return false
-      return ps === 'parsing' || ps === 'pending' || ps === 'failed'
+      // 仅真正进行中的文件计入「正在解析」提示条；解析失败的文件不再误报为进行中
+      return ps === 'parsing' || ps === 'pending' || ps === 'processing'
     })
     for (const it of mine) {
       const ps = it.parse_status

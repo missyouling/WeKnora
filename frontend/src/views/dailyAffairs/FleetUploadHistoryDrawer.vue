@@ -132,14 +132,14 @@ const fmtTime = (v?: string) => (v ? v.replace('T', ' ').slice(0, 19) : '--')
 
 const parseLabel = (s?: string) => {
   if (s === 'completed') return '已完成'
-  if (s === 'parsing' || s === 'pending') return '解析中'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return '解析中'
   if (s === 'failed') return '解析失败'
   return '待解析'
 }
 const parseTheme = (s?: string) => {
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
-  if (s === 'parsing' || s === 'pending') return 'warning'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'warning'
   return 'default'
 }
 const extractStatus = (row: any) => {
