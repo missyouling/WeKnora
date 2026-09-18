@@ -166,7 +166,13 @@ const handleGlobalDrop = async (event: DragEvent) => {
         }));
         return;
     }
-    
+
+    // 业务页面（能耗管理/车队管理等）无 kbId 路由参数，由页面内的上传组件自行处理文件；
+    // 全局上传处理器在此静默放行，避免误报「缺少知识库 ID」。
+    if (!getCurrentKbId()) {
+        return;
+    }
+
     const isInitialized = await checkKnowledgeBaseInitialization();
     if (!isInitialized) {
         return;
