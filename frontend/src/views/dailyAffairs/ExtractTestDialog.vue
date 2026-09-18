@@ -1,15 +1,15 @@
 <template>
-  <t-dialog :visible="visible" header="测试规则" :width="'80%'" :close-on-overlay-click="false" :footer="false"
+  <t-dialog :visible="visible" header="测试规则" :width="'72%'" :close-on-overlay-click="false" :footer="false"
     :attach="'body'" @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
     <div class="extract-test-layout">
       <!-- 左 5/12：输入与原文预览（限高内滚）；右 7/12：提取结果 -->
       <t-row :gutter="24">
-        <t-col :span="10" class="col-left">
+        <t-col :span="5" class="col-left">
           <TestInputPanel v-model:source-mode="sourceMode" v-model:text="text" v-model:knowledge-id="knowledgeId"
             :files="files" :loading-files="loadingFiles" :original-text="originalText" :original-status="originalStatus"
             :disabled="testing" @reload-files="loadFiles" />
         </t-col>
-        <t-col :span="14" class="col-right">
+        <t-col :span="7" class="col-right">
           <TestResultPanel :testing="testing" :error="error" :success="success" :result="result" :fields="props.fields"
             :prompt-preview="previewPrompt" />
         </t-col>
@@ -50,20 +50,23 @@ const emit = defineEmits<{
   (e: 'saved'): void
 }>()
 
-const sourceMode = ref<'text' | 'file'>('text')
+type Mode = 'text' | 'file'
+const sourceMode = ref<Mode>('text')
 const text = ref('')
 const knowledgeId = ref('')
 const files = ref<any[]>([])
 const loadingFiles = ref(false)
 const testing = ref(false)
 const saving = ref(false)
-const result = ref<any>(null)
-const error = ref('')
-const success = ref(false)
 
-// VLM 识别原文：所选文件 description（VLM 摘要），选文件后拉取
+// 提取结果按测试方式隔离：文件提取测试 / 文本提取测试互不串扰
+const resultMap = ref<Record<Mode, any>>({ text: null, file: null })
+const errorMap = ref<Record<Mode, string>>({ text: '', file: '' })
+const successMap = ref<Record<Mode, boolean>>({ text: false, file: false })
+
+// VLM 识别原文：文本模式展示粘贴文本；文件模式展示所选文件 description
 const originalText = ref('')
-const originalStatus = ref<'none' | 'loading' | 'done' | 'empty'>('none')
+const originalStatus = ref<'none' | 'loading' | 'done' | 'empty' | 'preview'>('none')
 
 const fileOptions = computed(() =>
   files.value.map((f) => ({ label: f.file_name || f.title || f.id, value: f.id })),
@@ -71,17 +74,53 @@ const fileOptions = computed(() =>
 const canRun = computed(() =>
   props.visible && (sourceMode.value === 'text' ? text.value.trim().length > 0 : !!knowledgeId.value),
 )
+const result = computed(() => resultMap.value[sourceMode.value])
+const error = computed(() => errorMap.value[sourceMode.value])
+const success = computed(() => successMap.value[sourceMode.value])
 
-// 防抖自动测试（切换文件 / 修改文本 500ms 后触发）
+// 文本提取测试：输入变化 500ms 防抖自动触发；切换标签不触发
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
-watch([text, knowledgeId, sourceMode], () => {
-  originalStatus.value = 'none'
-  originalText.value = ''
+watch(text, () => {
+  originalText.value = text.value
+  originalStatus.value = 'preview'
   if (debounceTimer) clearTimeout(debounceTimer)
-  if (!props.visible) return
+  if (!props.visible || sourceMode.value !== 'text') return
   debounceTimer = setTimeout(() => {
     if (canRun.value) runTest()
   }, 500)
+})
+
+// 文件提取测试：拉取 VLM 原文（不自动测试，点击「运行测试」手动触发）
+async function loadOriginal(kid: string) {
+  originalStatus.value = 'loading'
+  originalText.value = ''
+  try {
+    const res: any = await getKnowledgeDetails(kid)
+    const desc: string = res?.data?.description || ''
+    originalText.value = desc
+    originalStatus.value = desc.trim() ? 'done' : 'empty'
+  } catch (e) {
+    console.error('load document original text failed', e)
+    originalStatus.value = 'empty'
+  }
+}
+
+watch(knowledgeId, async (kid) => {
+  if (!kid || sourceMode.value !== 'file') return
+  await loadOriginal(kid)
+})
+
+// 切换标签：仅同步原文预览，保持弹窗尺寸一致，不清空各自测试结果
+watch(sourceMode, () => {
+  if (sourceMode.value === 'text') {
+    originalText.value = text.value
+    originalStatus.value = 'preview'
+  } else if (knowledgeId.value) {
+    void loadOriginal(knowledgeId.value)
+  } else {
+    originalText.value = ''
+    originalStatus.value = 'none'
+  }
 })
 
 // 实际发送给大模型的 Prompt 预览（与后端 BuildExtractSystemPrompt 同构）
@@ -131,28 +170,12 @@ async function loadFiles() {
   }
 }
 
-// 选择知识库文件后拉取 VLM 识别原文（description）
-watch(knowledgeId, async (kid) => {
-  if (!kid || sourceMode.value !== 'file') return
-  originalStatus.value = 'loading'
-  originalText.value = ''
-  try {
-    const res: any = await getKnowledgeDetails(kid)
-    const desc: string = res?.data?.description || ''
-    originalText.value = desc
-    originalStatus.value = desc.trim() ? 'done' : 'empty'
-  } catch (e) {
-    console.error('load document original text failed', e)
-    originalStatus.value = 'empty'
-  }
-})
-
 async function runTest() {
   if (!canRun.value || testing.value) return
   testing.value = true
-  error.value = ''
-  result.value = null
-  success.value = false
+  errorMap.value[sourceMode.value] = ''
+  resultMap.value[sourceMode.value] = null
+  successMap.value[sourceMode.value] = false
   try {
     const payload: Record<string, unknown> = {
       scope: props.scope,
@@ -164,15 +187,16 @@ async function runTest() {
     if (sourceMode.value === 'text') payload.text = text.value
     else payload.knowledge_id = knowledgeId.value
     const res: any = await testExtractConfig(props.kbId, payload)
-    result.value = res?.data
-    if (result.value) {
-      success.value = true
+    const data = res?.data
+    if (data) {
+      resultMap.value[sourceMode.value] = data
+      successMap.value[sourceMode.value] = true
     } else {
-      error.value = '未返回提取结果'
+      errorMap.value[sourceMode.value] = '未返回提取结果'
     }
   } catch (e: any) {
     console.error('test extract failed', e)
-    error.value = e?.message || '测试失败，请检查规则配置或模型服务'
+    errorMap.value[sourceMode.value] = e?.message || '测试失败，请检查规则配置或模型服务'
   } finally {
     testing.value = false
   }
@@ -211,11 +235,11 @@ watch(
   () => props.visible,
   (v) => {
     if (v) {
-      error.value = ''
-      result.value = null
-      success.value = false
-      originalText.value = ''
-      originalStatus.value = 'none'
+      resultMap.value = { text: null, file: null }
+      errorMap.value = { text: '', file: '' }
+      successMap.value = { text: false, file: false }
+      originalText.value = text.value
+      originalStatus.value = 'preview'
       loadFiles()
     }
   },

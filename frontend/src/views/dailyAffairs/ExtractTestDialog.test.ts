@@ -6,36 +6,68 @@ const dialog = readFileSync(new URL('./ExtractTestDialog.vue', import.meta.url),
 const inputPanel = readFileSync(new URL('./TestInputPanel.vue', import.meta.url), 'utf8')
 const resultPanel = readFileSync(new URL('./TestResultPanel.vue', import.meta.url), 'utf8')
 
-test('测试弹窗为 80% 宽度并采用左右 5/12 + 7/12 分栏', () => {
-  assert.match(dialog, /:width="'80%'"/)
-  assert.match(dialog, /<t-col :span="10" class="col-left">/)
-  assert.match(dialog, /<t-col :span="14" class="col-right">/)
+test('测试弹窗为 72% 宽度并采用左右 5/12 + 7/12 分栏（TDesign 12 栅格）', () => {
+  assert.match(dialog, /:width="'72%'"/)
+  assert.match(dialog, /<t-col :span="5" class="col-left">/)
+  assert.match(dialog, /<t-col :span="7" class="col-right">/)
 })
 
 test('测试弹窗显式挂载到 body，从抽屉容器中独立出来', () => {
   assert.match(dialog, /:attach="'body'"/)
 })
 
-test('左侧输入面板提供粘贴文本 / 选择知识库文件两种输入方式', () => {
-  assert.match(inputPanel, /label="粘贴文本"/)
-  assert.match(inputPanel, /label="选择知识库文件"/)
-  assert.match(inputPanel, /t-textarea/)
-  assert.match(inputPanel, /t-select/)
+test('输入方式：文件提取测试在前、文本提取测试在后', () => {
+  const fileIdx = inputPanel.indexOf('value="file" label="文件提取测试"')
+  const textIdx = inputPanel.indexOf('value="text" label="文本提取测试"')
+  assert.ok(fileIdx !== -1 && textIdx !== -1, '两个标签都存在')
+  assert.ok(fileIdx < textIdx, '文件提取测试位于文本提取测试之前')
 })
 
-test('左侧面板包含 VLM 识别原文区：识别中/识别完成/无可用原文 状态标签，原文只读等宽', () => {
+test('左侧面板包含 VLM 识别原文区：识别中/识别完成/无可用原文/文本预览 状态标签，原文只读等宽', () => {
   assert.match(inputPanel, /VLM 识别原文/)
   assert.match(inputPanel, /识别中/)
   assert.match(inputPanel, /识别完成/)
   assert.match(inputPanel, /无可用原文/)
+  assert.match(inputPanel, /文本预览/)
   assert.match(inputPanel, /original-area/)
   assert.match(inputPanel, /:model-value="originalText"/)
   assert.match(inputPanel, /font-family: 'JetBrains Mono'/)
 })
 
-test('输入变化 500ms 防抖自动触发测试', () => {
+test('文本提取测试：输入变化 500ms 防抖自动触发，切换标签不触发', () => {
+  assert.match(dialog, /watch\(text/)
   assert.match(dialog, /setTimeout\(\(\) => \{/)
   assert.match(dialog, /\}, 500\)/)
+  assert.match(dialog, /sourceMode\.value !== 'text'/)
+})
+
+test('文件提取测试：选择文件后拉取 VLM 原文但不自动测试（需手动点运行测试）', () => {
+  assert.match(dialog, /watch\(knowledgeId, async/)
+  assert.match(dialog, /getKnowledgeDetails/)
+  assert.match(dialog, /不自动测试/)
+  assert.match(dialog, /「运行测试」手动触发/)
+  assert.match(dialog, /payload\.knowledge_id = knowledgeId\.value/)
+})
+
+test('提取结果按测试方式隔离：文件/文本测试结果互不串扰', () => {
+  assert.match(dialog, /resultMap = ref<Record<Mode, any>>/)
+  assert.match(dialog, /errorMap = ref<Record<Mode, string>>/)
+  assert.match(dialog, /successMap = ref<Record<Mode, boolean>>/)
+  assert.match(dialog, /resultMap\.value\[sourceMode\.value\] = data/)
+  assert.match(dialog, /const result = computed\(\(\) => resultMap\.value\[sourceMode\.value\]\)/)
+})
+
+test('切换标签时弹窗尺寸一致：左侧限高内滚，右侧与左列等高', () => {
+  assert.match(inputPanel, /max-height: 540px/)
+  assert.match(inputPanel, /overflow-y: auto/)
+  assert.match(dialog, /:deep\(\.col-left\),\s*\n\s*:deep\(\.col-right\) \{/)
+  assert.match(dialog, /height: 100%;/)
+})
+
+test('切回文件标签时若已选文件则重新拉取原文恢复「识别完成」，无文件才显示「待选择」', () => {
+  assert.match(dialog, /async function loadOriginal\(kid: string\)/)
+  assert.match(dialog, /else if \(knowledgeId\.value\) \{\s*\n\s*void loadOriginal\(knowledgeId\.value\)/)
+  assert.match(dialog, /originalStatus\.value = 'none'/)
 })
 
 test('底部操作区三按钮：运行测试（loading）、确认规则并保存（成功后显示）、关闭', () => {
@@ -73,11 +105,6 @@ test('字段名称与状态列宽固定，结果列自适应省略，表头不�
   assert.match(resultPanel, /title: '状态',\s*\n\s*width: 96/)
   assert.match(resultPanel, /white-space: nowrap/)
   assert.match(resultPanel, /text-overflow: ellipsis/)
-})
-
-test('左侧输入面板限高并内部滚动，避免挤压右侧表格', () => {
-  assert.match(inputPanel, /max-height: 540px/)
-  assert.match(inputPanel, /overflow-y: auto/)
 })
 
 test('提供原始 JSON 与实际 Prompt 折叠面板，等宽只读展示', () => {

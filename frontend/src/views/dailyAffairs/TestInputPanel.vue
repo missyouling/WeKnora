@@ -1,12 +1,8 @@
 <template>
   <div class="test-input-panel">
-    <!-- 输入方式 -->
+    <!-- 输入方式：文件提取测试在前，文本提取测试在后 -->
     <t-tabs v-model="innerMode" class="input-tabs">
-      <t-tab-panel value="text" label="粘贴文本">
-        <t-textarea v-model="innerText" class="input-area" :autosize="{ minRows: 6, maxRows: 10 }"
-          :disabled="disabled" placeholder="粘贴要测试的文档内容（VLM 识别出的原文或手工文本）" />
-      </t-tab-panel>
-      <t-tab-panel value="file" label="选择知识库文件">
+      <t-tab-panel value="file" label="文件提取测试">
         <div class="file-row">
           <t-select v-model="innerKnowledgeId" :options="fileOptions" placeholder="选择已解析完成的文件" filterable
             :disabled="disabled" class="file-select" :loading="loadingFiles" />
@@ -14,7 +10,11 @@
             <template #icon><t-icon name="refresh" /></template>
           </t-button>
         </div>
-        <p class="file-hint">选中的文件将调用 VLM 识别原文并参与提取测试</p>
+        <p class="file-hint">选中的文件将调用 VLM 识别原文并参与提取测试，选择后点击「运行测试」执行</p>
+      </t-tab-panel>
+      <t-tab-panel value="text" label="文本提取测试">
+        <t-textarea v-model="innerText" class="input-area" :autosize="{ minRows: 6, maxRows: 10 }"
+          :disabled="disabled" placeholder="粘贴要测试的文档内容（VLM 识别出的原文或手工文本）" />
       </t-tab-panel>
     </t-tabs>
 
@@ -27,6 +27,7 @@
         </t-tag>
         <t-tag v-else-if="originalStatus === 'done'" size="small" theme="success" variant="light-outline">识别完成</t-tag>
         <t-tag v-else-if="originalStatus === 'empty'" size="small" theme="default" variant="light-outline">无可用原文</t-tag>
+        <t-tag v-else-if="originalStatus === 'preview'" size="small" theme="primary" variant="light-outline">文本预览</t-tag>
         <t-tag v-else size="small" theme="default" variant="light-outline">待选择</t-tag>
       </div>
       <t-textarea :model-value="originalText" class="original-area" readonly :autosize="{ minRows: 4, maxRows: 8 }"
@@ -45,7 +46,7 @@ const props = defineProps<{
   files: any[]
   loadingFiles: boolean
   originalText: string
-  originalStatus: 'none' | 'loading' | 'done' | 'empty'
+  originalStatus: 'none' | 'loading' | 'done' | 'empty' | 'preview'
   disabled: boolean
 }>()
 const emit = defineEmits<{
