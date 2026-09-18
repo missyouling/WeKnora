@@ -28,3 +28,19 @@ test('打开弹窗时继承父组件筛选的证照类型（defaultType）', () 
 test('上传任务携带所选证照类型：提取请求带 cert_type', () => {
   assert.match(dialog, /cert_type: certType/)
 })
+
+test('任务进度实时上报：深度监听任务列表，emit progress 携带进行中任务', () => {
+  assert.match(dialog, /\(e: 'progress', items: UploadProgressItem\[\]\)/)
+  assert.match(dialog, /watch\(tasks, \(list\) => \{/)
+  assert.match(dialog, /emitProgress\(\)/)
+  assert.match(dialog, /stage: t\.status as UploadProgressItem\['stage'\]/)
+  assert.match(dialog, /percent: Math\.round\(t\.progress\)/)
+})
+
+test('全部任务结束后自动关闭弹窗：延迟 emit update:visible false，进行中取消定时', () => {
+  assert.match(dialog, /setTimeout\(\(\) => \{/)
+  assert.match(dialog, /emit\('update:visible', false\)/)
+  assert.match(dialog, /\}, 1200\)/)
+  assert.match(dialog, /clearTimeout\(autoCloseTimer\)/)
+  assert.match(dialog, /list\.every\(\(t\) => t\.status === 'success' \|\| t\.status === 'failed'\)/)
+})

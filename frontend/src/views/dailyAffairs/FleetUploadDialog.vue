@@ -73,6 +73,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'done'): void
+  (e: 'progress', items: UploadProgressItem[]): void
 }>()
 
 interface UpTask {
@@ -86,6 +87,13 @@ interface UpTask {
   kid?: string
 }
 
+/** 工具栏实时进度项：stage 对应任务阶段 */
+export interface UploadProgressItem {
+  name: string
+  stage: 'uploading' | 'parsing' | 'extracting'
+  percent: number
+}
+
 const selectedType = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const dragOver = ref(false)
@@ -97,6 +105,33 @@ const typeOptions = computedTypeOptions()
 function computedTypeOptions() {
   return props.typeOptions && props.typeOptions.length ? props.typeOptions : []
 }
+
+// ---- 实时进度上报：任务状态/进度变化时把进行中的任务推给父组件工具栏 ----
+function emitProgress() {
+  const items: UploadProgressItem[] = tasks.value
+    .filter((t) => t.status === 'uploading' || t.status === 'parsing' || t.status === 'extracting')
+    .map((t) => ({ name: t.name, stage: t.status as UploadProgressItem['stage'], percent: Math.round(t.progress) }))
+  emit('progress', items)
+}
+
+let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
+
+// 深度监听任务列表：进度实时上报；全部任务结束后延迟自动关闭弹窗（手动关闭后后台任务仍会继续，结束时同样自动关闭）
+watch(tasks, (list) => {
+  emitProgress()
+  const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed')
+  if (allDone) {
+    if (!autoCloseTimer) {
+      autoCloseTimer = setTimeout(() => {
+        emit('update:visible', false)
+        autoCloseTimer = null
+      }, 1200)
+    }
+  } else if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer)
+    autoCloseTimer = null
+  }
+}, { deep: true })
 
 function onClose() { emit('update:visible', false) }
 function pickFiles() { fileInputRef.value?.click() }
@@ -282,7 +317,10 @@ watch(() => props.visible, (v) => {
   }
 })
 
-onBeforeUnmount(() => { /* 关闭弹窗不销毁任务：组件常驻，任务在后台继续 */ })
+onBeforeUnmount(() => {
+  // 组件常驻：关闭弹窗不销毁任务，任务在后台继续执行
+  if (autoCloseTimer) clearTimeout(autoCloseTimer)
+})
 </script>
 
 <style lang="less" scoped>

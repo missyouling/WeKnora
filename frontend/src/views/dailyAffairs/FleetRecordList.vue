@@ -1,9 +1,13 @@
 <template>
   <div class="utility-meter-tab">
-    <!-- 解析状态提示（证照型） -->
-    <div v-if="pendingFiles.length" class="archive-pending-bar">
+    <!-- 解析状态提示（证照型）：优先展示上传任务的实时进度（多文件轮播），无活动任务时回退列表轮询兜底 -->
+    <div v-if="uploadProgress.length || pendingFiles.length" class="archive-pending-bar">
       <t-loading size="small" />
-      <span>正在解析 {{ pendingFiles.length }} 个文件，解析完成后自动提取字段...</span>
+      <template v-if="uploadProgress.length">
+        <span>{{ stageLabel(uploadProgress[progressIndex].stage) }}「{{ uploadProgress[progressIndex].name }}」进度 {{ uploadProgress[progressIndex].percent }}%</span>
+        <span v-if="uploadProgress.length > 1" class="archive-pending-count">{{ progressIndex + 1 }}/{{ uploadProgress.length }}</span>
+      </template>
+      <span v-else>正在解析 {{ pendingFiles.length }} 个文件，解析完成后自动提取字段...</span>
     </div>
 
     <!-- 筛选工具栏（与电费核算内容页一致） -->
@@ -76,7 +80,7 @@
     <!-- 上传弹窗（证照型） -->
     <FleetUploadDialog v-if="isArchive" v-model:visible="uploadVisible" :kb-id="kbId" :scope="group.scope"
       :type-options="uploadTypeOptions" :default-type="isArchive && filters.docType ? filters.docType : ''"
-      @done="onUploadDone" />
+      @progress="onUploadProgress" @done="onUploadDone" />
 
     <!-- 上传历史抽屉（证照型） -->
     <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" />
@@ -945,7 +949,7 @@ onMounted(async () => {
   loadRecords()
   startPolling()
 })
-onBeforeUnmount(() => stopPolling())
+onBeforeUnmount(() => { stopPolling(); stopProgressTimer() })
 
 // ---------------------------------------------------------------------------
 // 列定义与字段选择器
@@ -1417,6 +1421,32 @@ const kbId = ref('')
 const pendingFiles = ref<any[]>([])
 const uploadVisible = ref(false)
 const historyVisible = ref(false)
+
+// 上传任务实时进度（来自上传弹窗 emit）：多文件同时进行时轮播展示
+const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
+const progressIndex = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+const STAGE_LABEL: Record<string, string> = { uploading: '正在上传', parsing: '正在解析', extracting: '正在提取' }
+function stageLabel(stage: string) { return STAGE_LABEL[stage] || stage }
+function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
+  uploadProgress.value = items
+  if (items.length <= 1) {
+    progressIndex.value = 0
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+    return
+  }
+  if (progressTimer) return
+  progressTimer = setInterval(() => {
+    if (uploadProgress.value.length <= 1) {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+      return
+    }
+    progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
+  }, 3000)
+}
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
 
 // 上传弹窗证照类型选项（当前档案组内置类型 + 已入库分类）
 const uploadTypeOptions = computed(() => {
@@ -1934,6 +1964,12 @@ function onDrawerResizeEnd() {
   color: var(--td-brand-color);
   border-radius: 8px;
   font-size: 13px;
+
+  .archive-pending-count {
+    margin-left: auto;
+    font-size: 12px;
+    opacity: 0.75;
+  }
 }
 
 /* 打印弹窗 */
