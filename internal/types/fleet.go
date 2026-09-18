@@ -4,17 +4,35 @@ import "time"
 
 // 车队管理记录类型
 const (
-	FleetRecordMaintain   = "maintain"      // 维保记录
-	FleetRecordFuel       = "fuel"          // 加油记录
-	FleetRecordInsurance  = "insurance"     // 车险记录
-	FleetRecordTire       = "tire"          // 轮胎记录
-	FleetRecordMaterial   = "material"      // 辅材记录（尿素、篷布等）
-	FleetRecordViolation  = "violation"     // 违章记录
-	FleetRecordCarRequest = "car-request"   // 请车记录
-	FleetRecordToll       = "toll"          // 通行费
+	// 档案类（上传解析入知识库）
+	FleetRecordVehicleArchive = "vehicle-archive" // 车辆档案（登记证书/行驶证/营运证/道路运输证/保险单/驾驶证/从业资格证）
+	FleetRecordDriverArchive  = "driver-archive"  // 司机档案（驾驶证/从业资格证）
+	FleetRecordMaintainArchive = "maintain-archive" // 维保管理（维修合同/维修工单/二级维护/保险单）
+	// 手动/成本类
+	FleetRecordTire         = "tire"           // 轮胎管理
+	FleetRecordInspection   = "inspection"     // 年检管理
+	FleetRecordFuelCharge   = "fuel-charge"    // 加油充电
+	FleetRecordRoadToll     = "road-toll"      // 路桥费
+	FleetRecordRepairCost   = "repair-cost"    // 维修保养费
+	FleetRecordInsuranceClaim = "insurance-claim" // 保险理赔
+	FleetRecordViolation    = "violation"      // 违章处理
+	FleetRecordMaterial     = "material"       // 辅材记录（尿素、篷布等）
+	FleetRecordCarRequest   = "car-request"    // 请车记录
+	// 历史类型（v1 保留，新 UI 不再展示：maintain/fuel/insurance/toll）
+	FleetRecordMaintain  = "maintain"  // 历史维保记录
+	FleetRecordFuel      = "fuel"      // 历史加油记录
+	FleetRecordInsurance = "insurance" // 历史车险记录
+	FleetRecordToll      = "toll"      // 历史通行费
 )
 
-// FleetVehicle 车辆配置
+// 档案分类 scope
+const (
+	FleetCategoryScopeVehicle  = "vehicle"
+	FleetCategoryScopeDriver   = "driver"
+	FleetCategoryScopeMaintain = "maintain"
+)
+
+// FleetVehicle 车辆配置（历史保留）
 type FleetVehicle struct {
 	ID           string     `gorm:"primaryKey" json:"id"`
 	TenantID     int64      `gorm:"index" json:"tenant_id"`
@@ -36,21 +54,21 @@ type FleetVehicle struct {
 
 func (FleetVehicle) TableName() string { return "fleet_vehicles" }
 
-// FleetDriver 驾驶员配置
+// FleetDriver 驾驶员配置（历史保留）
 type FleetDriver struct {
-	ID         string     `gorm:"primaryKey" json:"id"`
-	TenantID   int64      `gorm:"index" json:"tenant_id"`
-	Name       string     `json:"name"`        // 姓名
-	LicenseNo  string     `json:"license_no"`  // 驾驶证号
-	LicenseType string    `json:"license_type"` // 准驾车型
-	Phone      string     `json:"phone"`       // 联系电话
-	HireDate   string     `json:"hire_date"`   // 入职日期 YYYY-MM-DD
-	SortOrder  int        `json:"sort_order"`
-	Enabled    bool       `json:"enabled"`
-	Remark     string     `gorm:"type:text" json:"remark"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	DeletedAt  *time.Time `gorm:"index" json:"deleted_at"`
+	ID          string     `gorm:"primaryKey" json:"id"`
+	TenantID    int64      `gorm:"index" json:"tenant_id"`
+	Name        string     `json:"name"`         // 姓名
+	LicenseNo   string     `json:"license_no"`   // 驾驶证号
+	LicenseType string     `json:"license_type"` // 准驾车型
+	Phone       string     `json:"phone"`        // 联系电话
+	HireDate    string     `json:"hire_date"`    // 入职日期 YYYY-MM-DD
+	SortOrder   int        `json:"sort_order"`
+	Enabled     bool       `json:"enabled"`
+	Remark      string     `gorm:"type:text" json:"remark"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `gorm:"index" json:"deleted_at"`
 }
 
 func (FleetDriver) TableName() string { return "fleet_drivers" }
@@ -59,9 +77,13 @@ func (FleetDriver) TableName() string { return "fleet_drivers" }
 type FleetFuelCard struct {
 	ID         string     `gorm:"primaryKey" json:"id"`
 	TenantID   int64      `gorm:"index" json:"tenant_id"`
+	Alias      string     `json:"alias"`       // 油卡别名
 	CardNo     string     `json:"card_no"`     // 卡号
-	VehicleID  string     `json:"vehicle_id"`  // 所属车辆
-	DriverID   string     `json:"driver_id"`   // 所属驾驶员
+	CardType   string     `json:"card_type"`   // 卡类型：主卡/副卡/子卡/绑定卡
+	Brand      string     `json:"brand"`       // 油卡品牌：中石化/中石油/壳牌/民营等
+	VehicleID  string     `json:"vehicle_id"`  // 绑定车辆
+	DriverID   string     `json:"driver_id"`   // 绑定司机
+	CardStatus string     `json:"card_status"` // 卡状态：正常/挂失/冻结/注销/过期
 	Station    string     `json:"station"`     // 油站
 	FaceValue  float64    `gorm:"numeric(18,2)" json:"face_value"` // 面额
 	Balance    float64    `gorm:"numeric(18,2)" json:"balance"`    // 余额
@@ -75,22 +97,98 @@ type FleetFuelCard struct {
 
 func (FleetFuelCard) TableName() string { return "fleet_fuel_cards" }
 
-// FleetRecord 车队通用记录：8 类记录共用一张表，
-// 通用列（vehicle/date/month/amount/mileage/remark）+ data(JSONB) 存放类型专属字段。
+// FleetRecord 车队通用记录：各类型共用一张表，
+// 通用列（vehicle/date/month/amount/mileage/remark）+ data(JSONB) 存放类型专属字段；档案类使用 doc_type/file_name/doc_knowledge_id。
 type FleetRecord struct {
-	ID          string         `gorm:"primaryKey" json:"id"`
-	TenantID    int64          `gorm:"index" json:"tenant_id"`
-	RecordType  string         `gorm:"index" json:"record_type"` // maintain|fuel|insurance|tire|material|violation|car-request|toll
-	VehicleID   string         `gorm:"index" json:"vehicle_id"`  // 关联 FleetVehicle
-	RecordMonth string         `gorm:"index" json:"record_month"` // YYYY-MM（筛选/汇总用）
-	RecordDate  string         `json:"record_date"`               // YYYY-MM-DD
-	Amount      float64        `gorm:"numeric(18,2)" json:"amount"` // 金额（通用列，费用清单汇总用）
-	Mileage     float64        `gorm:"numeric(18,2)" json:"mileage"` // 里程（通用列）
-	Data        map[string]any `gorm:"type:jsonb;serializer:json" json:"data"` // 类型专属字段
-	Remark      string         `gorm:"type:text" json:"remark"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   *time.Time     `gorm:"index" json:"deleted_at"`
+	ID             string         `gorm:"primaryKey" json:"id"`
+	TenantID       int64          `gorm:"index" json:"tenant_id"`
+	RecordType     string         `gorm:"index" json:"record_type"` // 见常量
+	VehicleID      string         `gorm:"index" json:"vehicle_id"`  // 关联车辆（车牌号来源：档案解析或手动配置）
+	RecordMonth    string         `gorm:"index" json:"record_month"` // YYYY-MM（筛选/汇总用）
+	RecordDate     string         `json:"record_date"`               // YYYY-MM-DD
+	Amount         float64        `gorm:"numeric(18,2)" json:"amount"` // 金额（通用列，费用清单汇总用）
+	Mileage        float64        `gorm:"numeric(18,2)" json:"mileage"` // 里程（通用列）
+	Data           map[string]any `gorm:"type:jsonb;serializer:json" json:"data"` // 类型专属字段
+	DocType        string         `gorm:"index" json:"doc_type"`    // 证照类型（档案类）
+	FileName       string         `json:"file_name"`                // 源文件名（档案类）
+	DocKnowledgeID string         `json:"doc_knowledge_id"`         // 关联知识库文件 ID（档案类，用于源文件打印）
+	Remark         string         `gorm:"type:text" json:"remark"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      *time.Time     `gorm:"index" json:"deleted_at"`
 }
 
 func (FleetRecord) TableName() string { return "fleet_records" }
+
+// FleetCategorySub 档案分类小项（大项=分类行，小项=解析提取的字段，可启/禁用）
+type FleetCategorySub struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+// FleetCategory 档案分类配置：scope=vehicle|driver|maintain
+type FleetCategory struct {
+	ID        string             `gorm:"primaryKey" json:"id"`
+	TenantID  int64              `gorm:"index" json:"tenant_id"`
+	Scope     string             `gorm:"index" json:"scope"`
+	Name      string             `json:"name"` // 大项：如“行驶证”“驾驶证”
+	Subs      []FleetCategorySub `gorm:"type:jsonb;serializer:json" json:"subs"`
+	SortOrder int                `json:"sort_order"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
+	DeletedAt *time.Time         `gorm:"index" json:"deleted_at"`
+}
+
+func (FleetCategory) TableName() string { return "fleet_categories" }
+
+// FleetSupplier 供应商
+type FleetSupplier struct {
+	ID                string     `gorm:"primaryKey" json:"id"`
+	TenantID          int64      `gorm:"index" json:"tenant_id"`
+	Name              string     `json:"name"`               // 供应商名称
+	SupplierType      string     `json:"supplier_type"`      // 类型：维修厂/配件商/轮胎商/油品商/保险公司/年检代办/洗车/救援/租赁等
+	Qualification     string     `json:"qualification"`      // 资质等级：一类维修/二类维修
+	CreditCode        string     `json:"credit_code"`        // 统一社会信用代码
+	LegalPerson       string     `json:"legal_person"`       // 法定代表人
+	Contact           string     `json:"contact"`            // 联系人
+	Phone             string     `json:"phone"`              // 联系电话
+	Address           string     `json:"address"`            // 联系地址
+	CooperationStatus string     `json:"cooperation_status"` // 合作状态：潜在/合作中/暂停/终止
+	CoopStartDate     string     `json:"coop_start_date"`    // 合作开始日期
+	SettleMethod      string     `json:"settle_method"`      // 结算方式：月结/现结/季度结
+	TaxRate           string     `gorm:"type:varchar(20)" json:"tax_rate"` // 税率（如 13% 或 0.13）
+	InvoiceType       string     `json:"invoice_type"`       // 发票类型：增值税专票/普票
+	Status            string     `json:"status"`             // 供应商状态：正常/停用/黑名单
+	Enabled           bool       `json:"enabled"`
+	SortOrder         int        `json:"sort_order"`
+	Remark            string     `gorm:"type:text" json:"remark"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	DeletedAt         *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (FleetSupplier) TableName() string { return "fleet_suppliers" }
+
+// FleetETCCard ETC 卡
+type FleetETCCard struct {
+	ID         string     `gorm:"primaryKey" json:"id"`
+	TenantID   int64      `gorm:"index" json:"tenant_id"`
+	Alias      string     `json:"alias"`       // 别名
+	CardNo     string     `json:"card_no"`     // ETC卡号
+	CardType   string     `json:"card_type"`   // 卡类型
+	Issuer     string     `json:"issuer"`      // 发卡方
+	Bank       string     `json:"bank"`        // 开户行
+	OpenDate   string     `json:"open_date"`   // 开户日期
+	ExpireDate string     `json:"expire_date"` // 有效期
+	VehicleID  string     `json:"vehicle_id"`  // 车牌号
+	CardStatus string     `json:"card_status"` // 卡状态
+	SortOrder  int        `json:"sort_order"`
+	Enabled    bool       `json:"enabled"`
+	Remark     string     `gorm:"type:text" json:"remark"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	DeletedAt  *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (FleetETCCard) TableName() string { return "fleet_etc_cards" }

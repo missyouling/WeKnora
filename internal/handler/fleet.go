@@ -32,14 +32,23 @@ func fleetTenantID(c *gin.Context) (uint64, error) {
 }
 
 var fleetRecordTypes = map[string]bool{
-	types.FleetRecordMaintain:   true,
-	types.FleetRecordFuel:       true,
-	types.FleetRecordInsurance:  true,
-	types.FleetRecordTire:       true,
-	types.FleetRecordMaterial:   true,
-	types.FleetRecordViolation:  true,
-	types.FleetRecordCarRequest: true,
-	types.FleetRecordToll:       true,
+	types.FleetRecordVehicleArchive:  true,
+	types.FleetRecordDriverArchive:   true,
+	types.FleetRecordMaintainArchive: true,
+	types.FleetRecordTire:            true,
+	types.FleetRecordInspection:      true,
+	types.FleetRecordFuelCharge:      true,
+	types.FleetRecordRoadToll:        true,
+	types.FleetRecordRepairCost:      true,
+	types.FleetRecordInsuranceClaim:  true,
+	types.FleetRecordViolation:       true,
+	types.FleetRecordMaterial:        true,
+	types.FleetRecordCarRequest:      true,
+	// 历史类型（v1，兼容旧数据）
+	types.FleetRecordMaintain:  true,
+	types.FleetRecordFuel:      true,
+	types.FleetRecordInsurance: true,
+	types.FleetRecordToll:      true,
 }
 
 // ---------------------------------------------------------------------------
@@ -486,15 +495,19 @@ func (h *FleetHandler) UpdateFleetFuelCard(c *gin.Context) {
 	if err := h.db.WithContext(ctx).Model(&types.FleetFuelCard{}).
 		Where("id = ? AND tenant_id = ?", id, tenantID).
 		Updates(map[string]interface{}{
-			"card_no":    req.CardNo,
-			"vehicle_id": req.VehicleID,
-			"driver_id":  req.DriverID,
-			"station":    req.Station,
-			"face_value": req.FaceValue,
-			"balance":    req.Balance,
-			"enabled":    req.Enabled,
-			"remark":     req.Remark,
-			"updated_at": now,
+			"alias":       req.Alias,
+			"card_no":     req.CardNo,
+			"card_type":   req.CardType,
+			"brand":       req.Brand,
+			"vehicle_id":  req.VehicleID,
+			"driver_id":   req.DriverID,
+			"card_status": req.CardStatus,
+			"station":     req.Station,
+			"face_value":  req.FaceValue,
+			"balance":     req.Balance,
+			"enabled":     req.Enabled,
+			"remark":      req.Remark,
+			"updated_at":  now,
 		}).Error; err != nil {
 		logger.Errorf(ctx, "update fleet fuel card failed: %v", err)
 		c.Error(errors.NewInternalServerError("update fuel card failed: " + err.Error()))
@@ -549,6 +562,7 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	recordType := strings.TrimSpace(c.Query("type"))
 	month := strings.TrimSpace(c.Query("month"))
 	vehicleID := strings.TrimSpace(c.Query("vehicle_id"))
+	docType := strings.TrimSpace(c.Query("doc_type"))
 	q := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
 	if recordType != "" {
 		q = q.Where("record_type = ?", recordType)
@@ -558,6 +572,9 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	}
 	if vehicleID != "" {
 		q = q.Where("vehicle_id = ?", vehicleID)
+	}
+	if docType != "" {
+		q = q.Where("doc_type = ?", docType)
 	}
 	var items []types.FleetRecord
 	if err := q.Order("record_date DESC, created_at DESC").Find(&items).Error; err != nil {
@@ -573,7 +590,8 @@ func normalizeFleetRecord(req *types.FleetRecord) error {
 	if req.RecordType == "" || !fleetRecordTypes[req.RecordType] {
 		return errors.NewBadRequestError("record type 不合法")
 	}
-	if req.VehicleID == "" {
+	// 档案类记录（证照解析）不强制绑定车辆
+	if !strings.HasSuffix(req.RecordType, "-archive") && req.VehicleID == "" {
 		return errors.NewBadRequestError("请选择车辆")
 	}
 	if req.Data == nil {
@@ -656,15 +674,18 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 	if err := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
 		Where("id = ? AND tenant_id = ?", id, tenantID).
 		Updates(map[string]interface{}{
-			"record_type":  req.RecordType,
-			"vehicle_id":   req.VehicleID,
-			"record_month": req.RecordMonth,
-			"record_date":  req.RecordDate,
-			"amount":       req.Amount,
-			"mileage":      req.Mileage,
-			"data":         string(dataJSON),
-			"remark":       req.Remark,
-			"updated_at":   now,
+			"record_type":      req.RecordType,
+			"vehicle_id":       req.VehicleID,
+			"record_month":     req.RecordMonth,
+			"record_date":      req.RecordDate,
+			"amount":           req.Amount,
+			"mileage":          req.Mileage,
+			"data":             string(dataJSON),
+			"doc_type":         req.DocType,
+			"file_name":        req.FileName,
+			"doc_knowledge_id": req.DocKnowledgeID,
+			"remark":           req.Remark,
+			"updated_at":       now,
 		}).Error; err != nil {
 		logger.Errorf(ctx, "update fleet record failed: %v", err)
 		c.Error(errors.NewInternalServerError("update record failed: " + err.Error()))
@@ -700,17 +721,17 @@ func (h *FleetHandler) DeleteFleetRecord(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type fleetSummaryRow struct {
-	VehicleID    string  `json:"vehicle_id"`
-	PlateNo      string  `json:"plate_no"`
-	VehicleType  string  `json:"vehicle_type"`
-	FuelAmount     float64 `json:"fuel_amount"`     // 加油
-	MaintainAmount float64 `json:"maintain_amount"` // 维保
-	InsuranceAmount float64 `json:"insurance_amount"` // 车险
-	TireAmount    float64 `json:"tire_amount"`     // 轮胎
+	VehicleID     string  `json:"vehicle_id"`
+	PlateNo       string  `json:"plate_no"`
+	VehicleType   string  `json:"vehicle_type"`
+	FuelAmount    float64 `json:"fuel_amount"`    // 加油充电
+	MaintainAmount float64 `json:"maintain_amount"` // 维修保养费
+	InsuranceAmount float64 `json:"insurance_amount"` // 保险理赔
+	TireAmount    float64 `json:"tire_amount"`    // 轮胎
 	MaterialAmount float64 `json:"material_amount"` // 辅材
 	ViolationAmount float64 `json:"violation_amount"` // 违章罚款
-	TollAmount    float64 `json:"toll_amount"`     // 通行费
-	TotalAmount   float64 `json:"total_amount"`    // 合计
+	TollAmount    float64 `json:"toll_amount"`    // 路桥费
+	TotalAmount   float64 `json:"total_amount"`   // 合计
 	RecordCount   int     `json:"record_count"`
 }
 
@@ -784,11 +805,11 @@ func (h *FleetHandler) GetFleetSummary(c *gin.Context) {
 		}
 		row.RecordCount += r.Count
 		switch r.RecordType {
-		case types.FleetRecordFuel:
+		case types.FleetRecordFuelCharge, types.FleetRecordFuel:
 			row.FuelAmount = r.SumAmount
-		case types.FleetRecordMaintain:
+		case types.FleetRecordRepairCost, types.FleetRecordMaintain:
 			row.MaintainAmount = r.SumAmount
-		case types.FleetRecordInsurance:
+		case types.FleetRecordInsuranceClaim, types.FleetRecordInsurance:
 			row.InsuranceAmount = r.SumAmount
 		case types.FleetRecordTire:
 			row.TireAmount = r.SumAmount
@@ -796,7 +817,7 @@ func (h *FleetHandler) GetFleetSummary(c *gin.Context) {
 			row.MaterialAmount = r.SumAmount
 		case types.FleetRecordViolation:
 			row.ViolationAmount = r.SumAmount
-		case types.FleetRecordToll:
+		case types.FleetRecordRoadToll, types.FleetRecordToll:
 			row.TollAmount = r.SumAmount
 		}
 	}
@@ -808,6 +829,391 @@ func (h *FleetHandler) GetFleetSummary(c *gin.Context) {
 		result = append(result, row)
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+// ---------------------------------------------------------------------------
+// 档案分类配置（大项-小项）：scope=vehicle|driver|maintain
+// ---------------------------------------------------------------------------
+
+var fleetCategoryScopes = map[string]bool{
+	types.FleetCategoryScopeVehicle:  true,
+	types.FleetCategoryScopeDriver:   true,
+	types.FleetCategoryScopeMaintain: true,
+}
+
+// ListFleetCategories godoc
+// @Summary      档案分类列表
+// @Router       /fleet/categories [get]
+func (h *FleetHandler) ListFleetCategories(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	scope := strings.TrimSpace(c.Query("scope"))
+	q := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	if scope != "" {
+		if !fleetCategoryScopes[scope] {
+			c.Error(errors.NewBadRequestError("scope 不合法"))
+			return
+		}
+		q = q.Where("scope = ?", scope)
+	}
+	var items []types.FleetCategory
+	if err := q.Order("sort_order ASC, created_at ASC").Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list fleet categories failed: %v", err)
+		c.Error(errors.NewInternalServerError("list categories failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// CreateFleetCategory godoc
+// @Summary      新增档案分类（大项）
+// @Router       /fleet/categories [post]
+func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req types.FleetCategory
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if !fleetCategoryScopes[req.Scope] {
+		c.Error(errors.NewBadRequestError("scope 不合法"))
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		c.Error(errors.NewBadRequestError("分类名称不能为空"))
+		return
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	if req.Subs == nil {
+		req.Subs = []types.FleetCategorySub{}
+	}
+	var maxOrder int
+	h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", tenantID, req.Scope).
+		Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
+	req.SortOrder = maxOrder + 1
+	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
+		logger.Errorf(ctx, "create fleet category failed: %v", err)
+		c.Error(errors.NewInternalServerError("create category failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateFleetCategory godoc
+// @Summary      更新档案分类（名称/小项启用）
+// @Router       /fleet/categories/:id [put]
+func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.FleetCategory
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if req.Name != "" {
+		req.Name = strings.TrimSpace(req.Name)
+	}
+	now := timeNowUTC()
+	dataJSON, _ := json.Marshal(req.Subs)
+	updates := map[string]interface{}{
+		"enabled":    req.Enabled,
+		"updated_at": now,
+	}
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+	if req.Subs != nil {
+		updates["subs"] = string(dataJSON)
+	}
+	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Updates(updates).Error; err != nil {
+		logger.Errorf(ctx, "update fleet category failed: %v", err)
+		c.Error(errors.NewInternalServerError("update category failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// SortFleetCategories godoc
+// @Summary      档案分类排序
+// @Router       /fleet/categories/sort [put]
+func (h *FleetHandler) SortFleetCategories(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req struct {
+		Scope string   `json:"scope"`
+		IDs   []string `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
+	for i, id := range req.IDs {
+		h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			Update("sort_order", i+1)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// DeleteFleetCategory godoc
+// @Summary      删除档案分类
+// @Router       /fleet/categories/:id [delete]
+func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	res := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete fleet category failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete category failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("分类不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// ---------------------------------------------------------------------------
+// 供应商
+// ---------------------------------------------------------------------------
+
+// ListFleetSuppliers godoc
+// @Summary      供应商列表
+// @Router       /fleet/suppliers [get]
+func (h *FleetHandler) ListFleetSuppliers(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var items []types.FleetSupplier
+	if err := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID).
+		Order("sort_order ASC, created_at ASC").Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list fleet suppliers failed: %v", err)
+		c.Error(errors.NewInternalServerError("list suppliers failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// CreateFleetSupplier godoc
+// @Summary      新增供应商
+// @Router       /fleet/suppliers [post]
+func (h *FleetHandler) CreateFleetSupplier(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req types.FleetSupplier
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		c.Error(errors.NewBadRequestError("供应商名称不能为空"))
+		return
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	var maxOrder int
+	h.db.WithContext(ctx).Model(&types.FleetSupplier{}).
+		Where("tenant_id = ? AND deleted_at IS NULL", tenantID).
+		Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
+	req.SortOrder = maxOrder + 1
+	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
+		logger.Errorf(ctx, "create fleet supplier failed: %v", err)
+		c.Error(errors.NewInternalServerError("create supplier failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateFleetSupplier godoc
+// @Summary      更新供应商
+// @Router       /fleet/suppliers/:id [put]
+func (h *FleetHandler) UpdateFleetSupplier(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.FleetSupplier
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	now := timeNowUTC()
+	if err := h.db.WithContext(ctx).Model(&types.FleetSupplier{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Updates(map[string]interface{}{
+			"name":               req.Name,
+			"supplier_type":      req.SupplierType,
+			"qualification":      req.Qualification,
+			"credit_code":        req.CreditCode,
+			"legal_person":       req.LegalPerson,
+			"contact":            req.Contact,
+			"phone":              req.Phone,
+			"address":            req.Address,
+			"cooperation_status": req.CooperationStatus,
+			"coop_start_date":    req.CoopStartDate,
+			"settle_method":      req.SettleMethod,
+			"tax_rate":           req.TaxRate,
+			"invoice_type":       req.InvoiceType,
+			"status":             req.Status,
+			"enabled":            req.Enabled,
+			"remark":             req.Remark,
+			"updated_at":         now,
+		}).Error; err != nil {
+		logger.Errorf(ctx, "update fleet supplier failed: %v", err)
+		c.Error(errors.NewInternalServerError("update supplier failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// DeleteFleetSupplier godoc
+// @Summary      删除供应商
+// @Router       /fleet/suppliers/:id [delete]
+func (h *FleetHandler) DeleteFleetSupplier(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	res := h.db.WithContext(ctx).Model(&types.FleetSupplier{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete fleet supplier failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete supplier failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("供应商不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// ---------------------------------------------------------------------------
+// ETC 卡
+// ---------------------------------------------------------------------------
+
+// ListFleetETCCards godoc
+// @Summary      ETC卡列表
+// @Router       /fleet/etc-cards [get]
+func (h *FleetHandler) ListFleetETCCards(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var items []types.FleetETCCard
+	if err := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID).
+		Order("sort_order ASC, created_at ASC").Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list fleet etc cards failed: %v", err)
+		c.Error(errors.NewInternalServerError("list etc cards failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// CreateFleetETCCard godoc
+// @Summary      新增ETC卡
+// @Router       /fleet/etc-cards [post]
+func (h *FleetHandler) CreateFleetETCCard(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req types.FleetETCCard
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.CardNo = strings.TrimSpace(req.CardNo)
+	if req.CardNo == "" {
+		c.Error(errors.NewBadRequestError("ETC卡号不能为空"))
+		return
+	}
+	now := timeNowUTC()
+	req.ID = uuid.NewString()
+	req.TenantID = int64(tenantID)
+	req.CreatedAt = now
+	req.UpdatedAt = now
+	var maxOrder int
+	h.db.WithContext(ctx).Model(&types.FleetETCCard{}).
+		Where("tenant_id = ? AND deleted_at IS NULL", tenantID).
+		Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
+	req.SortOrder = maxOrder + 1
+	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
+		logger.Errorf(ctx, "create fleet etc card failed: %v", err)
+		c.Error(errors.NewInternalServerError("create etc card failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateFleetETCCard godoc
+// @Summary      更新ETC卡
+// @Router       /fleet/etc-cards/:id [put]
+func (h *FleetHandler) UpdateFleetETCCard(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.FleetETCCard
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	now := timeNowUTC()
+	if err := h.db.WithContext(ctx).Model(&types.FleetETCCard{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Updates(map[string]interface{}{
+			"alias":       req.Alias,
+			"card_no":     req.CardNo,
+			"card_type":   req.CardType,
+			"issuer":      req.Issuer,
+			"bank":        req.Bank,
+			"open_date":   req.OpenDate,
+			"expire_date": req.ExpireDate,
+			"vehicle_id":  req.VehicleID,
+			"card_status": req.CardStatus,
+			"enabled":     req.Enabled,
+			"remark":      req.Remark,
+			"updated_at":  now,
+		}).Error; err != nil {
+		logger.Errorf(ctx, "update fleet etc card failed: %v", err)
+		c.Error(errors.NewInternalServerError("update etc card failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
+}
+
+// DeleteFleetETCCard godoc
+// @Summary      删除ETC卡
+// @Router       /fleet/etc-cards/:id [delete]
+func (h *FleetHandler) DeleteFleetETCCard(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	res := h.db.WithContext(ctx).Model(&types.FleetETCCard{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete fleet etc card failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete etc card failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("ETC卡不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
 }
 
 var _ = time.Now

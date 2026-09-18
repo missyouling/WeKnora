@@ -429,6 +429,14 @@ export function updateKnowledgeMetadata(knowledgeId: string, customMetadata: Rec
   return put(`/api/v1/knowledge/${knowledgeId}`, { custom_metadata: customMetadata });
 }
 
+/** 更新知识文件标题与自定义元数据（车队证照：编辑文件名 / 手动匹配证照类型） */
+export function updateKnowledgeInfo(
+  id: string,
+  data: { title?: string; description?: string; custom_metadata?: Record<string, unknown> },
+) {
+  return put(`/api/v1/knowledge/${id}`, data);
+}
+
 /**
  * 触发发票字段提取：后端读取已解析文本并调用提取模型（复用知识库的
  * summary_model_id），将结果写入 custom_metadata。
@@ -902,6 +910,23 @@ export function saveUtilityFieldConfigs(category: string, configs: Record<string
 /** 按分组获取字段配置（电费分组：market/line/trans/sys/gov-industrial/catalog/gov-residential/capacity/pf/meter/resident-meter/overview） */
 export function listUtilityFieldConfigsByGroup(category: string, group: string) {
   return get(`/api/v1/utilities/field-configs?category=${category}&group=${group}`);
+}
+
+/** 自定义用途列表（内置 宿舍/工商业 由前端常量管理） */
+export function listUtilityKinds(scope: string) {
+  return get(`/api/v1/utilities/kinds?scope=${scope}`);
+}
+
+export function createUtilityKind(scope: string, payload: { value: string; label: string }) {
+  return post(`/api/v1/utilities/kinds`, { scope, ...payload });
+}
+
+export function updateUtilityKind(id: string, payload: { label: string }) {
+  return put(`/api/v1/utilities/kinds/${id}`, payload);
+}
+
+export function deleteUtilityKind(id: string) {
+  return del(`/api/v1/utilities/kinds/${id}`);
 }
 
 /** 基本户列表（电费多户） */
