@@ -388,3 +388,20 @@ type UtilityBasicAccount struct {
 }
 
 func (UtilityBasicAccount) TableName() string { return "utility_basic_accounts" }
+
+// UtilityKind 水电气用途配置：内置用途(宿舍/工商业)由前端常量管理，
+// 自定义用途(如公租房)持久化到后端，跨浏览器/多端共享。
+// Value 为表计 meter_kind 引用值；Scope 为 water | gas | electricity。
+type UtilityKind struct {
+	ID        string     `gorm:"primaryKey" json:"id"`
+	TenantID  int64      `gorm:"index" json:"tenant_id"`
+	Scope     string     `gorm:"index" json:"scope"` // water | gas | electricity
+	Value     string     `gorm:"index" json:"value"`
+	Label     string     `json:"label"`
+	SortOrder int        `json:"sort_order"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (UtilityKind) TableName() string { return "utility_kinds" }

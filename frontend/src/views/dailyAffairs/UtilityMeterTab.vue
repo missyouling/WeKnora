@@ -540,10 +540,10 @@
         <div class="kind-manage-body">
           <p class="kind-manage-tip">内置用途(宿舍/工商业)驱动分摊计算,可改名不可删除;公租房及其它自定义用途可删除、可修改、可新增,仅分组展示不参与租户核算计算。</p>
           <div v-for="k in meterKinds" :key="k.value" class="kind-manage-row">
-            <t-input :model-value="k.label" size="small" @blur="(e: any) => renameKind(k.value, e.target.value)" @enter="(e: any) => renameKind(k.value, e.target.value)">
+            <t-input v-model="k.label" size="small" @enter="() => {}">
               <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
             </t-input>
-            <t-popconfirm v-if="!k.builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？删除后该用途的表计将归入未分类分组。`"
+            <t-popconfirm v-if="!k.builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
               :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
               @confirm="removeCustomKind(k.value)">
               <t-button variant="text" size="small" @click.stop>
@@ -556,6 +556,10 @@
             <template #icon><t-icon name="add" /></template>
             新增用途
           </t-button>
+          <div class="kind-manage-actions">
+            <t-button variant="outline" size="small" @click="kindManageVisible = false">关闭</t-button>
+            <t-button theme="primary" size="small" :loading="savingKinds" @click="saveKinds">保存</t-button>
+          </div>
         </div>
       </t-dialog>
     </teleport>
@@ -584,7 +588,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import Sortable from 'sortablejs'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
@@ -597,6 +601,10 @@ import {
   updateUtilityMeter,
   deleteUtilityMeter,
   sortUtilityMeters,
+  listUtilityKinds,
+  createUtilityKind,
+  updateUtilityKind,
+  deleteUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 
@@ -697,47 +705,112 @@ const filteredMeters = computed(() => {
 })
 // 用途体系:内置 宿舍/工商业(锁定 value 驱动租户核算计算,label 可改名) + 用户自定义
 // 公租房降为自定义用途(可删除/修改/新增),仅分组展示、不参与租户核算计算
-const KIND_BUILTIN = [
+const KIND_BUILTIN = reactive([
   { value: 'dorm', label: '宿舍', builtin: true },
   { value: 'production', label: '工商业', builtin: true },
-]
+])
 const kindsStoreKey = 'weknora-utility-kinds'
-const loadCustomKinds = (): { value: string; label: string }[] => {
-  let arr: any[] = []
-  try { arr = JSON.parse(localStorage.getItem(kindsStoreKey) || '[]') } catch { /* ignore */ }
-  if (!Array.isArray(arr)) arr = []
-  const valid = arr.filter((k: any) => k && k.value && k.label && !KIND_BUILTIN.some(b => b.value === k.value))
-  // 兼容旧数据:公租房降为自定义用途,默认预置(可删除)
-  if (!valid.some(k => k.value === 'public')) {
-    valid.unshift({ value: 'public', label: '公租房' })
-  }
-  return valid
-}
-const customKinds = ref<{ value: string; label: string }[]>(loadCustomKinds())
+type KindItem = { id?: string; value: string; label: string }
+const customKinds = ref<KindItem[]>([])
 const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])
 const meterKindOptions = computed(() => meterKinds.value.map(k => ({ label: k.label, value: k.value })))
 const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || '未分类'
-const persistCustomKinds = () => {
-  try { localStorage.setItem(kindsStoreKey, JSON.stringify(customKinds.value)) } catch { /* ignore */ }
+
+// 从后端加载自定义用途；首次使用且后端为空时迁移旧 localStorage 数据（保留 value/label）
+const loadKinds = async () => {
+  try {
+    const res: any = await listUtilityKinds(props.category)
+    const list = res?.data || []
+    if (Array.isArray(list) && list.length) {
+      // 后端已持久化内置用途：内置 value 过滤出 customKinds，内置 label 同步到 KIND_BUILTIN
+      customKinds.value = list
+        .filter((k: any) => !KIND_BUILTIN.some(b => b.value === k.value))
+        .map((k: any) => ({ id: k.id, value: k.value, label: k.label }))
+      for (const k of list) {
+        const b = KIND_BUILTIN.find(x => x.value === k.value)
+        if (b && k.label) b.label = k.label
+      }
+      return
+    }
+    // 迁移旧本地数据
+    let old: any[] = []
+    try { old = JSON.parse(localStorage.getItem(kindsStoreKey) || '[]') } catch { /* ignore */ }
+    const olds = Array.isArray(old)
+      ? old.filter((k: any) => k && k.value && k.label && !KIND_BUILTIN.some(b => b.value === k.value))
+      : []
+    for (const k of olds) {
+      try {
+        const created: any = await createUtilityKind(props.category, { value: k.value, label: k.label })
+        const item = created?.data || created
+        if (item?.value) customKinds.value.push({ id: item.id, value: item.value, label: item.label })
+      } catch { /* ignore */ }
+    }
+    localStorage.removeItem(kindsStoreKey)
+  } catch (e) {
+    console.error('load kinds failed', e)
+  }
 }
-const addCustomKind = () => {
+
+const addCustomKind = async () => {
   const n = customKinds.value.length + 1
-  customKinds.value.push({ value: `custom${n}`, label: `自定义${n}` })
-  persistCustomKinds()
+  const value = `custom${n}`
+  const label = `自定义${n}`
+  try {
+    const res: any = await createUtilityKind(props.category, { value, label })
+    const item = res?.data || res
+    if (item?.id) {
+      customKinds.value.push({ id: item.id, value: item.value, label: item.label })
+    } else {
+      customKinds.value.push({ value, label })
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '新增用途失败')
+  }
 }
-const removeCustomKind = (value: string) => {
+const removeCustomKind = async (value: string) => {
   // 引用检查:有表计正在使用该用途时禁止删除
   const used = meters.value.filter(m => String(m.meter_kind) === value)
   if (used.length) {
     MessagePlugin.warning(`该用途已被 ${used.length} 个表计引用,请先删除或修改这些表计的用途后再删除`)
     return
   }
+  const item = customKinds.value.find(k => k.value === value)
+  if (!item) return
+  if (item.id) {
+    try {
+      await deleteUtilityKind(item.id)
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '删除失败')
+      return
+    }
+  }
   customKinds.value = customKinds.value.filter(k => k.value !== value)
-  persistCustomKinds()
 }
-const renameKind = (value: string, label: string) => {
-  const item = meterKinds.value.find(k => k.value === value)
-  if (item) { item.label = label.trim() || item.label; persistCustomKinds() }
+const savingKinds = ref(false)
+// 保存用途配置：内置用途 upsert 到后端（改名持久化），自定义用途按 id 更新
+const saveKinds = async () => {
+  savingKinds.value = true
+  try {
+    for (const k of meterKinds.value) {
+      const label = (k.label || '').trim()
+      if (!label) {
+        MessagePlugin.warning('用途名称不能为空')
+        return
+      }
+      if (k.builtin) {
+        await createUtilityKind(props.category, { value: k.value, label })
+      } else if (k.id) {
+        if (label !== k.label) k.label = label
+        await updateUtilityKind(k.id, { label })
+      }
+    }
+    MessagePlugin.success('用途配置已保存')
+    kindManageVisible.value = false
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  } finally {
+    savingKinds.value = false
+  }
 }
 
 // 设置抽屉分组标签:按用途配置动态生成(宿舍/公租房/工商业...),始终显示全部用途
@@ -776,6 +849,7 @@ const load = async () => {
     const records = recData?.records || recRes?.records || []
     const mets = meterRes?.data || recData?.meters || meterRes || []
     meters.value = Array.isArray(mets) ? mets : []
+    await loadKinds()
     const meterMap = new Map(meters.value.map((m: any) => [m.id, m]))
     const flat: any[] = []
     for (const rec of records) {
@@ -1890,7 +1964,7 @@ onBeforeUnmount(() => {
     align-items: center;
 
     .doc-date-picker {
-      width: 140px;
+      width: 160px;
     }
 
     .doc-filter-select {
@@ -2388,6 +2462,12 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.6;
   margin: 0 0 4px;
+}
+.kind-manage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 .kind-manage-row {
   display: flex;

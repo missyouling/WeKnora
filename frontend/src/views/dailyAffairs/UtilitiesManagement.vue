@@ -6,9 +6,9 @@
         <h2>能耗管理</h2>
         <p class="header-subtitle">市电、光伏账单自动解析归档；电、水、气按表计录入自动汇总</p>
       </div>
-      <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-        @change="onFileInputChange" />
     </div>
+    <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
+      @change="onFileInputChange" />
 
     <!-- 加载中 -->
     <div v-if="loading && activeTab === 'electricity'" class="loading-area">
@@ -51,31 +51,33 @@
         <div class="utilities-content">
           <template v-if="activeTab === 'electricity'">
           <div v-if="kbId" class="electricity-panel">
-            <!-- 模块标题区（与光伏页一致） -->
-            <div class="header">
-              <div class="header-title">
-                <h2>市电账单</h2>
-                <p class="header-subtitle">市电、光伏账单自动解析归档；电、水、气按表计录入自动汇总</p>
-              </div>
-              <div class="header-actions">
-                <t-button v-if="kbId" theme="primary" @click="triggerUpload">
-                  <template #icon><t-icon name="upload" /></template>
-                  上传电费账单
-                </t-button>
-              </div>
-            </div>
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
             <!-- 筛选工具栏 -->
             <div class="doc-filter-bar">
               <div class="doc-filter-bar__leading">
-                <div class="doc-filter-field doc-filter-field--wide">
+                <div class="doc-filter-field doc-filter-field--search">
+                  <t-input v-model="keyword" placeholder="搜索文件名 / 源文件" clearable class="doc-filter-field__control">
+                    <template #prefixIcon><t-icon name="search" size="16px" /></template>
+                  </t-input>
+                </div>
+                <div class="doc-filter-field">
                   <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
                     placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
                     @change="applyFilter">
                     <template #prefixIcon><t-icon name="time" size="16px" /></template>
                   </t-date-picker>
                 </div>
+                <t-button variant="outline" size="small" @click="applyFilter">
+                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                </t-button>
+                <t-tooltip content="删除历史" placement="bottom">
+                  <t-button variant="outline" size="small" @click="historyVisible = true">
+                    <template #icon><t-icon name="history" size="14px" /></template>
+                  </t-button>
+                </t-tooltip>
+              </div>
+              <div class="doc-filter-bar__trailing">
                 <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
                   overlay-inner-class="contract-field-popup">
                   <t-button variant="outline" size="small">
@@ -99,19 +101,14 @@
                     </div>
                   </template>
                 </t-popup>
-                <t-button variant="outline" size="small" @click="applyFilter">
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                <t-button variant="outline" size="small" @click="settingsVisible = true">
+                  <template #icon><t-icon name="setting" size="14px" /></template>
+                  设置
                 </t-button>
-                <t-tooltip content="设置" placement="bottom">
-                  <t-button variant="outline" size="small" @click="settingsVisible = true">
-                    <template #icon><t-icon name="setting" size="14px" /></template>
-                  </t-button>
-                </t-tooltip>
-                <t-tooltip content="删除历史" placement="bottom">
-                  <t-button variant="outline" size="small" @click="historyVisible = true">
-                    <template #icon><t-icon name="history" size="14px" /></template>
-                  </t-button>
-                </t-tooltip>
+                <t-button theme="primary" size="small" @click="triggerUpload">
+                  <template #icon><t-icon name="upload" /></template>
+                  上传电费账单
+                </t-button>
               </div>
             </div>
 
@@ -982,6 +979,7 @@ const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
 const monthFilter = ref('')
+const keyword = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
 const extractFailed = ref<Set<string>>(new Set())
@@ -1043,7 +1041,13 @@ const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
   tags: [],
   page: 0,
 })))
-const displayRows = computed(() => [...pendingRows.value, ...rows.value])
+const displayRows = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const all = [...pendingRows.value, ...rows.value]
+  if (!kw) return all
+  return all.filter(r =>
+    (r.fileName || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw))
+})
 
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
@@ -2444,24 +2448,32 @@ onBeforeUnmount(() => { stopPolling() })
     flex: 1;
   }
 
+  &__trailing {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   .doc-filter-field {
     display: flex;
     align-items: center;
 
     &--search {
-      min-width: 220px;
+      flex: 1;
+      min-width: 200px;
+      max-width: 320px;
     }
 
-    &--wide {
-      min-width: 260px;
+    .doc-filter-field__control {
+      width: 100%;
     }
 
     .doc-search {
-      width: 220px;
+      width: 200px;
     }
 
     .doc-date-range {
-      width: 260px;
+      width: 160px;
     }
   }
 }
@@ -2590,9 +2602,6 @@ onBeforeUnmount(() => { stopPolling() })
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
 }
 
 .utilities-side-item {

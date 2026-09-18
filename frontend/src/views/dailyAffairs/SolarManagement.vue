@@ -1,20 +1,7 @@
 <template>
   <div class="solar-management-container">
-    <!-- 顶部 -->
-    <div class="header">
-      <div class="header-title">
-        <h2>光伏账单</h2>
-        <p class="header-subtitle">光伏发电账单自动解析归档，与电费共用「日常事务-电费」知识库</p>
-      </div>
-      <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="triggerUpload">
-          <template #icon><t-icon name="upload" /></template>
-          上传光伏账单
-        </t-button>
-      </div>
-      <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-        @change="onFileInputChange" />
-    </div>
+    <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
+      @change="onFileInputChange" />
 
     <!-- 加载中 -->
     <div v-if="loading" class="loading-area">
@@ -36,13 +23,28 @@
         <!-- 筛选工具栏 -->
         <div class="doc-filter-bar">
           <div class="doc-filter-bar__leading">
-            <div class="doc-filter-field doc-filter-field--wide">
+            <div class="doc-filter-field doc-filter-field--search">
+              <t-input v-model="keyword" placeholder="搜索文件名 / 源文件" clearable class="doc-filter-field__control">
+                <template #prefixIcon><t-icon name="search" size="16px" /></template>
+              </t-input>
+            </div>
+            <div class="doc-filter-field">
               <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
                 placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
                 @change="applyFilter">
                 <template #prefixIcon><t-icon name="time" size="16px" /></template>
               </t-date-picker>
             </div>
+            <t-button variant="outline" size="small" @click="applyFilter">
+              <template #icon><t-icon name="refresh" size="14px" /></template>
+            </t-button>
+            <t-tooltip content="删除历史" placement="bottom">
+              <t-button variant="outline" size="small" @click="historyVisible = true">
+                <template #icon><t-icon name="history" size="14px" /></template>
+              </t-button>
+            </t-tooltip>
+          </div>
+          <div class="doc-filter-bar__trailing">
             <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
               overlay-inner-class="contract-field-popup">
               <t-button variant="outline" size="small">
@@ -66,19 +68,14 @@
                 </div>
               </template>
             </t-popup>
-            <t-button variant="outline" size="small" @click="applyFilter">
-              <template #icon><t-icon name="refresh" size="14px" /></template>
+            <t-button variant="outline" size="small" @click="settingsVisible = true">
+              <template #icon><t-icon name="setting" size="14px" /></template>
+              设置
             </t-button>
-            <t-tooltip content="设置" placement="bottom">
-              <t-button variant="outline" size="small" @click="settingsVisible = true">
-                <template #icon><t-icon name="setting" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
-            <t-tooltip content="删除历史" placement="bottom">
-              <t-button variant="outline" size="small" @click="historyVisible = true">
-                <template #icon><t-icon name="history" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
+            <t-button theme="primary" size="small" @click="triggerUpload">
+              <template #icon><t-icon name="upload" /></template>
+              上传光伏账单
+            </t-button>
           </div>
         </div>
 
@@ -637,6 +634,7 @@ const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
 const monthFilter = ref('')
+const keyword = ref('')
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
 const taggingInFlight = ref<Set<string>>(new Set())
@@ -694,7 +692,13 @@ const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
   item: {},
   tags: [],
 })))
-const displayRows = computed(() => [...pendingRows.value, ...rows.value])
+const displayRows = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const all = [...pendingRows.value, ...rows.value]
+  if (!kw) return all
+  return all.filter(r =>
+    (r.fileName || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw))
+})
 
 const meterReading = (row: Row) => {
   const g = row.item?.gateways?.[0]
@@ -1408,11 +1412,17 @@ onBeforeUnmount(() => { stopPolling() })
     flex-wrap: wrap;
     flex: 1;
   }
+
+  &__trailing {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
 }
 .doc-filter-field { display: flex; align-items: center; }
 .doc-filter-field--search { flex: 1; min-width: 200px; max-width: 320px; }
-.doc-filter-field--wide { width: 160px; }
 .doc-filter-field__control { width: 100%; }
+.doc-date-range { width: 160px; }
 .field-popup-content { min-width: 200px; padding: 8px; }
 .field-popup-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .field-popup-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
@@ -1484,10 +1494,55 @@ onBeforeUnmount(() => { stopPolling() })
 .row-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-mono { font-family: var(--app-font-family); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-status-tag { min-width: 64px; justify-content: center; }
-.row-tag-chips { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
-.row-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.row-tag-more { font-size: 12px; color: var(--td-text-color-secondary); }
-.row-tag-add { font-size: 12px; color: var(--td-brand-color); cursor: pointer; }
+.row-tag-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  cursor: pointer;
+
+  .row-tag {
+    max-width: 110px;
+
+    :deep(.t-tag__text) {
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+    }
+  }
+}
+
+.row-tag-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: 10px;
+}
+
+.row-tag-add {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 999px;
+  padding: 0 6px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: var(--td-brand-color);
+    color: var(--td-brand-color);
+    border-style: solid;
+  }
+}
 .icon-spin { animation: solar-icon-spin 1s linear infinite; }
 @keyframes solar-icon-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .list-loading { display: flex; justify-content: center; padding: 24px; }

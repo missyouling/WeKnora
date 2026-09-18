@@ -1361,7 +1361,7 @@ onMounted(() => {
   .doc-filter-field {
     display: flex;
     align-items: center;
-    .doc-date-picker { width: 140px; }
+    .doc-date-picker { width: 160px; }
     .doc-filter-select { width: 160px; }
   }
 }

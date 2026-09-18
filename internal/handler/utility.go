@@ -1886,3 +1886,210 @@ func (h *UtilityHandler) SaveUtilityBasicInfo(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已保存"})
 }
+
+// ---------------------------------------------------------------------------
+// 用途配置（自定义用途持久化：公租房等；内置 宿舍/工商业 由前端常量管理）
+// ---------------------------------------------------------------------------
+
+// ListUtilityKinds godoc
+// @Summary      获取自定义用途列表
+// @Description  按分类返回自定义用途（内置用途由前端常量提供，不落库）。
+// @Router       /utilities/kinds [get]
+func (h *UtilityHandler) ListUtilityKinds(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	scope := strings.TrimSpace(c.Query("scope"))
+	if scope == "" {
+		c.Error(errors.NewBadRequestError("scope is required (electricity/water/gas)"))
+		return
+	}
+	var items []types.UtilityKind
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", tenantID, scope).
+		Order("sort_order ASC, created_at ASC").Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list utility kinds failed: %v", err)
+		c.Error(errors.NewInternalServerError("list kinds failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// CreateUtilityKind godoc
+// @Summary      新增自定义用途
+// @Router       /utilities/kinds [post]
+func (h *UtilityHandler) CreateUtilityKind(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	var req struct {
+		Scope string `json:"scope"`
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Scope = strings.TrimSpace(req.Scope)
+	req.Value = strings.TrimSpace(req.Value)
+	req.Label = strings.TrimSpace(req.Label)
+	if req.Scope == "" || req.Value == "" || req.Label == "" {
+		c.Error(errors.NewBadRequestError("scope/value/label 不能为空"))
+		return
+	}
+	// 内置用途(dorm/production)允许 upsert：改名持久化到后端（删除仍被拦截）
+	if req.Value == "dorm" || req.Value == "production" {
+		var existing types.UtilityKind
+		err := h.db.WithContext(ctx).
+			Where("tenant_id = ? AND scope = ? AND value = ? AND deleted_at IS NULL", tenantID, req.Scope, req.Value).
+			First(&existing).Error
+		if err == nil {
+			existing.Label = req.Label
+			existing.UpdatedAt = timeNowUTC()
+			if uerr := h.db.WithContext(ctx).Model(&types.UtilityKind{}).
+				Where("id = ?", existing.ID).Update("label", req.Label).Error; uerr != nil {
+				logger.Errorf(ctx, "update builtin kind failed: %v", uerr)
+				c.Error(errors.NewInternalServerError("update kind failed: " + uerr.Error()))
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": existing})
+			return
+		}
+		if !(err == gorm.ErrRecordNotFound) {
+			logger.Errorf(ctx, "query builtin kind failed: %v", err)
+			c.Error(errors.NewInternalServerError("query kind failed: " + err.Error()))
+			return
+		}
+		// 内置记录不存在时按普通创建逻辑落库（跳过重名检查）
+		now := timeNowUTC()
+		item := types.UtilityKind{
+			ID:        uuid.NewString(),
+			TenantID:  int64(tenantID),
+			Scope:     req.Scope,
+			Value:     req.Value,
+			Label:     req.Label,
+			SortOrder: 0,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if cerr := h.db.WithContext(ctx).Create(&item).Error; cerr != nil {
+			logger.Errorf(ctx, "create builtin kind failed: %v", cerr)
+			c.Error(errors.NewInternalServerError("create kind failed: " + cerr.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": item})
+		return
+	}
+	var cnt int64
+	h.db.WithContext(ctx).Model(&types.UtilityKind{}).
+		Where("tenant_id = ? AND scope = ? AND value = ? AND deleted_at IS NULL", tenantID, req.Scope, req.Value).
+		Count(&cnt)
+	if cnt > 0 {
+		c.Error(errors.NewBadRequestError("该用途已存在"))
+		return
+	}
+	var maxOrder int
+	h.db.WithContext(ctx).Model(&types.UtilityKind{}).
+		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", tenantID, req.Scope).
+		Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
+	now := timeNowUTC()
+	item := types.UtilityKind{
+		ID:        uuid.NewString(),
+		TenantID:  int64(tenantID),
+		Scope:     req.Scope,
+		Value:     req.Value,
+		Label:     req.Label,
+		SortOrder: maxOrder + 1,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := h.db.WithContext(ctx).Create(&item).Error; err != nil {
+		logger.Errorf(ctx, "create utility kind failed: %v", err)
+		c.Error(errors.NewInternalServerError("create kind failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": item})
+}
+
+// UpdateUtilityKind godoc
+// @Summary      重命名自定义用途
+// @Router       /utilities/kinds/:id [put]
+func (h *UtilityHandler) UpdateUtilityKind(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.Error(errors.NewBadRequestError("id 不能为空"))
+		return
+	}
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Label = strings.TrimSpace(req.Label)
+	if req.Label == "" {
+		c.Error(errors.NewBadRequestError("用途名称不能为空"))
+		return
+	}
+	var existing types.UtilityKind
+	if err := h.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		First(&existing).Error; err != nil {
+		c.Error(errors.NewNotFoundError("用途不存在"))
+		return
+	}
+	if err := h.db.WithContext(ctx).Model(&types.UtilityKind{}).
+		Where("id = ? AND tenant_id = ?", id, tenantID).
+		Updates(map[string]interface{}{"label": req.Label, "updated_at": timeNowUTC()}).Error; err != nil {
+		logger.Errorf(ctx, "update utility kind failed: %v", err)
+		c.Error(errors.NewInternalServerError("update kind failed: " + err.Error()))
+		return
+	}
+	existing.Label = req.Label
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": existing})
+}
+
+// DeleteUtilityKind godoc
+// @Summary      删除自定义用途（软删）
+// @Router       /utilities/kinds/:id [delete]
+func (h *UtilityHandler) DeleteUtilityKind(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := utilityTenantID(c)
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.Error(errors.NewBadRequestError("id 不能为空"))
+		return
+	}
+	// 引用检查：仅统计同 scope（category）的表计，避免电/水/气互相误拦
+	var kind types.UtilityKind
+	if err := h.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		First(&kind).Error; err != nil {
+		c.Error(errors.NewBadRequestError("用途不存在或已被删除"))
+		return
+	}
+	var used int64
+	h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+		Where("tenant_id = ? AND category = ? AND meter_kind = ? AND deleted_at IS NULL",
+			tenantID, kind.Scope, kind.Value).
+		Count(&used)
+	if used > 0 {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("该用途已被 %d 个表计引用，请先删除或修改这些表计的用途后再删除", used)))
+		return
+	}
+	res := h.db.WithContext(ctx).Model(&types.UtilityKind{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete utility kind failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete kind failed: " + res.Error.Error()))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("用途不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
