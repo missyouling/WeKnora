@@ -134,11 +134,18 @@
                   </t-button>
                 </span>
                 <span v-else-if="isFileRow(row) && col.key === 'tags'" class="cell-status cell-tags">
-                  <template v-for="t in row.tags || []" :key="t.id">
-                    <t-tag size="small" theme="primary" variant="light" @click.stop="openTagEdit(row)">{{ t.name }}</t-tag>
+                  <template v-if="(row.tags || []).length">
+                    <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+                      <t-tag v-for="t in (row.tags || []).slice(0, 3)" :key="t.id" size="small" variant="light-outline"
+                        class="row-tag">{{ t.name }}</t-tag>
+                      <span v-if="(row.tags || []).length > 3" class="row-tag-overflow"
+                        :title="(row.tags || []).map((t: any) => t.name).join('、')">+{{ (row.tags || []).length - 3 }}</span>
+                    </div>
                   </template>
-                  <t-button v-if="!((row.tags || []).length)" variant="text" size="small" class="cell-tag-add"
-                    @click.stop="openTagEdit(row)">+标签</t-button>
+                  <span v-else class="row-tag-add" @click.stop="openTagEdit(row)">+ 标签</span>
+                </span>
+                <span v-else-if="!isFileRow(row) && col.key === 'data.证件状态'" class="cell-status">
+                  <t-tag size="small" :theme="certStatusTheme(calcCertStatus(row.data))" variant="light-outline">{{ calcCertStatus(row.data) }}</t-tag>
                 </span>
                 <span v-else>{{ col.value(row) }}</span>
               </div>
@@ -731,6 +738,13 @@ function calcCertStatus(data: any): string {
   const days = Math.ceil((endT.getTime() - today.getTime()) / 86400000)
   if (days <= 30) return '即将到期'
   return '有效'
+}
+// 证件状态颜色：有效=绿、即将到期=橙、已过期=红，与上传/解析状态标签样式统一
+function certStatusTheme(v?: string): string {
+  if (v === '已过期') return 'danger'
+  if (v === '即将到期') return 'warning'
+  if (v === '有效') return 'success'
+  return 'default'
 }
 
 // 全部证照类型（文件维度）列：文件别名 / 证照类型 / 源文件 / 文件类型 / 上传状态 / 解析状态 / 提取状态 / 说明 / 上传时间 / 标签
@@ -2010,15 +2024,48 @@ function onDrawerResizeEnd() {
   color: var(--td-brand-color);
 }
 
-/* 标签列：多个小标签横向排布 */
+/* 标签列：与知识库-文档管理列表标签样式一致（light-outline + 溢出+N + 空态） */
 .cell-tags {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 4px;
 }
-.cell-tags :deep(.t-tag) { cursor: pointer; }
-.cell-tag-add {
+.row-tag {
+  max-width: 100%;
+}
+.row-tag :deep(.t-tag__text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  display: inline-block;
+}
+.row-tag-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+}
+.row-tag-chips.is-clickable { cursor: pointer; }
+.row-tag-overflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  flex: none;
+}
+.row-tag-add {
   flex: none;
   color: var(--td-brand-color);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 /* 操作列（三个点下拉） */
