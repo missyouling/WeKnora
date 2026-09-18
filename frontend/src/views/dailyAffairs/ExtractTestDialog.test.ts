@@ -12,6 +12,10 @@ test('测试弹窗为 80% 宽度并采用左右 5/12 + 7/12 分栏', () => {
   assert.match(dialog, /<t-col :span="14" class="col-right">/)
 })
 
+test('测试弹窗显式挂载到 body，从抽屉容器中独立出来', () => {
+  assert.match(dialog, /:attach="'body'"/)
+})
+
 test('左侧输入面板提供粘贴文本 / 选择知识库文件两种输入方式', () => {
   assert.match(inputPanel, /label="粘贴文本"/)
   assert.match(inputPanel, /label="选择知识库文件"/)

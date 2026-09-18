@@ -1,6 +1,6 @@
 <template>
   <t-dialog :visible="visible" header="测试规则" :width="'80%'" :close-on-overlay-click="false" :footer="false"
-    @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
+    :attach="'body'" @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
     <div class="extract-test-layout">
       <!-- 左 5/12：输入与原文预览（限高内滚）；右 7/12：提取结果 -->
       <t-row :gutter="24">
