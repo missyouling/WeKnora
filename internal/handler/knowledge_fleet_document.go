@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -218,6 +217,7 @@ func (h *KnowledgeHandler) ExtractFleetDocument(c *gin.Context) {
 			"updated_at":       now,
 		}).Error; err != nil {
 			logger.Errorf(ctx, "update fleet record from extraction failed: %v", err)
+			h.markFleetExtractFailed(effCtx, knowledgeID, scope, certType, err.Error())
 			c.Error(errors.NewInternalServerError("update fleet record failed"))
 			return
 		}
@@ -226,14 +226,31 @@ func (h *KnowledgeHandler) ExtractFleetDocument(c *gin.Context) {
 		rec.TenantID = int64(effectiveTenantID)
 		rec.CreatedAt = now
 		rec.UpdatedAt = now
-		// 并发兜底：唯一索引 idx_fleet_records_kid_uq 冲突时转为更新，杜绝重复落库。
-		if err := h.db.WithContext(effCtx).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "tenant_id"}, {Name: "record_type"}, {Name: "doc_knowledge_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"vehicle_id", "data", "doc_type", "file_name", "doc_knowledge_id", "updated_at"}),
-		}).Create(&rec).Error; err != nil {
-			logger.Errorf(ctx, "create fleet record from extraction failed: %v", err)
-			c.Error(errors.NewInternalServerError("create fleet record failed"))
-			return
+		// 唯一索引 idx_fleet_records_kid_uq 是 partial index，GORM clause.OnConflict 无法带 partial WHERE 谓词会报 42P10。
+		// 改为直接 Create；若撞唯一索引（并发另一请求已落库），回查后降级为 Update。
+		if err := h.db.WithContext(effCtx).Create(&rec).Error; err != nil {
+			var existing2 types.FleetRecord
+			if gerr := h.db.WithContext(effCtx).Where("tenant_id = ? AND record_type = ? AND doc_knowledge_id = ? AND deleted_at IS NULL",
+				int64(effectiveTenantID), recordType, knowledgeID).First(&existing2).Error; gerr == nil {
+				if uerr := h.db.WithContext(effCtx).Model(&types.FleetRecord{}).Where("id = ?", existing2.ID).Updates(map[string]interface{}{
+					"vehicle_id":       rec.VehicleID,
+					"data":             mustJSON(rec.Data),
+					"doc_type":         rec.DocType,
+					"file_name":        rec.FileName,
+					"doc_knowledge_id": rec.DocKnowledgeID,
+					"updated_at":       now,
+				}).Error; uerr != nil {
+					logger.Errorf(ctx, "fleet record concurrent update failed: %v", uerr)
+					h.markFleetExtractFailed(effCtx, knowledgeID, scope, certType, uerr.Error())
+					c.Error(errors.NewInternalServerError("create fleet record failed"))
+					return
+				}
+			} else {
+				logger.Errorf(ctx, "create fleet record from extraction failed: %v", err)
+				h.markFleetExtractFailed(effCtx, knowledgeID, scope, certType, err.Error())
+				c.Error(errors.NewInternalServerError("create fleet record failed"))
+				return
+			}
 		}
 	}
 
@@ -407,3 +424,22 @@ func buildFleetExtractionContent(name, summary string, chunks []*types.Chunk) st
 }
 
 var _ = gorm.ErrRecordNotFound
+
+// markFleetExtractFailed 将提取失败状态写回知识文件 custom_metadata，
+// 避免失败后 extract_status 停留在 processing 导致前端一直显示"待提取/提取中"。
+func (h *KnowledgeHandler) markFleetExtractFailed(ctx context.Context, knowledgeID, scope, certType, errMsg string) {
+	failMeta, _ := json.Marshal(fleetDocCustomMetadata{
+		Kind: "fleet_" + scope + "_document", Scope: scope, FleetCertType: certType,
+		ExtractStatus: "failed", ExtractError: truncateErr(errMsg, 500),
+	})
+	if serr := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(failMeta)); serr != nil {
+		logger.Warnf(ctx, "Failed to persist fleet doc failed-state: %v", serr)
+	}
+}
+
+func truncateErr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
