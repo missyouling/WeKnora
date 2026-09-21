@@ -554,7 +554,7 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
   },
   '行驶证': {
     name: '行驶证', scope: 'vehicle',
-    base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '行驶证编号', '有效期', '状态', '备注'],
+    base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '有效期', '状态', '备注'],
     detail: [],
   },
   '道路运输经营许可证': {
@@ -742,40 +742,6 @@ function getExpireDate(data: any): Date | null {
   for (const k of EXPIRE_DATE_KEYS) { const d = parseCertDate(data?.[k]); if (d) return d }
   return null
 }
-// 系统证照编号自动生成：XZ01、XZ02... 顺序递增（取现有行驶证记录最大序号+1）
-function genCertNo(): string {
-  let max = 0
-  for (const r of rows.value || []) {
-    const v = String(r?.data?.['行驶证编号'] || '')
-    const m = v.match(/^XZ(\d+)$/)
-    if (m) max = Math.max(max, parseInt(m[1], 10))
-  }
-  return `XZ${String(max + 1).padStart(2, '0')}`
-}
-// 存量补全：行驶证记录缺"行驶证编号"时按顺序补 XZ01、XZ02...
-async function backfillCertNo() {
-  if (filters.docType !== '行驶证') return
-  const missing = rows.value.filter((r: any) => r.id && !(r.data && r.data['行驶证编号']))
-  if (!missing.length) return
-  let max = 0
-  for (const r of rows.value) {
-    const v = String(r?.data?.['行驶证编号'] || '')
-    const m = v.match(/^XZ(\d+)$/)
-    if (m) max = Math.max(max, parseInt(m[1], 10))
-  }
-  for (const r of missing) {
-    max += 1
-    const no = `XZ${String(max).padStart(2, '0')}`
-    try {
-      await updateFleetRecord(r.id, {
-        record_type: group.value.recordType,
-        doc_type: '行驶证',
-        data: { ...(r.data || {}), '行驶证编号': no },
-      })
-      r.data = { ...(r.data || {}), '行驶证编号': no }
-    } catch { /* ignore */ }
-  }
-}
 function calcCertStatus(data: any): string {
   const end = getExpireDate(data)
   if (!end) return data?.['证件状态'] || data?.['状态'] || data?.['驾驶证状态'] || '有效'
@@ -958,7 +924,6 @@ async function loadRecords() {
           doc_type: filters.docType,
         })
         rows.value = res.data || []
-        backfillCertNo()
       }
     } else {
       const res = await listFleetRecords({
@@ -1216,8 +1181,6 @@ function openDrawer(row: any) {
     form.id = ''
     if (isArchive.value) {
       form.doc_type = filters.docType || ''; form.file_name = ''; form.file_type = ''; form.doc_knowledge_id = ''; form.meta = {}; form.fail_reason = ''
-      // 行驶证编号：系统自动生成（可手动编辑，不参与模型提取）
-      if (form.doc_type === '行驶证' && !form.data['行驶证编号']) form.data['行驶证编号'] = genCertNo()
     }
   }
   drawerVisible.value = true
