@@ -240,7 +240,9 @@ async function runTask(t: UpTask) {
       const elapsed = Date.now() - pollStart
       t.progress = Math.min(92, 10 + elapsed / 1000 * 4)
       await sleep(2000)
-      if (elapsed > 120000) { t.status = 'failed'; t.msg = '解析超时'; return }
+      // 后端图片 VLM 解析常超过 2 分钟：超时不标失败，标记"后台继续解析"，
+      // 列表 loadPending 轮询会在解析完成后自动补打标并提取，避免与实际状态不一致。
+      if (elapsed > 120000) { t.status = 'parsing'; t.msg = '仍在解析（后台继续）'; emit('done'); return }
     }
 
     // 解析完成后再打标（此时不会再被清空），然后排队提取

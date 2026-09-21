@@ -136,6 +136,13 @@ func (h *KnowledgeHandler) ExtractFleetDocument(c *gin.Context) {
 		certType = strings.TrimSpace(prev.FleetCertType)
 	}
 
+	// 标记 processing：防止上传弹窗与列表轮询在 LLM 调用期间并发重复触发，
+	// 导致同一文件被提取两次、fleet_records 产生重复记录。
+	processingMeta, _ := json.Marshal(fleetDocCustomMetadata{
+		Kind: "fleet_" + scope + "_document", Scope: scope, FleetCertType: certType, ExtractStatus: "processing",
+	})
+	_ = h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(processingMeta))
+
 	if strings.TrimSpace(content) == "" {
 		failMeta, _ := json.Marshal(fleetDocCustomMetadata{
 			Kind: "fleet_" + scope + "_document", Scope: scope, FleetCertType: certType, ExtractStatus: "failed",

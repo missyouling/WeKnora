@@ -671,22 +671,29 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 	}
 	dataJSON, _ := json.Marshal(req.Data)
 	now := timeNowUTC()
+	updates := map[string]interface{}{
+		"record_type":      req.RecordType,
+		"vehicle_id":       req.VehicleID,
+		"record_month":     req.RecordMonth,
+		"record_date":      req.RecordDate,
+		"amount":           req.Amount,
+		"mileage":          req.Mileage,
+		"data":             string(dataJSON),
+		"doc_type":         req.DocType,
+		"remark":           req.Remark,
+		"updated_at":       now,
+	}
+	// doc_knowledge_id / file_name 由提取落库维护：编辑保存时空值不得覆盖已有关联，
+	// 否则会丢失源文件预览关联并破坏按 doc_knowledge_id 的幂等 upsert。
+	if strings.TrimSpace(req.FileName) != "" {
+		updates["file_name"] = req.FileName
+	}
+	if strings.TrimSpace(req.DocKnowledgeID) != "" {
+		updates["doc_knowledge_id"] = req.DocKnowledgeID
+	}
 	if err := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
 		Where("id = ? AND tenant_id = ?", id, tenantID).
-		Updates(map[string]interface{}{
-			"record_type":      req.RecordType,
-			"vehicle_id":       req.VehicleID,
-			"record_month":     req.RecordMonth,
-			"record_date":      req.RecordDate,
-			"amount":           req.Amount,
-			"mileage":          req.Mileage,
-			"data":             string(dataJSON),
-			"doc_type":         req.DocType,
-			"file_name":        req.FileName,
-			"doc_knowledge_id": req.DocKnowledgeID,
-			"remark":           req.Remark,
-			"updated_at":       now,
-		}).Error; err != nil {
+		Updates(updates).Error; err != nil {
 		logger.Errorf(ctx, "update fleet record failed: %v", err)
 		c.Error(errors.NewInternalServerError("update record failed: " + err.Error()))
 		return
