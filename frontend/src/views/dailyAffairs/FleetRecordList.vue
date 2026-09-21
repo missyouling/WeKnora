@@ -1780,7 +1780,7 @@ function onDrawerResizeEnd() {
     text-overflow: ellipsis;
   }
   .col-tip {
-    cursor: help;
+    cursor: default;
     display: inline-block;
     max-width: 100%;
     overflow: hidden;
