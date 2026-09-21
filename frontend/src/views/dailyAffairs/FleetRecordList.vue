@@ -742,12 +742,39 @@ function getExpireDate(data: any): Date | null {
   for (const k of EXPIRE_DATE_KEYS) { const d = parseCertDate(data?.[k]); if (d) return d }
   return null
 }
-// 系统证照编号自动生成：XZ + 年月日 + 3位随机
+// 系统证照编号自动生成：XZ01、XZ02... 顺序递增（取现有行驶证记录最大序号+1）
 function genCertNo(): string {
-  const d = new Date()
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-  const rand = String(Math.floor(100 + Math.random() * 900))
-  return `XZ${ymd}${rand}`
+  let max = 0
+  for (const r of rows.value || []) {
+    const v = String(r?.data?.['行驶证编号'] || '')
+    const m = v.match(/^XZ(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `XZ${String(max + 1).padStart(2, '0')}`
+}
+// 存量补全：行驶证记录缺"行驶证编号"时按顺序补 XZ01、XZ02...
+async function backfillCertNo() {
+  if (filters.docType !== '行驶证') return
+  const missing = rows.value.filter((r: any) => r.id && !(r.data && r.data['行驶证编号']))
+  if (!missing.length) return
+  let max = 0
+  for (const r of rows.value) {
+    const v = String(r?.data?.['行驶证编号'] || '')
+    const m = v.match(/^XZ(\d+)$/)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  for (const r of missing) {
+    max += 1
+    const no = `XZ${String(max).padStart(2, '0')}`
+    try {
+      await updateFleetRecord(r.id, {
+        record_type: group.value.recordType,
+        doc_type: '行驶证',
+        data: { ...(r.data || {}), '行驶证编号': no },
+      })
+      r.data = { ...(r.data || {}), '行驶证编号': no }
+    } catch { /* ignore */ }
+  }
 }
 function calcCertStatus(data: any): string {
   const end = getExpireDate(data)
@@ -931,6 +958,7 @@ async function loadRecords() {
           doc_type: filters.docType,
         })
         rows.value = res.data || []
+        backfillCertNo()
       }
     } else {
       const res = await listFleetRecords({
@@ -970,8 +998,8 @@ watch(() => props.recordType, () => {
 
 onMounted(async () => {
   activeGroup.value = archiveGroups.value[0]?.key || ''
-  initColumns()
   await Promise.all([loadBase(), ensureKb()])
+  initColumns()
   loadRecords()
   startPolling()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
