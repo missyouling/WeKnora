@@ -94,8 +94,8 @@
               @change="toggleAll" />
           </div>
           <template v-for="col in visibleColDefs" :key="col.key">
-            <div class="cell cell-body" role="columnheader" :title="typeof col.tip === 'string' ? col.tip : col.label">
-              <span class="col-tip" :title="typeof col.tip === 'string' ? col.tip : col.label">{{ col.label }}</span>
+            <div class="cell cell-body" role="columnheader">
+              <span class="col-tip">{{ col.label }}</span>
             </div>
           </template>
         </div>
@@ -132,10 +132,6 @@
                 </span>
                 <span v-else-if="isFileRow(row) && col.key === 'extract_status'" class="cell-status">
                   <t-tag size="small" :theme="extractTagTheme(row)" variant="light-outline">{{ col.value(row) }}</t-tag>
-                  <t-button v-if="row.extract_status === 'failed'" variant="text" size="small" class="cell-retry"
-                    @click.stop="retryFile(row, 'extract')">
-                    <template #icon><t-icon name="refresh" size="13px" /></template>重试
-                  </t-button>
                 </span>
                 <span v-else-if="isFileRow(row) && col.key === 'tags'" class="cell-status cell-tags">
                   <template v-if="(row.tags || []).length">
@@ -180,7 +176,7 @@
                 <template #icon><t-icon name="refresh" size="14px" /></template>重新解析
               </t-button>
               <t-button theme="default" variant="outline" size="small" :loading="batchBusy" @click="batchRetry('extract')">
-                <template #icon><t-icon name="file-addition" size="14px" /></template>重新提取
+                <template #icon><t-icon name="file-search" size="14px" /></template>重新提取
               </t-button>
             </template>
             <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
@@ -746,6 +742,13 @@ function getExpireDate(data: any): Date | null {
   for (const k of EXPIRE_DATE_KEYS) { const d = parseCertDate(data?.[k]); if (d) return d }
   return null
 }
+// 系统证照编号自动生成：XZ + 年月日 + 3位随机
+function genCertNo(): string {
+  const d = new Date()
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  const rand = String(Math.floor(100 + Math.random() * 900))
+  return `XZ${ymd}${rand}`
+}
 function calcCertStatus(data: any): string {
   const end = getExpireDate(data)
   if (!end) return data?.['证件状态'] || data?.['状态'] || data?.['驾驶证状态'] || '有效'
@@ -1169,7 +1172,11 @@ function openDrawer(row: any) {
     form.remark = ''
     form.data = {}
     form.id = ''
-    if (isArchive.value) { form.doc_type = filters.docType || ''; form.file_name = ''; form.file_type = ''; form.doc_knowledge_id = ''; form.meta = {}; form.fail_reason = '' }
+    if (isArchive.value) {
+      form.doc_type = filters.docType || ''; form.file_name = ''; form.file_type = ''; form.doc_knowledge_id = ''; form.meta = {}; form.fail_reason = ''
+      // 行驶证编号：系统自动生成（可手动编辑，不参与模型提取）
+      if (form.doc_type === '行驶证' && !form.data['行驶证编号']) form.data['行驶证编号'] = genCertNo()
+    }
   }
   drawerVisible.value = true
 }
