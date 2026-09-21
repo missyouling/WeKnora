@@ -564,37 +564,37 @@ function vehiclePlate(id: string) { return vehicles.value.find((v: any) => v.id 
 const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[]; detail: string[] }> = {
   '车辆登记证书': {
     name: '车辆登记证书', scope: 'vehicle',
-    base: ['证书编号', '车牌号', 'VIN码', '发证机关', '发证日期', '证书状态', '存放位置', '是否随车', '备注'],
+    base: ['证书编号', '车牌号', 'VIN码', '发证机关', '发证日期', '证书状态', '存放位置', '是否随车'],
     detail: ['证书编号', '车牌号', '发证机关', '发证日期', '证书状态', '存放位置', 'VIN', '发动机号', '品牌型号', '使用性质', '注册日期', '报废日期', '车主信息', '产权归属', '过户记录', '备注'],
   },
   '行驶证': {
     name: '行驶证', scope: 'vehicle',
-    base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '有效期', '状态', '备注'],
+    base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '有效期', '状态'],
     detail: [],
   },
   '道路运输经营许可证': {
     name: '道路运输经营许可证', scope: 'vehicle',
-    base: ['许可证号', '业户名称', '经营地址', '经营范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态', '备注'],
+    base: ['许可证号', '业户名称', '经营地址', '经营范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态'],
     detail: [],
   },
   '道路运输证': {
     name: '道路运输证', scope: 'vehicle',
-    base: ['道路运输证号', '车牌号', '经营许可证号', '车辆类型', '吨（座）位', '业户名称', '经营地址', '经营范围', '车辆尺寸', '发证日期', '有效期止', '发证机关', '上次审验日期', '下次审验日期', '审验状态', '技术评定等级', '备注'],
+    base: ['道路运输证号', '车牌号', '经营许可证号', '车辆类型', '吨（座）位', '业户名称', '经营地址', '经营范围', '车辆尺寸', '发证日期', '有效期止', '发证机关', '上次审验日期', '下次审验日期', '审验状态', '技术评定等级'],
     detail: [],
   },
   '保险单': {
     name: '保险单', scope: 'vehicle',
-    base: ['保单号', '保险公司', '保险类型', '车辆ID', '车牌号', 'VIN码', '被保险人名称', '险种名称', '保额', '保费', '总保费', '起保日期', '终保日期', '保单状态', '缴费状态', '发票号', '到期提醒天数', '是否续保', '备注'],
+    base: ['保单号', '保险公司', '保险类型', '车辆ID', '车牌号', 'VIN码', '被保险人名称', '险种名称', '保额', '保费', '总保费', '起保日期', '终保日期', '保单状态', '缴费状态', '发票号', '到期提醒天数', '是否续保'],
     detail: [],
   },
   '驾驶证': {
     name: '驾驶证', scope: 'driver',
-    base: ['驾驶证号', '司机姓名', '准驾车型', '初次领证日期', '有效期起', '有效期止', '发证机关', '驾驶证状态', '到期提醒天数', '提醒状态', '备注'],
+    base: ['驾驶证号', '司机姓名', '准驾车型', '初次领证日期', '有效期起', '有效期止', '发证机关', '驾驶证状态', '到期提醒天数', '提醒状态'],
     detail: [],
   },
   '从业资格证': {
     name: '从业资格证', scope: 'driver',
-    base: ['从业资格证号', '司机姓名', '从业资格类别', '准运范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态', '到期提醒天数', '提醒状态', '审验状态', '备注'],
+    base: ['从业资格证号', '司机姓名', '从业资格类别', '准运范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态', '到期提醒天数', '提醒状态', '审验状态'],
     detail: [],
   },
 }
@@ -861,7 +861,7 @@ function onOverviewCardClick(card: any) {
   if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
   else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
   else if (card.action === "history-extract_failed") { historyFilter.value = "extract_failed"; historyVisible.value = true }
-  else if (card.action === "type") { filters.docType = card.value; historyVisible.value = false }
+  else if (card.action === "type") { filters.docType = card.value; historyVisible.value = false; initColumns(); loadRecords() }
 }
 
 const docTypeOptions = computed(() => {
@@ -1063,7 +1063,7 @@ const columnDefs = computed<ColDef[]>(() => {
 const STORAGE_KEY = computed(() => {
   const scopePart = isArchive.value ? group.value.key : props.recordType
   const mode = isArchive.value && !filters.docType ? 'all-v3' : (filters.docType || 'all-v3')
-  return `weknora-fleet-${scopePart}-${mode}-cols-v2`
+  return `weknora-fleet-${scopePart}-${mode}-cols-v3`
 })
 const visibleKeys = ref<string[]>([])
 const visibleColDefs = computed(() => columnDefs.value.filter((c) => visibleKeys.value.includes(c.key)))
