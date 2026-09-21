@@ -590,8 +590,8 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
   },
   '道路运输证': {
     name: '道路运输证', scope: 'vehicle',
-    base: ['道路运输证号', '车牌号', '经营许可证号', '车辆类型', '吨（座）位', '业户名称', '经营地址', '经营范围', '车辆尺寸', '发证日期', '有效期止', '发证机关', '上次审验日期', '下次审验日期', '审验状态', '技术评定等级'],
-    detail: [],
+    base: ['道路运输证号', '车牌号', '经营许可证号', '车辆类型', '吨（座）位', '经营范围', '发证日期', '有效期止', '发证机关', '审验有效期至', '技术评定等级', '评定日期', '证照状态'],
+    detail: ['业户名称', '经营地址', '车辆尺寸', '上次审验日期', '下次审验日期', '审验状态', '备注'],
   },
   '保险单': {
     name: '保险单', scope: 'vehicle',
@@ -751,7 +751,7 @@ const CERT_STATUS_OPTIONS = ['有效', '即将到期', '已过期']
 // 状态字段：不同证照类型命名不同，统一按有效期自动判定
 const STATUS_FIELD_KEYS = ['证件状态', '状态', '驾驶证状态', '从业资格证状态']
 // 有效期字段：优先"有效期止"，其次行驶证的"有效期"、"有效期至"
-const EXPIRE_DATE_KEYS = ['有效期止', '有效期至', '有效期', '检验有效期至', '检验有效期', '到期日期', '下次审验日期', '检验期']
+const EXPIRE_DATE_KEYS = ['审验有效期至', '有效期止', '有效期至', '有效期', '检验有效期至', '检验有效期', '到期日期', '下次审验日期', '检验期']
 function isStatusField(k?: string): boolean { return !!k && STATUS_FIELD_KEYS.includes(k) }
 function parseCertDate(v?: string): Date | null {
   if (!v) return null

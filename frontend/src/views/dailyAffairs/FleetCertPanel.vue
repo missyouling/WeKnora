@@ -8,10 +8,13 @@
       </t-button>
     </div>
 
-    <!-- 分组标签（与电表配置一致：带数量、下划线贴合文字） -->
-    <t-tabs v-model="activeGroup" class="meter-settings-tabs">
-      <t-tab-panel v-for="g in groupList" :key="g.key" :value="g.key" :label="`${g.label} ${groupCount(g.key)}`" />
-    </t-tabs>
+    <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
+    <div class="group-headers">
+      <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
+        <span class="group-header__title">{{ g.label }}</span>
+        <span class="group-header__count">{{ groupCount(g.key) }}</span>
+      </div>
+    </div>
 
     <!-- 证照类型表格（复刻电表配置表格，支持拖拽排序） -->
     <div class="meter-table-wrap">
@@ -497,6 +500,13 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 }
 
 /* 分组标签：复用租户核算设置标签卡样式(选中绿色下划线) */
+.group-headers { display: flex; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
+.group-header { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 14px; color: var(--td-text-color-secondary); border-bottom: 2px solid transparent; margin-bottom: -9px; transition: color .15s; }
+.group-header:hover { color: var(--td-brand-color); }
+.group-header.active { color: var(--td-brand-color); border-bottom-color: var(--td-brand-color); font-weight: 500; }
+.group-header__title { font-size: 14px; }
+.group-header__count { font-size: 12px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-component); border-radius: 10px; padding: 0 8px; line-height: 18px; }
+.group-header.active .group-header__count { color: var(--td-brand-color); background: var(--td-brand-color-1); }
 .meter-settings-tabs {
   margin-bottom: 10px;
 
