@@ -29,7 +29,7 @@
           <template #icon><t-icon name="refresh" size="14px" /></template>
         </t-button>
         <t-tooltip content="上传历史" placement="bottom">
-          <t-button variant="outline" size="small" @click="historyVisible = true">
+          <t-button variant="outline" size="small" @click="onOverviewCardClick(card)">
             <template #icon><t-icon name="history" size="14px" /></template>
           </t-button>
         </t-tooltip>
@@ -83,20 +83,19 @@
       @progress="onUploadProgress" @done="onUploadDone" />
 
     <!-- 上传历史抽屉（证照型） -->
-    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope"
+    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope" :filter="historyFilter"
       @reload="loadRecords" />
 
     <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
     <div v-if="isArchive && !filters.docType" class="archive-overview">
       <div v-for="card in overviewCards" :key="card.key" class="overview-card" :class="card.cls"
-        @click="historyVisible = true">
+        @click="onOverviewCardClick(card)">
         <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
         <div class="overview-card__body">
           <div class="overview-card__num">{{ card.num }}</div>
           <div class="overview-card__label">{{ card.label }}</div>
         </div>
       </div>
-      <div class="archive-overview__hint">请在上方选择证照类型查看对应记录；文件上传、解析、提取、删除请到右上角「历史记录」。</div>
     </div>
 
     <!-- 列表 -->
@@ -172,8 +171,8 @@
     </div>
 
     <!-- 底部汇总 -->
-    <div v-if="displayRows.length" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-      <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : displayRows.length }} {{ isBilling ? '辆车' : isArchive ? '份' : '条' }}</span>
+    <!-- 底部汇总 -->
+    <div v-if="displayRows.length && !(isArchive && !filters.docType)" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
       <span v-if="typeMeta.hasAmount && !isArchive" class="doc-summary-item">总金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
       <span v-if="isBilling" class="doc-summary-item">总费用 <span class="doc-summary-val">{{ fmtMoney(totalAll) }}</span> 元</span>
     </div>
@@ -841,22 +840,29 @@ const parseTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'fa
 const uploadTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'pending' ? 'warning' : 'default')
 const extractTagTheme = (r: any) => (r.extract_status === 'success' ? 'success' : r.extract_status === 'failed' ? 'danger' : r.parse_status === 'completed' ? 'warning' : 'default')
 
-// 无筛选时的统计概览卡片：文件级生命周期聚合
+// 无筛选时的统计概览卡片：文件级生命周期聚合 + 各证照类型快捷入口
+const historyFilter = ref<"all" | "parse_failed" | "extract_failed">("all")
 const overviewCards = computed(() => {
   const all = fileRows.value || []
-  const total = all.length
-  const parsing = all.filter((r: any) => r.parse_status === "parsing" || r.parse_status === "pending" || r.parse_status === "processing").length
-  const parseFailed = all.filter((r: any) => r.parse_status === "failed").length
-  const extractFailed = all.filter((r: any) => (r.extract_status || "") === "failed").length
-  const pendingExtract = all.filter((r: any) => r.parse_status === "completed" && !r.extract_status).length
-  return [
-    { key: "total", label: "已上传文件", num: total, icon: "file", cls: "" },
-    { key: "parsing", label: "解析中", num: parsing, icon: "loading", cls: parsing ? "is-warn" : "" },
-    { key: "parseFailed", label: "解析失败", num: parseFailed, icon: "close-circle", cls: parseFailed ? "is-err" : "" },
-    { key: "pendingExtract", label: "待提取", num: pendingExtract, icon: "time", cls: pendingExtract ? "is-warn" : "" },
-    { key: "extractFailed", label: "提取失败", num: extractFailed, icon: "close-circle", cls: extractFailed ? "is-err" : "" },
+  const cards: any[] = [
+    { key: "total", label: "已上传文件", num: all.length, icon: "file", cls: "", action: "history-all" },
+    { key: "parseFailed", label: "解析失败", num: all.filter((r: any) => r.parse_status === "failed").length, icon: "close-circle", cls: "is-err", action: "history-parse_failed" },
+    { key: "extractFailed", label: "提取失败", num: all.filter((r: any) => (r.extract_status || "") === "failed").length, icon: "close-circle", cls: "is-err", action: "history-extract_failed" },
   ]
+  // 各证照类型卡片（按文件数聚合），点击直接跳列表
+  const byType = new Map<string, number>()
+  all.forEach((r: any) => { if (r.doc_type) byType.set(r.doc_type, (byType.get(r.doc_type) || 0) + 1) })
+  byType.forEach((num, name) => {
+    cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name })
+  })
+  return cards
 })
+function onOverviewCardClick(card: any) {
+  if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
+  else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
+  else if (card.action === "history-extract_failed") { historyFilter.value = "extract_failed"; historyVisible.value = true }
+  else if (card.action === "type") { filters.docType = card.value; historyVisible.value = false }
+}
 
 const docTypeOptions = computed(() => {
   if (!isArchive.value) return []

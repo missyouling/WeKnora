@@ -73,24 +73,21 @@
                   </div>
                   <div class="cell"><span class="row-mono">{{ fmtTime(row.created_at) }}</span></div>
                   <div class="cell cell-del" @click.stop>
-                    <t-tooltip v-if="row.parse_status !== 'completed'" content="重新解析" placement="top">
-                      <t-button variant="text" size="small" shape="square" :loading="row._reparsing" @click="reparseRow(row)">
-                        <template #icon><t-icon name="refresh" size="15px" /></template>
-                      </t-button>
-                    </t-tooltip>
-                    <t-tooltip v-if="row.parse_status === 'completed'" content="重新提取" placement="top">
-                      <t-button variant="text" size="small" shape="square" :loading="row._extracting" @click="reextractRow(row)">
-                        <template #icon><t-icon name="play-circle" size="15px" /></template>
-                      </t-button>
-                    </t-tooltip>
-                    <t-popconfirm theme="warning"
-                      :content="`确定删除该条上传历史吗？知识库文件保留，仅从历史中移除。`"
-                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                      @confirm="removeOne(row)">
+                    <t-dropdown trigger="click" placement="bottom-right">
                       <t-button variant="text" size="small" shape="square">
-                        <template #icon><t-icon name="delete" size="15px" /></template>
+                        <template #icon><t-icon name="ellipsis" size="16px" /></template>
                       </t-button>
-                    </t-popconfirm>
+                      <template #dropdownItem>
+                        <t-dropdown-item v-if="row.parse_status !== 'completed'" @click="reparseRow(row)">重新解析</t-dropdown-item>
+                        <t-dropdown-item v-if="row.parse_status === 'completed'" @click="reextractRow(row)">重新提取</t-dropdown-item>
+                        <t-popconfirm theme="warning"
+                          :content="`确定从知识库删除该文件吗？已解析记录将一并清除。`"
+                          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                          @confirm="removeOne(row)">
+                          <t-dropdown-item @click.stop>删除</t-dropdown-item>
+                        </t-popconfirm>
+                      </template>
+                    </t-dropdown>
                   </div>
                 </div>
                 <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
@@ -107,12 +104,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { listKnowledgeFiles, updateKnowledgeMetadata, reparseKnowledge } from '@/api/knowledge-base'
+import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 
 const props = defineProps<{
   visible: boolean
   kbId: string
   scope?: string
+  filter?: 'all' | 'parse_failed' | 'extract_failed'
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -182,6 +180,10 @@ const reload = async (p = 1) => {
     let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
     // 已删除（隐藏）的历史条目不再显示
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
+    // 按概览卡片传入的状态筛选
+    const f = props.filter || 'all'
+    if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
+    else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
     arr = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
     rows.value = arr
     total.value = res?.total || arr.length
@@ -257,44 +259,38 @@ const reextractRow = async (row: any) => {
   }
 }
 
-// ---- 删除历史条目（仅隐藏标记：知识库文件保留，已解析记录保留） ----
-const hideRow = async (row: any) => {
-  const meta = { ...(row.custom_metadata || {}), fleet_history_hidden: true }
-  await updateKnowledgeMetadata(row.id, meta)
-}
-
+// ---- 删除：复用知识库文档删除逻辑（真删除，从知识库移除） ----
 const removeOne = async (row: any) => {
   try {
-    await hideRow(row)
+    await delKnowledgeDetails(row.id)
     rows.value = rows.value.filter((r) => r.id !== row.id)
     total.value = Math.max(0, total.value - 1)
-    MessagePlugin.success('已删除')
-    emit('changed')
+    MessagePlugin.success("已删除")
+    emit("changed")
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+    MessagePlugin.error(e?.message || "删除失败")
   }
 }
 
 const clearAll = async () => {
   try {
-    // 全量拉取（含未加载分页）后统一打隐藏标记
     let all: any[] = []
     let p = 1
     for (;;) {
       const res: any = await listKnowledgeFiles(props.kbId, { page: p, page_size: 100 })
       const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-      all.push(...arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden)))
+      all.push(...arr)
       if (arr.length < 100) break
       p += 1
     }
-    for (const row of all) await hideRow(row)
+    for (const row of all) await delKnowledgeDetails(row.id)
     rows.value = []
     total.value = 0
     hasMore.value = false
-    MessagePlugin.success(`已删除 ${all.length} 条上传历史`)
-    emit('changed')
+    MessagePlugin.success(`已删除 ${all.length} 个文件`)
+    emit("changed")
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+    MessagePlugin.error(e?.message || "删除失败")
   }
 }
 
