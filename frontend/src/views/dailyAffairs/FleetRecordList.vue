@@ -2236,10 +2236,10 @@ function onDrawerResizeEnd() {
   font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
-.overview-group__cards { display: flex; flex-wrap: wrap; gap: 12px; }
+.overview-group__cards { display: grid; grid-template-columns: repeat(3, 220px); gap: 12px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
 .stat-card {
-  display: flex; align-items: center; gap: 12px; padding: 14px 18px; flex: 1 1 0; min-width: 0;
+  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
   background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
   border-radius: 10px; cursor: pointer; transition: all .18s ease;
 }
@@ -2257,7 +2257,7 @@ function onDrawerResizeEnd() {
 .stat-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
 /* 类型卡片:稍大,浅色背景,左图标右文字 */
 .type-card {
-  display: flex; align-items: center; gap: 14px; padding: 16px 20px; min-width: 220px; flex: 0 1 calc(33.333% - 8px);
+  display: flex; align-items: center; gap: 14px; padding: 16px 20px;
   background: var(--td-bg-color-secondarycontainer, #f7f8fa); border: 1px solid transparent;
   border-radius: 10px; cursor: pointer; transition: all .18s ease;
 }
@@ -2273,6 +2273,6 @@ function onDrawerResizeEnd() {
 .type-card__num { font-size: 18px; font-weight: 600; color: var(--td-brand-color); }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
 @media (max-width: 768px) {
-  .stat-card, .type-card { flex: 1 1 100%; }
+  .overview-group__cards { grid-template-columns: 1fr; }
 }
 </style>
