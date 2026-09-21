@@ -148,7 +148,7 @@
                   </template>
                   <span v-else class="row-tag-add" @click.stop="openTagEdit(row)">+ 标签</span>
                 </span>
-                <span v-else-if="!isFileRow(row) && col.key === 'data.证件状态'" class="cell-status">
+                <span v-else-if="!isFileRow(row) && isStatusField((col.key || '').replace('data.',''))" class="cell-status">
                   <t-tag size="small" :theme="certStatusTheme(calcCertStatus(row.data))" variant="light-outline">{{ calcCertStatus(row.data) }}</t-tag>
                 </span>
                 <span v-else>{{ col.value(row) }}</span>
@@ -247,7 +247,7 @@
               <template v-for="key in archiveEditKeys" :key="key">
                 <div class="rec-field" :class="{ 'rec-field--wide': key === '备注' }">
                   <label>{{ String(key) }}</label>
-                  <t-select v-if="key === '证件状态'" v-model="form.data[key]"
+                  <t-select v-if="isStatusField(key)" v-model="form.data[key]"
                     :options="CERT_STATUS_OPTIONS.map((v) => ({ label: v, value: v }))" clearable placeholder="选择状态"
                     :popup-props="{ overlayClassName: 'cert-status-pop' }" />
                   <t-textarea v-else-if="key === '备注'" v-model="form.data[key]" :autosize="{ minRows: 3, maxRows: 6 }"
@@ -724,18 +724,31 @@ const ARCHIVE_FIXED: ColDef[] = [
   { key: 'vehicle', label: '车牌号', def: true, tip: '关联车辆', value: (r: any) => vehiclePlate(r.vehicle_id) },
 ]
 
-// 证件状态：单选选项 + 按有效期自动计算
+// 证件状态：单选选项 + 按有效期自动计算（各证照类型统一，不依赖模型提取）
 const CERT_STATUS_OPTIONS = ['有效', '即将到期', '已过期']
+// 状态字段：不同证照类型命名不同，统一按有效期自动判定
+const STATUS_FIELD_KEYS = ['证件状态', '状态', '驾驶证状态', '从业资格证状态']
+// 有效期字段：优先"有效期止"，其次行驶证的"有效期"、"有效期至"
+const EXPIRE_DATE_KEYS = ['有效期止', '有效期至', '有效期', '检验有效期至', '检验有效期', '到期日期', '下次审验日期', '检验期']
+function isStatusField(k?: string): boolean { return !!k && STATUS_FIELD_KEYS.includes(k) }
 function parseCertDate(v?: string): Date | null {
   if (!v) return null
   const s = String(v).trim()
-  let m = s.match(/^(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})/)
+  // 在文本任意位置找日期（值常带中文前缀，如"检验有效期至2023年7月"）
+  let m = s.match(/(\d{4})\s*[-/年.]\s*(\d{1,2})\s*[-/月.]\s*(\d{1,2})/)
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  // 仅年月，如"2023年7月"
+  m = s.match(/(\d{4})\s*[-/年.]\s*(\d{1,2})\s*月?/)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, 1)
+  return null
+}
+function getExpireDate(data: any): Date | null {
+  for (const k of EXPIRE_DATE_KEYS) { const d = parseCertDate(data?.[k]); if (d) return d }
   return null
 }
 function calcCertStatus(data: any): string {
-  const end = parseCertDate(data?.['有效期止'])
-  if (!end) return data?.['证件状态'] || '有效'
+  const end = getExpireDate(data)
+  if (!end) return data?.['证件状态'] || data?.['状态'] || data?.['驾驶证状态'] || '有效'
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const endT = new Date(end); endT.setHours(0, 0, 0, 0)
   if (endT.getTime() < today.getTime()) return '已过期'
@@ -1003,8 +1016,8 @@ const columnDefs = computed<ColDef[]>(() => {
     const dyn = keys.map((k) => ({
       key: `data.${k}`, label: k, def: f.base.includes(k), tip: `提取自源文件：${k}`,
       value: (r: any) => {
-        // 证件状态：优先数据值；无值时按有效期自动计算
-        if (k === '证件状态') return r.data?.[k] || calcCertStatus(r.data)
+        // 证件状态：各证照类型统一按有效期自动计算，不依赖模型提取值
+        if (isStatusField(k)) return calcCertStatus(r.data)
         return fmtVal(r.data?.[k])
       },
     }))
@@ -1135,8 +1148,9 @@ function openDrawer(row: any) {
         form.remark = row.remark || ''
         form.data = JSON.parse(JSON.stringify(row.data || {}))
         form.id = row.id
-        // 证件状态按有效期自动计算（可手动修改）
-        form.data['证件状态'] = calcCertStatus(form.data)
+        // 证件状态：各证照类型统一按有效期自动计算（可手动修改）
+        const autoStatus = calcCertStatus(form.data)
+        Object.keys(form.data || {}).forEach((k) => { if (isStatusField(k)) form.data[k] = autoStatus })
       }
     } else {
       editMode.value = ''
@@ -1164,12 +1178,12 @@ function openDrawer(row: any) {
 watch(
   () => {
     if (!drawerVisible.value || !isArchive.value) return undefined
-    return [form.data?.['有效期起'], form.data?.['有效期止']]
+    return EXPIRE_DATE_KEYS.map((k) => form.data?.[k])
   },
   () => {
     if (form.data && drawerVisible.value && isArchive.value) {
       const next = calcCertStatus(form.data)
-      if (form.data['证件状态'] !== next) form.data['证件状态'] = next
+      Object.keys(form.data).forEach((k) => { if (isStatusField(k) && form.data[k] !== next) form.data[k] = next })
     }
   },
 )
@@ -1444,8 +1458,8 @@ let progressTimer: ReturnType<typeof setInterval> | null = null
 const STAGE_LABEL: Record<string, string> = { uploading: '正在上传', parsing: '正在解析', extracting: '正在提取' }
 function stageLabel(stage: string) { return STAGE_LABEL[stage] || stage }
 function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
-  uploadProgress.value = items
-  if (items.length <= 1) {
+  uploadProgress.value = filterLiveProgress(items)
+  if (uploadProgress.value.length <= 1) {
     progressIndex.value = 0
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
     return
@@ -1459,6 +1473,21 @@ function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' 
     progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
   }, 3000)
 }
+// 表格里该文件已"提取完成/失败"的，不再保留旧的"正在提取…30%"进度项
+function filterLiveProgress(items) {
+  const doneNames = new Set(
+    (fileRows.value || [])
+      .filter((r) => r.extract_status === 'success' || r.extract_status === 'failed')
+      .map((r) => r.file_name || r.alias || r.name),
+  )
+  return items.filter((it) => !doneNames.has(it.name))
+}
+// 轮询刷新列表后：用表格实际 extract_status 清掉已完成文件的残留进度
+watch(fileRows, () => {
+  if (!uploadProgress.value.length) return
+  uploadProgress.value = filterLiveProgress(uploadProgress.value)
+})
+
 function stopProgressTimer() {
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
 }

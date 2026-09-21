@@ -83,7 +83,10 @@
                 <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
               <div class="field-config-list">
-                <div v-for="(fd, i) in fieldsEditable" :key="i" class="field-config-row">
+                <div v-for="(fd, i) in fieldsEditable" :key="fd.name" class="field-config-row"
+                  :class="{ 'fc-dragging': fieldDragIndex === i }"
+                  draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
+                  @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
                   <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @keyup.enter="addField" />
                   <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
@@ -270,6 +273,19 @@ async function onDrop(i: number) {
     MessagePlugin.error(e?.message || '排序保存失败')
     load()
   }
+}
+
+// ---- 字段级拖拽排序（仅调整编辑态 fieldsEditable 顺序，保存时随 subs 持久化）----
+const fieldDragIndex = ref(-1)
+function onFieldDragStart(i: number) { fieldDragIndex.value = i }
+function onFieldDrop(i: number) {
+  const from = fieldDragIndex.value
+  fieldDragIndex.value = -1
+  if (from < 0 || from === i) return
+  const list = [...fieldsEditable.value]
+  const [moved] = list.splice(from, 1)
+  list.splice(i, 0, moved)
+  fieldsEditable.value = list
 }
 
 // 分类变更后通知列表页刷新证照类型选项（上传弹窗 / 筛选框依赖 categories）
@@ -680,11 +696,14 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     border-radius: 6px;
     background: var(--td-bg-color-container);
 
+    &.fc-dragging { opacity: 0.5; background: var(--td-brand-color-light); }
+
     .fc-drag {
       display: flex;
       align-items: center;
       color: var(--td-text-color-placeholder);
       cursor: grab;
+      &:active { cursor: grabbing; }
     }
 
     .fc-name {
