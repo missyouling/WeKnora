@@ -1032,10 +1032,8 @@ const archiveTypeFields = computed(() => {
 const archiveEditKeys = computed(() => {
   const f = archiveTypeFields.value
   const ordered = [...(f.base || []), ...(f.detail || [])]
-  // 配置字段全部渲染，未提取到的也显示空输入框；模型额外输出的字段追加末尾
-  const keys = [...ordered]
-  Object.keys(form.data || {}).forEach((k) => { if (!keys.includes(k)) keys.push(k) })
-  return keys
+  // 严格按配置字段渲染：未提取到的也显示空输入框；模型额外输出的字段不显示（与列表字段保持一致）
+  return [...ordered]
 })
 
 const columnDefs = computed<ColDef[]>(() => {
@@ -1180,6 +1178,21 @@ function openDrawer(row: any) {
         form.remark = row.remark || ''
         form.data = JSON.parse(JSON.stringify(row.data || {}))
         form.id = row.id
+        // 旧记录可能没有 doc_knowledge_id：按车牌号在已加载的知识文件列表里反查源文件，恢复预览
+        if (!form.doc_knowledge_id) {
+          const plate = String(form.data['车牌号'] || '').trim()
+          // 文件名常省略省份字母，如“渝C81022”对应“81022行驶证.pdf”；先完整车牌，再去省份前缀取尾段
+          const tail = plate.replace(/^[京津沪渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新][A-Z]/, '')
+          const hit = (fileRows.value || []).find((f: any) => {
+            const fn = String(f.file_name || f.title || '')
+            return (plate && fn.includes(plate)) || (tail && tail.length >= 4 && fn.includes(tail))
+          })
+          if (hit) {
+            form.doc_knowledge_id = hit.id
+            if (!form.file_name) form.file_name = hit.file_name || hit.title || ''
+            if (!form.file_type) form.file_type = hit.file_type || ''
+          }
+        }
         // 证件状态：各证照类型统一按有效期自动计算（可手动修改）
         const autoStatus = calcCertStatus(form.data)
         Object.keys(form.data || {}).forEach((k) => { if (isStatusField(k)) form.data[k] = autoStatus })
