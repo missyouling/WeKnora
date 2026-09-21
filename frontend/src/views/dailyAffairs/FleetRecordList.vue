@@ -83,10 +83,26 @@
       @progress="onUploadProgress" @done="onUploadDone" />
 
     <!-- 上传历史抽屉（证照型） -->
-    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" />
+    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope"
+      @reload="loadRecords" />
+
+    <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
+    <div v-if="isArchive && !filters.docType" class="archive-overview">
+      <div v-for="card in overviewCards" :key="card.key" class="overview-card" :class="card.cls"
+        @click="historyVisible = true">
+        <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+        <div class="overview-card__body">
+          <div class="overview-card__num">{{ card.num }}</div>
+          <div class="overview-card__label">{{ card.label }}</div>
+        </div>
+      </div>
+      <div class="archive-overview__hint">请在上方选择证照类型查看对应记录；文件上传、解析、提取、删除请到右上角「历史记录」。</div>
+    </div>
 
     <!-- 列表 -->
-    <div class="doc-list-scroll meter-list-scroll">
+
+    <!-- 列表 -->
+    <div v-else class="doc-list-scroll meter-list-scroll">
       <div class="doc-list-view">
         <div class="doc-list-header" :style="gridStyle" role="row">
           <div class="cell cell-check" role="columnheader" @click.stop>
@@ -825,6 +841,23 @@ const parseTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'fa
 const uploadTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'pending' ? 'warning' : 'default')
 const extractTagTheme = (r: any) => (r.extract_status === 'success' ? 'success' : r.extract_status === 'failed' ? 'danger' : r.parse_status === 'completed' ? 'warning' : 'default')
 
+// 无筛选时的统计概览卡片：文件级生命周期聚合
+const overviewCards = computed(() => {
+  const all = fileRows.value || []
+  const total = all.length
+  const parsing = all.filter((r: any) => r.parse_status === "parsing" || r.parse_status === "pending" || r.parse_status === "processing").length
+  const parseFailed = all.filter((r: any) => r.parse_status === "failed").length
+  const extractFailed = all.filter((r: any) => (r.extract_status || "") === "failed").length
+  const pendingExtract = all.filter((r: any) => r.parse_status === "completed" && !r.extract_status).length
+  return [
+    { key: "total", label: "已上传文件", num: total, icon: "file", cls: "" },
+    { key: "parsing", label: "解析中", num: parsing, icon: "loading", cls: parsing ? "is-warn" : "" },
+    { key: "parseFailed", label: "解析失败", num: parseFailed, icon: "close-circle", cls: parseFailed ? "is-err" : "" },
+    { key: "pendingExtract", label: "待提取", num: pendingExtract, icon: "time", cls: pendingExtract ? "is-warn" : "" },
+    { key: "extractFailed", label: "提取失败", num: extractFailed, icon: "close-circle", cls: extractFailed ? "is-err" : "" },
+  ]
+})
+
 const docTypeOptions = computed(() => {
   if (!isArchive.value) return []
   const set = new Map<string, { label: string; value: string }>()
@@ -890,9 +923,8 @@ async function loadRecords() {
         fileRows.value = arr
           .filter((it: any) => {
             const meta2 = it.custom_metadata || {}
-            const pv = pendingScopeOf(it.id)
-            // 主列表显示已解析记录：历史抽屉的删除（hidden）不影响此处
-            return meta2.fleet_scope === scope || meta2.scope === scope || pv.s === scope
+            // 该 kb 下所有文件都属于当前 scope，仅排除历史抽屉中已隐藏的条目
+            return !meta2.fleet_history_hidden
           })
           .map((it: any) => {
             const meta2 = it.custom_metadata || {}
@@ -2179,4 +2211,19 @@ function onDrawerResizeEnd() {
   background: var(--td-error-color-1);
   border-color: var(--td-error-color-2);
 }
+.archive-overview { display: flex; flex-wrap: wrap; gap: 16px; padding: 24px; align-items: stretch; }
+.overview-card {
+  display: flex; align-items: center; gap: 14px; padding: 18px 22px; min-width: 180px;
+  background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
+  border-radius: 10px; cursor: pointer; transition: all .15s ease;
+}
+.overview-card:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0,82,217,.08); }
+.overview-card.is-warn { border-color: #e37318; }
+.overview-card.is-err { border-color: #d54941; }
+.overview-card__icon { color: var(--td-brand-color); }
+.overview-card.is-warn .overview-card__icon { color: #e37318; }
+.overview-card.is-err .overview-card__icon { color: #d54941; }
+.overview-card__num { font-size: 26px; font-weight: 600; line-height: 1.1; }
+.overview-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
+.archive-overview__hint { width: 100%; font-size: 12px; color: var(--td-text-color-secondary); }
 </style>

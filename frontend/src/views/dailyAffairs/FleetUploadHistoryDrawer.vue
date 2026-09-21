@@ -54,11 +54,16 @@
                     </div>
                   </div>
                   <div class="cell">
-                    <t-tag size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
+                    <t-tooltip v-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
+                      <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
+                    </t-tooltip>
+                    <t-tag v-else size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
                   </div>
                   <div class="cell">
-                    <t-tag v-if="extractStatus(row) === 'success'" size="small" theme="success" variant="light-outline">提取完成</t-tag>
-                    <t-tag v-else-if="extractStatus(row) === 'failed'" size="small" theme="danger" variant="light-outline">提取失败</t-tag>
+                    <t-tooltip v-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
+                      <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
+                    </t-tooltip>
+                    <t-tag v-else-if="extractStatus(row) === 'success'" size="small" theme="success" variant="light-outline">提取完成</t-tag>
                     <t-tag v-else-if="row.parse_status === 'completed'" size="small" theme="warning" variant="light-outline">待提取</t-tag>
                     <span v-else class="row-muted">—</span>
                   </div>
@@ -68,6 +73,16 @@
                   </div>
                   <div class="cell"><span class="row-mono">{{ fmtTime(row.created_at) }}</span></div>
                   <div class="cell cell-del" @click.stop>
+                    <t-tooltip v-if="row.parse_status !== 'completed'" content="重新解析" placement="top">
+                      <t-button variant="text" size="small" shape="square" :loading="row._reparsing" @click="reparseRow(row)">
+                        <template #icon><t-icon name="refresh" size="15px" /></template>
+                      </t-button>
+                    </t-tooltip>
+                    <t-tooltip v-if="row.parse_status === 'completed'" content="重新提取" placement="top">
+                      <t-button variant="text" size="small" shape="square" :loading="row._extracting" @click="reextractRow(row)">
+                        <template #icon><t-icon name="play-circle" size="15px" /></template>
+                      </t-button>
+                    </t-tooltip>
                     <t-popconfirm theme="warning"
                       :content="`确定删除该条上传历史吗？知识库文件保留，仅从历史中移除。`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
@@ -92,11 +107,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { listKnowledgeFiles, updateKnowledgeMetadata } from '@/api/knowledge-base'
+import { listKnowledgeFiles, updateKnowledgeMetadata, reparseKnowledge } from '@/api/knowledge-base'
 
 const props = defineProps<{
   visible: boolean
   kbId: string
+  scope?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -115,7 +131,7 @@ const activeRow = ref<any>(null)
 
 // 列表网格列宽（复刻合同管理历史抽屉样式，末尾操作列）
 const gridStyle = computed(() => ({
-  gridTemplateColumns: 'minmax(0, 31%) minmax(0, 12%) minmax(0, 12%) minmax(0, 16%) minmax(0, 21%) 34px',
+  gridTemplateColumns: 'minmax(0, 28%) minmax(0, 11%) minmax(0, 11%) minmax(0, 15%) minmax(0, 19%) 96px',
 }))
 
 const fileExt = (name: string) => {
@@ -201,6 +217,44 @@ const loadMore = async () => {
 const onListScroll = (e: Event) => {
   const el = e.target as HTMLElement
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadMore()
+}
+
+// ---- 失败原因 ----
+const parseError = (row: any) => row.custom_metadata?.parse_error || row.custom_metadata?.error || ''
+const extractError = (row: any) => row.custom_metadata?.extract_error || row.custom_metadata?.error || ''
+
+// ---- 重新解析 ----
+const reparseRow = async (row: any) => {
+  row._reparsing = true
+  try {
+    await reparseKnowledge(row.id)
+    MessagePlugin.success('已重新解析')
+    reload(1)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '重新解析失败')
+  } finally {
+    row._reparsing = false
+  }
+}
+
+// ---- 重新提取 ----
+const reextractRow = async (row: any) => {
+  row._extracting = true
+  try {
+    const res = await fetch(`/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-fleet-document`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') },
+      body: JSON.stringify({ scope: props.scope || 'vehicle', doc_type: row.doc_type || undefined }),
+    })
+    if (!res.ok) throw new Error('提取请求失败')
+    MessagePlugin.success('已重新提取')
+    reload(1)
+    emit('changed')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '重新提取失败')
+  } finally {
+    row._extracting = false
+  }
 }
 
 // ---- 删除历史条目（仅隐藏标记：知识库文件保留，已解析记录保留） ----
