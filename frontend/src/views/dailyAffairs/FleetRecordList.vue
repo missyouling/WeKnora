@@ -85,26 +85,24 @@
     <div v-if="isArchive && !filters.docType" class="archive-overview">
       <div class="overview-group">
         <div class="overview-group__title">文件状态</div>
-        <div class="overview-group__cards">
-          <div v-for="card in overviewStatusCards" :key="card.key" class="overview-card" :class="card.cls"
+        <div class="overview-group__cards overview-group__cards--status">
+          <div v-for="card in overviewStatusCards" :key="card.key" class="stat-card" :class="card.cls"
             @click="onOverviewCardClick(card)">
-            <div class="overview-card__icon"><t-icon :name="card.icon" size="18px" /></div>
-            <div class="overview-card__body">
-              <div class="overview-card__num">{{ card.num }}</div>
-              <div class="overview-card__label">{{ card.label }}</div>
-            </div>
+            <div class="stat-card__icon"><t-icon :name="card.icon" size="20px" /></div>
+            <div class="stat-card__num">{{ card.num }}</div>
+            <div class="stat-card__label">{{ card.label }}</div>
           </div>
         </div>
       </div>
       <div v-if="overviewTypeCards.length" class="overview-group">
         <div class="overview-group__title">证照类型</div>
-        <div class="overview-group__cards">
-          <div v-for="card in overviewTypeCards" :key="card.key" class="overview-card overview-card--type"
+        <div class="overview-group__cards overview-group__cards--type">
+          <div v-for="card in overviewTypeCards" :key="card.key" class="type-card"
             @click="onOverviewCardClick(card)">
-            <div class="overview-card__icon"><t-icon :name="card.icon" size="18px" /></div>
-            <div class="overview-card__body">
-              <div class="overview-card__num">{{ card.num }}</div>
-              <div class="overview-card__label">{{ card.label }}</div>
+            <div class="type-card__icon"><t-icon :name="card.icon" size="20px" /></div>
+            <div class="type-card__body">
+              <div class="type-card__label">{{ card.label }}</div>
+              <div class="type-card__num">{{ card.num }} <span>份</span></div>
             </div>
           </div>
         </div>
@@ -2232,22 +2230,49 @@ function onDrawerResizeEnd() {
   background: var(--td-error-color-1);
   border-color: var(--td-error-color-2);
 }
-.archive-overview { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
-.overview-group { display: flex; flex-direction: column; gap: 10px; }
-.overview-group__title { font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary); }
-.overview-group__cards { display: flex; flex-wrap: wrap; gap: 12px; }
-.overview-card {
-  display: flex; align-items: center; gap: 10px; padding: 12px 16px; min-width: 140px;
-  background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
-  border-radius: 8px; cursor: pointer; transition: all .15s ease;
+.archive-overview { display: flex; flex-direction: column; gap: 20px; padding: 24px; }
+.overview-group { display: flex; flex-direction: column; gap: 12px; }
+.overview-group__title {
+  font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
+  padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
-.overview-card:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0,82,217,.08); }
-.overview-card.is-warn { border-color: #e37318; }
-.overview-card.is-err { border-color: #d54941; }
-.overview-card__icon { color: var(--td-brand-color); }
-.overview-card.is-warn .overview-card__icon { color: #e37318; }
-.overview-card.is-err .overview-card__icon { color: #d54941; }
-.overview-card__num { font-size: 20px; font-weight: 600; line-height: 1.1; }
-.overview-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
-.overview-group .overview-card { flex: 0 0 auto; }
+.overview-group__cards { display: flex; flex-wrap: wrap; gap: 12px; }
+/* 状态卡片:紧凑横向,图标圆形背景 */
+.stat-card {
+  display: flex; align-items: center; gap: 12px; padding: 14px 18px; flex: 1 1 0; min-width: 0;
+  background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
+  border-radius: 10px; cursor: pointer; transition: all .18s ease;
+}
+.stat-card:hover { border-color: var(--td-brand-color); box-shadow: 0 4px 12px rgba(0,82,217,.1); transform: translateY(-1px); }
+.stat-card.is-warn { border-color: #e37318; background: #fff7ed; }
+.stat-card.is-err { border-color: #d54941; background: #fef2f2; }
+.stat-card__icon {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--td-brand-color-1, #e8f3ff); color: var(--td-brand-color);
+}
+.stat-card.is-warn .stat-card__icon { background: #fff1e0; color: #e37318; }
+.stat-card.is-err .stat-card__icon { background: #fde8e8; color: #d54941; }
+.stat-card__num { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--td-text-color-primary); }
+.stat-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
+/* 类型卡片:稍大,浅色背景,左图标右文字 */
+.type-card {
+  display: flex; align-items: center; gap: 14px; padding: 16px 20px; min-width: 220px; flex: 0 1 calc(33.333% - 8px);
+  background: var(--td-bg-color-secondarycontainer, #f7f8fa); border: 1px solid transparent;
+  border-radius: 10px; cursor: pointer; transition: all .18s ease;
+}
+.type-card:hover { background: var(--td-brand-color-1, #e8f3ff); border-color: var(--td-brand-color); transform: translateY(-1px); }
+.type-card__icon {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--td-bg-color-container); color: var(--td-brand-color);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.type-card__body { flex: 1; min-width: 0; }
+.type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
+.type-card__num { font-size: 18px; font-weight: 600; color: var(--td-brand-color); }
+.type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
+@media (max-width: 768px) {
+  .stat-card, .type-card { flex: 1 1 100%; }
+}
 </style>
