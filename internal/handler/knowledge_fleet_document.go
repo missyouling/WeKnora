@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -225,7 +226,11 @@ func (h *KnowledgeHandler) ExtractFleetDocument(c *gin.Context) {
 		rec.TenantID = int64(effectiveTenantID)
 		rec.CreatedAt = now
 		rec.UpdatedAt = now
-		if err := h.db.WithContext(effCtx).Create(&rec).Error; err != nil {
+		// 并发兜底：唯一索引 idx_fleet_records_kid_uq 冲突时转为更新，杜绝重复落库。
+		if err := h.db.WithContext(effCtx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "tenant_id"}, {Name: "record_type"}, {Name: "doc_knowledge_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"vehicle_id", "data", "doc_type", "file_name", "doc_knowledge_id", "updated_at"}),
+		}).Create(&rec).Error; err != nil {
 			logger.Errorf(ctx, "create fleet record from extraction failed: %v", err)
 			c.Error(errors.NewInternalServerError("create fleet record failed"))
 			return
