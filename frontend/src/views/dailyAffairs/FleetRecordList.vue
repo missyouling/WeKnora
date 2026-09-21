@@ -1032,7 +1032,8 @@ const archiveTypeFields = computed(() => {
 const archiveEditKeys = computed(() => {
   const f = archiveTypeFields.value
   const ordered = [...(f.base || []), ...(f.detail || [])]
-  const keys = ordered.filter((k) => form.data && k in form.data)
+  // 配置字段全部渲染，未提取到的也显示空输入框；模型额外输出的字段追加末尾
+  const keys = [...ordered]
   Object.keys(form.data || {}).forEach((k) => { if (!keys.includes(k)) keys.push(k) })
   return keys
 })
