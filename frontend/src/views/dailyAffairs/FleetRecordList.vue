@@ -1034,13 +1034,24 @@ const archiveTypeFields = computed(() => {
   const builtin = t ? BUILTIN_CERTS[t] : null
   // 用户分类配置优先（与设置页保持同步）；内置定义兜底
   const cat = (categories.value[group.value.scope] || []).find((c: any) => c.name === t)
-  if (cat?.subs?.length) {
-    const subs = cat.subs
+  const enabledSet = new Set(
+    (cat?.subs || [])
       .filter((s: any) => s.enabled !== false && s.name && !String(s.name).includes('其它文档中出现的字段'))
       .map((s: any) => s.name)
+  )
+  if (builtin) {
+    // 以内置定义的 base/detail 为准；用户启用状态决定是否显示
+    const base = builtin.base.filter((k: string) => enabledSet.size === 0 || enabledSet.has(k))
+    const detail = (builtin.detail || []).filter((k: string) => enabledSet.has(k))
+    // 用户新增的字段（内置定义没有的）归入 base
+    const known = new Set([...builtin.base, ...(builtin.detail || [])])
+    const extra = [...enabledSet].filter((k: string) => !known.has(k))
+    return { base: [...base, ...extra], detail }
+  }
+  if (cat?.subs?.length) {
+    const subs = [...enabledSet]
     if (subs.length) return { base: subs, detail: [] }
   }
-  if (builtin) return { base: builtin.base, detail: builtin.detail || [] }
   return { base: [], detail: [] }
 })
 
