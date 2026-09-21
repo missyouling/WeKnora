@@ -25,7 +25,7 @@
 
 - 已有计划任务：`WeKnoraServer`（后端）、`WeKnoraDocreader`（解析服务）、`WeKnoraVite`（前端）。
 - 启动后端：`Start-ScheduledTask -TaskName WeKnoraServer`
-- 端口约定：后端 8088、前端 5173、docreader gRPC 50051。
+- 端口约定：后端 8080（注意：`scripts\start_vite.bat` 曾写死 VITE_DEV_PROXY_TARGET=8088 导致 5173 代理 500，已改为 8080）、前端 5173、docreader gRPC 50051。
 - docreader 可手动启动（当前 python 解释器版本不符时用项目虚拟环境）：
   ```powershell
   $env:PYTHONPATH = "D:\Downloads\WeKnora-main"
