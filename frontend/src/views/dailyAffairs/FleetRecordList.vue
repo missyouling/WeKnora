@@ -1483,15 +1483,10 @@ async function handlePrint() {
   if (!rowsToPrint.length) { MessagePlugin.warning('当前无数据可打印'); return }
   catalogBusy.value = true
   try {
+    // 目录打印：严格按当前列表显示的字段（visibleColDefs）生成，含 data.* 字段，不截断
     const cols: CatalogColumn[] = visibleColDefs.value
-      .filter((c: any) => !(isArchive.value && (c.key === 'file_name' || c.key === 'source' || c.key.startsWith('data.'))))
+      .filter((c: any) => !(isArchive.value && (c.key === 'file_name' || c.key === 'source')))
       .map((c: any) => ({ key: c.key, label: c.label, value: c.value }))
-    if (isArchive.value) {
-      const f = archiveTypeFields.value
-      ;[...f.base, ...f.detail].slice(0, 8).forEach((k: string) => {
-        cols.push({ key: 'd' + k, label: k, value: (r: any) => fmtVal(r.data?.[k]) })
-      })
-    }
     const bytes = await generateCatalogPdf({
       title: printTitle.value,
       columns: cols,
