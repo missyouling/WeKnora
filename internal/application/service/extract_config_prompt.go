@@ -79,13 +79,30 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	schema := BuildFieldsSchema(cfg.Fields)
 	certType := strings.TrimSpace(cfg.CertType)
 
-	// 高级模式：用户模板优先（模板须自行包含完整输出结构约束）
+	// 高级模式：用户模板优先，替换变量后强制追加 JSON 输出兜底约束，
+	// 防止用户模板未声明 JSON 输出格式（如仅写字段定义）导致模型输出非 JSON、解析失败。
 	if cfg.AdvancedEnabled && strings.TrimSpace(cfg.PromptTemplate) != "" {
 		r := strings.NewReplacer(
 			"{{fields_schema}}", schema,
 			"{{document_text}}", "<document>\n{{document_text}}\n</document>",
 		)
-		return r.Replace(cfg.PromptTemplate)
+		prompt := strings.TrimSpace(r.Replace(cfg.PromptTemplate))
+		var sb strings.Builder
+		sb.WriteString(prompt)
+		sb.WriteString("\n\n【系统强制输出约束】(该约束优先级高于以上模板，必须无条件遵守)\n")
+		sb.WriteString("1. 只能输出一个合法的 JSON 对象，禁止输出 JSON 以外的任何文字、注释、Markdown 代码块围栏或前后缀说明。\n")
+		sb.WriteString("2. 输出结构固定为：{\"kind\": \"")
+		sb.WriteString(kind)
+		sb.WriteString("\", \"doc_type\": \"")
+		sb.WriteString(certType)
+		sb.WriteString("\", \"vehicle_no\": \"车牌号（没有则空字符串）\", \"fields\": { 字段名: 值, ... }}\n")
+		sb.WriteString("3. fields 必须直接以上述字段名作为键输出键值对，严禁把字段值嵌套进 properties/required/type 等 JSON Schema 结构。\n")
+		sb.WriteString("4. doc_type 必须严格等于「")
+		sb.WriteString(certType)
+		sb.WriteString("」，严禁修改为其它类型。\n")
+		sb.WriteString("5. 只输出字段清单中列出的字段：文档中真实出现的填值，未出现的填空字符串（数组填 []、数字填 0）；不要输出未列出的额外字段。\n")
+		sb.WriteString("6. 必须严格执行每个字段的「规则」：文档中出现规则列举的同类表述时，统一归入该字段。")
+		return sb.String()
 	}
 
 	// 默认模式：fields 直接输出键值对骨架（严禁输出 schema 包装 properties/required/type），
