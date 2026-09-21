@@ -83,21 +83,30 @@
 
     <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
     <div v-if="isArchive && !filters.docType" class="archive-overview">
-      <div v-for="card in overviewStatusCards" :key="card.key" class="overview-card" :class="card.cls"
-        @click="onOverviewCardClick(card)">
-        <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
-        <div class="overview-card__body">
-          <div class="overview-card__num">{{ card.num }}</div>
-          <div class="overview-card__label">{{ card.label }}</div>
+      <div class="overview-group">
+        <div class="overview-group__title">文件状态</div>
+        <div class="overview-group__cards">
+          <div v-for="card in overviewStatusCards" :key="card.key" class="overview-card" :class="card.cls"
+            @click="onOverviewCardClick(card)">
+            <div class="overview-card__icon"><t-icon :name="card.icon" size="18px" /></div>
+            <div class="overview-card__body">
+              <div class="overview-card__num">{{ card.num }}</div>
+              <div class="overview-card__label">{{ card.label }}</div>
+            </div>
+          </div>
         </div>
       </div>
-      <div v-if="overviewTypeCards.length" class="overview-divider" />
-      <div v-for="card in overviewTypeCards" :key="card.key" class="overview-card overview-card--type"
-        @click="onOverviewCardClick(card)">
-        <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
-        <div class="overview-card__body">
-          <div class="overview-card__num">{{ card.num }}</div>
-          <div class="overview-card__label">{{ card.label }}</div>
+      <div v-if="overviewTypeCards.length" class="overview-group">
+        <div class="overview-group__title">证照类型</div>
+        <div class="overview-group__cards">
+          <div v-for="card in overviewTypeCards" :key="card.key" class="overview-card overview-card--type"
+            @click="onOverviewCardClick(card)">
+            <div class="overview-card__icon"><t-icon :name="card.icon" size="18px" /></div>
+            <div class="overview-card__body">
+              <div class="overview-card__num">{{ card.num }}</div>
+              <div class="overview-card__label">{{ card.label }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2223,11 +2232,14 @@ function onDrawerResizeEnd() {
   background: var(--td-error-color-1);
   border-color: var(--td-error-color-2);
 }
-.archive-overview { display: flex; flex-wrap: wrap; gap: 16px; padding: 24px; align-items: stretch; }
+.archive-overview { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+.overview-group { display: flex; flex-direction: column; gap: 10px; }
+.overview-group__title { font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary); }
+.overview-group__cards { display: flex; flex-wrap: wrap; gap: 12px; }
 .overview-card {
-  display: flex; align-items: center; gap: 14px; padding: 18px 22px; min-width: 180px;
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px; min-width: 140px;
   background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
-  border-radius: 10px; cursor: pointer; transition: all .15s ease;
+  border-radius: 8px; cursor: pointer; transition: all .15s ease;
 }
 .overview-card:hover { border-color: var(--td-brand-color); box-shadow: 0 2px 8px rgba(0,82,217,.08); }
 .overview-card.is-warn { border-color: #e37318; }
@@ -2235,9 +2247,7 @@ function onDrawerResizeEnd() {
 .overview-card__icon { color: var(--td-brand-color); }
 .overview-card.is-warn .overview-card__icon { color: #e37318; }
 .overview-card.is-err .overview-card__icon { color: #d54941; }
-.overview-card__num { font-size: 26px; font-weight: 600; line-height: 1.1; }
-.overview-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
-.archive-overview__hint { width: 100%; font-size: 12px; color: var(--td-text-color-secondary); }
-.overview-divider { flex-basis: 100%; height: 0; }
-.overview-card { flex: 0 1 calc(33.333% - 12px); }
+.overview-card__num { font-size: 20px; font-weight: 600; line-height: 1.1; }
+.overview-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
+.overview-group .overview-card { flex: 0 0 auto; }
 </style>
