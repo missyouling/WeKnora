@@ -4,7 +4,7 @@
       :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onResizeStart">
       <div class="dh-resize-line" />
     </div>
-    <t-drawer v-if="visible" :visible="true" header="上传历史" :size="`${drawerWidth}px`" :footer="false"
+    <t-drawer v-if="visible" :visible="true" header="已上传文件" :size="`${drawerWidth}px`" :footer="false"
       :close-btn="true" class="fleet-history-drawer" @close="onClose" @update:visible="(v: boolean) => (v || onClose())">
       <div class="dh-body">
         <!-- 上传历史列表（解析 / 提取状态，支持删除历史条目） -->
@@ -18,15 +18,6 @@
               <template #icon><t-icon name="search" size="14px" /></template>
               搜索
             </t-button>
-            <t-popconfirm theme="warning"
-              :content="`确定删除全部 ${rows.length} 条上传历史吗？知识库文件保留，仅从历史中移除。`"
-              :confirm-btn="{ content: '全部删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="clearAll">
-              <t-button theme="danger" variant="outline">
-                <template #icon><t-icon name="delete" size="14px" /></template>
-                全部删除
-              </t-button>
-            </t-popconfirm>
           </div>
           <div class="dh-hint">
             展示该档案库全部上传文件的解析与提取状态。
@@ -72,22 +63,23 @@
                     <span v-else class="row-muted">—</span>
                   </div>
                   <div class="cell"><span class="row-mono">{{ fmtTime(row.created_at) }}</span></div>
-                  <div class="cell cell-del" @click.stop>
-                    <t-dropdown trigger="click" placement="bottom-right">
-                      <t-button variant="text" size="small" shape="square">
-                        <template #icon><t-icon name="ellipsis" size="16px" /></template>
+                  <div class="cell cell-del">
+                    <t-tooltip content="重新解析" placement="top">
+                      <t-button variant="text" size="small" shape="square" @click="reparseRow(row)">
+                        <template #icon><t-icon name="refresh" size="14px" /></template>
                       </t-button>
-                      <template #dropdownItem>
-                        <t-dropdown-item v-if="row.parse_status !== 'completed'" @click="reparseRow(row)">重新解析</t-dropdown-item>
-                        <t-dropdown-item v-if="row.parse_status === 'completed'" @click="reextractRow(row)">重新提取</t-dropdown-item>
-                        <t-popconfirm theme="warning"
-                          :content="`确定从知识库删除该文件吗？已解析记录将一并清除。`"
-                          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                          @confirm="removeOne(row)">
-                          <t-dropdown-item @click.stop>删除</t-dropdown-item>
-                        </t-popconfirm>
-                      </template>
-                    </t-dropdown>
+                    </t-tooltip>
+                    <t-tooltip content="重新提取" placement="top">
+                      <t-button variant="text" size="small" shape="square" @click="reextractRow(row)">
+                        <template #icon><t-icon name="scan" size="14px" /></template>
+                      </t-button>
+                    </t-tooltip>
+                    <t-popconfirm theme="danger" content="确定从知识库删除该文件吗？已解析记录将一并清除。"
+                      confirm-btn="删除" cancel-btn="取消" placement="top" @confirm="removeOne(row)">
+                      <t-button variant="text" size="small" shape="square" theme="danger">
+                        <template #icon><t-icon name="delete" size="14px" /></template>
+                      </t-button>
+                    </t-popconfirm>
                   </div>
                 </div>
                 <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
@@ -103,7 +95,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -257,6 +249,17 @@ const reextractRow = async (row: any) => {
   } finally {
     row._extracting = false
   }
+}
+
+const confirmRemove = (row: any) => {
+  const dlg = DialogPlugin.confirm({
+    header: '删除文件',
+    body: '确定从知识库删除该文件吗？已解析记录将一并清除。',
+    confirmBtn: { content: '删除', theme: 'danger' },
+    cancelBtn: '取消',
+    onConfirm: async () => { dlg.destroy(); await removeOne(row) },
+    onClose: () => dlg.destroy(),
+  })
 }
 
 // ---- 删除：复用知识库文档删除逻辑（真删除，从知识库移除） ----

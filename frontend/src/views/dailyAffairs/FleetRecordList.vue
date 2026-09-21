@@ -28,11 +28,6 @@
         <t-button variant="outline" size="small" @click="refreshAll">
           <template #icon><t-icon name="refresh" size="14px" /></template>
         </t-button>
-        <t-tooltip content="上传历史" placement="bottom">
-          <t-button variant="outline" size="small" @click="onOverviewCardClick(card)">
-            <template #icon><t-icon name="history" size="14px" /></template>
-          </t-button>
-        </t-tooltip>
       </div>
       <div class="doc-filter-bar__trailing">
         <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
@@ -88,7 +83,16 @@
 
     <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
     <div v-if="isArchive && !filters.docType" class="archive-overview">
-      <div v-for="card in overviewCards" :key="card.key" class="overview-card" :class="card.cls"
+      <div v-for="card in overviewStatusCards" :key="card.key" class="overview-card" :class="card.cls"
+        @click="onOverviewCardClick(card)">
+        <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+        <div class="overview-card__body">
+          <div class="overview-card__num">{{ card.num }}</div>
+          <div class="overview-card__label">{{ card.label }}</div>
+        </div>
+      </div>
+      <div v-if="overviewTypeCards.length" class="overview-divider" />
+      <div v-for="card in overviewTypeCards" :key="card.key" class="overview-card overview-card--type"
         @click="onOverviewCardClick(card)">
         <div class="overview-card__icon"><t-icon :name="card.icon" size="22px" /></div>
         <div class="overview-card__body">
@@ -846,8 +850,8 @@ const overviewCards = computed(() => {
   const all = fileRows.value || []
   const cards: any[] = [
     { key: "total", label: "已上传文件", num: all.length, icon: "file", cls: "", action: "history-all" },
-    { key: "parseFailed", label: "解析失败", num: all.filter((r: any) => r.parse_status === "failed").length, icon: "close-circle", cls: "is-err", action: "history-parse_failed" },
-    { key: "extractFailed", label: "提取失败", num: all.filter((r: any) => (r.extract_status || "") === "failed").length, icon: "close-circle", cls: "is-err", action: "history-extract_failed" },
+    { key: "parseFailed", label: "解析失败", num: all.filter((r: any) => r.parse_status === "failed").length, icon: "close-circle", cls: "", action: "history-parse_failed" },
+    { key: "extractFailed", label: "提取失败", num: all.filter((r: any) => (r.extract_status || "") === "failed").length, icon: "close-circle", cls: "", action: "history-extract_failed" },
   ]
   // 各证照类型卡片（按文件数聚合），点击直接跳列表
   const byType = new Map<string, number>()
@@ -857,6 +861,8 @@ const overviewCards = computed(() => {
   })
   return cards
 })
+const overviewStatusCards = computed(() => overviewCards.value.filter((c: any) => !String(c.key).startsWith('type-')))
+const overviewTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-')))
 function onOverviewCardClick(card: any) {
   if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
   else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
@@ -1047,7 +1053,7 @@ const columnDefs = computed<ColDef[]>(() => {
     const keys = [...f.base]
     f.detail.forEach((k) => { if (!keys.includes(k)) keys.push(k) })
     const dyn = keys.map((k) => ({
-      key: `data.${k}`, label: k, def: f.base.includes(k), tip: `提取自源文件：${k}`,
+      key: `data.${k}`, label: k, def: f.base.includes(k) && k !== '备注', tip: `提取自源文件：${k}`,
       value: (r: any) => {
         // 证件状态：各证照类型统一按有效期自动计算，不依赖模型提取值
         if (isStatusField(k)) return calcCertStatus(r.data)
@@ -2232,4 +2238,6 @@ function onDrawerResizeEnd() {
 .overview-card__num { font-size: 26px; font-weight: 600; line-height: 1.1; }
 .overview-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
 .archive-overview__hint { width: 100%; font-size: 12px; color: var(--td-text-color-secondary); }
+.overview-divider { flex-basis: 100%; height: 0; }
+.overview-card { flex: 0 1 calc(33.333% - 12px); }
 </style>
