@@ -5,16 +5,25 @@
       <div class="doc-drawer-resize-line" />
     </div>
   </teleport>
-  <t-drawer :visible="visible" :header="drawerTitle" :size="drawerWidth" :footer="false" :close-btn="true"
+  <t-drawer :visible="visible" :size="drawerWidth" :footer="false" :close-btn="true"
     :close-on-overlay-click="true" :esc-close="true" destroy-on-close
     class="fleet-settings-drawer meter-record-drawer" @close="emit('update:visible', false)"
     @update:visible="(v: boolean) => emit('update:visible', v)">
+    <template #header>
+      <div class="fleet-drawer-header">
+        <span class="fleet-drawer-title">{{ drawerTitle }}</span>
+        <t-button v-if="showAddBtn" theme="primary" size="small" @click="onHeaderAdd">
+          <template #icon><t-icon name="add" size="14px" /></template>
+          {{ addBtnLabel }}
+        </t-button>
+      </div>
+    </template>
     <div class="fleet-settings-body">
       <!-- 按当前菜单动态显示对应配置面板（车辆档案：证照配置 + 提取规则） -->
       <template v-if="panelKey === 'cert-vehicle'">
         <t-tabs v-model="vehicleTab" class="fleet-settings-tabs" @change="onVehicleTabChange">
           <t-tab-panel value="cert" label="证照配置">
-            <CertPanel scope="vehicle" />
+            <CertPanel ref="vehicleCertRef" scope="vehicle" />
           </t-tab-panel>
           <t-tab-panel value="extract" label="提取规则">
             <ExtractRulePanel ref="extractPanelRef" scope="vehicle" />
@@ -22,10 +31,10 @@
         </t-tabs>
       </template>
       <template v-else-if="panelKey === 'cert-driver'">
-        <CertPanel scope="driver" />
+        <CertPanel ref="driverCertRef" scope="driver" />
       </template>
       <template v-else-if="panelKey === 'cert-maintain'">
-        <CertPanel scope="maintain" />
+        <CertPanel ref="maintainCertRef" scope="maintain" />
       </template>
       <template v-else-if="panelKey === 'oil'">
         <OilCardPanel />
@@ -39,13 +48,13 @@
       <!-- 兜底：未映射菜单保留全量设置入口 -->
       <t-tabs v-else v-model="activeTab" class="fleet-settings-tabs">
         <t-tab-panel value="vehicle" label="车辆档案">
-          <CertPanel scope="vehicle" />
+          <CertPanel ref="vehicleCertRef" scope="vehicle" />
         </t-tab-panel>
         <t-tab-panel value="driver" label="司机档案">
-          <CertPanel scope="driver" />
+          <CertPanel ref="driverCertRef" scope="driver" />
         </t-tab-panel>
         <t-tab-panel value="maintain" label="维保管理">
-          <CertPanel scope="maintain" />
+          <CertPanel ref="maintainCertRef" scope="maintain" />
         </t-tab-panel>
         <t-tab-panel value="fuel" label="油卡管理">
           <OilCardPanel />
@@ -87,6 +96,24 @@ const drawerTitle = computed(() => PANEL_MAP[props.menuKey || '']?.title || '设
 const activeTab = ref('vehicle')
 const vehicleTab = ref('cert')
 const extractPanelRef = ref()
+const vehicleCertRef = ref<any>(null)
+const driverCertRef = ref<any>(null)
+const maintainCertRef = ref<any>(null)
+// 标题栏右侧「新增」按钮：仅证照配置面板显示（车辆档案仅在“证照配置”tab）
+const showAddBtn = computed(() => {
+  if (panelKey.value === 'cert-vehicle') return vehicleTab.value === 'cert'
+  if (panelKey.value === 'cert-driver' || panelKey.value === 'cert-maintain') return true
+  if (!panelKey.value) return ['vehicle', 'driver', 'maintain'].includes(activeTab.value)
+  return false
+})
+const activeCertRef = computed(() => {
+  if (panelKey.value === 'cert-vehicle' || (!panelKey.value && activeTab.value === 'vehicle')) return vehicleCertRef.value
+  if (panelKey.value === 'cert-driver' || (!panelKey.value && activeTab.value === 'driver')) return driverCertRef.value
+  if (panelKey.value === 'cert-maintain' || (!panelKey.value && activeTab.value === 'maintain')) return maintainCertRef.value
+  return null
+})
+const addBtnLabel = computed(() => activeCertRef.value?.addLabel || '新增')
+function onHeaderAdd() { activeCertRef.value?.startAdd?.() }
 // 切到提取规则页时重新拉取证照配置，保证字段名与证照配置实时同步
 function onVehicleTabChange(val: string | number) {
   if (val === 'extract') extractPanelRef.value?.refresh()
@@ -120,6 +147,8 @@ onMounted(() => { activeTab.value = 'vehicle' })
 </script>
 
 <style lang="less" scoped>
+.fleet-drawer-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding-right: 28px; box-sizing: border-box; }
+.fleet-drawer-title { font-size: var(--td-font-size-title-medium); font-weight: 600; color: var(--td-text-color-primary); }
 .fleet-settings-body { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .fleet-settings-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .fleet-settings-tabs :deep(.t-tabs__content) { flex: 1; min-height: 0; overflow: auto; padding-top: 16px; }

@@ -1,19 +1,18 @@
 ﻿<template>
   <div class="meter-settings-body">
-    <!-- 顶部：新增按钮（复刻电表配置面板头部） -->
-    <div class="settings-head">
-      <t-button theme="primary" size="small" @click="startAdd">
-        <template #icon><t-icon name="add" size="14px" /></template>
-        新增{{ group.label }}
-      </t-button>
-    </div>
-
     <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
     <div class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
         <span class="group-header__title">{{ g.label }}</span>
         <span class="group-header__count">{{ groupCount(g.key) }}</span>
-        <t-icon v-if="!g.builtin" name="close" size="12px" class="group-header__del" @click.stop="removeGroup(g)" />
+        <span v-if="!g.builtin" class="group-header__del-wrap" @click.stop>
+          <t-popconfirm theme="warning" :visible="delGroupKey === g.key" placement="bottom"
+            content="确定删除该自定义分组吗？仅空分组可删除。"
+            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+            @confirm="doRemoveGroup(g)" @visible-change="(v: boolean) => onDelGroupVisible(g, v)">
+            <t-icon name="close" size="12px" class="group-header__del" />
+          </t-popconfirm>
+        </span>
       </div>
       <div class="group-header group-header--add" @click="startAddGroup" title="新增分组">
         <t-icon name="add" size="14px" />
@@ -33,21 +32,6 @@
           <span>字段数</span>
           <span>状态</span>
           <span>操作</span>
-        </div>
-
-        <!-- 新增表单展开在顶部（复刻 meter-form） -->
-        <div v-if="addVisible" class="meter-form">
-          <div class="meter-form-title">新增{{ group.label }}</div>
-          <div class="form-grid">
-            <div class="form-item">
-              <label>证照名称 <span class="required">*</span></label>
-              <t-input v-model="addForm.name" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
-            </div>
-          </div>
-          <div class="meter-form-actions">
-            <t-button variant="outline" size="small" @click="addVisible = false">取消</t-button>
-            <t-button theme="primary" size="small" :loading="saving" @click="commitAdd">保存</t-button>
-          </div>
         </div>
 
         <template v-for="(item, idx) in groupItems" :key="item.id">
@@ -126,13 +110,29 @@
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
           <span class="panel-empty-text">暂无证照类型</span>
         </div>
+
+        <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
+        <div v-if="addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
+          <span class="cert-add-gap"></span>
+          <span class="cert-add-input">
+            <t-input ref="addInputRef" v-model="addForm.name" size="small" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
+          </span>
+          <span class="cert-add-actions">
+            <t-button variant="outline" size="small" @click="addVisible = false">取消</t-button>
+            <t-button theme="primary" size="small" :loading="saving" @click="commitAdd">添加</t-button>
+          </span>
+        </div>
+        <div v-else class="cert-add-row" @click="startAdd">
+          <span class="cert-add-gap"></span>
+          <span class="cert-add-name"><t-icon name="add" size="14px" /><span>新增{{ group.label }}</span></span>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup } from '@/api/fleet'
 
@@ -187,15 +187,29 @@ async function confirmAddGroup() {
   } catch (e: any) { MessagePlugin.error(e?.message || '创建失败') }
   finally { savingGroup.value = false }
 }
-async function removeGroup(g: any) {
-  if (groupCount(g.key) > 0) { window.alert(`分组"${g.label}"下还有${groupCount(g.key)}个证照类型，请先移除或重新归类后再删除`); return }
-  if (!window.confirm(`确定删除分组"${g.label}"吗？`)) return
+const delGroupKey = ref('')
+// 受控 Popconfirm：打开前做引用判断，组内仍有证照则拦截并提示
+function onDelGroupVisible(g: any, v: boolean) {
+  if (v) {
+    const n = groupCount(g.key)
+    if (n > 0) {
+      delGroupKey.value = ''
+      MessagePlugin.warning(`分组「${g.label}」下还有 ${n} 个证照类型，请先移除或重新归类后再删除分组。`)
+      return
+    }
+    delGroupKey.value = g.key
+  } else if (delGroupKey.value === g.key) {
+    delGroupKey.value = ''
+  }
+}
+async function doRemoveGroup(g: any) {
   try {
     await deleteFleetCertGroup(g.id)
     customGroups.value = customGroups.value.filter((x: any) => x.key !== g.key)
     if (activeGroup.value === g.key) activeGroup.value = groupList.value[0]?.key || 'company'
     MessagePlugin.success('分组已删除')
   } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+  finally { delGroupKey.value = '' }
 }
 
 // 内置证照类型（字段：base=默认显示，detail=详细字段；上传解析后自动更新，内置不可删除）
@@ -209,8 +223,8 @@ const BUILTIN: Record<string, CertDef[]> = {
     },
     {
       name: '行驶证',
-      base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '行驶证编号', '有效期', '状态', '备注'],
-      detail: [],
+      base: ['车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '强制报废日期', '证件状态'],
+      detail: ['备注'],
     },
     {
       name: '道路运输经营许可证',
@@ -409,10 +423,18 @@ watch(() => props.scope, () => {
 // ---- 新增 ----
 const addVisible = ref(false)
 const addForm = reactive({ name: '' })
+const addInputRef = ref<any>(null)
 function startAdd() {
   addForm.name = ''
   addVisible.value = true
+  nextTick(() => {
+    addInputRef.value?.focus?.()
+    document.querySelector('.cert-add-row--editing')?.scrollIntoView({ block: 'nearest' })
+  })
 }
+// 供抽屉标题栏右侧「新增」按钮调用（FleetSettingsDrawer header）
+const addLabel = computed(() => `新增${group.value.label}`)
+defineExpose({ startAdd, addLabel })
 async function commitAdd() {
   const name = addForm.name.trim()
   if (!name) { MessagePlugin.warning('请输入证照名称'); return }
@@ -551,13 +573,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   padding: 4px 0 24px;
 }
 
-.settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
 .meter-table-wrap {
   display: flex;
   flex-direction: column;
@@ -565,20 +580,24 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 }
 
 /* 分组标签：复用租户核算设置标签卡样式(选中绿色下划线) */
-.group-headers { display: flex; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
+.group-headers { display: flex; align-items: center; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
 .group-header { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 14px; color: var(--td-text-color-secondary); border-bottom: 2px solid transparent; margin-bottom: -9px; transition: color .15s; }
 .group-header:hover { color: var(--td-brand-color); }
 .group-header.active { color: var(--td-brand-color); border-bottom-color: var(--td-brand-color); font-weight: 500; }
 .group-header__title { font-size: 14px; }
 .group-header__count { font-size: 12px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-component); border-radius: 10px; padding: 0 8px; line-height: 18px; }
 .group-header.active .group-header__count { color: var(--td-brand-color); background: var(--td-brand-color-1); }
-.group-headers { display: flex; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
-.group-header { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 14px; color: var(--td-text-color-secondary); border-bottom: 2px solid transparent; margin-bottom: -9px; transition: color .15s; }
-.group-header:hover { color: var(--td-brand-color); }
-.group-header.active { color: var(--td-brand-color); border-bottom-color: var(--td-brand-color); font-weight: 500; }
-.group-header__title { font-size: 14px; }
-.group-header__count { font-size: 12px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-component); border-radius: 10px; padding: 0 8px; line-height: 18px; }
-.group-header.active .group-header__count { color: var(--td-brand-color); background: var(--td-brand-color-1); }
+.group-header__del-wrap { display: inline-flex; align-items: center; }
+.group-header__del { color: var(--td-text-color-placeholder); transition: color .15s; cursor: pointer; }
+.group-header__del:hover { color: var(--td-error-color); }
+/* 新增分组「+」与内置分组标签同形 */
+.group-header--add { color: var(--td-text-color-secondary); }
+.group-header--add:hover { color: var(--td-brand-color); }
+/* 内联命名输入：去掉标签下划线占位，输入框与标签等高对齐 */
+.group-header--adding { border-bottom: none; margin-bottom: 0; padding: 0; cursor: default; }
+.group-header--adding:hover { color: inherit; }
+.group-header--adding :deep(.t-input) { width: 132px; }
+.group-header--adding :deep(.t-input .t-input__inner) { height: 24px; }
 .meter-settings-tabs {
   margin-bottom: 10px;
 
@@ -743,6 +762,27 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   padding: 40px 0;
   background: var(--td-bg-color-container);
   font-size: var(--td-font-size-body-small);
+}
+
+/* 列表末尾内联新增证照（与表格列对齐） */
+.cert-add-row {
+  display: grid;
+  grid-template-columns: 30px 1.6fr 0.9fr 0.6fr 0.6fr 0.7fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  border-top: 1px dashed var(--td-component-stroke);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  &:hover { background: var(--td-bg-color-secondarycontainer); color: var(--td-brand-color); }
+  .cert-add-gap { grid-column: 1; }
+  .cert-add-name { grid-column: 2; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+  .cert-add-input { grid-column: 2; }
+  .cert-add-actions { grid-column: 3 / -1; display: flex; justify-content: flex-end; gap: 8px; cursor: default; }
+  &.cert-add-row--editing { cursor: default; background: var(--td-brand-color-light); }
+  &.cert-add-row--editing:hover { color: var(--td-text-color-secondary); background: var(--td-brand-color-light); }
 }
 
 /* 字段配置区 */

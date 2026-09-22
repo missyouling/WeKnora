@@ -595,8 +595,8 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
   },
   '行驶证': {
     name: '行驶证', scope: 'vehicle',
-    base: ['车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '备注'],
-    detail: [],
+    base: ['车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '强制报废日期', '证件状态'],
+    detail: ['备注'],
   },
   '道路运输经营许可证': {
     name: '道路运输经营许可证', scope: 'vehicle',
