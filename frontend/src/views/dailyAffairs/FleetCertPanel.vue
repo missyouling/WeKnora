@@ -15,9 +15,8 @@
         <span class="group-header__count">{{ groupCount(g.key) }}</span>
         <t-icon v-if="!g.builtin" name="close" size="12px" class="group-header__del" @click.stop="removeGroup(g)" />
       </div>
-      <div class="group-header group-header--add" @click="addGroup">
+      <div class="group-header group-header--add" @click="addGroup" title="新增分组">
         <t-icon name="add" size="14px" />
-        <span>新增分组</span>
       </div>
     </div>
 

@@ -82,7 +82,7 @@
       @reload="loadRecords" />
 
     <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
-    <div v-if="isArchive && !filters.docType" class="archive-overview">
+    <div v-if="isArchive && !filters.docType" class="archive-overview archive-overview--panel">
       <div class="overview-group">
         <div class="overview-group__title">文件状态</div>
         <div class="overview-group__cards overview-group__cards--status">
@@ -94,7 +94,7 @@
           </div>
         </div>
       </div>
-      <div v-if="overviewVehicleTypeCards.length || overviewDriverTypeCards.length" class="overview-group overview-group--panel">
+      <div v-if="overviewVehicleTypeCards.length || overviewDriverTypeCards.length" class="overview-group">
         <div v-if="overviewVehicleTypeCards.length" class="overview-subgroup">
           <div class="overview-group__title">公司证照</div>
           <div class="overview-group__cards overview-group__cards--type">
@@ -2260,7 +2260,7 @@ function onDrawerResizeEnd() {
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
 .overview-group__cards { display: grid; grid-template-columns: repeat(3, 240px); gap: 14px; }
-.overview-group--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
+.archive-overview--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
 .overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .overview-subgroup + .overview-subgroup { margin-top: 8px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
