@@ -15,8 +15,11 @@
         <span class="group-header__count">{{ groupCount(g.key) }}</span>
         <t-icon v-if="!g.builtin" name="close" size="12px" class="group-header__del" @click.stop="removeGroup(g)" />
       </div>
-      <div class="group-header group-header--add" @click="addGroup" title="新增分组">
+      <div class="group-header group-header--add" @click="startAddGroup" title="新增分组">
         <t-icon name="add" size="14px" />
+      </div>
+      <div v-if="addingGroup" class="group-header group-header--adding">
+        <t-input v-model="newGroupName" size="small" placeholder="输入分组名" @keyup.enter="confirmAddGroup" @blur="confirmAddGroup" autofocus />
       </div>
     </div>
 
@@ -155,12 +158,19 @@ const groupList = computed(() => {
   const builtin = (GROUPS[props.scope] || GROUPS.vehicle).map((g: any) => ({ ...g, builtin: true }))
   return [...builtin, ...customGroups.value]
 })
-async function addGroup() {
-  const name = window.prompt('请输入分组名称')
-  if (!name || !name.trim()) return
+const addingGroup = ref(false)
+const newGroupName = ref('')
+function startAddGroup() {
+  addingGroup.value = true
+  newGroupName.value = ''
+}
+async function confirmAddGroup() {
+  const name = newGroupName.value.trim()
+  addingGroup.value = false
+  if (!name) return
   try {
     const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
-    const res: any = await createFleetCertGroup({ name: name.trim(), parent_scope: parentScope })
+    const res: any = await createFleetCertGroup({ name, parent_scope: parentScope })
     const g = res?.data || res
     customGroups.value.push({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id })
     activeGroup.value = g.id
