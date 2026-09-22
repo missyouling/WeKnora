@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,7 +26,12 @@ type FleetHandler struct {
 
 // NewFleetHandler creates a new FleetHandler.
 func NewFleetHandler(db *gorm.DB) *FleetHandler {
-	return &FleetHandler{db: db}
+	h := &FleetHandler{db: db}
+	// best-effort ensure table exists for cert groups (no versioned migration yet)
+	if err := db.AutoMigrate(&types.FleetCertGroup{}); err != nil {
+		logger.Warnf(context.Background(), "AutoMigrate fleet_cert_groups failed: %v", err)
+	}
+	return h
 }
 
 func fleetTenantID(c *gin.Context) (uint64, error) {
