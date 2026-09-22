@@ -13,6 +13,11 @@
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
         <span class="group-header__title">{{ g.label }}</span>
         <span class="group-header__count">{{ groupCount(g.key) }}</span>
+        <t-icon v-if="!g.builtin" name="close" size="12px" class="group-header__del" @click.stop="removeGroup(g)" />
+      </div>
+      <div class="group-header group-header--add" @click="addGroup">
+        <t-icon name="add" size="14px" />
+        <span>新增分组</span>
       </div>
     </div>
 
@@ -500,6 +505,13 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 }
 
 /* 分组标签：复用租户核算设置标签卡样式(选中绿色下划线) */
+.group-headers { display: flex; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
+.group-header { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 14px; color: var(--td-text-color-secondary); border-bottom: 2px solid transparent; margin-bottom: -9px; transition: color .15s; }
+.group-header:hover { color: var(--td-brand-color); }
+.group-header.active { color: var(--td-brand-color); border-bottom-color: var(--td-brand-color); font-weight: 500; }
+.group-header__title { font-size: 14px; }
+.group-header__count { font-size: 12px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-component); border-radius: 10px; padding: 0 8px; line-height: 18px; }
+.group-header.active .group-header__count { color: var(--td-brand-color); background: var(--td-brand-color-1); }
 .group-headers { display: flex; gap: 24px; padding: 12px 0 8px; border-bottom: 1px solid var(--td-component-stroke); margin-bottom: 12px; }
 .group-header { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 0; font-size: 14px; color: var(--td-text-color-secondary); border-bottom: 2px solid transparent; margin-bottom: -9px; transition: color .15s; }
 .group-header:hover { color: var(--td-brand-color); }
