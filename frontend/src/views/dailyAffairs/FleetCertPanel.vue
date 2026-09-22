@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="meter-settings-body">
     <!-- 顶部：新增按钮（复刻电表配置面板头部） -->
     <div class="settings-head">
@@ -19,7 +19,7 @@
         <t-icon name="add" size="14px" />
       </div>
       <div v-if="addingGroup" class="group-header group-header--adding">
-        <t-input v-model="newGroupName" size="small" placeholder="输入分组名" @keyup.enter="confirmAddGroup" @blur="confirmAddGroup" autofocus />
+        <t-input v-model="newGroupName" size="small" placeholder="输入分组名" @enter="confirmAddGroup" @blur="confirmAddGroup" autofocus />
       </div>
     </div>
 
@@ -46,7 +46,7 @@
           <div class="form-grid">
             <div class="form-item">
               <label>证照名称 <span class="required">*</span></label>
-              <t-input v-model="addForm.name" placeholder="如：车辆购置税完税证明" @keyup.enter="commitAdd" />
+              <t-input v-model="addForm.name" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
             </div>
           </div>
           <div class="meter-form-actions">
@@ -83,7 +83,7 @@
             <div class="form-grid">
               <div class="form-item">
                 <label>证照名称 <span class="required">*</span></label>
-                <t-input v-model="editForm.name" @keyup.enter="commitEdit" />
+                <t-input v-model="editForm.name" @enter="commitEdit" />
               </div>
             </div>
             <!-- 字段配置：增删改 + 启用/禁用（同步字段筛选器） -->
@@ -98,7 +98,7 @@
                   draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
-                  <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @keyup.enter="addField" />
+                  <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                   <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
                   <t-popconfirm v-if="!usedFields.has(fd.name)" theme="warning"
                     :content="`确定删除字段「${fd.name}」吗？`"
@@ -114,7 +114,7 @@
                 </div>
                 <div class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
-                    @keyup.enter="addField" />
+                    @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
                 </div>
               </div>
