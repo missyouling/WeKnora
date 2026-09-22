@@ -2263,7 +2263,7 @@ function onDrawerResizeEnd() {
 .stat-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
 /* 类型卡片:稍大,浅色背景,左图标右文字 */
 .type-card {
-  display: flex; align-items: center; gap: 14px; padding: 16px 20px;
+  display: flex; align-items: center; gap: 14px; padding: 20px 22px;
   background: var(--td-bg-color-secondarycontainer, #f7f8fa); border: 1px solid transparent;
   border-radius: 10px; cursor: pointer; transition: all .18s ease;
 }
