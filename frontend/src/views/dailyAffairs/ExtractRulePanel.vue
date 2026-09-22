@@ -76,7 +76,7 @@
       </div>
     </template>
 
-    <ExtractTestDialog v-model:visible="testVisible" :kb-id="kbId" :scope="scope" :cert-type="certType"
+    <ExtractTestDialog v-model:visible="testVisible" :kb-id="kbId" :scope="currentScope" :cert-type="certTypeName"
       :fields="fields" :advanced-enabled="advancedEnabled" :prompt-template="promptTemplate" />
   </div>
 </template>
@@ -278,22 +278,47 @@ const typeOptions = [
 const slots = ['{{fields_schema}}', '{{document_text}}']
 
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
+
+// 车辆档案统一管理「公司证照(vehicle)」与「司机证照(driver)」两组类型；
+// 下拉按组展示，每个类型携带其真实 scope，读写规则均按真实 scope 走。
+const TYPE_GROUP_META = [
+  { scope: 'vehicle', title: '公司证照' },
+  { scope: 'driver', title: '司机证照' },
+] as const
+
+// v-model 存复合值 `${scope}__${name}`，避免公司/司机同名类型在下拉中冲突
+function typeComposite(scope: string, name: string) {
+  return `${scope}__${name}`
+}
+
 const certTypeOptions = computed(() => {
-  const names: string[] = []
-  const seen = new Set<string>()
-  Object.keys(DEFAULT_FIELDS[props.scope] || {}).forEach((n) => {
-    if (!seen.has(n)) {
-      seen.add(n)
-      names.push(n)
-    }
-  })
-  ;(categories.value[props.scope] || []).forEach((c) => {
-    if (c && c.name && !seen.has(c.name)) {
-      seen.add(c.name)
-      names.push(c.name)
-    }
-  })
-  return names.map((n) => ({ label: n, value: n }))
+  return TYPE_GROUP_META.map(({ scope, title }) => {
+    const names: string[] = []
+    const seen = new Set<string>()
+    ;(Object.keys(DEFAULT_FIELDS[scope] || {}) as string[]).forEach((n) => {
+      if (!seen.has(n)) {
+        seen.add(n)
+        names.push(n)
+      }
+    })
+    ;(categories.value[scope] || []).forEach((c: any) => {
+      if (c && c.name && !seen.has(c.name)) {
+        seen.add(c.name)
+        names.push(c.name)
+      }
+    })
+    return { label: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }
+  }).filter((g) => (g.children || []).length > 0)
+})
+
+// 当前选中类型的真实 scope 与纯类型名（复合值解析）
+const currentScope = computed(() => {
+  const s = certType.value.split('__', 1)[0]
+  return s && s !== certType.value ? s : props.scope
+})
+const certTypeName = computed(() => {
+  const parts = certType.value.split('__')
+  return parts.length > 1 ? parts.slice(1).join('__') : certType.value
 })
 
 const certType = ref('')
@@ -324,14 +349,15 @@ function makeField(name: string): ExtractFieldConfig {
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
 function authorityFields(): { name: string; enabled: boolean }[] {
-  const c = (categories.value[props.scope] || []).find((x: any) => x.name === certType.value)
+  const scope = currentScope.value
+  const c = (categories.value[scope] || []).find((x: any) => x.name === certTypeName.value)
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
       .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
-  const defaults = (DEFAULT_FIELDS[props.scope] || {})[certType.value] || []
+  const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
   const seen = new Set<string>()
   return defaults
     .map((n) => ({ name: n, enabled: true }))
@@ -378,7 +404,7 @@ async function loadConfig() {
   if (!kbId.value) return
   loadingCfg.value = true
   try {
-    const res: any = await getExtractConfig(kbId.value, props.scope, certType.value)
+    const res: any = await getExtractConfig(kbId.value, currentScope.value, certTypeName.value)
     const data = res?.data
     const cfgMap = new Map<string, any>()
     if (data && Array.isArray(data.fields)) {
@@ -388,7 +414,7 @@ async function loadConfig() {
     }
     // 字段名以证照配置为准：subs 或内置底稿；提取配置只提供 desc/type/rule 增强
     const auth = authorityFields()
-    const draft = (DEFAULT_RULES[props.scope] || {})[certType.value] || {}
+    const draft = (DEFAULT_RULES[currentScope.value] || {})[certTypeName.value] || {}
     fields.value = auth.map((a) => {
       const c = cfgMap.get(a.name)
       const d = draft[a.name] || {}
@@ -423,8 +449,8 @@ async function save() {
     return
   }
   const payload = {
-    scope: props.scope,
-    cert_type: certType.value,
+    scope: currentScope.value,
+    cert_type: certTypeName.value,
     fields: fields.value.map((f) => ({ ...f })),
     advanced_enabled: advancedEnabled.value,
     prompt_template: promptTemplate.value,
@@ -446,11 +472,15 @@ function openTest() {
   testVisible.value = true
 }
 
-// 重新拉取证照配置（用户在证照配置 tab 增删字段后，切回本页保持字段同步）
+// 重新拉取证照配置（公司证照 vehicle + 司机证照 driver，含自定义分组类型）
 async function refresh() {
   try {
-    const res: any = await listFleetCategories({ scope: props.scope })
-    categories.value[props.scope] = Array.isArray(res) ? res : res?.data || []
+    const scopes = ['vehicle', 'driver']
+    const results = await Promise.all(scopes.map((s) => listFleetCategories({ scope: s })))
+    scopes.forEach((s, i) => {
+      const r: any = results[i]
+      categories.value[s] = Array.isArray(r) ? r : r?.data || []
+    })
   } catch (e) {
     console.error('load categories failed', e)
   }
@@ -469,9 +499,10 @@ watch(
 onMounted(async () => {
   await ensureKb()
   await refresh()
-  const opts = certTypeOptions.value
-  if (opts.length > 0) {
-    certType.value = opts[0].value
+  const groups = certTypeOptions.value
+  const first = groups[0]?.children?.[0]
+  if (first) {
+    certType.value = first.value
     await loadConfig()
   }
 })
