@@ -2236,7 +2236,17 @@ function onDrawerResizeEnd() {
   background: var(--td-error-color-1);
   border-color: var(--td-error-color-2);
 }
-.archive-overview { display: flex; flex-direction: column; gap: 20px; padding: 24px; }
+.archive-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-1);
+  margin: 0 0 16px 0;
+}
 .overview-group { display: flex; flex-direction: column; gap: 12px; }
 .overview-group__title {
   font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
