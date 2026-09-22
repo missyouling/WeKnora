@@ -28,7 +28,7 @@ type FleetHandler struct {
 func NewFleetHandler(db *gorm.DB) *FleetHandler {
 	h := &FleetHandler{db: db}
 	// best-effort ensure table exists for cert groups (no versioned migration yet)
-	if err := db.AutoMigrate(&types.FleetCertGroup{}); err != nil {
+	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate fleet_cert_groups failed: %v", err)
 	}
 	return h
@@ -899,6 +899,16 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("分类名称不能为空"))
 		return
 	}
+	req.GroupID = strings.TrimSpace(req.GroupID)
+	if req.GroupID != "" {
+		var grp types.FleetCertGroup
+		if err := h.db.WithContext(ctx).
+			Where("id = ? AND tenant_id = ? AND parent_scope = ? AND deleted_at IS NULL", req.GroupID, tenantID, req.Scope).
+			First(&grp).Error; err != nil {
+			c.Error(errors.NewBadRequestError("证照分组不存在"))
+			return
+		}
+	}
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
 	req.TenantID = int64(tenantID)
@@ -1091,7 +1101,7 @@ func (h *FleetHandler) DeleteFleetCertGroup(c *gin.Context) {
 	// 引用判定：该分组下还有分类则禁止删除
 	var catCount int64
 	h.db.WithContext(ctx).Model(&types.FleetCategory{}).
-		Where("scope = ? AND tenant_id = ? AND deleted_at IS NULL", "custom-"+id, tenantID).
+		Where("group_id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 		Count(&catCount)
 	if catCount > 0 {
 		c.Error(errors.NewBadRequestError(fmt.Sprintf("分组下还有%d个证照类型，请先移除或重新归类", catCount)))

@@ -25,11 +25,6 @@
 
     <!-- 证照类型表格（复刻电表配置表格，支持拖拽排序） -->
     <div class="meter-table-wrap">
-      <div v-if="!groupItems.length && !addVisible" class="panel-empty">
-        <t-icon name="setting" size="28px" class="panel-empty-icon" />
-        <span class="panel-empty-text">暂无{{ group.label }}类型，点击新增或上传文件解析自动生成</span>
-      </div>
-
       <div class="meter-table">
         <div class="meter-table-head">
           <span class="th-drag"></span>
@@ -125,6 +120,12 @@
             </div>
           </div>
         </template>
+
+        <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
+        <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
+          <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
+          <span class="panel-empty-text">暂无证照类型</span>
+        </div>
       </div>
     </div>
   </div>
@@ -138,13 +139,13 @@ import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFl
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | '' }>(), { scope: 'vehicle' })
 
 // 分组：车辆档案=公司证照+司机证照；司机档案=司机证照；维保管理=维保文件
-const GROUPS: Record<string, { key: string; label: string; scope: string }[]> = {
+const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
   vehicle: [
-    { key: 'company', label: '公司证照', scope: 'vehicle' },
-    { key: 'driver', label: '司机证照', scope: 'driver' },
+    { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
+    { key: 'driver', label: '司机证照', scope: 'driver', groupId: '' },
   ],
-  driver: [{ key: 'driver', label: '司机证照', scope: 'driver' }],
-  maintain: [{ key: 'maintain', label: '维保文件', scope: 'maintain' }],
+  driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
+  maintain: [{ key: 'maintain', label: '维保文件', scope: 'maintain', groupId: '' }],
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
@@ -152,7 +153,8 @@ async function loadCustomGroups() {
     const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
     const res: any = await listFleetCertGroups({ parent_scope: parentScope })
     const arr = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
-    customGroups.value = arr.map((g: any) => ({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id }))
+    const fallbackScope = props.scope === 'driver' ? 'driver' : (props.scope === 'maintain' ? 'maintain' : 'vehicle')
+    customGroups.value = arr.map((g: any) => ({ key: g.id, label: g.name, scope: g.parent_scope || fallbackScope, groupId: g.id, builtin: false, id: g.id }))
   } catch { customGroups.value = [] }
 }
 const groupList = computed(() => {
@@ -160,24 +162,30 @@ const groupList = computed(() => {
   return [...builtin, ...customGroups.value]
 })
 const addingGroup = ref(false)
+const savingGroup = ref(false)
 const newGroupName = ref('')
 function startAddGroup() {
   addingGroup.value = true
   newGroupName.value = ''
 }
 async function confirmAddGroup() {
+  if (savingGroup.value) return
   const name = newGroupName.value.trim()
+  // 同步关闭输入框并清空名称：Enter 提交后输入框卸载会触发 blur，清空可避免同次输入重复建组
   addingGroup.value = false
+  newGroupName.value = ''
   if (!name) return
+  savingGroup.value = true
   try {
     const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
     const res: any = await createFleetCertGroup({ name, parent_scope: parentScope })
     const g = res?.data || res
     if (!g || !g.id) { MessagePlugin.error('创建失败：返回数据异常'); return }
-    customGroups.value.push({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id })
+    customGroups.value.push({ key: g.id, label: g.name, scope: parentScope, groupId: g.id, builtin: false, id: g.id })
     activeGroup.value = g.id
     MessagePlugin.success('分组已创建')
   } catch (e: any) { MessagePlugin.error(e?.message || '创建失败') }
+  finally { savingGroup.value = false }
 }
 async function removeGroup(g: any) {
   if (groupCount(g.key) > 0) { window.alert(`分组"${g.label}"下还有${groupCount(g.key)}个证照类型，请先移除或重新归类后再删除`); return }
@@ -249,26 +257,32 @@ const orderTick = ref(0)
 
 const group = computed(() => groupList.value.find((g) => g.key === activeGroup.value) || groupList.value[0])
 
-function buildItems(scope: string): any[] {
+function buildItems(g0: any): any[] {
   void orderTick.value // 建立响应式依赖：本地拖拽顺序变化后重算
-  const list = categories.value[scope] || []
+  const scope: string = g0.scope
+  const gid: string = g0.groupId || ''
+  // 仅取归属当前分组的分类（内置分组 group_id 为空；自定义分组按 group_id 过滤）
+  const list = (categories.value[scope] || []).filter((c: any) => (c.group_id || '') === gid)
   const merged: any[] = []
   const seen = new Set<string>()
-  ;(BUILTIN[scope] || []).forEach((b) => {
-    const found = list.find((c: any) => c.name === b.name)
-    if (found) {
-      merged.push({ ...found, builtin: true, fields: certFieldCount(b) })
-    } else {
-      merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
-    }
-    seen.add(b.name)
-  })
+  // 内置证照类型只出现在内置分组（groupId 为空）
+  if (!gid) {
+    ;(BUILTIN[scope] || []).forEach((b) => {
+      const found = list.find((c: any) => c.name === b.name)
+      if (found) {
+        merged.push({ ...found, builtin: true, fields: certFieldCount(b) })
+      } else {
+        merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
+      }
+      seen.add(b.name)
+    })
+  }
   list.forEach((c: any) => {
     if (!seen.has(c.name)) { merged.push({ ...c, builtin: false, fields: Array.isArray(c.subs) ? c.subs.length : 0 }); seen.add(c.name) }
   })
-  // 本地持久化的拖拽顺序（含内置项，以名称作排序键：id 会因入库/改名而失效）
+  // 本地持久化的拖拽顺序（按分组 key 隔离，以名称作排序键：id 会因入库/改名而失效）
   try {
-    const saved = JSON.parse(localStorage.getItem(`weknora-fleet-cert-order-${scope}`) || '[]')
+    const saved = JSON.parse(localStorage.getItem(`weknora-fleet-cert-order-${g0.key}`) || '[]')
     if (Array.isArray(saved) && saved.length) {
       const byName = new Map(merged.map((m) => [m.name, m]))
       const byId = new Map(merged.map((m) => [m.id, m]))
@@ -292,10 +306,10 @@ function buildItems(scope: string): any[] {
   } catch { /* ignore */ }
   return merged
 }
-const groupItems = computed(() => buildItems(group.value.scope))
+const groupItems = computed(() => buildItems(group.value))
 function groupCount(key: string) {
   const g = groupList.value.find((x: any) => x.key === key)
-  return g ? buildItems(g.scope).length : 0
+  return g ? buildItems(g).length : 0
 }
 
 // ---- 拖拽排序（持久化到后端 sort_order）----
@@ -311,7 +325,7 @@ async function onDrop(i: number) {
   list.splice(i, 0, moved)
   // 完整顺序（含内置）持久化到本地：以名称作排序键（id 会因入库/改名而失效）
   try {
-    localStorage.setItem(`weknora-fleet-cert-order-${group.value.scope}`, JSON.stringify(list.map((it: any) => it.name)))
+    localStorage.setItem(`weknora-fleet-cert-order-${group.value.key}`, JSON.stringify(list.map((it: any) => it.name)))
   } catch { /* ignore */ }
   orderTick.value++
   // 已入库项同步后端 sort_order
@@ -347,7 +361,7 @@ function notifyCategoriesChanged() {
 
 async function load() {
   try {
-    const scopes = groupList.value.map((g) => g.scope)
+    const scopes = [...new Set(groupList.value.map((g) => g.scope))]
     const resList = await Promise.all(scopes.map((s) => listFleetCategories({ scope: s })))
     scopes.forEach(async (s, i) => {
       let list = resList[i].data || []
@@ -405,10 +419,12 @@ async function commitAdd() {
   if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning('该证照类型已存在'); return }
   saving.value = true
   try {
-    const res = await createFleetCategory({ scope: group.value.scope, name, subs: [] })
+    const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs: [] })
     const created = res.data || res
     if (created?.id) {
-      categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
+      // 兜底：确保新记录带上当前分组 group_id，避免后端响应未回填时短暂错归到内置分组
+      const record = { ...created, group_id: created.group_id || group.value.groupId || '' }
+      categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), record]
       addVisible.value = false
       MessagePlugin.success('证照类型已创建')
       notifyCategoriesChanged()
@@ -463,7 +479,7 @@ async function commitEdit() {
   try {
     if (item.builtin && item.id.startsWith('builtin-')) {
       // 内置类型尚未入库：字段配置后自动入库
-      const res = await createFleetCategory({ scope: group.value.scope, name, subs })
+      const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs })
       const created = res.data || res
       if (created?.id) {
         categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
@@ -492,7 +508,7 @@ async function toggleEnabled(item: any, v: boolean) {
     // 内置未入库：启用即入库
     if (v) {
       try {
-        const res = await createFleetCategory({ scope: group.value.scope, name: item.name, subs: [] })
+        const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name: item.name, subs: [] })
         const created = res.data || res
         if (created?.id) {
           categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
@@ -721,6 +737,12 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   color: var(--td-text-color-placeholder);
   font-size: 13px;
   .panel-empty-icon { opacity: 0.6; }
+}
+
+.panel-empty--inline {
+  padding: 40px 0;
+  background: var(--td-bg-color-container);
+  font-size: var(--td-font-size-body-small);
 }
 
 /* 字段配置区 */
