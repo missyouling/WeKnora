@@ -92,6 +92,17 @@ export function sortFleetCategories(scope: string, ids: string[]) {
   return put('/api/v1/fleet/categories/sort', { scope, ids })
 }
 
+// ---- 证照分组 ----
+export function listFleetCertGroups(params: { parent_scope: string }) {
+  return get(`/api/v1/fleet/cert-groups?parent_scope=${params.parent_scope}`)
+}
+export function createFleetCertGroup(payload: Record<string, unknown>) {
+  return post('/api/v1/fleet/cert-groups', payload)
+}
+export function deleteFleetCertGroup(id: string) {
+  return del(`/api/v1/fleet/cert-groups/${id}`)
+}
+
 // ---- 供应商 ----
 export function listFleetSuppliers() {
   return get('/api/v1/fleet/suppliers')

@@ -130,7 +130,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords } from '@/api/fleet'
+import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup } from '@/api/fleet'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | '' }>(), { scope: 'vehicle' })
 
@@ -143,7 +143,40 @@ const GROUPS: Record<string, { key: string; label: string; scope: string }[]> = 
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver' }],
   maintain: [{ key: 'maintain', label: '维保文件', scope: 'maintain' }],
 }
-const groupList = computed(() => GROUPS[props.scope] || GROUPS.vehicle)
+const customGroups = ref<any[]>([])
+async function loadCustomGroups() {
+  try {
+    const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
+    const res: any = await listFleetCertGroups({ parent_scope: parentScope })
+    customGroups.value = (res?.data || res || []).map((g: any) => ({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id }))
+  } catch { customGroups.value = [] }
+}
+const groupList = computed(() => {
+  const builtin = (GROUPS[props.scope] || GROUPS.vehicle).map((g: any) => ({ ...g, builtin: true }))
+  return [...builtin, ...customGroups.value]
+})
+async function addGroup() {
+  const name = window.prompt('请输入分组名称')
+  if (!name || !name.trim()) return
+  try {
+    const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
+    const res: any = await createFleetCertGroup({ name: name.trim(), parent_scope: parentScope })
+    const g = res?.data || res
+    customGroups.value.push({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id })
+    activeGroup.value = g.id
+    MessagePlugin.success('分组已创建')
+  } catch (e: any) { MessagePlugin.error(e?.message || '创建失败') }
+}
+async function removeGroup(g: any) {
+  if (groupCount(g.key) > 0) { window.alert(`分组"${g.label}"下还有${groupCount(g.key)}个证照类型，请先移除或重新归类后再删除`); return }
+  if (!window.confirm(`确定删除分组"${g.label}"吗？`)) return
+  try {
+    await deleteFleetCertGroup(g.id)
+    customGroups.value = customGroups.value.filter((x: any) => x.key !== g.key)
+    if (activeGroup.value === g.key) activeGroup.value = groupList.value[0]?.key || 'company'
+    MessagePlugin.success('分组已删除')
+  } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
 
 // 内置证照类型（字段：base=默认显示，detail=详细字段；上传解析后自动更新，内置不可删除）
 type CertDef = { name: string; base: string[]; detail: string[] }
@@ -339,7 +372,7 @@ async function loadUsedFields(scope: string) {
     usedFields.value = set
   } catch { /* ignore */ }
 }
-onMounted(load)
+onMounted(() => { load(); loadCustomGroups() })
 watch(() => props.scope, () => {
   activeGroup.value = groupList.value[0]?.key || 'company'
   addVisible.value = false

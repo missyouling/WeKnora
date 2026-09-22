@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -989,6 +990,117 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 	}
 	if res.RowsAffected == 0 {
 		c.Error(errors.NewNotFoundError("分类不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// ---------------------------------------------------------------------------
+// 证照自定义分组
+// ---------------------------------------------------------------------------
+
+// ListFleetCertGroups godoc
+// @Summary      证照分组列表
+// @Router       /fleet/cert-groups [get]
+func (h *FleetHandler) ListFleetCertGroups(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	parentScope := strings.TrimSpace(c.Query("parent_scope"))
+	q := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	if parentScope != "" {
+		q = q.Where("parent_scope = ?", parentScope)
+	}
+	var items []types.FleetCertGroup
+	if err := q.Order("sort_order ASC, created_at ASC").Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list fleet cert groups failed: %v", err)
+		c.Error(errors.NewInternalServerError("list cert groups failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// CreateFleetCertGroup godoc
+// @Summary      新增证照分组
+// @Router       /fleet/cert-groups [post]
+func (h *FleetHandler) CreateFleetCertGroup(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req types.FleetCertGroup
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.ID = secutils.SanitizeForLog(req.ID)
+	if req.ID == "" {
+		req.ID = "cg-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+	}
+	req.TenantID = int64(tenantID)
+	req.Builtin = false
+	if req.ParentScope == "" {
+		req.ParentScope = "vehicle"
+	}
+	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
+		logger.Errorf(ctx, "create fleet cert group failed: %v", err)
+		c.Error(errors.NewInternalServerError("create cert group failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// UpdateFleetCertGroup godoc
+// @Summary      更新证照分组
+// @Router       /fleet/cert-groups/:id [put]
+func (h *FleetHandler) UpdateFleetCertGroup(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req types.FleetCertGroup
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	updates := map[string]any{"name": req.Name, "sort_order": req.SortOrder}
+	res := h.db.WithContext(ctx).Model(&types.FleetCertGroup{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Updates(updates)
+	if res.Error != nil {
+		logger.Errorf(ctx, "update fleet cert group failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("update cert group failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("分组不存在"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已更新"})
+}
+
+// DeleteFleetCertGroup godoc
+// @Summary      删除证照分组
+// @Router       /fleet/cert-groups/:id [delete]
+func (h *FleetHandler) DeleteFleetCertGroup(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	id := secutils.SanitizeForLog(c.Param("id"))
+	// 引用判定：该分组下还有分类则禁止删除
+	var catCount int64
+	h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("scope = ? AND tenant_id = ? AND deleted_at IS NULL", "custom-"+id, tenantID).
+		Count(&catCount)
+	if catCount > 0 {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("分组下还有%d个证照类型，请先移除或重新归类", catCount)))
+		return
+	}
+	res := h.db.WithContext(ctx).Model(&types.FleetCertGroup{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		Update("deleted_at", timeNowUTC())
+	if res.Error != nil {
+		logger.Errorf(ctx, "delete fleet cert group failed: %v", res.Error)
+		c.Error(errors.NewInternalServerError("delete cert group failed"))
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.Error(errors.NewNotFoundError("分组不存在"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})

@@ -142,6 +142,21 @@ type FleetCategory struct {
 
 func (FleetCategory) TableName() string { return "fleet_categories" }
 
+// FleetCertGroup 证照自定义分组（公司证照/司机证照内置，用户可新增自定义分组）
+type FleetCertGroup struct {
+	ID          string     `gorm:"primaryKey" json:"id"`
+	TenantID    int64      `gorm:"index" json:"tenant_id"`
+	ParentScope string     `gorm:"index" json:"parent_scope"` // 归属：vehicle/driver/maintain
+	Name        string     `json:"name"`
+	SortOrder   int        `json:"sort_order"`
+	Builtin     bool       `json:"builtin"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `gorm:"index" json:"deleted_at"`
+}
+
+func (FleetCertGroup) TableName() string { return "fleet_cert_groups" }
+
 // FleetSupplier 供应商
 type FleetSupplier struct {
 	ID                string     `gorm:"primaryKey" json:"id"`
