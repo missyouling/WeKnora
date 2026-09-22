@@ -94,15 +94,30 @@
           </div>
         </div>
       </div>
-      <div v-if="overviewTypeCards.length" class="overview-group">
-        <div class="overview-group__title">证照类型</div>
-        <div class="overview-group__cards overview-group__cards--type">
-          <div v-for="card in overviewTypeCards" :key="card.key" class="type-card"
-            @click="onOverviewCardClick(card)">
-            <div class="type-card__icon"><t-icon :name="card.icon" size="20px" /></div>
-            <div class="type-card__body">
-              <div class="type-card__label">{{ card.label }}</div>
-              <div class="type-card__num">{{ card.num }} <span>份</span></div>
+      <div v-if="overviewVehicleTypeCards.length || overviewDriverTypeCards.length" class="overview-group overview-group--panel">
+        <div v-if="overviewVehicleTypeCards.length" class="overview-subgroup">
+          <div class="overview-group__title">公司证照</div>
+          <div class="overview-group__cards overview-group__cards--type">
+            <div v-for="card in overviewVehicleTypeCards" :key="card.key" class="type-card"
+              @click="onOverviewCardClick(card)">
+              <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+              <div class="type-card__body">
+                <div class="type-card__label">{{ card.label }}</div>
+                <div class="type-card__num">{{ card.num }} <span>份</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="overviewDriverTypeCards.length" class="overview-subgroup">
+          <div class="overview-group__title">司机证照</div>
+          <div class="overview-group__cards overview-group__cards--type">
+            <div v-for="card in overviewDriverTypeCards" :key="card.key" class="type-card"
+              @click="onOverviewCardClick(card)">
+              <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+              <div class="type-card__body">
+                <div class="type-card__label">{{ card.label }}</div>
+                <div class="type-card__num">{{ card.num }} <span>份</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -864,12 +879,14 @@ const overviewCards = computed(() => {
   const byType = new Map<string, number>()
   all.forEach((r: any) => { if (r.doc_type) byType.set(r.doc_type, (byType.get(r.doc_type) || 0) + 1) })
   byType.forEach((num, name) => {
-    cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name })
+    const def = (BUILTIN_CERTS as any)[name]
+    cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || 'vehicle' })
   })
   return cards
 })
 const overviewStatusCards = computed(() => overviewCards.value.filter((c: any) => !String(c.key).startsWith('type-')))
-const overviewTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-')))
+const overviewVehicleTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'vehicle'))
+const overviewDriverTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'driver'))
 function onOverviewCardClick(card: any) {
   if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
   else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
@@ -2242,7 +2259,10 @@ function onDrawerResizeEnd() {
   font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
-.overview-group__cards { display: grid; grid-template-columns: repeat(3, 220px); gap: 12px; }
+.overview-group__cards { display: grid; grid-template-columns: repeat(3, 240px); gap: 14px; }
+.overview-group--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
+.overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
+.overview-subgroup + .overview-subgroup { margin-top: 8px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
 .stat-card {
   display: flex; align-items: center; gap: 12px; padding: 14px 18px;
@@ -2276,7 +2296,7 @@ function onDrawerResizeEnd() {
 }
 .type-card__body { flex: 1; min-width: 0; }
 .type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
-.type-card__num { font-size: 18px; font-weight: 600; color: var(--td-brand-color); }
+.type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
 @media (max-width: 768px) {
   .overview-group__cards { grid-template-columns: 1fr; }
