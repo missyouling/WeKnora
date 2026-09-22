@@ -151,7 +151,8 @@ async function loadCustomGroups() {
   try {
     const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
     const res: any = await listFleetCertGroups({ parent_scope: parentScope })
-    customGroups.value = (res?.data || res || []).map((g: any) => ({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id }))
+    const arr = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+    customGroups.value = arr.map((g: any) => ({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id }))
   } catch { customGroups.value = [] }
 }
 const groupList = computed(() => {
@@ -172,6 +173,7 @@ async function confirmAddGroup() {
     const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
     const res: any = await createFleetCertGroup({ name, parent_scope: parentScope })
     const g = res?.data || res
+    if (!g || !g.id) { MessagePlugin.error('创建失败：返回数据异常'); return }
     customGroups.value.push({ key: g.id, label: g.name, scope: 'custom-' + g.id, builtin: false, id: g.id })
     activeGroup.value = g.id
     MessagePlugin.success('分组已创建')

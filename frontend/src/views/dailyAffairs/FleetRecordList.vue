@@ -595,7 +595,7 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
   },
   '行驶证': {
     name: '行驶证', scope: 'vehicle',
-    base: ['编号', '车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '有效期', '状态', '备注'],
+    base: ['车牌号', 'VIN码/车架号', '发动机号', '品牌型号', '车辆类型', '使用性质', '注册日期', '发证日期', '发证机关', '备注'],
     detail: [],
   },
   '道路运输经营许可证': {
@@ -2260,7 +2260,7 @@ function onDrawerResizeEnd() {
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
 .overview-group__cards { display: grid; grid-template-columns: repeat(3, 240px); gap: 14px; }
-.archive-overview--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; overflow: auto; }
+.archive-overview--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
 .overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .overview-subgroup + .overview-subgroup { margin-top: 8px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
@@ -2298,6 +2298,9 @@ function onDrawerResizeEnd() {
 .type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
 .type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
+@media (max-width: 1200px) {
+  .overview-group__cards { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 768px) {
   .overview-group__cards { grid-template-columns: 1fr; }
 }
