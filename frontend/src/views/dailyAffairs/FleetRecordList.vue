@@ -1040,13 +1040,13 @@ const archiveTypeFields = computed(() => {
       .map((s: any) => s.name)
   )
   if (builtin) {
-    // 以内置定义的 base/detail 为准；用户启用状态决定是否显示
-    const base = builtin.base.filter((k: string) => enabledSet.size === 0 || enabledSet.has(k))
-    const detail = (builtin.detail || []).filter((k: string) => enabledSet.has(k))
-    // 用户新增的字段（内置定义没有的）归入 base
+    // 以内置定义的 base/detail 为准；base 字段始终显示（不受用户启用状态影响），detail 字段根据用户启用状态决定
+    const base = [...builtin.base]
+    const detail = (builtin.detail || []).filter((k: string) => enabledSet.size === 0 || enabledSet.has(k))
+    // 用户新增的字段（内置定义没有的）归入 detail
     const known = new Set([...builtin.base, ...(builtin.detail || [])])
     const extra = [...enabledSet].filter((k: string) => !known.has(k))
-    return { base: [...base, ...extra], detail }
+    return { base, detail: [...detail, ...extra] }
   }
   if (cat?.subs?.length) {
     const subs = [...enabledSet]
