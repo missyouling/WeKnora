@@ -590,8 +590,8 @@ function vehiclePlate(id: string) { return vehicles.value.find((v: any) => v.id 
 const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[]; detail: string[] }> = {
   '车辆登记证书': {
     name: '车辆登记证书', scope: 'vehicle',
-    base: ['证书编号', '车牌号', 'VIN码', '发证机关', '发证日期', '证书状态', '存放位置', '是否随车'],
-    detail: ['证书编号', '车牌号', '发证机关', '发证日期', '证书状态', '存放位置', 'VIN', '发动机号', '品牌型号', '使用性质', '注册日期', '报废日期', '车主信息', '产权归属', '过户记录', '备注'],
+    base: ['登记证书编号', '车牌号码', '机动车所有人', '车辆识别代号', '车辆品牌', '车辆型号', '车辆类型', '使用性质', '登记日期', '发证日期'],
+    detail: ['证书编号', '车牌号', '发证机关', '证书状态', '存放位置', '是否随车', 'VIN', '发动机号', '品牌型号', '注册日期', '报废日期', '车主信息', '产权归属', '过户记录', '备注'],
   },
   '行驶证': {
     name: '行驶证', scope: 'vehicle',
