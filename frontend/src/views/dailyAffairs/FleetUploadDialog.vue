@@ -129,6 +129,8 @@ watch(tasks, (list) => {
   emitProgress()
   const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed')
   if (allDone) {
+    // 所有上传+解析+提取任务真正完成后，通知父组件刷新概览统计（卡片份数、已上传文件数）
+    emit('done')
     if (!autoCloseTimer) {
       autoCloseTimer = setTimeout(() => {
         emit('update:visible', false)
@@ -280,7 +282,6 @@ async function runTask(t: UpTask) {
       }
     })
     drainExtractQueue()
-    emit('done')
   } catch (err: any) {
     const msg = err?.message || '上传失败'
     if (msg.includes('already exists') || msg.includes('文件重复')) {
