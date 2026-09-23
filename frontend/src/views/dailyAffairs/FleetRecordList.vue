@@ -1704,21 +1704,19 @@ function stopProgressTimer() {
 // value 用复合值 scope__name，上传/提取按所选类型真实 scope 走。
 const uploadTypeOptions = computed(() => {
   if (!isArchive.value) return []
-  const groups = [
-    { scope: 'vehicle', title: '公司证照' },
-    { scope: 'driver', title: '司机证照' },
-  ]
-  return groups.map(({ scope, title }) => {
-    const names: string[] = []
-    const seen = new Set<string>()
-    Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => {
-      if (!seen.has(b.name)) { seen.add(b.name); names.push(b.name) }
-    })
-    ;(categories.value[scope] || []).filter((c: any) => c.enabled).forEach((c: any) => {
-      if (c && c.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name) }
-    })
-    return { label: title, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }
-  }).filter((g) => (g.children || []).length > 0)
+  const scope = group.value?.scope
+  if (!scope) return []
+  const titleMap: Record<string, string> = { vehicle: '公司证照', driver: '司机证照', maintain: '维保记录' }
+  const names: string[] = []
+  const seen = new Set<string>()
+  Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => {
+    if (!seen.has(b.name)) { seen.add(b.name); names.push(b.name) }
+  })
+  ;(categories.value[scope] || []).filter((c: any) => c.enabled).forEach((c: any) => {
+    if (c && c.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name) }
+  })
+  if (!names.length) return []
+  return [{ label: titleMap[scope] || scope, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }]
 })
 
 function onUploadDone() {

@@ -141,7 +141,11 @@ watch(tasks, (list) => {
   }
 }, { deep: true })
 
-function onClose() { emit('update:visible', false) }
+function onClose() {
+  // 关闭时清理已结束（成功/失败）的上传记录，再次打开不残留；进行中的任务保留后台继续
+  tasks.value = tasks.value.filter((t) => t.status === 'uploading' || t.status === 'parsing' || t.status === 'extracting')
+  emit('update:visible', false)
+}
 function pickFiles() { fileInputRef.value?.click() }
 function onInputChange(e: Event) {
   const input = e.target as HTMLInputElement
