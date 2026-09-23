@@ -375,6 +375,35 @@ function notifyCategoriesChanged() {
   window.dispatchEvent(new CustomEvent('fleet-categories-changed'))
 }
 
+// 一次性迁移：对已入库分类，若从未设置过默认字段，则把其内置 base 字段在 subs 中标记 is_default=true 并保存。
+// 之后用户在字段配置里可自行调整；以 localStorage 标记按 scope 只跑一次。
+async function migrateDefaultFlags(scope: string, list: any[]) {
+  try {
+    const flagKey = `weknora-fleet-default-migrated-${scope}`
+    if (localStorage.getItem(flagKey)) return
+    const builtinList = (BUILTIN as any)[scope] || []
+    for (const c of list) {
+      if (!c.id || String(c.id).startsWith('builtin-')) continue
+      const subs = Array.isArray(c.subs) ? c.subs : []
+      if (!subs.length) continue
+      if (subs.some((x: any) => x.is_default === true)) continue
+      const b = builtinList.find((x: any) => x.name === c.name)
+      const baseSet = new Set((b && b.base) || [])
+      if (!baseSet.size) continue
+      let changed = false
+      const newSubs = subs.map((x: any) => {
+        const isDef = baseSet.has(String(x.name))
+        if (isDef) changed = true
+        return { ...x, is_default: isDef }
+      })
+      if (changed) {
+        try { await updateFleetCategory(c.id, { name: c.name, subs: newSubs, enabled: c.enabled !== false }) } catch { /* 迁移失败不阻塞 */ }
+      }
+    }
+    localStorage.setItem(flagKey, '1')
+  } catch { /* ignore */ }
+}
+
 async function load() {
   try {
     const scopes = [...new Set(groupList.value.map((g) => g.scope))]
@@ -393,6 +422,7 @@ async function load() {
       }
       categories.value[s] = list
       usedFields.value = new Set()
+      migrateDefaultFlags(s, list)
     })
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')

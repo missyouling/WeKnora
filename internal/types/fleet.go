@@ -122,8 +122,9 @@ func (FleetRecord) TableName() string { return "fleet_records" }
 
 // FleetCategorySub 档案分类小项（大项=分类行，小项=解析提取的字段，可启/禁用）
 type FleetCategorySub struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	IsDefault bool   `json:"is_default"` // 字段筛选器「重置」时默认勾选
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

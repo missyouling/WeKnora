@@ -80,6 +80,18 @@
         </div>
       </div>
     </t-drawer>
+    <div v-if="previewUrl" class="img-preview-mask" @click.self="closePreview">
+      <div class="img-preview-box">
+        <div class="img-preview-head">
+          <span class="img-preview-title">打印预览</span>
+          <div class="img-preview-actions">
+            <t-button theme="primary" size="small" @click="printPreview">打印</t-button>
+            <t-button variant="outline" size="small" @click="closePreview">关闭</t-button>
+          </div>
+        </div>
+        <img :src="previewUrl" class="img-preview-img" alt="预览" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -109,6 +121,20 @@ const pageSize = ref(20)
 const hasMore = ref(true)
 const listScrollRef = ref<HTMLElement>()
 const activeRow = ref<any>(null)
+const previewUrl = ref('')
+
+function closePreview() { if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' } }
+function printPreview() {
+  if (!previewUrl.value) return
+  const url = previewUrl.value
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'; iframe.style.inset = '0'; iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'
+  iframe.src = url
+  iframe.onload = () => { setTimeout(() => { try { iframe.contentWindow?.focus(); iframe.contentWindow?.print() } catch (_) {} }, 200) }
+  document.body.appendChild(iframe)
+  setTimeout(() => { iframe.remove() }, 60000)
+  closePreview()
+}
 
 // 列表网格列宽（复刻合同管理历史抽屉样式，末尾操作列）
 const gridStyle = computed(() => ({
@@ -298,13 +324,12 @@ const isImg = (name: string) => IMG_EXT.includes(fileExt(name).toLowerCase())
 
 const rowMenuOptions = (row: any) => {
   const opts: any[] = [
-    { content: '重新解析', value: 'reparse', prefixIcon: 'refresh' },
-    { content: '重新提取', value: 'reextract', prefixIcon: 'scan' },
-    { content: '下载源文件', value: 'download', prefixIcon: 'download' },
-    { content: '打印源文件', value: 'print', prefixIcon: 'print' },
+    { content: '重新解析', value: 'reparse' },
+    { content: '重新提取', value: 'reextract' },
+    { content: '下载源文件', value: 'download' },
+    { content: '打印源文件', value: 'print' },
   ]
-  // 已解析失败才提示重新解析，已提取失败才提示重新提取（其余仍可点，不强制禁用）
-  opts.push({ content: '删除', value: 'delete', theme: 'danger', prefixIcon: 'delete' })
+  opts.push({ content: '删除', value: 'delete', theme: 'danger' })
   return opts
 }
 
@@ -355,14 +380,7 @@ const printSource = async (row: any) => {
       document.body.appendChild(iframe)
       setTimeout(() => { iframe.remove(); URL.revokeObjectURL(url) }, 60000)
     } else if (IMG_EXT.includes(ext)) {
-      const w = window.open('', '_blank')
-      if (w) {
-        w.document.write(`<title>打印源文件</title><img src="${url}" style="max-width:100%;" onload="window.print()" />`)
-        w.document.close()
-      } else {
-        MessagePlugin.warning('浏览器拦截了打印窗口，请允许弹窗后重试')
-        URL.revokeObjectURL(url)
-      }
+      previewUrl.value = url
     } else {
       MessagePlugin.warning('该文件类型暂不支持在线打印，可下载后查看')
       URL.revokeObjectURL(url)
@@ -578,5 +596,27 @@ watch(() => props.visible, (v) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.img-preview-mask {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.img-preview-box {
+  width: min(880px, 90vw); max-height: 88vh;
+  background: var(--td-bg-color-container);
+  border-radius: var(--td-radius-medium);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--td-shadow-3);
+}
+.img-preview-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--td-component-stroke);
+}
+.img-preview-title { font-size: var(--td-font-size-body-medium); color: var(--td-text-color-primary); }
+.img-preview-actions { display: flex; gap: 8px; }
+.img-preview-img {
+  max-width: 100%; max-height: calc(88vh - 52px);
+  object-fit: contain; margin: 0 auto; display: block; background: var(--td-bg-color-secondarycontainer);
 }
 </style>
