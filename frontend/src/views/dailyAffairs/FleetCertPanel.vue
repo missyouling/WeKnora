@@ -75,6 +75,7 @@
                 <div class="field-colhead">
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
+                  <span class="fc-h-type">数据类型</span>
                   <span class="fc-h-switch">默认表头</span>
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
@@ -871,12 +872,12 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
   }
-  .fc-h-switch, .fc-h-op { text-align: center; }
+  .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; }
   .fc-h-name { text-align: left; }
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 76px 76px 48px;
+    grid-template-columns: 20px minmax(0, 1fr) 140px 76px 76px 48px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
@@ -895,17 +896,16 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
 
     .fc-name {
-      flex: 1;
       min-width: 0;
     }
     .fc-type {
-      width: 120px;
-      flex: none;
+      width: 100%;
+      min-width: 0;
     }
 
-    > *:nth-child(3),
     > *:nth-child(4),
     > *:nth-child(5) { justify-self: center; }
+    > *:nth-child(6) { justify-self: center; }
 
   .fc-used {
       display: inline-flex;

@@ -65,11 +65,11 @@
           <template #icon><t-icon name="add" size="14px" /></template>
           手动新增
         </t-button>
-        <t-button v-else-if="isBilling" theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
+        <t-button v-if="isBilling && !isArchive" theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
           <template #icon><t-icon name="print" size="14px" /></template>
           打印
         </t-button>
-        <t-button v-else theme="primary" size="small" @click="openDrawer(null)">
+        <t-button v-if="!isArchive && !isBilling" theme="primary" size="small" @click="openDrawer(null)">
           <template #icon><t-icon name="add" size="14px" /></template>
           新增记录
         </t-button>
