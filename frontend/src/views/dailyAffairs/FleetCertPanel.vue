@@ -75,7 +75,7 @@
                 <div class="field-colhead">
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
-                  <span class="fc-h-switch">启用表头</span>
+                  <span class="fc-h-switch">默认表头</span>
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
                 </div>
