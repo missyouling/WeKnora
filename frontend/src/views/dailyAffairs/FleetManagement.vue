@@ -46,14 +46,16 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import FleetRecordList from './FleetRecordList.vue'
 import FleetSettingsDrawer from './FleetSettingsDrawer.vue'
 
 const settingsVisible = ref(false)
 
 const sideItems = [
-  { key: 'vehicle-archive', label: '证照档案', icon: 'view-module' },
-  { key: 'maintain-archive', label: '维保管理', icon: 'tools' },
+  { key: 'vehicle-archive', label: '车辆档案', icon: 'view-module' },
+  { key: 'driver-archive', label: '司机档案', icon: 'user' },
+  { key: 'maintain-archive', label: '维保档案', icon: 'tools' },
   { key: 'tire', label: '轮胎管理', icon: 'circle' },
   { key: 'inspection', label: '年检管理', icon: 'check-rectangle' },
 ]
@@ -70,8 +72,15 @@ const costItems = [
 
 const costOpen = ref(true)
 
-const activeTab = ref('vehicle-archive')
-const switchTab = (key: string) => { activeTab.value = key }
+const route = useRoute()
+const router = useRouter()
+const validTabs = [...sideItems, ...costItems].map((i) => i.key)
+const queryTab = route.query.tab as string
+const activeTab = ref(validTabs.includes(queryTab) ? queryTab : 'vehicle-archive')
+const switchTab = (key: string) => {
+  activeTab.value = key
+  router.replace({ query: { ...route.query, tab: key } })
+}
 </script>
 
 <style lang="less" scoped>

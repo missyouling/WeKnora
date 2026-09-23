@@ -94,8 +94,8 @@
           </div>
         </div>
       </div>
-      <div v-if="overviewVehicleTypeCards.length || overviewDriverTypeCards.length" class="overview-group">
-        <div v-if="overviewVehicleTypeCards.length" class="overview-subgroup">
+      <div v-if="(currentScopes.has('vehicle') && overviewVehicleTypeCards.length) || (currentScopes.has('driver') && overviewDriverTypeCards.length) || (currentScopes.has('maintain') && overviewMaintainTypeCards.length)" class="overview-group">
+        <div v-if="currentScopes.has('vehicle') && overviewVehicleTypeCards.length" class="overview-subgroup">
           <div class="overview-group__title">公司证照</div>
           <div class="overview-group__cards overview-group__cards--type">
             <div v-for="card in overviewVehicleTypeCards" :key="card.key" class="type-card"
@@ -108,10 +108,23 @@
             </div>
           </div>
         </div>
-        <div v-if="overviewDriverTypeCards.length" class="overview-subgroup">
+        <div v-if="currentScopes.has('driver') && overviewDriverTypeCards.length" class="overview-subgroup">
           <div class="overview-group__title">司机证照</div>
           <div class="overview-group__cards overview-group__cards--type">
             <div v-for="card in overviewDriverTypeCards" :key="card.key" class="type-card"
+              @click="onOverviewCardClick(card)">
+              <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+              <div class="type-card__body">
+                <div class="type-card__label">{{ card.label }}</div>
+                <div class="type-card__num">{{ card.num }} <span>份</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="currentScopes.has('maintain') && overviewMaintainTypeCards.length" class="overview-subgroup">
+          <div class="overview-group__title">维保文件</div>
+          <div class="overview-group__cards overview-group__cards--type">
+            <div v-for="card in overviewMaintainTypeCards" :key="card.key" class="type-card"
               @click="onOverviewCardClick(card)">
               <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
               <div class="type-card__body">
@@ -904,6 +917,9 @@ const overviewCards = computed(() => {
 const overviewStatusCards = computed(() => overviewCards.value.filter((c: any) => !String(c.key).startsWith('type-')))
 const overviewVehicleTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'vehicle'))
 const overviewDriverTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'driver'))
+const overviewMaintainTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'maintain'))
+// 当前档案页所属 scope（vehicle/driver/maintain）：概览卡片组按此过滤，避免跨档案显示
+const currentScopes = computed(() => new Set(archiveGroups.value.map((g: any) => g.scope)))
 async function onOverviewCardClick(card: any) {
   if (card.action === "history-all" || card.action === "history-parse_failed" || card.action === "history-extract_failed") {
     // 历史抽屉需要全量文件列表（含状态），此时才拉取；首页概览态不预取

@@ -138,11 +138,10 @@ import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFl
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | '' }>(), { scope: 'vehicle' })
 
-// 分组：车辆档案=公司证照+司机证照；司机档案=司机证照；维保管理=维保文件
+// 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件
 const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
   vehicle: [
     { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
-    { key: 'driver', label: '司机证照', scope: 'driver', groupId: '' },
   ],
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
   maintain: [{ key: 'maintain', label: '维保文件', scope: 'maintain', groupId: '' }],
