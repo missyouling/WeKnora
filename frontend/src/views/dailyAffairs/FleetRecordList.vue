@@ -606,21 +606,21 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
   '道路运输证': {
     name: '道路运输证', scope: 'vehicle',
     base: ['道路运输证号', '车牌号', '经营许可证号', '车辆类型', '吨（座）位', '经营范围', '发证日期', '有效期止', '发证机关', '审验有效期至', '技术评定等级', '评定日期', '证照状态'],
-    detail: ['业户名称', '经营地址', '车辆尺寸', '上次审验日期', '下次审验日期', '审验状态', '备注'],
+    detail: ['业户名称', '经营地址', '车辆尺寸', '上次审验日期', '下次审验日期', '备注'],
   },
   '保险单': {
     name: '保险单', scope: 'vehicle',
     base: ['车牌号码', '保险类型', '车架号', '保险起期', '保险止期', '交强险保单号', '商业险保单号', '交强险保费', '商业险保费', '出单机构', '保单状态'],
-    detail: ['保单号', '保险公司', '车辆ID', 'VIN码', '被保险人名称', '险种名称', '保额', '保费', '总保费', '起保日期', '终保日期', '缴费状态', '发票号', '到期提醒天数', '是否续保'],
+    detail: ['保单号', '保险公司', '车辆ID', 'VIN码', '被保险人名称', '险种名称', '保额', '保费', '总保费', '起保日期', '终保日期', '缴费状态', '发票号' ],
   },
   '驾驶证': {
     name: '驾驶证', scope: 'driver',
-    base: ['驾驶证号', '司机姓名', '准驾车型', '初次领证日期', '有效期起', '有效期止', '发证机关', '驾驶证状态', '到期提醒天数', '提醒状态'],
+    base: ['驾驶证号', '司机姓名', '准驾车型', '初次领证日期', '有效期起', '有效期止', '发证机关', '驾驶证状态'],
     detail: [],
   },
   '从业资格证': {
     name: '从业资格证', scope: 'driver',
-    base: ['从业资格证号', '司机姓名', '从业资格类别', '准运范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态', '到期提醒天数', '提醒状态', '审验状态'],
+    base: ['从业资格证号', '司机姓名', '从业资格类别', '准运范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态'],
     detail: [],
   },
 }
@@ -840,6 +840,8 @@ const cards = ref<any[]>([])
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
 const rows = ref<any[]>([])
 const fileRows = ref<any[]>([])
+// 原始文件列表（未映射）缓存：供 loadPending 复用，避免启动时与 loadRecords 重复请求
+const rawFileRows = ref<any[]>([])
 const loading = ref(false)
 const filters = reactive({ month: '', vehicle_id: '' as any, docType: '' })
 
@@ -970,6 +972,7 @@ async function loadRecords() {
       if (kbId.value) {
         const fres: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
         let arr = Array.isArray(fres?.data) ? fres.data : Array.isArray(fres?.list) ? fres.list : []
+        rawFileRows.value = arr
         const scope = group.value.scope
         fileRows.value = arr
           .filter((it: any) => {
@@ -1025,7 +1028,7 @@ async function loadRecords() {
 }
 
 function refreshAll() {
-  Promise.all([loadBase(), ensureKb()]).then(() => { loadRecords(); loadPending() })
+  Promise.all([loadBase(), ensureKb()]).then(async () => { await loadRecords(); loadPending() })
 }
 function onDocTypeChange() { activeDocScope.value = docScopeOf(filters.docType); initColumns(); loadRecords() }
 function onDateChange() {
@@ -1061,6 +1064,10 @@ onBeforeUnmount(() => {
 // ---------------------------------------------------------------------------
 // 列定义与字段选择器
 // ---------------------------------------------------------------------------
+// 纯派生提醒列黑名单：非用户定义、非系统状态列，不得出现在列表/筛选器/字段设置中
+const DERIVED_BLACKLIST = ['到期提醒天数', '提醒状态', '审验状态', '是否续保'] as string[]
+const isDerivedColumn = (k: string) => DERIVED_BLACKLIST.includes(k)
+
 const archiveTypeFields = computed(() => {
   const t = filters.docType
   const builtin = t ? BUILTIN_CERTS[t] : null
@@ -1078,11 +1085,11 @@ const archiveTypeFields = computed(() => {
     // 用户新增的字段（内置定义没有的）归入 detail
     const known = new Set([...builtin.base, ...(builtin.detail || [])])
     const extra = [...enabledSet].filter((k: string) => !known.has(k))
-    return { base, detail: [...detail, ...extra] }
+    return { base: base.filter((k: string) => !isDerivedColumn(k)), detail: [...detail, ...extra].filter((k: string) => !isDerivedColumn(k)) }
   }
   if (cat?.subs?.length) {
     const subs = [...enabledSet]
-    if (subs.length) return { base: subs, detail: [] }
+    if (subs.length) return { base: subs.filter((k: string) => !isDerivedColumn(k)), detail: [] }
   }
   return { base: [], detail: [] }
 })
@@ -1682,13 +1689,19 @@ async function extractFile(kid: string, scope: string, certType?: string) {
   if (!res.ok) throw new Error(j?.message || '提取失败')
 }
 
-async function loadPending() {
+async function loadPending(forceFetch = false) {
   if (!kbId.value || !isArchive.value) return
   // 弹窗组件可能已更新 sessionStorage 上传记忆（含证照类型），轮询时重读保持同步
   pendingScopes.value = loadPendingScopes()
   try {
-    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-    const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+    // 启动时 loadRecords 已拉取过文件列表：直接复用，避免与 loadRecords 重复请求；轮询时才重新拉取最新
+    let arr: any[] | null = rawFileRows.value && rawFileRows.value.length ? rawFileRows.value : null
+    if (!arr) {
+      const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
+      const got: any[] = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+      arr = got
+      rawFileRows.value = got
+    }
     const scope = group.value.scope
     const mine = arr.filter((it: any) => {
       const meta2 = it.custom_metadata || {}
@@ -1730,7 +1743,7 @@ async function loadPending() {
 }
 function startPolling() {
   stopPolling()
-  pollTimer = setInterval(() => { loadPending() }, 4000)
+  pollTimer = setInterval(() => { loadPending(true) }, 4000)
 }
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -2286,7 +2299,7 @@ function onDrawerResizeEnd() {
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
 .overview-group__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
-.archive-overview--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
+.archive-overview--panel { flex: 1; align-content: flex-start; background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
 .overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .overview-subgroup + .overview-subgroup { margin-top: 8px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
