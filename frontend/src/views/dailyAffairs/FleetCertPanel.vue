@@ -893,9 +893,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       min-width: 0;
     }
 
-    .field-config-row > *:nth-child(3),
-  .field-config-row > *:nth-child(4),
-  .field-config-row > *:nth-child(5) { justify-self: center; }
+    > *:nth-child(3),
+    > *:nth-child(4),
+    > *:nth-child(5) { justify-self: center; }
 
   .fc-used {
       display: inline-flex;
@@ -915,10 +915,5 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       min-width: 0;
     }
   }
-}
-.field-config-row :deep(.t-switch) {
-  width: 44px !important;
-  min-width: 44px;
-  flex-shrink: 0;
 }
 </style>
