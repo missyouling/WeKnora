@@ -61,6 +61,10 @@
           <template #icon><t-icon name="upload" size="14px" /></template>
           上传{{ group.fileLabel }}
         </t-button>
+        <t-button v-if="isArchive && group.scope === 'maintain'" theme="default" variant="outline" size="small" @click="manualVisible = true">
+          <template #icon><t-icon name="add" size="14px" /></template>
+          手动新增
+        </t-button>
         <t-button v-else-if="isBilling" theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
           <template #icon><t-icon name="print" size="14px" /></template>
           打印
@@ -76,6 +80,10 @@
     <FleetUploadDialog v-if="isArchive" v-model:visible="uploadVisible" :kb-id="kbId" :scope="group.scope"
       :type-options="uploadTypeOptions" :default-type="isArchive && filters.docType ? filters.docType : ''"
       @progress="onUploadProgress" @done="onUploadDone" />
+
+    <!-- 维保记录：手动录入抽屉 -->
+    <FleetManualEntryDrawer v-if="isArchive" v-model:visible="manualVisible" :kb-id="kbId" :scope="group.scope"
+      @saved="onManualSaved" />
 
     <!-- 上传历史抽屉（证照型） -->
     <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope" :filter="historyFilter" :doc-types="currentDocTypes"
@@ -393,6 +401,7 @@ import KbTagManageDrawer from '../knowledge/components/KbTagManageDrawer.vue'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { selectInitialModelId } from '@/utils/modelDefaults'
 import FleetUploadDialog from './FleetUploadDialog.vue'
+import FleetManualEntryDrawer from './FleetManualEntryDrawer.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 
 const props = defineProps<{ recordType: string }>()
@@ -1672,6 +1681,8 @@ function handleSourcePrint() {
 const kbId = ref('')
 const pendingFiles = ref<any[]>([])
 const uploadVisible = ref(false)
+const manualVisible = ref(false)
+function onManualSaved() { void loadRecords(); void loadBase() }
 const historyVisible = ref(false)
 
 // 上传任务实时进度（来自上传弹窗 emit）：多文件同时进行时轮播展示
