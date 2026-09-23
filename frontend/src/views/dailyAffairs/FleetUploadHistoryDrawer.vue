@@ -103,6 +103,7 @@ const props = defineProps<{
   kbId: string
   scope?: string
   filter?: 'all' | 'parse_failed' | 'extract_failed'
+  docTypes?: Set<string>
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -172,6 +173,8 @@ const reload = async (p = 1) => {
     let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
     // 已删除（隐藏）的历史条目不再显示
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
+    const dtSet = props.docTypes
+    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = (r.custom_metadata || {}).doc_type; return dt ? dtSet.has(dt) : true })
     // 按概览卡片传入的状态筛选
     const f = props.filter || 'all'
     if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
@@ -197,6 +200,8 @@ const loadMore = async () => {
     const res: any = await listKnowledgeFiles(props.kbId, { page: next, page_size: pageSize.value, keyword: keyword.value || undefined })
     let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
+    const dtSet2 = props.docTypes
+    if (dtSet2 && dtSet2.size) arr = arr.filter((r: any) => { const dt = (r.custom_metadata || {}).doc_type; return dt ? dtSet2.has(dt) : true })
     const more = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
     rows.value.push(...more)
     page.value = next

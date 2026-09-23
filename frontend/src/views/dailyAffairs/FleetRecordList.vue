@@ -78,7 +78,7 @@
       @progress="onUploadProgress" @done="onUploadDone" />
 
     <!-- 上传历史抽屉（证照型） -->
-    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope" :filter="historyFilter"
+    <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope" :filter="historyFilter" :doc-types="currentDocTypes"
       @reload="loadRecords" />
 
     <!-- 无筛选时：统计概览卡片（文件级生命周期），点击打开历史记录 -->
@@ -948,6 +948,17 @@ function docScopeOf(name: string): string {
   }
   return 'vehicle'
 }
+// 当前档案 scope 下的全部证照类型名（用于上传历史抽屉按车辆/司机/维保筛选）
+const currentDocTypes = computed(() => {
+  const set = new Set<string>()
+  currentScopes.value.forEach((sc: string) => {
+    (categories.value[sc] || []).forEach((c: any) => { if (c && c.name) set.add(c.name) })
+    Object.keys(BUILTIN_CERTS as any).forEach((n: string) => {
+      if ((BUILTIN_CERTS as any)[n].scope === sc) set.add(n)
+    })
+  })
+  return set
+})
 const activeRecordType = computed(() => SCOPE_TO_ARCHIVE[activeDocScope.value] || group.value.recordType || props.recordType)
 
 const docTypeOptions = computed(() => {

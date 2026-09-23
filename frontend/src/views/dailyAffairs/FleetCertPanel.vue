@@ -389,7 +389,7 @@ async function load() {
         }
       }
       categories.value[s] = list
-      loadUsedFields(s)
+      usedFields.value = new Set()
     })
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
@@ -401,11 +401,12 @@ const RECORD_TYPE_MAP: Record<string, string> = {
   vehicle: 'vehicle-archive', driver: 'driver-archive', maintain: 'maintain-archive',
 }
 const usedFields = ref<Set<string>>(new Set())
-async function loadUsedFields(scope: string) {
+async function loadUsedFields(scope: string, certName?: string) {
   const type = RECORD_TYPE_MAP[scope]
   if (!type) return
   try {
-    const res: any = await listFleetRecords({ type })
+    // 引用边界：只统计当前编辑证照类型自身记录里出现的字段，跨证照同名字段不互相牵连
+    const res: any = await listFleetRecords(certName ? { type, doc_type: certName } : { type })
     const set = new Set<string>()
     ;(res.data || []).forEach((r: any) => Object.keys(r.data || {}).forEach((k) => set.add(String(k))))
     usedFields.value = set
@@ -463,7 +464,7 @@ const editForm = reactive({ name: '' })
 const fieldsEditable = ref<{ name: string; enabled: boolean }[]>([])
 const newFieldName = ref('')
 function toggleEdit(item: any) {
-  if (editingId.value === item.id) { editingId.value = ''; return }
+  if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
   editForm.name = item.name
   newFieldName.value = ''
   // 字段来源：已入库 subs（含解析提取字段）优先，否则内置 base+detail
@@ -476,6 +477,7 @@ function toggleEdit(item: any) {
     .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false }))
     .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
   editingId.value = item.id
+  loadUsedFields(group.value.scope, item.name)
 }
 function addField() {
   const name = newFieldName.value.trim()

@@ -4,7 +4,7 @@
     <div class="header">
       <div class="header-title">
         <h2>车队管理</h2>
-        <p class="header-subtitle">车辆/司机/维保档案自动解析，轮胎、年检、成本与费用清单统一管理</p>
+        <p class="header-subtitle">车辆/司机/维保记录自动解析，轮胎、年检、成本与费用清单统一管理</p>
       </div>
     </div>
 
@@ -55,7 +55,7 @@ const settingsVisible = ref(false)
 const sideItems = [
   { key: 'vehicle-archive', label: '车辆档案', icon: 'view-module' },
   { key: 'driver-archive', label: '司机档案', icon: 'user' },
-  { key: 'maintain-archive', label: '维保档案', icon: 'tools' },
+  { key: 'maintain-archive', label: '维保记录', icon: 'tools' },
   { key: 'tire', label: '轮胎管理', icon: 'circle' },
   { key: 'inspection', label: '年检管理', icon: 'check-rectangle' },
 ]
