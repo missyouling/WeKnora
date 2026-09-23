@@ -61,7 +61,7 @@
           <template #icon><t-icon name="upload" size="14px" /></template>
           上传{{ group.fileLabel }}
         </t-button>
-        <t-button v-if="isArchive && group.scope === 'maintain'" theme="default" variant="outline" size="small" @click="manualVisible = true">
+        <t-button v-if="isArchive && group.scope === 'maintain'" theme="default" variant="outline" size="small" @click="openDrawer(null)">
           <template #icon><t-icon name="add" size="14px" /></template>
           手动新增
         </t-button>
@@ -81,9 +81,6 @@
       :type-options="uploadTypeOptions" :default-type="isArchive && filters.docType ? filters.docType : ''"
       @progress="onUploadProgress" @done="onUploadDone" />
 
-    <!-- 维保记录：手动录入抽屉 -->
-    <FleetManualEntryDrawer v-if="isArchive" v-model:visible="manualVisible" :kb-id="kbId" :scope="group.scope"
-      @saved="onManualSaved" />
 
     <!-- 上传历史抽屉（证照型） -->
     <FleetUploadHistoryDrawer v-if="isArchive" v-model:visible="historyVisible" :kb-id="kbId" :scope="group.scope" :filter="historyFilter" :doc-types="currentDocTypes"
@@ -302,6 +299,10 @@
             </template>
             <!-- 证照型：已提取记录（字段编辑 + 底部源文件预览） -->
             <template v-else-if="isArchive">
+              <div v-if="!form.id" class="rec-field rec-field--wide">
+                <label>维保类型 <span class="required">*</span></label>
+                <t-select v-model="form.doc_type" :options="archiveTypePlainOptions" filterable clearable placeholder="选择维保类型" />
+              </div>
               <template v-for="key in archiveEditKeys" :key="key">
                 <div class="rec-field" :class="{ 'rec-field--wide': key === '备注' }">
                   <label>{{ String(key) }}</label>
@@ -401,7 +402,6 @@ import KbTagManageDrawer from '../knowledge/components/KbTagManageDrawer.vue'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { selectInitialModelId } from '@/utils/modelDefaults'
 import FleetUploadDialog from './FleetUploadDialog.vue'
-import FleetManualEntryDrawer from './FleetManualEntryDrawer.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 
 const props = defineProps<{ recordType: string }>()
@@ -655,11 +655,7 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
     base: ['维护日期', '车牌号', '维护项目', '维护单位', '下次维护日期'],
     detail: [],
   },
-  '维保保险单': {
-    name: '保险单', scope: 'maintain',
-    base: ['保单号', '被保险人', '保险公司', '险种', '车牌号', '保额', '保费', '起保日期', '终保日期'],
-    detail: [],
-  },
+
 }
 
 const RECORD_COLS: Record<string, ColDef[]> = {
@@ -1173,7 +1169,7 @@ const DERIVED_BLACKLIST = ['到期提醒天数', '提醒状态', '审验状态',
 const isDerivedColumn = (k: string) => DERIVED_BLACKLIST.includes(k)
 
 const archiveTypeFields = computed(() => {
-  const t = filters.docType
+  const t = (drawerVisible.value && editMode.value === 'record' ? form.doc_type : '') || filters.docType
   const builtin = t ? BUILTIN_CERTS[t] : null
   // 用户分类配置优先（与设置页保持同步）；内置定义兜底
   const cat = (categories.value[group.value.scope] || []).find((c: any) => c.name === t)
@@ -1681,8 +1677,6 @@ function handleSourcePrint() {
 const kbId = ref('')
 const pendingFiles = ref<any[]>([])
 const uploadVisible = ref(false)
-const manualVisible = ref(false)
-function onManualSaved() { void loadRecords(); void loadBase() }
 const historyVisible = ref(false)
 
 // 上传任务实时进度（来自上传弹窗 emit）：多文件同时进行时轮播展示
@@ -1745,6 +1739,15 @@ const uploadTypeOptions = computed(() => {
   return [{ label: titleMap[scope] || scope, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }]
 })
 
+// 新增记录抽屉：维保类型纯名选项（不带 scope__ 前缀，与 form.doc_type / BUILTIN_CERTS 对齐）
+const archiveTypePlainOptions = computed(() => {
+  const scope = group.value?.scope
+  if (!scope) return []
+  const names: string[] = []
+  Object.values(BUILTIN_CERTS).filter((b: any) => b.scope === scope).forEach((b: any) => { if (!names.includes(b.name)) names.push(b.name) })
+  ;(categories.value[scope] || []).filter((c: any) => c && c.enabled).forEach((c: any) => { if (c.name && !names.includes(c.name)) names.push(c.name) })
+  return names.map((n) => ({ label: n, value: n }))
+})
 function onUploadDone() {
   loadRecords()
   loadBase()

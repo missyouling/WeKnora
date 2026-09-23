@@ -53,7 +53,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory } from '@/api/fleet'
 
 const props = defineProps<{ scope: string }>()
-const scopeLabel = ref(props.scope === 'vehicle' ? '车辆证照' : props.scope === 'driver' ? '司机证照' : '维保文件')
+const scopeLabel = ref(props.scope === 'vehicle' ? '车辆证照' : props.scope === 'driver' ? '司机证照' : '维保类型')
 
 const categories = ref<any[]>([])
 const expanded = ref<Set<string>>(new Set())

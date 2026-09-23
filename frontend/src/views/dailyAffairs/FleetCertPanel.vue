@@ -154,7 +154,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
     { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
   ],
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
-  maintain: [{ key: 'maintain', label: '维保文件', scope: 'maintain', groupId: '' }],
+  maintain: [{ key: 'maintain', label: '维保类型', scope: 'maintain', groupId: '' }],
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
@@ -266,7 +266,6 @@ const BUILTIN: Record<string, CertDef[]> = {
   maintain: [
     { name: '维修工单', base: ['工单号', '车牌号', '维修日期', '维修项目', '工时费', '材料费', '总费用'], detail: [] },
     { name: '二级维护', base: ['维护日期', '车牌号', '维护项目', '维护单位', '下次维护日期'], detail: [] },
-    { name: '保险单', base: ['保单号', '被保险人', '保险公司', '险种', '车牌号', '保额', '保费', '起保日期', '终保日期'], detail: [] },
   ],
 }
 function certFieldCount(b: CertDef) {

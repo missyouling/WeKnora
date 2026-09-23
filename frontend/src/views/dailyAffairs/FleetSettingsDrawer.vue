@@ -99,7 +99,7 @@ const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
 const PANEL_MAP: Record<string, { key: string; title: string }> = {
   'vehicle-archive': { key: 'cert-vehicle', title: '车辆档案配置' },
   'driver-archive': { key: 'cert-driver', title: '司机档案配置' },
-  'maintain-archive': { key: 'cert-maintain', title: '维保管理配置' },
+  'maintain-archive': { key: 'cert-maintain', title: '维保记录配置' },
   'fuel-charge': { key: 'oil', title: '油卡管理' },
   'road-toll': { key: 'etc', title: 'ETC管理' },
   'repair-cost': { key: 'supplier', title: '供应商' },
