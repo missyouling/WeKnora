@@ -183,6 +183,9 @@
 10. **列顺序以字段配置 subs 数组为唯一权威**：列表列、字段筛选器、编辑抽屉三处的字段排列顺序，必须按该证照类型在 categories[scope].subs 里的数组顺序输出；base/detail 只决定「默认是否勾选显示」（def 判定用 baseSet），不得用内置 BUILTIN_CERTS.base/detail 的硬编码顺序覆盖用户在字段配置里拖动后的顺序。用户在字段配置里调整 subs 顺序后，列表列、筛选器、编辑抽屉必须立即同步。无 subs 时回退内置顺序兜底；用户新增字段追加末尾。
 11. **字段开关「四同步」**：字段配置里某个字段的状态开关关闭后，该字段在「列表表头、字段筛选器、编辑抽屉、打印预览」四处必须同时隐藏；四处字段均派生自同一份 rchiveTypeFields（源头已 .filter(s => s.enabled !== false)），禁止在任一处各自维护一份独立字段列表或绕过该源头。分类开关关闭后，该分类的类型卡片、筛选下拉选项、上传类型选项均不显示（内置未入库分类默认启用）。
 
+12. **「启用表头」开关与字段筛选器勾选双向同步**：字段配置里的「启用表头」开关（后端 `FleetCategorySub.is_default`）= 该字段在字段筛选器里默认勾选/在列表表头显示。用户在字段配置里切换并保存后，列表页必须按最新 `is_default` 重建筛选器勾选（`resetColumns()`），**不得**继续沿用旧的 localStorage 勾选存档。实现：字段配置保存后 `dispatchEvent('fleet-categories-changed')`，列表页 `reloadCategories()` 末尾在 `nextTick` 里 `resetColumns()`。后端 `is_default` 必须随 subs 一起 JSON 透传持久化（`FleetCategorySub` 结构体必须含 `IsDefault bool json:"is_default"`，否则会被序列化丢弃导致开关回读丢失）。
+13. **字段配置弹窗样式约束**：字段配置列表必须有列标题行（字段名 | 启用表头 | 启用字段 | 操作），与下方每一行用同一套 grid 列对齐（`20px minmax(0,1fr) 76px 76px 48px`）。**禁止**表头和「字段配置」标题复用同名 class 造成覆盖（曾因都用 `.field-config-head`，grid 把标题挤成竖排、开关列被拉伸）。TDesign `t-switch` 在 grid 列里会被拉伸满列宽，必须用 `:deep(.t-switch){width:44px!important}` 固定小尺寸；scoped 下 `:deep` 规则写在 style 顶层才稳定生效，不要嵌套在父选择器内。
+
 ---
 
 ## 窄屏自适应规则（强制）
