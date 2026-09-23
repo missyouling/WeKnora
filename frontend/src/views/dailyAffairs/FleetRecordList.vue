@@ -13,13 +13,13 @@
     <!-- 筛选工具栏（与电费核算内容页一致） -->
     <div class="doc-filter-bar">
       <div class="doc-filter-bar__leading">
-        <div class="doc-filter-field">
+        <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
           <t-input v-model="searchText" :placeholder="isArchive ? '搜索车牌号 / 源文件 / 字段值' : '搜索车牌号 / 单号 / 字段值'"
             clearable class="doc-filter-field__control" style="width: 200px">
             <template #prefix-icon><t-icon name="search" size="14px" /></template>
           </t-input>
         </div>
-        <div class="doc-filter-field">
+        <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
           <t-date-picker v-if="!isArchive" v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM"
             value-type="YYYY-MM" clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
           <t-select v-else v-model="filters.docType" :options="docTypeOptions" clearable placeholder="全部证照类型"
