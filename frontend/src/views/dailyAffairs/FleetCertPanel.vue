@@ -821,7 +821,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   padding: 8px 12px;
   font-size: 12px;
   color: var(--td-text-color-secondary);
-  border-top: 1px dashed var(--td-component-stroke);
+  border-top: 1px solid var(--td-component-stroke);
   cursor: pointer;
   transition: background .15s, color .15s;
   &:hover { background: var(--td-bg-color-secondarycontainer); color: var(--td-brand-color); }

@@ -12,10 +12,7 @@
     <template #header>
       <div class="fleet-drawer-header">
         <span class="fleet-drawer-title">{{ drawerTitle }}</span>
-        <t-button v-if="showAddBtn" theme="primary" size="small" @click="onHeaderAdd">
-          <template #icon><t-icon name="add" size="14px" /></template>
-          {{ addBtnLabel }}
-        </t-button>
+
       </div>
     </template>
     <div class="fleet-settings-body">
