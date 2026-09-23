@@ -636,6 +636,21 @@ const BUILTIN_CERTS: Record<string, { name: string; scope: string; base: string[
     base: ['从业资格证号', '司机姓名', '从业资格类别', '准运范围', '发证机关', '发证日期', '有效期起', '有效期止', '证件状态'],
     detail: [],
   },
+  '维修工单': {
+    name: '维修工单', scope: 'maintain',
+    base: ['工单号', '车牌号', '维修日期', '维修项目', '工时费', '材料费', '总费用'],
+    detail: ['服务商', '备注'],
+  },
+  '二级维护': {
+    name: '二级维护', scope: 'maintain',
+    base: ['维护日期', '车牌号', '维护项目', '维护单位', '下次维护日期'],
+    detail: [],
+  },
+  '维保保险单': {
+    name: '保险单', scope: 'maintain',
+    base: ['保单号', '被保险人', '保险公司', '险种', '车牌号', '保额', '保费', '起保日期', '终保日期'],
+    detail: [],
+  },
 }
 
 const RECORD_COLS: Record<string, ColDef[]> = {
