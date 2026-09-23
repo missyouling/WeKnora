@@ -916,7 +916,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
   }
 }
-.mtr-switch :deep(.t-switch),
 .field-config-row :deep(.t-switch) {
   width: 44px !important;
   min-width: 44px;
