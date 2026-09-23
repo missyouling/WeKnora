@@ -73,3 +73,12 @@ weknora-server.exe
 duckdb.dll
 server-boot.log.err
 weknora-server.exe~
+
+# 临时/本地产物
+_migrate.py
+_q.py
+_ref.png
+*.bak*
+server.exe.bak-*
+AGENTS.md
+
