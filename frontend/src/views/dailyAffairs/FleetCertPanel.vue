@@ -27,7 +27,7 @@
       <div class="meter-table">
         <div class="meter-table-head">
           <span class="th-drag"></span>
-          <span class="th-name">证照名称</span>
+          <span class="th-name">{{ group.scope === 'maintain' ? '维保项名称' : '证照名称' }}</span>
           <span>分组</span>
           <span>字段数</span>
           <span>状态</span>
@@ -61,7 +61,7 @@
             <div class="meter-form-title">编辑{{ group.label }}</div>
             <div class="form-grid">
               <div class="form-item">
-                <label>证照名称 <span class="required">*</span></label>
+                <label>{{ group.scope === 'maintain' ? '维保项名称' : '证照名称' }} <span class="required">*</span></label>
                 <t-input v-model="editForm.name" @enter="commitEdit" />
               </div>
             </div>
@@ -85,6 +85,7 @@
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
                   <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
+                  <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                   <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
                     <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
                   </t-tooltip>
@@ -118,7 +119,7 @@
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
         <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
-          <span class="panel-empty-text">暂无证照类型</span>
+          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : '暂无证照类型' }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
@@ -292,7 +293,7 @@ function buildItems(g0: any): any[] {
     ;(BUILTIN[scope] || []).forEach((b) => {
       const found = list.find((c: any) => c.name === b.name)
       if (found) {
-        merged.push({ ...found, builtin: true, fields: certFieldCount(b) })
+        merged.push({ ...found, builtin: true, fields: (Array.isArray(found.subs) && found.subs.length) ? found.subs.length : certFieldCount(b) })
       } else {
         merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
       }
@@ -500,8 +501,14 @@ async function commitAdd() {
 // ---- 编辑（点击行展开）----
 const editingId = ref('')
 const editForm = reactive({ name: '' })
-const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean }[]>([])
+const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean; dataType: string }[]>([])
 const newFieldName = ref('')
+const dataTypeOptions = [
+  { label: '文本', value: 'text' },
+  { label: '数字', value: 'number' },
+  { label: '日期', value: 'date' },
+  { label: '数组(明细)', value: 'array' },
+]
 function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
   editForm.name = item.name
@@ -513,7 +520,7 @@ function toggleEdit(item: any) {
     : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true, isDefault: false }))
   const seen = new Set<string>()
   fieldsEditable.value = raw
-    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true }))
+    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true, dataType: s.data_type || 'text' }))
     .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
   editingId.value = item.id
   loadUsedFields(group.value.scope, item.name)
@@ -522,7 +529,7 @@ function addField() {
   const name = newFieldName.value.trim()
   if (!name) { MessagePlugin.warning('请输入字段名'); return }
   if (fieldsEditable.value.some((f) => f.name === name)) { MessagePlugin.warning('字段已存在'); return }
-  fieldsEditable.value.push({ name, enabled: true, isDefault: false })
+  fieldsEditable.value.push({ name, enabled: true, isDefault: false, dataType: 'text' })
   newFieldName.value = ''
 }
 function removeField(fd: any) {
@@ -535,7 +542,7 @@ async function commitEdit() {
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning('请输入证照名称'); return }
   const subs = fieldsEditable.value
-    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault }))
+    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text' }))
     .filter((f) => f.name)
   saving.value = true
   try {
@@ -890,6 +897,10 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     .fc-name {
       flex: 1;
       min-width: 0;
+    }
+    .fc-type {
+      width: 120px;
+      flex: none;
     }
 
     > *:nth-child(3),

@@ -112,7 +112,6 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
   maintain: {
     维修工单: ['工单号', '车牌号', '维修日期', '维修项目', '工时费', '材料费', '总费用'],
     二级维护: ['维护日期', '车牌号', '维护项目', '维护单位', '下次维护日期'],
-    保险单: ['保单号', '被保险人', '保险公司', '险种', '车牌号', '保额', '保费', '起保日期', '终保日期'],
   },
 }
 
@@ -240,17 +239,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       维护单位: { desc: '维护单位名称', rule: '提取“维护单位”栏' },
       下次维护日期: { desc: '下次维护日期', rule: '提取“下次维护日期”栏，统一为 YYYY-MM-DD' },
     },
-    保险单: {
-      保单号: { desc: '保险单编号', rule: '提取“保单号”栏' },
-      被保险人: { desc: '被保险人名称', rule: '提取“被保险人”栏' },
-      保险公司: { desc: '承保保险公司', rule: '提取“保险公司 / 保险人”栏' },
-      险种: { desc: '具体险种', rule: '提取“险种名称”栏' },
-      车牌号: { desc: '被保险车辆号牌', rule: '提取“车牌号”栏' },
-      保额: { desc: '保险金额', rule: '提取“保险金额”栏' },
-      保费: { desc: '保费金额', rule: '提取“保费”栏' },
-      起保日期: { desc: '保险责任开始日期', rule: '提取“起保日期”栏，统一为 YYYY-MM-DD' },
-      终保日期: { desc: '保险责任截止日期', rule: '提取“终保日期”栏，统一为 YYYY-MM-DD' },
-    },
+
   },
 }
 
@@ -359,19 +348,19 @@ function makeField(name: string): ExtractFieldConfig {
 
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
-function authorityFields(): { name: string; enabled: boolean }[] {
+function authorityFields(): { name: string; enabled: boolean; dataType: string }[] {
   const scope = currentScope.value
   const c = (categories.value[scope] || []).find((x: any) => x.name === certTypeName.value)
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
-      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false }))
+      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, dataType: s.data_type || 'text' }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
   const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
   const seen = new Set<string>()
   return defaults
-    .map((n) => ({ name: n, enabled: true }))
+    .map((n) => ({ name: n, enabled: true, dataType: 'text' }))
     .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
 }
 
@@ -432,7 +421,7 @@ async function loadConfig() {
       return {
         name: a.name,
         desc: c?.desc || d.desc || '',
-        type: c?.type || 'string',
+        type: c?.type || ({ text: 'string', number: 'number', date: 'date', array: 'array' } as Record<string,string>)[a.dataType] || 'string',
         rule: c?.rule || d.rule || '',
         enabled: c && c.enabled !== undefined ? !!c.enabled : a.enabled,
       }

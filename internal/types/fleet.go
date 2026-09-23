@@ -125,6 +125,7 @@ type FleetCategorySub struct {
 	Name      string `json:"name"`
 	Enabled   bool   `json:"enabled"`
 	IsDefault bool   `json:"is_default"` // 字段筛选器「重置」时默认勾选
+	DataType  string `json:"data_type"`  // text | number | date | array（影响提取骨架与编辑控件）
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

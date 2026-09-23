@@ -311,6 +311,11 @@
                     :popup-props="{ overlayClassName: 'cert-status-pop' }" />
                   <t-textarea v-else-if="key === '备注'" v-model="form.data[key]" :autosize="{ minRows: 3, maxRows: 6 }"
                     :maxlength="500" placeholder="可修改" />
+                  <t-date-picker v-else-if="fieldDataTypes[key] === 'date'" v-model="form.data[key]" clearable
+                    value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+                  <t-textarea v-else-if="fieldDataTypes[key] === 'array'" v-model="form.data[key]" :autosize="{ minRows: 3, maxRows: 6 }"
+                    placeholder="每行一条明细" />
+                  <t-input v-else-if="fieldDataTypes[key] === 'number'" type="number" v-model="form.data[key]" placeholder="可修改" />
                   <t-input v-else v-model="form.data[key]" placeholder="可修改" />
                 </div>
               </template>
@@ -1214,6 +1219,14 @@ const archiveTypeFields = computed(() => {
   return { base: [], detail: [], baseSet: new Set<string>() }
 })
 
+// 字段数据类型映射（名称 -> data_type）：驱动编辑抽屉控件
+const fieldDataTypes = computed<Record<string, string>>(() => {
+  const t = (drawerVisible.value && editMode.value === 'record' ? form.doc_type : '') || filters.docType
+  const cat = (categories.value[group.value.scope] || []).find((c: any) => c.name === t)
+  const m: Record<string, string> = {}
+  ;(cat?.subs || []).forEach((s: any) => { if (s && s.name) m[s.name] = s.data_type || 'text' })
+  return m
+})
 // 编辑抽屉字段渲染顺序：按当前类型配置字段顺序（备注固定排证件状态后），多余字段追加末尾
 const archiveEditKeys = computed(() => {
   const f = archiveTypeFields.value
