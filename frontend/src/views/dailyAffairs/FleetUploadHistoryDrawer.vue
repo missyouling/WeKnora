@@ -64,22 +64,12 @@
                   </div>
                   <div class="cell"><span class="row-mono">{{ fmtTime(row.created_at) }}</span></div>
                   <div class="cell cell-del">
-                    <t-tooltip content="重新解析" placement="top">
-                      <t-button variant="text" size="small" shape="square" @click="reparseRow(row)">
-                        <template #icon><t-icon name="refresh" size="14px" /></template>
+                    <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
+                      @click="(ctx: any) => onRowMenu(row, ctx.value)">
+                      <t-button variant="text" size="small" shape="square" class="row-more-btn">
+                        <template #icon><t-icon name="ellipsis" size="16px" /></template>
                       </t-button>
-                    </t-tooltip>
-                    <t-tooltip content="重新提取" placement="top">
-                      <t-button variant="text" size="small" shape="square" @click="reextractRow(row)">
-                        <template #icon><t-icon name="scan" size="14px" /></template>
-                      </t-button>
-                    </t-tooltip>
-                    <t-popconfirm theme="danger" content="确定从知识库删除该文件吗？已解析记录将一并清除。"
-                      confirm-btn="删除" cancel-btn="取消" placement="top" @confirm="removeOne(row)">
-                      <t-button variant="text" size="small" shape="square" theme="danger">
-                        <template #icon><t-icon name="delete" size="14px" /></template>
-                      </t-button>
-                    </t-popconfirm>
+                    </t-dropdown>
                   </div>
                 </div>
                 <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
@@ -302,6 +292,93 @@ const clearAll = async () => {
   }
 }
 
+// ---- 行操作三点菜单 ----
+const IMG_EXT = ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tif', 'tiff']
+const isImg = (name: string) => IMG_EXT.includes(fileExt(name).toLowerCase())
+
+const rowMenuOptions = (row: any) => {
+  const opts: any[] = [
+    { content: '重新解析', value: 'reparse', prefixIcon: 'refresh' },
+    { content: '重新提取', value: 'reextract', prefixIcon: 'scan' },
+    { content: '下载源文件', value: 'download', prefixIcon: 'download' },
+    { content: '打印源文件', value: 'print', prefixIcon: 'print' },
+  ]
+  // 已解析失败才提示重新解析，已提取失败才提示重新提取（其余仍可点，不强制禁用）
+  opts.push({ content: '删除', value: 'delete', theme: 'danger', prefixIcon: 'delete' })
+  return opts
+}
+
+const authHeaders = () => ({ Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') })
+
+const fetchBlob = async (row: any, kind: 'download' | 'preview') => {
+  const res = await fetch(`/api/v1/knowledge/${row.id}/${kind}`, { headers: authHeaders() })
+  if (!res.ok) throw new Error('文件获取失败')
+  return res.blob()
+}
+
+const downloadSource = async (row: any) => {
+  try {
+    const blob = await fetchBlob(row, 'download')
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = row.file_name || 'source'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '下载失败')
+  }
+}
+
+// 打印源文件：PDF 走 iframe 打印；图片走弹窗预览后打印；其余类型提示下载
+const printSource = async (row: any) => {
+  const ext = fileExt(row.file_name).toLowerCase()
+  try {
+    const blob = await fetchBlob(row, 'preview')
+    const url = URL.createObjectURL(blob)
+    if (ext === 'pdf') {
+      const iframe = document.createElement('iframe')
+      iframe.style.position = 'fixed'
+      iframe.style.right = '0'
+      iframe.style.bottom = '0'
+      iframe.style.width = '0'
+      iframe.style.height = '0'
+      iframe.style.border = '0'
+      iframe.src = url
+      iframe.onload = () => {
+        setTimeout(() => {
+          try { iframe.contentWindow?.focus(); iframe.contentWindow?.print() } catch (_) {}
+        }, 300)
+      }
+      document.body.appendChild(iframe)
+      setTimeout(() => { iframe.remove(); URL.revokeObjectURL(url) }, 60000)
+    } else if (IMG_EXT.includes(ext)) {
+      const w = window.open('', '_blank')
+      if (w) {
+        w.document.write(`<title>打印源文件</title><img src="${url}" style="max-width:100%;" onload="window.print()" />`)
+        w.document.close()
+      } else {
+        MessagePlugin.warning('浏览器拦截了打印窗口，请允许弹窗后重试')
+        URL.revokeObjectURL(url)
+      }
+    } else {
+      MessagePlugin.warning('该文件类型暂不支持在线打印，可下载后查看')
+      URL.revokeObjectURL(url)
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '打印失败')
+  }
+}
+
+const onRowMenu = (row: any, value: string) => {
+  if (value === 'reparse') reparseRow(row)
+  else if (value === 'reextract') reextractRow(row)
+  else if (value === 'download') downloadSource(row)
+  else if (value === 'print') printSource(row)
+  else if (value === 'delete') confirmRemove(row)
+}
 // ---- 抽屉宽度拖动（复用合同管理历史抽屉方案） ----
 const DRAWER_MIN_WIDTH = 720
 const DRAWER_MAX_WIDTH = 1200

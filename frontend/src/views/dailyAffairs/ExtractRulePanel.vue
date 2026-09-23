@@ -69,7 +69,9 @@
         </div>
         <t-textarea v-model="promptTemplate" class="prompt-area" :autosize="{ minRows: 6, maxRows: 16 }"
           placeholder="你是一个证件信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON，未找到的字段输出 null，不臆造内容。" />
+        <t-alert v-if="templateWarning" theme="warning" variant="light" :message="templateWarning" class="advanced-warning" />
         <div class="advanced-actions">
+          <t-button variant="outline" size="small" @click="resetPromptTemplate">恢复默认模板</t-button>
           <t-button variant="outline" size="small" @click="advancedEnabled = false">收起</t-button>
           <t-button theme="primary" size="small" :disabled="!certType" :loading="saving" @click="save">保存</t-button>
         </div>
@@ -325,6 +327,20 @@ const testVisible = ref(false)
 const loadingCfg = ref(false)
 const editingName = ref('')
 
+// 高级模板防呆：非空但未引用字段 schema 插槽时给出警告（字段规则以后端拼装的 schema 为准）
+const templateWarning = computed(() => {
+  const t = (promptTemplate.value || '').trim()
+  if (!t) return ''
+  if (!t.includes('{{fields_schema}}')) {
+    return '模板未包含 {{fields_schema}} 插槽，字段规则将无法注入；建议保留该插槽，避免模型字段缺失。'
+  }
+  return ''
+})
+
+function resetPromptTemplate() {
+  promptTemplate.value = ''
+  MessagePlugin.success('已恢复默认模板，将使用系统默认字段规则拼装')
+}
 function toggleEdit(name: string) {
   editingName.value = editingName.value === name ? '' : name
 }

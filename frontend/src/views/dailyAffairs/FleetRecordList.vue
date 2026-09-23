@@ -1157,8 +1157,14 @@ const archiveTypeFields = computed(() => {
       .filter((s: any) => s.enabled !== false && s.name && !String(s.name).includes('其它文档中出现的字段'))
       .map((s: any) => s.name)
   )
+  // 默认字段集合：用户在字段配置里标记「默认」的字段，重置字段筛选器时自动勾选；未标记则回退内置 base
+  const defaultSet = new Set(
+    rawSubs
+      .filter((s: any) => s.enabled !== false && s.is_default === true && s.name && enabledSet.has(String(s.name)))
+      .map((s: any) => String(s.name))
+  )
   if (builtin) {
-    const baseSet = new Set(builtin.base)
+    const baseSet = defaultSet.size ? new Set([...defaultSet]) : new Set(builtin.base)
     const known = new Set([...builtin.base, ...(builtin.detail || [])])
     // 列/编辑抽屉/字段筛选器的顺序以“字段配置 subs 数组”为权威；无 subs 时回退内置顺序
     let ordered: string[]
@@ -1178,7 +1184,10 @@ const archiveTypeFields = computed(() => {
   }
   if (rawSubs.length) {
     const subs = [...enabledSet].filter((k: string) => !isDerivedColumn(k))
-    if (subs.length) return { base: subs, detail: [], baseSet: new Set(subs) }
+    if (subs.length) {
+      const bs = defaultSet.size ? new Set([...defaultSet]) : new Set(subs)
+      return { base: subs, detail: [], baseSet: bs }
+    }
   }
   return { base: [], detail: [], baseSet: new Set<string>() }
 })

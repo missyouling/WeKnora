@@ -78,6 +78,9 @@
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
                   <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
+                  <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
+                    <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
+                  </t-tooltip>
                   <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
                   <t-popconfirm v-if="!usedFields.has(fd.name)" theme="warning"
                     :content="`确定删除字段「${fd.name}」吗？`"
@@ -461,7 +464,7 @@ async function commitAdd() {
 // ---- 编辑（点击行展开）----
 const editingId = ref('')
 const editForm = reactive({ name: '' })
-const fieldsEditable = ref<{ name: string; enabled: boolean }[]>([])
+const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean }[]>([])
 const newFieldName = ref('')
 function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
@@ -471,10 +474,10 @@ function toggleEdit(item: any) {
   const b = (BUILTIN[group.value.scope] || []).find((x: any) => x.name === item.name)
   const raw = Array.isArray(item.subs) && item.subs.length
     ? item.subs
-    : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true }))
+    : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true, isDefault: false }))
   const seen = new Set<string>()
   fieldsEditable.value = raw
-    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false }))
+    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true }))
     .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
   editingId.value = item.id
   loadUsedFields(group.value.scope, item.name)
@@ -483,7 +486,7 @@ function addField() {
   const name = newFieldName.value.trim()
   if (!name) { MessagePlugin.warning('请输入字段名'); return }
   if (fieldsEditable.value.some((f) => f.name === name)) { MessagePlugin.warning('字段已存在'); return }
-  fieldsEditable.value.push({ name, enabled: true })
+  fieldsEditable.value.push({ name, enabled: true, isDefault: false })
   newFieldName.value = ''
 }
 function removeField(fd: any) {
@@ -496,7 +499,7 @@ async function commitEdit() {
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning('请输入证照名称'); return }
   const subs = fieldsEditable.value
-    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled }))
+    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault }))
     .filter((f) => f.name)
   saving.value = true
   try {
