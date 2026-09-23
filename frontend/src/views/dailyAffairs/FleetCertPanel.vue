@@ -508,7 +508,7 @@ const dataTypeOptions = [
   { label: '文本', value: 'text' },
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
-  { label: '数组(明细)', value: 'array' },
+  { label: '数组', value: 'array' },
 ]
 function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
@@ -865,19 +865,19 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 76px 76px 48px;
+    grid-template-columns: 20px minmax(0, 1fr) 130px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
   }
-  .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; }
+  .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; white-space: nowrap; }
   .fc-h-name { text-align: left; }
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 140px 76px 76px 48px;
+    grid-template-columns: 20px minmax(0, 1fr) 130px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
