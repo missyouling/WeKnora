@@ -31,10 +31,24 @@
         </t-tabs>
       </template>
       <template v-else-if="panelKey === 'cert-driver'">
-        <CertPanel ref="driverCertRef" scope="driver" />
+        <t-tabs v-model="driverTab" class="fleet-settings-tabs" @change="onDriverTabChange">
+          <t-tab-panel value="cert" label="证照配置">
+            <CertPanel ref="driverCertRef" scope="driver" />
+          </t-tab-panel>
+          <t-tab-panel value="extract" label="提取规则">
+            <ExtractRulePanel ref="driverExtractRef" scope="driver" />
+          </t-tab-panel>
+        </t-tabs>
       </template>
       <template v-else-if="panelKey === 'cert-maintain'">
-        <CertPanel ref="maintainCertRef" scope="maintain" />
+        <t-tabs v-model="maintainTab" class="fleet-settings-tabs" @change="onMaintainTabChange">
+          <t-tab-panel value="cert" label="维保配置">
+            <CertPanel ref="maintainCertRef" scope="maintain" />
+          </t-tab-panel>
+          <t-tab-panel value="extract" label="提取规则">
+            <ExtractRulePanel ref="maintainExtractRef" scope="maintain" />
+          </t-tab-panel>
+        </t-tabs>
       </template>
       <template v-else-if="panelKey === 'oil'">
         <OilCardPanel />
@@ -95,14 +109,19 @@ const drawerTitle = computed(() => PANEL_MAP[props.menuKey || '']?.title || '设
 
 const activeTab = ref('vehicle')
 const vehicleTab = ref('cert')
+const driverTab = ref('cert')
+const maintainTab = ref('cert')
 const extractPanelRef = ref()
+const driverExtractRef = ref()
+const maintainExtractRef = ref()
 const vehicleCertRef = ref<any>(null)
 const driverCertRef = ref<any>(null)
 const maintainCertRef = ref<any>(null)
-// 标题栏右侧「新增」按钮：仅证照配置面板显示（车辆档案仅在“证照配置”tab）
+// 标题栏右侧「新增」按钮：仅证照配置面板且停留在“证照配置”tab 时显示
 const showAddBtn = computed(() => {
   if (panelKey.value === 'cert-vehicle') return vehicleTab.value === 'cert'
-  if (panelKey.value === 'cert-driver' || panelKey.value === 'cert-maintain') return true
+  if (panelKey.value === 'cert-driver') return driverTab.value === 'cert'
+  if (panelKey.value === 'cert-maintain') return maintainTab.value === 'cert'
   if (!panelKey.value) return ['vehicle', 'driver', 'maintain'].includes(activeTab.value)
   return false
 })
@@ -117,6 +136,12 @@ function onHeaderAdd() { activeCertRef.value?.startAdd?.() }
 // 切到提取规则页时重新拉取证照配置，保证字段名与证照配置实时同步
 function onVehicleTabChange(val: string | number) {
   if (val === 'extract') extractPanelRef.value?.refresh()
+}
+function onDriverTabChange(val: string | number) {
+  if (val === 'extract') driverExtractRef.value?.refresh()
+}
+function onMaintainTabChange(val: string | number) {
+  if (val === 'extract') maintainExtractRef.value?.refresh()
 }
 
 const DRAWER_KEY = 'weknora-fleet-settings-drawer-width'

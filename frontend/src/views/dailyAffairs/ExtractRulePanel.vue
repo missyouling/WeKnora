@@ -276,6 +276,7 @@ const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintai
 const TYPE_GROUP_META = [
   { scope: 'vehicle', title: '公司证照' },
   { scope: 'driver', title: '司机证照' },
+  { scope: 'maintain', title: '维保文件' },
 ] as const
 
 // v-model 存复合值 `${scope}__${name}`，避免公司/司机同名类型在下拉中冲突
@@ -284,7 +285,9 @@ function typeComposite(scope: string, name: string) {
 }
 
 const certTypeOptions = computed(() => {
-  return TYPE_GROUP_META.map(({ scope, title }) => {
+  return TYPE_GROUP_META
+    .filter((g) => g.scope === props.scope)
+    .map(({ scope, title }) => {
     const names: string[] = []
     const seen = new Set<string>()
     ;(Object.keys(DEFAULT_FIELDS[scope] || {}) as string[]).forEach((n) => {
@@ -467,7 +470,7 @@ function openTest() {
 // 重新拉取证照配置（公司证照 vehicle + 司机证照 driver，含自定义分组类型）
 async function refresh() {
   try {
-    const scopes = ['vehicle', 'driver']
+    const scopes = ['vehicle', 'driver', 'maintain']
     const results = await Promise.all(scopes.map((s) => listFleetCategories({ scope: s })))
     scopes.forEach((s, i) => {
       const r: any = results[i]

@@ -952,10 +952,16 @@ const activeRecordType = computed(() => SCOPE_TO_ARCHIVE[activeDocScope.value] |
 
 const docTypeOptions = computed(() => {
   if (!isArchive.value) return []
+  const allowed = currentScopes.value
   const set = new Map<string, { label: string; value: string }>()
-  // 仅加载已解析提取且存在数据的证照类型（来自知识库文件 meta + 记录）
-  ;(fileRows.value || []).forEach((f: any) => { if (f.doc_type) set.set(f.doc_type, { label: f.doc_type, value: f.doc_type }) })
-  ;(rows.value || []).forEach((r: any) => { if (r.doc_type) set.set(r.doc_type, { label: r.doc_type, value: r.doc_type }) })
+  // 仅加载已解析提取且存在数据的证照类型，并按当前档案 scope 过滤
+  // （车辆档案页不出现司机/维保类型，司机档案页不出现公司/维保类型）
+  const put = (name: string) => {
+    if (!name || !allowed.has(docScopeOf(name))) return
+    set.set(name, { label: name, value: name })
+  }
+  ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
+  ;(rows.value || []).forEach((r: any) => put(r.doc_type))
   return [...set.values()]
 })
 
@@ -1119,25 +1125,36 @@ const archiveTypeFields = computed(() => {
   const builtin = t ? BUILTIN_CERTS[t] : null
   // 用户分类配置优先（与设置页保持同步）；内置定义兜底
   const cat = (categories.value[group.value.scope] || []).find((c: any) => c.name === t)
+  const rawSubs = (cat?.subs || [])
   const enabledSet = new Set(
-    (cat?.subs || [])
+    rawSubs
       .filter((s: any) => s.enabled !== false && s.name && !String(s.name).includes('其它文档中出现的字段'))
       .map((s: any) => s.name)
   )
   if (builtin) {
-    // 以内置定义的 base/detail 为准；base 字段始终显示（不受用户启用状态影响），detail 字段根据用户启用状态决定
-    const base = [...builtin.base]
-    const detail = (builtin.detail || []).filter((k: string) => enabledSet.size === 0 || enabledSet.has(k))
-    // 用户新增的字段（内置定义没有的）归入 detail
+    const baseSet = new Set(builtin.base)
     const known = new Set([...builtin.base, ...(builtin.detail || [])])
-    const extra = [...enabledSet].filter((k: string) => !known.has(k))
-    return { base: base.filter((k: string) => !isDerivedColumn(k)), detail: [...detail, ...extra].filter((k: string) => !isDerivedColumn(k)) }
+    // 列/编辑抽屉/字段筛选器的顺序以“字段配置 subs 数组”为权威；无 subs 时回退内置顺序
+    let ordered: string[]
+    if (rawSubs.length) {
+      ordered = rawSubs
+        .filter((s: any) => s.enabled !== false && s.name && !isDerivedColumn(s.name)
+          && (baseSet.has(s.name) || enabledSet.has(s.name) || known.has(s.name)))
+        .map((s: any) => s.name)
+    } else {
+      ordered = [...builtin.base, ...(builtin.detail || [])].filter((k: string) => !isDerivedColumn(k))
+    }
+    // 用户新增、配置里未排序的字段追加末尾
+    const extra = [...enabledSet].filter((k: string) => !known.has(k) && !isDerivedColumn(k) && !ordered.includes(k))
+    ordered = [...ordered, ...extra]
+    // base=顺序列表(列顺序权威)，detail 置空；baseSet=默认勾选集合
+    return { base: ordered, detail: [], baseSet }
   }
-  if (cat?.subs?.length) {
-    const subs = [...enabledSet]
-    if (subs.length) return { base: subs.filter((k: string) => !isDerivedColumn(k)), detail: [] }
+  if (rawSubs.length) {
+    const subs = [...enabledSet].filter((k: string) => !isDerivedColumn(k))
+    if (subs.length) return { base: subs, detail: [], baseSet: new Set(subs) }
   }
-  return { base: [], detail: [] }
+  return { base: [], detail: [], baseSet: new Set<string>() }
 })
 
 // 编辑抽屉字段渲染顺序：按当前类型配置字段顺序（备注固定排证件状态后），多余字段追加末尾
@@ -1156,7 +1173,7 @@ const columnDefs = computed<ColDef[]>(() => {
     const keys = [...f.base]
     f.detail.forEach((k) => { if (!keys.includes(k)) keys.push(k) })
     const dyn = keys.map((k) => ({
-      key: `data.${k}`, label: k, def: f.base.includes(k) && k !== '备注', tip: `提取自源文件：${k}`,
+      key: `data.${k}`, label: k, def: (f.baseSet ? f.baseSet.has(k) : f.base.includes(k)) && k !== '备注', tip: `提取自源文件：${k}`,
       value: (r: any) => {
         // 证件状态：各证照类型统一按有效期自动计算，不依赖模型提取值
         if (isStatusField(k)) return calcCertStatus(r.data)
