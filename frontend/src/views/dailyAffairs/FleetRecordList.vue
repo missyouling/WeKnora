@@ -14,7 +14,7 @@
     <div class="doc-filter-bar">
       <div class="doc-filter-bar__leading">
         <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
-          <t-input v-model="searchText" :placeholder="isArchive ? '搜索车牌号 / 源文件 / 字段值' : '搜索车牌号 / 单号 / 字段值'"
+          <t-input v-model="searchText" placeholder="搜索车牌 / 字段值"
             clearable class="doc-filter-field__control" style="width: 200px">
             <template #prefix-icon><t-icon name="search" size="14px" /></template>
           </t-input>
@@ -25,12 +25,12 @@
           <t-select v-else v-model="filters.docType" :options="docTypeOptions" clearable placeholder="全部证照类型"
             class="doc-filter-select doc-filter-field__control" style="width: 180px" @change="onDocTypeChange" />
         </div>
-        <t-button variant="outline" size="small" @click="refreshAll">
+        <t-button v-if="!(isArchive && !filters.docType)" variant="outline" size="small" @click="refreshAll">
           <template #icon><t-icon name="refresh" size="14px" /></template>
         </t-button>
       </div>
       <div class="doc-filter-bar__trailing">
-        <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
+        <t-popup v-if="!(isArchive && !filters.docType)" v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
           overlay-inner-class="meter-field-popup">
           <t-button variant="outline" size="small">
             <template #icon><t-icon name="view-list" size="14px" /></template>
@@ -891,8 +891,23 @@ function onOverviewCardClick(card: any) {
   if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
   else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
   else if (card.action === "history-extract_failed") { historyFilter.value = "extract_failed"; historyVisible.value = true }
-  else if (card.action === "type") { filters.docType = card.value; historyVisible.value = false; initColumns(); loadRecords() }
+  else if (card.action === "type") { filters.docType = card.value; activeDocScope.value = card.scope || "vehicle"; historyVisible.value = false; initColumns(); loadRecords() }
 }
+
+// 司机证照(driver)与公司证照(vehicle)同页管理：按当前选中证照的真实 scope 决定查询 record_type，
+// 否则驾驶证等 driver-archive 记录会被 vehicle-archive 查询漏掉。
+const SCOPE_TO_ARCHIVE: Record<string,string> = { vehicle:'vehicle-archive', driver:'driver-archive', maintain:'maintain-archive' }
+const activeDocScope = ref('vehicle')
+function docScopeOf(name: string): string {
+  const def = (BUILTIN_CERTS as any)[name]
+  if (def && def.scope) return def.scope
+  for (const sc of ['vehicle','driver','maintain'] as string[]) {
+    const hit = (categories.value[sc] || []).find((c: any) => c && c.name === name)
+    if (hit) return sc
+  }
+  return 'vehicle'
+}
+const activeRecordType = computed(() => SCOPE_TO_ARCHIVE[activeDocScope.value] || group.value.recordType || props.recordType)
 
 const docTypeOptions = computed(() => {
   if (!isArchive.value) return []
@@ -988,14 +1003,14 @@ async function loadRecords() {
       }
       if (filters.docType) {
         const res = await listFleetRecords({
-          type: group.value.recordType || props.recordType,
+          type: activeRecordType.value,
           doc_type: filters.docType,
         })
         rows.value = res.data || []
       }
     } else {
       const res = await listFleetRecords({
-        type: group.value.recordType || props.recordType,
+        type: activeRecordType.value,
         month: filters.month || undefined,
         vehicle_id: filters.vehicle_id || undefined,
         doc_type: filters.docType || undefined,
@@ -1012,7 +1027,7 @@ async function loadRecords() {
 function refreshAll() {
   Promise.all([loadBase(), ensureKb()]).then(() => { loadRecords(); loadPending() })
 }
-function onDocTypeChange() { initColumns(); loadRecords() }
+function onDocTypeChange() { activeDocScope.value = docScopeOf(filters.docType); initColumns(); loadRecords() }
 function onDateChange() {
   if (form.record_date && !form.record_month) {
     form.record_month = String(form.record_date).slice(0, 7)
@@ -1102,7 +1117,7 @@ const columnDefs = computed<ColDef[]>(() => {
 })
 
 const STORAGE_KEY = computed(() => {
-  const scopePart = isArchive.value ? group.value.key : props.recordType
+  const scopePart = isArchive.value ? activeDocScope.value : props.recordType
   const mode = isArchive.value && !filters.docType ? 'all-v3' : (filters.docType || 'all-v3')
   return `weknora-fleet-${scopePart}-${mode}-cols-v3`
 })
@@ -2270,7 +2285,7 @@ function onDrawerResizeEnd() {
   font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
-.overview-group__cards { display: grid; grid-template-columns: repeat(3, 240px); gap: 14px; }
+.overview-group__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
 .archive-overview--panel { background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
 .overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .overview-subgroup + .overview-subgroup { margin-top: 8px; }
