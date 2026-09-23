@@ -865,7 +865,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 130px 76px 76px 56px;
+    grid-template-columns: 20px minmax(0, 1fr) 60px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
@@ -877,7 +877,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 130px 76px 76px 56px;
+    grid-template-columns: 20px minmax(0, 1fr) 60px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
