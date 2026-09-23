@@ -160,6 +160,18 @@ type FleetCertGroup struct {
 
 func (FleetCertGroup) TableName() string { return "fleet_cert_groups" }
 
+// FleetGroupAlias 内置分组显示别名（纯展示层，不影响数据关联）
+type FleetGroupAlias struct {
+	ID        string    `gorm:"primaryKey" json:"id"`
+	TenantID  int64     `gorm:"index:uk_group_alias,unique" json:"tenant_id"`
+	Scope     string    `gorm:"index:uk_group_alias,unique" json:"scope"`
+	GroupKey  string    `gorm:"index:uk_group_alias,unique" json:"group_key"`
+	Name      string    `json:"name"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (FleetGroupAlias) TableName() string { return "fleet_group_aliases" }
+
 // FleetSupplier 供应商
 type FleetSupplier struct {
 	ID                string     `gorm:"primaryKey" json:"id"`

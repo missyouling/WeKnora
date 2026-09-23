@@ -393,6 +393,8 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 		fl.POST("/cert-groups", g.Contributor(), handler.CreateFleetCertGroup)
 		fl.PUT("/cert-groups/:id", g.Contributor(), handler.UpdateFleetCertGroup)
 		fl.DELETE("/cert-groups/:id", g.Contributor(), handler.DeleteFleetCertGroup)
+		fl.GET("/group-alias", g.Viewer(), handler.ListFleetGroupAliases)
+		fl.PUT("/group-alias", g.Contributor(), handler.UpsertFleetGroupAlias)
 		fl.GET("/suppliers", g.Viewer(), handler.ListFleetSuppliers)
 		fl.POST("/suppliers", g.Contributor(), handler.CreateFleetSupplier)
 		fl.PUT("/suppliers/:id", g.Contributor(), handler.UpdateFleetSupplier)

@@ -3,7 +3,10 @@
     <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
     <div class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
-        <span class="group-header__title">{{ g.label }}</span>
+        <span v-if="renamingKey === g.key" class="group-header__rename-wrap">
+          <t-input v-model="renameValue" size="small" @enter="confirmRename(g)" @blur="confirmRename(g)" autofocus />
+        </span>
+        <span v-else class="group-header__title" title="双击重命名分组" @dblclick.stop="startRename(g)">{{ displayLabel(g) }}</span>
         <span class="group-header__count">{{ groupCount(g.key) }}</span>
         <span v-if="!g.builtin" class="group-header__del-wrap" @click.stop>
           <t-popconfirm theme="warning" :visible="delGroupKey === g.key" placement="bottom"
@@ -146,7 +149,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup } from '@/api/fleet'
+import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias } from '@/api/fleet'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | '' }>(), { scope: 'vehicle' })
 
@@ -280,6 +283,32 @@ const saving = ref(false)
 const orderTick = ref(0)
 
 const group = computed(() => groupList.value.find((g) => g.key === activeGroup.value) || groupList.value[0])
+
+// 分组重命名（纯显示别名，localStorage 持久化；不影响数据关联）
+const groupAliases = ref<Record<string, string>>({})
+function aliasKey(g: any) { return `${g.scope}:${g.key}` }
+function displayLabel(g: any) { return groupAliases.value[aliasKey(g)] || g.label }
+async function loadGroupAliases() {
+  try {
+    const res: any = await listFleetGroupAliases()
+    const arr = res?.data || res || []
+    const m: Record<string, string> = {}
+    for (const it of arr) m[`${it.scope}:${it.group_key}`] = it.name
+    groupAliases.value = m
+  } catch { groupAliases.value = {} }
+}
+loadGroupAliases()
+const renamingKey = ref('')
+const renameValue = ref('')
+function startRename(g: any) { renamingKey.value = g.key; renameValue.value = displayLabel(g) }
+async function confirmRename(g: any) {
+  const v = renameValue.value.trim()
+  if (v && v !== displayLabel(g)) {
+    groupAliases.value[aliasKey(g)] = v
+    try { await upsertFleetGroupAlias({ scope: g.scope, group_key: g.key, name: v }) } catch { /* 持久化失败不影响本地显示 */ }
+  }
+  renamingKey.value = ''
+}
 
 function buildItems(g0: any): any[] {
   void orderTick.value // 建立响应式依赖：本地拖拽顺序变化后重算
@@ -633,6 +662,8 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 .group-header:hover { color: var(--td-brand-color); }
 .group-header.active { color: var(--td-brand-color); border-bottom-color: var(--td-brand-color); font-weight: 500; }
 .group-header__title { font-size: 14px; }
+.group-header__rename-wrap { width: 120px; }
+.group-header__rename-wrap :deep(.t-input__inner) { height: 24px; font-size: 13px; padding: 0 6px; }
 .group-header__count { font-size: 12px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-component); border-radius: 10px; padding: 0 8px; line-height: 18px; }
 .group-header.active .group-header__count { color: var(--td-brand-color); background: var(--td-brand-color-1); }
 .group-header__del-wrap { display: inline-flex; align-items: center; }
@@ -865,7 +896,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 60px 76px 76px 56px;
+    grid-template-columns: 20px minmax(0, 1fr) 100px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
@@ -877,7 +908,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 60px 76px 76px 56px;
+    grid-template-columns: 20px minmax(0, 1fr) 100px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;

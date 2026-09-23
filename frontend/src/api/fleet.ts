@@ -103,6 +103,13 @@ export function deleteFleetCertGroup(id: string) {
   return del(`/api/v1/fleet/cert-groups/${id}`)
 }
 
+export function listFleetGroupAliases() {
+  return get('/api/v1/fleet/group-alias')
+}
+export function upsertFleetGroupAlias(payload: Record<string, unknown>) {
+  return put('/api/v1/fleet/group-alias', payload)
+}
+
 // ---- 供应商 ----
 export function listFleetSuppliers() {
   return get('/api/v1/fleet/suppliers')

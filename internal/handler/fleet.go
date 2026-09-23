@@ -28,7 +28,7 @@ type FleetHandler struct {
 func NewFleetHandler(db *gorm.DB) *FleetHandler {
 	h := &FleetHandler{db: db}
 	// best-effort ensure table exists for cert groups (no versioned migration yet)
-	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}); err != nil {
+	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}, &types.FleetGroupAlias{}); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate fleet_cert_groups failed: %v", err)
 	}
 	return h
@@ -1120,6 +1120,70 @@ func (h *FleetHandler) DeleteFleetCertGroup(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// ListFleetGroupAliases godoc
+// @Summary      内置分组显示别名列表
+// @Router       /fleet/group-alias [get]
+func (h *FleetHandler) ListFleetGroupAliases(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var items []types.FleetGroupAlias
+	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Find(&items).Error; err != nil {
+		logger.Errorf(ctx, "list fleet group alias failed: %v", err)
+		c.Error(errors.NewInternalServerError("list group alias failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
+// UpsertFleetGroupAlias godoc
+// @Summary      设置内置分组显示别名（upsert）
+// @Router       /fleet/group-alias [put]
+func (h *FleetHandler) UpsertFleetGroupAlias(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID, _ := fleetTenantID(c)
+	var req struct {
+		Scope    string `json:"scope"`
+		GroupKey string `json:"group_key"`
+		Name     string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	req.Scope = strings.TrimSpace(req.Scope)
+	req.GroupKey = strings.TrimSpace(req.GroupKey)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Scope == "" || req.GroupKey == "" {
+		c.Error(errors.NewBadRequestError("scope 与 group_key 不能为空"))
+		return
+	}
+	var row types.FleetGroupAlias
+	err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND scope = ? AND group_key = ?", tenantID, req.Scope, req.GroupKey).
+		First(&row).Error
+	if err != nil {
+		row = types.FleetGroupAlias{
+			ID:        "ga-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
+			TenantID:  int64(tenantID),
+			Scope:     req.Scope,
+			GroupKey:  req.GroupKey,
+			Name:      req.Name,
+		}
+		if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+			logger.Errorf(ctx, "create fleet group alias failed: %v", err)
+			c.Error(errors.NewInternalServerError("create group alias failed"))
+			return
+		}
+	} else {
+		if err := h.db.WithContext(ctx).Model(&row).Update("name", req.Name).Error; err != nil {
+			logger.Errorf(ctx, "update fleet group alias failed: %v", err)
+			c.Error(errors.NewInternalServerError("update group alias failed"))
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": row})
 }
 
 // ---------------------------------------------------------------------------
