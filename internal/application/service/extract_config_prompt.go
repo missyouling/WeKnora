@@ -81,7 +81,7 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 
 	// 高级模式：用户模板优先，替换变量后强制追加 JSON 输出兜底约束，
 	// 防止用户模板未声明 JSON 输出格式（如仅写字段定义）导致模型输出非 JSON、解析失败。
-	if cfg.AdvancedEnabled && strings.TrimSpace(cfg.PromptTemplate) != "" {
+	if strings.TrimSpace(cfg.PromptTemplate) != "" {
 		r := strings.NewReplacer(
 			"{{fields_schema}}", schema,
 			"{{document_text}}", "<document>\n{{document_text}}\n</document>",

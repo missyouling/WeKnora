@@ -500,7 +500,13 @@ func (h *KnowledgeHandler) FleetOverviewStats(c *gin.Context) {
 	}
 	total := len(rows)
 	parseFailed, extractFailed := 0, 0
-	byType := map[string]int{}
+	type typeCount struct {
+		DocType       string `json:"doc_type"`
+		Count         int    `json:"count"`
+		ParseFailed   int    `json:"parse_failed"`
+		ExtractFailed int    `json:"extract_failed"`
+	}
+	byType := map[string]*typeCount{}
 	for _, r := range rows {
 		if r.ParseStatus == "failed" {
 			parseFailed++
@@ -509,16 +515,21 @@ func (h *KnowledgeHandler) FleetOverviewStats(c *gin.Context) {
 			extractFailed++
 		}
 		if dt := strings.TrimSpace(r.MetaDocType); dt != "" {
-			byType[dt]++
+			if byType[dt] == nil {
+				byType[dt] = &typeCount{DocType: dt}
+			}
+			byType[dt].Count++
+			if r.ParseStatus == "failed" {
+				byType[dt].ParseFailed++
+			}
+			if r.MetaExtract == "failed" {
+				byType[dt].ExtractFailed++
+			}
 		}
 	}
-	type typeCount struct {
-		DocType string `json:"doc_type"`
-		Count   int    `json:"count"`
-	}
-	items := make([]typeCount, 0, len(byType))
-	for k, v := range byType {
-		items = append(items, typeCount{DocType: k, Count: v})
+	items := make([]*typeCount, 0, len(byType))
+	for _, v := range byType {
+		items = append(items, v)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"total":          total,

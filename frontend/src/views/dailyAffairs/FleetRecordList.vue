@@ -417,10 +417,10 @@ const ARCHIVE_GROUPS: Record<string, { key: string; label: string; fileLabel: st
     { key: 'vehicle', label: '公司证照', fileLabel: '证照', scope: 'vehicle', recordType: 'vehicle-archive' },
   ],
   'driver-archive': [
-    { key: 'driver', label: '司机证照', fileLabel: '司机证照', scope: 'driver', recordType: 'driver-archive' },
+    { key: 'driver', label: '司机证照', fileLabel: '证照', scope: 'driver', recordType: 'driver-archive' },
   ],
   'maintain-archive': [
-    { key: 'maintain', label: '维保文件', fileLabel: '维保文件', scope: 'maintain', recordType: 'maintain-archive' },
+    { key: 'maintain', label: '维保文件', fileLabel: '记录', scope: 'maintain', recordType: 'maintain-archive' },
   ],
 }
 const archiveGroups = computed(() => ARCHIVE_GROUPS[props.recordType] || [])
@@ -887,20 +887,29 @@ const historyFilter = ref<"all" | "parse_failed" | "extract_failed">("all")
 const overviewStats = ref<any>(null)
 const overviewCards = computed(() => {
   const st = overviewStats.value
+  const dtSet = currentDocTypes.value
   if (st) {
+    // 按当前档案 scope 过滤：只统计本档案证照类型的文件/失败数
+    const items = (st.by_doc_type || []).filter((t: any) => dtSet.has(t.doc_type))
+    const totalN = items.reduce((s: number, t: any) => s + (t.count || 0), 0)
+    const pfN = items.reduce((s: number, t: any) => s + (t.parse_failed || 0), 0)
+    const efN = items.reduce((s: number, t: any) => s + (t.extract_failed || 0), 0)
     const cards: any[] = [
-      { key: "total", label: "已上传文件", num: st.total || 0, icon: "file", cls: "", action: "history-all" },
-      { key: "parseFailed", label: "解析失败", num: st.parse_failed || 0, icon: "close-circle", cls: "", action: "history-parse_failed" },
-      { key: "extractFailed", label: "提取失败", num: st.extract_failed || 0, icon: "close-circle", cls: "", action: "history-extract_failed" },
+      { key: "total", label: "已上传文件", num: totalN, icon: "file", cls: "", action: "history-all" },
+      { key: "parseFailed", label: "解析失败", num: pfN, icon: "close-circle", cls: "", action: "history-parse_failed" },
+      { key: "extractFailed", label: "提取失败", num: efN, icon: "close-circle", cls: "", action: "history-extract_failed" },
     ]
-    ;(st.by_doc_type || []).forEach((t: any) => {
+    items.forEach((t: any) => {
       const name = t.doc_type
+      const sc = docScopeOf(name)
+      const cat = (categories.value[sc] || []).find((c: any) => c && c.name === name)
+      if (cat && cat.enabled === false) return
       const def = (BUILTIN_CERTS as any)[name]
-      cards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || docScopeOf(name) })
+      cards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || sc })
     })
     return cards
   }
-  const all = fileRows.value || []
+  const all = (fileRows.value || []).filter((r: any) => { const dt = r.doc_type; return dt ? dtSet.has(dt) : true })
   const cards: any[] = [
     { key: "total", label: "已上传文件", num: all.length, icon: "file", cls: "", action: "history-all" },
     { key: "parseFailed", label: "解析失败", num: all.filter((r: any) => r.parse_status === "failed").length, icon: "close-circle", cls: "", action: "history-parse_failed" },
@@ -952,7 +961,7 @@ function docScopeOf(name: string): string {
 const currentDocTypes = computed(() => {
   const set = new Set<string>()
   currentScopes.value.forEach((sc: string) => {
-    (categories.value[sc] || []).forEach((c: any) => { if (c && c.name) set.add(c.name) })
+    (categories.value[sc] || []).forEach((c: any) => { if (c && c.name && c.enabled !== false) set.add(c.name) })
     Object.keys(BUILTIN_CERTS as any).forEach((n: string) => {
       if ((BUILTIN_CERTS as any)[n].scope === sc) set.add(n)
     })
@@ -967,8 +976,14 @@ const docTypeOptions = computed(() => {
   const set = new Map<string, { label: string; value: string }>()
   // 仅加载已解析提取且存在数据的证照类型，并按当前档案 scope 过滤
   // （车辆档案页不出现司机/维保类型，司机档案页不出现公司/维保类型）
+  const isCatEnabled = (name: string) => {
+    const sc = docScopeOf(name)
+    const cat = (categories.value[sc] || []).find((c: any) => c && c.name === name)
+    return !cat || cat.enabled !== false
+  }
   const put = (name: string) => {
     if (!name || !allowed.has(docScopeOf(name))) return
+    if (!isCatEnabled(name)) return
     set.set(name, { label: name, value: name })
   }
   ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
