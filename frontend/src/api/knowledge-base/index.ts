@@ -294,6 +294,21 @@ export function listKnowledgeFiles(
   return get(`/api/v1/knowledge-bases/${kbId}/knowledge?${qs}`);
 }
 
+/** 证照类型文件计数（轻量，不含文件行与 OCR 全文）。 */
+export interface FleetOverviewTypeCount {
+  doc_type: string;
+  count: number;
+}
+/** 证照档案首页概览统计：只返回计数，不返回大字段。 */
+export function getFleetOverviewStats(kbId: string) {
+  return get<{
+    total: number;
+    parse_failed: number;
+    extract_failed: number;
+    by_doc_type: FleetOverviewTypeCount[];
+  }>(`/api/v1/knowledge-bases/${kbId}/knowledge/fleet-overview-stats`);
+}
+
 /** One node of the knowledge base folder tree. */
 export interface KnowledgeFolderNode {
   /** Canonical folder path, e.g. "docs/spec". */

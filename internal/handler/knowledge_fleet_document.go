@@ -40,6 +40,25 @@ func fleetArchiveRecordType(scope string) string {
 	}
 }
 
+// resolveFleetScopeByDocType 按证照类型名称在分类配置中的实际归属返回其 scope
+// （vehicle/driver/maintain）；同名分类优先取 driver，未配置时返回空串，
+// 由调用方回退到请求 scope。用于纠正上传时默认传 vehicle 导致驾驶证等司机
+// 证照被误判落进车辆档案（vehicle-archive）的问题。
+func (h *KnowledgeHandler) resolveFleetScopeByDocType(ctx context.Context, tenantID int64, docType string) string {
+	docType = strings.TrimSpace(docType)
+	if docType == "" {
+		return ""
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND name = ? AND deleted_at IS NULL", tenantID, docType).
+		Order("CASE scope WHEN 'driver' THEN 1 WHEN 'maintain' THEN 2 ELSE 3 END").
+		First(&cat).Error; err != nil {
+		return ""
+	}
+	return cat.Scope
+}
+
 // ExtractFleetDocument godoc
 // @Summary      提取车队证照/维保文件字段
 // @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取证照字段，写入 fleet_records（record_type=*-archive）并同步档案分类（大项-小项）。幂等：同一知识重复调用会覆盖更新。
@@ -159,6 +178,11 @@ func (h *KnowledgeHandler) ExtractFleetDocument(c *gin.Context) {
 		return
 	}
 
+	// 以证照类型在分类配置中的真实归属纠正 scope：上传时可能默认传 vehicle，
+	// 若直接使用会把驾驶证等司机证照误判落进车辆档案（vehicle-archive）。
+	if st := h.resolveFleetScopeByDocType(effCtx, int64(effectiveTenantID), certType); st != "" {
+		scope = st
+	}
 	// 提取字段与 Prompt：优先使用用户可配置的提取规则（知识库×scope×证照类型），
 	// 无配置时回退到内置字段定义/分类小项 + 内置 Prompt 拼装。
 	fieldNames := h.fleetFieldNames(effCtx, int64(effectiveTenantID), scope, certType)
@@ -442,4 +466,64 @@ func truncateErr(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+
+// FleetOverviewStats 证照档案首页轻量统计：只返回按证照类型分组的文件数与
+// 状态计数，不返回文件行与 OCR 全文（description），避免首屏拉取全量大字段。
+func (h *KnowledgeHandler) FleetOverviewStats(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	var rows []struct {
+		ParseStatus string `gorm:"column:parse_status"`
+		MetaDocType string `gorm:"column:meta_doc_type"`
+		MetaExtract string `gorm:"column:meta_extract"`
+	}
+	if err := h.db.WithContext(effCtx).Model(&types.Knowledge{}).
+		Where("knowledge_base_id = ? AND deleted_at IS NULL", kbID).
+		Select("parse_status, custom_metadata->>'doc_type' AS meta_doc_type, custom_metadata->>'extract_status' AS meta_extract").
+		Find(&rows).Error; err != nil {
+		logger.Error(ctx, "Failed to load fleet overview stats", err)
+		c.Error(errors.NewInternalServerError("load overview stats failed"))
+		return
+	}
+	total := len(rows)
+	parseFailed, extractFailed := 0, 0
+	byType := map[string]int{}
+	for _, r := range rows {
+		if r.ParseStatus == "failed" {
+			parseFailed++
+		}
+		if r.MetaExtract == "failed" {
+			extractFailed++
+		}
+		if dt := strings.TrimSpace(r.MetaDocType); dt != "" {
+			byType[dt]++
+		}
+	}
+	type typeCount struct {
+		DocType string `json:"doc_type"`
+		Count   int    `json:"count"`
+	}
+	items := make([]typeCount, 0, len(byType))
+	for k, v := range byType {
+		items = append(items, typeCount{DocType: k, Count: v})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"total":          total,
+		"parse_failed":   parseFailed,
+		"extract_failed": extractFailed,
+		"by_doc_type":    items,
+	})
 }

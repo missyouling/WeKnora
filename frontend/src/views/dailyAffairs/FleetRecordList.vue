@@ -368,7 +368,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles,
+  listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
   listKnowledgeTags, updateKnowledgeTagBatch,
 } from '@/api/knowledge-base'
@@ -870,30 +870,53 @@ const extractTagTheme = (r: any) => (r.extract_status === 'success' ? 'success' 
 
 // 无筛选时的统计概览卡片：文件级生命周期聚合 + 各证照类型快捷入口
 const historyFilter = ref<"all" | "parse_failed" | "extract_failed">("all")
+// 轻量概览统计（首页只拉计数，不拉全量文件+OCR全文）
+const overviewStats = ref<any>(null)
 const overviewCards = computed(() => {
+  const st = overviewStats.value
+  if (st) {
+    const cards: any[] = [
+      { key: "total", label: "已上传文件", num: st.total || 0, icon: "file", cls: "", action: "history-all" },
+      { key: "parseFailed", label: "解析失败", num: st.parse_failed || 0, icon: "close-circle", cls: "", action: "history-parse_failed" },
+      { key: "extractFailed", label: "提取失败", num: st.extract_failed || 0, icon: "close-circle", cls: "", action: "history-extract_failed" },
+    ]
+    ;(st.by_doc_type || []).forEach((t: any) => {
+      const name = t.doc_type
+      const def = (BUILTIN_CERTS as any)[name]
+      cards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || docScopeOf(name) })
+    })
+    return cards
+  }
   const all = fileRows.value || []
   const cards: any[] = [
     { key: "total", label: "已上传文件", num: all.length, icon: "file", cls: "", action: "history-all" },
     { key: "parseFailed", label: "解析失败", num: all.filter((r: any) => r.parse_status === "failed").length, icon: "close-circle", cls: "", action: "history-parse_failed" },
     { key: "extractFailed", label: "提取失败", num: all.filter((r: any) => (r.extract_status || "") === "failed").length, icon: "close-circle", cls: "", action: "history-extract_failed" },
   ]
-  // 各证照类型卡片（按文件数聚合），点击直接跳列表
   const byType = new Map<string, number>()
   all.forEach((r: any) => { if (r.doc_type) byType.set(r.doc_type, (byType.get(r.doc_type) || 0) + 1) })
   byType.forEach((num, name) => {
     const def = (BUILTIN_CERTS as any)[name]
-    cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || 'vehicle' })
+    cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || docScopeOf(name) })
   })
   return cards
 })
 const overviewStatusCards = computed(() => overviewCards.value.filter((c: any) => !String(c.key).startsWith('type-')))
 const overviewVehicleTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'vehicle'))
 const overviewDriverTypeCards = computed(() => overviewCards.value.filter((c: any) => String(c.key).startsWith('type-') && c.scope === 'driver'))
-function onOverviewCardClick(card: any) {
-  if (card.action === "history-all") { historyFilter.value = "all"; historyVisible.value = true }
-  else if (card.action === "history-parse_failed") { historyFilter.value = "parse_failed"; historyVisible.value = true }
-  else if (card.action === "history-extract_failed") { historyFilter.value = "extract_failed"; historyVisible.value = true }
-  else if (card.action === "type") { filters.docType = card.value; activeDocScope.value = card.scope || "vehicle"; historyVisible.value = false; initColumns(); loadRecords() }
+async function onOverviewCardClick(card: any) {
+  if (card.action === "history-all" || card.action === "history-parse_failed" || card.action === "history-extract_failed") {
+    // 历史抽屉需要全量文件列表（含状态），此时才拉取；首页概览态不预取
+    await ensureFileRows(true)
+    historyFilter.value = card.action === "history-all" ? "all" : card.action === "history-parse_failed" ? "parse_failed" : "extract_failed"
+    historyVisible.value = true
+  } else if (card.action === "type") {
+    filters.docType = card.value
+    activeDocScope.value = card.scope || "vehicle"
+    historyVisible.value = false
+    initColumns()
+    loadRecords()
+  }
 }
 
 // 司机证照(driver)与公司证照(vehicle)同页管理：按当前选中证照的真实 scope 决定查询 record_type，
@@ -959,6 +982,42 @@ async function reloadCategories() {
 // 设置抽屉（证照配置/提取规则）变更分类后同步刷新
 function onCategoriesChanged() { void reloadCategories() }
 
+// 拉取/刷新全量文件列表（含 OCR 字段）。仅在选中具体证照类型或打开历史记录抽屉时调用，
+// 首页概览态用轻量统计接口，避免首屏拉取全量大字段。
+async function ensureFileRows(force = false) {
+  if (!kbId.value) return
+  if (!force && fileRows.value.length) return
+  const fres: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
+  let arr = Array.isArray(fres?.data) ? fres.data : Array.isArray(fres?.list) ? fres.list : []
+  rawFileRows.value = arr
+  fileRows.value = arr
+    .filter((it: any) => {
+      const meta2 = it.custom_metadata || {}
+      return !meta2.fleet_history_hidden
+    })
+    .map((it: any) => {
+      const meta2 = it.custom_metadata || {}
+      return {
+        __file: true,
+        id: it.id,
+        meta: meta2,
+        title: it.title || '',
+        alias: it.title || it.file_name || it.name || '',
+        file_name: it.file_name || it.name || it.title || '',
+        file_type: it.file_type || '',
+        upload_status: 'completed',
+        upload_error: it.error_message || '',
+        tags: Array.isArray(it.tags) ? it.tags : [],
+        parse_status: it.parse_status || '',
+        parse_fail_reason: it.parse_fail_reason || it.reason || (it.parse_status === 'failed' ? '解析失败' : ''),
+        created_at: it.created_at || '',
+        doc_type: meta2.fleet_cert_type || meta2.doc_type || '',
+        extract_status: meta2.extract_status || '',
+        extract_error: meta2.extract_error || '',
+      }
+    })
+}
+
 async function loadRecords() {
   loading.value = true
   try {
@@ -967,44 +1026,15 @@ async function loadRecords() {
       const res = await getFleetSummary({ month: filters.month, vehicle_id: filters.vehicle_id || undefined })
       rows.value = res.data || []
     } else if (isArchive.value) {
-      // 证照型：始终刷新文件列表（供“全部证照类型”视图与证照类型选项）；筛选类型时再加载对应记录
+      // 证照型：首页概览只拉轻量计数（不拉全量文件+OCR全文）；选中具体证照或打开历史抽屉时才拉文件列表
       rows.value = []
       if (kbId.value) {
-        const fres: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-        let arr = Array.isArray(fres?.data) ? fres.data : Array.isArray(fres?.list) ? fres.list : []
-        rawFileRows.value = arr
-        const scope = group.value.scope
-        fileRows.value = arr
-          .filter((it: any) => {
-            const meta2 = it.custom_metadata || {}
-            // 该 kb 下所有文件都属于当前 scope，仅排除历史抽屉中已隐藏的条目
-            return !meta2.fleet_history_hidden
-          })
-          .map((it: any) => {
-            const meta2 = it.custom_metadata || {}
-            return {
-              __file: true,
-              id: it.id,
-              meta: meta2,
-              title: it.title || '',
-              // 别名 = 标题（可改）；源文件 = 上传时的原始文件名（不可改）
-              alias: it.title || it.file_name || it.name || '',
-              file_name: it.file_name || it.name || it.title || '',
-              file_type: it.file_type || '',
-              upload_status: 'completed',
-              upload_error: it.error_message || '',
-              tags: Array.isArray(it.tags) ? it.tags : [],
-              parse_status: it.parse_status || '',
-              parse_fail_reason: it.parse_fail_reason || it.reason || (it.parse_status === 'failed' ? '解析失败' : ''),
-              created_at: it.created_at || '',
-              // 用户手动选择的类型（fleet_cert_type）优先，模型自动判定仅作兜底
-              doc_type: meta2.fleet_cert_type || meta2.doc_type || '',
-              extract_status: meta2.extract_status || '',
-              extract_error: meta2.extract_error || '',
-            }
-          })
+        getFleetOverviewStats(kbId.value)
+          .then((res: any) => { overviewStats.value = res?.data || res || null })
+          .catch(() => {})
       }
       if (filters.docType) {
+        await ensureFileRows()
         const res = await listFleetRecords({
           type: activeRecordType.value,
           doc_type: filters.docType,
@@ -1950,7 +1980,7 @@ function onDrawerResizeEnd() {
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
+  border-radius: var(--td-radius-large);
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
@@ -2299,7 +2329,7 @@ function onDrawerResizeEnd() {
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
 }
 .overview-group__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
-.archive-overview--panel { flex: 1; align-content: flex-start; background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 20px; }
+.archive-overview--panel { flex: 1; align-content: flex-start; background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); padding: 20px; }
 .overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
 .overview-subgroup + .overview-subgroup { margin-top: 8px; }
 /* 状态卡片:紧凑横向,图标圆形背景 */
