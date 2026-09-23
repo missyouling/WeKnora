@@ -72,11 +72,11 @@
                 <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
               <div class="field-config-list">
-                <div class="field-config-head">
+                <div class="field-colhead">
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
-                  <span class="fc-h-switch">默认</span>
-                  <span class="fc-h-switch">显示</span>
+                  <span class="fc-h-switch">启用表头</span>
+                  <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
                 </div>
                 <div v-for="(fd, i) in fieldsEditable" :key="fd.name" class="field-config-row"
@@ -856,9 +856,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     gap: 6px;
   }
 
-  .field-config-head {
+  .field-colhead {
     display: grid;
-    grid-template-columns: 20px 1fr 72px 72px 48px;
+    grid-template-columns: 20px minmax(0, 1fr) 76px 76px 48px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
@@ -870,7 +870,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px 1fr 72px 72px 48px;
+    grid-template-columns: 20px minmax(0, 1fr) 76px 76px 48px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
@@ -896,6 +896,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     .field-config-row > *:nth-child(3),
   .field-config-row > *:nth-child(4),
   .field-config-row > *:nth-child(5) { justify-self: center; }
+  .field-config-row .t-switch { width: auto !important; }
 
   .fc-used {
       display: inline-flex;

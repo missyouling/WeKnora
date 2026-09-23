@@ -378,7 +378,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
@@ -1025,6 +1025,8 @@ async function reloadCategories() {
       listFleetCategories({ scope: 'maintain' }),
     ])
     categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
+    // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
+    nextTick(() => { try { resetColumns() } catch { /* ignore */ } })
   } catch { /* ignore */ }
 }
 // 设置抽屉（证照配置/提取规则）变更分类后同步刷新
