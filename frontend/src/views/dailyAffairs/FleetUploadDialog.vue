@@ -67,7 +67,7 @@ const props = defineProps<{
   visible: boolean
   kbId: string
   scope: string
-  typeOptions?: { label: string; value: string }[]
+  typeOptions?: any[]
   defaultType?: string
 }>()
 const emit = defineEmits<{
@@ -103,6 +103,16 @@ let taskSeq = 0
 // 证照类型选项必须响应式：父组件 uploadTypeOptions 随分类加载/设置变更更新，
 // 若用一次性求值会冻结为初始快照（分类尚未加载时只有内置类型，自定义类型缺失）
 const typeOptions = computed(() => (props.typeOptions && props.typeOptions.length ? props.typeOptions : []))
+
+// 复合值 scope__name 解析：公司/司机同名类型在下拉中不冲突，上传与提取按真实 scope 走
+const currentScope = computed(() => {
+  const head = (selectedType.value || '').split('__', 1)[0]
+  return head && head !== selectedType.value ? head : props.scope
+})
+const certTypeName = computed(() => {
+  const parts = (selectedType.value || '').split('__')
+  return parts.length > 1 ? parts.slice(1).join('__') : selectedType.value
+})
 
 // ---- 实时进度上报：任务状态/进度变化时把进行中的任务推给父组件工具栏 ----
 function emitProgress() {
@@ -213,8 +223,8 @@ function startQueued() {
 }
 
 async function runTask(t: UpTask) {
-  const scope = props.scope
-  const certType = selectedType.value
+  const scope = currentScope.value
+  const certType = certTypeName.value
   try {
     t.status = 'uploading'
     t.progress = 0
@@ -313,7 +323,7 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
 // 打开时：若未手动选择，默认继承父组件当前筛选的证照类型（防止漏选导致模型误判类型）
 watch(() => props.visible, (v) => {
   if (v && !selectedType.value && props.defaultType) {
-    selectedType.value = props.defaultType
+    selectedType.value = props.defaultType.includes('__') ? props.defaultType : ('vehicle__' + props.defaultType)
   }
 })
 

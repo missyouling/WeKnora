@@ -1578,14 +1578,25 @@ function stopProgressTimer() {
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
 }
 
-// 上传弹窗证照类型选项（当前档案组内置类型 + 已入库分类）
+// 上传弹窗证照类型选项：公司证照(vehicle)+司机证照(driver)分组展示，
+// value 用复合值 scope__name，上传/提取按所选类型真实 scope 走。
 const uploadTypeOptions = computed(() => {
   if (!isArchive.value) return []
-  const scope = group.value.scope
-  const set = new Map<string, { label: string; value: string }>()
-  Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => set.set(b.name, { label: b.name, value: b.name }))
-  ;(categories.value[scope] || []).filter((c: any) => c.enabled).forEach((c: any) => set.set(c.name, { label: c.name, value: c.name }))
-  return [...set.values()]
+  const groups = [
+    { scope: 'vehicle', title: '公司证照' },
+    { scope: 'driver', title: '司机证照' },
+  ]
+  return groups.map(({ scope, title }) => {
+    const names: string[] = []
+    const seen = new Set<string>()
+    Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => {
+      if (!seen.has(b.name)) { seen.add(b.name); names.push(b.name) }
+    })
+    ;(categories.value[scope] || []).filter((c: any) => c.enabled).forEach((c: any) => {
+      if (c && c.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name) }
+    })
+    return { label: title, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }
+  }).filter((g) => (g.children || []).length > 0)
 })
 
 function onUploadDone() {

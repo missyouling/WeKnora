@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -188,6 +190,151 @@ func tryParseFleetDocJSON(raw string, parsed *FleetDocumentExtractionResult) boo
 	return true
 }
 
+// ---- 提取后统一清洗层（所有证照类型通用）----
+// 1) 有效期字段 → 状态字段自动计算（90 天预警窗口），不依赖模型自报状态；
+// 2) 驾驶证号按 18 位身份证号校验，不符则状态置「待复核」走人工复核；
+// 3) 副页「记录」类字段按换行拆成数组，便于追溯。
+
+var (
+	reFleetStatusKey = regexp.MustCompile(`状态`)
+	reFleetIDNoKey   = regexp.MustCompile(`驾驶证号|身份证号`)
+	reFleetIDFormat  = regexp.MustCompile(`^\d{17}[\dXx]$`)
+	reFleetRecordKey = regexp.MustCompile(`记录`)
+)
+
+// isFleetExpiryKey 判断是否为「有效期截止」类字段（用于状态自动计算）。
+// 排除「有效期起」「上次审验日期」等非截止日期字段。
+func isFleetExpiryKey(k string) bool {
+	if strings.Contains(k, "起") || strings.Contains(k, "上次") || strings.Contains(k, "开始") {
+		return false
+	}
+	return strings.Contains(k, "有效期") ||
+		strings.Contains(k, "审验有效期") ||
+		strings.Contains(k, "下次审验") ||
+		strings.Contains(k, "到期") ||
+		strings.Contains(k, "届满") ||
+		strings.Contains(k, "终保")
+}
+
+// parseFleetDate 兼容 YYYY-MM-DD / YYYY/MM/DD / YYYY年MM月DD日。
+func parseFleetDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if len(s) < 8 {
+		return time.Time{}, false
+	}
+	s = strings.ReplaceAll(s, "年", "-")
+	s = strings.ReplaceAll(s, "月", "-")
+	s = strings.ReplaceAll(s, "日", "")
+	s = strings.ReplaceAll(s, "/", "-")
+	// 取前 10 字符做日期解析
+	cand := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == 'T' })[0]
+	for _, layout := range []string{"2006-01-02", "2006-1-2", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, cand); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func sanitizeFleetFields(scope, certType string, fields map[string]any) map[string]any {
+	if len(fields) == 0 {
+		return fields
+	}
+	// 1) 有效期 → 状态自动计算（90 天窗口）
+	var expiry time.Time
+	hasExpiry := false
+	for k, v := range fields {
+		if !isFleetExpiryKey(k) {
+			continue
+		}
+		vs := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(formatFleetValue(v)), "\""), "\""))
+		if vs == "" || vs == "-" || vs == "无" {
+			continue
+		}
+		if t, ok := parseFleetDate(vs); ok {
+			expiry, hasExpiry = t, true
+		}
+	}
+	if hasExpiry {
+		now := time.Now()
+		soon := now.AddDate(0, 0, 90)
+		statusText := "已过期"
+		if expiry.After(now) {
+			if expiry.Before(soon) {
+				statusText = "即将到期"
+			} else {
+				statusText = "有效"
+			}
+		}
+		for k := range fields {
+			if reFleetStatusKey.MatchString(k) {
+				fields[k] = statusText
+			}
+		}
+	}
+
+	// 2) 驾驶证号 18 位身份证校验 → 待复核
+	for k, v := range fields {
+		if !reFleetIDNoKey.MatchString(k) {
+			continue
+		}
+		vs := strings.TrimSpace(formatFleetValue(v))
+		if vs == "" {
+			continue
+		}
+		if !reFleetIDFormat.MatchString(vs) {
+			for kk := range fields {
+				if reFleetStatusKey.MatchString(kk) {
+					fields[kk] = "待复核"
+				}
+			}
+			logger.Warnf(context.Background(), "fleet doc id-no format invalid: scope=%s cert=%s id=%s", scope, certType, k)
+		}
+	}
+
+	// 3) 记录字段按换行拆数组
+	for k, v := range fields {
+		if !reFleetRecordKey.MatchString(k) {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok || !strings.Contains(s, "\n") {
+			continue
+		}
+		parts := strings.Split(s, "\n")
+		cleaned := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cleaned = append(cleaned, p)
+			}
+		}
+		if len(cleaned) > 0 {
+			fields[k] = cleaned
+		}
+	}
+	return fields
+}
+
+func formatFleetValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case nil:
+		return ""
+	default:
+		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(jsonFleetValue(v)), "\""), "\""))
+	}
+}
+
+func jsonFleetValue(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // ExtractFleetDocumentFromContent calls the configured chat model and parses
 // its strict-JSON reply. 与电费/光伏提取一致的"流式优先、多次重试"策略。
 // certType 非空时固定输出该证照类型；fieldNames 非空时按字段清单提取；
@@ -248,6 +395,8 @@ func ExtractFleetDocumentFromContent(ctx context.Context, model chat.Chat, conte
 		}
 		var parsed FleetDocumentExtractionResult
 		if tryParseFleetDocJSON(raw, &parsed) {
+			// 统一清洗：有效期→状态自动计算、驾驶证号校验、记录拆数组
+			parsed.Fields = sanitizeFleetFields(scope, certType, parsed.Fields)
 			return &parsed, nil
 		}
 		lastErr = errParseLLMOutput

@@ -52,8 +52,7 @@ import FleetSettingsDrawer from './FleetSettingsDrawer.vue'
 const settingsVisible = ref(false)
 
 const sideItems = [
-  { key: 'vehicle-archive', label: '车辆档案', icon: 'view-module' },
-  { key: 'driver-archive', label: '司机档案', icon: 'user' },
+  { key: 'vehicle-archive', label: '证照档案', icon: 'view-module' },
   { key: 'maintain-archive', label: '维保管理', icon: 'tools' },
   { key: 'tire', label: '轮胎管理', icon: 'circle' },
   { key: 'inspection', label: '年检管理', icon: 'check-rectangle' },
