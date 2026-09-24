@@ -1,7 +1,7 @@
 <template>
   <div class="extract-rule-panel">
     <div class="extract-toolbar">
-      <t-select v-model="certType" class="cert-type-select" :options="certTypeOptions" placeholder="选择证照类型" @change="onCertTypeChange" />
+      <t-select v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
       <div class="spacer" />
       <t-switch v-model="advancedEnabled" size="small">
         <template #label>高级模式</template>
@@ -87,7 +87,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/api/fleet'
-import { listFleetCategories } from '@/api/fleet'
+import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
@@ -263,13 +263,29 @@ const slots = ['{{fields_schema}}', '{{document_text}}']
 
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
 
+// 分组别名：与设置抽屉 FleetCertPanel 同 key（`${scope}:${builtinGroupKey}`），builtin group_key = company/driver/maintain
+const BUILTIN_GROUP_KEY: Record<string, string> = { vehicle: 'company', driver: 'driver', maintain: 'maintain' }
+const groupAliases = ref<Record<string, string>>({})
+async function loadGroupAliases() {
+  try {
+    const res: any = await listFleetGroupAliases()
+    const arr = res?.data || res || []
+    const m: Record<string, string> = {}
+    for (const it of arr) m[`${it.scope}:${it.group_key}`] = it.name
+    groupAliases.value = m
+  } catch { groupAliases.value = {} }
+}
+
 // 车辆档案统一管理「公司证照(vehicle)」与「司机证照(driver)」两组类型；
 // 下拉按组展示，每个类型携带其真实 scope，读写规则均按真实 scope 走。
 const TYPE_GROUP_META = [
-  { scope: 'vehicle', title: '公司证照' },
-  { scope: 'driver', title: '司机证照' },
-  { scope: 'maintain', title: '维保文件' },
+  { scope: 'vehicle', fallback: '公司证照' },
+  { scope: 'driver', fallback: '司机证照' },
+  { scope: 'maintain', fallback: '维保文件' },
 ] as const
+function groupTitle(scope: string, fallback: string): string {
+  return groupAliases.value[`${scope}:${BUILTIN_GROUP_KEY[scope] || scope}`] || fallback
+}
 
 // v-model 存复合值 `${scope}__${name}`，避免公司/司机同名类型在下拉中冲突
 function typeComposite(scope: string, name: string) {
@@ -279,7 +295,8 @@ function typeComposite(scope: string, name: string) {
 const certTypeOptions = computed(() => {
   return TYPE_GROUP_META
     .filter((g) => g.scope === props.scope)
-    .map(({ scope, title }) => {
+    .map(({ scope, fallback }) => {
+    const title = groupTitle(scope, fallback)
     const names: string[] = []
     const seen = new Set<string>()
     // 顺序：按 builtinOrder（内置定义顺序）遍历 categories 匹配项，
@@ -485,7 +502,10 @@ function openTest() {
 async function refresh() {
   try {
     const scopes = ['vehicle', 'driver', 'maintain']
-    const results = await Promise.all(scopes.map((s) => listFleetCategories({ scope: s })))
+    const [results] = await Promise.all([
+      Promise.all(scopes.map((s) => listFleetCategories({ scope: s }))),
+      loadGroupAliases(),
+    ])
     scopes.forEach((s, i) => {
       const r: any = results[i]
       categories.value[s] = Array.isArray(r) ? r : r?.data || []

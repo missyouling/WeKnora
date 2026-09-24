@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="utility-meter-tab">
     <!-- 解析状态提示（证照型）：优先展示上传任务的实时进度（多文件轮播），无活动任务时回退列表轮询兜底 -->
     <div v-if="uploadProgress.length || pendingFiles.length" class="archive-pending-bar">
@@ -1123,7 +1123,7 @@ async function reloadCategories() {
       const am: Record<string,string> = {}
       for (const it of arr) am[it.scope + ':' + it.group_key] = it.name
       if (am['vehicle:company']) groupNames.value.vehicle = am['vehicle:company']
-      console.log('ALIAS', JSON.stringify(am)); if (am['driver:driver']) groupNames.value.driver = am['driver:driver']
+      if (am['driver:driver']) groupNames.value.driver = am['driver:driver']
       if (am['maintain:maintain']) groupNames.value.maintain = am['maintain:maintain']
     } catch { /* ignore */ }
     // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
@@ -1919,7 +1919,7 @@ const uploadTypeOptions = computed(() => {
   if (!isArchive.value) return []
   const scope = group.value?.scope
   if (!scope) return []
-  const titleMap: Record<string, string> = { vehicle: '公司证照', driver: '司机证照', maintain: '维保记录' }
+  const titleMap: Record<string, string> = { vehicle: groupNames.value.vehicle, driver: groupNames.value.driver, maintain: groupNames.value.maintain }
   const names: string[] = []
   const seen = new Set<string>()
   Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => {

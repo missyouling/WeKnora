@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="meter-settings-body" v-if="ready">
     <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
     <div class="group-headers">
@@ -507,7 +507,7 @@ const addLabel = computed(() => `新增${group.value.label}`)
 defineExpose({ startAdd, addLabel })
 async function commitAdd() {
   const name = addForm.name.trim()
-  if (!name) { MessagePlugin.warning('请输入证照名称'); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : '请输入证照名称'); return }
   if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning('该证照类型已存在'); return }
   saving.value = true
   try {
@@ -570,7 +570,7 @@ async function commitEdit() {
   const item = groupItems.value.find((it: any) => it.id === editingId.value)
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
-  if (!name) { MessagePlugin.warning('请输入证照名称'); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : '请输入证照名称'); return }
   const subs = fieldsEditable.value
     .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text' }))
     .filter((f) => f.name)
