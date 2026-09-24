@@ -61,9 +61,9 @@
           <template #icon><t-icon name="upload" size="14px" /></template>
           上传{{ group.fileLabel }}
         </t-button>
-        <t-button v-if="isArchive && group.scope === 'maintain'" theme="default" variant="outline" size="small" @click="openDrawer(null)">
+        <t-button v-if="isArchive && group.scope === 'maintain'" theme="primary" size="small" @click="openDrawer(null)">
           <template #icon><t-icon name="add" size="14px" /></template>
-          手动新增
+          手工录入
         </t-button>
         <t-button v-if="isBilling && !isArchive" theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handlePrint">
           <template #icon><t-icon name="print" size="14px" /></template>
@@ -319,6 +319,27 @@
                   <t-input v-else v-model="form.data[key]" placeholder="可修改" />
                 </div>
               </template>
+              <div v-if="!form.id" class="rec-field rec-field--wide">
+                <label>附件（可选，可点击选择，或直接在本区域 Ctrl+V 粘贴截图）</label>
+                <div class="attach-drop" :class="{ 'attach-drop--busy': attachUploading }" @click="pickAttach"
+                  @paste="onAttachPaste" tabindex="0">
+                  <input ref="attachInputRef" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp" hidden @change="onAttachChange" />
+                  <template v-if="attachUploading">
+                    <t-loading size="small" text="上传中..." />
+                  </template>
+                  <template v-else-if="form.doc_knowledge_id">
+                    <t-icon name="file" size="18px" class="attach-icon" />
+                    <span class="attach-name" :title="form.source_name || form.file_name">{{ form.source_name || form.file_name || '已上传附件' }}</span>
+                    <t-button variant="text" size="small" @click.stop="clearAttach">
+                      <template #icon><t-icon name="close" size="14px" /></template>
+                    </t-button>
+                  </template>
+                  <template v-else>
+                    <t-icon name="upload" size="20px" class="attach-icon" />
+                    <span class="attach-hint">点击选择文件 / Ctrl+V 粘贴图片</span>
+                  </template>
+                </div>
+              </div>
               <div class="rec-field rec-field--wide">
                 <label>源文件预览</label>
                 <DocumentPreview v-if="form.doc_knowledge_id" :knowledge-id="form.doc_knowledge_id"
@@ -397,7 +418,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
-  listKnowledgeTags, updateKnowledgeTagBatch,
+  listKnowledgeTags, updateKnowledgeTagBatch, uploadKnowledgeFile,
 } from '@/api/knowledge-base'
 import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary } from '@/api/fleet'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
@@ -434,7 +455,7 @@ const ARCHIVE_GROUPS: Record<string, { key: string; label: string; fileLabel: st
     { key: 'driver', label: '司机证照', fileLabel: '证照', scope: 'driver', recordType: 'driver-archive' },
   ],
   'maintain-archive': [
-    { key: 'maintain', label: '维保文件', fileLabel: '记录', scope: 'maintain', recordType: 'maintain-archive' },
+    { key: 'maintain', label: '维保文件', fileLabel: '清单', scope: 'maintain', recordType: 'maintain-archive' },
   ],
 }
 const archiveGroups = computed(() => ARCHIVE_GROUPS[props.recordType] || [])
@@ -1343,6 +1364,47 @@ const drawerVisible = ref(false)
 const saving = ref(false)
 const editMode = ref<'file' | 'record' | ''>('')
 const form = reactive<any>({})
+
+// ---- 手工录入：附件上传（选择 + 粘贴），仅作留底凭证，不触发提取 ----
+const attachUploading = ref(false)
+const attachInputRef = ref<HTMLInputElement | null>(null)
+function pickAttach() { attachInputRef.value?.click() }
+function onAttachChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files ? Array.from(input.files) : []
+  input.value = ''
+  if (files.length) uploadAttachFile(files[0])
+}
+function onAttachPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items ? Array.from(e.clipboardData.items) : []
+  const img = items.find((it) => it.type.startsWith('image/'))
+  if (!img) return
+  e.preventDefault()
+  const blob = img.getAsFile()
+  if (!blob) return
+  const file = new File([blob], `粘贴截图_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`, { type: blob.type })
+  uploadAttachFile(file)
+}
+async function uploadAttachFile(file: File) {
+  if (!kbId.value) { MessagePlugin.warning('知识库尚未就绪'); return }
+  attachUploading.value = true
+  try {
+    const res: any = await uploadKnowledgeFile(kbId.value, { file })
+    const knowledge = res?.data || res
+    const kid = knowledge?.id || knowledge?.knowledge_id
+    if (!kid) throw new Error('上传响应缺少文件标识')
+    form.doc_knowledge_id = kid
+    form.source_name = file.name
+    form.file_name = file.name
+    form.file_type = (file.name.split('.').pop() || '').toUpperCase()
+    MessagePlugin.success('附件已上传')
+  } catch (err: any) {
+    MessagePlugin.error(err?.message || '附件上传失败')
+  } finally { attachUploading.value = false }
+}
+function clearAttach() {
+  form.doc_knowledge_id = ''; form.source_name = ''; form.file_name = ''; form.file_type = ''
+}
 const drawerTitle = computed(() => {
   if (isArchive.value) {
     if (editMode.value === 'file') return '编辑证照'
@@ -2208,10 +2270,10 @@ function onDrawerResizeEnd() {
   padding: 4px 0 24px;
 }
 
-/* 新增/编辑记录：两列紧凑布局 */
+/* 新增/编辑记录：响应式栅格，宽屏多列、窄屏收成单列 */
 .rec-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px 20px;
 }
 .rec-field {
@@ -2238,6 +2300,32 @@ function onDrawerResizeEnd() {
 }
 .rec-field--wide {
   grid-column: 1 / -1;
+}
+.attach-drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px dashed var(--td-component-border);
+  border-radius: var(--td-radius-medium);
+  background: var(--td-bg-color-secondarycontainer);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  outline: none;
+
+  &:hover, &:focus, &--busy {
+    border-color: var(--td-brand-color);
+    background: var(--td-brand-color-light);
+  }
+
+  .attach-icon { flex: none; color: var(--td-brand-color); }
+  .attach-name {
+    flex: 1; min-width: 0;
+    font-size: 13px; color: var(--td-text-color-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .attach-hint { font-size: 12px; color: var(--td-text-color-placeholder); }
 }
 /* 证件状态下拉面板：最小宽度与输入框对齐，避免菜单项溢出选择框 */
 :global(.cert-status-pop) {
