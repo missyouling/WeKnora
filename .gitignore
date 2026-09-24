@@ -82,3 +82,5 @@ _ref.png
 server.exe.bak-*
 AGENTS.md
 
+# AOCI 认知资产必须被 git 跟踪（aoci scan 按 git 忽略权威取文件）
+!AGENTS.md
