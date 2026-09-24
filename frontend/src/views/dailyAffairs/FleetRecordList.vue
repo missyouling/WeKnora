@@ -1399,7 +1399,25 @@ async function uploadAttachFile(file: File) {
     form.file_type = (file.name.split('.').pop() || '').toUpperCase()
     MessagePlugin.success('附件已上传')
   } catch (err: any) {
-    MessagePlugin.error(err?.message || '附件上传失败')
+    const msg = err?.message || ''
+    if (msg.includes('already exists') || msg.includes('文件重复') || msg.includes('409')) {
+      try {
+        const fl: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 200 })
+        const arr = Array.isArray(fl?.data) ? fl.data : Array.isArray(fl?.list) ? fl.list : []
+        const hit = arr.find((k: any) => k.name === file.name || k.file_name === file.name)
+        if (hit?.id) {
+          form.doc_knowledge_id = hit.id
+          form.source_name = file.name
+          form.file_name = file.name
+          form.file_type = (file.name.split('.').pop() || '').toUpperCase()
+          MessagePlugin.success('附件已关联已有文件')
+        } else {
+          MessagePlugin.warning('文件已存在，但未找到原文件，请换名重试')
+        }
+      } catch { MessagePlugin.error('文件已存在，请换名重试') }
+    } else {
+      MessagePlugin.error(msg || '附件上传失败')
+    }
   } finally { attachUploading.value = false }
 }
 function clearAttach() {
