@@ -996,6 +996,14 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := fleetTenantID(c)
 	id := secutils.SanitizeForLog(c.Param("id"))
+	// 内置分类（builtin_key 非空）禁止删除
+	var builtinCheck types.FleetCategory
+	if err := h.db.WithContext(ctx).Select("builtin_key").
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+		First(&builtinCheck).Error; err == nil && builtinCheck.BuiltinKey != "" {
+		c.Error(errors.NewBadRequestError("内置分类不可删除"))
+		return
+	}
 	res := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 		Update("deleted_at", timeNowUTC())

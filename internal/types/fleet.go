@@ -134,6 +134,7 @@ type FleetCategory struct {
 	TenantID  int64              `gorm:"index" json:"tenant_id"`
 	Scope     string             `gorm:"index" json:"scope"`
 	GroupID   string             `gorm:"index" json:"group_id"` // 自定义证照分组 id（fleet_cert_groups.id）；内置分组为空
+	BuiltinKey string            `gorm:"index" json:"builtin_key"` // 内置分类锚点（原始名）；非空=内置分类，可改名不可删除
 	Name      string             `json:"name"`                  // 大项：如“行驶证”“驾驶证”
 	Subs      []FleetCategorySub `gorm:"type:jsonb;serializer:json" json:"subs"`
 	SortOrder int                `json:"sort_order"`

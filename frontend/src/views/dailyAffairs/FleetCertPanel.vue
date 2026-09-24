@@ -321,7 +321,7 @@ function buildItems(g0: any): any[] {
   // 内置证照类型只出现在内置分组（groupId 为空）
   if (!gid) {
     ;(BUILTIN[scope] || []).forEach((b) => {
-      const found = list.find((c: any) => c.name === b.name)
+      const found = list.find((c: any) => c.builtin_key === b.name || c.name === b.name)
       if (found) {
         merged.push({ ...found, builtin: true, fields: (Array.isArray(found.subs) && found.subs.length) ? found.subs.length : certFieldCount(b) })
       } else {
@@ -577,8 +577,9 @@ async function commitEdit() {
   saving.value = true
   try {
     if (item.builtin && item.id.startsWith('builtin-')) {
-      // 内置类型尚未入库：字段配置后自动入库
-      const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs })
+      // 内置类型尚未入库：字段配置后自动入库，带 builtin_key 锚点（改名后仍识别为内置）
+      const builtinKey = item.id.slice('builtin-'.length)
+      const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', builtin_key: builtinKey, name, subs })
       const created = res.data || res
       if (created?.id) {
         categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
@@ -607,7 +608,8 @@ async function toggleEnabled(item: any, v: boolean) {
     // 内置未入库：启用即入库
     if (v) {
       try {
-        const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name: item.name, subs: [] })
+        const builtinKey = String(item.id).slice('builtin-'.length)
+      const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', builtin_key: builtinKey, name: item.name, subs: [] })
         const created = res.data || res
         if (created?.id) {
           categories.value[group.value.scope] = [...(categories.value[group.value.scope] || []), created]
