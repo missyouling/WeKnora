@@ -101,7 +101,7 @@
       </div>
       <div v-if="(currentScopes.has('vehicle') && overviewVehicleTypeCards.length) || (currentScopes.has('driver') && overviewDriverTypeCards.length) || (currentScopes.has('maintain') && overviewMaintainTypeCards.length)" class="overview-group">
         <div v-if="currentScopes.has('vehicle') && overviewVehicleTypeCards.length" class="overview-subgroup">
-          <div class="overview-group__title">公司证照</div>
+          <div class="overview-group__title">{{ groupNames.vehicle }}</div>
           <div class="overview-group__cards overview-group__cards--type">
             <div v-for="card in overviewVehicleTypeCards" :key="card.key" class="type-card"
               @click="onOverviewCardClick(card)">
@@ -114,7 +114,7 @@
           </div>
         </div>
         <div v-if="currentScopes.has('driver') && overviewDriverTypeCards.length" class="overview-subgroup">
-          <div class="overview-group__title">司机证照</div>
+          <div class="overview-group__title">{{ groupNames.driver }}</div>
           <div class="overview-group__cards overview-group__cards--type">
             <div v-for="card in overviewDriverTypeCards" :key="card.key" class="type-card"
               @click="onOverviewCardClick(card)">
@@ -127,7 +127,7 @@
           </div>
         </div>
         <div v-if="currentScopes.has('maintain') && overviewMaintainTypeCards.length" class="overview-subgroup">
-          <div class="overview-group__title">维保文件</div>
+          <div class="overview-group__title">{{ groupNames.maintain }}</div>
           <div class="overview-group__cards overview-group__cards--type">
             <div v-for="card in overviewMaintainTypeCards" :key="card.key" class="type-card"
               @click="onOverviewCardClick(card)">
@@ -900,6 +900,7 @@ const vehicles = ref<any[]>([])
 const drivers = ref<any[]>([])
 const cards = ref<any[]>([])
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
+const groupNames = ref<Record<string,string>>({ vehicle: '公司证照', driver: '司机证照', maintain: '维保文件' })
 const rows = ref<any[]>([])
 const fileRows = ref<any[]>([])
 // 原始文件列表（未映射）缓存：供 loadPending 复用，避免启动时与 loadRecords 重复请求
@@ -1097,6 +1098,21 @@ async function reloadCategories() {
       listFleetCategories({ scope: 'maintain' }),
     ])
     categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
+    // 加载分组名（与设置页 tab 同步）
+    try {
+      const [gv, gd, gm] = await Promise.all([
+        listFleetCertGroups({ parent_scope: 'vehicle' }).catch(()=>({data:[]})),
+        listFleetCertGroups({ parent_scope: 'driver' }).catch(()=>({data:[]})),
+        listFleetCertGroups({ parent_scope: 'maintain' }).catch(()=>({data:[]})),
+      ])
+      const pick = (arr:any[], fallback:string) => {
+        const builtin = (arr||[]).find((g:any)=>g.builtin || !g.parent_scope || g.id?.length < 30)
+        return builtin?.name || fallback
+      }
+      groupNames.value.vehicle = pick(gv.data, '公司证照')
+      groupNames.value.driver = pick(gd.data, '司机证照')
+      groupNames.value.maintain = pick(gm.data, '维保文件')
+    } catch { /* ignore */ }
     // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
     nextTick(() => {
       try { resetColumns() } catch { /* ignore */ }
@@ -1109,13 +1125,7 @@ async function reloadCategories() {
         filters.docType = bkMap[filters.docType]
         activeDocScope.value = docScopeOf(filters.docType)
       }
-      // 默认选中第一个分类（与设置定义顺序一致）
-      if (!filters.docType && docTypeOptions.value.length) {
-        filters.docType = docTypeOptions.value[0].value
-        activeDocScope.value = docScopeOf(filters.docType)
-        initColumns()
-        loadRecords()
-      }
+      // 默认停在概览卡片页，不自动选分类；点卡片才进入列表
     })
   } catch { /* ignore */ }
 }
