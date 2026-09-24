@@ -422,7 +422,7 @@ import {
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
   listKnowledgeTags, updateKnowledgeTagBatch, uploadKnowledgeFile,
 } from '@/api/knowledge-base'
-import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary } from '@/api/fleet'
+import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary, listFleetGroupAliases } from '@/api/fleet'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import DocumentPreview from '@/components/document-preview.vue'
