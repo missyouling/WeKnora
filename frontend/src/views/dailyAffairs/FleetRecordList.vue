@@ -265,7 +265,7 @@
       <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
         :close-btn="true" :close-on-overlay-click="true" :esc-close="true" destroy-on-close class="meter-record-drawer"
         @close="drawerVisible = false" @update:visible="(v: boolean) => (v || (drawerVisible = false))">
-        <div class="meter-drawer-body">
+        <div class="meter-drawer-body" @paste="onAttachPaste">
           <div class="rec-grid">
             <!-- 证照型：文件编辑（全部证照类型列表） -->
             <template v-if="isArchive && editMode === 'file'">
@@ -321,8 +321,7 @@
               </template>
               <div v-if="!form.id" class="rec-field rec-field--wide">
                 <label>附件（可选，可点击选择，或直接在本区域 Ctrl+V 粘贴截图）</label>
-                <div class="attach-drop" :class="{ 'attach-drop--busy': attachUploading }" @click="pickAttach"
-                  @paste="onAttachPaste" tabindex="0">
+                <div class="attach-drop" :class="{ 'attach-drop--busy': attachUploading }" @click="pickAttach" tabindex="0">
                   <input ref="attachInputRef" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp" hidden @change="onAttachChange" />
                   <template v-if="attachUploading">
                     <t-loading size="small" text="上传中..." />
@@ -1376,6 +1375,7 @@ function onAttachChange(e: Event) {
   if (files.length) uploadAttachFile(files[0])
 }
 function onAttachPaste(e: ClipboardEvent) {
+  if (form.id || !isArchive.value) return
   const items = e.clipboardData?.items ? Array.from(e.clipboardData.items) : []
   const img = items.find((it) => it.type.startsWith('image/'))
   if (!img) return
