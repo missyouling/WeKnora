@@ -159,7 +159,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
     { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
   ],
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
-  maintain: [{ key: 'maintain', label: '维保类型', scope: 'maintain', groupId: '' }],
+  maintain: [{ key: 'maintain', label: '维保清单', scope: 'maintain', groupId: '' }],
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
