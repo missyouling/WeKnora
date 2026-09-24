@@ -324,14 +324,14 @@ function buildItems(g0: any): any[] {
       const found = list.find((c: any) => c.builtin_key === b.name || c.name === b.name)
       if (found) {
         merged.push({ ...found, builtin: true, fields: (Array.isArray(found.subs) && found.subs.length) ? found.subs.length : certFieldCount(b) })
+        seen.add(found.id)
       } else {
         merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
       }
-      seen.add(b.name)
     })
   }
   list.forEach((c: any) => {
-    if (!seen.has(c.name)) { merged.push({ ...c, builtin: false, fields: Array.isArray(c.subs) ? c.subs.length : 0 }); seen.add(c.name) }
+    if (!seen.has(c.id)) { merged.push({ ...c, builtin: false, fields: Array.isArray(c.subs) ? c.subs.length : 0 }); seen.add(c.id) }
   })
   // 本地持久化的拖拽顺序（按分组 key 隔离，以名称作排序键：id 会因入库/改名而失效）
   try {
