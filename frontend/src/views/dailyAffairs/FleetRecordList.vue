@@ -1098,20 +1098,15 @@ async function reloadCategories() {
       listFleetCategories({ scope: 'maintain' }),
     ])
     categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
-    // 加载分组名（与设置页 tab 同步）
+    // 加载分组别名（与设置页 tab 重命名同步）
     try {
-      const [gv, gd, gm] = await Promise.all([
-        listFleetCertGroups({ parent_scope: 'vehicle' }).catch(()=>({data:[]})),
-        listFleetCertGroups({ parent_scope: 'driver' }).catch(()=>({data:[]})),
-        listFleetCertGroups({ parent_scope: 'maintain' }).catch(()=>({data:[]})),
-      ])
-      const pick = (arr:any[], fallback:string) => {
-        const builtin = (arr||[]).find((g:any)=>g.builtin || !g.parent_scope || g.id?.length < 30)
-        return builtin?.name || fallback
-      }
-      groupNames.value.vehicle = pick(gv.data, '公司证照')
-      groupNames.value.driver = pick(gd.data, '司机证照')
-      groupNames.value.maintain = pick(gm.data, '维保文件')
+      const res: any = await listFleetGroupAliases()
+      const arr = res?.data || res || []
+      const am: Record<string,string> = {}
+      for (const it of arr) am[${it.scope}:] = it.name
+      if (am['vehicle:company']) groupNames.value.vehicle = am['vehicle:company']
+      if (am['driver:driver']) groupNames.value.driver = am['driver:driver']
+      if (am['maintain:maintain']) groupNames.value.maintain = am['maintain:maintain']
     } catch { /* ignore */ }
     // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
     nextTick(() => {
