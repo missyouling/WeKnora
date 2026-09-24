@@ -264,7 +264,7 @@
     <teleport to="body">
       <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
         :close-btn="true" :close-on-overlay-click="true" :esc-close="true" destroy-on-close class="meter-record-drawer"
-        @close="drawerVisible = false" @update:visible="(v: boolean) => (v || (drawerVisible = false))">
+        @close="closeDrawer" @update:visible="(v: boolean) => (v || closeDrawer())">
         <div class="meter-drawer-body" @paste="onAttachPaste">
           <div class="rec-grid">
             <!-- 证照型：文件编辑（全部证照类型列表） -->
@@ -324,12 +324,12 @@
                 <div class="attach-drop" :class="{ 'attach-drop--busy': attachUploading }" @click="pickAttach" tabindex="0">
                   <input ref="attachInputRef" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp" hidden @change="onAttachChange" />
                   <template v-if="attachUploading">
-                    <t-loading size="small" text="上传中..." />
+                    <t-progress :percentage="attachProgress" :label="true" size="small" class="attach-progress" />
                   </template>
                   <template v-else-if="form.doc_knowledge_id">
                     <t-icon name="file" size="18px" class="attach-icon" />
                     <span class="attach-name" :title="form.source_name || form.file_name">{{ form.source_name || form.file_name || '已上传附件' }}</span>
-                    <t-button variant="text" size="small" @click.stop="clearAttach">
+                    <t-button variant="text" size="small" @click.stop="confirmClearAttach">
                       <template #icon><t-icon name="close" size="14px" /></template>
                     </t-button>
                   </template>
@@ -377,7 +377,7 @@
           </div>
         </div>
         <div class="meter-drawer-footer">
-          <t-button variant="outline" size="small" @click="drawerVisible = false">取消</t-button>
+          <t-button variant="outline" size="small" @click="closeDrawer">取消</t-button>
           <t-button theme="primary" size="small" :loading="saving" @click="saveRecord">保存</t-button>
         </div>
       </t-drawer>
@@ -413,7 +413,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
@@ -1366,6 +1366,8 @@ const form = reactive<any>({})
 
 // ---- 手工录入：附件上传（选择 + 粘贴），仅作留底凭证，不触发提取 ----
 const attachUploading = ref(false)
+const attachProgress = ref(0)
+const attachIsNew = ref(false)
 const attachInputRef = ref<HTMLInputElement | null>(null)
 function pickAttach() { attachInputRef.value?.click() }
 function onAttachChange(e: Event) {
@@ -1388,11 +1390,15 @@ function onAttachPaste(e: ClipboardEvent) {
 async function uploadAttachFile(file: File) {
   if (!kbId.value) { MessagePlugin.warning('知识库尚未就绪'); return }
   attachUploading.value = true
+  attachProgress.value = 0
   try {
-    const res: any = await uploadKnowledgeFile(kbId.value, { file })
+    const res: any = await uploadKnowledgeFile(kbId.value, { file }, (ev: any) => {
+      if (ev?.total) attachProgress.value = Math.round((ev.loaded / ev.total) * 100)
+    })
     const knowledge = res?.data || res
     const kid = knowledge?.id || knowledge?.knowledge_id
     if (!kid) throw new Error('上传响应缺少文件标识')
+    attachIsNew.value = true
     form.doc_knowledge_id = kid
     form.source_name = file.name
     form.file_name = file.name
@@ -1406,6 +1412,7 @@ async function uploadAttachFile(file: File) {
         const arr = Array.isArray(fl?.data) ? fl.data : Array.isArray(fl?.list) ? fl.list : []
         const hit = arr.find((k: any) => k.name === file.name || k.file_name === file.name)
         if (hit?.id) {
+          attachIsNew.value = false
           form.doc_knowledge_id = hit.id
           form.source_name = file.name
           form.file_name = file.name
@@ -1420,8 +1427,39 @@ async function uploadAttachFile(file: File) {
     }
   } finally { attachUploading.value = false }
 }
-function clearAttach() {
+function resetAttachFields() {
   form.doc_knowledge_id = ''; form.source_name = ''; form.file_name = ''; form.file_type = ''
+}
+function confirmClearAttach() {
+  const isNew = attachIsNew.value
+  const kid = form.doc_knowledge_id
+  const dlg = DialogPlugin.confirm({
+    header: '移除附件',
+    body: isNew
+      ? '该附件是本次新上传的文件，移除后将彻底删除。确定移除？'
+      : '该附件关联知识库已有文件，仅解除关联、不删除原文件。确定移除？',
+    confirmBtn: '确定移除',
+    onConfirm: async () => {
+      if (isNew && kid) {
+        try { await delKnowledgeDetails(kid) } catch { /* 忽略删除失败 */ }
+      }
+      resetAttachFields()
+      attachIsNew.value = false
+      dlg.destroy()
+    },
+    onCancel: () => dlg.destroy(),
+  })
+}
+// 关抽屉时清理未保存的新上传孤儿附件
+async function disposeOrphanAttach() {
+  if (form.id || !attachIsNew.value || !form.doc_knowledge_id) return
+  const kid = form.doc_knowledge_id
+  try { await delKnowledgeDetails(kid) } catch { /* ignore */ }
+  attachIsNew.value = false
+}
+function closeDrawer() {
+  void disposeOrphanAttach()
+  drawerVisible.value = false
 }
 const drawerTitle = computed(() => {
   if (isArchive.value) {
@@ -1532,6 +1570,7 @@ async function saveRecord() {
       if (form.id) await updateFleetRecord(form.id, payload)
       else await createFleetRecord(payload)
       MessagePlugin.success('已保存')
+      attachIsNew.value = false
       drawerVisible.value = false
       loadRecords()
     } catch (e: any) {
@@ -2344,6 +2383,7 @@ function onDrawerResizeEnd() {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .attach-hint { font-size: 12px; color: var(--td-text-color-placeholder); }
+  .attach-progress { flex: 1; min-width: 180px; }
 }
 /* 证件状态下拉面板：最小宽度与输入框对齐，避免菜单项溢出选择框 */
 :global(.cert-status-pop) {
