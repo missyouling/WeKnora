@@ -1929,7 +1929,7 @@ const uploadTypeOptions = computed(() => {
     if (c && c.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name) }
   })
   if (!names.length) return []
-  return [{ label: titleMap[scope] || scope, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }]
+  return [{ group: titleMap[scope] || scope, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }]
 })
 
 // 新增记录抽屉：维保类型纯名选项（不带 scope__ 前缀，与 form.doc_type / BUILTIN_CERTS 对齐）

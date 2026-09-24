@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="extract-rule-panel">
     <div class="extract-toolbar">
       <t-select v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
@@ -319,7 +319,7 @@ const certTypeOptions = computed(() => {
         seen.add(c.name); names.push(c.name)
       }
     })
-    return { label: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }
+    return { group: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }
   }).filter((g) => (g.children || []).length > 0)
 })
 
