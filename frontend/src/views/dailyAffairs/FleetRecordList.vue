@@ -937,6 +937,11 @@ const overviewStats = ref<any>(null)
 const overviewCards = computed(() => {
   const st = overviewStats.value
   const dtSet = currentDocTypes.value
+  const bkMap: Record<string,string> = {}
+  ;['vehicle','driver','maintain'].forEach((sc:string) => {
+    (categories.value[sc]||[]).forEach((c:any) => { if (c?.builtin_key && c?.name) bkMap[c.builtin_key] = c.name })
+  })
+  const nm = (s:string) => bkMap[s] || s
   if (st) {
     // 按当前档案 scope 过滤：只统计本档案证照类型的文件/失败数
     const items = (st.by_doc_type || []).filter((t: any) => dtSet.has(t.doc_type))
@@ -965,7 +970,7 @@ const overviewCards = computed(() => {
     { key: "extractFailed", label: "提取失败", num: all.filter((r: any) => (r.extract_status || "") === "failed").length, icon: "close-circle", cls: "", action: "history-extract_failed" },
   ]
   const byType = new Map<string, number>()
-  all.forEach((r: any) => { if (r.doc_type) byType.set(r.doc_type, (byType.get(r.doc_type) || 0) + 1) })
+  all.forEach((r: any) => { if (r.doc_type) { const dn = nm(r.doc_type); byType.set(dn, (byType.get(dn) || 0) + 1) } })
   byType.forEach((num, name) => {
     const def = (BUILTIN_CERTS as any)[name]
     cards.push({ key: "type-" + name, label: name, num, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || docScopeOf(name) })
@@ -1095,6 +1100,15 @@ async function reloadCategories() {
     // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
     nextTick(() => {
       try { resetColumns() } catch { /* ignore */ }
+      // 旧数据 doc_type 归一到新名（内置改名后旧名映射）
+      const bkMap: Record<string,string> = {}
+      ;['vehicle','driver','maintain'].forEach((sc:string) => {
+        (categories.value[sc]||[]).forEach((c:any) => { if (c?.builtin_key && c?.name) bkMap[c.builtin_key] = c.name })
+      })
+      if (filters.docType && bkMap[filters.docType]) {
+        filters.docType = bkMap[filters.docType]
+        activeDocScope.value = docScopeOf(filters.docType)
+      }
       // 默认选中第一个分类（与设置定义顺序一致）
       if (!filters.docType && docTypeOptions.value.length) {
         filters.docType = docTypeOptions.value[0].value
