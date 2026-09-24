@@ -954,15 +954,22 @@ const overviewCards = computed(() => {
       { key: "parseFailed", label: "解析失败", num: pfN, icon: "close-circle", cls: "", action: "history-parse_failed" },
       { key: "extractFailed", label: "提取失败", num: efN, icon: "close-circle", cls: "", action: "history-extract_failed" },
     ]
+    const typeCards: any[] = []
     items.forEach((t: any) => {
       const name = t.doc_type
       const sc = docScopeOf(name)
       const cat = (categories.value[sc] || []).find((c: any) => c && c.name === name)
       if (cat && cat.enabled === false) return
       const def = (BUILTIN_CERTS as any)[name]
-      cards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || sc })
+      typeCards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || sc })
     })
-    return cards
+    typeCards.sort((a: any, b: any) => {
+      const cats = (categories.value[a.scope] || []) as any[]
+      const ia = cats.findIndex((c: any) => c.name === a.label)
+      const ib = cats.findIndex((c: any) => c.name === b.label)
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+    })
+    return cards.concat(typeCards)
   }
   const all = (fileRows.value || []).filter((r: any) => { const dt = r.doc_type; return dt ? dtSet.has(dt) : true })
   const cards: any[] = [
