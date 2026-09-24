@@ -265,7 +265,7 @@
       <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
         :close-btn="true" :close-on-overlay-click="true" :esc-close="true" destroy-on-close class="meter-record-drawer"
         @close="closeDrawer" @update:visible="(v: boolean) => (v || closeDrawer())">
-        <div class="meter-drawer-body" @paste="onAttachPaste">
+        <div class="meter-drawer-body">
           <div class="rec-grid">
             <!-- 证照型：文件编辑（全部证照类型列表） -->
             <template v-if="isArchive && editMode === 'file'">
@@ -1183,8 +1183,12 @@ onMounted(async () => {
   startPolling()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
+onMounted(() => {
+  window.addEventListener('paste', onAttachPaste)
+})
 onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+  window.removeEventListener('paste', onAttachPaste)
   stopPolling()
   stopProgressTimer()
 })
@@ -1380,7 +1384,7 @@ function onAttachChange(e: Event) {
   if (files.length) uploadAttachFile(files[0])
 }
 function onAttachPaste(e: ClipboardEvent) {
-  if (form.id || !isArchive.value) return
+  if (!drawerVisible.value || form.id || !isArchive.value) return
   const items = e.clipboardData?.items ? Array.from(e.clipboardData.items) : []
   const img = items.find((it) => it.type.startsWith('image/'))
   if (!img) return
@@ -2321,7 +2325,7 @@ function onDrawerResizeEnd() {
 /* 新增/编辑记录：响应式栅格，宽屏多列、窄屏收成单列 */
 .rec-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px 20px;
 }
 .rec-field {
