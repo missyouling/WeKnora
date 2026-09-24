@@ -1043,7 +1043,8 @@ const docTypeOptions = computed(() => {
   }
   // 1) 按 categories 定义顺序输出（用户在字段配置里的排序）
   currentScopes.value.forEach((sc: string) => {
-    sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[]).forEach((c: any) => {
+    const builtinKeys = Object.keys(BUILTIN_CERTS as any).filter((n: string) => (BUILTIN_CERTS as any)[n].scope === sc)
+    sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[], builtinKeys).forEach((c: any) => {
       if (c && c.name && c.enabled !== false) put(c.name)
     })
     // 2) 内置但未入库的追加末尾

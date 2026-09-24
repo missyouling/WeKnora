@@ -1,1 +1,318 @@
 #AOCI-CODE-VOLUME: 1
+
+===D:/Downloads/WeKnora-main/===
+.gitignore[FG4T]: F:定义仓库忽略规则(构建产物/依赖/环境/IDE/本地文件) | R:- | A:与git全局忽略协同 | S:含AGENTS.md忽略行及!AGENTS.md取消除外;认知资产必须入库
+AGENTS.md[SG9M]: F:定义仓库级Agent行为契约:UCRT构建链/计划任务启动/端口约定/前端TDesign令牌与组件复用规范/打印与字段配置规则/窄屏自适应/AOCI认知层使用条款 | R:- | A:所有Agent Run读取的项目规则 | S:含aoci:begin/end区块;禁止忽略aoci.txt等认知资产;UI改动必须用设计令牌且每次改动需commit与测试
+CHANGELOG.md[SV5L]: F:按版本记录新特性/改进/修复/基础设施与构建变更 | R:- | A:发布流程随版本更新 | S:遵循Keep a Changelog格式
+LICENSE[SZ3L]: F:项目许可证文件:MIT许可+第三方组件版权声明 | R:- | A:- | S:Copyright(C)2025 Tencent
+Makefile[XV6M]: F:定义项目构建/运行/测试/清理/Docker镜像构建(wechatopenai/weknora-*)/服务管理/数据库迁移/格式化lint/文档生成目标 | R:- | A:make命令入口 | S:anydoc-lib需Rust工具链
+README.md[SD5M]: F:项目英文介绍:功能特性/架构/快速开始/部署/配置/API文档 | R:- | A:用户与开发者入口文档 | S:-
+README_CN.md[SL5M]: F:项目中文介绍:功能特性/架构/快速开始/部署/配置文档 | R:- | A:中文用户入口文档 | S:-
+VERSION[FV2T]: F:声明当前项目版本号0.7.2 | R:- | A:构建/发布流程读取 | S:-
+
+===D:/Downloads/WeKnora-main/.github/ISSUE_TEMPLATE/===
+bug_report.yml[FQ3T]: F:定义Bug报告表单(受影响组件/复现步骤/期望与实际行为/具体版本/部署方式/日志采集指引) | R:- | A:GitHub新建Bug Issue时按此表单收集信息 | S:版本字段要求具体版本号,拒绝latest/main等占位
+config.yml[FQ2T]: F:禁用空白Issue并定义文档/讨论区联系链接 | R:- | A:GitHub新建Issue入口引导 | S:blank_issues_enabled=false强制走模板
+feature_request.yml[FQ2T]: F:定义功能请求表单(受影响组件/问题/方案/影响范围) | R:- | A:GitHub新建Feature Issue时加载 | S:-
+question.yml[FQ2T]: F:定义提问表单(分类/上下文/环境信息/已查资源) | R:- | A:GitHub新建Question Issue时加载 | S:环境信息要求具体版本号
+
+===D:/Downloads/WeKnora-main/.github/===
+pull_request_template.md[SQ2T]: F:PR描述模板(类型/关联issue/测试/清单/截图) | R:- | A:新建PR时自动填充 | S:标题遵循Conventional Commits
+dependabot.yml[FV5S]: F:配置Dependabot依赖更新策略:仅/cli gomod月度常规分组更新,其余生态(根/服务器/client gomod、frontend/miniprogram npm、docreader pip、github-actions)security-only | R:- | A:按计划自动开PR | S:open-pull-requests-limit:0与通配ignore双保险禁用版本PR,安全更新不受影响
+
+===D:/Downloads/WeKnora-main/.github/workflows/===
+anydoc.yml[FV3T]: F:编译vendored Rust库(scripts/build-anydoc-lib.sh)并cargo-audit审计,RUSTSEC致命告警使构建失败;go vet/test/build带-tags anydoc | R:- | A:third_party/anydoc-go路径变更触发 | S:仅该路径触发,非可信PDF解析安全性依赖Rust审计
+app.yml[FV6S]: F:Go主仓gofmt/vet/test/build验证,排除cli/client/docreader/third_party/anydoc-go | R:- | A:Go相关路径push/PR触发 | S:gofmt对比base...head提交;测试用LOG_FORMAT置空保证独立
+cli-e2e.yml[FV4T]: F:对真实WeKnora服务器运行cli/acceptance/e2e测试 | R:- | A:workflow_dispatch或acceptance-e2e标签PR触发 | S:依赖WEKNORA_E2E_HOST/WEKNORA_E2E_TOKEN secrets,缺失自动跳过
+cli.yml[FV4T]: F:cli模块3平台go build/test(race+cover)/vet及Go wire词汇/凭据检查脚本 | R:- | A:cli路径变更触发 | S:Windows runner强制bash shell
+docker-image.yml[FV6M]: F:tag v*/main触发构建推送ui/docreader/sandbox(+cube变体)/app五镜像,amd64+arm64 digest与manifest合并 | R:- | A:push tag或main分支 | S:app镜像用imagetools digest合并;cube仅amd64;版本走scripts/get_version.sh
+docreader.yml[FV5S]: F:docreader Python compileall/unittest、Playwright WebKit安装、gRPC 50051起服后Go client集成测试 | R:- | A:docreader路径变更触发 | S:TestReadURL依赖真实WebKit,浏览器安装失败即失败
+dsh-plugin.yml[FV5M]: F:packages/dsh-weknora插件typecheck/单测/契约测试/e2e(dsh真实loop)/漂移检测/npm provenance发布 | R:- | A:插件路径、dsh-weknora-v* tag、每周漂移触发 | S:发布tag必须命名packaged version一致;e2e固定DSH_PINNED_SPEC
+frontend.yml[FV5T]: F:前端npm ci/test/type-check/build(Node 24) | R:- | A:frontend路径变更触发 | S:-
+go-lint-cache.yml[FV3T]: F:main分支预热三个Go模块golangci-lint缓存(issues-exit-code=0) | R:- | A:push main涉及Go文件 | S:仅默认分支缓存可共享;独立于go-lint.yml避免跳过job显示为check
+go-lint.yml[FV5S]: F:PR触发golangci-lint only-new-issues,先detect变更模块决定matrix | R:- | A:仅PR触发 | S:存量backlog大,只判定新增问题
+mcp-server.yml[FV5S]: F:Python MCP server 4版本测试、sdist+wheel构建(含upload_paths.py回归守卫)、PyPI OIDC可信发布 | R:- | A:main push与tag(向后兼容)触发 | S:发布不依赖tag,pyproject版本提升即触发;PyPI已存在则跳过
+release-lite.yml[FV6L]: F:workflow_dispatch(tag输入)构建Lite发布:前端→4平台CLI二进制(CGO sqlite_fts5)→Wails桌面app(macOS universal/amd64/arm64/Linux/Windows NSIS)→GitHub Release→Homebrew formula更新 | R:- | A:手动dispatch | S:push tag触发被注释;桌面与CLI分离构建
+
+===D:/Downloads/WeKnora-main/Formula/===
+weknora-lite.rb[FV4S]: F:定义Homebrew公式安装weknora-lite单二进制(macOS/Linux×arm64/amd64四平台tarball+sha256),install时生成weknora-lite包装脚本并布置web/config/migrations | R:- | A:brew install weknora-lite | S:version 0.3.6-test随发布更新
+
+===D:/Downloads/WeKnora-main/cli/===
+.gitignore[FG2T]: F:cli模块忽略规则(bin/coverage.out/ROADMAP.md/html) | R:- | A:- | S:-
+AGENTS.md[SG9L]: F:定义weknora CLI的Agent契约:JSON信封格式(ok/data/meta/profile)/错误格式/退出码/输出字段约定,module path github.com/Tencent/WeKnora/cli | R:- | A:所有消费weknora输出的AI agent与贡献者 | S:输出格式是agent-facing API,每个JSON字段成为agent决策输入;可选字段omitempty
+CHANGELOG.md[SV5L]: F:记录weknora CLI版本变更(Keep a Changelog格式,独立于服务器发布节奏) | R:- | A:CLI发布随版本更新 | S:CLI遵循SemVer;v0.3前历史在根CHANGELOG.md
+Makefile[XV3T]: F:定义cli模块build/test/test-coverage/lint/tidy/clean目标,版本元数据经ldflags注入internal/build | R:- | A:make命令入口 | S:VERSION/COMMIT/DATE经-X注入
+README.md[SD5L]: F:weknora CLI功能/安装/命令参考(agent/api/auth/chat/kb/mcp/search等22个子命令)/Agent契约文档 | R:- | A:CLI用户与agent开发者 | S:-
+go.mod[FV5T]: F:声明 CLI 模块路径、Go 版本与直接/间接依赖 | R:- | A:module github.com/Tencent/WeKnora/cli，go 1.26.0 | S:依赖本地 WeKnora/client，含 cobra/huh/gojq/mcp-go-sdk 等
+go.sum[FV3S]: F:记录 CLI 全部依赖模块的加密校验和 | R:code:cli/go.mod | A:go mod 自动生成，每行 module version h1:hash/go.mod | S:自动生成锁定文件，禁止手动编辑
+main.go[EG5T]: F:weknora CLI 入口，信号接入 root context | R:code:cli/cmd/root.go | A:main() 绑定 SIGINT/SIGTERM，调用 cmd.Execute(ctx) | S:信号触发取消时退出码 130，长命令可重发自动创建的 session id 供恢复
+
+===D:/Downloads/WeKnora-main/cli/cmd/agent/===
+agent.go[EU3T]: F:构建weknora agent命令树父命令并注册list/view/create/edit/delete/status/check子命令 | R:- | A:cli/cmd/root.go调用NewCmd | S:agent仅指Custom Agents CRUD,调用走session ask --agent
+check.go[EQ5S]: F:agent check <id>深校验:探测agent每个KB的可达性(kb_scope_all_reachable指针区分不可达与不适用) | R:- | A:输出AgentCheckResult JSON | S:与status区分:status浅读现有状态,check主动验证依赖(1+N HTTP)
+create.go[EU6M]: F:agent create/copy:创建或复制自定义agent,支持--system-prompt-file/--config-file/stdin输入,embedding set位区分显式零值与未传 | R:- | A:输出创建/复制结果JSON | S:依赖sdk.CreateAgent/CopyAgent/UpdateAgent
+delete.go[EQ4S]: F:agent delete永久删除agent,支持全局-y确认与--dry-run | R:- | A:输出{id,deleted} JSON | S:删除非幂等:缺失id报resource.not_found而非静默exit 0
+edit.go[EU6L]: F:agent edit:先GetAgent预取基线再全量PUT更新(防未传字段clobber),模型名解析快速失败,--jq投影 | R:- | A:输出更新结果JSON | S:UpdateAgent是full PUT;模型名先经ListModels解析,错误名不落库
+list.go[EU4S]: F:agent list列出自定义agents,支持--limit客户端截断/--jq过滤/表格输出 | R:- | A:输出Agent数组JSON | S:SDK无分页,--all-pages是no-op故不暴露
+status.go[EQ4S]: F:agent status浅健康快照:单次HTTP调用获取reachable+model_id | R:- | A:输出AgentStatusResult JSON | S:model_reachable刻意省略(服务器无per-agent测试端点);KB可达性验证走check
+view.go[EU5M]: F:agent view详情展示(含嵌套config子字段,--jq投影,多行提示折叠为单行) | R:- | A:输出Agent详情JSON | S:嵌套config经--jq '.config.system_prompt'访问
+
+===D:/Downloads/WeKnora-main/cli/acceptance/===
+doc.go[SQ2T]: F:声明acceptance子树为跨切面契约/集成测试归属(contract:信封JSON golden+错误码注册表一致性;e2e:真实服务器黑盒) | R:- | A:- | S:位于cli/internal外,提示契约表面改动需谨慎
+
+===D:/Downloads/WeKnora-main/cli/cmd/api/===
+api.go[EU6L]: F:weknora api原始HTTP直通:一个path位置参数+-X/--method(默认GET,提供body自动升POST),text模式写原始响应,--format json把解析后响应直接放envelope.data | R:- | A:输出服务端原始响应或按服务器自身深度投影 | S:复用sdk.Client.Raw自动带tenant+auth头
+
+===D:/Downloads/WeKnora-main/cli/cmd/auth/===
+auth.go[EU3T]: F:构建auth命令树父命令(login/logout/list/refresh/status/token),定义凭据模式常量(ModeBearer/APIKey/Unknown)与modeFromRefs映射(bearer优先) | R:- | A:cli/cmd/root.go调用 | S:模式描述HTTP凭据类型而非登录流
+list.go[EQ3T]: F:auth list列出所有profile摘要(name/host/user/mode/current) | R:- | A:输出listEntry数组JSON | S:mode取modeFromRefs映射结果
+login.go[EU5M]: F:auth login交互式登录(邮箱/密码/2FA),凭据存secrets keyring,支持--force/--skip-prompt | R:- | A:输出{profile,host,mode,email,tenant_id}摘要,不含token | S:Host/Profile来自活动profile而非flag;token不进stdout
+logout.go[EQ3S]: F:auth logout登出profile(--all清全部,-y确认,--dry-run),结果含removed列表 | R:- | A:输出{removed:[...]} | S:经secrets store清除凭据
+refresh.go[EQ3S]: F:auth refresh续期JWT access token(--dry-run支持) | R:- | A:输出{profile},刻意不含token防泄密 | S:新token写回keyring;验证走auth status
+status.go[EQ4S]: F:auth status实时API检查活动profile凭据(user_id/username/email/is_active/can_access_all_tenants/tenant_id) | R:- | A:输出statusResult JSON | S:单资源形状,filter作用于data本身
+token.go[EQ3S]: F:auth token打印活动profile凭据到stdout供shell管道(如WEKNORA_TOKEN=$(weknora auth token)) | R:- | A:输出裸token对象{token,mode,profile} | S:用户自行构造Authorization头;token泄入agent transcript是已知取舍
+
+===D:/Downloads/WeKnora-main/cli/cmd/chat/===
+chat.go[EU6M]: F:weknora chat <text>流式RAG入口:JSON(默认,缓冲投影)/Text(直写)/NDJSON(原始协议透传)三模式共用一次SDK调用 | R:- | A:输出答案/引用/推理事件 | S:SDK回调单goroutine串行无需锁;runChat用ChatService接口便于测试注入
+
+===D:/Downloads/WeKnora-main/cli/cmd/chunk/===
+delete.go[EQ4S]: F:chunk delete删除chunk(路由需docID+chunkID双id),支持-y/--dry-run/多id批量 | R:- | A:输出{id,deleted}或批量envelope | S:SDK DeleteChunk同时要doc_id与chunk_id
+list.go[EQ4M]: F:chunk list枚举chunks(页大小50/上限1000,支持--limit/--jq),JSON为裸SDK对象23字段 | R:- | A:输出Chunk数组JSON | S:字段snake_case,与KV标签doc_id/kb_id拼写不同
+view.go[EQ4S]: F:chunk view查看单个chunk详情(23字段裸SDK透传,--jq可用) | R:- | A:输出Chunk对象JSON | S:json键snake_case与人类标签不同
+chunk.go[EU3T]: F:构建chunk命令树父命令(list/view/delete),包名chunkcmd避cobra冲突 | R:- | A:cli/cmd/root.go调用 | S:chunk=文档索引片段(1 doc→N chunks)
+
+===D:/Downloads/WeKnora-main/cli/cmd/config/===
+config.go[EC3T]: F:构建config命令树(当前仅只读view),包名configcmd避内部config包冲突 | R:- | A:cli/cmd/root.go调用 | S:无修改无网络
+view.go[EC4M]: F:config view打印解析后的CLI配置及其解析链来源(active_profile/auth_source/host/kb_id/log_level等扁平data) | R:- | A:输出扁平JSON(每键含_source) | S:每键带来源指示文件/环境/默认
+
+===D:/Downloads/WeKnora-main/cli/cmd/doc/===
+create.go[EU4S]: F:doc create --text "..."从内联文本直接建知识条目(Markdown),无需上传文件或抓取URL | R:- | A:输出docCreateFields JSON | S:--title可选
+delete.go[EQ4M]: F:doc delete删除知识条目(单id或--all按--kb全删),支持-y/--dry-run | R:- | A:输出{id,deleted} JSON | S:--all必须给--kb
+doc.go[EU3T]: F:构建doc命令树父命令(list/view/upload/fetch/create/download/delete/wait),doc=CLI名词对SDK类型Knowledge的映射 | R:- | A:cli/cmd/root.go调用 | S:重命名只在此包内,SDK/服务器API保持Knowledge拼写
+download.go[EU4S]: F:doc download下载文档内容到指定路径/-O stdout/服务器建议文件名 | R:- | A:输出{path,bytes,filename} JSON | S:--format json且输出到文件时才有envelope
+fetch.go[EU4S]: F:doc fetch <url>抓取远程URL入库,支持--name/--title,file-vs-crawl模式检测 | R:- | A:输出docFetchFields JSON | S:依赖服务器fetch通道与解析管线
+list.go[EQ4M]: F:doc list枚举知识条目(页50/上限1000,支持--limit/--jq),JSON为裸Knowledge数组 | R:- | A:输出Knowledge数组 | S:filter作用于每个裸对象
+reparse.go[EQ3T]: F:doc reparse触发文档重新解析(重置parse_status),支持--dry-run | R:- | A:输出{id,parse_status,file_name,title} | S:-
+update.go[EQ4S]: F:doc update更新条目元数据(--title/--description),*string区分未传与置空,fetch-then-update保留未传字段 | R:- | A:输出更新后Knowledge | S:仅改显式传入字段
+upload.go[EU4M]: F:doc upload上传本地文件入库,默认channel=api(区分web/extension/wechat),支持--channel覆盖 | R:- | A:输出上传结果 | S:channel仅服务端统计用
+upload_recursive.go[EU4S]: F:doc upload --recursive/--glob批量遍历目录上传,并发批处理汇总每文件结果 | R:- | A:输出uploadResults与汇总 | S:单文件失败不阻断整体
+view.go[EQ4S]: F:doc view查看单条知识详情(顶层字段含file_path/storage_size等21字段) | R:- | A:输出Knowledge对象 | S:-
+wait.go[EQ4M]: F:doc wait轮询文档直到parse_status稳定(多id并行,超时/间隔可配) | R:- | A:输出最终状态 | S:随机退避防打爆API
+
+===D:/Downloads/WeKnora-main/cli/cmd/doctor/===
+doctor.go[EQ6L]: F:weknora doctor四项自检(server reachable/auth/kb配置/CLI更新),状态ok/warn/fail/skip,json裸输出Result | R:- | A:输出checks数组+summary.all_passed | S:任一fail退出1(仍发json);all_passed仅当无warn/fail/skip
+
+===D:/Downloads/WeKnora-main/cli/cmd/===
+exitcodes.go[EQ3T]: F:weknora exit-codes列出CLI退出码表(code/meaning/error_types/agent_action) | R:- | A:输出exitCodeRow数组 | S:供agent分支决策
+root.go[EU8M]: F:构建 cobra 根命令树，注册全部子命令并提供 Execute 入口 | R:- | A:main.go 调用 Execute()，全局 --profile/-y/--format 持久 flag | S:所有子命令通过 AddCommand 注册，help 输出按字母排序
+schema.go[EU5M]: F:实现 weknora schema，输出命令树结构与破坏性风险标注 | R:code:cli/cmd/root.go | A:遍历 cobra 命令树，tabwriter/JSON 输出 flag 和 risk 等级 | S:破坏性写操作标注 risk level 供 agent 识别规避
+
+===D:/Downloads/WeKnora-main/cli/cmd/kb/===
+check.go[EQ4S]: F:kb check深校验:status字段+FailedCount分页聚合doc列表 | R:- | A:输出CheckResult | S:status浅读,check主动验证(多HTTP)
+config.go[EC4S]: F:kb config查看KB模型配置(retrieval_ready/embedding/llm/rerank/multimodal),secret-free | R:- | A:输出KBModelConfigView | S:刻意不含api keys
+config_set.go[EC4S]: F:kb config set绑定chat/embedding模型(经模型列表校验),支持-y/--dry-run | R:- | A:输出配置结果 | S:模型名需先解析
+create.go[EU4S]: F:kb create创建知识库,支持--embedding/--summary模型与类型 | R:- | A:输出完整KnowledgeBase | S:嵌套config省略,用--jq
+delete.go[EQ4S]: F:kb delete删除知识库(临时库快速确认),支持-y/--dry-run | R:- | A:输出{id,deleted} | S:批量内容删走doc delete --all --kb
+edit.go[EU4S]: F:kb update更新KB元数据/模型绑定/配置 | R:- | A:输出更新后KnowledgeBase | S:-
+kb.go[EU3T]: F:构建kb命令树父命令(list/view/create/edit/delete/pin/unpin) | R:- | A:cli/cmd/root.go调用 | S:批量删走doc delete --all --kb
+list.go[EQ4S]: F:kb list枚举知识库(页50/上限1000,支持--limit/--jq),嵌套config省略 | R:- | A:输出KnowledgeBase数组 | S:-
+pin.go[EU3S]: F:kb pin/unpin切换KB置顶状态,支持--dry-run | R:- | A:输出{id,is_pinned} | S:-
+status.go[EQ4S]: F:kb status浅健康读:单HTTP(reachable+retrieval_ready),无失败聚合 | R:- | A:输出StatusResult | S:深验证用kb check
+view.go[EQ4S]: F:kb view查看单个KB详情(顶层字段,嵌套config用--jq) | R:- | A:输出KnowledgeBase对象 | S:-
+
+===D:/Downloads/WeKnora-main/cli/cmd/link/===
+link.go[EU6M]: F:实现 weknora link 命令，将当前目录绑定到知识库 | R:code:cli/cmd/root.go | A:cobra 命令，--kb 指定知识库 UUID/名称，--dry-run 预览 | S:已存在链接时静默覆盖不报错
+unlink.go[EU5S]: F:实现 weknora unlink 命令，解除目录与知识库绑定 | R:code:cli/cmd/root.go | A:cobra 命令，--dry-run 预览，输出 project_link_path | S:从 cwd 向上递归查找 .weknora/project.yaml
+
+===D:/Downloads/WeKnora-main/cli/cmd/mcp/===
+mcp.go[EU5T]: F:定义 weknora mcp 命令树，将 CLI 工具暴露为 MCP 服务 | R:code:cli/cmd/root.go | A:cobra 父命令，注册 serve 子命令，Short/Long 描述 MCP 协议 | S:包名 mcpcmd 避免与 cli/internal/mcp 实现包冲突
+serve.go[EU6T]: F:实现 weknora mcp serve，以 stdio 传输运行 MCP 服务器 | R:code:cli/cmd/mcp/mcp.go | A:JSON-RPC 2.0 over stdin/stdout，日志走 stderr | S:无活动 profile 时启动即退出 auth.unauthenticated
+
+===D:/Downloads/WeKnora-main/cli/cmd/message/===
+delete.go[EU4S]: F:实现 weknora message delete，删除指定会话中的消息 | R:code:cli/cmd/message/message.go | A:需 --session-id 和 message_id 参数，-y 跳过确认，--dry-run | S:非 TTY/JSON 模式下无 -y 则拒绝执行高风险删除
+list.go[EU5S]: F:实现 weknora message list，列出会话内消息列表 | R:code:cli/cmd/message/message.go | A:--session-id --limit --before(RFC3339)，tabwriter 表格输出 | S:服务端按时间游标分页而非页码，需用 --before 回溯
+message.go[EU4T]: F:定义 weknora message 命令组，管理会话内消息 | R:code:cli/cmd/root.go | A:cobra 父命令，注册 list/search/delete 三个子命令 | S:消息是 session ask 多轮对话的底层载体
+search.go[EU5S]: F:实现 weknora message search，全文搜索历史问答消息 | R:code:cli/cmd/message/message.go | A:--query --mode，输出 request_id/session/score/match_type | S:--mode 枚举从 SDK AllMessageSearchModes 派生防与服务端漂移
+
+===D:/Downloads/WeKnora-main/cli/cmd/model/===
+create.go[EU6M]: F:实现 weknora model create，向服务器注册新模型 | R:code:cli/cmd/model/model.go | A:--name --source(local/remote) --type --provider --base-url 等 | S:--source 仅接受 local/remote，provider 身份走 --provider 不传 --source
+delete.go[EU5T]: F:实现 weknora model delete，按 ID 删除服务器模型 | R:code:cli/cmd/model/model.go | A:需 model-id 位置参数，-y 跳过确认，--dry-run 预览 | S:高风险写操作，非 TTY 无 -y 时拒绝执行
+list.go[EU6S]: F:实现 weknora model list，列出服务器配置的所有模型 | R:code:cli/cmd/model/model.go | A:--type --source 过滤，tabwriter 输出，省略嵌套 parameters | S:过滤枚举从 SDK 派生，拼写错误前置拒绝而非返回空集
+model.go[EU5T]: F:定义 weknora model 命令树，管理模型生命周期 | R:code:cli/cmd/root.go | A:cobra 父命令，注册 list/view/create/update/delete | S:包名 modelcmd 避免与 SDK Model 类型名冲突
+update.go[EU5S]: F:实现 weknora model update，精确修改模型配置字段 | R:code:cli/cmd/model/model.go | A:--display-name --description --base-url --api-key-stdin --params --default | S:每 flag 独立 Set 位区分空字符串(清空)与未设置状态
+view.go[EU5T]: F:实现 weknora model view，查看单个模型完整详情 | R:code:cli/cmd/model/model.go | A:需 model-id，JSON 输出含嵌套 parameters 完整配置 | S:单条视图是唯一包含完整 parameters 对象的列表类命令
+
+===D:/Downloads/WeKnora-main/cli/cmd/profile/===
+add.go[EU6S]: F:实现 weknora profile add，添加 CLI 连接配置 profile | R:code:cli/cmd/profile/profile.go | A:--host --user --use，写入 config.yaml，输出 name/host/user/current | S:--use 标志在添加后立即切换为活动 profile
+list.go[EU5T]: F:实现 weknora profile list，列出所有 CLI 连接 profile | R:code:cli/cmd/profile/profile.go | A:tabwriter 输出 name/host/user/current，JSON 模式输出数组 | S:按 profile 名称字母排序输出
+profile.go[EU5T]: F:定义 weknora profile 命令树，管理 CLI 连接配置 | R:code:cli/cmd/root.go | A:cobra 父命令，注册 list/add/remove/use 四个子命令 | S:包名 profilecmd 保持与其他 cmd 子包命名规范一致
+remove.go[EU5S]: F:实现 weknora profile remove，删除 CLI 连接 profile | R:code:cli/cmd/profile/profile.go | A:-y 跳过确认，--dry-run，输出 name/removed/was_current | S:删除时同步清理 secrets 存储中该 profile 的凭证
+use.go[EU6S]: F:实现 weknora profile use，切换默认活动 profile | R:code:cli/cmd/profile/profile.go | A:写入 config.yaml，名称大小写敏感，输出 current/previous | S:AI agent 不应主动切换 profile 除非用户明确要求
+
+===D:/Downloads/WeKnora-main/cli/cmd/search/===
+chunks.go[EU6M]: F:实现 weknora search chunks，对知识库做混合检索(RAG) | R:code:cli/cmd/search/search.go | A:--kb 指定知识库 --query，输出 chunk/score/match_type | S:混合检索按 score 排序，支持图片 chunk 和 matched_content
+docs.go[EU5S]: F:实现 weknora search docs，在知识库内按关键词搜索文档 | R:code:cli/cmd/search/search.go | A:--kb --query --page-size，服务端关键词过滤预分页 | S:默认 page-size=200，服务端硬上限 1000
+kb.go[EU5S]: F:实现 weknora search kb，按名称/描述模糊搜索知识库 | R:code:cli/cmd/search/search.go | A:--query，输出 id/name/type/knowledge_count/chunk_count | S:返回 KB 列表子集字段，不含完整配置详情
+search.go[EU5T]: F:定义 weknora search 命令树，统一 chunks/kb/docs/sessions 搜索 | R:code:cli/cmd/root.go | A:cobra 父命令，四个子命令均为动词-名词结构 | S:纯分发器无默认动作，用户必须选择具体搜索类型
+sessions.go[EU5S]: F:实现 weknora search sessions，按标题/描述搜索聊天会话 | R:code:cli/cmd/search/search.go | A:--query --page-size，拉取全量后客户端侧过滤 | S:默认 page-size=200，过滤在客户端非服务端
+
+===D:/Downloads/WeKnora-main/cli/cmd/session/===
+ask.go[EU7M]: F:实现 weknora session ask，发起多轮对话并流式接收 SSE | R:code:cli/cmd/session/session.go | A:--agent --query --message，SSE 流输出支持 NDJSON | S:NDJSON 首行 init 携带 session_id/message_id 供 agent 关联
+delete.go[EU5S]: F:实现 weknora session delete，删除聊天会话记录 | R:code:cli/cmd/session/session.go | A:支持单 ID 和批量 ID，-y 跳过确认，--dry-run | S:批量删除输出信封结构，单条输出 id/deleted
+list.go[EU6M]: F:实现 weknora session list，分页列出聊天会话 | R:code:cli/cmd/session/session.go | A:--page --page-size --status 过滤，默认 30/页上限 1000 | S:服务端分页，支持按会话状态过滤
+resume.go[EU6S]: F:实现 weknora session resume，重连 SSE 流恢复对话输出 | R:code:cli/cmd/session/session.go | A:--session-id --message-id，从索引 0 重放事件并 tail | S:重放从 0 开始非游标续传，agent 须按 message_id 去重
+session.go[EU6T]: F:定义 weknora session 命令树，管理聊天会话与 agent 调用 | R:code:cli/cmd/root.go | A:cobra 父命令，注册 list/view/delete/ask/resume/stop/tool-approval | S:包名 sessioncmd 避免与 SDK Session 类型名冲突
+stop.go[EU5S]: F:实现 weknora session stop，取消服务端消息生成 | R:code:cli/cmd/session/session.go | A:--session-id --message-id，通知服务端真正停止生成 | S:与 Ctrl-C 仅断连不同，停止服务端生成并停止计费
+tool_approval.go[EU5M]: F:实现 session tool-approval resolve，审批或拒绝 agent 工具调用 | R:code:cli/cmd/session/session.go | A:--pending-id --decision(approve/reject)，--dry-run | S:decision 仅 approve/reject 两值与服务端枚举严格对齐
+view.go[EU5S]: F:实现 weknora session view，查看会话详情与消息列表 | R:code:cli/cmd/session/session.go | A:--session-id --full，--full 包含 messages 数组 | S:默认不含消息，--full 拉取最近 50 条上限 1000
+
+===D:/Downloads/WeKnora-main/cli/cmd/skills/===
+skills.go[EU5M]: F:定义 weknora skills 命令树，列出并安装内置 Agent Skills | R:code:cli/cmd/root.go | A:list 查看内置 skills，install 写入 agent skills 目录 | S:skill markdown 嵌入二进制，无需源码检出即可安装
+
+===D:/Downloads/WeKnora-main/cli/internal/cmdutil/===
+agentconfig.go[CG6S]: F:提供 agent 配置 flag 结构与默认值合并逻辑 | R:- | A:AgentConfigFlags 含每 flag Set 位，Merge 合并默认与用户值 | S:per-flag Set 位区分零值与未设置，对应 pflag Changed()
+agenthelp.go[CG5S]: F:为命令注入结构化 agent 帮助(WEKNORA_AGENT_HELP=1) | R:- | A:SetAgentHelp 挂载 JSON 帮助和 AI agents 警告块 | S:agent 帮助与人类帮助共享单一数据源防止漂移
+authrefresh.go[CI6T]: F:刷新 OAuth token 并持久化 access/refresh 对到 secrets | R:- | A:RefreshAndPersist 读 refresh token 交换后写回，返回新 access | S:auth refresh 与 AuthRetryTransport 共用同一实现避免漂移
+authretry.go[CI6S]: F:HTTP 传输层拦截 401 并自动刷新 token 后重放请求 | R:code:cli/internal/cmdutil/authrefresh.go | A:包装 http.RoundTripper，仅重试一次非 /auth/* 端点的 401 | S:仅重试一次，并发刷新用 sync.Once 避免重复换 token
+batch.go[CG5S]: F:多目标批量变更的通用执行与信封输出框架 | R:- | A:RunBatch 遍历目标执行闭包，EmitBatch 输出 JSON/NDJSON/文本 | S:保持 argv 顺序，单项失败不中断整体(keep-going)
+charcheck.go[CS6S]: F:校验 CLI 输入值中的控制字符和 Unicode 双向覆盖 | R:- | A:RejectUnsafeFlagValue 遍历 rune，拒绝 C0 控制码/Bidi/零宽字符 | S:agent-first CLI 输入边界防护，防 ANSI 逃逸注入终端
+confirm.go[CG5S]: F:破坏性操作确认与可直接执行的重试 argv 构建 | R:- | A:ConfirmDestructive/ConfirmWrite，BuildRetryArgv 拼接变更 flag+-y | S:非 TTY/JSON 模式无 -y 时拒绝，重试 argv 可直接 exec
+dryrun.go[CG6S]: F:统一 --dry-run 标志注册、计划输出与副作用抑制 | R:- | A:AddDryRunFlag/EmitDryRun/DryRunPlan/HandleDryRun | S:dry-run 路径禁止调用 SDK/写 keyring/写 project.yaml/写下载文件
+errors.go[CG7L]: F:定义 CLI 稳定错误码注册表与结构化错误类型 | R:- | A:ErrorCode 字符串枚举，Error 类型含 code/retry_argv/risk，PrintError | S:错误码 SemVer 治理，v0.x 保持注册表稳定，新增需发版说明
+exit.go[CG6M]: F:统一进程退出码、错误打印与格式模式全局状态 | R:code:cli/cmd/root.go | A:SetFormatMode/PrintError/ExitCode，文本或 JSON 信封输出 | S:globalFormatMode 包级变量由 root PersistentPreRunE 设置
+factory.go[CG8M]: F:命令依赖注入工厂，懒加载 SDK 客户端/配置/IO/密钥 | R:- | A:Factory 提供 Client()/Config()/IOStreams()/Prompt()/ResolveKB | S:客户端懒加载且带 AuthRetryTransport，profile 切换需重建 Factory
+format.go[CG5S]: F:--format 输出格式解析与默认值解析(text/json/ndjson) | R:- | A:FormatMode 类型枚举，FormatOptions.ResolveDefault 处理自动检测 | S:非 TTY 自动降级为 JSON，管道场景不输出人类可读格式
+host.go[CG4T]: F:校验并规范化 --host 服务器地址 | R:- | A:NormalizeHost 去尾部斜杠，要求 http/https scheme 和非空 host | S:空字符串视为无效值而非缺失，由 cobra required 层处理缺失
+input.go[CG4T]: F:解析 RFC3339 时间标志值，空值视为未设置 | R:- | A:ParseTimeFlag 返回 *time.Time，nil 表示无边界，label 用于错误信息 | S:malformed 值返回 CodeInputInvalidArgument 并给出 RFC3339 示例
+kb.go[CG5T]: F:知识库 ID/名称自动检测与解析 | R:- | A:IsKBID 正则匹配 UUID 格式，ResolveKB 按 id 或 name 查找 | S:KB id 固定为 uuid.New().String() 36 字符，名称为任意用户字符串
+loglevel.go[CG3T]: F:校验 --log-level 取值合法性 | R:- | A:IsValidLogLevel O(1) 校验 debug/info/warn/error 四值 | S:日志级别枚举与 slog 级别映射，新增级别需同步更新
+model.go[CG5T]: F:模型引用(id 或 name)解析为模型 UUID | R:- | A:ResolveModelRef 按 wantType 过滤后名称匹配，ModelLister 窄接口 | S:与 --kb id-or-name 策略一致，可按模型类型过滤名称查找
+profilename.go[CS5T]: F:校验 profile 名称白名单，防路径穿越和 shell 注入 | R:- | A:ValidateProfileName 允许字母数字/-/_/.，拒绝 . .. 和路径分隔符 | S:名称需安全嵌入 retry_argv，防恶意命名通过 sh -c 执行命令
+risk.go[CG5T]: F:为 cobra 命令附加风险等级注解(destructive/write) | R:code:cli/internal/cmdutil/agenthelp.go | A:SetRisk/SetWriteRisk 写 cobra Annotations，agenthelp 读取并展示 | S:envelope.error.risk.action 由 callsite 传入，不读注解，两者独立
+suggest.go[CG4S]: F:基于 rune 感知 Levenshtein 距离的拼写建议 | R:- | A:Suggest 返回最接近的候选项，阈值内才建议，空输入返回空 | S:按 rune 而非字节计算，多字节 UTF-8 名称比较正确
+
+===D:/Downloads/WeKnora-main/cli/internal/compat/===
+cache.go[CG4T]: F:服务器版本信息的 24h TTL 文件缓存读写 | R:code:cli/internal/compat/version_check.go | A:LoadCache/SaveCache，YAML 序列化到 XDG_CACHE_HOME | S:TTL 24 小时，缓存过期返回 fresh=false 触发重新探测
+compat.go[CG5T]: F:定义客户端-服务器版本兼容等级(OK/SoftWarn/HardError) | R:code:cli/internal/compat/version_check.go | A:Level 枚举及 String()，Assess 按 major/minor 比对判定等级 | S:major 不匹配=HardError，minor 不匹配=SoftWarn，相等=OK
+version_check.go[CG5T]: F:探测服务器 /system/info 并判定版本兼容等级 | R:code:cli/internal/compat/compat.go | A:Check 调用 SDK GetSystemInfo，带 24h 缓存，返回 Level+建议 | S:用于 weknora doctor 的 server_version 检查项
+
+===D:/Downloads/WeKnora-main/cli/internal/config/===
+config.go[CG6T]: F:读写用户级 CLI 配置 config.yaml(profiles/current_profile) | R:- | A:Load/Save 基于 XDG_CONFIG_HOME，yaml.v3 直接序列化 | S:故意不用 viper，per-project 链接由 projectlink 包独立处理
+
+===D:/Downloads/WeKnora-main/cli/internal/format/===
+bare.go[CG4T]: F:裸数据 JSON/表格写入器，列表直接输出数组 | R:- | A:WriteJSON 单行 JSON 禁 HTML 转义，WriteTable tabwriter | S:列表命令直接输出数组，单资源直接输出对象，无信封包装
+dash.go[CG2T]: F:空字符串渲染为短横线的表格单元格辅助函数 | R:- | A:DashIfEmpty("") 返回 "-"，否则原样返回 | S:人类可读表格中可选字段的统一空值显示约定
+filter.go[CG4T]: F:基于 gojq 的 JSON 字段过滤与投影 | R:- | A:FilterJSON 按 fields 列表提取对象键，支持数组元素逐元素过滤 | S:非对象数组元素原样透传，字段不存在时静默跳过
+ndjson.go[CG4T]: F:NDJSON 序列化器，切片逐元素一行否则单行 | R:code:cli/internal/format/bare.go | A:WriteNDJSON 反射判断 slice/array，禁 HTML 转义 | S:符合 ndjson.org 规范，agent 流解析器友好
+references.go[CG4T]: F:引用索引类型，将 SDK 搜索结果投影为稳定引用键 | R:- | A:ReferenceIndex 含 kb_id/chunk_id/parent_chunk_id，IndexReferences | S:完整 chunk 文本仅在 raw NDJSON 中，投影输出只保留查找键
+
+===D:/Downloads/WeKnora-main/cli/internal/iostreams/===
+iostreams.go[CG5T]: F:封装 stdin/stdout/stderr，TTY 检测与颜色感知 | R:- | A:IO 全局单例，IsInteractive/IsStdoutTTY，SetForTest 测试替换 | S:测试用 SetForTest 替换全局，禁止 t.Parallel() 中调用
+
+===D:/Downloads/WeKnora-main/cli/internal/mcp/===
+server.go[CG6T]: F:MCP 服务器 stdio 入口，手工精选工具集注册 | R:code:cli/internal/mcp/tools.go | A:RunStdio 启动 go-sdk MCP server，工具手工 curated 非自动派生 | S:长运行工具服务端累积 SSE 后单次返回(MCP 2025-06-18 无流式)
+tools.go[CG7L]: F:MCP 工具实现集合(kb/session/agent/search 等) | R:code:cli/internal/mcp/server.go | A:每个工具定义 input schema+handler，调用 SDK 并投影结果 | S:工具表面手工 curated，不暴露 auth/link/破坏性动词给 agent
+
+===D:/Downloads/WeKnora-main/cli/internal/output/===
+batch.go[CG4T]: F:批量操作输出信封结构与写入器 | R:code:cli/internal/output/envelope.go | A:BatchItem 含 id/ok/result/error，WriteBatchEnvelope 写 {ok,data,meta} | S:meta 含 count/successes/failures 三态统计
+envelope.go[CG6S]: F:对称信封线协议定义(stdout 成功/stderr 错误) | R:- | A:Envelope{ok,status,data,meta,profile}，ErrorEnvelope{ok,error} | S:成功信封写 stdout，错误信封写 stderr，NDJSON 流另走 ndjson_stream
+ndjson_stream.go[CG4T]: F:流式命令 NDJSON 输出的 init 生命周期事件 | R:- | A:InitEvent{type,session_id,kb_id,model,profile} 写在流头部 | S:agent 凭 init 行关联后续事件并发起 follow-up 调用
+
+===D:/Downloads/WeKnora-main/cli/internal/projectlink/===
+projectlink.go[CG6T]: F:读写 per-project 链接文件 .weknora/project.yaml | R:- | A:Find/Read/Write，从 cwd 向上遍历查找，64 层深度上限防循环 | S:允许跨 mount boundary，模式匹配 cargo/npm/git 的项目根查找
+
+===D:/Downloads/WeKnora-main/cli/internal/prompt/===
+prompt.go[CG4T]: F:交互式输入抽象接口与非 TTY 拒绝策略 | R:code:cli/internal/prompt/tty.go | A:Prompter 接口(Input/Password/Confirm)，ErrAgentNoPrompt | S:非 TTY/agent 模式下所有交互调用返回 ErrAgentNoPrompt
+tty.go[CG4T]: F:基于 charmbracelet/huh 的 TTY 交互式输入实现 | R:code:cli/internal/prompt/prompt.go | A:TTYPrompter 实现 Prompter，Confirm 用 huh.Confirm | S:仅在 iostreams.IO 交互式时由 Factory 注入使用
+
+===D:/Downloads/WeKnora-main/cli/internal/secrets/===
+keyring.go[CI6T]: F:OS 密钥环凭证存储(macOS Keychain/Windows CredMgr) | R:- | A:KeyringStore Get/Set/Delete，service="weknora:<profile>" | S:不支持的平台返回 ErrUnsupported，调用方降级到明文配置
+
+===D:/Downloads/WeKnora-main/cli/internal/sse/===
+accumulator.go[CG5T]: F:SSE 流内容累积器，缓冲 Content/References/SessionID | R:code:cli/internal/sse/projector.go | A:OnEvent 回调追加内容，Done() 后 Result() 返回完整投影 | S:流式模式直接写 token 到 stdout，仅用累积器取最终 References 页脚
+agent_accumulator.go[CG5T]: F:Agent SSE 流的 tool_call/tool_result 事件累积器 | R:code:cli/internal/sse/accumulator.go | A:AgentToolEvent{Kind,Data}，Kind 是 SDK 类型枚举非函数字符串 | S:Kind 是事件种类非函数名，函数名在 tool_call 的 Data 中
+projector.go[CG6M]: F:将 SDK SSE 事件投影为有界输出格式(JSON/文本/MCP) | R:code:cli/internal/sse/accumulator.go | A:ProjectedEvent 镜像 SDK 字段名，Project/ProjectText 多格式输出 | S:投影输出故意省略原始大字段，完整数据仅在 raw NDJSON 流中
+
+===D:/Downloads/WeKnora-main/cli/internal/testutil/===
+prompter.go[TQ3T]: F:测试用 Prompter 替身，脚本化 Confirm 应答 | R:code:cli/internal/prompt/prompt.go | A:ConfirmPrompter{Answer,Err,Asked}，Input/Password 返回 ErrAgentNoPrompt | S:供 cmd/* 测试复用，避免每命令重复实现相同测试替身
+xdg.go[TQ2T]: F:测试用 XDG 临时目录创建器，隔离配置读写 | R:code:cli/internal/xdg/xdg.go | A:XDGTempDir(t) 返回临时目录并设置 XDG_CONFIG_HOME | S:无 build tag，供其他包测试导入，禁止生产代码引用
+
+===D:/Downloads/WeKnora-main/cli/internal/text/===
+displayname.go[CG3T]: F:知识条目展示名选择器，FileName>Title>ID 优先级 | R:- | A:KnowledgeDisplayName(fileName,title,id) 三字段直接传参 | S:不导入 SDK 保持包纯净，doc list 与 search docs 共用同一排序
+match.go[CG2T]: F:跨多字段大小写不敏感包含匹配，OR 语义 | R:- | A:ContainsFold(lowerNeedle, fields...) 调用方预传小写 needle | S:needle 由调用方小写化，避免每字段重复 ToLower
+oneline.go[CG2T]: F:换行/制表符折叠为空格后按显示宽度截断 | R:code:cli/internal/text/truncate.go | A:OneLine(maxDisplayWidth, s) 用于表格预览行 | S:依赖 Truncate 做 UTF-8 安全截断，lineReplacer 包级单例
+pluralize.go[CG2T]: F:简单复数化，n==1 不加 s 否则加 s | R:- | A:Pluralize(n, thing) 返回 "n thing" 或 "n things" | S:不支持不规则复数(person/people)，纯函数无 I/O
+timeago.go[CG3T]: F:相对时间模糊格式化，支持过去与未来 | R:- | A:FuzzyAgo(now, t) 返回 "about N minutes ago/from now" | S:分钟/小时/天/周/月/年六档，取整用 math.Round
+timeago_string.go[CG3T]: F:RFC3339 字符串输入版 FuzzyAgo，适配 SDK 时间字段 | R:code:cli/internal/text/timeago.go | A:FuzzyAgoStr(now, ts) 空串返回"-"，解析失败返回原值 | S:解析失败故意暴露原始值而非静默替换，便于发现服务端格式变更
+truncate.go[CG3T]: F:按显示宽度(CJK/emoji=2列)截断并加省略号 | R:- | A:Truncate(maxWidth, s) 基于 go-runewidth，maxWidth<=0 返回空 | S:省略号占1列，截断预算=maxWidth-1，非 rune 计数
+
+===D:/Downloads/WeKnora-main/cli/internal/xdg/===
+xdg.go[CG5T]: F:XDG 根路径解析与原子写入，config/secrets 共用 | R:- | A:Path(envVar,fallbackDir,parts...) 解析 weknora/ 子路径，WriteYAML 原子写 | S:macOS 也强制走 XDG 变量而非 os.UserConfigDir，原子写用临时文件+rename
+
+===D:/Downloads/WeKnora-main/cli/scripts/===
+check-secret-tokens.sh[XQ4T]: F:CI 脚本，扫描 CLI 文档中误提交的真实凭证 | R:- | A:bash 脚本，git ls-files 扫描 skills/*.md/README，匹配 sk- 高熵串和 JWT | S:占位词(EXAMPLE/REDACTED/YOUR_)忽略，sk- 需>=24字符且含数字才报警
+check-skill-wire-vocab.sh[XQ4T]: F:CI 脚本，检测 agent 文档中残留的已废弃 wire 词汇 | R:- | A:bash 脚本，BANNED 数组维护 旧词:替换词 映射，grep 扫描 skills 文档 | S:重命名/删除命令时必须在同一 commit 扩展 BANNED 列表
+
+===D:/Downloads/WeKnora-main/cli/skills/===
+embed.go[CG5S]: F:将 bundled Agent Skills 嵌入 CLI 二进制，skills install 直接写出 | R:code:cli/skills/weknora-shared/SKILL.md | A://go:embed all:weknora-shared all:weknora-rag-search，List/Install API | S:markdown 是唯一事实源，嵌入保证二进制与文档锁步，替代手动 symlink MVP
+
+===D:/Downloads/WeKnora-main/cli/skills/weknora-rag-search/===
+SKILL.md[SG6T]: F:weknora-rag-search Agent Skill，指导 chat/session ask/search 选择 | R:code:cli/skills/weknora-shared/SKILL.md | A:frontmatter name+description，决策表按目标选命令，tested_against v0.10 | S:必须先读 weknora-shared 获取认证/JSON 信封/退出码基础
+
+===D:/Downloads/WeKnora-main/cli/skills/weknora-rag-search/references/===
+chat.md[SG4T]: F:chat 与 session ask 命令参考，RAG 问答与原始流 | R:code:cli/skills/weknora-rag-search/SKILL.md | A:命令语法+flag 表，--reference 加引用索引，--format ndjson 原始事件流 | S:chat 做纯 KB RAG，session ask 调用自定义 agent，共享 SSE 词汇
+search-chunks.md[SG4T]: F:search chunks 命令参考，混合向量+关键词检索无 LLM | R:code:cli/skills/weknora-rag-search/SKILL.md | A:--limit 默认8(适配 LLM 上下文)，--vector-threshold/--keyword-threshold 预融合过滤 | S:不合成答案，返回排序后的 chunk 供调用方推理，用 chat 获取合成回答
+
+===D:/Downloads/WeKnora-main/cli/skills/weknora-shared/===
+SKILL.md[SG7S]: F:weknora-shared Agent Skill，所有 weknora-* skill 的前置基础 | R:- | A:认证(WEKNORA_API_KEY 无状态/ profile 持久化)、JSON 信封、退出码、流式输出规范 | S:agent 通常跳过 profile 直接用环境变量，tested_against v0.10，其他 skill 必须先读本文件
+
+===D:/Downloads/WeKnora-main/client/===
+README.md[SG6L]: F:WeKnora HTTP 客户端库中文文档，11 大功能模块说明 | R:code:client/agent.go | A:会话/知识库/知识/空间/问答/Agent/分块/消息/模型/沙箱技能/认证 | S:SwitchTenant 写入最近活跃租户偏好，沙箱技能支持 zip/ClawHub/SkillHub/GitHub
+README_EN.md[SG5M]: F:WeKnora HTTP 客户端库英文文档，功能模块说明 | R:code:client/README.md | A:10 大模块(会话/知识库/知识/空间/问答/分块/消息/模型/评测/沙箱技能/认证) | S:英文版未含评测功能说明，与中文版模块列表略有差异
+agent.go[KD6S]: F:Agent 问答 API 客户端，含思考过程/工具调用/反思流式解析 | R:- | A:MentionedItem{ID,Name,Type}，AgentChat/AgentChatStream SSE 逐行解析 | S:Type 枚举 kb/file/tag/mcp/skill，流式用 bufio.Scanner 按行解码 JSON
+agent_manage.go[KD6M]: F:自定义 Agent CRUD 管理 API 客户端 | R:code:client/client.go | A:CreateAgent/GetAgent/UpdateAgent/DeleteAgent/ListAgents，含工具配置 | S:Agent 管理与 agent.go 的运行时问答分离，管理走 REST CRUD
+auth.go[KI6M]: F:认证 API 客户端，登录/刷新令牌/切换空间 | R:code:client/client.go | A:Login/RefreshToken/SwitchTenant，SwitchTenant 写入最近活跃租户偏好 | S:LoginRequest 用 email+password，RefreshToken 走 refresh_token grant
+chunk.go[KD5M]: F:知识分块 CRUD API 客户端，查询/更新/删除 | R:code:client/client.go | A:Chunk 结构体含 content/metadata/score，ListChunks 支持分页过滤 | S:分块是知识库存储与索引的基本单元，更新走 PATCH 部分字段
+client.go[KD7M]: F:WeKnora HTTP 客户端核心，请求构建/认证/错误处理 | R:- | A:Client 结构体含 baseURL/httpClient/token，Do 方法统一 JSON 编解码 | S:所有资源客户端嵌入此 Client，错误响应统一解析为 APIError
+env_var.go[KI5S]: F:环境变量管理 API，列出/设置/删除沙箱技能环境变量 | R:code:client/client.go | A:EnvSource 三态 unset/workspace/user，ListMyEnvVars 返回来源标记 | S:workspace 填充值与用户个人值区分处理，未设置返回 unset
+evaluation.go[KD5S]: F:模型评测任务 API，启动评测/获取结果 | R:code:client/client.go | A:EvaluationTask 含 task_id/status，支持 embedding/chat/rerank 模型对比 | S:评测任务异步执行，需轮询 status 获取最终结果
+example.go[SG4M]: F:WeKnora 客户端完整使用示例，创建 KB/上传/会话/问答全流程 | R:code:client/client.go | A:ExampleUsage 函数演示从初始化到问答的端到端流程 | S:供集成方参考，非生产代码，含 os.Getenv 读取凭证
+faq.go[KD6L]: F:FAQ 条目管理 API，知识库下问答对 CRUD | R:code:client/client.go | A:FAQEntry 含 id/question/answer/enabled，支持批量导入导出 | S:FAQ 是知识库的直接问答源，与向量检索互补，468 行含完整分页
+go.mod[FV2T]: F:client 子模块 Go 模块定义 | R:- | A:module github.com/Tencent/WeKnora/client，go 1.24.2 | S:独立 go.mod 子模块，与主模块分离依赖管理
+initialization.go[KD6M]: F:知识库初始化配置 API，设置/读取 chat/embedding/rerank 模型 | R:code:client/client.go | A:InitializationConfig 写载荷用扁平 model id，读返回 KBModelConfigView | S:读写端点结构不同，写用扁平 id 读用完整视图，勿混用
+knowledge.go[KD8L]: F:知识条目管理 API，文件上传/URL/文本创建/下载/删除 | R:code:client/client.go | A:Knowledge 支持 multipart 文件上传，CreateKnowledgeFromFile/URL/Text | S:977 行最大客户端文件，含 MIME 类型检测、进度回调、批量操作
+knowledgebase.go[KD7L]: F:知识库 CRUD API，创建/配置/搜索/统计 | R:code:client/client.go | A:KnowledgeBase 含 name/description/visibility，HybridSearch 混合检索 | S:知识库是知识条目集合与问答入口，545 行含完整配置项
+log.go[CG3T]: F:SDK 内部 opt-in slog 日志器，默认丢弃输出 | R:- | A:SetDebugLevel("debug") 启用，debugLogger 默认 io.Discard | S:嵌入方主动调用才启用，避免 SDK 内部日志污染调用方 stdout
+mcp_service.go[KD5M]: F:MCP 服务管理 API，注册/配置 SSE 与 HTTP-Streamable 传输 | R:code:client/client.go | A:MCPTransportType 枚举 sse/http-streamable，MCPService CRUD | S:MCP 服务为 Agent 提供外部工具，传输类型决定连接方式
+message.go[KD6M]: F:会话消息管理 API，创建/查询/删除，含工具调用结果 | R:code:client/client.go | A:ToolResult 结构体，ListMessages 分页，DeleteMessage | S:消息是会话中的交互单元，含 user/assistant/tool 角色
+message_suggestion.go[KD4T]: F:消息建议 API，获取推荐追问/相关问题 | R:code:client/client.go | A:MessageSuggestionItem 含 text/category/source/knowledge_base_ids | S:建议由后端基于会话上下文生成，category 区分追问/相关
+model.go[KD6M]: F:AI 模型管理 API，chat/embedding/rerank 模型 CRUD | R:code:client/client.go | A:ModelType 枚举，CreateModel/GetModel/UpdateModel/DeleteModel/ListModels | S:模型按用途分类，配置含 base_url/api_key/model_name
+organization.go[KI7L]: F:组织/租户协作管理 API，成员/角色/邀请/空间切换 | R:code:client/client.go | A:Organization 含成员管理，643 行含 RBAC 角色与邀请流程 | S:组织是多租户隔离边界，SwitchTenant 与此模块联动
+resource_urls.go[CG3T]: F:资源 URL 模式常量，handle 内部代理 vs public 限时直链 | R:- | A:ResourceURLMode 枚举 handle/public，空值由服务端决定 | S:handle 需走认证 /files 代理，public 可无凭证加载但有时效
+session.go[KD7L]: F:会话管理 API，CRUD/标题生成/流式问答 | R:code:client/client.go | A:Session 含 messages，ChatStream 用 bufio 逐行解析 SSE，518 行 | S:会话是问答交互上下文容器，流式与非流式问答均在此模块
+skill.go[KD6M]: F:沙箱技能管理 API，上传/安装/列表/删除技能包 | R:code:client/client.go | A:SkillInfo 含 name/version/author，支持 zip/ClawHub/SkillHub/GitHub 源 | S:技能在沙箱中执行，安装需指定 source_type，344 行含 multipart 上传
+stream_errors.go[CG4T]: F:SSE 流终端错误类型，标记 response_type=error done=true 帧 | R:- | A:ErrSSEStreamTerminal + SSEStreamError{Type,Message,Code} | S:终端错误帧已先投递回调再返回错误，调用方需区分流中断与业务错误
+system.go[KD5S]: F:系统信息 API，获取版本/构建/配置/健康状态 | R:code:client/client.go | A:SystemInfo 含 version/edition/commit_id/build_time/go_version | S:183 行含健康检查端点与配置读取，无需认证
+tag.go[KD5S]: F:知识库标签管理 API，CRUD/批量打标/颜色配置 | R:code:client/client.go | A:Tag 含 id/seq_id/name/color/knowledge_count，支持按 KB 过滤 | S:标签是知识分类维度，与知识条目多对多关联，187 行含分页
+tenant.go[KI7L]: F:租户管理 API，CRUD/检索引擎配置/配额管理 | R:code:client/client.go | A:Tenant 含 id/name/status/retriever_config，463 行含完整分页与过滤 | S:租户是多租户隔离边界，检索引擎配置按租户独立设置
+web_search.go[KD3T]: F:网页搜索提供商 API，列出/启用搜索源 | R:code:client/client.go | A:WebSearchProvider 含 name/label/description/enabled | S:32 行精简模块，为 Agent 提供联网搜索能力配置
+
+===D:/Downloads/WeKnora-main/cloudbase/migrations/===
+20260915012526_import_schema.sql[PD8L]: F:CloudBase PG 全量 schema 导入，含扩展/函数/表/索引/约束 | R:- | A:CREATE EXTENSION vector/uuid-ossp/pg_trgm，unify_prompt_placeholder 函数 | S:2375 行从 Supabase dump 导入，是后续数据迁移的 schema 基线
+20260915022826_import_data_a.sql[PD5L]: F:audit_logs 表初始数据导入，操作审计记录 | R:code:cloudbase/migrations/20260915012526_import_schema.sql | A:INSERT audit_logs 含 actor/action/target/outcome/details/scope | S:549 行，tenant_id=10000 星达铜业数据，文件名后缀 a 对应表名首字母
+20260915022828_import_data_c.sql[PD7L]: F:chunks 表初始数据导入(批次C)，知识分块内容 | R:code:cloudbase/migrations/20260915012526_import_schema.sql | A:INSERT chunks 含 content/chunk_index/chunk_type/relation_chunks/metadata | S:6326 行，含发票/电费等 OCR 文本分块，tenant_id=10000
+20260915022829_import_data_d.sql[PD7L]: F:chunks 表初始数据导入(批次D)，含 image_ocr 类型分块 | R:code:cloudbase/migrations/20260915022828_import_data_c.sql | A:INSERT chunks 含 image_info OCR 描述与 caption，deleted_at 软删除 | S:8059 行最大 chunks 批次，含发票监制章 OCR 与图片关系链
+20260915022830_import_data_e.sql[PD7L]: F:chunks 表初始数据导入(批次E)，通行费/电费文本分块 | R:code:cloudbase/migrations/20260915022828_import_data_c.sql | A:INSERT chunks 含 context_header 上下文头，start_at/end_at 字符偏移 | S:5739 行，含 URL 残留(localhost:63342)说明从开发环境导出
+20260915022834_import_data_i.sql[PD7L]: F:chunks 表初始数据导入(批次I)，电费明细长文本分块 | R:code:cloudbase/migrations/20260915022828_import_data_c.sql | A:INSERT chunks 含 source_content 原文副本，seq_id 全局序号 | S:5533 行，含重庆电价明细与电能表编号，tenant_id=10000
+20260915022846_import_data_u.sql[PD4T]: F:embeddings 表初始数据导入，向量嵌入记录 | R:code:cloudbase/migrations/20260915012526_import_schema.sql | A:INSERT embeddings 含 1024 维向量数组，source_type=0 文本 | S:43 行含合同签署页嵌入，dimension=1024，向量为 float32 数组
+
+===D:/Downloads/WeKnora-main/cmd/desktop/===
+app.go[EU5T]: F:Wails 桌面端 App 状态结构体，持有后端 URL 与关闭通道 | R:code:cmd/desktop/main.go | A:App{ctx,backendURL,apiLanBaseURL,listenPublic,shutdownCh} | S:84 行，Wails 绑定方法的接收者，前端通过 wailsjs 调用
+main.go[EU7L]: F:WeKnora Lite 桌面端主入口，启动 Gin 后端+Wails 前端壳 | R:code:cmd/desktop/app.go | A:!bindings build tag，反向代理 /api 到后端，信号优雅关闭 | S:521 行，桌面端内嵌后端服务，LAN 模式可对外暴露 API
+main_bindings.go[EU3T]: F:Wails 绑定生成专用入口，-tags bindings 编译不启动后端 | R:code:cmd/desktop/main.go | A:bindings build tag，wails.Run 仅注册 App 绑定用于生成 wailsjs | S:17 行，避免生成绑定时依赖本机 Postgres/Gin 运行时
+prefs.go[CG4T]: F:桌面端偏好持久化，读写 desktop-prefs.json | R:code:cmd/desktop/app.go | A:desktopPrefs{HTTPPort,HTTPBindPublic}，存用户配置目录 | S:93 行，JSON 原子读写，端口与公网绑定开关
+update.go[EU6M]: F:桌面端自动更新，检查/下载/替换可执行文件 | R:code:cmd/desktop/main.go | A:CheckUpdate/DownloadUpdate/ApplyUpdate，跨平台 OS 特定替换逻辑 | S:413 行，Windows 用重命名+重启替换，macOS 处理 .app 包结构
+wails.json[FV3T]: F:Wails 构建配置，指定前端目录与产物名 | R:- | A:name=WeKnora Lite，frontend:dir=../../frontend，wailsjsdir=../../frontend/src | S:22 行，wails build 读取此配置，author/info 元数据
+
+===D:/Downloads/WeKnora-main/cmd/download/duckdb/===
+duckdb.go[XV3T]: F:DuckDB 扩展安装器，加载 spatial/excel 扩展 | R:- | A:duckdbExtensions=["spatial","excel"]，main 中 INSTALL+LOAD | S:spatial 枚举 Excel sheet，excel 提供 read_xlsx 类型推断
