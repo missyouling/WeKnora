@@ -1021,27 +1021,37 @@ const activeRecordType = computed(() => SCOPE_TO_ARCHIVE[activeDocScope.value] |
 const docTypeOptions = computed(() => {
   if (!isArchive.value) return []
   const allowed = currentScopes.value
+  // builtin_key -> 当前分类名（旧数据 doc_type 是旧内置名，改名后需映射到新名）
+  const builtinKeyMap: Record<string, string> = {}
+  currentScopes.value.forEach((sc: string) => {
+    (categories.value[sc] || []).forEach((c: any) => {
+      if (c && c.builtin_key && c.name) builtinKeyMap[c.builtin_key] = c.name
+    })
+  })
+  const normalize = (name: string) => builtinKeyMap[name] || name
   const set = new Map<string, { label: string; value: string }>()
-  // 仅加载已解析提取且存在数据的证照类型，并按当前档案 scope 过滤
-  // （车辆档案页不出现司机/维保类型，司机档案页不出现公司/维保类型）
   const isCatEnabled = (name: string) => {
     const sc = docScopeOf(name)
     const cat = (categories.value[sc] || []).find((c: any) => c && c.name === name)
     return !cat || cat.enabled !== false
   }
   const put = (name: string) => {
-    if (!name || !allowed.has(docScopeOf(name))) return
-    if (!isCatEnabled(name)) return
-    set.set(name, { label: name, value: name })
+    const nm = normalize(name)
+    if (!nm || !allowed.has(docScopeOf(nm))) return
+    if (!isCatEnabled(nm)) return
+    set.set(nm, { label: nm, value: nm })
   }
+  // 1) 按 categories 定义顺序输出（用户在字段配置里的排序）
   currentScopes.value.forEach((sc: string) => {
     (categories.value[sc] || []).forEach((c: any) => {
       if (c && c.name && c.enabled !== false) put(c.name)
     })
+    // 2) 内置但未入库的追加末尾
     Object.keys(BUILTIN_CERTS as any).forEach((n: string) => {
       if ((BUILTIN_CERTS as any)[n].scope === sc) put(n)
     })
   })
+  // 3) 旧数据里出现但不在上面的（历史残留），归一化后补上
   ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
   ;(rows.value || []).forEach((r: any) => put(r.doc_type))
   return [...set.values()]
@@ -1082,7 +1092,16 @@ async function reloadCategories() {
     ])
     categories.value = { vehicle: crv.data || [], driver: crd.data || [], maintain: crm.data || [] }
     // 字段配置变更后，按最新 isDefault(启用表头)重置筛选器勾选，与字段配置保持同步
-    nextTick(() => { try { resetColumns() } catch { /* ignore */ } })
+    nextTick(() => {
+      try { resetColumns() } catch { /* ignore */ }
+      // 默认选中第一个分类（与设置定义顺序一致）
+      if (!filters.docType && docTypeOptions.value.length) {
+        filters.docType = docTypeOptions.value[0].value
+        activeDocScope.value = docScopeOf(filters.docType)
+        initColumns()
+        loadRecords()
+      }
+    })
   } catch { /* ignore */ }
 }
 // 设置抽屉（证照配置/提取规则）变更分类后同步刷新

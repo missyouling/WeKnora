@@ -281,16 +281,24 @@ const certTypeOptions = computed(() => {
     .map(({ scope, title }) => {
     const names: string[] = []
     const seen = new Set<string>()
+    // builtin_key -> 当前名（内置改名后旧名归一）
+    const builtinRenamed = new Set<string>()
+    ;(categories.value[scope] || []).forEach((c: any) => {
+      if (c && c.builtin_key) builtinRenamed.add(c.builtin_key)
+    })
+    // 1) 用户在设置里定义的分类（按定义顺序）
+    ;(categories.value[scope] || []).forEach((c: any) => {
+      if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
+        seen.add(c.name)
+        names.push(c.name)
+      }
+    })
+    // 2) 内置但未入库的补充
     ;(Object.keys(DEFAULT_FIELDS[scope] || {}) as string[]).forEach((n) => {
+      if (builtinRenamed.has(n)) return
       if (!seen.has(n)) {
         seen.add(n)
         names.push(n)
-      }
-    })
-    ;(categories.value[scope] || []).forEach((c: any) => {
-      if (c && c.name && !seen.has(c.name)) {
-        seen.add(c.name)
-        names.push(c.name)
       }
     })
     return { label: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }
