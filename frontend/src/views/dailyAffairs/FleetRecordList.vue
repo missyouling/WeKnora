@@ -1043,7 +1043,7 @@ const docTypeOptions = computed(() => {
   }
   // 1) 按 categories 定义顺序输出（用户在字段配置里的排序）
   currentScopes.value.forEach((sc: string) => {
-    (categories.value[sc] || []).forEach((c: any) => {
+    sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[]).forEach((c: any) => {
       if (c && c.name && c.enabled !== false) put(c.name)
     })
     // 2) 内置但未入库的追加末尾

@@ -88,6 +88,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/api/fleet'
 import { listFleetCategories } from '@/api/fleet'
+import { sortCertsByLocalOrder } from './useCertOrder'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
@@ -286,8 +287,8 @@ const certTypeOptions = computed(() => {
     ;(categories.value[scope] || []).forEach((c: any) => {
       if (c && c.builtin_key) builtinRenamed.add(c.builtin_key)
     })
-    // 1) 用户在设置里定义的分类（按定义顺序）
-    ;(categories.value[scope] || []).forEach((c: any) => {
+    // 1) 用户在设置里定义的分类（按拖拽排序）
+    sortCertsByLocalOrder(scope, (categories.value[scope] || []) as any[]).forEach((c: any) => {
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name)
         names.push(c.name)
