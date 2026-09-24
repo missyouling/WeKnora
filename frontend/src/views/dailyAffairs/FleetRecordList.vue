@@ -1103,7 +1103,7 @@ async function reloadCategories() {
       const res: any = await listFleetGroupAliases()
       const arr = res?.data || res || []
       const am: Record<string,string> = {}
-      for (const it of arr) am[${it.scope}:] = it.name
+      for (const it of arr) am[it.scope + ':' + it.group_key] = it.name
       if (am['vehicle:company']) groupNames.value.vehicle = am['vehicle:company']
       if (am['driver:driver']) groupNames.value.driver = am['driver:driver']
       if (am['maintain:maintain']) groupNames.value.maintain = am['maintain:maintain']
