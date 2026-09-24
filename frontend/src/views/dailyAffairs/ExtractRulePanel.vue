@@ -282,25 +282,24 @@ const certTypeOptions = computed(() => {
     .map(({ scope, title }) => {
     const names: string[] = []
     const seen = new Set<string>()
-    // builtin_key -> 当前名（内置改名后旧名归一）
-    const builtinRenamed = new Set<string>()
-    ;(categories.value[scope] || []).forEach((c: any) => {
-      if (c && c.builtin_key) builtinRenamed.add(c.builtin_key)
-    })
-    // 1) 用户在设置里定义的分类（按拖拽排序）
+    // 顺序：按 builtinOrder（内置定义顺序）遍历 categories 匹配项，
+    // 内置未入库的按同位置插入，自定义分类追加末尾；localStorage 拖拽顺序优先。
     const builtinKeys = Object.keys(DEFAULT_FIELDS[scope] || {})
-    sortCertsByLocalOrder(scope, (categories.value[scope] || []) as any[], builtinKeys).forEach((c: any) => {
-      if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
-        seen.add(c.name)
-        names.push(c.name)
+    const sortedCats = sortCertsByLocalOrder(scope, (categories.value[scope] || []) as any[], builtinKeys) as any[]
+    const pushedNames = new Set<string>()
+    builtinKeys.forEach((bKey) => {
+      const cat = sortedCats.find((c: any) => c.builtin_key === bKey)
+      if (cat) {
+        if (cat.enabled === false) return
+        if (!seen.has(cat.name)) { seen.add(cat.name); names.push(cat.name); pushedNames.add(cat.name) }
+      } else {
+        // 内置未入库：直接用内置名
+        if (!seen.has(bKey)) { seen.add(bKey); names.push(bKey) }
       }
     })
-    // 2) 内置但未入库的补充
-    ;(Object.keys(DEFAULT_FIELDS[scope] || {}) as string[]).forEach((n) => {
-      if (builtinRenamed.has(n)) return
-      if (!seen.has(n)) {
-        seen.add(n)
-        names.push(n)
+    sortedCats.forEach((c: any) => {
+      if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
+        seen.add(c.name); names.push(c.name)
       }
     })
     return { label: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }

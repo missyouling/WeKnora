@@ -1041,16 +1041,15 @@ const docTypeOptions = computed(() => {
     if (!isCatEnabled(nm)) return
     set.set(nm, { label: nm, value: nm })
   }
-  // 1) 按 categories 定义顺序输出（用户在字段配置里的排序）
+  // 1) 按 categories 定义顺序输出（内置顺序优先，自定义追加；localStorage 拖拽顺序优先）
   currentScopes.value.forEach((sc: string) => {
     const builtinKeys = Object.keys(BUILTIN_CERTS as any).filter((n: string) => (BUILTIN_CERTS as any)[n].scope === sc)
-    sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[], builtinKeys).forEach((c: any) => {
-      if (c && c.name && c.enabled !== false) put(c.name)
+    const sortedCats = sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[], builtinKeys) as any[]
+    builtinKeys.forEach((bKey: string) => {
+      const cat = sortedCats.find((c: any) => c.builtin_key === bKey)
+      if (cat) { put(cat.name) } else { put(bKey) }
     })
-    // 2) 内置但未入库的追加末尾
-    Object.keys(BUILTIN_CERTS as any).forEach((n: string) => {
-      if ((BUILTIN_CERTS as any)[n].scope === sc) put(n)
-    })
+    sortedCats.forEach((c: any) => { if (c && c.name) put(c.name) })
   })
   // 3) 旧数据里出现但不在上面的（历史残留），归一化后补上
   ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
