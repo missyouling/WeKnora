@@ -302,3 +302,14 @@ Entry 的语义必须来自模型对真实证据的理解。不得仅依据路�
 
 不预加载、不猜测，也不自行重建这些专项流程。平台调用方式、请求格式、批次上限、审批规则、索引格式细节和恢复步骤由对应Guide、工具说明、模型Prompt和CLI帮助按需提供。
 <!-- aoci:end -->
+
+13. **分类名称、顺序、别名全局六同步**：用户在「字段配置」里对证照分类的改名、拖拽排序、启用/禁用，必须同时同步到以下六处，任何一处硬编码或用本地兜底数据都会导致闪烁/不一致：
+    - ① 设置抽屉内分类列表（权威源，`categories[scope]` 数组顺序即排序）；
+    - ② 主页面概览卡片分组标题（取 `fleet_group_aliases.name`，key=`${scope}:${group_key}`，builtin group_key=`company/driver/maintain`）；
+    - ③ 主页面概览类型卡片顺序（按 `categories[scope]` 的 name 顺序 sort，禁止按 overviewStats.by_doc_type 的返回顺序渲染）；
+    - ④ 工具栏证照类型筛选下拉；
+    - ⑤ 提取规则面板证照类型下拉；
+    - ⑥ 上传弹窗证照类型下拉。
+    - **反闪烁门控**：设置抽屉首次打开时，`loadCategories()`、`loadCustomGroups()`、`loadGroupAliases()` 三个异步必须 `await Promise.all` 全部完成后才 `ready=true` 渲染内容，禁止先用硬编码 GROUPS label + 本地 BUILTIN 字段数渲染再异步跳变。
+    - **import 必须显式**：新用到的 API（如 `listFleetGroupAliases`）必须在文件头 import 行里显式列出，调用时被 catch 吞掉会静默失效。
+
