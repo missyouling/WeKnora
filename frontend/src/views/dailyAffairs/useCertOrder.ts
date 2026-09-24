@@ -1,45 +1,36 @@
-// 证照类型排序：与 FleetCertPanel 设置抽屉一致
-// 1) 先按 BUILTIN 内置顺序（builtin_key 匹配）
-// 2) 再追加 categories 里未 matched 的自定义分类（后端顺序）
-// 3) 若 localStorage 有拖拽顺序则优先用拖拽顺序
+// 证照类型排序：以后端 categories 数组顺序为唯一权威
+// （后端 ListFleetCategories 已按 sort_order ASC 排序，用户拖动后通过
+// sortFleetCategories 持久化 sort_order）。
+//
+// 历史上这里曾优先读 localStorage 拖拽顺序、无 localStorage 时按内置
+// BUILTIN 顺序重排，导致设置抽屉（直接渲染 categories）与工具栏下拉、
+// 提取规则下拉、上传弹窗下拉的类型顺序不一致。现已废弃这两套本地排序，
+// 统一信任后端返回顺序。
+//
+// 内置未入库分类（categories 里缺失，理论上不应出现）按内置顺序追加末尾兜底。
 export function sortCertsByLocalOrder<T extends { name: string; id?: string; builtin_key?: string }>(
-  scope: string,
+  _scope: string,
   list: T[],
   builtinOrder: string[] = [],
 ): T[] {
-  // 1) localStorage 拖拽顺序
-  try {
-    const saved = JSON.parse(localStorage.getItem(`weknora-fleet-cert-order-${scope}`) || '[]')
-    if (Array.isArray(saved) && saved.length) {
-      const byName = new Map(list.map((m) => [m.name, m]))
-      const byId = new Map(list.map((m) => [String(m.id), m]))
-      const ordered: T[] = []
-      const pushed = new Set<string>()
-      for (const key of saved) {
-        let item = byName.get(key)
-        if (!item && typeof key === 'string' && key.startsWith('builtin-')) {
-          item = byName.get(key.slice('builtin-'.length))
-        }
-        if (!item && byId.has(key)) item = byId.get(String(key))
-        if (item && !pushed.has(item.name)) {
-          ordered.push(item)
-          pushed.add(item.name)
-        }
-      }
-      list.forEach((m) => { if (!pushed.has(m.name)) ordered.push(m) })
-      return ordered
-    }
-  } catch { /* ignore */ }
-
-  // 2) 无拖拽顺序：按内置顺序（builtin_key 匹配）排，自定义追加末尾
-  const byBuiltin = new Map<string, T>()
-  list.forEach((c) => { if (c.builtin_key) byBuiltin.set(c.builtin_key, c) })
   const ordered: T[] = []
   const pushed = new Set<string>()
+  // 1) categories 后端顺序（权威）
+  list.forEach((c) => {
+    if (c && c.name && !pushed.has(c.name)) {
+      ordered.push(c)
+      pushed.add(c.name)
+    }
+  })
+  // 2) 内置未入库兜底：按内置顺序追加
+  const byBuiltin = new Map<string, T>()
+  list.forEach((c) => { if (c.builtin_key) byBuiltin.set(c.builtin_key, c) })
   builtinOrder.forEach((bKey) => {
     const c = byBuiltin.get(bKey)
-    if (c && !pushed.has(c.name)) { ordered.push(c); pushed.add(c.name) }
+    if (c && !pushed.has(c.name)) {
+      ordered.push(c)
+      pushed.add(c.name)
+    }
   })
-  list.forEach((c) => { if (!pushed.has(c.name)) ordered.push(c) })
   return ordered
 }

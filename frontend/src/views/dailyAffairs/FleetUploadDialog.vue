@@ -37,7 +37,7 @@
                 <span class="fu-item-status fu-item-status--err">{{ t.msg || '提取失败' }}</span>
               </template>
               <template v-else>
-                <t-progress :percentage="t.progress" :label="false" size="small" :theme="t.status === 'failed' ? 'error' : undefined" />
+                <t-progress :percentage="t.progress" :label="false" size="small" />
                 <span class="fu-item-label">{{ taskLabel(t) }}</span>
               </template>
             </div>
@@ -328,7 +328,7 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
 // 打开时：若未手动选择，默认继承父组件当前筛选的证照类型（防止漏选导致模型误判类型）
 watch(() => props.visible, (v) => {
   if (v && !selectedType.value && props.defaultType) {
-    selectedType.value = props.defaultType.includes('__') ? props.defaultType : ('vehicle__' + props.defaultType)
+    selectedType.value = props.defaultType.includes('__') ? props.defaultType : (props.scope + '__' + props.defaultType)
   }
 })
 

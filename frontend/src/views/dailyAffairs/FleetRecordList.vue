@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="utility-meter-tab">
     <!-- 解析状态提示（证照型）：优先展示上传任务的实时进度（多文件轮播），无活动任务时回退列表轮询兜底 -->
     <div v-if="uploadProgress.length || pendingFiles.length" class="archive-pending-bar">
@@ -954,20 +954,27 @@ const overviewCards = computed(() => {
       { key: "parseFailed", label: "解析失败", num: pfN, icon: "close-circle", cls: "", action: "history-parse_failed" },
       { key: "extractFailed", label: "提取失败", num: efN, icon: "close-circle", cls: "", action: "history-extract_failed" },
     ]
+    // 类型卡片以当前 scope 的 enabled categories 为唯一权威（名称/顺序/是否显示）；
+    // 文件数通过 name 或 builtin_key 匹配 by_doc_type 统计，匹配不上为 0。
+    const statByKey = new Map<string, any>()
+    items.forEach((t: any) => statByKey.set(t.doc_type, t))
     const typeCards: any[] = []
-    items.forEach((t: any) => {
-      const name = t.doc_type
-      const sc = docScopeOf(name)
-      const cat = (categories.value[sc] || []).find((c: any) => c && c.name === name)
-      if (cat && cat.enabled === false) return
-      const def = (BUILTIN_CERTS as any)[name]
-      typeCards.push({ key: "type-" + name, label: name, num: t.count, icon: "file-copy", cls: "", action: "type", value: name, scope: def?.scope || sc })
-    })
-    typeCards.sort((a: any, b: any) => {
-      const cats = (categories.value[a.scope] || []) as any[]
-      const ia = cats.findIndex((c: any) => c.name === a.label)
-      const ib = cats.findIndex((c: any) => c.name === b.label)
-      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib)
+    currentScopes.value.forEach((sc: string) => {
+      ;(categories.value[sc] || []).forEach((c: any) => {
+        if (!c || c.enabled === false) return
+        let stat = statByKey.get(c.name)
+        if (!stat && c.builtin_key) stat = statByKey.get(c.builtin_key)
+        typeCards.push({
+          key: "type-" + (c.id || c.name),
+          label: c.name,
+          num: stat?.count || 0,
+          icon: "file-copy",
+          cls: "",
+          action: "type",
+          value: c.name,
+          scope: sc,
+        })
+      })
     })
     return cards.concat(typeCards)
   }
@@ -1059,11 +1066,12 @@ const docTypeOptions = computed(() => {
   currentScopes.value.forEach((sc: string) => {
     const builtinKeys = Object.keys(BUILTIN_CERTS as any).filter((n: string) => (BUILTIN_CERTS as any)[n].scope === sc)
     const sortedCats = sortCertsByLocalOrder(sc, (categories.value[sc] || []) as any[], builtinKeys) as any[]
-    builtinKeys.forEach((bKey: string) => {
-      const cat = sortedCats.find((c: any) => c.builtin_key === bKey)
-      if (cat) { put(cat.name) } else { put(bKey) }
-    })
     sortedCats.forEach((c: any) => { if (c && c.name) put(c.name) })
+    // 内置未入库兜底：按内置顺序补
+    builtinKeys.forEach((bKey: string) => {
+      const exists = sortedCats.some((c: any) => c && (c.builtin_key === bKey || c.name === bKey))
+      if (!exists) put(bKey)
+    })
   })
   // 3) 旧数据里出现但不在上面的（历史残留），归一化后补上
   ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
@@ -1266,46 +1274,46 @@ onBeforeUnmount(() => {
 const DERIVED_BLACKLIST = ['到期提醒天数', '提醒状态', '审验状态', '是否续保'] as string[]
 const isDerivedColumn = (k: string) => DERIVED_BLACKLIST.includes(k)
 
-const archiveTypeFields = computed(() => {
+const archiveTypeFields = computed<{ base: string[]; detail: string[]; baseSet: Set<string> }>(() => {
   const t = (drawerVisible.value && editMode.value === 'record' ? form.doc_type : '') || filters.docType
   const builtin = t ? BUILTIN_CERTS[t] : null
   // 用户分类配置优先（与设置页保持同步）；内置定义兜底
   const cat = (categories.value[group.value.scope] || []).find((c: any) => c.name === t)
-  const rawSubs = (cat?.subs || [])
-  const enabledSet = new Set(
+  const rawSubs: any[] = ((cat?.subs || []) as any[])
+  const enabledSet = new Set<string>(
     rawSubs
       .filter((s: any) => s.enabled !== false && s.name && !String(s.name).includes('其它文档中出现的字段'))
-      .map((s: any) => s.name)
+      .map((s: any) => String(s.name))
   )
   // 默认字段集合：用户在字段配置里标记「默认」的字段，重置字段筛选器时自动勾选；未标记则回退内置 base
-  const defaultSet = new Set(
+  const defaultSet = new Set<string>(
     rawSubs
       .filter((s: any) => s.enabled !== false && s.is_default === true && s.name && enabledSet.has(String(s.name)))
       .map((s: any) => String(s.name))
   )
   if (builtin) {
-    const baseSet = defaultSet.size ? new Set([...defaultSet]) : new Set(builtin.base)
-    const known = new Set([...builtin.base, ...(builtin.detail || [])])
+    const baseSet = defaultSet.size ? new Set<string>([...defaultSet]) : new Set<string>(builtin.base)
+    const known = new Set<string>([...builtin.base, ...(builtin.detail || [])])
     // 列/编辑抽屉/字段筛选器的顺序以“字段配置 subs 数组”为权威；无 subs 时回退内置顺序
     let ordered: string[]
     if (rawSubs.length) {
       ordered = rawSubs
-        .filter((s: any) => s.enabled !== false && s.name && !isDerivedColumn(s.name)
-          && (baseSet.has(s.name) || enabledSet.has(s.name) || known.has(s.name)))
-        .map((s: any) => s.name)
+        .filter((s: any) => s.enabled !== false && s.name && !isDerivedColumn(String(s.name))
+          && (baseSet.has(String(s.name)) || enabledSet.has(String(s.name)) || known.has(String(s.name))))
+        .map((s: any) => String(s.name))
     } else {
       ordered = [...builtin.base, ...(builtin.detail || [])].filter((k: string) => !isDerivedColumn(k))
     }
     // 用户新增、配置里未排序的字段追加末尾
-    const extra = [...enabledSet].filter((k: string) => !known.has(k) && !isDerivedColumn(k) && !ordered.includes(k))
+    const extra: string[] = [...enabledSet].filter((k: string) => !known.has(k) && !isDerivedColumn(k) && !ordered.includes(k))
     ordered = [...ordered, ...extra]
     // base=顺序列表(列顺序权威)，detail 置空；baseSet=默认勾选集合
     return { base: ordered, detail: [], baseSet }
   }
   if (rawSubs.length) {
-    const subs = [...enabledSet].filter((k: string) => !isDerivedColumn(k))
+    const subs: string[] = [...enabledSet].filter((k: string) => !isDerivedColumn(k))
     if (subs.length) {
-      const bs = defaultSet.size ? new Set([...defaultSet]) : new Set(subs)
+      const bs = defaultSet.size ? new Set<string>([...defaultSet]) : new Set<string>(subs)
       return { base: subs, detail: [], baseSet: bs }
     }
   }
@@ -1321,7 +1329,7 @@ const fieldDataTypes = computed<Record<string, string>>(() => {
   return m
 })
 // 编辑抽屉字段渲染顺序：按当前类型配置字段顺序（备注固定排证件状态后），多余字段追加末尾
-const archiveEditKeys = computed(() => {
+const archiveEditKeys = computed<string[]>(() => {
   const f = archiveTypeFields.value
   const ordered = [...(f.base || []), ...(f.detail || [])]
   // 严格按配置字段渲染：未提取到的也显示空输入框；模型额外输出的字段不显示（与列表字段保持一致）
@@ -1895,13 +1903,13 @@ function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' 
   }, 3000)
 }
 // 表格里该文件已"提取完成/失败"的，不再保留旧的"正在提取…30%"进度项
-function filterLiveProgress(items) {
+function filterLiveProgress(items: any[]) {
   const doneNames = new Set(
     (fileRows.value || [])
       .filter((r) => r.extract_status === 'success' || r.extract_status === 'failed')
       .map((r) => r.file_name || r.alias || r.name),
   )
-  return items.filter((it) => !doneNames.has(it.name))
+  return items.filter((it: any) => !doneNames.has(it.name))
 }
 // 轮询刷新列表后：用表格实际 extract_status 清掉已完成文件的残留进度
 watch(fileRows, () => {
@@ -1920,14 +1928,10 @@ const uploadTypeOptions = computed(() => {
   const scope = group.value?.scope
   if (!scope) return []
   const titleMap: Record<string, string> = { vehicle: groupNames.value.vehicle, driver: groupNames.value.driver, maintain: groupNames.value.maintain }
-  const names: string[] = []
-  const seen = new Set<string>()
-  Object.values(BUILTIN_CERTS).filter((b) => b.scope === scope).forEach((b) => {
-    if (!seen.has(b.name)) { seen.add(b.name); names.push(b.name) }
-  })
-  ;(categories.value[scope] || []).filter((c: any) => c.enabled).forEach((c: any) => {
-    if (c && c.name && !seen.has(c.name)) { seen.add(c.name); names.push(c.name) }
-  })
+  const builtinKeys = Object.values(BUILTIN_CERTS).filter((b: any) => b.scope === scope).map((b: any) => b.name)
+  const enabledCats = (categories.value[scope] || []).filter((c: any) => c && c.enabled !== false) as any[]
+  const sorted = sortCertsByLocalOrder(scope, enabledCats, builtinKeys)
+  const names = sorted.map((c: any) => c.name).filter(Boolean)
   if (!names.length) return []
   return [{ group: titleMap[scope] || scope, children: names.map((n) => ({ label: n, value: scope + '__' + n })) }]
 })
@@ -1936,10 +1940,10 @@ const uploadTypeOptions = computed(() => {
 const archiveTypePlainOptions = computed(() => {
   const scope = group.value?.scope
   if (!scope) return []
-  const names: string[] = []
-  Object.values(BUILTIN_CERTS).filter((b: any) => b.scope === scope).forEach((b: any) => { if (!names.includes(b.name)) names.push(b.name) })
-  ;(categories.value[scope] || []).filter((c: any) => c && c.enabled).forEach((c: any) => { if (c.name && !names.includes(c.name)) names.push(c.name) })
-  return names.map((n) => ({ label: n, value: n }))
+  const builtinKeys = Object.values(BUILTIN_CERTS).filter((b: any) => b.scope === scope).map((b: any) => b.name)
+  const enabledCats = (categories.value[scope] || []).filter((c: any) => c && c.enabled !== false) as any[]
+  const sorted = sortCertsByLocalOrder(scope, enabledCats, builtinKeys)
+  return sorted.map((c: any) => ({ label: c.name, value: c.name }))
 })
 function onUploadDone() {
   loadRecords()

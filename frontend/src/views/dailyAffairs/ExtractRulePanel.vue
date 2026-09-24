@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="extract-rule-panel">
     <div class="extract-toolbar">
       <t-select v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
@@ -21,7 +21,7 @@
         <div class="rule-table-row" :class="{ editing: editingName === f.name }" @click="toggleEdit(f.name)">
           <span class="rtr-name" :class="{ 'rtr-disabled': !f.enabled }">{{ f.name }}</span>
           <span class="rtr-desc" :title="f.desc || f.name">{{ f.desc || '—' }}</span>
-          <span class="rtr-type">{{ typeLabel(f.type) }}</span>
+          <span class="rtr-type">{{ typeLabel(f.type || '') }}</span>
           <span class="rtr-status">
             <t-switch v-model="f.enabled" size="small" @click.stop @change="() => {}" />
           </span>
@@ -299,25 +299,18 @@ const certTypeOptions = computed(() => {
     const title = groupTitle(scope, fallback)
     const names: string[] = []
     const seen = new Set<string>()
-    // 顺序：按 builtinOrder（内置定义顺序）遍历 categories 匹配项，
-    // 内置未入库的按同位置插入，自定义分类追加末尾；localStorage 拖拽顺序优先。
+    // 顺序唯一权威：categories 后端顺序（sort_order，用户拖动后持久化）
     const builtinKeys = Object.keys(DEFAULT_FIELDS[scope] || {})
     const sortedCats = sortCertsByLocalOrder(scope, (categories.value[scope] || []) as any[], builtinKeys) as any[]
-    const pushedNames = new Set<string>()
-    builtinKeys.forEach((bKey) => {
-      const cat = sortedCats.find((c: any) => c.builtin_key === bKey)
-      if (cat) {
-        if (cat.enabled === false) return
-        if (!seen.has(cat.name)) { seen.add(cat.name); names.push(cat.name); pushedNames.add(cat.name) }
-      } else {
-        // 内置未入库：直接用内置名
-        if (!seen.has(bKey)) { seen.add(bKey); names.push(bKey) }
-      }
-    })
     sortedCats.forEach((c: any) => {
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name); names.push(c.name)
       }
+    })
+    // 内置未入库兜底：按内置顺序追加
+    builtinKeys.forEach((bKey) => {
+      const exists = sortedCats.some((c: any) => c && (c.builtin_key === bKey || c.name === bKey))
+      if (!exists && !seen.has(bKey)) { seen.add(bKey); names.push(bKey) }
     })
     return { group: title, children: names.map((n) => ({ label: n, value: typeComposite(scope, n) })) }
   }).filter((g) => (g.children || []).length > 0)
@@ -409,7 +402,7 @@ function applyTemplateExample() {
 async function ensureKb() {
   if (kbId.value) return kbId.value
   try {
-    const res: any = await listKnowledgeBases({ page: 1, page_size: 100 })
+    const res: any = await listKnowledgeBases({ page: 1, page_size: 100 } as any)
     const list = Array.isArray(res) ? res : res?.data || []
     const found = Array.isArray(list) ? list.find((kb: any) => kb.name === KB_NAME) : null
     if (found) kbId.value = found.id
@@ -533,6 +526,16 @@ onMounted(async () => {
   if (first) {
     certType.value = first.value
     await loadConfig()
+  }
+})
+
+// 兜底：categories 异步加载完成后，若仍未选中类型则自动选中第一个（默认加载第一个分类）
+watch(certTypeOptions, (groups) => {
+  if (certType.value) return
+  const first = groups[0]?.children?.[0]
+  if (first) {
+    certType.value = first.value
+    loadConfig()
   }
 })
 </script>

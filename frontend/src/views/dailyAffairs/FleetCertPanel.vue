@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="meter-settings-body" v-if="ready">
     <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
     <div class="group-headers">
@@ -280,7 +280,6 @@ function certFieldCount(b: CertDef) {
 const activeGroup = ref('company')
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
 const saving = ref(false)
-const orderTick = ref(0)
 
 const group = computed(() => groupList.value.find((g) => g.key === activeGroup.value) || groupList.value[0])
 
@@ -311,52 +310,29 @@ async function confirmRename(g: any) {
 }
 
 function buildItems(g0: any): any[] {
-  void orderTick.value // 建立响应式依赖：本地拖拽顺序变化后重算
   const scope: string = g0.scope
   const gid: string = g0.groupId || ''
   // 仅取归属当前分组的分类（内置分组 group_id 为空；自定义分组按 group_id 过滤）
   const list = (categories.value[scope] || []).filter((c: any) => (c.group_id || '') === gid)
   const merged: any[] = []
   const seen = new Set<string>()
-  // 内置证照类型只出现在内置分组（groupId 为空）
+  // 1) 已入库分类：严格按 categories 后端顺序（sort_order，用户拖动后持久化）
+  list.forEach((c: any) => {
+    const isBuiltin = !!c.builtin_key
+    if (!seen.has(c.id)) {
+      merged.push({ ...c, builtin: isBuiltin, fields: (Array.isArray(c.subs) && c.subs.length) ? c.subs.length : (isBuiltin ? certFieldCount({ name: c.builtin_key } as any) : 0) })
+      seen.add(c.id)
+    }
+  })
+  // 2) 内置未入库兜底（理论上初始化会写入全部内置，这里仅防御）：按内置顺序追加
   if (!gid) {
     ;(BUILTIN[scope] || []).forEach((b) => {
       const found = list.find((c: any) => c.builtin_key === b.name || c.name === b.name)
-      if (found) {
-        merged.push({ ...found, builtin: true, fields: (Array.isArray(found.subs) && found.subs.length) ? found.subs.length : certFieldCount(b) })
-        seen.add(found.id)
-      } else {
+      if (!found) {
         merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
       }
     })
   }
-  list.forEach((c: any) => {
-    if (!seen.has(c.id)) { merged.push({ ...c, builtin: false, fields: Array.isArray(c.subs) ? c.subs.length : 0 }); seen.add(c.id) }
-  })
-  // 本地持久化的拖拽顺序（按分组 key 隔离，以名称作排序键：id 会因入库/改名而失效）
-  try {
-    const saved = JSON.parse(localStorage.getItem(`weknora-fleet-cert-order-${g0.key}`) || '[]')
-    if (Array.isArray(saved) && saved.length) {
-      const byName = new Map(merged.map((m) => [m.name, m]))
-      const byId = new Map(merged.map((m) => [m.id, m]))
-      const ordered: any[] = []
-      const pushed = new Set<any>()
-      for (const key of saved) {
-        let item = byName.get(key)
-        // 兼容旧数据：builtin-{name} / 入库后的 uuid
-        if (!item && typeof key === 'string' && key.startsWith('builtin-')) {
-          item = byName.get(key.slice('builtin-'.length))
-        }
-        if (!item && byId.has(key)) item = byId.get(key)
-        if (item && !pushed.has(item)) {
-          ordered.push(item)
-          pushed.add(item)
-        }
-      }
-      const rest = merged.filter((m) => !pushed.has(m))
-      return [...ordered, ...rest]
-    }
-  } catch { /* ignore */ }
   return merged
 }
 const groupItems = computed(() => buildItems(group.value))
@@ -376,20 +352,24 @@ async function onDrop(i: number) {
   const list = [...groupItems.value]
   const [moved] = list.splice(from, 1)
   list.splice(i, 0, moved)
-  // 完整顺序（含内置）持久化到本地：以名称作排序键（id 会因入库/改名而失效）
-  try {
-    localStorage.setItem(`weknora-fleet-cert-order-${group.value.key}`, JSON.stringify(list.map((it: any) => it.name)))
-  } catch { /* ignore */ }
-  orderTick.value++
+  const scope = group.value.scope
+  const gid = group.value.groupId || ''
+  // 乐观更新：当前分组项按新顺序填入它们在 categories 数组中原来占据的 slot
+  const arr = [...(categories.value[scope] || [])]
+  const newGroupItems = list.filter((it: any) => !String(it.id).startsWith('builtin-'))
+  let gi = 0
+  const prev = arr
+  categories.value[scope] = arr.map((c0: any) => ((c0.group_id || '') === gid ? (newGroupItems[gi++] ?? c0) : c0)) as any
   // 已入库项同步后端 sort_order
-  const ids = list.filter((it: any) => !String(it.id).startsWith('builtin-')).map((it: any) => it.id)
+  const ids = newGroupItems.map((it: any) => it.id)
   if (!ids.length) return
   try {
-    await sortFleetCategories(group.value.scope, ids)
+    await sortFleetCategories(scope, ids)
     MessagePlugin.success('顺序已保存')
     notifyCategoriesChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '排序保存失败')
+    void prev
     load()
   }
 }
