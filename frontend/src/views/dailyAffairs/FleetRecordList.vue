@@ -1034,6 +1034,14 @@ const docTypeOptions = computed(() => {
     if (!isCatEnabled(name)) return
     set.set(name, { label: name, value: name })
   }
+  currentScopes.value.forEach((sc: string) => {
+    (categories.value[sc] || []).forEach((c: any) => {
+      if (c && c.name && c.enabled !== false) put(c.name)
+    })
+    Object.keys(BUILTIN_CERTS as any).forEach((n: string) => {
+      if ((BUILTIN_CERTS as any)[n].scope === sc) put(n)
+    })
+  })
   ;(fileRows.value || []).forEach((f: any) => put(f.doc_type))
   ;(rows.value || []).forEach((r: any) => put(r.doc_type))
   return [...set.values()]
