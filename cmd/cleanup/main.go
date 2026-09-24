@@ -18,6 +18,6 @@ func main() {
 	for rows.Next() {
 		var s, g, n string
 		rows.Scan(&s, &g, &n)
-		fmt.Printf("scope=%s group_key=%s name=%s\n", s, g, n)
+		fmt.Printf("scope=%q group_key=%q name=%q\n", s, g, n)
 	}
 }

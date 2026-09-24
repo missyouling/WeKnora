@@ -1088,6 +1088,17 @@ async function loadBase() {
   } catch { /* ignore */ }
 }
 
+async function loadGroupAliases() {
+  try {
+    const res: any = await listFleetGroupAliases()
+    const arr = res?.data || res || []
+    const am: Record<string,string> = {}
+    for (const it of arr) am[it.scope + ':' + it.group_key] = it.name
+    if (am['vehicle:company']) groupNames.value.vehicle = am['vehicle:company']
+    if (am['driver:driver']) groupNames.value.driver = am['driver:driver']
+    if (am['maintain:maintain']) groupNames.value.maintain = am['maintain:maintain']
+  } catch (e) { console.warn('alias load failed', e) }
+}
 // 只重载证照分类（上传弹窗类型选项、证照类型筛选框依赖 categories）
 async function reloadCategories() {
   if (!isArchive.value) return
@@ -1218,6 +1229,7 @@ watch(() => props.recordType, () => {
   filters.docType = ''
   searchText.value = ''
   activeGroup.value = archiveGroups.value[0]?.key || ''
+  loadGroupAliases()
   initColumns()
   loadRecords()
 })
