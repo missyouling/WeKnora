@@ -43,7 +43,7 @@
             @drop.prevent="onDrop(idx)" @dragend="dragIndex = -1" @click="toggleEdit(item)">
             <span class="mtr-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
             <span class="mtr-name" :class="{ 'mtr-disabled': !item.enabled }">{{ item.name }}</span>
-            <span class="mtr-scope">{{ group.label }}</span>
+            <span class="mtr-scope">{{ displayLabel(group) }}</span>
             <span class="mtr-fields">{{ item.fields }}</span>
             <span class="mtr-switch" @click.stop>
               <t-switch :model-value="!!item.enabled" size="small" @change="(v: any) => toggleEnabled(item, v)" />
@@ -164,7 +164,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
   try {
-    const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
+    const parentScope = props.scope
     const res: any = await listFleetCertGroups({ parent_scope: parentScope })
     const arr = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
     const fallbackScope = props.scope === 'driver' ? 'driver' : (props.scope === 'maintain' ? 'maintain' : 'vehicle')
@@ -191,7 +191,7 @@ async function confirmAddGroup() {
   if (!name) return
   savingGroup.value = true
   try {
-    const parentScope = props.scope === 'driver' ? 'driver' : 'vehicle'
+    const parentScope = props.scope
     const res: any = await createFleetCertGroup({ name, parent_scope: parentScope })
     const g = res?.data || res
     if (!g || !g.id) { MessagePlugin.error('创建失败：返回数据异常'); return }
