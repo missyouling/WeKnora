@@ -424,6 +424,7 @@ import {
 } from '@/api/knowledge-base'
 import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary } from '@/api/fleet'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { sortCertsByLocalOrder } from './useCertOrder'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '../knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '../knowledge/components/KbTagManageDrawer.vue'
