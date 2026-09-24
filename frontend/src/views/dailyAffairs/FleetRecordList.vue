@@ -329,9 +329,12 @@
                   <template v-else-if="form.doc_knowledge_id">
                     <t-icon name="file" size="18px" class="attach-icon" />
                     <span class="attach-name" :title="form.source_name || form.file_name">{{ form.source_name || form.file_name || '已上传附件' }}</span>
-                    <t-button variant="text" size="small" @click.stop="confirmClearAttach">
-                      <template #icon><t-icon name="close" size="14px" /></template>
-                    </t-button>
+                    <t-popconfirm :content="attachIsNew ? '将彻底删除刚上传的附件，确定移除？' : '关联知识库已有文件，仅解除关联、不删除原文件。'" confirm-btn="确定移除" cancel-btn="取消"
+                      @confirm="doClearAttach">
+                      <t-button variant="text" size="small" @click.stop>
+                        <template #icon><t-icon name="close" size="14px" /></template>
+                      </t-button>
+                    </t-popconfirm>
                   </template>
                   <template v-else>
                     <t-icon name="upload" size="20px" class="attach-icon" />
@@ -413,7 +416,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
@@ -1430,25 +1433,13 @@ async function uploadAttachFile(file: File) {
 function resetAttachFields() {
   form.doc_knowledge_id = ''; form.source_name = ''; form.file_name = ''; form.file_type = ''
 }
-function confirmClearAttach() {
-  const isNew = attachIsNew.value
-  const kid = form.doc_knowledge_id
-  const dlg = DialogPlugin.confirm({
-    header: '移除附件',
-    body: isNew
-      ? '该附件是本次新上传的文件，移除后将彻底删除。确定移除？'
-      : '该附件关联知识库已有文件，仅解除关联、不删除原文件。确定移除？',
-    confirmBtn: '确定移除',
-    onConfirm: async () => {
-      if (isNew && kid) {
-        try { await delKnowledgeDetails(kid) } catch { /* 忽略删除失败 */ }
-      }
-      resetAttachFields()
-      attachIsNew.value = false
-      dlg.destroy()
-    },
-    onCancel: () => dlg.destroy(),
-  })
+async function doClearAttach() {
+  if (attachIsNew.value && form.doc_knowledge_id) {
+    const kid = form.doc_knowledge_id
+    try { await delKnowledgeDetails(kid) } catch { /* 忽略删除失败 */ }
+  }
+  resetAttachFields()
+  attachIsNew.value = false
 }
 // 关抽屉时清理未保存的新上传孤儿附件
 async function disposeOrphanAttach() {
