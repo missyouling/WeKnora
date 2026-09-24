@@ -1,5 +1,5 @@
 <template>
-  <div class="meter-settings-body">
+  <div class="meter-settings-body" v-if="ready">
     <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
     <div class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
@@ -286,6 +286,7 @@ const group = computed(() => groupList.value.find((g) => g.key === activeGroup.v
 
 // 分组重命名（纯显示别名，localStorage 持久化；不影响数据关联）
 const groupAliases = ref<Record<string, string>>({})
+const ready = ref(false)
 function aliasKey(g: any) { return `${g.scope}:${g.key}` }
 function displayLabel(g: any) { return groupAliases.value[aliasKey(g)] || g.label }
 async function loadGroupAliases() {
@@ -297,7 +298,6 @@ async function loadGroupAliases() {
     groupAliases.value = m
   } catch { groupAliases.value = {} }
 }
-loadGroupAliases()
 const renamingKey = ref('')
 const renameValue = ref('')
 function startRename(g: any) { renamingKey.value = g.key; renameValue.value = displayLabel(g) }
@@ -482,7 +482,7 @@ async function loadUsedFields(scope: string, certName?: string) {
     usedFields.value = set
   } catch { /* ignore */ }
 }
-onMounted(() => { load(); loadCustomGroups() })
+onMounted(async () => { await Promise.all([load(), loadCustomGroups(), loadGroupAliases()]); ready.value = true })
 watch(() => props.scope, () => {
   activeGroup.value = groupList.value[0]?.key || 'company'
   addVisible.value = false
