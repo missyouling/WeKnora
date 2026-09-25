@@ -1205,3 +1205,19 @@ func (s *knowledgeService) SearchKnowledgeForScopes(ctx context.Context, scopes 
 	}
 	return s.repo.SearchKnowledgeInScopes(ctx, scopes, keyword, offset, limit, fileTypes)
 }
+
+// === daily-affairs sandbox: SaveInvoiceCustomMetadata ===
+
+func (s *knowledgeService) SaveInvoiceCustomMetadata(ctx context.Context, knowledgeID string, meta types.JSON) error {
+	record, err := s.repo.GetKnowledgeByID(ctx, ctx.Value(types.TenantIDContextKey).(uint64), knowledgeID)
+	if err != nil {
+		return err
+	}
+	record.CustomMetadata = meta
+	if err := s.repo.UpdateKnowledge(ctx, record); err != nil {
+		logger.Errorf(ctx, "Failed to persist invoice custom metadata: %v", err)
+		return err
+	}
+	logger.Infof(ctx, "Invoice custom metadata saved successfully, knowledge ID: %s", knowledgeID)
+	return nil
+}

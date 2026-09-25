@@ -44,6 +44,10 @@ type RouterParams struct {
 	AgentShareService            interfaces.AgentShareService
 	KBHandler                    *handler.KnowledgeBaseHandler
 	KnowledgeHandler             *handler.KnowledgeHandler
+	BusinessExtractHandler        *handler.BusinessExtractHandler
+	UtilityHandler               *handler.UtilityHandler
+	BillingHandler               *handler.BillingHandler
+	FleetHandler                 *handler.FleetHandler
 	TenantHandler                *handler.TenantHandler
 	TenantService                interfaces.TenantService
 	TenantAPIKeyService          interfaces.TenantAPIKeyService
@@ -293,7 +297,10 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.KnowledgeService,
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
-		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
+		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, params.BusinessExtractHandler, rbacGuards)
+		RegisterUtilityRoutes(v1, params.UtilityHandler, rbacGuards)
+		RegisterBillingRoutes(v1, params.BillingHandler, rbacGuards)
+		RegisterFleetRoutes(v1, params.FleetHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
 		RegisterSessionRoutes(v1, params.SessionHandler, params.MessageSuggestionHandler, rbacGuards)

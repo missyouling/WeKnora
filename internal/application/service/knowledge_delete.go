@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -760,4 +761,41 @@ func (s *knowledgeService) ProcessKnowledgeListDelete(ctx context.Context, t *as
 
 	logger.Infof(ctx, "Successfully deleted %d knowledge items", len(payload.KnowledgeIDs))
 	return nil
+}
+
+// === daily-affairs sandbox: AutoDeleteKnowledge ===
+
+func (s *knowledgeService) AutoDeleteKnowledge(ctx context.Context, id, reason string) error {
+	if err := s.markAutoDeleteHistory(ctx, id, reason); err != nil {
+		logger.Warnf(ctx, "AutoDeleteKnowledge failed to record delete history for %s: %v", id, err)
+	}
+	return s.DeleteKnowledge(ctx, id)
+}
+
+// markAutoDeleteHistory writes auto_deleted / deleted_reason / auto_deleted_at /
+// auto_deleted_count into the knowledge row's custom_metadata before soft-delete.
+func (s *knowledgeService) markAutoDeleteHistory(ctx context.Context, id, reason string) error {
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	knowledge, err := s.repo.GetKnowledgeByID(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	var meta map[string]any
+	_ = json.Unmarshal(knowledge.CustomMetadata, &meta)
+	if meta == nil {
+		meta = make(map[string]any)
+	}
+	count := 0
+	if c, ok := meta["auto_deleted_count"].(float64); ok {
+		count = int(c)
+	}
+	meta["auto_deleted"] = true
+	meta["auto_deleted_reason"] = reason
+	meta["auto_deleted_at"] = time.Now().Format(time.RFC3339)
+	meta["auto_deleted_count"] = count + 1
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateKnowledgeColumn(ctx, id, "custom_metadata", types.JSON(raw))
 }

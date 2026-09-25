@@ -64,7 +64,7 @@ func RegisterChunkRoutes(r *gin.RouterGroup, handler *handler.ChunkHandler, g *r
 // reuse OwnedKBOrAdmin because the URL :id is the KB id directly.
 // Body-scoped batch operations have a Contributor route gate and resolve
 // their KB ownership plus Editor operation grant inside the handler.
-func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandler, g *rbacGuards) {
+func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandler, business *handler.BusinessExtractHandler, g *rbacGuards) {
 	// 知识库下的知识路由组（URL :id is the KB id）。Scoped API key 需要
 	// ingest 能力才能写内容，且仍受 KB 范围限制；清空 KB 只允许 full-access key。
 	kb := g.apiKeyGroup(r.Group("/knowledge-bases/:id/knowledge"), apiKeyIngest(apiKeyFullAccess()))
@@ -81,6 +81,26 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		// Clearing all contents under a KB is a destructive op; gate
 		// behind Admin instead of Contributor.
 		kb.With(apiKeyFullAccess()).DELETE("", g.Admin(), g.KBAccessWrite("id"), handler.ClearKnowledgeBaseContents)
+
+		// === 日常事务沙盒：业务提取路由（挂在 BusinessExtractHandler 上） ===
+		if business != nil {
+			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoice)
+			kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoicePage)
+			kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteInvoicePage)
+			kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContract)
+			kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractRegulation)
+			kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractAwardPunish)
+			kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractUtilityBill)
+			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
+			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
+			kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContractPage)
+			kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteContractPage)
+			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
+			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
+			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
+			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
+			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
+		}
 	}
 
 	// Image gallery: list every image asset of a KB (read-only, Viewer+).
@@ -363,5 +383,123 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		// Issues
 		wikiRead.GET("/issues", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.ListIssues)
 		wiki.PUT("/issues/:issue_id/status", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.UpdateIssueStatus)
+	}
+}
+
+// === 日常事务沙盒：独立业务路由组（Utility/Fleet/Billing） ===
+
+func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	ut := g.apiKeyGroup(r.Group("/utilities"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		ut.GET("/field-configs", g.Viewer(), handler.ListUtilityFieldConfigs)
+		ut.POST("/field-configs", g.Contributor(), handler.SaveUtilityFieldConfigs)
+		ut.GET("/kinds", g.Viewer(), handler.ListUtilityKinds)
+		ut.POST("/kinds", g.Contributor(), handler.CreateUtilityKind)
+		ut.PUT("/kinds/:id", g.Contributor(), handler.UpdateUtilityKind)
+		ut.DELETE("/kinds/:id", g.Contributor(), handler.DeleteUtilityKind)
+		ut.GET("/basic-accounts", g.Viewer(), handler.ListUtilityBasicAccounts)
+		ut.POST("/basic-accounts", g.Contributor(), handler.CreateUtilityBasicAccount)
+		ut.PUT("/basic-accounts/:id", g.Contributor(), handler.UpdateUtilityBasicAccount)
+		ut.DELETE("/basic-accounts/:id", g.Contributor(), handler.DeleteUtilityBasicAccount)
+		ut.GET("/basic-info", g.Viewer(), handler.GetUtilityBasicInfo)
+		ut.PUT("/basic-info", g.Contributor(), handler.SaveUtilityBasicInfo)
+		ut.GET("/meter-records", g.Viewer(), handler.ListUtilityMeterRecords)
+		ut.POST("/meter-records", g.Contributor(), handler.CreateUtilityMeterRecord)
+		ut.PUT("/meter-records/:id", g.Contributor(), handler.UpdateUtilityMeterRecord)
+		ut.DELETE("/meter-records/:id", g.Contributor(), handler.DeleteUtilityMeterRecord)
+		ut.GET("/meters", g.Viewer(), handler.ListUtilityMeters)
+		ut.POST("/meters", g.Contributor(), handler.CreateUtilityMeter)
+		ut.PUT("/meters/sort", g.Contributor(), handler.SortUtilityMeters)
+		ut.PUT("/meters/:id", g.Contributor(), handler.UpdateUtilityMeter)
+		ut.DELETE("/meters/:id", g.Contributor(), handler.DeleteUtilityMeter)
+		ut.GET("/tariff-rules", g.Viewer(), handler.ListUtilityTariffRules)
+		ut.POST("/tariff-rules", g.Contributor(), handler.CreateUtilityTariffRule)
+		ut.PUT("/tariff-rules/:id", g.Contributor(), handler.UpdateUtilityTariffRule)
+		ut.DELETE("/tariff-rules/:id", g.Contributor(), handler.DeleteUtilityTariffRule)
+	}
+}
+
+// RegisterFleetRoutes 车队管理：车辆/驾驶员/油卡配置、档案分类/供应商/ETC、各类型记录 CRUD 与费用汇总。
+func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	fl := g.apiKeyGroup(r.Group("/fleet"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		fl.GET("/vehicles", g.Viewer(), handler.ListFleetVehicles)
+		fl.POST("/vehicles", g.Contributor(), handler.CreateFleetVehicle)
+		fl.PUT("/vehicles/sort", g.Contributor(), handler.SortFleetVehicles)
+		fl.PUT("/vehicles/:id", g.Contributor(), handler.UpdateFleetVehicle)
+		fl.DELETE("/vehicles/:id", g.Contributor(), handler.DeleteFleetVehicle)
+		fl.GET("/drivers", g.Viewer(), handler.ListFleetDrivers)
+		fl.POST("/drivers", g.Contributor(), handler.CreateFleetDriver)
+		fl.PUT("/drivers/sort", g.Contributor(), handler.SortFleetDrivers)
+		fl.PUT("/drivers/:id", g.Contributor(), handler.UpdateFleetDriver)
+		fl.DELETE("/drivers/:id", g.Contributor(), handler.DeleteFleetDriver)
+		fl.GET("/fuel-cards", g.Viewer(), handler.ListFleetFuelCards)
+		fl.POST("/fuel-cards", g.Contributor(), handler.CreateFleetFuelCard)
+		fl.PUT("/fuel-cards/:id", g.Contributor(), handler.UpdateFleetFuelCard)
+		fl.DELETE("/fuel-cards/:id", g.Contributor(), handler.DeleteFleetFuelCard)
+		fl.GET("/records", g.Viewer(), handler.ListFleetRecords)
+		fl.POST("/records", g.Contributor(), handler.CreateFleetRecord)
+		fl.PUT("/records/:id", g.Contributor(), handler.UpdateFleetRecord)
+		fl.DELETE("/records/:id", g.Contributor(), handler.DeleteFleetRecord)
+		fl.GET("/summary", g.Viewer(), handler.GetFleetSummary)
+		fl.GET("/categories", g.Viewer(), handler.ListFleetCategories)
+		fl.POST("/categories", g.Contributor(), handler.CreateFleetCategory)
+		fl.PUT("/categories/sort", g.Contributor(), handler.SortFleetCategories)
+		fl.PUT("/categories/:id", g.Contributor(), handler.UpdateFleetCategory)
+		fl.DELETE("/categories/:id", g.Contributor(), handler.DeleteFleetCategory)
+		fl.GET("/cert-groups", g.Viewer(), handler.ListFleetCertGroups)
+		fl.POST("/cert-groups", g.Contributor(), handler.CreateFleetCertGroup)
+		fl.PUT("/cert-groups/:id", g.Contributor(), handler.UpdateFleetCertGroup)
+		fl.DELETE("/cert-groups/:id", g.Contributor(), handler.DeleteFleetCertGroup)
+		fl.GET("/group-alias", g.Viewer(), handler.ListFleetGroupAliases)
+		fl.PUT("/group-alias", g.Contributor(), handler.UpsertFleetGroupAlias)
+		fl.GET("/suppliers", g.Viewer(), handler.ListFleetSuppliers)
+		fl.POST("/suppliers", g.Contributor(), handler.CreateFleetSupplier)
+		fl.PUT("/suppliers/:id", g.Contributor(), handler.UpdateFleetSupplier)
+		fl.DELETE("/suppliers/:id", g.Contributor(), handler.DeleteFleetSupplier)
+		fl.GET("/etc-cards", g.Viewer(), handler.ListFleetETCCards)
+		fl.POST("/etc-cards", g.Contributor(), handler.CreateFleetETCCard)
+		fl.PUT("/etc-cards/:id", g.Contributor(), handler.UpdateFleetETCCard)
+		fl.DELETE("/etc-cards/:id", g.Contributor(), handler.DeleteFleetETCCard)
+	}
+}
+
+// RegisterBillingRoutes 租户费用核算：租户/分时电表/月度账单（电费比例分摊+宿舍定额+水费）。
+func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, g *rbacGuards) {
+	if handler == nil {
+		return
+	}
+	bl := g.apiKeyGroup(r.Group("/billing"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		bl.GET("/tenants", g.Viewer(), handler.ListBillingTenants)
+		bl.POST("/tenants", g.Contributor(), handler.CreateBillingTenant)
+		bl.GET("/tenants/:id", g.Viewer(), handler.GetBillingTenant)
+		bl.PUT("/tenants/:id", g.Contributor(), handler.UpdateBillingTenant)
+		bl.DELETE("/tenants/:id", g.Contributor(), handler.DeleteBillingTenant)
+		bl.GET("/tenants/:id/meters", g.Viewer(), handler.ListBillingTimeMeters)
+		bl.POST("/tenants/:id/meters", g.Contributor(), handler.CreateBillingTimeMeter)
+		bl.PUT("/meters/:id", g.Contributor(), handler.UpdateBillingTimeMeter)
+		bl.DELETE("/meters/:id", g.Contributor(), handler.DeleteBillingTimeMeter)
+		bl.GET("/meters/:id/readings", g.Viewer(), handler.GetBillingTimeReading)
+		bl.PUT("/meters/:id/readings", g.Contributor(), handler.SaveBillingTimeReading)
+		bl.GET("/tenants/:id/water-meters", g.Viewer(), handler.ListBillingWaterMeters)
+		bl.POST("/tenants/:id/water-meters", g.Contributor(), handler.CreateBillingWaterMeter)
+		bl.PUT("/water-meters/:id", g.Contributor(), handler.UpdateBillingWaterMeter)
+		bl.DELETE("/water-meters/:id", g.Contributor(), handler.DeleteBillingWaterMeter)
+		bl.GET("/water-meters/:id/readings", g.Viewer(), handler.GetBillingWaterReading)
+		bl.PUT("/water-meters/:id/readings", g.Contributor(), handler.SaveBillingWaterReading)
+		bl.GET("/water-readings", g.Viewer(), handler.ListBillingWaterReadings)
+		bl.PUT("/tenants/:id/items", g.Contributor(), handler.SaveBillingTenantItems)
+		bl.PUT("/tenants/:id/refs", g.Contributor(), handler.SaveBillingTenantRefs)
+		bl.GET("/tenants/:id/records", g.Viewer(), handler.ListBillingRecords)
+		bl.POST("/tenants/:id/records", g.Contributor(), handler.GenerateBillingRecord)
+		bl.GET("/records/:id", g.Viewer(), handler.GetBillingRecord)
+		bl.DELETE("/records/:id", g.Contributor(), handler.DeleteBillingRecord)
 	}
 }

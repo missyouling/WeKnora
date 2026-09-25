@@ -841,3 +841,601 @@ export function batchReparseKnowledge(kbId: string, ids: string[], processConfig
     process_config: processConfig,
   });
 }
+
+
+// === 日常事务沙盒 API 扩展（非侵入式追加） ===
+
+export interface FleetOverviewTypeCount {
+  doc_type: string;
+  count: number;
+}
+/** 证照档案首页概览统计：只返回计数，不返回大字段。 */
+
+export function getFleetOverviewStats(kbId: string) {
+  return get<{
+    total: number;
+    parse_failed: number;
+    extract_failed: number;
+    by_doc_type: FleetOverviewTypeCount[];
+  }>(`/api/v1/knowledge-bases/${kbId}/knowledge/fleet-overview-stats`);
+}
+
+/** One node of the knowledge base folder tree. */
+
+export function previewDeletedKnowledgeFile(kbId: string, id: string) {
+  return getDown(`/api/v1/knowledge-bases/${kbId}/knowledge/${id}/preview-deleted`);
+}
+
+/** @param idsQueryString - query string with ids (e.g. ids=xxx&ids=yyy) */
+
+export function updateKnowledgeInfo(
+  id: string,
+  data: { title?: string; description?: string; custom_metadata?: Record<string, unknown> },
+) {
+  return put(`/api/v1/knowledge/${id}`, data);
+}
+
+/**
+ * 触发发票字段提取：后端读取已解析文本并调用提取模型（复用知识库的
+ * summary_model_id），将结果写入 custom_metadata。
+ * 幂等：对同一 knowledge 重复调用会覆盖写，返回当前提取结果。
+ */
+
+export function extractInvoice(kbId: string, knowledgeId: string) {
+  // 长超时：多张发票（如 18/22 张）提取需 LLM 生成超长 JSON，30s 默认超时会
+  // 导致前端取消请求 → 后端 context canceled → 提取失败。
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-invoice`, {}, { timeout: 600000 });
+}
+
+/**
+ * 发票级聚合列表：服务端按发票号去重、全字段搜索、类型/税率/开票日期筛选、
+ * 排序、分页并返回金额聚合（sum_amount/sum_tax/sum_total）。
+ */
+
+export function listInvoiceRecords(kbId: string, params: {
+  q?: string;
+  invoice_type?: string;
+  tax_rate?: number;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/invoices?${q.toString()}`);
+}
+
+/**
+ * 发票税率列表：返回该知识库下所有发票出现过的去重税率（含多档税率明细），
+ * 用于税率筛选下拉框自动加载。
+ */
+
+export function listInvoiceTaxRates(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/invoice-tax-rates`);
+}
+
+/**
+ * 按页重新提取发票：只重新提取该知识文档中第 page 张发票（发票按文档内
+ * 出现顺序编号），仅替换该张发票数据，不影响同文件其它发票。
+ */
+
+export function extractInvoicePage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-invoice-page`, { page }, { timeout: 600000 });
+}
+
+/**
+ * 按页删除发票记录：从该文档的发票数组中移除第 page 张；若文档仅剩该张发票，
+ * 则整份文档一并删除（后端返回 deleted_file=true）。
+ */
+
+export function deleteInvoicePage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-invoice-page`, { page }, { timeout: 120000 });
+}
+
+/**
+ * 触发合同字段提取：后端读取已解析文本并调用提取模型（复用知识库的
+ * summary_model_id），将结果写入 custom_metadata。
+ * 幂等：对同一 knowledge 重复调用会覆盖写，返回当前提取结果。
+ */
+
+export function extractContract(kbId: string, knowledgeId: string) {
+  // 长超时：多份合同文档提取需 LLM 生成超长 JSON，30s 默认超时会
+  // 导致前端取消请求 → 后端 context canceled → 提取失败。
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract`, {}, { timeout: 600000 });
+}
+
+/**
+ * 合同级聚合列表：服务端全字段搜索、类型/履约状态/签订日期筛选、
+ * 排序、分页并返回金额聚合（sum_amount/sum_total）。
+ */
+
+export function listContractRecords(kbId: string, params: {
+  q?: string;
+  contract_type?: string;
+  fulfill_status?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/contracts?${q.toString()}`);
+}
+
+/**
+ * 合同类型列表：返回该知识库下所有合同出现过的去重合同类型（含数量），
+ * 用于合同类型筛选下拉框自动加载。
+ */
+
+export function listContractTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/contract-types`);
+}
+
+/**
+ * 触发制度字段提取：后端读取已解析文本并调用提取模型（复用知识库的
+ * summary_model_id），将结果写入 custom_metadata。
+ */
+
+export function extractRegulation(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-regulation`, {}, { timeout: 600000 });
+}
+
+/**
+ * 制度级聚合列表：服务端全字段搜索、类型/编制日期筛选、排序与分页。
+ */
+
+export function listRegulationRecords(kbId: string, params: {
+  q?: string;
+  reg_type?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/regulations?${q.toString()}`);
+}
+
+/**
+ * 制度类型列表：返回该知识库下所有制度出现过的去重制度类型（含数量），
+ * 用于制度类型筛选下拉框自动加载。
+ */
+
+export function listRegulationTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/regulation-types`);
+}
+
+/**
+ * 奖惩字段提取：复用知识库配置的摘要模型（summary_model_id），按当事人
+ * 拆分多条奖惩记录，将结果写入 custom_metadata。
+ */
+
+export function extractAwardPunish(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-award-punish`, {}, { timeout: 600000 });
+}
+
+/**
+ * 奖惩级聚合列表：服务端全字段搜索、奖惩类型/状态/签发日期筛选、排序与分页
+ * （一个当事人一条记录，同一文件多个当事人共享文号）。
+ */
+
+export function listAwardPunishRecords(kbId: string, params: {
+  q?: string;
+  ap_type?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/award-punish-records?${q.toString()}`);
+}
+
+/**
+ * 奖惩类型列表：返回该知识库下所有奖惩出现过的去重奖惩类型（含数量），
+ * 用于奖惩类型筛选下拉框自动加载。
+ */
+
+export function listAwardPunishTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/award-punish-types`);
+}
+
+/**
+ * 识别规则配置（发票/合同管理页"识别规则"设置面板）：
+ * 包含判定规则（模型判非但规则命中 → 认定为该类型）与类型归类规则。
+ */
+
+export function getRecognitionConfig(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/recognition-config`);
+}
+
+
+export function saveRecognitionConfig(kbId: string, cfg: Record<string, unknown>) {
+  return put(`/api/v1/knowledge-bases/${kbId}/recognition-config`, cfg);
+}
+
+/** 用当前包含判定规则重新评估删除历史：命中的自动恢复为待补录记录。 */
+
+export function reassessRecognition(kbId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/recognition/reassess`, {});
+}
+
+/**
+ * 按页重新提取合同：只重新提取该知识文档中第 page 份合同（合同按文档内
+ * 出现顺序编号），仅替换该份合同数据，不影响同文件其它合同。
+ */
+
+export function extractContractPage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract-page`, { page }, { timeout: 600000 });
+}
+
+/**
+ * 按页删除合同记录：从该文档的合同数组中移除第 page 份；若文档仅剩该份合同，
+ * 则整份文档一并删除（后端返回 deleted_file=true）。
+ */
+
+export function deleteContractPage(kbId: string, knowledgeId: string, page: number) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-contract-page`, { page }, { timeout: 120000 });
+}
+
+// ---- 删除历史（非合同/非发票自动删除记录的查看/恢复/永久删除）----
+
+/** 删除历史列表：知识库内被系统自动删除（判定非合同/非发票）且保留源文件的记录 */
+
+export function listDeletedKnowledge(kbId: string, params: { page?: number; page_size?: number; q?: string } = {}) {
+  return get(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge`, params);
+}
+
+/** 恢复自动删除的记录：恢复回知识库并重新解析提取（再次判定非该类文档时不再自动删除，防循环） */
+
+export function restoreDeletedKnowledge(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge/${knowledgeId}/restore`, {}, { timeout: 120000 });
+}
+
+/** 永久删除历史记录：DB 硬删 + 物理源文件删除，不可恢复 */
+
+export function purgeDeletedKnowledge(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge/${knowledgeId}/purge`, {}, { timeout: 120000 });
+}
+
+
+export function extractUtilityBill(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-utility-bill`, {}, { timeout: 600000 });
+}
+
+/** 电费账单记录列表（每份账单一条） */
+
+export function listUtilityBillRecords(kbId: string, params: {
+  q?: string;
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  if (params.status) query.set('status', params.status);
+  if (params.page && params.page > 1) query.set('page', String(params.page));
+  if (params.page_size) query.set('page_size', String(params.page_size));
+  const qs = query.toString();
+  return get(`/api/v1/knowledge-bases/${kbId}/utility-bill-records${qs ? `?${qs}` : ''}`);
+}
+
+/** 字段配置列表（electricity/water/gas） */
+
+export function listUtilityFieldConfigs(category: string) {
+  return get(`/api/v1/utilities/field-configs?category=${category}`);
+}
+
+/** 保存字段配置（整组覆盖；传 group 时仅覆盖该分组） */
+
+export function saveUtilityFieldConfigs(category: string, configs: Record<string, unknown>[], group?: string) {
+  const g = group ? `&group=${group}` : '';
+  return post(`/api/v1/utilities/field-configs?category=${category}${g}`, configs);
+}
+
+/** 按分组获取字段配置（电费分组：market/line/trans/sys/gov-industrial/catalog/gov-residential/capacity/pf/meter/resident-meter/overview） */
+
+export function listUtilityFieldConfigsByGroup(category: string, group: string) {
+  return get(`/api/v1/utilities/field-configs?category=${category}&group=${group}`);
+}
+
+/** 自定义用途列表（内置 宿舍/工商业 由前端常量管理） */
+
+export function listUtilityKinds(scope: string) {
+  return get(`/api/v1/utilities/kinds?scope=${scope}`);
+}
+
+
+export function createUtilityKind(scope: string, payload: { value: string; label: string }) {
+  return post(`/api/v1/utilities/kinds`, { scope, ...payload });
+}
+
+
+export function updateUtilityKind(id: string, payload: { label: string }) {
+  return put(`/api/v1/utilities/kinds/${id}`, payload);
+}
+
+
+export function deleteUtilityKind(id: string) {
+  return del(`/api/v1/utilities/kinds/${id}`);
+}
+
+/** 基本户列表（电费多户） */
+
+export function listUtilityBasicAccounts(category = 'electricity') {
+  return get(`/api/v1/utilities/basic-accounts?category=${category}`);
+}
+
+
+export function createUtilityBasicAccount(category: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/utilities/basic-accounts?category=${category}`, payload);
+}
+
+
+export function updateUtilityBasicAccount(id: string, category: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/basic-accounts/${id}?category=${category}`, payload);
+}
+
+
+export function deleteUtilityBasicAccount(id: string, category = 'electricity') {
+  return del(`/api/v1/utilities/basic-accounts/${id}?category=${category}`);
+}
+
+/** 基本户信息（兼容：默认户） */
+
+export function getUtilityBasicInfo(category: string) {
+  return get(`/api/v1/utilities/basic-info?category=${category}`);
+}
+
+/** 保存基本户信息 */
+
+export function saveUtilityBasicInfo(category: string, data: Record<string, unknown>) {
+  return put(`/api/v1/utilities/basic-info?category=${category}`, data);
+}
+
+/** 水/气月度记录列表 */
+
+export function listUtilityMeterRecords(params: { category: string; month?: string; q?: string; meter_id?: string } = { category: 'water' }) {
+  const query = new URLSearchParams();
+  query.set('category', params.category);
+  if (params.month) query.set('month', params.month);
+  if (params.q) query.set('q', params.q);
+  if (params.meter_id) query.set('meter_id', params.meter_id);
+  return get(`/api/v1/utilities/meter-records?${query.toString()}`);
+}
+
+
+export function createUtilityMeterRecord(payload: Record<string, unknown>) {
+  return post('/api/v1/utilities/meter-records', payload);
+}
+
+
+export function updateUtilityMeterRecord(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/meter-records/${id}`, payload);
+}
+
+
+export function deleteUtilityMeterRecord(id: string) {
+  return del(`/api/v1/utilities/meter-records/${id}`);
+}
+
+// ---- 水/气表计配置（utility_meters） ----
+
+export function listUtilityMeters(params: { category: string; enabled?: boolean } = { category: 'water' }) {
+  const query = new URLSearchParams();
+  query.set('category', params.category);
+  if (params.enabled) query.set('enabled', 'true');
+  return get(`/api/v1/utilities/meters?${query.toString()}`);
+}
+
+
+export function createUtilityMeter(payload: Record<string, unknown>) {
+  return post('/api/v1/utilities/meters', payload);
+}
+
+
+export function updateUtilityMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/meters/${id}`, payload);
+}
+
+
+export function deleteUtilityMeter(id: string) {
+  return del(`/api/v1/utilities/meters/${id}`);
+}
+
+/** 表计配置拖动排序：按传入 id 顺序批量更新 sort_order */
+
+export function sortUtilityMeters(category: string, ids: string[]) {
+  return put('/api/v1/utilities/meters/sort', { category, ids });
+}
+
+/** 分时电价规则：尖峰平谷月份设定 + 各时段单价 */
+
+export function listUtilityTariffRules(category = 'electricity') {
+  return get(`/api/v1/utilities/tariff-rules?category=${category}`);
+}
+
+
+export function createUtilityTariffRule(category: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/utilities/tariff-rules?category=${category}`, payload);
+}
+
+
+export function updateUtilityTariffRule(id: string, category: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/utilities/tariff-rules/${id}?category=${category}`, payload);
+}
+
+
+export function deleteUtilityTariffRule(id: string, category = 'electricity') {
+  return del(`/api/v1/utilities/tariff-rules/${id}?category=${category}`);
+}
+
+// ---- 光伏账单管理（与电费共用「日常事务-电费」知识库，kind=solar_bill 隔离） ----
+
+/** 光伏账单字段提取：复用知识库 summary_model_id 提取光伏字段写入 custom_metadata */
+
+export function extractSolarBill(kbId: string, knowledgeId: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-solar-bill`, {}, { timeout: 600000 });
+}
+
+/** 光伏账单记录列表（每份账单一条） */
+
+export function listSolarBillRecords(kbId: string, params: {
+  q?: string;
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.date_from) query.set('date_from', params.date_from);
+  if (params.date_to) query.set('date_to', params.date_to);
+  if (params.status) query.set('status', params.status);
+  if (params.page && params.page > 1) query.set('page', String(params.page));
+  if (params.page_size) query.set('page_size', String(params.page_size));
+  const qs = query.toString();
+  return get(`/api/v1/knowledge-bases/${kbId}/solar-bill-records${qs ? `?${qs}` : ''}`);
+}
+
+// ---- 租户费用核算（电费按市电账单子项比例分摊 + 宿舍定额 + 水费按表计） ----
+
+
+export function listBillingTenants() {
+  return get('/api/v1/billing/tenants');
+}
+
+
+export function createBillingTenant(payload: Record<string, unknown>) {
+  return post('/api/v1/billing/tenants', payload);
+}
+
+
+export function getBillingTenant(id: string) {
+  return get(`/api/v1/billing/tenants/${id}`);
+}
+
+
+export function updateBillingTenant(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${id}`, payload);
+}
+
+
+export function deleteBillingTenant(id: string) {
+  return del(`/api/v1/billing/tenants/${id}`);
+}
+
+
+export function listBillingTimeMeters(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/meters`);
+}
+
+
+export function createBillingTimeMeter(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/meters`, payload);
+}
+
+
+export function updateBillingTimeMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/meters/${id}`, payload);
+}
+
+
+export function deleteBillingTimeMeter(id: string) {
+  return del(`/api/v1/billing/meters/${id}`);
+}
+
+
+export function getBillingTimeReading(meterId: string, month: string) {
+  return get(`/api/v1/billing/meters/${meterId}/readings?month=${month}`);
+}
+
+
+export function saveBillingTimeReading(meterId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/meters/${meterId}/readings`, payload);
+}
+
+
+export function listBillingWaterMeters(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/water-meters`);
+}
+
+
+export function createBillingWaterMeter(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/water-meters`, payload);
+}
+
+
+export function updateBillingWaterMeter(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/water-meters/${id}`, payload);
+}
+
+
+export function deleteBillingWaterMeter(id: string) {
+  return del(`/api/v1/billing/water-meters/${id}`);
+}
+
+
+export function getBillingWaterReading(meterId: string, month: string) {
+  return get(`/api/v1/billing/water-meters/${meterId}/readings?month=${month}`);
+}
+
+
+export function saveBillingWaterReading(meterId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/water-meters/${meterId}/readings`, payload);
+}
+
+
+export function listBillingWaterReadings(params: { month?: string } = {}) {
+  const qs = params.month ? `?month=${params.month}` : ''
+  return get(`/api/v1/billing/water-readings${qs}`);
+}
+
+
+export function saveBillingTenantItems(tenantId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${tenantId}/items`, payload);
+}
+
+
+export function saveBillingTenantRefs(tenantId: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/tenants/${tenantId}/refs`, payload);
+}
+
+
+export function listBillingRecords(tenantId: string) {
+  return get(`/api/v1/billing/tenants/${tenantId}/records`);
+}
+
+
+export function generateBillingRecord(tenantId: string, payload: Record<string, unknown>) {
+  return post(`/api/v1/billing/tenants/${tenantId}/records`, payload, { timeout: 300000 });
+}
+
+
+export function getBillingRecord(id: string) {
+  return get(`/api/v1/billing/records/${id}`);
+}
+
+
+export function deleteBillingRecord(id: string) {
+  return del(`/api/v1/billing/records/${id}`);
+}
+

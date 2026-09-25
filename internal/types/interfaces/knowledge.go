@@ -238,6 +238,17 @@ type KnowledgeService interface {
 	SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
 	// SearchKnowledgeForScopes searches knowledge within the given (tenant_id, kb_id) scopes (e.g. for shared agent context).
 	SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
+
+	// === daily-affairs sandbox: business extraction extensions ===
+	// GetRecognitionConfig returns KB-level document recognition rules.
+	GetRecognitionConfig(ctx context.Context, kbID string) (*types.RecognitionConfig, error)
+	// SaveRecognitionConfig persists KB-level recognition rules.
+	SaveRecognitionConfig(ctx context.Context, kbID string, cfg *types.RecognitionConfig) error
+	// SaveInvoiceCustomMetadata persists extraction metadata without generic flat-scalar validation.
+	SaveInvoiceCustomMetadata(ctx context.Context, knowledgeID string, meta types.JSON) error
+
+	// AutoDeleteKnowledge soft-deletes a row judged not to belong in its KB, keeping the file.
+	AutoDeleteKnowledge(ctx context.Context, id, reason string) error
 }
 
 // KnowledgeRepository defines the interface for knowledge repositories.
@@ -379,4 +390,12 @@ type KnowledgeRepository interface {
 	// aggregate a knowledge-base description: every enabled document that has
 	// finished parsing (completed or finalizing), without content columns.
 	ListKnowledgeProfileRows(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeProfileRow, error)
+
+	// === 日常事务沙盒：回收站扩展（非侵入式追加） ===
+	// GetDeletedKnowledgeByID returns one soft-deleted row by ID (Unscoped).
+	GetDeletedKnowledgeByID(ctx context.Context, tenantID uint64, id string) (*types.Knowledge, error)
+	// ListDeletedKnowledge lists soft-deleted rows carrying the auto_deleted marker, newest first.
+	ListDeletedKnowledge(ctx context.Context, tenantID uint64, kbID string, page, pageSize int, keyword string) ([]*types.Knowledge, int64, error)
+	// RestoreDeletedKnowledgeRow clears the soft-delete tombstone and resets parse_status to pending.
+	RestoreDeletedKnowledgeRow(ctx context.Context, tenantID uint64, id string) error
 }

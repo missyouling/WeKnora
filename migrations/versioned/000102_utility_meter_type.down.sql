@@ -1,0 +1,10 @@
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS valley_curr;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS valley_prev;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS flat_curr;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS flat_prev;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS peak_curr;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS peak_prev;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS deep_curr;
+ALTER TABLE utility_meter_items DROP COLUMN IF EXISTS deep_prev;
+ALTER TABLE utility_meters DROP COLUMN IF EXISTS owner_unit;
+ALTER TABLE utility_meters DROP COLUMN IF EXISTS meter_type;

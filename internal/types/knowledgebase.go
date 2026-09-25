@@ -109,6 +109,9 @@ type KnowledgeBase struct {
 	QuestionGenerationConfig *QuestionGenerationConfig `yaml:"question_generation_config" json:"question_generation_config" gorm:"column:question_generation_config;type:json"`
 	// AutoTagConfig controls asynchronous association of existing tags after parsing.
 	AutoTagConfig *AutoTagConfig `yaml:"auto_tag_config" json:"auto_tag_config" gorm:"type:json"`
+
+	// RecognitionConfig stores user-customizable document recognition rules (invoice/contract/award-punish).
+	RecognitionConfig *RecognitionConfig `yaml:"recognition_config" json:"recognition_config" gorm:"column:recognition_config;type:json"`
 	// ProfileConfig controls automatic generation of the knowledge-base
 	// description from per-document profiles (document knowledge bases only).
 	ProfileConfig *KnowledgeBaseProfileConfig `yaml:"profile_config" json:"profile_config" gorm:"column:profile_config;type:json"` //nolint:lll // one-line struct tag
@@ -174,6 +177,9 @@ type KnowledgeBaseConfig struct {
 	WikiConfig *WikiConfig `yaml:"wiki_config"             json:"wiki_config"`
 	// AutoTagConfig controls optional automatic association of existing KB tags.
 	AutoTagConfig *AutoTagConfig `yaml:"auto_tag_config" json:"auto_tag_config"`
+
+	// RecognitionConfig stores document recognition rules; nil means no change on update.
+	RecognitionConfig *RecognitionConfig `yaml:"recognition_config" json:"recognition_config"`
 	// ProfileConfig controls optional automatic knowledge-base description
 	// generation. nil means "no change" when updating.
 	ProfileConfig *KnowledgeBaseProfileConfig `yaml:"profile_config" json:"profile_config"`

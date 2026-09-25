@@ -1181,3 +1181,59 @@ func (r *knowledgeRepository) ListIDsByTagIDs(
 		Pluck("knowledges.id", &ids).Error
 	return ids, err
 }
+
+// === 日常事务沙盒：回收站扩展实现（非侵入式追加） ===
+
+// GetDeletedKnowledgeByID returns a soft-deleted knowledge row (Unscoped).
+func (r *knowledgeRepository) GetDeletedKnowledgeByID(ctx context.Context, tenantID uint64, id string) (*types.Knowledge, error) {
+	var knowledge types.Knowledge
+	if err := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND id = ? AND deleted_at IS NOT NULL", tenantID, id).
+		First(&knowledge).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrKnowledgeNotFound
+		}
+		return nil, err
+	}
+	return &knowledge, nil
+}
+
+// ListDeletedKnowledge lists soft-deleted knowledge rows that carry the auto_deleted marker, newest first.
+func (r *knowledgeRepository) ListDeletedKnowledge(ctx context.Context, tenantID uint64, kbID string, page, pageSize int, keyword string) ([]*types.Knowledge, int64, error) {
+	var knowledges []*types.Knowledge
+	query := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NOT NULL", tenantID, kbID)
+	isPostgres := r.db.Dialector.Name() == "postgres"
+	if isPostgres {
+		query = query.Where("custom_metadata->>'auto_deleted' = 'true'")
+	} else {
+		query = query.Where("json_extract(custom_metadata, '$.auto_deleted') = 'true'")
+	}
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("(file_name LIKE ? OR title LIKE ?)", like, like)
+	}
+	var total int64
+	if err := query.Model(&types.Knowledge{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Order("deleted_at DESC, updated_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&knowledges).Error; err != nil {
+		return nil, 0, err
+	}
+	return knowledges, total, nil
+}
+
+// RestoreDeletedKnowledgeRow clears the soft-delete tombstone and resets parse_status to pending.
+func (r *knowledgeRepository) RestoreDeletedKnowledgeRow(ctx context.Context, tenantID uint64, id string) error {
+	return r.db.Unscoped().WithContext(ctx).
+		Model(&types.Knowledge{}).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
+		Updates(map[string]interface{}{
+			"deleted_at":    nil,
+			"parse_status":  types.ParseStatusPending,
+			"error_message": "",
+			"updated_at":    time.Now(),
+		}).Error
+}
