@@ -148,3 +148,49 @@ func (s *BusinessExtractService) MaxAutoRegulationSeq(ctx context.Context, kbID 
 	}
 	return max, nil
 }
+
+// MarkInvoiceDuplicates scans sibling invoice records in the same KB and marks
+// invoices whose invoice_no duplicates an existing record as Duplicate=true.
+func (s *BusinessExtractService) MarkInvoiceDuplicates(ctx context.Context, kbID, currentKnowledgeID string, meta *InvoiceCustomMetadata) {
+	if len(meta.Invoices) == 0 {
+		return
+	}
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	items, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, &types.Pagination{Page: 1, PageSize: 1000}, types.KnowledgeListFilter{})
+	if err != nil {
+		return
+	}
+	existing := make(map[string]struct{})
+	for _, k := range items {
+		if k == nil || k.ID == currentKnowledgeID || len(k.CustomMetadata) == 0 {
+			continue
+		}
+		var sibling struct {
+			Invoices []InvoiceExtractionItem `json:"invoices"`
+		}
+		if err := json.Unmarshal(k.CustomMetadata, &sibling); err != nil {
+			continue
+		}
+		for _, inv := range sibling.Invoices {
+			if no := strings.TrimSpace(inv.InvoiceNo); no != "" {
+				existing[no] = struct{}{}
+			}
+		}
+	}
+	for i := range meta.Invoices {
+		if no := strings.TrimSpace(meta.Invoices[i].InvoiceNo); no != "" {
+			if _, dup := existing[no]; dup {
+				meta.Invoices[i].Duplicate = true
+			}
+		}
+	}
+}
+
+// InvoiceCustomMetadata is the persisted shape written into a knowledge entry's
+// custom_metadata by ExtractInvoice.
+type InvoiceCustomMetadata struct {
+	Kind          string                  `json:"kind"`
+	Invoices      []InvoiceExtractionItem `json:"invoices"`
+	ExtractStatus string                  `json:"extract_status"`
+	ExtractError  string                  `json:"extract_error"`
+}

@@ -619,3 +619,550 @@ func contractBatchesHaveText(batches []string) bool {
 	}
 	return false
 }
+
+
+func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to extract invoice fields"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for invoice extraction", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	if knowledge.ParseStatus != types.ParseStatusCompleted {
+		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
+		return
+	}
+	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
+	var curInvoiceMeta invoiceCustomMetadata
+	_ = json.Unmarshal(knowledge.CustomMetadata, &curInvoiceMeta)
+	if curInvoiceMeta.ExtractStatus == "manual" {
+		logger.Infof(ctx, "Invoice extraction skipped: knowledge %s is manual intake", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "待补录记录，无需重复提取",
+			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
+		})
+		return
+	}
+
+	modelID := strings.TrimSpace(kb.SummaryModelID)
+	if modelID == "" {
+		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
+		return
+	}
+	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load extraction model", err)
+		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
+		return
+	}
+
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list chunks for invoice extraction", err)
+		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
+		return
+	}
+	// 分批提取：超长多发票文档（18/22 张）单次 LLM 调用不可靠（智谱 500 /
+	// 输出截断），按 chunk 分批独立调用后合并，Normalize 时按发票号去重。
+	batches := service.BuildInvoiceExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不自动删除，保留文件并标记
+	// failed 让用户人工处理。
+	if !invoiceBatchesHaveText(batches) {
+		noTextMeta, jerr := json.Marshal(invoiceCustomMetadata{
+			Kind:          "invoice",
+			ExtractStatus: "failed",
+			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+		})
+		if jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
+			}
+		}
+		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "document has no extractable text (possible scanned document), file kept",
+			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "failed", "removed": false},
+		})
+		return
+	}
+	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
+	var extractErr error
+	sawInvoice := false
+	for i, batch := range batches {
+		if strings.TrimSpace(batch) == "" {
+			continue
+		}
+		batchRes, berr := service.ExtractInvoicesFromContent(effCtx, chatModel, batch)
+		if berr != nil {
+			// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
+			// 后续批失败仅告警跳过，保留已提取的部分。
+			if i == 0 && len(merged.Invoices) == 0 {
+				extractErr = berr
+				break
+			}
+			logger.Warnf(ctx, "Invoice extraction batch %d failed (non-fatal): %v", i+1, berr)
+			continue
+		}
+		if batchRes == nil || batchRes.Kind == "not_invoice" {
+			continue
+		}
+		sawInvoice = true
+		merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
+	}
+	if !sawInvoice {
+		merged.Kind = "not_invoice"
+	}
+	if extractErr != nil {
+		// Persist a failed state so the UI shows "提取失败" (retriable via the
+		// floating toolbar) instead of looping forever as "提取中/待提取".
+		if failMeta, jerr := json.Marshal(invoiceCustomMetadata{
+			Kind:          "invoice",
+			ExtractStatus: "failed",
+			ExtractError:  "invoice extraction failed: " + extractErr.Error(),
+		}); jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist invoice extraction failed-state: %v", serr)
+			}
+		}
+		logger.Error(ctx, "Invoice extraction model call failed", extractErr)
+		c.Error(errors.NewInternalServerError("invoice extraction failed: " + extractErr.Error()))
+		return
+	}
+	extracted := merged
+	service.NormalizeInvoiceExtractionResult(extracted)
+
+	meta := service.InvoiceCustomMetadata{
+		Kind:          extracted.Kind,
+		Invoices:      extracted.Invoices,
+		ExtractStatus: "success",
+		ExtractError:  extracted.ExtractError,
+	}
+	// 自定义识别规则：类型归类（用户可配置关键词/正则 → 发票类型），
+	// 按模型提取出的发票类型字段匹配，命中则覆盖内置关键字判定。
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		fullText := strings.Join(batches, "\n")
+		for i := range meta.Invoices {
+			if t := service.ClassifyTypeFromRules(meta.Invoices[i].InvoiceType, recCfg); t != "" {
+				meta.Invoices[i].InvoiceType = t
+			} else if meta.Invoices[i].InvoiceType == "" {
+				// 模型未识别出类型时，用全文兜底归类（避免"其它票据"误归类）
+				if t := service.ClassifyTypeFromRules(fullText, recCfg); t != "" {
+					meta.Invoices[i].InvoiceType = t
+				}
+			}
+		}
+	}
+	if extracted.Kind == "not_invoice" {
+		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
+		// 不自动删除（避免"该是发票却没入库"）。
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
+				meta.Kind = "invoice"
+				meta.Invoices = []service.InvoiceExtractionItem{}
+				meta.ExtractStatus = "manual"
+				meta.ExtractError = "识别规则命中，已认定为发票，请编辑补录字段"
+				if raw, merr := json.Marshal(meta); merr == nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+						logger.Warnf(ctx, "Failed to persist rule-rescued invoice meta: %v", serr)
+					}
+				}
+				logger.Infof(ctx, "Invoice rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"message": "识别规则命中，已认定为发票，请在列表中编辑补录字段",
+					"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
+				})
+				return
+			}
+		}
+		meta.ExtractStatus = "not_invoice"
+		if meta.ExtractError == "" {
+			meta.ExtractError = "document does not look like an invoice"
+		}
+		// 防循环：auto_deleted_count >= 1（曾被自动删除后人工恢复）→ 不再自动删除，
+		// 改为 failed 保留。
+		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "系统判定非发票文件，但该文件已被人工恢复，已保留待人工处理"
+			logger.Warnf(ctx, "Invoice re-extraction judged non-invoice but row was restored before; keeping file %s", knowledgeID)
+		} else {
+			// 需求：非发票文件不能存在于发票知识库 → 提取判定后自动删除该文件
+			// （保留物理文件写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）。
+			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_invoice"); delErr != nil {
+				logger.Warnf(ctx, "auto-delete non-invoice knowledge failed: %v", delErr)
+			} else {
+				logger.Infof(ctx, "auto-deleted non-invoice knowledge, ID: %s", knowledgeID)
+				c.JSON(http.StatusOK, gin.H{
+					"success":  true,
+					"message":  "非发票文件已移至删除历史，可在删除历史中恢复",
+					"data":     map[string]interface{}{"removed": true, "kind": "not_invoice"},
+				})
+				return
+			}
+		}
+	}
+	// Extraction-result guard: a model reply marked as invoice but carrying no
+	// usable invoice (empty list, or every invoice blank) is a garbage/truncated
+	// reply — persist it as failed (not success) so the UI shows a retriable
+	// state instead of an empty "successful" row.
+	if meta.Kind == "invoice" {
+		if len(meta.Invoices) == 0 {
+			meta.ExtractStatus = "failed"
+			if meta.ExtractError == "" {
+				meta.ExtractError = "提取未返回任何发票，请重试"
+			}
+		} else if service.InvoicesAllEmpty(meta.Invoices) {
+			meta.ExtractStatus = "failed"
+			meta.ExtractError = "提取结果字段为空，请重试"
+		}
+	}
+
+	// Cross-file dedup: mark invoices whose number already exists in another
+	// document of the same KB, so the UI can hide them by default.
+	if len(meta.Invoices) > 0 {
+		h.businessSvc.MarkInvoiceDuplicates(effCtx, kbID, knowledgeID, &meta)
+	}
+
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+		logger.Error(ctx, "Failed to persist invoice extraction result", err)
+		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
+		return
+	}
+
+	// 自动打标签功能已弃用（需求决策：不再自动创建/关联大类标签，
+	// 保留手动标签）。category 字段仍随提取结果保存，仅不再自动转标签。
+
+	logger.Infof(ctx, "Invoice extraction succeeded, knowledge ID: %s, kind: %s, invoices: %d",
+		knowledgeID, meta.Kind, len(meta.Invoices))
+	if meta.ExtractStatus == "failed" {
+		logger.Warnf(ctx, "Invoice extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
+		c.Error(errors.NewInternalServerError(meta.ExtractError))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"message":  "Invoice extraction succeeded",
+		"data": map[string]interface{}{
+			"knowledge_id":    knowledgeID,
+			"kind":            meta.Kind,
+			"extract_status":  meta.ExtractStatus,
+			"invoices":        meta.Invoices,
+		},
+	})
+}
+
+// ExtractInvoicePage godoc
+// @Summary      按页重新提取发票
+// @Description  对该知识文档中指定的第 N 张发票（发票按文档内出现顺序编号，即提取结果中的 page）单独重新提取，仅替换该张发票的数据，不影响同文件其它发票。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Param        body         body  object  true  "{\"page\":1}"
+// @Success      200  {object}  map[string]interface{}  "更新后的发票"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice-page [post]
+
+
+func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to extract invoice fields"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		var req struct {
+			Page int `json:"page"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			logger.Warn(ctx, "extract-invoice-page: failed to decode body", err)
+		} else if req.Page >= 1 {
+			page = req.Page
+		}
+	}
+	if page < 1 {
+		c.Error(errors.NewBadRequestError("page must be a positive integer"))
+		return
+	}
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for invoice page extraction", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	if knowledge.ParseStatus != types.ParseStatusCompleted {
+		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
+		return
+	}
+	var meta service.InvoiceCustomMetadata
+	if err := json.Unmarshal(knowledge.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" || len(meta.Invoices) == 0 {
+		c.Error(errors.NewBadRequestError("no invoice extraction data, please run single-file extraction first"))
+		return
+	}
+	if page > len(meta.Invoices) {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("page %d out of range (1-%d)", page, len(meta.Invoices))))
+		return
+	}
+
+	modelID := strings.TrimSpace(kb.SummaryModelID)
+	if modelID == "" {
+		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
+		return
+	}
+	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load extraction model", err)
+		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
+		return
+	}
+
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to list chunks for invoice page extraction", err)
+		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
+		return
+	}
+	content := service.BuildInvoiceExtractionContent(knowledge.FileName, knowledge.Description, chunks)
+	res, err := service.ExtractInvoicePageFromContent(effCtx, chatModel, content, page)
+	if err != nil {
+		logger.Error(ctx, "Invoice page extraction model call failed", err)
+		c.Error(errors.NewInternalServerError("invoice page extraction failed: " + err.Error()))
+		return
+	}
+	service.NormalizeInvoiceExtractionResult(res)
+	if res == nil || res.Kind == "not_invoice" || len(res.Invoices) == 0 {
+		c.Error(errors.NewBadRequestError("unable to re-extract this invoice, please try single-file extraction"))
+		return
+	}
+
+	upd := res.Invoices[0]
+	upd.Page = page // 保持原页码
+	meta.Invoices[page-1] = upd
+	metaBytes, jerr := json.Marshal(meta)
+	if jerr != nil {
+		logger.Error(ctx, "Failed to encode invoice page extraction result", jerr)
+		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaBytes)); err != nil {
+		logger.Error(ctx, "Failed to persist invoice page extraction result", err)
+		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Invoice page extraction succeeded",
+		"data":    upd,
+	})
+}
+
+// DeleteInvoicePage godoc
+// @Summary      删除指定发票记录
+// @Description  按发票页码从 custom_metadata.invoices 中移除该张发票；若该文档仅剩这一张发票，则整份文档一并删除。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Param        request      body  object       true  "page：发票页码（文档内出现顺序，从 1 开始）"
+// @Success      200  {object}  map[string]interface{}  "deleted_file: 是否整份删除"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/delete-invoice-page [post]
+
+
+func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	_ = kb
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to delete invoice records"))
+		return
+	}
+	if err := h.requireKBOwnershipOrAdmin(c, kbID); err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page < 1 {
+		var req struct {
+			Page int `json:"page"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			logger.Warn(ctx, "delete-invoice-page: failed to decode body", err)
+		} else if req.Page >= 1 {
+			page = req.Page
+		}
+	}
+	if page < 1 {
+		c.Error(errors.NewBadRequestError("page must be a positive integer"))
+		return
+	}
+
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get knowledge for invoice page delete", err)
+		c.Error(errors.NewNotFoundError("Knowledge not found"))
+		return
+	}
+	if knowledge.KnowledgeBaseID != kbID {
+		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
+		return
+	}
+	var meta service.InvoiceCustomMetadata
+	if err := json.Unmarshal(knowledge.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" || len(meta.Invoices) == 0 {
+		c.Error(errors.NewBadRequestError("no invoice extraction data to delete"))
+		return
+	}
+	if page > len(meta.Invoices) {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("page %d out of range (1-%d)", page, len(meta.Invoices))))
+		return
+	}
+
+	// 移除该页发票
+	targetIdx := -1
+	for i, inv := range meta.Invoices {
+		if i == page-1 || inv.Page == page {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		targetIdx = page - 1
+	}
+	meta.Invoices = append(meta.Invoices[:targetIdx], meta.Invoices[targetIdx+1:]...)
+	// 后续发票页码前移，保持页码=文档内出现顺序
+	for i := range meta.Invoices {
+		meta.Invoices[i].Page = i + 1
+	}
+
+	// 删空：整份文档一并删除
+	if len(meta.Invoices) == 0 {
+		if _, err := h.enqueueKnowledgeListDelete(effCtx, effectiveTenantID, kbID, []string{knowledgeID}); err != nil {
+			logger.Error(ctx, "Failed to enqueue knowledge delete after removing last invoice", err)
+			c.Error(errors.NewInternalServerError("failed to schedule delete: " + err.Error()))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success":     true,
+			"message":     "Invoice removed, source file scheduled for deletion",
+			"deleted_file": true,
+		})
+		return
+	}
+
+	metaBytes, jerr := json.Marshal(meta)
+	if jerr != nil {
+		logger.Error(ctx, "Failed to encode invoice metadata after delete", jerr)
+		c.Error(errors.NewInternalServerError("failed to encode metadata"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaBytes)); err != nil {
+		logger.Error(ctx, "Failed to persist invoice metadata after delete", err)
+		c.Error(errors.NewInternalServerError("failed to save metadata: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"message":     "Invoice record deleted",
+		"deleted_file": false,
+		"data":        meta.Invoices,
+	})
+}
+
+// ExtractContractPage godoc
+// @Summary      按页重新提取合同
+// @Description  对该知识文档中指定的第 N 份合同（合同按文档内出现顺序编号，即提取结果中的 page）单独重新提取，仅替换该份合同的数据，不影响同文件其它合同。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Param        body         body  object  true  "{\"page\":1}"
+// @Success      200  {object}  map[string]interface{}  "更新后的合同"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-contract-page [post]
+
+type invoiceCustomMetadata struct {
+	Kind          string                          `json:"kind"`
+	Invoices      []service.InvoiceExtractionItem `json:"invoices"`
+	ExtractStatus string                          `json:"extract_status"`
+	ExtractError  string                          `json:"extract_error"`
+}
+
+func invoiceBatchesHaveText(batches []string) bool {
+	for _, b := range batches {
+		if strings.TrimSpace(b) != "" {
+			return true
+		}
+	}
+	return false
+}
