@@ -32,6 +32,19 @@ func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.
 	return &BusinessExtractHandler{KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc}
 }
 
+// parseSandboxPagination reads page/page_size from query with safe defaults.
+func parseSandboxPagination(c *gin.Context) (page, pageSize int) {
+	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ = strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 20
+	}
+	return page, pageSize
+}
+
 // autoDeleteCount reads the auto_deleted_count marker from a knowledge row's
 // custom_metadata (0 when absent).
 func (h *BusinessExtractHandler) autoDeleteCount(ctx context.Context, knowledge *types.Knowledge) int {
@@ -372,7 +385,7 @@ func (h *BusinessExtractHandler) ExtractContractPage(c *gin.Context) {
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	page, _ := strconv.Atoi(c.Query("page"))
+	page, _ := parseSandboxPagination(c)
 	if page < 1 {
 		var req struct {
 			Page int `json:"page"`
@@ -510,7 +523,7 @@ func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	page, _ := strconv.Atoi(c.Query("page"))
+	page, _ := parseSandboxPagination(c)
 	if page < 1 {
 		var req struct {
 			Page int `json:"page"`
@@ -916,7 +929,7 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	page, _ := strconv.Atoi(c.Query("page"))
+	page, _ := parseSandboxPagination(c)
 	if page < 1 {
 		var req struct {
 			Page int `json:"page"`
@@ -1049,7 +1062,7 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	page, _ := strconv.Atoi(c.Query("page"))
+	page, _ := parseSandboxPagination(c)
 	if page < 1 {
 		var req struct {
 			Page int `json:"page"`
@@ -1751,15 +1764,14 @@ func (h *BusinessExtractHandler) ListDeletedKnowledge(c *gin.Context) {
 		return
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize := parseSandboxPagination(c)
 	result, _, err := h.businessSvc.ListDeletedKnowledge(effCtx, effectiveTenantID, kbID, page, pageSize, c.Query("q"))
 	if err != nil {
 		logger.Error(ctx, "Failed to list deleted knowledge", err)
 		c.Error(errors.NewInternalServerError("list deleted knowledge failed: " + err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
 // RestoreDeletedKnowledge godoc
