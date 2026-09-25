@@ -1732,3 +1732,139 @@ func (h *KnowledgeBaseHandler) GetRecognitionConfig(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/deleted-knowledge [get]
+
+
+func (h *BusinessExtractHandler) ListDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to list deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	result, _, err := h.businessSvc.ListDeletedKnowledge(effCtx, effectiveTenantID, kbID, page, pageSize, c.Query("q"))
+	if err != nil {
+		logger.Error(ctx, "Failed to list deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("list deleted knowledge failed: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// RestoreDeletedKnowledge godoc
+// @Summary      恢复自动删除的记录
+// @Description  把被系统自动删除（非合同/非发票）的记录恢复回知识库并重新解析提取；再次判定非该类文档时不再自动删除（防循环）。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "恢复成功"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/restore [post]
+
+
+func (h *BusinessExtractHandler) RestoreDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to restore deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	if err := h.businessSvc.RestoreDeletedKnowledge(effCtx, effectiveTenantID, knowledgeID); err != nil {
+		logger.Error(ctx, "Failed to restore deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("restore deleted knowledge failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Restored auto-deleted knowledge %s", knowledgeID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "已重新入库，请在列表中编辑补录字段",
+		"data":    map[string]interface{}{"knowledge_id": knowledgeID},
+	})
+}
+
+// PurgeDeletedKnowledge godoc
+// @Summary      永久删除历史记录
+// @Description  永久删除一条删除历史记录（DB 硬删 + 物理源文件删除），不可恢复。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "永久删除成功"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/purge [post]
+
+
+func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to purge deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	if err := h.businessSvc.PurgeDeletedKnowledge(effCtx, effectiveTenantID, knowledgeID); err != nil {
+		logger.Error(ctx, "Failed to purge deleted knowledge", err)
+		c.Error(errors.NewInternalServerError("purge deleted knowledge failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Purged auto-deleted knowledge %s permanently", knowledgeID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Knowledge purged permanently",
+		"data":    map[string]interface{}{"knowledge_id": knowledgeID},
+	})
+}
+
+// ExtractInvoice godoc
+// @Summary      提取发票字段
+// @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取发票字段并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id           path  string  true  "知识库ID"
+// @Param        knowledgeId  path  string  true  "知识ID"
+// @Success      200  {object}  map[string]interface{}  "提取成功"
+// @Failure      400  {object}  errors.AppError         "请求参数错误"
+// @Failure      403  {object}  errors.AppError         "无权限"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice [post]

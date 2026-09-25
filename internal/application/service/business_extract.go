@@ -194,3 +194,22 @@ type InvoiceCustomMetadata struct {
 	ExtractStatus string                  `json:"extract_status"`
 	ExtractError  string                  `json:"extract_error"`
 }
+
+// ListDeletedKnowledge lists soft-deleted rows in a KB.
+func (s *BusinessExtractService) ListDeletedKnowledge(ctx context.Context, tenantID uint64, kbID string, page, pageSize int, keyword string) (interface{}, int64, error) {
+	items, total, err := s.repo.ListDeletedKnowledge(ctx, tenantID, kbID, page, pageSize, keyword)
+	if err != nil {
+		return nil, 0, err
+	}
+	return map[string]interface{}{"items": items, "total": total}, total, nil
+}
+
+// RestoreDeletedKnowledge clears the soft-delete tombstone.
+func (s *BusinessExtractService) RestoreDeletedKnowledge(ctx context.Context, tenantID uint64, id string) error {
+	return s.repo.RestoreDeletedKnowledgeRow(ctx, tenantID, id)
+}
+
+// PurgeDeletedKnowledge hard-deletes a soft-deleted row.
+func (s *BusinessExtractService) PurgeDeletedKnowledge(ctx context.Context, tenantID uint64, id string) error {
+	return s.repo.HardDeleteKnowledge(ctx, tenantID, id)
+}
