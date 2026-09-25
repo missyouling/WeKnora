@@ -535,6 +535,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewKnowledgeBaseHandler))
 	must(container.Provide(handler.NewKnowledgeHandler))
 	// === 日常事务沙盒：业务提取 / Utility / Billing / Fleet ===
+	must(container.Provide(service.NewBusinessExtractService))
 	must(container.Provide(handler.NewBusinessExtractHandler))
 	must(container.Provide(handler.NewUtilityHandler))
 	must(container.Provide(handler.NewBillingHandler))

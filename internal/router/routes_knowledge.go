@@ -84,22 +84,22 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 
 		// === 日常事务沙盒：业务提取路由（挂在 BusinessExtractHandler 上） ===
 		if business != nil {
-			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoice)
-			kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoicePage)
-			kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteInvoicePage)
-			kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContract)
-			kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractRegulation)
-			kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractAwardPunish)
-			kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractUtilityBill)
-			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
-			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
-			kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContractPage)
-			kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteContractPage)
-			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
-			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
-			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
-			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
-			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
+// 			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoice)
+// 			kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoicePage)
+// 			kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteInvoicePage)
+// 			kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContract)
+// 			kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractRegulation)
+// 			kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractAwardPunish)
+// 			kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractUtilityBill)
+// 			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
+// 			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
+// 			kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContractPage)
+// 			kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteContractPage)
+// 			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
+// 			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
+// 			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
+// 			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
+// 			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
 		}
 	}
 

@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -258,46 +256,6 @@ func NormalizeContractExtractionResult(res *ContractExtractionResult, autoSeqSta
 // MaxAutoContractSeq returns the highest trailing sequence number among
 // contracts with an auto-generated number HT-YYYYMMDD-NNN for the current date
 // inside the knowledge base. Used to keep auto-numbers unique across files.
-func (s *knowledgeService) MaxAutoContractSeq(ctx context.Context, kbID string) (int, error) {
-	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	prefix := "HT-" + time.Now().Format("20060102") + "-"
-	max := 0
-	page := 1
-	const batch = 1000
-	for {
-		p := &types.Pagination{Page: page, PageSize: batch}
-		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
-		if err != nil {
-			return max, err
-		}
-		if len(knowledges) == 0 {
-			break
-		}
-		for _, k := range knowledges {
-			if k == nil || len(k.CustomMetadata) == 0 {
-				continue
-			}
-			var meta contractMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "contract" {
-				continue
-			}
-			for _, ct := range meta.Contracts {
-				if !strings.HasPrefix(ct.ContractNo, prefix) {
-					continue
-				}
-				n := strings.TrimPrefix(ct.ContractNo, prefix)
-				if v, aerr := strconv.Atoi(n); aerr == nil && v > max {
-					max = v
-				}
-			}
-		}
-		if len(knowledges) < batch {
-			break
-		}
-		page++
-	}
-	return max, nil
-}
 
 // NormalizeContractTypeFromName maps a raw type string onto the fixed enum by
 // keyword priority:

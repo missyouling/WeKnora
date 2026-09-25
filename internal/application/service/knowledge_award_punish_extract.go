@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -237,46 +235,6 @@ func NormalizeAwardPunishExtractionResult(res *AwardPunishExtractionResult, auto
 // MaxAutoAwardPunishSeq returns the highest trailing sequence number among
 // records with an auto-generated number JC-YYYYMMDD-NNN for the current date
 // inside the knowledge base. Used to keep auto-numbers unique across files.
-func (s *knowledgeService) MaxAutoAwardPunishSeq(ctx context.Context, kbID string) (int, error) {
-	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	prefix := "JC-" + time.Now().Format("20060102") + "-"
-	max := 0
-	page := 1
-	const batch = 1000
-	for {
-		p := &types.Pagination{Page: page, PageSize: batch}
-		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
-		if err != nil {
-			return max, err
-		}
-		if len(knowledges) == 0 {
-			break
-		}
-		for _, k := range knowledges {
-			if k == nil || len(k.CustomMetadata) == 0 {
-				continue
-			}
-			var meta awardPunishMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "award_punish" {
-				continue
-			}
-			for _, r := range meta.Records {
-				if !strings.HasPrefix(r.ApNo, prefix) {
-					continue
-				}
-				n := strings.TrimPrefix(r.ApNo, prefix)
-				if v, aerr := strconv.Atoi(n); aerr == nil && v > max {
-					max = v
-				}
-			}
-		}
-		if len(knowledges) < batch {
-			break
-		}
-		page++
-	}
-	return max, nil
-}
 
 // NormalizeAwardPunishTypeFromName maps a raw type string onto the fixed enum by
 // keyword priority:

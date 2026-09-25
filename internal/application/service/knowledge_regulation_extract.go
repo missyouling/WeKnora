@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -178,46 +176,6 @@ func NormalizeRegulationExtractionResult(res *RegulationExtractionResult, autoSe
 // MaxAutoRegulationSeq returns the highest trailing sequence number among
 // regulations with an auto-generated number ZD-YYYYMMDD-NNN for the current
 // date inside the knowledge base. Used to keep auto-numbers unique across files.
-func (s *knowledgeService) MaxAutoRegulationSeq(ctx context.Context, kbID string) (int, error) {
-	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	prefix := "ZD-" + time.Now().Format("20060102") + "-"
-	max := 0
-	page := 1
-	const batch = 1000
-	for {
-		p := &types.Pagination{Page: page, PageSize: batch}
-		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
-		if err != nil {
-			return max, err
-		}
-		if len(knowledges) == 0 {
-			break
-		}
-		for _, k := range knowledges {
-			if k == nil || len(k.CustomMetadata) == 0 {
-				continue
-			}
-			var meta regulationMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "regulation" {
-				continue
-			}
-			for _, r := range meta.Regulations {
-				if !strings.HasPrefix(r.RegNo, prefix) {
-					continue
-				}
-				n := strings.TrimPrefix(r.RegNo, prefix)
-				if v, aerr := strconv.Atoi(n); aerr == nil && v > max {
-					max = v
-				}
-			}
-		}
-		if len(knowledges) < batch {
-			break
-		}
-		page++
-	}
-	return max, nil
-}
 
 // NormalizeRegulationTypeFromName maps a raw type string onto the fixed enum by
 // keyword priority:

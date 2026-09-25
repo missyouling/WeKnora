@@ -292,7 +292,7 @@ func TestKnowledgeReadRoutesDeclareRetrieveCapability(t *testing.T) {
 	v1 := gin.New().Group("/api/v1")
 
 	RegisterKnowledgeBaseRoutes(v1, &handler.KnowledgeBaseHandler{}, g)
-	RegisterKnowledgeRoutes(v1, &handler.KnowledgeHandler{}, g)
+	RegisterKnowledgeRoutes(v1, &handler.KnowledgeHandler{}, nil, g)
 	RegisterFAQRoutes(v1, &handler.FAQHandler{}, g)
 	RegisterKnowledgeTagRoutes(v1, &handler.TagHandler{}, g)
 	RegisterChatRoutes(v1, &sessionhandler.Handler{}, g)
@@ -595,7 +595,7 @@ func TestKnowledgeBatchWriteRoutesDeclareIngestCapability(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterKnowledgeRoutes(v1, &handler.KnowledgeHandler{}, g)
+	RegisterKnowledgeRoutes(v1, &handler.KnowledgeHandler{}, nil, g)
 
 	cases := []struct {
 		method string
