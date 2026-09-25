@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="utility-meter-tab">
     <!-- 筛选工具栏（与电费/合同管理一致） -->
     <div class="doc-filter-bar">
@@ -543,7 +543,7 @@
             <t-input v-model="k.label" size="small" @enter="() => {}">
               <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
             </t-input>
-            <t-popconfirm v-if="!k.builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
+            <t-popconfirm v-if="!(k as any).builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
               :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
               @confirm="removeCustomKind(k.value)">
               <t-button variant="text" size="small" @click.stop>
@@ -797,11 +797,11 @@ const saveKinds = async () => {
         MessagePlugin.warning('用途名称不能为空')
         return
       }
-      if (k.builtin) {
+      if ((k as any).builtin) {
         await createUtilityKind(props.category, { value: k.value, label })
-      } else if (k.id) {
+      } else if ((k as any).id) {
         if (label !== k.label) k.label = label
-        await updateUtilityKind(k.id, { label })
+        await updateUtilityKind((k as any).id, { label })
       }
     }
     MessagePlugin.success('用途配置已保存')
@@ -1008,7 +1008,7 @@ interface MeterForm {
   startReading: number; endReading: number
   deepPrev: number; deepCurr: number; peakPrev: number; peakCurr: number
   flatPrev: number; flatCurr: number; valleyPrev: number; valleyCurr: number
-  unitPrice: number; subsidy: number; remark: string
+  unitPrice: number; subsidy: string | number; remark: string
   garbageFee: number; secondaryWaterFee: number; sewageFee: number
 }
 const emptyForm = (): MeterForm => ({

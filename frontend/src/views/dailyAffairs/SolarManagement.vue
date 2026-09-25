@@ -334,7 +334,7 @@
                   <div class="fg-row fg-head">
                     <span v-for="c in gridFeeCols" :key="c.field_key">{{ c.label }}</span>
                   </div>
-                  <div v-for="(it, i) in gridFeeRows" :key="i" class="fg-row" @click="openFeeEdit('grid', i)">
+                  <div v-for="(it, i) in gridFeeRows" :key="i" class="fg-row" @click="openFeeEdit('grid', Number(i))">
                     <span v-for="c in gridFeeCols" :key="c.field_key"
                       :class="{ 'fg-name': c.field_key === 'category', 'row-mono': c.field_type !== 'text' }">
                       {{ feeCellText(it, c) }}
@@ -361,7 +361,7 @@
                   <div class="fg-row fg-head">
                     <span v-for="c in subsidyFeeCols" :key="c.field_key">{{ c.label }}</span>
                   </div>
-                  <div v-for="(it, i) in subsidyFeeRows" :key="i" class="fg-row" @click="openFeeEdit('subsidy', i)">
+                  <div v-for="(it, i) in subsidyFeeRows" :key="i" class="fg-row" @click="openFeeEdit('subsidy', Number(i))">
                     <span v-for="c in subsidyFeeCols" :key="c.field_key"
                       :class="{ 'fg-name': c.field_key === 'category', 'row-mono': c.field_type !== 'text' }">
                       {{ feeCellText(it, c) }}
@@ -642,11 +642,11 @@ const listScrollRef = ref<HTMLElement>()
 
 const summaryUsage = computed(() => {
   const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
-  return target.reduce((s, r) => s + (Number(r.item?.generation_kwh) || 0), 0)
+  return target.reduce((s, r) => s + (Number((r.item as any)?.generation_kwh) || 0), 0)
 })
 const summaryAmount = computed(() => {
   const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
-  return target.reduce((s, r) => s + (Number(r.item?.settlement_amount) || 0), 0)
+  return target.reduce((s, r) => s + (Number((r.item as any)?.settlement_amount) || 0), 0)
 })
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
@@ -697,7 +697,7 @@ const displayRows = computed(() => {
   const all = [...pendingRows.value, ...rows.value]
   if (!kw) return all
   return all.filter(r =>
-    (r.fileName || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw))
+    (r.fileName || '').toLowerCase().includes(kw) || ((r as any).title || '').toLowerCase().includes(kw))
 })
 
 const meterReading = (row: Row) => {
@@ -1123,8 +1123,8 @@ const recalcFeeEdit = () => {
   }
 }
 const saveFeeEdit = async () => {
-  if (!currentRow.value || !kbId.value || !feeEditTarget.value) return
-  const { group, index } = feeEditTarget.value
+  if (!currentRow.value || !kbId.value || !feeEditTarget) return
+  const { group, index } = feeEditTarget
   const gws = (it.value.gateways || []).filter((g: any) =>
     group === 'grid' ? g.gateway_type === '上网关口' : g.gateway_type === '发电关口')
   let cursor = 0
@@ -1218,7 +1218,7 @@ const openTagEdit = (row: Row) => {
 const onTagEditConfirm = async (tags: any[]) => {
   if (!tagTargetRow || !kbId.value) return
   try {
-    await updateKnowledgeTagBatch(kbId.value, { knowledge_ids: [tagTargetRow.knowledgeId], tag_ids: tags.map((t: any) => t.id || t.tag_id || t) })
+    await updateKnowledgeTagBatch({ updates: { [tagTargetRow.knowledgeId]: tags.map((t: any) => t.id || t.tag_id || t) } })
     tagTargetRow.tags = tags
     MessagePlugin.success('标签已更新')
   } catch (e: any) {
@@ -1232,7 +1232,7 @@ const openTagManage = () => { tagManageVisible.value = true }
 // ---- 打印（合并多份账单为一个 PDF，iframe 预览，与电费一致） ----
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
 const isImageRow = (r: any, blob: any) => {
-  const ext = String(r.fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
+  const ext = String((r as any).fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
   if (IMAGE_EXTS.includes(ext)) return true
   const mime = (blob?.type || '').toLowerCase()
   return mime.startsWith('image/')
@@ -1283,7 +1283,7 @@ const handleBatchPrint = async () => {
       try {
         const src = await blob.arrayBuffer()
         if (isImageRow(r, blob)) {
-          const ext = String(r.fileType || '').toLowerCase()
+          const ext = String((r as any).fileType || '').toLowerCase()
           const isPng = ext.includes('png') || (blob?.type || '').toLowerCase().includes('png')
           const img = isPng ? await out.embedPng(src) : await out.embedJpg(src)
           const page = out.addPage([img.width, img.height])

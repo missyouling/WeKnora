@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
@@ -320,13 +320,13 @@
                                 <span v-else class="os-fee-val" :class="{ 'os-fee-val--manual': r.total }">{{ fmtRate6(r.displayValue) }}</span>
                               </template>
                             </span>
-                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="!r.total && billFeeEditingKey !== r.ovBillKey && startBillFeeEdit(r)">
-                              <template v-if="billFeeEditingKey === r.ovBillKey">
+                            <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="!r.total && billFeeEditingKey !== (r as any).ovBillKey && startBillFeeEdit(r)">
+                              <template v-if="billFeeEditingKey === (r as any).ovBillKey">
                                 <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
                                   @blur="commitBillFeeOverride(r)" @enter="commitBillFeeOverride(r)" />
                               </template>
                               <template v-else>
-                                <t-tooltip v-if="!r.total && hasBillFeeOverride(r.ovBillKey)" content="手动修改，重提取后重置" placement="top">
+                                <t-tooltip v-if="!r.total && hasBillFeeOverride((r as any).ovBillKey)" content="手动修改，重提取后重置" placement="top">
                                   <span class="os-fee-val os-fee-val--manual">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
                                 </t-tooltip>
                                 <span v-else class="os-fee-val">{{ r.billFee ? fmtRate6(r.billFee) : '' }}</span>
@@ -419,12 +419,12 @@
                         </div>
                         <div v-for="(r, i) in meterRows" :key="r.meter_type || i" class="meter-row" @click="openMeterEdit(i)">
                           <span class="meter-type">{{ r.meter_type }}</span>
-                          <span class="row-mono">{{ r.prev || r.prev === 0 ? fmtKwh(r.prev) : '' }}</span>
-                          <span class="row-mono">{{ r.curr || r.curr === 0 ? fmtKwh(r.curr) : '' }}</span>
+                          <span class="row-mono">{{ r.prev != null ? fmtKwh(Number(r.prev)) : '' }}</span>
+                          <span class="row-mono">{{ r.curr != null ? fmtKwh(Number(r.curr)) : '' }}</span>
                           <span class="row-mono">{{ displayMultiplier(r) }}</span>
-                          <span class="row-mono">{{ r.reading_kwh || r.reading_kwh === 0 ? fmtKwh(r.reading_kwh) : '' }}</span>
-                          <span class="row-mono">{{ r.trans_loss || r.trans_loss === 0 ? fmtKwh(r.trans_loss) : '' }}</span>
-                          <span class="row-mono">{{ r.line_loss || r.line_loss === 0 ? fmtKwh(r.line_loss) : '' }}</span>
+                          <span class="row-mono">{{ r.reading_kwh != null ? fmtKwh(Number(r.reading_kwh)) : '' }}</span>
+                          <span class="row-mono">{{ r.trans_loss != null ? fmtKwh(Number(r.trans_loss)) : '' }}</span>
+                          <span class="row-mono">{{ r.line_loss != null ? fmtKwh(Number(r.line_loss)) : '' }}</span>
                           <span class="row-mono">{{ r.adjust || r.adjust === 0 ? fmtKwh(r.adjust) : '' }}</span>
                           <span class="row-mono">{{ r.bill_kwh ? fmtKwh(r.bill_kwh) : '' }}</span>
                         </div>
@@ -448,12 +448,12 @@
                         </div>
                         <div v-for="(r, i) in residentMeterRows" :key="i" class="meter-row" @click="openResidentMeterEdit(i)">
                           <span class="meter-type">{{ r.meter_type }}</span>
-                          <span class="row-mono">{{ r.prev || r.prev === 0 ? fmtKwh(r.prev) : '' }}</span>
-                          <span class="row-mono">{{ r.curr || r.curr === 0 ? fmtKwh(r.curr) : '' }}</span>
-                          <span class="row-mono">{{ r.multiplier || r.multiplier === 0 ? fmtKwh(r.multiplier) : '' }}</span>
-                          <span class="row-mono">{{ r.reading_kwh || r.reading_kwh === 0 ? fmtKwh(r.reading_kwh) : '' }}</span>
-                          <span class="row-mono">{{ r.trans_loss || r.trans_loss === 0 ? fmtKwh(r.trans_loss) : '' }}</span>
-                          <span class="row-mono">{{ r.line_loss || r.line_loss === 0 ? fmtKwh(r.line_loss) : '' }}</span>
+                          <span class="row-mono">{{ r.prev != null ? fmtKwh(Number(r.prev)) : '' }}</span>
+                          <span class="row-mono">{{ r.curr != null ? fmtKwh(Number(r.curr)) : '' }}</span>
+                          <span class="row-mono">{{ r.multiplier != null ? fmtKwh(Number(r.multiplier)) : '' }}</span>
+                          <span class="row-mono">{{ r.reading_kwh != null ? fmtKwh(Number(r.reading_kwh)) : '' }}</span>
+                          <span class="row-mono">{{ r.trans_loss != null ? fmtKwh(Number(r.trans_loss)) : '' }}</span>
+                          <span class="row-mono">{{ r.line_loss != null ? fmtKwh(Number(r.line_loss)) : '' }}</span>
                           <span class="row-mono">{{ r.adjust || r.adjust === 0 ? fmtKwh(r.adjust) : '' }}</span>
                           <span class="row-mono">{{ r.bill_kwh ? fmtKwh(r.bill_kwh) : '' }}</span>
                         </div>
@@ -477,7 +477,7 @@
                         <div class="fg-row fg-head">
                           <span v-for="c in feeGroupCols(activeMenu)" :key="c.field_key">{{ c.label }}</span>
                         </div>
-                        <div v-for="(it, i) in feeRowsOf(activeMenu)" :key="i" class="fg-row" @click="openFeeItemEdit(activeMenu, i)">
+                        <div v-for="(it, i) in feeRowsOf(activeMenu)" :key="i" class="fg-row" @click="openFeeItemEdit(activeMenu, Number(i))">
                           <span v-for="c in feeGroupCols(activeMenu)" :key="c.field_key"
                             :class="{ 'fg-name': c.field_key === 'name', 'row-mono': c.field_type !== 'text', 'os-neg': c.field_key === 'fee' && Number(it.fee) < 0 }"
                             :title="c.field_key === 'name' ? it.name : ''">
@@ -579,7 +579,7 @@
           <div class="detail-block-title">账单字段</div>
           <div class="detail-block-content">
             <div class="field-grid">
-              <div v-for="cfg in detailFieldDefs" :key="cfg.field_key" class="field-grid-item">
+              <div v-for="cfg in detailFieldDefs" :key="(cfg as any).field_key" class="field-grid-item">
                 <label class="field-label">{{ cfg.label }}</label>
                 <t-input v-if="cfg.fieldType === 'text'" :model-value="fieldValue(cfg)" size="small"
                   @update:model-value="(v: string) => setFieldValue(cfg, v)" />
@@ -612,7 +612,7 @@
                 <t-input v-model="it.qty" size="small" type="number" />
                 <t-input v-model="it.rate" size="small" type="number" />
                 <t-input v-model="it.fee" size="small" type="number" />
-                <t-button variant="text" size="small" shape="square" @click="removeFeeItem(i)">
+                <t-button variant="text" size="small" shape="square" @click="removeFeeItem(Number(i))">
                   <template #icon><t-icon name="delete" size="14px" /></template>
                 </t-button>
               </div>
@@ -987,11 +987,11 @@ const listScrollRef = ref<HTMLElement>()
 
 const summaryUsage = computed(() => {
   const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
-  return target.reduce((s, r) => s + (Number(r.item?.total_kwh) || 0), 0)
+  return target.reduce((s, r) => s + (Number((r.item as any)?.total_kwh) || 0), 0)
 })
 const summaryAmount = computed(() => {
   const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
-  return target.reduce((s, r) => s + (Number(r.item?.total_amount) || 0), 0)
+  return target.reduce((s, r) => s + (Number((r.item as any)?.total_amount) || 0), 0)
 })
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
@@ -1046,7 +1046,7 @@ const displayRows = computed(() => {
   const all = [...pendingRows.value, ...rows.value]
   if (!kw) return all
   return all.filter(r =>
-    (r.fileName || '').toLowerCase().includes(kw) || (r.title || '').toLowerCase().includes(kw))
+    (r.fileName || '').toLowerCase().includes(kw) || ((r as any).title || '').toLowerCase().includes(kw))
 })
 
 const loadFiles = async (reset = false) => {
@@ -1766,7 +1766,7 @@ const energyCompareRows = computed(() => {
   }
   const round2 = (n: number) => Math.round(n * 100) / 100
   const curPcts = cur.map(c => ({ key: c.key, pct: pct(c.v, curTotal) }))
-  const prevPcts = cur.map(c => ({ key: c.key, pct: prevTotal ? pct(prev[c.key] || 0, prevTotal) : 0 }))
+  const prevPcts = cur.map(c => ({ key: c.key, pct: prevTotal ? pct((prev as any)[c.key] || 0, prevTotal) : 0 }))
   const sumExcl = (arr: { key: string; pct: number }[], excl: string) =>
     arr.filter(a => a.key !== excl).reduce((s, a) => s + a.pct, 0)
   const curFlat = curTotal ? Math.max(0, round2(100 - sumExcl(curPcts, 'flat'))) : 0
@@ -1774,7 +1774,7 @@ const energyCompareRows = computed(() => {
   const curPctOf = (key: string) => (key === 'flat' ? curFlat : curPcts.find(p => p.key === key)!.pct)
   const prevPctOf = (key: string) => (key === 'flat' ? prevFlat : prevPcts.find(p => p.key === key)!.pct)
   return cur.map(c => {
-    const pv = prev[c.key] || 0
+    const pv = (prev as any)[c.key] || 0
     const curPct = curPctOf(c.key)
     const prevPct = prevPctOf(c.key)
     return {
@@ -2177,7 +2177,7 @@ const handleReExtract = async () => {
 // ---- 打印（合并多份账单为一个 PDF，iframe 预览） ----
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
 const isImageRow = (r: any, blob: any) => {
-  const ext = String(r.fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
+  const ext = String((r as any).fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
   if (IMAGE_EXTS.includes(ext)) return true
   const mime = (blob?.type || '').toLowerCase()
   return mime.startsWith('image/')
@@ -2206,7 +2206,7 @@ const handleBatchPrint = async () => {
       try {
         const src = await blob.arrayBuffer()
         if (isImageRow(r, blob)) {
-          const ext = String(r.fileType || '').toLowerCase()
+          const ext = String((r as any).fileType || '').toLowerCase()
           const isPng = ext.includes('png') || (blob?.type || '').toLowerCase().includes('png')
           const img = isPng ? await out.embedPng(src) : await out.embedJpg(src)
           const page = out.addPage([img.width, img.height])
