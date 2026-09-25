@@ -1,0 +1,41 @@
+# ============================================================
+# WeKnora Daily-Affairs Sandbox Image (二开专用)
+# 不修改官方 docker/Dockerfile.app，此文件独立维护
+# 目标：单镜像部署，后端托管前端静态文件，仅 amd64
+# ============================================================
+
+# ---------- Stage 1: 前端构建 ----------
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS builder-web
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+ARG VITE_FRONTEND_COMMIT=sandbox
+RUN npm run build
+
+# ---------- Stage 2: 后端构建 ----------
+FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS builder-go
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential libsqlite3-dev curl && rm -rf /var/lib/apt/lists/*
+COPY go.mod go.sum ./
+COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod 2>/dev/null || true
+RUN go mod download
+COPY . .
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-O2 -g"
+# 二开业务不需要 anydoc/browserskill，关闭以加速构建
+RUN go build -o WeKnora ./cmd/server
+
+# ---------- Stage 3: 运行时 ----------
+FROM debian:12-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libsqlite3-0 tzdata curl && rm -rf /var/lib/apt/lists/*
+COPY --from=builder-go /app/WeKnora ./WeKnora
+COPY --from=builder-go /app/config ./config
+COPY --from=builder-go /app/migrations ./migrations
+COPY --from=builder-go /app/scripts ./scripts
+COPY --from=builder-web /web/dist ./web/dist
+EXPOSE 8080
+CMD ["./WeKnora"]
