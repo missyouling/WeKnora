@@ -19,7 +19,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential libsqlite3-dev curl && rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
-COPY third_party/anydoc-go/go.mod third_party/anydoc-go/go.mod 2>/dev/null || true
+COPY third_party/anydoc-go/go.mo[d] third_party/anydoc-go/
 RUN go mod download
 COPY . .
 ENV CGO_ENABLED=1
