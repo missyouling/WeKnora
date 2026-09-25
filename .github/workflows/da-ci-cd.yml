@@ -54,7 +54,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=da-latest
-            type=sha,format=da-%s,prefix=
+            type=sha,prefix=da-
             type=ref,event=tag
       - uses: docker/build-push-action@v6
         with:
