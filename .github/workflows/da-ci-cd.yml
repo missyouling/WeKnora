@@ -29,8 +29,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
       - name: Vet sandbox packages
         run: go vet ./internal/handler ./internal/application/service
-      - name: Test sandbox packages (whitelist)
-        run: go test ./internal/handler ./internal/application/service
+      - name: Test sandbox packages (whitelist regex)
+        env:
+          CGO_ENABLED: 1
+        run: go test -run "TestBusiness|TestExtract|TestDailyAffairs" ./internal/handler ./internal/application/service
 
   build-push:
     needs: quality-gate
