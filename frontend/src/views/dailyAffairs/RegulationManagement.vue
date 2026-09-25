@@ -4,7 +4,7 @@
     <div class="header">
       <div class="header-title">
         <h2>制度管理</h2>
-        <p class="header-subtitle">上传制度文件，自动识别制度编号、类型、双方主体与金额等字段并归档，支持查询、编辑、打印、下载与删除</p>
+        <p class="header-subtitle">制度档案自动归档</p>
       </div>
       <div class="header-actions">
         <t-button v-if="kbId" theme="primary" @click="triggerUpload">

@@ -9,7 +9,7 @@
     <div class="header">
       <div class="header-title">
         <h2>车队管理</h2>
-        <p class="header-subtitle">车辆/司机/维保记录自动解析，轮胎、年检、成本与费用清单统一管理</p>
+        <p class="header-subtitle">车辆、司机与维保记录统一管理</p>
       </div>
     </div>
 

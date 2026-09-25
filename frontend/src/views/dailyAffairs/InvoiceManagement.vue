@@ -4,7 +4,7 @@
     <div class="header">
       <div class="header-title">
         <h2>发票管理</h2>
-        <p class="header-subtitle">上传发票文件，自动识别发票字段并归档，支持查询、编辑、打印、下载与删除</p>
+        <p class="header-subtitle">发票档案自动归档</p>
       </div>
       <div class="header-actions">
         <t-button v-if="kbId" theme="primary" @click="triggerUpload">
