@@ -490,6 +490,7 @@ const INVOICE_TYPES = ['专用发票', '普通发票', '医疗收据', '财政�
 
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
+import { useDocStatus } from '@/composables/useDocStatus'
 const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'invoiceNo', label: '发票号码', default: true, w: '1.5fr' },
   { key: 'invoiceDate', label: '开票日期', default: true, w: '1.1fr' },
@@ -605,12 +606,6 @@ interface InvoiceRow extends Record<string, any> {
   description?: string
 }
 
-interface StatusInfo {
-  label: string
-  theme: 'success' | 'warning' | 'danger' | 'primary' | 'default'
-  icon?: string
-  spin?: boolean
-}
 
 // ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
@@ -768,10 +763,6 @@ const loadTags = async () => {
   } catch { /* 标签加载失败不阻塞 */ }
 }
 
-const rowTags = (row: InvoiceRow) => {
-  const arr = row.tags || []
-  return Array.isArray(arr) ? arr : []
-}
 
 const openTagEdit = (row: InvoiceRow) => {
   tagTarget.value = row
@@ -1015,48 +1006,6 @@ const onRecognitionChanged = async () => {
   await loadFiles(true)
 }
 
-// ---- 状态列（复用原项目"绿色 loading 动态"样式） ----
-const extractStatusOf = (row: InvoiceRow): string => {
-  const ps = row.parseStatus
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
-  if (ps === 'failed') return 'parse_failed'
-  if (ps === 'completed') {
-    if (extractInFlight.value.has(row.knowledgeId)) return 'processing'
-    // 本地失败标记优先（后端尚未落 failed 状态时避免无限"待提取"）
-    if (extractFailed.value.has(row.knowledgeId)) return 'failed'
-    const es = row.extractStatus
-    if (!es || es === 'pending' || es === 'processing') return 'pending'
-    if (es === 'success') return 'success'
-    if (es === 'failed') return 'failed'
-    if (es === 'not_invoice') return 'not_invoice'
-    if (es === 'manual') return 'manual'
-  }
-  return ''
-}
-
-const statusOf = (row: InvoiceRow): StatusInfo => {
-  const s = extractStatusOf(row)
-  switch (s) {
-    case 'parsing': return { label: '解析中', theme: 'primary', icon: 'loading', spin: true }
-    case 'parse_failed': return { label: '解析失败', theme: 'danger', icon: 'close-circle' }
-    case 'pending': return { label: '待提取', theme: 'primary', icon: 'loading', spin: true }
-    case 'processing': return { label: '提取中', theme: 'primary', icon: 'loading', spin: true }
-    case 'success': return { label: '提取成功', theme: 'success' }
-    case 'failed': return { label: '提取失败', theme: 'danger', icon: 'close-circle' }
-    case 'not_invoice': return { label: '非发票', theme: 'default' }
-    case 'manual': return { label: '待补录', theme: 'warning', icon: 'edit-1' }
-    default: return { label: '待解析', theme: 'default' }
-  }
-}
-
-const summaryState = computed<StatusInfo | null>(() => {
-  const ss = currentDetail.value?.summary_status
-  if (!ss) return null
-  if (ss === 'pending' || ss === 'processing') return { label: '摘要生成中', theme: 'primary', icon: 'loading', spin: true }
-  if (ss === 'completed') return { label: '摘要已生成', theme: 'success' }
-  if (ss === 'failed') return { label: '摘要生成失败', theme: 'danger' }
-  return null
-})
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
@@ -1153,6 +1102,11 @@ const {
     loadTaxRates()
   },
   onTick: () => loadFiles(),
+})
+
+const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+  extractInFlight, extractFailed, currentDetail,
+  scope: 'invoice', notLabel: '非发票',
 })
 
 // ---- 详情抽屉 ----
@@ -1829,7 +1783,6 @@ onBeforeUnmount(() => {
 
 .row-tag-chips {
   display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; cursor: pointer;
-  .row-tag { max-width: 110px; :deep(.t-tag__text) { max-width: 100px; overflow: hidden; text-overflow: ellipsis; display: inline-block; } }
 }
 .row-tag-more {
   display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 4px;

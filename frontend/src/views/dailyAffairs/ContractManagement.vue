@@ -510,6 +510,7 @@ const PAYMENT_METHODS = ['一次性', '分期', '按进度']
 
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
+import { useDocStatus } from '@/composables/useDocStatus'
 const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
   { key: 'contractNo', label: '合同编号', default: true, w: '1.4fr' },
   { key: 'contractName', label: '合同名称', default: true, w: '1.6fr' },
@@ -643,12 +644,6 @@ interface ContractRow extends Record<string, any> {
   description?: string
 }
 
-interface StatusInfo {
-  label: string
-  theme: 'success' | 'warning' | 'danger' | 'primary' | 'default'
-  icon?: string
-  spin?: boolean
-}
 
 // ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
@@ -814,11 +809,6 @@ const loadTags = async () => {
     const pageData = (res?.data || {}) as { data?: any[]; total?: number }
     tagList.value = (pageData.data || []).map((tag: any) => ({ ...tag, id: String(tag.id) }))
   } catch { /* 标签加载失败不阻塞 */ }
-}
-
-const rowTags = (row: ContractRow) => {
-  const arr = row.tags || []
-  return Array.isArray(arr) ? arr : []
 }
 
 const openTagEdit = (row: ContractRow) => {
@@ -1058,47 +1048,6 @@ const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'primary' | 'def
   }
 }
 
-// ---- 状态列（复用原项目"绿色 loading 动态"样式） ----
-const extractStatusOf = (row: ContractRow): string => {
-  const ps = row.parseStatus
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
-  if (ps === 'failed') return 'parse_failed'
-  if (ps === 'completed') {
-    if (extractInFlight.value.has(row.knowledgeId)) return 'processing'
-    if (extractFailed.value.has(row.knowledgeId)) return 'failed'
-    const es = row.extractStatus
-    if (!es || es === 'pending' || es === 'processing') return 'pending'
-    if (es === 'success') return 'success'
-    if (es === 'failed') return 'failed'
-    if (es === 'not_contract') return 'not_contract'
-    if (es === 'manual') return 'manual'
-  }
-  return ''
-}
-
-const statusOf = (row: ContractRow): StatusInfo => {
-  const s = extractStatusOf(row)
-  switch (s) {
-    case 'parsing': return { label: '解析中', theme: 'primary', icon: 'loading', spin: true }
-    case 'parse_failed': return { label: '解析失败', theme: 'danger', icon: 'close-circle' }
-    case 'pending': return { label: '待提取', theme: 'primary', icon: 'loading', spin: true }
-    case 'processing': return { label: '提取中', theme: 'primary', icon: 'loading', spin: true }
-    case 'success': return { label: '提取成功', theme: 'success' }
-    case 'failed': return { label: '提取失败', theme: 'danger', icon: 'close-circle' }
-    case 'not_contract': return { label: '非合同', theme: 'default' }
-    case 'manual': return { label: '待补录', theme: 'warning', icon: 'edit-1' }
-    default: return { label: '待解析', theme: 'default' }
-  }
-}
-
-const summaryState = computed<StatusInfo | null>(() => {
-  const ss = currentDetail.value?.summary_status
-  if (!ss) return null
-  if (ss === 'pending' || ss === 'processing') return { label: '摘要生成中', theme: 'primary', icon: 'loading', spin: true }
-  if (ss === 'completed') return { label: '摘要已生成', theme: 'success' }
-  if (ss === 'failed') return { label: '摘要生成失败', theme: 'danger' }
-  return null
-})
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
@@ -1191,6 +1140,11 @@ const {
     loadContractTypes()
   },
   onTick: () => loadFiles(),
+})
+
+const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+  extractInFlight, extractFailed, currentDetail,
+  scope: 'contract', notLabel: '非合同',
 })
 
 // 刷新合同级列表（合并更新已加载行，提取完成的新数据实时出现）
@@ -1869,7 +1823,6 @@ onBeforeUnmount(() => {
 
 .row-tag-chips {
   display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; cursor: pointer;
-  .row-tag { max-width: 110px; :deep(.t-tag__text) { max-width: 100px; overflow: hidden; text-overflow: ellipsis; display: inline-block; } }
 }
 .row-tag-more {
   display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 4px;

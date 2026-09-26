@@ -432,6 +432,7 @@ const CONFIDENTIALITY_OPTIONS = ['公开', '内部', '机密', '绝密']
 
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
+import { useDocStatus } from '@/composables/useDocStatus'
 const DEFAULT_REGULATION_COLUMNS: ColumnDef[] = [
   { key: 'regNo', label: '制度编号', default: true, w: '1.4fr' },
   { key: 'regName', label: '制度名称', default: true, w: '1.8fr' },
@@ -533,14 +534,6 @@ interface RegulationRow extends Record<string, any> {
   description?: string
 }
 
-interface StatusInfo {
-  label: string
-  theme: 'success' | 'warning' | 'danger' | 'primary' | 'default'
-  icon?: string
-  spin?: boolean
-}
-
-// ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
 const regulationRows = ref<RegulationRow[]>([])
 // 进行中的文件（解析中/提取中/待提取），在制度级列表顶部以状态行展示
@@ -705,11 +698,6 @@ const loadTags = async () => {
     const pageData = (res?.data || {}) as { data?: any[]; total?: number }
     tagList.value = (pageData.data || []).map((tag: any) => ({ ...tag, id: String(tag.id) }))
   } catch { /* 标签加载失败不阻塞 */ }
-}
-
-const rowTags = (row: RegulationRow) => {
-  const arr = row.tags || []
-  return Array.isArray(arr) ? arr : []
 }
 
 const openTagEdit = (row: RegulationRow) => {
@@ -897,47 +885,6 @@ const pendingRows = computed<RegulationRow[]>(() => pendingFiles.value.map((k) =
 }))
 const filteredRows = computed(() => [...pendingRows.value, ...regulationRows.value])
 
-// ---- 状态列（复用原项目"绿色 loading 动态"样式） ----
-const extractStatusOf = (row: RegulationRow): string => {
-  const ps = row.parseStatus
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
-  if (ps === 'failed') return 'parse_failed'
-  if (ps === 'completed') {
-    if (extractInFlight.value.has(row.knowledgeId)) return 'processing'
-    if (extractFailed.value.has(row.knowledgeId)) return 'failed'
-    const es = row.extractStatus
-    if (!es || es === 'pending' || es === 'processing') return 'pending'
-    if (es === 'success') return 'success'
-    if (es === 'failed') return 'failed'
-    if (es === 'not_regulation') return 'not_regulation'
-    if (es === 'manual') return 'manual'
-  }
-  return ''
-}
-
-const statusOf = (row: RegulationRow): StatusInfo => {
-  const s = extractStatusOf(row)
-  switch (s) {
-    case 'parsing': return { label: '解析中', theme: 'primary', icon: 'loading', spin: true }
-    case 'parse_failed': return { label: '解析失败', theme: 'danger', icon: 'close-circle' }
-    case 'pending': return { label: '待提取', theme: 'primary', icon: 'loading', spin: true }
-    case 'processing': return { label: '提取中', theme: 'primary', icon: 'loading', spin: true }
-    case 'success': return { label: '提取成功', theme: 'success' }
-    case 'failed': return { label: '提取失败', theme: 'danger', icon: 'close-circle' }
-    case 'not_regulation': return { label: '非制度', theme: 'default' }
-    case 'manual': return { label: '待补录', theme: 'warning', icon: 'edit-1' }
-    default: return { label: '待解析', theme: 'default' }
-  }
-}
-
-const summaryState = computed<StatusInfo | null>(() => {
-  const ss = currentDetail.value?.summary_status
-  if (!ss) return null
-  if (ss === 'pending' || ss === 'processing') return { label: '摘要生成中', theme: 'primary', icon: 'loading', spin: true }
-  if (ss === 'completed') return { label: '摘要已生成', theme: 'success' }
-  if (ss === 'failed') return { label: '摘要生成失败', theme: 'danger' }
-  return null
-})
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
@@ -1023,6 +970,11 @@ const {
   },
   onRemoved: (item) => { MessagePlugin.info(`「${item.file_name || item.title}」不是制度文件，已移至删除历史，可在删除历史中恢复`) },
   onTick: () => loadFiles(),
+})
+
+const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+  extractInFlight, extractFailed, currentDetail,
+  scope: 'regulation', notLabel: '非制度',
 })
 
 // ---- 详情抽屉 ----
@@ -1609,7 +1561,6 @@ onBeforeUnmount(() => {
 
 .row-tag-chips {
   display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; cursor: pointer;
-  .row-tag { max-width: 110px; :deep(.t-tag__text) { max-width: 100px; overflow: hidden; text-overflow: ellipsis; display: inline-block; } }
 }
 .row-tag-more {
   display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 4px;
