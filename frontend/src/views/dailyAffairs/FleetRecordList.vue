@@ -255,16 +255,8 @@
     </transition>
 
     <!-- 新增/编辑抽屉 -->
-    <teleport to="body">
-      <div v-if="drawerVisible" class="doc-drawer-resize-handle" :style="{ right: drawerWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
-        :close-btn="true" :close-on-overlay-click="true" :esc-close="true" destroy-on-close class="meter-record-drawer"
-        @close="closeDrawer" @update:visible="(v: boolean) => (v || closeDrawer())">
+<teleport to="body">
+      <SettingDrawer v-model:visible="drawerVisible" :title="drawerTitle" width="640px" :storage-key="'weknora-fleet-drawer-width'" hide-footer destroy-on-close class="meter-record-drawer">
         <div class="meter-drawer-body">
           <div class="rec-grid">
             <!-- 证照型：文件编辑（全部证照类型列表） -->
@@ -383,7 +375,7 @@
           <t-button variant="outline" size="small" @click="closeDrawer">取消</t-button>
           <t-button theme="primary" size="small" :loading="saving" @click="saveRecord">保存</t-button>
         </div>
-      </t-drawer>
+      </SettingDrawer>
     </teleport>
 
     <!-- 打印预览弹窗 -->
@@ -432,6 +424,7 @@ import { useChatResourcesStore } from '@/stores/chatResources'
 import { selectInitialModelId } from '@/utils/modelDefaults'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 
 const props = defineProps<{ recordType: string }>()
 const emit = defineEmits<{ (e: 'openSettings'): void }>()
@@ -2073,32 +2066,6 @@ function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
-// ---------------------------------------------------------------------------
-// 抽屉宽度
-// ---------------------------------------------------------------------------
-const DRAWER_KEY = 'weknora-fleet-drawer-width'
-const drawerWidth = ref(`${parseInt(localStorage.getItem(DRAWER_KEY) || '', 10) || 640}px`)
-let resizing = false
-let startX = 0
-let startW = 0
-function onDrawerResizeStart(e: MouseEvent) {
-  resizing = true
-  startX = e.clientX
-  startW = parseInt(drawerWidth.value, 10)
-  document.addEventListener('mousemove', onDrawerResizeMove)
-  document.addEventListener('mouseup', onDrawerResizeEnd)
-}
-function onDrawerResizeMove(e: MouseEvent) {
-  if (!resizing) return
-  const w = Math.min(1200, Math.max(560, startW + (startX - e.clientX)))
-  drawerWidth.value = `${w}px`
-}
-function onDrawerResizeEnd() {
-  resizing = false
-  document.removeEventListener('mousemove', onDrawerResizeMove)
-  document.removeEventListener('mouseup', onDrawerResizeEnd)
-  localStorage.setItem(DRAWER_KEY, drawerWidth.value)
-}
 </script>
 
 <style lang="less" scoped>
@@ -2311,28 +2278,6 @@ function onDrawerResizeEnd() {
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
   &.is-batch-visible { margin-bottom: 72px; }
-}
-
-/* 抽屉 resize 手柄（发票管理同款） */
-.doc-drawer-resize-handle {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  z-index: 2200;
-  cursor: col-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  .doc-drawer-resize-line {
-    width: 2px;
-    height: 40px;
-    border-radius: 1px;
-    background: var(--td-brand-color);
-    opacity: 0;
-    transition: opacity 0.15s ease, height 0.15s ease;
-  }
-  &:hover .doc-drawer-resize-line { opacity: 1; height: 80px; }
 }
 
 /* 浮动工具栏（与电费核算一致） */

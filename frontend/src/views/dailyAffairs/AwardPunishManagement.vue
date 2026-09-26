@@ -258,12 +258,7 @@
       @changed="onRecognitionChanged" />
 
     <!-- 奖惩详情抽屉（竖向区块，可拖宽，上下滚动） -->
-    <div v-if="detailVisible" class="doc-drawer-resize-handle" :style="{ right: `${drawerWidth}px` }" role="separator"
-      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
-      <div class="doc-drawer-resize-line" />
-    </div>
-    <t-drawer v-model:visible="detailVisible" :header="detailTitle" :size="`${drawerWidth}px`" :footer="false"
-      destroy-on-close class="awardPunish-detail-drawer">
+<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-awardpunish-drawer-width'" hide-footer destroy-on-close class="awardpunish-detail-drawer">
       <div class="awardPunish-detail-body">
         <!-- 摘要 -->
         <section class="detail-block">
@@ -382,7 +377,7 @@
           </div>
         </section>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 标签编辑（复用原项目组件） -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -458,6 +453,7 @@ import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vu
 import AwardPunishKbWizard from './AwardPunishKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 
 const KB_NAME = '日常事务-奖惩'
 const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
@@ -678,13 +674,6 @@ watch(() => currentDetail.value?.description, () => {
 
 // 抽屉宽度（可拖动，localStorage 记忆）
 const DRAWER_WIDTH_KEY = 'weknora-awardPunish-drawer-width'
-const DRAWER_DEFAULT_WIDTH = 700
-const DRAWER_MIN_WIDTH = 520
-const drawerWidth = ref(DRAWER_DEFAULT_WIDTH)
-const drawerResizing = ref(false)
-let drawerResizeStartX = 0
-let drawerResizeStartWidth = 0
-
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
@@ -706,7 +695,6 @@ const loadKb = async () => {
     const found = Array.isArray(list) ? list.find((kb: any) => kb.name === KB_NAME) : null
     kbId.value = found?.id || ''
     if (kbId.value) {
-      loadDrawerWidth()
       await loadTags()
       await loadApTypes()
       await loadMeasures()
@@ -724,7 +712,6 @@ const loadKb = async () => {
 const onKbCreated = async (kb: any) => {
   kbId.value = kb?.id || ''
   if (kbId.value) {
-    loadDrawerWidth()
     await loadTags()
     await loadApTypes()
     await loadMeasures()
@@ -1195,38 +1182,6 @@ const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
-// ---- 抽屉宽度拖动（复刻原项目） ----
-function drawerMaxWidth() { return Math.min(1600, Math.max(DRAWER_MIN_WIDTH, Math.floor(window.innerWidth * 0.95))) }
-function clampDrawerWidth(w: number) { return Math.max(DRAWER_MIN_WIDTH, Math.min(drawerMaxWidth(), w)) }
-function loadDrawerWidth() {
-  try {
-    const raw = localStorage.getItem(DRAWER_WIDTH_KEY)
-    const parsed = raw ? parseInt(raw, 10) : NaN
-    if (!Number.isNaN(parsed)) drawerWidth.value = clampDrawerWidth(parsed)
-  } catch { /* ignore */ }
-}
-function onDrawerResizeStart(e: MouseEvent) {
-  drawerResizing.value = true
-  drawerResizeStartX = e.clientX
-  drawerResizeStartWidth = drawerWidth.value
-  document.addEventListener('mousemove', onDrawerResizeMove)
-  document.addEventListener('mouseup', onDrawerResizeEnd)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
-function onDrawerResizeMove(e: MouseEvent) {
-  const delta = drawerResizeStartX - e.clientX
-  drawerWidth.value = clampDrawerWidth(drawerResizeStartWidth + delta)
-}
-function onDrawerResizeEnd() {
-  document.removeEventListener('mousemove', onDrawerResizeMove)
-  document.removeEventListener('mouseup', onDrawerResizeEnd)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-  drawerResizing.value = false
-  try { localStorage.setItem(DRAWER_WIDTH_KEY, String(drawerWidth.value)) } catch { /* ignore */ }
-}
-
 // ---- 详情抽屉 ----
 const openDetail = async (row: AwardPunishRow) => {
   if (row.kind === 'pending') return
@@ -1594,10 +1549,7 @@ const handleBatchDelete = async () => {
 onMounted(() => { loadKb() })
 onBeforeUnmount(() => {
   stopPolling()
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  document.removeEventListener('mousemove', onDrawerResizeMove)
-  document.removeEventListener('mouseup', onDrawerResizeEnd)
-})
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)})
 </script>
 
 <style basisd lang="less">
@@ -1889,27 +1841,6 @@ onBeforeUnmount(() => {
 
 .detail-save-hint { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; color: var(--td-text-color-placeholder); }
 
-/* 抽屉 resize 手柄（复刻原项目） */
-.doc-drawer-resize-handle {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  z-index: 2001;
-  cursor: col-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  .doc-drawer-resize-line {
-    width: 2px;
-    height: 40px;
-    border-radius: 1px;
-    background: var(--td-brand-color);
-    opacity: 0;
-    transition: opacity 0.15s ease, height 0.15s ease;
-  }
-  &:hover .doc-drawer-resize-line { opacity: 1; height: 80px; }
-}
 </style>
 
 <style lang="less">
