@@ -979,20 +979,38 @@ const handleRowClick = (row: Row) => {
   openDetail(row)
 }
 
-const mapRow = (r: any): Row => ({
-  rowKey: r.row_key || `${r.knowledge_id}-${r.page || 0}`,
-  knowledgeId: r.knowledge_id || '',
-  fileName: r.file_name || r.knowledge_title || '',
-  fileType: r.file_type || '',
-  extractStatus: r.extract_status || '',
-  extractError: r.extract_error || '',
-  kind: r.extract_status === 'manual' ? 'manual' : 'bill',
-  item: r.item || {},
-  ...(r.item || {}),
-  bill_period: r.item ? `${r.item.bill_period_start || ""} ~ ${r.item.bill_period_end || ""}` : ``,
-  tags: r.tags || [],
-  page: r.page,
-})
+const mapRow = (r: any): Row => {
+  const it = r.item || {}
+  const feeAgg: Record<string, number> = {}
+  for (const fd of (it.fee_items || [])) {
+    const cat: string = fd.category || ''
+    const fee = Number(fd.fee) || 0
+    if (cat.startsWith('(1)')) feeAgg.market_amount = (feeAgg.market_amount || 0) + fee
+    else if (cat.startsWith('(2)')) feeAgg.line_amount = (feeAgg.line_amount || 0) + fee
+    else if (cat.startsWith('(3)')) feeAgg.trans_amount = (feeAgg.trans_amount || 0) + fee
+    else if (cat.startsWith('(4)')) feeAgg.sys_amount = (feeAgg.sys_amount || 0) + fee
+    else if (cat.startsWith('(5)')) feeAgg.catalog_amount = (feeAgg.catalog_amount || 0) + fee
+    else if (cat.startsWith('(6)')) {
+      if (cat.includes('工商')) feeAgg.govI_amount = (feeAgg.govI_amount || 0) + fee
+      else if (cat.includes('居民')) feeAgg.govR_amount = (feeAgg.govR_amount || 0) + fee
+    }
+  }
+  return {
+    rowKey: r.row_key || `${r.knowledge_id}-${r.page || 0}`,
+    knowledgeId: r.knowledge_id || '',
+    fileName: r.file_name || r.knowledge_title || '',
+    fileType: r.file_type || '',
+    extractStatus: r.extract_status || '',
+    extractError: r.extract_error || '',
+    kind: r.extract_status === 'manual' ? 'manual' : 'bill',
+    item: it,
+    ...it,
+    ...feeAgg,
+    bill_period: `${it.bill_period_start || ''} ~ ${it.bill_period_end || ''}`,
+    tags: r.tags || [],
+    page: r.page,
+  }
+}
 
 // 进行中文件（解析中/提取中/待提取）合并进列表行，与合同模块一致
 const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({

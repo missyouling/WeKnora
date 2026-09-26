@@ -653,18 +653,29 @@ const handleRowClick = (row: Row) => {
   openDetail(row)
 }
 
-const mapRow = (r: any): Row => ({
-  rowKey: r.row_key || `${r.knowledge_id}-0`,
-  knowledgeId: r.knowledge_id || '',
-  fileName: r.file_name || r.knowledge_title || '',
-  fileType: r.file_type || '',
-  extractStatus: r.extract_status || '',
-  extractError: r.extract_error || '',
-  kind: r.extract_status === 'manual' ? 'manual' : 'bill',
-  item: r.item || {},
-  ...(r.item || {}),
-  tags: r.tags || [],
-})
+const mapRow = (r: any): Row => {
+  const it = r.item || {}
+  const gw = (it.gateways || []).find((g: any) => g.gateway_type === '上网关口')
+  const rd = gw && gw.readings && gw.readings[0] ? gw.readings[0] : {}
+  return {
+    rowKey: r.row_key || `${r.knowledge_id}-0`,
+    knowledgeId: r.knowledge_id || '',
+    fileName: r.file_name || r.knowledge_title || '',
+    fileType: r.file_type || '',
+    extractStatus: r.extract_status || '',
+    extractError: r.extract_error || '',
+    kind: r.extract_status === 'manual' ? 'manual' : 'bill',
+    item: it,
+    ...it,
+    meter_prev: rd.prev,
+    meter_curr: rd.curr,
+    meter_ratio: rd.multiplier,
+    meter_reading: rd.reading_kwh,
+    meter_bill: rd.bill_kwh,
+    bill_period: `${it.bill_period_start || ''} ~ ${it.bill_period_end || ''}`,
+    tags: r.tags || [],
+  }
+}
 
 const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
   rowKey: `pending-${pf.id}`,
