@@ -59,29 +59,7 @@
             </t-date-range-picker>
           </div>
           <!-- 字段筛选（列显隐设置） -->
-          <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-            overlay-inner-class="invoice-field-popup">
-            <t-button variant="outline" size="small">
-              <template #icon><t-icon name="view-list" size="14px" /></template>
-              字段
-            </t-button>
-            <template #content>
-              <div class="field-popup-content">
-                <div class="field-popup-head">
-                  <span class="field-popup-title">显示字段</span>
-                  <div class="field-popup-actions">
-                    <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                    <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                  </div>
-                </div>
-                <t-checkbox-group v-model="visibleColKeys" class="field-popup-list">
-                  <t-checkbox v-for="col in effectiveColumns" :key="col.key" :value="col.key" class="field-popup-item">
-                    {{ col.label }}
-                  </t-checkbox>
-                </t-checkbox-group>
-              </div>
-            </template>
-          </t-popup>
+          <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
           <t-button variant="outline" size="small" @click="applyFilter">
             <template #icon><t-icon name="refresh" size="14px" /></template>
           </t-button>
@@ -517,6 +495,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-发票'
@@ -668,7 +647,6 @@ const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
 // 列显隐
-const fieldPopupVisible = ref(false)
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
