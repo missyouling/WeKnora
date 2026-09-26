@@ -101,120 +101,100 @@
       <!-- 合同列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
-          <div class="doc-list-header" :style="gridStyle" role="row">
-            <div class="cell cell-check" role="columnheader" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-                :disabled="!selectableRows.length" title="全选" @change="toggleSelectAll" />
+          <t-table
+        :data="filteredRows"
+        :columns="tableColumns"
+        row-key="rowKey"
+        size="small"
+        :hover="true"
+        :loading="listLoading"
+        max-height="100%"
+        class="doc-table"
+        :selected-row-keys="selectedRowKeys"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
+        @row-click="({ row }: any) => openDetail(row)"
+        @select-change="(val: string[]) => onSelectChange(val)"
+      >
+        <template #contractNo="{ row }: any">
+          <span class="row-contract-no" :title="row.contractNo || row.fileName">{{ row.contractNo }}</span>
+        </template>
+        <template #contractName="{ row }: any">
+          <span class="row-text" :title="row.contractName || row.fileName">{{ row.contractName || row.fileName }}</span>
+        </template>
+        <template #contractType="{ row }: any">
+          <span class="row-text" :title="row.contractType">{{ row.contractType }}</span>
+        </template>
+        <template #partyAName="{ row }: any">
+          <span class="row-text" :title="row.partyAName">{{ row.partyAName }}</span>
+        </template>
+        <template #partyBName="{ row }: any">
+          <span class="row-text" :title="row.partyBName">{{ row.partyBName }}</span>
+        </template>
+        <template #signDate="{ row }: any">
+          <span class="row-mono">{{ row.signDate }}</span>
+        </template>
+        <template #expiryDate="{ row }: any">
+          <span class="row-mono">{{ row.expiryDate }}</span>
+        </template>
+        <template #contractAmount="{ row }: any">
+          <span class="row-mono row-amount">{{ formatAmount(row.contractAmount) }}</span>
+        </template>
+        <template #taxRate="{ row }: any">
+          <span class="row-mono row-rate">{{ formatRate(row.taxRate) }}</span>
+        </template>
+        <template #extractStatus="{ row }: any">
+          <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
+            variant="light-outline" class="row-status-tag">
+            <template v-if="statusOf(row).icon" #icon>
+              <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
+            </template>
+            {{ statusOf(row).label }}
+          </t-tag>
+          <span v-else class="row-muted">--</span>
+        </template>
+        <template #tags="{ row }: any">
+          <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')" placement="top">
+            <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+              <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                {{ rowTags(row)[0].name }}
+              </t-tag>
+              <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
             </div>
-            <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-              {{ col.label }}
-            </div>
-          </div>
-          <div class="doc-list-body">
-            <div v-for="row in filteredRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
-              :class="{ selected: selectedRowKeys.includes(row.rowKey) }" role="row" @click="openDetail(row)">
-              <div class="cell cell-check" @click.stop>
-                <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                  :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
-              </div>
-              <!-- 合同编号（合同一份文件一份，不显示页码标签） -->
-              <div v-if="colVisible('contractNo')" class="cell cell-contractNo">
-                <span class="row-contract-no" :title="row.contractNo || row.fileName">{{ row.contractNo }}</span>
-              </div>
-              <!-- 合同名称（待补录占位行回退显示文件名） -->
-              <div v-if="colVisible('contractName')" class="cell cell-contractName">
-                <span class="row-text" :title="row.contractName || row.fileName">{{ row.contractName || row.fileName }}</span>
-              </div>
-              <!-- 合同类型 -->
-              <div v-if="colVisible('contractType')" class="cell cell-contractType">
-                <span class="row-text" :title="row.contractType">{{ row.contractType }}</span>
-              </div>
-              <!-- 甲方 -->
-              <div v-if="colVisible('partyAName')" class="cell cell-partyAName">
-                <span class="row-text" :title="row.partyAName">{{ row.partyAName }}</span>
-              </div>
-              <!-- 乙方 -->
-              <div v-if="colVisible('partyBName')" class="cell cell-partyBName">
-                <span class="row-text" :title="row.partyBName">{{ row.partyBName }}</span>
-              </div>
-              <!-- 签订日期 -->
-              <div v-if="colVisible('signDate')" class="cell cell-signDate">
-                <span class="row-mono">{{ row.signDate }}</span>
-              </div>
-              <!-- 到期日期 -->
-              <div v-if="colVisible('expiryDate')" class="cell cell-expiryDate">
-                <span class="row-mono">{{ row.expiryDate }}</span>
-              </div>
-              <!-- 合同金额 -->
-              <div v-if="colVisible('contractAmount')" class="cell cell-contractAmount">
-                <span class="row-mono row-amount">{{ formatAmount(row.contractAmount) }}</span>
-              </div>
-              <!-- 税率（百分比展示，不保留小数） -->
-              <div v-if="colVisible('taxRate')" class="cell cell-taxRate">
-                <span class="row-mono row-rate">{{ formatRate(row.taxRate) }}</span>
-              </div>
-              <!-- 履约状态 -->
-              <div v-if="colVisible('fulfillStatus')" class="cell cell-fulfillStatus">
-                <t-tag v-if="row.fulfillStatus" size="small" :theme="fulfillStatusTheme(row.fulfillStatus)" variant="light-outline">
-                  {{ row.fulfillStatus }}
-                </t-tag>
-                <span v-else class="row-muted">--</span>
-              </div>
-              <!-- 状态（提取进程，绿色 loading 动态） -->
-              <div v-if="colVisible('extractStatus')" class="cell cell-extractStatus">
-                <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
-                  variant="light-outline" class="row-status-tag">
-                  <template v-if="statusOf(row).icon" #icon>
-                    <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
-                  </template>
-                  {{ statusOf(row).label }}
-                </t-tag>
-                <span v-else class="row-muted">--</span>
-              </div>
-              <!-- 标签（显示 1 个 + N） -->
-              <div v-if="colVisible('tags')" class="cell cell-tags" @click.stop>
-                <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
-                  placement="top">
-                  <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                    <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
-                      {{ rowTags(row)[0].name }}
-                    </t-tag>
-                    <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
-                  </div>
-                </t-tooltip>
-                <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                  <span class="row-tag-add">+ 标签</span>
-                </span>
-              </div>
-              <!-- 甲方税号 -->
-              <div v-if="colVisible('partyATaxNo')" class="cell cell-partyATaxNo">
-                <span class="row-mono" :title="row.partyATaxNo">{{ row.partyATaxNo }}</span>
-              </div>
-              <!-- 乙方税号 -->
-              <div v-if="colVisible('partyBTaxNo')" class="cell cell-partyBTaxNo">
-                <span class="row-mono" :title="row.partyBTaxNo">{{ row.partyBTaxNo }}</span>
-              </div>
-              <!-- 生效日期 -->
-              <div v-if="colVisible('effectiveDate')" class="cell cell-effectiveDate">
-                <span class="row-mono">{{ row.effectiveDate }}</span>
-              </div>
-              <!-- 付款方式 -->
-              <div v-if="colVisible('paymentMethod')" class="cell cell-paymentMethod">
-                <span class="row-text">{{ row.paymentMethod }}</span>
-              </div>
-              <!-- 经办人 -->
-              <div v-if="colVisible('handler')" class="cell cell-handler">
-                <span class="row-text">{{ row.handler }}</span>
-              </div>
-              <!-- 部门 -->
-              <div v-if="colVisible('department')" class="cell cell-department">
-                <span class="row-text">{{ row.department }}</span>
-              </div>
-              <!-- 文件名 -->
-              <div v-if="colVisible('fileName')" class="cell cell-fileName">
-                <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-              </div>
-            </div>
+          </t-tooltip>
+          <span v-else class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+            <span class="row-tag-add">+ 标签</span>
+          </span>
+        </template>
+        <template #fulfillStatus="{ row }: any">
+          <t-tag v-if="row.fulfillStatus" size="small" :theme="fulfillStatusTheme(row.fulfillStatus)" variant="light-outline">
+            {{ row.fulfillStatus }}
+          </t-tag>
+          <span v-else class="row-muted">--</span>
+        </template>
+        <template #partyATaxNo="{ row }: any">
+          <span class="row-mono" :title="row.partyATaxNo">{{ row.partyATaxNo }}</span>
+        </template>
+        <template #partyBTaxNo="{ row }: any">
+          <span class="row-mono" :title="row.partyBTaxNo">{{ row.partyBTaxNo }}</span>
+        </template>
+        <template #effectiveDate="{ row }: any">
+          <span class="row-mono">{{ row.effectiveDate }}</span>
+        </template>
+        <template #paymentMethod="{ row }: any">
+          <span class="row-text">{{ row.paymentMethod }}</span>
+        </template>
+        <template #handler="{ row }: any">
+          <span class="row-text">{{ row.handler }}</span>
+        </template>
+        <template #department="{ row }: any">
+          <span class="row-text">{{ row.department }}</span>
+        </template>
+        <template #fileName="{ row }: any">
+          <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+        </template>
+      </t-table>
+    </div>
             <div v-if="!filteredRows.length && !listLoading" class="doc-empty-state">
               <t-empty description="暂无合同，请点击右上角「上传合同」" />
             </div>
@@ -736,6 +716,14 @@ const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const columnDefs = COLUMN_DEFS
 const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleColKeys.value.includes(c.key)))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+  }
+  return cols
+})
+function onSelectChange(val: string[]) { selectedRowKeys.value = val }
 const gridStyle = computed(() => ({
   gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
 }))
