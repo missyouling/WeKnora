@@ -1,4 +1,4 @@
-// 发票级聚合列表：把知识库下所有已提取发票平铺为"一行一张发票"的记录，
+﻿// 发票级聚合列表：把知识库下所有已提取发票平铺为"一行一张发票"的记录，
 // 在服务端完成按发票号去重（保留最新 created_at）、全字段搜索、类型/状态/
 // 日期筛选、排序、分页与金额聚合，供发票管理页直接渲染。
 package service
@@ -30,7 +30,7 @@ type invoiceMetadata struct {
 //  2. 平铺每份文档的 invoices，附上源文件上下文；
 //  3. 按发票号去重（空号不去重；同号保留 created_at 最新）；
 //  4. 按 filter 过滤、聚合、排序、分页。
-func (s *knowledgeService) ListInvoiceRecords(ctx context.Context, kbID string, filter types.InvoiceListFilter) (*types.InvoiceListResult, error) {
+func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID string, filter types.InvoiceListFilter) (*types.InvoiceListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -367,7 +367,7 @@ func approxEqualFloat(a, b float64) bool {
 
 // ListInvoiceTaxRates 返回该知识库下所有发票出现过的去重税率（含多档明细），
 // 用于前端税率筛选下拉自动加载。税率为金额最大项税率 + 全部明细档位的并集。
-func (s *knowledgeService) ListInvoiceTaxRates(ctx context.Context, kbID string) ([]types.InvoiceTaxRateCount, error) {
+func (s *BusinessExtractService) ListInvoiceTaxRates(ctx context.Context, kbID string) ([]types.InvoiceTaxRateCount, error) {
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
@@ -412,3 +412,4 @@ func (s *knowledgeService) ListInvoiceTaxRates(ctx context.Context, kbID string)
 	sort.Slice(rates, func(i, j int) bool { return rates[i].TaxRate < rates[j].TaxRate })
 	return rates, nil
 }
+

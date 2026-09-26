@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"context"
@@ -93,17 +93,9 @@ func (s *knowledgeService) existingTypesFor(ctx context.Context, kb *types.Knowl
 	if strings.Contains(kb.Name, "奖惩") {
 		return []string{"处罚", "奖励", "通报", "其它奖惩"}
 	}
-	cts, err := s.ListContractTypes(ctx, kb.ID)
-	if err != nil || len(cts) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(cts))
-	for _, c := range cts {
-		if c.ContractType != "" {
-			out = append(out, c.ContractType)
-		}
-	}
-	return out
+	// 合同类型自动填充在沙盒场景由 BusinessExtractService.ListContractTypes 负责；
+	// knowledgeService 侧不查库，避免引入对沙盒 repo 的依赖。
+	return nil
 }
 
 // SaveRecognitionConfig persists the KB-level recognition rules. Type rules
@@ -293,3 +285,4 @@ func (s *knowledgeService) knowledgeTextForRules(ctx context.Context, k *types.K
 	}
 	return b.String()
 }
+

@@ -1,4 +1,4 @@
-// 制度级聚合列表：把知识库下所有已提取制度平铺为"一行一份制度"的记录，
+﻿// 制度级聚合列表：把知识库下所有已提取制度平铺为"一行一份制度"的记录，
 // 在服务端完成全字段搜索、类型筛选、排序与分页，供制度管理页直接渲染。
 // 重复判断复用知识库文件上传层（file_hash / 文件名+大小），列表层不再按制度编号去重。
 package service
@@ -24,7 +24,7 @@ type regulationMetadata struct {
 }
 
 // ListRegulationRecords 实现制度级聚合列表。
-func (s *knowledgeService) ListRegulationRecords(ctx context.Context, kbID string, filter types.RegulationListFilter) (*types.RegulationListResult, error) {
+func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID string, filter types.RegulationListFilter) (*types.RegulationListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -252,7 +252,7 @@ func regulationRecordMatchKeyword(r types.RegulationRecord, kw string) bool {
 
 // ListRegulationTypes 返回该知识库下所有制度出现过的去重制度类型（含数量），
 // 用于前端制度类型筛选下拉自动加载。
-func (s *knowledgeService) ListRegulationTypes(ctx context.Context, kbID string) ([]types.RegulationTypeCount, error) {
+func (s *BusinessExtractService) ListRegulationTypes(ctx context.Context, kbID string) ([]types.RegulationTypeCount, error) {
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
@@ -294,3 +294,4 @@ func (s *knowledgeService) ListRegulationTypes(ctx context.Context, kbID string)
 	})
 	return types_, nil
 }
+

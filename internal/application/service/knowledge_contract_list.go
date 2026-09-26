@@ -1,4 +1,4 @@
-// 合同级聚合列表：把知识库下所有已提取合同平铺为"一行一份合同"的记录，
+﻿// 合同级聚合列表：把知识库下所有已提取合同平铺为"一行一份合同"的记录，
 // 在服务端完成全字段搜索、类型/履约状态/签订日期筛选、排序、分页与金额聚合，
 // 供合同管理页直接渲染。重复判断复用知识库文件上传层（file_hash / 文件名+大小），
 // 列表层不再按合同编号去重。
@@ -27,7 +27,7 @@ type contractMetadata struct {
 }
 
 // ListContractRecords 实现合同级聚合列表。
-func (s *knowledgeService) ListContractRecords(ctx context.Context, kbID string, filter types.ContractListFilter) (*types.ContractListResult, error) {
+func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID string, filter types.ContractListFilter) (*types.ContractListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -317,7 +317,7 @@ func contractRecordMatchKeyword(r types.ContractRecord, kw string) bool {
 
 // ListContractTypes 返回该知识库下所有合同出现过的去重合同类型（含数量），
 // 用于前端合同类型筛选下拉自动加载。
-func (s *knowledgeService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {
+func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
@@ -359,3 +359,4 @@ func (s *knowledgeService) ListContractTypes(ctx context.Context, kbID string) (
 	})
 	return types_, nil
 }
+

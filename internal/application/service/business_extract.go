@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"context"
@@ -14,12 +14,14 @@ import (
 // BusinessExtractService 承载 WeKnora 二次开发中「日常事务」模块的业务提取序号生成、
 // 自定义元数据持久化等业务逻辑。与核心 KnowledgeService 物理隔离，不污染上游接口。
 type BusinessExtractService struct {
-	repo interfaces.KnowledgeRepository
+	repo         interfaces.KnowledgeRepository
+	kbService    interfaces.KnowledgeBaseService
+	chunkService interfaces.ChunkService
 }
 
 // NewBusinessExtractService 构造业务提取 Service。
-func NewBusinessExtractService(repo interfaces.KnowledgeRepository) *BusinessExtractService {
-	return &BusinessExtractService{repo: repo}
+func NewBusinessExtractService(repo interfaces.KnowledgeRepository, kb interfaces.KnowledgeBaseService, cs interfaces.ChunkService) *BusinessExtractService {
+	return &BusinessExtractService{repo: repo, kbService: kb, chunkService: cs}
 }
 
 // MaxAutoContractSeq returns the highest trailing sequence number among

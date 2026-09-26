@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type awardPunishMetadata struct {
 // Records are NOT deduplicated by 文号 — the knowledge upload layer already
 // deduplicates files by hash, and one notice legitimately shares one 文号
 // across several persons.
-func (s *knowledgeService) ListAwardPunishRecords(ctx context.Context, kbID string, filter types.AwardPunishListFilter) (*types.AwardPunishListResult, error) {
+func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbID string, filter types.AwardPunishListFilter) (*types.AwardPunishListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -251,7 +251,7 @@ func awardPunishRecordMatchKeyword(r types.AwardPunishRecord, kw string) bool {
 
 // ListAwardPunishTypes 返回该知识库下所有奖惩出现过的去重奖惩类型（含数量），
 // 用于前端奖惩类型筛选下拉自动加载。
-func (s *knowledgeService) ListAwardPunishTypes(ctx context.Context, kbID string) ([]types.AwardPunishTypeCount, error) {
+func (s *BusinessExtractService) ListAwardPunishTypes(ctx context.Context, kbID string) ([]types.AwardPunishTypeCount, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
@@ -300,3 +300,4 @@ func (s *knowledgeService) ListAwardPunishTypes(ctx context.Context, kbID string
 	})
 	return ordered, nil
 }
+

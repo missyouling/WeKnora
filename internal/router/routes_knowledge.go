@@ -95,13 +95,34 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
 			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
 			kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContractPage)
-			kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteContractPage)
+				kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
 // 			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
 			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
 			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
 // 			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
 kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
 		}
+
+	// === 日常事务沙盒：业务列表/配置路由（挂在 /knowledge-bases/:id 直接子路径下） ===
+	if business != nil {
+		kbDirect := g.apiKeyGroup(r.Group("/knowledge-bases/:id"), apiKeyRetrieve(apiKeyFullAccess()))
+		kbDirectRead := kbDirect.With(apiKeyRetrieve(apiKeyFullAccess()))
+		{
+			kbDirectRead.GET("/invoices", g.Viewer(), g.KBAccessRead("id"), business.ListInvoiceRecords)
+			kbDirectRead.GET("/invoice-tax-rates", g.Viewer(), g.KBAccessRead("id"), business.ListInvoiceTaxRates)
+			kbDirectRead.GET("/contracts", g.Viewer(), g.KBAccessRead("id"), business.ListContractRecords)
+			kbDirectRead.GET("/contract-types", g.Viewer(), g.KBAccessRead("id"), business.ListContractTypes)
+			kbDirectRead.GET("/regulations", g.Viewer(), g.KBAccessRead("id"), business.ListRegulationRecords)
+			kbDirectRead.GET("/regulation-types", g.Viewer(), g.KBAccessRead("id"), business.ListRegulationTypes)
+			kbDirectRead.GET("/award-punish-records", g.Viewer(), g.KBAccessRead("id"), business.ListAwardPunishRecords)
+			kbDirectRead.GET("/award-punish-types", g.Viewer(), g.KBAccessRead("id"), business.ListAwardPunishTypes)
+			kbDirectRead.GET("/utility-bill-records", g.Viewer(), g.KBAccessRead("id"), business.ListUtilityBillRecords)
+			kbDirectRead.GET("/solar-bill-records", g.Viewer(), g.KBAccessRead("id"), business.ListSolarBillRecords)
+			kbDirectRead.GET("/recognition-config", g.Viewer(), g.KBAccessRead("id"), business.GetRecognitionConfig)
+			kbDirect.PUT("/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.SaveRecognitionConfig)
+			kbDirect.POST("/recognition/reassess", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ReassessRecognition)
+		}
+	}
 	}
 
 	// Image gallery: list every image asset of a KB (read-only, Viewer+).

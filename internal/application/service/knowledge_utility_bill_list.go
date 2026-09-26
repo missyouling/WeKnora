@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func unmarshalBillMetadata(raw []byte, out interface{}) error {
 
 // ListUtilityBillRecords returns the paginated utility-bill list of one KB.
 // kind 参数区分电费（utility_bill）与光伏（solar_bill），两者共库。
-func (s *knowledgeService) ListUtilityBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.UtilityBillListResult, error) {
+func (s *BusinessExtractService) ListUtilityBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.UtilityBillListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -181,7 +181,7 @@ func (s *knowledgeService) ListUtilityBillRecords(ctx context.Context, kbID stri
 
 // ListSolarBillRecords returns the paginated solar-bill list of one KB
 // (shares the KB with utility bills, filtered by custom_metadata kind=solar_bill).
-func (s *knowledgeService) ListSolarBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.SolarBillListResult, error) {
+func (s *BusinessExtractService) ListSolarBillRecords(ctx context.Context, kbID string, filter types.UtilityBillListFilter) (*types.SolarBillListResult, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -435,3 +435,4 @@ func utilityBillRecordMatchKeyword(r types.UtilityBillRecord, kw string) bool {
 	}
 	return false
 }
+
