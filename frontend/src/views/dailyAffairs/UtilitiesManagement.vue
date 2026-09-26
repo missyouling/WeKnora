@@ -54,13 +54,10 @@
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
             <!-- 筛选工具栏 -->
-            <div class="doc-filter-bar">
-              <div class="doc-filter-bar__leading">
-                <div class="doc-filter-field doc-filter-field--search">
-                  <t-input v-model="keyword" placeholder="搜索文件名 / 源文件" clearable class="doc-filter-field__control">
-                    <template #prefixIcon><t-icon name="search" size="16px" /></template>
-                  </t-input>
-                </div>
+            <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索文件名 / 源文件"
+              @refresh="applyFilter" :selected-count="selectedRowKeys.length" @clear-selection="clearSelection"
+              :show-print="false">
+              <template #type-extra>
                 <div class="doc-filter-field">
                   <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
                     placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
@@ -68,16 +65,8 @@
                     <template #prefixIcon><t-icon name="time" size="16px" /></template>
                   </t-date-picker>
                 </div>
-                <t-button variant="outline" size="small" @click="applyFilter">
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
-                </t-button>
-                <t-tooltip content="删除历史" placement="bottom">
-                  <t-button variant="outline" size="small" @click="historyVisible = true">
-                    <template #icon><t-icon name="history" size="14px" /></template>
-                  </t-button>
-                </t-tooltip>
-              </div>
-              <div class="doc-filter-bar__trailing">
+              </template>
+              <template #columns>
                 <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
                   overlay-inner-class="contract-field-popup">
                   <t-button variant="outline" size="small">
@@ -101,16 +90,47 @@
                     </div>
                   </template>
                 </t-popup>
+              </template>
+              <template #right-extra>
                 <t-button variant="outline" size="small" @click="settingsVisible = true">
                   <template #icon><t-icon name="setting" size="14px" /></template>
                   设置
                 </t-button>
-                <t-button theme="primary" size="small" @click="triggerUpload">
-                  <template #icon><t-icon name="upload" /></template>
-                  上传电费账单
+                <t-tooltip content="删除历史" placement="bottom">
+                  <t-button variant="outline" size="small" @click="historyVisible = true">
+                    <template #icon><t-icon name="history" size="14px" /></template>
+                  </t-button>
+                </t-tooltip>
+              </template>
+              <template #batch-actions>
+                <t-popconfirm theme="warning"
+                  :content="`确定重新解析并提取「${selectedSingle?.fileName || ''}」吗？将覆盖已有提取结果。`"
+                  :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                  @confirm="handleReExtract">
+                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                    <template #icon><t-icon name="refresh" size="14px" /></template>
+                    重新提取
+                  </t-button>
+                </t-popconfirm>
+                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
+                  <template #icon><t-icon name="edit" size="14px" /></template>
+                  编辑数据
                 </t-button>
-              </div>
-            </div>
+                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
+                  <template #icon><t-icon name="print" size="14px" /></template>
+                  打印
+                </t-button>
+                <t-popconfirm theme="warning"
+                  :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
+                  :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                  @confirm="handleBatchDelete">
+                  <t-button theme="danger" variant="outline" size="small" @click.stop>
+                    <template #icon><t-icon name="delete" size="14px" /></template>
+                    删除记录
+                  </t-button>
+                </t-popconfirm>
+              </template>
+            </BusinessListToolbar>
 
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -170,47 +190,6 @@
               <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
             </div>
 
-            <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏，避免浮于弹窗之上） -->
-            <transition name="batch-bar-fade">
-              <div v-if="selectedRowKeys.length && !printVisible" class="doc-batch-bar-fixed" role="region">
-                <div class="batch-bar-inner">
-                  <div class="batch-bar-left">
-                    <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-                    <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
-                      清除
-                    </t-button>
-                  </div>
-                  <div class="batch-bar-actions">
-                    <t-popconfirm theme="warning"
-                      :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
-                      :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                      @confirm="handleReExtract">
-                      <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                        <template #icon><t-icon name="refresh" size="14px" /></template>
-                        重新提取
-                      </t-button>
-                    </t-popconfirm>
-                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
-                      <template #icon><t-icon name="edit" size="14px" /></template>
-                      编辑数据
-                    </t-button>
-                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
-                      <template #icon><t-icon name="print" size="14px" /></template>
-                      打印
-                    </t-button>
-                    <t-popconfirm theme="warning"
-                      :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
-                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                      @confirm="handleBatchDelete">
-                      <t-button theme="danger" variant="outline" size="small" @click.stop>
-                        <template #icon><t-icon name="delete" size="14px" /></template>
-                        删除记录
-                      </t-button>
-                    </t-popconfirm>
-                  </div>
-                </div>
-              </div>
-            </transition>
             </template>
 
             <!-- ================= 详情视图（分层菜单 + 内容区） ================= -->
@@ -797,6 +776,7 @@ import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
 import UtilitySettingsDrawer from './UtilitySettingsDrawer.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import BusinessListToolbar from './BusinessListToolbar.vue'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
