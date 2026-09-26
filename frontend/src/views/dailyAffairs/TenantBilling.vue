@@ -55,32 +55,38 @@
     <!-- 列表 -->
     <div class="doc-list-scroll tenant-list-scroll">
       <div class="doc-list-view">
-        <div class="doc-list-header" :style="gridStyle" role="row">
-          <div class="cell cell-check" role="columnheader" @click.stop>
-            <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-              :disabled="!displayRows.length" title="全选" @change="toggleSelectAll" />
+        <t-table
+        :data="displayRows"
+        :columns="tableColumns"
+        row-key="id"
+        size="small"
+        :hover="true"
+        :loading="loading"
+        max-height="100%"
+        class="doc-table"
+        :selected-row-keys="selectedRowKeysArr"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedKeys.has(row.id) ? 'row-selected' : ''"
+        @row-click="({ row }: any) => onRowClick(row)"
+        @select-change="(val: any) => onTableSelectChange(val)"
+      >
+        <template #month="{ row }: any">
+          <span class="row-mono">{{ row.month }}</span>
+        </template>
+        <template #ratio="{ row }: any">
+          <span class="row-mono">{{ fmtRatio(row.ratio) }}</span>
+        </template>
+        <template #ind_price="{ row }: any">
+          <span class="row-mono">{{ fmtPrice(row.ind_price) }}</span>
+        </template>
+        <template #empty>
+          <div v-if="!loading" class="meter-empty">
+            <t-icon name="search-error" size="40px" class="meter-empty-icon" />
+            <span class="meter-empty-text">暂无数据</span>
           </div>
-          <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-            <t-tooltip :content="col.tip || ''" placement="top" :show-arrow="true" :destroy-on-close="false">
-              <span class="col-tip">{{ col.label }}</span>
-            </t-tooltip>
-          </div>
-        </div>
-        <div class="doc-list-body">
-          <div v-for="row in displayRows" :key="row.id" class="doc-list-row"
-            :class="{ 'row-selected': selectedKeys.has(row.id) }" :style="gridStyle" role="row" @click="onRowClick(row)">
-            <div class="cell cell-check" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(row.id)" @change="(v: any) => toggleSelect(row, v)" />
-            </div>
-            <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
-              <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
-              <span v-else-if="col.key === 'ratio'" class="row-mono">{{ fmtRatio(row.ratio) }}</span>
-              <span v-else-if="col.key === 'ind_price'" class="row-mono">{{ fmtPrice(row.ind_price) }}</span>
-              <span v-else-if="MONEY_KEYS.includes(col.key)" class="row-mono strong">{{ fmtMoney(row[col.key]) }}</span>
-              <span v-else-if="KWH_KEYS.includes(col.key)" class="row-mono">{{ fmtKwh(row[col.key]) }}</span>
-              <span v-else class="row-text" :title="String(row[col.key] ?? '')">{{ row[col.key] || '' }}</span>
-            </div>
-          </div>
+        </template>
+      </t-table>
+    </div>
           <div v-if="!loading && !displayRows.length" class="meter-empty">
             <t-icon name="search-error" size="40px" class="meter-empty-icon" />
             <span class="meter-empty-text">暂无数据</span>
@@ -551,9 +557,15 @@ const syncColumnKeys = () => { visibleKeys.value = loadStoredKeys() }
 syncColumnKeys()
 watch(useUnit, syncColumnKeys)
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
-}))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+  }
+  return cols
+})
+const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
+function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
 const fieldPopupVisible = ref(false)
 const selectAllColumns = () => { visibleKeys.value = activeColDefs.value.map(c => c.key); persistColumns() }
 const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c => c.default).map(c => c.key); persistColumns() }

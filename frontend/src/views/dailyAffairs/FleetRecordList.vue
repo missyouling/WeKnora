@@ -1369,29 +1369,7 @@ function colValue(key: string, row: any) {
   if (!col) return ''
   try { return col.value(row) } catch { return '' }
 }
-const gridStyle = computed(() => {
-  const n = visibleColDefs.value.length
-  // 列宽按内容自适应：长内容列（表头/数据）分配更多宽度，短列收缩；总和 100%，无横向滚动条
-  // CJK 按 14px/字、ASCII 按 8.5px/字估算；超长内容仍以省略号兜底（title 悬浮查看全文）
-  const weights = visibleColDefs.value.map((col) => {
-    let maxStr = col.label
-    for (const r of displayRows.value) {
-      let t = ''
-      try { t = String(col.value(r) ?? '') } catch { t = '' }
-      if (t.length > maxStr.length) maxStr = t
-    }
-    let px = 0
-    for (const ch of maxStr) px += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 14 : 8.5
-    px += 24
-    return Math.max(1, Math.min(14, Math.round(px / 45)))
-  })
-  return {
-    gridTemplateColumns: `44px ${weights.map((w) => `${w}fr`).join(' ')}`,
-    minWidth: '100%',
-  }
-})
 const fieldPopupVisible = ref(false)
-
 function persistColumns() { try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
 function resetColumns() { visibleKeys.value = columnDefs.value.filter((c) => c.def).map((c) => c.key); persistColumns() }
 function selectAllColumns() { visibleKeys.value = columnDefs.value.map((c) => c.key); persistColumns() }

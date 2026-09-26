@@ -57,84 +57,120 @@
     <!-- 列表（自绘 grid，数据少时只包裹记录行，超出滚动） -->
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
       <div class="doc-list-view">
-        <div class="doc-list-header" :style="gridStyle" role="row">
-          <div class="cell cell-check" role="columnheader" @click.stop>
-            <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-              :disabled="!displayRows.length" title="全选" @change="toggleSelectAll" />
-          </div>
-          <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-            <t-tooltip :content="col.tip || ''" placement="top" :show-arrow="true" :destroy-on-close="false">
-              <span class="col-tip">{{ col.label }}</span>
-            </t-tooltip>
-          </div>
-        </div>
-        <div class="doc-list-body">
-          <template v-for="row in displayRows" :key="row.item_id || row.key">
-            <div class="doc-list-row"
-              :class="{ 'row-selected': selectedKeys.has(row.key) }" :style="gridStyle" role="row" @click="onRowClick(row)">
-              <div class="cell cell-check" @click.stop>
-                <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(row.key)" @change="(v: any) => toggleSelect(row, v)" />
-              </div>
-              <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`">
-                <span v-if="col.key === 'month'" class="row-mono">{{ row.month }}</span>
-                <span v-else-if="col.key === 'meter'" class="row-text" :title="row.meter_alias">
-                  <span v-if="isTimeRow(row)" class="row-expand-toggle" @click.stop="toggleExpand(row)">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
-                  {{ row.meter_alias }}
-                </span>
-                <span v-else-if="col.key === 'start_reading'" class="row-mono">{{ fmtNum(row.start_reading) }}</span>
-                <span v-else-if="col.key === 'end_reading'" class="row-mono">{{ fmtNum(row.end_reading) }}</span>
-                <span v-else-if="col.key === 'rate'" class="row-mono">{{ fmtNum(row.rate) }}</span>
-                <span v-else-if="col.key === 'usage'" class="row-mono">{{ fmtNum(row.usage) }}</span>
-                <span v-else-if="col.key === 'unit_price'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtUnitPrice(row.unit_price) }}</span>
-                <span v-else-if="col.key === 'garbage_fee'" class="row-mono">{{ fmtMoney(row.garbage_fee) }}</span>
-                <span v-else-if="col.key === 'secondary_water_fee'" class="row-mono">{{ fmtMoney(row.secondary_water_fee) }}</span>
-                <span v-else-if="col.key === 'sewage_fee'" class="row-mono">{{ fmtMoney(row.sewage_fee) }}</span>
-                <span v-else-if="col.key === 'subsidy'" class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ isTimeRow(row) ? '—' : fmtMoney(row.subsidy) }}</span>
-                <span v-else-if="col.key === 'amount'" class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtMoney(row.amount) }}</span>
-                <span v-else-if="col.key === 'reading_date'" class="row-mono">{{ row.reading_date || '' }}</span>
-                <span v-else-if="col.key === 'reader'" class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
-                <span v-else-if="col.key === 'meter_no'" class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
-                <span v-else-if="col.key === 'use_unit'" class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
-                <span v-else-if="col.key === 'default_unit_price'" class="row-mono">{{ fmtUnitPrice(row.default_unit_price) }}</span>
-                <span v-else-if="col.key === 'meter_mode'" class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
-                <span v-else-if="col.key === 'install_date'" class="row-mono">{{ row.install_date || '' }}</span>
-                <span v-else class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
-              </div>
+        <t-table
+        :data="displayRows"
+        :columns="tableColumns"
+        :row-key="(row: any) => row.item_id || row.key"
+        size="small"
+        :hover="true"
+        :loading="loading"
+        max-height="100%"
+        class="doc-table"
+        :selected-row-keys="selectedRowKeysArr"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedKeys.has(row.key) ? 'row-selected' : ''"
+        :expanded-row-keys="expandedRowKeysArr"
+        @row-click="({ row }: any) => onRowClick(row)"
+        @select-change="(val: any) => onTableSelectChange(val)"
+        @expand-change="(ctx: any) => onExpandChange(ctx)"
+      >
+        <template #month="{ row }: any">
+          <span class="row-mono">{{ row.month }}</span>
+        </template>
+        <template #meter="{ row }: any">
+          <span class="row-text" :title="row.meter_alias">
+            <span v-if="isTimeRow(row)" class="row-expand-toggle">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
+            {{ row.meter_alias }}
+          </span>
+        </template>
+        <template #start_reading="{ row }: any">
+          <span class="row-mono">{{ fmtNum(row.start_reading) }}</span>
+        </template>
+        <template #end_reading="{ row }: any">
+          <span class="row-mono">{{ fmtNum(row.end_reading) }}</span>
+        </template>
+        <template #rate="{ row }: any">
+          <span class="row-mono">{{ fmtNum(row.rate) }}</span>
+        </template>
+        <template #usage="{ row }: any">
+          <span class="row-mono">{{ fmtNum(row.usage) }}</span>
+        </template>
+        <template #unit_price="{ row }: any">
+          <span class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtUnitPrice(row.unit_price) }}</span>
+        </template>
+        <template #garbage_fee="{ row }: any">
+          <span class="row-mono">{{ fmtMoney(row.garbage_fee) }}</span>
+        </template>
+        <template #secondary_water_fee="{ row }: any">
+          <span class="row-mono">{{ fmtMoney(row.secondary_water_fee) }}</span>
+        </template>
+        <template #sewage_fee="{ row }: any">
+          <span class="row-mono">{{ fmtMoney(row.sewage_fee) }}</span>
+        </template>
+        <template #subsidy="{ row }: any">
+          <span class="row-mono" :class="{ 'os-neg': Number(row.subsidy) < 0 }">{{ isTimeRow(row) ? '—' : fmtMoney(row.subsidy) }}</span>
+        </template>
+        <template #amount="{ row }: any">
+          <span class="row-mono" :class="{ 'row-dash': isTimeRow(row) }">{{ isTimeRow(row) ? '—' : fmtMoney(row.amount) }}</span>
+        </template>
+        <template #reading_date="{ row }: any">
+          <span class="row-mono">{{ row.reading_date || '' }}</span>
+        </template>
+        <template #reader="{ row }: any">
+          <span class="row-text" :title="String(row.reader ?? '')">{{ row.reader || '' }}</span>
+        </template>
+        <template #meter_no="{ row }: any">
+          <span class="row-mono" :title="String(row.meter_no ?? '')">{{ row.meter_no || '' }}</span>
+        </template>
+        <template #use_unit="{ row }: any">
+          <span class="row-text" :title="String(row.use_unit ?? '')">{{ row.use_unit || '' }}</span>
+        </template>
+        <template #default_unit_price="{ row }: any">
+          <span class="row-mono">{{ fmtUnitPrice(row.default_unit_price) }}</span>
+        </template>
+        <template #meter_mode="{ row }: any">
+          <span class="row-text">{{ row.meter_mode === 'auto' ? '自动抄表' : row.meter_mode === 'manual' ? '手动抄表' : '' }}</span>
+        </template>
+        <template #install_date="{ row }: any">
+          <span class="row-mono">{{ row.install_date || '' }}</span>
+        </template>
+        <template #remark="{ row }: any">
+          <span class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
+        </template>
+        <template #expandedRow="{ row }: any">
+          <div v-if="isTimeRow(row)" class="expand-inner">
+            <div class="expand-grid">
+              <div class="expand-cell expand-head">时段</div>
+              <div class="expand-cell expand-head">起度</div>
+              <div class="expand-cell expand-head">止度</div>
+              <div class="expand-cell expand-head">倍率</div>
+              <div class="expand-cell expand-head">时段电量</div>
             </div>
-            <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
-            <div v-if="isTimeRow(row) && expandedKeys.has(row.key)" class="doc-list-expand" :style="gridStyle">
-              <div class="expand-inner">
-                <div class="expand-grid">
-                  <div class="expand-cell expand-head">时段</div>
-                  <div class="expand-cell expand-head">起度</div>
-                  <div class="expand-cell expand-head">止度</div>
-                  <div class="expand-cell expand-head">倍率</div>
-                  <div class="expand-cell expand-head">时段电量</div>
-                </div>
-                <div v-for="p in periodsOf(row)" :key="p.name" class="expand-grid expand-grid--row">
-                  <div class="expand-cell expand-name">{{ p.name }}</div>
-                  <div class="expand-cell expand-mono">{{ fmtNum(p.prev) }}</div>
-                  <div class="expand-cell expand-mono">{{ fmtNum(p.curr) }}</div>
-                  <div class="expand-cell expand-mono">{{ fmtNum(row.rate) }}</div>
-                  <div class="expand-cell expand-mono">{{ fmtNum(p.usage) }} {{ unitLabel }}</div>
-                </div>
-                <div class="expand-grid expand-grid--row expand-grid--total">
-                  <div class="expand-cell expand-name">合计</div>
-                  <div class="expand-cell expand-mono" />
-                  <div class="expand-cell expand-mono" />
-                  <div class="expand-cell expand-mono" />
-                  <div class="expand-cell expand-mono">{{ fmtNum(row.usage) }} {{ unitLabel }}</div>
-                </div>
-              </div>
+            <div v-for="p in periodsOf(row)" :key="p.name" class="expand-grid expand-grid--row">
+              <div class="expand-cell expand-name">{{ p.name }}</div>
+              <div class="expand-cell expand-mono">{{ fmtNum(p.prev) }}</div>
+              <div class="expand-cell expand-mono">{{ fmtNum(p.curr) }}</div>
+              <div class="expand-cell expand-mono">{{ fmtNum(row.rate) }}</div>
+              <div class="expand-cell expand-mono">{{ fmtNum(p.usage) }} {{ unitLabel }}</div>
             </div>
-          </template>
-          <div v-if="!loading && !displayRows.length" class="meter-empty">
+            <div class="expand-grid expand-grid--row expand-grid--total">
+              <div class="expand-cell expand-name">合计</div>
+              <div class="expand-cell expand-mono" />
+              <div class="expand-cell expand-mono" />
+              <div class="expand-cell expand-mono" />
+              <div class="expand-cell expand-mono">{{ fmtNum(row.usage) }} {{ unitLabel }}</div>
+            </div>
+          </div>
+        </template>
+        <template #empty>
+          <div v-if="!loading" class="meter-empty">
             <t-icon name="search-error" size="40px" class="meter-empty-icon" />
             <span class="meter-empty-text">暂无数据</span>
           </div>
-        </div>
-      </div>
+        </template>
+      </t-table>
     </div>
+            <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
 
     <!-- 底部汇总（列表容器外固定显示；选中时按选中统计并避让浮动工具栏，样式与发票管理一致） -->
     <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
@@ -648,9 +684,20 @@ const COLUMN_DEFS: ColDef[] = [
 const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v3`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
 const visibleColDefs = computed(() => categoryCols(COLUMN_DEFS).filter(c => visibleKeys.value.includes(c.key)))
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
-}))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+  }
+  return cols
+})
+const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
+const expandedRowKeysArr = computed(() => Array.from(expandedKeys.value))
+function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
+function onExpandChange(ctx: any) {
+  const keys = Array.isArray(ctx?.expandedRowKeys) ? ctx.expandedRowKeys : []
+  expandedKeys.value = new Set(keys)
+}
 
 function loadStoredKeys(): string[] {
   try {

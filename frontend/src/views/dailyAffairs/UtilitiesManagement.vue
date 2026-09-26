@@ -115,67 +115,52 @@
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
               <div class="doc-list-view">
-                <div class="doc-list-header" :style="gridStyle" role="row">
-                  <div class="cell cell-check" role="columnheader" @click.stop>
-                    <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-                      :disabled="!selectableRows.length" title="全选" @change="toggleSelectAll" />
-                  </div>
-                  <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-                    {{ col.label }}
-                  </div>
-                  <div class="cell cell-extractStatus" role="columnheader">状态</div>
-                  <div class="cell cell-tags" role="columnheader">标签</div>
-                </div>
-                <div class="doc-list-body">
-                  <div v-for="row in displayRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
-                    :class="{ selected: selectedRowKeys.includes(row.rowKey), 'is-pending': row.kind === 'pending' }" role="row"
-                    @click="handleRowClick(row)">
-                    <div class="cell cell-check" @click.stop>
-                      <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                        :disabled="row.kind === 'pending' && !['failed', 'parse_failed'].includes(row.extractStatus)" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
-                    </div>
-                    <template v-for="col in visibleColDefs" :key="col.key">
-                      <div class="cell" :class="`cell-${col.key}`">
-                        <!-- 进行中/失败行：文件名显示在第一列，其余列留空，保证与表头对齐（与发票模块一致） -->
-                        <span v-if="row.kind === 'pending' && col.key === visibleColDefs[0]?.key" class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-                        <span v-else-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.key)">
-                          {{ cellText(row, col.key) }}
-                        </span>
-                        <span v-else class="row-text" :title="cellText(row, col.key)">{{ cellText(row, col.key) }}</span>
-                      </div>
-                    </template>
-                    <div class="cell cell-extractStatus">
-                      <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
-                        variant="light-outline" class="row-status-tag">
-                        <template v-if="statusOf(row).icon" #icon>
-                          <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
-                        </template>
-                        {{ statusOf(row).label }}
-                      </t-tag>
-                    </div>
-                    <div class="cell cell-tags" @click.stop>
-                      <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
-                        placement="top">
-                        <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                          <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
-                            {{ rowTags(row)[0].name }}
-                          </t-tag>
-                          <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
-                        </div>
-                      </t-tooltip>
-                      <span v-else class="row-tag-chips is-clickable" @click="row.kind !== 'pending' && openTagEdit(row)">
-                        <span class="row-tag-add">+ 标签</span>
-                      </span>
-                    </div>
-                  </div>
-                  <div v-if="listLoading" class="list-loading">
-                    <t-loading size="small" text="加载中..." />
-                  </div>
-                  <div v-else-if="!rows.length && !pendingFiles.length" class="list-empty">
-                    <t-empty description="暂无数据" />
-                  </div>
-                </div>
+                <t-table
+          :data="displayRows"
+          :columns="tableColumns"
+          row-key="rowKey"
+          size="small"
+          :hover="true"
+          :loading="listLoading"
+          max-height="100%"
+          class="doc-table"
+          :selected-row-keys="selectedRowKeys"
+          select-on-change
+          :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
+          @row-click="({ row }: any) => handleRowClick(row)"
+          @select-change="(val: any) => onTableSelectChange(val)"
+        >
+          <template #defaultCell="{ row, col }: any">
+            <span v-if="row.kind === 'pending' && col.colKey === visibleColDefs[0]?.key" class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+            <span v-else-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.colKey)">
+              {{ cellText(row, col.colKey) }}
+            </span>
+            <span v-else class="row-text" :title="cellText(row, col.colKey)">{{ cellText(row, col.colKey) }}</span>
+          </template>
+          <template #extractStatus="{ row }: any">
+            <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
+              variant="light-outline" class="row-status-tag">
+              <template v-if="statusOf(row).icon" #icon>
+                <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
+              </template>
+              {{ statusOf(row).label }}
+            </t-tag>
+          </template>
+          <template #tags="{ row }: any">
+            <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')" placement="top">
+              <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+                <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                  {{ rowTags(row)[0].name }}
+                </t-tag>
+                <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
               </div>
+            </t-tooltip>
+            <span v-else class="row-tag-chips is-clickable" @click.stop="row.kind !== 'pending' && openTagEdit(row)">
+              <span class="row-tag-add">+ 标签</span>
+            </span>
+          </template>
+        </t-table>
+    </div>
             </div>
             <!-- 底部汇总（列表容器外固定显示，不随内容滚动；选中时按选中统计并避让浮动工具栏） -->
             <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
@@ -854,9 +839,16 @@ const columnDefs = ref<ColDef[]>(FALLBACK_COLUMNS)
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')} 72px 88px`,
-}))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType })
+  }
+  cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
+  cols.push({ colKey: 'tags', title: '标签', width: 140 })
+  return cols
+})
+function onTableSelectChange(val: any) { selectedRowKeys.value = Array.isArray(val) ? val : [] }
 
 function loadStoredColumns(): string[] {
   try {

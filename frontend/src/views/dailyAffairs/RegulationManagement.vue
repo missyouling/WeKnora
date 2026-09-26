@@ -613,9 +613,6 @@ const tableColumns = computed(() => {
   }
   return cols
 })
-const gridStyle = computed(() => ({
-  gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
-}))
 
 function loadStoredColumns(): string[] {
   try {
