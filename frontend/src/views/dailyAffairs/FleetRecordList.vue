@@ -15,7 +15,7 @@
       <div class="doc-filter-bar__leading">
         <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
           <t-input v-model="searchText" placeholder="搜索车牌 / 字段值"
-            clearable class="doc-filter-field__control" style="width: 200px">
+            clearable class="doc-filter-field__control">
             <template #prefix-icon><t-icon name="search" size="14px" /></template>
           </t-input>
         </div>
@@ -23,7 +23,7 @@
           <t-date-picker v-if="!isArchive" v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM"
             value-type="YYYY-MM" clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
           <t-select v-else v-model="filters.docType" :options="docTypeOptions" clearable placeholder="全部证照类型"
-            class="doc-filter-select doc-filter-field__control" style="width: 180px" @change="onDocTypeChange" />
+            class="doc-filter-select doc-filter-field__control" @change="onDocTypeChange" />
         </div>
         <t-button v-if="!(isArchive && !filters.docType)" variant="outline" size="small" @click="refreshAll">
           <template #icon><t-icon name="refresh" size="14px" /></template>
@@ -312,7 +312,7 @@
                   <t-textarea v-else-if="key === '备注'" v-model="form.data[key]" :autosize="{ minRows: 3, maxRows: 6 }"
                     :maxlength="500" placeholder="可修改" />
                   <t-date-picker v-else-if="fieldDataTypes[key] === 'date'" v-model="form.data[key]" clearable
-                    value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+                    value-format="YYYY-MM-DD" placeholder="选择日期" />
                   <t-textarea v-else-if="fieldDataTypes[key] === 'array'" v-model="form.data[key]" :autosize="{ minRows: 3, maxRows: 6 }"
                     placeholder="每行一条明细" />
                   <t-input v-else-if="fieldDataTypes[key] === 'number'" type="number" v-model="form.data[key]" placeholder="可修改" />
@@ -2660,24 +2660,24 @@ function onDrawerResizeEnd() {
   border-radius: 10px; cursor: pointer; transition: all .18s ease;
 }
 .stat-card:hover { border-color: var(--td-brand-color); box-shadow: 0 4px 12px rgba(0,82,217,.1); transform: translateY(-1px); }
-.stat-card.is-warn { border-color: #e37318; background: #fff7ed; }
-.stat-card.is-err { border-color: #d54941; background: #fef2f2; }
+.stat-card.is-warn { border-color: var(--td-warning-color); background: var(--td-warning-color-1); }
+.stat-card.is-err { border-color: var(--td-error-color); background: var(--td-error-color-1); }
 .stat-card__icon {
   flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  background: var(--td-brand-color-1, #e8f3ff); color: var(--td-brand-color);
+  background: var(--td-brand-color-1); color: var(--td-brand-color);
 }
-.stat-card.is-warn .stat-card__icon { background: #fff1e0; color: #e37318; }
-.stat-card.is-err .stat-card__icon { background: #fde8e8; color: #d54941; }
+.stat-card.is-warn .stat-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
+.stat-card.is-err .stat-card__icon { background: var(--td-error-color-1); color: var(--td-error-color); }
 .stat-card__num { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--td-text-color-primary); }
 .stat-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
 /* 类型卡片:稍大,浅色背景,左图标右文字 */
 .type-card {
   display: flex; align-items: center; gap: 14px; padding: 20px 22px;
-  background: var(--td-bg-color-secondarycontainer, #f7f8fa); border: 1px solid transparent;
+  background: var(--td-bg-color-secondarycontainer); border: 1px solid transparent;
   border-radius: 10px; cursor: pointer; transition: all .18s ease;
 }
-.type-card:hover { background: var(--td-brand-color-1, #e8f3ff); border-color: var(--td-brand-color); transform: translateY(-1px); }
+.type-card:hover { background: var(--td-brand-color-1); border-color: var(--td-brand-color); transform: translateY(-1px); }
 .type-card__icon {
   flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
