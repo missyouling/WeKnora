@@ -1328,7 +1328,7 @@ const columnDefs = computed<ColDef[]>(() => {
     const keys = [...f.base]
     f.detail.forEach((k) => { if (!keys.includes(k)) keys.push(k) })
     const dyn = keys.map((k) => ({
-      key: `data.${k}`, label: k, def: (f.baseSet ? f.baseSet.has(k) : f.base.includes(k)) && k !== '备注', tip: `提取自源文件：${k}`,
+      key: `data__${k}`, label: k, def: (f.baseSet ? f.baseSet.has(k) : f.base.includes(k)) && k !== '备注', tip: `提取自源文件：${k}`,
       value: (r: any) => {
         // 证件状态：各证照类型统一按有效期自动计算，不依赖模型提取值
         if (isStatusField(k)) return calcCertStatus(r.data)
@@ -1353,6 +1353,11 @@ const tableColumns = computed(() => {
   for (const c of visibleColDefs.value) {
     const base: any = { colKey: c.key, title: c.label, ellipsis: true }
     if (c.fixedWidth) base.width = c.fixedWidth
+    if (typeof c.value === 'function') {
+      base.cell = (h: any, params: any) => {
+        try { return c.value(params?.row) } catch { return '-' }
+      }
+    }
     cols.push(base)
   }
   return cols
@@ -1424,7 +1429,7 @@ const totalAll = computed(() => displayRows.value.reduce((s, r) => s + (Number(r
 const drawerVisible = ref(false)
 const saving = ref(false)
 const editMode = ref<'file' | 'record' | ''>('')
-const form = reactive<any>({})
+const form = reactive<any>({ data: {} })
 
 // ---- 手工录入：附件上传（选择 + 粘贴），仅作留底凭证，不触发提取 ----
 const attachUploading = ref(false)
