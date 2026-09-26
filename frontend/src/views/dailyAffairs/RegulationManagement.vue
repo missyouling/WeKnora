@@ -330,7 +330,7 @@
                   </t-form-item>
                   <t-form-item label="制度类型" label-width="110px">
                     <t-select v-model="editForm.reg_type" :options="regTypeOptions" clearable filterable
-                      placeholder="选择类型" style="width: 100%" />
+                      placeholder="选择类型" />
                   </t-form-item>
                   <t-form-item label="编制部门" label-width="110px">
                     <t-input v-model="editForm.dept" placeholder="" />
@@ -340,7 +340,7 @@
                   </t-form-item>
                   <t-form-item label="编制日期" label-width="110px">
                     <t-date-picker v-model="editForm.issue_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input style="width: 100%" />
+                      allow-input />
                   </t-form-item>
                   <t-form-item label="页数" label-width="110px">
                     <t-input v-model="editForm.page_count" placeholder="" />
@@ -368,11 +368,11 @@
                   </t-form-item>
                   <t-form-item label="生效日期" label-width="110px">
                     <t-date-picker v-model="editForm.effective_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input style="width: 100%" />
+                      allow-input />
                   </t-form-item>
                   <t-form-item label="密级" label-width="110px">
                     <t-select v-model="editForm.confidentiality" :options="CONFIDENTIALITY_OPTIONS" clearable
-                      placeholder="选择密级" style="width: 100%" />
+                      placeholder="选择密级" />
                   </t-form-item>
                 </div>
               </div>
@@ -1808,7 +1808,7 @@ onBeforeUnmount(() => {
 .row-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--td-text-color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
 .row-rate { font-size: 12px; color: var(--td-text-color-primary); }
-.row-muted { color: var(--td-text-color-disabled, #bbb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-status-tag :deep(.t-icon) { margin-right: 2px; }
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
 
@@ -1960,7 +1960,7 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 32px);
   height: 82vh;
   max-height: 92vh;
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
   display: flex;
@@ -1974,7 +1974,7 @@ onBeforeUnmount(() => {
   padding: 12px 16px 12px 24px;
   border-bottom: 1px solid var(--td-component-stroke);
   flex-shrink: 0;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .regulation-print-title {
   font-size: 16px;
@@ -1988,7 +1988,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .regulation-print-body .print-preview-frame {
   width: 100%;
@@ -2011,7 +2011,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 12px 24px;
   flex-shrink: 0;
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-top: 1px solid var(--td-component-stroke);
 }
 </style>

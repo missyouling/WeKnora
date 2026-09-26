@@ -338,11 +338,11 @@
                   </t-form-item>
                   <t-form-item label="开票日期" label-width="100px">
                     <t-date-picker v-model="editForm.invoice_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input style="width: 100%" />
+                      allow-input />
                   </t-form-item>
                   <t-form-item label="发票类型" label-width="100px">
                     <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
-                      filterable placeholder="选择或输入类型" style="width: 100%" />
+                      filterable placeholder="选择或输入类型" />
                   </t-form-item>
                   <t-form-item label="金额" label-width="100px">
                     <t-input v-model="editForm.amount" placeholder="" @input="(v: string) => (editForm.amount = sanitizeNum(v))" />
@@ -2029,7 +2029,7 @@ onBeforeUnmount(() => {
 .row-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--td-text-color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
-.row-muted { color: var(--td-text-color-disabled, #bbb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-status-tag :deep(.t-icon) { margin-right: 2px; }
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
 
@@ -2183,7 +2183,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 82vh !important;
   max-height: 92vh !important;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .invoice-print-dialog :deep(.t-dialog__wrap) {
   align-items: center;
@@ -2196,11 +2196,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
   padding: 8px 24px 0;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .invoice-print-dialog :deep(.t-dialog__footer) {
   padding: 12px 24px;
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-top: 1px solid var(--td-component-stroke);
 }
 .print-preview-area {
@@ -2214,7 +2214,7 @@ onBeforeUnmount(() => {
     min-height: 0;
     border: 1px solid var(--td-component-stroke);
     border-radius: 6px;
-    background: #fff;
+    background: var(--td-bg-color-container);
   }
   .print-preview-loading {
     flex: 1;
@@ -2244,7 +2244,7 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 32px);
   height: 82vh;
   max-height: 92vh;
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
   display: flex;
@@ -2258,7 +2258,7 @@ onBeforeUnmount(() => {
   padding: 12px 16px 12px 24px;
   border-bottom: 1px solid var(--td-component-stroke);
   flex-shrink: 0;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .invoice-print-title {
   font-size: 16px;
@@ -2272,7 +2272,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #fff;
+  background: var(--td-bg-color-container);
 }
 .invoice-print-body .print-preview-frame {
   width: 100%;
@@ -2295,7 +2295,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 12px 24px;
   flex-shrink: 0;
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-top: 1px solid var(--td-component-stroke);
 }
 </style>
