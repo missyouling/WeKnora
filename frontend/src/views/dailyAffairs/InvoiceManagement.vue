@@ -516,6 +516,7 @@ import InvoiceKbWizard from './InvoiceKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-发票'
 const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
@@ -662,8 +663,6 @@ const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 const selectedRowKeys = ref<string[]>([])
-const extractInFlight = ref<Set<string>>(new Set())
-const extractFailed = ref<Set<string>>(new Set())
 
 // 列显隐
 const visibleColKeys = ref<string[]>(loadStoredColumns())
@@ -749,7 +748,6 @@ const printLoaded = ref(false)
 const printMode = ref<'print' | 'catalog'>('print')
 const catalogBusy = ref(false)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ---- KB 检测 ----
 const loadKb = async () => {
@@ -1196,117 +1194,23 @@ const handleUploadFiles = async (files: File[]) => {
   }
 }
 
-// ---- 轮询解析 + 提取 ----
-const startPolling = () => ensurePolling()
-const ensurePolling = () => {
-  if (pollTimer) return
-  pollTimer = setInterval(async () => { await pollTick() }, 3000)
-}
-
-// 轮询刷新：
-// 1) probeExtract 用 knowledge 级列表探测"已解析完成但尚未提取"的新上传文件并触发提取；
-// 2) refreshInvoiceRows 刷新发票级聚合列表，把提取完成的发票行实时合并进列表。
-let refreshBusy = false
-const probeExtract = async () => {
-  if (!kbId.value || refreshBusy) return
-  refreshBusy = true
-  try {
-    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-    const data = res?.data || res?.list || []
-    const arr: KnowledgeItem[] = Array.isArray(data) ? data : []
-    const needExtract: KnowledgeItem[] = []
-    const pend: KnowledgeItem[] = []
-    for (const item of arr) {
-      const ps = item.parse_status
-      if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') {
-        pend.push(item)
-        continue
-      }
-      if (ps === 'completed') {
-        const es = item.custom_metadata?.extract_status
-        if ((!es || es === 'pending' || es === 'processing') &&
-            !extractInFlight.value.has(item.id) && !extractFailed.value.has(item.id)) {
-          needExtract.push(item)
-        }
-        if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
-        if (!es || es === 'pending' || es === 'processing') pend.push(item)
-      }
-    }
-    // 已有发票行（提取完成）的文件不再显示进行中状态行
+// ---- 轮询解析 + 提取（统一 composable） ----
+const {
+  extractInFlight, extractFailed, pendingFiles,
+  start: startPolling, stop: stopPolling,
+} = useBusinessPolling({
+  kbId,
+  extractFn: (kid, fileId) => extractInvoice(kid, fileId),
+  onPendingFiles: (files) => {
     const withRows = new Set(invoiceRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = pend.filter(k => !withRows.has(k.id))
-    for (const item of needExtract.slice(0, 5)) {
-      extractInFlight.value.add(item.id)
-      try {
-        const r: any = await extractInvoice(kbId.value, item.id)
-        // 后端判定非发票并已自动删除该文件 → 提示并刷新税率
-        if (r?.data?.removed) {
-          MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已移至删除历史，可在删除历史中恢复`)
-          loadTaxRates()
-        }
-      } catch {
-        extractFailed.value.add(item.id)
-      }
-    }
-    for (const id of Array.from(extractInFlight.value)) {
-      const it = arr.find(k => k.id === id)
-      if (it?.custom_metadata?.extract_status) extractInFlight.value.delete(id)
-    }
-  } catch { /* 轮询探测失败静默，下轮重试 */ }
-  finally { refreshBusy = false }
-}
-
-// 刷新发票级列表（合并更新已加载行，提取完成的新数据实时出现）
-let invoiceRefreshBusy = false
-const refreshInvoiceRows = async () => {
-  if (!kbId.value || invoiceRefreshBusy) return
-  invoiceRefreshBusy = true
-  try {
-    const res: any = await listInvoiceRecords(kbId.value, {
-      q: keyword.value || undefined,
-      invoice_type: filterInvoiceType.value || undefined,
-      tax_rate: taxRateFilter.value === '' || taxRateFilter.value === null || taxRateFilter.value === undefined
-        ? undefined : Number(taxRateFilter.value),
-      date_from: dateRange.value?.[0] || undefined,
-      date_to: dateRange.value?.[1] || undefined,
-      page: 1,
-      page_size: Math.max(invoiceRows.value.length, PAGE_SIZE),
-    })
-    const data = res?.data || res?.list || []
-    const arr = Array.isArray(data) ? data : []
-    const total = Number(res?.total || arr.length || 0)
-    invoiceSummary.value = {
-      total,
-      sumAmount: Number(res?.sum_amount || 0),
-      sumTax: Number(res?.sum_tax || 0),
-      sumTotal: Number(res?.sum_total || 0),
-    }
-    const byKey = new Map(invoiceRows.value.map(r => [r.rowKey, r]))
-    const fresh: InvoiceRow[] = []
-    for (const r of arr) {
-      const row = mapInvoiceRecord(r)
-      const old = byKey.get(row.rowKey)
-      if (old) {
-        // 已存在行：合并最新字段（提取完成后从空变有值）
-        const idx = invoiceRows.value.findIndex(x => x.rowKey === row.rowKey)
-        if (idx >= 0) invoiceRows.value[idx] = { ...old, ...row }
-      } else {
-        fresh.push(row)
-      }
-    }
-    if (fresh.length) invoiceRows.value = [...fresh, ...invoiceRows.value]
-  } catch { /* 发票列表刷新失败静默 */ }
-  finally { invoiceRefreshBusy = false }
-}
-
-const pollTick = async () => {
-  if (!kbId.value || document.hidden) return
-  await probeExtract()
-  await refreshInvoiceRows()
-}
-const stopPolling = () => {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-}
+    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+  },
+  onRemoved: (item) => {
+    MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已移至删除历史，可在删除历史中恢复`)
+    loadTaxRates()
+  },
+  onTick: refreshInvoiceRows,
+})
 
 // ---- 详情抽屉 ----
 const openDetail = async (row: InvoiceRow) => {

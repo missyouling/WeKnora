@@ -456,6 +456,7 @@ import RegulationKbWizard from './RegulationKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-制度'
 const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
@@ -590,8 +591,6 @@ const filterFulfillStatus = ref('')
 const regTypeOptions = ref<Array<{ value: string; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 const selectedRowKeys = ref<string[]>([])
-const extractInFlight = ref<Set<string>>(new Set())
-const extractFailed = ref<Set<string>>(new Set())
 
 // 列显隐
 const visibleColKeys = ref<string[]>(loadStoredColumns())
@@ -676,7 +675,6 @@ const printLoaded = ref(false)
 const printMode = ref<'print' | 'catalog'>('print')
 const catalogBusy = ref(false)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ---- KB 检测 ----
 const loadKb = async () => {
@@ -1069,110 +1067,20 @@ const handleUploadFiles = async (files: File[]) => {
   }
 }
 
-// ---- 轮询解析 + 提取 ----
-const startPolling = () => ensurePolling()
-const ensurePolling = () => {
-  if (pollTimer) return
-  pollTimer = setInterval(async () => { await pollTick() }, 3000)
-}
-
-// 轮询刷新：
-// 1) probeExtract 用 knowledge 级列表探测"已解析完成但尚未提取"的新上传文件并触发提取；
-// 2) refreshRegulationRows 刷新制度级聚合列表，把提取完成的制度行实时合并进列表。
-let refreshBusy = false
-const probeExtract = async () => {
-  if (!kbId.value || refreshBusy) return
-  refreshBusy = true
-  try {
-    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-    const data = res?.data || res?.list || []
-    const arr: KnowledgeItem[] = Array.isArray(data) ? data : []
-    const needExtract: KnowledgeItem[] = []
-    const pend: KnowledgeItem[] = []
-    for (const item of arr) {
-      const ps = item.parse_status
-      if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') {
-        pend.push(item)
-        continue
-      }
-      if (ps === 'completed') {
-        const es = item.custom_metadata?.extract_status
-        if ((!es || es === 'pending' || es === 'processing') &&
-            !extractInFlight.value.has(item.id) && !extractFailed.value.has(item.id)) {
-          needExtract.push(item)
-        }
-        if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
-        if (!es || es === 'pending' || es === 'processing') pend.push(item)
-      }
-    }
-    // 已有制度行（提取完成）的文件不再显示进行中状态行
+// ---- 轮询解析 + 提取（统一 composable） ----
+const {
+  extractInFlight, extractFailed, pendingFiles,
+  start: startPolling, stop: stopPolling,
+} = useBusinessPolling({
+  kbId,
+  extractFn: (kid, fileId) => extractRegulation(kid, fileId),
+  onPendingFiles: (files) => {
     const withRows = new Set(regulationRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = pend.filter(k => !withRows.has(k.id))
-    for (const item of needExtract.slice(0, 5)) {
-      extractInFlight.value.add(item.id)
-      try {
-        const r: any = await extractRegulation(kbId.value, item.id)
-        // 后端判定非制度并已自动删除该文件 → 提示并刷新类型
-        if (r?.data?.removed) {
-          MessagePlugin.info(`「${item.file_name || item.title}」不是制度文件，已移至删除历史，可在删除历史中恢复`)
-          loadRegTypes()
-        }
-      } catch {
-        extractFailed.value.add(item.id)
-      }
-    }
-    for (const id of Array.from(extractInFlight.value)) {
-      const it = arr.find(k => k.id === id)
-      if (it?.custom_metadata?.extract_status) extractInFlight.value.delete(id)
-    }
-  } catch { /* 轮询探测失败静默，下轮重试 */ }
-  finally { refreshBusy = false }
-}
-
-// 刷新制度级列表（合并更新已加载行，提取完成的新数据实时出现）
-let regulationRefreshBusy = false
-const refreshRegulationRows = async () => {
-  if (!kbId.value || regulationRefreshBusy) return
-  regulationRefreshBusy = true
-  try {
-    const res: any = await listRegulationRecords(kbId.value, {
-      q: keyword.value || undefined,
-      reg_type: filterRegType.value || undefined,
-      date_from: dateRange.value?.[0] || undefined,
-      date_to: dateRange.value?.[1] || undefined,
-      page: 1,
-      page_size: Math.max(regulationRows.value.length, PAGE_SIZE),
-    })
-    const data = res?.data || res?.list || []
-    const arr = Array.isArray(data) ? data : []
-    const total = Number(res?.total || arr.length || 0)
-    regulationSummary.value = { total, sumAmount: 0, sumTotal: 0 }
-    const byKey = new Map(regulationRows.value.map(r => [r.rowKey, r]))
-    const fresh: RegulationRow[] = []
-    for (const r of arr) {
-      const row = mapRegulationRecord(r)
-      const old = byKey.get(row.rowKey)
-      if (old) {
-        // 已存在行：合并最新字段（提取完成后从空变有值）
-        const idx = regulationRows.value.findIndex(x => x.rowKey === row.rowKey)
-        if (idx >= 0) regulationRows.value[idx] = { ...old, ...row }
-      } else {
-        fresh.push(row)
-      }
-    }
-    if (fresh.length) regulationRows.value = [...fresh, ...regulationRows.value]
-  } catch { /* 制度列表刷新失败静默 */ }
-  finally { regulationRefreshBusy = false }
-}
-
-const pollTick = async () => {
-  if (!kbId.value || document.hidden) return
-  await probeExtract()
-  await refreshRegulationRows()
-}
-const stopPolling = () => {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-}
+    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+  },
+  onRemoved: (item) => { MessagePlugin.info(`「${item.file_name || item.title}」不是制度文件，已移至删除历史，可在删除历史中恢复`) },
+  onTick: refreshRegulationRows,
+})
 
 // ---- 详情抽屉 ----
 const openDetail = async (row: RegulationRow) => {
