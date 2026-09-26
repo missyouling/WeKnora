@@ -186,15 +186,7 @@
         </template>
       </t-table>
     </div>
-            <div v-if="!filteredRows.length && !listLoading" class="doc-empty-state">
-              <t-empty description="暂无制度，请点击右上角「上传制度」" />
-            </div>
-            <div v-if="loadingMore" class="doc-load-more">
-              <t-loading size="small" text="加载中..." />
-            </div>
-          </div>
         </div>
-      </div>
 
       <!-- 底部汇总（选中记录时显示选中制度汇总，未选中显示全部；选中时避让底部工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">

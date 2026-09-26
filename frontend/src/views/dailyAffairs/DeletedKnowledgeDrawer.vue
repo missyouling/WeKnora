@@ -75,6 +75,7 @@
             </t-table>
           </div>
         </div>
+        </div>  <!-- /dh-list-region -->
 
         <!-- 下半：源文件预览（点击行加载，固定约 50% 高度） -->
         <div class="dh-preview-region">

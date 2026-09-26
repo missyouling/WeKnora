@@ -203,8 +203,6 @@
         </template>
       </t-table>
     </div>
-        </template>
-      </div>
     </div>
 
     <!-- 底部汇总 -->

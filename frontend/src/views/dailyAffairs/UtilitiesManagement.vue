@@ -161,7 +161,7 @@
           </template>
         </t-table>
     </div>
-            </div>
+    </div>
             <!-- 底部汇总（列表容器外固定显示，不随内容滚动；选中时按选中统计并避让浮动工具栏） -->
             <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
               <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>

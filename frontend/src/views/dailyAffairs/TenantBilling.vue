@@ -87,12 +87,6 @@
         </template>
       </t-table>
     </div>
-          <div v-if="!loading && !displayRows.length" class="meter-empty">
-            <t-icon name="search-error" size="40px" class="meter-empty-icon" />
-            <span class="meter-empty-text">暂无数据</span>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- 底部汇总 -->

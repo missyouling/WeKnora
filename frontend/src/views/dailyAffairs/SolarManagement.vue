@@ -127,7 +127,6 @@
       </t-table>
     </div>
         </div>
-        <!-- 底部汇总 -->
         <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
           <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
           <span>发电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>

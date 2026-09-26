@@ -76,10 +76,6 @@
               </template>
             </t-table>
           </div>
-                <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
-                <div v-if="!loading && !rows.length" class="dh-list-empty"><t-empty title="暂无上传历史" /></div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
