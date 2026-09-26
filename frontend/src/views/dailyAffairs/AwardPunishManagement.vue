@@ -560,7 +560,6 @@ interface StatusInfo {
 const items = ref<KnowledgeItem[]>([])
 const awardPunishRows = ref<AwardPunishRow[]>([])
 // 进行中的文件（解析中/提取中/待提取），在奖惩级列表顶部以状态行展示
-const pendingFiles = ref<KnowledgeItem[]>([])
 const awardPunishSummary = ref<{ total: number; sumAmount: number; sumTotal: number }>({
   total: 0, sumAmount: 0, sumTotal: 0,
 })
@@ -603,7 +602,7 @@ const selectedRowKeys = ref<string[]>([])
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const columnDefs = effectiveColumns
-const visibleColDefs = computed(() => effectiveColumns.filter(c => visibleColKeys.value.includes(c.key)))
+const visibleColDefs = computed(() => effectiveColumns.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
@@ -617,14 +616,14 @@ function loadStoredColumns(): string[] {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.some(c => c.key === k))
+      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.value.some(c => c.key === k))
     }
   } catch { /* ignore */ }
-  return effectiveColumns.filter(c => c.default).map(c => c.key)
+  return effectiveColumns.value.filter(c => c.default).map(c => c.key)
 }
 function colVisible(key: string) { return visibleColKeys.value.includes(key) }
-function selectAllColumns() { visibleColKeys.value = effectiveColumns.map(c => c.key) }
-function resetColumns() { visibleColKeys.value = effectiveColumns.filter(c => c.default).map(c => c.key) }
+function selectAllColumns() { visibleColKeys.value = effectiveColumns.value.map(c => c.key) }
+function resetColumns() { visibleColKeys.value = effectiveColumns.value.filter(c => c.default).map(c => c.key) }
 function persistColumns() {
   try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
 }
@@ -1066,7 +1065,7 @@ const handleUploadFiles = async (files: File[]) => {
     for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
     MessagePlugin.success(`已上传 ${valid.length} 个奖惩文件，正在解析...`)
     await loadFiles(true)
-    ensurePolling()
+    startPolling()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '上传失败')
   }
@@ -1084,7 +1083,7 @@ const {
     pendingFiles.value = files.filter(k => !withRows.has(k.id))
   },
   onRemoved: (item) => { MessagePlugin.info(`「${item.file_name || item.title}」不是奖惩文件，已移至删除历史，可在删除历史中恢复`) },
-  onTick: refreshAwardPunishRows,
+  onTick: () => loadFiles(),
 })
 
 // ---- 详情抽屉 ----

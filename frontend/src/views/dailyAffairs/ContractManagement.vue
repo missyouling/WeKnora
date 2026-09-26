@@ -719,7 +719,7 @@ const selectedRowKeys = ref<string[]>([])
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const columnDefs = effectiveColumns
-const visibleColDefs = computed(() => effectiveColumns.filter(c => visibleColKeys.value.includes(c.key)))
+const visibleColDefs = computed(() => effectiveColumns.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
@@ -734,14 +734,14 @@ function loadStoredColumns(): string[] {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.some(c => c.key === k))
+      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.value.some(c => c.key === k))
     }
   } catch { /* ignore */ }
-  return effectiveColumns.filter(c => c.default).map(c => c.key)
+  return effectiveColumns.value.filter(c => c.default).map(c => c.key)
 }
 function colVisible(key: string) { return visibleColKeys.value.includes(key) }
-function selectAllColumns() { visibleColKeys.value = effectiveColumns.map(c => c.key) }
-function resetColumns() { visibleColKeys.value = effectiveColumns.filter(c => c.default).map(c => c.key) }
+function selectAllColumns() { visibleColKeys.value = effectiveColumns.value.map(c => c.key) }
+function resetColumns() { visibleColKeys.value = effectiveColumns.value.filter(c => c.default).map(c => c.key) }
 function persistColumns() {
   try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
 }
@@ -1241,7 +1241,7 @@ const handleUploadFiles = async (files: File[]) => {
     for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
     MessagePlugin.success(`已上传 ${valid.length} 个合同文件，正在解析...`)
     await loadFiles(true)
-    ensurePolling()
+    startPolling()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '上传失败')
   }
@@ -1262,7 +1262,7 @@ const {
     MessagePlugin.info(`「${item.file_name || item.title}」不是合同文件，已移至删除历史，可在删除历史中恢复`)
     loadContractTypes()
   },
-  onTick: refreshContractRows,
+  onTick: () => loadFiles(),
 })
 
 // 刷新合同级列表（合并更新已加载行，提取完成的新数据实时出现）
