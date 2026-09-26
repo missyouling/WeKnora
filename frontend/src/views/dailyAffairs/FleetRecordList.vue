@@ -147,69 +147,62 @@
     <!-- 列表 -->
     <div v-else class="doc-list-scroll meter-list-scroll">
       <div class="doc-list-view">
-        <div class="doc-list-header" :style="gridStyle" role="row">
-          <div class="cell cell-check" role="columnheader" @click.stop>
-            <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-              @change="toggleAll" />
+        <t-table
+        :data="displayRows"
+        :columns="tableColumns"
+        :row-key="(row: any) => rowKey(row)"
+        size="small"
+        :hover="true"
+        :loading="loading"
+        max-height="100%"
+        class="doc-table fleet-table"
+        :selected-row-keys="selectedRowKeysArr"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedKeys.has(rowKey(row)) ? 'row-selected' : ''"
+        @row-click="({ row }: any) => openDrawer(row)"
+        @select-change="(val: any) => onTableSelectChange(val)"
+      >
+        <template #empty>
+          <div v-if="!loading" class="meter-empty">
+            <t-icon :name="isArchive ? 'file-copy' : 'search-error'" size="40px" class="meter-empty-icon" />
+            <span class="meter-empty-text">{{ emptyText }}</span>
+            <t-button v-if="isArchive" theme="primary" variant="outline" size="small" class="meter-empty-action"
+              :disabled="!kbId" @click.stop="uploadVisible = true">
+              <template #icon><t-icon name="upload" size="14px" /></template>
+              上传{{ group.fileLabel }}
+            </t-button>
           </div>
-          <template v-for="col in visibleColDefs" :key="col.key">
-            <div class="cell cell-body" role="columnheader">
-              <span class="col-tip">{{ col.label }}</span>
+        </template>
+        <template #upload_status="{ row }: any">
+          <t-tag size="small" :theme="uploadTagTheme(row.upload_status)" variant="light-outline">{{ colValue('upload_status', row) }}</t-tag>
+        </template>
+        <template #file_type="{ row }: any">
+          <t-tag v-if="row.file_type" size="small" theme="default" variant="light-outline">{{ row.file_type }}</t-tag>
+          <span v-else>—</span>
+        </template>
+        <template #parse_status="{ row }: any">
+          <t-tag size="small" :theme="parseTagTheme(row.parse_status)" variant="light-outline">{{ colValue('parse_status', row) }}</t-tag>
+          <t-button v-if="row.parse_status === 'failed'" variant="text" size="small" class="cell-retry"
+            @click.stop="retryFile(row, 'parse')">
+            <template #icon><t-icon name="refresh" size="13px" /></template>重试
+          </t-button>
+        </template>
+        <template #extract_status="{ row }: any">
+          <t-tag size="small" :theme="extractTagTheme(row)" variant="light-outline">{{ colValue('extract_status', row) }}</t-tag>
+        </template>
+        <template #tags="{ row }: any">
+          <template v-if="(row.tags || []).length">
+            <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+              <t-tag v-for="t in (row.tags || []).slice(0, 3)" :key="t.id" size="small" variant="light-outline"
+                class="row-tag">{{ t.name }}</t-tag>
+              <span v-if="(row.tags || []).length > 3" class="row-tag-overflow"
+                :title="(row.tags || []).map((t: any) => t.name).join('、')">+{{ (row.tags || []).length - 3 }}</span>
             </div>
           </template>
-        </div>
-        <div v-if="!loading && !displayRows.length" class="meter-empty">
-          <t-icon :name="isArchive ? 'file-copy' : 'search-error'" size="40px" class="meter-empty-icon" />
-          <span class="meter-empty-text">{{ emptyText }}</span>
-          <t-button v-if="isArchive" theme="primary" variant="outline" size="small" class="meter-empty-action"
-            :disabled="!kbId" @click="uploadVisible = true">
-            <template #icon><t-icon name="upload" size="14px" /></template>
-            上传{{ group.fileLabel }}
-          </t-button>
-        </div>
-        <template v-for="row in displayRows" :key="rowKey(row)">
-          <div class="doc-list-row" :style="gridStyle" role="row" :class="{ 'row-selected': selectedKeys.has(rowKey(row)) }"
-            @click="openDrawer(row)">
-            <div class="cell cell-check" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="selectedKeys.has(rowKey(row))" @change="toggleSelect(row)" />
-            </div>
-            <template v-for="col in visibleColDefs" :key="col.key">
-              <div class="cell cell-body" :title="cellTitle(col, row)">
-                <span v-if="isFileRow(row) && col.key === 'upload_status'" class="cell-status">
-                  <t-tag size="small" :theme="uploadTagTheme(row.upload_status)" variant="light-outline">{{ col.value(row) }}</t-tag>
-                </span>
-                <span v-else-if="isFileRow(row) && col.key === 'file_type'" class="cell-status">
-                  <t-tag v-if="row.file_type" size="small" theme="default" variant="light-outline">{{ row.file_type }}</t-tag>
-                  <span v-else>—</span>
-                </span>
-                <span v-else-if="isFileRow(row) && col.key === 'parse_status'" class="cell-status">
-                  <t-tag size="small" :theme="parseTagTheme(row.parse_status)" variant="light-outline">{{ col.value(row) }}</t-tag>
-                  <t-button v-if="row.parse_status === 'failed'" variant="text" size="small" class="cell-retry"
-                    @click.stop="retryFile(row, 'parse')">
-                    <template #icon><t-icon name="refresh" size="13px" /></template>重试
-                  </t-button>
-                </span>
-                <span v-else-if="isFileRow(row) && col.key === 'extract_status'" class="cell-status">
-                  <t-tag size="small" :theme="extractTagTheme(row)" variant="light-outline">{{ col.value(row) }}</t-tag>
-                </span>
-                <span v-else-if="isFileRow(row) && col.key === 'tags'" class="cell-status cell-tags">
-                  <template v-if="(row.tags || []).length">
-                    <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
-                      <t-tag v-for="t in (row.tags || []).slice(0, 3)" :key="t.id" size="small" variant="light-outline"
-                        class="row-tag">{{ t.name }}</t-tag>
-                      <span v-if="(row.tags || []).length > 3" class="row-tag-overflow"
-                        :title="(row.tags || []).map((t: any) => t.name).join('、')">+{{ (row.tags || []).length - 3 }}</span>
-                    </div>
-                  </template>
-                  <span v-else class="row-tag-add" @click.stop="openTagEdit(row)">+ 标签</span>
-                </span>
-                <span v-else-if="!isFileRow(row) && isStatusField((col.key || '').replace('data.',''))" class="cell-status">
-                  <t-tag size="small" :theme="certStatusTheme(calcCertStatus(row.data))" variant="light-outline">{{ calcCertStatus(row.data) }}</t-tag>
-                </span>
-                <span v-else>{{ col.value(row) }}</span>
-              </div>
-            </template>
-          </div>
+          <span v-else class="row-tag-add" @click.stop="openTagEdit(row)">+ 标签</span>
+        </template>
+      </t-table>
+    </div>
         </template>
       </div>
     </div>
@@ -1357,6 +1350,25 @@ const STORAGE_KEY = computed(() => {
 })
 const visibleKeys = ref<string[]>([])
 const visibleColDefs = computed(() => columnDefs.value.filter((c) => visibleKeys.value.includes(c.key)))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  for (const c of visibleColDefs.value) {
+    const base: any = { colKey: c.key, title: c.label, ellipsis: true }
+    if (c.fixedWidth) base.width = c.fixedWidth
+    cols.push(base)
+  }
+  return cols
+})
+const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
+function onTableSelectChange(val: any) {
+  const arr = Array.isArray(val) ? val : []
+  selectedKeys.value = new Set(arr)
+}
+function colValue(key: string, row: any) {
+  const col = columnDefs.value.find((c: any) => c.key === key)
+  if (!col) return ''
+  try { return col.value(row) } catch { return '' }
+}
 const gridStyle = computed(() => {
   const n = visibleColDefs.value.length
   // 列宽按内容自适应：长内容列（表头/数据）分配更多宽度，短列收缩；总和 100%，无横向滚动条
