@@ -264,30 +264,30 @@
               <div class="field-group">
                 <div class="field-group-title">发票信息</div>
                 <div class="field-grid">
-                  <t-form-item label="发票号码" label-width="100px">
+                  <t-form-item label="发票号码" label-width="110px">
                     <t-input v-model="editForm.invoice_no" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="开票日期" label-width="100px">
+                  <t-form-item label="开票日期" label-width="110px">
                     <t-date-picker v-model="editForm.invoice_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
                       allow-input />
                   </t-form-item>
-                  <t-form-item label="发票类型" label-width="100px">
+                  <t-form-item label="发票类型" label-width="110px">
                     <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
                       filterable placeholder="选择或输入类型" />
                   </t-form-item>
-                  <t-form-item label="金额" label-width="100px">
+                  <t-form-item label="金额" label-width="110px">
                     <t-input v-model="editForm.amount" placeholder="" @input="(v: string) => (editForm.amount = sanitizeNum(v))" />
                   </t-form-item>
-                  <t-form-item label="税额" label-width="100px">
+                  <t-form-item label="税额" label-width="110px">
                     <t-input v-model="editForm.tax" placeholder="" @input="(v: string) => (editForm.tax = sanitizeNum(v))" />
                   </t-form-item>
-                  <t-form-item label="价税合计" label-width="100px">
+                  <t-form-item label="价税合计" label-width="110px">
                     <t-input v-model="editForm.total_amount" placeholder="" @input="(v: string) => (editForm.total_amount = sanitizeNum(v))" />
                   </t-form-item>
-                  <t-form-item label="开票人" label-width="100px">
+                  <t-form-item label="开票人" label-width="110px">
                     <t-input v-model="editForm.issuer" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="作废标记" label-width="100px">
+                  <t-form-item label="作废标记" label-width="110px">
                     <t-switch v-model="editForm.void_flag" size="small" />
                   </t-form-item>
                 </div>
@@ -296,22 +296,22 @@
               <div class="field-group">
                 <div class="field-group-title">销售方</div>
                 <div class="field-grid">
-                  <t-form-item label="名称" label-width="100px">
+                  <t-form-item label="名称" label-width="110px">
                     <t-input v-model="editForm.seller_name" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="100px">
+                  <t-form-item label="统一社会信用代码" label-width="110px">
                     <t-input v-model="editForm.seller_tax_no" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="地址" label-width="100px">
+                  <t-form-item label="地址" label-width="110px">
                     <t-input v-model="editForm.seller_address" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="电话" label-width="100px">
+                  <t-form-item label="电话" label-width="110px">
                     <t-input v-model="editForm.seller_phone" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="开户行" label-width="100px">
+                  <t-form-item label="开户行" label-width="110px">
                     <t-input v-model="editForm.seller_bank" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="账号" label-width="100px">
+                  <t-form-item label="账号" label-width="110px">
                     <t-input v-model="editForm.seller_account" placeholder="" />
                   </t-form-item>
                 </div>
@@ -320,22 +320,22 @@
               <div class="field-group">
                 <div class="field-group-title">购买方</div>
                 <div class="field-grid">
-                  <t-form-item label="名称" label-width="100px">
+                  <t-form-item label="名称" label-width="110px">
                     <t-input v-model="editForm.buyer_name" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="100px">
+                  <t-form-item label="统一社会信用代码" label-width="110px">
                     <t-input v-model="editForm.buyer_tax_no" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="地址" label-width="100px">
+                  <t-form-item label="地址" label-width="110px">
                     <t-input v-model="editForm.buyer_address" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="电话" label-width="100px">
+                  <t-form-item label="电话" label-width="110px">
                     <t-input v-model="editForm.buyer_phone" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="开户行" label-width="100px">
+                  <t-form-item label="开户行" label-width="110px">
                     <t-input v-model="editForm.buyer_bank" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="账号" label-width="100px">
+                  <t-form-item label="账号" label-width="110px">
                     <t-input v-model="editForm.buyer_account" placeholder="" />
                   </t-form-item>
                 </div>
@@ -344,7 +344,7 @@
               <div class="field-group">
                 <div class="field-group-title">备注</div>
                 <div class="field-grid field-grid--full">
-                  <t-form-item label="备注" label-width="100px">
+                  <t-form-item label="备注" label-width="110px">
                     <t-textarea v-model="editForm.remark" :autosize="{ minRows: 2, maxRows: 5 }" placeholder="" />
                   </t-form-item>
                 </div>
@@ -1794,7 +1794,6 @@ onBeforeUnmount(() => {
   &:hover { border-color: var(--td-brand-color); color: var(--td-brand-color); border-style: solid; }
 }
 
-.doc-empty-state { padding: 40px 0; display: flex; justify-content: center; }
 .doc-load-more { display: flex; justify-content: center; padding: 12px 0; }
 .doc-load-end {
   text-align: center; padding: 10px 0; font-size: 12px; color: var(--td-text-color-placeholder);

@@ -1553,7 +1553,6 @@ onBeforeUnmount(() => {
   &:hover { border-color: var(--td-brand-color); color: var(--td-brand-color); border-style: solid; }
 }
 
-.doc-empty-state { padding: 40px 0; display: flex; justify-content: center; }
 .doc-load-more { display: flex; justify-content: center; padding: 12px 0; }
 
 /* ---- 底部浮动工具栏 ---- */

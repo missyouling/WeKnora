@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="tenant-billing-container">
     <!-- 筛选工具栏（与电费/合同管理一致） -->
     <div class="doc-filter-bar">
@@ -80,10 +80,7 @@
           <span class="row-mono">{{ fmtPrice(row.ind_price) }}</span>
         </template>
         <template #empty>
-          <div v-if="!loading" class="meter-empty">
-            <t-icon name="search-error" size="40px" class="meter-empty-icon" />
-            <span class="meter-empty-text">暂无数据</span>
-          </div>
+          <EmptyState v-if="!loading" title="暂无数据" icon="search-error" compact />
         </template>
       </t-table>
     </div>
@@ -479,6 +476,7 @@ import {
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 const OWNER_UNIT = '重庆星达'
@@ -1467,16 +1465,6 @@ onMounted(() => {
   border-radius: 9px;
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-.meter-empty {
-  padding: 40px 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  color: var(--td-text-color-placeholder);
-  .meter-empty-icon { color: var(--td-text-color-placeholder); }
-  .meter-empty-text { font-size: 13px; color: var(--td-text-color-placeholder); }
 }
 
 /* 底部汇总 */
