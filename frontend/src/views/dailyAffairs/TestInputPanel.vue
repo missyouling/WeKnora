@@ -124,7 +124,7 @@ const fileOptions = computed(() =>
       font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
       font-size: 12px;
       line-height: 1.6;
-      background: #f9f9f9;
+      background: var(--td-bg-color-secondarycontainer);
     }
   }
 }
