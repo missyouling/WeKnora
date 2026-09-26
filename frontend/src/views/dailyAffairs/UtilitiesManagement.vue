@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
@@ -770,6 +770,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
@@ -964,7 +965,6 @@ interface Row {
   page?: number
 }
 const rows = ref<Row[]>([])
-const pendingFiles = ref<any[]>([])
 const summary = ref<{ total: number; sumKwh: number; sumAmount: number }>({ total: 0, sumKwh: 0, sumAmount: 0 })
 const listLoading = ref(false)
 const loadingMore = ref(false)
@@ -973,8 +973,6 @@ const hasMore = ref(true)
 const monthFilter = ref('')
 const keyword = ref('')
 const selectedRowKeys = ref<string[]>([])
-const extractInFlight = ref<Set<string>>(new Set())
-const extractFailed = ref<Set<string>>(new Set())
 const listScrollRef = ref<HTMLElement>()
 
 const summaryUsage = computed(() => {
@@ -1114,57 +1112,25 @@ const pendingLabel = (pf: any) => {
   if (ps === 'failed') return 'parse_failed'
   const meta = pf.custom_metadata || {}
   // 提取进行中以前端 Set 为准（与发票模块 extractInFlight 一致）
-  if (extractingSet.has(pf.id)) return 'extracting'
+  if (extractInFlight.value.has(pf.id)) return 'extracting'
   if (meta.extract_status === 'failed') return 'failed'
   if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
   return 'pending'
 }
 
 // 轮询：解析完成后自动触发提取；提取中动态刷新状态
-let pollTimer: ReturnType<typeof setInterval> | null = null
-let extractingSet = new Set<string>()
-const startPolling = () => {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (!kbId.value) return
-    try {
-      const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-      const data = res?.data || res?.list || []
-      const arr = Array.isArray(data) ? data : []
-      // 进行中/失败文件（解析中/提取中/待提取/解析失败/提取失败）；
-      // 仅处理打标 bill_kind=electricity 或已提取 kind=utility_bill 的文件，光伏文件（solar）一律跳过
-      pendingFiles.value = arr.filter((it: any) => {
-        const ps = it.parse_status
-        const meta = it.custom_metadata || {}
-        if (meta.kind === 'solar_bill') return false
-        if (meta.bill_kind && meta.bill_kind !== 'electricity') return false
-        return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
-          meta.extract_status === 'failed' ||
-          meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
-          (meta.extract_status == null && ps === 'completed' && meta.bill_kind === 'electricity')
-      })
-      // 已解析完成且已打标 electricity 但尚未提取的文件自动触发提取
-      for (const it of arr) {
-        const ps = it.parse_status
-        const meta = it.custom_metadata || {}
-        if (meta.kind === 'solar_bill') continue
-        if (meta.bill_kind && meta.bill_kind !== 'electricity') continue
-        if (ps === 'completed' && meta.bill_kind === 'electricity' && !meta.kind && !meta.extract_status && !extractingSet.has(it.id)) {
-          extractingSet.add(it.id)
-          try {
-            await extractUtilityBill(kbId.value, it.id)
-            loadFiles(true)
-          } catch { /* 失败下轮重试 */ } finally {
-            extractingSet.delete(it.id)
-          }
-        }
-      }
-    } catch { /* 轮询失败静默 */ }
-  }, 3000)
-}
-const stopPolling = () => {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-}
+const { extractInFlight, extractFailed, pendingFiles, start: startPolling, stop: stopPolling } = useBusinessPolling({
+  kbId,
+  extractFn: (kid, fileId) => extractUtilityBill(kid, fileId),
+  filter: (item: any) => {
+    const meta = item.custom_metadata || {}
+    if (meta.kind === 'solar_bill') return false
+    if (meta.bill_kind && meta.bill_kind !== 'electricity') return false
+    return true
+  },
+  onPendingFiles: () => { /* pendingRows computed 直接读 pendingFiles */ },
+  onTick: () => { loadFiles() },
+})
 
 // ---- KB ----
 const loadKb = async () => {

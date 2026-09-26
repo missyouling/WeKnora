@@ -23,6 +23,8 @@ export interface UseBusinessPollingOptions {
   onTick?: () => Promise<void> | void
   /** 轮询间隔，默认 3s */
   intervalMs?: number
+  /** 文件过滤器：只处理匹配的文件（能耗模块按 bill_kind 区分电费/光伏） */
+  filter?: (item: BusinessFileItem) => boolean
 }
 
 /**
@@ -33,7 +35,7 @@ export interface UseBusinessPollingOptions {
  * 4) 把 pending 文件回调给业务层渲染状态行。
  */
 export function useBusinessPolling(opts: UseBusinessPollingOptions) {
-  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, intervalMs = 3000 } = opts
+  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, intervalMs = 3000, filter } = opts
 
   const extractInFlight = ref<Set<string>>(new Set())
   const extractFailed = ref<Set<string>>(new Set())
@@ -53,6 +55,7 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
       const pend: BusinessFileItem[] = []
 
       for (const item of arr) {
+        if (filter && !filter(item)) continue
         const ps = item.parse_status
         if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') {
           pend.push(item)
