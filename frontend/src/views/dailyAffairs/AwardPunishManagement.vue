@@ -95,96 +95,88 @@
       <!-- 奖惩列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
-          <div class="doc-list-header" :style="gridStyle" role="row">
-            <div class="cell cell-check" role="columnheader" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-                :disabled="!selectableRows.length" title="全选" @change="toggleSelectAll" />
+          <t-table
+        :data="filteredRows"
+        :columns="tableColumns"
+        row-key="rowKey"
+        size="small"
+        :hover="true"
+        :loading="listLoading"
+        max-height="100%"
+        class="doc-table"
+        :selected-row-keys="selectedRowKeys"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
+        @row-click="({ row }: any) => openDetail(row)"
+        @select-change="(val: string[]) => (selectedRowKeys = val)"
+      >
+        <template #apNo="{ row }: any">
+          <span class="row-awardPunish-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
+        </template>
+        <template #apTitle="{ row }: any">
+          <span class="row-text" :title="row.apTitle || row.fileName">{{ row.apTitle || row.fileName }}</span>
+        </template>
+        <template #apType="{ row }: any">
+          <span class="row-text" :title="row.apType">{{ row.apType }}</span>
+        </template>
+        <template #person="{ row }: any">
+          <span class="row-text" :title="row.person">{{ row.person }}</span>
+        </template>
+        <template #dept="{ row }: any">
+          <span class="row-text" :title="row.dept">{{ row.dept }}</span>
+        </template>
+        <template #position="{ row }: any">
+          <span class="row-text">{{ row.position }}</span>
+        </template>
+        <template #signDate="{ row }: any">
+          <span class="row-mono">{{ row.signDate }}</span>
+        </template>
+        <template #signer="{ row }: any">
+          <span class="row-text">{{ row.signer }}</span>
+        </template>
+        <template #measure="{ row }: any">
+          <span class="row-text">{{ row.measure }}</span>
+        </template>
+        <template #summary="{ row }: any">
+          <span class="row-text" :title="row.summary">{{ row.summary }}</span>
+        </template>
+        <template #extractStatus="{ row }: any">
+          <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
+            variant="light-outline" class="row-status-tag">
+            <template v-if="statusOf(row).icon" #icon>
+              <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
+            </template>
+            {{ statusOf(row).label }}
+          </t-tag>
+          <span v-else class="row-muted">--</span>
+        </template>
+        <template #tags="{ row }: any">
+          <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')" placement="top">
+            <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+              <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                {{ rowTags(row)[0].name }}
+              </t-tag>
+              <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
             </div>
-            <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-              {{ col.label }}
-            </div>
-          </div>
-          <div class="doc-list-body">
-            <div v-for="row in filteredRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
-              :class="{ selected: selectedRowKeys.includes(row.rowKey) }" role="row" @click="openDetail(row)">
-              <div class="cell cell-check" @click.stop>
-                <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                  :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
-              </div>
-                            <!-- 数据列（与表头同源 v-for，顺序自动对齐） -->
-              <template v-for="col in visibleColDefs" :key="col.key">
-                <div v-if="col.key === 'apNo'" class="cell cell-apNo">
-                  <span class="row-awardPunish-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
-                </div>
-                <div v-else-if="col.key === 'apTitle'" class="cell cell-apTitle">
-                  <span class="row-text" :title="row.apTitle || row.fileName">{{ row.apTitle || row.fileName }}</span>
-                </div>
-                <div v-else-if="col.key === 'apType'" class="cell cell-apType">
-                  <span class="row-text" :title="row.apType">{{ row.apType }}</span>
-                </div>
-                <div v-else-if="col.key === 'person'" class="cell cell-person">
-                  <span class="row-text" :title="row.person">{{ row.person }}</span>
-                </div>
-                <div v-else-if="col.key === 'dept'" class="cell cell-dept">
-                  <span class="row-text" :title="row.dept">{{ row.dept }}</span>
-                </div>
-                <div v-else-if="col.key === 'position'" class="cell cell-position">
-                  <span class="row-text">{{ row.position }}</span>
-                </div>
-                <div v-else-if="col.key === 'signDate'" class="cell cell-signDate">
-                  <span class="row-mono">{{ row.signDate }}</span>
-                </div>
-                <div v-else-if="col.key === 'signer'" class="cell cell-signer">
-                  <span class="row-text">{{ row.signer }}</span>
-                </div>
-                <div v-else-if="col.key === 'measure'" class="cell cell-measure">
-                  <span class="row-text">{{ row.measure }}</span>
-                </div>
-                <div v-else-if="col.key === 'summary'" class="cell cell-summary">
-                  <span class="row-text" :title="row.summary">{{ row.summary }}</span>
-                </div>
-                <div v-else-if="col.key === 'extractStatus'" class="cell cell-extractStatus">
-                  <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
-                    variant="light-outline" class="row-status-tag">
-                    <template v-if="statusOf(row).icon" #icon>
-                      <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
-                    </template>
-                    {{ statusOf(row).label }}
-                  </t-tag>
-                  <span v-else class="row-muted">--</span>
-                </div>
-                <div v-else-if="col.key === 'tags'" class="cell cell-tags" @click.stop>
-                  <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
-                    placement="top">
-                    <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                      <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
-                        {{ rowTags(row)[0].name }}
-                      </t-tag>
-                      <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
-                    </div>
-                  </t-tooltip>
-                  <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                    <span class="row-tag-add">+ 标签</span>
-                  </span>
-                </div>
-                <div v-else-if="col.key === 'basis'" class="cell cell-basis">
-                  <span class="row-text" :title="row.basis">{{ row.basis }}</span>
-                </div>
-                <div v-else-if="col.key === 'effectiveDate'" class="cell cell-effectiveDate">
-                  <span class="row-mono">{{ row.effectiveDate }}</span>
-                </div>
-                <div v-else-if="col.key === 'remark'" class="cell cell-remark">
-                  <span class="row-text" :title="row.remark">{{ row.remark }}</span>
-                </div>
-                <div v-else-if="col.key === 'fileName'" class="cell cell-fileName">
-                  <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-                </div>
-              </template>
-              <!-- 文件名 -->
-              <div v-if="colVisible('fileName')" class="cell cell-fileName">
-                <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-              </div>
-            </div>
+          </t-tooltip>
+          <span v-else class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+            <span class="row-tag-add">+ 标签</span>
+          </span>
+        </template>
+        <template #basis="{ row }: any">
+          <span class="row-text" :title="row.basis">{{ row.basis }}</span>
+        </template>
+        <template #effectiveDate="{ row }: any">
+          <span class="row-mono">{{ row.effectiveDate }}</span>
+        </template>
+        <template #remark="{ row }: any">
+          <span class="row-text" :title="row.remark">{{ row.remark }}</span>
+        </template>
+        <template #fileName="{ row }: any">
+          <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+        </template>
+      </t-table>
+    </div>
             <div v-if="!filteredRows.length && !listLoading" class="doc-empty-state">
               <t-empty description="暂无奖惩，请点击右上角「上传奖惩」" />
             </div>
@@ -611,6 +603,13 @@ const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const columnDefs = COLUMN_DEFS
 const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleColKeys.value.includes(c.key)))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+  }
+  return cols
+})
 const gridStyle = computed(() => ({
   gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
 }))

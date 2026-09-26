@@ -95,117 +95,97 @@
       <!-- 制度列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
-          <div class="doc-list-header" :style="gridStyle" role="row">
-            <div class="cell cell-check" role="columnheader" @click.stop>
-              <t-checkbox class="doc-list-check" size="small" :checked="isAllSelected" :indeterminate="someSelected"
-                :disabled="!selectableRows.length" title="全选" @change="toggleSelectAll" />
+          <t-table
+        :data="filteredRows"
+        :columns="tableColumns"
+        row-key="rowKey"
+        size="small"
+        :hover="true"
+        :loading="listLoading"
+        max-height="100%"
+        class="doc-table"
+        :selected-row-keys="selectedRowKeys"
+        select-on-change
+        :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
+        @row-click="({ row }: any) => openDetail(row)"
+        @select-change="(val: string[]) => (selectedRowKeys = val)"
+      >
+        <template #regNo="{ row }: any">
+          <span class="row-regulation-no" :title="row.regNo || row.fileName">{{ row.regNo }}</span>
+        </template>
+        <template #regName="{ row }: any">
+          <span class="row-text" :title="row.regName || row.fileName">{{ row.regName || row.fileName }}</span>
+        </template>
+        <template #regType="{ row }: any">
+          <span class="row-text" :title="row.regType">{{ row.regType }}</span>
+        </template>
+        <template #version="{ row }: any">
+          <span class="row-text">{{ row.version }}</span>
+        </template>
+        <template #pageCount="{ row }: any">
+          <span class="row-text">{{ row.pageCount }}</span>
+        </template>
+        <template #issueDate="{ row }: any">
+          <span class="row-mono">{{ row.issueDate }}</span>
+        </template>
+        <template #effectiveDate="{ row }: any">
+          <span class="row-mono">{{ row.effectiveDate }}</span>
+        </template>
+        <template #scope="{ row }: any">
+          <span class="row-text" :title="row.scope">{{ row.scope }}</span>
+        </template>
+        <template #extractStatus="{ row }: any">
+          <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
+            variant="light-outline" class="row-status-tag">
+            <template v-if="statusOf(row).icon" #icon>
+              <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
+            </template>
+            {{ statusOf(row).label }}
+          </t-tag>
+          <span v-else class="row-muted">--</span>
+        </template>
+        <template #tags="{ row }: any">
+          <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')" placement="top">
+            <div class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+              <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
+                {{ rowTags(row)[0].name }}
+              </t-tag>
+              <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
             </div>
-            <div v-for="col in visibleColDefs" :key="col.key" class="cell" :class="`cell-${col.key}`" role="columnheader">
-              {{ col.label }}
-            </div>
-          </div>
-          <div class="doc-list-body">
-            <div v-for="row in filteredRows" :key="row.rowKey" class="doc-list-row" :style="gridStyle"
-              :class="{ selected: selectedRowKeys.includes(row.rowKey) }" role="row" @click="openDetail(row)">
-              <div class="cell cell-check" @click.stop>
-                <t-checkbox class="doc-list-check" size="small" :checked="selectedRowKeys.includes(row.rowKey)"
-                  :disabled="row.kind === 'pending'" @change="(c: boolean) => toggleRow(row.rowKey, c)" />
-              </div>
-              <!-- 制度编号（制度一份文件一份，不显示页码标签） -->
-              <div v-if="colVisible('regNo')" class="cell cell-regNo">
-                <span class="row-regulation-no" :title="row.regNo || row.fileName">{{ row.regNo }}</span>
-              </div>
-              <!-- 制度名称（待补录占位行回退显示文件名） -->
-              <div v-if="colVisible('regName')" class="cell cell-regName">
-                <span class="row-text" :title="row.regName || row.fileName">{{ row.regName || row.fileName }}</span>
-              </div>
-              <!-- 制度类型 -->
-              <div v-if="colVisible('regType')" class="cell cell-regType">
-                <span class="row-text" :title="row.regType">{{ row.regType }}</span>
-              </div>
-              <!-- 版本 -->
-              <div v-if="colVisible('version')" class="cell cell-version">
-                <span class="row-text">{{ row.version }}</span>
-              </div>
-              <!-- 页数 -->
-              <div v-if="colVisible('pageCount')" class="cell cell-pageCount">
-                <span class="row-text">{{ row.pageCount }}</span>
-              </div>
-              <!-- 编制日期 -->
-              <div v-if="colVisible('issueDate')" class="cell cell-issueDate">
-                <span class="row-mono">{{ row.issueDate }}</span>
-              </div>
-              <!-- 生效日期 -->
-              <div v-if="colVisible('effectiveDate')" class="cell cell-effectiveDate">
-                <span class="row-mono">{{ row.effectiveDate }}</span>
-              </div>
-              <!-- 适用范围 -->
-              <div v-if="colVisible('scope')" class="cell cell-scope">
-                <span class="row-text" :title="row.scope">{{ row.scope }}</span>
-              </div>
-              <!-- 状态（提取进程，绿色 loading 动态） -->
-              <div v-if="colVisible('extractStatus')" class="cell cell-extractStatus">
-                <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
-                  variant="light-outline" class="row-status-tag">
-                  <template v-if="statusOf(row).icon" #icon>
-                    <t-icon :name="statusOf(row).icon!" :class="{ 'icon-spin': statusOf(row).spin }" />
-                  </template>
-                  {{ statusOf(row).label }}
-                </t-tag>
-                <span v-else class="row-muted">--</span>
-              </div>
-              <!-- 标签（显示 1 个 + N） -->
-              <div v-if="colVisible('tags')" class="cell cell-tags" @click.stop>
-                <t-tooltip v-if="rowTags(row).length" :content="rowTags(row).map((t: any) => t.name).join('、')"
-                  placement="top">
-                  <div class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                    <t-tag v-if="rowTags(row).length" size="small" variant="light-outline" class="row-tag">
-                      {{ rowTags(row)[0].name }}
-                    </t-tag>
-                    <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
-                  </div>
-                </t-tooltip>
-                <span v-else class="row-tag-chips is-clickable" @click="openTagEdit(row)">
-                  <span class="row-tag-add">+ 标签</span>
-                </span>
-              </div>
-              <!-- 编制部门 -->
-              <div v-if="colVisible('dept')" class="cell cell-dept">
-                <span class="row-text" :title="row.dept">{{ row.dept }}</span>
-              </div>
-              <!-- 修改次数 -->
-              <div v-if="colVisible('modifyCount')" class="cell cell-modifyCount">
-                <span class="row-text">{{ row.modifyCount }}</span>
-              </div>
-              <!-- 编制 -->
-              <div v-if="colVisible('compiledBy')" class="cell cell-compiledBy">
-                <span class="row-text" :title="row.compiledBy">{{ row.compiledBy }}</span>
-              </div>
-              <!-- 审核 -->
-              <div v-if="colVisible('reviewedBy')" class="cell cell-reviewedBy">
-                <span class="row-text" :title="row.reviewedBy">{{ row.reviewedBy }}</span>
-              </div>
-              <!-- 批准 -->
-              <div v-if="colVisible('approvedBy')" class="cell cell-approvedBy">
-                <span class="row-text" :title="row.approvedBy">{{ row.approvedBy }}</span>
-              </div>
-              <!-- 摘要 -->
-              <div v-if="colVisible('summary')" class="cell cell-summary">
-                <span class="row-text" :title="row.summary">{{ row.summary }}</span>
-              </div>
-              <!-- 密级 -->
-              <div v-if="colVisible('confidentiality')" class="cell cell-confidentiality">
-                <span class="row-text">{{ row.confidentiality }}</span>
-              </div>
-              <!-- 备注 -->
-              <div v-if="colVisible('remark')" class="cell cell-remark">
-                <span class="row-text" :title="row.remark">{{ row.remark }}</span>
-              </div>
-              <!-- 文件名 -->
-              <div v-if="colVisible('fileName')" class="cell cell-fileName">
-                <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-              </div>
-            </div>
+          </t-tooltip>
+          <span v-else class="row-tag-chips is-clickable" @click.stop="openTagEdit(row)">
+            <span class="row-tag-add">+ 标签</span>
+          </span>
+        </template>
+        <template #dept="{ row }: any">
+          <span class="row-text" :title="row.dept">{{ row.dept }}</span>
+        </template>
+        <template #modifyCount="{ row }: any">
+          <span class="row-text">{{ row.modifyCount }}</span>
+        </template>
+        <template #compiledBy="{ row }: any">
+          <span class="row-text" :title="row.compiledBy">{{ row.compiledBy }}</span>
+        </template>
+        <template #reviewedBy="{ row }: any">
+          <span class="row-text" :title="row.reviewedBy">{{ row.reviewedBy }}</span>
+        </template>
+        <template #approvedBy="{ row }: any">
+          <span class="row-text" :title="row.approvedBy">{{ row.approvedBy }}</span>
+        </template>
+        <template #summary="{ row }: any">
+          <span class="row-text" :title="row.summary">{{ row.summary }}</span>
+        </template>
+        <template #confidentiality="{ row }: any">
+          <span class="row-text">{{ row.confidentiality }}</span>
+        </template>
+        <template #remark="{ row }: any">
+          <span class="row-text" :title="row.remark">{{ row.remark }}</span>
+        </template>
+        <template #fileName="{ row }: any">
+          <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
+        </template>
+      </t-table>
+    </div>
             <div v-if="!filteredRows.length && !listLoading" class="doc-empty-state">
               <t-empty description="暂无制度，请点击右上角「上传制度」" />
             </div>
@@ -626,6 +606,13 @@ const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const columnDefs = COLUMN_DEFS
 const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleColKeys.value.includes(c.key)))
+const tableColumns = computed(() => {
+  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  for (const c of visibleColDefs.value) {
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+  }
+  return cols
+})
 const gridStyle = computed(() => ({
   gridTemplateColumns: `44px ${visibleColDefs.value.map(c => c.w).join(' ')}`,
 }))
