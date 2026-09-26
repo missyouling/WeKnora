@@ -24,55 +24,55 @@
           </div>
           <div ref="listScrollRef" class="doc-list-scroll" @scroll="onListScroll">
             <div class="doc-list-view">
-              <div class="doc-list-header" :style="gridStyle" role="row">
-                <div class="cell cell-file" role="columnheader">文件</div>
-                <div class="cell" role="columnheader">删除原因</div>
-                <div class="cell" role="columnheader">删除时间</div>
-                <div class="cell" role="columnheader">次数</div>
-                <div class="cell cell-op" role="columnheader">操作</div>
-              </div>
-              <div class="doc-list-body">
-                <div v-for="row in rows" :key="row.id" class="doc-list-row" :style="gridStyle"
-                  :class="{ selected: activeRow?.id === row.id }" @click="activeRow = row">
-                  <div class="cell cell-file">
-                    <div class="dh-file">
-                      <span class="dh-file-icon">{{ fileExt(row.fileName) }}</span>
-                      <div class="dh-file-meta">
-                        <div class="dh-file-name" :title="row.title || row.fileName">{{ row.title || row.fileName }}</div>
-                        <div class="dh-file-sub">{{ row.fileName }} · {{ fmtSize(row.fileSize) }}</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="cell">
-                    <t-tag size="small" theme="warning" variant="light-outline">{{ row.reason || '自动删除' }}</t-tag>
-                  </div>
-                  <div class="cell"><span class="row-mono">{{ row.deletedAt }}</span></div>
-                  <div class="cell">
-                    <span v-if="(row.deleteCount || 1) > 1" class="dh-count-badge">{{ row.deleteCount }} 次</span>
-                    <span v-else class="row-muted">1 次</span>
-                  </div>
-                  <div class="cell cell-op" @click.stop>
-                    <t-dropdown :min-column-width="120" @click="(d: any) => onMenuClick(d, row)">
-                      <t-button variant="text" size="small" shape="square">
-                        <template #icon><t-icon name="more" size="16px" /></template>
-                      </t-button>
-                      <template #dropdown>
-                        <t-dropdown-menu>
-                          <t-dropdown-item value="restore">
-                            <span class="dh-menu-item"><t-icon name="rollback" size="14px" class="dh-menu-icon dh-menu-icon--restore" />重新入库</span>
-                          </t-dropdown-item>
-                          <t-dropdown-item value="purge">
-                            <span class="dh-menu-item"><t-icon name="delete" size="14px" class="dh-menu-icon dh-menu-icon--purge" />永久删除</span>
-                          </t-dropdown-item>
-                        </t-dropdown-menu>
-                      </template>
-                    </t-dropdown>
+              <t-table
+              :data="rows"
+              :columns="columns"
+              row-key="id"
+              size="small"
+              :hover="true"
+              :loading="loading"
+              max-height="100%"
+              class="dh-table"
+              :row-class-name="({ row }: any) => activeRow?.id === row.id ? 'is-selected' : ''"
+              @row-click="({ row }: any) => (activeRow = row)"
+            >
+              <template #file="{ row }: any">
+                <div class="dh-file">
+                  <span class="dh-file-icon">{{ fileExt(row.fileName) }}</span>
+                  <div class="dh-file-meta">
+                    <div class="dh-file-name" :title="row.title || row.fileName">{{ row.title || row.fileName }}</div>
+                    <div class="dh-file-sub">{{ row.fileName }} · {{ fmtSize(row.fileSize) }}</div>
                   </div>
                 </div>
-                <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
-                <div v-if="!loading && !rows.length" class="dh-list-empty"><t-empty title="暂无删除历史" /></div>
-              </div>
-            </div>
+              </template>
+              <template #reason="{ row }: any">
+                <t-tag size="small" theme="warning" variant="light-outline">{{ row.reason || '自动删除' }}</t-tag>
+              </template>
+              <template #deletedAt="{ row }: any">
+                <span class="row-mono">{{ row.deletedAt }}</span>
+              </template>
+              <template #deleteCount="{ row }: any">
+                <span v-if="(row.deleteCount || 1) > 1" class="dh-count-badge">{{ row.deleteCount }} 次</span>
+                <span v-else class="row-muted">1 次</span>
+              </template>
+              <template #op="{ row }: any">
+                <t-dropdown :min-column-width="120" @click="(d: any) => onMenuClick(d, row)">
+                  <t-button variant="text" size="small" shape="square">
+                    <template #icon><t-icon name="more" size="16px" /></template>
+                  </t-button>
+                  <template #dropdown>
+                    <t-dropdown-menu>
+                      <t-dropdown-item value="restore">
+                        <span class="dh-menu-item"><t-icon name="rollback" size="14px" class="dh-menu-icon dh-menu-icon--restore" />重新入库</span>
+                      </t-dropdown-item>
+                      <t-dropdown-item value="purge">
+                        <span class="dh-menu-item"><t-icon name="delete" size="14px" class="dh-menu-icon dh-menu-icon--purge" />永久删除</span>
+                      </t-dropdown-item>
+                    </t-dropdown-menu>
+                  </template>
+                </t-dropdown>
+              </template>
+            </t-table>
           </div>
         </div>
 
@@ -131,10 +131,13 @@ const pageSize = ref(20)
 const hasMore = ref(true)
 const listScrollRef = ref<HTMLElement>()
 
-// 列表网格列宽（复刻合同管理列表样式）
-const gridStyle = computed(() => ({
-  gridTemplateColumns: 'minmax(0, 30%) minmax(0, 22%) minmax(0, 20%) minmax(0, 12%) minmax(0, 16%)',
-}))
+const columns = [
+  { colKey: 'file', title: '文件', ellipsis: true },
+  { colKey: 'reason', title: '删除原因', width: '120px' },
+  { colKey: 'deletedAt', title: '删除时间', width: '160px' },
+  { colKey: 'deleteCount', title: '次数', width: '80px' },
+  { colKey: 'op', title: '操作', width: '70px', fixed: 'right' as const },
+]
 
 const fileExt = (name: string) => {
   const m = String(name || '').match(/\.([^.]+)$/)
@@ -397,42 +400,6 @@ watch(() => props.visible, (v) => {
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.doc-list-view {
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-.doc-list-header, .doc-list-row {
-  display: grid;
-  align-items: center;
-  padding: 0 12px;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-.doc-list-header {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  height: 40px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-secondarycontainer);
-  border-bottom: 1px solid var(--td-component-stroke);
-}
-.doc-list-body { display: flex; flex-direction: column; }
-.doc-list-row {
-  position: relative;
-  min-height: 52px;
-  font-size: 13px;
-  color: var(--td-text-color-primary);
-  border-bottom: 1px solid var(--td-component-stroke);
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-.doc-list-row:last-child { border-bottom: 0; }
-.doc-list-row:hover:not(.selected) { background: var(--td-bg-color-secondarycontainer); }
-.doc-list-row.selected { background: var(--td-brand-color-1); }
 .cell {
   display: flex;
   align-items: center;
