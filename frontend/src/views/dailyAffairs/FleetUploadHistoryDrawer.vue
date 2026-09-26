@@ -24,54 +24,58 @@
           </div>
           <div ref="listScrollRef" class="doc-list-scroll" @scroll="onListScroll">
             <div class="doc-list-view">
-              <div class="doc-list-header" :style="gridStyle" role="row">
-                <div class="cell cell-file" role="columnheader">文件</div>
-                <div class="cell" role="columnheader">解析</div>
-                <div class="cell" role="columnheader">提取</div>
-                <div class="cell" role="columnheader">证照类型</div>
-                <div class="cell" role="columnheader">上传时间</div>
-                <div class="cell cell-del" role="columnheader">操作</div>
-              </div>
-              <div class="doc-list-body">
-                <div v-for="row in rows" :key="row.id" class="doc-list-row" :style="gridStyle"
-                  :class="{ selected: activeRow?.id === row.id }" @click="activeRow = row">
-                  <div class="cell cell-file">
-                    <div class="dh-file">
-                      <span class="dh-file-icon">{{ fileExt(row.file_name) }}</span>
-                      <div class="dh-file-meta">
-                        <div class="dh-file-name" :title="row.title || row.file_name">{{ row.title || row.file_name }}</div>
-                        <div class="dh-file-sub">{{ row.file_name }} · {{ fmtSize(row.file_size) }}</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="cell">
-                    <t-tooltip v-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
-                      <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
-                    </t-tooltip>
-                    <t-tag v-else size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
-                  </div>
-                  <div class="cell">
-                    <t-tooltip v-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
-                      <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
-                    </t-tooltip>
-                    <t-tag v-else-if="extractStatus(row) === 'success'" size="small" theme="success" variant="light-outline">提取完成</t-tag>
-                    <t-tag v-else-if="row.parse_status === 'completed'" size="small" theme="warning" variant="light-outline">待提取</t-tag>
-                    <span v-else class="row-muted">—</span>
-                  </div>
-                  <div class="cell">
-                    <span v-if="row.doc_type" class="row-mono">{{ row.doc_type }}</span>
-                    <span v-else class="row-muted">—</span>
-                  </div>
-                  <div class="cell"><span class="row-mono">{{ fmtTime(row.created_at) }}</span></div>
-                  <div class="cell cell-del">
-                    <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
-                      @click="(ctx: any) => onRowMenu(row, ctx.value)">
-                      <t-button variant="text" size="small" shape="square" class="row-more-btn">
-                        <template #icon><t-icon name="ellipsis" size="16px" /></template>
-                      </t-button>
-                    </t-dropdown>
+              <t-table
+              :data="rows"
+              :columns="columns"
+              row-key="id"
+              size="small"
+              :hover="true"
+              :loading="loading"
+              max-height="100%"
+              class="dh-table"
+              :row-class-name="({ row }: any) => activeRow?.id === row.id ? 'is-selected' : ''"
+              @row-click="({ row }: any) => (activeRow = row)"
+            >
+              <template #file="{ row }: any">
+                <div class="dh-file">
+                  <span class="dh-file-icon">{{ fileExt(row.file_name) }}</span>
+                  <div class="dh-file-meta">
+                    <div class="dh-file-name" :title="row.title || row.file_name">{{ row.title || row.file_name }}</div>
+                    <div class="dh-file-sub">{{ row.file_name }} · {{ fmtSize(row.file_size) }}</div>
                   </div>
                 </div>
+              </template>
+              <template #parse="{ row }: any">
+                <t-tooltip v-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
+                  <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
+                </t-tooltip>
+                <t-tag v-else size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
+              </template>
+              <template #extract="{ row }: any">
+                <t-tooltip v-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
+                  <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
+                </t-tooltip>
+                <t-tag v-else-if="extractStatus(row) === 'success'" size="small" theme="success" variant="light-outline">提取完成</t-tag>
+                <t-tag v-else-if="row.parse_status === 'completed'" size="small" theme="warning" variant="light-outline">待提取</t-tag>
+                <span v-else class="row-muted">—</span>
+              </template>
+              <template #docType="{ row }: any">
+                <span v-if="row.doc_type" class="row-mono">{{ row.doc_type }}</span>
+                <span v-else class="row-muted">—</span>
+              </template>
+              <template #createdAt="{ row }: any">
+                <span class="row-mono">{{ fmtTime(row.created_at) }}</span>
+              </template>
+              <template #op="{ row }: any">
+                <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
+                  @click="(ctx: any) => onRowMenu(row, ctx.value)">
+                  <t-button variant="text" size="small" shape="square" class="row-more-btn">
+                    <template #icon><t-icon name="ellipsis" size="16px" /></template>
+                  </t-button>
+                </t-dropdown>
+              </template>
+            </t-table>
+          </div>
                 <div v-if="loading" class="dh-list-loading"><t-loading size="small" text="加载中..." /></div>
                 <div v-if="!loading && !rows.length" class="dh-list-empty"><t-empty title="暂无上传历史" /></div>
               </div>
@@ -136,10 +140,14 @@ function printPreview() {
   closePreview()
 }
 
-// 列表网格列宽（复刻合同管理历史抽屉样式，末尾操作列）
-const gridStyle = computed(() => ({
-  gridTemplateColumns: 'minmax(0, 28%) minmax(0, 11%) minmax(0, 11%) minmax(0, 15%) minmax(0, 19%) 96px',
-}))
+const columns = [
+  { colKey: 'file', title: '文件', ellipsis: true },
+  { colKey: 'parse', title: '解析', width: '100px' },
+  { colKey: 'extract', title: '提取', width: '100px' },
+  { colKey: 'docType', title: '证照类型', width: '120px' },
+  { colKey: 'createdAt', title: '上传时间', width: '160px' },
+  { colKey: 'op', title: '操作', width: '60px', fixed: 'right' as const },
+]
 
 const fileExt = (name: string) => {
   const m = String(name || '').match(/\.([^.]+)$/)
@@ -502,42 +510,6 @@ watch(() => props.visible, (v) => {
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.doc-list-view {
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-.doc-list-header, .doc-list-row {
-  display: grid;
-  align-items: center;
-  padding: 0 12px;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-.doc-list-header {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  height: 40px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-secondarycontainer);
-  border-bottom: 1px solid var(--td-component-stroke);
-}
-.doc-list-body { display: flex; flex-direction: column; }
-.doc-list-row {
-  position: relative;
-  min-height: 52px;
-  font-size: 13px;
-  color: var(--td-text-color-primary);
-  border-bottom: 1px solid var(--td-component-stroke);
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-.doc-list-row:last-child { border-bottom: 0; }
-.doc-list-row:hover:not(.selected) { background: var(--td-bg-color-secondarycontainer); }
-.doc-list-row.selected { background: var(--td-brand-color-1); }
 .cell {
   display: flex;
   align-items: center;
