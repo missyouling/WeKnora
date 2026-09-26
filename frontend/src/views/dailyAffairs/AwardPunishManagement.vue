@@ -231,7 +231,7 @@
     </div>
 
     <!-- 创建知识库向导 -->
-    <AwardPunishKbWizard v-model:visible="wizardVisible" @created="onKbCreated" />
+    <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-奖惩" kb-desc="奖惩管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析奖惩文件，自动提取奖惩字段" default-description="用于存放并解析奖惩文件，自动提取奖惩字段" model-tip="提取模型将复用下方「对话模型」，用于解析奖惩文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
 
     <!-- 删除历史（自动删除的非奖惩记录） -->
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="奖惩"
@@ -434,7 +434,7 @@ import {
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
-import AwardPunishKbWizard from './AwardPunishKbWizard.vue'
+import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
