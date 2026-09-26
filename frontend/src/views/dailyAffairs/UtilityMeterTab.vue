@@ -1,8 +1,17 @@
 <template>
   <div class="utility-meter-tab">
-    <!-- 筛选工具栏（与电费/合同管理一致） -->
-    <div class="doc-filter-bar">
-      <div class="doc-filter-bar__leading">
+    <!-- 筛选工具栏（中台化） -->
+    <BusinessListToolbar
+      v-model:keyword="meterSearch"
+      search-placeholder="搜索表计/使用单位"
+      :show-print="false"
+      primary-action-text="新增记录"
+      :selected-count="selectedRowKeysArr.length"
+      @refresh="load"
+      @primary="openCreate"
+      @clear-selection="clearSelection"
+    >
+      <template #type-extra>
         <div class="doc-filter-field">
           <t-date-picker v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM" value-type="YYYY-MM" clearable
             class="doc-date-picker doc-filter-field__control" @change="load" />
@@ -15,11 +24,8 @@
           <t-select v-model="filters.useUnit" placeholder="使用单位" clearable filterable class="doc-filter-select doc-filter-field__control"
             :options="useUnitOptions" @change="load" />
         </div>
-        <t-button variant="outline" size="small" @click="load">
-          <template #icon><t-icon name="refresh" size="14px" /></template>
-        </t-button>
-      </div>
-      <div class="doc-filter-bar__trailing">
+      </template>
+      <template #columns>
         <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
           overlay-inner-class="meter-field-popup">
           <t-button variant="outline" size="small">
@@ -43,16 +49,14 @@
             </div>
           </template>
         </t-popup>
+      </template>
+      <template #right-extra>
         <t-button variant="outline" size="small" @click="openSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" size="small" @click="openCreate">
-          <template #icon><t-icon name="add" /></template>
-          新增记录
-        </t-button>
-      </div>
-    </div>
+      </template>
+    </BusinessListToolbar>
 
     <!-- 列表（自绘 grid，数据少时只包裹记录行，超出滚动） -->
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
@@ -60,7 +64,7 @@
         <t-table
         :data="displayRows"
         :columns="tableColumns"
-        :row-key="(row: any) => row.item_id || row.key"
+        :row-key="(row: any) => row.key || row.record_id"
         size="small"
         :hover="true"
         :loading="loading"
@@ -644,6 +648,7 @@ import {
   deleteUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import BusinessListToolbar from './BusinessListToolbar.vue'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
