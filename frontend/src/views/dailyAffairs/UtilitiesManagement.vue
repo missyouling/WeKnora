@@ -150,13 +150,6 @@
           @row-click="({ row }: any) => handleRowClick(row)"
           @select-change="(val: any) => onTableSelectChange(val)"
         >
-          <template #default="{ row, col }: any">
-            <span v-if="row.kind === 'pending' && col.colKey === visibleColDefs[0]?.key" class="row-text" :title="row.fileName">{{ row.fileName }}</span>
-            <span v-else-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.colKey)">
-              {{ cellText(row, col.colKey) }}
-            </span>
-            <span v-else class="row-text" :title="cellText(row, col.colKey)">{{ cellText(row, col.colKey) }}</span>
-          </template>
           <template #extractStatus="{ row }: any">
             <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
               variant="light-outline" class="row-status-tag">
@@ -748,7 +741,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, h } from 'vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
