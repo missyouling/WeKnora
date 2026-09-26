@@ -488,6 +488,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
@@ -1692,7 +1693,23 @@ const handleBatchDelete = async () => {
 }
 
 // ---- 生命周期 ----
-onMounted(() => { loadKb() })
+onMounted(() => {
+  loadKb()
+  void (async () => {
+    try {
+      const res: any = await listFleetCategories({ scope: 'invoice' })
+      const cats = res?.data || []
+      if (cats[0]?.subs?.length) {
+        customColumns.value = cats[0].subs
+          .filter((s: any) => s.enabled !== false)
+          .map((s: any) => {
+            const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
+            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr' }
+          })
+      }
+    } catch { /* 后端未配置时回退内置默认 */ }
+  })()
+})
 onBeforeUnmount(() => {
   stopPolling()
   if (autoSaveTimer) clearTimeout(autoSaveTimer)})

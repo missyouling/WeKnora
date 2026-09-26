@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"context"
@@ -31,6 +31,7 @@ func NewFleetHandler(db *gorm.DB) *FleetHandler {
 	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}, &types.FleetGroupAlias{}); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate fleet_cert_groups failed: %v", err)
 	}
+	h.seedBusinessCategories()
 	return h
 }
 
@@ -853,6 +854,11 @@ var fleetCategoryScopes = map[string]bool{
 	types.FleetCategoryScopeVehicle:  true,
 	types.FleetCategoryScopeDriver:   true,
 	types.FleetCategoryScopeMaintain: true,
+	// P2-D: 日常事务业务模块（单大类，subs 即列表列配置）
+	"contract":      true,
+	"invoice":       true,
+	"regulation":    true,
+	"award_punish":  true,
 }
 
 // ListFleetCategories godoc
@@ -862,7 +868,14 @@ func (h *FleetHandler) ListFleetCategories(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := fleetTenantID(c)
 	scope := strings.TrimSpace(c.Query("scope"))
-	q := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	q := h.db.WithContext(ctx).Where("deleted_at IS NULL")
+	// P2-D: 日常事务业务模块（contract/invoice/...）使用全局 tenant_id=0 配置，不按 tenant 隔离
+	isBusinessScope := scope == "contract" || scope == "invoice" || scope == "regulation" || scope == "award_punish"
+	if isBusinessScope {
+		q = q.Where("tenant_id = 0")
+	} else {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
 	if scope != "" {
 		if !fleetCategoryScopes[scope] {
 			c.Error(errors.NewBadRequestError("scope 不合法"))
@@ -1424,3 +1437,89 @@ func (h *FleetHandler) DeleteFleetETCCard(c *gin.Context) {
 }
 
 var _ = time.Now
+
+// seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
+// 记录 tenant_id=0（全局共享），subs.name 为前端 row 的 camelCase key，data_type 标注类型。
+func (h *FleetHandler) seedBusinessCategories() {
+	ctx := context.Background()
+	seeds := []struct {
+		Scope string
+		Name  string
+		Subs  []types.FleetCategorySub
+	}{
+		{"contract", "合同", []types.FleetCategorySub{
+			{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+			{Name: "fulfillStatus", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
+			{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		}},
+		{"invoice", "发票", []types.FleetCategorySub{
+			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceCode", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "taxAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		}},
+		{"regulation", "制度", []types.FleetCategorySub{
+			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "docNumber", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "category", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "publishDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "effectiveDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		}},
+		{"award_punish", "奖惩", []types.FleetCategorySub{
+			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "person", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "dept", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "eventDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "reason", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		}},
+	}
+	for _, s := range seeds {
+		var cnt int64
+		h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("tenant_id = 0 AND scope = ? AND deleted_at IS NULL", s.Scope).Count(&cnt)
+		if cnt > 0 {
+			continue
+		}
+		cat := types.FleetCategory{
+			ID:        "seed-" + s.Scope,
+			TenantID:  0,
+			Scope:     s.Scope,
+			BuiltinKey: s.Scope,
+			Name:      s.Name,
+			Subs:      s.Subs,
+			SortOrder: 0,
+			Enabled:   true,
+			CreatedAt: timeNowUTC(),
+			UpdatedAt: timeNowUTC(),
+		}
+		if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
+			logger.Warnf(ctx, "seed business category %s failed: %v", s.Scope, err)
+		}
+	}
+}
