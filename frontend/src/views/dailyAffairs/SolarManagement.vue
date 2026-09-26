@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="solar-management-container">
     <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
       @change="onFileInputChange" />
@@ -97,7 +97,7 @@
         @row-click="({ row }: any) => handleRowClick(row)"
         @select-change="(val: any) => onTableSelectChange(val)"
       >
-        <template #defaultCell="{ row, col }: any">
+        <template #default="{ row, col }: any">
           <span v-if="row.kind === 'pending' && col.colKey === visibleColDefs[0]?.key" class="row-text" :title="row.fileName">{{ row.fileName }}</span>
           <span v-else-if="col.fieldType === 'number' || col.fieldType === 'amount'" class="row-mono" :title="cellText(row, col.colKey)">
             {{ cellText(row, col.colKey) }}
