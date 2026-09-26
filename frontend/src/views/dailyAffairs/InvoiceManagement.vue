@@ -74,8 +74,8 @@
                     <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
                   </div>
                 </div>
-                <t-checkbox-group v-model="visibleColKeys" class="field-popup-list" @change="persistColumns">
-                  <t-checkbox v-for="col in columnDefs" :key="col.key" :value="col.key" class="field-popup-item">
+                <t-checkbox-group v-model="visibleColKeys" class="field-popup-list">
+                  <t-checkbox v-for="col in effectiveColumns" :key="col.key" :value="col.key" class="field-popup-item">
                     {{ col.label }}
                   </t-checkbox>
                 </t-checkbox-group>
@@ -527,12 +527,7 @@ const PAGE_SIZE = 20
 const INVOICE_TYPES = ['专用发票', '普通发票', '医疗收据', '财政收据', '其它票据']
 
 // 字段定义（列显隐设置）
-interface ColumnDef {
-  key: string
-  label: string
-  default: boolean
-  w: string
-}
+import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'invoiceNo', label: '发票号码', default: true, w: '1.5fr' },
   { key: 'invoiceDate', label: '开票日期', default: true, w: '1.1fr' },
@@ -551,17 +546,16 @@ const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'buyerTaxNo', label: '购买方税号', default: false, w: '1.3fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
-// P2-B: 后端驱动的动态列（未来从后端 categories.subs 加载），当前为空回退默认。
-const customColumns = ref<ColumnDef[]>([])
-const effectiveColumns = computed<ColumnDef[]>(() => customColumns.value.length ? customColumns.value : DEFAULT_INVOICE_COLUMNS)
-function colValue(row: any, key: string): any {
-  try {
-    if (!row) return '-'
-    const v = row[key]
-    return v === undefined || v === null || v === '' ? '-' : v
-  } catch { return '-' }
-}
-const COLUMN_STORAGE_KEY = 'weknora-invoice-list-columns'
+const {
+  customColumns, effectiveColumns,
+  visibleColKeys, visibleColDefs,
+  resetColumns, selectAllColumns, colVisible,
+  selectedRowKeys, onSelectChange, clearSelection,
+  colValue,
+} = useBusinessList({
+  storageKey: 'weknora-invoice-list-columns',
+  defaultColumns: DEFAULT_INVOICE_COLUMNS,
+})
 
 const kbId = ref('')
 const loading = ref(true)
@@ -672,13 +666,9 @@ const filterInvoiceType = ref('')
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
-const selectedRowKeys = ref<string[]>([])
 
 // 列显隐
-const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
-const columnDefs = effectiveColumns
-const visibleColDefs = computed(() => effectiveColumns.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
@@ -687,25 +677,8 @@ const tableColumns = computed(() => {
   return cols
 })
 
-function loadStoredColumns(): string[] {
-  try {
-    const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
-    if (raw) {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.value.some(c => c.key === k))
-    }
-  } catch { /* ignore */ }
-  return effectiveColumns.value.filter(c => c.default).map(c => c.key)
-}
-function colVisible(key: string) { return visibleColKeys.value.includes(key) }
-function selectAllColumns() { visibleColKeys.value = effectiveColumns.value.map(c => c.key) }
-function resetColumns() { visibleColKeys.value = effectiveColumns.value.filter(c => c.default).map(c => c.key) }
-function persistColumns() {
-  try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
-}
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
-watch(visibleColKeys, () => persistColumns(), { deep: true })
 
 // ---- 标签 ----
 const tagList = ref<any[]>([])
@@ -1143,7 +1116,6 @@ const toggleRow = (rowKey: string, checked: boolean) => {
     selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
   }
 }
-const clearSelection = () => { selectedRowKeys.value = [] }
 const selectedRows = computed(() => {
   const byKey = new Map(invoiceRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as InvoiceRow[]

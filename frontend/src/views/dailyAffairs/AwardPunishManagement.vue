@@ -68,8 +68,8 @@
                     <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
                   </div>
                 </div>
-                <t-checkbox-group v-model="visibleColKeys" class="field-popup-list" @change="persistColumns">
-                  <t-checkbox v-for="col in columnDefs" :key="col.key" :value="col.key" class="field-popup-item">
+                <t-checkbox-group v-model="visibleColKeys" class="field-popup-list">
+                  <t-checkbox v-for="col in effectiveColumns" :key="col.key" :value="col.key" class="field-popup-item">
                     {{ col.label }}
                   </t-checkbox>
                 </t-checkbox-group>
@@ -449,12 +449,7 @@ const PAGE_SIZE = 20
 const AWARD_PUNISH_TYPES = ['处罚', '奖励', '通报', '其它奖惩']
 
 // 字段定义（列显隐设置）
-interface ColumnDef {
-  key: string
-  label: string
-  default: boolean
-  w: string
-}
+import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 const DEFAULT_AWARDPUNISH_COLUMNS: ColumnDef[] = [
   { key: 'apNo', label: '文号', default: true, w: '1.4fr' },
   { key: 'apTitle', label: '标题', default: true, w: '1.8fr' },
@@ -473,17 +468,16 @@ const DEFAULT_AWARDPUNISH_COLUMNS: ColumnDef[] = [
   { key: 'remark', label: '备注', default: false, w: '1.4fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
-// P2-B: 后端驱动的动态列（未来从后端 categories.subs 加载），当前为空回退默认。
-const customColumns = ref<ColumnDef[]>([])
-const effectiveColumns = computed<ColumnDef[]>(() => customColumns.value.length ? customColumns.value : DEFAULT_AWARDPUNISH_COLUMNS)
-function colValue(row: any, key: string): any {
-  try {
-    if (!row) return '-'
-    const v = row[key]
-    return v === undefined || v === null || v === '' ? '-' : v
-  } catch { return '-' }
-}
-const COLUMN_STORAGE_KEY = 'weknora-awardPunish-list-columns-v4'
+const {
+  customColumns, effectiveColumns,
+  visibleColKeys, visibleColDefs,
+  resetColumns, selectAllColumns, colVisible,
+  selectedRowKeys, onSelectChange, clearSelection,
+  colValue,
+} = useBusinessList({
+  storageKey: 'weknora-awardpunish-list-columns',
+  defaultColumns: DEFAULT_AWARDPUNISH_COLUMNS,
+})
 
 const kbId = ref('')
 const loading = ref(true)
@@ -597,13 +591,9 @@ const loadMeasures = async () => {
   } catch { /* 措施加载失败不阻塞 */ }
 }
 const dateRange = ref<Array<string>>([])
-const selectedRowKeys = ref<string[]>([])
 
 // 列显隐
-const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
-const columnDefs = effectiveColumns
-const visibleColDefs = computed(() => effectiveColumns.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
@@ -612,25 +602,8 @@ const tableColumns = computed(() => {
   return cols
 })
 
-function loadStoredColumns(): string[] {
-  try {
-    const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
-    if (raw) {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.value.some(c => c.key === k))
-    }
-  } catch { /* ignore */ }
-  return effectiveColumns.value.filter(c => c.default).map(c => c.key)
-}
-function colVisible(key: string) { return visibleColKeys.value.includes(key) }
-function selectAllColumns() { visibleColKeys.value = effectiveColumns.value.map(c => c.key) }
-function resetColumns() { visibleColKeys.value = effectiveColumns.value.filter(c => c.default).map(c => c.key) }
-function persistColumns() {
-  try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
-}
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
-watch(visibleColKeys, () => persistColumns(), { deep: true })
 
 // ---- 标签 ----
 const tagList = ref<any[]>([])
@@ -1019,7 +992,6 @@ const toggleRow = (rowKey: string, checked: boolean) => {
     selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
   }
 }
-const clearSelection = () => { selectedRowKeys.value = [] }
 const selectedRows = computed(() => {
   const byKey = new Map(awardPunishRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as AwardPunishRow[]
