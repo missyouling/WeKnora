@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   modelCatalog: {
     "title": "模型目录",
     "description": "模型目录决定添加模型时可选的模型列表，以及上下文窗口、是否支持思考等默认参数。在这里修改后，所有空间立即生效。",
@@ -7019,6 +7019,7 @@ export default {
   },
   knowledgeBase: {
     tagAddAction: '添加标签',
+    tagNewPlaceholder: '请输入新标签',
     documentCount: '{count} 个文档',
     filters: '筛选',
     clearFilters: '清除筛选',

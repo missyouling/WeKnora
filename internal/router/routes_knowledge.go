@@ -100,7 +100,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
 			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
 // 			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
-// 			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
+kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
 		}
 	}
 
