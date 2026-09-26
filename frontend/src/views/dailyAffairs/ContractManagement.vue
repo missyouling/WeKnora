@@ -552,7 +552,7 @@ interface ColumnDef {
   default: boolean
   w: string
 }
-const COLUMN_DEFS: ColumnDef[] = [
+const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
   { key: 'contractNo', label: '合同编号', default: true, w: '1.4fr' },
   { key: 'contractName', label: '合同名称', default: true, w: '1.6fr' },
   { key: 'contractType', label: '合同类型', default: true, w: '1fr' },
@@ -573,6 +573,20 @@ const COLUMN_DEFS: ColumnDef[] = [
   { key: 'department', label: '部门', default: false, w: '0.9fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
+// P2-A: 后端驱动的动态列（未来从 contract categories.subs 加载）。
+// 当前为空，回退到 DEFAULT_CONTRACT_COLUMNS。
+const customColumns = ref<ColumnDef[]>([])
+const effectiveColumns = computed<ColumnDef[]>(() => customColumns.value.length ? customColumns.value : DEFAULT_CONTRACT_COLUMNS)
+
+// P2-A: 深层路径安全取值兜底。row 上字段是扁平 camelCase，直接取，undefined 返回 '-'。
+function colValue(row: any, key: string): any {
+  try {
+    if (!row) return '-'
+    const v = row[key]
+    return v === undefined || v === null || v === '' ? '-' : v
+  } catch { return '-' }
+}
+
 const COLUMN_STORAGE_KEY = 'weknora-contract-list-columns'
 
 const kbId = ref('')
@@ -704,8 +718,8 @@ const selectedRowKeys = ref<string[]>([])
 // 列显隐
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
-const columnDefs = COLUMN_DEFS
-const visibleColDefs = computed(() => COLUMN_DEFS.filter(c => visibleColKeys.value.includes(c.key)))
+const columnDefs = effectiveColumns
+const visibleColDefs = computed(() => effectiveColumns.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
@@ -720,14 +734,14 @@ function loadStoredColumns(): string[] {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => COLUMN_DEFS.some(c => c.key === k))
+      if (Array.isArray(arr) && arr.length) return arr.filter((k: string) => effectiveColumns.some(c => c.key === k))
     }
   } catch { /* ignore */ }
-  return COLUMN_DEFS.filter(c => c.default).map(c => c.key)
+  return effectiveColumns.filter(c => c.default).map(c => c.key)
 }
 function colVisible(key: string) { return visibleColKeys.value.includes(key) }
-function selectAllColumns() { visibleColKeys.value = COLUMN_DEFS.map(c => c.key) }
-function resetColumns() { visibleColKeys.value = COLUMN_DEFS.filter(c => c.default).map(c => c.key) }
+function selectAllColumns() { visibleColKeys.value = effectiveColumns.map(c => c.key) }
+function resetColumns() { visibleColKeys.value = effectiveColumns.filter(c => c.default).map(c => c.key) }
 function persistColumns() {
   try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
 }
