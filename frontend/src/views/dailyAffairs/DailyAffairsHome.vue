@@ -271,42 +271,42 @@ const onPlaceholder = (name: string) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--td-text-color-anti);
 
   &.da-card-icon--invoice {
-    background: linear-gradient(135deg, #07c05f, #0a9d51);
+    background: linear-gradient(135deg, var(--td-brand-color), var(--td-brand-color-active));
   }
 
   &.da-card-icon--contract {
-    background: linear-gradient(135deg, #4e6b99, #3a5480);
+    background: linear-gradient(135deg, var(--td-brand-color-5), var(--td-brand-color-7));
   }
 
   &.da-card-icon--policy {
-    background: linear-gradient(135deg, #f59e0b, #d97706);
+    background: linear-gradient(135deg, var(--td-warning-color), var(--td-warning-color-7));
   }
 
   &.da-card-icon--reward {
-    background: linear-gradient(135deg, #ef4444, #dc2626);
+    background: linear-gradient(135deg, var(--td-error-color), var(--td-error-color-7));
   }
 
   &.da-card-icon--utility {
-    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+    background: linear-gradient(135deg, var(--td-brand-color-4), var(--td-brand-color-7));
   }
 
   &.da-card-icon--energy {
-    background: linear-gradient(135deg, #22c55e, #15803d);
+    background: linear-gradient(135deg, var(--td-success-color), var(--td-success-color-7));
   }
 
   &.da-card-icon--fleet {
-    background: linear-gradient(135deg, #64748b, #475569);
+    background: linear-gradient(135deg, var(--td-text-color-secondary), var(--td-text-color-primary));
   }
 
   &.da-card-icon--canteen {
-    background: linear-gradient(135deg, #f97316, #c2410c);
+    background: linear-gradient(135deg, var(--td-warning-color-6), var(--td-warning-color-8));
   }
 
   &.da-card-icon--dorm {
-    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+    background: linear-gradient(135deg, var(--td-brand-color-3), var(--td-brand-color-7));
   }
 }
 

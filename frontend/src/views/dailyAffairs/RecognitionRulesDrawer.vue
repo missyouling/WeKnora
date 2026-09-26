@@ -391,14 +391,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .rr-body { padding: 4px 2px 24px; display: flex; flex-direction: column; gap: 16px; }
-.rr-hint { font-size: 12px; color: var(--td-text-color-secondary, #666); line-height: 1.6; }
+.rr-hint { font-size: 12px; color: var(--td-text-color-secondary); line-height: 1.6; }
 .rr-section { display: flex; flex-direction: column; gap: 0; }
-.rr-section-head { display: flex; align-items: center; gap: 8px; padding: 8px 0 6px; border-bottom: 1px solid var(--td-component-border, #e7e7e7); }
+.rr-section-head { display: flex; align-items: center; gap: 8px; padding: 8px 0 6px; border-bottom: 1px solid var(--td-component-border); }
 .rr-section-title { font-size: 13px; font-weight: 600; }
-.rr-state { font-size: 12px; color: var(--td-text-color-secondary, #666); }
+.rr-state { font-size: 12px; color: var(--td-text-color-secondary); }
 .rr-spacer { flex: 1; }
-.rr-empty { font-size: 12px; color: var(--td-text-color-placeholder, #999); padding: 10px 2px; }
-.rr-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--td-component-border, #eee); }
+.rr-empty { font-size: 12px; color: var(--td-text-color-placeholder); padding: 10px 2px; }
+.rr-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--td-component-border); }
 .rr-row--last { border-bottom: none; }
 .rr-row-main { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; flex-wrap: wrap; }
 .rr-row-side { display: flex; align-items: center; gap: 4px; }
@@ -406,18 +406,18 @@ onBeforeUnmount(() => {
 .rr-match { width: 96px; }
 .rr-keywords { flex: 1; min-width: 160px; }
 .rr-logic { width: 110px; }
-.rr-del { color: var(--td-error-color, #d54941); }
+.rr-del { color: var(--td-error-color); }
 .rr-pattern { flex: 1; min-width: 140px; }
 .rr-regex-check { margin-right: 2px; }
 .rr-type-val { width: 130px; }
 .rr-priority { width: 76px; }
-.rr-regex-tip { color: var(--td-text-color-secondary, #666); }
-.rr-regex-tip-box { padding: 8px 10px; background: var(--td-bg-color-container-hover, #f5f5f5); border-radius: 6px; display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+.rr-regex-tip { color: var(--td-text-color-secondary); }
+.rr-regex-tip-box { padding: 8px 10px; background: var(--td-bg-color-container-hover); border-radius: 6px; display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
 .rr-regex-item { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-.rr-regex-code { font-family: Consolas, Monaco, monospace; color: var(--td-brand-color, #0052d9); background: var(--td-bg-color-container, #fff); padding: 1px 6px; border-radius: 3px; }
-.rr-regex-desc { color: var(--td-text-color-secondary, #666); }
+.rr-regex-code { font-family: Consolas, Monaco, monospace; color: var(--td-brand-color); background: var(--td-bg-color-container); padding: 1px 6px; border-radius: 3px; }
+.rr-regex-desc { color: var(--td-text-color-secondary); }
 .rr-type-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 4px; }
-.rr-type-chip { display: flex; align-items: center; gap: 2px; border: 1px solid var(--td-component-border, #e7e7e7); border-radius: 6px; padding: 2px 2px 2px 8px; background: var(--td-bg-color-container, #fff); }
+.rr-type-chip { display: flex; align-items: center; gap: 2px; border: 1px solid var(--td-component-border); border-radius: 6px; padding: 2px 2px 2px 8px; background: var(--td-bg-color-container); }
 .rr-type-name { width: 110px; }
 .rr-measure-type { width: 96px; }
 .rr-type-chip .rr-del { width: 24px; }
@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
 }
 .rr-resize-line {
   width: 3px; height: 42px; border-radius: 2px;
-  background: var(--td-component-border, #e7e7e7); opacity: 0; transition: opacity .2s;
+  background: var(--td-component-border); opacity: 0; transition: opacity .2s;
 }
-.rr-resize-handle:hover .rr-resize-line { opacity: 1; background: var(--td-brand-color, #0052d9); }
+.rr-resize-handle:hover .rr-resize-line { opacity: 1; background: var(--td-brand-color); }
 </style>

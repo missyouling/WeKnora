@@ -384,7 +384,7 @@ watch(() => props.visible, (v) => {
 .dh-search { flex: 1; }
 .dh-hint {
   font-size: 12px;
-  color: var(--td-text-color-secondary, #666);
+  color: var(--td-text-color-secondary);
 }
 /* ---- 列表（复刻合同管理列表样式：grid 自绘 + 懒加载滚动） ---- */
 .doc-list-scroll {
@@ -455,7 +455,7 @@ watch(() => props.visible, (v) => {
   text-overflow: ellipsis;
   min-width: 0;
 }
-.row-muted { color: var(--td-text-color-disabled, #bbb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dh-list-loading, .dh-list-empty {
   display: flex;
   justify-content: center;
@@ -468,8 +468,8 @@ watch(() => props.visible, (v) => {
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  background: var(--td-brand-color-light, #e8f3ff);
-  color: var(--td-brand-color, #0052d9);
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
   font-size: 10px;
   font-weight: 600;
   display: flex;
@@ -480,24 +480,24 @@ watch(() => props.visible, (v) => {
 .dh-file-meta { min-width: 0; }
 .dh-file-name {
   font-size: 13px;
-  color: var(--td-text-color-primary, #333);
+  color: var(--td-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .dh-file-sub {
   font-size: 12px;
-  color: var(--td-text-color-secondary, #888);
+  color: var(--td-text-color-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dh-count-badge { color: var(--td-warning-color, #e37318); font-weight: 600; }
-.dh-count-once { color: var(--td-text-color-secondary, #888); }
+.dh-count-badge { color: var(--td-warning-color); font-weight: 600; }
+.dh-count-once { color: var(--td-text-color-secondary); }
 .dh-menu-item { display: inline-flex; align-items: center; gap: 6px; }
 .dh-menu-icon { flex-shrink: 0; }
-.dh-menu-icon--restore { color: var(--td-brand-color, #0052d9); }
-.dh-menu-icon--purge { color: var(--td-error-color, #d54941); }
+.dh-menu-icon--restore { color: var(--td-brand-color); }
+.dh-menu-icon--purge { color: var(--td-error-color); }
 
 /* 下半：预览 */
 .dh-preview-region {
@@ -517,7 +517,7 @@ watch(() => props.visible, (v) => {
 .dh-preview-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--td-text-color-primary, #333);
+  color: var(--td-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -525,9 +525,9 @@ watch(() => props.visible, (v) => {
 .dh-preview-file {
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--td-component-border, #e7e7e7);
+  border: 1px solid var(--td-component-border);
   border-radius: 8px;
-  background: var(--td-bg-color-container, #fff);
+  background: var(--td-bg-color-container);
   overflow: hidden;
   display: flex;
   flex-direction: column;
