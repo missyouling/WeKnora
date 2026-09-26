@@ -34,45 +34,72 @@
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
-          <div class="doc-filter-field doc-filter-field--search">
-            <t-input v-model="keyword" placeholder="搜索全部字段" clearable class="doc-search doc-filter-field__control"
-              @enter="onKeywordChange" @clear="onKeywordChange">
-              <template #prefixIcon><t-icon name="search" size="16px" /></template>
-            </t-input>
-          </div>
-          <div class="doc-filter-field">
-            <t-select v-model="filterContractType" :options="contractTypeOptions" placeholder="合同类型"
-              class="doc-type-select doc-filter-field__control" clearable @change="applyFilter">
-              <template #prefixIcon><t-icon name="file" size="16px" /></template>
-            </t-select>
-          </div>
-          <div class="doc-filter-field">
-            <t-select v-model="filterFulfillStatus" :options="fulfillStatusOptions" placeholder="履约状态"
-              class="doc-type-select doc-filter-field__control" clearable @change="applyFilter">
-              <template #prefixIcon><t-icon name="check-circle" size="16px" /></template>
-            </t-select>
-          </div>
-          <div class="doc-filter-field doc-filter-field--wide">
-            <t-date-range-picker v-model="dateRange" placeholder="签订日期" class="doc-date-range doc-filter-field__control"
-              clearable allow-input @change="applyFilter">
-              <template #prefixIcon><t-icon name="time" size="16px" /></template>
-            </t-date-range-picker>
-          </div>
-          <!-- 字段筛选（列显隐设置） -->
-          <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
-          <t-button variant="outline" size="small" @click="applyFilter">
-            <template #icon><t-icon name="refresh" size="14px" /></template>
-          </t-button>
-          <t-tooltip content="设置" placement="bottom">
-            <t-button variant="outline" size="small" @click="recognitionVisible = true">
-              <template #icon><t-icon name="setting" size="14px" /></template>
+        <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
+          :type-options="contractTypeOptions" v-model:type-value="filterContractType"
+          primary-action-text="新建合同" @primary="wizardVisible = true"
+          @refresh="applyFilter" @print="handleBatchPrint" :selected-count="selectedRowKeys.length"
+          @clear-selection="clearSelection">
+          <template #type-extra>
+            <div class="doc-filter-field">
+              <t-select v-model="filterFulfillStatus" :options="fulfillStatusOptions" placeholder="履约状态"
+                class="doc-type-select doc-filter-field__control" clearable @change="applyFilter">
+                <template #prefixIcon><t-icon name="check-circle" size="16px" /></template>
+              </t-select>
+            </div>
+            <div class="doc-filter-field doc-filter-field--wide">
+              <t-date-range-picker v-model="dateRange" placeholder="签订日期" class="doc-date-range doc-filter-field__control"
+                clearable allow-input @change="applyFilter">
+                <template #prefixIcon><t-icon name="time" size="16px" /></template>
+              </t-date-range-picker>
+            </div>
+          </template>
+          <template #columns>
+            <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
+          </template>
+          <template #right-extra>
+            <t-tooltip content="设置" placement="bottom">
+              <t-button variant="outline" size="small" @click="recognitionVisible = true">
+                <template #icon><t-icon name="setting" size="14px" /></template>
+              </t-button>
+            </t-tooltip>
+            <t-tooltip content="删除历史" placement="bottom">
+              <t-button variant="outline" size="small" @click="historyVisible = true">
+                <template #icon><t-icon name="history" size="14px" /></template>
+              </t-button>
+            </t-tooltip>
+          </template>
+          <template #batch-actions>
+            <t-popconfirm theme="warning"
+              :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
+              :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+              @confirm="handleReExtract">
+              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                <template #icon><t-icon name="refresh" size="14px" /></template>
+                重新提取
+              </t-button>
+            </t-popconfirm>
+            <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
+              <template #icon><t-icon name="edit" size="14px" /></template>
+              编辑数据
             </t-button>
-          </t-tooltip>
-          <t-tooltip content="删除历史" placement="bottom">
-            <t-button variant="outline" size="small" @click="historyVisible = true">
-              <template #icon><t-icon name="history" size="14px" /></template>
+            <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+              <template #icon><t-icon name="print" size="14px" /></template>
+              打印
             </t-button>
-          </t-tooltip>
+            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+              <template #icon><t-icon name="file-paste" size="14px" /></template>
+              目录
+            </t-button>
+            <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个合同记录吗？删除后不可恢复。`"
+              :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+              @confirm="handleBatchDelete">
+              <t-button theme="danger" variant="outline" size="small" @click.stop>
+                <template #icon><t-icon name="delete" size="14px" /></template>
+                删除记录
+              </t-button>
+            </t-popconfirm>
+          </template>
+        </BusinessListToolbar>
         </div>
       </div>
 
@@ -183,50 +210,6 @@
         </span>
       </div>
 
-      <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏，避免浮于弹窗之上） -->
-      <transition name="batch-bar-fade">
-        <div v-if="selectedRowKeys.length && !printVisible" class="doc-batch-bar-fixed" role="region">
-          <div class="batch-bar-inner">
-            <div class="batch-bar-left">
-              <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-              <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
-                清除
-              </t-button>
-            </div>
-            <div class="batch-bar-actions">
-              <t-popconfirm theme="warning"
-                :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
-                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleReExtract">
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
-                  重新提取
-                </t-button>
-              </t-popconfirm>
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-                <template #icon><t-icon name="edit" size="14px" /></template>
-                编辑数据
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                打印
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-                <template #icon><t-icon name="file-paste" size="14px" /></template>
-                目录
-              </t-button>
-              <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个合同记录吗？删除后不可恢复。`"
-                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleBatchDelete">
-                <t-button theme="danger" variant="outline" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="14px" /></template>
-                  删除记录
-                </t-button>
-              </t-popconfirm>
-            </div>
-          </div>
-        </div>
-      </transition>
     </div>
 
     <!-- 创建知识库向导 -->
@@ -684,7 +667,8 @@ const filterFulfillStatus = ref('')
 const contractTypeOptions = ref<Array<{ value: string; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
-// 列显隐
+// 列显隐
+
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
