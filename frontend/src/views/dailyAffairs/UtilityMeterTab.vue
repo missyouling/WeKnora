@@ -2100,7 +2100,7 @@ onBeforeUnmount(() => {
   font-family: var(--app-font-family);
 }
 
-.os-neg { color: var(--td-error-color, #d54941); }
+.os-neg { color: var(--td-error-color); }
 .row-dash { color: var(--td-text-color-placeholder); }
 .row-expand-toggle {
   display: inline-flex;

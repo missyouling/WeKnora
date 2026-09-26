@@ -1794,7 +1794,7 @@ onBeforeUnmount(() => { stopPolling() })
   flex-direction: column;
   width: min(920px, 92vw);
   height: min(820px, 90vh);
-  background: #fff;
+  background: var(--td-bg-color-container);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -1808,7 +1808,7 @@ onBeforeUnmount(() => { stopPolling() })
 }
 .utility-print-title { font-size: 14px; font-weight: 600; color: var(--td-text-color-primary); }
 .utility-print-body { flex: 1; min-height: 0; display: flex; }
-.print-preview-frame { width: 100%; height: 100%; border: none; background: #fff; }
+.print-preview-frame { width: 100%; height: 100%; border: none; background: var(--td-bg-color-container); }
 .print-preview-loading { display: flex; align-items: center; justify-content: center; width: 100%; }
 .utility-print-footer {
   display: flex;

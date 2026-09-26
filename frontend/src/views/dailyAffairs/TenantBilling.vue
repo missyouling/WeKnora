@@ -1450,7 +1450,7 @@ onMounted(() => {
 .row-mono,
 .row-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-mono { font-family: var(--app-font-family); }
-.os-neg { color: var(--td-error-color, #d54941); }
+.os-neg { color: var(--td-error-color); }
 .strong { font-weight: 600; }
 
 .tenant-list-scroll {
@@ -1939,7 +1939,7 @@ onMounted(() => {
     width: 100% !important;
     max-height: none !important;
     overflow: visible !important;
-    background: #fff !important;
+    background: var(--td-bg-color-container) !important;
     padding: 0 !important;
   }
   #rd-print-clone .record-overview { grid-template-columns: repeat(4, 1fr) !important; page-break-inside: avoid; }
