@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="utilities-management-container">
     <!-- 顶部 -->
     <div class="header">
@@ -988,6 +988,8 @@ const mapRow = (r: any): Row => ({
   extractError: r.extract_error || '',
   kind: r.extract_status === 'manual' ? 'manual' : 'bill',
   item: r.item || {},
+  ...(r.item || {}),
+  bill_period: r.item ? `${r.item.bill_period_start || ""} ~ ${r.item.bill_period_end || ""}` : ``,
   tags: r.tags || [],
   page: r.page,
 })

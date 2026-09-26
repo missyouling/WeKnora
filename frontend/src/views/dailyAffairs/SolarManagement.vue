@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="solar-management-container">
     <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
       @change="onFileInputChange" />
@@ -662,6 +662,7 @@ const mapRow = (r: any): Row => ({
   extractError: r.extract_error || '',
   kind: r.extract_status === 'manual' ? 'manual' : 'bill',
   item: r.item || {},
+  ...(r.item || {}),
   tags: r.tags || [],
 })
 
