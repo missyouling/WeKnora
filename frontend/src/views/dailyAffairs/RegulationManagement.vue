@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="regulation-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
@@ -439,7 +439,7 @@ import {
   updateKnowledgeMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
-  extractRegulation,
+  extractBusinessDocument,
   listRegulationRecords,
   listRegulationTypes,
   previewKnowledgeFile,
@@ -1073,7 +1073,7 @@ const {
   start: startPolling, stop: stopPolling,
 } = useBusinessPolling({
   kbId,
-  extractFn: (kid, fileId) => extractRegulation(kid, fileId),
+  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'regulation'),
   onPendingFiles: (files) => {
     const withRows = new Set(regulationRows.value.map(r => r.knowledgeId))
     pendingFiles.value = files.filter(k => !withRows.has(k.id))

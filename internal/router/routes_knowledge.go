@@ -1,4 +1,4 @@
-package router
+﻿package router
 
 import (
 	"net/http"
@@ -84,6 +84,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 
 		// === 日常事务沙盒：业务提取路由（挂在 BusinessExtractHandler 上） ===
 		if business != nil {
+			kb.POST(":knowledgeId/extract-business", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractBusinessDocument)
 // 			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoice)
 // 			kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoicePage)
 // 			kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteInvoicePage)

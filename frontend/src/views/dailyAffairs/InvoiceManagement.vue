@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="invoice-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
@@ -501,7 +501,7 @@ import {
   updateKnowledgeMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
-  extractInvoice,
+  extractBusinessDocument,
   extractInvoicePage,
   deleteInvoicePage,
   listInvoiceRecords,
@@ -1200,7 +1200,7 @@ const {
   start: startPolling, stop: stopPolling,
 } = useBusinessPolling({
   kbId,
-  extractFn: (kid, fileId) => extractInvoice(kid, fileId),
+  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'invoice'),
   onPendingFiles: (files) => {
     const withRows = new Set(invoiceRows.value.map(r => r.knowledgeId))
     pendingFiles.value = files.filter(k => !withRows.has(k.id))

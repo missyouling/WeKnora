@@ -1,4 +1,4 @@
-import { get, post, put, del, postUpload, getDown } from "../../utils/request";
+﻿import { get, post, put, del, postUpload, getDown } from "../../utils/request";
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import type { AuditLog, AuditOutcome, ListAuditLogResponse } from '@/api/tenant/audit-log';
 import { buildListKnowledgeFilesQuery } from './knowledgeFileListQuery';
@@ -1021,6 +1021,15 @@ export function listRegulationTypes(kbId: string) {
 
 export function extractAwardPunish(kbId: string, knowledgeId: string) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-award-punish`, {}, { timeout: 600000 });
+}
+
+/**
+ * P1-C: 统一业务文档提取入口。前端只调这一个接口，后端按 scope 分发。
+ * scope: contract | invoice | regulation | award_punish
+ */
+export function extractBusinessDocument(kbId: string, knowledgeId: string, scope: string) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-business`,
+    { scope }, { timeout: 600000 });
 }
 
 /**

@@ -514,7 +514,7 @@ import {
   updateKnowledgeMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
-  extractContract,
+  extractBusinessDocument,
   deleteContractPage,
   listContractRecords,
   listContractTypes,
@@ -1239,7 +1239,7 @@ const {
   start: startPolling, stop: stopPolling,
 } = useBusinessPolling({
   kbId,
-  extractFn: (kid, fileId) => extractContract(kid, fileId),
+  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'contract'),
   onPendingFiles: (files) => {
     const withRows = new Set(contractRows.value.map(r => r.knowledgeId))
     pendingFiles.value = files.filter(k => !withRows.has(k.id))

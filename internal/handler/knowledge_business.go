@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"context"
@@ -1880,3 +1880,24 @@ func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice [post]
+
+
+// ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。
+func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
+	var body struct {
+		Scope string `json:"scope"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	switch body.Scope {
+	case "contract":
+		h.ExtractContract(c)
+	case "invoice":
+		h.ExtractInvoice(c)
+	case "regulation":
+		h.ExtractRegulation(c)
+	case "award_punish":
+		h.ExtractAwardPunish(c)
+	default:
+		c.Error(errors.NewBadRequestError("unknown business scope: " + body.Scope))
+	}
+}

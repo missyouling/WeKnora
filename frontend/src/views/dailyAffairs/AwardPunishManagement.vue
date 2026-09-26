@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="awardPunish-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
@@ -421,7 +421,7 @@ import {
   updateKnowledgeMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
-  extractAwardPunish,
+  extractBusinessDocument,
   listAwardPunishRecords,
   listAwardPunishTypes,
   previewKnowledgeFile,
@@ -1068,7 +1068,7 @@ const {
   start: startPolling, stop: stopPolling,
 } = useBusinessPolling({
   kbId,
-  extractFn: (kid, fileId) => extractAwardPunish(kid, fileId),
+  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'award_punish'),
   onPendingFiles: (files) => {
     const withRows = new Set(awardPunishRows.value.map(r => r.knowledgeId))
     pendingFiles.value = files.filter(k => !withRows.has(k.id))
