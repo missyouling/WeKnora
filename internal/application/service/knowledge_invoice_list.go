@@ -1,4 +1,4 @@
-﻿// 发票级聚合列表：把知识库下所有已提取发票平铺为"一行一张发票"的记录，
+// 发票级聚合列表：把知识库下所有已提取发票平铺为"一行一张发票"的记录，
 // 在服务端完成按发票号去重（保留最新 created_at）、全字段搜索、类型/状态/
 // 日期筛选、排序、分页与金额聚合，供发票管理页直接渲染。
 package service
@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -117,12 +118,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				continue
 			}
 			for _, inv := range meta.Invoices {
-					// 过滤"空提取"记录：LLM 提取失败返回的空对象（无发票号且无任何
-					// 有效内容）不作为发票展示，避免列表出现无意义的空行。
-					if invoiceExtractionItemBlank(inv) {
-						continue
-					}
-					items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
+				// 过滤"空提取"记录：LLM 提取失败返回的空对象（无发票号且无任何
+				// 有效内容）不作为发票展示，避免列表出现无意义的空行。
+				if invoiceExtractionItemBlank(inv) {
+					continue
+				}
+				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
 						Name:    it.Name,
@@ -365,6 +366,138 @@ func approxEqualFloat(a, b float64) bool {
 	return math.Abs(a-b) < 1e-9
 }
 
+// InvoiceOverviewStats 计算发票台账概览统计。口径与 ListInvoiceRecords 完全一致：
+// 遍历知识库下全部 knowledge → 平铺 invoices → 按发票号去重（保留最新）→ 聚合。
+// 所有金额字段为空值时按 0 处理，不报类型转换错误（在内存中聚合，避免 JSONB
+// 数组展开的 SQL 类型转换陷阱，同时兼容 Postgres 与 SQLite 双库）。
+func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID string) (*types.InvoiceOverviewStats, error) {
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+
+	records := make([]types.InvoiceRecord, 0, 256)
+	parseFailedFiles := 0
+	page := 1
+	const batch = 1000
+	for {
+		p := &types.Pagination{Page: page, PageSize: batch}
+		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
+		if err != nil {
+			return nil, fmt.Errorf("list knowledge for invoice overview: %w", err)
+		}
+		if len(knowledges) == 0 {
+			break
+		}
+		for _, k := range knowledges {
+			if k == nil {
+				continue
+			}
+			// 文件级解析失败计数：与 FleetOverviewStats 口径一致（parse_status=failed）
+			if k.ParseStatus == "failed" {
+				parseFailedFiles++
+			}
+			if len(k.CustomMetadata) == 0 {
+				continue
+			}
+			var meta invoiceMetadata
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" {
+				continue
+			}
+			for _, inv := range meta.Invoices {
+				if invoiceExtractionItemBlank(inv) {
+					continue
+				}
+				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
+				for _, it := range inv.Items {
+					items = append(items, types.InvoiceExtractionItemItems{
+						Name:    it.Name,
+						Qty:     it.Qty,
+						Price:   it.Price,
+						TaxRate: it.TaxRate,
+					})
+				}
+				records = append(records, types.InvoiceRecord{
+					InvoiceNo:     inv.InvoiceNo,
+					InvoiceDate:   inv.InvoiceDate,
+					InvoiceType:   inv.InvoiceType,
+					TotalAmount:   inv.TotalAmount,
+					Amount:        inv.Amount,
+					Tax:           inv.Tax,
+					TaxRate:       inv.TaxRate,
+					SellerName:    inv.SellerName,
+					BuyerName:     inv.BuyerName,
+					Issuer:        inv.Issuer,
+					Remark:        inv.Remark,
+					Category:      inv.Category,
+					Items:         items,
+					VoidFlag:      inv.VoidFlag,
+					Page:          inv.Page,
+					KnowledgeID:   k.ID,
+					ExtractStatus: meta.ExtractStatus,
+					ExtractError:  meta.ExtractError,
+					CreatedAt:     k.CreatedAt,
+				})
+			}
+		}
+		if len(knowledges) < batch {
+			break
+		}
+		page++
+	}
+
+	// 按发票号去重（保留 created_at 最新），与列表口径一致
+	records = dedupInvoiceRecords(records)
+
+	stats := &types.InvoiceOverviewStats{
+		ByInvoiceType: []types.InvoiceTypeStat{},
+	}
+	stats.Total = len(records)
+	stats.ParseFailed = parseFailedFiles
+
+	// 当前月（基于开票日期 YYYY-MM-DD 或 YYYYMMDD）
+	now := time.Now()
+	monthPrefix := now.Format("2006-01") // YYYY-MM
+	monthPrefixCompact := now.Format("200601")
+
+	typeByMap := map[string]*types.InvoiceTypeStat{}
+	for _, r := range records {
+		if r.ExtractStatus == "failed" {
+			stats.ExtractFailed++
+		}
+		if r.TotalAmount != nil {
+			stats.SumTotal += *r.TotalAmount
+		}
+		// 本月看板：开票日期命中当前年月（兼容带横线与不带横线格式）
+		date := strings.TrimSpace(r.InvoiceDate)
+		if date != "" && (strings.HasPrefix(date, monthPrefix) || strings.HasPrefix(strings.ReplaceAll(date, "-", ""), monthPrefixCompact)) {
+			stats.CurrentMonth.Count++
+			if r.TotalAmount != nil {
+				stats.CurrentMonth.SumTotal += *r.TotalAmount
+			}
+		}
+		// 按发票类型分组
+		typ := strings.TrimSpace(r.InvoiceType)
+		if typ == "" {
+			typ = "未分类"
+		}
+		t := typeByMap[typ]
+		if t == nil {
+			t = &types.InvoiceTypeStat{InvoiceType: typ}
+			typeByMap[typ] = t
+		}
+		t.Count++
+		if r.TotalAmount != nil {
+			t.SumTotal += *r.TotalAmount
+		}
+	}
+	for _, t := range typeByMap {
+		stats.ByInvoiceType = append(stats.ByInvoiceType, *t)
+	}
+	// 按张数降序，稳定排序
+	sort.Slice(stats.ByInvoiceType, func(i, j int) bool {
+		return stats.ByInvoiceType[i].Count > stats.ByInvoiceType[j].Count
+	})
+	return stats, nil
+}
+
 // ListInvoiceTaxRates 返回该知识库下所有发票出现过的去重税率（含多档明细），
 // 用于前端税率筛选下拉自动加载。税率为金额最大项税率 + 全部明细档位的并集。
 func (s *BusinessExtractService) ListInvoiceTaxRates(ctx context.Context, kbID string) ([]types.InvoiceTaxRateCount, error) {
@@ -412,4 +545,3 @@ func (s *BusinessExtractService) ListInvoiceTaxRates(ctx context.Context, kbID s
 	sort.Slice(rates, func(i, j int) bool { return rates[i].TaxRate < rates[j].TaxRate })
 	return rates, nil
 }
-

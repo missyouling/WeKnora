@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"context"
@@ -62,6 +62,29 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		"page":       result.Page,
 		"page_size":  result.PageSize,
 	})
+}
+
+// InvoiceOverviewStats 发票台账概览统计
+func (h *BusinessExtractHandler) InvoiceOverviewStats(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(apperrors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	stats, err := h.businessSvc.InvoiceOverviewStats(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load invoice overview stats", err)
+		c.Error(apperrors.NewInternalServerError("load invoice overview stats failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
 }
 
 // ListInvoiceTaxRates 发票税率去重列表
