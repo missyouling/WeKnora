@@ -123,6 +123,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 				kbDirectRead.GET("/recognition-config", g.Viewer(), g.KBAccessRead("id"), business.GetRecognitionConfig)
 				kbDirect.PUT("/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.SaveRecognitionConfig)
 				kbDirect.POST("/recognition/reassess", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ReassessRecognition)
+				// 提取规则配置（可配置字段提取规则）：车队档案与日常事务共用
+				kbDirectRead.GET("/extract-config", g.Viewer(), g.KBAccessRead("id"), business.GetExtractConfig)
+				kbDirect.POST("/extract-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.SaveExtractConfig)
+				kbDirect.POST("/extract-config/test", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.TestExtractConfig)
 			}
 		}
 	}

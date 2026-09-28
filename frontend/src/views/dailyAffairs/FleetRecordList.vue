@@ -120,7 +120,7 @@
         <t-table
         :data="displayRows"
         :columns="tableColumns"
-        :row-key="(row: any) => rowKey(row)"
+        row-key="id"
         size="small"
         :hover="true"
         :loading="loading"
@@ -1370,7 +1370,7 @@ function initColumns() {
 // 选择与汇总
 // ---------------------------------------------------------------------------
 const selectedKeys = ref<Set<string>>(new Set())
-const rowKey = (r: any) => (r?.__file ? `f-${r.id}` : (r.key || r.id))
+const rowKey = (r: any) => (r?.id ?? r?.key ?? '')
 const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every((r) => selectedKeys.value.has(rowKey(r))))
 const someSelected = computed(() => displayRows.value.some((r) => selectedKeys.value.has(rowKey(r))))
 const selectedRows = computed(() => displayRows.value.filter((r) => selectedKeys.value.has(rowKey(r))))

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 withDefaults(defineProps<{
   columns: Array<{ key: string; label: string }>
@@ -15,41 +15,78 @@ const emit = defineEmits<{
 }>()
 
 const popVisible = ref(false)
-defineExpose({
-  open: () => { popVisible.value = true },
-})
+const pos = ref({ x: 0, y: 0 })
+const wrapEl = ref<HTMLElement | null>(null)
+
+function toggle() {
+  popVisible.value = !popVisible.value
+  if (popVisible.value && wrapEl.value) {
+    const r = wrapEl.value.getBoundingClientRect()
+    pos.value = { x: r.left, y: r.bottom + 6 }
+  }
+}
+function open() {
+  popVisible.value = true
+  if (wrapEl.value) {
+    const r = wrapEl.value.getBoundingClientRect()
+    pos.value = { x: r.left, y: r.bottom + 6 }
+  }
+}
+function onDocMouseDown(e: MouseEvent) {
+  const t = e.target as Node
+  if (wrapEl.value?.contains(t)) return
+  const panel = document.querySelector('.business-column-filter')
+  if (panel && panel.contains(t)) return
+  popVisible.value = false
+}
+onMounted(() => document.addEventListener('mousedown', onDocMouseDown, true))
+onUnmounted(() => document.removeEventListener('mousedown', onDocMouseDown, true))
+
+defineExpose({ open })
 </script>
 
 <template>
-  <t-popup trigger="click" placement="bottom-left" :hide-empty-popup="false" overlay-inner-class="business-column-filter"
-    :visible="popVisible" @visible-change="(v: boolean) => (popVisible = v)">
+  <div ref="wrapEl" class="business-column-filter-wrap">
     <span v-if="hideTrigger" class="field-filter-anchor"></span>
-    <t-button v-else variant="outline" size="small" @click="popVisible = true">
+    <t-button v-else variant="outline" size="small" @click="toggle">
       <template #icon><t-icon name="view-list" size="14px" /></template>
       字段
     </t-button>
-    <template #content>
-      <div class="field-popup-content">
-        <div class="field-popup-head">
-          <span class="field-popup-title">显示字段</span>
-          <div class="field-popup-actions">
-            <t-button variant="text" size="small" @click="emit('selectAll')">全选</t-button>
-            <t-button variant="text" size="small" @click="emit('reset')">重置</t-button>
+    <teleport to="body">
+      <div v-show="popVisible" class="business-column-filter" :style="{ left: pos.x + 'px', top: pos.y + 'px' }">
+        <div class="field-popup-content">
+          <div class="field-popup-head">
+            <span class="field-popup-title">显示字段</span>
+            <div class="field-popup-actions">
+              <t-button variant="text" size="small" @click="emit('selectAll')">全选</t-button>
+              <t-button variant="text" size="small" @click="emit('reset')">重置</t-button>
+            </div>
           </div>
+          <t-checkbox-group :value="visibleKeys" class="field-popup-list"
+            @change="(val: any) => emit('update:visibleKeys', val as string[])">
+            <t-checkbox v-for="col in columns" :key="col.key" :value="col.key" class="field-popup-item">
+              {{ col.label }}
+            </t-checkbox>
+          </t-checkbox-group>
         </div>
-        <t-checkbox-group :value="visibleKeys" class="field-popup-list"
-          @change="(val: any) => emit('update:visibleKeys', val as string[])">
-          <t-checkbox v-for="col in columns" :key="col.key" :value="col.key" class="field-popup-item">
-            {{ col.label }}
-          </t-checkbox>
-        </t-checkbox-group>
       </div>
-    </template>
-  </t-popup>
+    </teleport>
+  </div>
 </template>
 
 <style scoped>
 .field-filter-anchor { display: inline-block; width: 0; height: 0; overflow: hidden; }
+.field-filter-wrap { display: inline-block; }
+.field-filter-anchor { display: inline-block; width: 0; height: 0; overflow: hidden; }
+.business-column-filter {
+  position: fixed;
+  z-index: 3000;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-2);
+  box-sizing: border-box;
+}
 .field-popup-content {
   width: 220px;
   padding: 12px;
