@@ -240,9 +240,8 @@
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="发票"
       @changed="loadFiles(true)" @restored="onRestored" />
 
-    <!-- 识别规则（包含判定 + 类型归类） -->
-    <RecognitionRulesDrawer v-model:visible="recognitionVisible" :kb-id="kbId || ''" module-name="发票"
-      @changed="onRecognitionChanged" />
+    <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
+    <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="reloadColumns" />
 
     <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
@@ -497,7 +496,7 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
-import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
+import InvoiceSettingsDrawer from './InvoiceSettingsDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
@@ -697,7 +696,7 @@ const moreMenuOptions = [
 ]
 const onMoreMenuClick = (data: { value?: string | number }) => {
   if (data.value === 'columns') fieldFilterRef.value?.open()
-  else if (data.value === 'settings') recognitionVisible.value = true
+  else if (data.value === 'settings') invoiceSettingsVisible.value = true
   else if (data.value === 'history') historyVisible.value = true
 }
 const taxRateFilter = ref<number | string>('')
@@ -760,7 +759,7 @@ const DRAWER_WIDTH_KEY = 'weknora-invoice-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
-const recognitionVisible = ref(false)
+const invoiceSettingsVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')
@@ -1083,9 +1082,20 @@ const loadTypeOptions = async () => {
     if (Array.isArray(c?.types) && c.types.length) kbTypes.value = c.types.filter(Boolean)
   } catch { /* 保持现状 */ }
 }
-const onRecognitionChanged = async () => {
-  await loadTypeOptions()
-  await loadFiles(true)
+// 重新拉取后端发票动态列配置（字段定义保存后同步刷新列表列）
+const reloadColumns = async () => {
+  try {
+    const res: any = await listFleetCategories({ scope: 'invoice' })
+    const cats = res?.data || []
+    if (cats[0]?.subs?.length) {
+      customColumns.value = cats[0].subs
+        .filter((s: any) => s.enabled !== false)
+        .map((s: any) => {
+          const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr' }
+        })
+    }
+  } catch { /* 后端未配置时回退内置默认 */ }
 }
 
 
@@ -1675,20 +1685,7 @@ onMounted(() => {
   if (typeof route.query.type === 'string' && route.query.type) filterInvoiceType.value = route.query.type
   if (route.query.failed === '1') historyVisible.value = true
   loadKb()
-  void (async () => {
-    try {
-      const res: any = await listFleetCategories({ scope: 'invoice' })
-      const cats = res?.data || []
-      if (cats[0]?.subs?.length) {
-        customColumns.value = cats[0].subs
-          .filter((s: any) => s.enabled !== false)
-          .map((s: any) => {
-            const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
-            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr' }
-          })
-      }
-    } catch { /* 后端未配置时回退内置默认 */ }
-  })()
+  reloadColumns()
 })
 onBeforeUnmount(() => {
   stopPolling()

@@ -1,7 +1,8 @@
 <template>
   <div class="extract-rule-panel">
     <div class="extract-toolbar">
-      <t-select v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
+      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
+      <span v-else class="cert-type-static">整体提取规则</span>
       <div class="spacer" />
       <t-switch v-model="advancedEnabled" size="small">
         <template #label>高级模式</template>
@@ -92,9 +93,9 @@ import { sortCertsByLocalOrder } from './useCertOrder'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
-const props = defineProps<{ scope: string }>()
+const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
 
-const KB_NAME = '车队管理'
+const KB_NAME = computed(() => props.kbName || '车队管理')
 const kbId = ref('')
 
 // 默认字段底稿（无配置时按证照类型生成）：与证照配置内置字段一致
@@ -265,6 +266,9 @@ const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintai
 
 // 分组别名：与设置抽屉 FleetCertPanel 同 key（`${scope}:${builtinGroupKey}`），builtin group_key = company/driver/maintain
 const BUILTIN_GROUP_KEY: Record<string, string> = { vehicle: 'company', driver: 'driver', maintain: 'maintain' }
+// 非车队 scope（如 invoice）：整体一条规则，无证照类型维度
+const ALL_CERT_TYPE = '__all__'
+const isFleetScope = computed(() => !!BUILTIN_GROUP_KEY[props.scope])
 const groupAliases = ref<Record<string, string>>({})
 async function loadGroupAliases() {
   try {
@@ -322,6 +326,7 @@ const currentScope = computed(() => {
   return s && s !== certType.value ? s : props.scope
 })
 const certTypeName = computed(() => {
+  if (certType.value === ALL_CERT_TYPE) return ''
   const parts = certType.value.split('__')
   return parts.length > 1 ? parts.slice(1).join('__') : certType.value
 })
@@ -368,6 +373,16 @@ function makeField(name: string): ExtractFieldConfig {
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
 function authorityFields(): { name: string; enabled: boolean; dataType: string }[] {
+  if (!isFleetScope.value) {
+    // 非车队 scope：整体规则，字段名权威 = categories[scope][0].subs（如发票动态列）
+    const arr = categories.value[props.scope] || []
+    const c = arr.find((x: any) => Array.isArray(x.subs)) || arr[0]
+    const subs = c && Array.isArray(c.subs) ? c.subs : []
+    const seen = new Set<string>()
+    return subs
+      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, dataType: s.data_type || 'text' }))
+      .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
+  }
   const scope = currentScope.value
   const c = (categories.value[scope] || []).find((x: any) => x.name === certTypeName.value)
   if (c && Array.isArray(c.subs) && c.subs.length) {
@@ -401,10 +416,15 @@ function applyTemplateExample() {
 
 async function ensureKb() {
   if (kbId.value) return kbId.value
+  // 父组件直接传入 kbId（发票等业务模块与列表同库），免去按名称查找
+  if (props.kbId) {
+    kbId.value = props.kbId
+    return kbId.value
+  }
   try {
     const res: any = await listKnowledgeBases({ page: 1, page_size: 100 } as any)
     const list = Array.isArray(res) ? res : res?.data || []
-    const found = Array.isArray(list) ? list.find((kb: any) => kb.name === KB_NAME) : null
+    const found = Array.isArray(list) ? list.find((kb: any) => kb.name === KB_NAME.value) : null
     if (found) kbId.value = found.id
   } catch (e) {
     console.error('load kb failed', e)
@@ -464,7 +484,7 @@ async function save() {
   if (!certType.value) return
   await ensureKb()
   if (!kbId.value) {
-    MessagePlugin.error('未找到车队管理知识库')
+    MessagePlugin.error(`未找到${KB_NAME.value}知识库`)
     return
   }
   const payload = {
@@ -494,10 +514,10 @@ function openTest() {
 // 重新拉取证照配置（公司证照 vehicle + 司机证照 driver，含自定义分组类型）
 async function refresh() {
   try {
-    const scopes = ['vehicle', 'driver', 'maintain']
+    const scopes = isFleetScope.value ? ['vehicle', 'driver', 'maintain'] : [props.scope]
     const [results] = await Promise.all([
       Promise.all(scopes.map((s) => listFleetCategories({ scope: s }))),
-      loadGroupAliases(),
+      isFleetScope.value ? loadGroupAliases() : Promise.resolve(),
     ])
     scopes.forEach((s, i) => {
       const r: any = results[i]
@@ -515,23 +535,44 @@ watch(
   () => {
     certType.value = ''
     fields.value = []
+    if (!isFleetScope.value) {
+      certType.value = ALL_CERT_TYPE
+      refresh()
+    }
+  },
+)
+
+// 防御：父组件 kbId 异步注入（如发票页 loadKb 晚于面板挂载）时，注入后自动加载整体规则
+watch(
+  () => props.kbId,
+  (v) => {
+    if (!v || isFleetScope.value) return
+    if (kbId.value === v && certType.value === ALL_CERT_TYPE) return
+    kbId.value = v
+    certType.value = ALL_CERT_TYPE
+    refresh()
   },
 )
 
 onMounted(async () => {
   await ensureKb()
   await refresh()
-  const groups = certTypeOptions.value
-  const first = groups[0]?.children?.[0]
-  if (first) {
-    certType.value = first.value
+  if (isFleetScope.value) {
+    const groups = certTypeOptions.value
+    const first = groups[0]?.children?.[0]
+    if (first) {
+      certType.value = first.value
+      await loadConfig()
+    }
+  } else {
+    certType.value = ALL_CERT_TYPE
     await loadConfig()
   }
 })
 
 // 兜底：categories 异步加载完成后，若仍未选中类型则自动选中第一个（默认加载第一个分类）
 watch(certTypeOptions, (groups) => {
-  if (certType.value) return
+  if (!isFleetScope.value || certType.value) return
   const first = groups[0]?.children?.[0]
   if (first) {
     certType.value = first.value
@@ -555,6 +596,11 @@ watch(certTypeOptions, (groups) => {
   flex-wrap: wrap;
   .cert-type-select {
     width: 220px;
+  }
+  .cert-type-static {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--td-text-color-secondary);
   }
   .spacer {
     flex: 1;
