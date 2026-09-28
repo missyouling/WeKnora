@@ -10,49 +10,20 @@
       <span v-else>正在解析 {{ pendingFiles.length }} 个文件，解析完成后自动提取字段...</span>
     </div>
 
-    <!-- 筛选工具栏（与电费核算内容页一致） -->
-    <div class="doc-filter-bar">
-      <div class="doc-filter-bar__leading">
-        <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
-          <t-input v-model="searchText" placeholder="搜索车牌 / 字段值"
-            clearable class="doc-filter-field__control">
-            <template #prefix-icon><t-icon name="search" size="14px" /></template>
-          </t-input>
-        </div>
-        <div v-if="!(isArchive && !filters.docType)" class="doc-filter-field">
-          <t-date-picker v-if="!isArchive" v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM"
-            value-type="YYYY-MM" clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
-          <t-select v-else v-model="filters.docType" :options="docTypeOptions" clearable placeholder="全部证照类型"
-            class="doc-filter-select doc-filter-field__control" @change="onDocTypeChange" />
-        </div>
-        <t-button v-if="!(isArchive && !filters.docType)" variant="outline" size="small" @click="refreshAll">
-          <template #icon><t-icon name="refresh" size="14px" /></template>
-        </t-button>
-      </div>
-      <div class="doc-filter-bar__trailing">
-        <t-popup v-if="!(isArchive && !filters.docType)" v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-          overlay-inner-class="meter-field-popup">
-          <t-button variant="outline" size="small">
-            <template #icon><t-icon name="view-list" size="14px" /></template>
-            字段
-          </t-button>
-          <template #content>
-            <div class="field-popup-content">
-              <div class="field-popup-head">
-                <span class="field-popup-title">显示字段</span>
-                <div class="field-popup-actions">
-                  <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                  <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                </div>
-              </div>
-              <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in columnDefs" :key="col.key" :value="col.key" class="field-popup-item">
-                  {{ col.label }}
-                </t-checkbox>
-              </t-checkbox-group>
-            </div>
-          </template>
-        </t-popup>
+    <!-- 筛选工具栏（标准中台组件 BusinessListToolbar） -->
+    <BusinessListToolbar v-if="!(isArchive && !filters.docType)" v-model:keyword="searchText"
+      search-placeholder="搜索车牌 / 字段值" hide-batch-bar @refresh="refreshAll">
+      <template #type-extra>
+        <t-date-picker v-if="!isArchive" v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM"
+          value-type="YYYY-MM" clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
+        <t-select v-else v-model="filters.docType" :options="docTypeOptions" clearable placeholder="全部证照类型"
+          class="doc-filter-select doc-filter-field__control" @change="onDocTypeChange" />
+      </template>
+      <template #columns>
+        <BusinessColumnFilter :columns="columnDefs" v-model:visibleKeys="visibleKeys"
+          @update:visible-keys="persistColumns" @reset="resetColumns" @select-all="selectAllColumns" />
+      </template>
+      <template #right-extra>
         <t-button variant="outline" size="small" @click="emit('openSettings')">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
@@ -73,9 +44,8 @@
           <template #icon><t-icon name="add" size="14px" /></template>
           新增记录
         </t-button>
-      </div>
-    </div>
-
+      </template>
+    </BusinessListToolbar>
     <!-- 上传弹窗（证照型） -->
     <FleetUploadDialog v-if="isArchive" v-model:visible="uploadVisible" :kb-id="kbId" :scope="group.scope"
       :type-options="uploadTypeOptions" :default-type="isArchive && filters.docType ? filters.docType : ''"
@@ -416,6 +386,8 @@ import { selectInitialModelId } from '@/utils/modelDefaults'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import BusinessListToolbar from './BusinessListToolbar.vue'
+import BusinessColumnFilter from './BusinessColumnFilter.vue'
 
 const props = defineProps<{ recordType: string }>()
 const emit = defineEmits<{ (e: 'openSettings'): void }>()
@@ -1372,7 +1344,6 @@ function colValue(key: string, row: any) {
   if (!col) return ''
   try { return col.value(row) } catch { return '' }
 }
-const fieldPopupVisible = ref(false)
 function persistColumns() { try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
 function resetColumns() { visibleKeys.value = columnDefs.value.filter((c) => c.def).map((c) => c.key); persistColumns() }
 function selectAllColumns() { visibleKeys.value = columnDefs.value.map((c) => c.key); persistColumns() }

@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { ColumnDef } from '@/composables/useBusinessList'
 
 withDefaults(defineProps<{
-  columns: ColumnDef[]
+  columns: Array<{ key: string; label: string }>
   visibleKeys: string[]
   hideTrigger?: boolean
 }>(), {

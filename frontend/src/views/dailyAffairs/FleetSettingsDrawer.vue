@@ -19,30 +19,30 @@
       <!-- 按当前菜单动态显示对应配置面板（车辆档案：证照配置 + 提取规则） -->
       <template v-if="panelKey === 'cert-vehicle'">
         <t-tabs v-model="vehicleTab" class="fleet-settings-tabs" @change="onVehicleTabChange">
-          <t-tab-panel value="cert" label="证照配置">
+          <t-tab-panel value="fields" label="字段定义">
             <CertPanel ref="vehicleCertRef" scope="vehicle" />
           </t-tab-panel>
-          <t-tab-panel value="extract" label="提取规则">
+          <t-tab-panel value="rules" label="提取规则">
             <ExtractRulePanel ref="extractPanelRef" scope="vehicle" />
           </t-tab-panel>
         </t-tabs>
       </template>
       <template v-else-if="panelKey === 'cert-driver'">
         <t-tabs v-model="driverTab" class="fleet-settings-tabs" @change="onDriverTabChange">
-          <t-tab-panel value="cert" label="证照配置">
+          <t-tab-panel value="fields" label="字段定义">
             <CertPanel ref="driverCertRef" scope="driver" />
           </t-tab-panel>
-          <t-tab-panel value="extract" label="提取规则">
+          <t-tab-panel value="rules" label="提取规则">
             <ExtractRulePanel ref="driverExtractRef" scope="driver" />
           </t-tab-panel>
         </t-tabs>
       </template>
       <template v-else-if="panelKey === 'cert-maintain'">
         <t-tabs v-model="maintainTab" class="fleet-settings-tabs" @change="onMaintainTabChange">
-          <t-tab-panel value="cert" label="维保配置">
+          <t-tab-panel value="fields" label="字段定义">
             <CertPanel ref="maintainCertRef" scope="maintain" />
           </t-tab-panel>
-          <t-tab-panel value="extract" label="提取规则">
+          <t-tab-panel value="rules" label="提取规则">
             <ExtractRulePanel ref="maintainExtractRef" scope="maintain" />
           </t-tab-panel>
         </t-tabs>
@@ -105,9 +105,9 @@ const panelKey = computed(() => PANEL_MAP[props.menuKey || '']?.key || '')
 const drawerTitle = computed(() => PANEL_MAP[props.menuKey || '']?.title || '设置')
 
 const activeTab = ref('vehicle')
-const vehicleTab = ref('cert')
-const driverTab = ref('cert')
-const maintainTab = ref('cert')
+const vehicleTab = ref('fields')
+const driverTab = ref('fields')
+const maintainTab = ref('fields')
 const extractPanelRef = ref()
 const driverExtractRef = ref()
 const maintainExtractRef = ref()
@@ -116,9 +116,9 @@ const driverCertRef = ref<any>(null)
 const maintainCertRef = ref<any>(null)
 // 标题栏右侧「新增」按钮：仅证照配置面板且停留在“证照配置”tab 时显示
 const showAddBtn = computed(() => {
-  if (panelKey.value === 'cert-vehicle') return vehicleTab.value === 'cert'
-  if (panelKey.value === 'cert-driver') return driverTab.value === 'cert'
-  if (panelKey.value === 'cert-maintain') return maintainTab.value === 'cert'
+  if (panelKey.value === 'cert-vehicle') return vehicleTab.value === 'fields'
+  if (panelKey.value === 'cert-driver') return driverTab.value === 'fields'
+  if (panelKey.value === 'cert-maintain') return maintainTab.value === 'fields'
   if (!panelKey.value) return ['vehicle', 'driver', 'maintain'].includes(activeTab.value)
   return false
 })
@@ -132,13 +132,13 @@ const addBtnLabel = computed(() => activeCertRef.value?.addLabel || '新增')
 function onHeaderAdd() { activeCertRef.value?.startAdd?.() }
 // 切到提取规则页时重新拉取证照配置，保证字段名与证照配置实时同步
 function onVehicleTabChange(val: string | number) {
-  if (val === 'extract') extractPanelRef.value?.refresh()
+  if (val === 'rules') extractPanelRef.value?.refresh()
 }
 function onDriverTabChange(val: string | number) {
-  if (val === 'extract') driverExtractRef.value?.refresh()
+  if (val === 'rules') driverExtractRef.value?.refresh()
 }
 function onMaintainTabChange(val: string | number) {
-  if (val === 'extract') maintainExtractRef.value?.refresh()
+  if (val === 'rules') maintainExtractRef.value?.refresh()
 }
 
 const DRAWER_KEY = 'weknora-fleet-settings-drawer-width'

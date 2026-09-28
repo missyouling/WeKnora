@@ -56,7 +56,7 @@
           </div>
         </div>
       </template>
-      <div v-if="!fields.length" class="rule-empty">暂无字段，请在证照配置中添加字段</div>
+      <div v-if="!fields.length" class="rule-empty">暂无字段，请在字段定义中添加字段</div>
     </div>
 
     <template v-if="advancedEnabled">
