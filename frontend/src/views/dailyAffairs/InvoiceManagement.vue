@@ -41,49 +41,44 @@
 
       <!-- 台账概览视图：独立看板，不随列表筛选变化 -->
       <div v-show="activeView === 'overview-dashboard'" class="overview-dashboard">
-        <!-- 第一排：核心指标 -->
+        <!-- 第一排：核心 KPI 4 卡并排（TDesign 24 栅格等分，lg=6 即 span 6） -->
         <t-row :gutter="16">
           <t-col v-for="card in overviewCoreCards" :key="card.key" :xs="24" :sm="12" :lg="6">
             <div class="metric-card" :class="card.cls" @click="onOverviewCardClick(card)">
               <div class="metric-card__icon"><t-icon :name="card.icon" size="24px" /></div>
               <div class="metric-card__body">
                 <div class="metric-card__value">{{ card.value }}</div>
-                <div class="metric-card__label">{{ card.label }}</div>
-              </div>
-            </div>
-          </t-col>
-        </t-row>
-
-        <!-- 第二排：异常质量 -->
-        <t-row :gutter="16">
-          <t-col v-for="card in overviewQualityCards" :key="card.key" :xs="24" :sm="12" :lg="6">
-            <div class="quality-card" :class="card.cls" @click="onOverviewCardClick(card)">
-              <div class="quality-card__icon"><t-icon :name="card.icon" size="22px" /></div>
-              <div class="quality-card__body">
-                <div class="quality-card__num">{{ card.num }}</div>
-                <div class="quality-card__label">{{ card.label }}</div>
-              </div>
-            </div>
-          </t-col>
-        </t-row>
-
-        <!-- 第三排：类型分布 -->
-        <div v-if="overviewTypeCards.length" class="overview-section">
-          <div class="overview-section__title">类型分布</div>
-          <t-row :gutter="16">
-            <t-col v-for="card in overviewTypeCards" :key="card.key" :xs="24" :sm="12" :lg="8">
-              <div class="type-card" @click="onOverviewCardClick(card)">
-                <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
-                <div class="type-card__body">
-                  <div class="type-card__label">{{ card.label }}</div>
-                  <div class="type-card__num">{{ card.num }} <span>张</span></div>
+                <div class="metric-card__sub">
+                  <t-icon v-if="card.subIcon" :name="card.subIcon" size="14px" class="metric-card__sub-icon" />
+                  <span>{{ card.sub }}</span>
                 </div>
               </div>
-            </t-col>
-          </t-row>
+            </div>
+          </t-col>
+        </t-row>
+
+        <!-- 健康态折叠：0 失败 = 轻量 tag；有失败 = 告警 + 查看详情 -->
+        <div class="overview-health">
+          <t-tag v-if="!overviewHasErrors" theme="success" variant="light" size="medium" class="overview-health__tag">
+            <template #icon><t-icon name="check-circle" size="16px" /></template>
+            系统运行正常，无解析/提取失败记录
+          </t-tag>
+          <t-alert v-else :theme="overviewAlertTheme" :message="overviewAlertMessage" :close="false" class="overview-health__alert">
+            <template #operation>
+              <t-button variant="text" size="small" @click="goFailedList">
+                <template #icon><t-icon name="search" size="14px" /></template>
+                查看详情
+              </t-button>
+            </template>
+          </t-alert>
+        </div>
+
+        <!-- 类型分布环形图（ECharts） -->
+        <div class="overview-section overview-section--chart">
+          <div class="overview-section__title">类型分布</div>
+          <div ref="typeChartRef" class="type-chart"></div>
         </div>
       </div>
-
       <!-- 发票列表视图 -->
       <div v-show="activeView === 'invoice-list'" class="invoice-list-view">
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
@@ -161,6 +156,15 @@
         </div>
       </div>
 
+      <!-- 筛选结果实时摘要：与概览 KPI 数字视觉统一 -->
+      <div class="filter-summary">
+        <t-typography variant="body">
+          当前筛选：共 <span class="filter-summary__num">{{ displaySummary.total }}</span> 条
+          <template v-if="displaySummary.total">
+            | 价税合计 <span class="filter-summary__num">{{ formatAmount(displaySummary.sumTotal) }}</span>
+          </template>
+        </t-typography>
+      </div>
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
@@ -250,8 +254,6 @@
         </template>
       </t-table>
     </div>
-    </div>
-
       <!-- 底部汇总（选中记录时显示选中发票汇总，未选中显示全部；选中时避让底部工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
@@ -264,11 +266,10 @@
         <span v-if="displaySummary.total" class="doc-summary-item">
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
-      </div>
-      </div>
-
+      </div>
     </div>
-
+    </div>
+    </div>
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-发票" kb-desc="发票管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析电子发票，自动提取发票字段" default-description="用于存放并解析电子发票，自动提取发票字段" model-tip="提取模型将复用下方「对话模型」，用于解析发票字段。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
 
@@ -504,6 +505,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import * as echarts from 'echarts'
+import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -576,6 +579,9 @@ const {
   storageKey: 'weknora-invoice-list-columns',
   defaultColumns: DEFAULT_INVOICE_COLUMNS,
 })
+
+const route = useRoute()
+const router = useRouter()
 
 const kbId = ref('')
 const loading = ref(true)
@@ -698,42 +704,96 @@ const loadInvoiceOverview = async () => {
 const overviewCoreCards = computed(() => {
   const st = overviewStats.value || {}
   const m = st.current_month || {}
+  const total = Number(st.total || 0)
+  const parseFailed = Number(st.parse_failed || 0)
+  const extractFailed = Number(st.extract_failed || 0)
+  const failed = parseFailed + extractFailed
+  const successRate = total > 0 ? Math.max(0, Math.round(((total - failed) / total) * 100)) : 100
   return [
-    { key: 'total', label: '已收录发票', value: `${Number(st.total || 0)} 张`, icon: 'file', cls: '', action: 'history-all' },
-    { key: 'monthCount', label: '本月新增', value: `${Number(m.count || 0)} 张`, icon: 'chart-pie', cls: '', action: '' },
-    { key: 'monthSum', label: '本月价税合计', value: formatAmount(Number(m.sum_total || 0)), icon: 'money-circle', cls: 'is-brand', action: '' },
-    { key: 'sumTotal', label: '总价税合计', value: formatAmount(Number(st.sum_total || 0)), icon: 'money-circle', cls: 'is-brand', action: '' },
+    { key: 'total', label: '已收录发票', value: `${total} 张`, sub: `本月新增 ${Number(m.count || 0)} 张`, subIcon: 'arrow-up', icon: 'file', cls: '', action: 'history-all' },
+    { key: 'sumTotal', label: '总价税合计', value: formatAmount(Number(st.sum_total || 0)), sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, icon: 'money-circle', cls: 'is-brand', action: '' },
+    { key: 'successRate', label: '验真成功率', value: `${successRate}%`, sub: failed ? `${failed} 张待复核` : '解析/提取全部成功', icon: 'check-circle', cls: 'is-success', action: failed ? 'history-failed' : '' },
+    { key: 'pending', label: '待处理', value: `${failed} 张`, sub: '解析或提取失败', icon: 'error-circle', cls: failed > 0 ? 'is-warn' : 'is-muted', action: failed ? 'history-failed' : '' },
   ]
 })
-const overviewQualityCards = computed(() => {
+const overviewHasErrors = computed(() => {
   const st = overviewStats.value || {}
-  return [
-    { key: 'parseFailed', label: '解析失败', num: Number(st.parse_failed || 0), icon: 'error-circle', cls: 'is-warn', action: 'history-parse_failed' },
-    { key: 'extractFailed', label: '提取失败', num: Number(st.extract_failed || 0), icon: 'error-circle', cls: 'is-err', action: 'history-extract_failed' },
-  ]
+  return (Number(st.parse_failed || 0) + Number(st.extract_failed || 0)) > 0
 })
-const overviewTypeCards = computed(() => {
-  const arr = overviewStats.value?.by_invoice_type || []
-  return arr.map((t: any) => ({
-    key: 'type-' + (t.invoice_type || '未分类'),
-    label: t.invoice_type || '未分类',
-    num: Number(t.count || 0),
-    icon: 'money-circle',
-    action: 'type',
-    value: t.invoice_type || '',
-  }))
+const overviewAlertTheme = computed(() => {
+  const st = overviewStats.value || {}
+  return Number(st.extract_failed || 0) > 0 ? 'error' : 'warning'
+})
+const overviewAlertMessage = computed(() => {
+  const st = overviewStats.value || {}
+  return `存在 ${Number(st.parse_failed || 0)} 条解析失败、${Number(st.extract_failed || 0)} 条提取失败记录，建议人工复核`
 })
 const onOverviewCardClick = async (card: any) => {
-  if (card.action === 'history-all' || card.action === 'history-parse_failed' || card.action === 'history-extract_failed') {
+  if (card.action === 'history-all' || card.action === 'history-parse_failed' || card.action === 'history-extract_failed' || card.action === 'history-failed') {
     historyVisible.value = true
     return
   }
   if (card.action === 'type' && card.value) {
-    // 跨 Tab 联动：切回发票列表视图并应用类型筛选
+    router.replace({ query: { ...route.query, view: 'invoice-list', type: card.value } })
     activeView.value = 'invoice-list'
     filterInvoiceType.value = card.value  // watch(filterInvoiceType) 自动触发刷新
   }
 }
+const goFailedList = () => {
+  router.replace({ query: { ...route.query, view: 'invoice-list', failed: '1' } })
+  activeView.value = 'invoice-list'
+  historyVisible.value = true
+}
+
+// ---- 类型分布环形图（ECharts） ----
+const typeChartRef = ref<HTMLElement>()
+let typeChart: echarts.ECharts | null = null
+const TYPE_COLORS: Record<string, string> = {
+  '普通发票': '#0052D9',
+  '专用发票': '#4B5FD9',
+}
+const renderTypeChart = () => {
+  const el = typeChartRef.value
+  if (!el) return
+  const arr = overviewStats.value?.by_invoice_type || []
+  if (!arr.length) return
+  if (!typeChart) typeChart = echarts.init(el)
+  const total = Number(overviewStats.value?.total || 0)
+  const m = overviewStats.value?.current_month || {}
+  const data = arr.map((t: any) => ({
+    name: t.invoice_type || '未分类',
+    value: Number(t.count || 0),
+    itemStyle: { color: TYPE_COLORS[t.invoice_type] || '#909399' },
+  }))
+  typeChart.setOption({
+    tooltip: { trigger: 'item', formatter: '{b}: {c} 张 ({d}%)' },
+    legend: { orient: 'vertical', right: 0, top: 'middle', itemWidth: 12, itemHeight: 12, icon: 'circle', textStyle: { color: '#606266' } },
+    series: [{
+      type: 'pie', radius: ['50%', '72%'], center: ['38%', '50%'],
+      avoidLabelOverlap: true,
+      itemStyle: { borderColor: '#fff', borderWidth: 2 },
+      label: { show: false },
+      emphasis: { label: { show: true, fontSize: 14, fontWeight: 600, formatter: '{b}\n{c} 张' } },
+      data,
+    }],
+    title: {
+      text: `${total} 张`, subtext: `本月 ${Number(m.count || 0)} 张`,
+      left: '32%', top: '38%', textAlign: 'center', itemGap: 6,
+      textStyle: { fontSize: 24, fontWeight: 600, color: '#181818' },
+      subtextStyle: { fontSize: 12, color: '#606266' },
+    },
+  }, true)
+  typeChart.off('click')
+  typeChart.on('click', (p: any) => {
+    if (p?.name) {
+      router.replace({ query: { ...route.query, view: 'invoice-list', type: p.name } })
+      activeView.value = 'invoice-list'
+      filterInvoiceType.value = p.name
+    }
+  })
+}
+const resizeTypeChart = () => typeChart?.resize()
+
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
@@ -1705,6 +1765,13 @@ const handleBatchDelete = async () => {
 
 // ---- 生命周期 ----
 onMounted(() => {
+  // 路由 query 回填：view / type / failed 直达状态（跨 Tab 联动可分享 URL）
+  const qv = route.query.view
+  if (qv === 'invoice-list' || qv === 'overview-dashboard') activeView.value = qv
+  if (typeof route.query.type === 'string' && route.query.type) filterInvoiceType.value = route.query.type
+  if (route.query.failed === '1') historyVisible.value = true
+  watch(activeView, () => { nextTick(() => { renderTypeChart(); resizeTypeChart() }) })
+  window.addEventListener('resize', resizeTypeChart)
   loadKb()
   void (async () => {
     try {
@@ -1723,7 +1790,10 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)})
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  if (typeChart) { typeChart.dispose(); typeChart = null }
+  window.removeEventListener('resize', resizeTypeChart)
+})
 </script>
 
 <style scoped lang="less">
@@ -1771,6 +1841,10 @@ onBeforeUnmount(() => {
   flex: 1; min-height: 0; overflow-y: auto;
 }
 .overview-section { display: flex; flex-direction: column; gap: 12px; }
+.overview-health { display: flex; align-items: center; gap: 12px; }
+.overview-health__tag { gap: 6px; }
+.overview-health__alert { flex: 1; background: color-mix(in srgb, var(--td-warning-color) 8%, var(--td-bg-color-container)); }
+.overview-health__alert.t-alert--error { background: color-mix(in srgb, var(--td-error-color) 8%, var(--td-bg-color-container)); }
 .overview-section__title {
   font-size: 14px; font-weight: 600; color: var(--td-text-color-primary);
   padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
@@ -1797,6 +1871,16 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-primary); font-variant-numeric: tabular-nums;
 }
 .metric-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
+.metric-card__sub {
+  display: flex; align-items: center; gap: 4px; margin-top: 4px;
+  font-size: 12px; color: var(--td-text-color-secondary);
+  .metric-card__sub-icon { color: var(--td-success-color); }
+}
+.metric-card.is-success .metric-card__icon { background: var(--td-success-color-1); color: var(--td-success-color); }
+.metric-card.is-warn .metric-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
+.metric-card.is-muted { opacity: .62; }
+.metric-card.is-muted .metric-card__icon { background: var(--td-bg-color-component); color: var(--td-text-color-secondary); }
+.metric-card.is-brand .metric-card__icon { background: var(--td-brand-color); color: var(--td-text-color-anti); }
 .quality-card {
   display: flex; align-items: center; gap: 12px; padding: 14px 18px;
   background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
@@ -1832,12 +1916,21 @@ onBeforeUnmount(() => {
 .type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
 .type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
+.overview-section--chart { flex: 1; min-height: 0; }
+.type-chart { width: 100%; height: 300px; background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 8px 0; box-sizing: border-box; }
 
 /* ---- 发票列表视图（Tab 独立视图） ---- */
 .invoice-list-view {
   display: flex; flex-direction: column; gap: 12px;
   flex: 1; min-height: 0;
 }
+/* ---- 筛选结果实时摘要（数字与概览 KPI 视觉统一） ---- */
+.filter-summary {
+  display: flex; align-items: center; padding: 0 2px;
+  font-size: 13px; color: var(--td-text-color-secondary);
+  .filter-summary__num { font-size: 14px; font-weight: 600; color: var(--td-text-color-primary); font-variant-numeric: tabular-nums; }
+}
+
 /* ---- 筛选工具栏 ---- */
 .doc-filter-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1887,11 +1980,16 @@ onBeforeUnmount(() => {
 
 /* ---- 底部汇总 ---- */
 .doc-summary-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 0 2px;
+  padding: 10px 16px;
   font-size: 13px;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
   color: var(--td-text-color-secondary);
   .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
   .doc-summary-item {
