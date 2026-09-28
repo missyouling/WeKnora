@@ -116,7 +116,7 @@
         :selected-row-keys="selectedRowKeys"
         select-on-change
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
-        @row-click="({ row }: any) => openDetail(row)"
+        @row-click="({ row, e }: any) => onRowClick(row, e)"
         @select-change="(val: string[]) => (selectedRowKeys = val)"
       >
         <template #invoiceNo="{ row }: any">
@@ -190,7 +190,8 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部汇总（选中记录时显示选中发票汇总，未选中显示全部；选中时避让底部工具栏） -->
+    </div>
+      <!-- 底部汇总（移出滚动容器，始终贴列表底部；选中时避让底部浮动工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
         <span v-if="displaySummary.total" class="doc-summary-item">
@@ -204,7 +205,6 @@
         </span>
       </div>
 
-    </div>
     </div>
     </div>
     <!-- 创建知识库向导 -->
@@ -224,129 +224,37 @@
     <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
       <div class="invoice-detail-body">
-        <!-- 摘要 -->
-        <section class="detail-block">
-          <div class="detail-block-title">摘要</div>
-          <div class="detail-block-content">
-            <template v-if="currentDetail?.description">
-              <div v-if="summaryState" class="summary-status">
-                <t-tag :theme="summaryState.theme" variant="light" size="small">
-                  <template v-if="summaryState.icon" #icon>
-                    <t-icon :name="summaryState.icon" :class="{ 'icon-spin': summaryState.spin }" />
-                  </template>
-                  {{ summaryState.label }}
-                </t-tag>
-              </div>
-              <!-- 摘要：复用知识库文档抽屉样式（线框 + 展开/折叠 + 每条字段一行） -->
-              <div class="summary_wrapper" :class="{ 'summary_clickable': summaryOverflow || summaryExpanded }"
-                @click="(summaryOverflow || summaryExpanded) && (summaryExpanded = !summaryExpanded)">
-                <div ref="summaryRef" :class="['summary_content', { 'summary_collapsed': !summaryExpanded }]">{{
-                  summaryLines
-                }}</div>
-                <div v-if="(summaryOverflow && !summaryExpanded) || summaryExpanded" class="summary_fade"
-                  :class="{ 'summary_fade_expanded': summaryExpanded }">
-                  <t-icon :name="summaryExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="summary_fade_icon" />
-                </div>
-              </div>
-            </template>
-            <t-empty v-else description="暂无摘要" />
-          </div>
-        </section>
-
-        <!-- 发票字段 -->
+        <!-- 发票字段（按分类配置动态渲染，字段来自设置-字段定义 subs） -->
         <section class="detail-block">
           <div class="detail-block-content">
             <div class="detail-fields">
               <div class="field-group">
-                <div class="field-group-title">发票信息</div>
+                <div class="field-group-title">{{ editForm.invoice_type || '发票信息' }}</div>
                 <div class="field-grid">
-                  <t-form-item label="发票号码" label-width="110px">
-                    <t-input v-model="editForm.invoice_no" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="开票日期" label-width="110px">
-                    <t-date-picker v-model="editForm.invoice_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="发票类型" label-width="110px">
-                    <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
-                      filterable placeholder="选择或输入类型" />
-                  </t-form-item>
-                  <t-form-item label="金额" label-width="110px">
-                    <t-input v-model="editForm.amount" placeholder="" @input="(v: string) => (editForm.amount = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="税额" label-width="110px">
-                    <t-input v-model="editForm.tax" placeholder="" @input="(v: string) => (editForm.tax = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="价税合计" label-width="110px">
-                    <t-input v-model="editForm.total_amount" placeholder="" @input="(v: string) => (editForm.total_amount = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="开票人" label-width="110px">
-                    <t-input v-model="editForm.issuer" placeholder="" />
-                  </t-form-item>
+                  <template v-for="f in editFieldDefs" :key="f.name">
+                    <t-form-item v-if="f.name === 'invoiceType'" label="发票类型" label-width="110px">
+                      <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
+                        filterable placeholder="选择或输入类型" />
+                    </t-form-item>
+                    <t-form-item v-else-if="f.name === 'extractStatus'" label="提取状态" label-width="110px">
+                      <span class="detail-readonly">{{ editForm.data.extractStatus || '—' }}</span>
+                    </t-form-item>
+                    <t-form-item v-else :label="f.label" label-width="110px">
+                      <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
+                        format="YYYY-MM-DD" clearable allow-input />
+                      <t-input v-else-if="f.dataType === 'number'" v-model="editForm.data[f.name]"
+                        @input="(v: string) => (editForm.data[f.name] = sanitizeNum(v))" />
+                      <t-textarea v-else-if="f.dataType === 'array'" v-model="editForm.data[f.name]"
+                        :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                      <t-input v-else v-model="editForm.data[f.name]" />
+                    </t-form-item>
+                  </template>
                   <t-form-item label="作废标记" label-width="110px">
                     <t-switch v-model="editForm.void_flag" size="small" />
                   </t-form-item>
                 </div>
               </div>
-
-              <div class="field-group">
-                <div class="field-group-title">销售方</div>
-                <div class="field-grid">
-                  <t-form-item label="名称" label-width="110px">
-                    <t-input v-model="editForm.seller_name" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="110px">
-                    <t-input v-model="editForm.seller_tax_no" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="地址" label-width="110px">
-                    <t-input v-model="editForm.seller_address" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="电话" label-width="110px">
-                    <t-input v-model="editForm.seller_phone" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="开户行" label-width="110px">
-                    <t-input v-model="editForm.seller_bank" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="账号" label-width="110px">
-                    <t-input v-model="editForm.seller_account" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">购买方</div>
-                <div class="field-grid">
-                  <t-form-item label="名称" label-width="110px">
-                    <t-input v-model="editForm.buyer_name" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="110px">
-                    <t-input v-model="editForm.buyer_tax_no" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="地址" label-width="110px">
-                    <t-input v-model="editForm.buyer_address" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="电话" label-width="110px">
-                    <t-input v-model="editForm.buyer_phone" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="开户行" label-width="110px">
-                    <t-input v-model="editForm.buyer_bank" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="账号" label-width="110px">
-                    <t-input v-model="editForm.buyer_account" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">备注</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="备注" label-width="110px">
-                    <t-textarea v-model="editForm.remark" :autosize="{ minRows: 2, maxRows: 5 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <!-- 明细 items -->
+              <!-- 明细 items（发票特有业务，保留） -->
               <div class="items-section">
                 <div class="items-header">
                   <span class="items-title">项目明细</span>
@@ -381,10 +289,7 @@
                 <div v-else class="items-empty">暂无明细</div>
               </div>
 
-              <div class="detail-save-hint">
-                <t-icon name="check-circle" size="14px" />
-                <span>字段修改后将自动保存{{ autoSaving ? '（保存中...）' : '' }}</span>
-              </div>
+
             </div>
           </div>
         </section>
@@ -397,6 +302,10 @@
               :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
           </div>
         </section>
+      </div>
+      <div class="invoice-detail-footer">
+        <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
+        <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
       </div>
     </SettingDrawer>
 
@@ -489,6 +398,7 @@ const INVOICE_TYPES = ['专用发票', '普通发票', '医疗收据', '财政�
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
+import { invoiceFieldLabel } from './invoiceFieldLabels'
 const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'invoiceNo', label: '发票号码', default: true, w: '1.5fr' },
   { key: 'invoiceDate', label: '开票日期', default: true, w: '1.1fr' },
@@ -701,31 +611,25 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 const detailVisible = ref(false)
 const currentRow = ref<InvoiceRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
-const editForm = ref<Record<string, any>>({ items: [] })
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let autoSaveDirty = false
-let editFormSnapshot = ''
+const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', void_flag: false, items: [], data: {} })
 const autoSaving = ref(false)
 
-// 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
-const summaryExpanded = ref(false)
-const summaryRef = ref<HTMLElement>()
-const summaryOverflow = ref(false)
-const summaryLines = computed(() => {
-  const d = currentDetail.value?.description || ''
-  if (!d) return ''
-  // 以 "-" 作为每条字段起点分行展示，避免全部堆在一行
-  return d.replace(/-(?=[^\s-])/g, '\n-').trim()
-})
-const checkSummaryOverflow = () => {
-  const el = summaryRef.value
-  if (!el) { summaryOverflow.value = false; return }
-  summaryOverflow.value = el.scrollHeight > el.clientHeight + 1
-}
-watch(summaryRef, () => checkSummaryOverflow())
-watch(() => currentDetail.value?.description, () => {
-  summaryExpanded.value = false
-  nextTick(() => checkSummaryOverflow())
+// 详情抽屉动态字段：按当前发票类型匹配分类 subs（启用字段优先），无配置时回退内置列
+const editFieldDefs = computed(() => {
+  const t = editForm.value.invoice_type
+  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
+  const hit = cats.find((c: any) => c.name === t) || cats[0]
+  const subs = hit?.subs
+  if (Array.isArray(subs) && subs.length) {
+    return subs
+      .filter((x: any) => x.enabled !== false)
+      .map((x: any) => ({ name: x.name, label: invoiceFieldLabel(x.name), dataType: x.data_type || 'text' }))
+  }
+  return DEFAULT_INVOICE_COLUMNS.map((c) => ({
+    name: c.key,
+    label: c.label,
+    dataType: c.key === 'invoiceDate' ? 'date' : ['amount', 'tax', 'totalAmount', 'taxRate'].includes(c.key) ? 'number' : 'text',
+  }))
 })
 
 // 抽屉宽度（可拖动，localStorage 记忆）
@@ -1178,12 +1082,18 @@ const {
   onTick: () => loadFiles(),
 })
 
-const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'invoice', notLabel: '非发票',
 })
 
 // ---- 详情抽屉 ----
+// 行点击打开详情；点击多选 checkbox 区域不触发（避免勾选即弹窗）
+const onRowClick = (row: InvoiceRow, e?: MouseEvent) => {
+  const t = e?.target as HTMLElement | null
+  if (t?.closest('.t-table__cell-check') || t?.closest('.t-checkbox') || t?.closest('input[type="checkbox"]')) return
+  openDetail(row)
+}
 const openDetail = async (row: InvoiceRow) => {
   if (row.kind === 'pending') return
   currentRow.value = row
@@ -1212,29 +1122,11 @@ const detailTitle = computed(() =>
 // ---- 字段编辑 + 自动保存 ----
 const fillEditForm = () => {
   const r = currentRow.value
-  autoSaveDirty = false
   if (!r) return
+  const tags = Array.isArray(r.tags) ? r.tags.join('\n') : (r.tags || '')
   editForm.value = {
     invoice_no: r.invoiceNo || '',
-    invoice_date: r.invoiceDate || '',
     invoice_type: r.invoiceType || '',
-    total_amount: numToStr(r.totalAmount),
-    amount: numToStr(r.amount),
-    tax: numToStr(r.tax),
-    seller_name: r.sellerName || '',
-    seller_tax_no: r.sellerTaxNo || '',
-    seller_address: r.sellerAddress || '',
-    seller_phone: r.sellerPhone || '',
-    seller_bank: r.sellerBank || '',
-    seller_account: r.sellerAccount || '',
-    buyer_name: r.buyerName || '',
-    buyer_tax_no: r.buyerTaxNo || '',
-    buyer_address: r.buyerAddress || '',
-    buyer_phone: r.buyerPhone || '',
-    buyer_bank: r.buyerBank || '',
-    buyer_account: r.buyerAccount || '',
-    issuer: r.issuer || '',
-    remark: r.remark || '',
     void_flag: !!r.voidFlag,
     items: Array.isArray(r.items) ? r.items.map(it => ({
       name: it.name || '',
@@ -1243,9 +1135,25 @@ const fillEditForm = () => {
       // 税率以百分比显示（0.03 → "3"），保存时再转回小数
       tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
     })) : [],
+    data: {
+      invoiceNo: r.invoiceNo || '',
+      invoiceDate: r.invoiceDate || '',
+      invoiceType: r.invoiceType || '',
+      amount: numToStr(r.amount),
+      taxRate: numToStr(r.taxRate),
+      tax: numToStr(r.tax),
+      totalAmount: numToStr(r.totalAmount),
+      buyerName: r.buyerName || '',
+      sellerName: r.sellerName || '',
+      issuer: r.issuer || '',
+      remark: r.remark || '',
+      extractStatus: r.extractStatus || '',
+      tags,
+      sellerTaxNo: r.sellerTaxNo || '',
+      buyerTaxNo: r.buyerTaxNo || '',
+      fileName: r.fileName || '',
+    },
   }
-  editFormSnapshot = JSON.stringify(editForm.value)
-  autoSaveDirty = true
 }
 
 const addItemRow = () => {
@@ -1254,15 +1162,6 @@ const addItemRow = () => {
 const removeItemRow = (idx: number) => {
   editForm.value.items = (editForm.value.items || []).filter((_: any, i: number) => i !== idx)
 }
-
-watch(editForm, () => {
-  if (!autoSaveDirty || !currentRow.value) return
-  // 打开抽屉未做任何编辑（表单值与初始快照一致）时不触发自动保存，
-  // 避免"打开即保存空字段"把待补录记录从列表挤掉。
-  if (JSON.stringify(editForm.value) === editFormSnapshot) return
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { saveEditForm() }, 1200)
-}, { deep: true })
 
 const saveEditForm = async () => {
   const now = currentRow.value
@@ -1273,27 +1172,22 @@ const saveEditForm = async () => {
     const detail = res?.data || res
     const meta = detail?.custom_metadata || {}
     const invoices = Array.isArray(meta.invoices) ? [...meta.invoices] : []
+    const d = editForm.value.data || {}
     const updated: any = {
-      invoice_no: editForm.value.invoice_no || '',
-      invoice_date: editForm.value.invoice_date || '',
+      invoice_no: d.invoiceNo || '',
+      invoice_date: d.invoiceDate || '',
       invoice_type: editForm.value.invoice_type || '',
-      total_amount: toNumber(editForm.value.total_amount),
-      amount: toNumber(editForm.value.amount),
-      tax: toNumber(editForm.value.tax),
-      seller_name: editForm.value.seller_name || '',
-      seller_tax_no: editForm.value.seller_tax_no || '',
-      seller_address: editForm.value.seller_address || '',
-      seller_phone: editForm.value.seller_phone || '',
-      seller_bank: editForm.value.seller_bank || '',
-      seller_account: editForm.value.seller_account || '',
-      buyer_name: editForm.value.buyer_name || '',
-      buyer_tax_no: editForm.value.buyer_tax_no || '',
-      buyer_address: editForm.value.buyer_address || '',
-      buyer_phone: editForm.value.buyer_phone || '',
-      buyer_bank: editForm.value.buyer_bank || '',
-      buyer_account: editForm.value.buyer_account || '',
-      issuer: editForm.value.issuer || '',
-      remark: editForm.value.remark || '',
+      total_amount: toNumber(d.totalAmount),
+      amount: toNumber(d.amount),
+      tax: toNumber(d.tax),
+      tax_rate: toNumber(d.taxRate),
+      seller_name: d.sellerName || '',
+      seller_tax_no: d.sellerTaxNo || '',
+      buyer_name: d.buyerName || '',
+      buyer_tax_no: d.buyerTaxNo || '',
+      issuer: d.issuer || '',
+      remark: d.remark || '',
+      tags: Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split('\n').map((x: string) => x.trim()).filter(Boolean) : []),
       void_flag: !!editForm.value.void_flag,
       items: Array.isArray(editForm.value.items)
         ? editForm.value.items.map((it: any) => {
@@ -1348,6 +1242,8 @@ const saveEditForm = async () => {
         items: updated.items,
       }
     }
+    // 手动保存：成功后关闭详情抽屉（对齐车队行内保存）
+    detailVisible.value = false
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -1649,7 +1545,6 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
@@ -1807,6 +1702,12 @@ onBeforeUnmount(() => {
   top: 0;
   z-index: 5;
   background: var(--td-bg-color-container);
+  /* 右侧补 1px 边框闭合：避免纵向滚动条插入表头内部导致最右侧未闭合 */
+  border-right: 1px solid var(--td-component-stroke);
+}
+/* 纵向滚动条预留宽度：表头与内容列宽一致、右下角对齐，滚动条不再压表头 */
+.doc-list-view :deep(.t-table__content) {
+  scrollbar-gutter: stable;
 }
 
 .doc-list-header, .doc-list-row {
@@ -1920,6 +1821,22 @@ onBeforeUnmount(() => {
   gap: 28px;
 }
 
+// 详情抽屉底部取消/保存（对齐车队 meter-drawer-footer 行内保存）
+.invoice-detail-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--td-component-stroke);
+  margin-top: 4px;
+}
+.detail-readonly {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  color: var(--td-text-color-primary);
+}
+
 .detail-block { width: 100%; }
 .detail-block-title {
   display: flex;
@@ -1933,38 +1850,7 @@ onBeforeUnmount(() => {
 }
 .detail-block-content { width: 100%; }
 
-// 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
-.summary_wrapper {
-  position: relative;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-border);
-  border-radius: 6px;
-  &.summary_clickable { cursor: pointer; }
-}
-.summary_content {
-  padding: 12px;
-  color: var(--td-text-color-primary);
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-word;
-  white-space: pre-wrap;
-  &.summary_collapsed { max-height: 4.5em; overflow: hidden; }
-}
-.summary_fade {
-  display: flex;
-  justify-content: center;
-  padding-bottom: 4px;
-  pointer-events: none;
-  &:not(.summary_fade_expanded) {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 28px;
-    background: linear-gradient(transparent, var(--td-bg-color-container) 80%);
-    border-radius: 0 0 6px 6px;
-    align-items: flex-end;
-  }
-}
-.summary_fade_icon { color: var(--td-text-color-placeholder); }
+
 
 .detail-fields { padding-bottom: 16px; }
 

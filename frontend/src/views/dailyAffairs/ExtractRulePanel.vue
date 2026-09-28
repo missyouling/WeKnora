@@ -20,7 +20,7 @@
       </div>
       <template v-for="(f, i) in fields" :key="f.name + '-' + i">
         <div class="rule-table-row" :class="{ editing: editingName === f.name }" @click="toggleEdit(f.name)">
-          <span class="rtr-name" :class="{ 'rtr-disabled': !f.enabled }">{{ f.name }}</span>
+          <span class="rtr-name" :class="{ 'rtr-disabled': !f.enabled }">{{ fieldLabel(f.name) }}</span>
           <span class="rtr-desc" :title="f.desc || f.name">{{ f.desc || '—' }}</span>
           <span class="rtr-type">{{ typeLabel(f.type || '') }}</span>
           <span class="rtr-status">
@@ -30,7 +30,7 @@
         </div>
         <!-- 行内展开配置（复刻证照配置展开编辑） -->
         <div v-if="editingName === f.name" class="rule-form rule-form--inline">
-          <div class="rule-form-title">配置「{{ f.name }}」</div>
+          <div class="rule-form-title">配置「{{ fieldLabel(f.name) }}」</div>
           <div class="rule-form-grid">
             <div class="rule-form-item">
               <label>字段描述</label>
@@ -90,6 +90,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/api/fleet'
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
+import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
@@ -410,6 +411,11 @@ function resetPromptTemplate() {
 }
 function toggleEdit(name: string) {
   editingName.value = editingName.value === name ? '' : name
+}
+
+// 发票字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
+function fieldLabel(n: string): string {
+  return props.scope === 'invoice' ? invoiceFieldLabel(n) : n
 }
 
 function typeLabel(t: string) {

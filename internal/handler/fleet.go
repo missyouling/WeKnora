@@ -850,6 +850,11 @@ func (h *FleetHandler) GetFleetSummary(c *gin.Context) {
 // 档案分类配置（大项-小项）：scope=vehicle|driver|maintain
 // ---------------------------------------------------------------------------
 
+// isBusinessCategoryScope 判断是否为日常事务业务 scope（分类配置全局 tenant_id=0，不按 tenant 隔离）
+func isBusinessCategoryScope(scope string) bool {
+	return scope == "contract" || scope == "invoice" || scope == "regulation" || scope == "award_punish"
+}
+
 var fleetCategoryScopes = map[string]bool{
 	types.FleetCategoryScopeVehicle:  true,
 	types.FleetCategoryScopeDriver:   true,
@@ -870,8 +875,7 @@ func (h *FleetHandler) ListFleetCategories(c *gin.Context) {
 	scope := strings.TrimSpace(c.Query("scope"))
 	q := h.db.WithContext(ctx).Where("deleted_at IS NULL")
 	// P2-D: 日常事务业务模块（contract/invoice/...）使用全局 tenant_id=0 配置，不按 tenant 隔离
-	isBusinessScope := scope == "contract" || scope == "invoice" || scope == "regulation" || scope == "award_punish"
-	if isBusinessScope {
+	if isBusinessCategoryScope(scope) {
 		q = q.Where("tenant_id = 0")
 	} else {
 		q = q.Where("tenant_id = ?", tenantID)
@@ -950,6 +954,15 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := fleetTenantID(c)
 	id := secutils.SanitizeForLog(c.Param("id"))
+	// 日常事务业务 scope 分类使用全局 tenant_id=0 配置，不按 tenant 隔离（与 List 口径一致）
+	var existing types.FleetCategory
+	if err := h.db.WithContext(ctx).Select("scope").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
+		c.Error(errors.NewNotFoundError("分类不存在"))
+		return
+	}
+	if isBusinessCategoryScope(existing.Scope) {
+		tenantID = 0
+	}
 	var req types.FleetCategory
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
@@ -1009,6 +1022,15 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := fleetTenantID(c)
 	id := secutils.SanitizeForLog(c.Param("id"))
+	// 日常事务业务 scope 分类使用全局 tenant_id=0 配置，不按 tenant 隔离（与 List 口径一致）
+	var existing types.FleetCategory
+	if err := h.db.WithContext(ctx).Select("scope").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
+		c.Error(errors.NewNotFoundError("分类不存在"))
+		return
+	}
+	if isBusinessCategoryScope(existing.Scope) {
+		tenantID = 0
+	}
 	// 内置分类（builtin_key 非空）禁止删除
 	var builtinCheck types.FleetCategory
 	if err := h.db.WithContext(ctx).Select("builtin_key").
@@ -1470,20 +1492,6 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
-		{"invoice", "发票", "invoice", 0, []types.FleetCategorySub{
-			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "invoiceCode", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "taxAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-		}},
-		// 发票档案内置两大分类（对齐提取数据 invoice_type 桶名：普通发票 / 专用发票），
-		// 字段与前端 DEFAULT_INVOICE_COLUMNS 同源；启用/顺序可由用户调整，内置锚点保证不可删。
 		{"invoice", "普通发票", "invoice-common", 1, []types.FleetCategorySub{
 			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},

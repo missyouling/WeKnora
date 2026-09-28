@@ -88,7 +88,8 @@
                   draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
-                  <t-input v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
+                  <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static">{{ invoiceFieldLabel(fd.name) }}</span>
+                  <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                   <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                   <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
                     <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
@@ -150,6 +151,7 @@
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias } from '@/api/fleet'
+import { invoiceFieldLabel } from './invoiceFieldLabels'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | '' }>(), { scope: 'vehicle' })
 
@@ -913,6 +915,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
     .fc-name {
       min-width: 0;
+    }
+    .fc-name-static {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      padding: 4px 8px;
+      height: 32px;
+      box-sizing: border-box;
+      color: var(--td-text-color-primary);
+      border-radius: var(--td-radius-default);
+      background: var(--td-bg-color-container);
     }
     .fc-type {
       width: 100%;

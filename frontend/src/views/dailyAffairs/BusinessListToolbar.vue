@@ -111,10 +111,13 @@ const emit = defineEmits<{
 /* 类型下拉随选项内容自适应宽度，禁止收缩避免截断 */
 .doc-type-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .doc-batch-bar-fixed {
-  position: sticky;
-  bottom: 12px;
-  margin-top: 12px;
-  z-index: 10;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3000;
+  min-width: 420px;
+  margin-top: 0;
 }
 .batch-bar-inner {
   display: flex;
