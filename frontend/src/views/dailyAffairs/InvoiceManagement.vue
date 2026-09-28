@@ -1745,10 +1745,13 @@ onBeforeUnmount(() => {
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
 .doc-list-scroll {
-  flex: 0 1 auto; /* 高度随内容自适应：1 条就包 1 条，多条向下扩展 */
-  max-height: 100%;
+  /* P4：列表容器始终撑满可视区剩余高度——数据少时底部边线仍贴底；滚动交给 t-table 内部（表头固定） */
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
   background: var(--td-bg-color-container);
@@ -1780,6 +1783,8 @@ onBeforeUnmount(() => {
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
 }
 
 .doc-list-header, .doc-list-row {
