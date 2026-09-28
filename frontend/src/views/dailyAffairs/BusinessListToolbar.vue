@@ -86,14 +86,16 @@ const emit = defineEmits<{
   justify-content: space-between;
   gap: var(--td-comp-margin-s);
   flex-wrap: wrap;
+  /* 工具栏与下方列表保持间距 */
+  margin-bottom: var(--td-comp-margin-l);
 }
 .doc-toolbar__leading {
   display: flex;
   align-items: center;
   gap: var(--td-comp-margin-s);
   flex-wrap: wrap;
-  /* 独占整行：保证搜索/筛选/刷新始终同行，不被右侧操作区挤压换行 */
-  flex: 1 1 100%;
+  /* 左侧筛选区占据剩余空间，与右侧操作区保持同一行两端对齐 */
+  flex: 1 1 auto;
   min-width: 0;
 }
 .doc-toolbar__trailing {
