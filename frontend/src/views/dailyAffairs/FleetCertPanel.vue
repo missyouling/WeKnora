@@ -872,6 +872,8 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
 
   .field-config-list {
+    min-width: 480px;
+    overflow-x: auto;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -879,7 +881,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 100px 76px 76px 56px;
+    grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
@@ -891,7 +893,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) 100px 76px 76px 56px;
+    grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
