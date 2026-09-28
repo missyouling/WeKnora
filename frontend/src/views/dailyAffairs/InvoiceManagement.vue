@@ -31,56 +31,22 @@
 
     <!-- KB 存在：主界面 -->
     <div v-else class="invoice-main">
-      <!-- 视图切换器：发票列表 / 台账概览 -->
-      <div class="invoice-view-switcher">
-        <t-radio-group v-model="activeView">
-          <t-radio-button value="invoice-list">发票列表</t-radio-button>
-          <t-radio-button value="overview-dashboard">台账概览</t-radio-button>
-        </t-radio-group>
-      </div>
-
-      <!-- 台账概览视图：独立看板，不随列表筛选变化 -->
-      <div v-show="activeView === 'overview-dashboard'" class="overview-dashboard">
-        <!-- 第一排：核心 KPI 4 卡并排（TDesign 24 栅格等分，lg=6 即 span 6） -->
-        <t-row :gutter="16">
-          <t-col v-for="card in overviewCoreCards" :key="card.key" :xs="24" :sm="12" :lg="6">
-            <div class="metric-card" :class="card.cls" @click="onOverviewCardClick(card)">
-              <div class="metric-card__icon"><t-icon :name="card.icon" size="24px" /></div>
-              <div class="metric-card__body">
-                <div class="metric-card__value">{{ card.value }}</div>
-                <div class="metric-card__sub">
-                  <t-icon v-if="card.subIcon" :name="card.subIcon" size="14px" class="metric-card__sub-icon" />
-                  <span>{{ card.sub }}</span>
-                </div>
-              </div>
+      <!-- 概览紧凑卡（车队 type-card 风格） -->
+      <div class="overview-group">
+        <div class="overview-group__cards invoice-overview-cards">
+          <div v-for="card in overviewCards" :key="card.key" class="type-card" :class="card.cls" @click="onOverviewCardClick(card)">
+            <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+            <div class="type-card__body">
+              <div class="type-card__label">{{ card.label }}</div>
+              <div class="type-card__num">{{ card.value }} <span>{{ card.unit }}</span></div>
+              <div class="type-card__sub">{{ card.sub }}</div>
             </div>
-          </t-col>
-        </t-row>
-
-        <!-- 健康态折叠：0 失败 = 轻量 tag；有失败 = 告警 + 查看详情 -->
-        <div class="overview-health">
-          <t-tag v-if="!overviewHasErrors" theme="success" variant="light" size="medium" class="overview-health__tag">
-            <template #icon><t-icon name="check-circle" size="16px" /></template>
-            系统运行正常，无解析/提取失败记录
-          </t-tag>
-          <t-alert v-else :theme="overviewAlertTheme" :message="overviewAlertMessage" :close="false" class="overview-health__alert">
-            <template #operation>
-              <t-button variant="text" size="small" @click="goFailedList">
-                <template #icon><t-icon name="search" size="14px" /></template>
-                查看详情
-              </t-button>
-            </template>
-          </t-alert>
-        </div>
-
-        <!-- 类型分布环形图（ECharts） -->
-        <div class="overview-section overview-section--chart">
-          <div class="overview-section__title">类型分布</div>
-          <div ref="typeChartRef" class="type-chart"></div>
+          </div>
         </div>
       </div>
-      <!-- 发票列表视图 -->
-      <div v-show="activeView === 'invoice-list'" class="invoice-list-view">
+
+      <!-- 发票列表 -->
+      <div class="invoice-list-view">
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -262,7 +228,8 @@
         <span v-if="displaySummary.total" class="doc-summary-item">
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
-      </div>
+      </div>
+
     </div>
     </div>
     </div>
@@ -501,7 +468,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import * as echarts from 'echarts'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -680,9 +646,6 @@ const hasMore = ref(true)
 const keyword = ref('')
 const filterInvoiceType = ref('')
 
-// 视图切换：发票列表 / 台账概览
-const activeView = ref<'invoice-list' | 'overview-dashboard'>('invoice-list')
-
 // ---- 台账概览看板（对标车辆档案：档案质量 / 当月看板 / 类型分布） ----
 const overviewStats = ref<any>(null)
 const overviewLoading = ref(false)
@@ -697,98 +660,33 @@ const loadInvoiceOverview = async () => {
     overviewLoading.value = false
   }
 }
-const overviewCoreCards = computed(() => {
+const overviewCards = computed(() => {
   const st = overviewStats.value || {}
   const m = st.current_month || {}
   const total = Number(st.total || 0)
   const parseFailed = Number(st.parse_failed || 0)
   const extractFailed = Number(st.extract_failed || 0)
   const failed = parseFailed + extractFailed
-  const successRate = total > 0 ? Math.max(0, Math.round(((total - failed) / total) * 100)) : 100
-  return [
-    { key: 'total', label: '已收录发票', value: `${total} 张`, sub: `本月新增 ${Number(m.count || 0)} 张`, subIcon: 'arrow-up', icon: 'file', cls: '', action: 'history-all' },
-    { key: 'sumTotal', label: '总价税合计', value: formatAmount(Number(st.sum_total || 0)), sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, icon: 'money-circle', cls: 'is-brand', action: '' },
-    { key: 'successRate', label: '验真成功率', value: `${successRate}%`, sub: failed ? `${failed} 张待复核` : '解析/提取全部成功', icon: 'check-circle', cls: 'is-success', action: failed ? 'history-failed' : '' },
-    { key: 'pending', label: '待处理', value: `${failed} 张`, sub: '解析或提取失败', icon: 'error-circle', cls: failed > 0 ? 'is-warn' : 'is-muted', action: failed ? 'history-failed' : '' },
+  const types: Array<{ invoice_type: string; count: number }> = st.by_invoice_type || []
+  const typeCount = (name: string) => types.find((t) => t.invoice_type === name)?.count || 0
+  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
+    { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
+    { key: 'sumTotal', label: '价税合计', icon: 'money-circle', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
   ]
-})
-const overviewHasErrors = computed(() => {
-  const st = overviewStats.value || {}
-  return (Number(st.parse_failed || 0) + Number(st.extract_failed || 0)) > 0
-})
-const overviewAlertTheme = computed(() => {
-  const st = overviewStats.value || {}
-  return Number(st.extract_failed || 0) > 0 ? 'error' : 'warning'
-})
-const overviewAlertMessage = computed(() => {
-  const st = overviewStats.value || {}
-  return `存在 ${Number(st.parse_failed || 0)} 条解析失败、${Number(st.extract_failed || 0)} 条提取失败记录，建议人工复核`
-})
-const onOverviewCardClick = async (card: any) => {
-  if (card.action === 'history-all' || card.action === 'history-parse_failed' || card.action === 'history-extract_failed' || card.action === 'history-failed') {
-    historyVisible.value = true
-    return
+  // 类型分布卡：点击联动列表类型筛选
+  for (const t of types) {
+    cards.push({ key: `type-${t.invoice_type}`, label: t.invoice_type, icon: 'label', value: `${typeCount(t.invoice_type)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: t.invoice_type })
   }
-  if (card.action === 'type' && card.value) {
-    router.replace({ query: { ...route.query, view: 'invoice-list', type: card.value } })
-    activeView.value = 'invoice-list'
-    filterInvoiceType.value = card.value  // watch(filterInvoiceType) 自动触发刷新
+  // 异常质量卡：0 时弱化展示
+  cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: '' })
+  return cards
+})
+const onOverviewCardClick = (card: any) => {
+  // 类型卡点击：联动列表类型筛选（watch(filterInvoiceType) 自动刷新）
+  if (card.action === 'type' && card.typeValue) {
+    filterInvoiceType.value = card.typeValue
   }
 }
-const goFailedList = () => {
-  router.replace({ query: { ...route.query, view: 'invoice-list', failed: '1' } })
-  activeView.value = 'invoice-list'
-  historyVisible.value = true
-}
-
-// ---- 类型分布环形图（ECharts） ----
-const typeChartRef = ref<HTMLElement>()
-let typeChart: echarts.ECharts | null = null
-const TYPE_COLORS: Record<string, string> = {
-  '普通发票': '#0052D9',
-  '专用发票': '#4B5FD9',
-}
-const renderTypeChart = () => {
-  const el = typeChartRef.value
-  if (!el) return
-  const arr = overviewStats.value?.by_invoice_type || []
-  if (!arr.length) return
-  if (!typeChart) typeChart = echarts.init(el)
-  const total = Number(overviewStats.value?.total || 0)
-  const m = overviewStats.value?.current_month || {}
-  const data = arr.map((t: any) => ({
-    name: t.invoice_type || '未分类',
-    value: Number(t.count || 0),
-    itemStyle: { color: TYPE_COLORS[t.invoice_type] || '#909399' },
-  }))
-  typeChart.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}: {c} 张 ({d}%)' },
-    legend: { orient: 'vertical', right: 0, top: 'middle', itemWidth: 12, itemHeight: 12, icon: 'circle', textStyle: { color: '#606266' } },
-    series: [{
-      type: 'pie', radius: ['50%', '72%'], center: ['38%', '50%'],
-      avoidLabelOverlap: true,
-      itemStyle: { borderColor: '#fff', borderWidth: 2 },
-      label: { show: false },
-      emphasis: { label: { show: true, fontSize: 14, fontWeight: 600, formatter: '{b}\n{c} 张' } },
-      data,
-    }],
-    title: {
-      text: `${total} 张`, subtext: `本月 ${Number(m.count || 0)} 张`,
-      left: '32%', top: '38%', textAlign: 'center', itemGap: 6,
-      textStyle: { fontSize: 24, fontWeight: 600, color: '#181818' },
-      subtextStyle: { fontSize: 12, color: '#606266' },
-    },
-  }, true)
-  typeChart.off('click')
-  typeChart.on('click', (p: any) => {
-    if (p?.name) {
-      router.replace({ query: { ...route.query, view: 'invoice-list', type: p.name } })
-      activeView.value = 'invoice-list'
-      filterInvoiceType.value = p.name
-    }
-  })
-}
-const resizeTypeChart = () => typeChart?.resize()
 
 // 工具栏「更多操作」：字段配置 / 提取规则设置 / 删除历史
 const fieldFilterRef = ref<InstanceType<typeof BusinessColumnFilter>>()
@@ -1773,13 +1671,9 @@ const handleBatchDelete = async () => {
 
 // ---- 生命周期 ----
 onMounted(() => {
-  // 路由 query 回填：view / type / failed 直达状态（跨 Tab 联动可分享 URL）
-  const qv = route.query.view
-  if (qv === 'invoice-list' || qv === 'overview-dashboard') activeView.value = qv
+  // 路由 query 回填：type / failed 直达状态
   if (typeof route.query.type === 'string' && route.query.type) filterInvoiceType.value = route.query.type
   if (route.query.failed === '1') historyVisible.value = true
-  watch(activeView, () => { nextTick(() => { renderTypeChart(); resizeTypeChart() }) })
-  window.addEventListener('resize', resizeTypeChart)
   loadKb()
   void (async () => {
     try {
@@ -1799,8 +1693,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling()
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  if (typeChart) { typeChart.dispose(); typeChart = null }
-  window.removeEventListener('resize', resizeTypeChart)
 })
 </script>
 
@@ -1836,82 +1728,19 @@ onBeforeUnmount(() => {
 
 .invoice-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
-/* ---- 视图切换器（发票列表 / 台账概览） ---- */
-.invoice-view-switcher {
-  display: flex; align-items: center; justify-content: flex-start;
-  .t-radio-group { display: inline-flex; }
+/* ---- 概览紧凑卡（车队 type-card 风格） ---- */
+.overview-group {
+  margin-bottom: var(--td-comp-margin-l);
 }
-
-/* ---- 台账概览看板（Tab 独立视图，网格排版） ---- */
-.overview-dashboard {
-  display: flex; flex-direction: column; gap: 24px;
-  padding: 4px 2px 8px;
-  flex: 1; min-height: 0; overflow-y: auto;
+.overview-group__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
-.overview-section { display: flex; flex-direction: column; gap: 12px; }
-.overview-health { display: flex; align-items: center; gap: 12px; }
-.overview-health__tag { gap: 6px; }
-.overview-health__alert { flex: 1; background: color-mix(in srgb, var(--td-warning-color) 8%, var(--td-bg-color-container)); }
-.overview-health__alert.t-alert--error { background: color-mix(in srgb, var(--td-error-color) 8%, var(--td-bg-color-container)); }
-.overview-section__title {
-  font-size: 14px; font-weight: 600; color: var(--td-text-color-primary);
-  padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
-}
-.metric-card {
-  display: flex; align-items: center; gap: 14px; padding: 20px 22px;
-  background: var(--td-bg-color-secondarycontainer);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  cursor: pointer; transition: all .18s ease;
-  height: 100%; box-sizing: border-box;
-}
-.metric-card:hover { border-color: var(--td-brand-color); box-shadow: 0 4px 12px rgba(0,82,217,.1); transform: translateY(-1px); }
-.metric-card__icon {
-  flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--td-brand-color-1); color: var(--td-brand-color);
-}
-.metric-card.is-brand .metric-card__icon { background: var(--td-brand-color); color: var(--td-text-color-anti); }
-.metric-card__body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.metric-card__value {
-  font-size: 24px; font-weight: 600; line-height: 1.15;
-  color: var(--td-text-color-primary); font-variant-numeric: tabular-nums;
-}
-.metric-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
-.metric-card__sub {
-  display: flex; align-items: center; gap: 4px; margin-top: 4px;
-  font-size: 12px; color: var(--td-text-color-secondary);
-  .metric-card__sub-icon { color: var(--td-success-color); }
-}
-.metric-card.is-success .metric-card__icon { background: var(--td-success-color-1); color: var(--td-success-color); }
-.metric-card.is-warn .metric-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
-.metric-card.is-muted { opacity: .62; }
-.metric-card.is-muted .metric-card__icon { background: var(--td-bg-color-component); color: var(--td-text-color-secondary); }
-.metric-card.is-brand .metric-card__icon { background: var(--td-brand-color); color: var(--td-text-color-anti); }
-.quality-card {
-  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
-  background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium); cursor: pointer; transition: all .18s ease;
-  height: 100%; box-sizing: border-box;
-}
-.quality-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.08); }
-.quality-card.is-warn { border-color: transparent; background: var(--td-warning-color-1); }
-.quality-card.is-err { border-color: transparent; background: var(--td-error-color-1); }
-.quality-card__icon {
-  flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-}
-.quality-card.is-warn .quality-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
-.quality-card.is-err .quality-card__icon { background: var(--td-error-color-1); color: var(--td-error-color); }
-.quality-card__body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.quality-card__num { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--td-text-color-primary); }
-.quality-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
 .type-card {
-  display: flex; align-items: center; gap: 14px; padding: 20px 22px;
+  display: flex; align-items: center; gap: 14px; padding: 18px 20px;
   background: var(--td-bg-color-secondarycontainer); border: 1px solid transparent;
-  border-radius: var(--td-radius-medium); cursor: pointer; transition: all .18s ease;
-  height: 100%; box-sizing: border-box;
+  border-radius: var(--td-radius-large); cursor: pointer; transition: all .18s ease;
 }
 .type-card:hover { background: var(--td-brand-color-1); border-color: var(--td-brand-color); transform: translateY(-1px); }
 .type-card__icon {
@@ -1924,8 +1753,11 @@ onBeforeUnmount(() => {
 .type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
 .type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
-.overview-section--chart { flex: 1; min-height: 0; }
-.type-chart { width: 100%; height: 300px; background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--td-radius-medium); padding: 8px 0; box-sizing: border-box; }
+.type-card__sub { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
+.type-card.is-brand .type-card__icon { background: var(--td-brand-color-1); }
+.type-card.is-warn .type-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
+.type-card.is-warn .type-card__num { color: var(--td-warning-color); }
+.type-card.is-muted { opacity: .6; }
 
 /* ---- 发票列表视图（Tab 独立视图） ---- */
 .invoice-list-view {
