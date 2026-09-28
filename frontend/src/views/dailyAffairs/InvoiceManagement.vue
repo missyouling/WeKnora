@@ -190,8 +190,7 @@
         </template>
       </t-table>
     </div>
-    </div>
-      <!-- 底部汇总（移出滚动容器，始终贴列表底部；选中时避让底部浮动工具栏） -->
+      <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；选中时避让底部浮动工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
         <span v-if="displaySummary.total" class="doc-summary-item">
@@ -204,6 +203,7 @@
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
+    </div>
 
     </div>
     </div>
@@ -1702,12 +1702,12 @@ onBeforeUnmount(() => {
   top: 0;
   z-index: 5;
   background: var(--td-bg-color-container);
-  /* 右侧补 1px 边框闭合：避免纵向滚动条插入表头内部导致最右侧未闭合 */
-  border-right: 1px solid var(--td-component-stroke);
 }
-/* 纵向滚动条预留宽度：表头与内容列宽一致、右下角对齐，滚动条不再压表头 */
+/* 表头右侧闭合：滚动条左缘固定 1px 竖线（inset 阴影不随横向滚动），
+   消除"滚动条插入表头内部导致最右侧未闭合"的空隙 */
 .doc-list-view :deep(.t-table__content) {
   scrollbar-gutter: stable;
+  box-shadow: inset -7px 0 0 -6px var(--td-component-stroke);
 }
 
 .doc-list-header, .doc-list-row {
