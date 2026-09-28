@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"context"
@@ -726,8 +726,19 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
 	sawInvoice := false
-	// 沙盒整体规则：发票提取优先注入用户在设置抽屉配置的字段口径/高级模板
+	// 沙盒提取规则：优先按记录归档类型读取（上传弹窗打标 fleet_cert_type），
+	// 无类型或该类型未配置规则时回退整体规则（设置抽屉可分别配置）。
 	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
+	if kdMeta := knowledge.CustomMetadata; len(kdMeta) > 0 {
+		var mdMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(kdMeta, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			if tCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, mdMeta.FleetCertType); tCfg != nil {
+				invoiceRuleCfg = tCfg
+			}
+		}
+	}
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
@@ -991,6 +1002,16 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 	}
 	content := service.BuildInvoiceExtractionContent(knowledge.FileName, knowledge.Description, chunks)
 	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
+	if kdMeta := knowledge.CustomMetadata; len(kdMeta) > 0 {
+		var mdMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(kdMeta, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			if tCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, mdMeta.FleetCertType); tCfg != nil {
+				invoiceRuleCfg = tCfg
+			}
+		}
+	}
 	res, err := service.ExtractInvoicePageFromContentWithRules(effCtx, chatModel, content, page, invoiceRuleCfg)
 	if err != nil {
 		logger.Error(ctx, "Invoice page extraction model call failed", err)
