@@ -6,12 +6,6 @@
         <h2>发票管理</h2>
         <p class="header-subtitle">发票档案自动归档</p>
       </div>
-      <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="triggerUpload">
-          <template #icon><t-icon name="upload" /></template>
-          上传发票
-        </t-button>
-      </div>
       <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
         @change="onFileInputChange" />
     </div>
@@ -47,46 +41,34 @@
 
       <!-- 发票列表 -->
       <div class="invoice-list-view">
-      <!-- 筛选工具栏（复用原项目文档列表样式） -->
-      <div class="doc-filter-bar">
-        <div class="doc-filter-bar__leading">
+      <!-- 筛选工具栏（对齐车队标准中台组件） -->
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
             :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection">
             <template #type-extra>
-              <div class="doc-filter-field doc-filter-field--wide">
-                <t-date-range-picker v-model="dateRange" placeholder="开票日期" class="doc-date-range doc-filter-field__control"
-                  clearable allow-input @change="applyFilter">
-                  <template #prefixIcon><t-icon name="time" size="16px" /></template>
-                </t-date-range-picker>
-              </div>
-              <!-- 更多筛选：税率等折叠面板 -->
-              <t-popup trigger="click" placement="bottom-left" :hide-empty-popup="false" overlay-inner-class="invoice-more-filter">
-                <t-button variant="outline" size="small">
-                  <template #icon><t-icon name="filter" size="14px" /></template>
-                  更多筛选
-                </t-button>
-                <template #content>
-                  <div class="more-filter-content">
-                    <div class="more-filter-item">
-                      <span class="more-filter-label">税率</span>
-                      <t-select v-model="taxRateFilter" :options="taxRateOptions" placeholder="税率" filterable clearable
-                        class="more-filter-control" @change="applyFilter" />
-                    </div>
-                  </div>
-                </template>
-              </t-popup>
+              <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter">
+                <template #prefixIcon><t-icon name="time" size="16px" /></template>
+              </t-date-range-picker>
             </template>
             <template #columns>
               <BusinessColumnFilter ref="fieldFilterRef" hide-trigger :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
-              <t-dropdown :options="moreMenuOptions" placement="bottom-right" attach="body" trigger="click" @click="onMoreMenuClick">
-                <t-button variant="outline" size="small">
-                  <template #icon><t-icon name="more" size="14px" /></template>
+              <t-tooltip content="设置" placement="bottom">
+                <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">
+                  <template #icon><t-icon name="setting" size="14px" /></template>
                 </t-button>
-              </t-dropdown>
+              </t-tooltip>
+              <t-tooltip content="删除历史" placement="bottom">
+                <t-button variant="outline" size="small" @click="historyVisible = true">
+                  <template #icon><t-icon name="history" size="14px" /></template>
+                </t-button>
+              </t-tooltip>
+              <t-button theme="primary" size="small" @click="triggerUpload">
+                <template #icon><t-icon name="upload" size="14px" /></template>
+                上传发票
+              </t-button>
             </template>
             <template #batch-actions>
               <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handlePageExtract">
@@ -124,8 +106,6 @@
               </t-popconfirm>
             </template>
           </BusinessListToolbar>
-        </div>
-      </div>
 
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -689,16 +669,6 @@ const onOverviewCardClick = (card: any) => {
 
 // 工具栏「更多操作」：字段配置 / 提取规则设置 / 删除历史
 const fieldFilterRef = ref<InstanceType<typeof BusinessColumnFilter>>()
-const moreMenuOptions = [
-  { content: '字段配置', value: 'columns' },
-  { content: '提取规则设置', value: 'settings' },
-  { content: '删除历史', value: 'history' },
-]
-const onMoreMenuClick = (data: { value?: string | number }) => {
-  if (data.value === 'columns') fieldFilterRef.value?.open()
-  else if (data.value === 'settings') invoiceSettingsVisible.value = true
-  else if (data.value === 'history') historyVisible.value = true
-}
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
@@ -1762,18 +1732,6 @@ onBeforeUnmount(() => {
   flex: 1; min-height: 0;
 }
 /* ---- 筛选工具栏 ---- */
-.doc-filter-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  &__leading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
-  .doc-filter-field {
-    display: flex; align-items: center;
-    &--search { min-width: 220px; }
-    &--wide { min-width: 260px; }
-    .doc-search { width: 220px; }
-    .doc-type-select { width: 130px; }
-    .doc-date-range { width: 260px; }
-  }
-}
 
 /* ---- 字段筛选弹层 ---- */
 :global(.invoice-field-popup) {
@@ -2155,16 +2113,5 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--td-component-stroke);
 }
 
-/* ---- 更多筛选折叠面板（t-popup 挂载 body，global） ---- */
-:global(.invoice-more-filter) {
-  width: 240px;
-  padding: 12px 14px;
-}
-:global(.invoice-more-filter .more-filter-item) {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-}
-:global(.invoice-more-filter .more-filter-label) {
-  font-size: 13px; color: var(--td-text-color-secondary); flex-shrink: 0;
-}
-:global(.invoice-more-filter .more-filter-control) { width: 150px; }
+
 </style>
