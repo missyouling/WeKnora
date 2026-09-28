@@ -1,20 +1,31 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { ColumnDef } from '@/composables/useBusinessList'
 
-defineProps<{
+withDefaults(defineProps<{
   columns: ColumnDef[]
   visibleKeys: string[]
-}>()
+  hideTrigger?: boolean
+}>(), {
+  hideTrigger: false,
+})
 const emit = defineEmits<{
   (e: 'update:visibleKeys', v: string[]): void
   (e: 'reset'): void
   (e: 'selectAll'): void
 }>()
+
+const popVisible = ref(false)
+defineExpose({
+  open: () => { popVisible.value = true },
+})
 </script>
 
 <template>
-  <t-popup trigger="click" placement="bottom-left" :hide-empty-popup="false" overlay-inner-class="business-column-filter">
-    <t-button variant="outline" size="small">
+  <t-popup trigger="click" placement="bottom-left" :hide-empty-popup="false" overlay-inner-class="business-column-filter"
+    :visible="popVisible" @visible-change="(v: boolean) => (popVisible = v)">
+    <span v-if="hideTrigger" class="field-filter-anchor"></span>
+    <t-button v-else variant="outline" size="small" @click="popVisible = true">
       <template #icon><t-icon name="view-list" size="14px" /></template>
       字段
     </t-button>
@@ -39,6 +50,7 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+.field-filter-anchor { display: inline-block; width: 0; height: 0; overflow: hidden; }
 .field-popup-content {
   width: 220px;
   padding: 12px;

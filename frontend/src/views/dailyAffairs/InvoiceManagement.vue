@@ -89,33 +89,38 @@
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection">
             <template #type-extra>
-              <div class="doc-filter-field">
-                <t-select v-model="taxRateFilter" :options="taxRateOptions" placeholder="税率" filterable
-                  class="doc-type-select doc-filter-field__control" clearable @change="applyFilter">
-                  <template #prefixIcon><t-icon name="percent" size="16px" /></template>
-                </t-select>
-              </div>
               <div class="doc-filter-field doc-filter-field--wide">
                 <t-date-range-picker v-model="dateRange" placeholder="开票日期" class="doc-date-range doc-filter-field__control"
                   clearable allow-input @change="applyFilter">
                   <template #prefixIcon><t-icon name="time" size="16px" /></template>
                 </t-date-range-picker>
               </div>
+              <!-- 更多筛选：税率等折叠面板 -->
+              <t-popup trigger="click" placement="bottom-left" :hide-empty-popup="false" overlay-inner-class="invoice-more-filter">
+                <t-button variant="outline" size="small">
+                  <template #icon><t-icon name="filter" size="14px" /></template>
+                  更多筛选
+                </t-button>
+                <template #content>
+                  <div class="more-filter-content">
+                    <div class="more-filter-item">
+                      <span class="more-filter-label">税率</span>
+                      <t-select v-model="taxRateFilter" :options="taxRateOptions" placeholder="税率" filterable clearable
+                        class="more-filter-control" @change="applyFilter" />
+                    </div>
+                  </div>
+                </template>
+              </t-popup>
             </template>
             <template #columns>
-              <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
+              <BusinessColumnFilter ref="fieldFilterRef" hide-trigger :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
-              <t-tooltip content="设置" placement="bottom">
-                <t-button variant="outline" size="small" @click="recognitionVisible = true">
-                  <template #icon><t-icon name="setting" size="14px" /></template>
+              <t-dropdown :options="moreMenuOptions" placement="bottom-right" attach="body" trigger="click" @click="onMoreMenuClick">
+                <t-button variant="outline" size="small">
+                  <template #icon><t-icon name="more" size="14px" /></template>
                 </t-button>
-              </t-tooltip>
-              <t-tooltip content="删除历史" placement="bottom">
-                <t-button variant="outline" size="small" @click="historyVisible = true">
-                  <template #icon><t-icon name="history" size="14px" /></template>
-                </t-button>
-              </t-tooltip>
+              </t-dropdown>
             </template>
             <template #batch-actions>
               <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handlePageExtract">
@@ -156,15 +161,6 @@
         </div>
       </div>
 
-      <!-- 筛选结果实时摘要：与概览 KPI 数字视觉统一 -->
-      <div class="filter-summary">
-        <t-typography variant="body">
-          当前筛选：共 <span class="filter-summary__num">{{ displaySummary.total }}</span> 条
-          <template v-if="displaySummary.total">
-            | 价税合计 <span class="filter-summary__num">{{ formatAmount(displaySummary.sumTotal) }}</span>
-          </template>
-        </t-typography>
-      </div>
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
@@ -794,6 +790,18 @@ const renderTypeChart = () => {
 }
 const resizeTypeChart = () => typeChart?.resize()
 
+// 工具栏「更多操作」：字段配置 / 提取规则设置 / 删除历史
+const fieldFilterRef = ref<InstanceType<typeof BusinessColumnFilter>>()
+const moreMenuOptions = [
+  { content: '字段配置', value: 'columns' },
+  { content: '提取规则设置', value: 'settings' },
+  { content: '删除历史', value: 'history' },
+]
+const onMoreMenuClick = (data: { value?: string | number }) => {
+  if (data.value === 'columns') fieldFilterRef.value?.open()
+  else if (data.value === 'settings') recognitionVisible.value = true
+  else if (data.value === 'history') historyVisible.value = true
+}
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
@@ -1924,13 +1932,6 @@ onBeforeUnmount(() => {
   display: flex; flex-direction: column; gap: 12px;
   flex: 1; min-height: 0;
 }
-/* ---- 筛选结果实时摘要（数字与概览 KPI 视觉统一） ---- */
-.filter-summary {
-  display: flex; align-items: center; padding: 0 2px;
-  font-size: 13px; color: var(--td-text-color-secondary);
-  .filter-summary__num { font-size: 14px; font-weight: 600; color: var(--td-text-color-primary); font-variant-numeric: tabular-nums; }
-}
-
 /* ---- 筛选工具栏 ---- */
 .doc-filter-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -2324,4 +2325,17 @@ onBeforeUnmount(() => {
   background: var(--td-bg-color-container);
   border-top: 1px solid var(--td-component-stroke);
 }
+
+/* ---- 更多筛选折叠面板（t-popup 挂载 body，global） ---- */
+:global(.invoice-more-filter) {
+  width: 240px;
+  padding: 12px 14px;
+}
+:global(.invoice-more-filter .more-filter-item) {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+:global(.invoice-more-filter .more-filter-label) {
+  font-size: 13px; color: var(--td-text-color-secondary); flex-shrink: 0;
+}
+:global(.invoice-more-filter .more-filter-control) { width: 150px; }
 </style>
