@@ -2041,42 +2041,9 @@ function stopPolling() {
   padding-top: 4px;
 }
 
-/* 筛选工具栏（与电费核算内容页一致） */
-.doc-filter-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-
-  &__leading {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    flex: 1;
-  }
-
-  &__trailing {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .doc-filter-field {
-    display: flex;
-    align-items: center;
-
-    .doc-date-picker {
-      width: 140px;
-    }
-
-    .doc-filter-select {
-      width: 160px;
-    }
-  }
-}
-
+/* 筛选工具栏（BusinessListToolbar 中台组件）：#type-extra 内特化控件固定宽度，避免长名称撑开导致 flex 换行堆叠 */
+.doc-date-picker { width: 140px; }
+.doc-filter-select { width: 160px; }
 .field-popup-content {
   width: 240px;
   padding: 12px;
