@@ -1,6 +1,6 @@
 <template>
   <SettingDrawer v-model:visible="drawerVisible" :title="'发票设置'" width="760px"
-    :storage-key="'weknora-invoice-settings-drawer-width'" destroy-on-close
+    :storage-key="'weknora-invoice-settings-drawer-width'" destroy-on-close hide-footer
     class="invoice-settings-drawer">
     <t-tabs v-model="activeTab" class="invoice-settings-tabs" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
