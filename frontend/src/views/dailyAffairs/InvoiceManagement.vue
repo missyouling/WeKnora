@@ -56,7 +56,7 @@
 
         <!-- 第二排：异常质量 -->
         <t-row :gutter="16">
-          <t-col v-for="card in overviewQualityCards" :key="card.key" :xs="24" :sm="12" :lg="12">
+          <t-col v-for="card in overviewQualityCards" :key="card.key" :xs="24" :sm="12" :lg="6">
             <div class="quality-card" :class="card.cls" @click="onOverviewCardClick(card)">
               <div class="quality-card__icon"><t-icon :name="card.icon" size="22px" /></div>
               <div class="quality-card__body">
@@ -91,7 +91,6 @@
         <div class="doc-filter-bar__leading">
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
             :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType"
-            primary-action-text="新建发票" @primary="wizardVisible = true"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection">
             <template #type-extra>
@@ -732,8 +731,7 @@ const onOverviewCardClick = async (card: any) => {
   if (card.action === 'type' && card.value) {
     // 跨 Tab 联动：切回发票列表视图并应用类型筛选
     activeView.value = 'invoice-list'
-    filterInvoiceType.value = card.value
-    await applyFilter()
+    filterInvoiceType.value = card.value  // watch(filterInvoiceType) 自动触发刷新
   }
 }
 const taxRateFilter = ref<number | string>('')
@@ -742,7 +740,8 @@ const dateRange = ref<Array<string>>([])
 
 // 列显隐
 const tableColumns = computed(() => {
-  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 44 }]
   for (const c of visibleColDefs.value) {
     cols.push({ colKey: c.key, title: c.label, ellipsis: true })
   }
@@ -1167,6 +1166,14 @@ const displaySummary = computed(() => selectedSummary.value || invoiceSummary.va
 
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 const onKeywordChange = () => { loadFiles(true) }
+// 筛选联动：类型下拉变更即时刷新（修复中台 Toolbar 只发 update 不触发刷新的空转）
+watch(filterInvoiceType, () => applyFilter())
+// 关键词防抖 300ms 后刷新
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
+watch(keyword, () => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => loadFiles(true), 300)
+})
 
 // 懒加载
 const listScrollRef = ref<HTMLElement>()
@@ -1772,14 +1779,14 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; gap: 14px; padding: 20px 22px;
   background: var(--td-bg-color-secondarycontainer);
   border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-large);
+  border-radius: var(--td-radius-medium);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   cursor: pointer; transition: all .18s ease;
   height: 100%; box-sizing: border-box;
 }
 .metric-card:hover { border-color: var(--td-brand-color); box-shadow: 0 4px 12px rgba(0,82,217,.1); transform: translateY(-1px); }
 .metric-card__icon {
-  flex-shrink: 0; width: 44px; height: 44px; border-radius: 10px;
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: var(--td-brand-color-1); color: var(--td-brand-color);
 }
@@ -1793,14 +1800,14 @@ onBeforeUnmount(() => {
 .quality-card {
   display: flex; align-items: center; gap: 12px; padding: 14px 18px;
   background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-large); cursor: pointer; transition: all .18s ease;
+  border-radius: var(--td-radius-medium); cursor: pointer; transition: all .18s ease;
   height: 100%; box-sizing: border-box;
 }
 .quality-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.08); }
-.quality-card.is-warn { border-color: var(--td-warning-color); background: var(--td-warning-color-1); }
-.quality-card.is-err { border-color: var(--td-error-color); background: var(--td-error-color-1); }
+.quality-card.is-warn { border-color: transparent; background: var(--td-warning-color-1); }
+.quality-card.is-err { border-color: transparent; background: var(--td-error-color-1); }
 .quality-card__icon {
-  flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px;
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
 }
 .quality-card.is-warn .quality-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
@@ -1811,7 +1818,7 @@ onBeforeUnmount(() => {
 .type-card {
   display: flex; align-items: center; gap: 14px; padding: 20px 22px;
   background: var(--td-bg-color-secondarycontainer); border: 1px solid transparent;
-  border-radius: var(--td-radius-large); cursor: pointer; transition: all .18s ease;
+  border-radius: var(--td-radius-medium); cursor: pointer; transition: all .18s ease;
   height: 100%; box-sizing: border-box;
 }
 .type-card:hover { background: var(--td-brand-color-1); border-color: var(--td-brand-color); transform: translateY(-1px); }
