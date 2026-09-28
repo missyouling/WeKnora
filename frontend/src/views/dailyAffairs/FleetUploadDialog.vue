@@ -1,13 +1,13 @@
 <template>
-  <t-dialog :visible="visible" header="上传证照" width="640px" :footer="false" placement="center"
+  <t-dialog :visible="visible" :header="dialogTitle" width="640px" :footer="false" placement="center"
     class="fleet-upload-dialog" @close="onClose" @update:visible="(v: boolean) => (v || onClose())">
     <div class="fu-body">
       <!-- 证照类型选择 -->
       <div class="fu-type-row">
-        <span class="fu-type-label">证照类型</span>
-        <t-select v-model="selectedType" :options="typeOptions" placeholder="请选择证照类型"
+        <span class="fu-type-label">{{ typeFieldLabel }}</span>
+        <t-select v-model="selectedType" :options="typeOptions" :placeholder="typeFieldLabel"
           class="fu-type-select" style="width: 220px" />
-        <span class="fu-type-tip">必须选择证照类型，上传后按所选类型归类提取</span>
+        <span class="fu-type-tip">{{ typeTip }}</span>
       </div>
 
       <!-- 拖拽/点击选择区 -->
@@ -99,6 +99,12 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const dragOver = ref(false)
 const tasks = ref<UpTask[]>([])
 let taskSeq = 0
+
+// 发票 scope（invoice）复用车队上传弹窗：文案与提取接口差异化
+const isInvoice = computed(() => props.scope === 'invoice')
+const dialogTitle = computed(() => (isInvoice.value ? '上传发票' : '上传证照'))
+const typeFieldLabel = computed(() => (isInvoice.value ? '发票类型' : '证照类型'))
+const typeTip = computed(() => (isInvoice.value ? '选择发票类型，上传后按所选类型归档归类' : '必须选择证照类型，上传后按所选类型归类提取'))
 
 // 证照类型选项必须响应式：父组件 uploadTypeOptions 随分类加载/设置变更更新，
 // 若用一次性求值会冻结为初始快照（分类尚未加载时只有内置类型，自定义类型缺失）
@@ -314,10 +320,16 @@ function drainExtractQueue() {
 
 async function extractFile(kid: string, scope: string, certType: string) {
   const token = localStorage.getItem('weknora_token')
-  const res = await fetch(`/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-fleet-document`, {
+  const api = isInvoice.value
+    ? `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-business`
+    : `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-fleet-document`
+  const body = isInvoice.value
+    ? { scope: props.scope }
+    : (certType ? { scope, cert_type: certType } : { scope })
+  const res = await fetch(api, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify(certType ? { scope, cert_type: certType } : { scope }),
+    body: JSON.stringify(body),
   })
   const j = await res.json()
   if (!res.ok) throw new Error(j?.message || '提取失败')
@@ -330,10 +342,24 @@ watch(() => props.visible, (v) => {
   if (v && !selectedType.value && props.defaultType) {
     selectedType.value = props.defaultType.includes('__') ? props.defaultType : (props.scope + '__' + props.defaultType)
   }
+  // 剪贴板粘贴：弹窗打开时挂载全局 paste 监听（支持粘贴图片/文件直接入队）
+  if (v) {
+    document.addEventListener('paste', onGlobalPaste)
+  } else {
+    document.removeEventListener('paste', onGlobalPaste)
+  }
 })
+
+// 剪贴板粘贴入口：从 clipboardData 提取图片/文件（截图粘贴上传）
+function onGlobalPaste(e: ClipboardEvent) {
+  const files = e.clipboardData?.files
+  if (!files || !files.length) return
+  addFiles(Array.from(files))
+}
 
 onBeforeUnmount(() => {
   // 组件常驻：关闭弹窗不销毁任务，任务在后台继续执行
+  document.removeEventListener('paste', onGlobalPaste)
   if (autoCloseTimer) clearTimeout(autoCloseTimer)
 })
 </script>

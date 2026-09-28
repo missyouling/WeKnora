@@ -6,8 +6,6 @@
         <h2>发票管理</h2>
         <p class="header-subtitle">发票档案自动归档</p>
       </div>
-      <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-        @change="onFileInputChange" />
     </div>
 
     <!-- 加载中 -->
@@ -65,7 +63,7 @@
                   <template #icon><t-icon name="history" size="14px" /></template>
                 </t-button>
               </t-tooltip>
-              <t-button theme="primary" size="small" @click="triggerUpload">
+              <t-button theme="primary" size="small" @click="uploadVisible = true">
                 <template #icon><t-icon name="upload" size="14px" /></template>
                 上传发票
               </t-button>
@@ -222,6 +220,10 @@
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
     <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="reloadColumns" />
+
+    <!-- 上传弹窗（对齐车队：分类选择 + 拖拽/选择/粘贴 + 进度） -->
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="invoice"
+      :type-options="uploadTypeOptions" :default-type="filterInvoiceType || ''" @done="onUploadDone" />
 
     <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
@@ -455,7 +457,6 @@ import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
-  uploadKnowledgeFile,
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
@@ -477,13 +478,13 @@ import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vu
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import InvoiceSettingsDrawer from './InvoiceSettingsDrawer.vue'
+import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-发票'
-const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
 const PAGE_SIZE = 20
 
 // 发票类型枚举（编辑/筛选推荐值，allow-create 兼容提取值）
@@ -527,7 +528,6 @@ const router = useRouter()
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
-const fileInputRef = ref<HTMLInputElement>()
 
 interface KnowledgeItem {
   id: string
@@ -1057,6 +1057,7 @@ const reloadColumns = async () => {
   try {
     const res: any = await listFleetCategories({ scope: 'invoice' })
     const cats = res?.data || []
+    invoiceCats.value = cats
     if (cats[0]?.subs?.length) {
       customColumns.value = cats[0].subs
         .filter((s: any) => s.enabled !== false)
@@ -1130,30 +1131,18 @@ const onListScroll = (e: Event) => {
   }
 }
 
-// ---- 上传 ----
-const triggerUpload = () => { fileInputRef.value?.click() }
-const onFileInputChange = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) handleUploadFiles(Array.from(input.files))
-  input.value = ''
-}
-
-const handleUploadFiles = async (files: File[]) => {
-  const valid = files.filter(f => {
-    const ext = (f.name.split('.').pop() || '').toLowerCase()
-    return ACCEPT_TYPES.includes(ext)
-  })
-  const invalidCount = files.length - valid.length
-  if (invalidCount) MessagePlugin.warning(`已忽略 ${invalidCount} 个不支持的文件（仅支持 PDF/JPG/PNG）`)
-  if (!valid.length) return
-  try {
-    for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
-    MessagePlugin.success(`已上传 ${valid.length} 个发票文件，正在解析...`)
-    await loadFiles(true)
-    startPolling()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '上传失败')
-  }
+// ---- 上传（对齐车队：FleetUploadDialog 弹窗，支持拖拽/选择/剪贴板粘贴） ----
+const uploadVisible = ref(false)
+// 上传弹窗分类选项：categories['invoice'] 分类列表（含新增自定义类型），复合值 scope__name
+const invoiceCats = ref<any[]>([])
+const uploadTypeOptions = computed(() => {
+  const cats = invoiceCats.value.filter((c: any) => c.enabled !== false)
+  if (!cats.length) return [{ label: '发票', value: 'invoice__发票' }]
+  return cats.map((c: any) => ({ label: c.name, value: `invoice__${c.name}` }))
+})
+const onUploadDone = async () => {
+  await loadFiles(true)
+  loadInvoiceOverview()
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
