@@ -117,12 +117,22 @@ func TestInvoiceOverviewStats(t *testing.T) {
 	if stats.CurrentMonth.SumTotal != 999 {
 		t.Errorf("CurrentMonth.SumTotal = %v, want 999", stats.CurrentMonth.SumTotal)
 	}
-	// 类型分组：专用发票(1张,999) + 普通发票(1张,226)，按张数降序
-	if len(stats.ByInvoiceType) != 2 {
-		t.Fatalf("ByInvoiceType len = %d, want 2", len(stats.ByInvoiceType))
+	// 类型分组：固定三桶（专用发票1张999 + 普通发票1张226 + 其它票据0张），按张数降序
+	if len(stats.ByInvoiceType) != 3 {
+		t.Fatalf("ByInvoiceType len = %d, want 3", len(stats.ByInvoiceType))
 	}
 	if stats.ByInvoiceType[0].InvoiceType != "专用发票" || stats.ByInvoiceType[0].Count != 1 {
 		t.Errorf("ByInvoiceType[0] = %+v, want 专用发票 x1", stats.ByInvoiceType[0])
+	}
+	// 空桶"其它票据"必须补齐（count=0），前端类型卡稳定展示
+	foundOther := false
+	for _, bt := range stats.ByInvoiceType {
+		if bt.InvoiceType == "其它票据" && bt.Count == 0 {
+			foundOther = true
+		}
+	}
+	if !foundOther {
+		t.Errorf("ByInvoiceType missing zero-count 其它票据 bucket: %+v", stats.ByInvoiceType)
 	}
 }
 
@@ -136,7 +146,13 @@ func TestInvoiceOverviewStatsEmpty(t *testing.T) {
 	if stats.Total != 0 || stats.ParseFailed != 0 || stats.ExtractFailed != 0 {
 		t.Errorf("empty stats = %+v, want all zero", stats)
 	}
-	if len(stats.ByInvoiceType) != 0 {
-		t.Errorf("empty ByInvoiceType = %+v, want empty slice", stats.ByInvoiceType)
+	// 空场景同样固定三桶（全部 0 值），保证前端类型卡始终渲染
+	if len(stats.ByInvoiceType) != 3 {
+		t.Fatalf("empty ByInvoiceType len = %d, want 3 fixed buckets, got %+v", len(stats.ByInvoiceType), stats.ByInvoiceType)
+	}
+	for _, bt := range stats.ByInvoiceType {
+		if bt.Count != 0 {
+			t.Errorf("empty bucket %s Count = %d, want 0", bt.InvoiceType, bt.Count)
+		}
 	}
 }

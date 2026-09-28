@@ -45,7 +45,8 @@
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection">
             <template #type-extra>
-              <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter">
+              <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter"
+                class="invoice-date-range">
                 <template #prefixIcon><t-icon name="time" size="16px" /></template>
               </t-date-range-picker>
             </template>
@@ -53,14 +54,14 @@
               <BusinessColumnFilter ref="fieldFilterRef" hide-trigger :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
+              <t-tooltip content="字段配置" placement="bottom">
+                <t-button variant="outline" size="small" @click="fieldFilterRef?.open()">
+                  <template #icon><t-icon name="view-list" size="14px" /></template>
+                </t-button>
+              </t-tooltip>
               <t-tooltip content="设置" placement="bottom">
                 <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">
                   <template #icon><t-icon name="setting" size="14px" /></template>
-                </t-button>
-              </t-tooltip>
-              <t-tooltip content="删除历史" placement="bottom">
-                <t-button variant="outline" size="small" @click="historyVisible = true">
-                  <template #icon><t-icon name="history" size="14px" /></template>
                 </t-button>
               </t-tooltip>
               <t-button theme="primary" size="small" @click="uploadVisible = true">
@@ -214,9 +215,9 @@
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-发票" kb-desc="发票管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析电子发票，自动提取发票字段" default-description="用于存放并解析电子发票，自动提取发票字段" model-tip="提取模型将复用下方「对话模型」，用于解析发票字段。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
 
-    <!-- 删除历史（自动删除的非发票记录） -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="发票"
-      @changed="loadFiles(true)" @restored="onRestored" />
+    <!-- 已上传文件（复用车队：全部上传文件的解析/提取状态；待复核卡点击打开） -->
+    <FleetUploadHistoryDrawer v-model:visible="uploadHistoryVisible" :kb-id="kbId || ''" scope="invoice"
+      @changed="loadFiles(true)" />
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
     <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="reloadColumns" />
@@ -476,7 +477,7 @@ import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import InvoiceSettingsDrawer from './InvoiceSettingsDrawer.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
@@ -652,18 +653,23 @@ const overviewCards = computed(() => {
     { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
     { key: 'sumTotal', label: '价税合计', icon: 'money-circle', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
   ]
-  // 类型分布卡：点击联动列表类型筛选
-  for (const t of types) {
+  // 类型分布卡：点击联动列表类型筛选（按固定枚举序：专票/普票/其它票据）
+  const typeOrder = (name: string) => { const i = INVOICE_TYPES.indexOf(name); return i < 0 ? 99 : i }
+  const sortedTypes = [...types].sort((a, b) => typeOrder(a.invoice_type) - typeOrder(b.invoice_type))
+  for (const t of sortedTypes) {
     cards.push({ key: `type-${t.invoice_type}`, label: t.invoice_type, icon: 'label', value: `${typeCount(t.invoice_type)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: t.invoice_type })
   }
   // 异常质量卡：0 时弱化展示
-  cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: '' })
+  cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
   return cards
 })
 const onOverviewCardClick = (card: any) => {
   // 类型卡点击：联动列表类型筛选（watch(filterInvoiceType) 自动刷新）
   if (card.action === 'type' && card.typeValue) {
     filterInvoiceType.value = card.typeValue
+  } else if (card.action === 'history') {
+    // 待复核卡：打开已上传文件抽屉（全部文件，含解析/提取失败与非发票保留件）
+    uploadHistoryVisible.value = true
   }
 }
 
@@ -728,7 +734,7 @@ watch(() => currentDetail.value?.description, () => {
 const DRAWER_WIDTH_KEY = 'weknora-invoice-drawer-width'
 // 打印预览
 const printVisible = ref(false)
-const historyVisible = ref(false)
+const uploadHistoryVisible = ref(false)
 const invoiceSettingsVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
@@ -1038,7 +1044,9 @@ const pageBadgeOf = (row: InvoiceRow): string => {
 }
 
 const invoiceTypeOptions = computed(() => {
-  const list = kbTypes.value.length ? kbTypes.value : INVOICE_TYPES
+  const base = kbTypes.value.length ? kbTypes.value : INVOICE_TYPES
+  // 确保排除式语义的「其它票据」始终可选（点击概览其它票据卡联动筛选）
+  const list = base.includes('其它票据') ? base : [...base, '其它票据']
   return list.map(v => ({ value: v, label: v }))
 })
 
@@ -1157,7 +1165,7 @@ const {
     pendingFiles.value = files.filter(k => !withRows.has(k.id))
   },
   onRemoved: (item) => {
-    MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已移至删除历史，可在删除历史中恢复`)
+    MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已保留待人工复核`)
     loadTaxRates()
   },
   onTick: () => loadFiles(),
@@ -1193,28 +1201,6 @@ const openDetail = async (row: InvoiceRow) => {
 const detailTitle = computed(() =>
   currentRow.value?.invoiceNo ? `发票详情 · ${currentRow.value.invoiceNo}` : '发票详情'
 )
-
-// ---- 重新入库（恢复）后自动打开编辑抽屉 ----
-const onRestored = async (knowledgeId: string) => {
-  await loadFiles(true)
-  const row = invoiceRows.value.find((r: any) => r.knowledgeId === knowledgeId)
-  if (row) {
-    openDetail(row)
-  } else {
-    // 列表可能因分页/懒加载未包含该行，用最小占位行打开编辑抽屉补录字段
-    openDetail({
-      rowKey: `manual-${knowledgeId}`,
-      knowledgeId,
-      fileName: '',
-      parseStatus: 'completed',
-      extractStatus: 'manual',
-      kind: 'invoice',
-      tags: [],
-      description: '',
-      page: 0,
-    } as InvoiceRow)
-  }
-}
 
 // ---- 字段编辑 + 自动保存 ----
 const fillEditForm = () => {
@@ -1642,7 +1628,7 @@ const handleBatchDelete = async () => {
 onMounted(() => {
   // 路由 query 回填：type / failed 直达状态
   if (typeof route.query.type === 'string' && route.query.type) filterInvoiceType.value = route.query.type
-  if (route.query.failed === '1') historyVisible.value = true
+  if (route.query.failed === '1') uploadHistoryVisible.value = true
   loadKb()
   reloadColumns()
 })
@@ -1721,6 +1707,8 @@ onBeforeUnmount(() => {
   flex: 1; min-height: 0;
 }
 /* ---- 筛选工具栏 ---- */
+.invoice-date-range { width: 240px; flex-shrink: 0; }
+
 
 /* ---- 字段筛选弹层 ---- */
 :global(.invoice-field-popup) {
@@ -1882,23 +1870,6 @@ onBeforeUnmount(() => {
 .doc-load-end {
   text-align: center; padding: 10px 0; font-size: 12px; color: var(--td-text-color-placeholder);
 }
-
-/* ---- 底部浮动工具栏 ---- */
-.doc-batch-bar-fixed {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
-  width: 100%; max-width: 700px; padding: 0 4px; box-sizing: border-box;
-}
-.batch-bar-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 12px; background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke); border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-}
-.batch-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
-.batch-bar-count { font-size: 13px; font-weight: 500; color: var(--td-text-color-secondary); white-space: nowrap; }
-.batch-bar-clear { flex-shrink: 0; padding: 0 6px !important; height: 28px !important; font-size: 12px; color: var(--td-text-color-secondary) !important; &:hover { color: var(--td-brand-color) !important; } }
-.batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
-.batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
 
 /* ---- 详情抽屉：竖向区块 + 可拖宽（复用知识库文档抽屉上下滚动样式） ---- */
 .invoice-detail-drawer :deep(.t-drawer__body) {

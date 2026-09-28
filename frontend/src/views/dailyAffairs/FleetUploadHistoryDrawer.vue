@@ -140,7 +140,7 @@ const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '100px' },
   { colKey: 'extract', title: '提取', width: '100px' },
-  { colKey: 'docType', title: '证照类型', width: '120px' },
+  { colKey: 'docType', title: props.scope === 'invoice' ? '发票类型' : '证照类型', width: '120px' },
   { colKey: 'createdAt', title: '上传时间', width: '160px' },
   { colKey: 'op', title: '操作', width: '60px', fixed: 'right' as const },
 ]
@@ -260,10 +260,15 @@ const reparseRow = async (row: any) => {
 const reextractRow = async (row: any) => {
   row._extracting = true
   try {
-    const res = await fetch(`/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-fleet-document`, {
+    const url = props.scope === 'invoice'
+      ? `/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-business`
+      : `/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-fleet-document`
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') },
-      body: JSON.stringify({ scope: props.scope || 'vehicle', doc_type: row.doc_type || undefined }),
+      body: props.scope === 'invoice'
+        ? JSON.stringify({ scope: 'invoice' })
+        : JSON.stringify({ scope: props.scope || 'vehicle', doc_type: row.doc_type || undefined }),
     })
     if (!res.ok) throw new Error('提取请求失败')
     MessagePlugin.success('已重新提取')

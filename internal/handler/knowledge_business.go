@@ -832,25 +832,15 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 		}
 		// 防循环：auto_deleted_count >= 1（曾被自动删除后人工恢复）→ 不再自动删除，
 		// 改为 failed 保留。
+		// 需求变更（发票删除历史功能弃用）：非发票文件不再自动删除，保留在库并标记
+		// failed，用户可通过「待复核」卡/「已上传文件」抽屉人工处理。
+		meta.ExtractStatus = "failed"
 		if h.autoDeleteCount(effCtx, knowledge) > 0 {
-			meta.ExtractStatus = "failed"
-			meta.ExtractError = "系统判定非发票文件，但该文件已被人工恢复，已保留待人工处理"
-			logger.Warnf(ctx, "Invoice re-extraction judged non-invoice but row was restored before; keeping file %s", knowledgeID)
+			meta.ExtractError = "系统判定非发票文件，该文件曾被人工恢复，已保留待人工处理"
 		} else {
-			// 需求：非发票文件不能存在于发票知识库 → 提取判定后自动删除该文件
-			// （保留物理文件写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）。
-			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_invoice"); delErr != nil {
-				logger.Warnf(ctx, "auto-delete non-invoice knowledge failed: %v", delErr)
-			} else {
-				logger.Infof(ctx, "auto-deleted non-invoice knowledge, ID: %s", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非发票文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_invoice"},
-				})
-				return
-			}
+			meta.ExtractError = "系统判定非发票文件，已保留待人工复核"
 		}
+		logger.Infof(ctx, "non-invoice knowledge kept for manual review, ID: %s", knowledgeID)
 	}
 	// Extraction-result guard: a model reply marked as invoice but carrying no
 	// usable invoice (empty list, or every invoice blank) is a garbage/truncated

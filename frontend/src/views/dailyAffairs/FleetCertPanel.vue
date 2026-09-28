@@ -30,7 +30,7 @@
       <div class="meter-table">
         <div class="meter-table-head">
           <span class="th-drag"></span>
-          <span class="th-name">{{ group.scope === 'maintain' ? '维保项名称' : '证照名称' }}</span>
+          <span class="th-name">{{ group.scope === 'maintain' ? '维保项名称' : group.scope === 'invoice' ? '发票类型' : '证照名称' }}</span>
           <span>分组</span>
           <span>字段数</span>
           <span>状态</span>
@@ -49,7 +49,7 @@
               <t-switch :model-value="!!item.enabled" size="small" @change="(v: any) => toggleEnabled(item, v)" />
             </span>
             <span class="meter-row-actions" @click.stop>
-              <t-popconfirm v-if="!item.builtin" theme="warning" :content="`确定删除证照类型「${item.name}」吗？`"
+              <t-popconfirm v-if="!item.builtin" theme="warning" :content="`确定删除${group.scope === 'invoice' ? '发票类型' : group.scope === 'maintain' ? '维保类型' : '证照类型'}「${item.name}」吗？`"
                 :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="removeItem(item)">
                 <t-button variant="text" size="small" @click.stop>
@@ -64,7 +64,7 @@
             <div class="meter-form-title">编辑{{ group.label }}</div>
             <div class="form-grid">
               <div class="form-item">
-                <label>{{ group.scope === 'maintain' ? '维保项名称' : '证照名称' }} <span class="required">*</span></label>
+                <label>{{ group.scope === 'maintain' ? '维保项名称' : group.scope === 'invoice' ? '发票类型' : '证照名称' }} <span class="required">*</span></label>
                 <t-input v-model="editForm.name" @enter="commitEdit" />
               </div>
             </div>
@@ -123,7 +123,7 @@
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
         <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
-          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : '暂无证照类型' }}</span>
+          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : group.scope === 'invoice' ? '暂无发票类型' : '暂无证照类型' }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
@@ -151,7 +151,7 @@ import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias } from '@/api/fleet'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | '' }>(), { scope: 'vehicle' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | '' }>(), { scope: 'vehicle' })
 
 // 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件
 const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
@@ -160,6 +160,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   ],
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
   maintain: [{ key: 'maintain', label: '维保清单', scope: 'maintain', groupId: '' }],
+  invoice: [{ key: 'invoice', label: '发票', scope: 'invoice', groupId: '' }],
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
@@ -487,8 +488,8 @@ const addLabel = computed(() => `新增${group.value.label}`)
 defineExpose({ startAdd, addLabel })
 async function commitAdd() {
   const name = addForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : '请输入证照名称'); return }
-  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning('该证照类型已存在'); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入发票类型' : '请输入证照名称')); return }
+  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning(`该${props.scope === 'invoice' ? '发票类型' : props.scope === 'maintain' ? '维保类型' : '证照类型'}已存在`); return }
   saving.value = true
   try {
     const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs: [] })
@@ -550,7 +551,7 @@ async function commitEdit() {
   const item = groupItems.value.find((it: any) => it.id === editingId.value)
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : '请输入证照名称'); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入发票类型' : '请输入证照名称')); return }
   const subs = fieldsEditable.value
     .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text' }))
     .filter((f) => f.name)

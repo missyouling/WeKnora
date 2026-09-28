@@ -4,7 +4,7 @@
     class="invoice-settings-drawer">
     <t-tabs v-model="activeTab" class="invoice-settings-tabs" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
-        <FleetCategoryPanel scope="invoice" @saved="onPanelSaved" />
+        <FleetCertPanel scope="invoice" />
       </t-tab-panel>
       <t-tab-panel value="rules" label="提取规则">
         <ExtractRulePanel ref="extractRef" scope="invoice" kb-name="日常事务-发票" :kb-id="kbId || ''" />
@@ -14,9 +14,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import FleetCategoryPanel from './FleetCategoryPanel.vue'
+import FleetCertPanel from './FleetCertPanel.vue'
 import ExtractRulePanel from './ExtractRulePanel.vue'
 
 const props = defineProps<{ visible: boolean; kbId?: string }>()
@@ -35,11 +35,13 @@ function onTabChange(val: string | number) {
   if (val === 'rules') extractRef.value?.refresh()
 }
 
-// 字段/分类配置保存后：通知列表刷新列，并刷新提取规则面板的类型下拉
-function onPanelSaved() {
+// FleetCertPanel 保存分类/字段后派发全局事件：刷新列表列定义与提取规则面板
+function onCategoriesChanged() {
   emit('saved')
   extractRef.value?.refresh()
 }
+onMounted(() => window.addEventListener('fleet-categories-changed', onCategoriesChanged))
+onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCategoriesChanged))
 </script>
 
 <style lang="less" scoped>

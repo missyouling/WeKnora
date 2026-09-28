@@ -186,8 +186,15 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	kept := records[:0]
 	var sumAmount, sumTax, sumTotal float64
 	for _, r := range records {
-		if filter.InvoiceType != "" && r.InvoiceType != filter.InvoiceType {
-			continue
+		if filter.InvoiceType != "" {
+			// 排除式筛选：其它票据 = 非专用发票/普通发票的全部（含空值/未知值）
+			if filter.InvoiceType == "其它票据" {
+				if r.InvoiceType == "专用发票" || r.InvoiceType == "普通发票" {
+					continue
+				}
+			} else if r.InvoiceType != filter.InvoiceType {
+				continue
+			}
 		}
 		if filter.TaxRate != nil && (r.TaxRate == nil || !approxEqualFloat(*r.TaxRate, *filter.TaxRate)) {
 			continue
@@ -478,6 +485,10 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 		if typ == "" {
 			typ = "未分类"
 		}
+		// 其它票据桶：除专用发票/普通发票外的全部（含未分类/未知值）统一归入"其它票据"
+		if typ != "专用发票" && typ != "普通发票" {
+			typ = "其它票据"
+		}
 		t := typeByMap[typ]
 		if t == nil {
 			t = &types.InvoiceTypeStat{InvoiceType: typ}
@@ -490,6 +501,16 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 	}
 	for _, t := range typeByMap {
 		stats.ByInvoiceType = append(stats.ByInvoiceType, *t)
+	}
+	// 保证专票/普票/其它票据三桶固定出现（空桶补 0），前端类型卡稳定展示
+	seenType := map[string]bool{}
+	for _, t := range stats.ByInvoiceType {
+		seenType[t.InvoiceType] = true
+	}
+	for _, name := range []string{"专用发票", "普通发票", "其它票据"} {
+		if !seenType[name] {
+			stats.ByInvoiceType = append(stats.ByInvoiceType, types.InvoiceTypeStat{InvoiceType: name})
+		}
 	}
 	// 按张数降序，稳定排序
 	sort.Slice(stats.ByInvoiceType, func(i, j int) bool {
