@@ -16,7 +16,7 @@
     <!-- KB 不存在：空状态 -->
     <div v-else-if="!kbId" class="empty-area">
       <t-empty description="尚未创建「日常事务-发票」知识库">
-        <template #image><t-icon name="money-circle" size="64px" /></template>
+        <template #image><t-icon name="file" size="64px" /></template>
       </t-empty>
       <t-button theme="primary" @click="wizardVisible = true">创建发票知识库</t-button>
     </div>
@@ -51,19 +51,13 @@
               </t-date-range-picker>
             </template>
             <template #columns>
-              <BusinessColumnFilter ref="fieldFilterRef" hide-trigger :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
+              <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
-              <t-tooltip content="字段配置" placement="bottom">
-                <t-button variant="outline" size="small" @click="fieldFilterRef?.open()">
-                  <template #icon><t-icon name="view-list" size="14px" /></template>
-                </t-button>
-              </t-tooltip>
-              <t-tooltip content="设置" placement="bottom">
-                <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">
-                  <template #icon><t-icon name="setting" size="14px" /></template>
-                </t-button>
-              </t-tooltip>
+              <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">
+                <template #icon><t-icon name="setting" size="14px" /></template>
+                设置
+              </t-button>
               <t-button theme="primary" size="small" @click="uploadVisible = true">
                 <template #icon><t-icon name="upload" size="14px" /></template>
                 上传发票
@@ -651,14 +645,18 @@ const overviewCards = computed(() => {
   const typeCount = (name: string) => types.find((t) => t.invoice_type === name)?.count || 0
   const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
     { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
-    { key: 'sumTotal', label: '价税合计', icon: 'money-circle', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
+    { key: 'sumTotal', label: '价税合计', icon: 'money', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
   ]
-  // 类型分布卡：点击联动列表类型筛选（按固定枚举序：专票/普票/其它票据）
-  const typeOrder = (name: string) => { const i = INVOICE_TYPES.indexOf(name); return i < 0 ? 99 : i }
-  const sortedTypes = [...types].sort((a, b) => typeOrder(a.invoice_type) - typeOrder(b.invoice_type))
-  for (const t of sortedTypes) {
-    cards.push({ key: `type-${t.invoice_type}`, label: t.invoice_type, icon: 'label', value: `${typeCount(t.invoice_type)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: t.invoice_type })
+  // 类型分布卡（六同步）：按 categories(scope=invoice) 数组顺序渲染（enabled 过滤），
+  // 计数按分类名匹配后端统计桶，匹配不到缺省 0（对齐 AGENTS.md 主页面类型卡规则）
+  const cats = invoiceCats.value.filter((c: any) => c.enabled !== false)
+  const catNames = (cats.length ? cats.map((c: any) => c.name) : INVOICE_TYPES).filter((n: string) => n && n !== '其它票据')
+  for (const name of catNames) {
+    const typeIcon = name === '专用发票' ? 'file-copy' : name === '普通发票' ? 'file-1' : 'file-unknown'
+    cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
+  // 其它票据：排除式统计桶（非实体分类），固定追加在类型卡末尾
+  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
   // 异常质量卡：0 时弱化展示
   cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
   return cards
@@ -674,7 +672,6 @@ const onOverviewCardClick = (card: any) => {
 }
 
 // 工具栏「更多操作」：字段配置 / 提取规则设置 / 删除历史
-const fieldFilterRef = ref<InstanceType<typeof BusinessColumnFilter>>()
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
@@ -1044,10 +1041,19 @@ const pageBadgeOf = (row: InvoiceRow): string => {
 }
 
 const invoiceTypeOptions = computed(() => {
-  const base = kbTypes.value.length ? kbTypes.value : INVOICE_TYPES
-  // 确保排除式语义的「其它票据」始终可选（点击概览其它票据卡联动筛选）
+  // 六同步：类型下拉以 categories(scope=invoice) 为权威源（设置页改名/排序/启停后自动同步），
+  // 未入库时回退识别规则配置 -> 内置枚举；「其它票据」为排除式统计桶，始终追加在末尾
+  const catNames = invoiceCats.value
+    .filter((c: any) => c.enabled !== false)
+    .map((c: any) => c.name)
+    .filter((n: string) => n && n !== '其它票据')
+  const base = catNames.length
+    ? catNames
+    : kbTypes.value.length
+      ? kbTypes.value
+      : INVOICE_TYPES.filter((n) => n !== '其它票据')
   const list = base.includes('其它票据') ? base : [...base, '其它票据']
-  return list.map(v => ({ value: v, label: v }))
+  return list.map((v: string) => ({ value: v, label: v }))
 })
 
 // ---- 类型分类列表：从识别规则配置加载（支持自定义分类增删改查） ----
@@ -1624,6 +1630,12 @@ const handleBatchDelete = async () => {
   }
 }
 
+// 六同步：字段/分类配置变更后重建动态列与概览统计（类型卡/下拉由 invoiceCats computed 自动派生）
+const onCategoriesChanged = () => {
+  reloadColumns()
+  loadInvoiceOverview()
+}
+
 // ---- 生命周期 ----
 onMounted(() => {
   // 路由 query 回填：type / failed 直达状态
@@ -1631,10 +1643,13 @@ onMounted(() => {
   if (route.query.failed === '1') uploadHistoryVisible.value = true
   loadKb()
   reloadColumns()
+  // 六同步：设置页字段/分类保存后全局事件 -> 重建动态列/类型卡/下拉
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 onBeforeUnmount(() => {
   stopPolling()
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
 
@@ -1672,12 +1687,12 @@ onBeforeUnmount(() => {
 
 /* ---- 概览紧凑卡（车队 type-card 风格） ---- */
 .overview-group {
-  margin-bottom: var(--td-comp-margin-l);
+  margin-bottom: var(--td-comp-margin-m);
 }
 .overview-group__cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px;
 }
 .type-card {
   display: flex; align-items: center; gap: 14px; padding: 18px 20px;
@@ -1703,7 +1718,7 @@ onBeforeUnmount(() => {
 
 /* ---- 发票列表视图（Tab 独立视图） ---- */
 .invoice-list-view {
-  display: flex; flex-direction: column; gap: 12px;
+  display: flex; flex-direction: column; gap: 0;
   flex: 1; min-height: 0;
 }
 /* ---- 筛选工具栏 ---- */
@@ -1737,11 +1752,12 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
+  border-radius: var(--td-radius-large);
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
