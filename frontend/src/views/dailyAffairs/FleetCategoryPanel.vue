@@ -53,7 +53,8 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory } from '@/api/fleet'
 
 const props = defineProps<{ scope: string }>()
-const scopeLabel = ref(props.scope === 'vehicle' ? '车辆证照' : props.scope === 'driver' ? '司机证照' : '维保类型')
+const emit = defineEmits<{ (e: 'saved'): void }>()
+const scopeLabel = ref(props.scope === 'vehicle' ? '车辆证照' : props.scope === 'driver' ? '司机证照' : props.scope === 'maintain' ? '维保类型' : '发票类型')
 
 const categories = ref<any[]>([])
 const expanded = ref<Set<string>>(new Set())
@@ -94,6 +95,7 @@ async function commitAdd(cat: any) {
     const created = res.data || res
     categories.value = categories.value.map((c: any) => (c.id === '__new__' ? created : c))
     MessagePlugin.success('分类已创建')
+    emit('saved')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '创建失败')
     categories.value = categories.value.filter((c: any) => c.id !== '__new__')
@@ -103,6 +105,7 @@ async function commitAdd(cat: any) {
 async function saveCat(cat: any) {
   try {
     await updateFleetCategory(cat.id, { name: cat.name, subs: cat.subs || [], enabled: cat.enabled })
+    emit('saved')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   }
@@ -114,6 +117,7 @@ async function removeCat(cat: any) {
     categories.value = categories.value.filter((c: any) => c.id !== cat.id)
     expanded.value.delete(cat.id)
     MessagePlugin.success('已删除')
+    emit('saved')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
   }

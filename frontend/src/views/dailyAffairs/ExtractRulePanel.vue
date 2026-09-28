@@ -1,7 +1,7 @@
 <template>
   <div class="extract-rule-panel">
     <div class="extract-toolbar">
-      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="scope === 'maintain' ? '选择维保类型' : '选择证照类型'" @change="onCertTypeChange" />
+      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="isFleetScope ? (scope === 'maintain' ? '选择维保类型' : '选择证照类型') : '选择发票类型'" @change="onCertTypeChange" />
       <span v-else class="cert-type-static">整体提取规则</span>
       <div class="spacer" />
       <t-switch v-model="advancedEnabled" size="small">
@@ -266,8 +266,7 @@ const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintai
 
 // 分组别名：与设置抽屉 FleetCertPanel 同 key（`${scope}:${builtinGroupKey}`），builtin group_key = company/driver/maintain
 const BUILTIN_GROUP_KEY: Record<string, string> = { vehicle: 'company', driver: 'driver', maintain: 'maintain' }
-// 非车队 scope（如 invoice）：整体一条规则，无证照类型维度
-const ALL_CERT_TYPE = '__all__'
+// 非车队 scope（如 invoice）：类型 = categories[scope] 分类列表（含新增自定义类型），规则按类型存取
 const isFleetScope = computed(() => !!BUILTIN_GROUP_KEY[props.scope])
 const groupAliases = ref<Record<string, string>>({})
 async function loadGroupAliases() {
@@ -297,6 +296,19 @@ function typeComposite(scope: string, name: string) {
 }
 
 const certTypeOptions = computed(() => {
+  if (!isFleetScope.value) {
+    // 非车队 scope：类型 = 分类列表（含新增自定义类型），平铺无分组
+    const arr = categories.value[props.scope] || []
+    const seen = new Set<string>()
+    const children: { label: string; value: string }[] = []
+    arr.forEach((c: any) => {
+      if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
+        seen.add(c.name)
+        children.push({ label: c.name, value: typeComposite(props.scope, c.name) })
+      }
+    })
+    return children
+  }
   return TYPE_GROUP_META
     .filter((g) => g.scope === props.scope)
     .map(({ scope, fallback }) => {
@@ -326,7 +338,6 @@ const currentScope = computed(() => {
   return s && s !== certType.value ? s : props.scope
 })
 const certTypeName = computed(() => {
-  if (certType.value === ALL_CERT_TYPE) return ''
   const parts = certType.value.split('__')
   return parts.length > 1 ? parts.slice(1).join('__') : certType.value
 })
@@ -373,29 +384,27 @@ function makeField(name: string): ExtractFieldConfig {
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
 function authorityFields(): { name: string; enabled: boolean; dataType: string }[] {
-  if (!isFleetScope.value) {
-    // 非车队 scope：整体规则，字段名权威 = categories[scope][0].subs（如发票动态列）
-    const arr = categories.value[props.scope] || []
-    const c = arr.find((x: any) => Array.isArray(x.subs)) || arr[0]
-    const subs = c && Array.isArray(c.subs) ? c.subs : []
-    const seen = new Set<string>()
-    return subs
-      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, dataType: s.data_type || 'text' }))
-      .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
-  }
   const scope = currentScope.value
-  const c = (categories.value[scope] || []).find((x: any) => x.name === certTypeName.value)
+  const catList = categories.value[scope] || []
+  // 非车队 scope：按选中类型取 subs，未选中/无匹配回退第一个分类
+  let c = catList.find((x: any) => x.name === certTypeName.value)
+  if (!isFleetScope.value && !c) {
+    c = catList.find((x: any) => Array.isArray(x.subs)) || catList[0]
+  }
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
       .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, dataType: s.data_type || 'text' }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
-  const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
-  const seen = new Set<string>()
-  return defaults
-    .map((n) => ({ name: n, enabled: true, dataType: 'text' }))
-    .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
+  if (isFleetScope.value) {
+    const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
+    const seen = new Set<string>()
+    return defaults
+      .map((n) => ({ name: n, enabled: true, dataType: 'text' }))
+      .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
+  }
+  return []
 }
 
 function insertSlot(slot: string) {
@@ -535,10 +544,7 @@ watch(
   () => {
     certType.value = ''
     fields.value = []
-    if (!isFleetScope.value) {
-      certType.value = ALL_CERT_TYPE
-      refresh()
-    }
+    refresh()
   },
 )
 
@@ -547,9 +553,8 @@ watch(
   () => props.kbId,
   (v) => {
     if (!v || isFleetScope.value) return
-    if (kbId.value === v && certType.value === ALL_CERT_TYPE) return
+    if (kbId.value === v) return
     kbId.value = v
-    certType.value = ALL_CERT_TYPE
     refresh()
   },
 )
@@ -557,25 +562,27 @@ watch(
 onMounted(async () => {
   await ensureKb()
   await refresh()
-  if (isFleetScope.value) {
-    const groups = certTypeOptions.value
-    const first = groups[0]?.children?.[0]
-    if (first) {
-      certType.value = first.value
-      await loadConfig()
-    }
-  } else {
-    certType.value = ALL_CERT_TYPE
+  const first = pickFirstOption()
+  if (first) {
+    certType.value = first
     await loadConfig()
   }
 })
 
 // 兜底：categories 异步加载完成后，若仍未选中类型则自动选中第一个（默认加载第一个分类）
+// 车队分组式选项取首个 children；非车队平铺选项直接取首项
+function pickFirstOption(): string {
+  const opts: any = certTypeOptions.value
+  if (!opts || !opts.length) return ''
+  if (!isFleetScope.value) return opts[0]?.value || ''
+  return opts[0]?.children?.[0]?.value || ''
+}
+
 watch(certTypeOptions, (groups) => {
-  if (!isFleetScope.value || certType.value) return
-  const first = groups[0]?.children?.[0]
+  if (certType.value || !groups.length) return
+  const first = pickFirstOption()
   if (first) {
-    certType.value = first.value
+    certType.value = first
     loadConfig()
   }
 })
