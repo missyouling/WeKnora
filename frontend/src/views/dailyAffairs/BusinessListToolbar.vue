@@ -92,7 +92,8 @@ const emit = defineEmits<{
   align-items: center;
   gap: var(--td-comp-margin-s);
   flex-wrap: wrap;
-  flex: 1 1 auto;
+  /* 独占整行：保证搜索/筛选/刷新始终同行，不被右侧操作区挤压换行 */
+  flex: 1 1 100%;
   min-width: 0;
 }
 .doc-toolbar__trailing {
@@ -106,7 +107,7 @@ const emit = defineEmits<{
 /* 搜索框固定宽度且禁止 flex 收缩：避免被容器挤压 */
 .doc-search-field { width: 240px; flex-shrink: 0; }
 /* 类型下拉随选项内容自适应宽度，禁止收缩避免截断 */
-.doc-type-select { flex-shrink: 0; min-width: max-content; }
+.doc-type-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .doc-batch-bar-fixed {
   position: sticky;
   bottom: 12px;

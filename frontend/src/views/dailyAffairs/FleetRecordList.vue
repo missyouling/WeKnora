@@ -2043,7 +2043,7 @@ function stopPolling() {
 
 /* 筛选工具栏（BusinessListToolbar 中台组件）：月份选择固定宽度；证照类型下拉随选项内容自适应且禁止收缩避免截断 */
 .doc-date-picker { width: 140px; }
-.doc-filter-select { flex-shrink: 0; min-width: max-content; }
+.doc-filter-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .field-popup-content {
   width: 240px;
   padding: 12px;
