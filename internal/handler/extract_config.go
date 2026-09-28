@@ -19,13 +19,20 @@ import (
 
 const maxExtractConfigVersions = 20
 
-// getExtractConfig 按知识库 × scope × 证照类型读取生效中的提取规则配置；无则返回 nil。
+// getExtractConfig 按知识库 × scope 读取生效中的提取规则配置；certType 非空时精确匹配类型，为空时回退整体规则。
 func (h *BusinessExtractHandler) getExtractConfig(ctx context.Context, kbID, scope, certType string) *types.KbExtractConfig {
 	var ec types.KbExtractConfig
-	if err := h.db.WithContext(ctx).
-		Where("knowledge_base_id = ? AND scope = ? AND cert_type = ? AND enabled = TRUE AND deleted_at IS NULL",
-			kbID, strings.TrimSpace(scope), strings.TrimSpace(certType)).
-		First(&ec).Error; err != nil {
+	q := h.db.WithContext(ctx).
+		Where("knowledge_base_id = ? AND scope = ? AND enabled = TRUE AND deleted_at IS NULL",
+			kbID, strings.TrimSpace(scope))
+	ct := strings.TrimSpace(certType)
+	if ct != "" {
+		q = q.Where("cert_type = ?", ct)
+	} else {
+		// 整体规则：cert_type 为空或 __all__ 哨兵
+		q = q.Where("cert_type = ? OR cert_type = ?", "", "__all__")
+	}
+	if err := q.Order("updated_at DESC").First(&ec).Error; err != nil {
 		return nil
 	}
 	return &ec
@@ -34,7 +41,8 @@ func (h *BusinessExtractHandler) getExtractConfig(ctx context.Context, kbID, sco
 func validateExtractScope(scope string) bool {
 	return scope == types.FleetCategoryScopeVehicle ||
 		scope == types.FleetCategoryScopeDriver ||
-		scope == types.FleetCategoryScopeMaintain
+		scope == types.FleetCategoryScopeMaintain ||
+		scope == types.FleetCategoryScopeInvoice
 }
 
 func normalizeExtractFields(fields []types.ExtractFieldConfig) []types.ExtractFieldConfig {
@@ -77,10 +85,6 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 		scope = types.FleetCategoryScopeVehicle
 	}
 	certType := strings.TrimSpace(c.Query("cert_type"))
-	if certType == "" {
-		c.Error(errors.NewBadRequestError("cert_type is required"))
-		return
-	}
 	if _, _, _, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID); err != nil {
 		c.Error(err)
 		return
@@ -139,10 +143,6 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 		return
 	}
 	certType := strings.TrimSpace(req.CertType)
-	if certType == "" {
-		c.Error(errors.NewBadRequestError("cert_type is required"))
-		return
-	}
 	fields := normalizeExtractFields(req.Fields)
 	promptTemplate := strings.TrimSpace(req.PromptTemplate)
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
@@ -150,8 +150,9 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 
 	// 字段名权威校验：若该证照类型已在证照配置中入库，提交的每个字段名必须存在于其启用的 subs 中，
 	// 杜绝提取规则与证照配置双写漂移（证照配置是字段名的唯一权威源）。
+	// 整体规则（cert_type 为空）不按单证照类型校验字段归属，字段名权威由 categories[scope][0].subs 承担
 	var cat types.FleetCategory
-	catFound := h.db.WithContext(effCtx).
+	catFound := certType != "" && h.db.WithContext(effCtx).
 		Where("scope = ? AND name = ? AND deleted_at IS NULL", scope, certType).
 		First(&cat).Error == nil
 	if catFound {

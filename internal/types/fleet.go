@@ -30,6 +30,7 @@ const (
 	FleetCategoryScopeVehicle  = "vehicle"
 	FleetCategoryScopeDriver   = "driver"
 	FleetCategoryScopeMaintain = "maintain"
+	FleetCategoryScopeInvoice  = "invoice" // 发票整体规则（无证照类型维度）
 )
 
 // FleetVehicle 车辆配置（历史保留）
