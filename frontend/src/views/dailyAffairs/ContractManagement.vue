@@ -57,11 +57,6 @@
             <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
           </template>
           <template #right-extra>
-            <t-tooltip content="设置" placement="bottom">
-              <t-button variant="outline" size="small" @click="recognitionVisible = true">
-                <template #icon><t-icon name="setting" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
             <t-tooltip content="删除历史" placement="bottom">
               <t-button variant="outline" size="small" @click="historyVisible = true">
                 <template #icon><t-icon name="history" size="14px" /></template>
@@ -219,9 +214,6 @@
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="合同"
       @changed="loadFiles(true)" @restored="onRestored" />
 
-    <!-- 识别规则（包含判定 + 类型归类） -->
-    <RecognitionRulesDrawer v-model:visible="recognitionVisible" :kb-id="kbId || ''" module-name="合同"
-      @changed="onRecognitionChanged" />
 
     <!-- 合同详情抽屉（竖向区块，可拖宽，上下滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-contract-drawer-width'" hide-footer destroy-on-close class="contract-detail-drawer">
@@ -492,7 +484,6 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
-import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
@@ -715,7 +706,6 @@ const DRAWER_WIDTH_KEY = 'weknora-contract-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
-const recognitionVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')
@@ -836,11 +826,6 @@ const onTagManageChanged = () => {
   loadFiles(true)
 }
 
-// 识别规则保存后：刷新合同类型选项（含新增分类）+ 重新加载列表
-const onRecognitionChanged = () => {
-  loadContractTypes()
-  loadFiles(true)
-}
 
 // ---- 列表加载（合同级聚合列表，懒加载分页） ----
 const loadFiles = async (reset = false) => {
