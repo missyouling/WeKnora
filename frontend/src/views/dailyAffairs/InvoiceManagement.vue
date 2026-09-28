@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="invoice-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
@@ -31,6 +31,46 @@
 
     <!-- KB 存在：主界面 -->
     <div v-else class="invoice-main">
+      <!-- 台账概览看板：无筛选时显示，点击类型卡联动底部列表筛选 -->
+      <div v-if="!filterInvoiceType && !taxRateFilter && !dateRange.length" class="archive-overview archive-overview--panel">
+        <div class="overview-group">
+          <div class="overview-group__title">档案质量</div>
+          <div class="overview-group__cards overview-group__cards--status">
+            <div v-for="card in overviewStatusCards" :key="card.key" class="stat-card" :class="card.cls"
+              @click="onOverviewCardClick(card)">
+              <div class="stat-card__icon"><t-icon :name="card.icon" size="20px" /></div>
+              <div class="stat-card__num">{{ card.num }}</div>
+              <div class="stat-card__label">{{ card.label }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="overview-group">
+          <div class="overview-group__title">当月看板</div>
+          <div class="overview-group__cards overview-group__cards--status">
+            <t-tooltip content="统计不含作废发票" placement="top">
+              <div class="stat-card">
+                <div class="stat-card__icon"><t-icon name="money-circle" size="20px" /></div>
+                <div class="stat-card__num">{{ overviewMonthCard.num }}</div>
+                <div class="stat-card__label">{{ overviewMonthCard.label }}</div>
+              </div>
+            </t-tooltip>
+          </div>
+        </div>
+        <div v-if="overviewTypeCards.length" class="overview-group">
+          <div class="overview-group__title">类型分布</div>
+          <div class="overview-group__cards overview-group__cards--type">
+            <div v-for="card in overviewTypeCards" :key="card.key" class="type-card"
+              @click="onOverviewCardClick(card)">
+              <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
+              <div class="type-card__body">
+                <div class="type-card__label">{{ card.label }}</div>
+                <div class="type-card__num">{{ card.num }} <span>张</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -468,6 +508,7 @@ import {
   deleteInvoicePage,
   listInvoiceRecords,
   listInvoiceTaxRates,
+  getInvoiceOverviewStats,
   previewKnowledgeFile,
   getRecognitionConfig,
 } from '@/api/knowledge-base'
@@ -479,6 +520,7 @@ import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import RecognitionRulesDrawer from './RecognitionRulesDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-发票'
@@ -620,6 +662,57 @@ const page = ref(1)
 const hasMore = ref(true)
 const keyword = ref('')
 const filterInvoiceType = ref('')
+
+// ---- 台账概览看板（对标车辆档案：档案质量 / 当月看板 / 类型分布） ----
+const overviewStats = ref<any>(null)
+const overviewLoading = ref(false)
+const loadInvoiceOverview = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await getInvoiceOverviewStats(kbId.value)
+    overviewStats.value = res?.data || null
+  } catch (e: any) {
+    overviewStats.value = null
+  } finally {
+    overviewLoading.value = false
+  }
+}
+const overviewStatusCards = computed(() => {
+  const st = overviewStats.value || {}
+  return [
+    { key: 'total', label: '已收录发票', num: Number(st.total || 0), icon: 'file', cls: '', action: 'history-all' },
+    { key: 'parseFailed', label: '解析失败', num: Number(st.parse_failed || 0), icon: 'close-circle', cls: 'is-warn', action: 'history-parse_failed' },
+    { key: 'extractFailed', label: '提取失败', num: Number(st.extract_failed || 0), icon: 'close-circle', cls: 'is-err', action: 'history-extract_failed' },
+  ]
+})
+const overviewMonthCard = computed(() => {
+  const m = overviewStats.value?.current_month || {}
+  return {
+    num: `本月 ${Number(m.count || 0)} 张`,
+    label: `价税合计 ${formatAmount(Number(m.sum_total || 0))}`,
+  }
+})
+const overviewTypeCards = computed(() => {
+  const arr = overviewStats.value?.by_invoice_type || []
+  return arr.map((t: any) => ({
+    key: 'type-' + (t.invoice_type || '未分类'),
+    label: t.invoice_type || '未分类',
+    num: Number(t.count || 0),
+    icon: 'money-circle',
+    action: 'type',
+    value: t.invoice_type || '',
+  }))
+})
+const onOverviewCardClick = async (card: any) => {
+  if (card.action === 'history-all' || card.action === 'history-parse_failed' || card.action === 'history-extract_failed') {
+    historyVisible.value = true
+    return
+  }
+  if (card.action === 'type' && card.value) {
+    filterInvoiceType.value = card.value
+    await applyFilter()
+  }
+}
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
@@ -701,6 +794,7 @@ const loadKb = async () => {
       await loadTypeOptions()
       await cleanNonInvoiceFiles()
       await loadFiles()
+      loadInvoiceOverview()
       startPolling()
     }
   } catch (e: any) {
@@ -1048,7 +1142,7 @@ const selectedSummary = computed(() => {
 })
 const displaySummary = computed(() => selectedSummary.value || invoiceSummary.value)
 
-const applyFilter = () => { loadFiles(true) }
+const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 const onKeywordChange = () => { loadFiles(true) }
 
 // 懒加载
@@ -1633,6 +1727,64 @@ onBeforeUnmount(() => {
 }
 
 .invoice-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+
+/* ---- 台账概览看板（对标车辆档案 archive-overview） ---- */
+.archive-overview { display: flex; flex-direction: column; gap: 20px; padding: 24px; }
+.overview-group { display: flex; flex-direction: column; gap: 12px; }
+.overview-group__title {
+  font-size: 12px; font-weight: 500; color: var(--td-text-color-secondary);
+  padding-left: 8px; border-left: 2px solid var(--td-brand-color); line-height: 1;
+}
+.overview-group__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.archive-overview--panel {
+  flex: 1; align-content: flex-start;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  padding: 20px;
+}
+.overview-subgroup { display: flex; flex-direction: column; gap: 12px; }
+.overview-subgroup + .overview-subgroup { margin-top: 8px; }
+.stat-card {
+  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+  background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke);
+  border-radius: 10px; cursor: pointer; transition: all .18s ease;
+}
+.stat-card:hover { border-color: var(--td-brand-color); box-shadow: 0 4px 12px rgba(0,82,217,.1); transform: translateY(-1px); }
+.stat-card.is-warn { border-color: var(--td-warning-color); background: var(--td-warning-color-1); }
+.stat-card.is-err { border-color: var(--td-error-color); background: var(--td-error-color-1); }
+.stat-card__icon {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--td-brand-color-1); color: var(--td-brand-color);
+}
+.stat-card.is-warn .stat-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
+.stat-card.is-err .stat-card__icon { background: var(--td-error-color-1); color: var(--td-error-color); }
+.stat-card__num { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--td-text-color-primary); }
+.stat-card__label { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 2px; }
+.type-card {
+  display: flex; align-items: center; gap: 14px; padding: 20px 22px;
+  background: var(--td-bg-color-secondarycontainer); border: 1px solid transparent;
+  border-radius: 10px; cursor: pointer; transition: all .18s ease;
+}
+.type-card:hover { background: var(--td-brand-color-1); border-color: var(--td-brand-color); transform: translateY(-1px); }
+.type-card__icon {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--td-bg-color-container); color: var(--td-brand-color);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.type-card__body { flex: 1; min-width: 0; }
+.type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
+.type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
+.type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
+@media (max-width: 1200px) {
+  .overview-group__cards { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .overview-group__cards { grid-template-columns: 1fr; }
+}
 
 /* ---- 筛选工具栏 ---- */
 .doc-filter-bar {

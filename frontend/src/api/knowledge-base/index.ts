@@ -1,4 +1,4 @@
-﻿import { get, post, put, del, postUpload, getDown } from "../../utils/request";
+import { get, post, put, del, postUpload, getDown } from "../../utils/request";
 import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import type { AuditLog, AuditOutcome, ListAuditLogResponse } from '@/api/tenant/audit-log';
 import { buildListKnowledgeFilesQuery } from './knowledgeFileListQuery';
@@ -913,6 +913,13 @@ export function listInvoiceRecords(kbId: string, params: {
  * 用于税率筛选下拉框自动加载。
  */
 
+/**
+ * 发票台账概览统计：返回库内发票总数、解析/提取失败数、本月收录看板、
+ * 全部价税合计与按发票类型分组统计（口径与列表一致：按发票号去重）。
+ */
+export function getInvoiceOverviewStats(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/invoice-overview-stats`);
+}
 export function listInvoiceTaxRates(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/invoice-tax-rates`);
 }
