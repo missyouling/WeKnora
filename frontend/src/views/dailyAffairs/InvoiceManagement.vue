@@ -111,6 +111,7 @@
         :hover="true"
         :loading="listLoading"
         max-height="100%"
+        sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -1663,7 +1664,7 @@ onBeforeUnmount(() => {
   height: 100%;
   box-sizing: border-box;
   padding: 24px 32px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .header {
@@ -1748,12 +1749,12 @@ onBeforeUnmount(() => {
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
 .doc-list-scroll {
-  /* P4：列表容器始终撑满可视区剩余高度——数据少时底部边线仍贴底；滚动交给 t-table 内部（表头固定） */
+  /* P4：列表容器只撑可视区高度，滚动必须由 t-table 内部承担（max-height 100% + 表头 sticky）；
+     容器自身不滚动，否则表头会被滚走、底部摘要 sticky 定位错乱（回归修复：overflow 由 auto 恢复为 hidden） */
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--td-component-stroke);
@@ -1789,6 +1790,23 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表格高度受限于容器，滚动由 .t-table__content 内部承担（max-height 100% + sticky 表头） */
+.doc-list-view :deep(.t-table) {
+  flex: 1;
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* 表头固定（sticky-header 兜底）：容器内滚动时表头始终贴顶，横向滚动同步不错位 */
+.doc-list-view :deep(.t-table__header) {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--td-bg-color-container);
 }
 
 .doc-list-header, .doc-list-row {

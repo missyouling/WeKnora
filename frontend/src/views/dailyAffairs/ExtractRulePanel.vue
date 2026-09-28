@@ -115,6 +115,10 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
     维修工单: ['工单号', '车牌号', '维修日期', '维修项目', '工时费', '材料费', '总费用'],
     二级维护: ['维护日期', '车牌号', '维护项目', '维护单位', '下次维护日期'],
   },
+  invoice: {
+    普通发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
+    专用发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
+  },
 }
 
 // 默认提取规则底稿：每个字段的 desc + rule 预设，加载时自动填充（已保存配置优先）。
@@ -131,7 +135,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       证书状态: { desc: '证书当前状态', rule: '从正常、遗失、补办中、注销中识别；原文无则留空' },
       存放位置: { desc: '证书实物存放地点', rule: '如“财务室档案柜”；原文无则留空' },
       是否随车: { desc: '证书是否随车携带', rule: '识别“是 / 否”；原文无则留空' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
     行驶证: {
       编号: { desc: '证件编号', rule: '提取行驶证“证件编号”栏' },
@@ -146,8 +150,8 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       发证机关: { desc: '车管所名称', rule: '提取“发证机关”栏' },
       行驶证编号: { desc: '证芯编号', rule: '提取“行驶证编号 / 证芯编号”栏' },
       有效期: { desc: '检验有效期', rule: '提取“检验有效期”栏，统一为 YYYY-MM-DD' },
-      状态: { desc: '正常、遗失、补办中、注销', rule: '从状态描述中识别；原文无则留空' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      extractStatus: { desc: '正常、遗失、补办中、注销', rule: '从状态描述中识别；原文无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
     道路运输经营许可证: {
       许可证号: { desc: '道路运输经营许可证编号', rule: '提取“许可证号”栏，如“渝交运管许可渝字5001202023001号”' },
@@ -159,7 +163,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       有效期起: { desc: '有效期开始日期', rule: '提取“有效期起”栏，统一为 YYYY-MM-DD' },
       有效期止: { desc: '有效期截止日期', rule: '提取“有效期止 / 有效期至”栏，统一为 YYYY-MM-DD' },
       证件状态: { desc: '证件当前状态', rule: '根据有效期自动判断：已过期 / 有效 / 即将到期；原文有明确状态时优先取原文' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
     道路运输证: {
       道路运输证号: { desc: '道路运输证编号', rule: '提取“道路运输证号”栏' },
@@ -177,7 +181,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       上次审验日期: { desc: '上次年度审验日期', rule: '提取“上次审验日期”栏，统一为 YYYY-MM-DD' },
       下次审验日期: { desc: '下次年度审验日期', rule: '提取“下次审验日期”栏，统一为 YYYY-MM-DD' },
       技术评定等级: { desc: '车辆技术等级', rule: '提取“技术评定等级”栏，如“一级”' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
     保险单: {
       保单号: { desc: '保险单编号', rule: '提取“保单号”栏' },
@@ -196,7 +200,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       保单状态: { desc: '正常、退保、已到期等', rule: '根据有效期与原文识别；原文无则留空' },
       缴费状态: { desc: '已缴 / 未缴', rule: '识别“已缴 / 未缴 / 已支付”等表述' },
       发票号: { desc: '保费发票号码', rule: '提取“发票号”栏；原文无则留空' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
   },
   driver: {
@@ -209,7 +213,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       有效期止: { desc: '有效期截止日期', rule: '提取“有效期限”截止日期，统一为 YYYY-MM-DD' },
       发证机关: { desc: '发证机关名称', rule: '提取“发证机关”栏' },
       驾驶证状态: { desc: '正常、注销、暂扣等', rule: '从状态描述中识别；原文无则留空' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
     从业资格证: {
       从业资格证号: { desc: '从业资格证编号', rule: '提取“从业资格证号”栏' },
@@ -221,7 +225,7 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       有效期起: { desc: '有效期开始日期', rule: '提取“有效期起”栏，统一为 YYYY-MM-DD' },
       有效期止: { desc: '有效期截止日期', rule: '提取“有效期止”栏，统一为 YYYY-MM-DD' },
       证件状态: { desc: '证件当前状态', rule: '根据有效期判断：有效 / 已过期 / 即将到期；原文有明确状态时优先取原文' },
-      备注: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
+      remark: { desc: '补充说明', rule: '原文中其它重要信息摘要，不超过 50 字；无则留空' },
     },
   },
   maintain: {
@@ -242,6 +246,45 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       下次维护日期: { desc: '下次维护日期', rule: '提取“下次维护日期”栏，统一为 YYYY-MM-DD' },
     },
 
+  },
+  // 发票档案：普通发票 / 专用发票共用一套字段口径（对齐 fleet_categories invoice 内置字段）
+  invoice: {
+    普通发票: {
+      invoiceNo: { desc: '发票号码', rule: '提取“发票号码 / 发票号”栏，纯数字或数字字母组合，如“26507000000266963455”' },
+      invoiceDate: { desc: '开票日期', rule: '提取“开票日期”栏，统一为 YYYY-MM-DD' },
+      invoiceType: { desc: '发票类型', rule: '从 专用发票、普通发票、医疗收据、财政收据、其它票据 中识别；含通行费或电子发票归为普通发票' },
+      amount: { desc: '不含税金额', rule: '提取“金额 / 不含税金额”栏，保留两位小数；多张发票分别取值' },
+      taxRate: { desc: '适用税率', rule: '提取“税率”栏，如 13%、9%、6%、3%；多档税率以“、”分隔' },
+      tax: { desc: '税额', rule: '提取“税额”栏，保留两位小数' },
+      totalAmount: { desc: '价税合计', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      buyerName: { desc: '购买方（受票方）名称', rule: '提取“购买方名称”栏' },
+      sellerName: { desc: '销售方（开票方）名称', rule: '提取“销售方名称”栏' },
+      issuer: { desc: '开票人姓名', rule: '提取“开票人”栏；原文无则留空' },
+      remark: { desc: '备注', rule: '原文备注栏内容；如含车牌号、通行日期等运输信息以“车牌号：XX；通行日期起：XX；通行日期止：XX”格式拼接；无则留空' },
+      extractStatus: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      tags: { desc: '发票标签', rule: '根据货物/劳务名称或销方类型归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回' },
+      sellerTaxNo: { desc: '销售方纳税人识别号', rule: '提取“销售方纳税人识别号”栏' },
+      buyerTaxNo: { desc: '购买方纳税人识别号', rule: '提取“购买方纳税人识别号”栏' },
+      fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
+    专用发票: {
+      invoiceNo: { desc: '发票号码', rule: '提取“发票号码 / 发票号”栏，纯数字或数字字母组合，如“26507000000266963455”' },
+      invoiceDate: { desc: '开票日期', rule: '提取“开票日期”栏，统一为 YYYY-MM-DD' },
+      invoiceType: { desc: '发票类型', rule: '从 专用发票、普通发票、医疗收据、财政收据、其它票据 中识别；含通行费或电子发票归为普通发票' },
+      amount: { desc: '不含税金额', rule: '提取“金额 / 不含税金额”栏，保留两位小数；多张发票分别取值' },
+      taxRate: { desc: '适用税率', rule: '提取“税率”栏，如 13%、9%、6%、3%；多档税率以“、”分隔' },
+      tax: { desc: '税额', rule: '提取“税额”栏，保留两位小数' },
+      totalAmount: { desc: '价税合计', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      buyerName: { desc: '购买方（受票方）名称', rule: '提取“购买方名称”栏' },
+      sellerName: { desc: '销售方（开票方）名称', rule: '提取“销售方名称”栏' },
+      issuer: { desc: '开票人姓名', rule: '提取“开票人”栏；原文无则留空' },
+      remark: { desc: '备注', rule: '原文备注栏内容；如含车牌号、通行日期等运输信息以“车牌号：XX；通行日期起：XX；通行日期止：XX”格式拼接；无则留空' },
+      extractStatus: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      tags: { desc: '发票标签', rule: '根据货物/劳务名称或销方类型归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回' },
+      sellerTaxNo: { desc: '销售方纳税人识别号', rule: '提取“销售方纳税人识别号”栏' },
+      buyerTaxNo: { desc: '购买方纳税人识别号', rule: '提取“购买方纳税人识别号”栏' },
+      fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
   },
 }
 

@@ -1443,11 +1443,13 @@ var _ = time.Now
 func (h *FleetHandler) seedBusinessCategories() {
 	ctx := context.Background()
 	seeds := []struct {
-		Scope string
-		Name  string
-		Subs  []types.FleetCategorySub
+		Scope      string
+		Name       string
+		BuiltinKey string
+		SortOrder  int
+		Subs       []types.FleetCategorySub
 	}{
-		{"contract", "合同", []types.FleetCategorySub{
+		{"contract", "合同", "contract", 0, []types.FleetCategorySub{
 			{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
@@ -1468,7 +1470,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
-		{"invoice", "发票", []types.FleetCategorySub{
+		{"invoice", "发票", "invoice", 0, []types.FleetCategorySub{
 			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "invoiceCode", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
@@ -1480,7 +1482,45 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		}},
-		{"regulation", "制度", []types.FleetCategorySub{
+		// 发票档案内置两大分类（对齐提取数据 invoice_type 桶名：普通发票 / 专用发票），
+		// 字段与前端 DEFAULT_INVOICE_COLUMNS 同源；启用/顺序可由用户调整，内置锚点保证不可删。
+		{"invoice", "普通发票", "invoice-common", 1, []types.FleetCategorySub{
+			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "tax", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		}},
+		{"invoice", "专用发票", "invoice-vat", 2, []types.FleetCategorySub{
+			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "tax", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		}},
+		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
 			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "docNumber", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "category", Enabled: true, IsDefault: true, DataType: "text"},
@@ -1489,7 +1529,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		}},
-		{"award_punish", "奖惩", []types.FleetCategorySub{
+		{"award_punish", "奖惩", "award_punish", 0, []types.FleetCategorySub{
 			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "person", Enabled: true, IsDefault: true, DataType: "text"},
@@ -1502,21 +1542,22 @@ func (h *FleetHandler) seedBusinessCategories() {
 	}
 	for _, s := range seeds {
 		var cnt int64
-		h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("tenant_id = 0 AND scope = ? AND deleted_at IS NULL", s.Scope).Count(&cnt)
+		h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", s.Scope, s.Name).Count(&cnt)
 		if cnt > 0 {
 			continue
 		}
 		cat := types.FleetCategory{
-			ID:        "seed-" + s.Scope,
-			TenantID:  0,
-			Scope:     s.Scope,
-			BuiltinKey: s.Scope,
-			Name:      s.Name,
-			Subs:      s.Subs,
-			SortOrder: 0,
-			Enabled:   true,
-			CreatedAt: timeNowUTC(),
-			UpdatedAt: timeNowUTC(),
+			ID:         "seed-" + s.Scope + "-" + s.BuiltinKey,
+			TenantID:   0,
+			Scope:      s.Scope,
+			BuiltinKey: s.BuiltinKey,
+			Name:       s.Name,
+			Subs:       s.Subs,
+			SortOrder:  s.SortOrder,
+			Enabled:    true,
+			CreatedAt:  timeNowUTC(),
+			UpdatedAt:  timeNowUTC(),
 		}
 		if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
 			logger.Warnf(ctx, "seed business category %s failed: %v", s.Scope, err)
