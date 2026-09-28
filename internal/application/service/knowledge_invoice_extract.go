@@ -143,6 +143,100 @@ func ExtractInvoicesFromContent(ctx context.Context, model chat.Chat, content st
 	return &parsed, nil
 }
 
+// buildInvoiceRuleSystemPrompt 在默认发票提示词基础上注入沙盒整体规则
+// （invoice scope 提取规则：高级模板 + 字段口径）。输出结构契约（kind/invoices）
+// 由默认提示词兜底，规则仅用于增强字段识别准确性。
+func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
+	if cfg == nil {
+		return invoiceExtractionSystemPrompt
+	}
+	hasTemplate := strings.TrimSpace(cfg.PromptTemplate) != ""
+	hasFields := len(cfg.Fields) > 0
+	if !hasTemplate && !hasFields {
+		return invoiceExtractionSystemPrompt
+	}
+	var sb strings.Builder
+	if hasTemplate {
+		r := strings.NewReplacer("{{fields_schema}}", BuildFieldsSchema(cfg.Fields))
+		sb.WriteString(strings.TrimSpace(r.Replace(cfg.PromptTemplate)))
+		sb.WriteString("\n\n")
+	}
+	if hasFields {
+		sb.WriteString("提取要点（用户配置的字段口径，请按这些要点识别发票内容；输出结构仍严格按下方规则执行）:\n")
+		for _, f := range cfg.Fields {
+			n := strings.TrimSpace(f.Name)
+			if n == "" || !f.Enabled {
+				continue
+			}
+			parts := make([]string, 0, 2)
+			if d := strings.TrimSpace(f.Desc); d != "" {
+				parts = append(parts, "描述："+d)
+			}
+			if r := strings.TrimSpace(f.Rule); r != "" {
+				parts = append(parts, "规则："+r)
+			}
+			line := "· " + n
+			if len(parts) > 0 {
+				line += "（" + strings.Join(parts, "；") + "）"
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString(invoiceExtractionSystemPrompt)
+	return sb.String()
+}
+
+// ExtractInvoicesFromContentWithRules 与 ExtractInvoicesFromContent 相同，但支持注入
+// 沙盒发票整体规则（高级模板与字段口径），规则为空时行为与默认版一致。
+func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
+	if strings.TrimSpace(content) == "" {
+		return &InvoiceExtractionResult{Kind: "not_invoice", ExtractError: "no text content to extract"}, nil
+	}
+	systemPrompt := buildInvoiceRuleSystemPrompt(cfg)
+	userPrompt := "<document>\n" + content + "\n</document>"
+	thinking := false
+	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	if err != nil {
+		return nil, fmt.Errorf("extract invoice fields: %w", err)
+	}
+	var parsed InvoiceExtractionResult
+	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse invoice extraction response: %w", err)
+	}
+	return &parsed, nil
+}
+
+// ExtractInvoicePageFromContentWithRules 单张发票重提取，支持注入沙盒规则。
+func ExtractInvoicePageFromContentWithRules(ctx context.Context, model chat.Chat, content string, page int, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
+	if strings.TrimSpace(content) == "" {
+		return &InvoiceExtractionResult{Kind: "not_invoice", ExtractError: "no text content to extract"}, nil
+	}
+	if page < 1 {
+		return &InvoiceExtractionResult{Kind: "not_invoice", ExtractError: "invalid page number"}, nil
+	}
+	systemPrompt := buildInvoiceRuleSystemPrompt(cfg)
+	userPrompt := fmt.Sprintf(
+		"以下文档中包含多张发票。请只提取文档中的第 %d 张发票（发票按文档中出现的先后顺序从 1 开始编号）。invoices 数组只包含这一张发票，字段规则不变；若无法确定第 %d 张发票，invoices 返回空数组。\n<document>\n%s\n</document>",
+		page, page, strings.TrimSpace(content))
+	thinking := false
+	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	if err != nil {
+		return nil, fmt.Errorf("extract invoice page: %w", err)
+	}
+	var parsed InvoiceExtractionResult
+	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse invoice page response: %w", err)
+	}
+	return &parsed, nil
+}
+
 // ExtractInvoicePageFromContent asks the model to extract only the Nth invoice
 // from the document text, keeping single-page re-extraction cheap (short
 // output, only that invoice is replaced by the caller).

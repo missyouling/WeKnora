@@ -726,11 +726,13 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
 	sawInvoice := false
+	// 沙盒整体规则：发票提取优先注入用户在设置抽屉配置的字段口径/高级模板
+	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractInvoicesFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractInvoicesFromContentWithRules(effCtx, chatModel, batch, invoiceRuleCfg)
 		if berr != nil {
 			// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
 			// 后续批失败仅告警跳过，保留已提取的部分。
@@ -988,7 +990,8 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		return
 	}
 	content := service.BuildInvoiceExtractionContent(knowledge.FileName, knowledge.Description, chunks)
-	res, err := service.ExtractInvoicePageFromContent(effCtx, chatModel, content, page)
+	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
+	res, err := service.ExtractInvoicePageFromContentWithRules(effCtx, chatModel, content, page, invoiceRuleCfg)
 	if err != nil {
 		logger.Error(ctx, "Invoice page extraction model call failed", err)
 		c.Error(errors.NewInternalServerError("invoice page extraction failed: " + err.Error()))
