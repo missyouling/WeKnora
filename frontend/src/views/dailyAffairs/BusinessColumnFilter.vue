@@ -18,19 +18,24 @@ const popVisible = ref(false)
 const pos = ref({ x: 0, y: 0 })
 const wrapEl = ref<HTMLElement | null>(null)
 
+// 弹层定位：默认右对齐按钮右缘，并对视口左右边界做 clamp，避免窄屏下右侧溢出被截断
+const PANEL_WIDTH = 220
+function placePopup() {
+  if (!wrapEl.value) return
+  const r = wrapEl.value.getBoundingClientRect()
+  const vw = window.innerWidth || 0
+  let left = r.right - PANEL_WIDTH
+  if (left < 8) left = Math.min(r.left, Math.max(8, vw - PANEL_WIDTH - 8))
+  if (vw && left + PANEL_WIDTH > vw - 8) left = vw - PANEL_WIDTH - 8
+  pos.value = { x: Math.max(8, left), y: r.bottom + 6 }
+}
 function toggle() {
   popVisible.value = !popVisible.value
-  if (popVisible.value && wrapEl.value) {
-    const r = wrapEl.value.getBoundingClientRect()
-    pos.value = { x: r.left, y: r.bottom + 6 }
-  }
+  if (popVisible.value) placePopup()
 }
 function open() {
   popVisible.value = true
-  if (wrapEl.value) {
-    const r = wrapEl.value.getBoundingClientRect()
-    pos.value = { x: r.left, y: r.bottom + 6 }
-  }
+  placePopup()
 }
 function onDocMouseDown(e: MouseEvent) {
   const t = e.target as Node
