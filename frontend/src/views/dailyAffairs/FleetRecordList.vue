@@ -2041,9 +2041,9 @@ function stopPolling() {
   padding-top: 4px;
 }
 
-/* 筛选工具栏（BusinessListToolbar 中台组件）：#type-extra 内特化控件固定宽度，避免长名称撑开导致 flex 换行堆叠 */
+/* 筛选工具栏（BusinessListToolbar 中台组件）：月份选择固定宽度；证照类型下拉随选项内容自适应且禁止收缩避免截断 */
 .doc-date-picker { width: 140px; }
-.doc-filter-select { width: 160px; }
+.doc-filter-select { flex-shrink: 0; min-width: max-content; }
 .field-popup-content {
   width: 240px;
   padding: 12px;

@@ -32,29 +32,33 @@ const emit = defineEmits<{
 
 <template>
   <div class="doc-toolbar">
-    <div class="doc-filter-field">
-      <t-input :value="props.keyword" :placeholder="props.searchPlaceholder" clearable
-        @update:value="(v: string) => emit('update:keyword', v)">
-        <template #prefixIcon><t-icon name="search" size="16px" /></template>
-      </t-input>
+    <div class="doc-toolbar__leading">
+      <div class="doc-filter-field doc-search-field">
+        <t-input :value="props.keyword" :placeholder="props.searchPlaceholder" clearable
+          @update:value="(v: string) => emit('update:keyword', v)">
+          <template #prefixIcon><t-icon name="search" size="16px" /></template>
+        </t-input>
+      </div>
+      <div v-if="props.typeOptions.length" class="doc-filter-field">
+        <t-select :value="props.typeValue" :options="props.typeOptions" placeholder="类型筛选"
+          class="doc-type-select doc-filter-field__control" clearable
+          @update:value="(v: string) => emit('update:typeValue', v || '')">
+          <template #prefixIcon><t-icon name="file" size="16px" /></template>
+        </t-select>
+      </div>
+      <slot name="type-extra" />
+      <t-button v-if="props.showRefresh" variant="outline" size="small" @click="emit('refresh')">
+        <template #icon><t-icon name="refresh" size="14px" /></template>
+      </t-button>
     </div>
-    <div v-if="props.typeOptions.length" class="doc-filter-field">
-      <t-select :value="props.typeValue" :options="props.typeOptions" placeholder="类型筛选"
-        class="doc-type-select doc-filter-field__control" clearable
-        @update:value="(v: string) => emit('update:typeValue', v || '')">
-        <template #prefixIcon><t-icon name="file" size="16px" /></template>
-      </t-select>
+    <div class="doc-toolbar__trailing">
+      <slot name="columns" />
+      <slot name="right-extra" />
+      <t-button v-if="props.primaryActionText" theme="primary" size="small" @click="emit('primary')">
+        <template #icon><t-icon name="add" size="14px" /></template>
+        {{ props.primaryActionText }}
+      </t-button>
     </div>
-    <slot name="type-extra" />
-    <slot name="columns" />
-    <t-button v-if="props.showRefresh" variant="outline" size="small" @click="emit('refresh')">
-      <template #icon><t-icon name="refresh" size="14px" /></template>
-    </t-button>
-    <slot name="right-extra" />
-    <t-button v-if="props.primaryActionText" theme="primary" size="small" @click="emit('primary')">
-      <template #icon><t-icon name="add" size="14px" /></template>
-      {{ props.primaryActionText }}
-    </t-button>
   </div>
 
   <transition name="batch-bar-fade">
@@ -75,14 +79,34 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+/* 两端对齐布局：左侧筛选区（搜索/类型/刷新）+ 右侧操作区（字段/设置/上传），下拉随内容自适应 */
 .doc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-margin-s);
+  flex-wrap: wrap;
+}
+.doc-toolbar__leading {
   display: flex;
   align-items: center;
   gap: var(--td-comp-margin-s);
   flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-toolbar__trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--td-comp-margin-s);
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 .doc-filter-field { display: flex; align-items: center; }
-.doc-type-select { width: 160px; }
+/* 搜索框固定宽度且禁止 flex 收缩：避免被容器挤压 */
+.doc-search-field { width: 240px; flex-shrink: 0; }
+/* 类型下拉随选项内容自适应宽度，禁止收缩避免截断 */
+.doc-type-select { flex-shrink: 0; min-width: max-content; }
 .doc-batch-bar-fixed {
   position: sticky;
   bottom: 12px;
