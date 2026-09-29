@@ -43,7 +43,7 @@
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
             :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
-            @clear-selection="clearSelection">
+            @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
               <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter"
                 class="invoice-date-range">
@@ -62,41 +62,6 @@
                 <template #icon><t-icon name="upload" size="14px" /></template>
                 上传发票
               </t-button>
-            </template>
-            <template #batch-actions>
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handlePageExtract">
-                <template #icon><t-icon name="refresh" size="14px" /></template>
-                页面提取
-              </t-button>
-              <t-popconfirm theme="warning"
-                :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」的所有页面发票吗？将覆盖已有提取结果。`"
-                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleFileExtract">
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
-                  单文件提取
-                </t-button>
-              </t-popconfirm>
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-                <template #icon><t-icon name="edit" size="14px" /></template>
-                编辑数据
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                打印
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-                <template #icon><t-icon name="file-paste" size="14px" /></template>
-                目录
-              </t-button>
-              <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个发票文件吗？删除后不可恢复。`"
-                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleBatchDelete">
-                <t-button theme="danger" variant="outline" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="14px" /></template>
-                  删除记录
-                </t-button>
-              </t-popconfirm>
             </template>
           </BusinessListToolbar>
 
@@ -191,7 +156,7 @@
       </t-table>
     </div>
       <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；选中时避让底部浮动工具栏） -->
-      <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
+      <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
         <span v-if="displaySummary.total" class="doc-summary-item">
           金额 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumAmount) }}</span>
@@ -203,6 +168,55 @@
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
+      <!-- 底部浮动工具条（复刻原项目 DocumentBatchBar：position:relative 文档流内联，
+           位于列表容器底部，不脱离布局、不撑开空白；选中行时出现） -->
+      <transition name="batch-bar-fade">
+        <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
+          <div class="batch-bar-inner">
+            <div class="batch-bar-left">
+              <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
+              <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+                清除
+              </t-button>
+            </div>
+            <div class="batch-bar-actions">
+              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handlePageExtract">
+                <template #icon><t-icon name="refresh" size="14px" /></template>
+                页面提取
+              </t-button>
+              <t-popconfirm theme="warning"
+                :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」的所有页面发票吗？将覆盖已有提取结果。`"
+                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleFileExtract">
+                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                  单文件提取
+                </t-button>
+              </t-popconfirm>
+              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
+                <template #icon><t-icon name="edit" size="14px" /></template>
+                编辑数据
+              </t-button>
+              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+                <template #icon><t-icon name="print" size="14px" /></template>
+                打印
+              </t-button>
+              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+                <template #icon><t-icon name="file-paste" size="14px" /></template>
+                目录
+              </t-button>
+              <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个发票文件吗？删除后不可恢复。`"
+                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleBatchDelete">
+                <t-button theme="danger" variant="outline" size="small" @click.stop>
+                  <template #icon><t-icon name="delete" size="14px" /></template>
+                  删除记录
+                </t-button>
+              </t-popconfirm>
+            </div>
+          </div>
+        </div>
+      </transition>
     </div>
 
     </div>
@@ -1680,7 +1694,70 @@ onBeforeUnmount(() => {
     display: inline-flex; align-items: baseline; gap: 6px;
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
-  &.is-batch-visible { margin-bottom: 72px; } /* 选中时给底部浮动工具栏让位 */
+}
+
+/* 底部浮动工具条（复刻原项目 DocumentBatchBar.vue）：relative 文档流内联，
+   置于列表容器底部，不脱离布局 → 无底部留白；宽度自适应容器 */
+.doc-batch-bar {
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  max-width: 920px;
+  margin: 12px auto 0;
+  box-sizing: border-box;
+}
+.batch-bar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-2);
+}
+.batch-bar-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.batch-bar-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+}
+.batch-bar-clear {
+  flex-shrink: 0;
+  padding: 0 6px !important;
+  height: 28px !important;
+  font-size: 12px;
+  color: var(--td-text-color-secondary) !important;
+  &:hover { color: var(--td-text-color-primary) !important; }
+}
+.batch-bar-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.batch-bar-actions > * { flex-shrink: 0; }
+.batch-bar-fade-enter-active,
+.batch-bar-fade-leave-active {
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.batch-bar-fade-enter-from,
+.batch-bar-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .doc-list-view {
@@ -1717,6 +1794,7 @@ onBeforeUnmount(() => {
   z-index: 20;
   width: 6px;
   height: 39px;
+  box-sizing: border-box; /* 39px 含底边框，与 th 高度/边框完全对齐，不溢出表头横线 */
   pointer-events: none;
   background: var(--td-bg-color-secondarycontainer);
   border-bottom: 1px solid var(--td-component-border);
