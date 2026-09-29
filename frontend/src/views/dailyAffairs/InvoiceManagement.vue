@@ -1684,6 +1684,7 @@ onBeforeUnmount(() => {
 }
 
 .doc-list-view {
+  position: relative;
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
@@ -1700,17 +1701,25 @@ onBeforeUnmount(() => {
   max-height: 100%;
 }
 
-/* 表头吸顶：sticky-header 使表头固定于滚动容器顶部；不透明背景 + z-index
-   覆盖滚动条轨道顶部区域 → 垂直滚动条视觉上仅在表体，表头右上角缝隙闭合。
-   scrollbar-gutter:stable 保证占位宽度恒定，列与滚动条不错位 */
+/* scrollbar-gutter:stable 保证滚动条占位宽度恒定，列与滚动条不错位 */
 .doc-list-view :deep(.t-table__content) {
   scrollbar-gutter: stable;
 }
-.doc-list-view :deep(.t-table__header) {
-  position: sticky;
+/* 表头右侧轨道遮罩：浏览器滚动条属于滚动容器的 UI 层，绘制层级高于 sticky
+   表头，无法靠表头背景覆盖。在滚动容器父层(.doc-list-view)挂绝对定位遮罩，
+   盖住表头高度(39px)内的轨道段 → 垂直滚动条仅在表体区域可见，表头右上角无缝隙。
+   宽度 6px 对齐 TDesign ::-webkit-scrollbar；pointer-events:none 不挡滚轮 */
+.doc-list-view::after {
+  content: '';
+  position: absolute;
   top: 0;
-  z-index: 6;
-  background: var(--td-bg-color-container);
+  right: 0;
+  z-index: 20;
+  width: 6px;
+  height: 39px;
+  pointer-events: none;
+  background: var(--td-bg-color-secondarycontainer);
+  border-bottom: 1px solid var(--td-component-border);
 }
 
 .doc-list-header, .doc-list-row {
