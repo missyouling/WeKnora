@@ -110,7 +110,7 @@
         size="small"
         :hover="true"
         :loading="listLoading"
-        max-height="100%"
+        :max-height="tableMaxHeight"
         sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
@@ -925,6 +925,10 @@ const pendingRows = computed<InvoiceRow[]>(() => pendingFiles.value.map((k) => {
 }))
 const filteredRows = computed(() => [...pendingRows.value, ...invoiceRows.value])
 
+// 表格高度约束：数据加载后由空串切到 '100%'，驱动 TDesign useFixed 重算
+// isFixedHeader（scrollHeight > clientHeight）→ 表头/表体分离，滚动条仅在表体
+const tableMaxHeight = computed(() => (filteredRows.value.length ? '100%' : ''))
+
 // 同一上传文件内的多张发票：按文件分组计数，用于生成绿色页码标签
 const fileInvoiceCounts = computed(() => {
   const map = new Map<string, number>()
@@ -1696,18 +1700,17 @@ onBeforeUnmount(() => {
   max-height: 100%;
 }
 
-/* 表头固定（sticky-header 兜底）：容器内滚动时表头始终贴顶，横向滚动同步不错位 */
+/* 表头吸顶：sticky-header 使表头固定于滚动容器顶部；不透明背景 + z-index
+   覆盖滚动条轨道顶部区域 → 垂直滚动条视觉上仅在表体，表头右上角缝隙闭合。
+   scrollbar-gutter:stable 保证占位宽度恒定，列与滚动条不错位 */
+.doc-list-view :deep(.t-table__content) {
+  scrollbar-gutter: stable;
+}
 .doc-list-view :deep(.t-table__header) {
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: 6;
   background: var(--td-bg-color-container);
-}
-/* 表头右侧闭合：滚动条左缘固定 1px 竖线（inset 阴影不随横向滚动），
-   消除"滚动条插入表头内部导致最右侧未闭合"的空隙 */
-.doc-list-view :deep(.t-table__content) {
-  scrollbar-gutter: stable;
-  box-shadow: inset -7px 0 0 -6px var(--td-component-stroke);
 }
 
 .doc-list-header, .doc-list-row {
