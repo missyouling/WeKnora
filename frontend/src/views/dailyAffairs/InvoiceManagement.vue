@@ -69,6 +69,7 @@
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
           <t-table
+        ref="invoiceTableRef"
         :data="filteredRows"
         :columns="tableColumns"
         row-key="rowKey"
@@ -79,10 +80,9 @@
         sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
-        select-on-change
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
         @row-click="({ row, e }: any) => onRowClick(row, e)"
-        @select-change="(val: string[]) => (selectedRowKeys = val)"
+        @select-change="onTableSelectChange"
       >
         <template #invoiceNo="{ row }: any">
           <span class="row-invoice-no" :title="row.invoiceNo || row.fileName">{{ row.invoiceNo || row.fileName }}</span>
@@ -168,14 +168,12 @@
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
-      <!-- 底部浮动工具条（复刻原项目 DocumentBatchBar：position:relative 文档流内联，
-           位于列表容器底部，不脱离布局、不撑开空白；选中行时出现） -->
-      <transition name="batch-bar-fade">
+      <!-- 底部悬浮工具条：fixed 脱离文档流，出现/消失不占物理空间；选中行时显示 -->
         <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
           <div class="batch-bar-inner">
             <div class="batch-bar-left">
               <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-              <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+              <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
                 清除
               </t-button>
             </div>
@@ -216,7 +214,6 @@
             </div>
           </div>
         </div>
-      </transition>
     </div>
 
     </div>
@@ -435,12 +432,14 @@ const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
   resetColumns, selectAllColumns, colVisible,
-  selectedRowKeys, onSelectChange, clearSelection,
+  selectedRowKeys, clearSelection,
   colValue,
 } = useBusinessList({
   storageKey: 'weknora-invoice-list-columns',
   defaultColumns: DEFAULT_INVOICE_COLUMNS,
 })
+
+const invoiceTableRef = ref<any>(null)
 
 const route = useRoute()
 const router = useRouter()
@@ -1009,6 +1008,11 @@ const reloadColumns = async () => {
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
+// select-change 守卫：只接受与当前可选项 rowKey 匹配的 key，杜绝受控模式幽灵写回导致浮条残留
+const onTableSelectChange = (val: string[]) => {
+  const valid = new Set(selectableRows.value.map(r => r.rowKey))
+  selectedRowKeys.value = val.filter(k => valid.has(k))
+}
 const isAllSelected = computed(() =>
   selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey))
 )
@@ -1545,6 +1549,13 @@ const handleBatchDelete = async () => {
   }
 }
 
+// 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），
+// 再兜底清空 selectedRowKeys，杜绝 TDesign 受控反向写回旧 key 导致浮条不消失
+const clearSelectionSafe = () => {
+  try { invoiceTableRef.value?.clearSelected?.() } catch { /* ignore */ }
+  selectedRowKeys.value = []
+}
+
 // 六同步：字段/分类配置变更后重建动态列与概览统计（类型卡/下拉由 invoiceCats computed 自动派生）
 const onCategoriesChanged = () => {
   reloadColumns()
@@ -1696,14 +1707,16 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 底部浮动工具条（复刻原项目 DocumentBatchBar.vue）：relative 文档流内联，
-   置于列表容器底部，不脱离布局 → 无底部留白；宽度自适应容器 */
+/* 底部悬浮工具条：fixed 脱离文档流（悬浮于视口底部），
+   出现/消失不占据物理空间 → 页面不会上下跳动、底部无冗余留白 */
 .doc-batch-bar {
-  position: relative;
-  z-index: 5;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3000;
   width: 100%;
   max-width: 920px;
-  margin: 12px auto 0;
   box-sizing: border-box;
 }
 .batch-bar-inner {
@@ -1750,15 +1763,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .batch-bar-actions > * { flex-shrink: 0; }
-.batch-bar-fade-enter-active,
-.batch-bar-fade-leave-active {
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.batch-bar-fade-enter-from,
-.batch-bar-fade-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
-}
 
 .doc-list-view {
   position: relative;
@@ -1782,24 +1786,29 @@ onBeforeUnmount(() => {
 .doc-list-view :deep(.t-table__content) {
   scrollbar-gutter: stable;
 }
-/* 表头右侧轨道遮罩：浏览器滚动条属于滚动容器的 UI 层，绘制层级高于 sticky
-   表头，无法靠表头背景覆盖。在滚动容器父层(.doc-list-view)挂绝对定位遮罩，
-   盖住表头高度(39px)内的轨道段 → 垂直滚动条仅在表体区域可见，表头右上角无缝隙。
-   宽度 6px 对齐 TDesign ::-webkit-scrollbar；pointer-events:none 不挡滚轮 */
+
+/* 表头右侧滚动条轨道遮罩：滚动条属于滚动容器 UI 层，绘制层级高于 sticky 表头，
+   无法靠表头背景覆盖。在滚动容器父层(.doc-list-view)挂绝对定位色块，
+   盖住表头高(39px)内的轨道段 → 垂直滚动条仅在表体区域可见；
+   底边框与 th 底边框同色同位 → 表头横线在滚动条区单线闭合（无缝隙、无双线） */
 .doc-list-view::after {
   content: '';
   position: absolute;
   top: 0;
   right: 0;
   z-index: 20;
-  width: 6px;
+  width: 7px;
   height: 39px;
-  box-sizing: border-box; /* 39px 含底边框，与 th 高度/边框完全对齐，不溢出表头横线 */
+  box-sizing: border-box;
   pointer-events: none;
-  background: var(--td-bg-color-secondarycontainer);
-  border-bottom: 1px solid var(--td-component-border);
+  background: var(--td-bg-color-container);
+  border-bottom: 1px solid var(--td-component-stroke);
 }
 
+/* 表头统一容器背景，与右侧遮罩无缝同色 */
+.doc-list-view :deep(.t-table__header) {
+  background: var(--td-bg-color-container);
+}
 .doc-list-header, .doc-list-row {
   display: grid;
   align-items: center;
