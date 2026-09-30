@@ -79,10 +79,10 @@
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
                   <span class="fc-h-type">数据类型</span>
+                  <span v-if="showWidthCol" class="fc-h-width">宽度(px)</span>
                   <span class="fc-h-switch">默认表头</span>
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
-                  <span v-if="showWidthCol" class="fc-h-width">宽度(px)</span>
                 </div>
                 <div v-for="(fd, i) in fieldsEditable" :key="fd.name" class="field-config-row"
                   :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragIndex === i }]"
@@ -92,6 +92,9 @@
                   <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static">{{ invoiceFieldLabel(fd.name) }}</span>
                   <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                   <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
+                  <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
+                    <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
+                  </t-tooltip>
                   <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
                     <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
                   </t-tooltip>
@@ -106,9 +109,6 @@
                   </t-popconfirm>
                   <t-tooltip v-else :content="`该字段已被证照记录引用，不能删除`" placement="top">
                     <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                  </t-tooltip>
-                  <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
-                    <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" />
                   </t-tooltip>
                 </div>
                 <div class="field-config-add">
@@ -880,7 +880,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
 
   .field-config-list {
-    min-width: 480px;
+    min-width: 510px;
     overflow-x: auto;
     display: flex;
     flex-direction: column;
@@ -889,17 +889,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 28px 130px 110px 76px 76px 56px;
+    grid-template-columns: 24px 110px 90px 64px 64px 40px;
     align-items: center;
-    gap: 10px;
-    padding: 0 10px;
-    min-width: 596px;
+    gap: 8px;
+    padding: 0 8px;
+    min-width: 510px;
     box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 28px 130px 110px 76px 76px 56px 120px;
+      grid-template-columns: 24px 110px 90px 70px 64px 64px 40px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -909,15 +909,15 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 28px 130px 110px 76px 76px 56px;
+    grid-template-columns: 24px 110px 90px 64px 64px 40px;
     align-items: center;
-    gap: 10px;
-    padding: 4px 10px;
-    min-width: 596px;
+    gap: 8px;
+    padding: 4px 8px;
+    min-width: 510px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 28px 130px 110px 76px 76px 56px 120px;
+      grid-template-columns: 24px 110px 90px 70px 64px 64px 40px;
     }
     .fc-width {
       width: 100%;
@@ -959,10 +959,16 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       width: 100%;
       min-width: 0;
     }
+    .fc-width {
+      width: 100%;
+      min-width: 0;
+    }
 
     > *:nth-child(4),
     > *:nth-child(5) { justify-self: center; }
     > *:nth-child(6) { justify-self: center; }
+    &.has-width > *:nth-child(4) { justify-self: stretch; }
+    &.has-width > *:nth-child(7) { justify-self: center; }
 
   .fc-used {
       display: inline-flex;
