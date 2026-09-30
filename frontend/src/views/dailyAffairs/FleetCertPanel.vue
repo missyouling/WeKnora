@@ -889,30 +889,35 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px;
+    grid-template-columns: 28px 130px 110px 76px 76px 56px;
     align-items: center;
-    gap: 8px;
-    padding: 0 8px;
+    gap: 10px;
+    padding: 0 10px;
+    min-width: 596px;
+    box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px 96px;
+      grid-template-columns: 28px 130px 110px 76px 76px 56px 120px;
     }
-    .fc-h-width { text-align: center; white-space: nowrap; }
+    > span { white-space: nowrap; }
+    .fc-h-width { text-align: center; }
   }
-  .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; white-space: nowrap; }
+  .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; }
   .fc-h-name { text-align: left; }
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px;
+    grid-template-columns: 28px 130px 110px 76px 76px 56px;
     align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
+    gap: 10px;
+    padding: 4px 10px;
+    min-width: 596px;
+    box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px 96px;
+      grid-template-columns: 28px 130px 110px 76px 76px 56px 120px;
     }
     .fc-width {
       width: 100%;
@@ -943,6 +948,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       padding: 4px 8px;
       height: 32px;
       box-sizing: border-box;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       color: var(--td-text-color-primary);
       border-radius: var(--td-radius-default);
       background: var(--td-bg-color-container);
