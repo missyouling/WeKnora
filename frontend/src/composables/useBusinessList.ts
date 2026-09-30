@@ -5,6 +5,8 @@ export interface ColumnDef {
   label: string
   default: boolean
   w: string
+  /** 列宽 px：0/缺省=按内容自适应；>0=固定宽度（系统 clamp 60~400 防误输入） */
+  width?: number
 }
 
 export interface BusinessListOptions {

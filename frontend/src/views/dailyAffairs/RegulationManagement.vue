@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="regulation-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
@@ -383,6 +383,7 @@ import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { colWidthOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -544,8 +545,11 @@ const dateRange = ref<Array<string>>([])
 // 列显隐
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
+    const w = colWidthOf(c.width, c.label, rows.map(r => colValue(r, c.key)))
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: w })
   }
   return cols
 })
@@ -1353,7 +1357,7 @@ onMounted(() => {
           .filter((s: any) => s.enabled !== false)
           .map((s: any) => {
             const builtin = DEFAULT_REGULATION_COLUMNS.find((b: any) => b.key === s.name)
-            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr' }
+            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
           })
       }
     } catch { /* 后端未配置时回退内置默认 */ }

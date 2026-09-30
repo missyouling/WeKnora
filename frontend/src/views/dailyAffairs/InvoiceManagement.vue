@@ -366,6 +366,7 @@ import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { colWidthOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -596,38 +597,20 @@ const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
-// 列显隐：短内容列（税率/金额/日期/税额/价税合计/开票人/状态/标签）按内容自适应；
-// 其它长文本列（发票号码/发票类型/购买方/销售方等）统一 250px 省略，避免内容全展开撑出横向滚动
-const AUTO_COL_KEYS = new Set(['amount', 'tax', 'totalAmount', 'invoiceDate', 'taxRate', 'issuer', 'extractStatus', 'tags'])
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 44 }]
   const vis = visibleColDefs.value
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   vis.forEach((c, i) => {
-    const w = AUTO_COL_KEYS.has(c.key) ? autoColWidth(c, rows) : 250
+    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
+    const w = colWidthOf(c.width, c.label, rows.map(r => colValue(r, c.key)))
     cols.push(i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w })
   })
   return cols
 })
-
-// 列宽估算：max(表头宽度, 当前页数据最长内容)，中文 15px/字、单名/税号 13px/字、金额/日期/税率等数字列 9px/字
-const autoColWidth = (c: { key: string; label: string }, rows: InvoiceRow[]): number => {
-  const isMono = c.key === 'invoiceNo' || c.key === 'sellerTaxNo' || c.key === 'buyerTaxNo'
-  const isDigit = c.key === 'amount' || c.key === 'tax' || c.key === 'totalAmount' || c.key === 'invoiceDate' || c.key === 'taxRate'
-  const chW = isMono ? 13 : (isDigit ? 9 : 15)
-  let maxW = (c.label.length + 2) * chW
-  for (const r of rows) {
-    const v = colValue(r, c.key)
-    if (v == null || v === '') continue
-    const len = String(v).length
-    const w = len * chW + 24
-    if (w > maxW) maxW = w
-  }
-  return Math.min(Math.ceil(maxW), 150)
-}
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
@@ -1032,7 +1015,7 @@ const reloadColumns = async () => {
         .filter((s: any) => s.enabled !== false)
         .map((s: any) => {
           const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr' }
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
         })
     }
   } catch { /* 后端未配置时回退内置默认 */ }

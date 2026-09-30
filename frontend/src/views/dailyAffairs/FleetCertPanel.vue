@@ -75,16 +75,17 @@
                 <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
               <div class="field-config-list">
-                <div class="field-colhead">
+                <div class="field-colhead" :class="{ 'has-width': showWidthCol }">
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
                   <span class="fc-h-type">数据类型</span>
                   <span class="fc-h-switch">默认表头</span>
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
+                  <span v-if="showWidthCol" class="fc-h-width">宽度(px)</span>
                 </div>
                 <div v-for="(fd, i) in fieldsEditable" :key="fd.name" class="field-config-row"
-                  :class="{ 'fc-dragging': fieldDragIndex === i }"
+                  :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragIndex === i }]"
                   draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
@@ -105,6 +106,9 @@
                   </t-popconfirm>
                   <t-tooltip v-else :content="`该字段已被证照记录引用，不能删除`" placement="top">
                     <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                  </t-tooltip>
+                  <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
+                    <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" />
                   </t-tooltip>
                 </div>
                 <div class="field-config-add">
@@ -153,7 +157,9 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | '' }>(), { scope: 'vehicle' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | '' }>(), { scope: 'vehicle' })
+// 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
+const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
 // 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件
 const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
@@ -514,7 +520,7 @@ async function commitAdd() {
 // ---- 编辑（点击行展开）----
 const editingId = ref('')
 const editForm = reactive({ name: '' })
-const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean; dataType: string }[]>([])
+const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean; dataType: string; width: number }[]>([])
 const newFieldName = ref('')
 const dataTypeOptions = [
   { label: '文本', value: 'text' },
@@ -530,10 +536,10 @@ function toggleEdit(item: any) {
   const b = (BUILTIN[group.value.scope] || []).find((x: any) => x.name === item.name)
   const raw = Array.isArray(item.subs) && item.subs.length
     ? item.subs
-    : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true, isDefault: false }))
+    : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true, isDefault: false, width: 0 }))
   const seen = new Set<string>()
   fieldsEditable.value = raw
-    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true, dataType: s.data_type || 'text' }))
+    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true, dataType: s.data_type || 'text', width: Number(s.width) || 0 }))
     .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
   editingId.value = item.id
   loadUsedFields(group.value.scope, item.name)
@@ -542,7 +548,7 @@ function addField() {
   const name = newFieldName.value.trim()
   if (!name) { MessagePlugin.warning('请输入字段名'); return }
   if (fieldsEditable.value.some((f) => f.name === name)) { MessagePlugin.warning('字段已存在'); return }
-  fieldsEditable.value.push({ name, enabled: true, isDefault: false, dataType: 'text' })
+  fieldsEditable.value.push({ name, enabled: true, isDefault: false, dataType: 'text', width: 0 })
   newFieldName.value = ''
 }
 function removeField(fd: any) {
@@ -555,7 +561,7 @@ async function commitEdit() {
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入发票类型' : '请输入证照名称')); return }
   const subs = fieldsEditable.value
-    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text' }))
+    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text', width: Number(f.width) || 0 }))
     .filter((f) => f.name)
   saving.value = true
   try {
@@ -889,6 +895,11 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     padding: 0 8px;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
+
+    &.has-width {
+      grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px 96px;
+    }
+    .fc-h-width { text-align: center; white-space: nowrap; }
   }
   .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; white-space: nowrap; }
   .fc-h-name { text-align: left; }
@@ -899,6 +910,15 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
+
+    &.has-width {
+      grid-template-columns: 20px minmax(110px, 1fr) 100px 76px 76px 56px 96px;
+    }
+    .fc-width {
+      width: 100%;
+      min-width: 0;
+      justify-self: center;
+    }
     border: 1px solid var(--td-component-border);
     border-radius: 6px;
     background: var(--td-bg-color-container);
