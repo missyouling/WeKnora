@@ -928,15 +928,25 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 	}
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
-	req.TenantID = int64(tenantID)
+	// P2-D 一致：日常事务业务 scope 分类使用全局 tenant_id=0 配置（List/Update 同口径），
+	// 否则新建/复制的分类重开列表时被 tenant 过滤而"消失"
+	if isBusinessCategoryScope(req.Scope) {
+		req.TenantID = 0
+	} else {
+		req.TenantID = int64(tenantID)
+	}
 	req.CreatedAt = now
 	req.UpdatedAt = now
 	if req.Subs == nil {
 		req.Subs = []types.FleetCategorySub{}
 	}
+	queryTenant := tenantID
+	if isBusinessCategoryScope(req.Scope) {
+		queryTenant = 0
+	}
 	var maxOrder int
 	h.db.WithContext(ctx).Model(&types.FleetCategory{}).
-		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", tenantID, req.Scope).
+		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", queryTenant, req.Scope).
 		Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
 	req.SortOrder = maxOrder + 1
 	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
