@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   modelCatalog: {
     "title": "模型目录",
     "description": "模型目录决定添加模型时可选的模型列表，以及上下文窗口、是否支持思考等默认参数。在这里修改后，所有空间立即生效。",
@@ -7046,6 +7046,11 @@
     },
     tagUpdateSuccess: '标签已更新',
     tagEditDialogHeading: '编辑标签',
+    tagEditSelectedSection: '已选标签',
+    tagClearAction: '清除',
+    tagEditNoSelected: '暂无已选标签',
+    tagEditAvailableSection: '可用标签',
+    tagEditSearch: '搜索标签',
     folderTree: {
       totalDocuments: '共 {count} 个文档',
       countHint: '当前目录 {direct} 个文档，含子目录共 {total} 个',

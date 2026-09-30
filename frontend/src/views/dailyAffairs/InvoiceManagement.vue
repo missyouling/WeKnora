@@ -596,14 +596,16 @@ const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
-// 列显隐：按内容长度估算列宽（保留省略），让内容少的列（如税率）自然变窄
+// 列显隐：短内容列（税率/金额/日期/税额/价税合计/开票人/状态/标签）按内容自适应；
+// 其它长文本列（发票号码/发票类型/购买方/销售方等）统一 250px 省略，避免内容全展开撑出横向滚动
+const AUTO_COL_KEYS = new Set(['amount', 'tax', 'totalAmount', 'invoiceDate', 'taxRate', 'issuer', 'extractStatus', 'tags'])
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 44 }]
   const vis = visibleColDefs.value
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   vis.forEach((c, i) => {
-    const w = autoColWidth(c, rows)
+    const w = AUTO_COL_KEYS.has(c.key) ? autoColWidth(c, rows) : 250
     cols.push(i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w })
@@ -758,12 +760,26 @@ const openTagEdit = (row: InvoiceRow) => {
   tagDialogVisible.value = true
 }
 
-const tagTargetTags = computed(() => (tagTarget.value ? rowTags(tagTarget.value) : []))
+// 行内 tags 可能只携带标签名（后端返回字符串数组时被转为 { id: name }），
+// 打开弹窗时按 tagList 反查真实 id，保证已选回显与提交 id 正确
+const tagTargetTags = computed(() => {
+  const tags = tagTarget.value ? rowTags(tagTarget.value) : []
+  return tags.map((t: any) => {
+    const hit = tagList.value.find((x: any) => String(x.id) === String(t.id) || x.name === t.name || x.name === t)
+    return hit ? { id: String(hit.id), name: String(hit.name || t.name || t) }
+      : { id: String(t.id ?? t.name ?? t), name: String(t.name ?? t) }
+  })
+})
 
 const onTagEditConfirm = async (tagIds: string[]) => {
   if (!tagTarget.value) return
   try {
-    await updateKnowledgeTagBatch({ updates: { [tagTarget.value.knowledgeId]: tagIds } })
+    // 兜底：混合传入的标签名/ID 统一反查真实 tag id（标签名会触发后端 400）
+    const realIds = tagIds.map(id => {
+      const hit = tagList.value.find((t: any) => String(t.id) === id || t.name === id)
+      return hit ? String(hit.id) : id
+    })
+    await updateKnowledgeTagBatch({ updates: { [tagTarget.value.knowledgeId]: realIds } })
     MessagePlugin.success('标签已更新')
     await loadFiles(true)
   } catch (e: any) {
