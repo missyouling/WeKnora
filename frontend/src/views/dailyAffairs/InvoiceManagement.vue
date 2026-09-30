@@ -191,17 +191,13 @@
                   单文件提取
                 </t-button>
               </t-popconfirm>
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-                <template #icon><t-icon name="edit" size="14px" /></template>
-                编辑数据
-              </t-button>
               <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
                 <template #icon><t-icon name="print" size="14px" /></template>
-                打印
+                单页打印
               </t-button>
               <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
                 <template #icon><t-icon name="file-paste" size="14px" /></template>
-                目录
+                列表打印
               </t-button>
               <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个发票文件吗？删除后不可恢复。`"
                 :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
@@ -600,15 +596,35 @@ const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
-// 列显隐
+// 列显隐：按内容长度估算列宽（保留省略），让内容少的列（如税率）自然变窄
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 44 }]
-  for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
-  }
+  const vis = visibleColDefs.value
+  const rows = filteredRows.value.filter(r => r.kind !== 'pending')
+  vis.forEach((c, i) => {
+    const w = autoColWidth(c, rows)
+    cols.push(i === vis.length - 1
+      ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
+      : { colKey: c.key, title: c.label, ellipsis: true, width: w })
+  })
   return cols
 })
+
+// 列宽估算：max(表头宽度, 当前页数据最长内容)，中文按 15px/字、数字/单名列按 13px/字
+const autoColWidth = (c: { key: string; label: string }, rows: InvoiceRow[]): number => {
+  const isMono = c.key === 'invoiceNo' || c.key === 'sellerTaxNo' || c.key === 'buyerTaxNo'
+  const chW = isMono ? 13 : 15
+  let maxW = (c.label.length + 2) * chW
+  for (const r of rows) {
+    const v = colValue(r, c.key)
+    if (v == null || v === '') continue
+    const len = String(v).length
+    const w = len * chW + 24
+    if (w > maxW) maxW = w
+  }
+  return Math.min(Math.ceil(maxW), 320)
+}
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
@@ -1362,15 +1378,6 @@ const handleFileExtract = async () => {
   }
 }
 
-const handleBatchEdit = () => {
-  const rows = selectedRows.value
-  if (rows.length !== 1) {
-    MessagePlugin.info('请选中单行后编辑，或点击列表中的发票行进入编辑')
-    return
-  }
-  openDetail(rows[0])
-}
-
 // 打印：把所有选中发票的页面合并为一个 PDF，单 iframe 预览打印
 // （跨文件、同文件任意组合均支持；图片发票自动转 PDF 页；无页码记录回退整文件页）
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
@@ -1715,8 +1722,8 @@ onBeforeUnmount(() => {
   left: 50%;
   transform: translateX(-50%);
   z-index: 3000;
-  width: 100%;
-  max-width: 920px;
+  width: max-content;
+  max-width: calc(100vw - 48px);
   box-sizing: border-box;
 }
 .batch-bar-inner {
@@ -1724,8 +1731,8 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 12px 24px;
+  padding: 8px 16px;
   background: var(--td-bg-color-container);
   border: 1px solid var(--td-component-stroke);
   border-radius: var(--td-radius-medium);
@@ -1754,7 +1761,7 @@ onBeforeUnmount(() => {
   &:hover { color: var(--td-text-color-primary) !important; }
 }
 .batch-bar-actions {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -1801,14 +1808,10 @@ onBeforeUnmount(() => {
   height: 39px;
   box-sizing: border-box;
   pointer-events: none;
-  background: var(--td-bg-color-container);
+  background: var(--td-bg-color-secondarycontainer);
   border-bottom: 1px solid var(--td-component-stroke);
 }
 
-/* 表头统一容器背景，与右侧遮罩无缝同色 */
-.doc-list-view :deep(.t-table__header) {
-  background: var(--td-bg-color-container);
-}
 .doc-list-header, .doc-list-row {
   display: grid;
   align-items: center;
