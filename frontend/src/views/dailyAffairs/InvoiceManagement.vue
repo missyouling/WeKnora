@@ -1912,6 +1912,15 @@ onBeforeUnmount(() => {
   padding-right: 8px;
 }
 
+/* 排序图标紧凑对齐：TDesign bordered 表格默认对排序列标题两端对齐(space-between)，
+   导致图标被推到单元格最右侧。强制左对齐并让图标紧跟文本（非排序列表头不受影响） */
+.doc-list-view :deep(.t-table th .t-table__cell--title) {
+  justify-content: flex-start !important;
+}
+.doc-list-view :deep(.t-table th .t-table__cell--title .t-table__filter-icon-wrap) {
+  margin-left: 4px;
+}
+
 .doc-list-view {
   position: relative;
   width: 100%;
