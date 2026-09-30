@@ -212,9 +212,28 @@
                 <template #icon><t-icon name="file-paste" size="14px" /></template>
                 列表打印
               </t-button>
-              <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个发票文件吗？删除后不可恢复。`"
-                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleBatchDelete">
+              <!-- 删除确认：单气泡内嵌二选一（多页文件时「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
+              <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+                :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+                <template #content>
+                  <div class="del-pop-body">
+                    <div v-if="delMultiCount > 0" class="del-pop-title">
+                      选中的发票涉及 {{ delMultiCount }} 份多页文件，请选择删除范围：
+                    </div>
+                    <div v-else class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 条发票记录吗？删除后不可恢复。</div>
+                    <div class="del-pop-actions">
+                      <template v-if="delMultiCount > 0">
+                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除此页</t-button>
+                        <t-button size="small" theme="danger" variant="outline" @click="confirmFileDelete">删除文件</t-button>
+                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                      </template>
+                      <template v-else>
+                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除</t-button>
+                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                      </template>
+                    </div>
+                  </div>
+                </template>
                 <t-button theme="danger" variant="outline" size="small" @click.stop>
                   <template #icon><t-icon name="delete" size="14px" /></template>
                   删除记录
@@ -386,10 +405,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, h, resolveComponent, type VNode } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf } from './columnWidth'
@@ -1611,31 +1630,26 @@ const finishDelete = async () => {
   selectedRowKeys.value = []
   await loadFiles(true)
 }
-const handleBatchDelete = async () => {
-  const rows = selectedRows.value
-  if (!rows.length) return
-  // 命中多页文件集合（同一上传文件含多张发票）时走二选一交互
-  const multiFiles = new Set<string>()
-  for (const r of rows) {
+// 删除确认：气泡内二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗
+const delPopVisible = ref(false)
+const closeDelPop = () => { delPopVisible.value = false }
+// 选中记录涉及的多页文件数量（同一上传文件含多张发票）
+const delMultiCount = computed(() => {
+  const set = new Set<string>()
+  for (const r of selectedRows.value) {
     if (!r.knowledgeId) continue
     const count = fileInvoiceCounts.value.get(r.knowledgeId) || 0
-    if (count > 1) multiFiles.add(r.knowledgeId)
+    if (count > 1) set.add(r.knowledgeId)
   }
-  const runPage = async () => { try { await doPageDelete(rows); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') } }
-  const runFile = async () => { try { await doFileDelete(rows); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') } }
-  if (!multiFiles.size) { await runPage(); return }
-  const TBtn = resolveComponent('t-button')
-  let dlg: ReturnType<typeof DialogPlugin> | undefined
-  dlg = DialogPlugin({
-    header: '批量删除发票',
-    body: '选中的记录包含同一上传文件中的多张发票，请选择删除范围：',
-    footer: (): VNode[] => [
-      h(TBtn, { theme: 'default', size: 'small', onClick: () => dlg?.destroy() }, { default: () => '取消' }),
-      h(TBtn, { theme: 'danger', variant: 'outline', size: 'small', onClick: () => { dlg?.destroy(); void runFile() } }, { default: () => '整份删除' }),
-      h(TBtn, { theme: 'danger', size: 'small', onClick: () => { dlg?.destroy(); void runPage() } }, { default: () => '仅删除选中的发票' }),
-    ],
-    onClose: () => dlg?.destroy(),
-  })
+  return set.size
+})
+const confirmPageDelete = async () => {
+  closeDelPop()
+  try { await doPageDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+const confirmFileDelete = async () => {
+  closeDelPop()
+  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
 }
 
 // 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），
@@ -2196,4 +2210,9 @@ onBeforeUnmount(() => {
 }
 
 
+.del-pop-body {
+  min-width: 200px;
+  .del-pop-title { font-size: 13px; color: var(--td-text-color-primary); line-height: 1.5; margin-bottom: 12px; }
+  .del-pop-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+}
 </style>
