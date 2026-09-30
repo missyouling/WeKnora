@@ -103,7 +103,7 @@
                     :content="`确定删除字段「${fd.name}」吗？`"
                     :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                     @confirm="removeField(fd)">
-                    <t-button variant="text" size="small">
+                    <t-button class="action-delete-btn" variant="text" size="small">
                       <template #icon><t-icon name="delete" size="15px" /></template>
                     </t-button>
                   </t-popconfirm>
@@ -975,6 +975,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       align-items: center;
       color: var(--td-text-color-placeholder);
       cursor: not-allowed;
+    }
+  .action-delete-btn {
+      color: var(--td-text-color-primary);
+      cursor: pointer;
+      transition: color 0.2s ease;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  .action-delete-btn:hover {
+      color: var(--td-error-color);
     }
   }
 

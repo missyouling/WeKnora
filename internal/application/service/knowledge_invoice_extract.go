@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -19,32 +21,32 @@ const invoiceExtractMaxContentRunes = 24000
 // Numeric fields use pointers so an unrecognized value stays null on the
 // wire instead of being coerced to 0.
 type InvoiceExtractionItem struct {
-	InvoiceNo    string                  `json:"invoice_no"`
-	InvoiceCode  string                  `json:"invoice_code"`
-	InvoiceDate  string                  `json:"invoice_date"`
-	InvoiceType  string                  `json:"invoice_type"`
-	TotalAmount  *float64                `json:"total_amount"`
-	Amount       *float64                `json:"amount"`
-	Tax          *float64                `json:"tax"`
-	TaxRate      *float64                `json:"tax_rate"`
-	SellerName   string                  `json:"seller_name"`
-	SellerTaxNo  string                  `json:"seller_tax_no"`
-	SellerAddr   string                  `json:"seller_address"`
-	SellerPhone  string                  `json:"seller_phone"`
-	SellerBank   string                  `json:"seller_bank"`
-	SellerAcct   string                  `json:"seller_account"`
-	BuyerName    string                  `json:"buyer_name"`
-	BuyerTaxNo   string                  `json:"buyer_tax_no"`
-	BuyerAddr    string                  `json:"buyer_address"`
-	BuyerPhone   string                  `json:"buyer_phone"`
-	BuyerBank    string                  `json:"buyer_bank"`
-	BuyerAcct    string                  `json:"buyer_account"`
-	Issuer       string                  `json:"issuer"`
-	Remark       string                  `json:"remark"`
-	Category     string                  `json:"category"`
-	Items        []InvoiceExtractionLine `json:"items"`
-	VoidFlag     bool                    `json:"void_flag"`
-	Duplicate    bool                    `json:"duplicate"`
+	InvoiceNo   string                  `json:"invoice_no"`
+	InvoiceCode string                  `json:"invoice_code"`
+	InvoiceDate string                  `json:"invoice_date"`
+	InvoiceType string                  `json:"invoice_type"`
+	TotalAmount *float64                `json:"total_amount"`
+	Amount      *float64                `json:"amount"`
+	Tax         *float64                `json:"tax"`
+	TaxRate     *float64                `json:"tax_rate"`
+	SellerName  string                  `json:"seller_name"`
+	SellerTaxNo string                  `json:"seller_tax_no"`
+	SellerAddr  string                  `json:"seller_address"`
+	SellerPhone string                  `json:"seller_phone"`
+	SellerBank  string                  `json:"seller_bank"`
+	SellerAcct  string                  `json:"seller_account"`
+	BuyerName   string                  `json:"buyer_name"`
+	BuyerTaxNo  string                  `json:"buyer_tax_no"`
+	BuyerAddr   string                  `json:"buyer_address"`
+	BuyerPhone  string                  `json:"buyer_phone"`
+	BuyerBank   string                  `json:"buyer_bank"`
+	BuyerAcct   string                  `json:"buyer_account"`
+	Issuer      string                  `json:"issuer"`
+	Remark      string                  `json:"remark"`
+	Category    string                  `json:"category"`
+	Items       []InvoiceExtractionLine `json:"items"`
+	VoidFlag    bool                    `json:"void_flag"`
+	Duplicate   bool                    `json:"duplicate"`
 	// Page is the 1-based page/ordinal of the invoice inside its source file.
 	// It is assigned by the backend (in extraction-result order) so the
 	// floating toolbar can target a single page for re-extraction; legacy
@@ -210,6 +212,35 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 	return &parsed, nil
 }
 
+// ExtractInvoicesFromContentWithRulesGuided 与 ExtractInvoicesFromContentWithRules
+// 相同，但允许注入一段提取引导（guide）。分批提取多发票合集时，模型可能因为
+// 单批文本碎片化（模板噪音占比高、发票被跨 chunk 拆开）而把本批误判为
+// not_invoice 导致整批发票丢失；guide 用于告知模型"本批是发票合集的一部分、
+// 包含多张发票、必须全部提取"，显著降低误判率。
+func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig, guide string) (*InvoiceExtractionResult, error) {
+	if strings.TrimSpace(content) == "" {
+		return &InvoiceExtractionResult{Kind: "not_invoice", ExtractError: "no text content to extract"}, nil
+	}
+	systemPrompt := buildInvoiceRuleSystemPrompt(cfg)
+	userPrompt := "<document>\n" + content + "\n</document>"
+	if strings.TrimSpace(guide) != "" {
+		userPrompt = strings.TrimSpace(guide) + "\n\n" + userPrompt
+	}
+	thinking := false
+	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	if err != nil {
+		return nil, fmt.Errorf("extract invoice fields: %w", err)
+	}
+	var parsed InvoiceExtractionResult
+	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse invoice extraction response: %w", err)
+	}
+	return &parsed, nil
+}
+
 // ExtractInvoicePageFromContentWithRules 单张发票重提取，支持注入沙盒规则。
 func ExtractInvoicePageFromContentWithRules(ctx context.Context, model chat.Chat, content string, page int, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
@@ -266,13 +297,20 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 }
 
 // InvoiceExtractionBatchSize caps how many text/OCR chunks go into one LLM
-// call. Very long documents (dozens of invoices) can exceed a chat model's
-// reliable single-call output, so extraction splits into batches and merges.
-const InvoiceExtractionBatchSize = 10
+// call as a hard safety net. Batching is driven primarily by the rune limit
+// (invoiceExtractMaxContentRunes): a mid-size multi-invoice document stays in
+// one or two calls so the model sees the full document context, while very
+// long documents (dozens of invoices) still split reliably. Before the rune-
+// driven change, a 30-chunk / 18-invoice toll invoice PDF was cut into many
+// tiny batches (each seeing only 1-2 invoices) and the model dropped most.
+const InvoiceExtractionBatchSize = 64
 
 // BuildInvoiceExtractionBatches assembles the document text into independent
 // batches (each carries the document name/summary header), so long
-// multi-invoice documents extract reliably across several LLM calls.
+// multi-invoice documents extract reliably across several LLM calls. A batch
+// is flushed when its accumulated content exceeds the rune cap (or when the
+// chunk-count hard cap is hit), never earlier — this keeps related invoice
+// fragments in the same call.
 func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []string {
 	if batchSize <= 0 {
 		batchSize = InvoiceExtractionBatchSize
@@ -301,20 +339,36 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 	headStr := strings.Join(header, "\n\n")
 
 	var batches []string
-	for i := 0; i < len(usable); i += batchSize {
-		end := i + batchSize
-		if end > len(usable) {
-			end = len(usable)
+	curParts := make([]string, 0, 64)
+	curRunes := 0
+	flush := func() {
+		if len(curParts) == 0 {
+			return
 		}
-		parts := make([]string, 0, end-i+1)
+		parts := make([]string, 0, len(curParts)+1)
 		if headStr != "" {
 			parts = append(parts, headStr)
 		}
-		for _, c := range usable[i:end] {
-			parts = append(parts, strings.TrimSpace(c.Content))
-		}
+		parts = append(parts, curParts...)
 		batches = append(batches, sampleLongContent(strings.Join(parts, "\n\n"), invoiceExtractMaxContentRunes))
+		curParts = curParts[:0]
+		curRunes = 0
 	}
+	for _, c := range usable {
+		part := strings.TrimSpace(c.Content)
+		if part == "" {
+			continue
+		}
+		r := len([]rune(part))
+		// 主约束：累积 runes 超限才切批；chunk 数仅作极端兜底。只要单批内容
+		// 仍在模型可靠处理范围内就尽量整批，避免发票被拆散导致漏提。
+		if (curRunes+r > invoiceExtractMaxContentRunes || len(curParts) >= batchSize) && curRunes > 0 {
+			flush()
+		}
+		curParts = append(curParts, part)
+		curRunes += r
+	}
+	flush()
 	if len(batches) == 0 {
 		batches = []string{""}
 	}
@@ -432,4 +486,170 @@ func InvoicesAllEmpty(invs []InvoiceExtractionItem) bool {
 		}
 	}
 	return true
+}
+
+// ============ 规则提取（系统生成的规整电子票据） ============
+//
+// 通行费电子票据汇总单（PDF）由固定模板渲染，文本层格式完全规整：每张发票
+// 由「号码行」（发票号 日期 购买方税号 销售方名称 销售方税号 *项目*通行费
+// 车牌 车型 通行日期起 金额 税率 税额）与「金额行」（¥金额 大写 开票人
+// ¥价税合计 通行日期止 购买方名称 ¥税额）两行构成。模型在这种高模板噪音
+// 长文本中常漏提（实测 18 张只提取 1~8 张），而正则规则可 100% 全量命中，
+// 因此提取链路优先走规则、未命中才回退模型。
+
+var (
+	// invoiceHeadLineRe 匹配发票「号码行」。
+	invoiceHeadLineRe = regexp.MustCompile(
+		`^(\d{20})\s+(\d{4})年(\d{1,2})月(\d{1,2})日\s+([0-9A-Z]{15,20})\s+(.+?)([0-9A-Z]{15,20})\s+\*([^*]*)\*通行费\s+(\S+)\s+(\S+)\s+(\d{8})\s+([\d.]+)\s+(\d+(?:\.\d+)?%)\s+([\d.]+)\s*$`)
+	// invoiceAmountLineRe 匹配发票「金额行」。
+	invoiceAmountLineRe = regexp.MustCompile(
+		`^¥([\d.]+)\s+(.+?)\s+(\S+)\s+¥([\d.]+)\s+(\d{8})\s+(.+?)\s+¥([\d.]+)\s*$`)
+)
+
+// cleanInvoiceTemplateNoise 逐行清洗电子票据文本中的模板噪音，返回有效行。
+// 噪音来源：IDE 本地路径水印（localhost:63342...）、markdown 图片引用、
+// 空表单模板标签（购销方信息/项目列/价税合计占位等）。
+func cleanInvoiceTemplateNoise(content string) []string {
+	noiseLines := map[string]struct{}{
+		"开票日期：": {}, "购": {}, "买": {}, "方": {}, "信": {}, "息": {}, "名称：": {},
+		"统一社会信用代码/纳税人识别号：": {}, "销": {}, "售": {},
+		"项目名称 车牌号 车辆类型 通行日期起 通行日期止 金额 税率/征收率 税额": {},
+		"合 计": {}, "价税合计（大写） （小写）": {}, "备": {}, "注": {}, "开票人:": {},
+	}
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "localhost:63342") || strings.HasPrefix(line, "![") {
+			continue
+		}
+		if _, noise := noiseLines[line]; noise {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// parsePercentToFloat 将 "3%" / "9%" 解析为 0.03 / 0.09；解析失败返回 nil。
+func parsePercentToFloat(s string) *float64 {
+	s = strings.TrimSuffix(strings.TrimSpace(s), "%")
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	f = f / 100
+	return &f
+}
+
+// parseAmountToFloat 解析金额字符串；解析失败返回 nil。
+func parseAmountToFloat(s string) *float64 {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return nil
+	}
+	return &f
+}
+
+// ExtractInvoicesByLineRules 按「号码行+金额行」固定格式从电子票据文本中
+// 提取全部发票。返回 (result, true) 表示规则命中（invoices 非空）；返回
+// (nil, false) 表示未命中该格式，调用方应回退模型提取。
+func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool) {
+	if strings.TrimSpace(content) == "" {
+		return nil, false
+	}
+	lines := cleanInvoiceTemplateNoise(content)
+
+	type headMatch struct {
+		no, dateY, dateM, dateD                                                             string
+		buyerTax, sellerName, sellerTax, item, plate, vehType, passStart, amount, rate, tax string
+	}
+	var heads []headMatch
+	for _, ln := range lines {
+		m := invoiceHeadLineRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		heads = append(heads, headMatch{
+			no: m[1], dateY: m[2], dateM: m[3], dateD: m[4],
+			buyerTax: m[5], sellerName: strings.TrimSpace(m[6]), sellerTax: m[7],
+			item: strings.TrimSpace(m[8]), plate: m[9], vehType: m[10],
+			passStart: m[11], amount: m[12], rate: m[13], tax: m[14],
+		})
+	}
+	if len(heads) == 0 {
+		return nil, false
+	}
+
+	type amtMatch struct {
+		amount, issuer, total, passEnd, buyer, tax string
+	}
+	var amts []amtMatch
+	for _, ln := range lines {
+		m := invoiceAmountLineRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		amts = append(amts, amtMatch{amount: m[1], issuer: m[3], total: m[4], passEnd: m[5], buyer: strings.TrimSpace(m[6]), tax: m[7]})
+	}
+
+	res := &InvoiceExtractionResult{Kind: "invoice"}
+	for i, h := range heads {
+		inv := InvoiceExtractionItem{
+			InvoiceNo:   h.no,
+			InvoiceDate: fmt.Sprintf("%s-%s-%s", h.dateY, h.dateM, h.dateD),
+			InvoiceType: "普通发票", // 通行费电子发票均为增值税普通发票
+			SellerName:  h.sellerName,
+			SellerTaxNo: h.sellerTax,
+			BuyerTaxNo:  h.buyerTax,
+			Category:    "通行费",
+			Amount:      parseAmountToFloat(h.amount),
+			Tax:         parseAmountToFloat(h.tax),
+			TaxRate:     parsePercentToFloat(h.rate),
+			Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", h.plate, h.passStart),
+		}
+		if it := strings.TrimSpace(h.item); it != "" {
+			// 填充 price/tax_rate 供 Normalize 时 dominantItemTaxRate 计算列表税率列
+			inv.Items = []InvoiceExtractionLine{{Name: it, Price: inv.Amount, TaxRate: inv.TaxRate}}
+		}
+		if i < len(amts) {
+			a := amts[i]
+			inv.Issuer = a.issuer
+			inv.BuyerName = a.buyer
+			inv.TotalAmount = parseAmountToFloat(a.total)
+			if a.amount != "" {
+				inv.Amount = parseAmountToFloat(a.amount)
+			}
+			if a.tax != "" {
+				inv.Tax = parseAmountToFloat(a.tax)
+			}
+			if a.passEnd != "" {
+				inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s",
+					h.plate, h.passStart, a.passEnd)
+			}
+		}
+		res.Invoices = append(res.Invoices, inv)
+	}
+	return res, true
+}
+
+// ExtractInvoicesByLineRulesFromChunks 将 text/OCR chunks 按页序拼接后执行
+// 规则提取。返回 (result, true) 表示规则命中；否则 (nil, false)。
+func ExtractInvoicesByLineRulesFromChunks(chunks []*types.Chunk) (*InvoiceExtractionResult, bool) {
+	var parts []string
+	for _, c := range chunks {
+		if c == nil || c.Content == "" {
+			continue
+		}
+		if c.ChunkType != types.ChunkTypeText && c.ChunkType != types.ChunkTypeImageOCR {
+			continue
+		}
+		parts = append(parts, c.Content)
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return ExtractInvoicesByLineRules(strings.Join(parts, "\n"))
 }

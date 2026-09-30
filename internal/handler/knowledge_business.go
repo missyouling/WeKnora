@@ -253,9 +253,9 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			} else {
 				logger.Infof(ctx, "auto-deleted non-contract knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非合同文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_contract"},
+					"success": true,
+					"message": "非合同文件已移至删除历史，可在删除历史中恢复",
+					"data":    map[string]interface{}{"removed": true, "kind": "not_contract"},
 				})
 				return
 			}
@@ -293,13 +293,13 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"message":  "Contract extraction succeeded",
+		"success": true,
+		"message": "Contract extraction succeeded",
 		"data": map[string]interface{}{
-			"knowledge_id":    knowledgeID,
-			"kind":            meta.Kind,
-			"extract_status":  meta.ExtractStatus,
-			"contracts":       meta.Contracts,
+			"knowledge_id":   knowledgeID,
+			"kind":           meta.Kind,
+			"extract_status": meta.ExtractStatus,
+			"contracts":      meta.Contracts,
 		},
 	})
 }
@@ -308,20 +308,20 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 // entry's custom_metadata by ExtractRegulation. The frontend reads exactly
 // these keys to render the regulation management list.
 type regulationCustomMetadata struct {
-	Kind          string                              `json:"kind"`
-	Regulations   []types.RegulationExtractionItem    `json:"regulations"`
-	ExtractStatus string                              `json:"extract_status"`
-	ExtractError  string                              `json:"extract_error"`
+	Kind          string                           `json:"kind"`
+	Regulations   []types.RegulationExtractionItem `json:"regulations"`
+	ExtractStatus string                           `json:"extract_status"`
+	ExtractError  string                           `json:"extract_error"`
 }
 
 // awardPunishCustomMetadata is the persisted shape written into a knowledge
 // entry's custom_metadata by ExtractAwardPunish. The frontend reads exactly
 // these keys to render the award/punish management list.
 type awardPunishCustomMetadata struct {
-	Kind          string                             `json:"kind"`
-	Records       []types.AwardPunishExtractionItem  `json:"records"`
-	ExtractStatus string                             `json:"extract_status"`
-	ExtractError  string                             `json:"extract_error"`
+	Kind          string                            `json:"kind"`
+	Records       []types.AwardPunishExtractionItem `json:"records"`
+	ExtractStatus string                            `json:"extract_status"`
+	ExtractError  string                            `json:"extract_error"`
 }
 
 // awardPunishBatchesHaveText reports whether any extraction batch carries usable
@@ -364,7 +364,6 @@ func regulationBatchesHaveText(batches []string) bool {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-regulation [post]
-
 
 func (h *BusinessExtractHandler) ExtractContractPage(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -498,7 +497,6 @@ func (h *BusinessExtractHandler) ExtractContractPage(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/delete-contract-page [post]
 
-
 func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
@@ -584,8 +582,8 @@ func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"success":     true,
-			"message":     "Contract removed, source file scheduled for deletion",
+			"success":      true,
+			"message":      "Contract removed, source file scheduled for deletion",
 			"deleted_file": true,
 		})
 		return
@@ -603,10 +601,10 @@ func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
-		"message":     "Contract record deleted",
+		"success":      true,
+		"message":      "Contract record deleted",
 		"deleted_file": false,
-		"data":        meta.Contracts,
+		"data":         meta.Contracts,
 	})
 }
 
@@ -617,10 +615,10 @@ func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 
 // contractCustomMetadata mirrors the per-knowledge custom_metadata shape for contracts.
 type contractCustomMetadata struct {
-	Kind          string                          `json:"kind"`
+	Kind          string                           `json:"kind"`
 	Contracts     []service.ContractExtractionItem `json:"contracts"`
-	ExtractStatus string                          `json:"extract_status"`
-	ExtractError  string                          `json:"extract_error"`
+	ExtractStatus string                           `json:"extract_status"`
+	ExtractError  string                           `json:"extract_error"`
 }
 
 // contractBatchesHaveText reports whether any extraction batch carries usable text.
@@ -632,7 +630,6 @@ func contractBatchesHaveText(batches []string) bool {
 	}
 	return false
 }
-
 
 func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -739,26 +736,51 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 			}
 		}
 	}
-	for i, batch := range batches {
-		if strings.TrimSpace(batch) == "" {
-			continue
-		}
-		batchRes, berr := service.ExtractInvoicesFromContentWithRules(effCtx, chatModel, batch, invoiceRuleCfg)
-		if berr != nil {
-			// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
-			// 后续批失败仅告警跳过，保留已提取的部分。
-			if i == 0 && len(merged.Invoices) == 0 {
-				extractErr = berr
-				break
+	// 规则提取优先：系统生成的规整电子票据（通行费汇总单等）文本格式固定，
+	// 按「号码行+金额行」正则可 100% 全量命中（模型在高模板噪音长文本中会漏提，
+	// 实测 18 张通行费发票只提取出 1~8 张）；未命中该固定格式时才回退分批模型。
+	if ruleRes, ruleOK := service.ExtractInvoicesByLineRulesFromChunks(chunks); ruleOK {
+		merged = ruleRes
+		sawInvoice = len(ruleRes.Invoices) > 0
+		logger.Infof(ctx, "Invoice extraction by line rules: %d invoices from knowledge %s", len(ruleRes.Invoices), knowledgeID)
+	} else {
+		for i, batch := range batches {
+			if strings.TrimSpace(batch) == "" {
+				continue
 			}
-			logger.Warnf(ctx, "Invoice extraction batch %d failed (non-fatal): %v", i+1, berr)
-			continue
+			// 分批提取多发票合集时，模型常因单批文本碎片化（模板噪音占比高、发票被跨 chunk
+			// 拆开）而漏提本批中的部分发票（典型：18 张通行费发票只提取出 8 张）。因此
+			// 主调用直接使用"发票合集 + 第 N/M 批"引导，要求模型提取本批全部可见发票；
+			// guided 调用失败时再回退普通调用兜底。
+			guide := fmt.Sprintf(
+				"重要提示：文档《%s》是包含多张电子发票的合集（文档描述：%s）。以下文本是该文档的第 %d/%d 批内容，本批文本中包含若干张发票。"+
+					"请逐张提取本批文本中出现的全部发票（特征：发票号码、金额、税率/征收率、税额、价税合计、购销方信息、开票人、发票类型等），一张都不可遗漏。"+
+					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。",
+				knowledge.FileName, knowledge.Description, i+1, len(batches))
+			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(effCtx, chatModel, batch, invoiceRuleCfg, guide)
+			if berr != nil {
+				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
+				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(effCtx, chatModel, batch, invoiceRuleCfg); ferr == nil && fbRes != nil {
+					batchRes = fbRes
+					berr = nil
+				}
+			}
+			if berr != nil {
+				// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
+				// 后续批失败仅告警跳过，保留已提取的部分。
+				if i == 0 && len(merged.Invoices) == 0 {
+					extractErr = berr
+					break
+				}
+				logger.Warnf(ctx, "Invoice extraction batch %d failed (non-fatal): %v", i+1, berr)
+				continue
+			}
+			if batchRes == nil || batchRes.Kind == "not_invoice" {
+				continue
+			}
+			sawInvoice = true
+			merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
 		}
-		if batchRes == nil || batchRes.Kind == "not_invoice" {
-			continue
-		}
-		sawInvoice = true
-		merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
 	}
 	if !sawInvoice {
 		merged.Kind = "not_invoice"
@@ -886,13 +908,13 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"message":  "Invoice extraction succeeded",
+		"success": true,
+		"message": "Invoice extraction succeeded",
 		"data": map[string]interface{}{
-			"knowledge_id":    knowledgeID,
-			"kind":            meta.Kind,
-			"extract_status":  meta.ExtractStatus,
-			"invoices":        meta.Invoices,
+			"knowledge_id":   knowledgeID,
+			"kind":           meta.Kind,
+			"extract_status": meta.ExtractStatus,
+			"invoices":       meta.Invoices,
 		},
 	})
 }
@@ -911,7 +933,6 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice-page [post]
-
 
 func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -1051,7 +1072,6 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/delete-invoice-page [post]
 
-
 func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
@@ -1137,8 +1157,8 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"success":     true,
-			"message":     "Invoice removed, source file scheduled for deletion",
+			"success":      true,
+			"message":      "Invoice removed, source file scheduled for deletion",
 			"deleted_file": true,
 		})
 		return
@@ -1156,10 +1176,10 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
-		"message":     "Invoice record deleted",
+		"success":      true,
+		"message":      "Invoice record deleted",
 		"deleted_file": false,
-		"data":        meta.Invoices,
+		"data":         meta.Invoices,
 	})
 }
 
@@ -1193,7 +1213,6 @@ func invoiceBatchesHaveText(batches []string) bool {
 	}
 	return false
 }
-
 
 func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -1385,9 +1404,9 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 			} else {
 				logger.Infof(ctx, "auto-deleted non-regulation knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非制度文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_regulation"},
+					"success": true,
+					"message": "非制度文件已移至删除历史，可在删除历史中恢复",
+					"data":    map[string]interface{}{"removed": true, "kind": "not_regulation"},
 				})
 				return
 			}
@@ -1425,13 +1444,13 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"message":  "Regulation extraction succeeded",
+		"success": true,
+		"message": "Regulation extraction succeeded",
 		"data": map[string]interface{}{
-			"knowledge_id":    knowledgeID,
-			"kind":            meta.Kind,
-			"extract_status":  meta.ExtractStatus,
-			"regulations":     meta.Regulations,
+			"knowledge_id":   knowledgeID,
+			"kind":           meta.Kind,
+			"extract_status": meta.ExtractStatus,
+			"regulations":    meta.Regulations,
 		},
 	})
 }
@@ -1450,7 +1469,6 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-award-punish [post]
-
 
 func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -1665,9 +1683,9 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 			} else {
 				logger.Infof(ctx, "auto-deleted non-award/punish knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非奖惩文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_award_punish"},
+					"success": true,
+					"message": "非奖惩文件已移至删除历史，可在删除历史中恢复",
+					"data":    map[string]interface{}{"removed": true, "kind": "not_award_punish"},
 				})
 				return
 			}
@@ -1705,13 +1723,13 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"message":  "Award/punish extraction succeeded",
+		"success": true,
+		"message": "Award/punish extraction succeeded",
 		"data": map[string]interface{}{
-			"knowledge_id":    knowledgeID,
-			"kind":            meta.Kind,
-			"extract_status":  meta.ExtractStatus,
-			"records":         meta.Records,
+			"knowledge_id":   knowledgeID,
+			"kind":           meta.Kind,
+			"extract_status": meta.ExtractStatus,
+			"records":        meta.Records,
 		},
 	})
 }
@@ -1760,7 +1778,6 @@ func (h *KnowledgeBaseHandler) GetRecognitionConfig(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/deleted-knowledge [get]
 
-
 func (h *BusinessExtractHandler) ListDeletedKnowledge(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
@@ -1801,7 +1818,6 @@ func (h *BusinessExtractHandler) ListDeletedKnowledge(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/restore [post]
-
 
 func (h *BusinessExtractHandler) RestoreDeletedKnowledge(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -1848,7 +1864,6 @@ func (h *BusinessExtractHandler) RestoreDeletedKnowledge(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/deleted-knowledge/{knowledgeId}/purge [post]
 
-
 func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
@@ -1894,7 +1909,6 @@ func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice [post]
-
 
 // ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。
 func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
