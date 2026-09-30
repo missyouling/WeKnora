@@ -49,12 +49,18 @@
               <t-switch :model-value="!!item.enabled" size="small" @change="(v: any) => toggleEnabled(item, v)" />
             </span>
             <span class="meter-row-actions" @click.stop>
-              <t-dropdown :options="itemMenuOptions(item)" placement="bottom-right" min-column-width="120px"
-                @click="(ctx: any) => onItemMenu(item, ctx.value)">
-                <t-button variant="text" size="small" shape="square">
-                  <template #icon><t-icon name="more" size="16px" /></template>
-                </t-button>
-              </t-dropdown>
+              <t-popconfirm theme="warning" :visible="delItemPop?.id === item.id" placement="left"
+                :content="`确定删除分类「${item.name}」吗？该分类的字段配置与提取规则将一并清除，且不可恢复。`"
+                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                @confirm="onItemPopRemove" @cancel="delItemPop = null"
+                @visible-change="(v: boolean) => { if (!v) delItemPop = null }">
+                <t-dropdown :options="itemMenuOptions(item)" placement="bottom-right" min-column-width="120px"
+                  @click="(ctx: any) => onItemMenu(item, ctx.value)">
+                  <t-button variant="text" size="small" shape="square">
+                    <template #icon><t-icon name="more" size="16px" /></template>
+                  </t-button>
+                </t-dropdown>
+              </t-popconfirm>
             </span>
           </div>
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
@@ -151,7 +157,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
@@ -645,17 +651,13 @@ const itemMenuOptions = (item: any) => {
 }
 function onItemMenu(item: any, value: string) {
   if (value === 'copy') void duplicateItem(item)
-  else if (value === 'delete') confirmRemoveItem(item)
+  else if (value === 'delete') delItemPop.value = item
 }
-function confirmRemoveItem(item: any) {
-  const dlg = DialogPlugin.confirm({
-    header: '删除分类',
-    body: `确定删除分类「${item.name}」吗？该分类的字段配置与提取规则将一并清除，且不可恢复。`,
-    confirmBtn: { content: '删除', theme: 'danger' },
-    cancelBtn: '取消',
-    onConfirm: async () => { dlg.destroy(); await removeItem(item) },
-    onClose: () => dlg.destroy(),
-  })
+const delItemPop = ref<any>(null)
+const onItemPopRemove = async () => {
+  const item = delItemPop.value
+  delItemPop.value = null
+  if (item) await removeItem(item)
 }
 
 // ---- 复制分类：字段（subs）与提取规则完全复制，命名「{原名}的副本{n}」 ----

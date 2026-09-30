@@ -180,12 +180,30 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	// 3. 按发票号去重（保留 created_at 最新）
 	records = dedupInvoiceRecords(records)
 
-	// 4. 过滤
+	// 4. 过滤：关键字搜索作用于全量去重记录，**忽略类型/税率/状态/日期筛选**（全局搜索语义）。
+	// 仅当关键字为空时才按类型、税率、状态、日期筛选收窄结果。
 	kw := strings.ToLower(strings.TrimSpace(filter.Keyword))
 	dateFrom, dateTo := strings.TrimSpace(filter.DateFrom), strings.TrimSpace(filter.DateTo)
 	kept := records[:0]
 	var sumAmount, sumTax, sumTotal float64
 	for _, r := range records {
+		if kw != "" {
+			// 搜索模式：命中关键词即纳入结果，不受筛选框约束
+			if !invoiceRecordMatchKeyword(r, kw) {
+				continue
+			}
+			kept = append(kept, r)
+			if r.Amount != nil {
+				sumAmount += *r.Amount
+			}
+			if r.Tax != nil {
+				sumTax += *r.Tax
+			}
+			if r.TotalAmount != nil {
+				sumTotal += *r.TotalAmount
+			}
+			continue
+		}
 		if filter.InvoiceType != "" {
 			// 排除式筛选：其它票据 = 非专用发票/普通发票的全部（含空值/未知值）
 			if filter.InvoiceType == "其它票据" {
@@ -203,9 +221,6 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 			continue
 		}
 		if !invoiceDateInRange(r.InvoiceDate, dateFrom, dateTo) {
-			continue
-		}
-		if kw != "" && !invoiceRecordMatchKeyword(r, kw) {
 			continue
 		}
 		kept = append(kept, r)

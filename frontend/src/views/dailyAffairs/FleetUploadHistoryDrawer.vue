@@ -19,9 +19,6 @@
               搜索
             </t-button>
           </div>
-          <div class="dh-hint">
-            展示该档案库全部上传文件的解析与提取状态。
-          </div>
           <div ref="listScrollRef" class="doc-list-scroll" @scroll="onListScroll">
             <div class="doc-list-view">
               <t-table
@@ -54,9 +51,7 @@
                 <t-tooltip v-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
                 </t-tooltip>
-                <t-tag v-else-if="extractStatus(row) === 'success'" size="small" theme="success" variant="light-outline">提取完成</t-tag>
-                <t-tag v-else-if="row.parse_status === 'completed'" size="small" theme="warning" variant="light-outline">待提取</t-tag>
-                <span v-else class="row-muted">—</span>
+                <t-tag v-else size="small" :theme="extractTheme(row)" variant="light-outline">{{ extractLabel(row) }}</t-tag>
               </template>
               <template #docType="{ row }: any">
                 <span v-if="row.doc_type" class="row-mono">{{ row.doc_type }}</span>
@@ -66,12 +61,18 @@
                 <span class="row-mono">{{ fmtTime(row.created_at) }}</span>
               </template>
               <template #op="{ row }: any">
-                <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
-                  @click="(ctx: any) => onRowMenu(row, ctx.value)">
-                  <t-button variant="text" size="small" shape="square" class="row-more-btn">
-                    <template #icon><t-icon name="more" size="16px" /></template>
-                  </t-button>
-                </t-dropdown>
+                <t-popconfirm theme="warning" :visible="delPopRow?.id === row.id" placement="left"
+                  :content="'确定从知识库删除该文件吗？已解析记录将一并清除。'"
+                  :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                  @confirm="onPopRemove" @cancel="delPopRow = null"
+                  @visible-change="(v: boolean) => { if (!v) delPopRow = null }">
+                  <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
+                    @click.stop="(ctx: any) => onRowMenu(row, ctx.value)">
+                    <t-button variant="text" size="small" shape="square" class="row-more-btn">
+                      <template #icon><t-icon name="more" size="16px" /></template>
+                    </t-button>
+                  </t-dropdown>
+                </t-popconfirm>
               </template>
             </t-table>
           </div>
@@ -79,25 +80,13 @@
         </div>
       </div>
     </t-drawer>
-    <div v-if="previewUrl" class="img-preview-mask" @click.self="closePreview">
-      <div class="img-preview-box">
-        <div class="img-preview-head">
-          <span class="img-preview-title">打印预览</span>
-          <div class="img-preview-actions">
-            <t-button theme="primary" size="small" @click="printPreview">打印</t-button>
-            <t-button variant="outline" size="small" @click="closePreview">关闭</t-button>
-          </div>
-        </div>
-        <img :src="previewUrl" class="img-preview-img" alt="预览" />
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
-import { RefreshIcon, CloudUploadIcon, DownloadIcon, PrintIcon, DeleteIcon } from 'tdesign-icons-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
+import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -121,21 +110,6 @@ const pageSize = ref(20)
 const hasMore = ref(true)
 const listScrollRef = ref<HTMLElement>()
 const activeRow = ref<any>(null)
-const previewUrl = ref('')
-
-function closePreview() { if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' } }
-function printPreview() {
-  if (!previewUrl.value) return
-  const url = previewUrl.value
-  const iframe = document.createElement('iframe')
-  iframe.style.position = 'fixed'; iframe.style.inset = '0'; iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'
-  iframe.src = url
-  iframe.onload = () => { setTimeout(() => { try { iframe.contentWindow?.focus(); iframe.contentWindow?.print() } catch (_) {} }, 200) }
-  document.body.appendChild(iframe)
-  setTimeout(() => { iframe.remove() }, 60000)
-  closePreview()
-}
-
 const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '100px' },
@@ -173,6 +147,32 @@ const extractStatus = (row: any) => {
   const m = row.custom_metadata || {}
   return m.extract_status || ''
 }
+// 提取状态文案与解析状态同口径：success→已完成 / failed→提取失败 / 处理中→提取中 / 其他→待提取
+const extractLabel = (row: any) => {
+  const s = extractStatus(row)
+  if (s === 'success') return '已完成'
+  if (s === 'failed') return '提取失败'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return '提取中'
+  return '待提取'
+}
+const extractTheme = (row: any) => {
+  const s = extractStatus(row)
+  if (s === 'success') return 'success'
+  if (s === 'failed') return 'danger'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'warning'
+  return 'default'
+}
+
+// 发票类型取值：优先上传时写入的 fleet_cert_type，其次 custom_metadata.invoice_type，
+// 再次发票提取结果 invoices[0].invoice_type，最后回退 doc_type/顶层字段（补齐历史遗留空白）。
+const invDocType = (r: any) => {
+  const m = r.custom_metadata || {}
+  if (m.fleet_cert_type) return m.fleet_cert_type
+  if (m.invoice_type) return m.invoice_type
+  const invs = Array.isArray(m.invoices) ? m.invoices : []
+  if (invs.length && invs[0]?.invoice_type) return invs[0].invoice_type
+  return m.doc_type || r.doc_type || ''
+}
 
 const normalize = (r: any) => ({
   id: r.id,
@@ -182,10 +182,10 @@ const normalize = (r: any) => ({
   parse_status: r.parse_status || '',
   created_at: r.created_at || '',
   custom_metadata: r.custom_metadata || {},
-  doc_type: (r.custom_metadata || {}).fleet_cert_type || (r.custom_metadata || {}).doc_type || '',
+  doc_type: invDocType(r),
 })
 
-const rowDocType = (r: any) => (r.custom_metadata || {}).fleet_cert_type || (r.custom_metadata || {}).doc_type || ''
+const rowDocType = (r: any) => invDocType(r)
 
 const reload = async (p = 1) => {
   if (!props.kbId) return
@@ -283,15 +283,11 @@ const reextractRow = async (row: any) => {
   }
 }
 
-const confirmRemove = (row: any) => {
-  const dlg = DialogPlugin.confirm({
-    header: '删除文件',
-    body: '确定从知识库删除该文件吗？已解析记录将一并清除。',
-    confirmBtn: { content: '删除', theme: 'danger' },
-    cancelBtn: '取消',
-    onConfirm: async () => { dlg.destroy(); await removeOne(row) },
-    onClose: () => dlg.destroy(),
-  })
+const delPopRow = ref<any>(null)
+const onPopRemove = async () => {
+  const row = delPopRow.value
+  delPopRow.value = null
+  if (row) await removeOne(row)
 }
 
 // ---- 删除：复用知识库文档删除逻辑（真删除，从知识库移除） ----
@@ -338,7 +334,6 @@ const rowMenuOptions = (row: any) => {
     { content: '重新解析', value: 'reparse', prefixIcon: () => h(RefreshIcon, { size: '14px' }) },
     { content: '重新提取', value: 'reextract', prefixIcon: () => h(CloudUploadIcon, { size: '14px' }) },
     { content: '下载源文件', value: 'download', prefixIcon: () => h(DownloadIcon, { size: '14px' }) },
-    { content: '打印源文件', value: 'print', prefixIcon: () => h(PrintIcon, { size: '14px' }) },
   ]
   opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
   return opts
@@ -346,15 +341,15 @@ const rowMenuOptions = (row: any) => {
 
 const authHeaders = () => ({ Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') })
 
-const fetchBlob = async (row: any, kind: 'download' | 'preview') => {
-  const res = await fetch(`/api/v1/knowledge/${row.id}/${kind}`, { headers: authHeaders() })
+const fetchBlob = async (row: any) => {
+  const res = await fetch(`/api/v1/knowledge/${row.id}/download`, { headers: authHeaders() })
   if (!res.ok) throw new Error('文件获取失败')
   return res.blob()
 }
 
 const downloadSource = async (row: any) => {
   try {
-    const blob = await fetchBlob(row, 'download')
+    const blob = await fetchBlob(row)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -368,45 +363,11 @@ const downloadSource = async (row: any) => {
   }
 }
 
-// 打印源文件：PDF 走 iframe 打印；图片走弹窗预览后打印；其余类型提示下载
-const printSource = async (row: any) => {
-  const ext = fileExt(row.file_name).toLowerCase()
-  try {
-    const blob = await fetchBlob(row, 'preview')
-    const url = URL.createObjectURL(blob)
-    if (ext === 'pdf') {
-      const iframe = document.createElement('iframe')
-      iframe.style.position = 'fixed'
-      iframe.style.right = '0'
-      iframe.style.bottom = '0'
-      iframe.style.width = '0'
-      iframe.style.height = '0'
-      iframe.style.border = '0'
-      iframe.src = url
-      iframe.onload = () => {
-        setTimeout(() => {
-          try { iframe.contentWindow?.focus(); iframe.contentWindow?.print() } catch (_) {}
-        }, 300)
-      }
-      document.body.appendChild(iframe)
-      setTimeout(() => { iframe.remove(); URL.revokeObjectURL(url) }, 60000)
-    } else if (IMG_EXT.includes(ext)) {
-      previewUrl.value = url
-    } else {
-      MessagePlugin.warning('该文件类型暂不支持在线打印，可下载后查看')
-      URL.revokeObjectURL(url)
-    }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '打印失败')
-  }
-}
-
 const onRowMenu = (row: any, value: string) => {
   if (value === 'reparse') reparseRow(row)
   else if (value === 'reextract') reextractRow(row)
   else if (value === 'download') downloadSource(row)
-  else if (value === 'print') printSource(row)
-  else if (value === 'delete') confirmRemove(row)
+  else if (value === 'delete') delPopRow.value = row
 }
 // ---- 抽屉宽度拖动（复用合同管理历史抽屉方案） ----
 const DRAWER_MIN_WIDTH = 720
@@ -497,10 +458,6 @@ watch(() => props.visible, (v) => {
 }
 .dh-toolbar { display: flex; gap: 8px; align-items: center; }
 .dh-search { flex: 1; }
-.dh-hint {
-  font-size: 12px;
-  color: var(--td-text-color-secondary);
-}
 /* ---- 列表（复刻合同管理历史抽屉样式：grid 自绘 + 懒加载滚动） ---- */
 .doc-list-scroll {
   flex: 1 1 auto;
@@ -569,27 +526,5 @@ watch(() => props.visible, (v) => {
 .dh-file-size {
   font-size: 12px;
   color: var(--td-text-color-secondary);
-}
-.img-preview-mask {
-  position: fixed; inset: 0; z-index: 2000;
-  background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center;
-}
-.img-preview-box {
-  width: min(880px, 90vw); max-height: 88vh;
-  background: var(--td-bg-color-container);
-  border-radius: var(--td-radius-medium);
-  display: flex; flex-direction: column; overflow: hidden;
-  box-shadow: var(--td-shadow-3);
-}
-.img-preview-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; border-bottom: 1px solid var(--td-component-stroke);
-}
-.img-preview-title { font-size: var(--td-font-size-body-medium); color: var(--td-text-color-primary); }
-.img-preview-actions { display: flex; gap: 8px; }
-.img-preview-img {
-  max-width: 100%; max-height: calc(88vh - 52px);
-  object-fit: contain; margin: 0 auto; display: block; background: var(--td-bg-color-secondarycontainer);
 }
 </style>

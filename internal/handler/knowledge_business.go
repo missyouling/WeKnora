@@ -1910,6 +1910,48 @@ func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice [post]
 
+// UpdateInvoiceMetadata godoc
+// @Summary      保存发票提取元数据
+// @Description  直接持久化发票 custom_metadata（含 invoices 数组），绕过原生
+// custom_metadata 标量校验，供发票详情抽屉手动保存使用。调用方需自带完整元数据。
+// @Tags         日常事务
+// @Accept       json
+// @Produce      json
+// @Param        id            path      string                 true  "知识库ID"
+// @Param        knowledgeId   path      string                 true  "知识ID"
+// @Param        request       body      map[string]interface{} true  "custom_metadata"
+// @Success      200           {object}  map[string]interface{} "保存成功"
+// @Failure      400           {object}  errors.AppError       "请求参数错误"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/invoice-metadata [put]
+func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	var body struct {
+		CustomMetadata json.RawMessage `json:"custom_metadata"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
+		return
+	}
+	if len(body.CustomMetadata) == 0 || string(body.CustomMetadata) == "null" {
+		c.Error(errors.NewBadRequestError("custom_metadata cannot be empty"))
+		return
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(body.CustomMetadata)); err != nil {
+		logger.Error(ctx, "Failed to persist invoice metadata", err)
+		c.Error(errors.NewInternalServerError("failed to save invoice metadata: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Invoice custom metadata updated, knowledge ID: %s", knowledgeID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"id": knowledgeID}})
+}
 // ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。
 func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	var body struct {

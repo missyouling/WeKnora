@@ -287,10 +287,7 @@
                       </div>
                       <span v-else class="row-muted">—</span>
                     </t-form-item>
-                    <t-form-item v-else-if="f.name === 'items'" label="项目明细" label-width="110px">
-                      <span class="row-muted">项目明细请在下方面板编辑</span>
-                    </t-form-item>
-                    <t-form-item v-else :label="f.label" label-width="110px">
+                    <t-form-item v-else :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' }">
                       <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
                         format="YYYY-MM-DD" clearable allow-input />
                       <t-input v-else-if="f.dataType === 'number'" v-model="editForm.data[f.name]"
@@ -305,7 +302,6 @@
               <!-- 明细 items（发票特有业务；字段配置开启 items 时显示） -->
               <div v-if="hasItemsField" class="items-section">
                 <div class="items-header">
-                  <span class="items-title">项目明细</span>
                   <t-button size="small" variant="outline" @click="addItemRow">
                     <template #icon><t-icon name="add" size="14px" /></template>
                     添加明细
@@ -418,7 +414,7 @@ import {
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
-  updateKnowledgeMetadata,
+  updateInvoiceMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
@@ -1314,7 +1310,7 @@ const saveEditForm = async () => {
     const nextStatus = hasInvoiceData ? 'success' : 'manual'
     const nextError = hasInvoiceData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'invoice', invoices, extract_status: nextStatus, extract_error: nextError }
-    await updateKnowledgeMetadata(now.knowledgeId, newMeta)
+    await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑（如备注）后列表立即刷新
     const listIdx = invoiceRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
@@ -2073,11 +2069,11 @@ onBeforeUnmount(() => {
 }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; row-gap: 12px; }
 .field-grid--full { grid-template-columns: 1fr; }
+.field-grid__full { grid-column: 1 / -1; }
 .field-grid :deep(.t-form__item) { margin-bottom: 0; }
 
 .items-section { border-top: 1px solid var(--td-component-stroke); padding-top: 14px; margin-top: 4px;
-  .items-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
-    .items-title { font-size: 14px; font-weight: 600; color: var(--td-text-color-primary); } }
+  .items-header { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 10px; }
 }
 .items-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 44px; gap: 8px; align-items: center; margin-bottom: 8px;
   &--head { font-size: 12px; color: var(--td-text-color-secondary); margin-bottom: 4px; }

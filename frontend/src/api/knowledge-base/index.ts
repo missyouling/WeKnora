@@ -617,6 +617,11 @@ export function updateKnowledgeMetadata(knowledgeId: string, customMetadata: Rec
   return put(`/api/v1/knowledge/${knowledgeId}`, { custom_metadata: customMetadata });
 }
 
+// 发票详情手动保存：走二开 invoice-metadata 路由，持久化数组型 invoices 元数据（绕过原生标量校验）
+export function updateInvoiceMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>) {
+  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata });
+}
+
 export function updateKnowledgeSummary(knowledgeId: string, description: string) {
   return put(`/api/v1/knowledge/${knowledgeId}`, { description });
 }
