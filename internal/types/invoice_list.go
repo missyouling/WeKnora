@@ -57,6 +57,8 @@ type InvoiceListFilter struct {
 	Status      string   // extract_status
 	DateFrom    string   // YYYY-MM-DD（含）
 	DateTo      string   // YYYY-MM-DD（含）
+	SortBy      string   // 表头排序字段：invoice_no / invoice_date（空=默认创建时间倒序）
+	SortOrder   string   // asc / desc（默认 desc）
 	Page        int
 	PageSize    int
 }

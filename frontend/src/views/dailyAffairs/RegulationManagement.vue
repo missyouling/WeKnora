@@ -1649,7 +1649,7 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-primary); margin-bottom: 12px;
   &::before { content: ''; width: 3px; height: 14px; background: var(--td-brand-color); border-radius: 2px; flex-shrink: 0; }
 }
-.field-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; row-gap: 12px; }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 20px; row-gap: 12px; }
 .field-grid--full { grid-template-columns: 1fr; }
 .field-grid :deep(.t-form__item) { margin-bottom: 0; }
 

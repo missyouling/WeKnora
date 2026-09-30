@@ -67,7 +67,7 @@
                   @confirm="onPopRemove" @cancel="delPopRow = null"
                   @visible-change="(v: boolean) => { if (!v) delPopRow = null }">
                   <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
-                    @click.stop="(ctx: any) => onRowMenu(row, ctx.value)">
+                    @click="(ctx: any) => onRowMenu(row, ctx.value)">
                     <t-button variant="text" size="small" shape="square" class="row-more-btn">
                       <template #icon><t-icon name="more" size="16px" /></template>
                     </t-button>
@@ -116,7 +116,7 @@ const columns = [
   { colKey: 'extract', title: '提取', width: '100px' },
   { colKey: 'docType', title: props.scope === 'invoice' ? '发票类型' : '证照类型', width: '120px' },
   { colKey: 'createdAt', title: '上传时间', width: '160px' },
-  { colKey: 'op', title: '操作', width: '60px', fixed: 'right' as const },
+  { colKey: 'op', title: '操作', width: '60px' },
 ]
 
 const fileExt = (name: string) => {

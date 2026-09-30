@@ -903,6 +903,8 @@ export function listInvoiceRecords(kbId: string, params: {
   tax_rate?: number;
   date_from?: string;
   date_to?: string;
+  sort_by?: string;
+  sort_order?: string;
   page?: number;
   page_size?: number;
 } = {}) {

@@ -35,6 +35,19 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 			taxRate = &v
 		}
 	}
+	sortBy := c.Query("sort_by")
+	if sortBy != "" && sortBy != "invoice_no" && sortBy != "invoice_date" {
+		c.Error(apperrors.NewBadRequestError("invalid sort_by: must be invoice_no or invoice_date"))
+		return
+	}
+	sortOrder := c.Query("sort_order")
+	if sortOrder == "" {
+		sortOrder = "desc"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		c.Error(apperrors.NewBadRequestError("invalid sort_order: must be asc or desc"))
+		return
+	}
 	filter := types.InvoiceListFilter{
 		Keyword:     c.Query("q"),
 		InvoiceType: c.Query("invoice_type"),
@@ -42,6 +55,8 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		Status:      c.Query("status"),
 		DateFrom:    c.Query("date_from"),
 		DateTo:      c.Query("date_to"),
+		SortBy:      sortBy,
+		SortOrder:   sortOrder,
 		Page:        page,
 		PageSize:    pageSize,
 	}

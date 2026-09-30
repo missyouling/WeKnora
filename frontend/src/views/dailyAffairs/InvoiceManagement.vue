@@ -41,7 +41,7 @@
       <div class="invoice-list-view">
       <!-- 筛选工具栏（对齐车队标准中台组件） -->
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType" :type-clearable="false"
+            :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType" :type-clearable="searchActive"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
@@ -80,9 +80,11 @@
         sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
+        :sort="sortState"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
         @row-click="({ row, e }: any) => onRowClick(row, e)"
         @select-change="onTableSelectChange"
+        @sort-change="onSortChange"
       >
         <template #invoiceNo="{ row }: any">
           <span class="row-invoice-no" :title="row.invoiceNo || row.fileName">{{ row.invoiceNo || row.fileName }}</span>
@@ -287,7 +289,7 @@
                       </div>
                       <span v-else class="row-muted">—</span>
                     </t-form-item>
-                    <t-form-item v-else :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' }">
+                    <t-form-item v-else-if="f.name !== 'items'" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' }">
                       <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
                         format="YYYY-MM-DD" clearable allow-input />
                       <t-input v-else-if="f.dataType === 'number'" v-model="editForm.data[f.name]"
@@ -618,8 +620,8 @@ const overviewCards = computed(() => {
     const typeIcon = name === '专用发票' ? 'file-copy' : name === '普通发票' ? 'file-1' : 'file-unknown'
     cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
-  // 其它票据：排除式统计桶（非实体分类），固定追加在类型卡末尾
-  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
+  // 其它票据：排除式统计桶（非实体分类），固定追加在类型卡末尾；工具栏已无该筛选选项，卡片仅作统计展示
+  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: '' })
   // 异常质量卡：0 时弱化展示
   cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
   return cards
@@ -647,9 +649,12 @@ const tableColumns = computed(() => {
   vis.forEach((c, i) => {
     // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
     const w = colWidthOf(c.width, c.label, rows.map(r => c.key === 'items' ? itemsTextOf(r) : colValue(r, c.key)))
-    cols.push(i === vis.length - 1
+    const base: any = i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
-      : { colKey: c.key, title: c.label, ellipsis: true, width: w })
+      : { colKey: c.key, title: c.label, ellipsis: true, width: w }
+    // 发票号码 / 开票日期支持表头排序（排序在服务端执行）
+    if (c.key === 'invoiceNo' || c.key === 'invoiceDate') base.sorter = true
+    cols.push(base)
   })
   return cols
 })
@@ -841,6 +846,8 @@ const loadFiles = async (reset = false) => {
         ? undefined : Number(taxRateFilter.value),
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
+      sort_by: sortBy.value || undefined,
+      sort_order: sortDirection.value || undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     })
@@ -1032,8 +1039,7 @@ const invoiceTypeOptions = computed(() => {
     : kbTypes.value.length
       ? kbTypes.value
       : INVOICE_TYPES.filter((n) => n !== '其它票据')
-  const list = base.includes('其它票据') ? base : [...base, '其它票据']
-  return list.map((v: string) => ({ value: v, label: v }))
+  return base.map((v: string) => ({ value: v, label: v }))
 })
 
 // ---- 类型分类列表：从识别规则配置加载（支持自定义分类增删改查） ----
@@ -1065,9 +1071,12 @@ const reloadColumns = async () => {
   } catch { /* 后端未配置时回退内置默认 */ }
 }
 
-// 类型筛选锁定：始终保证有一项分类被选中（禁清空）。
+// 搜索态：关键词非空时类型下拉可临时清空（全局搜索优先，见 ⑦）
+const searchActive = computed(() => !!keyword.value.trim())
+// 类型筛选锁定：始终保证有一项分类被选中（禁清空）；搜索态放行（由 keyword watch 负责恢复）。
 // 优先保留当前合法选中项（含路由 query 回填），否则按分类顺序选中第一个启用分类。
 const ensureInvoiceType = () => {
+  if (searchActive.value) return
   const valid = new Set(invoiceTypeOptions.value.map((o) => o.value))
   if (filterInvoiceType.value && valid.has(filterInvoiceType.value)) return
   const cats = invoiceCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
@@ -1123,11 +1132,44 @@ const displaySummary = computed(() => selectedSummary.value || invoiceSummary.va
 
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 const onKeywordChange = () => { loadFiles(true) }
+
+// ---- 表头排序（服务端排序）：sort_by=invoice_no|invoice_date ----
+const sortBy = ref('')
+const sortDirection = ref('desc')
+const sortState = computed(() => sortBy.value ? [{ sortBy: sortBy.value, desc: sortDirection.value === 'desc' }] : [])
+const onSortChange = (ctx: any) => {
+  // TDesign 返回列 colKey（invoiceNo/invoiceDate），映射为后端 sort_by 参数（invoice_no/invoice_date）
+  const by = ctx?.sortBy || ''
+  const dir = ctx?.direction
+  const map: Record<string, string> = { invoiceNo: 'invoice_no', invoiceDate: 'invoice_date' }
+  if (!by || !map[by]) {
+    sortBy.value = ''
+    sortDirection.value = 'desc'
+  } else {
+    sortBy.value = map[by]
+    sortDirection.value = dir === 'asc' ? 'asc' : 'desc'
+  }
+  loadFiles(true)
+}
 // 筛选联动：类型下拉变更即时刷新（修复中台 Toolbar 只发 update 不触发刷新的空转）
 watch(filterInvoiceType, () => applyFilter())
 // 关键词防抖 300ms 后刷新
+// ⑦ 全局搜索：输入关键词时临时清空类型筛选（下拉与请求参数均不带筛选），
+// 清空搜索词后恢复原选中类型并重新锁定。
 let keywordTimer: ReturnType<typeof setTimeout> | null = null
-watch(keyword, () => {
+let searchRestoreType = ''
+watch(keyword, (v) => {
+  if (v && v.trim()) {
+    if (searchRestoreType === '' && filterInvoiceType.value) searchRestoreType = filterInvoiceType.value
+    if (filterInvoiceType.value) filterInvoiceType.value = ''
+  } else {
+    if (searchRestoreType) {
+      filterInvoiceType.value = searchRestoreType
+      searchRestoreType = ''
+    } else {
+      ensureInvoiceType()
+    }
+  }
   if (keywordTimer) clearTimeout(keywordTimer)
   keywordTimer = setTimeout(() => loadFiles(true), 300)
 })
@@ -2067,7 +2109,7 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-primary); margin-bottom: 12px;
   &::before { content: ''; width: 3px; height: 14px; background: var(--td-brand-color); border-radius: 2px; flex-shrink: 0; }
 }
-.field-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; row-gap: 12px; }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); column-gap: 20px; row-gap: 12px; }
 .field-grid--full { grid-template-columns: 1fr; }
 .field-grid__full { grid-column: 1 / -1; }
 .field-grid :deep(.t-form__item) { margin-bottom: 0; }

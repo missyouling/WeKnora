@@ -103,17 +103,23 @@
                     <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
                   </t-tooltip>
                   <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
-                  <t-popconfirm v-if="!usedFields.has(fd.name)" theme="warning"
-                    :content="`确定删除字段「${fd.name}」吗？`"
-                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                    @confirm="removeField(fd)">
-                    <t-button class="action-delete-btn" variant="text" size="small">
-                      <template #icon><t-icon name="delete" size="15px" /></template>
-                    </t-button>
+                  <template v-if="usedFields.has(fd.name)">
+                    <t-tooltip :content="`该字段已被证照记录引用，不能删除`" placement="top">
+                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                    </t-tooltip>
+                  </template>
+                  <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === fd.name" placement="left"
+                    :content="`确定删除字段「${fieldLabelOf(fd)}」吗？该字段将不可恢复。`"
+                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                    @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
+                    @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
+                    <t-dropdown :options="fieldMenuOptions(fd)" placement="bottom-right" min-column-width="110px"
+                      @click="(ctx: any) => onFieldMenu(fd, ctx.value)">
+                      <t-button variant="text" size="small" shape="square">
+                        <template #icon><t-icon name="more" size="15px" /></template>
+                      </t-button>
+                    </t-dropdown>
                   </t-popconfirm>
-                  <t-tooltip v-else :content="`该字段已被证照记录引用，不能删除`" placement="top">
-                    <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                  </t-tooltip>
                 </div>
                 <div class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
@@ -552,6 +558,31 @@ function toggleEdit(item: any) {
     .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
   editingId.value = item.id
   loadUsedFields(group.value.scope, item.name)
+}
+// ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
+const fieldDelPop = ref<any>(null)
+const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice' ? invoiceFieldLabel(fd.name) : fd.desc || fd.name)
+const fieldMenuOptions = (fd: any) => [
+  { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
+  { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
+]
+function onFieldMenu(fd: any, value: string) {
+  if (value === 'copy') void duplicateField(fd)
+  else if (value === 'delete') fieldDelPop.value = fd
+}
+const onFieldPopRemove = async () => {
+  const fd = fieldDelPop.value
+  fieldDelPop.value = null
+  if (fd) await removeField(fd)
+}
+// 复制字段：字段配置全量复制为新字段（名称去重递增），提取映射由分类保存时统一落库
+function duplicateField(fd: any) {
+  const exists = (n: string) => fieldsEditable.value.some((f: any) => f.name === n)
+  let n = 1
+  let nm = `${fd.name}_copy`
+  while (exists(nm)) { n += 1; nm = `${fd.name}_copy${n}` }
+  fieldsEditable.value.push({ name: nm, enabled: !!fd.enabled, isDefault: !!fd.isDefault, dataType: fd.dataType || 'text', width: Number(fd.width) || 0 })
+  MessagePlugin.success('已复制字段')
 }
 function addField() {
   const name = newFieldName.value.trim()

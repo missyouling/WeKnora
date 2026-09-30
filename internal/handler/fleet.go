@@ -1034,7 +1034,7 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 	id := secutils.SanitizeForLog(c.Param("id"))
 	// 日常事务业务 scope 分类使用全局 tenant_id=0 配置，不按 tenant 隔离（与 List 口径一致）
 	var existing types.FleetCategory
-	if err := h.db.WithContext(ctx).Select("scope").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
+	if err := h.db.WithContext(ctx).Select("scope, name, builtin_key").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
 		c.Error(errors.NewNotFoundError("分类不存在"))
 		return
 	}
@@ -1042,11 +1042,17 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 		tenantID = 0
 	}
 	// 内置分类（builtin_key 非空）禁止删除
-	var builtinCheck types.FleetCategory
-	if err := h.db.WithContext(ctx).Select("builtin_key").
-		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
-		First(&builtinCheck).Error; err == nil && builtinCheck.BuiltinKey != "" {
+	if existing.BuiltinKey != "" {
 		c.Error(errors.NewBadRequestError("内置分类不可删除"))
+		return
+	}
+	// 引用检查：分类名下已有数据记录时禁止删除，防止档案数据失联
+	if refCount, err := h.countFleetCategoryRefs(ctx, existing.Scope, existing.Name); err != nil {
+		logger.Errorf(ctx, "count fleet category refs failed: %v", err)
+		c.Error(errors.NewInternalServerError("check category references failed"))
+		return
+	} else if refCount > 0 {
+		c.Error(errors.NewBadRequestError(fmt.Sprintf("该分类下已有 %d 条记录引用，禁止删除", refCount)))
 		return
 	}
 	res := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
@@ -1062,6 +1068,79 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// countFleetCategoryRefs 统计分类名下被数据记录引用的数量：
+//   - invoice：knowledge.custom_metadata->'invoices' 数组中 invoice_type == 分类名
+//   - contract/regulation/award_punish：knowledge.custom_metadata->>'category' == 分类名
+//   - vehicle/driver/maintain：fleet_records.doc_type == 分类名
+//
+// 先用 LIKE 粗筛缩小候选集，再在 Go 侧精确解析 JSON，避免依赖具体数据库 JSON 方言。
+func (h *FleetHandler) countFleetCategoryRefs(ctx context.Context, scope, name string) (int, error) {
+	if strings.TrimSpace(name) == "" {
+		return 0, nil
+	}
+	switch scope {
+	case "invoice":
+		var rows []types.Knowledge
+		if err := h.db.WithContext(ctx).
+			Where("deleted_at IS NULL AND custom_metadata LIKE ?", "%"+name+"%").
+			Find(&rows).Error; err != nil {
+			return 0, err
+		}
+		count := 0
+		for i := range rows {
+			var meta struct {
+				Invoices []struct {
+					InvoiceType string `json:"invoice_type"`
+				} `json:"invoices"`
+			}
+			if len(rows[i].CustomMetadata) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(rows[i].CustomMetadata, &meta); err != nil {
+				continue
+			}
+			for _, inv := range meta.Invoices {
+				if inv.InvoiceType == name {
+					count++
+				}
+			}
+		}
+		return count, nil
+	case "contract", "regulation", "award_punish":
+		var rows []types.Knowledge
+		if err := h.db.WithContext(ctx).
+			Where("deleted_at IS NULL AND custom_metadata LIKE ?", "%"+name+"%").
+			Find(&rows).Error; err != nil {
+			return 0, err
+		}
+		count := 0
+		for i := range rows {
+			var meta struct {
+				Category string `json:"category"`
+			}
+			if len(rows[i].CustomMetadata) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(rows[i].CustomMetadata, &meta); err != nil {
+				continue
+			}
+			if meta.Category == name {
+				count++
+			}
+		}
+		return count, nil
+	default:
+		// 车队档案：fleet_records.doc_type 关联分类名
+		var count int64
+		if err := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
+			Where("deleted_at IS NULL AND doc_type = ?", name).
+			Count(&count).Error; err != nil {
+			return 0, err
+		}
+		return int(count), nil
+	}
 }
 
 // ---------------------------------------------------------------------------

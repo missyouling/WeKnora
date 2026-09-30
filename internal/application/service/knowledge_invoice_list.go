@@ -205,12 +205,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 			continue
 		}
 		if filter.InvoiceType != "" {
-			// 排除式筛选：其它票据 = 非专用发票/普通发票的全部（含空值/未知值）
-			if filter.InvoiceType == "其它票据" {
-				if r.InvoiceType == "专用发票" || r.InvoiceType == "普通发票" {
-					continue
-				}
-			} else if r.InvoiceType != filter.InvoiceType {
+			if r.InvoiceType != filter.InvoiceType {
 				continue
 			}
 		}
@@ -236,13 +231,42 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	}
 	records = kept
 
-	// 5. 排序：源文件创建时间新在前；同文件按发票页码升序
-	sort.SliceStable(records, func(i, j int) bool {
-		if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
-			return records[i].CreatedAt.After(records[j].CreatedAt)
-		}
-		return records[i].Page < records[j].Page
-	})
+	// 5. 排序：默认源文件创建时间新在前；同文件按发票页码升序。
+	// 表头排序（invoice_no / invoice_date）时以该字段为主排序键，空值排后。
+	desc := filter.SortOrder != "asc"
+	if filter.SortBy == "invoice_no" || filter.SortBy == "invoice_date" {
+		by := filter.SortBy
+		sort.SliceStable(records, func(i, j int) bool {
+			var a, b string
+			if by == "invoice_no" {
+				a, b = strings.ToLower(strings.TrimSpace(records[i].InvoiceNo)), strings.ToLower(strings.TrimSpace(records[j].InvoiceNo))
+			} else {
+				a, b = records[i].InvoiceDate, records[j].InvoiceDate
+			}
+			// 空值恒排后（无论升序还是降序）
+			aEmpty, bEmpty := a == "", b == ""
+			if aEmpty != bEmpty {
+				return !aEmpty
+			}
+			if a != b {
+				if desc {
+					return a > b
+				}
+				return a < b
+			}
+			if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
+				return records[i].CreatedAt.After(records[j].CreatedAt)
+			}
+			return records[i].Page < records[j].Page
+		})
+	} else {
+		sort.SliceStable(records, func(i, j int) bool {
+			if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
+				return records[i].CreatedAt.After(records[j].CreatedAt)
+			}
+			return records[i].Page < records[j].Page
+		})
+	}
 
 	// 6. 分页
 	total := len(records)
