@@ -39,10 +39,9 @@
               <template #file="{ row }: any">
                 <div class="dh-file">
                   <span class="dh-file-icon">{{ fileExt(row.file_name) }}</span>
-                  <div class="dh-file-meta">
-                    <div class="dh-file-name" :title="row.title || row.file_name">{{ row.title || row.file_name }}</div>
-                    <div class="dh-file-sub">{{ row.file_name }} · {{ fmtSize(row.file_size) }}</div>
-                  </div>
+                  <span class="dh-file-name" :title="`${row.title || row.file_name} · ${fmtSize(row.file_size)}`">
+                    {{ row.title || row.file_name }}<span class="dh-file-size"> · {{ fmtSize(row.file_size) }}</span>
+                  </span>
                 </div>
               </template>
               <template #parse="{ row }: any">
@@ -70,7 +69,7 @@
                 <t-dropdown :options="rowMenuOptions(row)" placement="bottom-right" min-column-width="120px"
                   @click="(ctx: any) => onRowMenu(row, ctx.value)">
                   <t-button variant="text" size="small" shape="square" class="row-more-btn">
-                    <template #icon><t-icon name="ellipsis" size="16px" /></template>
+                    <template #icon><t-icon name="more" size="16px" /></template>
                   </t-button>
                 </t-dropdown>
               </template>
@@ -96,8 +95,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { RefreshIcon, CloudUploadIcon, DownloadIcon, PrintIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 
 const props = defineProps<{
@@ -182,8 +182,10 @@ const normalize = (r: any) => ({
   parse_status: r.parse_status || '',
   created_at: r.created_at || '',
   custom_metadata: r.custom_metadata || {},
-  doc_type: (r.custom_metadata || {}).doc_type || '',
+  doc_type: (r.custom_metadata || {}).fleet_cert_type || (r.custom_metadata || {}).doc_type || '',
 })
+
+const rowDocType = (r: any) => (r.custom_metadata || {}).fleet_cert_type || (r.custom_metadata || {}).doc_type || ''
 
 const reload = async (p = 1) => {
   if (!props.kbId) return
@@ -194,7 +196,7 @@ const reload = async (p = 1) => {
     // 已删除（隐藏）的历史条目不再显示
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
     const dtSet = props.docTypes
-    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = (r.custom_metadata || {}).doc_type; return dt ? dtSet.has(dt) : true })
+    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet.has(dt) : true })
     // 按概览卡片传入的状态筛选
     const f = props.filter || 'all'
     if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
@@ -221,7 +223,7 @@ const loadMore = async () => {
     let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
     const dtSet2 = props.docTypes
-    if (dtSet2 && dtSet2.size) arr = arr.filter((r: any) => { const dt = (r.custom_metadata || {}).doc_type; return dt ? dtSet2.has(dt) : true })
+    if (dtSet2 && dtSet2.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet2.has(dt) : true })
     const more = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
     rows.value.push(...more)
     page.value = next
@@ -333,12 +335,12 @@ const isImg = (name: string) => IMG_EXT.includes(fileExt(name).toLowerCase())
 
 const rowMenuOptions = (row: any) => {
   const opts: any[] = [
-    { content: '重新解析', value: 'reparse' },
-    { content: '重新提取', value: 'reextract' },
-    { content: '下载源文件', value: 'download' },
-    { content: '打印源文件', value: 'print' },
+    { content: '重新解析', value: 'reparse', prefixIcon: () => h(RefreshIcon, { size: '14px' }) },
+    { content: '重新提取', value: 'reextract', prefixIcon: () => h(CloudUploadIcon, { size: '14px' }) },
+    { content: '下载源文件', value: 'download', prefixIcon: () => h(DownloadIcon, { size: '14px' }) },
+    { content: '打印源文件', value: 'print', prefixIcon: () => h(PrintIcon, { size: '14px' }) },
   ]
-  opts.push({ content: '删除', value: 'delete', theme: 'danger' })
+  opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
   return opts
 }
 
@@ -555,20 +557,18 @@ watch(() => props.visible, (v) => {
   justify-content: center;
   letter-spacing: 0.5px;
 }
-.dh-file-meta { min-width: 0; }
 .dh-file-name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   color: var(--td-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dh-file-sub {
+.dh-file-size {
   font-size: 12px;
   color: var(--td-text-color-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .img-preview-mask {
   position: fixed; inset: 0; z-index: 2000;
