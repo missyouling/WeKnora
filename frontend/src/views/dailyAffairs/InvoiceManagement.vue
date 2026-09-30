@@ -611,10 +611,11 @@ const tableColumns = computed(() => {
   return cols
 })
 
-// 列宽估算：max(表头宽度, 当前页数据最长内容)，中文按 15px/字、数字/单名列按 13px/字
+// 列宽估算：max(表头宽度, 当前页数据最长内容)，中文 15px/字、单名/税号 13px/字、金额/日期/税率等数字列 9px/字
 const autoColWidth = (c: { key: string; label: string }, rows: InvoiceRow[]): number => {
   const isMono = c.key === 'invoiceNo' || c.key === 'sellerTaxNo' || c.key === 'buyerTaxNo'
-  const chW = isMono ? 13 : 15
+  const isDigit = c.key === 'amount' || c.key === 'tax' || c.key === 'totalAmount' || c.key === 'invoiceDate' || c.key === 'taxRate'
+  const chW = isMono ? 13 : (isDigit ? 9 : 15)
   let maxW = (c.label.length + 2) * chW
   for (const r of rows) {
     const v = colValue(r, c.key)
@@ -623,7 +624,7 @@ const autoColWidth = (c: { key: string; label: string }, rows: InvoiceRow[]): nu
     const w = len * chW + 24
     if (w > maxW) maxW = w
   }
-  return Math.min(Math.ceil(maxW), 320)
+  return Math.min(Math.ceil(maxW), 150)
 }
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
@@ -1770,6 +1771,13 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .batch-bar-actions > * { flex-shrink: 0; }
+
+/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
+.doc-list-view :deep(.t-table__cell),
+.doc-list-view :deep(.t-table__th) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
 
 .doc-list-view {
   position: relative;
