@@ -49,14 +49,12 @@
               <t-switch :model-value="!!item.enabled" size="small" @change="(v: any) => toggleEnabled(item, v)" />
             </span>
             <span class="meter-row-actions" @click.stop>
-              <t-popconfirm v-if="!item.builtin" theme="warning" :content="`确定删除${group.scope === 'invoice' ? '发票类型' : group.scope === 'maintain' ? '维保类型' : '证照类型'}「${item.name}」吗？`"
-                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="removeItem(item)">
-                <t-button variant="text" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="15px" /></template>
+              <t-dropdown :options="itemMenuOptions(item)" placement="bottom-right" min-column-width="120px"
+                @click="(ctx: any) => onItemMenu(item, ctx.value)">
+                <t-button variant="text" size="small" shape="square">
+                  <template #icon><t-icon name="more" size="16px" /></template>
                 </t-button>
-              </t-popconfirm>
-              <span v-else class="mtr-builtin">内置</span>
+              </t-dropdown>
             </span>
           </div>
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
@@ -144,7 +142,7 @@
         </div>
         <div v-else class="cert-add-row" @click="startAdd">
           <span class="cert-add-gap"></span>
-          <span class="cert-add-name"><t-icon name="add" size="14px" /><span>新增{{ group.label }}</span></span>
+          <span class="cert-add-name"><t-icon name="add" size="14px" /><span>{{ addRowLabel }}</span></span>
         </div>
       </div>
     </div>
@@ -152,12 +150,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
-import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias } from '@/api/fleet'
+import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
+import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | '' }>(), { scope: 'vehicle' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
@@ -492,15 +491,18 @@ function startAdd() {
   })
 }
 // 供抽屉标题栏右侧「新增」按钮调用（FleetSettingsDrawer header）
-const addLabel = computed(() => `新增${group.value.label}`)
+const addLabel = computed(() => props.scope === 'invoice' ? '新增分类' : `新增${group.value.label}`)
+// 列表末尾「新增」行文案：发票 scope 按用户口径固定为「新增分类」
+const addRowLabel = computed(() => props.scope === 'invoice' ? '新增分类' : `新增${group.value.label}`)
 defineExpose({ startAdd, addLabel })
 async function commitAdd() {
   const name = addForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入发票类型' : '请输入证照名称')); return }
-  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning(`该${props.scope === 'invoice' ? '发票类型' : props.scope === 'maintain' ? '维保类型' : '证照类型'}已存在`); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入分类名称' : '请输入证照名称')); return }
+  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning(`该${props.scope === 'invoice' ? '分类' : props.scope === 'maintain' ? '维保类型' : '证照类型'}已存在`); return }
   saving.value = true
   try {
-    const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs: [] })
+    // enabled 显式传 true：新分类默认启用，避免后端缺省关闭导致抽屉重开后被 enabled 过滤而“消失”
+    const res = await createFleetCategory({ scope: group.value.scope, group_id: group.value.groupId || '', name, subs: [], enabled: true })
     const created = res.data || res
     if (created?.id) {
       // 兜底：确保新记录带上当前分组 group_id，避免后端响应未回填时短暂错归到内置分组
@@ -560,7 +562,7 @@ async function commitEdit() {
   const item = groupItems.value.find((it: any) => it.id === editingId.value)
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入发票类型' : '请输入证照名称')); return }
+  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入分类名称' : '请输入证照名称')); return }
   const subs = fieldsEditable.value
     .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text', width: Number(f.width) || 0 }))
     .filter((f) => f.name)
@@ -630,6 +632,81 @@ async function removeItem(item: any) {
     notifyCategoriesChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
+  }
+}
+
+// ---- 分类行操作：竖向三点菜单（复制 / 删除，图标+文字）----
+const itemMenuOptions = (item: any) => {
+  const opts: any[] = [
+    { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
+  ]
+  if (!item.builtin) opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
+  return opts
+}
+function onItemMenu(item: any, value: string) {
+  if (value === 'copy') void duplicateItem(item)
+  else if (value === 'delete') confirmRemoveItem(item)
+}
+function confirmRemoveItem(item: any) {
+  const dlg = DialogPlugin.confirm({
+    header: '删除分类',
+    body: `确定删除分类「${item.name}」吗？该分类的字段配置与提取规则将一并清除，且不可恢复。`,
+    confirmBtn: { content: '删除', theme: 'danger' },
+    cancelBtn: '取消',
+    onConfirm: async () => { dlg.destroy(); await removeItem(item) },
+    onClose: () => dlg.destroy(),
+  })
+}
+
+// ---- 复制分类：字段（subs）与提取规则完全复制，命名「{原名}的副本{n}」 ----
+async function duplicateItem(item: any) {
+  const scope = group.value.scope
+  const gid = group.value.groupId || ''
+  const base = item.name
+  const names = new Set((categories.value[scope] || []).map((c: any) => c.name))
+  let n = 1
+  let name = `${base}的副本${n}`
+  while (names.has(name)) { n += 1; name = `${base}的副本${n}` }
+  // 字段全量复制：已入库分类取 subs 原样拷贝；内置未入库回退内置底稿
+  let subs: any[] = []
+  if (Array.isArray(item.subs) && item.subs.length) {
+    subs = item.subs
+      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, is_default: s.is_default === true, data_type: s.data_type || 'text', width: Number(s.width) || 0 }))
+      .filter((s: any) => s.name)
+  } else if (item.builtin) {
+    const def = (BUILTIN as any)[scope] || []
+    const b = def.find((x: any) => x.name === base)
+    if (b) subs = [...b.base, ...b.detail].map((nm: string) => ({ name: nm, enabled: true, is_default: b.base.includes(nm), data_type: 'text', width: 0 }))
+  }
+  saving.value = true
+  try {
+    const res = await createFleetCategory({ scope, group_id: gid, name, subs, enabled: true })
+    const created = res.data || res
+    if (!created?.id) { MessagePlugin.error('复制失败：返回数据异常'); return }
+    const record = { ...created, group_id: created.group_id || gid }
+    categories.value[scope] = [...(categories.value[scope] || []), record]
+    // 完全复制：提取规则一并拷贝（源分类无规则时静默跳过）
+    if (props.kbId) {
+      try {
+        const src: any = await getExtractConfig(props.kbId, scope, base)
+        const cfg = src?.data
+        if (cfg && Array.isArray(cfg.fields)) {
+          await saveExtractConfig(props.kbId, {
+            scope,
+            cert_type: name,
+            fields: cfg.fields.map((f: any) => ({ ...f })),
+            advanced_enabled: !!cfg.advanced_enabled,
+            prompt_template: cfg.prompt_template || '',
+          })
+        }
+      } catch { /* 源分类无提取规则，跳过规则复制 */ }
+    }
+    MessagePlugin.success(`已复制为「${name}」`)
+    notifyCategoriesChanged()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '复制失败')
+  } finally {
+    saving.value = false
   }
 }
 

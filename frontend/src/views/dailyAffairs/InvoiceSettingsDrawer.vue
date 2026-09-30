@@ -4,7 +4,7 @@
     class="invoice-settings-drawer">
     <t-tabs v-model="activeTab" class="invoice-settings-tabs" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
-        <FleetCertPanel scope="invoice" />
+        <FleetCertPanel scope="invoice" :kb-id="kbId || ''" />
       </t-tab-panel>
       <t-tab-panel value="rules" label="提取规则">
         <ExtractRulePanel ref="extractRef" scope="invoice" kb-name="日常事务-发票" :kb-id="kbId || ''" />
