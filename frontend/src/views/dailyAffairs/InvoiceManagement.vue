@@ -41,7 +41,7 @@
       <div class="invoice-list-view">
       <!-- 筛选工具栏（对齐车队标准中台组件） -->
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType"
+            :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType" :type-clearable="false"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
@@ -386,10 +386,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, h, resolveComponent, type VNode } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf } from './columnWidth'
@@ -1045,7 +1045,18 @@ const reloadColumns = async () => {
           return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
         })
     }
+    // 类型筛选锁定（Q4）：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用的分类
+    ensureInvoiceType()
   } catch { /* 后端未配置时回退内置默认 */ }
+}
+
+// 类型筛选锁定：始终保证有一项分类被选中（禁清空）。
+// 优先保留当前合法选中项（含路由 query 回填），否则按分类顺序选中第一个启用分类。
+const ensureInvoiceType = () => {
+  const valid = new Set(invoiceTypeOptions.value.map((o) => o.value))
+  if (filterInvoiceType.value && valid.has(filterInvoiceType.value)) return
+  const cats = invoiceCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
+  filterInvoiceType.value = (cats.length ? cats[0] : invoiceTypeOptions.value[0]?.value) || ''
 }
 
 
@@ -1567,36 +1578,64 @@ const downloadCatalogPdf = () => {
 }
 
 // 删除记录：有页码的行按页删除该发票（同文件其它发票保留）；无页码（历史数据）删整份文件
+// 批量删除二选一：选中记录若来自多页文件集合，先让用户选择「仅删选中发票」或「整份删除该文件」；
+// 仅删选中：按页删除（无页码的行等价整份删除该文件）；整份删除：对选中行涉及的文件整体软删并从上传历史移除。
+const doPageDelete = async (rows: InvoiceRow[]) => {
+  const fileDeleteIds = new Set<string>()
+  const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
+  for (const r of rows) {
+    if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
+    else fileDeleteIds.add(r.knowledgeId)
+  }
+  // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
+  pageDeleteIds.sort((a, b) => b.page - a.page)
+  for (const pd of pageDeleteIds) {
+    try {
+      const res: any = await deleteInvoicePage(kbId.value, pd.knowledgeId, pd.page)
+      if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || `删除发票（${pd.page}）失败`)
+      return
+    }
+  }
+  if (fileDeleteIds.size) {
+    await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
+  }
+}
+const doFileDelete = async (rows: InvoiceRow[]) => {
+  const fileIds = Array.from(new Set(rows.map((r) => r.knowledgeId).filter((x): x is string => !!x)))
+  if (fileIds.length) await batchDeleteKnowledge(kbId.value, fileIds)
+}
+const finishDelete = async () => {
+  MessagePlugin.success('删除成功')
+  selectedRowKeys.value = []
+  await loadFiles(true)
+}
 const handleBatchDelete = async () => {
   const rows = selectedRows.value
   if (!rows.length) return
-  try {
-    const fileDeleteIds = new Set<string>()
-    const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
-    for (const r of rows) {
-      if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
-      else fileDeleteIds.add(r.knowledgeId)
-    }
-    // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
-    pageDeleteIds.sort((a, b) => b.page - a.page)
-    for (const pd of pageDeleteIds) {
-      try {
-        const res: any = await deleteInvoicePage(kbId.value, pd.knowledgeId, pd.page)
-        if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
-      } catch (e: any) {
-        MessagePlugin.error(e?.message || `删除发票（${pd.page}）失败`)
-        return
-      }
-    }
-    if (fileDeleteIds.size) {
-      await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-    }
-    MessagePlugin.success('删除成功')
-    selectedRowKeys.value = []
-    await loadFiles(true)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+  // 命中多页文件集合（同一上传文件含多张发票）时走二选一交互
+  const multiFiles = new Set<string>()
+  for (const r of rows) {
+    if (!r.knowledgeId) continue
+    const count = fileInvoiceCounts.value.get(r.knowledgeId) || 0
+    if (count > 1) multiFiles.add(r.knowledgeId)
   }
+  const runPage = async () => { try { await doPageDelete(rows); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') } }
+  const runFile = async () => { try { await doFileDelete(rows); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') } }
+  if (!multiFiles.size) { await runPage(); return }
+  const TBtn = resolveComponent('t-button')
+  let dlg: ReturnType<typeof DialogPlugin> | undefined
+  dlg = DialogPlugin({
+    header: '批量删除发票',
+    body: '选中的记录包含同一上传文件中的多张发票，请选择删除范围：',
+    footer: (): VNode[] => [
+      h(TBtn, { theme: 'default', size: 'small', onClick: () => dlg?.destroy() }, { default: () => '取消' }),
+      h(TBtn, { theme: 'danger', variant: 'outline', size: 'small', onClick: () => { dlg?.destroy(); void runFile() } }, { default: () => '整份删除' }),
+      h(TBtn, { theme: 'danger', size: 'small', onClick: () => { dlg?.destroy(); void runPage() } }, { default: () => '仅删除选中的发票' }),
+    ],
+    onClose: () => dlg?.destroy(),
+  })
 }
 
 // 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），

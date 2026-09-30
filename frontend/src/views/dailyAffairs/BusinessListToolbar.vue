@@ -4,6 +4,7 @@ interface Props {
   searchPlaceholder?: string
   typeOptions?: { label: string; value: string }[]
   typeValue?: string
+  typeClearable?: boolean
   primaryActionText?: string
   showPrint?: boolean
   showRefresh?: boolean
@@ -14,6 +15,7 @@ const props = withDefaults(defineProps<Props>(), {
   searchPlaceholder: '请输入关键词',
   typeOptions: () => [],
   typeValue: '',
+  typeClearable: true,
   primaryActionText: '',
   showPrint: true,
   showRefresh: true,
@@ -41,7 +43,7 @@ const emit = defineEmits<{
       </div>
       <div v-if="props.typeOptions.length" class="doc-filter-field">
         <t-select :value="props.typeValue" :options="props.typeOptions" placeholder="类型筛选"
-          class="doc-type-select doc-filter-field__control" clearable
+          class="doc-type-select doc-filter-field__control" :clearable="props.typeClearable"
           @update:value="(v: string) => emit('update:typeValue', v || '')">
           <template #prefixIcon><t-icon name="file" size="16px" /></template>
         </t-select>
