@@ -58,7 +58,7 @@ defineExpose({ open })
       字段
     </t-button>
     <teleport to="body">
-      <div v-show="popVisible" class="business-column-filter" :style="{ left: pos.x + 'px', top: pos.y + 'px' }">
+      <div v-if="popVisible" class="business-column-filter" :style="{ left: pos.x + 'px', top: pos.y + 'px' }">
         <div class="field-popup-content">
           <div class="field-popup-head">
             <span class="field-popup-title">显示字段</span>

@@ -1,5 +1,5 @@
 <template>
-  <t-dialog
+  <t-dialog destroy-on-close
     :visible="visible"
     :header="title"
     :footer="false"
@@ -157,6 +157,7 @@ watch(
       }
     }
   },
+  { immediate: true },
 )
 
 const onModelConfigChange = (config: any) => {
