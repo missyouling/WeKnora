@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"context"
@@ -680,16 +680,16 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 	dataJSON, _ := json.Marshal(req.Data)
 	now := timeNowUTC()
 	updates := map[string]interface{}{
-		"record_type":      req.RecordType,
-		"vehicle_id":       req.VehicleID,
-		"record_month":     req.RecordMonth,
-		"record_date":      req.RecordDate,
-		"amount":           req.Amount,
-		"mileage":          req.Mileage,
-		"data":             string(dataJSON),
-		"doc_type":         req.DocType,
-		"remark":           req.Remark,
-		"updated_at":       now,
+		"record_type":  req.RecordType,
+		"vehicle_id":   req.VehicleID,
+		"record_month": req.RecordMonth,
+		"record_date":  req.RecordDate,
+		"amount":       req.Amount,
+		"mileage":      req.Mileage,
+		"data":         string(dataJSON),
+		"doc_type":     req.DocType,
+		"remark":       req.Remark,
+		"updated_at":   now,
 	}
 	// doc_knowledge_id / file_name 由提取落库维护：编辑保存时空值不得覆盖已有关联，
 	// 否则会丢失源文件预览关联并破坏按 doc_knowledge_id 的幂等 upsert。
@@ -736,18 +736,18 @@ func (h *FleetHandler) DeleteFleetRecord(c *gin.Context) {
 // ---------------------------------------------------------------------------
 
 type fleetSummaryRow struct {
-	VehicleID     string  `json:"vehicle_id"`
-	PlateNo       string  `json:"plate_no"`
-	VehicleType   string  `json:"vehicle_type"`
-	FuelAmount    float64 `json:"fuel_amount"`    // 加油充电
-	MaintainAmount float64 `json:"maintain_amount"` // 维修保养费
+	VehicleID       string  `json:"vehicle_id"`
+	PlateNo         string  `json:"plate_no"`
+	VehicleType     string  `json:"vehicle_type"`
+	FuelAmount      float64 `json:"fuel_amount"`      // 加油充电
+	MaintainAmount  float64 `json:"maintain_amount"`  // 维修保养费
 	InsuranceAmount float64 `json:"insurance_amount"` // 保险理赔
-	TireAmount    float64 `json:"tire_amount"`    // 轮胎
-	MaterialAmount float64 `json:"material_amount"` // 辅材
+	TireAmount      float64 `json:"tire_amount"`      // 轮胎
+	MaterialAmount  float64 `json:"material_amount"`  // 辅材
 	ViolationAmount float64 `json:"violation_amount"` // 违章罚款
-	TollAmount    float64 `json:"toll_amount"`    // 路桥费
-	TotalAmount   float64 `json:"total_amount"`   // 合计
-	RecordCount   int     `json:"record_count"`
+	TollAmount      float64 `json:"toll_amount"`      // 路桥费
+	TotalAmount     float64 `json:"total_amount"`     // 合计
+	RecordCount     int     `json:"record_count"`
 }
 
 // GetFleetSummary godoc
@@ -860,10 +860,10 @@ var fleetCategoryScopes = map[string]bool{
 	types.FleetCategoryScopeDriver:   true,
 	types.FleetCategoryScopeMaintain: true,
 	// P2-D: 日常事务业务模块（单大类，subs 即列表列配置）
-	"contract":      true,
-	"invoice":       true,
-	"regulation":    true,
-	"award_punish":  true,
+	"contract":     true,
+	"invoice":      true,
+	"regulation":   true,
+	"award_punish": true,
 }
 
 // ListFleetCategories godoc
@@ -1208,11 +1208,11 @@ func (h *FleetHandler) UpsertFleetGroupAlias(c *gin.Context) {
 		First(&row).Error
 	if err != nil {
 		row = types.FleetGroupAlias{
-			ID:        "ga-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
-			TenantID:  int64(tenantID),
-			Scope:     req.Scope,
-			GroupKey:  req.GroupKey,
-			Name:      req.Name,
+			ID:       "ga-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
+			TenantID: int64(tenantID),
+			Scope:    req.Scope,
+			GroupKey: req.GroupKey,
+			Name:     req.Name,
 		}
 		if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
 			logger.Errorf(ctx, "create fleet group alias failed: %v", err)
@@ -1508,6 +1508,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "items", Enabled: true, IsDefault: true, DataType: "items"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		{"invoice", "专用发票", "invoice-vat", 2, []types.FleetCategorySub{
@@ -1526,6 +1527,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "items", Enabled: true, IsDefault: true, DataType: "items"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
@@ -1569,6 +1571,38 @@ func (h *FleetHandler) seedBusinessCategories() {
 		}
 		if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
 			logger.Warnf(ctx, "seed business category %s failed: %v", s.Scope, err)
+		}
+	}
+
+	// 存量内置发票分类幂等补齐 items 明细字段（老库已入库的分类不经过上面的 seed 插入）
+	var invSeeds []types.FleetCategory
+	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
+		types.FleetCategoryScopeInvoice, []string{"invoice-common", "invoice-vat"}).Find(&invSeeds).Error; err == nil {
+		for i := range invSeeds {
+			subs := invSeeds[i].Subs
+			hasItems := false
+			for _, s := range subs {
+				if s.Name == "items" {
+					hasItems = true
+					break
+				}
+			}
+			if hasItems {
+				continue
+			}
+			subs = append(subs, types.FleetCategorySub{Name: "items", Enabled: true, IsDefault: true, DataType: "items"})
+			raw, merr := json.Marshal(subs)
+			if merr != nil {
+				logger.Warnf(ctx, "backfill invoice items field marshal failed: %v", merr)
+				continue
+			}
+			// 显式 ::jsonb 转换：GORM 对 jsonb 列直接 Update slice 会以 record 数组传参导致 SQLSTATE 42804
+			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("id = ?", invSeeds[i].ID).
+				Update("subs", gorm.Expr("?::jsonb", string(raw))).Error; err != nil {
+				logger.Warnf(ctx, "backfill invoice items field failed: %v", err)
+			} else {
+				logger.Infof(ctx, "backfilled invoice category %q items field", invSeeds[i].Name)
+			}
 		}
 	}
 }

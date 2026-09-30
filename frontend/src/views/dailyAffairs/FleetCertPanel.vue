@@ -527,6 +527,7 @@ const dataTypeOptions = [
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
   { label: '数组', value: 'array' },
+  { label: '明细', value: 'items' },
 ]
 function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }

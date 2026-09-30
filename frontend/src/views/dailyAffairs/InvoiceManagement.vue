@@ -150,6 +150,19 @@
         <template #buyerTaxNo="{ row }: any">
           <span class="row-mono" :title="row.buyerTaxNo">{{ row.buyerTaxNo }}</span>
         </template>
+        <template #items="{ row }: any">
+          <t-tooltip v-if="(row.items || []).length" :content="itemsTextOf(row)" placement="top">
+            <div class="row-items">
+              <div v-for="(it, i) in (row.items || []).slice(0, 3)" :key="i" class="row-items-line">
+                <span class="row-items-name">{{ it.name || '—' }}</span>
+                <template v-if="it.qty !== undefined && it.qty !== null && it.qty !== ''"><span class="row-items-qty">×{{ it.qty }}</span></template>
+                <template v-if="it.price !== undefined && it.price !== null && it.price !== ''"><span class="row-items-price">¥{{ formatAmount(it.price) }}</span></template>
+              </div>
+              <div v-if="(row.items || []).length > 3" class="row-items-more">等 {{ (row.items || []).length - 3 }} 条</div>
+            </div>
+          </t-tooltip>
+          <span v-else class="row-muted">—</span>
+        </template>
         <template #fileName="{ row }: any">
           <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
         </template>
@@ -244,7 +257,19 @@
                         filterable placeholder="选择或输入类型" />
                     </t-form-item>
                     <t-form-item v-else-if="f.name === 'extractStatus'" label="提取状态" label-width="110px">
-                      <span class="detail-readonly">{{ editForm.data.extractStatus || '—' }}</span>
+                      <span class="detail-readonly">{{ invoiceStatusText(editForm.data.extractStatus) }}</span>
+                    </t-form-item>
+                    <t-form-item v-else-if="f.name === 'tags'" label="标签" label-width="110px">
+                      <div v-if="String(editForm.data.tags || '').trim()" class="detail-tags-readonly">
+                        <t-tag v-for="t in String(editForm.data.tags).split('\n').map((x: string) => x.trim()).filter(Boolean)" :key="t"
+                          size="small" variant="light-outline" class="row-tag">
+                          {{ t }}
+                        </t-tag>
+                      </div>
+                      <span v-else class="row-muted">—</span>
+                    </t-form-item>
+                    <t-form-item v-else-if="f.name === 'items'" label="项目明细" label-width="110px">
+                      <span class="row-muted">项目明细请在下方面板编辑</span>
                     </t-form-item>
                     <t-form-item v-else :label="f.label" label-width="110px">
                       <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
@@ -256,13 +281,10 @@
                       <t-input v-else v-model="editForm.data[f.name]" />
                     </t-form-item>
                   </template>
-                  <t-form-item label="作废标记" label-width="110px">
-                    <t-switch v-model="editForm.void_flag" size="small" />
-                  </t-form-item>
                 </div>
               </div>
-              <!-- 明细 items（发票特有业务，保留） -->
-              <div class="items-section">
+              <!-- 明细 items（发票特有业务；字段配置开启 items 时显示） -->
+              <div v-if="hasItemsField" class="items-section">
                 <div class="items-header">
                   <span class="items-title">项目明细</span>
                   <t-button size="small" variant="outline" @click="addItemRow">
@@ -287,9 +309,13 @@
                     <t-input :value="it.tax_rate" size="small" class="item-cell item-num" placeholder="" suffix="%"
                       @input="(v: string) => (it.tax_rate = sanitizeNum(v))" />
                     <div class="item-cell item-op">
-                      <t-button variant="text" theme="danger" size="small" @click="removeItemRow(Number(idx))">
-                        <t-icon name="delete" />
-                      </t-button>
+                      <t-popconfirm theme="warning" :content="`确定删除明细「${it.name || '未命名'}」吗？删除后需保存才生效。`"
+                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                        @confirm="removeItemRow(Number(idx))">
+                        <t-button variant="text" theme="danger" size="small" @click.stop>
+                          <t-icon name="delete" />
+                        </t-button>
+                      </t-popconfirm>
                     </div>
                   </div>
                 </div>
@@ -423,6 +449,7 @@ const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
   { key: 'sellerTaxNo', label: '销售方税号', default: false, w: '1.3fr' },
   { key: 'buyerTaxNo', label: '购买方税号', default: false, w: '1.3fr' },
+  { key: 'items', label: '项目明细', default: true, w: '1.4fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
 const {
@@ -604,7 +631,7 @@ const tableColumns = computed(() => {
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   vis.forEach((c, i) => {
     // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
-    const w = colWidthOf(c.width, c.label, rows.map(r => colValue(r, c.key)))
+    const w = colWidthOf(c.width, c.label, rows.map(r => c.key === 'items' ? itemsTextOf(r) : colValue(r, c.key)))
     cols.push(i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w })
@@ -626,7 +653,7 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 const detailVisible = ref(false)
 const currentRow = ref<InvoiceRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
-const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', void_flag: false, items: [], data: {} })
+const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', items: [], data: {} })
 const autoSaving = ref(false)
 
 // 详情抽屉动态字段：按当前发票类型匹配分类 subs（启用字段优先），无配置时回退内置列
@@ -1161,11 +1188,12 @@ const detailTitle = computed(() =>
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
-  const tags = Array.isArray(r.tags) ? r.tags.join('\n') : (r.tags || '')
+  const tags = Array.isArray(r.tags)
+    ? r.tags.map((t: any) => (typeof t === 'string' ? t : t?.name ?? t)).join('\n')
+    : (r.tags || '')
   editForm.value = {
     invoice_no: r.invoiceNo || '',
     invoice_type: r.invoiceType || '',
-    void_flag: !!r.voidFlag,
     items: Array.isArray(r.items) ? r.items.map(it => ({
       name: it.name || '',
       qty: numToStr(it.qty),
@@ -1226,7 +1254,6 @@ const saveEditForm = async () => {
       issuer: d.issuer || '',
       remark: d.remark || '',
       tags: Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split('\n').map((x: string) => x.trim()).filter(Boolean) : []),
-      void_flag: !!editForm.value.void_flag,
       items: Array.isArray(editForm.value.items)
         ? editForm.value.items.map((it: any) => {
             const taxRate = toNumber(it.tax_rate)
@@ -1276,7 +1303,7 @@ const saveEditForm = async () => {
         sellerName: updated.seller_name,
         issuer: updated.issuer,
         remark: updated.remark,
-        voidFlag: updated.void_flag,
+        voidFlag: !!invoiceRows.value[listIdx].voidFlag,
         items: updated.items,
       }
     }
@@ -1474,6 +1501,21 @@ const doPrint = () => {
 
 // 目录生成：把选中记录按「当前列表展示字段」生成表格式清单 PDF（A4 横/纵自适应），
 // 复用打印弹窗预览，支持打印与下载
+// 抽屉「提取状态」只读中文化（与列表 statusOf 中文口径一致）
+const invoiceStatusText = (s: string): string =>
+  ({ success: '提取成功', parse_failed: '解析失败', extract_failed: '提取失败', not_invoice: '非发票文件', manual: '待补录' } as Record<string, string>)[s] || s || '—'
+
+// 项目明细 → 多行文本（列表列宽 / tooltip / 打印共用）
+const itemsTextOf = (row: InvoiceRow): string =>
+  (row.items || []).map((it: any) => {
+    const q = it.qty !== undefined && it.qty !== null && it.qty !== '' ? ` ×${it.qty}` : ''
+    const p = it.price !== undefined && it.price !== null && it.price !== '' ? ` ${formatAmount(it.price)}` : ''
+    return `${it.name || '—'}${q}${p}`
+  }).join('\n')
+
+// 字段配置开启「项目明细」后，抽屉才渲染明细编辑面板
+const hasItemsField = computed(() => editFieldDefs.value.some((f: any) => f.name === 'items'))
+
 const catalogValueOf = (row: InvoiceRow, key: string): string => {
   switch (key) {
     case 'invoiceNo': return row.invoiceNo || ''
@@ -1491,6 +1533,7 @@ const catalogValueOf = (row: InvoiceRow, key: string): string => {
     case 'tags': return rowTags(row).map((t: any) => t.name).join('、')
     case 'sellerTaxNo': return row.sellerTaxNo || ''
     case 'buyerTaxNo': return row.buyerTaxNo || ''
+    case 'items': return itemsTextOf(row)
     case 'fileName': return row.fileName || ''
     default: return String((row as any)[key] ?? '')
   }
@@ -1939,6 +1982,12 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--td-component-stroke);
   margin-top: 4px;
 }
+.row-items { display: flex; flex-direction: column; gap: 2px; max-width: 100%; overflow: hidden; }
+.row-items-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 4px; align-items: baseline; color: var(--td-text-color-primary); }
+.row-items-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.row-items-qty, .row-items-price { color: var(--td-text-color-secondary); font-family: var(--td-font-family-mono, monospace); }
+.row-items-more { color: var(--td-text-color-disabled); font-size: var(--td-font-size-body-small); }
+.detail-tags-readonly { display: flex; flex-wrap: wrap; gap: 4px; }
 .detail-readonly {
   display: inline-flex;
   align-items: center;

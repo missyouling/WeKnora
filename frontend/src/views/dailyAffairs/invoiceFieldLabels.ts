@@ -23,6 +23,7 @@ export const INVOICE_FIELD_LABELS: Record<string, string> = {
   pdfUrl: '源文件',
   sourceFile: '源文件',
   invoice_category: '发票类型',
+  items: '项目明细',
 }
 
 export function invoiceFieldLabel(name: string): string {
