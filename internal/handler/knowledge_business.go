@@ -665,18 +665,10 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
-	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
-	var curInvoiceMeta invoiceCustomMetadata
-	_ = json.Unmarshal(knowledge.CustomMetadata, &curInvoiceMeta)
-	if curInvoiceMeta.ExtractStatus == "manual" {
-		logger.Infof(ctx, "Invoice extraction skipped: knowledge %s is manual intake", knowledgeID)
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "待补录记录，无需重复提取",
-			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
-		})
-		return
-	}
+	// 注：不再对 manual（待补录）状态短路重提——前端自动提取链路（上传任务/列表兜底）
+	// 不会对已 manual 文件发起请求，此处短路只会挡死"用户配置好规则后手动重提"的合法路径。
+	// 重提会按所选归档类型规则重新提取并覆写 kind/invoices（manual 文件 invoices 恒为空，
+	// 无手工补录数据可丢失）。
 
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
@@ -723,17 +715,19 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
 	sawInvoice := false
-	// 沙盒提取规则：优先按记录归档类型读取（上传弹窗打标 fleet_cert_type），
-	// 分类规则缺失时回退普通发票规则，再回退整体规则（设置抽屉可分别配置）。
-	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, "")
-	if kdMeta := knowledge.CustomMetadata; len(kdMeta) > 0 {
+	// 沙盒提取规则：优先按请求携带的归档类型（上传弹窗 body.cert_type，如"三联收据"）
+	// 精确匹配分类规则；请求未携带时回退文件级打标 fleet_cert_type；再按
+	// resolveInvoiceRuleCfg 内建回退链（分类→普通发票→整体规则→内置模板）。
+	ruleCertType := certType
+	if ruleCertType == "" && len(knowledge.CustomMetadata) > 0 {
 		var mdMeta struct {
 			FleetCertType string `json:"fleet_cert_type"`
 		}
-		if jerr := json.Unmarshal(kdMeta, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
-			invoiceRuleCfg = h.resolveInvoiceRuleCfg(ctx, kbID, mdMeta.FleetCertType)
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			ruleCertType = mdMeta.FleetCertType
 		}
 	}
+	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, ruleCertType)
 	// 规则提取优先：系统生成的规整电子票据（通行费汇总单等）文本格式固定，
 	// 按「号码行+金额行」正则可 100% 全量命中（模型在高模板噪音长文本中会漏提，
 	// 实测 18 张通行费发票只提取出 1~8 张）；未命中该固定格式时才回退分批模型。

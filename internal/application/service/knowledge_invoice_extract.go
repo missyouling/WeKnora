@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -148,6 +149,220 @@ func ExtractInvoicesFromContent(ctx context.Context, model chat.Chat, content st
 // buildInvoiceRuleSystemPrompt 在默认发票提示词基础上注入沙盒整体规则
 // （invoice scope 提取规则：高级模板 + 字段口径）。输出结构契约（kind/invoices）
 // 由默认提示词兜底，规则仅用于增强字段识别准确性。
+// ============ 规则字段名归一化 ============
+//
+// 用户可在字段配置中用任意中文名定义字段（如「收据编号」「入账日期」），
+// 模型按这些中文名输出 JSON key；而 InvoiceExtractionItem 的 json tag 是
+// 固定英文（invoice_no/invoice_date/...），直接 Unmarshal 会把中文 key 全部
+// 丢弃，导致"提取结果字段为空"。normalizeRuleFieldKeys 在解析前把模型输出
+// 中命中的中文 key 映射回标准英文字段（含 items 明细与收款方式/审核等
+// 无标准位的字段并入 remark），确保自定义分类（收据等）也能正常落盘。
+
+// invoiceFieldAliases 中文别名 → 标准英文字段。匹配取"最长的包含命中的别名"，
+// 例如字段名「价税合计金额」同时包含「金额」与「价税合计」，取后者 → total_amount。
+var invoiceFieldAliases = []struct{ alias, target string }{
+	{"收据编号", "invoice_no"},
+	{"发票号码", "invoice_no"},
+	{"发票号", "invoice_no"},
+	{"单据编号", "invoice_no"},
+	{"单据号码", "invoice_no"},
+	{"流水号", "invoice_no"},
+	{"票据编号", "invoice_no"},
+	{"票号", "invoice_no"},
+	{"号码", "invoice_no"},
+	{"编号", "invoice_no"},
+	{"发票代码", "invoice_code"},
+	{"票据代码", "invoice_code"},
+	{"代码", "invoice_code"},
+	{"入账日期", "invoice_date"},
+	{"开票日期", "invoice_date"},
+	{"开票时间", "invoice_date"},
+	{"单据日期", "invoice_date"},
+	{"日期", "invoice_date"},
+	{"发票类型", "invoice_type"},
+	{"票据类型", "invoice_type"},
+	{"类型", "invoice_type"},
+	{"价税合计金额", "total_amount"},
+	{"价税合计", "total_amount"},
+	{"价税总额", "total_amount"},
+	{"总金额", "total_amount"},
+	{"总额", "total_amount"},
+	{"总价", "total_amount"},
+	{"总计", "total_amount"},
+	{"合计金额", "total_amount"},
+	{"合计", "total_amount"},
+	{"不含税金额", "amount"},
+	{"金额", "amount"},
+	{"小计", "amount"},
+	{"合计税额", "tax"},
+	{"税额", "tax"},
+	{"税金", "tax"},
+	{"税率", "tax_rate"},
+	{"交款单位", "buyer_name"},
+	{"购买方名称", "buyer_name"},
+	{"购方名称", "buyer_name"},
+	{"买方名称", "buyer_name"},
+	{"付款单位", "buyer_name"},
+	{"付款方", "buyer_name"},
+	{"客户名称", "buyer_name"},
+	{"单位名称", "buyer_name"},
+	{"购买方税号", "buyer_tax_no"},
+	{"购方税号", "buyer_tax_no"},
+	{"买方税号", "buyer_tax_no"},
+	{"纳税人识别号", "buyer_tax_no"},
+	{"销售方名称", "seller_name"},
+	{"销方名称", "seller_name"},
+	{"收款单位", "seller_name"},
+	{"收款方", "seller_name"},
+	{"卖方名称", "seller_name"},
+	{"开票方名称", "seller_name"},
+	{"销售方税号", "seller_tax_no"},
+	{"销方税号", "seller_tax_no"},
+	{"收款方税号", "seller_tax_no"},
+	{"开票人", "issuer"},
+	{"收款人", "issuer"},
+	{"经办", "issuer"},
+	{"收款方式", "remark"},
+	{"收款事由", "remark"},
+	{"用途", "remark"},
+	{"事由", "remark"},
+	{"摘要", "remark"},
+	{"备注", "remark"},
+	{"审核", "remark"},
+	{"出纳", "remark"},
+	{"财务主管", "remark"},
+}
+
+// invoiceLineFieldAliases 明细行字段的中文别名。
+var invoiceLineFieldAliases = []struct{ alias, target string }{
+	{"货物名称", "name"},
+	{"服务名称", "name"},
+	{"项目名称", "name"},
+	{"名称", "name"},
+	{"项目", "name"},
+	{"数量", "qty"},
+	{"单价", "price"},
+	{"价格", "price"},
+	{"金额", "price"},
+	{"税率", "tax_rate"},
+}
+
+// mapAliasKey 在别名表里找"包含命中且别名最长"的目标字段；找不到返回空串。
+func mapAliasKey(key string, aliases []struct{ alias, target string }) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	best, bestLen := "", 0
+	for _, a := range aliases {
+		if strings.Contains(key, a.alias) && len([]rune(a.alias)) > bestLen {
+			best, bestLen = a.target, len([]rune(a.alias))
+		}
+	}
+	return best
+}
+
+// normalizeRuleFieldKeys 把模型输出的 JSON 里命中规则字段名的中文 key 替换为
+// 标准英文字段。只处理顶层 kind/invoices 与 invoices 元素、items 明细元素；
+// 无法解析或无需替换时原样返回。
+func normalizeRuleFieldKeys(raw string, cfg *types.KbExtractConfig) string {
+	if cfg == nil || len(cfg.Fields) == 0 || strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
+		return raw
+	}
+
+	normalizeMap := func(m map[string]interface{}) {
+		type kv struct{ k, target string }
+		// 全量清洗：模型常把"未找到"写成字符串 "null"，统一置空（不落盘）。
+		for k, v := range m {
+			if s, ok := v.(string); ok && strings.EqualFold(strings.TrimSpace(s), "null") {
+				m[k] = ""
+			}
+		}
+		var moves []kv
+		for k := range m {
+			if t := mapAliasKey(k, invoiceFieldAliases); t != "" {
+				moves = append(moves, kv{k, t})
+			}
+		}
+		for _, mv := range moves {
+			v := m[mv.k]
+			// 无标准位的字段（收款方式/审核/出纳等）并入 remark，保留数据；
+			// 值为空（模型未识别/清洗后为空）时跳过，避免出现"审核：；"。
+			if mv.target == "remark" {
+				if v == nil {
+					delete(m, mv.k)
+					continue
+				}
+				if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+					delete(m, mv.k)
+					continue
+				}
+				line := fmt.Sprintf("%s：%v", mv.k, v)
+				if cur, ok := m["remark"].(string); ok && strings.TrimSpace(cur) != "" {
+					if !strings.Contains(cur, line) {
+						m["remark"] = strings.TrimSpace(cur) + "；" + line
+					}
+				} else if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+					m["remark"] = line
+				} else {
+					m["remark"] = line
+				}
+			} else {
+				m[mv.target] = v
+			}
+			delete(m, mv.k)
+		}
+		// items 明细元素的中文 key 归一化。
+		if items, ok := m["items"].([]interface{}); ok {
+			for _, it := range items {
+				im, ok := it.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				var lineMoves []kv
+				for k := range im {
+					if t := mapAliasKey(k, invoiceLineFieldAliases); t != "" {
+						lineMoves = append(lineMoves, kv{k, t})
+					}
+				}
+				for _, mv := range lineMoves {
+					im[mv.target] = im[mv.k]
+					delete(im, mv.k)
+				}
+			}
+		}
+	}
+
+	if invoices, ok := root["invoices"].([]interface{}); ok {
+		for _, inv := range invoices {
+			im, ok := inv.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			normalizeMap(im)
+		}
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
+// parseInvoiceRuleReply 在解析前先做规则字段名归一化，再反序列化为结果结构。
+func parseInvoiceRuleReply(raw string, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
+	normalized := normalizeRuleFieldKeys(raw, cfg)
+	var parsed InvoiceExtractionResult
+	if err := common.ParseLLMJsonResponse(normalized, &parsed); err != nil {
+		return nil, fmt.Errorf("parse invoice extraction response: %w", err)
+	}
+	return &parsed, nil
+}
+
 func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 	if cfg == nil {
 		return invoiceExtractionSystemPrompt
@@ -205,11 +420,11 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice fields: %w", err)
 	}
-	var parsed InvoiceExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse invoice extraction response: %w", err)
+	var parsed *InvoiceExtractionResult
+	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
+		return nil, err
 	}
-	return &parsed, nil
+	return parsed, nil
 }
 
 // ExtractInvoicesFromContentWithRulesGuided 与 ExtractInvoicesFromContentWithRules
@@ -234,11 +449,11 @@ func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.C
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice fields: %w", err)
 	}
-	var parsed InvoiceExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse invoice extraction response: %w", err)
+	var parsed *InvoiceExtractionResult
+	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
+		return nil, err
 	}
-	return &parsed, nil
+	return parsed, nil
 }
 
 // ExtractInvoicePageFromContentWithRules 单张发票重提取，支持注入沙盒规则。
@@ -261,11 +476,11 @@ func ExtractInvoicePageFromContentWithRules(ctx context.Context, model chat.Chat
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice page: %w", err)
 	}
-	var parsed InvoiceExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse invoice page response: %w", err)
+	var parsed *InvoiceExtractionResult
+	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
+		return nil, err
 	}
-	return &parsed, nil
+	return parsed, nil
 }
 
 // ExtractInvoicePageFromContent asks the model to extract only the Nth invoice
