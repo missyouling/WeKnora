@@ -821,8 +821,12 @@ const onTagManageChanged = () => {
 }
 
 // ---- 列表加载（发票级聚合列表，懒加载分页） ----
+// listSeq 请求序号守卫：类型/筛选切换时递增，丢弃过期响应，防止旧筛选
+// （轮询/翻页）in-flight 请求晚到被 append 进新筛选结果造成行混入。
+let listSeq = 0
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
+  const mySeq = ++listSeq
   if (reset) {
     page.value = 1
     invoiceRows.value = []
@@ -847,6 +851,8 @@ const loadFiles = async (reset = false) => {
       page: page.value,
       page_size: PAGE_SIZE,
     })
+    // 过期响应丢弃：此期间列表已按新筛选重置，旧结果不得混入
+    if (mySeq !== listSeq) return
     const data = res?.data || res?.list || []
     const arr = Array.isArray(data) ? data : []
     const total = Number(res?.total || arr.length || 0)
@@ -862,10 +868,14 @@ const loadFiles = async (reset = false) => {
     hasMore.value = invoiceRows.value.length < total
     if (hasMore.value) page.value += 1
   } catch (e: any) {
+    if (mySeq !== listSeq) return
     MessagePlugin.error(e?.message || '发票列表加载失败')
   } finally {
-    listLoading.value = false
-    loadingMore.value = false
+    // 仅最新请求可清理 loading 标志；过期响应保持其父请求的进行中状态
+    if (mySeq === listSeq) {
+      listLoading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
