@@ -38,6 +38,21 @@ func (h *BusinessExtractHandler) getExtractConfig(ctx context.Context, kbID, sco
 	return &ec
 }
 
+// resolveInvoiceRuleCfg 发票提取规则解析：优先按上传打标的分类规则（certType）读取，
+// 分类规则缺失时回退「普通发票」规则（内置通用兜底），再缺失回退整体规则（'' / __all__）。
+func (h *BusinessExtractHandler) resolveInvoiceRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
+	scope := types.FleetCategoryScopeInvoice
+	if ct := strings.TrimSpace(certType); ct != "" {
+		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
+			return cfg
+		}
+		if cfg := h.getExtractConfig(ctx, kbID, scope, "普通发票"); cfg != nil {
+			return cfg
+		}
+	}
+	return h.getExtractConfig(ctx, kbID, scope, "")
+}
+
 func validateExtractScope(scope string) bool {
 	return scope == types.FleetCategoryScopeVehicle ||
 		scope == types.FleetCategoryScopeDriver ||

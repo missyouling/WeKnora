@@ -1052,7 +1052,7 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("check category references failed"))
 		return
 	} else if refCount > 0 {
-		c.Error(errors.NewBadRequestError(fmt.Sprintf("该分类下已有 %d 条记录引用，禁止删除", refCount)))
+		c.Error(errors.NewConflictError(fmt.Sprintf("该分类下已有 %d 条记录引用，禁止删除", refCount)))
 		return
 	}
 	res := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
@@ -1084,7 +1084,7 @@ func (h *FleetHandler) countFleetCategoryRefs(ctx context.Context, scope, name s
 	case "invoice":
 		var rows []types.Knowledge
 		if err := h.db.WithContext(ctx).
-			Where("deleted_at IS NULL AND custom_metadata LIKE ?", "%"+name+"%").
+			Where("deleted_at IS NULL AND CAST(custom_metadata AS TEXT) LIKE ?", "%"+name+"%").
 			Find(&rows).Error; err != nil {
 			return 0, err
 		}
@@ -1111,7 +1111,7 @@ func (h *FleetHandler) countFleetCategoryRefs(ctx context.Context, scope, name s
 	case "contract", "regulation", "award_punish":
 		var rows []types.Knowledge
 		if err := h.db.WithContext(ctx).
-			Where("deleted_at IS NULL AND custom_metadata LIKE ?", "%"+name+"%").
+			Where("deleted_at IS NULL AND CAST(custom_metadata AS TEXT) LIKE ?", "%"+name+"%").
 			Find(&rows).Error; err != nil {
 			return 0, err
 		}

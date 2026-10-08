@@ -724,16 +724,14 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	var extractErr error
 	sawInvoice := false
 	// 沙盒提取规则：优先按记录归档类型读取（上传弹窗打标 fleet_cert_type），
-	// 无类型或该类型未配置规则时回退整体规则（设置抽屉可分别配置）。
-	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
+	// 分类规则缺失时回退普通发票规则，再回退整体规则（设置抽屉可分别配置）。
+	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, "")
 	if kdMeta := knowledge.CustomMetadata; len(kdMeta) > 0 {
 		var mdMeta struct {
 			FleetCertType string `json:"fleet_cert_type"`
 		}
 		if jerr := json.Unmarshal(kdMeta, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
-			if tCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, mdMeta.FleetCertType); tCfg != nil {
-				invoiceRuleCfg = tCfg
-			}
+			invoiceRuleCfg = h.resolveInvoiceRuleCfg(ctx, kbID, mdMeta.FleetCertType)
 		}
 	}
 	// 规则提取优先：系统生成的规整电子票据（通行费汇总单等）文本格式固定，
@@ -1029,15 +1027,13 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		return
 	}
 	content := service.BuildInvoiceExtractionContent(knowledge.FileName, knowledge.Description, chunks)
-	invoiceRuleCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, "")
+	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, "")
 	if kdMeta := knowledge.CustomMetadata; len(kdMeta) > 0 {
 		var mdMeta struct {
 			FleetCertType string `json:"fleet_cert_type"`
 		}
 		if jerr := json.Unmarshal(kdMeta, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
-			if tCfg := h.getExtractConfig(ctx, kbID, types.FleetCategoryScopeInvoice, mdMeta.FleetCertType); tCfg != nil {
-				invoiceRuleCfg = tCfg
-			}
+			invoiceRuleCfg = h.resolveInvoiceRuleCfg(ctx, kbID, mdMeta.FleetCertType)
 		}
 	}
 	res, err := service.ExtractInvoicePageFromContentWithRules(effCtx, chatModel, content, page, invoiceRuleCfg)
