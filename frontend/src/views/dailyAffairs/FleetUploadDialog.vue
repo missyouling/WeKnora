@@ -170,8 +170,8 @@ function onDrop(e: DragEvent) {
 
 function addFiles(files: File[]) {
   if (!props.kbId) { MessagePlugin.warning('知识库尚未就绪'); return }
-  // 必选证照类型：避免模型自动判定误分类
-  if (!selectedType.value) { MessagePlugin.warning('请先选择证照类型'); return }
+  // 必选类型：发票 scope 必须先选发票类型（防误分类），车队必须先选证照类型
+  if (!selectedType.value) { MessagePlugin.warning(isInvoice.value ? '请先选择发票类型' : '请先选择证照类型'); return }
   const allowed = /\.(pdf|png|jpg|jpeg|webp|bmp)$/i
   for (const f of files) {
     if (!allowed.test(f.name)) { MessagePlugin.warning(`${f.name} 类型不支持，已跳过`); continue }
@@ -336,9 +336,9 @@ async function extractFile(kid: string, scope: string, certType: string) {
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
 
-// 打开时：若未手动选择，默认继承父组件当前筛选的证照类型（防止漏选导致模型误判类型）
+// 打开时：车队按当前筛选证照类型默认选中（防漏选）；发票 scope 类型必须手动选择（防误分类），不自动注入
 watch(() => props.visible, (v) => {
-  if (v && !selectedType.value && props.defaultType) {
+  if (v && !selectedType.value && props.defaultType && !isInvoice.value) {
     selectedType.value = props.defaultType.includes('__') ? props.defaultType : (props.scope + '__' + props.defaultType)
   }
   // 剪贴板粘贴：弹窗打开时挂载全局 paste 监听（支持粘贴图片/文件直接入队）

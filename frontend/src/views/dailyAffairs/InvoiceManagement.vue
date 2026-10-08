@@ -622,7 +622,7 @@ const overviewCards = computed(() => {
   }
   cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: '' })
   // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
-  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
 })
 const onOverviewCardClick = (card: any) => {
@@ -1077,12 +1077,18 @@ const reloadColumns = async () => {
     // 列表列统一复用「普通发票」分类的字段配置（切换任意类型后列表样式保持一致）；
     // 普通发票分类不存在时回退第一个启用分类
     const baseCat = cats.find((c: any) => c.name === '普通发票') || cats[0]
+    // 列宽配置跟随当前选中分类：当前分类对应字段配置了宽度（>0）则优先采用，
+    // 未配置（0=自适应）回退普通发票的宽度，保证每个分类/新建分类的列宽配置均生效
+    const curCat = cats.find((c: any) => c.name === filterInvoiceType.value && c.enabled !== false)
+    const curMap = new Map<string, any>((curCat?.subs || []).map((s: any) => [s.name, s]))
     if (baseCat?.subs?.length) {
       customColumns.value = baseCat.subs
         .filter((s: any) => s.enabled !== false)
         .map((s: any) => {
           const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
+          const cur = curMap.get(s.name)
+          const width = Number(cur?.width) || Number(s.width) || 0
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width }
         })
     }
     // 类型筛选锁定（Q4）：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用的分类
@@ -1170,8 +1176,9 @@ const onSortChange = (ctx: any) => {
   }
   loadFiles(true)
 }
-// 筛选联动：类型下拉变更即时刷新（修复中台 Toolbar 只发 update 不触发刷新的空转）
-watch(filterInvoiceType, () => applyFilter())
+// 筛选联动：类型下拉变更即时刷新（修复中台 Toolbar 只发 update 不触发刷新的空转）；
+// 同时重载列表列（列宽跟随当前分类配置生效）
+watch(filterInvoiceType, () => { reloadColumns(); applyFilter() })
 // 关键词防抖 300ms 后刷新
 // ⑦ 全局搜索：输入关键词时临时清空类型筛选（下拉与请求参数均不带筛选），
 // 清空搜索词后恢复原选中类型并重新锁定。
@@ -1822,7 +1829,6 @@ onBeforeUnmount(() => {
 .type-card.is-brand .type-card__icon { background: var(--td-brand-color-1); }
 .type-card.is-warn .type-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
 .type-card.is-warn .type-card__num { color: var(--td-warning-color); }
-.type-card.is-muted { opacity: .6; }
 
 /* ---- 发票列表视图（Tab 独立视图） ---- */
 .invoice-list-view {
