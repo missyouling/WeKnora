@@ -289,6 +289,11 @@
                       </div>
                       <span v-else class="row-muted">—</span>
                     </t-form-item>
+                    <t-form-item v-else-if="f.remarkPart" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'items' || f.dataType === 'array' }">
+                      <t-textarea v-if="f.dataType === 'items' || f.dataType === 'array'" v-model="editForm.remarkParts[f.remarkPart]"
+                        :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                      <t-input v-else v-model="editForm.remarkParts[f.remarkPart]" placeholder="" />
+                    </t-form-item>
                     <t-form-item v-else-if="f.name !== 'items'" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' }">
                       <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
                         format="YYYY-MM-DD" clearable allow-input />
@@ -449,7 +454,7 @@ const INVOICE_TYPES = ['专用发票', '普通发票', '医疗收据', '财政�
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
-import { invoiceFieldLabel } from './invoiceFieldLabels'
+import { INVOICE_FIELD_LABELS, invoiceFieldKeyOf, isRemarkPartField, remarkPartOf, setRemarkPart } from './invoiceFieldLabels'
 const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'invoiceNo', label: '发票号码', default: true, w: '1.5fr' },
   { key: 'invoiceDate', label: '开票日期', default: true, w: '1.1fr' },
@@ -561,6 +566,8 @@ interface InvoiceRow extends Record<string, any> {
   issuer?: string
   remark?: string
   items?: InvoiceItem['items']
+  /** 发票所属分类（细分分类，如「三联收据」）；用于详情抽屉按分类字段渲染 */
+  category?: string
   voidFlag?: boolean
   duplicate?: boolean
   page?: number
@@ -652,7 +659,9 @@ const tableColumns = computed(() => {
     // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）。
     // 自适应估算必须与单元格实际渲染文本一致：状态列渲染 statusOf 中文标签（非原始英文值），
     // 否则空/英文状态值会把列宽压到表头宽度导致中文 tag 截断。
+    const rp = c.remarkPart
     const w = colWidthOf(c.width, c.label, rows.map(r => {
+      if (rp) return remarkPartOf(r.remark || '', rp)
       if (c.key === 'items') return itemsTextOf(r)
       if (c.key === 'extractStatus') { const s = statusOf(r).label; return s === '--' ? '' : s }
       return colValue(r, c.key)
@@ -660,6 +669,9 @@ const tableColumns = computed(() => {
     const base: any = i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w }
+    // 无标准存储位字段（收款方式/收款事由/审核…）：数据存于 remark「字段名：值」片段，按片段渲染
+    // TDesign cell 签名为 (h, { row })，第一参是 createElement，row 在第二参 props 中
+    if (rp) base.cell = (_h: any, { row }: any) => remarkPartOf(row?.remark || '', rp) || '-'
     cols.push(base)
   })
   return cols
@@ -679,10 +691,12 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 const detailVisible = ref(false)
 const currentRow = ref<InvoiceRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
-const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', items: [], data: {} })
+const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', items: [], data: {}, remarkParts: {} })
 const autoSaving = ref(false)
 
 // 详情抽屉动态字段：按当前发票类型匹配分类 subs（启用字段优先），无配置时回退内置列
+// 字段 name 一律归一到英文契约键（自定义中文字段名经 invoiceFieldKeyOf 映射），
+// 保证表单读写与保存写库都落在标准字段上；无标准存储位的字段（remark 片段）单独标记 remarkPart
 const editFieldDefs = computed(() => {
   const t = editForm.value.invoice_type
   const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
@@ -691,12 +705,21 @@ const editFieldDefs = computed(() => {
   if (Array.isArray(subs) && subs.length) {
     return subs
       .filter((x: any) => x.enabled !== false)
-      .map((x: any) => ({ name: x.name, label: invoiceFieldLabel(x.name), dataType: x.data_type || 'text' }))
+      .map((x: any) => {
+        const remarkPart = isRemarkPartField(String(x.name)) ? String(x.name) : ''
+        return {
+          name: remarkPart ? String(x.name) : invoiceFieldKeyOf(String(x.name)),
+          label: INVOICE_FIELD_LABELS[String(x.name)] || String(x.name),
+          dataType: x.data_type || 'text',
+          remarkPart,
+        }
+      })
   }
   return DEFAULT_INVOICE_COLUMNS.map((c) => ({
     name: c.key,
     label: c.label,
     dataType: c.key === 'invoiceDate' ? 'date' : ['amount', 'tax', 'totalAmount', 'taxRate'].includes(c.key) ? 'number' : 'text',
+    remarkPart: '',
   }))
 })
 
@@ -937,6 +960,7 @@ const mapInvoiceRecord = (r: any): InvoiceRow => ({
   buyerAccount: r.buyer_account || '',
   issuer: r.issuer || '',
   remark: r.remark || '',
+  category: r.category || r.invoice_category || '',
   items: Array.isArray(r.items) ? r.items : [],
   voidFlag: !!r.void_flag,
   duplicate: !!r.duplicate,
@@ -1000,6 +1024,7 @@ const parseCustomMetadata = (item: KnowledgeItem): InvoiceRow[] => {
     buyerAccount: inv.buyer_account || '',
     issuer: inv.issuer || '',
     remark: inv.remark || '',
+    category: inv.category || '',
     items: Array.isArray(inv.items) ? inv.items : [],
     voidFlag: !!inv.void_flag,
     duplicate: !!inv.duplicate,
@@ -1084,6 +1109,9 @@ const loadTypeOptions = async () => {
   } catch { /* 保持现状 */ }
 }
 // 重新拉取后端发票动态列配置（字段定义保存后同步刷新列表列）
+// 列表列以「普通发票」分类字段为底稿（切换任意类型后列表样式统一），
+// 但列宽/默认表头/remarkPart 片段跟随当前选中分类（六同步：当前分类的 subs 优先）。
+const lastColType = ref('')
 const reloadColumns = async (force = false) => {
   try {
     // 分类缓存：切换类型时直接用已拉取的分类重建列（省一次请求、切换更快）；
@@ -1094,24 +1122,39 @@ const reloadColumns = async (force = false) => {
       cats = res?.data || []
       invoiceCats.value = cats
     }
-    // 列表列统一复用「普通发票」分类的字段配置（切换任意类型后列表样式保持一致）；
-    // 普通发票分类不存在时回退第一个启用分类
-    const baseCat = cats.find((c: any) => c.name === '普通发票') || cats[0]
-    // 列宽与默认表头开关均跟随当前选中分类：当前分类对应字段配置了宽度（>0）/关闭了默认表头时优先采用，
-    // 未配置回退普通发票，保证每个分类/新建分类的列宽与「重置默认表头」配置均生效
+    // 列表列按「当前选中分类」的字段配置生成（六同步：列表/筛选器/编辑抽屉同源）。
+    // 自定义分类（如三联收据）显示自己配置的中文字段；未配置字段的分类回退普通发票字段。
     const curCat = cats.find((c: any) => c.name === filterInvoiceType.value && c.enabled !== false)
-    const curMap = new Map<string, any>((curCat?.subs || []).map((s: any) => [s.name, s]))
+    const baseCat = curCat || cats.find((c: any) => c.name === '普通发票') || cats[0]
     if (baseCat?.subs?.length) {
       customColumns.value = baseCat.subs
         .filter((s: any) => s.enabled !== false)
         .map((s: any) => {
           const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
-          const cur = curMap.get(s.name)
-          const width = Number(cur?.width) || Number(s.width) || 0
-          // 默认表头：当前分类保存的 is_default 优先（关闭后重置不再恢复默认勾选）
-          const isDefault = cur ? cur.is_default === true : s.is_default === true
-          return { key: s.name, label: builtin?.label || s.name, default: isDefault, w: builtin?.w || '1fr', width }
+          const width = Number(s.width) || 0
+          // 默认表头：分类保存的 is_default 为准（关闭后重置不再恢复默认勾选）
+          const isDefault = s.is_default === true
+          // 无标准存储位字段（收款方式/收款事由/审核…）：数据在 remark 片段，列表列按片段渲染
+          const remarkPart = isRemarkPartField(String(s.name)) ? String(s.name) : ''
+          return {
+            key: remarkPart ? String(s.name) : invoiceFieldKeyOf(String(s.name)),
+            label: INVOICE_FIELD_LABELS[String(s.name)] || String(s.name),
+            default: isDefault,
+            w: builtin?.w || '1fr',
+            width,
+            remarkPart,
+          }
         })
+      // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。
+      // 首轮加载（lastColType 为空）时保留用户既有 localStorage 存档，但若存档缺当前分类
+      // 的默认列（如 URL 直带「三联收据」刷新，存档仍是普通发票列集），则补齐当前分类默认列
+      if (!lastColType.value) {
+        const defaults = customColumns.value.filter(c => c.default).map(c => c.key)
+        if (defaults.some(k => !visibleColKeys.value.includes(k))) resetColumns()
+      } else if (force || lastColType.value !== filterInvoiceType.value) {
+        resetColumns()
+      }
+      lastColType.value = filterInvoiceType.value
     }
     // 类型筛选锁定（Q4）：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用的分类
     ensureInvoiceType()
@@ -1304,16 +1347,26 @@ const detailTitle = computed(() =>
   currentRow.value?.invoiceNo ? `发票详情 · ${currentRow.value.invoiceNo}` : '发票详情'
 )
 
-// ---- 字段编辑 + 自动保存 ----
+// ---- 字段编辑 + 手动保存 ----
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
   const tags = Array.isArray(r.tags)
     ? r.tags.map((t: any) => (typeof t === 'string' ? t : t?.name ?? t)).join('\n')
     : (r.tags || '')
+  // 分类优先：行级 category（细分分类如「三联收据」）> 提取类型 > 当前列表筛选类型，
+  // 保证自定义分类记录按自己配置的字段渲染，而非回退到普通发票
+  const targetType = r.invoiceType || r.category || filterInvoiceType.value || ''
+  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
+  const hitCat = cats.find((c: any) => c.name === targetType) || cats[0]
+  // 无标准存储位字段（收款方式/收款事由/审核…）：从 remark「字段名：值」片段提取各字段值
+  const rps: Record<string, string> = {}
+  for (const s of hitCat?.subs || []) {
+    if (isRemarkPartField(String(s.name))) rps[String(s.name)] = remarkPartOf(r.remark || '', String(s.name))
+  }
   editForm.value = {
     invoice_no: r.invoiceNo || '',
-    invoice_type: r.invoiceType || '',
+    invoice_type: targetType,
     items: Array.isArray(r.items) ? r.items.map(it => ({
       name: it.name || '',
       qty: numToStr(it.qty),
@@ -1321,6 +1374,7 @@ const fillEditForm = () => {
       // 税率以百分比显示（0.03 → "3"），保存时再转回小数
       tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
     })) : [],
+    remarkParts: rps,
     data: {
       invoiceNo: r.invoiceNo || '',
       invoiceDate: r.invoiceDate || '',
@@ -1359,6 +1413,9 @@ const saveEditForm = async () => {
     const meta = detail?.custom_metadata || {}
     const invoices = Array.isArray(meta.invoices) ? [...meta.invoices] : []
     const d = editForm.value.data || {}
+    // 无标准存储位字段（收款方式/收款事由/审核…）：各片段合并回 remark 后再整体写入
+    const rps = (editForm.value.remarkParts || {}) as Record<string, string>
+    for (const [part, val] of Object.entries(rps)) d.remark = setRemarkPart(d.remark, part, val)
     const updated: any = {
       invoice_no: d.invoiceNo || '',
       invoice_date: d.invoiceDate || '',

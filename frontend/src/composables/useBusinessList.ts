@@ -7,6 +7,8 @@ export interface ColumnDef {
   w: string
   /** 列宽 px：0/缺省=按内容自适应；>0=固定宽度（系统 clamp 60~400 防误输入） */
   width?: number
+  /** 无标准存储位的自定义字段：数据存于 remark 的「字段名：值」片段，列表按片段渲染 */
+  remarkPart?: string
 }
 
 export interface BusinessListOptions {
