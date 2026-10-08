@@ -92,6 +92,10 @@
                 </t-popup>
               </template>
               <template #right-extra>
+                <t-button variant="outline" size="small" @click="triggerUpload">
+                  <template #icon><t-icon name="upload" size="14px" /></template>
+                  上传账单
+                </t-button>
                 <t-button variant="outline" size="small" @click="settingsVisible = true">
                   <template #icon><t-icon name="setting" size="14px" /></template>
                   设置

@@ -467,6 +467,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 
 	records := make([]types.InvoiceRecord, 0, 256)
 	parseFailedFiles := 0
+	fileCount := 0
 	page := 1
 	const batch = 1000
 	for {
@@ -482,9 +483,11 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 			if k == nil {
 				continue
 			}
-			// 文件级解析失败计数：与 FleetOverviewStats 口径一致（parse_status=failed）
+			// 文件级解析失败计数：与 FleetOverviewStats 口径一致（parse_status=failed）。
+			// 解析失败文件无论是否打标 kind=invoice，都算「已上传文件」，计入 file_count。
 			if k.ParseStatus == "failed" {
 				parseFailedFiles++
+				fileCount++
 			}
 			if len(k.CustomMetadata) == 0 {
 				continue
@@ -492,6 +495,10 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 			var meta invoiceMetadata
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" {
 				continue
+			}
+			// 已打标 invoice 的文件计入已上传文件数（解析失败文件在上面已计，避免重复）
+			if k.ParseStatus != "failed" {
+				fileCount++
 			}
 			for _, inv := range meta.Invoices {
 				if invoiceExtractionItemBlank(inv) {
@@ -542,6 +549,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 		ByInvoiceType: []types.InvoiceTypeStat{},
 	}
 	stats.Total = len(records)
+	stats.FileCount = fileCount
 	stats.ParseFailed = parseFailedFiles
 
 	// 当前月（基于开票日期 YYYY-MM-DD 或 YYYYMMDD）

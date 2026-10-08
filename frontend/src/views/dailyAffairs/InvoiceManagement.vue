@@ -606,6 +606,7 @@ const overviewCards = computed(() => {
   const parseFailed = Number(st.parse_failed || 0)
   const extractFailed = Number(st.extract_failed || 0)
   const failed = parseFailed + extractFailed
+  const fileCount = Number(st.file_count || 0)
   const types: Array<{ invoice_type: string; count: number }> = st.by_invoice_type || []
   const typeCount = (name: string) => types.find((t) => t.invoice_type === name)?.count || 0
   const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
@@ -620,8 +621,8 @@ const overviewCards = computed(() => {
     cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
   cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: '' })
-  // 异常质量卡：0 时弱化展示
-  cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
+  // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
   return cards
 })
 const onOverviewCardClick = (card: any) => {
@@ -808,6 +809,7 @@ const onTagEditConfirm = async (tagIds: string[]) => {
     await updateKnowledgeTagBatch({ updates: { [tagTarget.value.knowledgeId]: realIds } })
     MessagePlugin.success('标签已更新')
     await loadFiles(true)
+    loadInvoiceOverview()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '标签更新失败')
   }
@@ -818,6 +820,7 @@ const openTagManage = () => { tagManageVisible.value = true }
 const onTagManageChanged = () => {
   loadTags()
   loadFiles(true)
+  loadInvoiceOverview()
 }
 
 // ---- 列表加载（发票级聚合列表，懒加载分页） ----
@@ -1391,6 +1394,9 @@ const saveEditForm = async () => {
     }
     // 手动保存：成功后关闭详情抽屉（对齐车队行内保存）
     detailVisible.value = false
+    // 记录修改后自动刷新：列表汇总与概览卡片（金额/类型/历史记录数）随最新数据同步
+    loadFiles(true)
+    loadInvoiceOverview()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {

@@ -84,6 +84,7 @@ type InvoiceListResult struct {
 // 口径与列表完全一致：按发票号去重（保留 created_at 最新）、剔除空提取项。
 type InvoiceOverviewStats struct {
 	Total         int               `json:"total"`           // 库内有效发票总数（去重后）
+	FileCount     int               `json:"file_count"`      // 已上传的发票类文件数（含解析失败文件，不含已删除）
 	ParseFailed   int               `json:"parse_failed"`    // 文件级解析失败数
 	ExtractFailed int               `json:"extract_failed"`  // 发票级提取失败数
 	CurrentMonth  InvoiceMonthStat  `json:"current_month"`   // 本月（开票日期）收录看板
