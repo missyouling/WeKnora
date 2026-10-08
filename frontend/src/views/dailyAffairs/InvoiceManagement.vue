@@ -646,8 +646,14 @@ const tableColumns = computed(() => {
   const vis = visibleColDefs.value
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   vis.forEach((c, i) => {
-    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
-    const w = colWidthOf(c.width, c.label, rows.map(r => c.key === 'items' ? itemsTextOf(r) : colValue(r, c.key)))
+    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）。
+    // 自适应估算必须与单元格实际渲染文本一致：状态列渲染 statusOf 中文标签（非原始英文值），
+    // 否则空/英文状态值会把列宽压到表头宽度导致中文 tag 截断。
+    const w = colWidthOf(c.width, c.label, rows.map(r => {
+      if (c.key === 'items') return itemsTextOf(r)
+      if (c.key === 'extractStatus') { const s = statusOf(r).label; return s === '--' ? '' : s }
+      return colValue(r, c.key)
+    }))
     const base: any = i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w }
