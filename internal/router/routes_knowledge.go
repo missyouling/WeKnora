@@ -86,7 +86,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		if business != nil {
 			kb.POST("/:knowledgeId/extract-business", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractBusinessDocument)
 			kb.PUT("/:knowledgeId/invoice-metadata", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.UpdateInvoiceMetadata)
-			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoice)
+			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractInvoice(c, "") })
 			kb.POST("/:knowledgeId/extract-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractInvoicePage)
 			kb.POST("/:knowledgeId/delete-invoice-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteInvoicePage)
 			kb.POST("/:knowledgeId/extract-contract", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContract)

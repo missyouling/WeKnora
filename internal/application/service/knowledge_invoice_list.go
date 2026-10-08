@@ -24,6 +24,20 @@ type invoiceMetadata struct {
 	ExtractStatus    string                  `json:"extract_status"`
 	ExtractError     string                  `json:"extract_error"`
 	AutoDeletedCount int                     `json:"auto_deleted_count"`
+	// 文件级归档分类：上传弹窗选择的票据类型（如"通行费发票"），列表平铺时
+	// 覆盖规则提取硬编码分类，作为「细分分类」筛选的权威来源。
+	FleetCertType string `json:"fleet_cert_type"`
+}
+
+// invoiceParentTypes 票面大类枚举（汇总大类）：筛选值属于该集合时按票面类型
+// invoice_type 匹配（普通发票大类含通行费/电费等细分记录）；否则视为细分分类，
+// 按记录归档分类 category 匹配（上传弹窗选择的票据类型）。
+var invoiceParentTypes = map[string]bool{
+	"普通发票": true,
+	"专用发票": true,
+	"医疗收据": true,
+	"财政收据": true,
+	"其它票据": true,
 }
 
 // ListInvoiceRecords 实现发票级聚合列表。步骤：
@@ -123,6 +137,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				if invoiceExtractionItemBlank(inv) {
 					continue
 				}
+				// 归档细分分类：文件级 fleet_cert_type（上传弹窗选择）优先，
+				// 覆盖规则提取硬编码（如"通行费"→"通行费发票"），供细分筛选。
+				cat := inv.Category
+				if meta.FleetCertType != "" {
+					cat = meta.FleetCertType
+				}
 				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
@@ -155,7 +175,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					BuyerAccount:   inv.BuyerAcct,
 					Issuer:         inv.Issuer,
 					Remark:         inv.Remark,
-					Category:       inv.Category,
+					Category:       cat,
 					Items:          items,
 					VoidFlag:       inv.VoidFlag,
 					Page:           inv.Page,
@@ -205,7 +225,13 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 			continue
 		}
 		if filter.InvoiceType != "" {
-			if r.InvoiceType != filter.InvoiceType {
+			if invoiceParentTypes[filter.InvoiceType] {
+				if r.InvoiceType != filter.InvoiceType {
+					continue
+				}
+			} else if r.Category != filter.InvoiceType && !(r.Category != "" && strings.Contains(filter.InvoiceType, r.Category)) {
+				// 细分分类：Category 精确匹配；规则产物可能用简称（如"通行费"），
+				// 上传分类名（"通行费发票"）包含该简称时同样命中，兼容存量数据。
 				continue
 			}
 		}

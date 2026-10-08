@@ -604,7 +604,7 @@ func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool)
 			SellerName:  h.sellerName,
 			SellerTaxNo: h.sellerTax,
 			BuyerTaxNo:  h.buyerTax,
-			Category:    "通行费",
+			Category:    "通行费发票", // 与上传分类名一致，供列表「细分分类」筛选精准命中
 			Amount:      parseAmountToFloat(h.amount),
 			Tax:         parseAmountToFloat(h.tax),
 			TaxRate:     parsePercentToFloat(h.rate),

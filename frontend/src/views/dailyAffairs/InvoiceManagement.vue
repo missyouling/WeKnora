@@ -67,7 +67,7 @@
 
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-        <div class="doc-list-view">
+        <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
           <t-table
         ref="invoiceTableRef"
         :data="filteredRows"
@@ -253,7 +253,7 @@
 
     <!-- 已上传文件（复用车队：全部上传文件的解析/提取状态；待复核卡点击打开） -->
     <FleetUploadHistoryDrawer v-model:visible="uploadHistoryVisible" :kb-id="kbId || ''" scope="invoice"
-      @changed="loadFiles(true)" />
+      @changed="onUploadHistoryChanged" />
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
     <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="reloadColumns" />
@@ -403,7 +403,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -650,8 +650,6 @@ const tableColumns = computed(() => {
     const base: any = i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
       : { colKey: c.key, title: c.label, ellipsis: true, width: w }
-    // 发票号码 / 开票日期支持表头排序（排序在服务端执行）
-    if (c.key === 'invoiceNo' || c.key === 'invoiceDate') base.sorter = true
     cols.push(base)
   })
   return cols
@@ -1194,10 +1192,14 @@ const uploadTypeOptions = computed(() => {
   if (!cats.length) return [{ label: '发票', value: 'invoice__发票' }]
   return cats.map((c: any) => ({ label: c.name, value: `invoice__${c.name}` }))
 })
-const onUploadDone = async () => {
+const onUploadDone = async (typeName?: string) => {
+  // 上传完成联动：携带本次上传的票据类型 → 列表切换为该细分分类（watch 触发 applyFilter）
+  if (typeName && typeName !== filterInvoiceType.value) filterInvoiceType.value = typeName
   await loadFiles(true)
   loadInvoiceOverview()
 }
+// 上传历史抽屉内容变化（删除/重新提取等）：列表与概览卡片一并刷新
+const onUploadHistoryChanged = () => { loadFiles(true); loadInvoiceOverview() }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
@@ -1669,6 +1671,7 @@ const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   selectedRowKeys.value = []
   await loadFiles(true)
+  loadInvoiceOverview()
 }
 // 删除确认：气泡内二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗
 const delPopVisible = ref(false)
@@ -1705,6 +1708,20 @@ const onCategoriesChanged = () => {
   loadInvoiceOverview()
 }
 
+// ---- 表头右侧滚动条轨道遮罩（Q5）：宽度=真实滚动条宽度、高度=表头实测高度，
+// 背景与表头 th 同令牌（container）→ 主题切换同步变色，无色差残留 ----
+const headerFix = reactive({ sbw: 17, thh: 39 })
+const measureTableHeaderFix = () => {
+  const th = document.querySelector('.doc-list-view thead th')
+  if (th) headerFix.thh = Math.max(30, Math.round(th.getBoundingClientRect().height))
+  const d = document.createElement('div')
+  d.style.cssText = 'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;left:-9999px'
+  document.body.appendChild(d)
+  const w = d.offsetWidth - d.clientWidth
+  d.remove()
+  if (w > 0) headerFix.sbw = w
+}
+
 // ---- 生命周期 ----
 onMounted(() => {
   // 路由 query 回填：type / failed 直达状态
@@ -1712,6 +1729,7 @@ onMounted(() => {
   if (route.query.failed === '1') uploadHistoryVisible.value = true
   loadKb()
   reloadColumns()
+  measureTableHeaderFix()
   // 六同步：设置页字段/分类保存后全局事件 -> 重建动态列/类型卡/下拉
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
@@ -1947,21 +1965,29 @@ onBeforeUnmount(() => {
   scrollbar-gutter: stable;
 }
 
+/* 表头 th 背景与内容区统一为 container 令牌（非 bordered 表格默认白底），
+   与下方表头右侧遮罩同令牌 → 主题切换同步变色，永不产生色差 */
+.doc-list-view :deep(.t-table__header--fixed > tr > th) {
+  background-color: var(--td-bg-color-container);
+}
+
 /* 表头右侧滚动条轨道遮罩：滚动条属于滚动容器 UI 层，绘制层级高于 sticky 表头，
    无法靠表头背景覆盖。在滚动容器父层(.doc-list-view)挂绝对定位色块，
-   盖住表头高(39px)内的轨道段 → 垂直滚动条仅在表体区域可见；
-   底边框与 th 底边框同色同位 → 表头横线在滚动条区单线闭合（无缝隙、无双线） */
+   宽度=真实滚动条宽度(--invoice-sbw，JS 实测)、高度=表头实测高度(--invoice-thh)，
+   盖住表头高内的轨道段 → 垂直滚动条仅在表体区域可见；
+   底边框与 th 底边框同色同位 → 表头横线在滚动条区单线闭合（无缝隙、无双线）。
+   背景与 th 同令牌(container)，深色主题下两者同步变化，不产生主题色差 */
 .doc-list-view::after {
   content: '';
   position: absolute;
   top: 0;
   right: 0;
   z-index: 20;
-  width: 7px;
-  height: 39px;
+  width: var(--invoice-sbw, 17px);
+  height: var(--invoice-thh, 39px);
   box-sizing: border-box;
   pointer-events: none;
-  background: var(--td-bg-color-secondarycontainer);
+  background: var(--td-bg-color-container);
   border-bottom: 1px solid var(--td-component-stroke);
 }
 

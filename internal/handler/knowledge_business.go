@@ -631,7 +631,7 @@ func contractBatchesHaveText(batches []string) bool {
 	return false
 }
 
-func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
+func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
@@ -823,6 +823,23 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context) {
 					meta.Invoices[i].InvoiceType = t
 				}
 			}
+		}
+	}
+	// 归档细分分类：上传弹窗选择的票据类型（cert_type，如"通行费发票"）写入每条
+	// 记录 category，供列表「细分分类」筛选（普通/专用为票面大类，通行费/电费等
+	// 为细分分类，细分记录仍统计进所属大类的卡片）。cert_type 为空（单文件重提取
+	// 直连路由）时从文件级 fleet_cert_type 元数据兜底。
+	if certType == "" && len(knowledge.CustomMetadata) > 0 {
+		var certMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &certMeta); jerr == nil {
+			certType = certMeta.FleetCertType
+		}
+	}
+	if certType != "" {
+		for i := range meta.Invoices {
+			meta.Invoices[i].Category = certType
 		}
 	}
 	if extracted.Kind == "not_invoice" {
@@ -1037,6 +1054,15 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 
 	upd := res.Invoices[0]
 	upd.Page = page // 保持原页码
+	// 重提取不丢归档细分分类：文件级 fleet_cert_type（上传弹窗选择）覆盖新提取记录
+	if len(knowledge.CustomMetadata) > 0 {
+		var certMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &certMeta); jerr == nil && certMeta.FleetCertType != "" {
+			upd.Category = certMeta.FleetCertType
+		}
+	}
 	meta.Invoices[page-1] = upd
 	metaBytes, jerr := json.Marshal(meta)
 	if jerr != nil {
@@ -1955,14 +1981,15 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 // ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。
 func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	var body struct {
-		Scope string `json:"scope"`
+		Scope    string `json:"scope"`
+		CertType string `json:"cert_type"`
 	}
 	_ = c.ShouldBindJSON(&body)
 	switch body.Scope {
 	case "contract":
 		h.ExtractContract(c)
 	case "invoice":
-		h.ExtractInvoice(c)
+		h.ExtractInvoice(c, body.CertType)
 	case "regulation":
 		h.ExtractRegulation(c)
 	case "award_punish":

@@ -72,7 +72,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
-  (e: 'done'): void
+  (e: 'done', typeName?: string): void
   (e: 'progress', items: UploadProgressItem[]): void
 }>()
 
@@ -135,8 +135,9 @@ watch(tasks, (list) => {
   emitProgress()
   const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed')
   if (allDone) {
-    // 所有上传+解析+提取任务真正完成后，通知父组件刷新概览统计（卡片份数、已上传文件数）
-    emit('done')
+    // 所有上传+解析+提取任务真正完成后，通知父组件刷新概览统计（卡片份数、已上传文件数）；
+    // 携带本次上传的票据类型名，父组件据此联动切换列表筛选（细分分类归类）
+    emit('done', certTypeName.value)
     if (!autoCloseTimer) {
       autoCloseTimer = setTimeout(() => {
         emit('update:visible', false)
@@ -323,9 +324,7 @@ async function extractFile(kid: string, scope: string, certType: string) {
   const api = isInvoice.value
     ? `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-business`
     : `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-fleet-document`
-  const body = isInvoice.value
-    ? { scope: props.scope }
-    : (certType ? { scope, cert_type: certType } : { scope })
+  const body = certType ? { scope, cert_type: certType } : { scope }
   const res = await fetch(api, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
