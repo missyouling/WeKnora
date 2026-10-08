@@ -671,7 +671,21 @@ const tableColumns = computed(() => {
       : { colKey: c.key, title: c.label, ellipsis: true, width: w }
     // 无标准存储位字段（收款方式/收款事由/审核…）：数据存于 remark「字段名：值」片段，按片段渲染
     // TDesign cell 签名为 (h, { row })，第一参是 createElement，row 在第二参 props 中
-    if (rp) base.cell = (_h: any, { row }: any) => remarkPartOf(row?.remark || '', rp) || '-'
+    if (rp) {
+      base.cell = (_h: any, { row }: any) => remarkPartOf(row?.remark || '', rp) || '-'
+    } else if (['amount', 'tax', 'totalAmount'].includes(c.key)) {
+      // 金额类字段统一格式化（¥ + 千分位 + 两位小数），消除自定义分类 colKey 不匹配
+      // #amount 插槽导致的显示差异；所有分类风格一致。
+      base.cell = (_h: any, { row }: any) => {
+        const v = colValue(row, c.key)
+        return v === '-' ? '-' : formatAmount(Number(v))
+      }
+    } else if (c.key === 'taxRate') {
+      base.cell = (_h: any, { row }: any) => {
+        const v = colValue(row, c.key)
+        return v === '-' ? '-' : formatRate(Number(v))
+      }
+    }
     cols.push(base)
   })
   return cols
@@ -865,8 +879,11 @@ let loadTimer: ReturnType<typeof setTimeout> | null = null
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
   const mySeq = ++listSeq
-  if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
   if (reset) {
+    // 仅 reset（类型/筛选切换）才接管并重置超时计时器；
+    // 非 reset（翻页/轮询）在 loading 中直接 return，绝不能清理父请求的超时 timer，
+    // 否则 onTick 轮询会不断清掉 15s 兜底，导致挂起请求永久转圈。
+    if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
     page.value = 1
     invoiceRows.value = []
     items.value = []
