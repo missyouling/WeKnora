@@ -30,7 +30,7 @@
             <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
             <div class="type-card__body">
               <div class="type-card__label">{{ card.label }}</div>
-              <div class="type-card__num">{{ card.value }} <span>{{ card.unit }}</span></div>
+              <div class="type-card__num" :class="card.numCls">{{ card.value }} <span>{{ card.unit }}</span></div>
               <div class="type-card__sub">{{ card.sub }}</div>
             </div>
           </div>
@@ -256,7 +256,7 @@
       @changed="onUploadHistoryChanged" />
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
-    <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="reloadColumns" />
+    <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="() => reloadColumns(true)" />
 
     <!-- 上传弹窗（对齐车队：分类选择 + 拖拽/选择/粘贴 + 进度） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="invoice"
@@ -609,10 +609,13 @@ const overviewCards = computed(() => {
   const fileCount = Number(st.file_count || 0)
   const types: Array<{ invoice_type: string; count: number }> = st.by_invoice_type || []
   const typeCount = (name: string) => types.find((t) => t.invoice_type === name)?.count || 0
-  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
+  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string; numCls?: string }> = [
     { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
-    { key: 'sumTotal', label: '价税合计', icon: 'money', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
   ]
+  // 价税合计金额：超过 9 位（含符号 14 字符以上）时自动缩小字号、禁止换行，保证卡片不挤压
+  const fmtTotal = formatAmount(Number(st.sum_total || 0))
+  const totalNumCls = fmtTotal.length > 18 ? 'num-xs' : fmtTotal.length > 14 ? 'num-sm' : ''
+  cards.push({ key: 'sumTotal', label: '价税合计', icon: 'money', value: fmtTotal, unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '', numCls: totalNumCls })
   // 类型分布卡：只显示内置票据类型（普通发票/专用发票），自定义分类（如电费发票）不作为卡片展示；
   // 「其它票据」为排除式统计桶固定追加末尾。计数按类型名匹配后端统计桶，匹配不到缺省 0
   const builtinTypeNames = ['普通发票', '专用发票']
@@ -833,15 +836,26 @@ const onTagManageChanged = () => {
 // listSeq 请求序号守卫：类型/筛选切换时递增，丢弃过期响应，防止旧筛选
 // （轮询/翻页）in-flight 请求晚到被 append 进新筛选结果造成行混入。
 let listSeq = 0
+// 加载超时兜底：切换类型/筛选后若列表请求长时间未返回（代理/后端瞬慢或挂起），
+// 15s 后强制结束 loading 并提示，避免表格永久转圈；新请求接管时旧 timer 作废。
+let loadTimer: ReturnType<typeof setTimeout> | null = null
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
   const mySeq = ++listSeq
+  if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
   if (reset) {
     page.value = 1
     invoiceRows.value = []
     items.value = []
     hasMore.value = true
     listLoading.value = true
+    loadTimer = setTimeout(() => {
+      if (listLoading.value && mySeq === listSeq) {
+        listLoading.value = false
+        loadingMore.value = false
+        MessagePlugin.warning('列表加载超时，请稍后重试')
+      }
+    }, 15000)
   } else if (listLoading.value || loadingMore.value) {
     return
   } else {
@@ -880,6 +894,7 @@ const loadFiles = async (reset = false) => {
     if (mySeq !== listSeq) return
     MessagePlugin.error(e?.message || '发票列表加载失败')
   } finally {
+    if (loadTimer && mySeq === listSeq) { clearTimeout(loadTimer); loadTimer = null }
     // 仅最新请求可清理 loading 标志；过期响应保持其父请求的进行中状态
     if (mySeq === listSeq) {
       listLoading.value = false
@@ -1069,11 +1084,16 @@ const loadTypeOptions = async () => {
   } catch { /* 保持现状 */ }
 }
 // 重新拉取后端发票动态列配置（字段定义保存后同步刷新列表列）
-const reloadColumns = async () => {
+const reloadColumns = async (force = false) => {
   try {
-    const res: any = await listFleetCategories({ scope: 'invoice' })
-    const cats = res?.data || []
-    invoiceCats.value = cats
+    // 分类缓存：切换类型时直接用已拉取的分类重建列（省一次请求、切换更快）；
+    // 仅首次进入或设置保存/六同步事件（force=true）时重新请求后端
+    let cats: any[] = force ? [] : invoiceCats.value
+    if (!cats || !cats.length) {
+      const res: any = await listFleetCategories({ scope: 'invoice' })
+      cats = res?.data || []
+      invoiceCats.value = cats
+    }
     // 列表列统一复用「普通发票」分类的字段配置（切换任意类型后列表样式保持一致）；
     // 普通发票分类不存在时回退第一个启用分类
     const baseCat = cats.find((c: any) => c.name === '普通发票') || cats[0]
@@ -1735,7 +1755,7 @@ const clearSelectionSafe = () => {
 
 // 六同步：字段/分类配置变更后重建动态列与概览统计（类型卡/下拉由 invoiceCats computed 自动派生）
 const onCategoriesChanged = () => {
-  reloadColumns()
+  reloadColumns(true)
   loadInvoiceOverview()
 }
 
@@ -1825,7 +1845,9 @@ onBeforeUnmount(() => {
 }
 .type-card__body { flex: 1; min-width: 0; }
 .type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
-.type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); }
+.type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); white-space: nowrap; }
+.type-card__num.num-sm { font-size: 17px; }
+.type-card__num.num-xs { font-size: 14px; }
 .type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
 .type-card__sub { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
 .type-card.is-brand .type-card__icon { background: var(--td-brand-color-1); }
