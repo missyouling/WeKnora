@@ -833,6 +833,8 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		for i := range meta.Invoices {
 			meta.Invoices[i].Category = certType
 		}
+		// 文件级打标：重提取不传 cert_type 时从 custom_metadata.fleet_cert_type 兜底选规则
+		meta.FleetCertType = certType
 	}
 	if extracted.Kind == "not_invoice" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，

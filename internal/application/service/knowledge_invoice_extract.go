@@ -65,9 +65,10 @@ type InvoiceExtractionLine struct {
 
 // InvoiceExtractionResult is the strict-JSON shape the model must return.
 type InvoiceExtractionResult struct {
-	Kind         string                  `json:"kind"` // "invoice" | "not_invoice"
-	Invoices     []InvoiceExtractionItem `json:"invoices"`
-	ExtractError string                  `json:"extract_error"`
+	Kind          string                  `json:"kind"` // "invoice" | "not_invoice"
+	Invoices      []InvoiceExtractionItem `json:"invoices"`
+	ExtractError  string                  `json:"extract_error"`
+	FleetCertType string                  `json:"fleet_cert_type,omitempty"` // 上传/重提取时的归档分类打标，供后续重提取选规则兜底
 }
 
 // invoiceExtractionSystemPrompt instructs the model to return strict JSON

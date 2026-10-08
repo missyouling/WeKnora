@@ -42,13 +42,15 @@
                 </div>
               </template>
               <template #parse="{ row }: any">
-                <t-tooltip v-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
+                <t-loading v-if="row._reparsing" size="small" text="解析中" />
+                <t-tooltip v-else-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
                 </t-tooltip>
                 <t-tag v-else size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
               </template>
               <template #extract="{ row }: any">
-                <t-tooltip v-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
+                <t-loading v-if="row._extracting" size="small" text="提取中" />
+                <t-tooltip v-else-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
                 </t-tooltip>
                 <t-tag v-else size="small" :theme="extractTheme(row)" variant="light-outline">{{ extractLabel(row) }}</t-tag>
@@ -164,13 +166,15 @@ const extractTheme = (row: any) => {
 }
 
 // 发票类型取值：优先上传时写入的 fleet_cert_type，其次 custom_metadata.invoice_type，
-// 再次发票提取结果 invoices[0].invoice_type，最后回退 doc_type/顶层字段（补齐历史遗留空白）。
+// 再次发票提取结果 invoices[0].invoice_type，然后 invoices[0].category（细分分类打标），
+// 最后回退 doc_type/顶层字段（补齐历史遗留空白）。
 const invDocType = (r: any) => {
   const m = r.custom_metadata || {}
   if (m.fleet_cert_type) return m.fleet_cert_type
   if (m.invoice_type) return m.invoice_type
   const invs = Array.isArray(m.invoices) ? m.invoices : []
   if (invs.length && invs[0]?.invoice_type) return invs[0].invoice_type
+  if (invs.length && invs[0]?.category) return invs[0].category
   return m.doc_type || r.doc_type || ''
 }
 
@@ -269,7 +273,7 @@ const reextractRow = async (row: any) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') },
       body: props.scope === 'invoice'
-        ? JSON.stringify({ scope: 'invoice' })
+        ? JSON.stringify({ scope: 'invoice', cert_type: row.doc_type || undefined })
         : JSON.stringify({ scope: props.scope || 'vehicle', doc_type: row.doc_type || undefined }),
     })
     if (!res.ok) throw new Error('提取请求失败')

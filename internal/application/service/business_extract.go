@@ -195,6 +195,7 @@ type InvoiceCustomMetadata struct {
 	Invoices      []InvoiceExtractionItem `json:"invoices"`
 	ExtractStatus string                  `json:"extract_status"`
 	ExtractError  string                  `json:"extract_error"`
+	FleetCertType string                  `json:"fleet_cert_type,omitempty"` // 归档分类打标，供重提取选规则兜底
 }
 
 // ListDeletedKnowledge lists soft-deleted rows in a KB.
