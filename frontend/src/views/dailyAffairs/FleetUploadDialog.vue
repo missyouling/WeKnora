@@ -33,6 +33,9 @@
               <template v-if="t.status === 'success'">
                 <span class="fu-item-status fu-item-status--ok">提取完成</span>
               </template>
+              <template v-else-if="t.status === 'duplicate'">
+                <span class="fu-item-status fu-item-status--dup">{{ t.msg || '知识库中已有相同文件' }}</span>
+              </template>
               <template v-else-if="t.status === 'failed'">
                 <span class="fu-item-status fu-item-status--err">{{ t.msg || '提取失败' }}</span>
               </template>
@@ -81,7 +84,7 @@ interface UpTask {
   file: File
   name: string
   size: number
-  status: 'queued' | 'uploading' | 'parsing' | 'extracting' | 'success' | 'failed'
+  status: 'queued' | 'uploading' | 'parsing' | 'extracting' | 'success' | 'failed' | 'duplicate'
   progress: number
   msg?: string
   kid?: string
@@ -133,11 +136,11 @@ let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
 // 深度监听任务列表：进度实时上报；全部任务结束后延迟自动关闭弹窗（手动关闭后后台任务仍会继续，结束时同样自动关闭）
 watch(tasks, (list) => {
   emitProgress()
-  const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed')
+  const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed' || t.status === 'duplicate')
   if (allDone) {
-    // 所有上传+解析+提取任务真正完成后，通知父组件刷新概览统计（卡片份数、已上传文件数）；
-    // 携带本次上传的票据类型名，父组件据此联动切换列表筛选（细分分类归类）
-    emit('done', certTypeName.value)
+    // 仅当本批存在真正新增（success）的记录时才通知父组件联动刷新与切换；
+    // 全为重复/失败时不扰动当前列表（与原项目 uploadQueue 的 uploaded 口径一致）
+    if (list.some((t) => t.status === 'success')) emit('done', certTypeName.value)
     if (!autoCloseTimer) {
       autoCloseTimer = setTimeout(() => {
         emit('update:visible', false)
@@ -197,11 +200,13 @@ function removeTask(key: string) {
 // ---- 状态展示 ----
 function taskIcon(t: UpTask) {
   if (t.status === 'success') return 'check-circle-filled'
+  if (t.status === 'duplicate') return 'info-circle-filled'
   if (t.status === 'failed') return 'error-circle-filled'
   return 'file'
 }
 function taskColor(t: UpTask) {
   if (t.status === 'success') return 'var(--td-success-color)'
+  if (t.status === 'duplicate') return 'var(--td-warning-color)'
   if (t.status === 'failed') return 'var(--td-error-color)'
   return 'var(--td-brand-color)'
 }
@@ -290,11 +295,13 @@ async function runTask(t: UpTask) {
     })
     drainExtractQueue()
   } catch (err: any) {
+    const code = err?.code ?? err?.error?.code ?? err?.data?.code
     const msg = err?.message || '上传失败'
-    if (msg.includes('already exists') || msg.includes('文件重复')) {
-      t.status = 'failed'
-      t.msg = '文件已存在，已忽略'
-      // 已存在文件同样补记，供列表轮询提取
+    // 复用原项目知识库重复文件机制：后端返回 duplicate_file（409），任务标记为「已存在」
+    if (code === 'duplicate_file' || err?.status === 409 || /already exists|文件重复|重复上传/i.test(msg)) {
+      t.status = 'duplicate'
+      t.msg = '知识库中已有相同文件'
+      // 已存在文件同样补打标，供列表轮询提取
       try {
         const fl: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: 100 })
         const arr = Array.isArray(fl?.data) ? fl.data : Array.isArray(fl?.list) ? fl.list : []
@@ -495,6 +502,7 @@ onBeforeUnmount(() => {
       font-size: 12px;
 
       &--ok { color: var(--td-success-color); }
+      &--dup { color: var(--td-warning-color); }
       &--err { color: var(--td-error-color); }
     }
   }
