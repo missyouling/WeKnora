@@ -1077,8 +1077,8 @@ const reloadColumns = async () => {
     // 列表列统一复用「普通发票」分类的字段配置（切换任意类型后列表样式保持一致）；
     // 普通发票分类不存在时回退第一个启用分类
     const baseCat = cats.find((c: any) => c.name === '普通发票') || cats[0]
-    // 列宽配置跟随当前选中分类：当前分类对应字段配置了宽度（>0）则优先采用，
-    // 未配置（0=自适应）回退普通发票的宽度，保证每个分类/新建分类的列宽配置均生效
+    // 列宽与默认表头开关均跟随当前选中分类：当前分类对应字段配置了宽度（>0）/关闭了默认表头时优先采用，
+    // 未配置回退普通发票，保证每个分类/新建分类的列宽与「重置默认表头」配置均生效
     const curCat = cats.find((c: any) => c.name === filterInvoiceType.value && c.enabled !== false)
     const curMap = new Map<string, any>((curCat?.subs || []).map((s: any) => [s.name, s]))
     if (baseCat?.subs?.length) {
@@ -1088,7 +1088,9 @@ const reloadColumns = async () => {
           const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
           const cur = curMap.get(s.name)
           const width = Number(cur?.width) || Number(s.width) || 0
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width }
+          // 默认表头：当前分类保存的 is_default 优先（关闭后重置不再恢复默认勾选）
+          const isDefault = cur ? cur.is_default === true : s.is_default === true
+          return { key: s.name, label: builtin?.label || s.name, default: isDefault, w: builtin?.w || '1fr', width }
         })
     }
     // 类型筛选锁定（Q4）：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用的分类
