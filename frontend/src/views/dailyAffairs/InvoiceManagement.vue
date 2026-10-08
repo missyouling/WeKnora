@@ -612,15 +612,13 @@ const overviewCards = computed(() => {
     { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
     { key: 'sumTotal', label: '价税合计', icon: 'money', value: formatAmount(Number(st.sum_total || 0)), unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '' },
   ]
-  // 类型分布卡（六同步）：按 categories(scope=invoice) 数组顺序渲染（enabled 过滤），
-  // 计数按分类名匹配后端统计桶，匹配不到缺省 0（对齐 AGENTS.md 主页面类型卡规则）
-  const cats = invoiceCats.value.filter((c: any) => c.enabled !== false)
-  const catNames = (cats.length ? cats.map((c: any) => c.name) : INVOICE_TYPES).filter((n: string) => n && n !== '其它票据')
-  for (const name of catNames) {
-    const typeIcon = name === '专用发票' ? 'file-copy' : name === '普通发票' ? 'file-1' : 'file-unknown'
+  // 类型分布卡：只显示内置票据类型（普通发票/专用发票），自定义分类（如电费发票）不作为卡片展示；
+  // 「其它票据」为排除式统计桶固定追加末尾。计数按类型名匹配后端统计桶，匹配不到缺省 0
+  const builtinTypeNames = ['普通发票', '专用发票']
+  for (const name of builtinTypeNames) {
+    const typeIcon = name === '专用发票' ? 'file-copy' : 'file-1'
     cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
-  // 其它票据：排除式统计桶（非实体分类），固定追加在类型卡末尾；工具栏已无该筛选选项，卡片仅作统计展示
   cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: '' })
   // 异常质量卡：0 时弱化展示
   cards.push({ key: 'failed', label: '待复核', icon: 'error-circle', value: `${failed}`, unit: '张', sub: failed ? '解析或提取失败' : '无失败记录', cls: failed > 0 ? 'is-warn' : 'is-muted', action: 'history' })
@@ -1005,7 +1003,8 @@ const filteredRows = computed(() => [...pendingRows.value, ...invoiceRows.value]
 
 // 表格高度约束：数据加载后由空串切到 '100%'，驱动 TDesign useFixed 重算
 // isFixedHeader（scrollHeight > clientHeight）→ 表头/表体分离，滚动条仅在表体
-const tableMaxHeight = computed(() => (filteredRows.value.length ? '100%' : ''))
+// 滚动条固定：无论记录多少，表格始终撑满容器高度 → 垂直滚动条轨道恒显于底部（统计摘要栏上方）
+const tableMaxHeight = computed(() => '100%')
 
 // 同一上传文件内的多张发票：按文件分组计数，用于生成绿色页码标签
 const fileInvoiceCounts = computed(() => {
@@ -1058,8 +1057,11 @@ const reloadColumns = async () => {
     const res: any = await listFleetCategories({ scope: 'invoice' })
     const cats = res?.data || []
     invoiceCats.value = cats
-    if (cats[0]?.subs?.length) {
-      customColumns.value = cats[0].subs
+    // 列表列统一复用「普通发票」分类的字段配置（切换任意类型后列表样式保持一致）；
+    // 普通发票分类不存在时回退第一个启用分类
+    const baseCat = cats.find((c: any) => c.name === '普通发票') || cats[0]
+    if (baseCat?.subs?.length) {
+      customColumns.value = baseCat.subs
         .filter((s: any) => s.enabled !== false)
         .map((s: any) => {
           const builtin = DEFAULT_INVOICE_COLUMNS.find((b: any) => b.key === s.name)
@@ -1936,6 +1938,7 @@ onBeforeUnmount(() => {
 .doc-list-view :deep(.t-table) {
   flex: 1;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
 }
 

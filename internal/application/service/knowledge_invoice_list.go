@@ -231,9 +231,28 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	}
 	records = kept
 
-	// 5. 排序：默认源文件创建时间新在前；同文件按发票页码升序。
-	// 表头排序（invoice_no / invoice_date）时以该字段为主排序键，空值排后。
+	// 5. 排序：默认按文件分组（文件最新记录时间降序，新文件在前），同文件按页码升序，
+	// 保证同一文件的多页发票（P1/P2...）连续排列、不被其它文件记录隔开。
+	// 表头排序（invoice_no / invoice_date）时以该字段为主排序键，空值排后；
+	// 主键相同仍先保证同文件连续，再按页升序。
 	desc := filter.SortOrder != "asc"
+	// 预计算每个文件的最新记录时间（分组排序键）
+	fileLatest := map[string]time.Time{}
+	for _, r := range records {
+		if t, ok := fileLatest[r.KnowledgeID]; !ok || r.CreatedAt.After(t) {
+			fileLatest[r.KnowledgeID] = r.CreatedAt
+		}
+	}
+	groupBefore := func(i, j int) bool {
+		if records[i].KnowledgeID == records[j].KnowledgeID {
+			return false
+		}
+		a, b := fileLatest[records[i].KnowledgeID], fileLatest[records[j].KnowledgeID]
+		if !a.Equal(b) {
+			return a.After(b)
+		}
+		return records[i].KnowledgeID < records[j].KnowledgeID
+	}
 	if filter.SortBy == "invoice_no" || filter.SortBy == "invoice_date" {
 		by := filter.SortBy
 		sort.SliceStable(records, func(i, j int) bool {
@@ -254,15 +273,16 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				}
 				return a < b
 			}
-			if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
-				return records[i].CreatedAt.After(records[j].CreatedAt)
+			// 主键相同：同文件连续，再按页升序
+			if records[i].KnowledgeID != records[j].KnowledgeID {
+				return groupBefore(i, j)
 			}
 			return records[i].Page < records[j].Page
 		})
 	} else {
 		sort.SliceStable(records, func(i, j int) bool {
-			if !records[i].CreatedAt.Equal(records[j].CreatedAt) {
-				return records[i].CreatedAt.After(records[j].CreatedAt)
+			if records[i].KnowledgeID != records[j].KnowledgeID {
+				return groupBefore(i, j)
 			}
 			return records[i].Page < records[j].Page
 		})
