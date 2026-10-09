@@ -739,9 +739,8 @@ const loadKb = async () => {
       await loadTypeOptions()
       await loadContractCats()
       await cleanNonContractFiles()
-      await loadFiles()
-      loadUploadStats()
-      loadContractOverview()
+      // 列表与概览卡并行加载（对齐发票基准：卡片不等待列表串行完成，消除"先列表后卡片"的滞后感）
+      await Promise.all([loadFiles(), loadUploadStats(), loadContractOverview()])
       startPolling()
     }
   } catch (e: any) {
@@ -758,9 +757,7 @@ const onKbCreated = async (kb: any) => {
     await loadTypeOptions()
     await loadContractCats()
     await cleanNonContractFiles()
-    await loadFiles()
-    loadUploadStats()
-    loadContractOverview()
+    await Promise.all([loadFiles(), loadUploadStats(), loadContractOverview()])
     startPolling()
   }
 }
@@ -1263,11 +1260,9 @@ const loadUploadStats = async () => {
     uploadStats.value = { total, failed }
   } catch { uploadStats.value = { total: 0, failed: 0 } }
 }
-// 历史记录抽屉变更（删除/重新解析）后同步刷新列表与卡片计数
+// 历史记录抽屉变更（删除/重新解析）后同步刷新列表与卡片计数（并行）
 const onUploadHistoryChanged = async () => {
-  await loadFiles(true)
-  loadUploadStats()
-  loadContractOverview()
+  await Promise.all([loadFiles(true), loadUploadStats(), loadContractOverview()])
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
@@ -1449,7 +1444,9 @@ const saveContractDetail = async () => {
     }
     MessagePlugin.success('保存成功')
     detailVisible.value = false
-    await loadFiles(true)
+    // 保存后并行刷新列表与概览卡片（对齐发票基准：合同类型/金额/总数随最新数据同步更新）
+    loadFiles(true)
+    loadContractOverview()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -1505,7 +1502,8 @@ const handleReExtract = async () => {
   try {
     await reparseKnowledge(row.knowledgeId)
     MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
-    setTimeout(() => { loadFiles(true) }, 1500)
+    // 解析完成后延迟刷新列表与概览卡（新记录/类型变化同步到卡片统计）
+    setTimeout(() => { loadFiles(true); loadContractOverview() }, 1500)
   } catch (e: any) {
     extractFailed.value.add(row.knowledgeId)
     MessagePlugin.error(e?.message || '重新提取失败')
@@ -1686,7 +1684,8 @@ const doFileDelete = async (rows: ContractRow[]) => {
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   clearSelectionSafe()
-  await loadFiles(true)
+  // 删除后并行刷新列表、概览卡与历史记录计数（对齐发票基准）
+  await Promise.all([loadFiles(true), loadContractOverview(), loadUploadStats()])
 }
 const confirmPageDelete = async () => {
   closeDelPop()
@@ -1704,6 +1703,8 @@ const onCategoriesChanged = () => {
   reloadColumns(true)
   loadContractCats()
   loadFiles(true)
+  // 分类配置变更（改名/启停用）影响概览类型分桶，同步刷新卡片统计
+  loadContractOverview()
 }
 // 从后端 categories（scope=contract）重建动态列；无配置时回退内置默认。
 // 列按「当前选中分类」的字段配置生成（六同步：列表/字段筛选器/编辑抽屉/打印同源），
