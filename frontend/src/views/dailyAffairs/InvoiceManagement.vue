@@ -1489,7 +1489,18 @@ const saveEditForm = async () => {
         i === nowPage - 1 || Number(inv.page) === nowPage || inv.invoice_no === now.invoiceNo)
     }
     if (targetIdx < 0) targetIdx = invoices.findIndex((inv: any) => inv.invoice_no === now.invoiceNo)
-    if (targetIdx >= 0) invoices[targetIdx] = { ...invoices[targetIdx], ...updated, page: nowPage || invoices[targetIdx]?.page }
+    if (targetIdx >= 0) {
+      const prevType = String((invoices[targetIdx] as any)?.invoice_type || '')
+      const nextType = String(updated.invoice_type || '')
+      // 同文件级联：发票类型实质性变更时，将该文件（同一 knowledge 的 invoices 数组）下
+      // 所有发票的类型同步为最新值（对齐标签行级同步逻辑；保存整包写回天然原子）
+      if (nextType && nextType !== prevType) {
+        invoices.forEach((inv: any, i: number) => {
+          if (i !== targetIdx) inv.invoice_type = nextType
+        })
+      }
+      invoices[targetIdx] = { ...invoices[targetIdx], ...updated, page: nowPage || invoices[targetIdx]?.page }
+    }
     else invoices.push({ ...updated, page: nowPage || 0 })
     // 无任何有效字段 → 保持"待补录"状态，记录不因空数据而从列表消失
     const hasInvoiceData = invoices.some((inv: any) =>
@@ -1521,6 +1532,13 @@ const saveEditForm = async () => {
         voidFlag: !!invoiceRows.value[listIdx].voidFlag,
         items: updated.items,
       }
+    }
+    // 同文件级联后，同步列表中同一文件的其他行类型展示（loadFiles 随后全量刷新兜底）
+    if (updated.invoice_type && now.knowledgeId) {
+      const kid = now.knowledgeId
+      invoiceRows.value = invoiceRows.value.map((r: any) =>
+        r.knowledgeId === kid && String(r.invoiceType || '') !== updated.invoice_type
+          ? { ...r, invoiceType: updated.invoice_type } : r)
     }
     // 手动保存：成功后关闭详情抽屉（对齐车队行内保存）
     detailVisible.value = false
