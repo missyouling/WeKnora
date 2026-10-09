@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -855,6 +856,31 @@ func isBusinessCategoryScope(scope string) bool {
 	return scope == "contract" || scope == "invoice" || scope == "regulation" || scope == "award_punish"
 }
 
+// invoice 系统字段：列表/编辑抽屉/六同步依赖的列（提取状态、标签、票据类型）。
+// 新建/复制发票分类时自动补齐，避免自定义分类缺失这三列导致渲染不齐。
+var invoiceSystemFields = []types.FleetCategorySub{
+	{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+	{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+	{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+}
+
+// ensureInvoiceSystemFields 保证发票分类 subs 始终包含系统字段（按 name 去重，保留用户已有定义）
+func ensureInvoiceSystemFields(subs []types.FleetCategorySub) []types.FleetCategorySub {
+	if subs == nil {
+		subs = []types.FleetCategorySub{}
+	}
+	have := make(map[string]bool, len(subs))
+	for _, s := range subs {
+		have[s.Name] = true
+	}
+	for _, sys := range invoiceSystemFields {
+		if !have[sys.Name] {
+			subs = append(subs, sys)
+		}
+	}
+	return subs
+}
+
 var fleetCategoryScopes = map[string]bool{
 	types.FleetCategoryScopeVehicle:  true,
 	types.FleetCategoryScopeDriver:   true,
@@ -940,6 +966,11 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 	if req.Subs == nil {
 		req.Subs = []types.FleetCategorySub{}
 	}
+	// invoice scope 自动补齐系统字段（invoiceType/extractStatus/tags），
+	// 保证新建/复制分类的列表、编辑抽屉、六同步立即可用
+	if req.Scope == "invoice" {
+		req.Subs = ensureInvoiceSystemFields(req.Subs)
+	}
 	queryTenant := tenantID
 	if isBusinessCategoryScope(req.Scope) {
 		queryTenant = 0
@@ -973,8 +1004,13 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	if isBusinessCategoryScope(existing.Scope) {
 		tenantID = 0
 	}
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
 	var req types.FleetCategory
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
 		return
 	}
@@ -986,6 +1022,14 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	updates := map[string]interface{}{
 		"enabled":    req.Enabled,
 		"updated_at": now,
+	}
+	// 缺失字段保护：请求体未显式传 enabled 时保留库中原值，
+	// 防止「仅更新 subs/name」的局部 PUT 被 Go bool 零值(false)误关分类
+	var reqRaw struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(bodyBytes, &reqRaw); err == nil && reqRaw.Enabled != nil {
+		updates["enabled"] = *reqRaw.Enabled
 	}
 	if req.Name != "" {
 		updates["name"] = req.Name
