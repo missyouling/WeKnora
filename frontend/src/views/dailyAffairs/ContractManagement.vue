@@ -25,9 +25,8 @@
     <div v-else class="contract-main">
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
       <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
-      <!-- 筛选工具栏（复用原项目文档列表样式） -->
-      <div class="doc-filter-bar">
-        <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
+      <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
+      <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
           :type-options="contractTypeOptions" v-model:type-value="filterContractType" :type-clearable="searchActive"
           @refresh="applyFilter" @print="handleBatchPrint" :selected-count="selectedRowKeys.length"
           @clear-selection="clearSelection">
@@ -105,7 +104,6 @@
             </t-popconfirm>
           </template>
         </BusinessListToolbar>
-      </div>
 
       <!-- 合同列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -250,7 +248,7 @@
                     <t-input v-model="editForm.contract_name" placeholder="" />
                   </t-form-item>
                   <t-form-item label="合同类型" label-width="110px">
-                    <t-select v-model="editForm.contract_type" :options="contractTypeRaw" clearable filterable
+                    <t-select v-model="editForm.contract_type" :options="contractTypeRaw" clearable filterable allow-create
                       placeholder="选择类型" />
                   </t-form-item>
                   <t-form-item label="签订日期" label-width="110px">
@@ -524,6 +522,23 @@ const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
   { key: 'paymentMethod', label: '付款方式', default: false, w: '1fr' },
   { key: 'handler', label: '经办人', default: false, w: '0.9fr' },
   { key: 'department', label: '部门', default: false, w: '0.9fr' },
+  // 详情字段（默认不占列表宽度，与编辑抽屉表单同源，可在字段筛选器中开启）
+  { key: 'signPlace', label: '签订地点', default: false, w: '1.2fr' },
+  { key: 'partyAAddress', label: '甲方地址', default: false, w: '1.6fr' },
+  { key: 'partyAPhone', label: '甲方电话', default: false, w: '1fr' },
+  { key: 'partyABank', label: '甲方开户行', default: false, w: '1.4fr' },
+  { key: 'partyAAccount', label: '甲方账号', default: false, w: '1.3fr' },
+  { key: 'partyBAddress', label: '乙方地址', default: false, w: '1.6fr' },
+  { key: 'partyBPhone', label: '乙方电话', default: false, w: '1fr' },
+  { key: 'partyBBank', label: '乙方开户行', default: false, w: '1.4fr' },
+  { key: 'partyBAccount', label: '乙方账号', default: false, w: '1.3fr' },
+  { key: 'qualityBond', label: '质保金', default: false, w: '1fr' },
+  { key: 'liquidatedDamages', label: '违约金', default: false, w: '1fr' },
+  { key: 'subject', label: '合同标的', default: false, w: '1.6fr' },
+  { key: 'quantity', label: '数量', default: false, w: '0.7fr' },
+  { key: 'unitPrice', label: '单价', default: false, w: '1fr' },
+  { key: 'performancePeriod', label: '履行期限', default: false, w: '1.2fr' },
+  { key: 'remark', label: '备注', default: false, w: '1.6fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
 const {
@@ -649,6 +664,10 @@ const listLoading = ref(false)
 const loadingMore = ref(false)
 const page = ref(1)
 const hasMore = ref(true)
+// 请求序号（黄金基准发票同款）：类型/筛选切换会 reset 并作废旧的在途请求，
+// 旧筛选响应返回时按序号丢弃，避免轮询/翻页的旧数据污染新筛选结果。
+let listSeq = 0
+let loadTimer: ReturnType<typeof setTimeout> | null = null
 const keyword = ref('')
 const filterContractType = ref('')
 const filterFulfillStatus = ref('')
@@ -661,10 +680,8 @@ const contractTypeRaw = computed<Array<{ value: string; label: string }>>(() => 
   const base = catNames.length ? catNames : kbTypes.value
   return base.map((v: string) => ({ value: v, label: v }))
 })
-// 工具栏筛选下拉：首项「全部合同」（value ''= 不过滤），其后为实际类型
-const contractTypeOptions = computed<Array<{ value: string; label: string }>>(
-  () => [{ value: '', label: '全部合同' }, ...contractTypeRaw.value],
-)
+// 工具栏筛选下拉（六同步：与发票基准一致，只列具体分类、无聚合项，始终选中一项、禁清空）
+const contractTypeOptions = computed<Array<{ value: string; label: string }>>(() => contractTypeRaw.value)
 const dateRange = ref<Array<string>>([])
 
 // 列显隐
@@ -817,14 +834,26 @@ const onTagManageChanged = () => {
 // ---- 列表加载（合同级聚合列表，懒加载分页） ----
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
+  // 防重检查必须在 ++listSeq 之前：非 reset（翻页/onTick 轮询）若在 reset 请求进行中空转，
+  // 绝不能递增请求序号，否则进行中的 reset 请求会被误判为「过期响应」而丢弃，
+  // 其 finally 不再清理 listLoading、超时 timer 回调也因 seq 不匹配而失效 → 永久转圈。
+  if (!reset && (listLoading.value || loadingMore.value)) return
+  const mySeq = ++listSeq
   if (reset) {
+    // reset（类型/筛选切换/手动刷新）接管并重置超时计时器
+    if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
     page.value = 1
     contractRows.value = []
     items.value = []
     hasMore.value = true
     listLoading.value = true
-  } else if (listLoading.value || loadingMore.value) {
-    return
+    loadTimer = setTimeout(() => {
+      if (listLoading.value && mySeq === listSeq) {
+        listLoading.value = false
+        loadingMore.value = false
+        MessagePlugin.warning('列表加载超时，请稍后重试')
+      }
+    }, 15000)
   } else {
     loadingMore.value = true
   }
@@ -838,6 +867,8 @@ const loadFiles = async (reset = false) => {
       page: page.value,
       page_size: PAGE_SIZE,
     })
+    // 过期响应丢弃：此期间列表已按新筛选重置，旧结果（如轮询/翻页的旧类型数据）不得混入
+    if (mySeq !== listSeq) return
     const data = res?.data || res?.list || []
     const arr = Array.isArray(data) ? data : []
     const total = Number(res?.total || arr.length || 0)
@@ -852,10 +883,15 @@ const loadFiles = async (reset = false) => {
     hasMore.value = contractRows.value.length < total
     if (hasMore.value) page.value += 1
   } catch (e: any) {
+    if (mySeq !== listSeq) return
     MessagePlugin.error(e?.message || '合同列表加载失败')
   } finally {
-    listLoading.value = false
-    loadingMore.value = false
+    if (loadTimer && mySeq === listSeq) { clearTimeout(loadTimer); loadTimer = null }
+    // 仅最新请求可清理 loading 标志；过期响应保持其父请求的进行中状态
+    if (mySeq === listSeq) {
+      listLoading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
@@ -1084,13 +1120,15 @@ const clearSelectionSafe = () => {
 }
 // 搜索态：关键词非空时类型下拉可临时清空（全局搜索优先）
 const searchActive = computed(() => !!keyword.value.trim())
-// 类型筛选锁定（发票基准 Q4 同款）：始终保证有一项被选中（含「全部合同」''）；
-// 搜索态放行（由 keyword watch 负责临时清空与恢复）；当前选中项合法则保留（含路由/上传回填）
+// 类型筛选锁定（发票基准同款）：始终保证有一项具体分类被选中（禁清空）；
+// 搜索态放行（由 keyword watch 负责临时清空与恢复）；当前选中项合法则保留（含路由/上传回填），
+// 否则按分类顺序选中第一个启用分类。
 const ensureContractType = () => {
   if (searchActive.value) return
   const valid = new Set(contractTypeOptions.value.map((o) => o.value))
-  if (valid.has(filterContractType.value)) return
-  filterContractType.value = ''
+  if (filterContractType.value && valid.has(filterContractType.value)) return
+  const cats = contractCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
+  filterContractType.value = (cats.length ? cats[0] : contractTypeOptions.value[0]?.value) || ''
 }
 // 类型切换：清空多选（防跨类型脏数据残留）+ 重建当前分类列 + 立即刷新列表（发票基准同款）
 watch(filterContractType, () => {
@@ -1170,7 +1208,7 @@ const uploadVisible = ref(false)
 const contractCats = ref<any[]>([])
 const uploadTypeOptions = computed(() => {
   const cats = contractCats.value.filter((c: any) => c.enabled !== false)
-  if (!cats.length) return [{ label: '合同', value: 'contract__合同' }]
+  if (!cats.length) return [{ label: '服务合同', value: 'contract__服务合同' }]
   return cats.map((c: any) => ({ label: c.name, value: `contract__${c.name}` }))
 })
 const loadContractCats = async () => {
@@ -1179,12 +1217,12 @@ const loadContractCats = async () => {
     const cats = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
     contractCats.value = cats
   } catch { contractCats.value = [] }
-  // 六同步：分类重载后若当前选中项已失效（禁用/改名/删除），回退「全部合同」
+  // 六同步：分类重载后若当前选中项已失效（禁用/改名/删除），回退第一个启用分类
   ensureContractType()
 }
 const onUploadDone = async (typeName?: string) => {
-  // 上传完成刷新列表（合同记录的类型为 OCR 提取的业务类型，与上传所选的字段分类无直接映射，
-  // 不切换类型筛选，避免切到「合同」分类导致列表被过滤为空）
+  // 上传完成刷新列表（合同记录的 contract_type 为 OCR 提取的业务类型，与上传所选字段分类不强制映射，
+  // 不主动切换类型筛选，避免提取结果与分类名不一致时列表被过滤为空）
   await loadFiles(true)
 }
 
@@ -1231,46 +1269,6 @@ const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'contract', notLabel: '非合同',
 })
-
-// 刷新合同级列表（合并更新已加载行，提取完成的新数据实时出现）
-let contractRefreshBusy = false
-const refreshContractRows = async () => {
-  if (!kbId.value || contractRefreshBusy) return
-  contractRefreshBusy = true
-  try {
-    const res: any = await listContractRecords(kbId.value, {
-      q: keyword.value || undefined,
-      contract_type: filterContractType.value || undefined,
-      date_from: dateRange.value?.[0] || undefined,
-      date_to: dateRange.value?.[1] || undefined,
-      page: 1,
-      page_size: Math.max(contractRows.value.length, PAGE_SIZE),
-    })
-    const data = res?.data || res?.list || []
-    const arr = Array.isArray(data) ? data : []
-    const total = Number(res?.total || arr.length || 0)
-    contractSummary.value = {
-      total,
-      sumAmount: Number(res?.sum_amount || 0),
-      sumTotal: Number(res?.sum_total || 0),
-    }
-    const byKey = new Map(contractRows.value.map(r => [r.rowKey, r]))
-    const fresh: ContractRow[] = []
-    for (const r of arr) {
-      const row = mapContractRecord(r)
-      const old = byKey.get(row.rowKey)
-      if (old) {
-        // 已存在行：合并最新字段（提取完成后从空变有值）
-        const idx = contractRows.value.findIndex(x => x.rowKey === row.rowKey)
-        if (idx >= 0) contractRows.value[idx] = { ...old, ...row }
-      } else {
-        fresh.push(row)
-      }
-    }
-    if (fresh.length) contractRows.value = [...fresh, ...contractRows.value]
-  } catch { /* 合同列表刷新失败静默 */ }
-  finally { contractRefreshBusy = false }
-}
 
 
 // ---- 详情抽屉 ----
@@ -1717,7 +1715,7 @@ const reloadColumns = async (force = false) => {
       }
       lastColType.value = filterContractType.value
     }
-    // 类型筛选锁定：分类重载后若当前选中项已失效（被禁用/改名），回退「全部合同」
+    // 类型筛选锁定：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用分类
     ensureContractType()
   } catch { /* 后端未配置时回退内置默认 */ }
 }
@@ -1765,18 +1763,12 @@ onBeforeUnmount(() => {
 
 .contract-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
-/* ---- 筛选工具栏 ---- */
-.doc-filter-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  &__leading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
-  .doc-filter-field {
-    display: flex; align-items: center;
-    &--search { min-width: 220px; }
-    &--wide { min-width: 260px; }
-    .doc-search { width: 220px; }
-    .doc-type-select { width: 130px; }
-    .doc-date-range { width: 260px; }
-  }
+/* ---- 工具栏 #type-extra 插槽内的履约状态/日期控件 ---- */
+.doc-filter-field {
+  display: flex; align-items: center;
+  &--wide { min-width: 260px; }
+  .doc-type-select { width: 130px; }
+  .doc-date-range { width: 260px; }
 }
 
 /* ---- 字段筛选弹层 ---- */

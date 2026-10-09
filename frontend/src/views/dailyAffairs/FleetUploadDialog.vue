@@ -105,11 +105,16 @@ const dragOver = ref(false)
 const tasks = ref<UpTask[]>([])
 let taskSeq = 0
 
-// 发票 scope（invoice）复用车队上传弹窗：文案与提取接口差异化
+// 发票 scope（invoice）/合同 scope（contract）复用车队上传弹窗：文案与提取接口差异化
 const isInvoice = computed(() => props.scope === 'invoice')
-const dialogTitle = computed(() => props.title || (isInvoice.value ? '上传发票' : '上传证照'))
-const typeFieldLabel = computed(() => (isInvoice.value ? '发票类型' : '证照类型'))
-const typeTip = computed(() => (isInvoice.value ? '选择发票类型，上传后按所选类型归档归类' : '必须选择证照类型，上传后按所选类型归类提取'))
+const isContract = computed(() => props.scope === 'contract')
+const dialogTitle = computed(() => props.title || (isInvoice.value ? '上传发票' : isContract.value ? '上传合同' : '上传证照'))
+const typeFieldLabel = computed(() => (isInvoice.value ? '发票类型' : isContract.value ? '合同类型' : '证照类型'))
+const typeTip = computed(() => (isInvoice.value
+  ? '选择发票类型，上传后按所选类型归档归类'
+  : isContract.value
+    ? '选择合同类型，上传后按所选类型归类提取'
+    : '必须选择证照类型，上传后按所选类型归类提取'))
 
 // 证照类型选项必须响应式：父组件 uploadTypeOptions 随分类加载/设置变更更新，
 // 若用一次性求值会冻结为初始快照（分类尚未加载时只有内置类型，自定义类型缺失）
@@ -176,7 +181,7 @@ function onDrop(e: DragEvent) {
 function addFiles(files: File[]) {
   if (!props.kbId) { MessagePlugin.warning('知识库尚未就绪'); return }
   // 必选类型：发票 scope 必须先选发票类型（防误分类），车队必须先选证照类型
-  if (!selectedType.value) { MessagePlugin.warning(isInvoice.value ? '请先选择发票类型' : '请先选择证照类型'); return }
+  if (!selectedType.value) { MessagePlugin.warning(isInvoice.value ? '请先选择发票类型' : isContract.value ? '请先选择合同类型' : '请先选择证照类型'); return }
   const allowed = /\.(pdf|png|jpg|jpeg|webp|bmp)$/i
   for (const f of files) {
     if (!allowed.test(f.name)) { MessagePlugin.warning(`${f.name} 类型不支持，已跳过`); continue }

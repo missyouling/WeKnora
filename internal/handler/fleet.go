@@ -1593,6 +1593,55 @@ func (h *FleetHandler) DeleteFleetETCCard(c *gin.Context) {
 
 var _ = time.Now
 
+// contractSeedSubs 合同内置分类（服务合同/租赁合同）完整字段集（35 项 = 31 业务字段 + 4 系统字段），
+// 与前端 DEFAULT_CONTRACT_COLUMNS、编辑抽屉表单、ExtractRulePanel 合同底稿三处同源。
+// 新增字段必须同步三处；系统字段：extractStatus/tags/fulfillStatus（派生）/fileName。
+func contractSeedSubs() []types.FleetCategorySub {
+	return []types.FleetCategorySub{
+		// 合同信息
+		{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
+		{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "signPlace", Enabled: true, IsDefault: false, DataType: "text"},
+		// 甲方
+		{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyAAddress", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyAPhone", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyABank", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyAAccount", Enabled: true, IsDefault: false, DataType: "text"},
+		// 乙方
+		{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyBAddress", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyBPhone", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyBBank", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "partyBAccount", Enabled: true, IsDefault: false, DataType: "text"},
+		// 金额
+		{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "qualityBond", Enabled: true, IsDefault: false, DataType: "number"},
+		{Name: "liquidatedDamages", Enabled: true, IsDefault: false, DataType: "number"},
+		// 项目内容
+		{Name: "subject", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "quantity", Enabled: true, IsDefault: false, DataType: "number"},
+		{Name: "unitPrice", Enabled: true, IsDefault: false, DataType: "number"},
+		{Name: "performancePeriod", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		// 系统字段
+		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+	}
+}
+
 // seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
 // 记录 tenant_id=0（全局共享），subs.name 为前端 row 的 camelCase key，data_type 标注类型。
 func (h *FleetHandler) seedBusinessCategories() {
@@ -1604,69 +1653,6 @@ func (h *FleetHandler) seedBusinessCategories() {
 		SortOrder  int
 		Subs       []types.FleetCategorySub
 	}{
-		{"contract", "合同", "contract", 0, []types.FleetCategorySub{
-			{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-			{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
-			{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
-		}},
-		{"contract", "服务合同", "contract-service", 1, []types.FleetCategorySub{
-			{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-			{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
-			{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
-		}},
-		{"contract", "租赁合同", "contract-lease", 2, []types.FleetCategorySub{
-			{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-			{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
-			{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
-		}},
 		{"invoice", "普通发票", "invoice-common", 1, []types.FleetCategorySub{
 			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
@@ -1749,35 +1735,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 		}
 	}
 
-	// 存量 contract 分类幂等补齐 fulfillStatus 默认表头（履约状态为系统派生列，默认开启显示，与前端 default 一致）
-	var ctSeeds []types.FleetCategory
-	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key = ? AND deleted_at IS NULL",
-		"contract", "contract").Find(&ctSeeds).Error; err == nil {
-		for i := range ctSeeds {
-			subs := ctSeeds[i].Subs
-			changed := false
-			for j := range subs {
-				if subs[j].Name == "fulfillStatus" && !subs[j].IsDefault {
-					subs[j].IsDefault = true
-					changed = true
-				}
-			}
-			if !changed {
-				continue
-			}
-			raw, merr := json.Marshal(subs)
-			if merr != nil {
-				logger.Warnf(ctx, "backfill contract fulfillStatus is_default marshal failed: %v", merr)
-				continue
-			}
-			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("id = ?", ctSeeds[i].ID).
-				Update("subs", gorm.Expr("?::jsonb", string(raw))).Error; err != nil {
-				logger.Warnf(ctx, "backfill contract fulfillStatus is_default failed: %v", err)
-			} else {
-				logger.Infof(ctx, "backfilled contract category %q fulfillStatus is_default", ctSeeds[i].Name)
-			}
-		}
-	}
+	// 合同内置分类（服务合同/租赁合同）走专门的名称协调逻辑，兼容历史脏数据：
+	// 早期笼统「合同」分类退役、服务合同曾复用 builtin_key=contract、用户自建同名分类收编。
+	h.reconcileContractCategories(ctx)
+
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
 		types.FleetCategoryScopeInvoice, []string{"invoice-common", "invoice-vat"}).Find(&invSeeds).Error; err == nil {
@@ -1806,6 +1767,124 @@ func (h *FleetHandler) seedBusinessCategories() {
 			} else {
 				logger.Infof(ctx, "backfilled invoice category %q items field", invSeeds[i].Name)
 			}
+		}
+	}
+}
+
+// reconcileContractCategories 协调合同内置分类（幂等，每次启动执行）。
+// 终态：内置仅「服务合同 contract-service(sort=0)」「租赁合同 contract-lease(sort=1)」两个分类，
+// 各挂 contractSeedSubs() 35 字段全集；早期笼统内置分类「合同」软删除。
+// 兼容三类历史脏数据：
+//  1. 早期服务合同复用 builtin_key=contract（id=seed-contract）——恢复并改锚为 contract-service；
+//  2. 用户在前端自建、与内置同名的分类（UUID、builtin_key 为空）——收编为内置行；
+//  3. 同名重复行——保留最优一行（未删除优先、锚点匹配优先），其余 live 行软删。
+func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
+	now := timeNowUTC()
+
+	// 1) 退役笼统「合同」分类：按名称精确匹配，避免误伤同名锚点不同的服务合同
+	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", "contract", "合同").
+		Update("deleted_at", now).Error; err != nil {
+		logger.Warnf(ctx, "retire legacy generic contract category failed: %v", err)
+	}
+
+	wanted := []struct {
+		Name string
+		Key  string
+		Sort int
+	}{
+		{"服务合同", "contract-service", 0},
+		{"租赁合同", "contract-lease", 1},
+	}
+	fullSubs := contractSeedSubs()
+
+	for _, w := range wanted {
+		// 查同名全部行（含软删；DeletedAt 为普通 *time.Time，无 GORM 自动软删作用域）
+		var rows []types.FleetCategory
+		if err := h.db.WithContext(ctx).
+			Where("tenant_id = 0 AND scope = ? AND name = ?", "contract", w.Name).
+			Find(&rows).Error; err != nil {
+			logger.Warnf(ctx, "reconcile contract category %q query failed: %v", w.Name, err)
+			continue
+		}
+
+		if len(rows) == 0 {
+			// 全新环境：直接创建内置分类
+			cat := types.FleetCategory{
+				ID:        "seed-contract-" + w.Key,
+				TenantID:  0,
+				Scope:     "contract",
+				GroupID:   "",
+				BuiltinKey: w.Key,
+				Name:      w.Name,
+				Subs:      fullSubs,
+				SortOrder: w.Sort,
+				Enabled:   true,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
+				logger.Warnf(ctx, "reconcile contract category %q create failed: %v", w.Name, err)
+			} else {
+				logger.Infof(ctx, "reconcile contract category %q created with %d subs", w.Name, len(fullSubs))
+			}
+			continue
+		}
+
+		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先
+		targetIdx := 0
+		for i := range rows {
+			cur, best := &rows[i], &rows[targetIdx]
+			curLive, bestLive := cur.DeletedAt == nil, best.DeletedAt == nil
+			if curLive && !bestLive {
+				targetIdx = i
+			} else if curLive == bestLive && cur.BuiltinKey == w.Key && best.BuiltinKey != w.Key {
+				targetIdx = i
+			}
+		}
+		target := rows[targetIdx]
+
+		// 同名重复的其它 live 行软删
+		for i := range rows {
+			if i == targetIdx || rows[i].DeletedAt != nil {
+				continue
+			}
+			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+				Where("id = ?", rows[i].ID).Update("deleted_at", now).Error; err != nil {
+				logger.Warnf(ctx, "reconcile contract category %q dedup failed: %v", w.Name, err)
+			}
+		}
+
+		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
+		subs := target.Subs
+		have := make(map[string]bool, len(subs))
+		for _, s := range subs {
+			have[s.Name] = true
+		}
+		for _, f := range fullSubs {
+			if !have[f.Name] {
+				subs = append(subs, f)
+				have[f.Name] = true
+			}
+		}
+		raw, merr := json.Marshal(subs)
+		if merr != nil {
+			logger.Warnf(ctx, "reconcile contract category %q marshal failed: %v", w.Name, merr)
+			continue
+		}
+		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("id = ?", target.ID).
+			Updates(map[string]any{
+				"deleted_at": nil, // 恢复被误软删的行
+				"builtin_key": w.Key,
+				"sort_order":  w.Sort,
+				"enabled":     true,
+				"subs":        gorm.Expr("?::jsonb", string(raw)),
+				"updated_at":  now,
+			}).Error; err != nil {
+			logger.Warnf(ctx, "reconcile contract category %q update failed: %v", w.Name, err)
+		} else {
+			logger.Infof(ctx, "reconcile contract category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
 		}
 	}
 }
