@@ -755,7 +755,7 @@ import {
   listKnowledgeFiles,
   uploadKnowledgeFile,
   getKnowledgeDetails,
-  updateKnowledgeMetadata,
+  updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractUtilityBill,
@@ -1179,7 +1179,7 @@ const onFileInputChange = async (e: Event) => {
           let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
           // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
           if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-          await updateKnowledgeMetadata(kid, { custom_metadata: { ...meta, bill_kind: 'electricity' } })
+          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'electricity' })
         } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
       }
       // 解析完成后由轮询自动触发提取
@@ -2066,7 +2066,8 @@ const saveEditForm = async () => {
       MessagePlugin.info('总账已按明细重算')
     }
     feeItemsSnapshot = JSON.stringify(updated.fee_items)
-    await updateKnowledgeMetadata(now.knowledgeId, nextMeta)
+    // records 等为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
+    await updateBusinessMetadata(kbId.value, now.knowledgeId, nextMeta)
     editFormSnapshot = JSON.stringify(editForm.value)
     // 同步列表行
     const listIdx = rows.value.findIndex((r: any) => r.rowKey === now.rowKey)

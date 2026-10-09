@@ -622,6 +622,11 @@ export function updateInvoiceMetadata(kbId: string, knowledgeId: string, customM
   return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata });
 }
 
+// 通用业务元数据保存（合同/规则/奖惩等数组型业务记录共用）：走同一二开持久化路由，绕过原生 custom_metadata 标量校验
+export function updateBusinessMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>) {
+  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata });
+}
+
 export function updateKnowledgeSummary(knowledgeId: string, description: string) {
   return put(`/api/v1/knowledge/${knowledgeId}`, { description });
 }

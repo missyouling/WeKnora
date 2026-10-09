@@ -391,7 +391,7 @@ import {
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
-  updateKnowledgeMetadata,
+  updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
@@ -1094,7 +1094,8 @@ const saveEditForm = async () => {
     const nextStatus = hasRegulationData ? 'success' : 'manual'
     const nextError = hasRegulationData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'regulation', regulations, extract_status: nextStatus, extract_error: nextError }
-    await updateKnowledgeMetadata(now.knowledgeId, newMeta)
+    // regulations 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
+    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑后列表立即刷新
     const listIdx = regulationRows.value.findIndex((r: any) => r.rowKey === now.rowKey)

@@ -512,6 +512,7 @@ import {
   uploadKnowledgeFile,
   getKnowledgeDetails,
   updateKnowledgeMetadata,
+  updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractSolarBill,
@@ -893,7 +894,7 @@ const onFileInputChange = async (e: Event) => {
           let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
           // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
           if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-          await updateKnowledgeMetadata(kid, { custom_metadata: { ...meta, bill_kind: 'solar' } })
+          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'solar' })
         } catch { /* 打标失败则文件保持未标记，轮询会自动补打标并提取 */ console.warn('[solar] 上传后打标失败，交由轮询自愈', f.name) }
       }
       // 解析完成后由轮询自动触发提取
@@ -912,7 +913,7 @@ const onFileInputChange = async (e: Event) => {
             if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
             const kind = meta?.kind || ''
             if (kind !== 'solar_bill') {
-              await updateKnowledgeMetadata(dupId, { custom_metadata: { ...meta, bill_kind: 'solar' } })
+              await updateBusinessMetadata(kbId.value, dupId, { ...meta, bill_kind: 'solar' })
               recovered = true
             }
           } catch { /* 恢复失败则仅提示已存在 */ }
@@ -1020,7 +1021,8 @@ const saveDetailField = async (f: any) => {
     } else {
       meta.records = [{ ...detailForm.value, gateways: currentRow.value.item?.gateways || [] }]
     }
-    await updateKnowledgeMetadata(kid, { custom_metadata: meta })
+    // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
+    await updateBusinessMetadata(kbId.value, kid, meta)
     currentRow.value.item = { ...(currentRow.value.item || {}), ...detailForm.value }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -1041,7 +1043,8 @@ const saveDetailFields = async () => {
     } else {
       meta.records = [{ ...detailForm.value, gateways: currentRow.value.item?.gateways || [] }]
     }
-    await updateKnowledgeMetadata(kid, { custom_metadata: meta })
+    // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
+    await updateBusinessMetadata(kbId.value, kid, meta)
     // 本地行同步
     currentRow.value.item = { ...(currentRow.value.item || {}), ...detailForm.value }
     MessagePlugin.success('已保存')
@@ -1142,7 +1145,8 @@ const saveFeeEdit = async () => {
     meta.records = meta.records || []
     if (meta.records.length) meta.records[0] = { ...(meta.records[0] || {}), gateways: it.value.gateways }
     else meta.records = [{ ...detailForm.value, gateways: it.value.gateways }]
-    await updateKnowledgeMetadata(kid, { custom_metadata: meta })
+    // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
+    await updateBusinessMetadata(kbId.value, kid, meta)
     currentRow.value.item = { ...currentRow.value.item, gateways: [...(it.value.gateways || [])] }
     MessagePlugin.success('已保存')
     feeEditVisible.value = false

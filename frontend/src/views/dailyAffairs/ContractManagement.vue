@@ -459,7 +459,7 @@ import {
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
-  updateKnowledgeMetadata,
+  updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
@@ -1420,7 +1420,8 @@ const saveContractDetail = async () => {
     const nextStatus = hasContractData ? 'success' : 'manual'
     const nextError = hasContractData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'contract', contracts, extract_status: nextStatus, extract_error: nextError }
-    await updateKnowledgeMetadata(now.knowledgeId, newMeta)
+    // 合同 contracts 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由（与发票同款）
+    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑后列表立即刷新
     const listIdx = contractRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
