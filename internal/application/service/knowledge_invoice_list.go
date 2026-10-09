@@ -225,7 +225,13 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 			continue
 		}
 		if filter.InvoiceType != "" {
-			if invoiceParentTypes[filter.InvoiceType] {
+			if filter.InvoiceType == "其它票据" {
+				// 「其它票据」为排除式桶：除普通发票/专用发票外的全部记录（含空/未知类型）
+				// 归入此筛选，与 InvoiceOverviewStats 的其它票据桶口径一致
+				if r.InvoiceType == "普通发票" || r.InvoiceType == "专用发票" {
+					continue
+				}
+			} else if invoiceParentTypes[filter.InvoiceType] {
 				if r.InvoiceType != filter.InvoiceType {
 					continue
 				}

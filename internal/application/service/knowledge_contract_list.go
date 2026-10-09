@@ -175,8 +175,16 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 	kept := records[:0]
 	var sumAmount, sumTotal float64
 	for _, r := range records {
-		if filter.ContractType != "" && r.ContractType != filter.ContractType {
-			continue
+		if filter.ContractType != "" {
+			// 「其它合同」为排除式桶：未匹配服务合同/租赁合同的记录（含空/未知类型）
+			// 归入此筛选，与 ContractOverviewStats 的其它合同桶口径一致
+			if filter.ContractType == "其它合同" {
+				if r.ContractType == "服务合同" || r.ContractType == "租赁合同" {
+					continue
+				}
+			} else if r.ContractType != filter.ContractType {
+				continue
+			}
 		}
 		if filter.FulfillStatus != "" && r.FulfillStatus != filter.FulfillStatus {
 			continue

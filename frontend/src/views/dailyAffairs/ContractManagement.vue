@@ -1129,7 +1129,8 @@ const searchActive = computed(() => !!keyword.value.trim())
 const ensureContractType = () => {
   if (searchActive.value) return
   const valid = new Set(contractTypeOptions.value.map((o) => o.value))
-  if (filterContractType.value && valid.has(filterContractType.value)) return
+  // 「其它合同」为排除式筛选态（不在分类下拉 options 中，点击其它合同卡进入），分类重载时须放行
+  if (filterContractType.value && (valid.has(filterContractType.value) || filterContractType.value === '其它合同')) return
   const cats = contractCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
   filterContractType.value = (cats.length ? cats[0] : contractTypeOptions.value[0]?.value) || ''
 }
@@ -1183,7 +1184,7 @@ const overviewCards = computed<KpiCard[]>(() => {
     const typeIcon = name === '租赁合同' ? 'file-copy' : 'file-1'
     cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: String(typeCount(name)), unit: '份', theme: 'neutral', action: 'type', typeValue: name })
   }
-  cards.push({ key: 'type-其它合同', label: '其它合同', icon: 'file-unknown', value: String(typeCount('其它合同')), unit: '份', theme: 'neutral', action: '' })
+  cards.push({ key: 'type-其它合同', label: '其它合同', icon: 'file-unknown', value: String(typeCount('其它合同')), unit: '份', theme: 'neutral', action: 'type', typeValue: '其它合同' })
   // 即将到期（未来 30 天内，全量口径）：warning 主题色警示
   cards.push({ key: 'expiring', label: '即将到期', icon: 'time', value: String(expiring), unit: '份', theme: 'warning', action: 'expiring' })
   // 历史记录（已上传文件，对齐发票基准 fileCount/failed）：异常文件数 sub 展示，点击打开已上传文件抽屉

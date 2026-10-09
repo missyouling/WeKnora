@@ -622,7 +622,7 @@ const overviewCards = computed(() => {
     const typeIcon = name === '专用发票' ? 'file-copy' : 'file-1'
     cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
-  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: '' })
+  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
   // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
   cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
@@ -1178,7 +1178,8 @@ const searchActive = computed(() => !!keyword.value.trim())
 const ensureInvoiceType = () => {
   if (searchActive.value) return
   const valid = new Set(invoiceTypeOptions.value.map((o) => o.value))
-  if (filterInvoiceType.value && valid.has(filterInvoiceType.value)) return
+  // 「其它票据」为排除式筛选态（不在分类下拉 options 中，点击其它票据卡进入），分类重载时须放行
+  if (filterInvoiceType.value && (valid.has(filterInvoiceType.value) || filterInvoiceType.value === '其它票据')) return
   const cats = invoiceCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
   filterInvoiceType.value = (cats.length ? cats[0] : invoiceTypeOptions.value[0]?.value) || ''
 }
