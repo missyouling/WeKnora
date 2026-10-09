@@ -68,17 +68,13 @@
                 重新提取
               </t-button>
             </t-popconfirm>
-            <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-              <template #icon><t-icon name="edit" size="14px" /></template>
-              编辑数据
-            </t-button>
             <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
               <template #icon><t-icon name="print" size="14px" /></template>
-              打印
+              单页打印
             </t-button>
             <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
               <template #icon><t-icon name="file-paste" size="14px" /></template>
-              目录
+              列表打印
             </t-button>
             <!-- 删除确认：单气泡内嵌二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
             <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
@@ -226,15 +222,15 @@
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab，黄金基准 StandardSettingDrawer） -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'contract'"
-      kb-name="日常事务-合同" title="合同设置" @saved="reloadColumns" />
+      kb-name="日常事务-合同" title="合同设置" @saved="() => reloadColumns(true)" />
 
     <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="contract" title="上传合同"
       :type-options="uploadTypeOptions" @done="onUploadDone" />
 
-    <!-- 删除历史（自动删除的非合同记录） -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="合同"
-      @changed="loadFiles(true)" @restored="onRestored" />
+    <!-- 历史记录（对齐发票基准：已上传文件抽屉，展示解析/提取状态与合同类型） -->
+    <FleetUploadHistoryDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" scope="contract"
+      @changed="onUploadHistoryChanged" />
 
 
     <!-- 合同详情抽屉（竖向区块，可拖宽，上下滚动） -->
@@ -473,16 +469,13 @@ import {
   listContractRecords,
   previewKnowledgeFile,
   reparseKnowledge,
-  listDeletedKnowledge,
-  restoreDeletedKnowledge,
-  purgeDeletedKnowledge,
   getRecognitionConfig,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
@@ -729,7 +722,7 @@ const loadKb = async () => {
       await loadContractCats()
       await cleanNonContractFiles()
       await loadFiles()
-      loadDeletedCount()
+      loadUploadStats()
       startPolling()
     }
   } catch (e: any) {
@@ -747,7 +740,7 @@ const onKbCreated = async (kb: any) => {
     await loadContractCats()
     await cleanNonContractFiles()
     await loadFiles()
-    loadDeletedCount()
+    loadUploadStats()
     startPolling()
   }
 }
@@ -1099,9 +1092,10 @@ const ensureContractType = () => {
   if (valid.has(filterContractType.value)) return
   filterContractType.value = ''
 }
-// 类型切换：清空多选（防跨类型脏数据残留）+ 立即刷新列表
+// 类型切换：清空多选（防跨类型脏数据残留）+ 重建当前分类列 + 立即刷新列表（发票基准同款）
 watch(filterContractType, () => {
   clearSelectionSafe()
+  reloadColumns()
   applyFilter()
 })
 // 履约状态筛选（前端派生过滤）：切换时清空多选残留并重载列表
@@ -1145,8 +1139,9 @@ const overviewCards = computed<KpiCard[]>(() => {
   // 即将到期（未来 30 天内）：warning 主题色警示
   const expiring = rows.filter(r => calcFulfillStatus(r.expiryDate) === '即将到期').length
   cards.push({ key: 'expiring', label: '即将到期', icon: 'time', value: String(expiring), unit: '份', theme: 'warning', action: 'expiring' })
-  // 历史记录（已删除文件，对齐发票页历史记录卡片）
-  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: String(deletedCount.value), unit: '份', theme: 'neutral', action: 'history' })
+  // 历史记录（已上传文件，对齐发票基准 fileCount/failed）：异常文件数 sub 展示，点击打开已上传文件抽屉
+  const hs = uploadStats.value
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: String(hs.total), unit: '份', sub: hs.failed ? `${hs.failed} 份异常` : '无异常文件', theme: hs.failed > 0 ? 'warning' : 'neutral', action: 'history' })
   return cards
 })
 // 卡片点击联动（发票基准同款 action 分流：类型卡切筛选；即将到期卡切履约筛选；历史记录卡开抽屉）
@@ -1193,15 +1188,25 @@ const onUploadDone = async (typeName?: string) => {
   await loadFiles(true)
 }
 
-// 历史记录（已删除文件）计数：KPI「历史记录」卡数据源（后端 data 为分页对象 {data,total}）
-const deletedCount = ref(0)
-const loadDeletedCount = async () => {
+// 历史记录（已上传文件）计数：KPI「历史记录」卡数据源（对齐发票基准 fileCount/failed，
+// 前端轻量聚合：文件总数 + 解析/提取异常数，异常数按已加载页统计）
+const uploadStats = ref<{ total: number; failed: number }>({ total: 0, failed: 0 })
+const loadUploadStats = async () => {
   if (!kbId.value) return
   try {
-    const res: any = await listDeletedKnowledge(kbId.value, { page: 1, page_size: 1 })
-    const d = res?.data || {}
-    deletedCount.value = Number(d?.total ?? res?.total ?? 0)
-  } catch { deletedCount.value = 0 }
+    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
+    const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+    const total = Number(res?.total ?? arr.length ?? 0)
+    const failed = arr.filter((it: any) =>
+      it.parse_status === 'failed' || (it.custom_metadata || {}).extract_status === 'failed'
+    ).length
+    uploadStats.value = { total, failed }
+  } catch { uploadStats.value = { total: 0, failed: 0 } }
+}
+// 历史记录抽屉变更（删除/重新解析）后同步刷新列表与卡片计数
+const onUploadHistoryChanged = async () => {
+  await loadFiles(true)
+  loadUploadStats()
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
@@ -1294,28 +1299,6 @@ const openDetail = async (row: ContractRow) => {
 const detailTitle = computed(() =>
   currentRow.value?.contractNo ? `合同详情 · ${currentRow.value.contractNo}` : '合同详情'
 )
-
-// ---- 重新入库（恢复）后自动打开编辑抽屉 ----
-const onRestored = async (knowledgeId: string) => {
-  await loadFiles(true)
-  const row = contractRows.value.find((r: any) => r.knowledgeId === knowledgeId)
-  if (row) {
-    openDetail(row)
-  } else {
-    // 列表可能因分页/懒加载未包含该行，用最小占位行打开编辑抽屉补录字段
-    openDetail({
-      rowKey: `manual-${knowledgeId}`,
-      knowledgeId,
-      fileName: '',
-      parseStatus: 'completed',
-      extractStatus: 'manual',
-      kind: 'contract',
-      tags: [],
-      description: '',
-      page: 0,
-    } as ContractRow)
-  }
-}
 
 // ---- 字段编辑 + 手动保存（黄金基准发票同款：底部「保存/取消」统一提交） ----
 const fillEditForm = () => {
@@ -1509,15 +1492,6 @@ const handleReExtract = async () => {
   }
 }
 
-const handleBatchEdit = () => {
-  const rows = selectedRows.value
-  if (rows.length !== 1) {
-    MessagePlugin.info('请选中单行后编辑，或点击列表中的合同行进入编辑')
-    return
-  }
-  openDetail(rows[0])
-}
-
 // 打印：合同一个文件一般只有一份合同，打印预览整个文档（含多页），
 // 支持跨文件任意组合合并为一个 PDF，单 iframe 预览打印。
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
@@ -1702,21 +1676,49 @@ const confirmFileDelete = async () => {
 }
 
 // ---- 生命周期 ----
-// 六同步：字段/分类配置变更后重建动态列（与发票基准一致）
-const onCategoriesChanged = () => { reloadColumns() }
-// 从后端 categories（scope=contract）重建动态列；无配置时回退内置默认
-const reloadColumns = async () => {
+// 六同步：字段/分类配置变更后重建动态列 + 重载分类（KPI 类型卡/工具栏下拉/编辑抽屉类型下拉/
+// 上传弹窗分类六处同源）+ 刷新记录（KPI 计数来自列表数据），与发票基准一致
+const onCategoriesChanged = () => {
+  reloadColumns(true)
+  loadContractCats()
+  loadFiles(true)
+}
+// 从后端 categories（scope=contract）重建动态列；无配置时回退内置默认。
+// 列按「当前选中分类」的字段配置生成（六同步：列表/字段筛选器/编辑抽屉/打印同源），
+// 多分类下切换类型时列表列跟随当前分类（不再假设单一「合同」分类）。
+const lastColType = ref('')
+const reloadColumns = async (force = false) => {
   try {
-    const res: any = await listFleetCategories({ scope: 'contract' })
-    const cats = res?.data || []
-    if (cats[0]?.subs?.length) {
-      customColumns.value = cats[0].subs
+    // 分类缓存：切换类型时直接用已拉取的分类重建列（省一次请求、切换更快）；
+    // 仅首次进入或设置保存/六同步事件（force=true）时重新请求后端
+    let cats: any[] = force ? [] : contractCats.value
+    if (!cats || !cats.length) {
+      const res: any = await listFleetCategories({ scope: 'contract' })
+      cats = res?.data || []
+      contractCats.value = cats
+    }
+    const curCat = cats.find((c: any) => c.name === filterContractType.value && c.enabled !== false)
+    const baseCat = curCat || cats[0]
+    if (baseCat?.subs?.length) {
+      customColumns.value = baseCat.subs
         .filter((s: any) => s.enabled !== false)
         .map((s: any) => {
           const builtin = DEFAULT_CONTRACT_COLUMNS.find((b: any) => b.key === s.name)
           return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
         })
+      // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。
+      // 首轮加载（lastColType 为空）时保留用户既有 localStorage 存档，但若存档缺当前分类
+      // 的默认列则补齐当前分类默认列（发票基准同款门控）
+      if (!lastColType.value) {
+        const defaults = customColumns.value.filter((c: any) => c.default).map((c: any) => c.key)
+        if (defaults.some((k: string) => !visibleColKeys.value.includes(k))) resetColumns()
+      } else if (force || lastColType.value !== filterContractType.value) {
+        resetColumns()
+      }
+      lastColType.value = filterContractType.value
     }
+    // 类型筛选锁定：分类重载后若当前选中项已失效（被禁用/改名），回退「全部合同」
+    ensureContractType()
   } catch { /* 后端未配置时回退内置默认 */ }
 }
 onMounted(() => {

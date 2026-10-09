@@ -116,7 +116,7 @@ const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '84px' },
   { colKey: 'extract', title: '提取', width: '84px' },
-  { colKey: 'docType', title: props.scope === 'invoice' ? '发票类型' : '证照类型', width: '110px' },
+  { colKey: 'docType', title: props.scope === 'invoice' ? '发票类型' : props.scope === 'contract' ? '合同类型' : '证照类型', width: '110px' },
   { colKey: 'createdAt', title: '上传时间', width: '160px' },
   { colKey: 'op', title: '操作', width: '48px' },
 ]
