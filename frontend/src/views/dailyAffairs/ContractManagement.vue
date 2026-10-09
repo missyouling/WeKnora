@@ -810,14 +810,29 @@ const openTagEdit = (row: ContractRow) => {
   tagDialogVisible.value = true
 }
 
-const tagTargetTags = computed(() => (tagTarget.value ? rowTags(tagTarget.value) : []))
+// 行内 tags 可能只携带标签名（后端返回字符串数组时被转为 { id: name }），
+// 打开弹窗时按 tagList 反查真实 id，保证已选回显与提交 id 正确（对齐发票基准）
+const tagTargetTags = computed(() => {
+  const tags = tagTarget.value ? rowTags(tagTarget.value) : []
+  return tags.map((t: any) => {
+    const hit = tagList.value.find((x: any) => String(x.id) === String(t.id) || x.name === t.name || x.name === t)
+    return hit ? { id: String(hit.id), name: String(hit.name || t.name || t) }
+      : { id: String(t.id ?? t.name ?? t), name: String(t.name ?? t) }
+  })
+})
 
 const onTagEditConfirm = async (tagIds: string[]) => {
   if (!tagTarget.value) return
   try {
-    await updateKnowledgeTagBatch({ updates: { [tagTarget.value.knowledgeId]: tagIds } })
+    // 兜底：混合传入的标签名/ID 统一反查真实 tag id（标签名会触发后端 400，对齐发票基准）
+    const realIds = tagIds.map(id => {
+      const hit = tagList.value.find((t: any) => String(t.id) === id || t.name === id)
+      return hit ? String(hit.id) : id
+    })
+    await updateKnowledgeTagBatch({ updates: { [tagTarget.value.knowledgeId]: realIds } })
     MessagePlugin.success('标签已更新')
     await loadFiles(true)
+    loadContractOverview()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '标签更新失败')
   }
