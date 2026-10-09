@@ -6,12 +6,6 @@
         <h2>合同管理</h2>
         <p class="header-subtitle">合同档案自动归档</p>
       </div>
-      <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="uploadVisible = true">
-          <template #icon><t-icon name="upload" /></template>
-          上传合同
-        </t-button>
-      </div>
     </div>
 
     <!-- 加载中 -->
@@ -33,7 +27,6 @@
       <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
-        <div class="doc-filter-bar__leading">
         <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
           :type-options="contractTypeOptions" v-model:type-value="filterContractType"
           primary-action-text="新建合同" @primary="wizardVisible = true"
@@ -57,16 +50,18 @@
             <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
           </template>
           <template #right-extra>
-            <t-tooltip content="删除历史" placement="bottom">
-              <t-button variant="outline" size="small" @click="historyVisible = true">
-                <template #icon><t-icon name="history" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
-            <t-tooltip content="设置" placement="bottom">
-              <t-button variant="outline" size="small" @click="settingsVisible = true">
-                <template #icon><t-icon name="setting" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
+            <t-button variant="outline" size="small" @click="historyVisible = true">
+              <template #icon><t-icon name="history" size="14px" /></template>
+              删除历史
+            </t-button>
+            <t-button variant="outline" size="small" @click="settingsVisible = true">
+              <template #icon><t-icon name="setting" size="14px" /></template>
+              设置
+            </t-button>
+            <t-button theme="primary" size="small" @click="uploadVisible = true">
+              <template #icon><t-icon name="upload" size="14px" /></template>
+              上传合同
+            </t-button>
           </template>
           <template #batch-actions>
             <t-popconfirm theme="warning"
@@ -119,7 +114,6 @@
             </t-popconfirm>
           </template>
         </BusinessListToolbar>
-        </div>
       </div>
 
       <!-- 合同列表（自绘 grid，可横向滚动，字段可配置） -->
@@ -240,7 +234,7 @@
       kb-name="日常事务-合同" title="合同设置" @saved="reloadColumns" />
 
     <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
-    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="contract"
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="contract" title="上传合同"
       :type-options="uploadTypeOptions" @done="onUploadDone" />
 
     <!-- 删除历史（自动删除的非合同记录） -->
@@ -669,7 +663,7 @@ const dateRange = ref<Array<string>>([])
 // 列显隐
 
 const tableColumns = computed(() => {
-  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 }, { colKey: 'serial-number', title: '', width: 44 }]
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   for (const c of visibleColDefs.value) {
     // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
@@ -1115,10 +1109,9 @@ const overviewCards = computed<KpiCard[]>(() => {
   const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const monthNew = rows.filter(r => (r.signDate || '').startsWith(monthPrefix)).length
   return [
-    { key: 'total', label: '合同总数', icon: 'file-copy', value: String(total), theme: 'brand' },
+    { key: 'total', label: '合同总数', icon: 'file-copy', value: String(total), sub: `本月新增 ${monthNew} 份`, theme: 'brand' },
     { key: 'amount', label: '合同金额', icon: 'money', value: sumAmount ? formatAmount(sumAmount) : '0.00', theme: 'success', numCls: 'num-sm' },
     { key: 'types', label: '合同类型', icon: 'view-module', value: String(typeSet.size), theme: 'warning' },
-    { key: 'month', label: '本月新增', icon: 'add-rectangle', value: String(monthNew), theme: 'neutral' },
   ]
 })
 // 轻量概览：点击卡片聚焦列表区（不承载视图跳转）

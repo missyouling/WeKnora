@@ -72,6 +72,8 @@ const props = defineProps<{
   scope: string
   typeOptions?: any[]
   defaultType?: string
+  /** 自定义弹窗标题；未传时按 scope 自动推断（invoice→上传发票，其它→上传证照） */
+  title?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -105,7 +107,7 @@ let taskSeq = 0
 
 // 发票 scope（invoice）复用车队上传弹窗：文案与提取接口差异化
 const isInvoice = computed(() => props.scope === 'invoice')
-const dialogTitle = computed(() => (isInvoice.value ? '上传发票' : '上传证照'))
+const dialogTitle = computed(() => props.title || (isInvoice.value ? '上传发票' : '上传证照'))
 const typeFieldLabel = computed(() => (isInvoice.value ? '发票类型' : '证照类型'))
 const typeTip = computed(() => (isInvoice.value ? '选择发票类型，上传后按所选类型归档归类' : '必须选择证照类型，上传后按所选类型归类提取'))
 
