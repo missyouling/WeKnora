@@ -112,7 +112,7 @@ func TestExtractInvoicesByLineRules_HitAll(t *testing.T) {
 	assert.Equal(t, "91500227MA5U54AJ0A", inv0.BuyerTaxNo)
 	assert.Equal(t, "测试购买方有限公司", inv0.BuyerName)
 	assert.Equal(t, "宋力", inv0.Issuer)
-	assert.Equal(t, "通行费", inv0.Category)
+	assert.Equal(t, "通行费发票", inv0.Category)
 	require.NotNil(t, inv0.Amount)
 	assert.InDelta(t, 225.98, *inv0.Amount, 0.001)
 	require.NotNil(t, inv0.TotalAmount)
