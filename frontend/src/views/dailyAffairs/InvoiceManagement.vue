@@ -606,30 +606,38 @@ const overviewCards = computed(() => {
   const extractFailed = Number(st.extract_failed || 0)
   const failed = parseFailed + extractFailed
   const fileCount = Number(st.file_count || 0)
-  const types: Array<{ invoice_type: string; count: number }> = st.by_invoice_type || []
-  const typeCount = (name: string) => types.find((t) => t.invoice_type === name)?.count || 0
+  // 分类统计：后端按 category 精确聚合（category 为空归「未分类」）
+  const catCount: Record<string, number> = {}
+  for (const c of (st.by_category || [])) catCount[String(c.category)] = Number(c.count) || 0
+  // 分类卡：以分类列表（categories[scope=invoice]）为权威源动态生成，
+  // 顺序 = 分类数组顺序；隐藏（enabled=false）的分类不出卡片（六同步：同时不出筛选下拉/上传选项）
+  const enabledCats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
   const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string; numCls?: string }> = [
-    { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: '' },
+    { key: 'total', label: '已收录发票', icon: 'file', value: `${total}`, unit: '张', sub: `本月新增 ${Number(m.count || 0)} 张`, cls: '', action: 'all' },
   ]
-  // 价税合计金额：超过 9 位（含符号 14 字符以上）时自动缩小字号、禁止换行，保证卡片不挤压
-  const fmtTotal = formatAmount(Number(st.sum_total || 0))
-  const totalNumCls = fmtTotal.length > 18 ? 'num-xs' : fmtTotal.length > 14 ? 'num-sm' : ''
-  cards.push({ key: 'sumTotal', label: '价税合计', icon: 'money', value: fmtTotal, unit: '', sub: `本月 ${formatAmount(Number(m.sum_total || 0))}`, cls: 'is-brand', action: '', numCls: totalNumCls })
-  // 类型分布卡：只显示内置票据类型（普通发票/专用发票），自定义分类（如电费发票）不作为卡片展示；
-  // 「其它票据」为排除式统计桶固定追加末尾。计数按类型名匹配后端统计桶，匹配不到缺省 0
-  const builtinTypeNames = ['普通发票', '专用发票']
-  for (const name of builtinTypeNames) {
-    const typeIcon = name === '专用发票' ? 'file-copy' : 'file-1'
-    cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: `${typeCount(name)}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: name })
+  let catSum = 0
+  for (const c of enabledCats) {
+    const cnt = catCount[String(c.name)] || 0
+    catSum += cnt
+    const typeIcon = c.name === '专用发票' ? 'file-copy' : c.name === '普通发票' ? 'file-1' : 'file'
+    cards.push({ key: `type-${c.name}`, label: c.name, icon: typeIcon, value: `${cnt}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: c.name })
   }
-  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${typeCount('其它票据')}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
+  // 「其它票据」为排除式统计桶：不在任何启用分类中的记录（含未分类/已停用分类存量），
+  // 仅当确实存在这类记录时（数量 > 0）才显示卡片；点击筛选未分类记录，可编辑后转移分类
+  const otherCount = Math.max(0, total - catSum)
+  if (otherCount > 0) {
+    cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${otherCount}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
+  }
   // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
   cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
 })
 const onOverviewCardClick = (card: any) => {
-  // 类型卡点击：联动列表类型筛选（watch(filterInvoiceType) 自动刷新）
-  if (card.action === 'type' && card.typeValue) {
+  // 「已收录发票」卡：清空类型筛选显示全部记录（与其它票据排除态一样为显式卡片动作）
+  if (card.action === 'all') {
+    filterInvoiceType.value = ''
+  } else if (card.action === 'type' && card.typeValue) {
+    // 类型卡点击：联动列表类型筛选（watch(filterInvoiceType) 自动刷新）
     filterInvoiceType.value = card.typeValue
   } else if (card.action === 'history') {
     // 待复核卡：打开已上传文件抽屉（全部文件，含解析/提取失败与非发票保留件）
@@ -895,9 +903,17 @@ const loadFiles = async (reset = false) => {
     loadingMore.value = true
   }
   try {
+    // 「其它票据」为排除式筛选：附上启用分类名集合，后端按 category 不属于该集合过滤，
+    // 与概览卡其它票据口径一致（否则会命中 invoice_type 非普通/专用的全部记录）
+    const knownCats = invoiceCats.value
+      .filter((c: any) => c.enabled !== false)
+      .map((c: any) => String(c.name))
+      .filter(Boolean)
     const res: any = await listInvoiceRecords(kbId.value, {
       q: keyword.value || undefined,
       invoice_type: filterInvoiceType.value || undefined,
+      known_categories: filterInvoiceType.value === '其它票据' && knownCats.length > 0
+        ? knownCats.join(',') : undefined,
       tax_rate: taxRateFilter.value === '' || taxRateFilter.value === null || taxRateFilter.value === undefined
         ? undefined : Number(taxRateFilter.value),
       date_from: dateRange.value?.[0] || undefined,
@@ -1180,6 +1196,9 @@ const ensureInvoiceType = () => {
   const valid = new Set(invoiceTypeOptions.value.map((o) => o.value))
   // 「其它票据」为排除式筛选态（不在分类下拉 options 中，点击其它票据卡进入），分类重载时须放行
   if (filterInvoiceType.value && (valid.has(filterInvoiceType.value) || filterInvoiceType.value === '其它票据')) return
+  // 空值 = 「全部」态（点击已收录发票卡进入）：与搜索态一样是显式卡片动作，
+  // 放行以避免被弹回第一个分类；工具栏下拉本身禁清空，用户无法手动进入此态
+  if (filterInvoiceType.value === '') return
   const cats = invoiceCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
   filterInvoiceType.value = (cats.length ? cats[0] : invoiceTypeOptions.value[0]?.value) || ''
 }
@@ -1458,6 +1477,9 @@ const saveEditForm = async () => {
       invoice_no: d.invoiceNo || '',
       invoice_date: d.invoiceDate || '',
       invoice_type: editForm.value.invoice_type || '',
+      // 归档分类与发票类型联动：列表筛选/概览卡按 category 精确匹配（本轮统一口径），
+      // 保存时必须同步，否则改类型后记录会从对应分类视图消失
+      category: editForm.value.invoice_type || '',
       total_amount: toNumber(d.totalAmount),
       amount: toNumber(d.amount),
       tax: toNumber(d.tax),
@@ -1493,10 +1515,14 @@ const saveEditForm = async () => {
       const prevType = String((invoices[targetIdx] as any)?.invoice_type || '')
       const nextType = String(updated.invoice_type || '')
       // 同文件级联：发票类型实质性变更时，将该文件（同一 knowledge 的 invoices 数组）下
-      // 所有发票的类型同步为最新值（对齐标签行级同步逻辑；保存整包写回天然原子）
+      // 所有发票的类型同步为最新值（对齐标签行级同步逻辑；保存整包写回天然原子）。
+      // category 与 invoice_type 联动更新，保证概览卡（category 精确）与列表口径一致。
       if (nextType && nextType !== prevType) {
         invoices.forEach((inv: any, i: number) => {
-          if (i !== targetIdx) inv.invoice_type = nextType
+          if (i !== targetIdx) {
+            inv.invoice_type = nextType
+            inv.category = nextType
+          }
         })
       }
       invoices[targetIdx] = { ...invoices[targetIdx], ...updated, page: nowPage || invoices[targetIdx]?.page }
@@ -1509,7 +1535,16 @@ const saveEditForm = async () => {
       Number(inv.amount) > 0 || Number(inv.total_amount) > 0)
     const nextStatus = hasInvoiceData ? 'success' : 'manual'
     const nextError = hasInvoiceData ? '' : '人工入库待编辑，请补充字段'
-    const newMeta = { ...meta, kind: 'invoice', invoices, extract_status: nextStatus, extract_error: nextError }
+    // 文件级归档分类同步为最新发票类型：列表平铺以文件级 fleet_cert_type 为优先
+    // （见后端 ListInvoiceRecords cat 取值），不同步会导致改类型后仍按旧分类展示
+    const newMeta = {
+      ...meta,
+      kind: 'invoice',
+      invoices,
+      fleet_cert_type: editForm.value.invoice_type || '',
+      extract_status: nextStatus,
+      extract_error: nextError,
+    }
     await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑（如备注）后列表立即刷新

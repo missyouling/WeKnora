@@ -29,17 +29,6 @@ type invoiceMetadata struct {
 	FleetCertType string `json:"fleet_cert_type"`
 }
 
-// invoiceParentTypes 票面大类枚举（汇总大类）：筛选值属于该集合时按票面类型
-// invoice_type 匹配（普通发票大类含通行费/电费等细分记录）；否则视为细分分类，
-// 按记录归档分类 category 匹配（上传弹窗选择的票据类型）。
-var invoiceParentTypes = map[string]bool{
-	"普通发票": true,
-	"专用发票": true,
-	"医疗收据": true,
-	"财政收据": true,
-	"其它票据": true,
-}
-
 // ListInvoiceRecords 实现发票级聚合列表。步骤：
 //  1. 分页拉取知识库下全部 knowledge（含 tags）；
 //  2. 平铺每份文档的 invoices，附上源文件上下文；
@@ -226,18 +215,28 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 		}
 		if filter.InvoiceType != "" {
 			if filter.InvoiceType == "其它票据" {
-				// 「其它票据」为排除式桶：除普通发票/专用发票外的全部记录（含空/未知类型）
-				// 归入此筛选，与 InvoiceOverviewStats 的其它票据桶口径一致
-				if r.InvoiceType == "普通发票" || r.InvoiceType == "专用发票" {
-					continue
-				}
-			} else if invoiceParentTypes[filter.InvoiceType] {
-				if r.InvoiceType != filter.InvoiceType {
-					continue
+				// 「其它票据」为排除式桶，与 InvoiceOverviewStats 卡片口径一致：
+				// category 不属于启用分类集合（含空/已删除分类旧值）的记录归入此筛选。
+				// 前端卡片计数 = 总数 - 各启用分类卡之和（见 InvoiceManagement.vue overviewCards）。
+				if len(filter.KnownCategories) > 0 {
+					known := make(map[string]struct{}, len(filter.KnownCategories))
+					for _, name := range filter.KnownCategories {
+						known[name] = struct{}{}
+					}
+					if r.Category != "" {
+						if _, ok := known[r.Category]; ok {
+							continue
+						}
+					}
+				} else {
+					// 向后兼容：未传分类集合时回退 invoice_type 排除桶（非普通/专用）
+					if r.InvoiceType == "普通发票" || r.InvoiceType == "专用发票" {
+						continue
+					}
 				}
 			} else if r.Category != filter.InvoiceType && !(r.Category != "" && strings.Contains(filter.InvoiceType, r.Category)) {
-				// 细分分类：Category 精确匹配；规则产物可能用简称（如"通行费"），
-				// 上传分类名（"通行费发票"）包含该简称时同样命中，兼容存量数据。
+				// 分类筛选统一按归档分类 category 精确匹配（与概览卡口径一致）；
+				// 规则产物可能用简称（如"通行费"），上传分类名（"通行费发票"）包含该简称时同样命中，兼容存量数据。
 				continue
 			}
 		}
@@ -553,6 +552,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 
 	stats := &types.InvoiceOverviewStats{
 		ByInvoiceType: []types.InvoiceTypeStat{},
+		ByCategory:    []types.InvoiceCategoryStat{},
 	}
 	stats.Total = len(records)
 	stats.FileCount = fileCount
@@ -601,6 +601,34 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 	for _, t := range typeByMap {
 		stats.ByInvoiceType = append(stats.ByInvoiceType, *t)
 	}
+	// 按用户定义分类（category）分组：category 为空/空白归「未分类」；
+	// 分类卡由前端按 categories(scope=invoice) enabled 列表动态渲染，计数精确匹配分类名。
+	catByMap := map[string]*types.InvoiceCategoryStat{}
+	for _, r := range records {
+		cat := strings.TrimSpace(r.Category)
+		if cat == "" {
+			cat = "未分类"
+		}
+		t := catByMap[cat]
+		if t == nil {
+			t = &types.InvoiceCategoryStat{Category: cat}
+			catByMap[cat] = t
+		}
+		t.Count++
+		if r.TotalAmount != nil {
+			t.SumTotal += *r.TotalAmount
+		}
+	}
+	for _, t := range catByMap {
+		stats.ByCategory = append(stats.ByCategory, *t)
+	}
+	// 分类桶按张数降序，稳定排序
+	sort.Slice(stats.ByCategory, func(i, j int) bool {
+		if stats.ByCategory[i].Count != stats.ByCategory[j].Count {
+			return stats.ByCategory[i].Count > stats.ByCategory[j].Count
+		}
+		return stats.ByCategory[i].Category < stats.ByCategory[j].Category
+	})
 	// 保证专票/普票/其它票据三桶固定出现（空桶补 0），前端类型卡稳定展示
 	seenType := map[string]bool{}
 	for _, t := range stats.ByInvoiceType {

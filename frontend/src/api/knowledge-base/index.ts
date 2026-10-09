@@ -905,6 +905,7 @@ export function extractInvoice(kbId: string, knowledgeId: string) {
 export function listInvoiceRecords(kbId: string, params: {
   q?: string;
   invoice_type?: string;
+  known_categories?: string;
   tax_rate?: number;
   date_from?: string;
   date_to?: string;

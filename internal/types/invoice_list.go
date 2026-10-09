@@ -53,14 +53,18 @@ type InvoiceExtractionItemItems struct {
 type InvoiceListFilter struct {
 	Keyword     string   // 全字段包含搜索
 	InvoiceType string   // 5 枚举之一
-	TaxRate     *float64 // 税率筛选（小数，如 0.03）
-	Status      string   // extract_status
-	DateFrom    string   // YYYY-MM-DD（含）
-	DateTo      string   // YYYY-MM-DD（含）
-	SortBy      string   // 表头排序字段：invoice_no / invoice_date（空=默认创建时间倒序）
-	SortOrder   string   // asc / desc（默认 desc）
-	Page        int
-	PageSize    int
+	// KnownCategories 启用分类名集合（scope=invoice，前端卡片权威源）。仅当
+	// InvoiceType=="其它票据" 时生效：category 不属于该集合（含空）的记录归入
+	// 「其它票据」，与概览卡口径一致；为空时回退 invoice_type 排除桶（向后兼容）。
+	KnownCategories []string
+	TaxRate         *float64 // 税率筛选（小数，如 0.03）
+	Status          string   // extract_status
+	DateFrom        string   // YYYY-MM-DD（含）
+	DateTo          string   // YYYY-MM-DD（含）
+	SortBy          string   // 表头排序字段：invoice_no / invoice_date（空=默认创建时间倒序）
+	SortOrder       string   // asc / desc（默认 desc）
+	Page            int
+	PageSize        int
 }
 
 // InvoiceTaxRateCount 是税率下拉列表的一个选项：税率 + 出现次数。
@@ -88,8 +92,9 @@ type InvoiceOverviewStats struct {
 	ParseFailed   int               `json:"parse_failed"`    // 文件级解析失败数
 	ExtractFailed int               `json:"extract_failed"`  // 发票级提取失败数
 	CurrentMonth  InvoiceMonthStat  `json:"current_month"`   // 本月（开票日期）收录看板
-	SumTotal      float64           `json:"sum_total"`       // 库内全部有效发票价税合计总额
-	ByInvoiceType []InvoiceTypeStat `json:"by_invoice_type"` // 按发票类型分组（张数 + 金额）
+	SumTotal      float64               `json:"sum_total"`       // 库内全部有效发票价税合计总额
+	ByInvoiceType []InvoiceTypeStat     `json:"by_invoice_type"` // 按发票类型分组（张数 + 金额）
+	ByCategory    []InvoiceCategoryStat `json:"by_category"`     // 按用户定义分类（category 细分）分组
 }
 
 // InvoiceMonthStat 是本月发票收录看板。
@@ -103,4 +108,11 @@ type InvoiceTypeStat struct {
 	InvoiceType string  `json:"invoice_type"`
 	Count       int     `json:"count"`
 	SumTotal    float64 `json:"sum_total"`
+}
+
+// InvoiceCategoryStat 是单一用户分类（category）的聚合统计；category 为空的记录归「未分类」。
+type InvoiceCategoryStat struct {
+	Category string  `json:"category"`
+	Count    int     `json:"count"`
+	SumTotal float64 `json:"sum_total"`
 }

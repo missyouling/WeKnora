@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -48,17 +49,27 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		c.Error(apperrors.NewBadRequestError("invalid sort_order: must be asc or desc"))
 		return
 	}
+	// known_categories：启用分类名集合（逗号分隔），供「其它票据」排除式筛选使用
+	var knownCategories []string
+	if kc := c.Query("known_categories"); kc != "" {
+		for _, name := range strings.Split(kc, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				knownCategories = append(knownCategories, name)
+			}
+		}
+	}
 	filter := types.InvoiceListFilter{
-		Keyword:     c.Query("q"),
-		InvoiceType: c.Query("invoice_type"),
-		TaxRate:     taxRate,
-		Status:      c.Query("status"),
-		DateFrom:    c.Query("date_from"),
-		DateTo:      c.Query("date_to"),
-		SortBy:      sortBy,
-		SortOrder:   sortOrder,
-		Page:        page,
-		PageSize:    pageSize,
+		Keyword:         c.Query("q"),
+		InvoiceType:     c.Query("invoice_type"),
+		KnownCategories: knownCategories,
+		TaxRate:         taxRate,
+		Status:          c.Query("status"),
+		DateFrom:        c.Query("date_from"),
+		DateTo:          c.Query("date_to"),
+		SortBy:          sortBy,
+		SortOrder:       sortOrder,
+		Page:            page,
+		PageSize:        pageSize,
 	}
 
 	result, err := h.businessSvc.ListInvoiceRecords(effCtx, kbID, filter)

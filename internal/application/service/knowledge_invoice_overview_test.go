@@ -58,8 +58,8 @@ func TestInvoiceOverviewStats(t *testing.T) {
 			CustomMetadata: mustJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
-					map[string]interface{}{"invoice_no": "A001", "invoice_date": month + "-01", "invoice_type": "专用发票", "amount": am, "total_amount": total},
-					map[string]interface{}{"invoice_no": "A002", "invoice_date": lastMonth + "-15", "invoice_type": "普通发票", "total_amount": total2},
+					map[string]interface{}{"invoice_no": "A001", "invoice_date": month + "-01", "invoice_type": "专用发票", "category": "专用发票", "amount": am, "total_amount": total},
+					map[string]interface{}{"invoice_no": "A002", "invoice_date": lastMonth + "-15", "invoice_type": "普通发票", "category": "电费发票", "total_amount": total2},
 				},
 			}),
 			CreatedAt: now.Add(-time.Hour),
@@ -79,7 +79,7 @@ func TestInvoiceOverviewStats(t *testing.T) {
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
 					// A001 同号更晚版本（created_at 更新）→ 去重应保留它
-					map[string]interface{}{"invoice_no": "A001", "invoice_date": month + "-20", "invoice_type": "专用发票", "total_amount": f64(999)},
+					map[string]interface{}{"invoice_no": "A001", "invoice_date": month + "-20", "invoice_type": "专用发票", "category": "专用发票", "total_amount": f64(999)},
 					// 空提取项 → 应被剔除
 					map[string]interface{}{"invoice_no": "", "invoice_date": "", "invoice_type": ""},
 				},
@@ -134,6 +134,20 @@ func TestInvoiceOverviewStats(t *testing.T) {
 	if !foundOther {
 		t.Errorf("ByInvoiceType missing zero-count 其它票据 bucket: %+v", stats.ByInvoiceType)
 	}
+	// 分类分组：A001(category=专用发票, 999) + A002(category=电费发票, 226)，按张数降序
+	if len(stats.ByCategory) != 2 {
+		t.Fatalf("ByCategory len = %d, want 2: %+v", len(stats.ByCategory), stats.ByCategory)
+	}
+	if stats.ByCategory[0].Category != "专用发票" || stats.ByCategory[0].Count != 1 {
+		t.Errorf("ByCategory[0] = %+v, want 专用发票 x1", stats.ByCategory[0])
+	}
+	catSum := map[string]float64{}
+	for _, c := range stats.ByCategory {
+		catSum[c.Category] = c.SumTotal
+	}
+	if catSum["电费发票"] != 226 {
+		t.Errorf("ByCategory 电费发票 SumTotal = %v, want 226", catSum["电费发票"])
+	}
 }
 
 func TestInvoiceOverviewStatsEmpty(t *testing.T) {
@@ -154,5 +168,9 @@ func TestInvoiceOverviewStatsEmpty(t *testing.T) {
 		if bt.Count != 0 {
 			t.Errorf("empty bucket %s Count = %d, want 0", bt.InvoiceType, bt.Count)
 		}
+	}
+	// 空场景分类桶为空数组（前端动态渲染，无强制桶）
+	if stats.ByCategory == nil || len(stats.ByCategory) != 0 {
+		t.Errorf("empty ByCategory = %+v, want empty slice", stats.ByCategory)
 	}
 }
