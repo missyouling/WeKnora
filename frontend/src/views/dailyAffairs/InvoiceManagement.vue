@@ -158,7 +158,7 @@
               <div v-for="(it, i) in (row.items || []).slice(0, 3)" :key="i" class="row-items-line">
                 <span class="row-items-name">{{ it.name || '—' }}</span>
                 <template v-if="it.qty !== undefined && it.qty !== null && it.qty !== ''"><span class="row-items-qty">×{{ it.qty }}</span></template>
-                <template v-if="it.price !== undefined && it.price !== null && it.price !== ''"><span class="row-items-price">¥{{ formatAmount(it.price) }}</span></template>
+                <template v-if="it.price !== undefined && it.price !== null && it.price !== ''"><span class="row-items-price">{{ formatAmount(it.price) }}</span></template>
               </div>
               <div v-if="(row.items || []).length > 3" class="row-items-more">等 {{ (row.items || []).length - 3 }} 条</div>
             </div>
@@ -173,13 +173,13 @@
       <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；选中时避让底部浮动工具栏） -->
       <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
-        <span v-if="displaySummary.total" class="doc-summary-item">
+        <span v-if="displaySummary.total && summaryShowAmount" class="doc-summary-item">
           金额 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumAmount) }}</span>
         </span>
-        <span v-if="displaySummary.total" class="doc-summary-item">
+        <span v-if="displaySummary.total && summaryShowTax" class="doc-summary-item">
           税额 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTax) }}</span>
         </span>
-        <span v-if="displaySummary.total" class="doc-summary-item">
+        <span v-if="displaySummary.total && summaryShowTotal" class="doc-summary-item">
           价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
@@ -674,7 +674,7 @@ const tableColumns = computed(() => {
     if (rp) {
       base.cell = (_h: any, { row }: any) => remarkPartOf(row?.remark || '', rp) || '-'
     } else if (['amount', 'tax', 'totalAmount'].includes(c.key)) {
-      // 金额类字段统一格式化（¥ + 千分位 + 两位小数），消除自定义分类 colKey 不匹配
+      // 金额类字段统一格式化（千分位 + 两位小数），消除自定义分类 colKey 不匹配
       // #amount 插槽导致的显示差异；所有分类风格一致。
       base.cell = (_h: any, { row }: any) => {
         const v = colValue(row, c.key)
@@ -878,11 +878,14 @@ let listSeq = 0
 let loadTimer: ReturnType<typeof setTimeout> | null = null
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
+  // 防重检查必须在 ++listSeq 之前：非 reset（翻页/onTick 轮询）若在 reset 请求进行中空转，
+  // 绝不能递增请求序号，否则进行中的 reset 请求会被误判为「过期响应」而丢弃，
+  // 其 finally 不再清理 listLoading、超时 timer 回调也因 seq 不匹配而失效 → 永久转圈。
+  if (!reset && (listLoading.value || loadingMore.value)) return
   const mySeq = ++listSeq
   if (reset) {
-    // 仅 reset（类型/筛选切换）才接管并重置超时计时器；
-    // 非 reset（翻页/轮询）在 loading 中直接 return，绝不能清理父请求的超时 timer，
-    // 否则 onTick 轮询会不断清掉 15s 兜底，导致挂起请求永久转圈。
+    // reset（类型/筛选切换/手动刷新）接管并重置超时计时器；
+    // 新 reset 会作废旧 timer，非 reset 空转不碰 timer。
     if (loadTimer) { clearTimeout(loadTimer); loadTimer = null }
     page.value = 1
     invoiceRows.value = []
@@ -896,8 +899,6 @@ const loadFiles = async (reset = false) => {
         MessagePlugin.warning('列表加载超时，请稍后重试')
       }
     }, 15000)
-  } else if (listLoading.value || loadingMore.value) {
-    return
   } else {
     loadingMore.value = true
   }
@@ -1237,6 +1238,21 @@ const selectedSummary = computed(() => {
 })
 const displaySummary = computed(() => selectedSummary.value || invoiceSummary.value)
 
+// 底部统计条按当前分类字段动态显示：无 tax/totalAmount 字段的分类（如三联收据）不显示冗余统计项。
+// subs.name 为中文自定义名（金额/税额…），经 invoiceFieldKeyOf 归一为契约键后再比对。
+const currentCatSubs = computed(() => {
+  const t = filterInvoiceType.value
+  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
+  const hit = cats.find((c: any) => c.name === t) || cats[0]
+  return Array.isArray(hit?.subs) ? hit.subs : []
+})
+const summaryShowAmount = computed(() =>
+  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'amount' && s.enabled !== false))
+const summaryShowTax = computed(() =>
+  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'tax' && s.enabled !== false))
+const summaryShowTotal = computed(() =>
+  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'totalAmount' && s.enabled !== false))
+
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 const onKeywordChange = () => { loadFiles(true) }
 
@@ -1343,6 +1359,10 @@ const openDetail = async (row: InvoiceRow) => {
   if (row.kind === 'pending') return
   currentRow.value = row
   currentDetail.value = null
+  // 先填充表单再打开抽屉：editFieldDefs 依赖 editForm.invoice_type，
+  // 若先 detailVisible=true 再 fillEditForm，抽屉打开瞬间会渲染上一分类（或空）的字段，
+  // 造成「先显示发票字段再跳转收据字段」的闪烁。行级 invoiceType/category 已就绪，可立即定字段。
+  fillEditForm()
   detailVisible.value = true
   try {
     const res: any = await getKnowledgeDetails(row.knowledgeId)
@@ -1353,11 +1373,14 @@ const openDetail = async (row: InvoiceRow) => {
         const parsed = parseCustomMetadata(detail)
         const match = parsed.find(p => row.page && p.page === row.page)
           || parsed.find(p => p.invoiceNo === row.invoiceNo) || parsed[0]
-        if (match) currentRow.value = { ...row, ...match }
+        if (match) {
+          currentRow.value = { ...row, ...match }
+          // 详情数据到达后重填一次（发票类型/字段值以落库数据为准）
+          fillEditForm()
+        }
       }
     }
   } catch { /* 详情刷新失败不影响查看 */ }
-  fillEditForm()
 }
 
 const detailTitle = computed(() =>
@@ -1536,7 +1559,7 @@ const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)
 
 const formatAmount = (v?: number) =>
-  v === undefined || v === null ? '' : `¥ ${Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  v === undefined || v === null ? '' : Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // 税率以百分比显示且不保留小数（0.03 → 3%）
 const formatRate = (v?: number) => {
