@@ -7,13 +7,11 @@
         <p class="header-subtitle">合同档案自动归档</p>
       </div>
       <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="triggerUpload">
+        <t-button v-if="kbId" theme="primary" @click="uploadVisible = true">
           <template #icon><t-icon name="upload" /></template>
           上传合同
         </t-button>
       </div>
-      <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-        @change="onFileInputChange" />
     </div>
 
     <!-- 加载中 -->
@@ -31,6 +29,8 @@
 
     <!-- KB 存在：主界面 -->
     <div v-else class="contract-main">
+      <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
+      <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -62,6 +62,11 @@
                 <template #icon><t-icon name="history" size="14px" /></template>
               </t-button>
             </t-tooltip>
+            <t-tooltip content="设置" placement="bottom">
+              <t-button variant="outline" size="small" @click="settingsVisible = true">
+                <template #icon><t-icon name="setting" size="14px" /></template>
+              </t-button>
+            </t-tooltip>
           </template>
           <template #batch-actions>
             <t-popconfirm theme="warning"
@@ -85,9 +90,28 @@
               <template #icon><t-icon name="file-paste" size="14px" /></template>
               目录
             </t-button>
-            <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个合同记录吗？删除后不可恢复。`"
-              :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="handleBatchDelete">
+            <!-- 删除确认：单气泡内嵌二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
+            <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+              :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+              <template #content>
+                <div class="del-pop-body">
+                  <div v-if="delMultiCount > 0" class="del-pop-title">
+                    选中的合同涉及 {{ delMultiCount }} 份多页文件，请选择删除范围：
+                  </div>
+                  <div v-else class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个合同记录吗？删除后不可恢复。</div>
+                  <div class="del-pop-actions">
+                    <template v-if="delMultiCount > 0">
+                      <t-button size="small" theme="danger" @click="confirmPageDelete">删除此页</t-button>
+                      <t-button size="small" theme="danger" variant="outline" @click="confirmFileDelete">删除文件</t-button>
+                      <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                    </template>
+                    <template v-else>
+                      <t-button size="small" theme="danger" @click="confirmPageDelete">删除</t-button>
+                      <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                    </template>
+                  </div>
+                </div>
+              </template>
               <t-button theme="danger" variant="outline" size="small" @click.stop>
                 <template #icon><t-icon name="delete" size="14px" /></template>
                 删除记录
@@ -102,6 +126,7 @@
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
           <t-table
+        ref="contractTableRef"
         :data="filteredRows"
         :columns="tableColumns"
         row-key="rowKey"
@@ -210,6 +235,14 @@
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-合同" kb-desc="合同管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析合同文件，自动提取合同字段" default-description="用于存放并解析合同文件，自动提取合同字段" model-tip="提取模型将复用下方「对话模型」，用于解析合同字段。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
 
+    <!-- 设置抽屉（字段定义 + 提取规则双 Tab，黄金基准 StandardSettingDrawer） -->
+    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'contract'"
+      kb-name="日常事务-合同" title="合同设置" @saved="reloadColumns" />
+
+    <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="contract"
+      :type-options="uploadTypeOptions" @done="onUploadDone" />
+
     <!-- 删除历史（自动删除的非合同记录） -->
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="合同"
       @changed="loadFiles(true)" @restored="onRestored" />
@@ -218,36 +251,7 @@
     <!-- 合同详情抽屉（竖向区块，可拖宽，上下滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-contract-drawer-width'" hide-footer destroy-on-close class="contract-detail-drawer">
       <div class="contract-detail-body">
-        <!-- 摘要 -->
-        <section class="detail-block">
-          <div class="detail-block-title">摘要</div>
-          <div class="detail-block-content">
-            <template v-if="currentDetail?.description">
-              <div v-if="summaryState" class="summary-status">
-                <t-tag :theme="summaryState.theme" variant="light" size="small">
-                  <template v-if="summaryState.icon" #icon>
-                    <t-icon :name="summaryState.icon" :class="{ 'icon-spin': summaryState.spin }" />
-                  </template>
-                  {{ summaryState.label }}
-                </t-tag>
-              </div>
-              <!-- 摘要：复用知识库文档抽屉样式（线框 + 展开/折叠 + 每条字段一行） -->
-              <div class="summary_wrapper" :class="{ 'summary_clickable': summaryOverflow || summaryExpanded }"
-                @click="(summaryOverflow || summaryExpanded) && (summaryExpanded = !summaryExpanded)">
-                <div ref="summaryRef" :class="['summary_content', { 'summary_collapsed': !summaryExpanded }]">{{
-                  summaryLines
-                }}</div>
-                <div v-if="(summaryOverflow && !summaryExpanded) || summaryExpanded" class="summary_fade"
-                  :class="{ 'summary_fade_expanded': summaryExpanded }">
-                  <t-icon :name="summaryExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="summary_fade_icon" />
-                </div>
-              </div>
-            </template>
-            <t-empty v-else description="暂无摘要" />
-          </div>
-        </section>
-
-        <!-- 合同字段 -->
+        <!-- 合同字段（手动保存模式：不再自动保存，底部「保存/取消」统一提交） -->
         <section class="detail-block">
           <div class="detail-block-content">
             <div class="detail-fields">
@@ -392,11 +396,17 @@
 
               <div class="detail-save-hint">
                 <t-icon name="check-circle" size="14px" />
-                <span>字段修改后将自动保存{{ autoSaving ? '（保存中...）' : '' }}</span>
+                <span>修改后点击底部「保存」提交{{ saving ? '（保存中...）' : '' }}</span>
               </div>
             </div>
           </div>
         </section>
+
+        <!-- 底部操作：手动保存/取消（黄金基准发票同款心智） -->
+        <div class="detail-footer-actions">
+          <t-button variant="outline" size="medium" @click="detailVisible = false">取消</t-button>
+          <t-button theme="primary" size="medium" :loading="saving" @click="saveContractDetail">保存</t-button>
+        </div>
 
         <!-- 源文件预览 -->
         <section class="detail-block">
@@ -455,6 +465,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { listFleetCategories } from '@/api/fleet'
+import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
+import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import BusinessListToolbar from './BusinessListToolbar.vue'
+import FleetUploadDialog from './FleetUploadDialog.vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
@@ -462,7 +477,6 @@ import { colWidthOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
-  uploadKnowledgeFile,
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
@@ -490,7 +504,6 @@ import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-合同'
-const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
 const PAGE_SIZE = 20
 
 // 合同类型枚举（编辑/筛选推荐值）
@@ -538,7 +551,6 @@ const {
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
-const fileInputRef = ref<HTMLInputElement>()
 
 interface KnowledgeItem {
   id: string
@@ -680,36 +692,14 @@ const detailVisible = ref(false)
 const currentRow = ref<ContractRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
 const editForm = ref<Record<string, any>>({})
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let autoSaveDirty = false
-let editFormSnapshot = ''
-const autoSaving = ref(false)
-
-// 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
-const summaryExpanded = ref(false)
-const summaryRef = ref<HTMLElement>()
-const summaryOverflow = ref(false)
-const summaryLines = computed(() => {
-  const d = currentDetail.value?.description || ''
-  if (!d) return ''
-  return d.replace(/-(?=[^\s-])/g, '\n-').trim()
-})
-const checkSummaryOverflow = () => {
-  const el = summaryRef.value
-  if (!el) { summaryOverflow.value = false; return }
-  summaryOverflow.value = el.scrollHeight > el.clientHeight + 1
-}
-watch(summaryRef, () => checkSummaryOverflow())
-watch(() => currentDetail.value?.description, () => {
-  summaryExpanded.value = false
-  nextTick(() => checkSummaryOverflow())
-})
+const saving = ref(false)
 
 // 抽屉宽度（可拖动，localStorage 记忆）
 const DRAWER_WIDTH_KEY = 'weknora-contract-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
+const settingsVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')
@@ -728,6 +718,7 @@ const loadKb = async () => {
     if (kbId.value) {
       await loadTags()
       await loadContractTypes()
+      await loadContractCats()
       await cleanNonContractFiles()
       await loadFiles()
       startPolling()
@@ -744,6 +735,7 @@ const onKbCreated = async (kb: any) => {
   if (kbId.value) {
     await loadTags()
     await loadContractTypes()
+    await loadContractCats()
     await cleanNonContractFiles()
     await loadFiles()
     startPolling()
@@ -1078,6 +1070,62 @@ const displaySummary = computed(() => selectedSummary.value || contractSummary.v
 const applyFilter = () => { loadFiles(true) }
 const onKeywordChange = () => { loadFiles(true) }
 
+// ---- 筛选联动闭环（黄金基准发票同款） ----
+// 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），
+// 再兜底清空 selectedRowKeys，杜绝 TDesign 受控反向写回旧 key 导致浮条不消失
+const contractTableRef = ref()
+const clearSelectionSafe = () => {
+  try { contractTableRef.value?.clearSelected?.() } catch { /* ignore */ }
+  clearSelection()
+}
+// 类型切换：清空多选（防跨类型脏数据残留）+ 立即刷新列表
+watch(filterContractType, () => {
+  clearSelectionSafe()
+  applyFilter()
+})
+// 关键词防抖 300ms 后刷新；输入时临时清空类型筛选（全局搜索），清空词后恢复原类型。
+// 履约状态与签订日期筛选保持不动（任务明确要求）。
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
+let searchRestoreType = ''
+watch(keyword, (v) => {
+  if (v && v.trim()) {
+    if (searchRestoreType === '' && filterContractType.value) searchRestoreType = filterContractType.value
+    if (filterContractType.value) filterContractType.value = ''
+  } else {
+    if (searchRestoreType) {
+      filterContractType.value = searchRestoreType
+      searchRestoreType = ''
+    }
+  }
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => loadFiles(true), 300)
+})
+
+// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不调后端 categories） ----
+const overviewCards = computed<KpiCard[]>(() => {
+  const rows = filteredRows.value.filter(r => r.kind !== 'pending')
+  const total = contractSummary.value.total || rows.length
+  const sumAmount = contractSummary.value.sumAmount || 0
+  // 合同类型数：列表出现的类型 ∪ 下拉枚举（含自定义分类）
+  const typeSet = new Set<string>()
+  for (const r of rows) if (r.contractType) typeSet.add(r.contractType)
+  for (const t of contractTypeOptions.value) typeSet.add(t.value)
+  // 本月新增：签订日期为当月的记录数
+  const now = new Date()
+  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const monthNew = rows.filter(r => (r.signDate || '').startsWith(monthPrefix)).length
+  return [
+    { key: 'total', label: '合同总数', icon: 'file-copy', value: String(total), theme: 'brand' },
+    { key: 'amount', label: '合同金额', icon: 'money', value: sumAmount ? formatAmount(sumAmount) : '0.00', theme: 'success', numCls: 'num-sm' },
+    { key: 'types', label: '合同类型', icon: 'view-module', value: String(typeSet.size), theme: 'warning' },
+    { key: 'month', label: '本月新增', icon: 'add-rectangle', value: String(monthNew), theme: 'neutral' },
+  ]
+})
+// 轻量概览：点击卡片聚焦列表区（不承载视图跳转）
+const onOverviewCardClick = () => {
+  nextTick(() => document.querySelector('.doc-filter-bar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
 // 懒加载
 const listScrollRef = ref<HTMLElement>()
 const onListScroll = (e: Event) => {
@@ -1087,30 +1135,26 @@ const onListScroll = (e: Event) => {
   }
 }
 
-// ---- 上传 ----
-const triggerUpload = () => { fileInputRef.value?.click() }
-const onFileInputChange = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) handleUploadFiles(Array.from(input.files))
-  input.value = ''
-}
-
-const handleUploadFiles = async (files: File[]) => {
-  const valid = files.filter(f => {
-    const ext = (f.name.split('.').pop() || '').toLowerCase()
-    return ACCEPT_TYPES.includes(ext)
-  })
-  const invalidCount = files.length - valid.length
-  if (invalidCount) MessagePlugin.warning(`已忽略 ${invalidCount} 个不支持的文件（仅支持 PDF/JPG/PNG）`)
-  if (!valid.length) return
+// ---- 上传（对齐发票/车队：FleetUploadDialog 弹窗，支持拖拽/选择/剪贴板粘贴 + 防重检测） ----
+const uploadVisible = ref(false)
+// 上传弹窗分类选项：contract categories（含自定义分类），复合值 contract__名称
+const contractCats = ref<any[]>([])
+const uploadTypeOptions = computed(() => {
+  const cats = contractCats.value.filter((c: any) => c.enabled !== false)
+  if (!cats.length) return [{ label: '合同', value: 'contract__合同' }]
+  return cats.map((c: any) => ({ label: c.name, value: `contract__${c.name}` }))
+})
+const loadContractCats = async () => {
   try {
-    for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
-    MessagePlugin.success(`已上传 ${valid.length} 个合同文件，正在解析...`)
-    await loadFiles(true)
-    startPolling()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '上传失败')
-  }
+    const res: any = await listFleetCategories({ scope: 'contract' })
+    const cats = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+    contractCats.value = cats
+  } catch { contractCats.value = [] }
+}
+const onUploadDone = async (typeName?: string) => {
+  // 上传完成联动：携带本次上传的合同类型 → 列表切换为该类型（watch 触发 applyFilter）
+  if (typeName && typeName !== filterContractType.value) filterContractType.value = typeName
+  await loadFiles(true)
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
@@ -1131,7 +1175,7 @@ const {
   onTick: () => loadFiles(),
 })
 
-const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'contract', notLabel: '非合同',
 })
@@ -1227,10 +1271,9 @@ const onRestored = async (knowledgeId: string) => {
   }
 }
 
-// ---- 字段编辑 + 自动保存 ----
+// ---- 字段编辑 + 手动保存（黄金基准发票同款：底部「保存/取消」统一提交） ----
 const fillEditForm = () => {
   const r = currentRow.value
-  autoSaveDirty = false
   if (!r) return
   editForm.value = {
     contract_no: r.contractNo || '',
@@ -1266,23 +1309,12 @@ const fillEditForm = () => {
     remark: r.remark || '',
     fulfill_status: r.fulfillStatus || '执行中',
   }
-  editFormSnapshot = JSON.stringify(editForm.value)
-  autoSaveDirty = true
 }
 
-watch(editForm, () => {
-  if (!autoSaveDirty || !currentRow.value) return
-  // 打开抽屉未做任何编辑（表单值与初始快照一致）时不触发自动保存，
-  // 避免"打开即保存空字段"把待补录记录从列表挤掉。
-  if (JSON.stringify(editForm.value) === editFormSnapshot) return
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { saveEditForm() }, 1200)
-}, { deep: true })
-
-const saveEditForm = async () => {
+const saveContractDetail = async () => {
   const now = currentRow.value
   if (!now) return
-  autoSaving.value = true
+  saving.value = true
   try {
     const res: any = await getKnowledgeDetails(now.knowledgeId)
     const detail = res?.data || res
@@ -1366,10 +1398,13 @@ const saveEditForm = async () => {
         remark: updated.remark,
       }
     }
+    MessagePlugin.success('保存成功')
+    detailVisible.value = false
+    await loadFiles(true)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
-    autoSaving.value = false
+    saving.value = false
   }
 }
 
@@ -1574,60 +1609,81 @@ const downloadCatalogPdf = () => {
   a.click()
 }
 
-// 删除记录：有页码的行按页删除该合同（同文件其它合同保留）；无页码（历史数据）删整份文件
-const handleBatchDelete = async () => {
-  const rows = selectedRows.value
-  if (!rows.length) return
-  try {
-    const fileDeleteIds = new Set<string>()
-    const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
-    for (const r of rows) {
-      if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
-      else fileDeleteIds.add(r.knowledgeId)
-    }
-    // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
-    pageDeleteIds.sort((a, b) => b.page - a.page)
-    for (const pd of pageDeleteIds) {
-      try {
-        const res: any = await deleteContractPage(kbId.value, pd.knowledgeId, pd.page)
-        if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
-      } catch (e: any) {
-        MessagePlugin.error(e?.message || `删除合同（${pd.page}）失败`)
-        return
-      }
-    }
-    if (fileDeleteIds.size) {
-      await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-    }
-    MessagePlugin.success('删除成功')
-    selectedRowKeys.value = []
-    await loadFiles(true)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+// ---- 删除（黄金基准发票同款：单气泡内嵌二选一，杜绝二次弹窗） ----
+const delPopVisible = ref(false)
+const closeDelPop = () => { delPopVisible.value = false }
+// 选中记录涉及的多页文件数量（同一上传文件含多份合同）
+const delMultiCount = computed(() => {
+  const set = new Set<string>()
+  for (const r of selectedRows.value) {
+    if (!r.knowledgeId) continue
+    if (r.page && r.page >= 1) set.add(r.knowledgeId)
   }
+  return set.size
+})
+// 仅删除选中的合同页（同文件其它合同保留）
+const doPageDelete = async (rows: ContractRow[]) => {
+  const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
+  const fileDeleteIds = new Set<string>()
+  for (const r of rows) {
+    if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
+    else fileDeleteIds.add(r.knowledgeId)
+  }
+  // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
+  pageDeleteIds.sort((a, b) => b.page - a.page)
+  for (const pd of pageDeleteIds) {
+    const res: any = await deleteContractPage(kbId.value, pd.knowledgeId, pd.page)
+    if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
+  }
+  if (fileDeleteIds.size) await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
+}
+// 删除整份上传文件（含其全部合同记录，从知识库完全删除）
+const doFileDelete = async (rows: ContractRow[]) => {
+  const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
+  if (ids.size) await batchDeleteKnowledge(kbId.value, Array.from(ids))
+}
+const finishDelete = async () => {
+  MessagePlugin.success('删除成功')
+  clearSelectionSafe()
+  await loadFiles(true)
+}
+const confirmPageDelete = async () => {
+  closeDelPop()
+  try { await doPageDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+const confirmFileDelete = async () => {
+  closeDelPop()
+  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
 }
 
 // ---- 生命周期 ----
+// 六同步：字段/分类配置变更后重建动态列（与发票基准一致）
+const onCategoriesChanged = () => { reloadColumns() }
+// 从后端 categories（scope=contract）重建动态列；无配置时回退内置默认
+const reloadColumns = async () => {
+  try {
+    const res: any = await listFleetCategories({ scope: 'contract' })
+    const cats = res?.data || []
+    if (cats[0]?.subs?.length) {
+      customColumns.value = cats[0].subs
+        .filter((s: any) => s.enabled !== false)
+        .map((s: any) => {
+          const builtin = DEFAULT_CONTRACT_COLUMNS.find((b: any) => b.key === s.name)
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
+        })
+    }
+  } catch { /* 后端未配置时回退内置默认 */ }
+}
 onMounted(() => {
   loadKb()
-  void (async () => {
-    try {
-      const res: any = await listFleetCategories({ scope: 'contract' })
-      const cats = res?.data || []
-      if (cats[0]?.subs?.length) {
-        customColumns.value = cats[0].subs
-          .filter((s: any) => s.enabled !== false)
-          .map((s: any) => {
-            const builtin = DEFAULT_CONTRACT_COLUMNS.find((b: any) => b.key === s.name)
-            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-          })
-      }
-    } catch { /* 后端未配置时回退内置默认 */ }
-  })()
+  loadContractCats()
+  reloadColumns()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 onBeforeUnmount(() => {
   stopPolling()
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)})
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+})
 </script>
 
 <style scoped lang="less">
@@ -1825,23 +1881,6 @@ onBeforeUnmount(() => {
 
 .doc-load-more { display: flex; justify-content: center; padding: 12px 0; }
 
-/* ---- 底部浮动工具栏 ---- */
-.doc-batch-bar-fixed {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
-  width: 100%; max-width: 700px; padding: 0 4px; box-sizing: border-box;
-}
-.batch-bar-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 12px; background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke); border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-}
-.batch-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
-.batch-bar-count { font-size: 13px; font-weight: 500; color: var(--td-text-color-secondary); white-space: nowrap; }
-.batch-bar-clear { flex-shrink: 0; padding: 0 6px !important; height: 28px !important; font-size: 12px; color: var(--td-text-color-secondary) !important; &:hover { color: var(--td-brand-color) !important; } }
-.batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
-.batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
-
 /* ---- 详情抽屉：竖向区块 + 可拖宽（复用知识库文档抽屉上下滚动样式） ---- */
 .contract-detail-drawer :deep(.t-drawer__body) {
   flex: 1;
@@ -1917,6 +1956,24 @@ onBeforeUnmount(() => {
 
 .detail-save-hint { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; color: var(--td-text-color-placeholder); }
 
+/* ---- 删除气泡：内嵌二选一（黄金基准发票同款） ---- */
+.del-pop-body {
+  min-width: 220px;
+  .del-pop-title { font-size: 13px; color: var(--td-text-color-primary); line-height: 1.5; margin-bottom: 12px; }
+  .del-pop-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+}
+
+/* ---- 详情抽屉底部操作：手动保存/取消 ---- */
+.detail-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--td-component-stroke);
+  margin-top: 8px;
+}
+
 </style>
 
 <style lang="less">
@@ -1924,7 +1981,7 @@ onBeforeUnmount(() => {
 .contract-print-mask {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 3000;
+  z-index: var(--wk-batch-bar-z);
   background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;

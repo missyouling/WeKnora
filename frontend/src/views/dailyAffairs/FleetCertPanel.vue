@@ -30,7 +30,7 @@
       <div class="meter-table">
         <div class="meter-table-head">
           <span class="th-drag"></span>
-          <span class="th-name">{{ group.scope === 'maintain' ? '维保项名称' : group.scope === 'invoice' ? '发票类型' : '证照名称' }}</span>
+          <span class="th-name">{{ scopeName(group.scope) }}</span>
           <span>分组</span>
           <span>字段数</span>
           <span>状态</span>
@@ -68,7 +68,7 @@
             <div class="meter-form-title">编辑{{ group.label }}</div>
             <div class="form-grid">
               <div class="form-item">
-                <label>{{ group.scope === 'maintain' ? '维保项名称' : group.scope === 'invoice' ? '发票类型' : '证照名称' }} <span class="required">*</span></label>
+                <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
                 <t-input v-model="editForm.name" @enter="commitEdit" />
               </div>
             </div>
@@ -138,7 +138,7 @@
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
         <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
-          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : group.scope === 'invoice' ? '暂无发票类型' : '暂无证照类型' }}</span>
+          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : group.scope === 'invoice' ? '暂无发票类型' : group.scope === 'contract' ? '暂无合同类型' : '暂无证照类型' }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
@@ -172,7 +172,7 @@ const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintai
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
-// 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件
+// 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件；发票/合同等业务 scope=单分类
 const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
   vehicle: [
     { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
@@ -180,6 +180,14 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   driver: [{ key: 'driver', label: '司机证照', scope: 'driver', groupId: '' }],
   maintain: [{ key: 'maintain', label: '维保清单', scope: 'maintain', groupId: '' }],
   invoice: [{ key: 'invoice', label: '发票', scope: 'invoice', groupId: '' }],
+  contract: [{ key: 'contract', label: '合同', scope: 'contract', groupId: '' }],
+  regulation: [{ key: 'regulation', label: '制度', scope: 'regulation', groupId: '' }],
+  award_punish: [{ key: 'award_punish', label: '奖惩', scope: 'award_punish', groupId: '' }],
+}
+
+// 分类名称列文案：按 scope 语义化显示（证照/发票类型/合同类型）
+function scopeName(scope: string) {
+  return scope === 'maintain' ? '维保项名称' : scope === 'invoice' ? '发票类型' : scope === 'contract' ? '合同类型' : scope === 'regulation' ? '制度名称' : scope === 'award_punish' ? '奖惩名称' : '证照名称'
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
@@ -187,7 +195,7 @@ async function loadCustomGroups() {
     const parentScope = props.scope
     const res: any = await listFleetCertGroups({ parent_scope: parentScope })
     const arr = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
-    const fallbackScope = props.scope === 'driver' ? 'driver' : (props.scope === 'maintain' ? 'maintain' : 'vehicle')
+    const fallbackScope = props.scope || 'vehicle'
     customGroups.value = arr.map((g: any) => ({ key: g.id, label: g.name, scope: g.parent_scope || fallbackScope, groupId: g.id, builtin: false, id: g.id }))
   } catch { customGroups.value = [] }
 }

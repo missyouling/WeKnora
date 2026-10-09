@@ -57,7 +57,10 @@ func validateExtractScope(scope string) bool {
 	return scope == types.FleetCategoryScopeVehicle ||
 		scope == types.FleetCategoryScopeDriver ||
 		scope == types.FleetCategoryScopeMaintain ||
-		scope == types.FleetCategoryScopeInvoice
+		scope == types.FleetCategoryScopeInvoice ||
+		scope == "contract" ||
+		scope == "regulation" ||
+		scope == "award_punish"
 }
 
 func normalizeExtractFields(fields []types.ExtractFieldConfig) []types.ExtractFieldConfig {
@@ -154,7 +157,7 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 		scope = types.FleetCategoryScopeVehicle
 	}
 	if !validateExtractScope(scope) {
-		c.Error(errors.NewBadRequestError("scope 必须是 vehicle|driver|maintain"))
+		c.Error(errors.NewBadRequestError("scope 必须是 vehicle|driver|maintain|invoice|contract|regulation|award_punish"))
 		return
 	}
 	certType := strings.TrimSpace(req.CertType)
@@ -286,7 +289,7 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		scope = types.FleetCategoryScopeVehicle
 	}
 	if !validateExtractScope(scope) {
-		c.Error(errors.NewBadRequestError("scope 必须是 vehicle|driver|maintain"))
+		c.Error(errors.NewBadRequestError("scope 必须是 vehicle|driver|maintain|invoice|contract|regulation|award_punish"))
 		return
 	}
 	certType := strings.TrimSpace(req.CertType)

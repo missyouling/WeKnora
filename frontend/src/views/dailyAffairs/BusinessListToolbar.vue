@@ -114,10 +114,10 @@ const emit = defineEmits<{
 .doc-type-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .doc-batch-bar-fixed {
   position: fixed;
-  bottom: 24px;
+  bottom: var(--wk-batch-bar-bottom);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3000;
+  z-index: var(--wk-batch-bar-z);
   min-width: 420px;
   margin-top: 0;
 }
