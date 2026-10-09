@@ -104,7 +104,8 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: var(--td-comp-margin-s);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   margin-left: auto;
 }
 .doc-filter-field { display: flex; align-items: center; }

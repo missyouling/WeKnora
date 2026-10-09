@@ -28,7 +28,7 @@
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-          :type-options="contractTypeOptions" v-model:type-value="filterContractType"
+          :type-options="contractTypeOptions" v-model:type-value="filterContractType" :type-clearable="searchActive"
           @refresh="applyFilter" @print="handleBatchPrint" :selected-count="selectedRowKeys.length"
           @clear-selection="clearSelection">
           <template #type-extra>
@@ -123,6 +123,7 @@
         :hover="true"
         :loading="listLoading"
         max-height="100%"
+        sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -209,15 +210,14 @@
         </template>
       </t-table>
     </div>
-    </div>
-
-      <!-- 底部汇总（选中记录时显示选中合同汇总，未选中显示全部；选中时避让底部工具栏） -->
-      <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
+      <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；发票基准同款位置与样式） -->
+      <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
         <span v-if="displaySummary.total" class="doc-summary-item">
           合同金额合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
+    </div>
 
     </div>
 
@@ -254,7 +254,7 @@
                     <t-input v-model="editForm.contract_name" placeholder="" />
                   </t-form-item>
                   <t-form-item label="合同类型" label-width="110px">
-                    <t-select v-model="editForm.contract_type" :options="contractTypeOptions" clearable filterable
+                    <t-select v-model="editForm.contract_type" :options="contractTypeRaw" clearable filterable
                       placeholder="选择类型" />
                   </t-form-item>
                   <t-form-item label="签订日期" label-width="110px">
@@ -471,7 +471,6 @@ import {
   extractBusinessDocument,
   deleteContractPage,
   listContractRecords,
-  listContractTypes,
   previewKnowledgeFile,
   reparseKnowledge,
   listDeletedKnowledge,
@@ -491,8 +490,6 @@ import { useBusinessPolling } from '@/composables/useBusinessPolling'
 const KB_NAME = '日常事务-合同'
 const PAGE_SIZE = 20
 
-// 合同类型枚举（编辑/筛选推荐值）
-const CONTRACT_TYPES = ['采购合同', '销售合同', '服务合同', '租赁合同', '技术合同', '运输合同', '借款合同', '保密协议', '其它合同']
 // 履约状态为系统按到期日期自动派生的动态字段（非提取字段，不落库人工值）：
 // 已超期（早于今天）/ 即将到期（未来 30 天内）/ 履行中（其余，含未填到期日期）
 const FULFILL_STATUSES = ['履行中', '即将到期', '已超期']
@@ -662,7 +659,19 @@ const hasMore = ref(true)
 const keyword = ref('')
 const filterContractType = ref('')
 const filterFulfillStatus = ref('')
-const contractTypeOptions = ref<Array<{ value: string; label: string }>>([])
+// 类型下拉（六同步：以 categories(scope=contract) 为权威源，回退识别规则配置类型）
+const contractTypeRaw = computed<Array<{ value: string; label: string }>>(() => {
+  const catNames = contractCats.value
+    .filter((c: any) => c.enabled !== false)
+    .map((c: any) => c.name)
+    .filter((n: string) => n && n.trim())
+  const base = catNames.length ? catNames : kbTypes.value
+  return base.map((v: string) => ({ value: v, label: v }))
+})
+// 工具栏筛选下拉：首项「全部合同」（value ''= 不过滤），其后为实际类型
+const contractTypeOptions = computed<Array<{ value: string; label: string }>>(
+  () => [{ value: '', label: '全部合同' }, ...contractTypeRaw.value],
+)
 const dateRange = ref<Array<string>>([])
 
 // 列显隐
@@ -716,7 +725,7 @@ const loadKb = async () => {
     kbId.value = found?.id || ''
     if (kbId.value) {
       await loadTags()
-      await loadContractTypes()
+      await loadTypeOptions()
       await loadContractCats()
       await cleanNonContractFiles()
       await loadFiles()
@@ -734,7 +743,7 @@ const onKbCreated = async (kb: any) => {
   kbId.value = kb?.id || ''
   if (kbId.value) {
     await loadTags()
-    await loadContractTypes()
+    await loadTypeOptions()
     await loadContractCats()
     await cleanNonContractFiles()
     await loadFiles()
@@ -757,35 +766,23 @@ const cleanNonContractFiles = async () => {
     if (bad.length) {
       await batchDeleteKnowledge(kbId.value, bad.map((b: any) => b.id))
       MessagePlugin.warning(`已移除 ${bad.length} 个非合同文件（旧数据清理）`)
-      loadContractTypes()
+      loadTypeOptions()
     }
   } catch { /* 清理失败静默，下轮重试 */ }
   finally { cleaningNonContract = false }
 }
 
-// ---- 合同类型下拉：从识别规则配置的分类列表加载（含自定义分类），
-// 未配置时兜底用知识库现有合同类型 + 枚举 ----
-const loadContractTypes = async () => {
+// ---- 合同类型下拉（六同步基准同款）：分类以 categories(scope=contract) 为权威源（含自定义分类），
+// 未入库时回退识别规则配置的类型列表；静态枚举已废弃，不再追加写死类型 ----
+const kbTypes = ref<string[]>([])
+const loadTypeOptions = async () => {
   if (!kbId.value) return
   try {
     const res: any = await getRecognitionConfig(kbId.value)
     const c = res?.data || res
-    const types: string[] = Array.isArray(c?.types) ? c.types.filter(Boolean) : []
-    if (types.length) {
-      contractTypeOptions.value = types.map(t => ({ value: t, label: t }))
-      return
-    }
-  } catch { /* 走兜底 */ }
-  try {
-    const res: any = await listContractTypes(kbId.value)
-    const list = res?.data || res?.list || []
-    const arr = Array.isArray(list) ? list : []
-    const dynamic = arr.map((r: any) => ({ value: r.contract_type, label: r.contract_type }))
-    // 动态类型在前，未出现过的枚举类型补在后（allow 自定义）
-    const seen = new Set(dynamic.map((d: any) => d.value))
-    const fixed = CONTRACT_TYPES.filter(t => !seen.has(t)).map(t => ({ value: t, label: t }))
-    contractTypeOptions.value = [...dynamic, ...fixed]
-  } catch { /* 类型加载失败不阻塞 */ }
+    if (Array.isArray(c?.types) && c.types.length) kbTypes.value = c.types.filter(Boolean)
+  } catch { /* 保持现状 */ }
+  ensureContractType()
 }
 
 // ---- 标签 ----
@@ -1092,6 +1089,16 @@ const clearSelectionSafe = () => {
   try { contractTableRef.value?.clearSelected?.() } catch { /* ignore */ }
   clearSelection()
 }
+// 搜索态：关键词非空时类型下拉可临时清空（全局搜索优先）
+const searchActive = computed(() => !!keyword.value.trim())
+// 类型筛选锁定（发票基准 Q4 同款）：始终保证有一项被选中（含「全部合同」''）；
+// 搜索态放行（由 keyword watch 负责临时清空与恢复）；当前选中项合法则保留（含路由/上传回填）
+const ensureContractType = () => {
+  if (searchActive.value) return
+  const valid = new Set(contractTypeOptions.value.map((o) => o.value))
+  if (valid.has(filterContractType.value)) return
+  filterContractType.value = ''
+}
 // 类型切换：清空多选（防跨类型脏数据残留）+ 立即刷新列表
 watch(filterContractType, () => {
   clearSelectionSafe()
@@ -1130,8 +1137,8 @@ const overviewCards = computed<KpiCard[]>(() => {
   const cards: KpiCard[] = [
     { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), sub: `本月新增 ${monthNew} 份`, theme: 'brand' },
   ]
-  // 各合同类型卡片：按下拉枚举动态渲染，点击联动类型筛选（发票基准同款 action/typeValue）
-  for (const t of contractTypeOptions.value) {
+  // 各合同类型卡片：按下拉枚举动态渲染（不含「全部合同」），点击联动类型筛选（发票基准同款 action/typeValue）
+  for (const t of contractTypeRaw.value) {
     const cnt = rows.filter(r => r.contractType === t.value).length
     cards.push({ key: `type-${t.value}`, label: t.label, icon: 'file-1', value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: t.value })
   }
@@ -1177,20 +1184,23 @@ const loadContractCats = async () => {
     const cats = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
     contractCats.value = cats
   } catch { contractCats.value = [] }
+  // 六同步：分类重载后若当前选中项已失效（禁用/改名/删除），回退「全部合同」
+  ensureContractType()
 }
 const onUploadDone = async (typeName?: string) => {
-  // 上传完成联动：携带本次上传的合同类型 → 列表切换为该类型（watch 触发 applyFilter）
-  if (typeName && typeName !== filterContractType.value) filterContractType.value = typeName
+  // 上传完成刷新列表（合同记录的类型为 OCR 提取的业务类型，与上传所选的字段分类无直接映射，
+  // 不切换类型筛选，避免切到「合同」分类导致列表被过滤为空）
   await loadFiles(true)
 }
 
-// 历史记录（已删除文件）计数：KPI「历史记录」卡数据源
+// 历史记录（已删除文件）计数：KPI「历史记录」卡数据源（后端 data 为分页对象 {data,total}）
 const deletedCount = ref(0)
 const loadDeletedCount = async () => {
   if (!kbId.value) return
   try {
     const res: any = await listDeletedKnowledge(kbId.value, { page: 1, page_size: 1 })
-    deletedCount.value = Number(res?.total || 0)
+    const d = res?.data || {}
+    deletedCount.value = Number(d?.total ?? res?.total ?? 0)
   } catch { deletedCount.value = 0 }
 }
 
@@ -1207,7 +1217,7 @@ const {
   },
   onRemoved: (item) => {
     MessagePlugin.info(`「${item.file_name || item.title}」不是合同文件，已移至删除历史，可在删除历史中恢复`)
-    loadContractTypes()
+    loadTypeOptions()
   },
   onTick: () => loadFiles(),
 })
@@ -1464,8 +1474,9 @@ const parseNum = (v: string): number | null => {
 const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)
 
+// 金额一律不显示货币符号（全系统统一规则，与发票/车队基准一致）
 const formatAmount = (v?: number) =>
-  v === undefined || v === null ? '' : `¥ ${Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  v === undefined || v === null ? '' : Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // 税率以百分比显示且不保留小数（0.03 → 3%）
 const formatRate = (v?: number) => {
@@ -1730,7 +1741,7 @@ onBeforeUnmount(() => {
   height: 100%;
   box-sizing: border-box;
   padding: 24px 32px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .header {
@@ -1789,17 +1800,21 @@ onBeforeUnmount(() => {
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
 .doc-list-scroll {
-  flex: 0 1 auto; /* 高度随内容自适应：1 条就包 1 条，多条向下扩展 */
-  max-height: 100%;
+  /* 发票基准同款：滚动必须由 t-table 内部承担（max-height 100% + sticky-header 表头固定），
+     容器自身不滚动，否则表头会被滚走、底部摘要 sticky 定位错乱 */
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--td-component-stroke);
   border-radius: 9px;
   background: var(--td-bg-color-container);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-/* ---- 底部汇总 ---- */
+/* ---- 底部汇总（发票基准 .doc-summary-bar 逐字同款：sticky 于列表容器底部，紧贴表格，极小垂直空间） ---- */
 .doc-summary-bar {
   position: sticky;
   bottom: 0;
@@ -1817,13 +1832,35 @@ onBeforeUnmount(() => {
     display: inline-flex; align-items: baseline; gap: 6px;
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
-  &.is-batch-visible { margin-bottom: 72px; } /* 选中时给底部浮动工具栏让位 */
 }
 
 .doc-list-view {
+  position: relative;
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表格高度受限于容器，滚动由 .t-table__content 内部承担（max-height 100% + sticky 表头），发票基准同款 */
+.doc-list-view :deep(.t-table) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+}
+
+/* scrollbar-gutter:stable 保证滚动条占位宽度恒定，列与滚动条不错位 */
+.doc-list-view :deep(.t-table__content) {
+  scrollbar-gutter: stable;
+}
+
+/* 表头 th 背景与内容区统一为 container 令牌，与下方表头右侧遮罩同令牌 → 主题切换同步变色，不产生色差 */
+.doc-list-view :deep(.t-table__header--fixed > tr > th) {
+  background-color: var(--td-bg-color-container);
 }
 
 .doc-list-header, .doc-list-row {

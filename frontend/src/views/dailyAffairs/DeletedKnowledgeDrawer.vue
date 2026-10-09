@@ -157,9 +157,12 @@ const reload = async (p = 1) => {
   loading.value = true
   try {
     const res: any = await listDeletedKnowledge(props.kbId, { page: p, page_size: pageSize.value, q: keyword.value || undefined })
-    rows.value = (res?.data || []).map((r: any) => ({ ...r, fileName: r.file_name, fileSize: r.file_size, deletedAt: fmtTime(r.deleted_at), createdAt: fmtTime(r.created_at), deleteCount: r.delete_count }))
-    total.value = res?.total || 0
-    page.value = res?.page || p
+    // 后端 data 为分页对象 {data:[],total,page,page_size}，取对象内 data 数组（兼容直接数组返回）
+    const d = res?.data || {}
+    const arr = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : [])
+    rows.value = arr.map((r: any) => ({ ...r, fileName: r.file_name, fileSize: r.file_size, deletedAt: fmtTime(r.deleted_at), createdAt: fmtTime(r.created_at), deleteCount: r.delete_count }))
+    total.value = Number(d?.total ?? res?.total ?? 0)
+    page.value = Number(d?.page ?? res?.page ?? p)
     hasMore.value = rows.value.length < total.value
     // 列表重载后不自动加载预览，等待用户点击记录后再加载
     activeRow.value = null
@@ -176,10 +179,12 @@ const loadMore = async () => {
   try {
     const next = page.value + 1
     const res: any = await listDeletedKnowledge(props.kbId, { page: next, page_size: pageSize.value, q: keyword.value || undefined })
-    const more = (res?.data || []).map((r: any) => ({ ...r, fileName: r.file_name, fileSize: r.file_size, deletedAt: fmtTime(r.deleted_at), createdAt: fmtTime(r.created_at), deleteCount: r.delete_count }))
+    const d = res?.data || {}
+    const arr = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : [])
+    const more = arr.map((r: any) => ({ ...r, fileName: r.file_name, fileSize: r.file_size, deletedAt: fmtTime(r.deleted_at), createdAt: fmtTime(r.created_at), deleteCount: r.delete_count }))
     rows.value.push(...more)
     page.value = next
-    hasMore.value = rows.value.length < (res?.total || 0)
+    hasMore.value = rows.value.length < Number(d?.total ?? res?.total ?? 0)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载更多失败')
   } finally {
