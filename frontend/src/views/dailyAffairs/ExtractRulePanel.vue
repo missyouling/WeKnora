@@ -91,6 +91,7 @@ import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
+import { contractFieldLabel } from './contractFieldLabels'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
@@ -119,6 +120,9 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
   invoice: {
     普通发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
     专用发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
+  },
+  contract: {
+    合同: ['contractNo', 'contractName', 'contractType', 'partyAName', 'partyBName', 'signDate', 'expiryDate', 'contractAmount', 'taxRate', 'extractStatus', 'tags', 'fulfillStatus', 'partyATaxNo', 'partyBTaxNo', 'effectiveDate', 'paymentMethod', 'handler', 'department', 'fileName'],
   },
 }
 
@@ -287,6 +291,30 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
     },
   },
+  // 合同档案：字段口径对齐 fleet_categories contract 内置字段（19 项）
+  contract: {
+    合同: {
+      contractNo: { desc: '合同编号', rule: '提取“合同编号 / 合同号 / 编号”栏，如“HT20240001”；原文无则留空（不要编造）' },
+      contractName: { desc: '合同名称', rule: '提取“合同名称 / 合同标题”，如“车辆租赁合同”；原文无则取文档主标题' },
+      contractType: { desc: '合同类型', rule: '从 采购合同、销售合同、服务合同、租赁合同、技术合同、运输合同、借款合同、保密协议、其它合同 中识别' },
+      partyAName: { desc: '甲方名称', rule: '提取“甲方 / 委托方 / 买方”名称，如“重庆星达铜业有限公司”' },
+      partyBName: { desc: '乙方名称', rule: '提取“乙方 / 受托方 / 卖方”名称' },
+      signDate: { desc: '签订日期', rule: '提取“签订日期 / 签署日期 / 订立日期”栏，统一为 YYYY-MM-DD' },
+      expiryDate: { desc: '到期日期', rule: '提取“合同期限 / 到期日期 / 有效期至”栏的截止日期，统一为 YYYY-MM-DD；原文无则留空' },
+      contractAmount: { desc: '合同金额', rule: '提取“合同金额 / 合同总价 / 标的金额”栏，保留两位小数' },
+      taxRate: { desc: '税率', rule: '提取“税率”栏，如 13%、9%、6%、3%、1%' },
+      extractStatus: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      tags: { desc: '合同标签', rule: '根据合同性质归纳业务标签，如 采购、租赁、保密协议；多个标签以数组返回' },
+      fulfillStatus: { desc: '履约状态', rule: '系统按到期日期自动派生：履行中 / 即将到期 / 已超期；无需人工填写' },
+      partyATaxNo: { desc: '甲方纳税人识别号', rule: '提取“甲方统一社会信用代码 / 纳税人识别号”栏' },
+      partyBTaxNo: { desc: '乙方纳税人识别号', rule: '提取“乙方统一社会信用代码 / 纳税人识别号”栏' },
+      effectiveDate: { desc: '生效日期', rule: '提取“生效日期 / 生效时间”栏，统一为 YYYY-MM-DD；原文无则留空' },
+      paymentMethod: { desc: '付款方式', rule: '从 一次性、分期、按进度 中识别“付款方式 / 结算方式”栏' },
+      handler: { desc: '经办人', rule: '提取“经办人 / 承办人”姓名；原文无则留空' },
+      department: { desc: '部门', rule: '提取合同所属部门；原文无则留空' },
+      fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
+  },
 }
 
 // 常用提取规则写法示例（展开“更多”展示）
@@ -413,9 +441,9 @@ function toggleEdit(name: string) {
   editingName.value = editingName.value === name ? '' : name
 }
 
-// 发票字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
+// 发票/合同字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
 function fieldLabel(n: string): string {
-  return props.scope === 'invoice' ? invoiceFieldLabel(n) : n
+  return props.scope === 'invoice' ? invoiceFieldLabel(n) : props.scope === 'contract' ? contractFieldLabel(n) : n
 }
 
 function typeLabel(t: string) {

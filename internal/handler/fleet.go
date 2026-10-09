@@ -1616,7 +1616,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-			{Name: "fulfillStatus", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
@@ -1707,7 +1707,35 @@ func (h *FleetHandler) seedBusinessCategories() {
 		}
 	}
 
-	// 存量内置发票分类幂等补齐 items 明细字段（老库已入库的分类不经过上面的 seed 插入）
+	// 存量 contract 分类幂等补齐 fulfillStatus 默认表头（履约状态为系统派生列，默认开启显示，与前端 default 一致）
+	var ctSeeds []types.FleetCategory
+	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key = ? AND deleted_at IS NULL",
+		"contract", "contract").Find(&ctSeeds).Error; err == nil {
+		for i := range ctSeeds {
+			subs := ctSeeds[i].Subs
+			changed := false
+			for j := range subs {
+				if subs[j].Name == "fulfillStatus" && !subs[j].IsDefault {
+					subs[j].IsDefault = true
+					changed = true
+				}
+			}
+			if !changed {
+				continue
+			}
+			raw, merr := json.Marshal(subs)
+			if merr != nil {
+				logger.Warnf(ctx, "backfill contract fulfillStatus is_default marshal failed: %v", merr)
+				continue
+			}
+			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("id = ?", ctSeeds[i].ID).
+				Update("subs", gorm.Expr("?::jsonb", string(raw))).Error; err != nil {
+				logger.Warnf(ctx, "backfill contract fulfillStatus is_default failed: %v", err)
+			} else {
+				logger.Infof(ctx, "backfilled contract category %q fulfillStatus is_default", ctSeeds[i].Name)
+			}
+		}
+	}
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
 		types.FleetCategoryScopeInvoice, []string{"invoice-common", "invoice-vat"}).Find(&invSeeds).Error; err == nil {

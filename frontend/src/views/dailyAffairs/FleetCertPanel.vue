@@ -94,6 +94,7 @@
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
                   <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static">{{ invoiceFieldLabel(fd.name) }}</span>
+                  <span v-else-if="group.scope === 'contract'" class="fc-name fc-name-static">{{ contractFieldLabel(fd.name) }}</span>
                   <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                   <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                   <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
@@ -167,6 +168,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
+import { contractFieldLabel } from './contractFieldLabels'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
@@ -569,7 +571,7 @@ function toggleEdit(item: any) {
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
 const fieldDelPop = ref<any>(null)
-const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice' ? invoiceFieldLabel(fd.name) : fd.desc || fd.name)
+const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice' ? invoiceFieldLabel(fd.name) : group.value.scope === 'contract' ? contractFieldLabel(fd.name) : fd.desc || fd.name)
 const fieldMenuOptions = (fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },

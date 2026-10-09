@@ -29,13 +29,12 @@
       <div class="doc-filter-bar">
         <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
           :type-options="contractTypeOptions" v-model:type-value="filterContractType"
-          primary-action-text="新建合同" @primary="wizardVisible = true"
           @refresh="applyFilter" @print="handleBatchPrint" :selected-count="selectedRowKeys.length"
           @clear-selection="clearSelection">
           <template #type-extra>
             <div class="doc-filter-field">
               <t-select v-model="filterFulfillStatus" :options="fulfillStatusOptions" placeholder="履约状态"
-                class="doc-type-select doc-filter-field__control" clearable @change="applyFilter">
+                class="doc-type-select doc-filter-field__control" clearable>
                 <template #prefixIcon><t-icon name="check-circle" size="16px" /></template>
               </t-select>
             </div>
@@ -50,10 +49,6 @@
             <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
           </template>
           <template #right-extra>
-            <t-button variant="outline" size="small" @click="historyVisible = true">
-              <template #icon><t-icon name="history" size="14px" /></template>
-              删除历史
-            </t-button>
             <t-button variant="outline" size="small" @click="settingsVisible = true">
               <template #icon><t-icon name="setting" size="14px" /></template>
               设置
@@ -277,10 +272,6 @@
                   <t-form-item label="签订地点" label-width="110px">
                     <t-input v-model="editForm.sign_place" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="履约状态" label-width="110px">
-                    <t-select v-model="editForm.fulfill_status" :options="fulfillStatusOptions" clearable
-                      placeholder="执行中" />
-                  </t-form-item>
                 </div>
               </div>
 
@@ -502,8 +493,22 @@ const PAGE_SIZE = 20
 
 // 合同类型枚举（编辑/筛选推荐值）
 const CONTRACT_TYPES = ['采购合同', '销售合同', '服务合同', '租赁合同', '技术合同', '运输合同', '借款合同', '保密协议', '其它合同']
-// 履约状态枚举
-const FULFILL_STATUSES = ['待签署', '执行中', '已完成', '已到期', '已终止']
+// 履约状态为系统按到期日期自动派生的动态字段（非提取字段，不落库人工值）：
+// 已超期（早于今天）/ 即将到期（未来 30 天内）/ 履行中（其余，含未填到期日期）
+const FULFILL_STATUSES = ['履行中', '即将到期', '已超期']
+const EXPIRY_WARN_DAYS = 30
+// 按到期日期派生履约状态（黄金基准：状态列自动计算，不依赖模型提取值）
+const calcFulfillStatus = (expiryDate?: string): string => {
+  if (!expiryDate) return ''
+  const d = new Date(expiryDate)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  now.setHours(0, 0, 0, 0)
+  const diff = Math.round((d.getTime() - now.getTime()) / 86400000)
+  if (diff < 0) return '已超期'
+  if (diff <= EXPIRY_WARN_DAYS) return '即将到期'
+  return '履行中'
+}
 // 付款方式枚举
 const PAYMENT_METHODS = ['一次性', '分期', '按进度']
 
@@ -522,7 +527,7 @@ const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
   { key: 'taxRate', label: '税率', default: true, w: '0.7fr' },
   { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
-  { key: 'fulfillStatus', label: '履约状态', default: false, w: '1fr' },
+  { key: 'fulfillStatus', label: '履约状态', default: true, w: '1fr' },
   { key: 'partyATaxNo', label: '甲方税号', default: false, w: '1.3fr' },
   { key: 'partyBTaxNo', label: '乙方税号', default: false, w: '1.3fr' },
   { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
@@ -715,6 +720,7 @@ const loadKb = async () => {
       await loadContractCats()
       await cleanNonContractFiles()
       await loadFiles()
+      loadDeletedCount()
       startPolling()
     }
   } catch (e: any) {
@@ -732,6 +738,7 @@ const onKbCreated = async (kb: any) => {
     await loadContractCats()
     await cleanNonContractFiles()
     await loadFiles()
+    loadDeletedCount()
     startPolling()
   }
 }
@@ -835,7 +842,7 @@ const loadFiles = async (reset = false) => {
     const res: any = await listContractRecords(kbId.value, {
       q: keyword.value || undefined,
       contract_type: filterContractType.value || undefined,
-      fulfill_status: filterFulfillStatus.value || undefined,
+      // 履约状态为前端按到期日期派生的动态字段，后端无存储值可过滤，交由前端筛选
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
       page: page.value,
@@ -906,7 +913,7 @@ const mapContractRecord = (r: any): ContractRow => ({
   handler: r.handler || '',
   department: r.department || '',
   remark: r.remark || '',
-  fulfillStatus: r.fulfill_status || '',
+  fulfillStatus: calcFulfillStatus(r.expiry_date),
   page: Number(r.page) || 0,
 })
 
@@ -976,7 +983,7 @@ const parseCustomMetadata = (item: KnowledgeItem): ContractRow[] => {
     handler: ct.handler || '',
     department: ct.department || '',
     remark: ct.remark || '',
-    fulfillStatus: ct.fulfill_status || '',
+    fulfillStatus: calcFulfillStatus(ct.expiry_date),
     page: Number(ct.page) || 0,
   }))
 }
@@ -1006,19 +1013,22 @@ const pendingRows = computed<ContractRow[]>(() => pendingFiles.value.map((k) => 
     tags: Array.isArray(k.tags) ? k.tags : [],
   } as ContractRow
 }))
-const filteredRows = computed(() => [...pendingRows.value, ...contractRows.value])
+// 履约状态为前端派生字段：筛选在已加载数据上按派生状态匹配（后端不传 fulfill_status）
+const fulfillFilteredRows = computed(() => {
+  if (!filterFulfillStatus.value) return contractRows.value
+  return contractRows.value.filter(r => calcFulfillStatus(r.expiryDate) === filterFulfillStatus.value)
+})
+const filteredRows = computed(() => [...pendingRows.value, ...fulfillFilteredRows.value])
 
 const fulfillStatusOptions = computed(() => FULFILL_STATUSES.map(v => ({ value: v, label: v })))
 const paymentMethodOptions = computed(() => PAYMENT_METHODS.map(v => ({ value: v, label: v })))
 
-// 履约状态标签主题
-const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'primary' | 'default' | 'danger' => {
+// 履约状态标签主题（派生三态：履行中 success / 即将到期 warning / 已超期 danger）
+const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'default' | 'danger' => {
   switch (s) {
-    case '执行中': return 'primary'
-    case '已完成': return 'success'
-    case '待签署': return 'warning'
-    case '已到期': return 'danger'
-    case '已终止': return 'default'
+    case '履行中': return 'success'
+    case '即将到期': return 'warning'
+    case '已超期': return 'danger'
     default: return 'default'
   }
 }
@@ -1059,7 +1069,17 @@ const selectedSummary = computed(() => {
   }
   return { total: rows.length, sumAmount: sumTotal, sumTotal }
 })
-const displaySummary = computed(() => selectedSummary.value || contractSummary.value)
+const displaySummary = computed(() => {
+  if (selectedSummary.value) return selectedSummary.value
+  // 履约状态筛选为前端派生过滤：汇总按过滤后的已加载行现算（与列表可见行一致）
+  if (filterFulfillStatus.value) {
+    const rows = fulfillFilteredRows.value
+    let sum = 0
+    for (const r of rows) sum += Number(r.contractAmount) || 0
+    return { total: rows.length, sumAmount: sum, sumTotal: sum }
+  }
+  return contractSummary.value
+})
 
 const applyFilter = () => { loadFiles(true) }
 const onKeywordChange = () => { loadFiles(true) }
@@ -1074,6 +1094,11 @@ const clearSelectionSafe = () => {
 }
 // 类型切换：清空多选（防跨类型脏数据残留）+ 立即刷新列表
 watch(filterContractType, () => {
+  clearSelectionSafe()
+  applyFilter()
+})
+// 履约状态筛选（前端派生过滤）：切换时清空多选残留并重载列表
+watch(filterFulfillStatus, () => {
   clearSelectionSafe()
   applyFilter()
 })
@@ -1095,28 +1120,37 @@ watch(keyword, (v) => {
   keywordTimer = setTimeout(() => loadFiles(true), 300)
 })
 
-// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不调后端 categories） ----
+// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：全部合同 → 各合同类型卡 → 即将到期 → 历史记录） ----
 const overviewCards = computed<KpiCard[]>(() => {
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   const total = contractSummary.value.total || rows.length
-  const sumAmount = contractSummary.value.sumAmount || 0
-  // 合同类型数：列表出现的类型 ∪ 下拉枚举（含自定义分类）
-  const typeSet = new Set<string>()
-  for (const r of rows) if (r.contractType) typeSet.add(r.contractType)
-  for (const t of contractTypeOptions.value) typeSet.add(t.value)
-  // 本月新增：签订日期为当月的记录数
   const now = new Date()
   const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const monthNew = rows.filter(r => (r.signDate || '').startsWith(monthPrefix)).length
-  return [
-    { key: 'total', label: '合同总数', icon: 'file-copy', value: String(total), sub: `本月新增 ${monthNew} 份`, theme: 'brand' },
-    { key: 'amount', label: '合同金额', icon: 'money', value: sumAmount ? formatAmount(sumAmount) : '0.00', theme: 'success', numCls: 'num-sm' },
-    { key: 'types', label: '合同类型', icon: 'view-module', value: String(typeSet.size), theme: 'warning' },
+  const cards: KpiCard[] = [
+    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), sub: `本月新增 ${monthNew} 份`, theme: 'brand' },
   ]
+  // 各合同类型卡片：按下拉枚举动态渲染，点击联动类型筛选（发票基准同款 action/typeValue）
+  for (const t of contractTypeOptions.value) {
+    const cnt = rows.filter(r => r.contractType === t.value).length
+    cards.push({ key: `type-${t.value}`, label: t.label, icon: 'file-1', value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: t.value })
+  }
+  // 即将到期（未来 30 天内）：warning 主题色警示
+  const expiring = rows.filter(r => calcFulfillStatus(r.expiryDate) === '即将到期').length
+  cards.push({ key: 'expiring', label: '即将到期', icon: 'time', value: String(expiring), unit: '份', theme: 'warning', action: 'expiring' })
+  // 历史记录（已删除文件，对齐发票页历史记录卡片）
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: String(deletedCount.value), unit: '份', theme: 'neutral', action: 'history' })
+  return cards
 })
-// 轻量概览：点击卡片聚焦列表区（不承载视图跳转）
-const onOverviewCardClick = () => {
-  nextTick(() => document.querySelector('.doc-filter-bar')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+// 卡片点击联动（发票基准同款 action 分流：类型卡切筛选；即将到期卡切履约筛选；历史记录卡开抽屉）
+const onOverviewCardClick = (card: KpiCard) => {
+  if (card.action === 'type' && card.typeValue) {
+    filterContractType.value = card.typeValue // watch 触发 clearSelectionSafe + applyFilter
+  } else if (card.action === 'expiring') {
+    filterFulfillStatus.value = '即将到期'
+  } else if (card.action === 'history') {
+    historyVisible.value = true
+  }
 }
 
 // 懒加载
@@ -1148,6 +1182,16 @@ const onUploadDone = async (typeName?: string) => {
   // 上传完成联动：携带本次上传的合同类型 → 列表切换为该类型（watch 触发 applyFilter）
   if (typeName && typeName !== filterContractType.value) filterContractType.value = typeName
   await loadFiles(true)
+}
+
+// 历史记录（已删除文件）计数：KPI「历史记录」卡数据源
+const deletedCount = ref(0)
+const loadDeletedCount = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await listDeletedKnowledge(kbId.value, { page: 1, page_size: 1 })
+    deletedCount.value = Number(res?.total || 0)
+  } catch { deletedCount.value = 0 }
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
@@ -1182,7 +1226,6 @@ const refreshContractRows = async () => {
     const res: any = await listContractRecords(kbId.value, {
       q: keyword.value || undefined,
       contract_type: filterContractType.value || undefined,
-      fulfill_status: filterFulfillStatus.value || undefined,
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
       page: 1,
@@ -1300,7 +1343,6 @@ const fillEditForm = () => {
     handler: r.handler || '',
     department: r.department || '',
     remark: r.remark || '',
-    fulfill_status: r.fulfillStatus || '执行中',
   }
 }
 
@@ -1347,7 +1389,6 @@ const saveContractDetail = async () => {
       handler: editForm.value.handler || '',
       department: editForm.value.department || '',
       remark: editForm.value.remark || '',
-      fulfill_status: editForm.value.fulfill_status || '',
     }
     const nowPage = now.page && now.page >= 1 ? now.page : 0
     let targetIdx = -1
@@ -1385,7 +1426,7 @@ const saveContractDetail = async () => {
         contractAmount: updated.contract_amount,
         taxRate: updated.tax_rate,
         paymentMethod: updated.payment_method,
-        fulfillStatus: updated.fulfill_status,
+        fulfillStatus: calcFulfillStatus(updated.expiry_date),
         handler: updated.handler,
         department: updated.department,
         remark: updated.remark,
@@ -1760,12 +1801,17 @@ onBeforeUnmount(() => {
 
 /* ---- 底部汇总 ---- */
 .doc-summary-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 0 2px;
+  padding: 10px 16px;
   font-size: 13px;
   color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-container);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
   .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
   .doc-summary-item {
     display: inline-flex; align-items: baseline; gap: 6px;
