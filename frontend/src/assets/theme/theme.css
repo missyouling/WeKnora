@@ -286,3 +286,46 @@ select:-webkit-autofill {
     --z-popover: 3000;
     --z-toast: 5000;
 }
+
+/* ============================================================
+ * 业务组件语义令牌（--wk-*）
+ * 中台业务组件（DashboardKpiGroup / 批量操作浮条 / 字段配置网格 /
+ * 弱化告警）的视觉语义变量，light/dark 双模式成对定义。
+ * 新业务组件一律引用 --wk-* / --td-* 令牌，禁止写死 rgba 与像素值。
+ * ============================================================ */
+:root {
+    /* 概览 KPI 卡 */
+    --wk-kpi-bg: var(--td-bg-color-secondarycontainer);
+    --wk-kpi-hover-bg: var(--td-brand-color-1);
+    --wk-kpi-icon-bg: var(--td-bg-color-container);
+    --wk-kpi-icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --wk-kpi-shadow: var(--td-shadow-1);
+
+    /* 批量操作浮条（position: fixed 底部居中） */
+    --wk-batch-bar-bottom: 24px;
+    --wk-batch-bar-z: 3000;
+
+    /* 字段配置列表紧凑网格 */
+    --wk-field-grid-gap: 8px;
+
+    /* 弱化告警背景（低饱和，替代全宽大色块） */
+    --wk-alert-soft-bg: var(--td-warning-color-1);
+}
+:root[theme-mode="dark"] {
+    /* 概览 KPI 卡 */
+    --wk-kpi-bg: var(--td-bg-color-secondarycontainer);
+    --wk-kpi-hover-bg: var(--td-brand-color-1);
+    --wk-kpi-icon-bg: var(--td-bg-color-container);
+    --wk-kpi-icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    --wk-kpi-shadow: var(--td-shadow-1);
+
+    /* 批量操作浮条 */
+    --wk-batch-bar-bottom: 24px;
+    --wk-batch-bar-z: 3000;
+
+    /* 字段配置列表紧凑网格 */
+    --wk-field-grid-gap: 8px;
+
+    /* 弱化告警背景 */
+    --wk-alert-soft-bg: var(--td-warning-color-1);
+}

@@ -216,3 +216,15 @@
 
 3. **卡片尺寸自适应**：卡片用 `1fr` 或 `auto` 宽度，禁止写死 `width: 240px` 在窄屏断点下；用媒体查询切换列数即可。
 4. **容器高度自适应**：概览容器高度随内容撑开，禁止写死 `height` 或 `max-height`。
+
+---
+
+## 架构军规（强制）
+
+> 适用所有列表/CRUD 页面与中台业务组件。违反即视为偏离黄金基准。
+
+1. **页面布局基准**：确立「同页紧凑概览卡 + 列表同页布局」为最高效的 CRUD 标准形态（不再使用 Tab 彻底分离的视图）。概览卡组必须使用中台组件 `<DashboardKpiGroup>`（`frontend/src/components/business/DashboardKpiGroup.vue`），禁止手写同类卡片堆叠。
+2. **底部浮条**：批量操作工具条必须使用 `position: fixed` 脱离文档流悬浮于视口底部（`bottom: var(--wk-batch-bar-bottom); left: 50%; transform: translateX(-50%); z-index: var(--wk-batch-bar-z)`）。出现/消失不得占据物理空间，禁止引起页面上下跳动或底部留白。
+3. **表单对齐**：复杂字段配置列表必须使用 CSS Grid 强对齐（表头与数据行共用同一 `grid-template-columns`），保证窄视口下无横向滚动条、内容不换行；网格间距引用 `var(--wk-field-grid-gap)`。
+4. **懒挂载与豁免**：常驻 Drawer/Dialog 必须懒挂载（`destroy-on-close` 或 `v-if` 强控制），降低初始 DOM 渲染成本。**豁免原则**：带生命周期或后台任务的组件（如上传任务进度弹窗 `FleetUploadDialog`）明确豁免懒挂载，防止销毁导致任务与进度丢失。
+5. **黄金参考基准**：`frontend/src/views/dailyAffairs/InvoiceManagement.vue` 为未来所有 CRUD 列表页面的黄金参考基准——工具栏（BusinessListToolbar）、概览卡（DashboardKpiGroup）、设置抽屉（StandardSettingDrawer 双 Tab）、浮动工具条、字段配置 Grid 全部以它为样板。

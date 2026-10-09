@@ -23,18 +23,9 @@
 
     <!-- KB 存在：主界面 -->
     <div v-else class="invoice-main">
-      <!-- 概览紧凑卡（车队 type-card 风格） -->
+      <!-- 概览紧凑卡（中台 DashboardKpiGroup 组件，type-card 范式） -->
       <div class="overview-group">
-        <div class="overview-group__cards invoice-overview-cards">
-          <div v-for="card in overviewCards" :key="card.key" class="type-card" :class="card.cls" @click="onOverviewCardClick(card)">
-            <div class="type-card__icon"><t-icon :name="card.icon" size="22px" /></div>
-            <div class="type-card__body">
-              <div class="type-card__label">{{ card.label }}</div>
-              <div class="type-card__num" :class="card.numCls">{{ card.value }} <span>{{ card.unit }}</span></div>
-              <div class="type-card__sub">{{ card.sub }}</div>
-            </div>
-          </div>
-        </div>
+        <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
       </div>
 
       <!-- 发票列表 -->
@@ -256,7 +247,7 @@
       @changed="onUploadHistoryChanged" />
 
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
-    <InvoiceSettingsDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="() => reloadColumns(true)" />
+    <StandardSettingDrawer v-model:visible="invoiceSettingsVisible" :kb-id="kbId || ''" @saved="() => reloadColumns(true)" />
 
     <!-- 上传弹窗（对齐车队：分类选择 + 拖拽/选择/粘贴 + 进度） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="invoice"
@@ -438,7 +429,8 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
-import InvoiceSettingsDrawer from './InvoiceSettingsDrawer.vue'
+import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
@@ -1275,8 +1267,13 @@ const onSortChange = (ctx: any) => {
   loadFiles(true)
 }
 // 筛选联动：类型下拉变更即时刷新（修复中台 Toolbar 只发 update 不触发刷新的空转）；
-// 同时重载列表列（列宽跟随当前分类配置生效）
-watch(filterInvoiceType, () => { reloadColumns(); applyFilter() })
+// 同时重载列表列（列宽跟随当前分类配置生效）。
+// 状态隔离：切换类型时清空多选，防止浮条「已选 N 项」残留上一类型的脏数据。
+watch(filterInvoiceType, () => {
+  clearSelectionSafe()
+  reloadColumns()
+  applyFilter()
+})
 // 关键词防抖 300ms 后刷新
 // ⑦ 全局搜索：输入关键词时临时清空类型筛选（下拉与请求参数均不带筛选），
 // 清空搜索词后恢复原选中类型并重新锁定。
@@ -1919,39 +1916,12 @@ onBeforeUnmount(() => {
 
 .invoice-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
-/* ---- 概览紧凑卡（车队 type-card 风格） ---- */
+/* ---- 概览紧凑卡（由中台组件 DashboardKpiGroup 渲染，样式内置组件） ---- */
 .overview-group {
   margin-bottom: var(--td-comp-margin-m);
 }
-.overview-group__cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 14px;
-}
-.type-card {
-  display: flex; align-items: center; gap: 14px; padding: 18px 20px;
-  background: var(--td-bg-color-secondarycontainer); border: 1px solid transparent;
-  border-radius: var(--td-radius-large); cursor: pointer; transition: all .18s ease;
-}
-.type-card:hover { background: var(--td-brand-color-1); border-color: var(--td-brand-color); transform: translateY(-1px); }
-.type-card__icon {
-  flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--td-bg-color-container); color: var(--td-brand-color);
-  box-shadow: 0 1px 3px rgba(0,0,0,.06);
-}
-.type-card__body { flex: 1; min-width: 0; }
-.type-card__label { font-size: 14px; font-weight: 500; color: var(--td-text-color-primary); margin-bottom: 4px; }
-.type-card__num { font-size: 20px; font-weight: 600; color: var(--td-brand-color); white-space: nowrap; }
-.type-card__num.num-sm { font-size: 17px; }
-.type-card__num.num-xs { font-size: 14px; }
-.type-card__num span { font-size: 12px; font-weight: 400; color: var(--td-text-color-secondary); margin-left: 2px; }
-.type-card__sub { font-size: 12px; color: var(--td-text-color-secondary); margin-top: 4px; }
-.type-card.is-brand .type-card__icon { background: var(--td-brand-color-1); }
-.type-card.is-warn .type-card__icon { background: var(--td-warning-color-1); color: var(--td-warning-color); }
-.type-card.is-warn .type-card__num { color: var(--td-warning-color); }
 
-/* ---- 发票列表视图（Tab 独立视图） ---- */
+/* ---- 发票列表视图 ---- */
 .invoice-list-view {
   display: flex; flex-direction: column; gap: 0;
   flex: 1; min-height: 0;
@@ -2021,10 +1991,10 @@ onBeforeUnmount(() => {
    出现/消失不占据物理空间 → 页面不会上下跳动、底部无冗余留白 */
 .doc-batch-bar {
   position: fixed;
-  bottom: 24px;
+  bottom: var(--wk-batch-bar-bottom);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3000;
+  z-index: var(--wk-batch-bar-z);
   width: max-content;
   max-width: calc(100vw - 48px);
   box-sizing: border-box;

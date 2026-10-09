@@ -815,7 +815,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     display: grid;
     grid-template-columns: 30px 1.6fr 0.9fr 0.6fr 0.6fr 0.7fr;
     align-items: center;
-    gap: 8px;
+    gap: var(--wk-field-grid-gap);
     padding: 7px 12px;
     font-size: 12px;
   }
@@ -950,7 +950,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   display: grid;
   grid-template-columns: 30px 1.6fr 0.9fr 0.6fr 0.6fr 0.7fr;
   align-items: center;
-  gap: 8px;
+  gap: var(--wk-field-grid-gap);
   padding: 8px 12px;
   font-size: 12px;
   color: var(--td-text-color-secondary);
