@@ -173,6 +173,29 @@ func (h *BusinessExtractHandler) ListContractRecords(c *gin.Context) {
 	})
 }
 
+// ContractOverviewStats 合同台账概览统计（全量只读聚合，不受列表筛选影响）
+func (h *BusinessExtractHandler) ContractOverviewStats(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(apperrors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	stats, err := h.businessSvc.ContractOverviewStats(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load contract overview stats", err)
+		c.Error(apperrors.NewInternalServerError("load contract overview stats failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
+}
+
 // ListContractTypes 合同类型去重列表
 func (h *BusinessExtractHandler) ListContractTypes(c *gin.Context) {
 	ctx := c.Request.Context()

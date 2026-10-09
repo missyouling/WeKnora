@@ -992,6 +992,16 @@ export function listContractTypes(kbId: string) {
 }
 
 /**
+ * 合同台账概览统计（全量只读聚合，不随列表筛选变化）：
+ * 返回总份数/金额合计/本月新增/即将到期/类型分布（服务合同/租赁合同/其它合同三桶），
+ * 供 KPI 概览卡片使用，不受工具栏类型/日期/搜索筛选影响。
+ */
+
+export function listContractOverview(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/contracts/overview-stats`);
+}
+
+/**
  * 触发制度字段提取：后端读取已解析文本并调用提取模型（复用知识库的
  * summary_model_id），将结果写入 custom_metadata。
  */

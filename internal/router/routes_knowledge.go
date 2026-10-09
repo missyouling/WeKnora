@@ -114,6 +114,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 
 				kbDirectRead.GET("/invoice-tax-rates", g.Viewer(), g.KBAccessRead("id"), business.ListInvoiceTaxRates)
 				kbDirectRead.GET("/contracts", g.Viewer(), g.KBAccessRead("id"), business.ListContractRecords)
+				kbDirectRead.GET("/contracts/overview-stats", g.Viewer(), g.KBAccessRead("id"), business.ContractOverviewStats)
 				kbDirectRead.GET("/contract-types", g.Viewer(), g.KBAccessRead("id"), business.ListContractTypes)
 				kbDirectRead.GET("/regulations", g.Viewer(), g.KBAccessRead("id"), business.ListRegulationRecords)
 				kbDirectRead.GET("/regulation-types", g.Viewer(), g.KBAccessRead("id"), business.ListRegulationTypes)

@@ -76,3 +76,30 @@ type ContractListResult struct {
 	Page         int              `json:"page"`
 	PageSize     int              `json:"page_size"`
 }
+
+// ContractOverviewStats 是合同台账概览统计（纯只读全量聚合，不随列表筛选变化）：
+// 遍历知识库下全部 knowledge → 平铺合同记录（口径与 ListContractRecords 一致），
+// 在内存中聚合总份数/金额/本月新增/即将到期/类型分布，兼容 Postgres 与 SQLite 双库。
+type ContractOverviewStats struct {
+	Total          int                `json:"total"`            // 全部合同份数（含未分类/其它合同与待补录占位行）
+	SumTotal       float64            `json:"sum_total"`        // 合同金额合计（金额字段空按 0）
+	CurrentMonth   ContractMonthStat  `json:"current_month"`    // 本月（签订日期）新增看板
+	Expiring       int                `json:"expiring"`         // 即将到期：到期日期在未来 30 天内
+	FileCount      int                `json:"file_count"`       // 已上传文件数（含解析失败文件）
+	ParseFailed    int                `json:"parse_failed"`     // 解析失败文件数
+	ExtractFailed  int                `json:"extract_failed"`   // 提取失败合同数
+	ByContractType []ContractTypeStat `json:"by_contract_type"` // 按合同类型分组（服务合同/租赁合同/其它合同三桶）
+}
+
+// ContractMonthStat 是本月（签订日期）合同新增看板。
+type ContractMonthStat struct {
+	Count    int     `json:"count"`
+	SumTotal float64 `json:"sum_total"`
+}
+
+// ContractTypeStat 是单一合同类型的聚合统计。
+type ContractTypeStat struct {
+	ContractType string  `json:"contract_type"`
+	Count        int     `json:"count"`
+	SumTotal     float64 `json:"sum_total"`
+}

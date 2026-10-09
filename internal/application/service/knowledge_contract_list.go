@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -315,10 +316,213 @@ func contractRecordMatchKeyword(r types.ContractRecord, kw string) bool {
 	return false
 }
 
+// ContractOverviewStats 计算合同台账概览统计。口径与 ListContractRecords 平铺完全一致：
+// 遍历知识库下全部 knowledge → 平铺合同记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，
+// 因此不受列表类型/日期/搜索筛选影响（发票基准 InvoiceOverviewStats 同款形态）。
+func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID string) (*types.ContractOverviewStats, error) {
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+
+	records := make([]types.ContractRecord, 0, 256)
+	parseFailedFiles := 0
+	fileCount := 0
+	page := 1
+	const batch = 1000
+	for {
+		p := &types.Pagination{Page: page, PageSize: batch}
+		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
+		if err != nil {
+			return nil, fmt.Errorf("list knowledge for contract overview: %w", err)
+		}
+		if len(knowledges) == 0 {
+			break
+		}
+		for _, k := range knowledges {
+			if k == nil {
+				continue
+			}
+			// 文件级解析失败计数（与发票/车队概览口径一致）：无论是否打标 kind=contract 都计入已上传文件数
+			if k.ParseStatus == "failed" {
+				parseFailedFiles++
+				fileCount++
+			}
+			if len(k.CustomMetadata) == 0 {
+				continue
+			}
+			var meta contractMetadata
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				continue
+			}
+			legacyManual := meta.Kind != "contract" && meta.AutoDeletedCount > 0
+			if meta.Kind != "contract" && !legacyManual {
+				continue
+			}
+			// 已打标 contract 的文件计入已上传文件数（解析失败文件在上面已计，避免重复）
+			if k.ParseStatus != "failed" {
+				fileCount++
+			}
+			tags := make([]string, 0, len(k.Tags))
+			for _, t := range k.Tags {
+				if t != nil && t.Name != "" {
+					tags = append(tags, t.Name)
+				}
+			}
+			// 待补录占位行：与列表口径一致计入总份数（无类型/日期/金额，仅影响 total/file_count）
+			if contractItemsAllBlank(meta.Contracts) &&
+				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+				records = append(records, types.ContractRecord{
+					KnowledgeID:   k.ID,
+					KnowledgeTitle: k.Title,
+					FileName:      k.FileName,
+					FileType:      k.FileType,
+					Tags:          tags,
+					ExtractStatus: "manual",
+					ExtractError:  meta.ExtractError,
+					KBID:          k.KnowledgeBaseID,
+					CreatedAt:     k.CreatedAt,
+				})
+				continue
+			}
+			if len(meta.Contracts) == 0 {
+				continue
+			}
+			for _, ct := range meta.Contracts {
+				if contractExtractionItemBlank(ct) {
+					continue
+				}
+				records = append(records, types.ContractRecord{
+					ContractNo:       ct.ContractNo,
+					ContractName:     ct.ContractName,
+					ContractType:     ct.ContractType,
+					SignDate:         ct.SignDate,
+					EffectiveDate:    ct.EffectiveDate,
+					ExpiryDate:       ct.ExpiryDate,
+					SignPlace:        ct.SignPlace,
+					PartyAName:       ct.PartyAName,
+					PartyATaxNo:      ct.PartyATaxNo,
+					PartyAAddress:    ct.PartyAAddress,
+					PartyAPhone:      ct.PartyAPhone,
+					PartyABank:       ct.PartyABank,
+					PartyAAccount:    ct.PartyAAccount,
+					PartyBName:       ct.PartyBName,
+					PartyBTaxNo:      ct.PartyBTaxNo,
+					PartyBAddress:    ct.PartyBAddress,
+					PartyBPhone:      ct.PartyBPhone,
+					PartyBBank:       ct.PartyBBank,
+					PartyBAccount:    ct.PartyBAccount,
+					ContractAmount:   ct.ContractAmount,
+					TaxRate:          ct.TaxRate,
+					PaymentMethod:    ct.PaymentMethod,
+					QualityBond:      ct.QualityBond,
+					LiquidatedDamages: ct.LiquidatedDamages,
+					Subject:          ct.Subject,
+					Quantity:         ct.Quantity,
+					UnitPrice:        ct.UnitPrice,
+					PerformancePeriod: ct.PerformancePeriod,
+					Handler:          ct.Handler,
+					Department:       ct.Department,
+					Remark:           ct.Remark,
+					FulfillStatus:    ct.FulfillStatus,
+					Page:             ct.Page,
+					KnowledgeID:      k.ID,
+					KnowledgeTitle:   k.Title,
+					FileName:         k.FileName,
+					FileType:         k.FileType,
+					Tags:             tags,
+					ExtractStatus:    meta.ExtractStatus,
+					ExtractError:     meta.ExtractError,
+					KBID:             k.KnowledgeBaseID,
+					CreatedAt:        k.CreatedAt,
+				})
+			}
+		}
+		if len(knowledges) < batch {
+			break
+		}
+		page++
+	}
+
+	stats := &types.ContractOverviewStats{
+		ByContractType: []types.ContractTypeStat{},
+	}
+	stats.Total = len(records)
+	stats.FileCount = fileCount
+	stats.ParseFailed = parseFailedFiles
+
+	// 当前月（基于签订日期 YYYY-MM-DD，兼容 YYYYMMDD）
+	now := time.Now()
+	monthPrefix := now.Format("2006-01")
+	monthPrefixCompact := now.Format("200601")
+	// 即将到期：到期日期在今天至未来 30 天内（与前端 calcFulfillStatus 口径一致）
+	today := time.Now()
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+	expiryCutoff := today.AddDate(0, 0, 30)
+
+	typeByMap := map[string]*types.ContractTypeStat{}
+	for _, r := range records {
+		if r.ExtractStatus == "failed" {
+			stats.ExtractFailed++
+		}
+		if r.ContractAmount != nil {
+			stats.SumTotal += *r.ContractAmount
+		}
+		// 本月新增：签订日期命中当前年月
+		date := strings.TrimSpace(r.SignDate)
+		if date != "" && (strings.HasPrefix(date, monthPrefix) || strings.HasPrefix(strings.ReplaceAll(date, "-", ""), monthPrefixCompact)) {
+			stats.CurrentMonth.Count++
+			if r.ContractAmount != nil {
+				stats.CurrentMonth.SumTotal += *r.ContractAmount
+			}
+		}
+		// 即将到期：到期日期非空且解析有效，落在 [today, today+30d]
+		if expiry := strings.TrimSpace(r.ExpiryDate); expiry != "" {
+			if d, err := time.Parse("2006-01-02", expiry); err == nil {
+				if !d.Before(today) && !d.After(expiryCutoff) {
+					stats.Expiring++
+				}
+			} else if d, err := time.Parse("20060102", strings.ReplaceAll(expiry, "-", "")); err == nil {
+				if !d.Before(today) && !d.After(expiryCutoff) {
+					stats.Expiring++
+				}
+			}
+		}
+		// 类型分桶：服务合同/租赁合同两桶按名精确匹配，其余（含空/未知/"其它合同"）统一归入"其它合同"
+		typ := strings.TrimSpace(r.ContractType)
+		if typ != "服务合同" && typ != "租赁合同" {
+			typ = "其它合同"
+		}
+		t := typeByMap[typ]
+		if t == nil {
+			t = &types.ContractTypeStat{ContractType: typ}
+			typeByMap[typ] = t
+		}
+		t.Count++
+		if r.ContractAmount != nil {
+			t.SumTotal += *r.ContractAmount
+		}
+	}
+	for _, t := range typeByMap {
+		stats.ByContractType = append(stats.ByContractType, *t)
+	}
+	// 保证服务/租赁/其它三桶固定出现（空桶补 0），前端类型卡稳定展示
+	seenType := map[string]bool{}
+	for _, t := range stats.ByContractType {
+		seenType[t.ContractType] = true
+	}
+	for _, name := range []string{"服务合同", "租赁合同", "其它合同"} {
+		if !seenType[name] {
+			stats.ByContractType = append(stats.ByContractType, types.ContractTypeStat{ContractType: name})
+		}
+	}
+	// 按份数降序，稳定排序
+	sort.Slice(stats.ByContractType, func(i, j int) bool {
+		return stats.ByContractType[i].Count > stats.ByContractType[j].Count
+	})
+	return stats, nil
+}
+
 // ListContractTypes 返回该知识库下所有合同出现过的去重合同类型（含数量），
 // 用于前端合同类型筛选下拉自动加载。
-func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {
-	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
 	seen := map[string]int{}

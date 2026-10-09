@@ -465,6 +465,7 @@ import {
   extractBusinessDocument,
   deleteContractPage,
   listContractRecords,
+  listContractOverview,
   previewKnowledgeFile,
   reparseKnowledge,
   getRecognitionConfig,
@@ -740,6 +741,7 @@ const loadKb = async () => {
       await cleanNonContractFiles()
       await loadFiles()
       loadUploadStats()
+      loadContractOverview()
       startPolling()
     }
   } catch (e: any) {
@@ -758,6 +760,7 @@ const onKbCreated = async (kb: any) => {
     await cleanNonContractFiles()
     await loadFiles()
     loadUploadStats()
+    loadContractOverview()
     startPolling()
   }
 }
@@ -1160,22 +1163,28 @@ watch(keyword, (v) => {
 })
 
 // ---- KPI 概览卡（黄金基准 DashboardKpiGroup：全部合同 → 各合同类型卡 → 即将到期 → 历史记录） ----
+// 数据源为后端全量概览 contractOverview（不受工具栏类型/日期/搜索筛选影响），
+// 仅「历史记录」卡沿用独立的上传文件计数（uploadStats，同属全量口径）。
 const overviewCards = computed<KpiCard[]>(() => {
-  const rows = filteredRows.value.filter(r => r.kind !== 'pending')
-  const total = contractSummary.value.total || rows.length
-  const now = new Date()
-  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const monthNew = rows.filter(r => (r.signDate || '').startsWith(monthPrefix)).length
+  const st = contractOverview.value || {}
+  const m = st.current_month || {}
+  const total = Number(st.total || 0)
+  const expiring = Number(st.expiring || 0)
+  const byType: Array<{ contract_type: string; count: number }> = st.by_contract_type || []
+  const typeCount = (name: string) => byType.find((t) => t.contract_type === name)?.count || 0
   const cards: KpiCard[] = [
-    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), sub: `本月新增 ${monthNew} 份`, theme: 'brand' },
+    // 全部合同：全量总份数（含未分类/其它合同与待补录占位行），带单位「份」
+    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), unit: '份', sub: `本月新增 ${Number(m.count || 0)} 份`, theme: 'brand' },
   ]
-  // 各合同类型卡片：按下拉枚举动态渲染（不含「全部合同」），点击联动类型筛选（发票基准同款 action/typeValue）
-  for (const t of contractTypeRaw.value) {
-    const cnt = rows.filter(r => r.contractType === t.value).length
-    cards.push({ key: `type-${t.value}`, label: t.label, icon: 'file-1', value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: t.value })
+  // 类型分布卡：只显示内置分类（服务合同/租赁合同）；「其它合同」为排除式统计桶
+  // 固定追加末尾（收纳未匹配服务/租赁分类的记录），点击不联动筛选（发票基准「其它票据」同款）
+  const builtinTypeNames = ['服务合同', '租赁合同']
+  for (const name of builtinTypeNames) {
+    const typeIcon = name === '租赁合同' ? 'file-copy' : 'file-1'
+    cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: String(typeCount(name)), unit: '份', theme: 'neutral', action: 'type', typeValue: name })
   }
-  // 即将到期（未来 30 天内）：warning 主题色警示
-  const expiring = rows.filter(r => calcFulfillStatus(r.expiryDate) === '即将到期').length
+  cards.push({ key: 'type-其它合同', label: '其它合同', icon: 'file-unknown', value: String(typeCount('其它合同')), unit: '份', theme: 'neutral', action: '' })
+  // 即将到期（未来 30 天内，全量口径）：warning 主题色警示
   cards.push({ key: 'expiring', label: '即将到期', icon: 'time', value: String(expiring), unit: '份', theme: 'warning', action: 'expiring' })
   // 历史记录（已上传文件，对齐发票基准 fileCount/failed）：异常文件数 sub 展示，点击打开已上传文件抽屉
   const hs = uploadStats.value
@@ -1220,10 +1229,22 @@ const loadContractCats = async () => {
   // 六同步：分类重载后若当前选中项已失效（禁用/改名/删除），回退第一个启用分类
   ensureContractType()
 }
+// 全量概览统计（对齐发票基准 InvoiceOverviewStats：后端全量聚合，不随列表筛选变化）。
+// KPI 卡片一律使用该数据源，保证切换类型/日期/搜索后卡片统计不受影响。
+const contractOverview = ref<any>(null)
+const loadContractOverview = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await listContractOverview(kbId.value)
+    contractOverview.value = res?.data || res || null
+  } catch {
+    contractOverview.value = null
+  }
+}
 const onUploadDone = async (typeName?: string) => {
-  // 上传完成刷新列表（合同记录的 contract_type 为 OCR 提取的业务类型，与上传所选字段分类不强制映射，
+  // 上传完成刷新列表与概览卡（合同记录的 contract_type 为 OCR 提取的业务类型，与上传所选字段分类不强制映射，
   // 不主动切换类型筛选，避免提取结果与分类名不一致时列表被过滤为空）
-  await loadFiles(true)
+  await Promise.all([loadFiles(true), loadContractOverview()])
 }
 
 // 历史记录（已上传文件）计数：KPI「历史记录」卡数据源（对齐发票基准 fileCount/failed，
@@ -1245,6 +1266,7 @@ const loadUploadStats = async () => {
 const onUploadHistoryChanged = async () => {
   await loadFiles(true)
   loadUploadStats()
+  loadContractOverview()
 }
 
 // ---- 轮询解析 + 提取（统一 composable） ----
