@@ -120,6 +120,7 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
   invoice: {
     普通发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
     专用发票: ['发票号码', '开票日期', '发票类型', '金额', '税率', '税额', '价税合计', '购买方', '销售方', '开票人', '备注', '状态', '标签', '销售方税号', '购买方税号', '文件名'],
+    其它票据: ['发票号码', '开票日期', '发票类型', '金额', '税额', '价税合计', '开票人', '备注', '状态', '标签', '文件名'],
   },
   contract: {
     服务合同: ['contractNo', 'contractName', 'contractType', 'partyAName', 'partyBName', 'signDate', 'effectiveDate', 'expiryDate', 'signPlace', 'partyATaxNo', 'partyAAddress', 'partyAPhone', 'partyABank', 'partyAAccount', 'partyBTaxNo', 'partyBAddress', 'partyBPhone', 'partyBBank', 'partyBAccount', 'contractAmount', 'taxRate', 'paymentMethod', 'qualityBond', 'liquidatedDamages', 'subject', 'quantity', 'unitPrice', 'performancePeriod', 'handler', 'department', 'remark', 'extractStatus', 'tags', 'fulfillStatus', 'fileName'],
@@ -289,6 +290,21 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       tags: { desc: '发票标签', rule: '根据货物/劳务名称或销方类型归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回' },
       sellerTaxNo: { desc: '销售方纳税人识别号', rule: '提取“销售方纳税人识别号”栏' },
       buyerTaxNo: { desc: '购买方纳税人识别号', rule: '提取“购买方纳税人识别号”栏' },
+      fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
+    // 其它票据：系统内置兜底分类的泛用规则底稿（对齐 seed subs：invoice-misc）。
+    // 规则回退链（分类→普通发票→整体规则）保证即使未保存本分类规则也能提取。
+    其它票据: {
+      invoiceNo: { desc: '票据号码', rule: '提取“票据号码 / 发票号码 / 编号”栏，数字或数字字母组合；原文无则留空' },
+      invoiceDate: { desc: '开票/出票日期', rule: '提取“开票日期 / 出票日期 / 日期”栏，统一为 YYYY-MM-DD' },
+      invoiceType: { desc: '票据类型', rule: '按票面标题识别：专用发票、普通发票、通行费发票、电费发票等；无法识别时保持为空' },
+      amount: { desc: '不含税金额', rule: '提取“金额 / 不含税金额 / 合计金额（不含税）”栏，保留两位小数；多张分别取值' },
+      tax: { desc: '税额', rule: '提取“税额”栏，保留两位小数；无则留空' },
+      totalAmount: { desc: '价税合计 / 总金额', rule: '提取“价税合计 / 合计 / 总金额”栏，保留两位小数' },
+      issuer: { desc: '开票人/经办人', rule: '提取“开票人 / 收款人 / 经办人”栏；原文无则留空' },
+      remark: { desc: '备注', rule: '原文备注栏内容摘要；无则留空' },
+      extractStatus: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      tags: { desc: '票据标签', rule: '根据票面用途归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回' },
       fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
     },
   },

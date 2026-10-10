@@ -1691,6 +1691,24 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "items", Enabled: true, IsDefault: true, DataType: "items"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
+		// 其它票据：系统内置兜底分类（任务 2）。废除 OCR 自动降级后，上传分类完全由用户
+		// 手动选择驱动，无法匹配已启用分类的杂散票据归入此分类。SortOrder=99 保证在
+		// 上传下拉/分类配置列表始终沉底；IsDefault=true 标记内置（防止被彻底物理删除）。
+		// 挂最基础公用字段，泛用默认提取规则由 ExtractRulePanel 默认底稿 + 规则回退链
+		// （分类→普通发票→整体规则）兜底。
+		{"invoice", "其它票据", "invoice-misc", 99, []types.FleetCategorySub{
+			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "tax", Enabled: true, IsDefault: false, DataType: "number"},
+			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "issuer", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		}},
 		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
 			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "docNumber", Enabled: true, IsDefault: true, DataType: "text"},

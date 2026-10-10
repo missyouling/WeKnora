@@ -625,6 +625,10 @@ const overviewCards = computed(() => {
   ]
   let catSum = 0
   for (const c of enabledCats) {
+    // 「其它票据」为系统内置兜底分类（seed invoice-misc，SortOrder=99 沉底）：
+    // 其统计口径是「排除式桶」（total - 各启用分类之和），不是独立计数卡。
+    // 因此跳过该分类卡且不计入 catSum，避免与下方排除式「其它票据」卡重复/口径错乱。
+    if (c.name === '其它票据') continue
     const cnt = catCount[String(c.name)] || 0
     catSum += cnt
     const typeIcon = c.name === '专用发票' ? 'file-copy' : c.name === '普通发票' ? 'file-1' : 'file'
@@ -912,11 +916,14 @@ const loadFiles = async (reset = false) => {
   }
   try {
     // 「其它票据」为排除式筛选：附上启用分类名集合，后端按 category 不属于该集合过滤，
-    // 与概览卡其它票据口径一致（否则会命中 invoice_type 非普通/专用的全部记录）
+    // 与概览卡其它票据口径一致（否则会命中 invoice_type 非普通/专用的全部记录）。
+    // 「其它票据」本身已是系统内置实体分类（seed invoice-misc），但统计/筛选口径保持
+    // 排除式桶（category=其它票据 的记录属于「已分类」，不属于本桶）——因此从
+    // knownCats 剔除它，后端同样做了防御剔除，双保险保证 category=其它票据 不被排除。
     const knownCats = invoiceCats.value
       .filter((c: any) => c.enabled !== false)
       .map((c: any) => String(c.name))
-      .filter(Boolean)
+      .filter((n: string) => Boolean(n) && n !== '其它票据')
     const res: any = await listInvoiceRecords(kbId.value, {
       q: keyword.value || undefined,
       invoice_type: filterInvoiceType.value || undefined,
