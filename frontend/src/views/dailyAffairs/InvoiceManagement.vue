@@ -715,6 +715,11 @@ const tableColumns = computed(() => {
         const v = colValue(row, c.key)
         return v === '-' ? '-' : formatRate(Number(v))
       }
+    } else if (!INVOICE_FIELD_LABELS[c.key]) {
+      // 自定义动态字段列（如通行费发票「车牌号」）：数据存于 row.fields 扩展桶，
+      // TDesign 默认只读 row[colKey] 不查 fields，导致这类列长期渲染为空。
+      // 内置契约键列（invoiceNo/sellerTaxNo/items…）走 #colKey 具名插槽，不在此列。
+      base.cell = (_h: any, { row }: any) => colValue(row, c.key)
     }
     cols.push(base)
   })
@@ -969,9 +974,12 @@ const loadFiles = async (reset = false) => {
       sumTax: Number(res?.sum_tax || 0),
       sumTotal: Number(res?.sum_total || 0),
     }
-    const existing = new Set(invoiceRows.value.map(r => r.rowKey))
-    const fresh = arr.map(mapInvoiceRecord).filter(r => !existing.has(r.rowKey))
-    invoiceRows.value = [...invoiceRows.value, ...fresh]
+    // 行合并：已加载的行（同 rowKey）用最新响应替换，新行追加。
+    // 修复回填/重新提取后 fields 更新不生效——旧写法 `filter(!existing.has)` 会把
+    // rowKey 相同的更新数据全部丢弃，导致列表永远展示旧行（如车牌号列长期为空）。
+    const byKey = new Map(invoiceRows.value.map((r: any) => [r.rowKey, r]))
+    for (const r of arr.map(mapInvoiceRecord)) byKey.set(r.rowKey, r)
+    invoiceRows.value = [...byKey.values()]
     hasMore.value = invoiceRows.value.length < total
     if (hasMore.value) page.value += 1
   } catch (e: any) {
@@ -1158,7 +1166,11 @@ const invoiceTypeOptions = computed(() => {
     : kbTypes.value.length
       ? kbTypes.value
       : INVOICE_TYPES.filter((n) => n !== '其它票据')
-  return base.map((v: string) => ({ value: v, label: v }))
+  const opts = base.map((v: string) => ({ value: v, label: v }))
+  // 「其它票据」是系统内置实体分类（seed invoice-misc）：详情抽屉改类型/新建记录时
+  // 也必须可选，否则用户无法把杂散票据归入该分类（仅靠排除式统计桶兜底）。
+  if (!opts.some((o) => o.value === '其它票据')) opts.push({ value: '其它票据', label: '其它票据' })
+  return opts
 })
 
 // ---- 类型分类列表：从识别规则配置加载（支持自定义分类增删改查） ----

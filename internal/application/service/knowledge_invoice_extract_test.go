@@ -124,6 +124,8 @@ func TestExtractInvoicesByLineRules_HitAll(t *testing.T) {
 	assert.Contains(t, inv0.Remark, "车牌号：渝A10001")
 	assert.Contains(t, inv0.Remark, "通行日期起：20260402")
 	assert.Contains(t, inv0.Remark, "通行日期止：20260428")
+	// 车牌号必须同步落入动态字段扩展桶（fields），列表「车牌号」列才能读到值
+	assert.Equal(t, "渝A10001", inv0.Fields["车牌号"])
 	require.Len(t, inv0.Items, 1)
 	assert.Equal(t, "经营租赁", inv0.Items[0].Name)
 
@@ -184,6 +186,7 @@ func TestExtractInvoicesByLineRules_OverlapAndBrokenLine(t *testing.T) {
 	assert.InDelta(t, 44.45, *inv1.TotalAmount, 0.001)
 	assert.Contains(t, inv1.Remark, "车牌号：渝C87567")
 	assert.Contains(t, inv1.Remark, "通行日期止：20260918")
+	assert.Equal(t, "渝C87567", inv1.Fields["车牌号"], "断行合并路径的车牌号同样必须落 fields 桶")
 
 	// 第 3 张：在两张重复金额行之后仍必须配对到自身金额（旧实现会错位成 225.98）
 	inv2 := res.Invoices[2]

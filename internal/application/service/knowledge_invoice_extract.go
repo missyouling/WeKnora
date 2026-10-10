@@ -859,6 +859,13 @@ func buildInvoiceFromHead(m []string) InvoiceExtractionItem {
 		TaxRate:     parsePercentToFloat(m[13]),
 		Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", m[9], m[11]),
 	}
+	// 车牌号写入动态字段扩展桶：行规则路径不经过 normalizeRuleFieldKeys（那是 LLM
+	// JSON 输出的清洗路径），这里与 LLM 路径的口径对齐——自定义分类字段（如通行费
+	// 发票「车牌号」）以分类 subs 的中文名作为 key 落入 fields 桶，前端列表/编辑
+	// 抽屉的动态列才能读到底层数据（否则车牌号只存在于 remark，独立列恒为空）。
+	if plate := strings.TrimSpace(m[9]); plate != "" {
+		inv.Fields = map[string]any{"车牌号": plate}
+	}
 	if it := strings.TrimSpace(m[8]); it != "" {
 		// 填充 price/tax_rate 供 Normalize 时 dominantItemTaxRate 计算列表税率列
 		inv.Items = []InvoiceExtractionLine{{Name: it, Price: inv.Amount, TaxRate: inv.TaxRate}}
@@ -880,6 +887,15 @@ func fillInvoiceFromAmt(inv *InvoiceExtractionItem, m []string, plate, passStart
 	}
 	if m[5] != "" {
 		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", plate, passStart, m[5])
+	}
+	// 号码行缺失时（孤立金额行兜底路径不调用本函数，直接构造）plate 可能为空；
+	// 兜底写入车牌号到 fields 桶，保持与 buildInvoiceFromHead 口径一致。
+	if p := strings.TrimSpace(plate); p != "" {
+		if inv.Fields == nil {
+			inv.Fields = map[string]any{"车牌号": p}
+		} else if _, ok := inv.Fields["车牌号"]; !ok {
+			inv.Fields["车牌号"] = p
+		}
 	}
 }
 
