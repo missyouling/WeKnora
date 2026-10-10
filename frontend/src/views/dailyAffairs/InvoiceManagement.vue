@@ -190,17 +190,24 @@
               </t-button>
             </div>
             <div class="batch-bar-actions">
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handlePageExtract">
-                <template #icon><t-icon name="refresh" size="14px" /></template>
-                页面提取
-              </t-button>
+              <!-- 重新解析：物理文件重新拆页/解析（单选，二次确认） -->
               <t-popconfirm theme="warning"
-                :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」的所有页面发票吗？将覆盖已有提取结果。`"
+                :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件并重新拆页吗？将覆盖已有解析结果。`"
+                :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleReparse">
+                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                  重新解析
+                </t-button>
+              </t-popconfirm>
+              <!-- 重新提取：大模型/OCR 按最新提取规则重新提取全部字段（单选，二次确认） -->
+              <t-popconfirm theme="warning"
+                :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有发票字段吗？将覆盖已有提取结果。`"
                 :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="handleFileExtract">
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
                   <template #icon><t-icon name="refresh" size="14px" /></template>
-                  单文件提取
+                  重新提取
                 </t-button>
               </t-popconfirm>
               <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
@@ -430,7 +437,7 @@ import {
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
-  extractInvoicePage,
+  reparseKnowledge,
   deleteInvoicePage,
   listInvoiceRecords,
   listInvoiceTaxRates,
@@ -1675,41 +1682,49 @@ const selectedSingle = computed(() => {
   return rows.length === 1 ? rows[0] : null
 })
 
-// 页面提取：只重新提取选中行所在页（单选）
-const handlePageExtract = async () => {
+// 重新解析：物理文件重新拆页/解析（单选，二次确认）
+const reparseBusy = ref(false)
+const handleReparse = async () => {
   const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('页面提取仅支持单选，请选中一张发票'); return }
-  if (!row.page || row.page < 1) {
-    MessagePlugin.warning('该发票暂无页码信息，请先执行「单文件提取」')
-    return
-  }
-  extractInFlight.value.add(row.knowledgeId)
+  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一张发票'); return }
+  reparseBusy.value = true
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新解析「${row.fileName}」...`)
   try {
-    await extractInvoicePage(kbId.value, row.knowledgeId, row.page)
-    MessagePlugin.success(`已重新提取第 ${row.page} 张发票`)
-    setTimeout(() => { loadFiles(true) }, 1500)
+    await reparseKnowledge(row.knowledgeId)
+    loading.close()
+    MessagePlugin.success(`「${row.fileName}」重新解析完成`)
+    loadFiles(true)
+    loadInvoiceOverview()
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '页面提取失败')
+    loading.close()
+    MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
+    reparseBusy.value = false
   }
 }
 
-// 单文件提取：重新解析并提取选中行对应源文件的全部页面（单选，二次确认）
+// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部发票字段（单选，二次确认）
+const extractBusy = ref(false)
 const handleFileExtract = async () => {
   const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('单文件提取仅支持单选，请选中一张发票'); return }
+  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一张发票'); return }
   extractInFlight.value.add(row.knowledgeId)
   extractFailed.value.delete(row.knowledgeId)
+  extractBusy.value = true
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
   try {
     await extractBusinessDocument(kbId.value, row.knowledgeId, 'invoice')
-    MessagePlugin.success(`已触发「${row.fileName}」全量重新提取`)
-    setTimeout(() => { loadFiles(true) }, 1500)
+    loading.close()
+    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    loadFiles(true)
+    loadInvoiceOverview()
   } catch (e: any) {
+    loading.close()
     extractFailed.value.add(row.knowledgeId)
-    MessagePlugin.error(e?.message || '单文件提取失败')
+    MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)
+    extractBusy.value = false
   }
 }
 
