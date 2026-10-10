@@ -1212,12 +1212,10 @@ const reloadColumns = async (force = false) => {
   } catch { /* 后端未配置时回退内置默认 */ }
 }
 
-// 搜索态：关键词非空时类型下拉可临时清空（全局搜索优先，见 ⑦）
-const searchActive = computed(() => !!keyword.value.trim())
-// 类型筛选锁定：始终保证有一项分类被选中（禁清空）；搜索态放行（由 keyword watch 负责恢复）。
+// 类型筛选锁定：始终保证有一项分类被选中（禁清空）。
 // 优先保留当前合法选中项（含路由 query 回填），否则按分类顺序选中第一个启用分类。
+// 搜索（关键词）不再清空类型筛选：keyword、税率、日期与类型为 AND 复合查询。
 const ensureInvoiceType = () => {
-  if (searchActive.value) return
   const valid = new Set(invoiceTypeOptions.value.map((o) => o.value))
   // 「其它票据」为排除式筛选态（不在分类下拉 options 中，点击其它票据卡进入），分类重载时须放行
   if (filterInvoiceType.value && (valid.has(filterInvoiceType.value) || filterInvoiceType.value === '其它票据')) return
@@ -1324,23 +1322,10 @@ watch(taxRateFilter, () => {
   clearSelectionSafe()
   applyFilter()
 })
-// 关键词防抖 300ms 后刷新
-// ⑦ 全局搜索：输入关键词时临时清空类型筛选（下拉与请求参数均不带筛选），
-// 清空搜索词后恢复原选中类型并重新锁定。
+// 关键词防抖 300ms 后刷新。关键词、税率、日期、类型为 AND 复合查询：
+// 输入关键词时不再清空类型筛选，四个条件同时发送后端取交集。
 let keywordTimer: ReturnType<typeof setTimeout> | null = null
-let searchRestoreType = ''
-watch(keyword, (v) => {
-  if (v && v.trim()) {
-    if (searchRestoreType === '' && filterInvoiceType.value) searchRestoreType = filterInvoiceType.value
-    if (filterInvoiceType.value) filterInvoiceType.value = ''
-  } else {
-    if (searchRestoreType) {
-      filterInvoiceType.value = searchRestoreType
-      searchRestoreType = ''
-    } else {
-      ensureInvoiceType()
-    }
-  }
+watch(keyword, () => {
   if (keywordTimer) clearTimeout(keywordTimer)
   keywordTimer = setTimeout(() => loadFiles(true), 300)
 })

@@ -89,3 +89,43 @@ func TestInvoiceListTaxRateItemsMatch(t *testing.T) {
 	assert.True(t, got["INV-B"], "明细(items)档位税率命中")
 	assert.False(t, got["INV-C"], "不相关税率不应命中")
 }
+
+// TestInvoiceListKeywordAndFilters 验证关键字、税率、日期筛选为 AND 复合查询交集：
+// 关键词命中只是其中一个过滤条件，不再豁免/清空税率与日期筛选。
+func TestInvoiceListKeywordAndFilters(t *testing.T) {
+	mkDated := func(invNo, date string, rate *float64) *types.Knowledge {
+		return &types.Knowledge{
+			ID:              "k_" + invNo,
+			KnowledgeBaseID: "kb1",
+			ParseStatus:     "completed",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "success",
+				"invoices": []interface{}{
+					map[string]interface{}{
+						"invoice_no": invNo, "invoice_type": "普通发票", "invoice_date": date,
+						"tax_rate": rate, "amount": 100.0, "tax": 9.0, "total_amount": 109.0,
+						"items": []interface{}{},
+					},
+				},
+			}),
+		}
+	}
+	rate9 := f64(0.09)
+	rate3 := f64(0.03)
+	repo := &taxRateFakeRepo{items: []*types.Knowledge{
+		mkDated("INV-A1", "2026-01-05", rate9), // keyword + 税率 + 日期 全命中
+		mkDated("INV-B1", "2026-06-05", rate9), // 关键词与税率命中但日期不命中
+		mkDated("INV-C1", "2026-01-05", rate3), // 关键词与日期命中但税率不命中
+		mkDated("INV-D1", "2026-01-05", rate9), // 税率与日期命中但关键词不命中
+	}}
+	svc := &BusinessExtractService{repo: repo}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	res, err := svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{
+		Keyword: "INV-A", TaxRate: rate9, DateFrom: "2026-01-01", DateTo: "2026-01-31",
+		Page: 1, PageSize: 20,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Len(t, res.Data, 1, "三个条件必须同时命中才返回")
+	assert.Equal(t, "INV-A1", res.Data[0].InvoiceNo)
+}
