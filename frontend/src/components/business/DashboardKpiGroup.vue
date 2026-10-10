@@ -51,15 +51,25 @@ defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
 
 <style lang="less" scoped>
 .dash-kpi-group {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   gap: 14px;
+  /* 隐藏横向滚动条（Windows 原生滚动条占高度且不美观），保留滚轮/触控板滑动 */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.dash-kpi-group::-webkit-scrollbar {
+  display: none;
 }
 .dash-kpi-card {
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 18px 20px;
+  flex-shrink: 0;
+  min-width: 200px;
   background: var(--wk-kpi-bg);
   border: 1px solid transparent;
   border-radius: var(--td-radius-large);
