@@ -56,6 +56,12 @@ defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
   overflow-x: auto;
   overflow-y: hidden;
   gap: 14px;
+  /* 垂直/水平内边距：为 hover 上浮与 box-shadow（--td-shadow-1 最大 blur 10px）
+     提供完整渲染空间，避免边缘卡片阴影/边框被 overflow 裁剪出平齐断层；
+     负外边距等量抵消内边距造成的布局位移，保证与旧版外观间距完全一致 */
+  padding: 12px 8px;
+  margin-top: -12px;
+  margin-bottom: -12px;
   /* 隐藏横向滚动条（Windows 原生滚动条占高度且不美观），保留滚轮/触控板滑动 */
   -ms-overflow-style: none;
   scrollbar-width: none;
