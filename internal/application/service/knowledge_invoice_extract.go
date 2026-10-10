@@ -48,6 +48,10 @@ type InvoiceExtractionItem struct {
 	Items       []InvoiceExtractionLine `json:"items"`
 	VoidFlag    bool                    `json:"void_flag"`
 	Duplicate   bool                    `json:"duplicate"`
+	// Fields 自定义动态字段扩展桶：用户自定义分类里没有标准存储位的字段
+	// （如通行费发票的「车牌号」），提取时从模型返回 JSON 的未知 key 收集而来，
+	// 随记录持久化并经列表/详情透传给前端动态列渲染。
+	Fields map[string]any `json:"fields,omitempty"`
 	// Page is the 1-based page/ordinal of the invoice inside its source file.
 	// It is assigned by the backend (in extraction-result order) so the
 	// floating toolbar can target a single page for re-extraction; legacy
@@ -264,6 +268,20 @@ func mapAliasKey(key string, aliases []struct{ alias, target string }) string {
 	return best
 }
 
+// invoiceStdFieldKeys 是 InvoiceExtractionItem 的全部标准 JSON 契约键。
+// normalizeRuleFieldKeys 用它判定模型返回的未知 key（如自定义分类字段「车牌号」），
+// 未知 key 收集进 fields 扩展桶，保证动态字段不丢、不误并入 remark。
+var invoiceStdFieldKeys = map[string]bool{
+	"invoice_no": true, "invoice_code": true, "invoice_date": true, "invoice_type": true,
+	"total_amount": true, "amount": true, "tax": true, "tax_rate": true,
+	"seller_name": true, "seller_tax_no": true, "seller_address": true, "seller_phone": true,
+	"seller_bank": true, "seller_account": true,
+	"buyer_name": true, "buyer_tax_no": true, "buyer_address": true, "buyer_phone": true,
+	"buyer_bank": true, "buyer_account": true,
+	"issuer": true, "remark": true, "category": true, "items": true,
+	"void_flag": true, "duplicate": true, "page": true, "kind": true, "fields": true,
+}
+
 // normalizeRuleFieldKeys 把模型输出的 JSON 里命中规则字段名的中文 key 替换为
 // 标准英文字段。只处理顶层 kind/invoices 与 invoices 元素、items 明细元素；
 // 无法解析或无需替换时原样返回。
@@ -317,6 +335,21 @@ func normalizeRuleFieldKeys(raw string, cfg *types.KbExtractConfig) string {
 				m[mv.target] = v
 			}
 			delete(m, mv.k)
+		}
+		// 自定义动态字段收集（如通行费发票「车牌号」）：别名映射后仍不在标准契约键
+		// 集合内的 key（含值为空串、非标量）归入 fields 扩展桶，随记录持久化。
+		// 与 remark 并入策略不同：动态字段有独立列/编辑位，不能混进备注原文。
+		for k, v := range m {
+			if k == "fields" || k == "kind" || invoiceStdFieldKeys[k] {
+				continue
+			}
+			fm, ok := m["fields"].(map[string]interface{})
+			if !ok || fm == nil {
+				fm = map[string]interface{}{}
+				m["fields"] = fm
+			}
+			fm[k] = v
+			delete(m, k)
 		}
 		// items 明细元素的中文 key 归一化。
 		if items, ok := m["items"].([]interface{}); ok {
@@ -401,6 +434,9 @@ func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 			sb.WriteString(line + "\n")
 		}
 		sb.WriteString("\n")
+		// 动态字段分离指令：关键业务信息（车牌号/通行日期等）常藏在备注中，
+		// 必须按字段口径分离到对应的独立输出字段，而不是只汇总在备注里。
+		sb.WriteString("分离要求：如果票面包含备注信息，请仔细分析备注内容，并按照上面的字段口径，将隐藏在备注中的关键数据（如车牌号、通行日期等）分离提取到对应的独立字段中输出；不要把这些数据只汇总在备注字段里。\n\n")
 	}
 	sb.WriteString(invoiceExtractionSystemPrompt)
 	return sb.String()

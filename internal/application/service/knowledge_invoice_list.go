@@ -167,6 +167,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					Category:       cat,
 					Items:          items,
 					VoidFlag:       inv.VoidFlag,
+					Fields:         inv.Fields,
 					Page:           inv.Page,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,

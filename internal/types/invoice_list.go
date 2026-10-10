@@ -29,6 +29,9 @@ type InvoiceRecord struct {
 	Category       string                       `json:"category"`
 	Items          []InvoiceExtractionItemItems `json:"items"`
 	VoidFlag       bool                         `json:"void_flag"`
+	// Fields 自定义动态字段扩展桶（如通行费发票「车牌号」），透传自 service 层，
+	// 前端动态列/详情抽屉按分类 subs.name 读取。
+	Fields         map[string]any               `json:"fields,omitempty"`
 	Page           int                          `json:"page"`
 	KnowledgeID    string                       `json:"knowledge_id"`
 	KnowledgeTitle string                       `json:"knowledge_title"`

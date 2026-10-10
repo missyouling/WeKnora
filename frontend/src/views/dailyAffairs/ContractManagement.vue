@@ -24,7 +24,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="contract-main">
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
-      <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
+      <DashboardKpiGroup :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
       <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
           :type-options="contractTypeOptions" v-model:type-value="filterContractType" :type-clearable="searchActive"

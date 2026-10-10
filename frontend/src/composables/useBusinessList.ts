@@ -72,7 +72,12 @@ export function useBusinessList(opts: BusinessListOptions) {
   function colValue(row: any, key: string): any {
     try {
       if (!row) return '-'
-      const v = row[key]
+      let v = row[key]
+      // 动态自定义字段（如通行费发票「车牌号」）存储于 fields 扩展桶：
+      // 契约键未命中时回退 row.fields?.[key]，保证自定义分类列能读到底层数据。
+      if (v === undefined && row.fields && typeof row.fields === 'object') {
+        v = row.fields[key]
+      }
       return v === undefined || v === null || v === '' ? '-' : v
     } catch { return '-' }
   }

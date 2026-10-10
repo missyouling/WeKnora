@@ -25,7 +25,7 @@
     <div v-else class="invoice-main">
       <!-- 概览紧凑卡（中台 DashboardKpiGroup 组件，type-card 范式） -->
       <div class="overview-group">
-        <DashboardKpiGroup :cards="overviewCards" @card-click="onOverviewCardClick" />
+        <DashboardKpiGroup :cards="overviewCards" :active-type="filterInvoiceType" @card-click="onOverviewCardClick" />
       </div>
 
       <!-- 发票列表 -->
@@ -206,7 +206,7 @@
                 :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="handleFileExtract">
                 <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                  <template #icon><t-icon name="cloud-upload" size="14px" /></template>
                   重新提取
                 </t-button>
               </t-popconfirm>
@@ -558,6 +558,9 @@ interface InvoiceRow extends Record<string, any> {
   summaryStatus?: string
   extractStatus: string
   kind: 'invoice' | 'not_invoice' | 'unknown' | 'pending'
+  // 自定义动态字段扩展桶（如通行费发票「车牌号」）：后端 fields JSON 透传，
+  // 列表动态列/详情抽屉按分类 subs.name 读取（colValue 已做回退）
+  fields?: Record<string, any>
   invoiceNo?: string
   invoiceDate?: string
   invoiceType?: string
@@ -1022,6 +1025,7 @@ const mapInvoiceRecord = (r: any): InvoiceRow => ({
   items: Array.isArray(r.items) ? r.items : [],
   voidFlag: !!r.void_flag,
   duplicate: !!r.duplicate,
+  fields: r.fields && typeof r.fields === 'object' ? r.fields : {},
   page: Number(r.page) || 0,
 })
 
@@ -1086,6 +1090,7 @@ const parseCustomMetadata = (item: KnowledgeItem): InvoiceRow[] => {
     items: Array.isArray(inv.items) ? inv.items : [],
     voidFlag: !!inv.void_flag,
     duplicate: !!inv.duplicate,
+    fields: inv.fields && typeof inv.fields === 'object' ? inv.fields : {},
   }))
 }
 
@@ -1440,8 +1445,20 @@ const fillEditForm = () => {
   const hitCat = cats.find((c: any) => c.name === targetType) || cats[0]
   // 无标准存储位字段（收款方式/收款事由/审核…）：从 remark「字段名：值」片段提取各字段值
   const rps: Record<string, string> = {}
+  // 自定义动态字段（如通行费发票「车牌号」）：无标准契约键、非 remark 片段，
+  // 数据存于行级 fields 扩展桶（后端 fields JSON 透传），按 subs.name 读回表单
+  const dynamic: Record<string, any> = {}
   for (const s of hitCat?.subs || []) {
-    if (isRemarkPartField(String(s.name))) rps[String(s.name)] = remarkPartOf(r.remark || '', String(s.name))
+    const rawName = String(s.name || '')
+    if (isRemarkPartField(rawName)) {
+      rps[rawName] = remarkPartOf(r.remark || '', rawName)
+      continue
+    }
+    const key = invoiceFieldKeyOf(rawName)
+    // 未映射到标准契约键的中文字段名 → 动态字段（如「车牌号」）
+    if (!INVOICE_FIELD_LABELS[key] && key === rawName && !['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName', 'items'].includes(key)) {
+      dynamic[rawName] = r.fields?.[rawName] ?? r[rawName] ?? ''
+    }
   }
   editForm.value = {
     invoice_no: r.invoiceNo || '',
@@ -1471,6 +1488,7 @@ const fillEditForm = () => {
       sellerTaxNo: r.sellerTaxNo || '',
       buyerTaxNo: r.buyerTaxNo || '',
       fileName: r.fileName || '',
+      ...dynamic,
     },
   }
 }
@@ -1541,6 +1559,14 @@ const persistEditForm = async (force: boolean) => {
           })
         : [],
     }
+    // 自定义动态字段（如「车牌号」）：data 中非标准契约键的字段收集进 fields 扩展桶
+    // 随 updated 合并写回（覆盖旧值），与后端 fields JSON 透传口径一致
+    const stdDataKeys = new Set(['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName'])
+    const dynamicFields: Record<string, any> = {}
+    for (const [k, v] of Object.entries(d)) {
+      if (!stdDataKeys.has(k) && k !== 'fields') dynamicFields[k] = v ?? ''
+    }
+    if (Object.keys(dynamicFields).length > 0) updated.fields = dynamicFields
     const nowPage = now.page && now.page >= 1 ? now.page : 0
     let targetIdx = -1
     if (nowPage >= 1) {
@@ -1603,6 +1629,7 @@ const persistEditForm = async (force: boolean) => {
         remark: updated.remark,
         voidFlag: !!invoiceRows.value[listIdx].voidFlag,
         items: updated.items,
+        fields: updated.fields || invoiceRows.value[listIdx].fields || {},
       }
       invoiceRows.value = invoiceRows.value.map((r: any, i: number) => (i === listIdx ? nextRow : r))
     }

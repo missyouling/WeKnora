@@ -4,7 +4,7 @@
       v-for="card in cards"
       :key="card.key"
       class="dash-kpi-card"
-      :class="[card.cls, card.numCls]"
+      :class="[card.cls, card.numCls, { 'is-active': isActive(card) }]"
       @click="$emit('card-click', card)"
     >
       <div class="dash-kpi-card__icon">
@@ -45,8 +45,16 @@ export interface KpiCard {
   typeValue?: string
 }
 
-defineProps<{ cards: KpiCard[] }>()
+// activeType：父组件当前筛选的分类值（如 filterInvoiceType/filterContractType）。
+// 高亮规则：action=all 卡在 activeType 为空时激活；action=type 卡在 typeValue 与 activeType 相等时激活。
+const props = defineProps<{ cards: KpiCard[]; activeType?: string }>()
 defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
+
+const isActive = (card: KpiCard): boolean => {
+  if (card.action === 'all') return !props.activeType
+  if (card.action === 'type' && card.typeValue) return props.activeType === card.typeValue
+  return false
+}
 </script>
 
 <style lang="less" scoped>
@@ -86,6 +94,13 @@ defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
   background: var(--wk-kpi-hover-bg);
   border-color: var(--td-brand-color);
   transform: translateY(-1px);
+  box-shadow: var(--wk-kpi-shadow);
+}
+/* 筛选态常驻高亮：与 hover 同级醒目（主题色边框 + 浅色底 + 阴影），
+   鼠标移开后保持，作为当前列表所处分类的视觉锚点 */
+.dash-kpi-card.is-active {
+  background: var(--td-brand-color-light);
+  border-color: var(--td-brand-color);
   box-shadow: var(--wk-kpi-shadow);
 }
 .dash-kpi-card__icon {
