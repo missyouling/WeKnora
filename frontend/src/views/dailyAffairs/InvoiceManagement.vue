@@ -407,7 +407,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -580,7 +580,9 @@ interface InvoiceRow extends Record<string, any> {
 
 // ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
-const invoiceRows = ref<InvoiceRow[]>([])
+// shallowRef：几千条发票行时消除深层 Proxy 代理开销（行数据只在整体赋值时更新，
+// 单行变化必须整体替换数组，见 saveInvoiceDetail 的 map 重建逻辑）
+const invoiceRows = shallowRef<InvoiceRow[]>([])
 // 进行中的文件（解析中/提取中/待提取），在发票级列表顶部以状态行展示
 const invoiceSummary = ref<{ total: number; sumAmount: number; sumTax: number; sumTotal: number }>({
   total: 0, sumAmount: 0, sumTax: 0, sumTotal: 0,
@@ -869,7 +871,9 @@ const onTagEditConfirm = async (tagIds: string[]) => {
     await loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '标签更新失败')
+    // 500/无具体信息：固定文案防止展示后端原始错误；有具体 message（如 400 原因）时保留
+    if (e?.status === 500 || !e?.message) MessagePlugin.error('标签更新失败，请稍后重试')
+    else MessagePlugin.error(e?.message)
   }
 }
 
@@ -1577,10 +1581,10 @@ const persistEditForm = async (force: boolean) => {
     }
     await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
-    // 同步列表行，保证编辑（如备注）后列表立即刷新
+    // 同步列表行，保证编辑（如备注）后列表立即刷新（shallowRef：整体替换数组触发更新）
     const listIdx = invoiceRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) {
-      invoiceRows.value[listIdx] = {
+      const nextRow: any = {
         ...invoiceRows.value[listIdx],
         extractStatus: nextStatus,
         extractError: nextError,
@@ -1597,6 +1601,7 @@ const persistEditForm = async (force: boolean) => {
         voidFlag: !!invoiceRows.value[listIdx].voidFlag,
         items: updated.items,
       }
+      invoiceRows.value = invoiceRows.value.map((r: any, i: number) => (i === listIdx ? nextRow : r))
     }
     // 同文件级联后，同步列表中同一文件的其他行类型展示（loadFiles 随后全量刷新兜底）
     if (updated.invoice_type && now.knowledgeId) {

@@ -1079,6 +1079,11 @@ func (s *knowledgeService) UpdateKnowledgeTagBatch(
 	if err != nil {
 		return err
 	}
+	// 防空：所有请求的 knowledge ID 均不可写/不存在时，loadKnowledgeWriteBatch
+	// 会返回错误；此处再兜底一次，杜绝 knowledgeList[0] 越界导致的偶发 500。
+	if len(knowledgeList) == 0 {
+		return werrors.NewBadRequestError("指定的知识条目不存在或已被删除")
+	}
 	tenantID := knowledgeList[0].TenantID
 
 	// Validate all requested IDs were found and belong to the authorized KB

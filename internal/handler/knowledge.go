@@ -2505,7 +2505,11 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 	}
 
 	if err := h.kgService.UpdateKnowledgeTagBatch(ctx, authorizedKBID, req.Updates); err != nil {
-		logger.ErrorWithFields(ctx, err, nil)
+		// 异常日志必须携带完整入参上下文（kb_id + 批量条数），便于线上定位偶发 500
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"kb_id":      secutils.SanitizeForLog(authorizedKBID),
+			"update_cnt": len(req.Updates),
+		})
 		c.Error(err)
 		return
 	}

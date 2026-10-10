@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -12,43 +13,66 @@ import (
 
 // SetKnowledgeTags replaces all tags for a single knowledge entry.
 // It deletes existing relations and inserts new ones in a transaction.
+// PostgreSQL 在高并发同记录打标时可能偶发 deadlock（40P01），此处对死锁
+// 做一次自动重试（事务整体回滚后重放），消除由此导致的偶发 500。
 func (r *knowledgeRepository) SetKnowledgeTags(
 	ctx context.Context,
 	knowledgeID string,
 	tagIDs []string,
 ) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Delete all existing tag relations for this knowledge
-		if err := tx.Where("knowledge_id = ?", knowledgeID).
-			Delete(&types.KnowledgeTagRelation{}).Error; err != nil {
-			return err
-		}
-		// Insert new relations (skip empty and duplicate IDs)
-		if len(tagIDs) == 0 {
+	for attempt := 0; ; attempt++ {
+		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Delete all existing tag relations for this knowledge
+			if err := tx.Where("knowledge_id = ?", knowledgeID).
+				Delete(&types.KnowledgeTagRelation{}).Error; err != nil {
+				return err
+			}
+			// Insert new relations (skip empty and duplicate IDs)
+			if len(tagIDs) == 0 {
+				return nil
+			}
+			seen := make(map[string]struct{}, len(tagIDs))
+			now := time.Now()
+			relations := make([]types.KnowledgeTagRelation, 0, len(tagIDs))
+			for _, tagID := range tagIDs {
+				if tagID == "" {
+					continue
+				}
+				if _, dup := seen[tagID]; dup {
+					continue
+				}
+				seen[tagID] = struct{}{}
+				relations = append(relations, types.KnowledgeTagRelation{
+					KnowledgeID: knowledgeID,
+					TagID:       tagID,
+					CreatedAt:   now,
+				})
+			}
+			if len(relations) == 0 {
+				return nil
+			}
+			return tx.Create(&relations).Error
+		})
+		if err == nil {
 			return nil
 		}
-		seen := make(map[string]struct{}, len(tagIDs))
-		now := time.Now()
-		relations := make([]types.KnowledgeTagRelation, 0, len(tagIDs))
-		for _, tagID := range tagIDs {
-			if tagID == "" {
-				continue
-			}
-			if _, dup := seen[tagID]; dup {
-				continue
-			}
-			seen[tagID] = struct{}{}
-			relations = append(relations, types.KnowledgeTagRelation{
-				KnowledgeID: knowledgeID,
-				TagID:       tagID,
-				CreatedAt:   now,
-			})
+		if isPostgresDeadlock(err) && attempt == 0 {
+			continue
 		}
-		if len(relations) == 0 {
-			return nil
-		}
-		return tx.Create(&relations).Error
-	})
+		return err
+	}
+}
+
+// isPostgresDeadlock reports whether err is a PostgreSQL deadlock_detected
+// (SQLSTATE 40P01) failure. pgx/gorm surface it as a PgError whose message
+// text is stable ("deadlock detected"), so matching the message avoids an
+// extra driver dependency.
+func isPostgresDeadlock(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "deadlock detected") || strings.Contains(msg, "40P01")
 }
 
 // AddKnowledgeTagRelations incrementally adds validated relations and never

@@ -118,6 +118,7 @@
         :loading="listLoading"
         max-height="100%"
         sticky-header
+        :scroll="{ type: 'virtual', rowHeight: 39, bufferSize: 20 }"
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -448,7 +449,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { listFleetCategories } from '@/api/fleet'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
@@ -662,7 +663,9 @@ interface ContractRow extends Record<string, any> {
 
 // ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
-const contractRows = ref<ContractRow[]>([])
+// shallowRef：几千条合同时消除深层 Proxy 代理开销（行数据只在整体赋值时更新，
+// 单行变化必须整体替换数组，见 saveContractDetail 的 map 重建逻辑）
+const contractRows = shallowRef<ContractRow[]>([])
 // 进行中的文件（解析中/提取中/待提取），在合同级列表顶部以状态行展示
 const contractSummary = ref<{ total: number; sumAmount: number; sumTotal: number }>({
   total: 0, sumAmount: 0, sumTotal: 0,
@@ -840,7 +843,9 @@ const onTagEditConfirm = async (tagIds: string[]) => {
     await loadFiles(true)
     loadContractOverview()
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '标签更新失败')
+    // 500/无具体信息：固定文案防止展示后端原始错误；有具体 message（如 400 原因）时保留
+    if (e?.status === 500 || !e?.message) MessagePlugin.error('标签更新失败，请稍后重试')
+    else MessagePlugin.error(e?.message)
   }
 }
 
@@ -1454,10 +1459,10 @@ const persistContractDetail = async (force: boolean) => {
     // 合同 contracts 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由（与发票同款）
     await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
-    // 同步列表行，保证编辑后列表立即刷新
+    // 同步列表行，保证编辑后列表立即刷新（shallowRef：整体替换数组触发更新）
     const listIdx = contractRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) {
-      contractRows.value[listIdx] = {
+      const nextRow: any = {
         ...contractRows.value[listIdx],
         extractStatus: nextStatus,
         extractError: nextError,
@@ -1477,6 +1482,7 @@ const persistContractDetail = async (force: boolean) => {
         department: updated.department,
         remark: updated.remark,
       }
+      contractRows.value = contractRows.value.map((r: any, i: number) => (i === listIdx ? nextRow : r))
     }
     MessagePlugin.success('保存成功')
     detailVisible.value = false
