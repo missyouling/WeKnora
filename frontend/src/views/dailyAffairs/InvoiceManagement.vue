@@ -32,10 +32,15 @@
       <div class="invoice-list-view">
       <!-- 筛选工具栏（对齐车队标准中台组件） -->
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            :type-options="invoiceTypeOptions" v-model:type-value="filterInvoiceType" :type-clearable="searchActive"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
             @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
+              <div class="doc-filter-field">
+                <t-select v-model="taxRateFilter" :options="taxRateOptions" placeholder="税率筛选" clearable
+                  class="doc-tax-select doc-filter-field__control">
+                  <template #prefixIcon><t-icon name="percent" size="16px" /></template>
+                </t-select>
+              </div>
               <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter"
                 class="invoice-date-range">
                 <template #prefixIcon><t-icon name="time" size="16px" /></template>
@@ -91,10 +96,11 @@
           <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
         <template #taxRate="{ row }: any">
-          <t-tooltip v-if="rateVariants(row).length > 1" :content="rateVariants(row).map(r => formatRate(r)).join('、')">
-            <span class="row-mono row-rate">{{ formatRate(row.taxRate) }}</span>
-          </t-tooltip>
-          <span v-else class="row-mono row-rate">{{ formatRate(row.taxRate) }}</span>
+          <div v-if="rateVariants(row).length > 1" class="row-rate-tags">
+            <t-tag v-for="r in rateVariants(row)" :key="r" size="small" variant="outline" theme="default"
+              class="row-rate-tag">{{ formatRate(r) }}</t-tag>
+          </div>
+          <span v-else class="row-mono row-rate">{{ formatRate(row.taxRate) || '-' }}</span>
         </template>
         <template #tax="{ row }: any">
           <span class="row-mono">{{ formatAmount(row.tax) }}</span>
@@ -1313,6 +1319,11 @@ watch(filterInvoiceType, () => {
   reloadColumns()
   applyFilter()
 })
+// 税率筛选联动：变更时清空多选并刷新（税率不影响列定义，无需 reloadColumns）
+watch(taxRateFilter, () => {
+  clearSelectionSafe()
+  applyFilter()
+})
 // 关键词防抖 300ms 后刷新
 // ⑦ 全局搜索：输入关键词时临时清空类型筛选（下拉与请求参数均不带筛选），
 // 清空搜索词后恢复原选中类型并重新锁定。
@@ -2023,6 +2034,11 @@ onBeforeUnmount(() => {
 }
 /* ---- 筛选工具栏 ---- */
 .invoice-date-range { width: 240px; flex-shrink: 0; }
+/* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
+.doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
+/* 多税率发票：多个税率档位并排标签展示 */
+.row-rate-tags { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.row-rate-tag { font-family: var(--td-font-family); }
 
 
 /* ---- 字段筛选弹层 ---- */

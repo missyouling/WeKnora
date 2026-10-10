@@ -246,8 +246,21 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				continue
 			}
 		}
-		if filter.TaxRate != nil && (r.TaxRate == nil || !approxEqualFloat(*r.TaxRate, *filter.TaxRate)) {
-			continue
+		if filter.TaxRate != nil {
+			// 税率筛选：发票级税率精确命中 或 明细(items)任意档位命中。
+			// 支持多明细多税率发票（如 13%,9%,6% 混开）按任一税率档筛选。
+			matched := r.TaxRate != nil && approxEqualFloat(*r.TaxRate, *filter.TaxRate)
+			if !matched {
+				for _, it := range r.Items {
+					if it.TaxRate != nil && approxEqualFloat(*it.TaxRate, *filter.TaxRate) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		if filter.Status != "" && r.ExtractStatus != filter.Status {
 			continue
