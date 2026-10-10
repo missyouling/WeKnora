@@ -160,7 +160,74 @@
 * 前端：默认端口 `5173`。
 * 解析服务 (docreader)：通过 gRPC 占用 `50051`，需在项目虚拟环境独立启动 Python 服务。
 
+---
 
+## 远端 VPS 生产部署与测试要点（强制）
+
+> **研发环境分工（最高原则）**：**本机 = 开发环境**（代码开发、调试、本地验证都在本机完成）；**GitHub Actions = 镜像构建**（push `daily-affairs-v2` 自动构建 `ghcr.io/missyouling/weknora-da:da-latest`）；**VPS = 生产运行**（watchtower 自动监视最新镜像并滚动更新，不做任何开发/调试）；**数据库 = 本机与 VPS 共用同一 Supabase 云库**。
+
+### 1. 部署拓扑（三容器全部 `network_mode: host`）
+
+- **VPS**：`root@43.155.185.216:5522`，部署目录 `/home/weknora-daily`（docker compose 项目目录），Ubuntu 22.04。
+- **容器**：
+  - `weknora-daily`：`ghcr.io/missyouling/weknora-da:da-latest`，监听 8080（前端 SPA + API 一体，端口直通公网）。
+  - `weknora-docreader`：`wechatopenai/weknora-docreader:latest`，gRPC 50051，供主服务经 `localhost:50051` 调用。
+  - `weknora-watchtower`：`containrrr/watchtower:latest`，每 4 小时检查 `da-latest` 并自动部署；**只监视带 `com.centurylinklabs.watchtower.enable=true` label 的 `weknora-daily`**，docreader 不监视。
+- **为什么 host 网络（不可改回 bridge）**：Supabase 数据库仅公网 IPv6（无 A 记录），Docker bridge 容器内无 IPv6 路由，会报 `dial tcp [2406:da18:1248:be01::816]:5432: network is unreachable` 循环 Restarting。host 网络复用宿主机网络栈直连。改回 bridge 前必须确认 VPS IPv6 出站可用。
+
+### 2. 关键配置与挂载（`deploy/docker-compose.yml`、`deploy/.env` 为权威源）
+
+- 主服务环境变量：`JIEBA_DICT_DIR=/app/jieba_dict`、`WEKNORA_WEB_DIR=/app/web/dist`、`DOCREADER_ADDR=localhost:50051`、`LOCAL_STORAGE_BASE_DIR=/data/files`。
+- 挂载：`./data:/data/files`（文件存储，`docker compose down` 不会删）、`./jieba_dict:/app/jieba_dict`（gojieba 5 个词典）、`./config/config.yaml`、`./config/prompt_templates`、`./config/builtin_agents.yaml`、`./config/agent_type_presets.yaml`。
+- 数据库：`deploy/.env` 内 `DB_HOST=db.kunsjmpkvfjjzcotdgrg.supabase.co` 等。**密码、JWT_SECRET、AES Key 等敏感项一律不入库、不写入 AGENTS.md/日志/提交信息**。
+- 改动 compose/.env 后必须同步到 VPS 并重建，否则 VPS 仍是旧配置：
+  ```bash
+  scp -P 5522 deploy/docker-compose.yml deploy/.env root@43.155.185.216:/home/weknora-daily/
+  ssh -p 5522 root@43.155.185.216 "cd /home/weknora-daily && docker compose up -d"
+  ```
+
+### 3. VPS IPv6 前提（Supabase 直连必需，VPS 迁移/重装后必须重配）
+
+- VPS 已绑定公网 IPv6 `240d:c000:f05f:7700:449e:4b9c:888e:0/128`，持久化于 `/etc/netplan/99-weknora-ipv6.yaml`（静态地址 + `default via fe80::1 dev eth0 scope link`）与 `/etc/sysctl.d/99-ipv6-dad.conf`（`accept_dad=0`，避免 DAD 冲突导致地址失效）。
+- 云厂商过滤 ICMPv6：`ping6` 100% 丢包是假象，**必须用 TCP 验证**：
+  ```bash
+  timeout 6 bash -c 'exec 3<>/dev/tcp/2406:da18:1248:be01::816/5432 && echo TCP_5432_OK'
+  ```
+
+### 4. 发布与更新链路
+
+1. 本机开发并**通过全部本地检查**（见下节）后，commit + push `daily-affairs-v2`。
+2. CI（`.github/workflows/da-ci-cd.yml`）：quality-gate（前端 vue-tsc、`go vet`、`go test` 白名单）→ build-push 构建并推送 `da-latest`。
+3. VPS watchtower 每 4 小时自动部署新镜像；**需要立即生效时手动更新**：
+   ```bash
+   ssh -p 5522 root@43.155.185.216
+   cd /home/weknora-daily && docker compose pull weknora-daily && docker compose up -d weknora-daily
+   ```
+4. 部署后验证（VPS 上）：
+   ```bash
+   docker compose ps
+   curl -s http://localhost:8080/health        # 期望 {"status":"ok"}
+   curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/   # 期望 200（前端 HTML，非 401）
+   ```
+
+### 5. 交付前本地测试要点（每次 push 前强制，全部必须真实执行通过）
+
+- 前端：`npm run type-check`、`npm run lint` 零报错。
+- 后端（UCRT 工具链，命令见本文件「后端构建与服务启动规范」）：
+  - `go build -o server.exe ./cmd/server`
+  - `go vet ./internal/handler ./internal/application/service`
+  - `go test -run "TestBusiness|TestExtract|TestDailyAffairs" ./internal/handler ./internal/application/service`（与 CI 白名单一致）
+- 涉及前端静态托管/路由改动时，追加 `go test -run "TestServeFrontendStatic|TestEmbed" ./internal/router`。
+- 涉及数据库 Seed/分类/提取规则的改动：遵守「防覆盖」原则（已存在的分类/规则绝不 Update 覆盖，只对缺失项 Create），改后重启验证存量数据不被冲掉。
+- **本机与生产共用同一 Supabase 库**：本机调试产生的测试数据会写入生产库；删除、清库、批量改库等高风险操作必须极其谨慎，优先使用可逆操作或先确认。
+
+### 6. 已知坑（禁止重犯）
+
+- **前端 401**：静态服务由 `internal/router/static.go` 的 `serveFrontendStatic` 托管（读 `WEKNORA_WEB_DIR`，注册于 auth 中间件之前，`/api/`、`/health`、`/swagger/`、`/r/`、`/files` 前缀放行；web 目录不存在时自动跳过）。曾因镜像 Edition 默认 `standard` 而 `if handler.Edition == "lite"` 不托管前端，已改为无条件调用——**不要再加 Edition 限制**。
+- **改镜像内静态文件**：前端构建产物打进镜像（`/app/web/dist`），改前端代码必须重新构建镜像生效，不要期望在 VPS 上直接改文件。
+- **watchtower API 版本**：Docker API 协商默认 1.25 过旧会报 `client version 1.25 is too old`，compose 已设 `DOCKER_API_VERSION=1.41`，勿删。
+- **网络残留**：`docker compose down` 先释放网络端点，再 `docker network rm`；直接 rm 会报 `has active endpoints`。
+- **`da-latest` 更新延迟**：文档/配置类改动也会触发 CI 重建镜像（内容不变但 SHA 变），watchtower 会多一次无谓重启；纯文档改动建议只 commit 不 push，或 push 后接受一次自动重建。
 
 ---
 
