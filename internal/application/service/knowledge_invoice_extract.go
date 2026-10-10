@@ -83,16 +83,17 @@ const invoiceExtractionSystemPrompt = `你是一个专业的发票信息提取�
 3. 同一张发票在文档中重复出现（复印件、多次贴票）时只提取一次，不要重复。
 4. 如果文档内容与发票无关（如合同、协议、制度、清单等），kind 设为 "not_invoice"，invoices 返回空数组。
 5. 金额字段 total_amount、amount、tax 使用数字类型，单位为元；无法识别时返回 null。
-6. tax_rate 使用小数（如 3% 记为 0.03）；无法识别时返回 null。
+6. tax_rate（发票级）使用小数（如 3% 记为 0.03）；无法识别时返回 null。若发票包含多行明细且税率不同，发票级 tax_rate 取金额最大明细行的税率，其余税率在 items 各行分别保留。
 7. invoice_date 使用 YYYY-MM-DD 格式；无法识别时返回空字符串。
 8. 发票作废或冲红时，void_flag 设为 true。
-9. items 为货物或应税劳务明细，无法识别时返回空数组。
+9. items 为货物或应税劳务明细，无法识别时返回空数组。每行明细必须提取该行对应的税率 tax_rate（小数，如 3% 记为 0.03）；若多行明细税率不同，各明细行分别保留各自税率，不要合并、不要取平均；同一税率档只出现一次的行可各自保留。
 10. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 11. 销售方/购买方字段：seller_name/buyer_name 为名称，seller_tax_no/buyer_tax_no 为统一社会信用代码，seller_address/buyer_address 为注册地址，seller_phone/buyer_phone 为电话，seller_bank/buyer_bank 为开户行，seller_account/buyer_account 为银行账号；无法识别时返回空字符串。
 12. issuer 为开票人，remark 为备注/备注栏内容；无法识别时返回空字符串。
 13. invoice_type 只从以下枚举中选择：专用发票、普通发票、医疗收据、财政收据、其它票据；含「通行费」或「电子发票」的票据一律归为「普通发票」（通行费电子发票均为增值税普通发票）；无法识别时返回空字符串。
 14. category 为发票大分类，只从以下枚举中选择：通行费、办公费、差旅费、餐饮费、通讯费、加油费、住宿费、材料费、设备购置费、服务费、广告费、培训费、会议费、租赁费、其它。根据发票的商品或劳务名称、销方类型判断最匹配的一个大类；无法判定时用「其它」。
 15. 如果发票包含车牌号、通行日期等运输信息（如 ETC 通行费发票），将车牌号、通行日期起止以「车牌号：XX；通行日期起：XX；通行日期止：XX」格式写入 remark 字段（与已有备注内容用分号拼接）；无则保持原样。
+16. 发票级 total_amount/amount/tax 为价税合计/金额/税额（税额为全部明细税额之和）；无法识别时返回 null。
 
 输出格式：
 {"kind":"invoice","invoices":[{"invoice_no":"","invoice_code":"","invoice_date":"","invoice_type":"","total_amount":0,"amount":0,"tax":0,"tax_rate":0,"seller_name":"","seller_tax_no":"","seller_address":"","seller_phone":"","seller_bank":"","seller_account":"","buyer_name":"","buyer_tax_no":"","buyer_address":"","buyer_phone":"","buyer_bank":"","buyer_account":"","issuer":"","remark":"","category":"","void_flag":false,"duplicate":false,"items":[{"name":"","qty":1,"price":0,"tax_rate":0}]}]}`
