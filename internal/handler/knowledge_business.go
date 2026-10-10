@@ -45,6 +45,37 @@ func parseSandboxPagination(c *gin.Context) (page, pageSize int) {
 	return page, pageSize
 }
 
+// businessExtractionInProgress 判断业务提取（发票/合同/制度/奖惩）是否因文档
+// 仍处于解析流水线中而必须拦截。仅拦截 pending/processing/finalizing/deleting；
+// completed 直接放行；failed/cancelled 也放行——docreader 短暂不可用会留下 failed，
+// 但文本 chunk 可能已完整落库，而业务重提只依赖 chunk 文本（行规则/模型），不应
+// 被失败状态挡死；无文本时由下游批次检查（invoiceBatchesHaveText 等）给出明确提示。
+func businessExtractionInProgress(status string) bool {
+	switch status {
+	case types.ParseStatusPending, types.ParseStatusProcessing,
+		types.ParseStatusFinalizing, types.ParseStatusDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
+// noExtractableTextNotice 在业务重提找不到可提取文本时，区分两种成因给出准确提示，
+// 避免把"解析失败/被中断导致文本 chunk 缺失"误报成"扫描件无文本层"：
+//   - parse_status=failed：docreader 解析失败或被中断（如 gRPC 50051 不可用），
+//     旧 chunk 可能已被软删而新 chunk 未生成，应引导用户先重新解析；
+//   - 其它（completed 等）：解析成功却无文本，才是真正的扫描件/纯图片。
+//
+// 返回值依次为写入 custom_metadata 的中文 ExtractError 与返回前端的英文 message。
+func noExtractableTextNotice(parseStatus string) (string, string) {
+	if parseStatus == types.ParseStatusFailed {
+		return "文档解析失败或被中断，暂无可提取文本，请先重新解析后再提取",
+			"document parsing previously failed or was interrupted; please re-parse the document before extracting"
+	}
+	return "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+		"document has no extractable text (possible scanned document), file kept"
+}
+
 // autoDeleteCount reads the auto_deleted_count marker from a knowledge row's
 // custom_metadata (0 when absent).
 func (h *BusinessExtractHandler) autoDeleteCount(ctx context.Context, knowledge *types.Knowledge) int {
@@ -91,7 +122,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -132,20 +163,21 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
 	// failed 让用户人工处理（配合删除历史，避免"监测检测合同"这类扫描件被误删）。
 	if !contractBatchesHaveText(batches) {
+		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
 		noTextMeta, jerr := json.Marshal(contractCustomMetadata{
 			Kind:          "contract",
 			ExtractStatus: "failed",
-			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
 			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
 			}
 		}
-		logger.Warnf(ctx, "Contract extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		logger.Warnf(ctx, "Contract extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "document has no extractable text (possible scanned document), file kept",
+			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "contract", "extract_status": "failed", "removed": false},
 		})
 		return
@@ -410,7 +442,7 @@ func (h *BusinessExtractHandler) ExtractContractPage(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -681,8 +713,37 @@ func (h *BusinessExtractHandler) applyInvoiceUserCategoryPrecedence(ctx context.
 		if t == "" {
 			continue
 		}
-		if _, ok := activeTypes[t]; !ok {
-			meta.Invoices[i].InvoiceType = "其它票据"
+		if _, ok := activeTypes[t]; ok {
+			continue
+		}
+		// 票面大类（如「普通发票」）已被停用，但行规则/模型给出了当前仍启用的
+		// 细分分类（Category，如「通行费发票」）时，归入该细分分类，而不是笼统
+		// 降级「其它票据」——细分记录本就应挂在启用的细分分类下。
+		if cat := strings.TrimSpace(meta.Invoices[i].Category); cat != "" {
+			if _, ok := activeTypes[cat]; ok {
+				meta.Invoices[i].InvoiceType = cat
+				continue
+			}
+		}
+		meta.Invoices[i].InvoiceType = "其它票据"
+	}
+	// certType 缺失（历史遗留文件没有 fleet_cert_type）但同文件所有发票最终都归属
+	// 同一个启用分类时，补回文件级打标，避免这类文件每次直连重提都被错误降级。
+	if meta.FleetCertType == "" && len(meta.Invoices) > 0 {
+		first := strings.TrimSpace(meta.Invoices[0].InvoiceType)
+		if first != "" && first != "其它票据" {
+			allSame := true
+			for _, inv := range meta.Invoices {
+				if strings.TrimSpace(inv.InvoiceType) != first {
+					allSame = false
+					break
+				}
+			}
+			if allSame {
+				if _, ok := activeTypes[first]; ok {
+					meta.FleetCertType = first
+				}
+			}
 		}
 	}
 }
@@ -717,7 +778,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -750,20 +811,21 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不自动删除，保留文件并标记
 	// failed 让用户人工处理。
 	if !invoiceBatchesHaveText(batches) {
+		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
 		noTextMeta, jerr := json.Marshal(invoiceCustomMetadata{
 			Kind:          "invoice",
 			ExtractStatus: "failed",
-			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
 			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
 			}
 		}
-		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "document has no extractable text (possible scanned document), file kept",
+			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "failed", "removed": false},
 		})
 		return
@@ -1045,7 +1107,7 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -1326,7 +1388,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -1365,20 +1427,21 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
 	// failed 让用户人工处理（配合删除历史）。
 	if !regulationBatchesHaveText(batches) {
+		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
 		noTextMeta, jerr := json.Marshal(regulationCustomMetadata{
 			Kind:          "regulation",
 			ExtractStatus: "failed",
-			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
 			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist regulation no-text state: %v", serr)
 			}
 		}
-		logger.Warnf(ctx, "Regulation extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		logger.Warnf(ctx, "Regulation extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "document has no extractable text (possible scanned document), file kept",
+			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "regulation", "extract_status": "failed", "removed": false},
 		})
 		return
@@ -1582,7 +1645,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
 		return
 	}
-	if knowledge.ParseStatus != types.ParseStatusCompleted {
+	if businessExtractionInProgress(knowledge.ParseStatus) {
 		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 		return
 	}
@@ -1621,20 +1684,21 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
 	// failed 让用户人工处理（配合删除历史）。
 	if !awardPunishBatchesHaveText(batches) {
+		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
 		noTextMeta, jerr := json.Marshal(awardPunishCustomMetadata{
 			Kind:          "award_punish",
 			ExtractStatus: "failed",
-			ExtractError:  "文档无可提取文本（疑似扫描件），已保留文件待人工处理",
+			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
 			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
 			}
 		}
-		logger.Warnf(ctx, "Award/punish extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
+		logger.Warnf(ctx, "Award/punish extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "document has no extractable text (possible scanned document), file kept",
+			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "failed", "removed": false},
 		})
 		return
