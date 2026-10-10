@@ -24,8 +24,13 @@ RUN go mod download
 COPY . .
 ENV CGO_ENABLED=1
 ENV CGO_CFLAGS="-O2 -g"
-# 二开业务不需要 anydoc/browserskill，关闭以加速构建
-RUN go build -o WeKnora ./cmd/server
+# 链接 anydoc 进程内解析引擎（Office 文档转 Markdown，无需 Python docreader）。
+# 需要 Rust 工具链构建静态归档（third_party/anydoc-go，~30MB），构建阶段增加数分钟。
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable && \
+    bash ./scripts/build-anydoc-lib.sh
+RUN go build -tags anydoc -o WeKnora ./cmd/server
 
 # ---------- Stage 3: 运行时 ----------
 FROM debian:12-slim

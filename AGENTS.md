@@ -221,6 +221,21 @@
 - 涉及数据库 Seed/分类/提取规则的改动：遵守「防覆盖」原则（已存在的分类/规则绝不 Update 覆盖，只对缺失项 Create），改后重启验证存量数据不被冲掉。
 - **本机与生产共用同一 Supabase 库**：本机调试产生的测试数据会写入生产库；删除、清库、批量改库等高风险操作必须极其谨慎，优先使用可逆操作或先确认。
 
+### 5.1 对象存储（腾讯云 COS，2026-10 起为生产存储）
+
+- **存储口径**：`STORAGE_TYPE=cos`，新上传文件一律写入腾讯云 COS 桶 `weknora-daily-1313344759`（ap-seoul）。所需环境变量（值只存在于 `deploy/.env`，**绝不写入 AGENTS.md/日志/提交信息**）：`COS_BUCKET_NAME`、`COS_REGION=ap-seoul`、`COS_SECRET_ID`、`COS_SECRET_KEY`、`COS_PATH_PREFIX=weknora`（必填非空），可选 `COS_APP_ID`。密钥来源：VPS `/home/weknora-daily/SecretKey.csv`（CRLF，含表头行）。
+- **存量兼容机制（勿破坏）**：历史文件记录 `resources.physical_path` 形如 `storage://<backend-id>/local://10000/...`，读路径按 resource 记录中的 `StorageBackendID`（`storage_backends` 表 `System LOCAL` env 记录）解析回 local 磁盘，**不依赖全局 STORAGE_TYPE**。因此 VPS `/home/weknora-daily/data/files/` 的存量磁盘文件（自本机 `data\files` 迁移，323 文件/53.7MB）必须保留，与 COS 并行读；只删除 `System LOCAL` backend 记录或该目录会直接导致存量预览失败。
+- **切换/回滚**：改 `STORAGE_TYPE` 与 `COS_*` 后必须 `scp deploy/.env → VPS`（LF 行尾）并 `docker compose up -d --force-recreate weknora-daily`；启动日志应见 `newCosClient: bucketURL: https://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/` 且 `storage_backends` 出现 `System COS`。回滚＝恢复 `.env.bak-*` 后重建。
+- **本机开发环境**：本机后端默认仍 `STORAGE_TYPE=local`，本机上传会写本机磁盘（provider=local），VPS 按 local backend 读不到该文件，公网预览再次失效——**本机与生产必须指向同一存储**（本机 `.env` 同步切 COS，或接受"本机仅开发、生产文件一律公网上传"的口径）。
+- **密钥轮换**：改 `COS_SECRET_*` 后重启，`storage_backends` 的 `System COS` 记录会被 upsert 覆盖（AES 加密存储）；用户自建 backend 记录不受影响。
+
+### 5.2 VPS 附加服务（Redis / Neo4j 知识图谱 / anydoc，2026-10 启用）
+
+- **Redis（流处理 + Asynq 任务队列）**：`STREAM_MANAGER_TYPE=redis`、`REDIS_ADDR=127.0.0.1:6379`（**host 网络无服务名 DNS，必须用 loopback**）、`REDIS_PASSWORD`、`REDIS_DB=0`、`REDIS_PREFIX=stream:`（值只在 `deploy/.env`）。compose 服务 `redis:7.0-alpine`，host 网络下 command 必须 `--bind 127.0.0.1 --requirepass ${REDIS_PASSWORD}`（防 6379 暴露公网），卷 `./redis-data:/data` 持久化。生效标志：启动日志 `Tenant sandbox resolver configured: binding=redis`、`asynq core-pool server starting`、`ModelLimiter ... distributed via redis`。
+- **Neo4j 知识图谱**：唯一开关 `NEO4J_ENABLE=true`（`ENABLE_GRAPH_RAG` 已废弃，勿再配置）、`NEO4J_URI=bolt://127.0.0.1:7687`、`NEO4J_USERNAME=neo4j`、`NEO4J_PASSWORD`。compose 服务 `neo4j:2025.10.1`，host 网络下必须设 `NEO4J_server_bolt_listen__address=127.0.0.1:7687` + `NEO4J_server_http_listen__address=127.0.0.1:7474`（防 7474/7687 暴露公网），apoc 三环境变量 + `NEO4JLABS_PLUGINS=["apoc"]`，卷 `./neo4j-data:/data`。neo4j 启动慢，app 有 30 次连接重试，日志见 `Successfully connected to Neo4j after N attempts`。
+- **anydoc（进程内 Office 解析引擎）**：**编译期 cgo 特性（Rust 库），不是运行时配置**。`Dockerfile.da` 已启用：builder 阶段装 rustup → `scripts/build-anydoc-lib.sh`（钉住 anydoc `=0.1.9`，产出 `third_party/anydoc-go/lib/linux_amd64_gnu/libanydoc_go.a` ≈30MB、git-ignored）→ `go build -tags anydoc`。改代码 push 后 CI 自动重建含 anydoc 镜像；无 `anydoc` tag 的构建引擎不可用（设置页显示不可用原因），**VPS compose 无法单独补开**。
+- redis/neo4j 均无 watchtower label（不自动更新）；`weknora-daily` `depends_on` 两者；三服务全部 `network_mode: host`。
+
 ### 6. 已知坑（禁止重犯）
 
 - **前端 401**：静态服务由 `internal/router/static.go` 的 `serveFrontendStatic` 托管（读 `WEKNORA_WEB_DIR`，注册于 auth 中间件之前，`/api/`、`/health`、`/swagger/`、`/r/`、`/files` 前缀放行；web 目录不存在时自动跳过）。曾因镜像 Edition 默认 `standard` 而 `if handler.Edition == "lite"` 不托管前端，已改为无条件调用——**不要再加 Edition 限制**。

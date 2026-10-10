@@ -1,0 +1,76 @@
+services:
+  weknora-daily:
+    image: ghcr.io/missyouling/weknora-da:da-latest
+    container_name: weknora-daily
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - JIEBA_DICT_DIR=/app/jieba_dict
+      - WEKNORA_WEB_DIR=/app/web/dist
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    volumes:
+      - ./data:/data/files
+      - ./jieba_dict:/app/jieba_dict
+      - ./config/config.yaml:/app/config/config.yaml
+      - ./config/prompt_templates:/app/config/prompt_templates
+      - ./config/builtin_agents.yaml:/app/config/builtin_agents.yaml
+      - ./config/agent_type_presets.yaml:/app/config/agent_type_presets.yaml
+    depends_on:
+      - redis
+      - neo4j
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: weknora-redis
+    network_mode: host
+    # host 网络下绑定 127.0.0.1，避免 6379 暴露公网；app 经 127.0.0.1:6379 访问
+    command: ["redis-server", "--bind", "127.0.0.1", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ./redis-data:/data
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:2025.10.1
+    container_name: weknora-neo4j
+    network_mode: host
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-password}
+      # host 网络下仅监听 loopback，防止 7474/7687 暴露公网
+      - NEO4J_server_bolt_listen__address=127.0.0.1:7687
+      - NEO4J_server_http_listen__address=127.0.0.1:7474
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+      - NEO4JLABS_PLUGINS=["apoc"]
+    volumes:
+      - ./neo4j-data:/data
+    restart: unless-stopped
+
+  docreader:
+    image: wechatopenai/weknora-docreader:latest
+    container_name: weknora-docreader
+    network_mode: host
+    environment:
+      - TZ=Asia/Shanghai
+      - DOCREADER_IMAGE_OUTPUT_DIR=/tmp/docreader
+      - MAX_FILE_SIZE_MB=50
+      - DOCREADER_PDF_RENDER_MAX_WORKERS=2
+      - DOCREADER_PDF_RENDER_PARALLELISM=2
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: weknora-watchtower
+    environment:
+      - WATCHTOWER_SCHEDULE=0 */4 * * *
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_TIMEOUT=600s
+      - DOCKER_API_VERSION=1.41
+      - TZ=Asia/Shanghai
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
