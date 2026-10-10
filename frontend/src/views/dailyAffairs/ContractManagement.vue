@@ -1287,7 +1287,13 @@ const loadUploadStats = async () => {
   } catch { uploadStats.value = { total: 0, failed: 0 } }
 }
 // 历史记录抽屉变更（删除/重新解析）后同步刷新列表与卡片计数（并行）
-const onUploadHistoryChanged = async () => {
+// 上传历史抽屉变化：删除（带 deletedIds）走乐观移除+延迟对账；重新提取等立即刷新
+const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {
+  if (payload?.deletedIds?.length) {
+    optimisticRemoveContractRows(new Set(payload.deletedIds), new Set())
+    schedulePostDeleteRefresh()
+    return
+  }
   await Promise.all([loadFiles(true), loadUploadStats(), loadContractOverview()])
 }
 
@@ -1708,10 +1714,31 @@ const delMultiCount = computed(() => {
   }
   return set.size
 })
+// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页合同
+const optimisticRemoveContractRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
+  contractRows.value = contractRows.value.filter((r) => {
+    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
+    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
+    return true
+  })
+}
+// 删除走 asynq 异步入队：200 仅代表入队，worker 启动后才置 parse_status=deleting
+// （列表据此排除）。立即刷新会读到旧数据，故先乐观移除，再分两次延迟权威对账。
+let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
+const schedulePostDeleteRefresh = () => {
+  deleteRefreshTimers.forEach(clearTimeout)
+  deleteRefreshTimers = []
+  loadContractOverview()
+  loadUploadStats()
+  const reload = () => { loadFiles(true); loadContractOverview(); loadUploadStats() }
+  deleteRefreshTimers.push(setTimeout(reload, 800))
+  deleteRefreshTimers.push(setTimeout(reload, 2600))
+}
 // 仅删除选中的合同页（同文件其它合同保留）
 const doPageDelete = async (rows: ContractRow[]) => {
   const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
   const fileDeleteIds = new Set<string>()
+  const pageKeys = new Set<string>()
   for (const r of rows) {
     if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
     else fileDeleteIds.add(r.knowledgeId)
@@ -1721,19 +1748,24 @@ const doPageDelete = async (rows: ContractRow[]) => {
   for (const pd of pageDeleteIds) {
     const res: any = await deleteContractPage(kbId.value, pd.knowledgeId, pd.page)
     if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
+    else pageKeys.add(`${pd.knowledgeId}::${pd.page}`)
   }
   if (fileDeleteIds.size) await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
+  optimisticRemoveContractRows(fileDeleteIds, pageKeys)
 }
 // 删除整份上传文件（含其全部合同记录，从知识库完全删除）
 const doFileDelete = async (rows: ContractRow[]) => {
   const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
-  if (ids.size) await batchDeleteKnowledge(kbId.value, Array.from(ids))
+  if (ids.size) {
+    await batchDeleteKnowledge(kbId.value, Array.from(ids))
+    optimisticRemoveContractRows(ids as Set<string>, new Set())
+  }
 }
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   clearSelectionSafe()
-  // 删除后并行刷新列表、概览卡与历史记录计数（对齐发票基准）
-  await Promise.all([loadFiles(true), loadContractOverview(), loadUploadStats()])
+  // 异步删除：不立即 loadFiles（会把乐观移除的行又拉回来），交由延迟对账权威纠正
+  schedulePostDeleteRefresh()
 }
 const confirmPageDelete = async () => {
   closeDelPop()
@@ -1800,6 +1832,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
+  deleteRefreshTimers.forEach(clearTimeout)
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>

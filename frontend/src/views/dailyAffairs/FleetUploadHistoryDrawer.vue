@@ -100,7 +100,9 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
-  (e: 'changed'): void
+  // payload.deletedIds：本次异步删除命中的 knowledge id（删除为 asynq 异步入队，
+  // 父组件可据此先做乐观移除，再延迟权威对账）；重新提取等场景不带 payload。
+  (e: 'changed', payload?: { deletedIds?: string[] }): void
 }>()
 
 const rows = ref<any[]>([])
@@ -168,13 +170,19 @@ const extractTheme = (row: any) => {
 // 发票类型取值：优先上传时写入的 fleet_cert_type，其次 custom_metadata.invoice_type，
 // 再次发票提取结果 invoices[0].invoice_type，然后 invoices[0].category（细分分类打标），
 // 最后回退 doc_type/顶层字段（补齐历史遗留空白）。
+// 注意：「其它票据」是未归类兜底值，不得作为 cert_type 锚点覆盖已识别出的细分分类
+// （如通行费发票），故取值时让兜底大类穿透，优先返回第一个有效细分分类。
+const FALLBACK_DOC_TYPE = '其它票据'
 const invDocType = (r: any) => {
   const m = r.custom_metadata || {}
-  if (m.fleet_cert_type) return m.fleet_cert_type
-  if (m.invoice_type) return m.invoice_type
   const invs = Array.isArray(m.invoices) ? m.invoices : []
-  if (invs.length && invs[0]?.invoice_type) return invs[0].invoice_type
-  if (invs.length && invs[0]?.category) return invs[0].category
+  const i0 = (invs.length ? invs[0] : {}) as Record<string, any>
+  const candidates = [m.fleet_cert_type, m.invoice_type, i0.invoice_type, i0.category, m.doc_type, r.doc_type]
+  for (const v of candidates) {
+    if (v && v !== FALLBACK_DOC_TYPE) return v
+  }
+  // 全部为空或仅剩兜底值时，才回退到「其它票据」（若确实存在）
+  if (m.invoice_type === FALLBACK_DOC_TYPE || i0.invoice_type === FALLBACK_DOC_TYPE) return FALLBACK_DOC_TYPE
   return m.doc_type || r.doc_type || ''
 }
 
@@ -301,7 +309,7 @@ const removeOne = async (row: any) => {
     rows.value = rows.value.filter((r) => r.id !== row.id)
     total.value = Math.max(0, total.value - 1)
     MessagePlugin.success("已删除")
-    emit("changed")
+    emit("changed", { deletedIds: [row.id] })
   } catch (e: any) {
     MessagePlugin.error(e?.message || "删除失败")
   }
@@ -323,7 +331,7 @@ const clearAll = async () => {
     total.value = 0
     hasMore.value = false
     MessagePlugin.success(`已删除 ${all.length} 个文件`)
-    emit("changed")
+    emit("changed", { deletedIds: all.map((r: any) => r.id) })
   } catch (e: any) {
     MessagePlugin.error(e?.message || "删除失败")
   }

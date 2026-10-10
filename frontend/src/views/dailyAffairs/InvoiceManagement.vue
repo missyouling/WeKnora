@@ -1366,8 +1366,18 @@ const onUploadDone = async (typeName?: string) => {
   await loadFiles(true)
   loadInvoiceOverview()
 }
-// 上传历史抽屉内容变化（删除/重新提取等）：列表与概览卡片一并刷新
-const onUploadHistoryChanged = () => { loadFiles(true); loadInvoiceOverview() }
+// 上传历史抽屉内容变化：
+// - 删除（带 deletedIds）：异步删除，先乐观移除再延迟权威对账（见 schedulePostDeleteRefresh）；
+// - 重新提取等（无 payload）：custom_metadata 已同步写回，立即刷新。
+const onUploadHistoryChanged = (payload?: { deletedIds?: string[] }) => {
+  if (payload?.deletedIds?.length) {
+    optimisticRemoveInvoiceRows(new Set(payload.deletedIds), new Set())
+    schedulePostDeleteRefresh()
+    return
+  }
+  loadFiles(true)
+  loadInvoiceOverview()
+}
 
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
@@ -1740,7 +1750,9 @@ const handleFileExtract = async () => {
   extractBusy.value = true
   const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
   try {
-    await extractBusinessDocument(kbId.value, row.knowledgeId, 'invoice')
+    // 携带当前细分分类（用户正在该分类视图下操作），锚定同文件多页发票的类型，
+    // 避免历史文件缺 fleet_cert_type 打标时被错误降级为「其它票据」。
+    await extractBusinessDocument(kbId.value, row.knowledgeId, 'invoice', filterInvoiceType.value || undefined)
     loading.close()
     MessagePlugin.success(`「${row.fileName}」重新提取完成`)
     loadFiles(true)
@@ -1919,8 +1931,29 @@ const downloadCatalogPdf = () => {
 // 删除记录：有页码的行按页删除该发票（同文件其它发票保留）；无页码（历史数据）删整份文件
 // 批量删除二选一：选中记录若来自多页文件集合，先让用户选择「仅删选中发票」或「整份删除该文件」；
 // 仅删选中：按页删除（无页码的行等价整份删除该文件）；整份删除：对选中行涉及的文件整体软删并从上传历史移除。
+// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页发票
+const optimisticRemoveInvoiceRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
+  invoiceRows.value = invoiceRows.value.filter((r) => {
+    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
+    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
+    return true
+  })
+}
+// 删除走 asynq 异步入队：接口返回 200 仅代表任务入队，worker 启动后才会把
+// parse_status 置为 deleting（列表查询据此排除）。立即刷新会读到旧数据，表现为
+// “删除后不消失、手动刷新才消失”。这里先做乐观本地移除，再分两次延迟做权威对账，
+// 覆盖 worker 调度抖动（800ms 常规、2600ms 兜底）。
+let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
+const schedulePostDeleteRefresh = () => {
+  deleteRefreshTimers.forEach(clearTimeout)
+  deleteRefreshTimers = []
+  loadInvoiceOverview()
+  deleteRefreshTimers.push(setTimeout(() => { loadFiles(true); loadInvoiceOverview() }, 800))
+  deleteRefreshTimers.push(setTimeout(() => { loadFiles(true); loadInvoiceOverview() }, 2600))
+}
 const doPageDelete = async (rows: InvoiceRow[]) => {
   const fileDeleteIds = new Set<string>()
+  const pageKeys = new Set<string>()
   const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
   for (const r of rows) {
     if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
@@ -1931,7 +1964,9 @@ const doPageDelete = async (rows: InvoiceRow[]) => {
   for (const pd of pageDeleteIds) {
     try {
       const res: any = await deleteInvoicePage(kbId.value, pd.knowledgeId, pd.page)
+      // 乐观移除该页；若后端反馈整文件已删（最后一张），整文件移除
       if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
+      else pageKeys.add(`${pd.knowledgeId}::${pd.page}`)
     } catch (e: any) {
       MessagePlugin.error(e?.message || `删除发票（${pd.page}）失败`)
       return
@@ -1940,16 +1975,20 @@ const doPageDelete = async (rows: InvoiceRow[]) => {
   if (fileDeleteIds.size) {
     await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
   }
+  optimisticRemoveInvoiceRows(fileDeleteIds, pageKeys)
 }
 const doFileDelete = async (rows: InvoiceRow[]) => {
   const fileIds = Array.from(new Set(rows.map((r) => r.knowledgeId).filter((x): x is string => !!x)))
-  if (fileIds.length) await batchDeleteKnowledge(kbId.value, fileIds)
+  if (fileIds.length) {
+    await batchDeleteKnowledge(kbId.value, fileIds)
+    optimisticRemoveInvoiceRows(new Set(fileIds), new Set())
+  }
 }
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   selectedRowKeys.value = []
-  await loadFiles(true)
-  loadInvoiceOverview()
+  // 异步删除：不立即 loadFiles（会把乐观移除的行又拉回来），交由延迟对账权威纠正
+  schedulePostDeleteRefresh()
 }
 // 删除确认：气泡内二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗
 const delPopVisible = ref(false)
@@ -2013,6 +2052,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
+  deleteRefreshTimers.forEach(clearTimeout)
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>

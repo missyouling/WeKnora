@@ -1058,9 +1058,14 @@ export function extractAwardPunish(kbId: string, knowledgeId: string) {
  * P1-C: 统一业务文档提取入口。前端只调这一个接口，后端按 scope 分发。
  * scope: contract | invoice | regulation | award_punish
  */
-export function extractBusinessDocument(kbId: string, knowledgeId: string, scope: string) {
+export function extractBusinessDocument(
+  kbId: string,
+  knowledgeId: string,
+  scope: string,
+  certType?: string,
+) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-business`,
-    { scope }, { timeout: 600000 });
+    certType ? { scope, cert_type: certType } : { scope }, { timeout: 600000 });
 }
 
 /**
