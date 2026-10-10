@@ -387,16 +387,22 @@
           <t-button theme="primary" size="medium" :loading="saving" @click="saveContractDetail">保存</t-button>
         </div>
 
-        <!-- 源文件预览 -->
-        <section class="detail-block">
-          <div class="detail-block-title">源文件预览</div>
-          <div class="detail-block-content">
-            <DocumentPreview v-if="currentRow" :knowledge-id="currentRow.knowledgeId"
-              :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-          </div>
-        </section>
+        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
+        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
+          <t-collapse-panel value="preview" header="源文件预览">
+            <div class="detail-block-content">
+              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
+                :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
+            </div>
+          </t-collapse-panel>
+        </t-collapse>
       </div>
     </SettingDrawer>
+
+    <!-- 合同编号重复二次确认：强制保存前询问（确认后带 force 重试，取消留在编辑态） -->
+    <t-dialog v-model:visible="dupConfirmVisible" header="合同编号重复" width="420" @confirm="onDupConfirm">
+      <span>系统已存在相同的合同编号「{{ dupNo }}」，是否强制保存？</span>
+    </t-dialog>
 
     <!-- 标签编辑（复用原项目组件） -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -1371,6 +1377,21 @@ const fillEditForm = () => {
 }
 
 const saveContractDetail = async () => {
+  await persistContractDetail(false)
+}
+
+// 合同编号重复二次确认：后端 409 + DUPLICATE_CONTRACT_NO 时先询问，确认后 force 重试
+const dupConfirmVisible = ref(false)
+const dupNo = ref('')
+const onDupConfirm = async () => {
+  dupConfirmVisible.value = false
+  await persistContractDetail(true)
+}
+
+// 源文件预览折叠面板（默认折叠，展开时才挂载 DocumentPreview）
+const previewExpanded = ref<string[]>([])
+
+const persistContractDetail = async (force: boolean) => {
   const now = currentRow.value
   if (!now) return
   saving.value = true
@@ -1431,7 +1452,7 @@ const saveContractDetail = async () => {
     const nextError = hasContractData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'contract', contracts, extract_status: nextStatus, extract_error: nextError }
     // 合同 contracts 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由（与发票同款）
-    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta)
+    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑后列表立即刷新
     const listIdx = contractRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
@@ -1463,6 +1484,12 @@ const saveContractDetail = async () => {
     loadFiles(true)
     loadContractOverview()
   } catch (e: any) {
+    if (e?.status === 409 && String(e?.message || '').startsWith('DUPLICATE_CONTRACT_NO')) {
+      // 合同编号重复：弹二次确认，确认后 force 重试；取消留在编辑态
+      dupNo.value = String(e?.message || '').split(':').pop() || ''
+      dupConfirmVisible.value = true
+      return
+    }
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     saving.value = false
@@ -2018,6 +2045,7 @@ onBeforeUnmount(() => {
   &::before { content: ''; width: 3px; height: 14px; background: var(--td-brand-color); border-radius: 2px; flex-shrink: 0; }
 }
 .detail-block-content { width: 100%; }
+.detail-preview-collapse { margin-top: 12px; }
 
 // 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
 .summary_wrapper {

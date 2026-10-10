@@ -340,20 +340,28 @@
           </div>
         </section>
 
-        <!-- 源文件预览 -->
-        <section class="detail-block">
-          <div class="detail-block-title">源文件预览</div>
-          <div class="detail-block-content">
-            <DocumentPreview v-if="currentRow" :knowledge-id="currentRow.knowledgeId"
-              :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-          </div>
-        </section>
-      </div>
-      <div class="invoice-detail-footer">
-        <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
-        <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+        <!-- 保存/取消前置到表单底部（源文件预览上方），无需滚过 PDF 预览即可保存 -->
+        <div class="invoice-detail-footer">
+          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
+          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+        </div>
+
+        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
+        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
+          <t-collapse-panel value="preview" header="源文件预览">
+            <div class="detail-block-content">
+              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
+                :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
+            </div>
+          </t-collapse-panel>
+        </t-collapse>
       </div>
     </SettingDrawer>
+
+    <!-- 单号重复二次确认：强制保存前询问（确认后带 force 重试，取消留在编辑态） -->
+    <t-dialog v-model:visible="dupConfirmVisible" header="发票号码重复" width="420" @confirm="onDupConfirm">
+      <span>系统已存在相同的发票号码「{{ dupNo }}」，是否强制保存？</span>
+    </t-dialog>
 
     <!-- 标签编辑（复用原项目组件） -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -1461,6 +1469,21 @@ const removeItemRow = (idx: number) => {
 }
 
 const saveEditForm = async () => {
+  await persistEditForm(false)
+}
+
+// 单号重复二次确认：后端 409 + DUPLICATE_INVOICE_NO 时先询问，确认后 force 重试
+const dupConfirmVisible = ref(false)
+const dupNo = ref('')
+const onDupConfirm = async () => {
+  dupConfirmVisible.value = false
+  await persistEditForm(true)
+}
+
+// 源文件预览折叠面板（默认折叠，展开时才挂载 DocumentPreview）
+const previewExpanded = ref<string[]>([])
+
+const persistEditForm = async (force: boolean) => {
   const now = currentRow.value
   if (!now) return
   autoSaving.value = true
@@ -1545,7 +1568,7 @@ const saveEditForm = async () => {
       extract_status: nextStatus,
       extract_error: nextError,
     }
-    await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta)
+    await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑（如备注）后列表立即刷新
     const listIdx = invoiceRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
@@ -1581,6 +1604,12 @@ const saveEditForm = async () => {
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
+    if (e?.status === 409 && String(e?.message || '').startsWith('DUPLICATE_INVOICE_NO')) {
+      // 单号重复：弹二次确认，确认后 force 重试；取消留在编辑态
+      dupNo.value = String(e?.message || '').split(':').pop() || ''
+      dupConfirmVisible.value = true
+      return
+    }
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     autoSaving.value = false
@@ -2290,6 +2319,7 @@ onBeforeUnmount(() => {
 .row-items-qty, .row-items-price { color: var(--td-text-color-secondary); font-family: var(--td-font-family-mono, monospace); }
 .row-items-more { color: var(--td-text-color-disabled); font-size: var(--td-font-size-body-small); }
 .detail-tags-readonly { display: flex; flex-wrap: wrap; gap: 4px; }
+.detail-preview-collapse { margin-top: 12px; }
 .detail-readonly {
   display: inline-flex;
   align-items: center;

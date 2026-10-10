@@ -1928,6 +1928,72 @@ func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-invoice [post]
 
+// checkDuplicateNo 校验本次保存的业务元数据中的单号（发票号码/合同编号）是否已在
+// 同一知识库的其它记录中存在。force=true 时跳过（前端二次确认后强制保存）。
+// 返回命中的重复单号、单号语义标签（用于冲突码与提示）与查询错误；无重复时 dupNo 为空。
+func (h *BusinessExtractHandler) checkDuplicateNo(ctx context.Context, kbID, knowledgeID string, meta map[string]interface{}, force bool) (dupNo, label string, err error) {
+	if force {
+		return "", "", nil
+	}
+	var field, arrKey string
+	if _, ok := meta["invoices"].([]interface{}); ok {
+		field = "invoice_no"
+		arrKey = "invoices"
+		label = "发票号码"
+	} else if _, ok := meta["contracts"].([]interface{}); ok {
+		field = "contract_no"
+		arrKey = "contracts"
+		label = "合同编号"
+	} else {
+		return "", "", nil
+	}
+	// 提取本次保存的单号集合（非空）
+	nos := map[string]bool{}
+	for _, it := range mustArray(meta[arrKey]) {
+		if m, ok := it.(map[string]interface{}); ok {
+			if v, ok := m[field].(string); ok && strings.TrimSpace(v) != "" {
+				nos[strings.TrimSpace(v)] = true
+			}
+		}
+	}
+	if len(nos) == 0 {
+		return "", "", nil
+	}
+	// 查询同知识库下其它记录的 custom_metadata，逐个匹配单号
+	var rows []struct {
+		ID             string
+		CustomMetadata types.JSON
+	}
+	if err := h.db.WithContext(ctx).Table("knowledges").
+		Select("id, custom_metadata").
+		Where("knowledge_base_id = ? AND id <> ? AND deleted_at IS NULL AND custom_metadata IS NOT NULL", kbID, knowledgeID).
+		Find(&rows).Error; err != nil {
+		return "", "", err
+	}
+	for _, row := range rows {
+		var m map[string]interface{}
+		if err := json.Unmarshal(row.CustomMetadata, &m); err != nil {
+			continue
+		}
+		for _, it := range mustArray(m[arrKey]) {
+			if mm, ok := it.(map[string]interface{}); ok {
+				if v, ok := mm[field].(string); ok && nos[strings.TrimSpace(v)] {
+					return strings.TrimSpace(v), label, nil
+				}
+			}
+		}
+	}
+	return "", "", nil
+}
+
+// mustArray 将 interface{} 安全归一为 []interface{}（nil/非数组返回空切片）。
+func mustArray(v interface{}) []interface{} {
+	if arr, ok := v.([]interface{}); ok {
+		return arr
+	}
+	return nil
+}
+
 // UpdateInvoiceMetadata godoc
 // @Summary      保存发票提取元数据
 // @Description  直接持久化发票 custom_metadata（含 invoices 数组），绕过原生
@@ -1953,6 +2019,7 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 	}
 	var body struct {
 		CustomMetadata json.RawMessage `json:"custom_metadata"`
+		Force          bool            `json:"force"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body: " + err.Error()))
@@ -1960,6 +2027,25 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 	}
 	if len(body.CustomMetadata) == 0 || string(body.CustomMetadata) == "null" {
 		c.Error(errors.NewBadRequestError("custom_metadata cannot be empty"))
+		return
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(body.CustomMetadata, &meta); err != nil {
+		c.Error(errors.NewBadRequestError("invalid custom_metadata: " + err.Error()))
+		return
+	}
+	// 单号查重（发票号码/合同编号）：命中重复且未携带 force 时返回 409，
+	// 前端据此弹「是否强制保存」二次确认后再以 force=true 重试。
+	if dupNo, label, derr := h.checkDuplicateNo(ctx, kbID, knowledgeID, meta, body.Force); derr != nil {
+		logger.Error(ctx, "Failed to check duplicate business number", derr)
+		c.Error(errors.NewInternalServerError("failed to check duplicate business number: " + derr.Error()))
+		return
+	} else if dupNo != "" {
+		code := "DUPLICATE_INVOICE_NO"
+		if label == "合同编号" {
+			code = "DUPLICATE_CONTRACT_NO"
+		}
+		c.Error(errors.NewConflictError(code + ":已存在相同的" + label + " " + dupNo))
 		return
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(body.CustomMetadata)); err != nil {

@@ -618,13 +618,14 @@ export function updateKnowledgeMetadata(knowledgeId: string, customMetadata: Rec
 }
 
 // 发票详情手动保存：走二开 invoice-metadata 路由，持久化数组型 invoices 元数据（绕过原生标量校验）
-export function updateInvoiceMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>) {
-  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata });
+// force=true 表示用户已确认单号重复，后端跳过查重强制保存
+export function updateInvoiceMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>, force = false) {
+  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata, force });
 }
 
 // 通用业务元数据保存（合同/规则/奖惩等数组型业务记录共用）：走同一二开持久化路由，绕过原生 custom_metadata 标量校验
-export function updateBusinessMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>) {
-  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata });
+export function updateBusinessMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>, force = false) {
+  return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata, force });
 }
 
 export function updateKnowledgeSummary(knowledgeId: string, description: string) {
