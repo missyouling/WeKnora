@@ -141,6 +141,60 @@ func TestExtractInvoicesByLineRules_HitAll(t *testing.T) {
 	assert.InDelta(t, 0.03, *inv2.TaxRate, 0.0001)
 }
 
+// 回归样本：复刻线上 19 页通行费汇总单的两类故障——
+//  1. 分块 overlap 导致金额行在相邻 chunk 各出现一次（完全重复），旧实现两个数组
+//     按下标配对，从第 2 张起金额整体串行错位；
+//  2. 长销售方名称被 PDF 文本层折断成多行，旧实现整行正则失配导致整页漏提。
+const syntheticTollInvoiceOverlapDoc = `11110000000000000001 2026年05月07日 91500227MA5U54AJ0A 测试高速甲有限公司 9150000075307715XY *经营租赁*通行费 渝A10001 货车 20260402 225.98 3% 6.78
+¥225.98 贰佰叁拾贰圆柒角陆分 宋力 ¥232.76 20260428 测试购买方有限公司 ¥6.78
+¥225.98 贰佰叁拾贰圆柒角陆分 宋力 ¥232.76 20260428 测试购买方有限公司 ¥6.78
+22220000000000000002 2026年05月07日 91500227MA5U54AJ0A
+四川成渝高速公路集团股份有限公司公路运营管
+理一分公司 915100000983301971 *生产生活服务*通行费 渝C87567 货车 20260918 43.16 3% 1.29
+¥43.16 肆拾肆圆肆角伍分 刘珊 ¥44.45 20260918 测试购买方有限公司 ¥1.29
+33330000000000000003 2026年05月07日 91500227MA5U54AJ0A 测试高速丙有限公司 9150000075307715XY *经营租赁*通行费 渝A10003 货车 20260425 2.60 3% 0.08
+¥2.60 贰圆陆角捌分 张莹月 ¥2.68 20260425 测试购买方有限公司 ¥0.08
+¥2.60 贰圆陆角捌分 张莹月 ¥2.68 20260425 测试购买方有限公司 ¥0.08
+`
+
+func TestExtractInvoicesByLineRules_OverlapAndBrokenLine(t *testing.T) {
+	res, ok := ExtractInvoicesByLineRules(syntheticTollInvoiceOverlapDoc)
+	require.True(t, ok, "规则应命中该格式")
+	require.NotNil(t, res)
+	require.Len(t, res.Invoices, 3, "跨行断行不得漏页，必须提取全部 3 张")
+
+	// 第 1 张：金额行重复两次不得造成配对错位
+	inv0 := res.Invoices[0]
+	assert.Equal(t, "11110000000000000001", inv0.InvoiceNo)
+	assert.Equal(t, "宋力", inv0.Issuer)
+	require.NotNil(t, inv0.Amount)
+	assert.InDelta(t, 225.98, *inv0.Amount, 0.001)
+	require.NotNil(t, inv0.TotalAmount)
+	assert.InDelta(t, 232.76, *inv0.TotalAmount, 0.001)
+
+	// 第 2 张：号码行被折断成 3 行，必须跨行合并命中，销售方名称完整
+	inv1 := res.Invoices[1]
+	assert.Equal(t, "22220000000000000002", inv1.InvoiceNo, "折断的号码行必须被跨行合并识别，不得漏页")
+	assert.Equal(t, "四川成渝高速公路集团股份有限公司公路运营管理一分公司", inv1.SellerName)
+	assert.Equal(t, "915100000983301971", inv1.SellerTaxNo)
+	assert.Equal(t, "刘珊", inv1.Issuer, "金额必须各归各页，不得串行成第 1 张的宋力/225.98")
+	require.NotNil(t, inv1.Amount)
+	assert.InDelta(t, 43.16, *inv1.Amount, 0.001)
+	require.NotNil(t, inv1.TotalAmount)
+	assert.InDelta(t, 44.45, *inv1.TotalAmount, 0.001)
+	assert.Contains(t, inv1.Remark, "车牌号：渝C87567")
+	assert.Contains(t, inv1.Remark, "通行日期止：20260918")
+
+	// 第 3 张：在两张重复金额行之后仍必须配对到自身金额（旧实现会错位成 225.98）
+	inv2 := res.Invoices[2]
+	assert.Equal(t, "33330000000000000003", inv2.InvoiceNo)
+	assert.Equal(t, "张莹月", inv2.Issuer)
+	require.NotNil(t, inv2.Amount)
+	assert.InDelta(t, 2.60, *inv2.Amount, 0.001)
+	require.NotNil(t, inv2.TotalAmount)
+	assert.InDelta(t, 2.68, *inv2.TotalAmount, 0.001)
+}
+
 func TestExtractInvoicesByLineRules_Miss(t *testing.T) {
 	// 非该固定格式的文本（普通合同文本）应返回未命中，交由模型兜底。
 	res, ok := ExtractInvoicesByLineRules("这是一份合同文本，不包含通行费发票行格式。")

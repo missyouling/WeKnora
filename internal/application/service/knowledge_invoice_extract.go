@@ -806,84 +806,194 @@ func parseAmountToFloat(s string) *float64 {
 	return &f
 }
 
+// invoiceHeadStartRe 锚定号码行起始（20 位发票号 + 开票日期）。长销售方名称
+// 会被 PDF 文本层折断到后续行，因此起始识别不要求整行完整，完整字段由
+// ExtractInvoicesByLineRules 跨行合并后再用 invoiceHeadLineRe 解析。
+var invoiceHeadStartRe = regexp.MustCompile(`^\d{20}\s+\d{4}年\d{1,2}月\d{1,2}日(?:\s|$)`)
+
+// headJoinMaxLines 限制号码行跨行合并最多向下吞并的行数，防止失控吞掉后续发票。
+const headJoinMaxLines = 6
+
+// lineHead / lineAmt 携带物理行号，供「物理窗口 + 金额锚点」配对使用。
+type lineHead struct {
+	m         []string
+	startLine int // 起始行（含）
+	endLine   int // 结束行（含，跨行合并后可能大于 startLine）
+}
+
+type lineAmt struct {
+	m        []string
+	line     int
+	consumed bool
+}
+
+// cjkSpaceRe 匹配两个中文字符之间的空白。PDF 文本层会在词内断行（如长公司名
+// 「…公路运营管理一分公司」在「管」后折断），跨行合并时引入的空格对中文词内
+// 断点属于伪空格，需要剔除；正常字段间空格两侧不会都是中文。
+var cjkSpaceRe = regexp.MustCompile(`(\p{Han})\s+(\p{Han})`)
+
+// joinCJKWords 消除中文字符之间因 PDF 断行产生的伪空格（循环处理连续断点）。
+func joinCJKWords(s string) string {
+	for {
+		next := cjkSpaceRe.ReplaceAllString(s, "$1$2")
+		if next == s {
+			return s
+		}
+		s = next
+	}
+}
+
+// buildInvoiceFromHead 用号码行捕获组构造发票（号码行本身已含金额/税率/税额/
+// 车牌/通行日期起/购销方税号），价税合计等金额行字段留待配对后补充。
+func buildInvoiceFromHead(m []string) InvoiceExtractionItem {
+	inv := InvoiceExtractionItem{
+		InvoiceNo:   m[1],
+		InvoiceDate: fmt.Sprintf("%s-%s-%s", m[2], m[3], m[4]),
+		InvoiceType: "普通发票", // 通行费电子发票均为增值税普通发票
+		SellerName:  joinCJKWords(strings.TrimSpace(m[6])),
+		SellerTaxNo: m[7],
+		BuyerTaxNo:  m[5],
+		Category:    "通行费发票", // 与上传分类名一致，供列表「细分分类」筛选精准命中
+		Amount:      parseAmountToFloat(m[12]),
+		Tax:         parseAmountToFloat(m[14]),
+		TaxRate:     parsePercentToFloat(m[13]),
+		Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", m[9], m[11]),
+	}
+	if it := strings.TrimSpace(m[8]); it != "" {
+		// 填充 price/tax_rate 供 Normalize 时 dominantItemTaxRate 计算列表税率列
+		inv.Items = []InvoiceExtractionLine{{Name: it, Price: inv.Amount, TaxRate: inv.TaxRate}}
+	}
+	return inv
+}
+
+// fillInvoiceFromAmt 用金额行捕获组补充价税合计/购买方名称/开票人/通行日期止，
+// 并以金额行的金额/税额为准（与号码行互相校验）。plate/passStart 来自号码行。
+func fillInvoiceFromAmt(inv *InvoiceExtractionItem, m []string, plate, passStart string) {
+	inv.Issuer = m[3]
+	inv.BuyerName = strings.TrimSpace(m[6])
+	inv.TotalAmount = parseAmountToFloat(m[4])
+	if m[1] != "" {
+		inv.Amount = parseAmountToFloat(m[1])
+	}
+	if m[7] != "" {
+		inv.Tax = parseAmountToFloat(m[7])
+	}
+	if m[5] != "" {
+		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", plate, passStart, m[5])
+	}
+}
+
 // ExtractInvoicesByLineRules 按「号码行+金额行」固定格式从电子票据文本中
 // 提取全部发票。返回 (result, true) 表示规则命中（invoices 非空）；返回
 // (nil, false) 表示未命中该格式，调用方应回退模型提取。
+//
+// 解析为流式两遍扫描，每张发票的数据物理隔离，杜绝串行错位：
+//  1. 号码行支持跨行合并（PDF 文本层会在长销售方名称处断行，整行正则会漏页）；
+//  2. 金额行按六元组去重（分块 overlap 会让同一金额行在相邻 chunk 各出现一次）；
+//  3. 配对以「物理窗口内金额相等」为锚点，不再用两个独立数组的下标配对；
+//  4. 有金额行无号码行时输出部分发票兜底，保证一张不漏。
 func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool) {
 	if strings.TrimSpace(content) == "" {
 		return nil, false
 	}
 	lines := cleanInvoiceTemplateNoise(content)
 
-	type headMatch struct {
-		no, dateY, dateM, dateD                                                             string
-		buyerTax, sellerName, sellerTax, item, plate, vehType, passStart, amount, rate, tax string
-	}
-	var heads []headMatch
-	for _, ln := range lines {
-		m := invoiceHeadLineRe.FindStringSubmatch(ln)
-		if m == nil {
-			continue
+	var heads []lineHead
+	var amts []lineAmt
+	amtSeen := make(map[string]struct{})
+	for i := 0; i < len(lines); i++ {
+		ln := lines[i]
+		if invoiceHeadStartRe.MatchString(ln) {
+			// 跨行合并：从起始行向下累积（最多 headJoinMaxLines 行），每合并
+			// 一行就尝试完整匹配，成功后消费这些行。
+			joined := ln
+			m := invoiceHeadLineRe.FindStringSubmatch(joined)
+			j := i
+			for m == nil && j-i < headJoinMaxLines && j+1 < len(lines) {
+				next := lines[j+1]
+				// 不跨越下一张发票的号码行或金额行
+				if invoiceHeadStartRe.MatchString(next) || invoiceAmountLineRe.MatchString(next) {
+					break
+				}
+				j++
+				joined += " " + strings.TrimSpace(next)
+				m = invoiceHeadLineRe.FindStringSubmatch(joined)
+			}
+			if m != nil {
+				heads = append(heads, lineHead{m: m, startLine: i, endLine: j})
+				i = j
+				continue
+			}
+			// 合并失败：起始行只是巧合的 20 位数字噪音，不消费后续行，继续扫描
 		}
-		heads = append(heads, headMatch{
-			no: m[1], dateY: m[2], dateM: m[3], dateD: m[4],
-			buyerTax: m[5], sellerName: strings.TrimSpace(m[6]), sellerTax: m[7],
-			item: strings.TrimSpace(m[8]), plate: m[9], vehType: m[10],
-			passStart: m[11], amount: m[12], rate: m[13], tax: m[14],
-		})
+		if am := invoiceAmountLineRe.FindStringSubmatch(ln); am != nil {
+			// 分块 overlap 去重：重叠产生的金额行完全相同，用金额/开票人/价税
+			// 合计/通行日期止/购买方/税额六元组作为身份键。
+			key := strings.Join([]string{am[1], am[3], am[4], am[5], am[6], am[7]}, "|")
+			if _, dup := amtSeen[key]; !dup {
+				amtSeen[key] = struct{}{}
+				amts = append(amts, lineAmt{m: am, line: i})
+			}
+		}
 	}
 	if len(heads) == 0 {
 		return nil, false
 	}
 
-	type amtMatch struct {
-		amount, issuer, total, passEnd, buyer, tax string
-	}
-	var amts []amtMatch
-	for _, ln := range lines {
-		m := invoiceAmountLineRe.FindStringSubmatch(ln)
-		if m == nil {
-			continue
-		}
-		amts = append(amts, amtMatch{amount: m[1], issuer: m[3], total: m[4], passEnd: m[5], buyer: strings.TrimSpace(m[6]), tax: m[7]})
-	}
-
 	res := &InvoiceExtractionResult{Kind: "invoice"}
-	for i, h := range heads {
-		inv := InvoiceExtractionItem{
-			InvoiceNo:   h.no,
-			InvoiceDate: fmt.Sprintf("%s-%s-%s", h.dateY, h.dateM, h.dateD),
-			InvoiceType: "普通发票", // 通行费电子发票均为增值税普通发票
-			SellerName:  h.sellerName,
-			SellerTaxNo: h.sellerTax,
-			BuyerTaxNo:  h.buyerTax,
-			Category:    "通行费发票", // 与上传分类名一致，供列表「细分分类」筛选精准命中
-			Amount:      parseAmountToFloat(h.amount),
-			Tax:         parseAmountToFloat(h.tax),
-			TaxRate:     parsePercentToFloat(h.rate),
-			Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", h.plate, h.passStart),
+	for hi, h := range heads {
+		inv := buildInvoiceFromHead(h.m)
+		// 物理窗口：本发票号码行结束 ~ 下一张发票号码行起始之间。
+		windowEnd := len(lines)
+		if hi+1 < len(heads) {
+			windowEnd = heads[hi+1].startLine
 		}
-		if it := strings.TrimSpace(h.item); it != "" {
-			// 填充 price/tax_rate 供 Normalize 时 dominantItemTaxRate 计算列表税率列
-			inv.Items = []InvoiceExtractionLine{{Name: it, Price: inv.Amount, TaxRate: inv.TaxRate}}
+		var matched *lineAmt
+		for ai := range amts {
+			a := &amts[ai]
+			if a.consumed || a.line < h.endLine || a.line > windowEnd {
+				continue
+			}
+			if a.m[1] == h.m[12] { // 金额锚点：金额行不含税金额 == 号码行金额
+				matched = a
+				break
+			}
 		}
-		if i < len(amts) {
-			a := amts[i]
-			inv.Issuer = a.issuer
-			inv.BuyerName = a.buyer
-			inv.TotalAmount = parseAmountToFloat(a.total)
-			if a.amount != "" {
-				inv.Amount = parseAmountToFloat(a.amount)
+		// 窗口内未命中（物理顺序异常的防御）→ 全局按金额锚点兜底
+		if matched == nil {
+			for ai := range amts {
+				a := &amts[ai]
+				if !a.consumed && a.m[1] == h.m[12] {
+					matched = a
+					break
+				}
 			}
-			if a.tax != "" {
-				inv.Tax = parseAmountToFloat(a.tax)
-			}
-			if a.passEnd != "" {
-				inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s",
-					h.plate, h.passStart, a.passEnd)
-			}
+		}
+		if matched != nil {
+			fillInvoiceFromAmt(&inv, matched.m, h.m[9], h.m[11])
+			matched.consumed = true
 		}
 		res.Invoices = append(res.Invoices, inv)
+	}
+	// 孤立金额行兜底：号码行缺失/无法识别时，金额行仍代表一张真实发票，
+	// 输出部分发票（金额/价税合计/购买方/开票人有值），绝不因号码行失配而漏页。
+	for ai := range amts {
+		a := &amts[ai]
+		if a.consumed {
+			continue
+		}
+		inv := InvoiceExtractionItem{
+			InvoiceType: "普通发票",
+			Category:    "通行费发票",
+			Issuer:      a.m[3],
+			BuyerName:   strings.TrimSpace(a.m[6]),
+			Amount:      parseAmountToFloat(a.m[1]),
+			TotalAmount: parseAmountToFloat(a.m[4]),
+			Tax:         parseAmountToFloat(a.m[7]),
+			Remark:      "通行日期止：" + a.m[5],
+		}
+		res.Invoices = append(res.Invoices, inv)
+		a.consumed = true
 	}
 	return res, true
 }
