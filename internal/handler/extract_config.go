@@ -419,6 +419,68 @@ func isEmptyExtractValue(v any) bool {
 // 字段名以分类 subs.name 为权威（可能是中文名，如「车牌号」），用包含匹配归一判断。
 func invoiceRuleDescFor(fieldName, catName string) (string, string) {
 	name := strings.TrimSpace(fieldName)
+	// 1) 英文键名精准分支：水电/通行费/其它票据等分类的 subs 使用英文键名
+	//    （invoiceNo/invoiceDate/...），中文包含匹配无法命中，此前全部落入
+	//    default「自定义字段」兜底。这里按字段语义 + 分类差异化给精准 desc/rule。
+	switch name {
+	case "invoiceNo":
+		return "发票号码", "提取票面“发票号码 / 发票号”栏，数字或数字字母组合，去除多余空白。"
+	case "invoiceDate":
+		return "开票日期", "提取票面“开票日期”栏，统一为 YYYY-MM-DD。"
+	case "invoiceType":
+		switch {
+		case strings.Contains(catName, "通行费"):
+			return "发票类型", "识别为“通行费发票”；票面含“通行费”或高速/桥梁收费抬头即可判定。"
+		case strings.Contains(catName, "水电") || strings.Contains(catName, "电费"):
+			return "发票类型", "识别为“水电发票（电费/水费）”；票面含“电费/水费”或供电/供水公司抬头即可判定。"
+		case strings.Contains(catName, "其它票据"):
+			return "票据类型", "按票面标题识别：专用发票、普通发票、通行费发票、电费发票等；无法识别时保持为空。"
+		default:
+			return "发票类型", "从 专用发票、普通发票 中识别；含通行费/电费/水费抬头的归入对应细分分类。"
+		}
+	case "amount":
+		return "不含税金额", "从票面“金额 / 不含税金额”栏提取数字金额，保留两位小数，不要货币符号。"
+	case "taxRate":
+		return "税率", "提取票面税率（如 13%、9%、6%、3%、1%）；一张票含多行明细且税率不同时，提取所有不重复税率并以英文逗号拼接（如：13%,9%,6%）。"
+	case "tax":
+		return "税额", "从票面“税额”栏提取数字金额，保留两位小数，不要货币符号。"
+	case "totalAmount":
+		return "价税合计", "从票面“价税合计 / 合计”栏提取数字金额，保留两位小数，不要货币符号。"
+	case "buyerName":
+		if strings.Contains(catName, "水电") || strings.Contains(catName, "电费") {
+			return "购买方（受票方）名称", "购买方通常为用电/用水的企业名称（户号对应单位），从票面“购买方”或“户名”栏识别提取。"
+		}
+		return "购买方（受票方）名称", "从票面“购买方 / 付款方 / 户名”栏识别提取。"
+	case "buyerTaxNo":
+		return "购买方纳税人识别号", "提取“购买方纳税人识别号 / 统一社会信用代码”栏，18 位数字或字母数字组合。"
+	case "sellerName":
+		if strings.Contains(catName, "水电") || strings.Contains(catName, "电费") {
+			return "销售方（开票方）名称", "销售方通常为国家电网、南方电网或当地自来水/燃气公司，从票面“销售方”栏识别提取。"
+		}
+		return "销售方（开票方）名称", "从票面“销售方 / 收款方”栏识别提取。"
+	case "sellerTaxNo":
+		return "销售方纳税人识别号", "提取“销售方纳税人识别号”栏，18 位数字或字母数字组合。"
+	case "issuer":
+		return "开票人", "从票面开票人、收款人或经办人栏识别提取姓名；原文无则留空。"
+	case "fileName":
+		return "源文件名", "取上传文件的原始文件名，无需识别。"
+	case "extractStatus":
+		return "提取状态", "系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写。"
+	case "tags":
+		return "发票标签", "根据货物/劳务名称或销方类型归纳业务标签（如 差旅、办公用品、加油）；多个标签以数组返回。"
+	case "remark":
+		switch {
+		case strings.Contains(catName, "水电") || strings.Contains(catName, "电费"):
+			return "用电/用水明细汇总", "请从票面的明细行中，尝试提取总用电量/用水量、单价及计费起止日期，并将这些信息格式化后汇总至备注字段中返回。"
+		case strings.Contains(catName, "通行费"):
+			return "备注", "保留票面备注原文；若备注中包含车牌号、通行日期等关键信息，同时按字段口径输出到对应独立字段。"
+		default:
+			return "备注", "保留票面备注原文。"
+		}
+	case "items":
+		return "项目明细行", "提取票面货物/服务明细：名称、数量、单价、税率；多行明细逐行输出。"
+	}
+	// 2) 中文名包含匹配（用户自定义中文键名，如 车牌号/购买方名称/收款事由）
 	switch {
 	case strings.Contains(name, "车牌号") || strings.Contains(name, "车牌"):
 		// 通行费发票关键动态字段：票面常无独立表头，车牌号藏在备注栏文字中
@@ -468,6 +530,108 @@ func invoiceRuleDescFor(fieldName, catName string) (string, string) {
 		}
 		return "自定义字段", "从票面及备注信息中尽力识别并提取该字段对应内容。"
 	}
+}
+
+// defaultInvoicePromptTemplate 按分类生成默认高级 Prompt 模板。
+// 模板使用 {{document_text}}、{{fields_schema}} 插槽，由提取引擎渲染；
+// 仅在配置的 prompt_template 为空时回填（不覆盖用户已保存模板）。
+func defaultInvoicePromptTemplate(catName string) string {
+	name := strings.TrimSpace(catName)
+	switch {
+	case strings.Contains(name, "通行费"):
+		return "你是一个通行费发票信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n" +
+			"通行费发票票面通常包含：发票号码、开票日期、车牌号、通行区间、金额、税率、税额、价税合计、购买方、销售方、开票人。\n" +
+			"注意：车牌号常常没有独立表头，而是隐藏在“备注”栏文字中（格式如“车牌号：渝C87567”），必须仔细阅读备注栏，将车牌号、通行日期起止等信息分离提取到对应独立字段，不要整体堆入备注。\n" +
+			"需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON；未找到的字段输出 null，不臆造内容。"
+	case strings.Contains(name, "水电") || strings.Contains(name, "电费"):
+		return "你是一个水电发票信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n" +
+			"水电发票的购买方通常为用电/用水的企业名称（户号对应单位），销售方通常为国家电网、南方电网或当地自来水/燃气公司。\n" +
+			"请提取票面的发票号码、开票日期、金额、税率、税额、价税合计、购买方（含税号）、销售方（含税号）、开票人；\n" +
+			"并从明细行中尝试提取总用电量/用水量、单价及计费起止日期，格式化汇总至备注字段。\n" +
+			"需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON；未找到的字段输出 null，不臆造内容。"
+	case strings.Contains(name, "其它票据"):
+		return "你是一个票据信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n" +
+			"此为非标准格式票据（如三联收据、手写票、非正规机打票等）。请尽最大能力识别并提取票面上的付款方（购买方）、收款方（销售方）、开票日期和合计金额。\n" +
+			"对于无法归入常规字段的有效业务信息（如事由、经办人等），请全部整合汇总提取至“备注”字段。\n" +
+			"需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON；未找到的字段输出 null，不臆造内容。"
+	default:
+		return "你是一个发票信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n" +
+			"需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON，未找到的字段输出 null，不臆造内容。"
+	}
+}
+
+// invoiceGenericRuleFor 返回该分类底稿 default 分支的泛用兜底 rule 文案，
+// 用于识别「未精配」的 seed 泛用规则（可升级为按字段精准规则），不误伤用户手写文案。
+func invoiceGenericRuleFor(catName string) string {
+	if strings.Contains(catName, "其它票据") {
+		return "此为非标准格式票据（如三联收据、手写票、非正规机打票等）。请尽最大能力识别并提取票面上的付款方（购买方）、收款方（销售方）、开票日期和合计金额。对于无法归入常规字段的有效业务信息（如事由、经办人等），请全部整合汇总提取至‘备注’字段。"
+	}
+	return "从票面及备注信息中尽力识别并提取该字段对应内容。"
+}
+
+// mergeInvoiceRuleFields 字段级增量合并（防覆盖铁律的字段级实现）：
+//   - 底稿有、现状缺失的字段 → 追加（desc/rule 按底稿）；
+//   - 已有字段 rule 为空，或 rule 等于底稿泛用兜底文案（seed 未精配）→ 升级 desc/rule；
+//   - 已有字段 rule 非空且非泛用兜底（用户手工精配）→ 严格保留，不覆盖。
+// 返回合并后的字段列表与是否有变化。
+func mergeInvoiceRuleFields(cur, draft []types.ExtractFieldConfig, catName string) ([]types.ExtractFieldConfig, bool) {
+	generic := invoiceGenericRuleFor(catName)
+	changed := false
+	byName := make(map[string]*types.ExtractFieldConfig, len(cur)+len(draft))
+	order := make([]string, 0, len(cur)+len(draft))
+	for i := range cur {
+		n := strings.TrimSpace(cur[i].Name)
+		if n == "" {
+			continue
+		}
+		// 全字段精准分支升级：不依赖底稿是否包含该字段（如 subs.enabled=false 的
+		// fileName 不在底稿里），只要 invoiceRuleDescFor 对当前字段名有精准分支
+		// （desc != 「自定义字段」），且现状是未精配（desc=自定义字段 / rule 空 /
+		// rule=泛用兜底），就按精准分支升级 desc/rule。
+		rule := strings.TrimSpace(cur[i].Rule)
+		desc := strings.TrimSpace(cur[i].Desc)
+		if desc == "自定义字段" || rule == "" || (generic != "" && rule == generic) {
+			if d, r := invoiceRuleDescFor(n, catName); d != "自定义字段" && (cur[i].Desc != d || cur[i].Rule != r) {
+				cur[i].Desc = d
+				cur[i].Rule = r
+				changed = true
+			}
+		}
+		if _, ok := byName[n]; !ok {
+			order = append(order, n)
+		}
+		byName[n] = &cur[i]
+	}
+	for _, d := range draft {
+		n := strings.TrimSpace(d.Name)
+		if n == "" {
+			continue
+		}
+		c, ok := byName[n]
+		if !ok {
+			cp := d
+			byName[n] = &cp
+			order = append(order, n)
+			changed = true
+			continue
+		}
+		rule := strings.TrimSpace(c.Rule)
+		desc := strings.TrimSpace(c.Desc)
+		// 未精配判定：rule 为空、rule 为底稿泛用兜底文案、或 desc 仍为 default 分支的
+		// 「自定义字段」（说明该字段从未被精准配置过，旧 seed 残留），一律按底稿升级。
+		if rule == "" || desc == "自定义字段" || (generic != "" && rule == generic) {
+			if c.Desc != d.Desc || c.Rule != d.Rule {
+				c.Desc = d.Desc
+				c.Rule = d.Rule
+				changed = true
+			}
+		}
+	}
+	out := make([]types.ExtractFieldConfig, 0, len(order))
+	for _, n := range order {
+		out = append(out, *byName[n])
+	}
+	return out, changed
 }
 
 // invoiceRuleTypeFor 将 FleetCategorySub.DataType 映射为 ExtractFieldConfig.Type。
@@ -550,21 +714,33 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 				continue
 			}
 			if exists > 0 {
-				// 防覆盖铁律：只要存在非空配置（用户已保存过规则），无论 GORM serializer
-				// 反序列化是否成功，一律跳过；SQL 层用 jsonb_array_length 判定，绝不覆盖用户改动。
-				var emptyEC types.KbExtractConfig
-				eerr := h.db.WithContext(ctx).
-					Where(baseQ+" AND (fields IS NULL OR jsonb_array_length(fields) = 0)",
-						kb.ID, types.FleetCategoryScopeInvoice, name).Order("updated_at DESC").First(&emptyEC).Error
-				if eerr != nil || len(fields) == 0 {
+				// 防覆盖铁律（字段级实现）：不覆盖用户已保存的非空规则；
+				// 但对底稿覆盖分类做增量补齐——缺失字段追加、空规则/seed 泛用兜底
+				// 规则升级为按字段精准规则、空高级模板回填默认模板。取最新一行合并
+				// （与前端 getExtractConfig 读取口径一致）。
+				if len(fields) == 0 {
 					continue
 				}
-				// 仅历史空配置（fields 为空数组）且该分类有底稿时才填充恢复
-				emptyEC.Version++
-				emptyEC.Fields = fields
-				emptyEC.Enabled = true
-				emptyEC.UpdatedAt = now
-				if uerr := h.db.WithContext(ctx).Save(&emptyEC).Error; uerr != nil {
+				var latest types.KbExtractConfig
+				if lerr := h.db.WithContext(ctx).
+					Where(baseQ, kb.ID, types.FleetCategoryScopeInvoice, name).
+					Order("updated_at DESC").First(&latest).Error; lerr != nil {
+					logger.Warnf(ctx, "seed invoice extract rules: load %s/%s failed: %v", kb.ID, name, lerr)
+					continue
+				}
+				merged, changed := mergeInvoiceRuleFields(latest.Fields, fields, name)
+				if strings.TrimSpace(latest.PromptTemplate) == "" {
+					latest.PromptTemplate = defaultInvoicePromptTemplate(name)
+					changed = true
+				}
+				if !changed {
+					continue
+				}
+				latest.Fields = merged
+				latest.Version++
+				latest.Enabled = true
+				latest.UpdatedAt = now
+				if uerr := h.db.WithContext(ctx).Save(&latest).Error; uerr != nil {
 					logger.Warnf(ctx, "seed invoice extract rules: backfill %s/%s failed: %v", kb.ID, name, uerr)
 				}
 				continue
@@ -575,7 +751,8 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 			ec := types.KbExtractConfig{
 				ID: uuid.NewString(), TenantID: 0, KnowledgeBaseID: kb.ID,
 				Scope: types.FleetCategoryScopeInvoice, CertType: name, Fields: fields,
-				AdvancedEnabled: false, Version: 1, Enabled: true, CreatedAt: now, UpdatedAt: now,
+				AdvancedEnabled: false, PromptTemplate: defaultInvoicePromptTemplate(name),
+				Version: 1, Enabled: true, CreatedAt: now, UpdatedAt: now,
 			}
 			if cerr := h.db.WithContext(ctx).Create(&ec).Error; cerr != nil {
 				logger.Warnf(ctx, "seed invoice extract rules: create %s/%s failed: %v", kb.ID, name, cerr)

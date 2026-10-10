@@ -1694,19 +1694,25 @@ func (h *FleetHandler) seedBusinessCategories() {
 		// 其它票据：系统内置兜底分类（任务 2）。废除 OCR 自动降级后，上传分类完全由用户
 		// 手动选择驱动，无法匹配已启用分类的杂散票据归入此分类。SortOrder=99 保证在
 		// 上传下拉/分类配置列表始终沉底；IsDefault=true 标记内置（防止被彻底物理删除）。
-		// 挂最基础公用字段，泛用默认提取规则由 ExtractRulePanel 默认底稿 + 规则回退链
-		// （分类→普通发票→整体规则）兜底。
+		// 字段复用普通发票字段集（发票号码/日期/类型/金额/税率/税额/价税合计/购买方含税号/
+		// 销售方含税号/开票人/备注/状态/标签/明细/文件名），确保规则回退与字段配置一致。
 		{"invoice", "其它票据", "invoice-misc", 99, []types.FleetCategorySub{
 			{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
 			{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "tax", Enabled: true, IsDefault: false, DataType: "number"},
+			{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+			{Name: "tax", Enabled: true, IsDefault: true, DataType: "number"},
 			{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "issuer", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "buyerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "sellerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "array"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+			{Name: "items", Enabled: true, IsDefault: false, DataType: "items"},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
@@ -1753,6 +1759,9 @@ func (h *FleetHandler) seedBusinessCategories() {
 		}
 	}
 
+	// 其它票据：已存在分类补齐缺失字段（复用普通发票字段集，幂等、不覆盖已有字段）
+	h.seedInvoiceMiscSubsBackfill(ctx)
+
 	// 合同内置分类（服务合同/租赁合同）走专门的名称协调逻辑，兼容历史脏数据：
 	// 早期笼统「合同」分类退役、服务合同曾复用 builtin_key=contract、用户自建同名分类收编。
 	h.reconcileContractCategories(ctx)
@@ -1785,6 +1794,68 @@ func (h *FleetHandler) seedBusinessCategories() {
 			} else {
 				logger.Infof(ctx, "backfilled invoice category %q items field", invSeeds[i].Name)
 			}
+		}
+	}
+}
+
+// seedInvoiceMiscSubsBackfill 幂等补齐「其它票据」内置分类字段（复用普通发票字段集）。
+// 仅追加缺失字段，不覆盖已有字段配置（字段名、顺序、启用状态均保留），
+// 与 fleetSeed 中「其它票据」的定义保持同一份字段清单。
+func (h *FleetHandler) seedInvoiceMiscSubsBackfill(ctx context.Context) {
+	expected := []types.FleetCategorySub{
+		{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "tax", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "buyerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "sellerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "array"},
+		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		{Name: "items", Enabled: true, IsDefault: false, DataType: "items"},
+		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL",
+			types.FleetCategoryScopeInvoice, "其它票据").Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "backfill misc invoice subs: list failed: %v", err)
+		return
+	}
+	for i := range cats {
+		existing := cats[i].Subs
+		have := make(map[string]bool, len(existing))
+		for _, s := range existing {
+			have[s.Name] = true
+		}
+		added := 0
+		for _, e := range expected {
+			if !have[e.Name] {
+				existing = append(existing, e)
+				have[e.Name] = true
+				added++
+			}
+		}
+		if added == 0 {
+			continue
+		}
+		raw, merr := json.Marshal(existing)
+		if merr != nil {
+			logger.Warnf(ctx, "backfill misc invoice subs marshal failed: %v", merr)
+			continue
+		}
+		// 显式 ::jsonb 转换：GORM 对 jsonb 列直接 Update slice 会以 record 数组传参导致 SQLSTATE 42804
+		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("id = ?", cats[i].ID).
+			Update("subs", gorm.Expr("?::jsonb", string(raw))).Error; err != nil {
+			logger.Warnf(ctx, "backfill misc invoice subs failed: %v", err)
+		} else {
+			logger.Infof(ctx, "backfilled misc invoice category %q subs (+%d fields)", cats[i].Name, added)
 		}
 	}
 }
