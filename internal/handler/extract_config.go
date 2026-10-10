@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -181,12 +180,20 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 				valid[n] = true
 			}
 		}
+		// 容错降级：未知/已禁用字段仅记警告并忽略，不再整体 400 中断保存，
+		// 避免「字段定义」调整后提取规则面板残留旧字段导致保存失败。
 		for _, f := range fields {
 			if !valid[f.Name] {
-				c.Error(errors.NewBadRequestError(fmt.Sprintf("字段「%s」不在证照配置中，请先在证照配置中添加并启用该字段", f.Name)))
-				return
+				logger.Warnf(ctx, "ignoring extract rule for unknown/disabled field: %s (scope=%s cert_type=%s)", f.Name, scope, certType)
 			}
 		}
+		kept := fields[:0]
+		for _, f := range fields {
+			if valid[f.Name] {
+				kept = append(kept, f)
+			}
+		}
+		fields = kept
 	}
 
 	var ec types.KbExtractConfig

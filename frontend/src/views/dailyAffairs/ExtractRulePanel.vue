@@ -643,10 +643,21 @@ async function save() {
     MessagePlugin.error(`未找到${KB_NAME.value}知识库`)
     return
   }
+  // 保存前按「当前启用字段」清洗：剔除已禁用/已删除的旧字段（如被停用的 invoiceNo），
+  // 避免提交不在证照配置中的字段触发后端 400 校验（证照配置是字段名的唯一权威源）。
+  // 分类未入库（authorityFields 为空）时不过滤，保持旧行为整体提交。
+  const activeNames = new Set(
+    authorityFields()
+      .filter((a) => a.enabled)
+      .map((a) => a.name),
+  )
+  const cleanFields = fields.value
+    .map((f) => ({ ...f }))
+    .filter((f) => activeNames.size === 0 || activeNames.has(f.name))
   const payload = {
     scope: currentScope.value,
     cert_type: certTypeName.value,
-    fields: fields.value.map((f) => ({ ...f })),
+    fields: cleanFields,
     advanced_enabled: advancedEnabled.value,
     prompt_template: promptTemplate.value,
   }
