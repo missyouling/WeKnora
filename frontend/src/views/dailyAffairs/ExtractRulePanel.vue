@@ -307,6 +307,60 @@ const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> =
       tags: { desc: '票据标签', rule: '根据票面用途归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回' },
       fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
     },
+    // 电费发票：水电类细分分类底稿（subs 多为中文名，如 购买方税号/销售方名称）。
+    // 购买方为用电企业、销售方为电网/供水公司，明细行信息格式化汇总至备注。
+    电费发票: {
+      发票号码: { desc: '发票号码', rule: '提取“发票号码 / 发票号”栏，数字或数字字母组合；原文无则留空' },
+      开票日期: { desc: '开票日期', rule: '提取“开票日期”栏，统一为 YYYY-MM-DD' },
+      发票类型: { desc: '发票类型', rule: '识别为“电费发票”；票面含“电费”或供电公司抬头即可判定' },
+      金额: { desc: '不含税金额', rule: '提取“金额 / 不含税金额”栏，保留两位小数，不要货币符号' },
+      税率: { desc: '适用税率', rule: '提取“税率”栏，如 13%、9%、6%、3%' },
+      税额: { desc: '税额', rule: '提取“税额”栏，保留两位小数' },
+      价税合计: { desc: '价税合计', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      价税合计金额: { desc: '价税合计金额', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      购买方名称: { desc: '购买方（受票方）名称', rule: '购买方通常为用电/用水的企业名称，从“购买方/户名”栏识别提取' },
+      购买方税号: { desc: '购买方纳税人识别号', rule: '提取“购买方纳税人识别号 / 统一社会信用代码”栏' },
+      销售方名称: { desc: '销售方（开票方）名称', rule: '销售方通常为国家电网、南方电网或当地自来水/燃气公司，从“销售方”栏识别提取' },
+      销售方税号: { desc: '销售方纳税人识别号', rule: '提取“销售方纳税人识别号”栏' },
+      开票人: { desc: '开票人姓名', rule: '提取“开票人”栏；原文无则留空' },
+      备注: { desc: '用电/用水明细汇总', rule: '请从票面的明细行中，尝试提取总用电量/用水量、单价及计费起止日期，并将这些信息格式化后汇总至备注字段中返回' },
+      提取状态: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      标签: { desc: '发票标签', rule: '归为“水电费”类业务标签；多个标签以数组返回' },
+      源文件名: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
+    // 通行费发票：细分分类底稿。车牌号无独立表头，藏在备注栏文字中，
+    // 必须从备注分离提取到独立字段（动态字段扩展桶随记录持久化）。
+    通行费发票: {
+      发票号码: { desc: '发票号码', rule: '提取“发票号码 / 发票号”栏，数字或数字字母组合' },
+      invoiceNo: { desc: '发票号码', rule: '提取“发票号码 / 发票号”栏，数字或数字字母组合' },
+      开票日期: { desc: '开票日期', rule: '提取“开票日期”栏，统一为 YYYY-MM-DD' },
+      invoiceDate: { desc: '开票日期', rule: '提取“开票日期”栏，统一为 YYYY-MM-DD' },
+      发票类型: { desc: '发票类型', rule: '识别为“通行费发票”；票面含“通行费”或高速/桥梁收费抬头即可判定' },
+      invoiceType: { desc: '发票类型', rule: '识别为“通行费发票”；票面含“通行费”或高速/桥梁收费抬头即可判定' },
+      车牌号: { desc: '通行车辆号牌号码', rule: '格式通常为省份简称加字母和数字（如：渝C87567）。如果票面上没有独立的‘车牌号’表头，请务必仔细阅读‘备注’栏文字，从中分离并提取出车牌号，直接输出车牌号本身，不要带有‘车牌号：’等前缀' },
+      金额: { desc: '不含税金额', rule: '提取“金额 / 不含税金额”栏，保留两位小数，不要货币符号' },
+      amount: { desc: '不含税金额', rule: '提取“金额 / 不含税金额”栏，保留两位小数，不要货币符号' },
+      税率: { desc: '适用税率', rule: '提取“税率”栏，如 13%、9%、6%、3%' },
+      taxRate: { desc: '适用税率', rule: '提取“税率”栏，如 13%、9%、6%、3%' },
+      税额: { desc: '税额', rule: '提取“税额”栏，保留两位小数' },
+      tax: { desc: '税额', rule: '提取“税额”栏，保留两位小数' },
+      价税合计: { desc: '价税合计', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      totalAmount: { desc: '价税合计', rule: '提取“价税合计 / 合计”栏，保留两位小数' },
+      购买方名称: { desc: '购买方（受票方）名称', rule: '提取“购买方名称”栏' },
+      buyerName: { desc: '购买方（受票方）名称', rule: '提取“购买方名称”栏' },
+      销售方名称: { desc: '销售方（开票方）名称', rule: '提取“销售方名称”栏' },
+      sellerName: { desc: '销售方（开票方）名称', rule: '提取“销售方名称”栏' },
+      开票人: { desc: '开票人姓名', rule: '提取“开票人”栏；原文无则留空' },
+      issuer: { desc: '开票人姓名', rule: '提取“开票人”栏；原文无则留空' },
+      备注: { desc: '备注', rule: '保留票面备注原文；若备注中包含车牌号、通行日期等关键信息，同时按字段口径输出到对应独立字段' },
+      remark: { desc: '备注', rule: '保留票面备注原文；若备注中包含车牌号、通行日期等关键信息，同时按字段口径输出到对应独立字段' },
+      提取状态: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      extractStatus: { desc: '提取状态', rule: '系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写' },
+      标签: { desc: '发票标签', rule: '归为“通行费”类业务标签；多个标签以数组返回' },
+      tags: { desc: '发票标签', rule: '归为“通行费”类业务标签；多个标签以数组返回' },
+      源文件名: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+      fileName: { desc: '源文件名', rule: '取上传文件的原始文件名，无需识别' },
+    },
   },
   // 合同档案：字段口径对齐 fleet_categories contract 内置字段（35 项，与编辑抽屉表单同源）
   contract: {
@@ -612,7 +666,9 @@ async function loadConfig() {
     const draft = (DEFAULT_RULES[currentScope.value] || {})[certTypeName.value] || {}
     fields.value = auth.map((a) => {
       const c = cfgMap.get(a.name)
-      const d = draft[a.name] || {}
+      // 底稿别名回退：自定义分类 subs 可能为中文（车牌号）或英文（invoiceNo），
+      // 精确 miss 时按最长包含命中（与后端 invoiceFieldAliases 同思路），仅影响 desc/rule 展示
+      const d = draft[a.name] || draftByContains(draft, a.name) || {}
       return {
         name: a.name,
         desc: c?.desc || d.desc || '',
@@ -634,6 +690,23 @@ async function loadConfig() {
 
 async function onCertTypeChange() {
   await loadConfig()
+}
+
+// 底稿别名回退：subs 名（车牌号/invoiceNo）与底稿键存在包含关系时，
+// 按最长包含命中返回对应底稿条目；无命中返回空对象（与后端 invoiceFieldAliases 同思路）。
+function draftByContains(draft: Record<string, any>, name: string): any {
+  let best: any = null
+  let bestLen = 0
+  for (const [k, v] of Object.entries(draft)) {
+    if (k !== name && (k.includes(name) || name.includes(k))) {
+      const len = Math.min(k.length, name.length)
+      if (len > bestLen) {
+        best = v
+        bestLen = len
+      }
+    }
+  }
+  return best || {}
 }
 
 async function save() {

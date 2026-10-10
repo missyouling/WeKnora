@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -84,6 +85,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 
 		// === 日常事务沙盒：业务提取路由（挂在 BusinessExtractHandler 上） ===
 		if business != nil {
+			// 启动幂等回填：发票分类提取规则底稿（存在且已配置则严格跳过，防覆盖）
+			business.SeedInvoiceExtractRuleBackfill(context.Background())
 			kb.POST("/:knowledgeId/extract-business", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractBusinessDocument)
 			kb.PUT("/:knowledgeId/invoice-metadata", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.UpdateInvoiceMetadata)
 			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractInvoice(c, "") })
