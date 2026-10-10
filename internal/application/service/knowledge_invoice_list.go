@@ -221,6 +221,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				if len(filter.KnownCategories) > 0 {
 					known := make(map[string]struct{}, len(filter.KnownCategories))
 					for _, name := range filter.KnownCategories {
+						// 「其它票据」已成为系统内置实体分类（seed invoice-misc）：
+						// 它本身是排除式桶的归属目标，绝不能作为「已分类」从桶中剔除，
+						// 否则 category=其它票据 的记录会被错误排除出该筛选。
+						if name == "其它票据" {
+							continue
+						}
 						known[name] = struct{}{}
 					}
 					if r.Category != "" {

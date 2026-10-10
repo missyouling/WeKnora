@@ -631,6 +631,62 @@ func contractBatchesHaveText(batches []string) bool {
 	return false
 }
 
+// enabledInvoiceCategoryNames 返回 invoice scope 当前已启用的分类名列表
+// （tenant_id=0 全局配置，enabled=true，排除软删，按 sort_order 升序），用于两处：
+//  1. 提取引导（guide）注入类型枚举约束——已停用分类不得出现在发给 LLM 的 Schema 选项中；
+//  2. 写库前的「停用分类隔离」——OCR/规则结果命中已停用分类（如普通/专用被禁用后
+//     的存量值）或当前分类库不存在的类型时，一律降级「其它票据」。
+func (h *BusinessExtractHandler) enabledInvoiceCategoryNames(ctx context.Context) []string {
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND enabled = TRUE AND deleted_at IS NULL", types.FleetCategoryScopeInvoice).
+		Order("sort_order ASC, created_at ASC").Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "load enabled invoice categories failed: %v", err)
+		return nil
+	}
+	names := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// applyInvoiceUserCategoryPrecedence 在写库前对提取结果执行「用户指定分类绝对优先 +
+// 停用分类隔离」：
+//   - certType 非空（上传弹窗选择/文件级 fleet_cert_type 打标）：无视 OCR、正则、
+//     自定义识别规则提议的类型，同文件下全部发票（含多页）的 InvoiceType 与 Category
+//     统一赋值为用户指定分类；
+//   - certType 为空（未打标的直连重提取）：OCR/规则结果必须落在当前已启用分类集合内，
+//     命中已停用分类或无法匹配的类型降级「其它票据」；空类型保持为空（前端显示 --）。
+func (h *BusinessExtractHandler) applyInvoiceUserCategoryPrecedence(ctx context.Context, meta *service.InvoiceCustomMetadata, certType string) {
+	if meta == nil {
+		return
+	}
+	activeTypes := make(map[string]struct{})
+	for _, n := range h.enabledInvoiceCategoryNames(ctx) {
+		activeTypes[n] = struct{}{}
+	}
+	if certType = strings.TrimSpace(certType); certType != "" {
+		for i := range meta.Invoices {
+			meta.Invoices[i].InvoiceType = certType
+			meta.Invoices[i].Category = certType
+		}
+		meta.FleetCertType = certType
+		return
+	}
+	for i := range meta.Invoices {
+		t := strings.TrimSpace(meta.Invoices[i].InvoiceType)
+		if t == "" {
+			continue
+		}
+		if _, ok := activeTypes[t]; !ok {
+			meta.Invoices[i].InvoiceType = "其它票据"
+		}
+	}
+}
+
 func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
@@ -747,8 +803,9 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			guide := fmt.Sprintf(
 				"重要提示：文档《%s》是包含多张电子发票的合集（文档描述：%s）。以下文本是该文档的第 %d/%d 批内容，本批文本中包含若干张发票。"+
 					"请逐张提取本批文本中出现的全部发票（特征：发票号码、金额、税率/征收率、税额、价税合计、购销方信息、开票人、发票类型等），一张都不可遗漏。"+
-					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。",
-				knowledge.FileName, knowledge.Description, i+1, len(batches))
+					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
+					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
+				knowledge.FileName, knowledge.Description, i+1, len(batches), strings.Join(h.enabledInvoiceCategoryNames(effCtx), "、"))
 			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(effCtx, chatModel, batch, invoiceRuleCfg, guide)
 			if berr != nil {
 				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
@@ -829,13 +886,11 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			certType = certMeta.FleetCertType
 		}
 	}
-	if certType != "" {
-		for i := range meta.Invoices {
-			meta.Invoices[i].Category = certType
-		}
-		// 文件级打标：重提取不传 cert_type 时从 custom_metadata.fleet_cert_type 兜底选规则
-		meta.FleetCertType = certType
-	}
+	// 用户指定分类绝对优先 + 停用分类隔离（任务 1）：
+	// certType 非空 → 同文件全部发票的 InvoiceType 与 Category 统一赋值为用户指定分类
+	// （无视 OCR/规则/自定义识别规则）；certType 为空 → 类型必须落在已启用分类集合内，
+	// 命中停用分类或无法匹配的类型降级「其它票据」。
+	h.applyInvoiceUserCategoryPrecedence(effCtx, &meta, certType)
 	if extracted.Kind == "not_invoice" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
 		// 不自动删除（避免"该是发票却没入库"）。
@@ -1046,14 +1101,23 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 
 	upd := res.Invoices[0]
 	upd.Page = page // 保持原页码
-	// 重提取不丢归档细分分类：文件级 fleet_cert_type（上传弹窗选择）覆盖新提取记录
+	// 重提取不丢归档细分分类：文件级 fleet_cert_type（上传弹窗选择）覆盖新提取记录的
+	// InvoiceType 与 Category（与主提取链路 applyInvoiceUserCategoryPrecedence 同口径）；
+	// 未打标时按已启用分类集合过滤，命中停用分类降级「其它票据」。
+	pageCert := ""
 	if len(knowledge.CustomMetadata) > 0 {
 		var certMeta struct {
 			FleetCertType string `json:"fleet_cert_type"`
 		}
-		if jerr := json.Unmarshal(knowledge.CustomMetadata, &certMeta); jerr == nil && certMeta.FleetCertType != "" {
-			upd.Category = certMeta.FleetCertType
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &certMeta); jerr == nil {
+			pageCert = certMeta.FleetCertType
 		}
+	}
+	tmp := &service.InvoiceCustomMetadata{Invoices: []service.InvoiceExtractionItem{upd}}
+	h.applyInvoiceUserCategoryPrecedence(effCtx, tmp, pageCert)
+	if len(tmp.Invoices) > 0 {
+		upd = tmp.Invoices[0]
+		upd.Page = page
 	}
 	meta.Invoices[page-1] = upd
 	metaBytes, jerr := json.Marshal(meta)
