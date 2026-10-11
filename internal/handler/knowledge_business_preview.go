@@ -102,15 +102,19 @@ func (h *BusinessExtractHandler) GetKnowledgePreviewURL(c *gin.Context) {
 //   - local-backed files prefer the driver's own URL (signed /r/ proxy), falling
 //     back to a fresh /r/ access-grant token when the driver cannot produce one
 //     (e.g. APP_EXTERNAL_URL unset).
-//   - COS-backed files always go through the /r/ app proxy: Tencent COS buckets
-//     created after 2024-01-01 force Content-Disposition: attachment on their
-//     default domain (including presigned URLs), which makes Chrome abort
-//     in-iframe PDF previews. The app proxy re-streams from COS with headers we
-//     control (inline + Accept-Ranges).
+//   - COS-backed files: when a custom domain is configured (env COS_CUSTOM_DOMAIN,
+//     e.g. cos.mozuiapp.com), return the presigned URL with the bucket host
+//     rewritten to that domain plus response-content-disposition=inline — the
+//     browser loads it straight from COS with native Range (206) support and no
+//     VPS bandwidth. Without a custom domain, COS files go through the /r/ app
+//     proxy: Tencent buckets created after 2024-01-01 force
+//     Content-Disposition: attachment on their default domain (incl. presigned
+//     URLs), which makes Chrome abort in-iframe PDF previews.
 func (h *BusinessExtractHandler) resolvePreviewURL(ctx context.Context, res *types.StoredResource, resourceRef string) (string, string, error) {
 	ownerTenant := &types.Tenant{ID: res.TenantID}
 	svc, provider, err := h.storageResolver.ResolveFileService(ctx, ownerTenant, res.StorageBackendID, res.Provider, localBaseDirEnv())
-	if err == nil && provider != "cos" {
+	cosDirect := provider == "cos" && os.Getenv("COS_CUSTOM_DOMAIN") != ""
+	if err == nil && (provider != "cos" || cosDirect) {
 		var url string
 		url, err = svc.GetFileURL(ctx, resourceRef)
 		// Only accept truly loadable URLs (presigned https / /r/ relative); local

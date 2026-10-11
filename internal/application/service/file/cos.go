@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,6 +29,13 @@ type cosFileService struct {
 	tempBucketURL string
 	bucketName    string
 	region        string
+	// customDomain, when set (env COS_CUSTOM_DOMAIN, e.g. cos.mozuiapp.com),
+	// replaces the default *.cos.<region>.myqcloud.com host in presigned URLs.
+	// COS buckets created after 2024-01-01 force Content-Disposition: attachment
+	// on their default domain, which breaks in-iframe preview; a custom domain
+	// bound in the COS console is the official fix and honours
+	// response-content-disposition=inline.
+	customDomain string
 }
 
 const cosScheme = "cos://"
@@ -56,7 +64,11 @@ func newCosClient(bucketName, region, secretID, secretKey string) (*cosFileServi
 		return nil, fmt.Errorf("failed to parse bucketURL: %w", err)
 	}
 	client := cos.NewClient(&cos.BaseURL{BucketURL: u}, newCOSHTTPClient(secretID, secretKey))
-	return &cosFileService{client: client, bucketURL: bucketURL, bucketName: bucketName, region: region}, nil
+	svc := &cosFileService{client: client, bucketURL: bucketURL, bucketName: bucketName, region: region}
+	if cd := os.Getenv("COS_CUSTOM_DOMAIN"); cd != "" {
+		svc.customDomain = strings.TrimSuffix(strings.TrimSpace(cd), "/")
+	}
+	return svc, nil
 }
 
 // NewCosFileService creates a new COS file service instance
@@ -265,20 +277,27 @@ func (s *cosFileService) SaveBytes(ctx context.Context, data []byte, tenantID ui
 	return fmt.Sprintf("cos://%s/%s/%s", s.bucketName, s.region, objectName), nil
 }
 
-// GetFileURL returns a presigned download URL for the file
+// GetFileURL returns a presigned download URL for the file. When the service is
+// configured with a custom domain (env COS_CUSTOM_DOMAIN), the default bucket
+// host is replaced by it and response-content-disposition=inline is appended so
+// browsers can render the object in an iframe (default-domain presigned URLs
+// force attachment on 2024+ buckets and cannot preview).
 func (s *cosFileService) GetFileURL(ctx context.Context, filePath string) (string, error) {
-	// ?????????
 	if s.tempClient != nil && strings.HasPrefix(filePath, s.tempBucketURL) {
 		objectName := strings.TrimPrefix(filePath, s.tempBucketURL)
 		if err := utils.SafeObjectKey(objectName); err != nil {
 			return "", fmt.Errorf("invalid file path: %w", err)
 		}
 		// Generate presigned URL (valid for 24 hours)
-		presignedURL, err := s.tempClient.Object.GetPresignedURL(ctx, http.MethodGet, objectName, s.tempClient.GetCredential().SecretID, s.tempClient.GetCredential().SecretKey, 24*time.Hour, nil)
+		var opts *cos.PresignedURLOptions
+		if s.customDomain != "" {
+			opts = &cos.PresignedURLOptions{Query: &url.Values{"response-content-disposition": []string{"inline"}}}
+		}
+		presignedURL, err := s.tempClient.Object.GetPresignedURL(ctx, http.MethodGet, objectName, s.tempClient.GetCredential().SecretID, s.tempClient.GetCredential().SecretKey, 24*time.Hour, opts)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate presigned URL for temp bucket: %w", err)
 		}
-		return presignedURL.String(), nil
+		return s.rewriteHost(presignedURL.String(), s.tempBucketURL), nil
 	}
 
 	objectName, err := s.parseCosObjectName(filePath)
@@ -289,10 +308,31 @@ func (s *cosFileService) GetFileURL(ctx context.Context, filePath string) (strin
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	// Generate presigned URL (valid for 24 hours)
-	presignedURL, err := s.client.Object.GetPresignedURL(ctx, http.MethodGet, objectName, s.client.GetCredential().SecretID, s.client.GetCredential().SecretKey, 24*time.Hour, nil)
+	var opts *cos.PresignedURLOptions
+	if s.customDomain != "" {
+		opts = &cos.PresignedURLOptions{Query: &url.Values{"response-content-disposition": []string{"inline"}}}
+	}
+	presignedURL, err := s.client.Object.GetPresignedURL(ctx, http.MethodGet, objectName, s.client.GetCredential().SecretID, s.client.GetCredential().SecretKey, 24*time.Hour, opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return presignedURL.String(), nil
+	return s.rewriteHost(presignedURL.String(), s.bucketURL), nil
+}
+
+// rewriteHost replaces the default bucket host with the configured custom domain
+// (scheme preserved). baseBucketURL is e.g. "https://bucket.cos.ap-seoul.myqcloud.com/".
+func (s *cosFileService) rewriteHost(rawURL, baseBucketURL string) string {
+	if s.customDomain == "" {
+		return rawURL
+	}
+	base := strings.TrimSuffix(baseBucketURL, "/")
+	for _, scheme := range []string{"https://", "http://"} {
+		host := strings.TrimPrefix(base, scheme)
+		old := scheme + host
+		if strings.HasPrefix(rawURL, old) {
+			return strings.Replace(rawURL, old, scheme+s.customDomain, 1)
+		}
+	}
+	return rawURL
 }
