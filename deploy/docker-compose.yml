@@ -11,7 +11,7 @@ services:
     labels:
       - com.centurylinklabs.watchtower.enable=true
     volumes:
-      - ./data:/data/files
+      - ./data/files:/data/files
       - ./jieba_dict:/app/jieba_dict
       - ./config/config.yaml:/app/config/config.yaml
       - ./config/prompt_templates:/app/config/prompt_templates

@@ -178,7 +178,7 @@
 ### 2. 关键配置与挂载（`deploy/docker-compose.yml`、`deploy/.env` 为权威源）
 
 - 主服务环境变量：`JIEBA_DICT_DIR=/app/jieba_dict`、`WEKNORA_WEB_DIR=/app/web/dist`、`DOCREADER_ADDR=localhost:50051`、`LOCAL_STORAGE_BASE_DIR=/data/files`。
-- 挂载：`./data:/data/files`（文件存储，`docker compose down` 不会删）、`./jieba_dict:/app/jieba_dict`（gojieba 5 个词典）、`./config/config.yaml`、`./config/prompt_templates`、`./config/builtin_agents.yaml`、`./config/agent_type_presets.yaml`。
+- 挂载：`./data/files:/data/files`（文件存储，`docker compose down` 不会删；**严禁写回 `./data:/data/files`**——那会造成容器内路径变成 `/data/files/files/...`，程序按 `/data/files/10000/...` 读取全部落空，VPS 源文件预览报 `Failed to retrieve file`，2026-10-11 已踩坑修复）、`./jieba_dict:/app/jieba_dict`（gojieba 5 个词典）、`./config/config.yaml`、`./config/prompt_templates`、`./config/builtin_agents.yaml`、`./config/agent_type_presets.yaml`。
 - 数据库：`deploy/.env` 内 `DB_HOST=db.kunsjmpkvfjjzcotdgrg.supabase.co` 等。**密码、JWT_SECRET、AES Key 等敏感项一律不入库、不写入 AGENTS.md/日志/提交信息**。
 - 改动 compose/.env 后必须同步到 VPS 并重建，否则 VPS 仍是旧配置：
   ```bash
