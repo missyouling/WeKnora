@@ -99,13 +99,18 @@ func (h *BusinessExtractHandler) GetKnowledgePreviewURL(c *gin.Context) {
 }
 
 // resolvePreviewURL builds the best direct-loadable URL for a stored resource:
-// prefer the resolved driver's own URL (COS presigned / local signed proxy),
-// and fall back to a /r/ access-grant token when the driver cannot produce one
-// (e.g. local backend without APP_EXTERNAL_URL configured).
+//   - local-backed files prefer the driver's own URL (signed /r/ proxy), falling
+//     back to a fresh /r/ access-grant token when the driver cannot produce one
+//     (e.g. APP_EXTERNAL_URL unset).
+//   - COS-backed files always go through the /r/ app proxy: Tencent COS buckets
+//     created after 2024-01-01 force Content-Disposition: attachment on their
+//     default domain (including presigned URLs), which makes Chrome abort
+//     in-iframe PDF previews. The app proxy re-streams from COS with headers we
+//     control (inline + Accept-Ranges).
 func (h *BusinessExtractHandler) resolvePreviewURL(ctx context.Context, res *types.StoredResource, resourceRef string) (string, string, error) {
 	ownerTenant := &types.Tenant{ID: res.TenantID}
 	svc, provider, err := h.storageResolver.ResolveFileService(ctx, ownerTenant, res.StorageBackendID, res.Provider, localBaseDirEnv())
-	if err == nil {
+	if err == nil && provider != "cos" {
 		var url string
 		url, err = svc.GetFileURL(ctx, resourceRef)
 		// Only accept truly loadable URLs (presigned https / /r/ relative); local
@@ -115,7 +120,8 @@ func (h *BusinessExtractHandler) resolvePreviewURL(ctx context.Context, res *typ
 			return url, provider, nil
 		}
 	}
-	// Fallback: short-lived /r/ access-grant URL (app proxy, Range-capable).
+	// Fallback: short-lived /r/ access-grant URL (app proxy, Range-capable,
+	// inline response headers). Used for COS files and driver failures alike.
 	token, grantErr := h.resourceCatalog.CreateAccessGrant(ctx, resourceRef, 2*time.Hour)
 	if grantErr != nil {
 		if err != nil {
