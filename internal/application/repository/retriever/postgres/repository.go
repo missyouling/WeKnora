@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -19,6 +20,12 @@ import (
 // pgRepository implements PostgreSQL-based retrieval operations
 type pgRepository struct {
 	db *gorm.DB // Database connection
+
+	// paradedb availability is probed once per repository instance. When the
+	// pg_search extension is absent (e.g. Supabase cloud), KeywordsRetrieve
+	// falls back to pg_trgm similarity + ILIKE instead of failing hard.
+	paradedbOnce sync.Once
+	paradedbOK   bool
 }
 
 // NewPostgresRetrieveEngineRepository creates a new PostgreSQL retriever repository
@@ -191,6 +198,9 @@ func (g *pgRepository) KeywordsRetrieve(ctx context.Context,
 	params types.RetrieveParams,
 ) ([]*types.RetrieveResult, error) {
 	logger.GetLogger(ctx).Infof("[Postgres] Keywords retrieval: query=%s, topK=%d", params.Query, params.TopK)
+	if !g.paradedbUsable(ctx) {
+		return g.KeywordsRetrieveFallback(ctx, params)
+	}
 	conds := make([]clause.Expression, 0)
 
 	// KnowledgeBaseIDs and KnowledgeIDs use AND logic
@@ -275,6 +285,90 @@ func (g *pgRepository) KeywordsRetrieve(ctx context.Context,
 			"[Postgres] Keywords result summary: total=%d logged=%d truncated=%d",
 			len(results), maxKeywordResultLog, len(results)-maxKeywordResultLog,
 		)
+	}
+	return []*types.RetrieveResult{
+		{
+			Results:             results,
+			RetrieverEngineType: types.PostgresRetrieverEngineType,
+			RetrieverType:       types.KeywordsRetrieverType,
+			Error:               nil,
+		},
+	}, nil
+}
+
+// paradedbUsable reports whether the pg_search extension (ParadeDB, schema
+// "paradedb") is available in the connected database. The check is performed
+// once per repository instance; subsequent calls reuse the cached result.
+func (g *pgRepository) paradedbUsable(ctx context.Context) bool {
+	g.paradedbOnce.Do(func() {
+		var ok bool
+		err := g.db.WithContext(ctx).Raw(
+			`SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'paradedb')`,
+		).Scan(&ok).Error
+		if err != nil {
+			logger.GetLogger(ctx).Warnf("[Postgres] paradedb availability check failed, using pg_trgm fallback: %v", err)
+			g.paradedbOK = false
+			return
+		}
+		g.paradedbOK = ok
+		logger.GetLogger(ctx).Infof("[Postgres] paradedb available: %v", ok)
+	})
+	return g.paradedbOK
+}
+
+// KeywordsRetrieveFallback performs keyword retrieval without ParadeDB by
+// falling back to pg_trgm similarity + ILIKE substring matching. It is only
+// used when the connected database lacks the pg_search extension (e.g.
+// Supabase cloud), where the BM25 `|||` operator and paradedb.score() do not
+// exist. The original BM25 path is untouched and stays the default whenever
+// paradedb is present.
+func (g *pgRepository) KeywordsRetrieveFallback(ctx context.Context,
+	params types.RetrieveParams,
+) ([]*types.RetrieveResult, error) {
+	logger.GetLogger(ctx).Infof("[Postgres] Keywords retrieval (pg_trgm fallback): query=%s, topK=%d", params.Query, params.TopK)
+
+	q := g.db.WithContext(ctx)
+	if len(params.KnowledgeBaseIDs) > 0 {
+		logger.GetLogger(ctx).Debugf("[Postgres] Filtering fallback keywords by knowledge base IDs: %v", params.KnowledgeBaseIDs)
+		q = q.Where("knowledge_base_id IN ?", params.KnowledgeBaseIDs)
+	}
+	if len(params.KnowledgeIDs) > 0 {
+		logger.GetLogger(ctx).Debugf("[Postgres] Filtering fallback keywords by knowledge IDs: %v", params.KnowledgeIDs)
+		q = q.Where("knowledge_id IN ?", params.KnowledgeIDs)
+	}
+	if len(params.TagIDs) > 0 {
+		logger.GetLogger(ctx).Debugf("[Postgres] Filtering fallback keywords by tag IDs: %v", params.TagIDs)
+		q = q.Where("tag_id IN ?", params.TagIDs)
+	}
+	q = q.Where("content ILIKE '%' || ? || '%'", params.Query)
+	q = q.Where("(is_enabled IS NULL OR is_enabled = ?)", true)
+	q = q.Select(
+		"similarity(content, ?) AS score, id, content, source_id, source_type, chunk_id, knowledge_id, knowledge_base_id, tag_id",
+		params.Query,
+	)
+	q = q.Order("score DESC, id ASC")
+	q = q.Limit(int(params.TopK))
+
+	var embeddingDBList []pgVectorWithScore
+	err := q.Find(&embeddingDBList).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		logger.GetLogger(ctx).Warnf("[Postgres] No records found for fallback keywords query: %s", params.Query)
+		return nil, nil
+	}
+	if err != nil {
+		logger.GetLogger(ctx).Errorf("[Postgres] Fallback keywords retrieval failed: %v", err)
+		return nil, err
+	}
+
+	logger.GetLogger(ctx).Infof("[Postgres] Fallback keywords retrieval found %d results", len(embeddingDBList))
+	results := make([]*types.IndexWithScore, len(embeddingDBList))
+	const maxKeywordResultLog = 8
+	for i := range embeddingDBList {
+		results[i] = fromDBVectorEmbeddingWithScore(&embeddingDBList[i], types.MatchTypeKeywords)
+		if i < maxKeywordResultLog {
+			logger.GetLogger(ctx).Debugf("[Postgres] Fallback keywords result %d: chunk=%s, score=%f",
+				i, results[i].ChunkID, results[i].Score)
+		}
 	}
 	return []*types.RetrieveResult{
 		{
