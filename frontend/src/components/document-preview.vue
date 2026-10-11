@@ -62,6 +62,13 @@ const props = defineProps<{
   active: boolean;
   fillHeight?: boolean;
   /**
+   * 多页文档（如同一 PDF 拆出的多张发票）中的目标页码（1-based）。
+   * 直连预览时与基础 URL 合并为 `url#page=N` 后一次性赋值给 iframe，
+   * 避免 URL 与页码分步赋值引发的二次重载；同文件页码切换走浏览器
+   * fragment 导航，不重新下载文件。
+   */
+  page?: number;
+  /**
    * Source mode renders PDFs with pdf.js instead of the browser viewer so a
    * citation can be scrolled to and highlighted.
    */
@@ -77,6 +84,30 @@ const emit = defineEmits<{
 }>();
 
 const loading = ref(false);
+/** 直连基础 URL 模块级缓存（knowledgeId -> {url, ts}）：
+ *  跨抽屉打开/组件重建后复用同一预签名 URL，让浏览器 HTTP 缓存命中，
+ *  避免每次打开详情都重新签名并整份下载大 PDF（表现为“加载两次/闪烁”）。
+ *  预签名有效期为 1h，留 10 分钟余量后失效重取。 */
+const directBaseUrlCache = new Map<string, { url: string; ts: number }>();
+const DIRECT_URL_TTL_MS = 50 * 60 * 1000;
+const DIRECT_URL_CACHE_MAX = 20;
+
+function cachedDirectUrl(knowledgeId: string): string {
+  const hit = directBaseUrlCache.get(knowledgeId);
+  if (hit && Date.now() - hit.ts < DIRECT_URL_TTL_MS) return hit.url;
+  return '';
+}
+
+function setDirectUrlCache(knowledgeId: string, url: string) {
+  if (directBaseUrlCache.size >= DIRECT_URL_CACHE_MAX) {
+    const oldest = directBaseUrlCache.keys().next().value;
+    if (oldest !== undefined) directBaseUrlCache.delete(oldest);
+  }
+  directBaseUrlCache.set(knowledgeId, { url, ts: Date.now() });
+}
+
+/** 直连 PDF 已赋值 src、等待 iframe load 的遮罩期（防止切换文件时白屏/二次加载）。 */
+const iframePending = ref(false);
 const error = ref('');
 const previewType = ref<FilePreviewKind>('unsupported');
 const blobUrl = ref('');
@@ -143,6 +174,10 @@ watch(
 );
 
 function onPreviewFrameLoad() {
+  // 直连 PDF 首次/跨文件加载完成：撤掉遮罩层，避免 loading 状态长期盖住内容。
+  if (iframePending.value) {
+    iframePending.value = false;
+  }
   if (document.activeElement === previewContent.value || document.activeElement === previewRoot.value) {
     focusPreviewContent();
   }
@@ -259,7 +294,9 @@ function getPreviewSourceKey(): string {
   if (props.sourceBlob) {
     return `resource-blob:${props.fileName}:${props.fileType}:${props.sourceBlob.size}:${props.sourceBlob.type}`;
   }
-  if (props.knowledgeId) return `knowledge:${props.knowledgeId}`;
+  // 同一 knowledge 文件的多页发票共享 knowledgeId：把页码纳入缓存键，
+  // 保证切换同文件不同页时能触发重定位，而不是命中缓存直接跳过。
+  if (props.knowledgeId) return `knowledge:${props.knowledgeId}${props.page ? `#p${props.page}` : ''}`;
   if (props.sessionId && props.attachmentId) return `attachment:${props.sessionId}:${props.attachmentId}`;
   if (
     props.sessionId &&
@@ -270,6 +307,12 @@ function getPreviewSourceKey(): string {
     return `artifact:${props.sessionId}:${props.messageId}:${props.artifactIndex}`;
   }
   return '';
+}
+
+/** 将多页文档的目标页码合并进预览 URL（一次成型，避免分步赋值触发 iframe 二次加载）。 */
+function withPageHash(url: string): string {
+  if (!url || !props.page || props.page <= 0) return url;
+  return `${url}#page=${props.page}`;
 }
 
 // Skill-generated HTML is often a self-contained chart that needs its own
@@ -321,25 +364,39 @@ async function loadPreview() {
   if (!sourceKey) return;
   if (loadedForId === sourceKey) return;
 
-  cleanup();
   loading.value = true;
   error.value = '';
   htmlViewMode.value = allowsHtmlScriptPreview() ? 'render' : 'source';
+
+  // 记录进入前的直连 PDF 状态：同文件页码切换走 fragment 导航（瞬间完成，无需遮罩），
+  // 跨文件/首次加载需要 iframePending 遮罩直到 iframe load，避免白屏闪烁。
+  // 注意：必须在 previewType 被新文件类型覆盖之前捕获旧状态。
+  const wasDirectPdf = previewType.value === 'pdf' && !!directUrl.value;
+  const prevKnowledgeId = props.knowledgeId;
 
   let ft = resolveFilePreviewExt(props.fileName, props.fileType);
   previewType.value = resolvePreviewKind(ft);
 
   try {
     // 知识库源文件优先尝试直连预览 URL（COS 预签名 / local /r/ 授权）：
-    // PDF/图片/音视频交给浏览器原生加载（自动 Range 分块），几十页大 PDF 首屏秒开、不占 VPS 带宽；
-    // 直连不可用（接口失败/类型不支持直连/sourceMode 定位模式）时回退 Blob 整包下载。
+    // PDF/图片/音视频交给浏览器原生加载（自动 Range 分块），几十页大 PDF 首屏秒开、不占 VPS 带宽。
+    // 注意顺序：先取到直连 URL、拼好最终形态，再清理旧内容并一次性赋值，
+    // 保证 iframe 节点从不被 loading 状态销毁重建（消除二次加载闪烁）。
     let direct = '';
     if (props.knowledgeId) {
-      try {
-        const resp = await getKnowledgePreviewUrl(props.knowledgeId);
-        direct = resp?.data?.url || '';
-      } catch {
-        direct = '';
+      // 优先复用模块级缓存的直连基础 URL：同文件（含跨抽屉打开）走同一预签名 URL，
+      // 让浏览器 HTTP 缓存命中，仅变更 #page hash 走同文档 fragment 导航。
+      // 若重新请求会拿到全新签名的 URL（query 串不同），浏览器会把 iframe 视为
+      // 全新文档而整份重新下载 PDF —— 这就是“加载两次”的根源。
+      direct = cachedDirectUrl(props.knowledgeId);
+      if (!direct) {
+        try {
+          const resp = await getKnowledgePreviewUrl(props.knowledgeId);
+          direct = resp?.data?.url || '';
+        } catch {
+          direct = '';
+        }
+        if (direct) setDirectUrlCache(props.knowledgeId, direct);
       }
     }
     const preliminaryKind = resolvePreviewKind(ft);
@@ -348,16 +405,23 @@ async function loadPreview() {
       (preliminaryKind === 'pdf' || preliminaryKind === 'image' || preliminaryKind === 'audio' || preliminaryKind === 'video') &&
       !(props.sourceMode && preliminaryKind === 'pdf')
     ) {
+      // URL 与页码合并后单次赋值：Vue 同一次刷新只见最终 src。
+      const finalUrl = withPageHash(direct);
+      cleanup();
       previewType.value = preliminaryKind;
       previewExt = ft;
-      directUrl.value = direct;
+      directUrl.value = finalUrl;
       loadedForId = sourceKey;
+      const sameFilePageJump = preliminaryKind === 'pdf' && wasDirectPdf && prevKnowledgeId === props.knowledgeId;
+      iframePending.value = preliminaryKind === 'pdf' && !sameFilePageJump;
       loading.value = false;
       await nextTick();
       scheduleLocate();
       return;
     }
 
+    // 直连不可用：回退 Blob 整包下载（此时才清理旧内容）。
+    cleanup();
     const rawBlob = await fetchPreviewBlob();
     let kind = resolvePreviewKind(ft);
     if (kind === 'unsupported') {
@@ -385,7 +449,8 @@ async function loadPreview() {
         if (props.sourceMode) {
           pdfData.value = await blob.arrayBuffer();
         } else {
-          blobUrl.value = URL.createObjectURL(blob);
+          const baseUrl = URL.createObjectURL(blob);
+          blobUrl.value = withPageHash(baseUrl);
         }
         break;
       }
@@ -449,8 +514,10 @@ async function loadPreview() {
 
 function cleanup() {
   directUrl.value = '';
+  iframePending.value = false;
   if (blobUrl.value) {
-    URL.revokeObjectURL(blobUrl.value);
+    // blobUrl 可能带 #page=N 后缀（多页定位），revoke 时按基础 URL 清理。
+    URL.revokeObjectURL(blobUrl.value.split('#')[0]);
     blobUrl.value = '';
   }
   textContent.value = '';
@@ -814,7 +881,7 @@ function applyLocate() {
 }
 
 watch(
-  () => [props.active, props.knowledgeId, props.sessionId, props.attachmentId, props.messageId, props.artifactIndex, props.sourceBlob, props.fileName, props.fileType],
+  () => [props.active, props.knowledgeId, props.sessionId, props.attachmentId, props.messageId, props.artifactIndex, props.sourceBlob, props.fileName, props.fileType, props.page],
   ([active]) => {
     if (active && getPreviewSourceKey()) {
       loadPreview();
@@ -830,14 +897,15 @@ onUnmounted(() => {
 
 <template>
   <div ref="previewRoot" tabindex="-1" :aria-label="fileName" class="document-preview" :class="{ 'fill-height': fillHeight }">
-    <!-- Loading -->
-    <div v-if="loading" class="preview-loading">
+    <!-- Loading：改为底部覆盖层（v-show 语义），不再与内容 v-if 互斥，
+         避免 iframe 因 loading 状态反复销毁重建引发二次加载闪烁。 -->
+    <div v-if="loading || iframePending" class="preview-loading preview-loading--overlay">
       <t-loading size="medium" />
       <span class="loading-text">{{ $t('preview.loading') }}</span>
     </div>
 
     <!-- Error -->
-    <div v-else-if="error" class="preview-error">
+    <div v-if="error" class="preview-error">
       <t-icon name="error-circle" size="48px" />
       <p>{{ error }}</p>
       <t-button theme="primary" size="small" @click="loadedForId = ''; loadPreview()">
@@ -951,8 +1019,7 @@ onUnmounted(() => {
         {{ $t('preview.videoNotSupported') }}
       </video>
     </div>
-  </div>
-</template>
+  </div></template>
 
 <style scoped lang="less">
 // ── Design tokens ──
@@ -1074,6 +1141,17 @@ onUnmounted(() => {
   padding: 60px 20px;
   gap: 16px;
   .loading-text { color: @text-tertiary; font-size: var(--app-text-base); }
+}
+
+// 覆盖层形态：盖在内容上方，而非与内容 v-if 互斥销毁（保护 iframe 不被重建）。
+.preview-loading--overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 24px 20px;
+  border-radius: @border-radius;
+  background: color-mix(in srgb, var(--td-bg-color-container) 82%, transparent);
+  backdrop-filter: blur(1px);
 }
 
 .preview-error {

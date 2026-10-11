@@ -364,7 +364,8 @@
           <t-collapse-panel value="preview" header="源文件预览">
             <div class="detail-block-content">
               <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
+                :page="currentRow.page" :file-type="currentRow?.fileType || ''"
+                :file-name="currentRow?.fileName || ''" :active="true" />
             </div>
           </t-collapse-panel>
         </t-collapse>
