@@ -1,6 +1,6 @@
 // @ts-nocheck
 <script setup lang="ts">
-import { ref, shallowRef, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
+import { ref, shallowRef, watch, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
 import { previewKnowledgeFile, getKnowledgePreviewUrl } from '@/api/knowledge-base/index';
 import { previewTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { downloadArtifact } from '@/api/chat';
@@ -61,8 +61,6 @@ const props = defineProps<{
   fileName: string;
   active: boolean;
   fillHeight?: boolean;
-  /** Place preview actions beside the host header's download button. */
-  toolbarTarget?: HTMLElement | null;
   /**
    * Source mode renders PDFs with pdf.js instead of the browser viewer so a
    * citation can be scrolled to and highlighted.
@@ -109,7 +107,6 @@ const imageNaturalWidth = ref(0);
 const imageNaturalHeight = ref(0);
 let loadedForId = '';
 
-const isFullscreen = ref(false);
 const previewRoot = ref<HTMLElement | null>(null);
 const previewContent = ref<HTMLElement | null>(null);
 
@@ -123,7 +120,7 @@ function focusPreviewContent() {
 }
 
 watch(
-  () => [props.active, previewRoot.value, getPreviewSourceKey(), props.sourceBlob, htmlViewMode.value, isFullscreen.value],
+  () => [props.active, previewRoot.value, getPreviewSourceKey(), props.sourceBlob, htmlViewMode.value],
   async () => {
     if (!props.active) return;
     const previousFocus = document.activeElement;
@@ -150,95 +147,6 @@ function onPreviewFrameLoad() {
     focusPreviewContent();
   }
 }
-
-function toggleFullscreen() {
-  if (isFullscreen.value) {
-    void exitPreviewFullscreen();
-  } else {
-    void enterPreviewFullscreen();
-  }
-}
-
-let fallbackOverflow: string | null = null;
-let fullscreenDisposed = false;
-
-async function enterPreviewFullscreen() {
-  const root = previewRoot.value;
-  if (!props.active || !root?.isConnected) return;
-  // Native fullscreen also handles Escape when focus is inside a PDF viewer
-  // or a sandboxed HTML iframe, whose keyboard events cannot bubble here.
-  if (root.requestFullscreen) {
-    try {
-      await root.requestFullscreen();
-      if (fullscreenDisposed || !props.active) {
-        if (document.fullscreenElement === root) await document.exitFullscreen();
-      } else {
-        syncFullscreen();
-      }
-      return;
-    } catch {
-      // Embedded hosts may disallow the Fullscreen API. Keep page fullscreen
-      // available there, with Escape handled in the parent document.
-    }
-  }
-  if (fullscreenDisposed || !props.active || !root.isConnected) return;
-  if (fallbackOverflow === null) fallbackOverflow = document.body.style.overflow;
-  document.body.style.overflow = 'hidden';
-  isFullscreen.value = true;
-}
-
-function clearFallbackFullscreen() {
-  if (fallbackOverflow !== null) {
-    document.body.style.overflow = fallbackOverflow;
-    fallbackOverflow = null;
-  }
-  isFullscreen.value = false;
-}
-
-async function exitPreviewFullscreen() {
-  if (previewRoot.value && document.fullscreenElement === previewRoot.value) {
-    try {
-      await document.exitFullscreen();
-    } catch {
-      // The browser may already have exited in response to Escape.
-    }
-    syncFullscreen();
-    return;
-  }
-  clearFallbackFullscreen();
-}
-
-function syncFullscreen() {
-  if (fallbackOverflow === null) {
-    isFullscreen.value = !!previewRoot.value && document.fullscreenElement === previewRoot.value;
-  }
-}
-
-function onFullscreenEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.isComposing || !isFullscreen.value || !props.active) return;
-  // Consume this Escape before a containing drawer can also close.
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  void exitPreviewFullscreen();
-}
-
-watch(() => props.active, (active) => {
-  if (!active) void exitPreviewFullscreen();
-});
-
-onMounted(() => {
-  document.addEventListener('fullscreenchange', syncFullscreen);
-  window.addEventListener('keydown', onFullscreenEscape, true);
-});
-
-onUnmounted(() => {
-  fullscreenDisposed = true;
-  document.removeEventListener('fullscreenchange', syncFullscreen);
-  window.removeEventListener('keydown', onFullscreenEscape, true);
-  void exitPreviewFullscreen();
-  clearFallbackFullscreen();
-});
-
 
 function ensureBlobType(blob: Blob, ft: string): Blob {
   const expected = getPreviewMimeType(ft);
@@ -404,8 +312,7 @@ async function renderMermaid(blob: Blob) {
 async function openMermaid() {
   const svg = mermaidSvg.value;
   if (!svg) return;
-  // The diagram viewer mounts on body, outside the native fullscreen element.
-  await exitPreviewFullscreen();
+  // The diagram viewer mounts on body, outside the preview element.
   if (props.active && previewRoot.value?.isConnected) openMermaidFullscreen(svg);
 }
 
@@ -922,31 +829,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="previewRoot" tabindex="-1" :aria-label="fileName" class="document-preview" :class="{ 'is-fullscreen': isFullscreen, 'fill-height': fillHeight }">
-    <!-- Toolbar -->
-    <Teleport :to="toolbarTarget || 'body'" :disabled="isFullscreen || !toolbarTarget">
-      <div class="preview-toolbar" :class="{ 'is-inline': toolbarTarget && !isFullscreen }" v-if="isFullscreen || (!loading && !error && previewType !== 'unsupported')">
-        <span v-if="isFullscreen" class="preview-toolbar-title" :title="fileName">{{ fileName }}</span>
-        <div class="preview-toolbar-actions">
-          <t-button
-            v-if="previewType === 'html' && allowsHtmlScriptPreview()"
-            theme="default" variant="text" size="small" shape="square"
-            :title="htmlViewMode === 'render' ? $t('preview.htmlSource') : $t('preview.htmlRendered')"
-            :aria-label="htmlViewMode === 'render' ? $t('preview.htmlSource') : $t('preview.htmlRendered')"
-            @click="htmlViewMode = htmlViewMode === 'render' ? 'source' : 'render'"
-          >
-            <template #icon><t-icon :name="htmlViewMode === 'render' ? 'code' : 'browse'" /></template>
-          </t-button>
-          <t-button theme="default" variant="text" size="small" shape="square" :aria-pressed="isFullscreen"
-            :title="isFullscreen ? $t('preview.exitFullscreen') : $t('preview.fullscreen')"
-            :aria-label="isFullscreen ? $t('preview.exitFullscreen') : $t('preview.fullscreen')"
-            @click="toggleFullscreen">
-            <template #icon><t-icon :name="isFullscreen ? 'fullscreen-exit' : 'fullscreen'" /></template>
-          </t-button>
-        </div>
-      </div>
-    </Teleport>
-
+  <div ref="previewRoot" tabindex="-1" :aria-label="fileName" class="document-preview" :class="{ 'fill-height': fillHeight }">
     <!-- Loading -->
     <div v-if="loading" class="preview-loading">
       <t-loading size="medium" />
@@ -1110,8 +993,7 @@ onUnmounted(() => {
   min-height: 200px;
   position: relative;
 
-  &.fill-height,
-  &.is-fullscreen {
+  &.fill-height {
     height: 100%;
     min-height: 0;
     display: flex;
@@ -1180,93 +1062,6 @@ onUnmounted(() => {
       height: auto;
       min-height: 0;
     }
-  }
-}
-
-.is-fullscreen {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2001;
-  background: var(--td-bg-color-container);
-  padding: 0;
-  overflow: hidden;
-
-  .preview-toolbar {
-    padding: 12px 16px;
-    margin-bottom: 0;
-  }
-
-  .preview-pptx {
-    height: auto;
-    min-height: 0;
-    overflow: auto;
-    border: none;
-
-    :deep(.pptx-preview-wrapper) {
-      height: auto !important;
-      overflow-y: visible !important;
-    }
-  }
-
-  .preview-image {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-}
-
-.preview-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-  min-width: 0;
-  padding: 8px 0;
-  margin-bottom: 8px;
-  border-bottom: 1px solid @border-color;
-  background: @bg-white;
-}
-
-.preview-toolbar-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: @text-primary;
-  font-size: var(--app-text-base);
-  font-weight: 500;
-}
-
-.preview-toolbar.is-inline {
-  padding: 0;
-  margin: 0;
-  border: 0;
-  background: transparent;
-}
-
-.preview-toolbar-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-left: auto;
-
-  :deep(.t-button) {
-    flex-shrink: 0;
-    width: 30px;
-    height: 30px;
-    border-radius: 7px;
-    color: @text-secondary;
-  }
-
-  :deep(.t-button__icon) {
-    margin: 0;
-    font-size: var(--app-text-xl);
   }
 }
 
