@@ -1,27 +1,57 @@
 package file
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
-func TestRewriteHost(t *testing.T) {
-	svc := &cosFileService{customDomain: "cos.mozuiapp.com"}
-	base := "https://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/"
-	raw := "https://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/weknora/10000/x.pdf?q-sign-algorithm=sha1&q-sign-time=1;2&response-content-disposition=inline"
-	got := svc.rewriteHost(raw, base)
-	want := "https://cos.mozuiapp.com/weknora/10000/x.pdf?q-sign-algorithm=sha1&q-sign-time=1;2&response-content-disposition=inline"
-	if got != want {
-		t.Fatalf("rewriteHost mismatch:\n got=%q\nwant=%q", got, want)
+// TestPresignCustomDomain verifies that with COS_CUSTOM_DOMAIN set, GetFileURL
+// returns a presigned URL whose host is the custom domain and whose signature
+// covers that host (q-header-list contains host). Signing against the custom
+// domain's Host is the only way COS accepts the signature after the host swap —
+// string-replacing the host of a default-domain signature fails with
+// SignatureDoesNotMatch.
+func TestPresignCustomDomain(t *testing.T) {
+	svc, err := newCosClient("weknora-daily-1313344759", "ap-seoul", "AKIDtestsecretid", "testsecretkey")
+	if err != nil {
+		t.Fatalf("newCosClient failed: %v", err)
 	}
+	svc.cosPathPrefix = "weknora"
+	svc.customDomain = "cos.mozuiapp.com"
 
-	// no custom domain -> unchanged
-	plain := &cosFileService{customDomain: ""}
-	if got := plain.rewriteHost(raw, base); got != raw {
-		t.Fatalf("no-custom-domain should not rewrite: %q", got)
+	url, err := svc.GetFileURL(context.Background(), "cos://weknora-daily-1313344759/ap-seoul/weknora/10000/abc.pdf")
+	if err != nil {
+		t.Fatalf("GetFileURL failed: %v", err)
 	}
+	if !strings.HasPrefix(url, "https://cos.mozuiapp.com/weknora/10000/abc.pdf?") {
+		t.Fatalf("expected custom-domain presigned URL, got: %s", url)
+	}
+	if !strings.Contains(url, "response-content-disposition=inline") {
+		t.Fatalf("expected inline disposition param, got: %s", url)
+	}
+	if !strings.Contains(url, "q-header-list=host") {
+		t.Fatalf("expected host in signed header list, got: %s", url)
+	}
+	if strings.Contains(url, "myqcloud.com") {
+		t.Fatalf("default domain must not appear, got: %s", url)
+	}
+}
 
-	// http scheme base
-	httpBase := "http://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/"
-	rawHTTP := "http://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/x.pdf"
-	if got := svc.rewriteHost(rawHTTP, httpBase); got != "http://cos.mozuiapp.com/x.pdf" {
-		t.Fatalf("http scheme rewrite failed: %q", got)
+// TestPresignDefaultDomain verifies the original behaviour is untouched when no
+// custom domain is configured: the presigned URL keeps the default bucket host.
+func TestPresignDefaultDomain(t *testing.T) {
+	svc, err := newCosClient("weknora-daily-1313344759", "ap-seoul", "AKIDtestsecretid", "testsecretkey")
+	if err != nil {
+		t.Fatalf("newCosClient failed: %v", err)
+	}
+	svc.cosPathPrefix = "weknora"
+
+	url, err := svc.GetFileURL(context.Background(), "cos://weknora-daily-1313344759/ap-seoul/weknora/10000/abc.pdf")
+	if err != nil {
+		t.Fatalf("GetFileURL failed: %v", err)
+	}
+	if !strings.HasPrefix(url, "https://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/weknora/10000/abc.pdf?") {
+		t.Fatalf("expected default-domain presigned URL, got: %s", url)
 	}
 }
