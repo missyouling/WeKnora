@@ -235,8 +235,11 @@ export function get<T = any>(url: string, config?: any): Promise<WithStatus<T>> 
 }
 
 export async function getDown(url: string): Promise<Blob> {
+  // 下载类请求走整包 Blob，大文件（几十页 PDF/长视频）在跨国链路上可能超过默认 30s，
+  // 放宽到 120s 并支持取消信号。直连预览改造后此路径仅作兜底。
   const res = await instance.get<Blob>(url, {
     responseType: "blob",
+    timeout: 120000,
   }) as unknown as Blob;
   return res
 }

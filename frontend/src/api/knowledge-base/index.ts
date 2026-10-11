@@ -577,6 +577,14 @@ export function previewKnowledgeFile(id: string) {
   return getDown(`/api/v1/knowledge/${id}/preview`);
 }
 
+/**
+ * 获取源文件直连预览 URL（COS 预签名 / local /r/ 授权）。
+ * 返回 { success, data: { url, kind, filename, file_name, file_type, size } }。
+ */
+export function getKnowledgePreviewUrl(id: string) {
+  return get(`/api/v1/knowledge/${id}/preview-url`);
+}
+
 /** @param idsQueryString - query string with ids (e.g. ids=xxx&ids=yyy) */
 export function batchQueryKnowledge(idsQueryString: string, kbId?: string, agentId?: string, agentSourceTenantId?: string) {
   let qs = idsQueryString;

@@ -22,14 +22,21 @@ import (
 // BusinessExtractHandler 承载 WeKnora 二次开发中「日常事务」模块的业务提取与记录管理。
 type BusinessExtractHandler struct {
 	*KnowledgeHandler
-	db           *gorm.DB
-	modelService interfaces.ModelService
-	businessSvc  *service.BusinessExtractService
+	db              *gorm.DB
+	modelService    interfaces.ModelService
+	businessSvc     *service.BusinessExtractService
+	storageResolver interfaces.StorageBackendResolver
+	resourceCatalog interfaces.ResourceCatalog
 }
 
 // NewBusinessExtractHandler 构造业务提取 Handler。
-func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.ModelService, bsvc *service.BusinessExtractService) *BusinessExtractHandler {
-	return &BusinessExtractHandler{KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc}
+func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.ModelService, bsvc *service.BusinessExtractService,
+	storageResolver interfaces.StorageBackendResolver, resourceCatalog interfaces.ResourceCatalog,
+) *BusinessExtractHandler {
+	return &BusinessExtractHandler{
+		KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc,
+		storageResolver: storageResolver, resourceCatalog: resourceCatalog,
+	}
 }
 
 // parseSandboxPagination reads page/page_size from query with safe defaults.

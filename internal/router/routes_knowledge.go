@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tencent/WeKnora/internal/handler"
+	"github.com/Tencent/WeKnora/internal/middleware"
 )
 
 // RegisterChunkerDebugRoutes wires the read-only chunker preview endpoint
@@ -105,6 +106,13 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
 			// 			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
 			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
+			// 源文件直连预览 URL（COS 预签名 / local /r/ 授权），供前端 iframe/img 无头直连
+			kbRead.GET("/:knowledgeId/preview-url", g.Viewer(), g.KBAccessRead("id"), business.GetKnowledgePreviewURL)
+		}
+
+		// === 日常事务沙盒：系统级迁移接口（仅租户 Admin，禁止 API Key 调用） ===
+		if business != nil {
+			r.POST("/system/migrate-local-to-cos", middleware.DenyAPIKeyPrincipal(), g.Admin(), business.MigrateLocalToCOS)
 		}
 
 		// === 日常事务沙盒：业务列表/配置路由（挂在 /knowledge-bases/:id 直接子路径下） ===
@@ -186,6 +194,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		// machine-principal authorization to the API-key gate.
 		kRead.GET("/:id/download", g.Contributor(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.DownloadKnowledgeFile)
 		kRead.GET("/:id/preview", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.PreviewKnowledgeFile)
+		// 源文件直连预览 URL（COS 预签名 / local /r/ 授权），浏览器无头直连用
+		if business != nil {
+			kRead.GET("/:id/preview-url", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), business.GetKnowledgePreviewURL)
+		}
 		k.PUT("/image/:id/:chunk_id", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateImageInfo)
 		kRead.GET("/search", g.Viewer(), handler.SearchKnowledge)
 		kRead.GET("/move/progress/:task_id", g.Viewer(), handler.GetKnowledgeMoveProgress)

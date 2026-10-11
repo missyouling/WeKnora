@@ -1,7 +1,7 @@
 // @ts-nocheck
 <script setup lang="ts">
 import { ref, shallowRef, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
-import { previewKnowledgeFile } from '@/api/knowledge-base/index';
+import { previewKnowledgeFile, getKnowledgePreviewUrl } from '@/api/knowledge-base/index';
 import { previewTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { downloadArtifact } from '@/api/chat';
 import hljs from 'highlight.js';
@@ -82,6 +82,8 @@ const loading = ref(false);
 const error = ref('');
 const previewType = ref<FilePreviewKind>('unsupported');
 const blobUrl = ref('');
+/** 直连预览 URL（COS 预签名 / local /r/ 授权），浏览器原生支持 Range 渐进加载。 */
+const directUrl = ref('');
 const textContent = ref('');
 const highlightedCode = ref('');
 const markdownHtml = ref('');
@@ -421,6 +423,34 @@ async function loadPreview() {
   previewType.value = resolvePreviewKind(ft);
 
   try {
+    // 知识库源文件优先尝试直连预览 URL（COS 预签名 / local /r/ 授权）：
+    // PDF/图片/音视频交给浏览器原生加载（自动 Range 分块），几十页大 PDF 首屏秒开、不占 VPS 带宽；
+    // 直连不可用（接口失败/类型不支持直连/sourceMode 定位模式）时回退 Blob 整包下载。
+    let direct = '';
+    if (props.knowledgeId) {
+      try {
+        const resp = await getKnowledgePreviewUrl(props.knowledgeId);
+        direct = resp?.data?.url || '';
+      } catch {
+        direct = '';
+      }
+    }
+    const preliminaryKind = resolvePreviewKind(ft);
+    if (
+      direct &&
+      (preliminaryKind === 'pdf' || preliminaryKind === 'image' || preliminaryKind === 'audio' || preliminaryKind === 'video') &&
+      !(props.sourceMode && preliminaryKind === 'pdf')
+    ) {
+      previewType.value = preliminaryKind;
+      previewExt = ft;
+      directUrl.value = direct;
+      loadedForId = sourceKey;
+      loading.value = false;
+      await nextTick();
+      scheduleLocate();
+      return;
+    }
+
     const rawBlob = await fetchPreviewBlob();
     let kind = resolvePreviewKind(ft);
     if (kind === 'unsupported') {
@@ -511,6 +541,7 @@ async function loadPreview() {
 }
 
 function cleanup() {
+  directUrl.value = '';
   if (blobUrl.value) {
     URL.revokeObjectURL(blobUrl.value);
     blobUrl.value = '';
@@ -942,8 +973,8 @@ onUnmounted(() => {
     <div v-else-if="previewType === 'pdf' && pdfData" class="preview-pdf preview-pdf--source">
       <PdfSourceViewer :data="pdfData" :file-name="fileName" :locate="locate" @located="(r) => emit('located', r)" />
     </div>
-    <div v-else-if="previewType === 'pdf' && blobUrl" class="preview-pdf">
-      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="blobUrl" class="pdf-iframe" @load="onPreviewFrameLoad" />
+    <div v-else-if="previewType === 'pdf' && (blobUrl || directUrl)" class="preview-pdf">
+      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="blobUrl || directUrl" class="pdf-iframe" @load="onPreviewFrameLoad" />
     </div>
 
     <!-- HTML: artifacts render in a unique-origin iframe; other sources stay as source. -->
@@ -963,10 +994,10 @@ onUnmounted(() => {
     </div>
 
     <!-- Image -->
-    <div v-else-if="previewType === 'image' && blobUrl" ref="previewContent" tabindex="0" :aria-label="fileName" class="preview-image">
+    <div v-else-if="previewType === 'image' && (blobUrl || directUrl)" ref="previewContent" tabindex="0" :aria-label="fileName" class="preview-image">
       <div class="image-wrapper">
         <div class="image-frame">
-          <img :src="blobUrl" :alt="fileName" @load="onImageLoad" />
+          <img :src="blobUrl || directUrl" :alt="fileName" @load="onImageLoad" />
           <div
             v-for="(mark, i) in imageMarks"
             :key="i"
@@ -1017,11 +1048,11 @@ onUnmounted(() => {
     </div>
 
     <!-- Audio -->
-    <div v-else-if="previewType === 'audio' && blobUrl" class="preview-audio">
+    <div v-else-if="previewType === 'audio' && (blobUrl || directUrl)" class="preview-audio">
       <div class="audio-wrapper">
         <t-icon name="sound" size="48px" />
         <p class="audio-filename">{{ fileName }}</p>
-        <audio ref="previewContent" controls :src="blobUrl" class="audio-element">
+        <audio ref="previewContent" controls :src="blobUrl || directUrl" class="audio-element">
           {{ $t('preview.audioNotSupported') }}
         </audio>
         <div v-if="audioRange" class="audio-locate">
@@ -1032,8 +1063,8 @@ onUnmounted(() => {
     </div>
 
     <!-- Video -->
-    <div v-else-if="previewType === 'video' && blobUrl" class="preview-video">
-      <video ref="previewContent" controls playsinline :src="blobUrl" class="video-element">
+    <div v-else-if="previewType === 'video' && (blobUrl || directUrl)" class="preview-video">
+      <video ref="previewContent" controls playsinline :src="blobUrl || directUrl" class="video-element">
         {{ $t('preview.videoNotSupported') }}
       </video>
     </div>
