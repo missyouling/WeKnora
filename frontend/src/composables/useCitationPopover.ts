@@ -240,7 +240,18 @@ export function useCitationPopover(rootRef: Ref<HTMLElement | null>, options: Ci
   }
 
   watch(rootRef, rebind, { flush: 'post' })
-  watch(options.getCacheScope, reset, { flush: 'sync' })
+  // Production minification (esbuild) may hoist the chat entry's props alias
+  // (e.g. `const b = t`) to *after* this composable's setup-time code. With a
+  // `flush: 'sync'` watch created here, Vue evaluates options.getCacheScope()
+  // synchronously during setup, which reads the still-uninitialized alias and
+  // throws "ReferenceError: Cannot access 'b' before initialization"
+  // (reproduced on the production bundle, not in dev). Deferring watch creation
+  // to onMounted keeps the exact same semantics — the first getter evaluation
+  // only collects dependencies (immediate=false, callback not invoked) and now
+  // happens after every declaration in setup is initialized.
+  onMounted(() => {
+    watch(options.getCacheScope, reset, { flush: 'sync' })
+  })
   onMounted(rebind)
   onBeforeUnmount(() => {
     disposed = true

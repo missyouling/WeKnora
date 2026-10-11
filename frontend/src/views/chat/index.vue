@@ -1618,6 +1618,17 @@ watch(error, (newError) => {
         recoverIncompleteMessage();
         return;
     }
+    // continue-stream 404: the session was deleted or no longer belongs to this
+    // tenant. The page may still be polling a stale in-flight answer, so quietly
+    // restore the operable state instead of flashing an error toast (the network
+    // 404 is expected in this scenario, not a real failure).
+    if (String(newError).includes('404')) {
+        isReplying.value = false;
+        loading.value = false;
+        // 清空当前 assistant message ID
+        currentAssistantMessageId.value = '';
+        return;
+    }
     MessagePlugin.error(newError);
     isReplying.value = false;
     loading.value = false;
