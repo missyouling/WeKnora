@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -327,6 +328,28 @@ func (g *pgRepository) KeywordsRetrieveFallback(ctx context.Context,
 ) ([]*types.RetrieveResult, error) {
 	logger.GetLogger(ctx).Infof("[Postgres] Keywords retrieval (pg_trgm fallback): query=%s, topK=%d", params.Query, params.TopK)
 
+	// Split the query into meaningful terms and match any of them (OR),
+	// mirroring the tokenized matching semantics of the ParadeDB BM25 path.
+	// A plain ILIKE over the full sentence matches nothing for natural-language
+	// questions (e.g. "我现在有多少张发票").
+	terms := splitQueryTerms(params.Query)
+	if len(terms) == 0 {
+		terms = []string{params.Query}
+	}
+	orExprs := make([]string, len(terms))
+	orArgs := make([]interface{}, len(terms))
+	for i, t := range terms {
+		orExprs[i] = "content ILIKE '%' || ? || '%'"
+		orArgs[i] = t
+	}
+	simExprs := make([]string, len(terms))
+	simArgs := make([]interface{}, len(terms))
+	for i, t := range terms {
+		simExprs[i] = "similarity(content, ?)"
+		simArgs[i] = t
+	}
+	scoreExpr := "GREATEST(" + strings.Join(simExprs, ", ") + ") AS score"
+
 	q := g.db.WithContext(ctx)
 	if len(params.KnowledgeBaseIDs) > 0 {
 		logger.GetLogger(ctx).Debugf("[Postgres] Filtering fallback keywords by knowledge base IDs: %v", params.KnowledgeBaseIDs)
@@ -340,11 +363,11 @@ func (g *pgRepository) KeywordsRetrieveFallback(ctx context.Context,
 		logger.GetLogger(ctx).Debugf("[Postgres] Filtering fallback keywords by tag IDs: %v", params.TagIDs)
 		q = q.Where("tag_id IN ?", params.TagIDs)
 	}
-	q = q.Where("content ILIKE '%' || ? || '%'", params.Query)
+	q = q.Where("("+strings.Join(orExprs, " OR ")+")", orArgs...)
 	q = q.Where("(is_enabled IS NULL OR is_enabled = ?)", true)
 	q = q.Select(
-		"similarity(content, ?) AS score, id, content, source_id, source_type, chunk_id, knowledge_id, knowledge_base_id, tag_id",
-		params.Query,
+		scoreExpr+", id, content, source_id, source_type, chunk_id, knowledge_id, knowledge_base_id, tag_id",
+		simArgs...,
 	)
 	q = q.Order("score DESC, id ASC")
 	q = q.Limit(int(params.TopK))
@@ -378,6 +401,35 @@ func (g *pgRepository) KeywordsRetrieveFallback(ctx context.Context,
 			Error:               nil,
 		},
 	}, nil
+}
+
+// splitQueryTerms splits a free-form Chinese/English query into candidate
+// search terms. It keeps letters, digits and CJK runs (so plate numbers like
+// "渝C87567" survive as a single term) while dropping common question
+// particles, pronouns and auxiliary words that would match too many chunks.
+func splitQueryTerms(query string) []string {
+	re := regexp.MustCompile(`[\p{Han}]+|[A-Za-z0-9]+`)
+	raw := re.FindAllString(query, -1)
+	terms := make([]string, 0, len(raw))
+	for _, t := range raw {
+		if strings.TrimSpace(t) == "" {
+			continue
+		}
+		if stopChineseTerms[t] {
+			continue
+		}
+		terms = append(terms, t)
+	}
+	return terms
+}
+
+var stopChineseTerms = map[string]bool{
+	"我": true, "你": true, "他": true, "她": true, "它": true,
+	"我们": true, "你们": true, "他们": true, "她们": true, "它们": true,
+	"现在": true, "多少": true, "什么": true, "怎么": true, "为什么": true,
+	"是": true, "的": true, "了": true, "吗": true, "呢": true, "吧": true,
+	"啊": true, "有": true, "没有": true, "请问": true, "一共": true, "总共": true,
+	"请": true, "告诉": true, "知道": true, "查询": true, "查": true,
 }
 
 // VectorRetrieve performs vector similarity search using pgvector

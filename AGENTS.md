@@ -256,6 +256,7 @@
 - **watchtower API 版本**：Docker API 协商默认 1.25 过旧会报 `client version 1.25 is too old`，compose 已设 `DOCKER_API_VERSION=1.41`，勿删。
 - **网络残留**：`docker compose down` 先释放网络端点，再 `docker network rm`；直接 rm 会报 `has active endpoints`。
 - **`da-latest` 更新延迟**：文档/配置类改动也会触发 CI 重建镜像（内容不变但 SHA 变），watchtower 会多一次无谓重启；纯文档改动建议只 commit 不 push，或 push 后接受一次自动重建。
+- **Supabase 云库无 pg_search（paradedb）**：云库（如 aws-0-ap-southeast-1.pooler.supabase.com）没有 `paradedb` schema，关键词检索若走 BM25（`content ||| ?` + `paradedb.score(id)`）会报 `schema "paradedb" does not exist (SQLSTATE 3F000)`。已实现自动探测降级：`internal/application/repository/retriever/postgres/repository.go` 的 `KeywordsRetrieve` 用 `paradedbUsable()`（sync.Once 探测一次）判定，不可用则走 `KeywordsRetrieveFallback`——**按词切分（splitQueryTerms 过滤疑问/代词停用词）做 `content ILIKE '%词%'` OR 匹配 + `GREATEST(similarity)` 排序**，禁止用整句子串 ILIKE（自然语言问句 0 命中）。**排查此类问题时先确认 8080 运行进程是新二进制**（Windows 下端口被旧进程占用时新进程起不来、日志仍由旧进程写，极易误判"修复无效"——用 `netstat -ano | findstr :8080` 核对 PID 与 `server.exe` 的 mtime/StartTime）。
 
 ---
 
