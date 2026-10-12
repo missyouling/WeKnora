@@ -1088,22 +1088,8 @@ export function reassessRecognition(kbId: string) {
 }
 
 /**
- * 按页重新提取合同：只重新提取该知识文档中第 page 份合同（合同按文档内
- * 出现顺序编号），仅替换该份合同数据，不影响同文件其它合同。
- */
-
-export function extractContractPage(kbId: string, knowledgeId: string, page: number) {
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract-page`, { page }, { timeout: 600000 });
-}
 
 /**
- * 按页删除合同记录：从该文档的合同数组中移除第 page 份；若文档仅剩该份合同，
- * 则整份文档一并删除（后端返回 deleted_file=true）。
- */
-
-export function deleteContractPage(kbId: string, knowledgeId: string, page: number) {
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-contract-page`, { page }, { timeout: 120000 });
-}
 
 // ---- 删除历史（非合同/非发票自动删除记录的查看/恢复/永久删除）----
 

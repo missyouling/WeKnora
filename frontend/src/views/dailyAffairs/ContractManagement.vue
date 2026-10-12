@@ -75,25 +75,15 @@
               <template #icon><t-icon name="file-paste" size="14px" /></template>
               列表打印
             </t-button>
-            <!-- 删除确认：单气泡内嵌二选一（多页文件「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
+            <!-- 删除确认：合同不需要按页操作（2026-10-12 设计），直接删除文件 -->
             <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
               :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
               <template #content>
                 <div class="del-pop-body">
-                  <div v-if="delMultiCount > 0" class="del-pop-title">
-                    选中的合同涉及 {{ delMultiCount }} 份多页文件，请选择删除范围：
-                  </div>
-                  <div v-else class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个合同记录吗？删除后不可恢复。</div>
+                  <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个合同记录吗？删除后不可恢复。</div>
                   <div class="del-pop-actions">
-                    <template v-if="delMultiCount > 0">
-                      <t-button size="small" theme="danger" @click="confirmPageDelete">删除此页</t-button>
-                      <t-button size="small" theme="danger" variant="outline" @click="confirmFileDelete">删除文件</t-button>
+                      <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
                       <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                    </template>
-                    <template v-else>
-                      <t-button size="small" theme="danger" @click="confirmPageDelete">删除</t-button>
-                      <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                    </template>
                   </div>
                 </div>
               </template>
@@ -471,7 +461,6 @@ import {
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
-  deleteContractPage,
   listContractRecords,
   listContractOverview,
   previewKnowledgeFile,
@@ -1707,14 +1696,7 @@ const downloadCatalogPdf = () => {
 const delPopVisible = ref(false)
 const closeDelPop = () => { delPopVisible.value = false }
 // 选中记录涉及的多页文件数量（同一上传文件含多份合同）
-const delMultiCount = computed(() => {
-  const set = new Set<string>()
-  for (const r of selectedRows.value) {
-    if (!r.knowledgeId) continue
-    if (r.page && r.page >= 1) set.add(r.knowledgeId)
-  }
-  return set.size
-})
+// delMultiCount 已删除：合同不需要按页操作
 // 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页合同
 const optimisticRemoveContractRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
   contractRows.value = contractRows.value.filter((r) => {
@@ -1735,25 +1717,7 @@ const schedulePostDeleteRefresh = () => {
   deleteRefreshTimers.push(setTimeout(reload, 800))
   deleteRefreshTimers.push(setTimeout(reload, 2600))
 }
-// 仅删除选中的合同页（同文件其它合同保留）
-const doPageDelete = async (rows: ContractRow[]) => {
-  const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
-  const fileDeleteIds = new Set<string>()
-  const pageKeys = new Set<string>()
-  for (const r of rows) {
-    if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
-    else fileDeleteIds.add(r.knowledgeId)
-  }
-  // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
-  pageDeleteIds.sort((a, b) => b.page - a.page)
-  for (const pd of pageDeleteIds) {
-    const res: any = await deleteContractPage(kbId.value, pd.knowledgeId, pd.page)
-    if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
-    else pageKeys.add(`${pd.knowledgeId}::${pd.page}`)
-  }
-  if (fileDeleteIds.size) await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-  optimisticRemoveContractRows(fileDeleteIds, pageKeys)
-}
+
 // 删除整份上传文件（含其全部合同记录，从知识库完全删除）
 const doFileDelete = async (rows: ContractRow[]) => {
   const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
@@ -1768,9 +1732,10 @@ const finishDelete = async () => {
   // 异步删除：不立即 loadFiles（会把乐观移除的行又拉回来），交由延迟对账权威纠正
   schedulePostDeleteRefresh()
 }
+// 合同不需要按页操作，直接走文件删除
 const confirmPageDelete = async () => {
   closeDelPop()
-  try { await doPageDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
 }
 const confirmFileDelete = async () => {
   closeDelPop()
