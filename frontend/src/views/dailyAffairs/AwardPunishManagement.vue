@@ -314,6 +314,11 @@
               :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
           </div>
         </section>
+        <!-- 手动保存：四模块统一为手动保存（2026-10-12 决策），替代原来的 1200ms 自动保存 -->
+        <div class="awardpunish-detail-footer">
+          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
+          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </SettingDrawer>
 
@@ -568,9 +573,7 @@ const detailVisible = ref(false)
 const currentRow = ref<AwardPunishRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
 const editForm = ref<Record<string, any>>({})
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let autoSaveDirty = false
-let editFormSnapshot = ''
+// 手动保存模式：已删除 autoSaveTimer/autoSaveDirty/editFormSnapshot（原自动保存用）
 const autoSaving = ref(false)
 
 // 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
@@ -1014,7 +1017,6 @@ const onRestored = async (knowledgeId: string) => {
 // ---- 字段编辑 + 自动保存 ----
 const fillEditForm = () => {
   const r = currentRow.value
-  autoSaveDirty = false
   if (!r) return
   editForm.value = {
     ap_no: r.apNo || '',
@@ -1031,18 +1033,10 @@ const fillEditForm = () => {
     person: r.person || '',
     summary: r.summary || '',
   }
-  editFormSnapshot = JSON.stringify(editForm.value)
-  autoSaveDirty = true
 }
 
-watch(editForm, () => {
-  if (!autoSaveDirty || !currentRow.value) return
-  // 打开抽屉未做任何编辑（表单值与初始快照一致）时不触发自动保存，
-  // 避免"打开即保存空字段"把待补录记录从列表挤掉。
-  if (JSON.stringify(editForm.value) === editFormSnapshot) return
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { saveEditForm() }, 1200)
-}, { deep: true })
+// 手动保存模式（2026-10-12 决策：四模块统一手动保存）：删除原来的 1200ms 自动保存 watcher，
+// 用户点「保存」按钮时才调用 saveEditForm。
 
 const saveEditForm = async () => {
   const now = currentRow.value
@@ -1346,7 +1340,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)})
+})
 </script>
 
 <style basisd lang="less">
@@ -1568,6 +1562,16 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 24px 24px;
+}
+
+// 详情抽屉底部取消/保存（对齐发票 invoice-detail-footer）
+.awardpunish-detail-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--td-border-level-1-color);
+  margin-top: 8px;
 }
 
 .awardPunish-detail-body {
