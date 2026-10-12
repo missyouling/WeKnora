@@ -86,6 +86,12 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           if (r?.data?.removed) onRemoved?.(item)
         } catch {
           if (!extractFailed.value.has(item.id)) extractFailed.value.set(item.id, Date.now())
+        } finally {
+          // 无论成功失败都从 in-flight 移除：成功时后端已同步写 extract_status；
+          // 失败时靠 extractFailed 做 5 分钟退避。不移除会导致永久死锁——
+          // 若后端未写入 extract_status（如超时/崩溃/409），下轮扫描因
+          // extractInFlight.has(id) 而永不重试，文件永久卡在"提取中"。
+          extractInFlight.value.delete(item.id)
         }
       }
       for (const id of Array.from(extractInFlight.value)) {
