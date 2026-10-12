@@ -51,6 +51,10 @@
               <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
+              <t-button variant="outline" size="small" @click="settingsVisible = true">
+                <template #icon><t-icon name="setting" size="14px" /></template>
+                设置
+              </t-button>
               <t-tooltip content="删除历史" placement="bottom">
                 <t-button variant="outline" size="small" @click="historyVisible = true">
                   <template #icon><t-icon name="history" size="14px" /></template>
@@ -199,6 +203,9 @@
 
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-制度" kb-desc="制度管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析制度文件，自动提取制度字段" default-description="用于存放并解析制度文件，自动提取制度字段" model-tip="提取模型将复用下方「对话模型」，用于解析制度文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
+    <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
+    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'regulation'"
+      kb-name="日常事务-制度" title="制度设置" />
 
     <!-- 删除历史（自动删除的非制度记录） -->
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="制度"
@@ -419,6 +426,7 @@ import {
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
+import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
@@ -631,6 +639,7 @@ const DRAWER_WIDTH_KEY = 'weknora-regulation-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
+const settingsVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')

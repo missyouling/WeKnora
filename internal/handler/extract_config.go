@@ -760,3 +760,19 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 		}
 	}
 }
+
+// resolveContractRuleCfg 合同提取规则解析：按 scope=contract 读取用户配置的提取规则。
+// 规则为空时返回 nil，调用方回退默认提取逻辑。
+func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
+	return h.getExtractConfig(ctx, kbID, "contract", "")
+}
+
+// resolveRegulationRuleCfg 制度提取规则解析：按 scope=regulation 读取用户配置的提取规则。
+func (h *BusinessExtractHandler) resolveRegulationRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
+	return h.getExtractConfig(ctx, kbID, "regulation", "")
+}
+
+// resolveAwardPunishRuleCfg 奖惩提取规则解析：按 scope=award_punish 读取用户配置的提取规则。
+func (h *BusinessExtractHandler) resolveAwardPunishRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
+	return h.getExtractConfig(ctx, kbID, "award_punish", "")
+}

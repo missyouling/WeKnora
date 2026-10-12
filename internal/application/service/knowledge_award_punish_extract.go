@@ -285,3 +285,72 @@ func AwardPunishRecordsAllEmpty(recs []types.AwardPunishExtractionItem) bool {
 	}
 	return true
 }
+
+// ============ 规则提取（用户可配置字段口径） ============
+
+// buildAwardPunishRuleSystemPrompt 在默认奖惩提示词基础上注入用户配置的提取规则
+// （字段口径、高级模板）。规则为空时行为与默认版一致。
+func buildAwardPunishRuleSystemPrompt(cfg *types.KbExtractConfig, measures []string) string {
+	base := buildAwardPunishExtractionSystemPrompt(measures)
+	if cfg == nil {
+		return base
+	}
+	hasTemplate := strings.TrimSpace(cfg.PromptTemplate) != ""
+	hasFields := len(cfg.Fields) > 0
+	if !hasTemplate && !hasFields {
+		return base
+	}
+	var sb strings.Builder
+	if hasTemplate {
+		r := strings.NewReplacer("{{fields_schema}}", BuildFieldsSchema(cfg.Fields))
+		sb.WriteString(strings.TrimSpace(r.Replace(cfg.PromptTemplate)))
+		sb.WriteString("\n\n")
+	}
+	if hasFields {
+		sb.WriteString("提取要点（用户配置的字段口径，请按这些要点识别奖惩内容；输出结构仍严格按下方规则执行）:\n")
+		for _, f := range cfg.Fields {
+			n := strings.TrimSpace(f.Name)
+			if n == "" || !f.Enabled {
+				continue
+			}
+			parts := make([]string, 0, 2)
+			if d := strings.TrimSpace(f.Desc); d != "" {
+				parts = append(parts, "描述："+d)
+			}
+			if r := strings.TrimSpace(f.Rule); r != "" {
+				parts = append(parts, "规则："+r)
+			}
+			line := "· " + n
+			if len(parts) > 0 {
+				line += "（" + strings.Join(parts, "；") + "）"
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString(base)
+	return sb.String()
+}
+
+// ExtractAwardPunishesFromContentWithRules 与 ExtractAwardPunishesFromContent 相同，但支持注入
+// 用户配置的提取规则（字段口径、高级模板），规则为空时行为与默认版一致。
+func ExtractAwardPunishesFromContentWithRules(ctx context.Context, model chat.Chat, content string, measures []string, cfg *types.KbExtractConfig) (*AwardPunishExtractionResult, error) {
+	if strings.TrimSpace(content) == "" {
+		return &AwardPunishExtractionResult{Kind: "not_award_punish", ExtractError: "no text content to extract"}, nil
+	}
+	systemPrompt := buildAwardPunishRuleSystemPrompt(cfg, measures)
+	userPrompt := "<document>\n" + content + "\n</document>"
+	thinking := false
+	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "award_punish_extract", ""), []chat.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	if err != nil {
+		return nil, fmt.Errorf("extract award/punish fields: %w", err)
+	}
+	var parsed AwardPunishExtractionResult
+	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse award/punish extraction response: %w", err)
+	}
+	return &parsed, nil
+}

@@ -198,11 +198,13 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	merged := &service.ContractExtractionResult{Kind: "contract"}
 	var extractErr error
 	sawContract := false
+	// 用户配置的提取规则（scope=contract）：为空时 WithRules 行为与默认版一致
+	contractRuleCfg := h.resolveContractRuleCfg(effCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractContractsFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractContractsFromContentWithRules(effCtx, chatModel, batch, contractRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Contracts) == 0 {
 				extractErr = berr
@@ -1283,11 +1285,13 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	merged := &service.RegulationExtractionResult{Kind: "regulation"}
 	var extractErr error
 	sawRegulation := false
+	// 用户配置的提取规则（scope=regulation）：为空时 WithRules 行为与默认版一致
+	regulationRuleCfg := h.resolveRegulationRuleCfg(effCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractRegulationsFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractRegulationsFromContentWithRules(effCtx, chatModel, batch, regulationRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Regulations) == 0 {
 				extractErr = berr
@@ -1559,11 +1563,13 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	}
 	var extractErr error
 	sawRecord := false
+	// 用户配置的提取规则（scope=award_punish）：为空时 WithRules 行为与默认版一致
+	awardPunishRuleCfg := h.resolveAwardPunishRuleCfg(effCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractAwardPunishesFromContent(effCtx, chatModel, batch, extractMeasures)
+		batchRes, berr := service.ExtractAwardPunishesFromContentWithRules(effCtx, chatModel, batch, extractMeasures, awardPunishRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr

@@ -333,3 +333,71 @@ func ContractsAllEmpty(cts []ContractExtractionItem) bool {
 	}
 	return true
 }
+
+// ============ 规则提取（用户可配置字段口径） ============
+
+// buildContractRuleSystemPrompt 在默认合同提示词基础上注入用户配置的提取规则
+// （字段口径、高级模板）。规则为空时行为与默认版一致。
+func buildContractRuleSystemPrompt(cfg *types.KbExtractConfig) string {
+	if cfg == nil {
+		return contractExtractionSystemPrompt
+	}
+	hasTemplate := strings.TrimSpace(cfg.PromptTemplate) != ""
+	hasFields := len(cfg.Fields) > 0
+	if !hasTemplate && !hasFields {
+		return contractExtractionSystemPrompt
+	}
+	var sb strings.Builder
+	if hasTemplate {
+		r := strings.NewReplacer("{{fields_schema}}", BuildFieldsSchema(cfg.Fields))
+		sb.WriteString(strings.TrimSpace(r.Replace(cfg.PromptTemplate)))
+		sb.WriteString("\n\n")
+	}
+	if hasFields {
+		sb.WriteString("提取要点（用户配置的字段口径，请按这些要点识别合同内容；输出结构仍严格按下方规则执行）:\n")
+		for _, f := range cfg.Fields {
+			n := strings.TrimSpace(f.Name)
+			if n == "" || !f.Enabled {
+				continue
+			}
+			parts := make([]string, 0, 2)
+			if d := strings.TrimSpace(f.Desc); d != "" {
+				parts = append(parts, "描述："+d)
+			}
+			if r := strings.TrimSpace(f.Rule); r != "" {
+				parts = append(parts, "规则："+r)
+			}
+			line := "· " + n
+			if len(parts) > 0 {
+				line += "（" + strings.Join(parts, "；") + "）"
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString(contractExtractionSystemPrompt)
+	return sb.String()
+}
+
+// ExtractContractsFromContentWithRules 与 ExtractContractsFromContent 相同，但支持注入
+// 用户配置的提取规则（字段口径、高级模板），规则为空时行为与默认版一致。
+func ExtractContractsFromContentWithRules(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*ContractExtractionResult, error) {
+	if strings.TrimSpace(content) == "" {
+		return &ContractExtractionResult{Kind: "not_contract", ExtractError: "no text content to extract"}, nil
+	}
+	systemPrompt := buildContractRuleSystemPrompt(cfg)
+	userPrompt := "<document>\n" + content + "\n</document>"
+	thinking := false
+	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "contract_extract", ""), []chat.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	if err != nil {
+		return nil, fmt.Errorf("extract contract fields: %w", err)
+	}
+	var parsed ContractExtractionResult
+	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse contract extraction response: %w", err)
+	}
+	return &parsed, nil
+}
