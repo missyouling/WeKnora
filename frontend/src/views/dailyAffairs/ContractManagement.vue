@@ -1557,6 +1557,8 @@ const selectedSingle = computed(() => {
 
 // 重新提取：重新解析选中行对应源文件，解析完成后自动触发合同字段提取
 // （合同一个文件一般只有一份合同，无需按页提取；打印也整文档预览）。
+const reparseBusy = ref(false)
+const extractBusy = ref(false)
 const handleReparse = async () => {
   const row = selectedSingle.value
   if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份合同'); return }
