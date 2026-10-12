@@ -881,7 +881,7 @@ export function getFleetOverviewStats(kbId: string) {
 /** One node of the knowledge base folder tree. */
 
 export function previewDeletedKnowledgeFile(kbId: string, id: string) {
-  return getDown(`/api/v1/knowledge-bases/${kbId}/knowledge/${id}/preview-deleted`);
+  return getDown(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge/${id}/preview`);
 }
 
 /** @param idsQueryString - query string with ids (e.g. ids=xxx&ids=yyy) */
