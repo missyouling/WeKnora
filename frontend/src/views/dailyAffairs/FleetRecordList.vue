@@ -375,7 +375,7 @@ import {
   updateKnowledgeMetadata, updateKnowledgeInfo, reparseKnowledge, delKnowledgeDetails,
   listKnowledgeTags, updateKnowledgeTagBatch, uploadKnowledgeFile,
 } from '@/api/knowledge-base'
-import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary, listFleetGroupAliases } from '@/api/fleet'
+import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary, listFleetGroupAliases, extractFleetDocument } from '@/api/fleet'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import DocumentPreview from '@/components/document-preview.vue'
@@ -1960,14 +1960,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let extractingSet = new Set<string>()
 
 async function extractFile(kid: string, scope: string, certType?: string) {
-  const token = localStorage.getItem('weknora_token')
-  const res = await fetch(`/api/v1/knowledge-bases/${kbId.value}/knowledge/${kid}/extract-fleet-document`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify(certType ? { scope, cert_type: certType } : { scope }),
-  })
-  const j = await res.json()
-  if (!res.ok) throw new Error(j?.message || '提取失败')
+  await extractFleetDocument(kbId.value, kid, certType ? { scope, cert_type: certType } : { scope })
 }
 
 async function loadPending(forceFetch = false) {

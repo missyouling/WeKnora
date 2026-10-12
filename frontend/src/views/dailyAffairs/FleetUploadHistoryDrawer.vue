@@ -90,6 +90,7 @@ import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
+import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 
 const props = defineProps<{
   visible: boolean
@@ -274,17 +275,13 @@ const reparseRow = async (row: any) => {
 const reextractRow = async (row: any) => {
   row._extracting = true
   try {
-    const url = props.scope === 'invoice'
-      ? `/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-business`
-      : `/api/v1/knowledge-bases/${props.kbId}/knowledge/${row.id}/extract-fleet-document`
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('weknora_token') || '') },
-      body: props.scope === 'invoice'
-        ? JSON.stringify({ scope: 'invoice', cert_type: row.doc_type || undefined })
-        : JSON.stringify({ scope: props.scope || 'vehicle', doc_type: row.doc_type || undefined }),
-    })
-    if (!res.ok) throw new Error('提取请求失败')
+    // 后端只认 cert_type（历史代码曾误传 doc_type 导致证照类型静默丢失）
+    const payload = { scope: props.scope === 'invoice' ? 'invoice' : (props.scope || 'vehicle'), cert_type: row.doc_type || undefined }
+    if (props.scope === 'invoice') {
+      await extractBusinessDocument(props.kbId, row.id, payload)
+    } else {
+      await extractFleetDocument(props.kbId, row.id, payload)
+    }
     MessagePlugin.success('已重新提取')
     reload(1)
     emit('changed')

@@ -65,6 +65,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata, listKnowledgeFiles } from '@/api/knowledge-base'
+import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 
 const props = defineProps<{
   visible: boolean
@@ -334,18 +335,12 @@ function drainExtractQueue() {
 }
 
 async function extractFile(kid: string, scope: string, certType: string) {
-  const token = localStorage.getItem('weknora_token')
-  const api = isInvoice.value
-    ? `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-business`
-    : `/api/v1/knowledge-bases/${props.kbId}/knowledge/${kid}/extract-fleet-document`
   const body = certType ? { scope, cert_type: certType } : { scope }
-  const res = await fetch(api, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify(body),
-  })
-  const j = await res.json()
-  if (!res.ok) throw new Error(j?.message || '提取失败')
+  if (isInvoice.value) {
+    await extractBusinessDocument(props.kbId, kid, body)
+  } else {
+    await extractFleetDocument(props.kbId, kid, body)
+  }
 }
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }

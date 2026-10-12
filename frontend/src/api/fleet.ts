@@ -156,3 +156,15 @@ export function saveExtractConfig(kbId: string, payload: Record<string, unknown>
 export function testExtractConfig(kbId: string, payload: Record<string, unknown>) {
   return post(`/api/v1/knowledge-bases/${kbId}/extract-config/test`, payload)
 }
+
+// ---- 证照提取 ----
+
+/** 触发证照/发票提取。后端只认 cert_type（勿传 doc_type）。超时放宽到 120s。 */
+export function extractFleetDocument(kbId: string, knowledgeId: string, payload: { scope: string; cert_type?: string }) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-fleet-document`, payload, { timeout: 120000 })
+}
+
+/** 发票提取统一入口（证照上传场景复用）。 */
+export function extractBusinessDocument(kbId: string, knowledgeId: string, payload: { scope: string; cert_type?: string }) {
+  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-business`, payload, { timeout: 120000 })
+}

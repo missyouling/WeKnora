@@ -1153,7 +1153,7 @@ export function deleteContractPage(kbId: string, knowledgeId: string, page: numb
 /** 删除历史列表：知识库内被系统自动删除（判定非合同/非发票）且保留源文件的记录 */
 
 export function listDeletedKnowledge(kbId: string, params: { page?: number; page_size?: number; q?: string } = {}) {
-  return get(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge`, params);
+  return get(`/api/v1/knowledge-bases/${kbId}/knowledge/deleted-knowledge`, { params });
 }
 
 /** 恢复自动删除的记录：恢复回知识库并重新解析提取（再次判定非该类文档时不再自动删除，防循环） */
