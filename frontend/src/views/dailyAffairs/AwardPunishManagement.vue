@@ -31,14 +31,14 @@
 
     <!-- KB 存在：主界面 -->
     <div v-else class="awardPunish-main">
+      <!-- 概览 KPI 卡 -->
+      <DashboardKpiGroup :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="awardpunish-kpi-group" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
           <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            :type-options="apTypeOptions" v-model:type-value="filterApType"
-            primary-action-text="新建奖惩" @primary="wizardVisible = true"
             @refresh="applyFilter" :selected-count="selectedRowKeys.length"
-            @clear-selection="clearSelection">
+            @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
               <div class="doc-filter-field doc-filter-field--wide">
                 <t-date-range-picker v-model="dateRange" placeholder="签发日期" class="doc-date-range doc-filter-field__control"
@@ -55,48 +55,14 @@
                 <template #icon><t-icon name="setting" size="14px" /></template>
                 设置
               </t-button>
-              <t-tooltip content="删除历史" placement="bottom">
-                <t-button variant="outline" size="small" @click="historyVisible = true">
-                  <template #icon><t-icon name="history" size="14px" /></template>
-                </t-button>
-              </t-tooltip>
-            </template>
-            <template #batch-actions>
-              <t-popconfirm theme="warning"
-                :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
-                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleReExtract">
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
-                  重新提取
-                </t-button>
-              </t-popconfirm>
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-                <template #icon><t-icon name="edit" size="14px" /></template>
-                编辑数据
+              <t-button theme="primary" size="small" @click="uploadVisible = true">
+                <template #icon><t-icon name="upload" size="14px" /></template>
+                上传奖惩
               </t-button>
-              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                打印
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-                <template #icon><t-icon name="file-paste" size="14px" /></template>
-                目录
-              </t-button>
-              <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个奖惩记录吗？删除后不可恢复。`"
-                :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleBatchDelete">
-                <t-button theme="danger" variant="outline" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="14px" /></template>
-                  删除记录
-                </t-button>
-              </t-popconfirm>
             </template>
           </BusinessListToolbar>
         </div>
       </div>
-      <!-- 概览 KPI 卡 -->
-      <DashboardKpiGroup :cards="overviewCards" class="awardpunish-kpi-group" />
 
       <!-- 奖惩列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -187,14 +153,66 @@
 
       <!-- 底部汇总（选中记录时显示选中奖惩汇总，未选中显示全部；选中时避让底部工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
-        <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
+        <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
       </div>
+    </div>
 
-      <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏，避免浮于弹窗之上） -->
+    <!-- 自有批量浮条（发票基准同款） -->
+    <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
+      <div class="batch-bar-inner">
+        <div class="batch-bar-left">
+          <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
+          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+            清除
+          </t-button>
+        </div>
+        <div class="batch-bar-actions">
+          <t-popconfirm theme="warning"
+            :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件吗？将覆盖已有解析结果。`"
+            :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+            @confirm="handleReparse">
+            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+              <template #icon><t-icon name="refresh" size="14px" /></template>
+              重新解析
+            </t-button>
+          </t-popconfirm>
+          <t-popconfirm theme="warning"
+            :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有奖惩字段吗？将覆盖已有提取结果。`"
+            :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+            @confirm="handleFileExtract">
+            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+              <template #icon><t-icon name="cloud-upload" size="14px" /></template>
+              重新提取
+            </t-button>
+          </t-popconfirm>
+          <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
+            <template #icon><t-icon name="edit" size="14px" /></template>
+            编辑数据
+          </t-button>
+          <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+            <template #icon><t-icon name="print" size="14px" /></template>
+            单页打印
+          </t-button>
+          <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+            <template #icon><t-icon name="file-paste" size="14px" /></template>
+            列表打印
+          </t-button>
+          <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 条奖惩记录吗？删除后不可恢复。`"
+            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+            @confirm="handleBatchDelete">
+            <t-button theme="danger" variant="outline" size="small" @click.stop>
+              <template #icon><t-icon name="delete" size="14px" /></template>
+              删除记录
+            </t-button>
+          </t-popconfirm>
+        </div>
+      </div>
     </div>
 
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-奖惩" kb-desc="奖惩管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析奖惩文件，自动提取奖惩字段" default-description="用于存放并解析奖惩文件，自动提取奖惩字段" model-tip="提取模型将复用下方「对话模型」，用于解析奖惩文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="award_punish" title="上传奖惩"
+      :type-options="uploadTypeOptions" @done="onUploadDone" />
     <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'award_punish'"
       kb-name="日常事务-奖惩" title="奖惩设置" />
@@ -205,7 +223,7 @@
 
 
     <!-- 奖惩详情抽屉（竖向区块，可拖宽，上下滚动） -->
-<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-awardpunish-drawer-width'" hide-footer destroy-on-close class="awardpunish-detail-drawer">
+<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-awardpunish-drawer-width'" hide-footer destroy-on-close class="awardpunish-detail-drawer">
       <div class="awardPunish-detail-body">
         <!-- 摘要 -->
         <section class="detail-block">
@@ -315,14 +333,15 @@
           </div>
         </section>
 
-        <!-- 源文件预览 -->
-        <section class="detail-block">
-          <div class="detail-block-title">源文件预览</div>
-          <div class="detail-block-content">
-            <DocumentPreview v-if="currentRow" :knowledge-id="currentRow.knowledgeId"
+        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview -->
+        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
+          <t-collapse-panel value="preview" header="源文件预览">
+            <div class="detail-block-content">
+              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
               :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-          </div>
-        </section>
+            </div>
+          </t-collapse-panel>
+        </t-collapse>
         <!-- 手动保存：四模块统一为手动保存（2026-10-12 决策），替代原来的 1200ms 自动保存 -->
         <div class="awardpunish-detail-footer">
           <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
@@ -405,6 +424,7 @@ import {
   restoreDeletedKnowledge,
   purgeDeletedKnowledge,
   getRecognitionConfig,
+  listAwardPunishOverview,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -415,6 +435,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import FleetUploadDialog from './FleetUploadDialog.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
@@ -527,25 +548,45 @@ const items = ref<KnowledgeItem[]>([])
 const awardPunishRows = ref<AwardPunishRow[]>([])
 
 // KPI 卡：总数、本月新增、按类型（奖励/惩罚）分布
+const overviewStats = ref<any>(null)
+const overviewLoading = ref(true)
+const loadAwardPunishOverview = async () => {
+  if (!kbId.value) return
+  try {
+    const res: any = await listAwardPunishOverview(kbId.value)
+    overviewStats.value = res?.data || null
+  } catch (e: any) {
+    overviewStats.value = null
+  } finally {
+    overviewLoading.value = false
+  }
+}
 const overviewCards = computed(() => {
-  const rows = awardPunishRows.value || []
-  const total = rows.length
-  const now = new Date()
-  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-  const monthCount = rows.filter((r: any) => (r.signDate || '') >= monthStart).length
-  const byType: Record<string, number> = {}
-  for (const r of rows) {
-    const t = (r as any).apType || '未分类'
-    byType[t] = (byType[t] || 0) + 1
-  }
-  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string }> = [
-    { key: 'total', label: '已收录奖惩', icon: 'file', value: `${total}`, unit: '份', sub: `本月新增 ${monthCount} 份` },
+  const st = overviewStats.value || {}
+  const total = Number(st.total || 0)
+  const monthCount = Number(st.current_month || 0)
+  const parseFailed = Number(st.parse_failed || 0)
+  const failed = parseFailed
+  const fileCount = Number(st.file_count || 0)
+  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
+    { key: 'total', label: '已收录奖惩', icon: 'file', value: `${total}`, unit: '条', sub: `本月新增 ${monthCount} 条`, cls: '', action: 'all' },
   ]
-  for (const [type, count] of Object.entries(byType)) {
-    cards.push({ key: `type-${type}`, label: type, icon: 'file-1', value: `${count}`, unit: '份', sub: '' })
+  for (const t of (st.by_ap_type || [])) {
+    const name = String(t.ap_type || '未分类')
+    cards.push({ key: `type-${name}`, label: name, icon: 'file-1', value: `${Number(t.count) || 0}`, unit: '条', sub: '', cls: 'is-type', action: 'type', typeValue: name })
   }
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
 })
+const onOverviewCardClick = (card: any) => {
+  if (card.action === 'all') {
+    filterApType.value = ''
+  } else if (card.action === 'type' && card.typeValue) {
+    filterApType.value = card.typeValue
+  } else if (card.action === 'history') {
+    historyVisible.value = true
+  }
+}
 // 进行中的文件（解析中/提取中/待提取），在奖惩级列表顶部以状态行展示
 const awardPunishSummary = ref<{ total: number; sumAmount: number; sumTotal: number }>({
   total: 0, sumAmount: 0, sumTotal: 0,
@@ -558,6 +599,15 @@ const keyword = ref('')
 const filterApType = ref('')
 const filterFulfillStatus = ref('')
 const apTypeOptions = ref<Array<{ value: string; label: string }>>([])
+const apCats = ref<any[]>([])
+const uploadTypeOptions = computed(() => {
+  const cats = apCats.value.filter((c: any) => c.enabled !== false)
+  if (!cats.length) return [{ label: '奖惩通报', value: 'award_punish__奖惩通报' }]
+  return cats.map((c: any) => ({ label: c.name, value: `award_punish__${c.name}` }))
+})
+const onUploadDone = async () => {
+  await Promise.all([loadFiles(true), loadAwardPunishOverview()])
+}
 const measureList = ref<{ name: string; type: string }[]>([])
 
 // 措施多选：editForm.measure 以逗号分隔字符串存储，多选组件用数组适配
@@ -609,6 +659,7 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 
 // ---- 详情抽屉 ----
 const detailVisible = ref(false)
+const previewExpanded = ref<string[]>([])
 const currentRow = ref<AwardPunishRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
 const editForm = ref<Record<string, any>>({})
@@ -641,6 +692,7 @@ const DRAWER_WIDTH_KEY = 'weknora-awardPunish-drawer-width'
 const printVisible = ref(false)
 const historyVisible = ref(false)
 const settingsVisible = ref(false)
+const uploadVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')
@@ -662,6 +714,7 @@ const loadKb = async () => {
       await loadMeasures()
       await cleanNonAwardPunishFiles()
       await loadFiles()
+      await loadAwardPunishOverview()
       startPolling()
     }
   } catch (e: any) {
@@ -679,6 +732,7 @@ const onKbCreated = async (kb: any) => {
     await loadMeasures()
     await cleanNonAwardPunishFiles()
     await loadFiles()
+    await loadAwardPunishOverview()
     startPolling()
   }
 }
@@ -1206,20 +1260,47 @@ const selectedSingle = computed(() => {
 
 // 重新提取：重新解析选中行对应源文件，解析完成后自动触发奖惩字段提取
 // （奖惩一个文件一般只有一份奖惩，无需按页提取；打印也整文档预览）。
-const handleReExtract = async () => {
+const reparseBusy = ref(false)
+const extractBusy = ref(false)
+const handleReparse = async () => {
+  const row = selectedSingle.value
+  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份奖惩'); return }
+  extractInFlight.value.add(row.knowledgeId)
+  extractFailed.value.delete(row.knowledgeId)
+  reparseBusy.value = true
+  try {
+    await reparseKnowledge(row.knowledgeId)
+    MessagePlugin.success(`已触发「${row.fileName}」重新解析`)
+    setTimeout(() => { loadFiles(true); loadAwardPunishOverview() }, 1500)
+  } catch (e: any) {
+    extractFailed.value.set(row.knowledgeId, Date.now())
+    MessagePlugin.error(e?.message || '重新解析失败')
+  } finally {
+    extractInFlight.value.delete(row.knowledgeId)
+    reparseBusy.value = false
+  }
+}
+
+const handleFileExtract = async () => {
   const row = selectedSingle.value
   if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份奖惩'); return }
   extractInFlight.value.add(row.knowledgeId)
   extractFailed.value.delete(row.knowledgeId)
+  extractBusy.value = true
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
   try {
-    await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
-    setTimeout(() => { loadFiles(true) }, 1500)
+    await extractBusinessDocument(kbId.value, row.knowledgeId, 'award_punish', filterApType.value || undefined)
+    loading.close()
+    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    loadFiles(true)
+    loadAwardPunishOverview()
   } catch (e: any) {
+    loading.close()
     extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)
+    extractBusy.value = false
   }
 }
 
@@ -1384,6 +1465,7 @@ onMounted(() => {
     try {
       const res: any = await listFleetCategories({ scope: 'award_punish' })
       const cats = res?.data || []
+      apCats.value = Array.isArray(cats) ? cats : []
       if (cats[0]?.subs?.length) {
         customColumns.value = cats[0].subs
           .filter((s: any) => s.enabled !== false)
