@@ -88,13 +88,15 @@
 ### 2. 页面骨架与高频组件复用（原项目基准）
 在实现任何功能前，必须优先复用原项目已被验证的布局与组件体系：
 - **标准页面骨架**：列表页必须沿用原项目的嵌套层级：
-  `.kb-list-container` -> `.kb-list-content` -> `.header` (含 `.title-row` 和 `.header-subtitle`) -> `ResourceListToolbar` -> `.kb-list-main` (含 `EmptyState` 与网格/列表)。
+  `.kb-list-container` -> `.kb-list-content` -> `.header` (含 `.title-row` 和 `.header-subtitle`) -> 工具栏 -> `.kb-list-main` (含 `EmptyState` 与网格/列表)。
+  - 日常事务二开模块（dailyAffairs）统一使用 `BusinessListToolbar`（2026-10-12 决策）；
+  - 上游原生页面（AgentList/KnowledgeBaseList/OrganizationList）沿用 `ResourceListToolbar`，二开不碰。
 - **强制复用白名单**（禁止重新手搓原生实现）：
   1. `SettingDrawer` (右侧抽屉，支持拖拽调宽/全屏)
   2. `ResourceIcon` (资源类型统一图标)
   3. `EmptyState` (空数据状态)
   4. `UploadTasksPanel` (上传进度浮层)
-  5. `ResourceListToolbar` (列表通用工具栏，含搜索/筛选)
+  5. `BusinessListToolbar` (日常事务列表通用工具栏，含搜索/筛选；二开统一用此，上游页面的 `ResourceListToolbar` 不引入二开)
   6. `MessagePlugin` (全局提示，来自 tdesign-vue-next)
 
 ### 3. 严格禁止项（Negative Constraints）
