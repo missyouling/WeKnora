@@ -1127,7 +1127,7 @@ export function saveRecognitionConfig(kbId: string, cfg: Record<string, unknown>
 /** 用当前包含判定规则重新评估删除历史：命中的自动恢复为待补录记录。 */
 
 export function reassessRecognition(kbId: string) {
-  return post(`/api/v1/knowledge-bases/${kbId}/recognition/reassess`, {});
+  return post(`/api/v1/knowledge-bases/${kbId}/recognition/reassess`, {}, { timeout: 120000 }); // 批量重评估可能耗时，放宽超时
 }
 
 /**
