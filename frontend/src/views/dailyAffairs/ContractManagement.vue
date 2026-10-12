@@ -24,7 +24,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="contract-main">
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
-      <DashboardKpiGroup :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
+      <DashboardKpiGroup :loading="!cardsReady" :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
       <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
           @refresh="applyFilter" :selected-count="selectedRowKeys.length"
@@ -1265,6 +1265,11 @@ const loadContractCats = async () => {
 // 全量概览统计（对齐发票基准 InvoiceOverviewStats：后端全量聚合，不随列表筛选变化）。
 // KPI 卡片一律使用该数据源，保证切换类型/日期/搜索后卡片统计不受影响。
 const contractOverview = ref<any>(null)
+// 卡片渲染门控：概览统计 + 上传文件计数两个异步源都就绪后才一次渲染全部卡片，
+// 避免数值分批跳变（任一请求失败也置 true，用空数据渲染，不永久转圈）
+const contractOverviewLoaded = ref(false)
+const uploadStatsLoaded = ref(false)
+const cardsReady = computed(() => contractOverviewLoaded.value && uploadStatsLoaded.value)
 const loadContractOverview = async () => {
   if (!kbId.value) return
   try {
@@ -1272,6 +1277,8 @@ const loadContractOverview = async () => {
     contractOverview.value = res?.data || res || null
   } catch {
     contractOverview.value = null
+  } finally {
+    contractOverviewLoaded.value = true
   }
 }
 const onUploadDone = async (typeName?: string) => {
@@ -1293,7 +1300,9 @@ const loadUploadStats = async () => {
       it.parse_status === 'failed' || (it.custom_metadata || {}).extract_status === 'failed'
     ).length
     uploadStats.value = { total, failed }
-  } catch { uploadStats.value = { total: 0, failed: 0 } }
+  } catch { uploadStats.value = { total: 0, failed: 0 } } finally {
+    uploadStatsLoaded.value = true
+  }
 }
 // 历史记录抽屉变更（删除/重新解析）后同步刷新列表与卡片计数（并行）
 // 上传历史抽屉变化：删除（带 deletedIds）走乐观移除+延迟对账；重新提取等立即刷新

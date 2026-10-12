@@ -1,5 +1,9 @@
 <template>
-  <div class="dash-kpi-group">
+  <!-- 加载态骨架：父页面在异步数据源未齐时传 loading，占位避免卡片分批跳变 -->
+  <div v-if="loading" class="dash-kpi-skeleton" aria-hidden="true">
+    <div v-for="i in 5" :key="i" class="dash-kpi-skeleton__card" />
+  </div>
+  <div v-else class="dash-kpi-group">
     <div
       v-for="card in cards"
       :key="card.key"
@@ -47,7 +51,7 @@ export interface KpiCard {
 
 // activeType：父组件当前筛选的分类值（如 filterInvoiceType/filterContractType）。
 // 高亮规则：action=all 卡在 activeType 为空时激活；action=type 卡在 typeValue 与 activeType 相等时激活。
-const props = defineProps<{ cards: KpiCard[]; activeType?: string }>()
+const props = defineProps<{ cards: KpiCard[]; activeType?: string; loading?: boolean }>()
 defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
 
 const isActive = (card: KpiCard): boolean => {
@@ -58,6 +62,18 @@ const isActive = (card: KpiCard): boolean => {
 </script>
 
 <style lang="less" scoped>
+.dash-kpi-skeleton {
+  display: flex;
+  gap: 14px;
+  padding: 12px 8px;
+}
+.dash-kpi-skeleton__card {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100px;
+  border-radius: var(--td-radius-large);
+  background: var(--td-bg-color-component);
+}
 .dash-kpi-group {
   display: flex;
   flex-wrap: nowrap;

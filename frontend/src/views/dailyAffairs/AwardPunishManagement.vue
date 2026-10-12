@@ -32,7 +32,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="awardPunish-main">
       <!-- 概览 KPI 卡 -->
-      <DashboardKpiGroup :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="awardpunish-kpi-group" />
+      <DashboardKpiGroup :loading="overviewLoading" :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="awardpunish-kpi-group" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">

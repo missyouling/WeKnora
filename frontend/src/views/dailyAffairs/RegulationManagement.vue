@@ -30,7 +30,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="regulation-main">
       <!-- 概览 KPI 卡 -->
-      <DashboardKpiGroup :cards="overviewCards" :active-type="filterRegType" @card-click="onOverviewCardClick" class="regulation-kpi-group" />
+      <DashboardKpiGroup :loading="overviewLoading" :cards="overviewCards" :active-type="filterRegType" @card-click="onOverviewCardClick" class="regulation-kpi-group" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -715,6 +715,7 @@ const loadKb = async () => {
       await loadRegTypes()
       await cleanNonRegulationFiles()
       await loadFiles()
+      await loadRegulationOverview()
       startPolling()
     }
   } catch (e: any) {

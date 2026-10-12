@@ -25,7 +25,7 @@
     <div v-else class="invoice-main">
       <!-- 概览紧凑卡（中台 DashboardKpiGroup 组件，type-card 范式） -->
       <div class="overview-group">
-        <DashboardKpiGroup :cards="overviewCards" :active-type="filterInvoiceType" @card-click="onOverviewCardClick" />
+        <DashboardKpiGroup :loading="!cardsReady" :cards="overviewCards" :active-type="filterInvoiceType" @card-click="onOverviewCardClick" />
       </div>
 
       <!-- 发票列表 -->
@@ -614,6 +614,11 @@ const filterInvoiceType = ref('')
 // ---- 台账概览看板（对标车辆档案：档案质量 / 当月看板 / 类型分布） ----
 const overviewStats = ref<any>(null)
 const overviewLoading = ref(false)
+// 卡片渲染门控：概览统计 + 分类列表两个异步源都就绪后才一次渲染全部卡片，
+// 避免「先 4 张再追加其它票据」的二次跳变（任一请求失败也置 true，用空数据渲染，不永久转圈）
+const overviewLoaded = ref(false)
+const catsLoaded = ref(false)
+const cardsReady = computed(() => overviewLoaded.value && catsLoaded.value)
 const loadInvoiceOverview = async () => {
   if (!kbId.value) return
   try {
@@ -623,6 +628,7 @@ const loadInvoiceOverview = async () => {
     overviewStats.value = null
   } finally {
     overviewLoading.value = false
+    overviewLoaded.value = true
   }
 }
 const overviewCards = computed(() => {
@@ -1241,7 +1247,9 @@ const reloadColumns = async (force = false) => {
     }
     // 类型筛选锁定（Q4）：分类重载后若当前选中项失效（被禁用/改名），回退第一个启用的分类
     ensureInvoiceType()
-  } catch { /* 后端未配置时回退内置默认 */ }
+  } catch { /* 后端未配置时回退内置默认 */ } finally {
+    catsLoaded.value = true
+  }
 }
 
 // 类型筛选锁定：始终保证有一项分类被选中（禁清空）。
