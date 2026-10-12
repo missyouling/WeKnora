@@ -317,10 +317,15 @@
         <!-- 手动保存：四模块统一为手动保存（2026-10-12 决策），替代原来的 1200ms 自动保存 -->
         <div class="awardpunish-detail-footer">
           <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm()">保存</t-button>
         </div>
       </div>
     </SettingDrawer>
+
+    <!-- 奖惩文号重复二次确认 -->
+    <t-dialog v-model:visible="dupConfirmVisible" header="奖惩文号重复" width="420" @confirm="onDupConfirm">
+      <span>系统已存在相同的奖惩文号「{{ dupNo }}」，是否强制保存？</span>
+    </t-dialog>
 
     <!-- 标签编辑（复用原项目组件） -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -1038,7 +1043,15 @@ const fillEditForm = () => {
 // 手动保存模式（2026-10-12 决策：四模块统一手动保存）：删除原来的 1200ms 自动保存 watcher，
 // 用户点「保存」按钮时才调用 saveEditForm。
 
-const saveEditForm = async () => {
+// 奖惩文号重复二次确认：后端 409 + DUPLICATE_AWARDPUNISH_NO 时先询问，确认后 force 重试
+const dupConfirmVisible = ref(false)
+const dupNo = ref('')
+const onDupConfirm = async () => {
+  dupConfirmVisible.value = false
+  await saveEditForm(true)
+}
+
+const saveEditForm = async (force = false) => {
   const now = currentRow.value
   if (!now) return
   autoSaving.value = true
@@ -1081,7 +1094,16 @@ const saveEditForm = async () => {
     const nextError = hasAwardPunishData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'award_punish', records, extract_status: nextStatus, extract_error: nextError }
     // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
-    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta)
+    try {
+      await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
+    } catch (e: any) {
+      if (e?.status === 409 && String(e?.message || '').startsWith('DUPLICATE_AWARDPUNISH_NO')) {
+        dupNo.value = String(e?.message || '').split(':').pop() || ''
+        dupConfirmVisible.value = true
+        return
+      }
+      throw e
+    }
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑后列表立即刷新
     const listIdx = awardPunishRows.value.findIndex((r: any) => r.rowKey === now.rowKey)

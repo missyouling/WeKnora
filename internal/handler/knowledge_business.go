@@ -2207,6 +2207,14 @@ func (h *BusinessExtractHandler) checkDuplicateNo(ctx context.Context, kbID, kno
 		field = "contract_no"
 		arrKey = "contracts"
 		label = "合同编号"
+	} else if _, ok := meta["regulations"].([]interface{}); ok {
+		field = "reg_no"
+		arrKey = "regulations"
+		label = "制度编号"
+	} else if _, ok := meta["records"].([]interface{}); ok {
+		field = "ap_no"
+		arrKey = "records"
+		label = "奖惩文号"
 	} else {
 		return "", "", nil
 	}
@@ -2297,7 +2305,7 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("invalid custom_metadata: " + err.Error()))
 		return
 	}
-	// 单号查重（发票号码/合同编号）：命中重复且未携带 force 时返回 409，
+	// 单号查重（发票号码/合同编号/制度编号/奖惩文号）：命中重复且未携带 force 时返回 409，
 	// 前端据此弹「是否强制保存」二次确认后再以 force=true 重试。
 	if dupNo, label, derr := h.checkDuplicateNo(ctx, kbID, knowledgeID, meta, body.Force); derr != nil {
 		logger.Error(ctx, "Failed to check duplicate business number", derr)
@@ -2305,8 +2313,13 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 		return
 	} else if dupNo != "" {
 		code := "DUPLICATE_INVOICE_NO"
-		if label == "合同编号" {
+		switch label {
+		case "合同编号":
 			code = "DUPLICATE_CONTRACT_NO"
+		case "制度编号":
+			code = "DUPLICATE_REGULATION_NO"
+		case "奖惩文号":
+			code = "DUPLICATE_AWARDPUNISH_NO"
 		}
 		c.Error(errors.NewConflictError(code + ":已存在相同的" + label + " " + dupNo))
 		return
