@@ -846,9 +846,13 @@ func joinCJKWords(s string) string {
 // buildInvoiceFromHead 用号码行捕获组构造发票（号码行本身已含金额/税率/税额/
 // 车牌/通行日期起/购销方税号），价税合计等金额行字段留待配对后补充。
 func buildInvoiceFromHead(m []string) InvoiceExtractionItem {
+	// 日期补零统一为 YYYY-MM-DD（m[2]=年 m[3]=月 m[4]=日），避免 "2026-1-5" 导致字符串排序错序
+	year, _ := strconv.Atoi(m[2])
+	month, _ := strconv.Atoi(m[3])
+	day, _ := strconv.Atoi(m[4])
 	inv := InvoiceExtractionItem{
 		InvoiceNo:   m[1],
-		InvoiceDate: fmt.Sprintf("%s-%s-%s", m[2], m[3], m[4]),
+		InvoiceDate: fmt.Sprintf("%04d-%02d-%02d", year, month, day),
 		InvoiceType: "普通发票", // 通行费电子发票均为增值税普通发票
 		SellerName:  joinCJKWords(strings.TrimSpace(m[6])),
 		SellerTaxNo: m[7],
@@ -1104,9 +1108,9 @@ func ExtractInvoicesByMarkdownTableRules(content, docHint string) (*InvoiceExtra
 	}
 
 	var (
-		invoices []InvoiceExtractionItem
-		seen     = make(map[string]struct{})
-		buyerTax string
+		invoices  []InvoiceExtractionItem
+		seen      = make(map[string]struct{})
+		buyerTax  string
 		sellerTax string
 	)
 	for _, raw := range strings.Split(content, "\n") {
