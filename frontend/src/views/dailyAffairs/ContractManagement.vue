@@ -27,9 +27,8 @@
       <DashboardKpiGroup :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
       <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-          :type-options="contractTypeOptions" v-model:type-value="filterContractType" :type-clearable="searchActive"
-          @refresh="applyFilter" @print="handleBatchPrint" :selected-count="selectedRowKeys.length"
-          @clear-selection="clearSelection">
+          @refresh="applyFilter" :selected-count="selectedRowKeys.length"
+          @clear-selection="clearSelection" hide-batch-bar>
           <template #type-extra>
             <div class="doc-filter-field">
               <t-select v-model="filterFulfillStatus" :options="fulfillStatusOptions" placeholder="履约状态"
@@ -56,42 +55,6 @@
               <template #icon><t-icon name="upload" size="14px" /></template>
               上传合同
             </t-button>
-          </template>
-          <template #batch-actions>
-            <t-popconfirm theme="warning"
-              :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
-              :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="handleReExtract">
-              <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                <template #icon><t-icon name="refresh" size="14px" /></template>
-                重新提取
-              </t-button>
-            </t-popconfirm>
-            <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-              <template #icon><t-icon name="print" size="14px" /></template>
-              单页打印
-            </t-button>
-            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-              <template #icon><t-icon name="file-paste" size="14px" /></template>
-              列表打印
-            </t-button>
-            <!-- 删除确认：合同不需要按页操作（2026-10-12 设计），直接删除文件 -->
-            <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
-              :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
-              <template #content>
-                <div class="del-pop-body">
-                  <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个合同记录吗？删除后不可恢复。</div>
-                  <div class="del-pop-actions">
-                      <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
-                      <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                  </div>
-                </div>
-              </template>
-              <t-button theme="danger" variant="outline" size="small" @click.stop>
-                <template #icon><t-icon name="delete" size="14px" /></template>
-                删除记录
-              </t-button>
-            </t-popconfirm>
           </template>
         </BusinessListToolbar>
 
@@ -201,6 +164,62 @@
         <span v-if="displaySummary.total" class="doc-summary-item">
           合同金额合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
+      </div>
+    </div>
+
+    <!-- 自有批量浮条（发票基准同款：hide-batch-bar 后自有 fixed 条） -->
+    <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
+      <div class="batch-bar-inner">
+        <div class="batch-bar-left">
+          <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
+          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
+            清除
+          </t-button>
+        </div>
+        <div class="batch-bar-actions">
+          <t-popconfirm theme="warning"
+            :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件吗？将覆盖已有解析结果。`"
+            :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+            @confirm="handleReparse">
+            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+              <template #icon><t-icon name="refresh" size="14px" /></template>
+              重新解析
+            </t-button>
+          </t-popconfirm>
+          <t-popconfirm theme="warning"
+            :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有合同字段吗？将覆盖已有提取结果。`"
+            :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+            @confirm="handleFileExtract">
+            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+              <template #icon><t-icon name="cloud-upload" size="14px" /></template>
+              重新提取
+            </t-button>
+          </t-popconfirm>
+          <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+            <template #icon><t-icon name="print" size="14px" /></template>
+            单页打印
+          </t-button>
+          <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+            <template #icon><t-icon name="file-paste" size="14px" /></template>
+            列表打印
+          </t-button>
+          <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+            :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+            <template #content>
+              <div class="del-pop-body">
+                <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个合同记录吗？删除后不可恢复。</div>
+                <div class="del-pop-actions">
+                  <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
+                  <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                </div>
+              </div>
+            </template>
+            <t-button theme="danger" variant="outline" size="small" @click.stop>
+              <template #icon><t-icon name="delete" size="14px" /></template>
+              删除记录
+            </t-button>
+          </t-popconfirm>
+        </div>
       </div>
     </div>
 
@@ -455,7 +474,6 @@ import {
   listKnowledgeBases,
   listKnowledgeFiles,
   getKnowledgeDetails,
-  delKnowledgeDetails,
   batchDeleteKnowledge,
   updateBusinessMetadata,
   listKnowledgeTags,
@@ -474,6 +492,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import { contractFieldLabel } from './contractFieldLabels'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-合同'
@@ -1538,21 +1557,46 @@ const selectedSingle = computed(() => {
 
 // 重新提取：重新解析选中行对应源文件，解析完成后自动触发合同字段提取
 // （合同一个文件一般只有一份合同，无需按页提取；打印也整文档预览）。
-const handleReExtract = async () => {
+const handleReparse = async () => {
   const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份合同'); return }
+  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份合同'); return }
   extractInFlight.value.add(row.knowledgeId)
   extractFailed.value.delete(row.knowledgeId)
+  reparseBusy.value = true
   try {
     await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
+    MessagePlugin.success(`已触发「${row.fileName}」重新解析`)
     // 解析完成后延迟刷新列表与概览卡（新记录/类型变化同步到卡片统计）
     setTimeout(() => { loadFiles(true); loadContractOverview() }, 1500)
   } catch (e: any) {
     extractFailed.value.set(row.knowledgeId, Date.now())
+    MessagePlugin.error(e?.message || '重新解析失败')
+  } finally {
+    extractInFlight.value.delete(row.knowledgeId)
+    reparseBusy.value = false
+  }
+}
+
+const handleFileExtract = async () => {
+  const row = selectedSingle.value
+  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份合同'); return }
+  extractInFlight.value.add(row.knowledgeId)
+  extractFailed.value.delete(row.knowledgeId)
+  extractBusy.value = true
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
+  try {
+    await extractBusinessDocument(kbId.value, row.knowledgeId, 'contract', filterContractType.value || undefined)
+    loading.close()
+    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    loadFiles(true)
+    loadContractOverview()
+  } catch (e: any) {
+    loading.close()
+    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)
+    extractBusy.value = false
   }
 }
 
@@ -1670,7 +1714,7 @@ const handleBatchCatalog = async () => {
   catalogBusy.value = true
   try {
     const cols: CatalogColumn[] = [
-      ...visibleColDefs.value.map((c: any) => ({ key: c.key, label: c.label, value: (r: any) => catalogValueOf(r, c.key) })),
+      ...visibleColDefs.value.map((c: any) => ({ key: c.key, label: c.label || contractFieldLabel(c.key), value: (r: any) => catalogValueOf(r, c.key) })),
     ]
     const bytes = await generateCatalogPdf({ title: '合同目录', columns: cols, rows })
     printMode.value = 'catalog'
@@ -2188,5 +2232,68 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   background: var(--td-bg-color-container);
   border-top: 1px solid var(--td-component-stroke);
+}
+
+/* 自有批量浮条（发票基准同款） */
+.doc-batch-bar {
+  position: fixed;
+  bottom: var(--wk-batch-bar-bottom);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--wk-batch-bar-z);
+  width: max-content;
+  max-width: calc(100vw - 48px);
+  box-sizing: border-box;
+}
+.batch-bar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 8px 16px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-2);
+}
+.batch-bar-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.batch-bar-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+}
+.batch-bar-clear {
+  flex-shrink: 0;
+  padding: 0 6px !important;
+  height: 28px !important;
+  font-size: 12px;
+  color: var(--td-text-color-secondary) !important;
+  &:hover { color: var(--td-text-color-primary) !important; }
+}
+.batch-bar-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.batch-bar-actions > * { flex-shrink: 0; }
+
+/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
+.doc-list-view :deep(.t-table__cell),
+.doc-list-view :deep(.t-table__th) {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 </style>
