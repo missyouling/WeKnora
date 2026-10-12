@@ -432,6 +432,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-制度'
@@ -586,7 +587,8 @@ const dateRange = ref<Array<string>>([])
 
 // 列显隐
 const tableColumns = computed(() => {
-  const cols: any[] = [{ colKey: 'serial-number', title: '', width: 44 }]
+  const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 44 }]
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   for (const c of visibleColDefs.value) {
     // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
