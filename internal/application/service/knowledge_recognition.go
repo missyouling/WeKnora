@@ -128,7 +128,7 @@ func (s *knowledgeService) SaveRecognitionConfig(ctx context.Context, kbID strin
 	}
 	_, err = s.kbService.UpdateKnowledgeBase(ctx, kb.ID, kb.Name, kb.Description, &types.KnowledgeBaseConfig{
 		RecognitionConfig: cfg,
-	})
+	}, nil)
 	return err
 }
 

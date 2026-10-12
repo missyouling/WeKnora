@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -216,4 +217,26 @@ func (s *knowledgeService) PurgeDeletedKnowledge(ctx context.Context, id string)
 	}
 	logger.Infof(ctx, "Purged auto-deleted knowledge %s permanently (file=%s)", id, knowledge.FileName)
 	return nil
+}
+
+// GetDeletedKnowledgeFile 获取已软删知识的物理源文件（供删除历史预览/下载）。
+// 与 GetKnowledgeFile 的区别：使用 GetDeletedKnowledgeByID 查询软删记录。
+func (s *knowledgeService) GetDeletedKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error) {
+	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	knowledge, err := s.repo.GetDeletedKnowledgeByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, "", err
+	}
+	if knowledge.FilePath == "" {
+		return nil, "", nil
+	}
+	kb, kerr := s.kbService.GetKnowledgeBaseByID(ctx, knowledge.KnowledgeBaseID)
+	if kerr != nil {
+		return nil, "", kerr
+	}
+	file, ferr := s.resolveFileServiceForPath(ctx, kb, knowledge.FilePath).GetFile(ctx, knowledge.FilePath)
+	if ferr != nil {
+		return nil, "", ferr
+	}
+	return file, knowledge.FileName, nil
 }

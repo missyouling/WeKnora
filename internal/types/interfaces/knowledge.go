@@ -106,6 +106,8 @@ type KnowledgeService interface {
 	DeleteKnowledgeList(ctx context.Context, ids []string) error
 	// GetKnowledgeFile retrieves the file associated with the knowledge.
 	GetKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error)
+	// GetDeletedKnowledgeFile 获取已软删知识的物理源文件（供删除历史预览/下载）。
+	GetDeletedKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error)
 	// UpdateKnowledge updates knowledge information.
 	UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error
 	// RegenerateKnowledgeSummary refreshes the document description and summary retrieval chunk.

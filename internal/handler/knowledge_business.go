@@ -14,6 +14,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/filetransport"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -2090,6 +2091,44 @@ func (h *BusinessExtractHandler) PurgeDeletedKnowledge(c *gin.Context) {
 	})
 }
 
+// PreviewDeletedKnowledgeFile 预览已删除（删除历史）知识文件的源文件。
+// 返回被系统自动删除（软删、保留物理源文件）的知识条目关联的原始文件，供删除历史抽屉查看/下载。
+func (h *BusinessExtractHandler) PreviewDeletedKnowledgeFile(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
+	if kbID == "" || knowledgeID == "" {
+		c.Error(errors.NewBadRequestError("knowledge base id and knowledge id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
+		c.Error(errors.NewForbiddenError("No permission to preview deleted knowledge"))
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	file, filename, ferr := h.kgService.GetDeletedKnowledgeFile(effCtx, knowledgeID)
+	if ferr != nil {
+		logger.Error(ctx, "Failed to retrieve deleted knowledge file", ferr)
+		c.Error(errors.NewInternalServerError("Failed to retrieve file").WithDetails(ferr.Error()))
+		return
+	}
+	if file == nil {
+		c.Error(errors.NewNotFoundError("deleted knowledge file not found"))
+		return
+	}
+	defer file.Close()
+	if err := filetransport.Serve(c.Writer, c.Request, file, filetransport.Options{
+		Filename: filename, CacheControl: "private, max-age=3600",
+	}); err != nil {
+		logger.Errorf(ctx, "Failed to stream deleted knowledge preview: %v", err)
+	}
+}
+
 // ExtractInvoice godoc
 // @Summary      提取发票字段
 // @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取发票字段并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
@@ -2233,6 +2272,7 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 	logger.Infof(ctx, "Invoice custom metadata updated, knowledge ID: %s", knowledgeID)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"id": knowledgeID}})
 }
+
 // ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。
 func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	var body struct {
