@@ -539,3 +539,49 @@ func (h *BusinessExtractHandler) ReassessRecognition(c *gin.Context) {
 		"data":    map[string]interface{}{"restored": restored},
 	})
 }
+
+// RegulationOverviewStats 制度台账概览统计（全量只读聚合，不受列表筛选影响）
+func (h *BusinessExtractHandler) RegulationOverviewStats(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(apperrors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	stats, err := h.businessSvc.RegulationOverviewStats(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load regulation overview stats", err)
+		c.Error(apperrors.NewInternalServerError("load regulation overview stats failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
+}
+
+// AwardPunishOverviewStats 奖惩台账概览统计（全量只读聚合，不受列表筛选影响）
+func (h *BusinessExtractHandler) AwardPunishOverviewStats(c *gin.Context) {
+	ctx := c.Request.Context()
+	kbID := secutils.SanitizeForLog(c.Param("id"))
+	if kbID == "" {
+		c.Error(apperrors.NewBadRequestError("knowledge base id cannot be empty"))
+		return
+	}
+	_, _, effectiveTenantID, _, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	stats, err := h.businessSvc.AwardPunishOverviewStats(effCtx, kbID)
+	if err != nil {
+		logger.Error(ctx, "Failed to load award_punish overview stats", err)
+		c.Error(apperrors.NewInternalServerError("load award_punish overview stats failed"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
+}

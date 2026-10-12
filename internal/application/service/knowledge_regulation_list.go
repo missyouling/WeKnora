@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -295,3 +296,99 @@ func (s *BusinessExtractService) ListRegulationTypes(ctx context.Context, kbID s
 	return types_, nil
 }
 
+
+// RegulationOverviewStats 计算制度台账概览统计。口径与 ListRegulationRecords 平铺完全一致：
+// 遍历知识库下全部 knowledge → 平铺制度记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，
+// 因此不受列表类型/日期/搜索筛选影响（发票基准 InvoiceOverviewStats 同款形态）。
+func (s *BusinessExtractService) RegulationOverviewStats(ctx context.Context, kbID string) (*types.RegulationOverviewStats, error) {
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+
+	type flatReg struct {
+		regType   string
+		issueDate string
+	}
+	records := make([]flatReg, 0, 256)
+	parseFailedFiles := 0
+	fileCount := 0
+	page := 1
+	const batch = 1000
+	for {
+		p := &types.Pagination{Page: page, PageSize: batch}
+		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
+		if err != nil {
+			return nil, fmt.Errorf("list knowledge for regulation overview: %w", err)
+		}
+		if len(knowledges) == 0 {
+			break
+		}
+		for _, k := range knowledges {
+			if k == nil {
+				continue
+			}
+			if k.ParseStatus == "failed" {
+				parseFailedFiles++
+				fileCount++
+			}
+			if len(k.CustomMetadata) == 0 {
+				continue
+			}
+			var meta regulationMetadata
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				continue
+			}
+			legacyManual := meta.Kind != "regulation" && meta.AutoDeletedCount > 0
+			if meta.Kind != "regulation" && !legacyManual {
+				continue
+			}
+			if k.ParseStatus != "failed" {
+				fileCount++
+			}
+			if regulationItemsAllBlank(meta.Regulations) &&
+				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+				records = append(records, flatReg{})
+				continue
+			}
+			if len(meta.Regulations) == 0 {
+				continue
+			}
+			for _, r := range meta.Regulations {
+				if regulationExtractionItemBlank(r) {
+					continue
+				}
+				records = append(records, flatReg{regType: r.RegType, issueDate: r.IssueDate})
+			}
+		}
+		if len(knowledges) < batch {
+			break
+		}
+		page++
+	}
+
+	stats := &types.RegulationOverviewStats{
+		ByRegType: []types.RegulationTypeStat{},
+	}
+	stats.Total = len(records)
+	stats.FileCount = fileCount
+	stats.ParseFailed = parseFailedFiles
+
+	now := time.Now()
+	monthPrefix := now.Format("2006-01")
+	monthPrefixCompact := now.Format("200601")
+	typeCount := make(map[string]int)
+	for _, r := range records {
+		d := strings.TrimSpace(r.issueDate)
+		if d != "" && (strings.HasPrefix(d, monthPrefix) || strings.HasPrefix(d, monthPrefixCompact)) {
+			stats.CurrentMonth++
+		}
+		t := strings.TrimSpace(r.regType)
+		if t == "" {
+			t = "其它制度"
+		}
+		typeCount[t]++
+	}
+	for t, c := range typeCount {
+		stats.ByRegType = append(stats.ByRegType, types.RegulationTypeStat{RegType: t, Count: c})
+	}
+	sort.Slice(stats.ByRegType, func(i, j int) bool { return stats.ByRegType[i].Count > stats.ByRegType[j].Count })
+	return stats, nil
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -301,3 +302,99 @@ func (s *BusinessExtractService) ListAwardPunishTypes(ctx context.Context, kbID 
 	return ordered, nil
 }
 
+
+// AwardPunishOverviewStats 计算奖惩台账概览统计。口径与 ListAwardPunishRecords 平铺完全一致：
+// 遍历知识库下全部 knowledge → 平铺奖惩记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，
+// 因此不受列表类型/日期/搜索筛选影响（发票基准 InvoiceOverviewStats 同款形态）。
+func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, kbID string) (*types.AwardPunishOverviewStats, error) {
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+
+	type flatRec struct {
+		apType   string
+		signDate string
+	}
+	records := make([]flatRec, 0, 256)
+	parseFailedFiles := 0
+	fileCount := 0
+	page := 1
+	const batch = 1000
+	for {
+		p := &types.Pagination{Page: page, PageSize: batch}
+		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
+		if err != nil {
+			return nil, fmt.Errorf("list knowledge for award_punish overview: %w", err)
+		}
+		if len(knowledges) == 0 {
+			break
+		}
+		for _, k := range knowledges {
+			if k == nil {
+				continue
+			}
+			if k.ParseStatus == "failed" {
+				parseFailedFiles++
+				fileCount++
+			}
+			if len(k.CustomMetadata) == 0 {
+				continue
+			}
+			var meta awardPunishMetadata
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				continue
+			}
+			legacyManual := meta.Kind != "award_punish" && meta.AutoDeletedCount > 0
+			if meta.Kind != "award_punish" && !legacyManual {
+				continue
+			}
+			if k.ParseStatus != "failed" {
+				fileCount++
+			}
+			if awardPunishItemsAllBlank(meta.Records) &&
+				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+				records = append(records, flatRec{})
+				continue
+			}
+			if len(meta.Records) == 0 {
+				continue
+			}
+			for _, r := range meta.Records {
+				if awardPunishItemBlank(r) {
+					continue
+				}
+				records = append(records, flatRec{apType: r.ApType, signDate: r.SignDate})
+			}
+		}
+		if len(knowledges) < batch {
+			break
+		}
+		page++
+	}
+
+	stats := &types.AwardPunishOverviewStats{
+		ByApType: []types.AwardPunishTypeStat{},
+	}
+	stats.Total = len(records)
+	stats.FileCount = fileCount
+	stats.ParseFailed = parseFailedFiles
+
+	now := time.Now()
+	monthPrefix := now.Format("2006-01")
+	monthPrefixCompact := now.Format("200601")
+	typeCount := make(map[string]int)
+	for _, r := range records {
+		d := strings.TrimSpace(r.signDate)
+		if d != "" && (strings.HasPrefix(d, monthPrefix) || strings.HasPrefix(d, monthPrefixCompact)) {
+			stats.CurrentMonth++
+		}
+		t := strings.TrimSpace(r.apType)
+		if t == "" {
+			t = "其它奖惩"
+		}
+		typeCount[t]++
+	}
+	for t, c := range typeCount {
+		stats.ByApType = append(stats.ByApType, types.AwardPunishTypeStat{ApType: t, Count: c})
+	}
+	sort.Slice(stats.ByApType, func(i, j int) bool { return stats.ByApType[i].Count > stats.ByApType[j].Count })
+	return stats, nil
+}

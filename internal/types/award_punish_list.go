@@ -76,3 +76,20 @@ type AwardPunishTypeCount struct {
 	ApType string `json:"ap_type"`
 	Count  int    `json:"count"`
 }
+
+// AwardPunishOverviewStats 是奖惩台账概览统计（纯只读全量聚合，不随列表筛选变化）：
+// 遍历知识库下全部 knowledge → 平铺奖惩记录（口径与 ListAwardPunishRecords 一致），
+// 在内存中聚合总条数/本月新增/类型分布，兼容 Postgres 与 SQLite 双库。
+type AwardPunishOverviewStats struct {
+	Total        int                  `json:"total"`         // 全部奖惩条数
+	CurrentMonth int                  `json:"current_month"`  // 本月（签发日期）新增数
+	FileCount    int                  `json:"file_count"`    // 已上传文件数（含解析失败文件）
+	ParseFailed  int                  `json:"parse_failed"`  // 解析失败文件数
+	ByApType     []AwardPunishTypeStat `json:"by_ap_type"`    // 按奖惩类型分组
+}
+
+// AwardPunishTypeStat 是单一奖惩类型的聚合统计。
+type AwardPunishTypeStat struct {
+	ApType string `json:"ap_type"`
+	Count  int    `json:"count"`
+}

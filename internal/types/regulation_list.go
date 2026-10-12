@@ -77,3 +77,20 @@ type RegulationTypeCount struct {
 	RegType string `json:"reg_type"`
 	Count   int    `json:"count"`
 }
+
+// RegulationOverviewStats 是制度台账概览统计（纯只读全量聚合，不随列表筛选变化）：
+// 遍历知识库下全部 knowledge → 平铺制度记录（口径与 ListRegulationRecords 一致），
+// 在内存中聚合总份数/本月新增/类型分布，兼容 Postgres 与 SQLite 双库。
+type RegulationOverviewStats struct {
+	Total        int                 `json:"total"`         // 全部制度份数
+	CurrentMonth int                 `json:"current_month"`  // 本月（发布日期）新增数
+	FileCount    int                 `json:"file_count"`    // 已上传文件数（含解析失败文件）
+	ParseFailed  int                 `json:"parse_failed"`  // 解析失败文件数
+	ByRegType    []RegulationTypeStat `json:"by_reg_type"`   // 按制度类型分组
+}
+
+// RegulationTypeStat 是单一制度类型的聚合统计。
+type RegulationTypeStat struct {
+	RegType string `json:"reg_type"`
+	Count   int    `json:"count"`
+}
