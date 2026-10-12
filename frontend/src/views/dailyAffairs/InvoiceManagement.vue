@@ -434,7 +434,7 @@ import {
   getKnowledgeDetails,
   delKnowledgeDetails,
   batchDeleteKnowledge,
-  updateInvoiceMetadata,
+  updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
   extractBusinessDocument,
@@ -1638,7 +1638,7 @@ const persistEditForm = async (force: boolean) => {
       extract_status: nextStatus,
       extract_error: nextError,
     }
-    await updateInvoiceMetadata(kbId.value, now.knowledgeId, newMeta, force)
+    await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
     // 同步列表行，保证编辑（如备注）后列表立即刷新（shallowRef：整体替换数组触发更新）
     const listIdx = invoiceRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
