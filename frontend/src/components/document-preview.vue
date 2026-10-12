@@ -136,6 +136,12 @@ const docxContainer = ref<HTMLElement | null>(null);
 const imageNaturalWidth = ref(0);
 const imageNaturalHeight = ref(0);
 let loadedForId = '';
+/** 正在加载中的 sourceKey 及其 Promise：防止并发 loadPreview 重复请求签名 URL
+ *  导致 iframe src 被设置两次（第二次会清空第一次的内容，造成闪烁）。
+ *  典型触发：详情抽屉 openDetail 先设 currentRow，getKnowledgeDetails 返回后又设一次，
+ *  若第二次发生在第一次的 getKnowledgePreviewUrl 等待期间，两次都会拿到不同的签名 URL。 */
+let loadingForKey = '';
+let loadingPromise: Promise<void> | null = null;
 
 const previewRoot = ref<HTMLElement | null>(null);
 const previewContent = ref<HTMLElement | null>(null);
@@ -363,7 +369,26 @@ async function loadPreview() {
   const sourceKey = getPreviewSourceKey();
   if (!sourceKey) return;
   if (loadedForId === sourceKey) return;
+  // 同一 sourceKey 正在加载中：等待已有的加载完成，而不是发起重复请求。
+  // 重复请求会拿到不同的签名 URL，导致 iframe src 被设置两次（闪烁）。
+  if (loadingForKey === sourceKey && loadingPromise) {
+    await loadingPromise;
+    return;
+  }
 
+  loadingForKey = sourceKey;
+  loadingPromise = doLoadPreview(sourceKey);
+  try {
+    await loadingPromise;
+  } finally {
+    if (loadingForKey === sourceKey) {
+      loadingForKey = '';
+      loadingPromise = null;
+    }
+  }
+}
+
+async function doLoadPreview(sourceKey: string) {
   loading.value = true;
   error.value = '';
   htmlViewMode.value = allowsHtmlScriptPreview() ? 'render' : 'source';
