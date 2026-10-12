@@ -12,7 +12,7 @@
 在宣布“任务完成”或向用户展示最终代码前，你**必须主动通过终端执行**以下检查，禁止“脑补”测试结果：
 - **前端检查**：
   - 必须执行 `npm run type-check`，绝不允许存在 TypeScript 类型报错（严禁滥用 `any` 或 `@ts-ignore` 逃避检查）。
-  - 必须执行 `npm run lint`（或对应脚本），修复所有格式和规范警告。
+  - 必须执行 `npm run lint`（或对应脚本），修复所有格式和规范警告。（待落地：2026-10-12 确认前端尚未安装 eslint，`lint` 脚本不存在，此条暂记为技术债，补齐前以 `type-check` 为准）
 - **后端检查**：
   - 必须执行 `go test ./...` 确保所有后端测试通过。
   - 必须执行 `go vet` 等静态检查，修复所有潜在隐患。
@@ -224,7 +224,7 @@
 
 ### 5. 交付前本地测试要点（每次 push 前强制，全部必须真实执行通过）
 
-- 前端：`npm run type-check`、`npm run lint` 零报错。
+- 前端：`npm run type-check` 零报错；`npm run lint` 待落地（2026-10-12 起记为技术债）。
 - 后端（UCRT 工具链，命令见本文件「后端构建与服务启动规范」）：
   - `go build -o server.exe ./cmd/server`
   - `go vet ./internal/handler ./internal/application/service`
