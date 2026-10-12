@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -43,6 +44,19 @@ func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.
 		KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc,
 		storageResolver: storageResolver, resourceCatalog: resourceCatalog,
 	}
+}
+
+// extractionTimeout 提取任务总超时：脱离 HTTP 请求生命周期后仍需硬上限，
+// 避免无人值守的提取任务永久运行烧 token。
+const extractionTimeout = 30 * time.Minute
+
+// newExtractionContext 返回脱离 HTTP 请求生命周期的提取上下文。
+// 场景：前端超时/切页面/网络抖动导致 gin request ctx 被取消时，耗时的大模型
+// 调用不会被连带掐断（context canceled），提取继续在后台跑完并落库，
+// 前端已有轮询会刷出最终状态。30 分钟硬上限防止任务永久运行。
+func newExtractionContext(effectiveTenantID uint64) (context.Context, context.CancelFunc) {
+	base := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
+	return context.WithTimeout(base, extractionTimeout)
 }
 
 // parseSandboxPagination reads page/page_size from query with safe defaults.
@@ -123,7 +137,18 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to extract contract fields"))
 		return
 	}
+	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
+	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		return
+	}
+	defer h.extractMu.Delete(knowledgeID)
+
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
+	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
+	defer extractCancel()
 
 	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
@@ -157,14 +182,14 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
 		return
 	}
-	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
 		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
 		return
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for contract extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
@@ -183,7 +208,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
 			}
 		}
@@ -199,12 +224,12 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	var extractErr error
 	sawContract := false
 	// 用户配置的提取规则（scope=contract）：为空时 WithRules 行为与默认版一致
-	contractRuleCfg := h.resolveContractRuleCfg(effCtx, kbID)
+	contractRuleCfg := h.resolveContractRuleCfg(extractCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractContractsFromContentWithRules(effCtx, chatModel, batch, contractRuleCfg)
+		batchRes, berr := service.ExtractContractsFromContentWithRules(extractCtx, chatModel, batch, contractRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Contracts) == 0 {
 				extractErr = berr
@@ -228,7 +253,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			ExtractStatus: "failed",
 			ExtractError:  "contract extraction failed: " + extractErr.Error(),
 		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
 			}
 		}
@@ -238,7 +263,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	}
 	extracted := merged
 	// 自动编号去重：无合同编号的合同按当天已有最大序号 +1 顺序递增（跨文件唯一）
-	autoSeq, seqErr := h.businessSvc.MaxAutoContractSeq(effCtx, kbID)
+	autoSeq, seqErr := h.businessSvc.MaxAutoContractSeq(extractCtx, kbID)
 	if seqErr != nil {
 		logger.Warnf(ctx, "Failed to compute auto contract seq for %s: %v", kbID, seqErr)
 	}
@@ -252,7 +277,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	}
 	// 自定义识别规则：合同类型归类（用户可配置关键词/正则 → 合同类型），
 	// 按模型提取出的合同类型字段匹配，命中则覆盖模型结果。
-	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 		for i := range meta.Contracts {
 			if t := service.ClassifyTypeFromRules(meta.Contracts[i].ContractType, recCfg); t != "" {
 				meta.Contracts[i].ContractType = t
@@ -262,14 +287,14 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	if extracted.Kind == "not_contract" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为合同，置 manual 待补录，
 		// 不自动删除（解决"该是合同却没入库"的误判）。
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
 				meta.Kind = "contract"
 				meta.Contracts = []service.ContractExtractionItem{}
 				meta.ExtractStatus = "manual"
 				meta.ExtractError = "识别规则命中，已认定为合同，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
 						logger.Warnf(ctx, "Failed to persist rule-rescued contract meta: %v", serr)
 					}
 				}
@@ -288,14 +313,14 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		}
 		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
 		// 恢复，再次判定非合同不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
-		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+		if h.autoDeleteCount(extractCtx, knowledge) > 0 {
 			meta.ExtractStatus = "failed"
 			meta.ExtractError = "系统判定非合同文件，但该文件已被人工恢复，已保留待人工处理"
 			logger.Warnf(ctx, "Contract re-extraction judged non-contract but row was restored before; keeping file %s", knowledgeID)
 		} else {
 			// 非合同文件不能存在于合同知识库 → 提取判定后自动删除该文件（保留物理文件，
 			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
-			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_contract"); delErr != nil {
+			if delErr := h.kgService.AutoDeleteKnowledge(extractCtx, knowledgeID, "not_contract"); delErr != nil {
 				logger.Warnf(ctx, "auto-delete non-contract knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-contract knowledge, ID: %s", knowledgeID)
@@ -326,7 +351,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist contract extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
@@ -535,6 +560,11 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// failed 状态。否则 gin request ctx 被取消后，DB 写入报 context canceled，
 	// failed 状态写不进去，记录永久停在"提取中"（实测 3 分钟超时循环 5 次）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
+	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：耗时的大模型调用不再被
+	// 前端超时/切页面/网络抖动连带掐断（context canceled），提取在后台跑完，
+	// 前端轮询刷出最终状态。
+	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
+	defer extractCancel()
 
 	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
 	// 保证状态闭环，不允许永久转圈。
@@ -580,14 +610,14 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
 		return
 	}
-	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
 		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
 		return
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for invoice extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
@@ -660,7 +690,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		sawInvoice = len(ruleRes.Invoices) > 0
 	} else {
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
-		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(effCtx), "、")
+		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
 		for i, batch := range batches {
 			if strings.TrimSpace(batch) == "" {
 				continue
@@ -675,10 +705,10 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
 					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
 				knowledge.FileName, knowledge.Description, i+1, len(batches), enabledCategoryNames)
-			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(effCtx, chatModel, batch, invoiceRuleCfg, guide)
+			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(extractCtx, chatModel, batch, invoiceRuleCfg, guide)
 			if berr != nil {
 				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
-				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(effCtx, chatModel, batch, invoiceRuleCfg); ferr == nil && fbRes != nil {
+				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(extractCtx, chatModel, batch, invoiceRuleCfg); ferr == nil && fbRes != nil {
 					batchRes = fbRes
 					berr = nil
 				}
@@ -730,7 +760,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	}
 	// 自定义识别规则：类型归类（用户可配置关键词/正则 → 发票类型），
 	// 按模型提取出的发票类型字段匹配，命中则覆盖内置关键字判定。
-	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 		fullText := strings.Join(batches, "\n")
 		for i := range meta.Invoices {
 			if t := service.ClassifyTypeFromRules(meta.Invoices[i].InvoiceType, recCfg); t != "" {
@@ -759,11 +789,11 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// certType 非空 → 同文件全部发票的 InvoiceType 与 Category 统一赋值为用户指定分类
 	// （无视 OCR/规则/自定义识别规则）；certType 为空 → 类型必须落在已启用分类集合内，
 	// 命中停用分类或无法匹配的类型降级「其它票据」。
-	h.applyInvoiceUserCategoryPrecedence(effCtx, &meta, certType)
+	h.applyInvoiceUserCategoryPrecedence(extractCtx, &meta, certType)
 	if extracted.Kind == "not_invoice" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
 		// 不自动删除（避免"该是发票却没入库"）。
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
 				meta.Kind = "invoice"
 				meta.Invoices = []service.InvoiceExtractionItem{}
@@ -792,7 +822,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		// 需求变更（发票删除历史功能弃用）：非发票文件不再自动删除，保留在库并标记
 		// failed，用户可通过「待复核」卡/「已上传文件」抽屉人工处理。
 		meta.ExtractStatus = "failed"
-		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+		if h.autoDeleteCount(extractCtx, knowledge) > 0 {
 			meta.ExtractError = "系统判定非发票文件，该文件曾被人工恢复，已保留待人工处理"
 		} else {
 			meta.ExtractError = "系统判定非发票文件，已保留待人工复核"
@@ -818,7 +848,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// Cross-file dedup: mark invoices whose number already exists in another
 	// document of the same KB, so the UI can hide them by default.
 	if len(meta.Invoices) > 0 {
-		h.businessSvc.MarkInvoiceDuplicates(effCtx, kbID, knowledgeID, &meta)
+		h.businessSvc.MarkInvoiceDuplicates(extractCtx, kbID, knowledgeID, &meta)
 	}
 
 	metaJSON, err := json.Marshal(meta)
@@ -1212,7 +1242,18 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to extract regulation fields"))
 		return
 	}
+	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
+	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		return
+	}
+	defer h.extractMu.Delete(knowledgeID)
+
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
+	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
+	defer extractCancel()
 
 	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
@@ -1246,14 +1287,14 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
 		return
 	}
-	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
 		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
 		return
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for regulation extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
@@ -1270,7 +1311,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist regulation no-text state: %v", serr)
 			}
 		}
@@ -1286,12 +1327,12 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	var extractErr error
 	sawRegulation := false
 	// 用户配置的提取规则（scope=regulation）：为空时 WithRules 行为与默认版一致
-	regulationRuleCfg := h.resolveRegulationRuleCfg(effCtx, kbID)
+	regulationRuleCfg := h.resolveRegulationRuleCfg(extractCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractRegulationsFromContentWithRules(effCtx, chatModel, batch, regulationRuleCfg)
+		batchRes, berr := service.ExtractRegulationsFromContentWithRules(extractCtx, chatModel, batch, regulationRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Regulations) == 0 {
 				extractErr = berr
@@ -1315,7 +1356,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 			ExtractStatus: "failed",
 			ExtractError:  "regulation extraction failed: " + extractErr.Error(),
 		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist regulation extraction failed-state: %v", serr)
 			}
 		}
@@ -1325,7 +1366,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	}
 	extracted := merged
 	// 自动编号去重：无制度编号的制度按当天已有最大序号 +1 顺序递增（跨文件唯一）
-	autoSeq, seqErr := h.businessSvc.MaxAutoRegulationSeq(effCtx, kbID)
+	autoSeq, seqErr := h.businessSvc.MaxAutoRegulationSeq(extractCtx, kbID)
 	if seqErr != nil {
 		logger.Warnf(ctx, "Failed to compute auto regulation seq for %s: %v", kbID, seqErr)
 	}
@@ -1339,7 +1380,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	}
 	// 自定义识别规则：制度类型归类（用户可配置关键词/正则 → 制度类型），
 	// 按模型提取出的制度类型字段匹配，命中则覆盖模型结果。
-	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 		for i := range meta.Regulations {
 			if t := service.ClassifyTypeFromRules(meta.Regulations[i].RegType, recCfg); t != "" {
 				meta.Regulations[i].RegType = t
@@ -1349,14 +1390,14 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	if extracted.Kind == "not_regulation" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为制度，置 manual 待补录，
 		// 不自动删除（解决"该是制度却没入库"的误判）。
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
 				meta.Kind = "regulation"
 				meta.Regulations = []types.RegulationExtractionItem{}
 				meta.ExtractStatus = "manual"
 				meta.ExtractError = "识别规则命中，已认定为制度，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
 						logger.Warnf(ctx, "Failed to persist rule-rescued regulation meta: %v", serr)
 					}
 				}
@@ -1375,14 +1416,14 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		}
 		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
 		// 恢复，再次判定非制度不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
-		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+		if h.autoDeleteCount(extractCtx, knowledge) > 0 {
 			meta.ExtractStatus = "failed"
 			meta.ExtractError = "系统判定非制度文件，但该文件已被人工恢复，已保留待人工处理"
 			logger.Warnf(ctx, "Regulation re-extraction judged non-regulation but row was restored before; keeping file %s", knowledgeID)
 		} else {
 			// 非制度文件不能存在于制度知识库 → 提取判定后自动删除该文件（保留物理文件，
 			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
-			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_regulation"); delErr != nil {
+			if delErr := h.kgService.AutoDeleteKnowledge(extractCtx, knowledgeID, "not_regulation"); delErr != nil {
 				logger.Warnf(ctx, "auto-delete non-regulation knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-regulation knowledge, ID: %s", knowledgeID)
@@ -1413,7 +1454,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist regulation extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
@@ -1471,7 +1512,18 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to extract award/punish fields"))
 		return
 	}
+	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
+	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		return
+	}
+	defer h.extractMu.Delete(knowledgeID)
+
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
+	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
+	defer extractCancel()
 
 	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
@@ -1505,14 +1557,14 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
 		return
 	}
-	chatModel, err := h.modelService.GetChatModel(effCtx, modelID)
+	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
 		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
 		return
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for award/punish extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
@@ -1529,7 +1581,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
 			}
 		}
@@ -1545,7 +1597,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	// 措施库约束：提取时 measure 仅从配置的措施列表中选取（用户自定义 + 默认兜底）
 	extractMeasures := make([]string, 0, 16)
 	measureSeen := map[string]bool{}
-	if measureCfg, merr := h.kgService.GetRecognitionConfig(effCtx, kbID); merr == nil {
+	if measureCfg, merr := h.kgService.GetRecognitionConfig(extractCtx, kbID); merr == nil {
 		for _, m := range measureCfg.Measures {
 			if n := strings.TrimSpace(m.Name); n != "" && !measureSeen[n] {
 				measureSeen[n] = true
@@ -1564,12 +1616,12 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	var extractErr error
 	sawRecord := false
 	// 用户配置的提取规则（scope=award_punish）：为空时 WithRules 行为与默认版一致
-	awardPunishRuleCfg := h.resolveAwardPunishRuleCfg(effCtx, kbID)
+	awardPunishRuleCfg := h.resolveAwardPunishRuleCfg(extractCtx, kbID)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractAwardPunishesFromContentWithRules(effCtx, chatModel, batch, extractMeasures, awardPunishRuleCfg)
+		batchRes, berr := service.ExtractAwardPunishesFromContentWithRules(extractCtx, chatModel, batch, extractMeasures, awardPunishRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
@@ -1593,7 +1645,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 			ExtractStatus: "failed",
 			ExtractError:  "award/punish extraction failed: " + extractErr.Error(),
 		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist award/punish extraction failed-state: %v", serr)
 			}
 		}
@@ -1603,7 +1655,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	}
 	extracted := merged
 	// 自动编号去重：无文号的奖惩按当天已有最大序号 +1 顺序递增（跨文件唯一）
-	autoSeq, seqErr := h.businessSvc.MaxAutoAwardPunishSeq(effCtx, kbID)
+	autoSeq, seqErr := h.businessSvc.MaxAutoAwardPunishSeq(extractCtx, kbID)
 	if seqErr != nil {
 		logger.Warnf(ctx, "Failed to compute auto award/punish seq for %s: %v", kbID, seqErr)
 	}
@@ -1621,7 +1673,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	}
 	// 自定义识别规则：奖惩类型归类（用户可配置关键词/正则 → 奖惩类型），
 	// 按模型提取出的奖惩类型字段匹配，命中则覆盖模型结果。
-	if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 		for i := range meta.Records {
 			if t := service.ClassifyTypeFromRules(meta.Records[i].ApType, recCfg); t != "" {
 				meta.Records[i].ApType = t
@@ -1631,14 +1683,14 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	if extracted.Kind == "not_award_punish" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为奖惩，置 manual 待补录，
 		// 不自动删除（解决"该是奖惩却没入库"的误判）。
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
 				meta.Kind = "award_punish"
 				meta.Records = []types.AwardPunishExtractionItem{}
 				meta.ExtractStatus = "manual"
 				meta.ExtractError = "识别规则命中，已认定为奖惩，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
 						logger.Warnf(ctx, "Failed to persist rule-rescued award/punish meta: %v", serr)
 					}
 				}
@@ -1657,14 +1709,14 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		}
 		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
 		// 恢复，再次判定非奖惩不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
-		if h.autoDeleteCount(effCtx, knowledge) > 0 {
+		if h.autoDeleteCount(extractCtx, knowledge) > 0 {
 			meta.ExtractStatus = "failed"
 			meta.ExtractError = "系统判定非奖惩文件，但该文件已被人工恢复，已保留待人工处理"
 			logger.Warnf(ctx, "Award/punish re-extraction judged non-award/punish but row was restored before; keeping file %s", knowledgeID)
 		} else {
 			// 非奖惩文件不能存在于奖惩知识库 → 提取判定后自动删除该文件（保留物理文件，
 			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
-			if delErr := h.kgService.AutoDeleteKnowledge(effCtx, knowledgeID, "not_award_punish"); delErr != nil {
+			if delErr := h.kgService.AutoDeleteKnowledge(extractCtx, knowledgeID, "not_award_punish"); delErr != nil {
 				logger.Warnf(ctx, "auto-delete non-award/punish knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-award/punish knowledge, ID: %s", knowledgeID)
@@ -1695,7 +1747,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist award/punish extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
