@@ -2161,6 +2161,7 @@ func (h *BusinessExtractHandler) checkDuplicateNo(ctx context.Context, kbID, kno
 	if force {
 		return "", "", nil
 	}
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	var field, arrKey string
 	if _, ok := meta["invoices"].([]interface{}); ok {
 		field = "invoice_no"
@@ -2192,7 +2193,7 @@ func (h *BusinessExtractHandler) checkDuplicateNo(ctx context.Context, kbID, kno
 	}
 	if err := h.db.WithContext(ctx).Table("knowledges").
 		Select("id, custom_metadata").
-		Where("knowledge_base_id = ? AND id <> ? AND deleted_at IS NULL AND custom_metadata IS NOT NULL", kbID, knowledgeID).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id <> ? AND deleted_at IS NULL AND custom_metadata IS NOT NULL", tenantID, kbID, knowledgeID).
 		Find(&rows).Error; err != nil {
 		return "", "", err
 	}
