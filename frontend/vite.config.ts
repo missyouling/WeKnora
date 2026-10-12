@@ -130,6 +130,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // 允许 Cloudflare 隧道域名（开发调试用，不影响生产构建）
+    allowedHosts: ['.trycloudflare.com', '.mozuiapp.com'],
     // 代理配置，用于开发环境
     proxy: {
       '/mcp/': {
