@@ -1075,7 +1075,25 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	// 合并而非覆盖：保留 custom_metadata 中提取流程不管理的字段
+	//（如 auto_deleted_count、历史 fleet_cert_type），避免整 JSON 覆盖丢数据。
+	// 三结构体收敛：以 InvoiceCustomMetadata 为唯一写入形状，其它字段透传保留。
+	mergedJSON := metaJSON
+	if len(knowledge.CustomMetadata) > 0 {
+		var existing map[string]interface{}
+		var fresh map[string]interface{}
+		if jerr1 := json.Unmarshal(knowledge.CustomMetadata, &existing); jerr1 == nil {
+			if jerr2 := json.Unmarshal(metaJSON, &fresh); jerr2 == nil {
+				for k, v := range fresh {
+					existing[k] = v
+				}
+				if mj, merr := json.Marshal(existing); merr == nil {
+					mergedJSON = mj
+				}
+			}
+		}
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(mergedJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist invoice extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
