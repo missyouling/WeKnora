@@ -993,6 +993,14 @@ export function listContractOverview(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/contracts/overview-stats`);
 }
 
+export function listRegulationOverview(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/regulations/overview-stats`);
+}
+
+export function listAwardPunishOverview(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/award-punish-records/overview-stats`);
+}
+
 
 /**
  * 制度级聚合列表：服务端全字段搜索、类型/编制日期筛选、排序与分页。
