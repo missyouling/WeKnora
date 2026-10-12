@@ -17,8 +17,8 @@ export interface DocRowLike {
 interface Options {
   /** 本地轮询中的 knowledgeId 集合（来自 useBusinessPolling） */
   extractInFlight: Ref<Set<string>>
-  /** 本地轮询失败的 knowledgeId 集合 */
-  extractFailed: Ref<Set<string>>
+  /** 本地轮询失败的 knowledgeId 集合（id -> 首次失败时间戳，支持冷却后重试） */
+  extractFailed: Ref<Map<string, number>>
   /** 当前详情抽屉行（用于 summaryState） */
   currentDetail: Ref<{ summary_status?: string } | null>
   /** 业务尾缀，如 contract / invoice / regulation / award_punish */

@@ -38,7 +38,9 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
   const { kbId, extractFn, onPendingFiles, onRemoved, onTick, intervalMs = 3000, filter } = opts
 
   const extractInFlight = ref<Set<string>>(new Set())
-  const extractFailed = ref<Set<string>>(new Set())
+  // 失败记录：id -> 首次失败时间戳。5 分钟后允许重试，避免一次网络抖动永久拉黑
+  const extractFailed = ref<Map<string, number>>(new Map())
+  const RETRY_AFTER_MS = 5 * 60 * 1000
   const pendingFiles = ref<BusinessFileItem[]>([])
 
   let timer: ReturnType<typeof setInterval> | null = null
@@ -63,8 +65,10 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
         }
         if (ps === 'completed') {
           const es = item.custom_metadata?.extract_status
+          const failedAt = extractFailed.value.get(item.id)
+          const canRetry = !failedAt || Date.now() - failedAt > RETRY_AFTER_MS
           if ((!es || es === 'pending' || es === 'processing') &&
-              !extractInFlight.value.has(item.id) && !extractFailed.value.has(item.id)) {
+              !extractInFlight.value.has(item.id) && canRetry) {
             needExtract.push(item)
           }
           if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
@@ -81,7 +85,7 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           const r: any = await extractFn(kbId.value, item.id)
           if (r?.data?.removed) onRemoved?.(item)
         } catch {
-          extractFailed.value.add(item.id)
+          if (!extractFailed.value.has(item.id)) extractFailed.value.set(item.id, Date.now())
         }
       }
       for (const id of Array.from(extractInFlight.value)) {

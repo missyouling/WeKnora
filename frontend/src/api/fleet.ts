@@ -153,8 +153,8 @@ export function getExtractConfig(kbId: string, scope: string, certType: string) 
 export function saveExtractConfig(kbId: string, payload: Record<string, unknown>) {
   return post(`/api/v1/knowledge-bases/${kbId}/extract-config`, payload)
 }
-export function testExtractConfig(kbId: string, payload: Record<string, unknown>) {
-  return post(`/api/v1/knowledge-bases/${kbId}/extract-config/test`, payload)
+export function testExtractConfig(kbId: string, payload: Record<string, unknown>, signal?: AbortSignal) {
+  return post(`/api/v1/knowledge-bases/${kbId}/extract-config/test`, payload, { timeout: 120000, signal })
 }
 
 // ---- 证照提取 ----
