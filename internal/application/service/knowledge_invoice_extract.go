@@ -1032,3 +1032,178 @@ func ExtractInvoicesByLineRulesFromChunks(chunks []*types.Chunk) (*InvoiceExtrac
 	}
 	return ExtractInvoicesByLineRules(strings.Join(parts, "\n"))
 }
+
+// ============ 规则提取（Markdown 表格模板，invoice2.html 渲染） ============
+//
+// 新版 docreader 对电子票据汇总单按 HTML 模板（invoice2.html）渲染后，文本层
+// 输出为 Markdown 表格（而非旧的纯文本「号码行 + ¥金额行」）：
+//
+//	发票号码：<20位> 通行费电子发票（普通发票） 开票日期：<日期>
+//	购 销 买 名称：<买方> 售 名称：<卖方> 方 方
+//	|||<买方税号>|||||<卖方税号>||
+//	|项目名称|车牌号|车辆类型|通行日期起||通行日期止|金额|税率/征收率|税额|
+//	|<项目>|<车牌>|<车型>|<通行起>||<通行止>|<金额>|<税率>|<税额>|
+//
+// 该模板下中文名称/大写金额常因 PDF 嵌入字体缺少 ToUnicode 而乱码，但税号、
+// 车牌、通行日期、金额、税率、税额均为 ASCII，可 100% 确定性提取。
+
+var (
+	// mdTaxRowRe 匹配「税号行」：|||<买方税号>|||||<卖方税号>||
+	mdTaxRowRe = regexp.MustCompile(
+		`^\|\|\|([0-9A-Z]{15,20})\|\|\|\|\|([0-9A-Z]{15,20})\|\|\s*$`)
+	// mdDataRowRe 匹配每张发票的表格「数据行」（表头行因通行起位置非 8 位
+	// 数字而天然被排除）：
+	// |项目|车牌|车型|通行起||通行止|金额|税率|税额|
+	mdDataRowRe = regexp.MustCompile(
+		`^\|([^|]*)\|([^|]*)\|([^|]*)\|(\d{8})\|\|(\d{8})\|([\d.]+)\|(\d+(?:\.\d+)?%)\|([\d.]+)\|\s*$`)
+	// mdInvoiceNoRe 抓取「发票号码：<20位>」；汇总单通常仅首张渲染号码。
+	mdInvoiceNoRe = regexp.MustCompile(`发票号码[：:]\s*(\d{20})`)
+	// mdIssuerRe 抓取开票人（仅当不含乱码替换字符时采用）。
+	mdIssuerRe = regexp.MustCompile(`开票人\s*[:：]\s*(\S+)`)
+)
+
+// mdDateFromCompact 将 8 位紧凑日期（20260902）转为 YYYY-MM-DD；非法返回空。
+func mdDateFromCompact(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) != 8 {
+		return ""
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return fmt.Sprintf("%s-%s-%s", s[:4], s[4:6], s[6:8])
+}
+
+// mdCleanText 去除 PDF 文本层乱码替换字符并裁剪；若结果含替换字符或为空，
+// 返回空串，表示该字段在文本层不可用。
+func mdCleanText(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsRune(s, '\ufffd') {
+		return ""
+	}
+	return s
+}
+
+// ExtractInvoicesByMarkdownTableRules 按 Markdown 表格模板从电子票据文本中
+// 提取全部发票。税号行总在其数据行之前（可能跨 chunk：税号行在 chunk 末尾、
+// 数据行在下一 chunk 开头），逐行扫描时以「最近一个税号行」配对其后第一个
+// 数据行。返回 (result, true) 表示命中（数据行非空）；否则 (nil, false)。
+//
+// docHint 为来源 knowledge 短标识，用于为缺失发票号生成全局唯一占位，
+// 避免 Normalize 按发票号去重时跨文件冲突。
+func ExtractInvoicesByMarkdownTableRules(content, docHint string) (*InvoiceExtractionResult, bool) {
+	if strings.TrimSpace(content) == "" {
+		return nil, false
+	}
+	// 预收集全部发票号码（按出现顺序），通常仅首张有。
+	var headNos []string
+	for _, m := range mdInvoiceNoRe.FindAllStringSubmatch(content, -1) {
+		headNos = append(headNos, m[1])
+	}
+
+	var (
+		invoices []InvoiceExtractionItem
+		seen     = make(map[string]struct{})
+		buyerTax string
+		sellerTax string
+	)
+	for _, raw := range strings.Split(content, "\n") {
+		ln := strings.TrimSpace(raw)
+		if ln == "" {
+			continue
+		}
+		if tx := mdTaxRowRe.FindStringSubmatch(ln); tx != nil {
+			buyerTax = tx[1]
+			sellerTax = tx[2]
+			continue
+		}
+		d := mdDataRowRe.FindStringSubmatch(ln)
+		if d == nil {
+			continue
+		}
+		plate := mdCleanText(d[2])
+		passStart := d[4]
+		passEnd := d[5]
+		amount := parseAmountToFloat(d[6])
+		taxRate := parsePercentToFloat(d[7])
+		tax := parseAmountToFloat(d[8])
+		// 身份键去重（防 chunk overlap 重复数据行）。
+		ident := strings.Join([]string{plate, passStart, passEnd, d[6], d[8]}, "|")
+		if _, dup := seen[ident]; dup {
+			continue
+		}
+		seen[ident] = struct{}{}
+
+		idx := len(invoices) + 1
+		// 发票号：取预收集号码的第 idx 个，缺失则生成唯一占位。
+		no := ""
+		if idx <= len(headNos) {
+			no = headNos[idx-1]
+		}
+		if no == "" {
+			no = fmt.Sprintf("TMP-%s-%02d", docHint, idx)
+		}
+		// 开票日期在该模板下常乱码，用通行日期起兜底。
+		date := mdDateFromCompact(passStart)
+		// 价税合计 = 金额 + 税额（小写价税合计在文本层乱码）。
+		var total *float64
+		if amount != nil && tax != nil {
+			t := *amount + *tax
+			total = &t
+		}
+		// 开票人：仅在不含乱码时采用。
+		issuer := ""
+		if im := mdIssuerRe.FindStringSubmatch(ln); im != nil {
+			issuer = mdCleanText(im[1])
+		}
+		remark := fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", plate, passStart, passEnd)
+
+		inv := InvoiceExtractionItem{
+			InvoiceNo:   no,
+			InvoiceDate: date,
+			InvoiceType: "普通发票", // 通行费电子发票均为增值税普通发票
+			Category:    "通行费发票",
+			BuyerTaxNo:  buyerTax,
+			SellerTaxNo: sellerTax,
+			Amount:      amount,
+			Tax:         tax,
+			TaxRate:     taxRate,
+			TotalAmount: total,
+			Issuer:      issuer,
+			Remark:      remark,
+		}
+		if plate != "" {
+			inv.Fields = map[string]any{"车牌号": plate}
+		}
+		// Items 填一条通行费明细（price + tax_rate），供 Normalize 的
+		// dominantItemTaxRate 计算列表税率列（否则税率列被覆盖为 nil）。
+		inv.Items = []InvoiceExtractionLine{{Name: "通行费", Price: amount, TaxRate: taxRate}}
+		invoices = append(invoices, inv)
+	}
+
+	if len(invoices) == 0 {
+		return nil, false
+	}
+	return &InvoiceExtractionResult{Kind: "invoice", Invoices: invoices}, true
+}
+
+// ExtractInvoicesByMarkdownTableRulesFromChunks 将 text/OCR chunks 按页序
+// 拼接后执行 Markdown 表格规则提取。
+func ExtractInvoicesByMarkdownTableRulesFromChunks(chunks []*types.Chunk, docHint string) (*InvoiceExtractionResult, bool) {
+	var parts []string
+	for _, c := range chunks {
+		if c == nil || c.Content == "" {
+			continue
+		}
+		if c.ChunkType != types.ChunkTypeText && c.ChunkType != types.ChunkTypeImageOCR {
+			continue
+		}
+		parts = append(parts, c.Content)
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return ExtractInvoicesByMarkdownTableRules(strings.Join(parts, "\n"), docHint)
+}

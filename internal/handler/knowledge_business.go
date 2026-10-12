@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -774,6 +775,30 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		return
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
+	// failed 状态。否则 gin request ctx 被取消后，DB 写入报 context canceled，
+	// failed 状态写不进去，记录永久停在"提取中"（实测 3 分钟超时循环 5 次）。
+	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
+
+	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
+	// 保证状态闭环，不允许永久转圈。
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "Invoice extraction panic recovered: %v\n%s", r, debug.Stack())
+			if failMeta, jerr := json.Marshal(invoiceCustomMetadata{
+				Kind:          "invoice",
+				ExtractStatus: "failed",
+				ExtractError:  fmt.Sprintf("invoice extraction panic: %v", r),
+			}); jerr == nil {
+				if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+					logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
+				}
+			}
+			if !c.Writer.Written() {
+				c.Error(errors.NewInternalServerError(fmt.Sprintf("invoice extraction panic: %v", r)))
+			}
+		}
+	}()
 
 	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
@@ -825,7 +850,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
 			}
 		}
@@ -856,10 +881,27 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// 规则提取优先：系统生成的规整电子票据（通行费汇总单等）文本格式固定，
 	// 按「号码行+金额行」正则可 100% 全量命中（模型在高模板噪音长文本中会漏提，
 	// 实测 18 张通行费发票只提取出 1~8 张）；未命中该固定格式时才回退分批模型。
-	if ruleRes, ruleOK := service.ExtractInvoicesByLineRulesFromChunks(chunks); ruleOK {
+	docHint := knowledgeID
+	if len(docHint) > 8 {
+		docHint = docHint[:8]
+	}
+	ruleRes, ruleOK := service.ExtractInvoicesByLineRulesFromChunks(chunks)
+	if ruleOK {
+		logger.Infof(ctx, "Invoice extraction by line rules: %d invoices from knowledge %s", len(ruleRes.Invoices), knowledgeID)
+	}
+	if !ruleOK {
+		// 新版 docreader（invoice2.html）输出 Markdown 表格，旧纯文本「号码行+金额行」
+		// 规则不命中；改用 Markdown 表格规则确定性提取（税号/车牌/日期/金额/税率/税额
+		// 均为 ASCII），避免回退 LLM 在乱码长文本上耗时 3 分钟超时。
+		if mdRes, mdOK := service.ExtractInvoicesByMarkdownTableRulesFromChunks(chunks, docHint); mdOK {
+			ruleRes = mdRes
+			ruleOK = true
+			logger.Infof(ctx, "Invoice extraction by markdown-table rules: %d invoices from knowledge %s", len(mdRes.Invoices), knowledgeID)
+		}
+	}
+	if ruleOK {
 		merged = ruleRes
 		sawInvoice = len(ruleRes.Invoices) > 0
-		logger.Infof(ctx, "Invoice extraction by line rules: %d invoices from knowledge %s", len(ruleRes.Invoices), knowledgeID)
 	} else {
 		for i, batch := range batches {
 			if strings.TrimSpace(batch) == "" {
@@ -911,7 +953,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			ExtractStatus: "failed",
 			ExtractError:  "invoice extraction failed: " + extractErr.Error(),
 		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist invoice extraction failed-state: %v", serr)
 			}
 		}
@@ -1026,7 +1068,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist invoice extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
