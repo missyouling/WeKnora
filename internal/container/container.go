@@ -808,7 +808,18 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 			os.Getenv("DB_NAME"),
 			"disable",
 		)
-		dialector = postgres.Open(gormDSN)
+		// Supabase 共享池（事务模式，6543 端口）不支持 prepared statement 缓存，
+		// 会报 "prepared statement already exists"。仅当显式设置
+		// WEKNORA_DB_SIMPLE_PROTOCOL=true 时改用简单协议（VM 开发环境经出口代理
+		// 只能走事务池时需要）；默认保持上游原逻辑，生产环境直连不受影响。
+		if os.Getenv("WEKNORA_DB_SIMPLE_PROTOCOL") == "true" {
+			dialector = postgres.New(postgres.Config{
+				DSN:                  gormDSN,
+				PreferSimpleProtocol: true,
+			})
+		} else {
+			dialector = postgres.Open(gormDSN)
+		}
 
 		// DSN for golang-migrate (URL format)
 		// URL-encode password to handle special characters like !@#
