@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -29,6 +30,9 @@ type BusinessExtractHandler struct {
 	businessSvc     *service.BusinessExtractService
 	storageResolver interfaces.StorageBackendResolver
 	resourceCatalog interfaces.ResourceCatalog
+	// extractMu 按 knowledgeID 防重入：同一文档并发提取会重复烧 token 且后写覆盖。
+	// 单实例内存锁（多实例部署时需换分布式锁）。
+	extractMu sync.Map // map[string]struct{}
 }
 
 // NewBusinessExtractHandler 构造业务提取 Handler。
@@ -779,6 +783,13 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewForbiddenError("No permission to extract invoice fields"))
 		return
 	}
+	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
+	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		return
+	}
+	defer h.extractMu.Delete(knowledgeID)
+
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
 	// failed 状态。否则 gin request ctx 被取消后，DB 写入报 context canceled，
@@ -1153,6 +1164,13 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		c.Error(errors.NewForbiddenError("No permission to extract invoice fields"))
 		return
 	}
+	// 防重入：与整份提取共用同一文档锁
+	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		return
+	}
+	defer h.extractMu.Delete(knowledgeID)
+
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, _ := parseSandboxPagination(c)
