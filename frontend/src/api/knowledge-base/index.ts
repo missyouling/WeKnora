@@ -893,17 +893,6 @@ export function updateKnowledgeInfo(
   return put(`/api/v1/knowledge/${id}`, data);
 }
 
-/**
- * 触发发票字段提取：后端读取已解析文本并调用提取模型（复用知识库的
- * summary_model_id），将结果写入 custom_metadata。
- * 幂等：对同一 knowledge 重复调用会覆盖写，返回当前提取结果。
- */
-
-export function extractInvoice(kbId: string, knowledgeId: string) {
-  // 长超时：多张发票（如 18/22 张）提取需 LLM 生成超长 JSON，30s 默认超时会
-  // 导致前端取消请求 → 后端 context canceled → 提取失败。
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-invoice`, {}, { timeout: 600000 });
-}
 
 /**
  * 发票级聚合列表：服务端按发票号去重、全字段搜索、类型/税率/开票日期筛选、
@@ -963,17 +952,6 @@ export function deleteInvoicePage(kbId: string, knowledgeId: string, page: numbe
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/delete-invoice-page`, { page }, { timeout: 120000 });
 }
 
-/**
- * 触发合同字段提取：后端读取已解析文本并调用提取模型（复用知识库的
- * summary_model_id），将结果写入 custom_metadata。
- * 幂等：对同一 knowledge 重复调用会覆盖写，返回当前提取结果。
- */
-
-export function extractContract(kbId: string, knowledgeId: string) {
-  // 长超时：多份合同文档提取需 LLM 生成超长 JSON，30s 默认超时会
-  // 导致前端取消请求 → 后端 context canceled → 提取失败。
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-contract`, {}, { timeout: 600000 });
-}
 
 /**
  * 合同级聚合列表：服务端全字段搜索、类型/履约状态/签订日期筛选、
@@ -1015,14 +993,6 @@ export function listContractOverview(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/contracts/overview-stats`);
 }
 
-/**
- * 触发制度字段提取：后端读取已解析文本并调用提取模型（复用知识库的
- * summary_model_id），将结果写入 custom_metadata。
- */
-
-export function extractRegulation(kbId: string, knowledgeId: string) {
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-regulation`, {}, { timeout: 600000 });
-}
 
 /**
  * 制度级聚合列表：服务端全字段搜索、类型/编制日期筛选、排序与分页。
@@ -1052,14 +1022,6 @@ export function listRegulationTypes(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/regulation-types`);
 }
 
-/**
- * 奖惩字段提取：复用知识库配置的摘要模型（summary_model_id），按当事人
- * 拆分多条奖惩记录，将结果写入 custom_metadata。
- */
-
-export function extractAwardPunish(kbId: string, knowledgeId: string) {
-  return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-award-punish`, {}, { timeout: 600000 });
-}
 
 /**
  * P1-C: 统一业务文档提取入口。前端只调这一个接口，后端按 scope 分发。
