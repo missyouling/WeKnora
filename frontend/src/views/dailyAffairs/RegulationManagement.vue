@@ -91,6 +91,8 @@
           </BusinessListToolbar>
         </div>
       </div>
+      <!-- 概览 KPI 卡 -->
+      <DashboardKpiGroup :cards="overviewCards" class="regulation-kpi-group" />
 
       <!-- 制度列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -417,6 +419,7 @@ import {
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
+import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
@@ -538,6 +541,27 @@ interface RegulationRow extends Record<string, any> {
 
 const items = ref<KnowledgeItem[]>([])
 const regulationRows = ref<RegulationRow[]>([])
+
+// KPI 卡：总数、本月新增、按类型分布（前端基于已加载数据计算）
+const overviewCards = computed(() => {
+  const rows = regulationRows.value || []
+  const total = rows.length
+  const now = new Date()
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+  const monthCount = rows.filter((r: any) => (r.issueDate || '') >= monthStart).length
+  const byType: Record<string, number> = {}
+  for (const r of rows) {
+    const t = (r as any).regType || '未分类'
+    byType[t] = (byType[t] || 0) + 1
+  }
+  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string }> = [
+    { key: 'total', label: '已收录制度', icon: 'file', value: `${total}`, unit: '份', sub: `本月新增 ${monthCount} 份` },
+  ]
+  for (const [type, count] of Object.entries(byType)) {
+    cards.push({ key: `type-${type}`, label: type, icon: 'file-1', value: `${count}`, unit: '份', sub: '' })
+  }
+  return cards
+})
 // 进行中的文件（解析中/提取中/待提取），在制度级列表顶部以状态行展示
 const regulationSummary = ref<{ total: number; sumAmount: number; sumTotal: number }>({
   total: 0, sumAmount: 0, sumTotal: 0,
