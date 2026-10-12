@@ -908,6 +908,8 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		merged = ruleRes
 		sawInvoice = len(ruleRes.Invoices) > 0
 	} else {
+		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
+		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(effCtx), "、")
 		for i, batch := range batches {
 			if strings.TrimSpace(batch) == "" {
 				continue
@@ -921,7 +923,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 					"请逐张提取本批文本中出现的全部发票（特征：发票号码、金额、税率/征收率、税额、价税合计、购销方信息、开票人、发票类型等），一张都不可遗漏。"+
 					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
 					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
-				knowledge.FileName, knowledge.Description, i+1, len(batches), strings.Join(h.enabledInvoiceCategoryNames(effCtx), "、"))
+				knowledge.FileName, knowledge.Description, i+1, len(batches), enabledCategoryNames)
 			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(effCtx, chatModel, batch, invoiceRuleCfg, guide)
 			if berr != nil {
 				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
