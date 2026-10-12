@@ -35,7 +35,10 @@ type invoiceMetadata struct {
 //  3. 按发票号去重（空号不去重；同号保留 created_at 最新）；
 //  4. 按 filter 过滤、聚合、排序、分页。
 func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID string, filter types.InvoiceListFilter) (*types.InvoiceListResult, error) {
-	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+	if tenantID == 0 {
+		return nil, fmt.Errorf("tenant id missing in context")
+	}
 	if filter.Page < 1 {
 		filter.Page = 1
 	}
