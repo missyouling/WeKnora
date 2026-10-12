@@ -1779,7 +1779,7 @@ const handleFileExtract = async () => {
     loadInvoiceOverview()
   } catch (e: any) {
     loading.close()
-    extractFailed.value.add(row.knowledgeId)
+    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)

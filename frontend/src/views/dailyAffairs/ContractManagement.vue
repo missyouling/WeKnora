@@ -1560,7 +1560,7 @@ const handleReExtract = async () => {
     // 解析完成后延迟刷新列表与概览卡（新记录/类型变化同步到卡片统计）
     setTimeout(() => { loadFiles(true); loadContractOverview() }, 1500)
   } catch (e: any) {
-    extractFailed.value.add(row.knowledgeId)
+    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)

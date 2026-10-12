@@ -1174,7 +1174,7 @@ const handleReExtract = async () => {
     MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
     setTimeout(() => { loadFiles(true) }, 1500)
   } catch (e: any) {
-    extractFailed.value.add(row.knowledgeId)
+    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     extractInFlight.value.delete(row.knowledgeId)
