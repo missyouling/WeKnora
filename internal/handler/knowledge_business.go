@@ -426,7 +426,9 @@ func (h *BusinessExtractHandler) ExtractContractPage(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, _ := parseSandboxPagination(c)
-	if page < 1 {
+	// query 未显式传 page 时，允许从 POST body 取（parseSandboxPagination 恒返回 >=1，
+	// 原 if page < 1 判断永假，body 分支为死代码）
+	if c.Query("page") == "" {
 		var req struct {
 			Page int `json:"page"`
 		}
@@ -563,7 +565,9 @@ func (h *BusinessExtractHandler) DeleteContractPage(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, _ := parseSandboxPagination(c)
-	if page < 1 {
+	// query 未显式传 page 时，允许从 POST body 取（parseSandboxPagination 恒返回 >=1，
+	// 原 if page < 1 判断永假，body 分支为死代码）
+	if c.Query("page") == "" {
 		var req struct {
 			Page int `json:"page"`
 		}
@@ -1132,7 +1136,9 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, _ := parseSandboxPagination(c)
-	if page < 1 {
+	// query 未显式传 page 时，允许从 POST body 取（parseSandboxPagination 恒返回 >=1，
+	// 原 if page < 1 判断永假，body 分支为死代码）
+	if c.Query("page") == "" {
 		var req struct {
 			Page int `json:"page"`
 		}
@@ -1291,7 +1297,9 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, _ := parseSandboxPagination(c)
-	if page < 1 {
+	// query 未显式传 page 时，允许从 POST body 取（parseSandboxPagination 恒返回 >=1，
+	// 原 if page < 1 判断永假，body 分支为死代码）
+	if c.Query("page") == "" {
 		var req struct {
 			Page int `json:"page"`
 		}
