@@ -782,6 +782,13 @@ const invoiceSettingsVisible = ref(false)
 const printCount = ref(0)
 const printBusy = ref(false)
 const printUrl = ref('')
+// 释放旧 Blob URL，避免重复生成/关闭弹窗时泄漏内存
+function revokePrintUrl() {
+  if (printUrl.value) {
+    URL.revokeObjectURL(printUrl.value)
+    printUrl.value = ''
+  }
+}
 const printLoaded = ref(false)
 const printMode = ref<'print' | 'catalog'>('print')
 const catalogBusy = ref(false)
@@ -1793,7 +1800,7 @@ const handleBatchPrint = async () => {
   const rows = selectedRows.value
   if (!rows.length) return
   printBusy.value = true
-  printUrl.value = ''
+  revokePrintUrl()
   printLoaded.value = false
   printCount.value = rows.length
   printVisible.value = true
@@ -1852,6 +1859,7 @@ const handleBatchPrint = async () => {
       return
     }
     const bytes = await out.save()
+    revokePrintUrl()
     printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
     if (notes.length) {
       setTimeout(() => MessagePlugin.warning(notes.join('；')), 300)
@@ -1924,7 +1932,7 @@ const handleBatchCatalog = async () => {
     const bytes = await generateCatalogPdf({ title: '发票目录', columns: cols, rows })
     printMode.value = 'catalog'
     printCount.value = rows.length
-    if (printUrl.value) URL.revokeObjectURL(printUrl.value)
+    revokePrintUrl()
     printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
     printVisible.value = true
   } catch (e: any) {
@@ -2066,7 +2074,13 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling()
   deleteRefreshTimers.forEach(clearTimeout)
+  revokePrintUrl()
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+})
+
+// 打印弹窗关闭时释放 Blob URL
+watch(printVisible, (v) => {
+  if (!v) revokePrintUrl()
 })
 </script>
 
