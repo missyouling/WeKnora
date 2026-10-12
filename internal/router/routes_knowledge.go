@@ -100,11 +100,12 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
 			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
 			kb.POST("/:knowledgeId/extract-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractContractPage)
+			kb.POST("/:knowledgeId/delete-contract-page", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.DeleteContractPage)
 			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
 			// 			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
 			kb.POST("/deleted-knowledge/:knowledgeId/restore", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.RestoreDeletedKnowledge)
 			kb.POST("/deleted-knowledge/:knowledgeId/purge", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.PurgeDeletedKnowledge)
-			// 			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
+			kbRead.GET("/:knowledgeId/preview-deleted", g.Viewer(), g.KBAccessRead("id"), business.PreviewDeletedKnowledgeFile)
 			kbRead.GET("/fleet-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.FleetOverviewStats)
 			// 源文件直连预览 URL（COS 预签名 / local /r/ 授权），供前端 iframe/img 无头直连
 			kbRead.GET("/:knowledgeId/preview-url", g.Viewer(), g.KBAccessRead("id"), business.GetKnowledgePreviewURL)
