@@ -61,8 +61,8 @@
             </template>
           </BusinessListToolbar>
 
-      <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，兜底 pendingFiles 计数），替代旧的列表占位行 -->
-      <BusinessParseStatusBar :progress="uploadProgress" :pending-files="pendingFiles" />
+      <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
+      <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
 
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -1440,6 +1440,41 @@ function stopProgressTimer() {
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
 }
 onBeforeUnmount(stopProgressTimer)
+
+// 解析/提取实时进度（弹窗关闭后兜底数据源）：
+// 后端轮询只返回状态枚举（pending/processing/completed + extract_status），无真实百分比。
+// 沿用上传弹窗同款"按耗时估算"口径：parsing 8→92、extracting 30→100；
+// 起点 = 文件首次进入进行中集合的时刻（fileStartAt 记忆表）。
+const fileStartAt = new Map<string, number>()
+const liveProgress = computed(() => {
+  const now = Date.now()
+  return pendingFiles.value.map((f) => {
+    const id = f.id
+    if (!fileStartAt.has(id)) fileStartAt.set(id, now)
+    const start = fileStartAt.get(id)!
+    const elapsed = (now - start) / 1000
+    const ps = f.parse_status || ''
+    const es = f.custom_metadata?.extract_status || ''
+    const name = f.file_name || f.title || id
+    // 解析已完成、提取进行中 → 提取阶段；否则视为解析阶段
+    if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) {
+      return { name, stage: 'extracting' as const, percent: Math.min(100, Math.round(30 + elapsed * 2)) }
+    }
+    return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
+  })
+})
+// 文件离开进行中集合后清理起点记忆，避免 id 复用导致百分比从旧值续算
+watch(pendingFiles, (v) => {
+  const alive = new Set(v.map((f: any) => f.id))
+  for (const id of Array.from(fileStartAt.keys())) {
+    if (!alive.has(id)) fileStartAt.delete(id)
+  }
+})
+// 弹窗打开期间优先展示上传弹窗上报的真实进度（含真实上传百分比）；
+// 弹窗关闭后 uploadProgress 停更，自动切换到轮询派生的解析/提取进度，状态条不中断。
+const displayProgress = computed(() =>
+  uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
+)
 
 const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
