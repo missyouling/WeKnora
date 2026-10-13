@@ -87,6 +87,7 @@ const groupRef = ref<HTMLElement>()
 const canLeft = ref(false)
 const canRight = ref(false)
 let groupRO: ResizeObserver | null = null
+let scrollRaf = 0
 
 const updateArrows = () => {
   const el = groupRef.value
@@ -95,10 +96,32 @@ const updateArrows = () => {
   canRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 2
 }
 
+// 手动 rAF 驱动滚动动画：原生 scrollBy({behavior:'smooth'}) 的滚动事件时序不可靠
+// （真实窄窗/动画中断场景下箭头状态不随滚动更新），改为每帧设置 scrollLeft 并强制
+// 刷新箭头状态，滚动结束保证左右箭头与边界严格同步。
 const scrollByStep = (dir: -1 | 1) => {
   const el = groupRef.value
   if (!el) return
-  el.scrollBy({ left: el.clientWidth * 0.7 * dir, behavior: 'smooth' })
+  const step = el.clientWidth * 0.7
+  const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + step * dir))
+  if (Math.abs(target - el.scrollLeft) < 1) {
+    updateArrows()
+    return
+  }
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  const start = el.scrollLeft
+  const delta = target - start
+  const dur = 260
+  const t0 = performance.now()
+  const tick = (now: number) => {
+    const p = Math.min(1, (now - t0) / dur)
+    // easeInOutQuad：匀速中段快、两端缓，观感与原生 smooth 一致
+    const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
+    el.scrollLeft = start + delta * eased
+    updateArrows()
+    if (p < 1) scrollRaf = requestAnimationFrame(tick)
+  }
+  scrollRaf = requestAnimationFrame(tick)
 }
 
 onMounted(() => {
@@ -113,6 +136,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (scrollRaf) cancelAnimationFrame(scrollRaf)
   const el = groupRef.value
   if (el) el.removeEventListener('scroll', updateArrows)
   if (groupRO) groupRO.disconnect()
