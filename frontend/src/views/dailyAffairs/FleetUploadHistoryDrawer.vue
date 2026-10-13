@@ -282,8 +282,14 @@ const reparseRow = async (row: any) => {
   row._reparsing = true
   try {
     await reparseKnowledge(row.id)
+    // 后端 reparse 为异步任务：接口 200 只代表任务已提交，此时 parse_status 仍是旧值（如 failed）。
+    // ① 乐观置为 pending（解析中），点击后立即反馈；
+    // ② 不执行 reload(1)——整表刷新会拉回任务入队前的旧 failed 状态，覆盖乐观值导致"先失败后解析中"闪现；
+    //    抽屉轮询（silentSync）随后自动跟踪 pending → processing → completed/failed 真实状态。
+    row.parse_status = 'pending'
+    row.custom_metadata = { ...(row.custom_metadata || {}), parse_error: '' }
     MessagePlugin.success('已重新解析')
-    reload(1)
+    emit('changed')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
