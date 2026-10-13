@@ -3,7 +3,17 @@
   <div v-if="loading" class="dash-kpi-skeleton" aria-hidden="true">
     <div v-for="i in 5" :key="i" class="dash-kpi-skeleton__card" />
   </div>
-  <div v-else class="dash-kpi-group">
+  <div v-else ref="groupRef" class="dash-kpi-group">
+    <!-- 溢出导航：滚动条被隐藏后，纯鼠标/触摸用户仍能点击箭头将不可见卡片滚入视口 -->
+    <button
+      v-if="canLeft"
+      type="button"
+      class="dash-kpi-arrow is-left"
+      aria-label="向左滚动"
+      @click="scrollByStep(-1)"
+    >
+      <t-icon name="chevron-left" />
+    </button>
     <div
       v-for="card in cards"
       :key="card.key"
@@ -22,10 +32,20 @@
         <div v-if="card.sub" class="dash-kpi-card__sub">{{ card.sub }}</div>
       </div>
     </div>
+    <button
+      v-if="canRight"
+      type="button"
+      class="dash-kpi-arrow is-right"
+      aria-label="向右滚动"
+      @click="scrollByStep(1)"
+    >
+      <t-icon name="chevron-right" />
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 // 概览 KPI 卡片组（中台统一组件）：
 // 提炼自 InvoiceManagement.vue 的 type-card 范式 —— flex 左右布局 + 40px 圆角图标底 +
 // hover 上浮 + 大字号数值（超长自动降档）。卡片点击由父级通过 card-click 事件联动业务。
@@ -59,6 +79,44 @@ const isActive = (card: KpiCard): boolean => {
   if (card.action === 'type' && card.typeValue) return props.activeType === card.typeValue
   return false
 }
+
+// ---- 横向溢出导航（方案 B）：滚动条隐藏后提供左右箭头入口 ----
+// 仅当内容溢出（scrollWidth > clientWidth）时箭头才出现，滚动到边界自动隐藏对应箭头；
+// 监听 scroll 与容器尺寸变化（ResizeObserver）实时刷新状态，卸载时清理监听。
+const groupRef = ref<HTMLElement>()
+const canLeft = ref(false)
+const canRight = ref(false)
+let groupRO: ResizeObserver | null = null
+
+const updateArrows = () => {
+  const el = groupRef.value
+  if (!el) return
+  canLeft.value = el.scrollLeft > 2
+  canRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 2
+}
+
+const scrollByStep = (dir: -1 | 1) => {
+  const el = groupRef.value
+  if (!el) return
+  el.scrollBy({ left: el.clientWidth * 0.7 * dir, behavior: 'smooth' })
+}
+
+onMounted(() => {
+  nextTick(() => {
+    const el = groupRef.value
+    if (!el) return
+    updateArrows()
+    el.addEventListener('scroll', updateArrows, { passive: true })
+    groupRO = new ResizeObserver(() => updateArrows())
+    groupRO.observe(el)
+  })
+})
+
+onBeforeUnmount(() => {
+  const el = groupRef.value
+  if (el) el.removeEventListener('scroll', updateArrows)
+  if (groupRO) groupRO.disconnect()
+})
 </script>
 
 <style lang="less" scoped>
@@ -75,6 +133,7 @@ const isActive = (card: KpiCard): boolean => {
   background: var(--td-bg-color-component);
 }
 .dash-kpi-group {
+  position: relative;
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -93,6 +152,35 @@ const isActive = (card: KpiCard): boolean => {
 .dash-kpi-group::-webkit-scrollbar {
   display: none;
 }
+/* 左右溢出导航箭头：仅在内容溢出时浮现，半透明不遮卡片主体，hover 强化为主题色 */
+.dash-kpi-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 50%;
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-secondary);
+  box-shadow: var(--td-shadow-1);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: all 0.18s ease;
+}
+.dash-kpi-arrow:hover {
+  background: var(--td-bg-color-container-hover);
+  color: var(--td-brand-color);
+  box-shadow: var(--td-shadow-2);
+  opacity: 1;
+}
+.dash-kpi-arrow.is-left { left: 4px; }
+.dash-kpi-arrow.is-right { right: 4px; }
 .dash-kpi-card {
   display: flex;
   align-items: center;
