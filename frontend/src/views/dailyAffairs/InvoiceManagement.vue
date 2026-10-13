@@ -2496,7 +2496,7 @@ watch(printVisible, (v) => {
 .invoice-detail-body {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 8px;
 }
 
 // 详情抽屉底部取消/保存（对齐车队 meter-drawer-footer 行内保存）
@@ -2504,9 +2504,9 @@ watch(printVisible, (v) => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 0 0;
+  padding: 4px 0 0;
   border-top: 1px solid var(--td-component-stroke);
-  margin-top: 4px;
+  margin-top: 0;
 }
 .row-items { display: flex; flex-direction: column; gap: 2px; max-width: 100%; overflow: hidden; }
 .row-items-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 4px; align-items: baseline; color: var(--td-text-color-primary); }
@@ -2514,7 +2514,7 @@ watch(printVisible, (v) => {
 .row-items-qty, .row-items-price { color: var(--td-text-color-secondary); font-family: var(--td-font-family-mono, monospace); }
 .row-items-more { color: var(--td-text-color-disabled); font-size: var(--td-font-size-body-small); }
 .detail-tags-readonly { display: flex; flex-wrap: wrap; gap: 4px; }
-.detail-preview-collapse { margin-top: 12px; }
+.detail-preview-collapse { margin-top: 0; }
 .detail-readonly {
   display: inline-flex;
   align-items: center;
@@ -2537,9 +2537,9 @@ watch(printVisible, (v) => {
 
 
 
-.detail-fields { padding-bottom: 16px; }
+.detail-fields { padding-bottom: 0; }
 
-.field-group { margin-bottom: 18px; }
+.field-group { margin-bottom: 4px; }
 .field-group-title {
   display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600;
   color: var(--td-text-color-primary); margin-bottom: 12px;
