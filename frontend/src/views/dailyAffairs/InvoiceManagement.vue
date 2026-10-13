@@ -321,19 +321,27 @@
                 <div v-if="(editForm.items || []).length" class="items-table">
                   <div class="items-row items-row--head">
                     <span class="item-cell item-name">项目名称</span>
+                    <span class="item-cell item-unit">单位</span>
                     <span class="item-cell item-num">数量</span>
                     <span class="item-cell item-num">单价</span>
+                    <span class="item-cell item-num">金额</span>
                     <span class="item-cell item-num">税率</span>
+                    <span class="item-cell item-num">税额</span>
                     <span class="item-cell item-op"></span>
                   </div>
                   <div v-for="(it, idx) in editForm.items || []" :key="idx" class="items-row">
                     <t-input v-model="it.name" size="small" class="item-cell item-name" placeholder="" />
+                    <t-input v-model="it.unit" size="small" class="item-cell item-unit" placeholder="" />
                     <t-input :value="numToStr(it.qty)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => (it.qty = parseNum(v))" />
+                      @input="(v: string) => { it.qty = parseNum(v); recalcItemRow(it, 'qty') }" />
                     <t-input :value="numToStr(it.price)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => (it.price = parseNum(v))" />
+                      @input="(v: string) => { it.price = parseNum(v); recalcItemRow(it, 'price') }" />
+                    <t-input :value="numToStr(it.amount)" size="small" class="item-cell item-num" placeholder=""
+                      @input="(v: string) => { it.amount = parseNum(v); recalcItemRow(it, 'amount') }" />
                     <t-input :value="it.tax_rate" size="small" class="item-cell item-num" placeholder="" suffix="%"
-                      @input="(v: string) => (it.tax_rate = sanitizeNum(v))" />
+                      @input="(v: string) => { it.tax_rate = sanitizeNum(v); recalcItemRow(it, 'tax_rate') }" />
+                    <t-input :value="numToStr(it.tax_amount)" size="small" class="item-cell item-num" placeholder=""
+                      @input="(v: string) => (it.tax_amount = parseNum(v))" />
                     <div class="item-cell item-op">
                       <t-popconfirm theme="warning" :content="`确定删除明细「${it.name || '未命名'}」吗？删除后需保存才生效。`"
                         :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
@@ -544,7 +552,7 @@ interface InvoiceItem {
   buyer_account?: string
   issuer?: string
   remark?: string
-  items?: Array<{ name?: string; qty?: number; price?: number; tax_rate?: number }>
+  items?: Array<{ name?: string; unit?: string; qty?: number; price?: number; amount?: number; tax_rate?: number; tax_amount?: number }>
   void_flag?: boolean
   duplicate?: boolean
   page?: number
@@ -1503,10 +1511,13 @@ const fillEditForm = () => {
     invoice_type: targetType,
     items: Array.isArray(r.items) ? r.items.map(it => ({
       name: it.name || '',
+      unit: it.unit || '',
       qty: numToStr(it.qty),
       price: numToStr(it.price),
+      amount: numToStr(it.amount),
       // 税率以百分比显示（0.03 → "3"），保存时再转回小数
       tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
+      tax_amount: numToStr(it.tax_amount),
     })) : [],
     remarkParts: rps,
     data: {
@@ -1532,10 +1543,25 @@ const fillEditForm = () => {
 }
 
 const addItemRow = () => {
-  editForm.value.items = [...(editForm.value.items || []), { name: '', qty: '', price: '', tax_rate: '' }]
+  editForm.value.items = [...(editForm.value.items || []), { name: '', unit: '', qty: '', price: '', amount: '', tax_rate: '', tax_amount: '' }]
 }
 const removeItemRow = (idx: number) => {
   editForm.value.items = (editForm.value.items || []).filter((_: any, i: number) => i !== idx)
+}
+// 明细行联动计算（保留两位小数）：
+//   金额 = 数量 × 单价；税额 = 金额 × 税率(%)。
+// 手动改金额/税率时只联动税额，避免覆盖用户手填的金额。
+const round2 = (n: number | null): number | null =>
+  n === null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100
+const recalcItemRow = (it: any, changed: string) => {
+  const qty = parseNum(it.qty)
+  const price = parseNum(it.price)
+  const rate = parseNum(it.tax_rate) // 百分比显示值（如 3）
+  if (changed === 'qty' || changed === 'price') {
+    if (qty !== null && price !== null) it.amount = round2(qty * price)
+  }
+  const amt = parseNum(it.amount)
+  if (amt !== null && rate !== null) it.tax_amount = round2((amt * rate) / 100)
 }
 
 const saveEditForm = async () => {
@@ -1589,10 +1615,13 @@ const persistEditForm = async (force: boolean) => {
             const taxRate = toNumber(it.tax_rate)
             return {
               name: it.name || '',
+              unit: it.unit || '',
               qty: toNumber(it.qty),
               price: toNumber(it.price),
+              amount: toNumber(it.amount),
               // 税率由百分比字符串转回小数（"3" → 0.03）
               tax_rate: taxRate === undefined ? undefined : taxRate / 100,
+              tax_amount: toNumber(it.tax_amount),
             }
           })
         : [],
@@ -2488,7 +2517,7 @@ watch(printVisible, (v) => {
 .items-section { border-top: 1px solid var(--td-component-stroke); padding-top: 14px; margin-top: 4px;
   .items-header { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 10px; }
 }
-.items-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 44px; gap: 8px; align-items: center; margin-bottom: 8px;
+.items-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr 44px; gap: 8px; align-items: center; margin-bottom: 8px;
   &--head { font-size: 12px; color: var(--td-text-color-secondary); margin-bottom: 4px; }
 }
 .item-cell { min-width: 0; }
