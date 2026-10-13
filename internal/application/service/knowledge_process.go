@@ -4219,6 +4219,19 @@ func (s *knowledgeService) convert(
 
 	var reader interfaces.DocReader = s.resolveDocReader(ctx, parserEngine, fileType, isURL, mergedOverrides)
 	if reader == nil {
+		// Graceful degradation: the configured engine is unavailable for this
+		// build (e.g. "anydoc" not compiled in on Windows) or the remote engine
+		// is unreachable. Fall back to the docreader service instead of failing
+		// the whole parse. On builds where the engine IS available (VPS images
+		// with anydoc), the primary reader is used and no fallback happens.
+		if s.documentReader != nil && !isURL {
+			logger.Warnf(ctx, "[convert] engine %q unavailable for kb=%s file=%s, falling back to docreader service",
+				parserEngine, kb.ID, payload.FileName)
+			parserEngine = "builtin"
+			reader = s.documentReader
+		}
+	}
+	if reader == nil {
 		logger.Errorf(ctx, "[convert] no doc reader for kb=%s knowledge=%s fileType=%s engine=%q isURL=%v",
 			kb.ID, knowledge.ID, fileType, parserEngine, isURL)
 		knowledge.ParseStatus = "failed"
