@@ -448,17 +448,77 @@ onBeforeUnmount(() => {
 const onClose = () => emit('update:visible', false)
 
 // 需求：解析/提取状态与上传时的真实处理状态实时同步。
-// 抽屉打开期间以 3s 间隔静默轮询文件列表（不置全局 loading，避免整表闪烁），
-// 解析中/提取中/失败/完成的状态随后端实际进度自动更新；关闭即停止轮询。
+// 设计原则：抽屉打开后不做无条件高频整表轮询，避免列表不停闪烁/选中丢失/滚动跳顶。
+// 1) 按需启动：仅当存在「活跃任务」（解析/提取进行中，或解析完成提取待落定）才启动轮询；
+// 2) 静默增量：轮询时仅对已存在行 patch 状态字段（保持行引用/选中态/滚动位置），
+//    仅当发生行增删（id 集合变化）才回退整表刷新；
+// 3) 及时收敛：全部任务落定即停轮询；超过 2 分钟无任何状态变化也自动停止，杜绝后台空转。
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let lastChangeTs = Date.now()
 const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
+// 是否存在需要持续关注的任务（任一命中即保持轮询）
+const hasActiveTasks = () => {
+  return rows.value.some((r: any) => {
+    const p = r.parse_status || ''
+    const e = extractStatus(r)
+    if (p === 'pending' || p === 'processing' || p === 'finalizing') return true
+    if (e === 'pending' || e === 'processing') return true
+    if (p === 'completed' && !e) return true
+    return false
+  })
+}
+
+// 静默增量同步：拉取最新首页数据，仅更新已有行的状态字段；行增删时回退整表刷新
+const silentSync = async () => {
+  if (!props.kbId) return
+  try {
+    const res: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: pageSize.value, keyword: keyword.value || undefined })
+    let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+    arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
+    const dtSet = props.docTypes
+    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet.has(dt) : true })
+    const f = props.filter || 'all'
+    if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
+    else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
+    // 增删检测：当前首页 id 集合与 fresh 不一致说明发生了真实变化，回退整表刷新
+    const currentIds = rows.value.slice(0, pageSize.value).map((r: any) => r.id).sort()
+    const freshIds = arr.map((r: any) => r.id).sort()
+    if (currentIds.length !== freshIds.length || currentIds.some((id, i) => id !== freshIds[i])) {
+      await reload(1)
+      return
+    }
+    // 仅增量 patch 已有行的状态字段（不替换数组、不重置选中/分页/滚动）
+    const map = new Map<string, any>(arr.map((r: any) => [r.id, r] as [string, any]))
+    let changed = false
+    for (const row of rows.value) {
+      const fr = map.get(row.id)
+      if (!fr) continue
+      if (fr.parse_status !== row.parse_status) { row.parse_status = fr.parse_status; changed = true }
+      const fe = (fr.custom_metadata || {}).extract_status || ''
+      if (fe !== extractStatus(row)) {
+        row.custom_metadata = { ...(row.custom_metadata || {}), extract_status: fe }
+        changed = true
+      }
+      const dt = invDocType(fr)
+      if (dt !== row.doc_type) { row.doc_type = dt; changed = true }
+    }
+    if (changed) lastChangeTs = Date.now()
+  } catch { /* 静默轮询失败不打扰用户，下一轮重试 */ }
+}
+
 watch(() => props.visible, (v) => {
+  stopPolling()
   if (v) {
-    reload(1)
-    stopPolling()
-    pollTimer = setInterval(() => { reload(1) }, 3000)
-  } else {
-    stopPolling()
+    reload(1).then(() => {
+      if (!hasActiveTasks()) return
+      lastChangeTs = Date.now()
+      pollTimer = setInterval(async () => {
+        await silentSync()
+        // 全部任务落定，或长时间无状态变化（防后台空转），停止轮询
+        if (!hasActiveTasks() || Date.now() - lastChangeTs > 120000) stopPolling()
+      }, 3000)
+    })
   }
 }, { immediate: true })
 onBeforeUnmount(stopPolling)
