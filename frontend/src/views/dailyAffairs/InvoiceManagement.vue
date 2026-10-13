@@ -642,11 +642,10 @@ const overviewCards = computed(() => {
     cards.push({ key: `type-${c.name}`, label: c.name, icon: typeIcon, value: `${cnt}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: c.name })
   }
   // 「其它票据」为排除式统计桶：不在任何启用分类中的记录（含未分类/已停用分类存量），
-  // 仅当确实存在这类记录时（数量 > 0）才显示卡片；点击筛选未分类记录，可编辑后转移分类
+  // 无条件渲染该卡（计数 0 兜底，overview 数据到达后自动回填），保证五张卡片
+  // 一次性渲染，不再出现「先 4 张再追加其它票据」的二次跳变；点击筛选未分类记录
   const otherCount = Math.max(0, total - catSum)
-  if (otherCount > 0) {
-    cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${otherCount}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
-  }
+  cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${otherCount}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
   // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
   cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
