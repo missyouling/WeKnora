@@ -227,3 +227,104 @@ func TestCleanInvoiceTemplateNoise(t *testing.T) {
 	assert.Equal(t, 3, headCount, "应保留 3 个号码行")
 	assert.Equal(t, 3, amtCount, "应保留 3 个金额行")
 }
+
+// syntheticCompactTollInvoiceDoc 复刻 docreader 新输出的「单行紧凑」格式：
+// 号码段与金额段合并为同一行（模板头 + 单行完整数据，无 | 表格符号）。
+// 数据行取自真实通行费汇总单 chunk（含开发机路径水印噪音行）。
+const syntheticCompactTollInvoiceDoc = `开票日期：
+购
+买
+方
+信
+息
+名称：
+统一社会信用代码/纳税人识别号：
+销
+售
+方
+信
+息
+名称：
+统一社会信用代码/纳税人识别号：
+项目名称 车牌号 车辆类型 通行日期起 通行日期止 金额 税率/征收率 税额
+合 计
+价税合计（大写） （小写）
+备
+注
+开票人:
+localhost:63342/cloud/service/invoice/invoice-alle/src/main/resources/templates/invoice2.html?_ijt=ujph1nj9mes58bk0psc9hf4i6n&_ij_reload=REL… 1/1
+通行费
+26507903161000014240 2026年10月08日 91500227MA5U54AJ0A 重庆渝蓉高速公路有限公司 9150000055675000X0 *生产生活服务*通行费 渝C81022 货车 20260903 1418.36 3% 42.55 ¥1418.36 壹仟肆佰陆拾圆玖角壹分 杨希 ¥1460.91 20260930 重庆星达铜业有限公司 ¥42.55
+
+![通行费电子票据汇总单(发票)_p1_img1.jpg](resource://oH-kEmAcTws2cLtgU21BFw)
+
+开票日期：
+购
+买
+方
+信
+息
+名称：
+统一社会信用代码/纳税人识别号：
+销
+售
+方
+信
+息
+名称：
+统一社会信用代码/纳税人识别号：
+项目名称 车牌号 车辆类型 通行日期起 通行日期止 金额 税率/征收率 税额
+合 计
+价税合计（大写） （小写）
+备
+注
+开票人:
+localhost:63342/cloud/service/invoice/invoice-alle/src/main/resources/templates/invoice2.html?_ijt=ujph1nj9mes58bk0psc9hf4i6n&_ij_reload=REL… 1/1
+通行费
+26517905111000001775 2026年10月08日 91500227MA5U54AJ0A 内江城建总诚绕城高速公路投资有限公司 91511000095586330H *生产生活服务*通行费 渝C81022 货车 20260903 282.72 3% 8.48 ¥282.72 贰佰玖拾壹圆贰角整 敬希艳 ¥291.20 20260930 重庆星达铜业有限公司 ¥8.48
+`
+
+func TestExtractInvoicesByLineRules_CompactSingleLine(t *testing.T) {
+	res, ok := ExtractInvoicesByLineRules(syntheticCompactTollInvoiceDoc)
+	require.True(t, ok, "单行紧凑格式必须被规则命中")
+	require.NotNil(t, res)
+	assert.Equal(t, "invoice", res.Kind)
+	require.Len(t, res.Invoices, 2, "应提取全部 2 张发票")
+
+	inv0 := res.Invoices[0]
+	assert.Equal(t, "26507903161000014240", inv0.InvoiceNo)
+	assert.Equal(t, "2026-10-08", inv0.InvoiceDate)
+	assert.Equal(t, "普通发票", inv0.InvoiceType)
+	assert.Equal(t, "通行费发票", inv0.Category)
+	assert.Equal(t, "重庆渝蓉高速公路有限公司", inv0.SellerName)
+	assert.Equal(t, "9150000055675000X0", inv0.SellerTaxNo)
+	assert.Equal(t, "91500227MA5U54AJ0A", inv0.BuyerTaxNo)
+	assert.Equal(t, "重庆星达铜业有限公司", inv0.BuyerName)
+	assert.Equal(t, "杨希", inv0.Issuer)
+	require.NotNil(t, inv0.Amount)
+	assert.InDelta(t, 1418.36, *inv0.Amount, 0.001)
+	require.NotNil(t, inv0.TotalAmount)
+	assert.InDelta(t, 1460.91, *inv0.TotalAmount, 0.001)
+	require.NotNil(t, inv0.Tax)
+	assert.InDelta(t, 42.55, *inv0.Tax, 0.001)
+	require.NotNil(t, inv0.TaxRate)
+	assert.InDelta(t, 0.03, *inv0.TaxRate, 0.0001)
+	assert.Contains(t, inv0.Remark, "车牌号：渝C81022")
+	assert.Contains(t, inv0.Remark, "通行日期起：20260903")
+	assert.Contains(t, inv0.Remark, "通行日期止：20260930")
+	// 车牌号必须同步落入动态字段扩展桶（fields）
+	assert.Equal(t, "渝C81022", inv0.Fields["车牌号"])
+	require.Len(t, inv0.Items, 1)
+	assert.Equal(t, "生产生活服务", inv0.Items[0].Name)
+
+	// 第二张：较长销售方名称、含「整」的大写金额
+	inv1 := res.Invoices[1]
+	assert.Equal(t, "26517905111000001775", inv1.InvoiceNo)
+	assert.Equal(t, "内江城建总诚绕城高速公路投资有限公司", inv1.SellerName)
+	assert.Equal(t, "敬希艳", inv1.Issuer)
+	require.NotNil(t, inv1.TaxRate)
+	assert.InDelta(t, 0.03, *inv1.TaxRate, 0.0001)
+	require.NotNil(t, inv1.TotalAmount)
+	assert.InDelta(t, 291.20, *inv1.TotalAmount, 0.001)
+	assert.Equal(t, "渝C81022", inv1.Fields["车牌号"])
+}

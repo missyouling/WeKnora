@@ -754,9 +754,15 @@ var (
 	// invoiceHeadLineRe 匹配发票「号码行」。
 	invoiceHeadLineRe = regexp.MustCompile(
 		`^(\d{20})\s+(\d{4})年(\d{1,2})月(\d{1,2})日\s+([0-9A-Z]{15,20})\s+(.+?)([0-9A-Z]{15,20})\s+\*([^*]*)\*通行费\s+(\S+)\s+(\S+)\s+(\d{8})\s+([\d.]+)\s+(\d+(?:\.\d+)?%)\s+([\d.]+)\s*$`)
-	// invoiceAmountLineRe 匹配发票「金额行」。
+		// invoiceAmountLineRe 匹配发票「金额行」。
 	invoiceAmountLineRe = regexp.MustCompile(
 		`^¥([\d.]+)\s+(.+?)\s+(\S+)\s+¥([\d.]+)\s+(\d{8})\s+(.+?)\s+¥([\d.]+)\s*$`)
+	// invoiceCompactLineRe 匹配 docreader 新输出的「单行紧凑」格式：号码段与
+	// 金额段合并为同一行（旧模板为两行，PDF 文本层按行锚定）。分组布局 =
+	// 号码段 1..14（与 invoiceHeadLineRe 一致）+ 金额段 15..21
+	// （15=¥金额 16=大写 17=开票人 18=¥价税合计 19=通行日期止 20=购买方名称 21=¥税额）。
+	invoiceCompactLineRe = regexp.MustCompile(
+		`^(\d{20})\s+(\d{4})年(\d{1,2})月(\d{1,2})日\s+([0-9A-Z]{15,20})\s+(.+?)([0-9A-Z]{15,20})\s+\*([^*]*)\*通行费\s+(\S+)\s+(\S+)\s+(\d{8})\s+([\d.]+)\s+(\d+(?:\.\d+)?%)\s+([\d.]+)\s+¥([\d.]+)\s+(.+?)\s+(\S+)\s+¥([\d.]+)\s+(\d{8})\s+(.+?)\s+¥([\d.]+)\s*$`)
 )
 
 // cleanInvoiceTemplateNoise 逐行清洗电子票据文本中的模板噪音，返回有效行。
@@ -917,6 +923,43 @@ func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool)
 		return nil, false
 	}
 	lines := cleanInvoiceTemplateNoise(content)
+
+	// 单行紧凑格式优先（docreader 新输出：号码段 + 金额段合并为同一行）。
+	// 识别特征：行首 20 位发票号 + 开票日期 + 双税号 + *通行费 + 内嵌 ¥金额段。
+	// 命中则 100% 确定性命中，无需 LLM 兜底；未命中再回退旧「两行式」逻辑，
+	// 保证旧模板文件不受影响。
+	var compactInvoices []InvoiceExtractionItem
+	compactSeen := make(map[string]struct{})
+	for _, ln := range lines {
+		m := invoiceCompactLineRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		inv := buildInvoiceFromHead(m) // m[1..14] 布局与 invoiceHeadLineRe 一致
+		// 金额段补充（15=¥金额 17=开票人 18=¥价税合计 19=通行日期止 20=购买方名称 21=¥税额）
+		inv.Issuer = m[17]
+		inv.BuyerName = strings.TrimSpace(m[20])
+		inv.TotalAmount = parseAmountToFloat(m[18])
+		if v := strings.TrimSpace(m[15]); v != "" {
+			inv.Amount = parseAmountToFloat(v)
+		}
+		if v := strings.TrimSpace(m[21]); v != "" {
+			inv.Tax = parseAmountToFloat(v)
+		}
+		if end := strings.TrimSpace(m[19]); end != "" {
+			inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", m[9], m[11], end)
+		}
+		// chunk overlap 去重：发票号/车牌/通行起止/金额/税额六元组身份键。
+		key := strings.Join([]string{m[1], m[9], m[11], m[19], m[12], m[14]}, "|")
+		if _, dup := compactSeen[key]; dup {
+			continue
+		}
+		compactSeen[key] = struct{}{}
+		compactInvoices = append(compactInvoices, inv)
+	}
+	if len(compactInvoices) > 0 {
+		return &InvoiceExtractionResult{Kind: "invoice", Invoices: compactInvoices}, true
+	}
 
 	var heads []lineHead
 	var amts []lineAmt
