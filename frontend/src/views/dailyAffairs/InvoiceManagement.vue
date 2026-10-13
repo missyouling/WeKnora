@@ -61,6 +61,9 @@
             </template>
           </BusinessListToolbar>
 
+      <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，兜底 pendingFiles 计数），替代旧的列表占位行 -->
+      <BusinessParseStatusBar :progress="uploadProgress" :pending-files="pendingFiles" />
+
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
@@ -264,7 +267,8 @@
 
     <!-- 上传弹窗（对齐车队：分类选择 + 拖拽/选择/粘贴 + 进度） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="invoice"
-      :type-options="uploadTypeOptions" :default-type="filterInvoiceType || ''" @done="onUploadDone" />
+      :type-options="uploadTypeOptions" :default-type="filterInvoiceType || ''" @done="onUploadDone"
+      @progress="onUploadProgress" />
 
     <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
@@ -426,6 +430,7 @@ import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vu
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
@@ -590,9 +595,12 @@ const overviewStats = ref<any>(null)
 const overviewLoading = ref(false)
 // 卡片渲染门控：概览统计 + 分类列表两个异步源都就绪后才一次渲染全部卡片，
 // 避免「先 4 张再追加其它票据」的二次跳变（任一请求失败也置 true，用空数据渲染，不永久转圈）
+// 卡片渲染门控：分类列表就绪即可先渲染全部卡片（名称/图标/摘要），
+// 计数由 overviewStats 提供——未到达时 computed 自然兜底为 0，数据到后自动填充，
+// 消除「先空白骨架几秒再整组出现」的加载断层（overview 请求失败也置 loaded，不永久转圈）
 const overviewLoaded = ref(false)
 const catsLoaded = ref(false)
-const cardsReady = computed(() => overviewLoaded.value && catsLoaded.value)
+const cardsReady = computed(() => catsLoaded.value)
 const loadInvoiceOverview = async () => {
   if (!kbId.value) return
   try {
@@ -1096,26 +1104,10 @@ const numOrUndef = (v: any): number | undefined => {
   return Number.isFinite(n) ? n : undefined
 }
 
-// 过滤/搜索/去重已由后端发票级接口完成，前端直接使用返回的分页数据；
-// 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
-const pendingRows = computed<InvoiceRow[]>(() => pendingFiles.value.map((k) => {
-  const ps = k.parse_status || ''
-  const es = k.custom_metadata?.extract_status || ''
-  let extractStatus = ''
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') extractStatus = 'parsing'
-  else if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) extractStatus = 'pending'
-  return {
-    rowKey: `pending-${k.id}`,
-    knowledgeId: k.id,
-    fileName: k.file_name || k.title || k.id,
-    parseStatus: ps,
-    extractStatus,
-    extractError: k.custom_metadata?.extract_error || '',
-    kind: 'pending',
-    tags: Array.isArray(k.tags) ? k.tags : [],
-  } as InvoiceRow
-}))
-const filteredRows = computed(() => [...pendingRows.value, ...invoiceRows.value])
+// 过滤/搜索/去重已由后端发票级接口完成，前端直接使用返回的分页数据。
+// 「进行中文件」（解析中/提取中/待提取）不再以伪行占用列表，改为列表上方的独立
+// 状态条（BusinessParseStatusBar）滚动展示；列表只渲染已产生发票行的记录。
+const filteredRows = computed(() => invoiceRows.value)
 
 // 表格高度约束：数据加载后由空串切到 '100%'，驱动 TDesign useFixed 重算
 // isFixedHeader（scrollHeight > clientHeight）→ 表头/表体分离，滚动条仅在表体
@@ -1398,6 +1390,57 @@ const {
   },
   onTick: () => loadFiles(),
 })
+
+// 需求：解析/提取完成后自动刷新 KPI 卡片统计。
+// pendingFiles 由轮询每 3s 更新：集合变化（有文件解析完成进入发票行 / 提取完成 / 失败）
+// 即触发概览统计重载，保证卡片数量与本轮真实状态一致。
+let lastPendingKey = ''
+watch(pendingFiles, (v) => {
+  const key = v.map((f: any) => f.id).sort().join(',')
+  if (key !== lastPendingKey) {
+    lastPendingKey = key
+    if (kbId.value) loadInvoiceOverview()
+  }
+}, { deep: false })
+
+// 上传任务实时进度（来自上传弹窗 @progress，车队同款）：多文件同时进行时轮播展示
+const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
+const progressIndex = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
+  uploadProgress.value = filterLiveProgress(items)
+  if (uploadProgress.value.length <= 1) {
+    progressIndex.value = 0
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+    return
+  }
+  if (progressTimer) return
+  progressTimer = setInterval(() => {
+    if (uploadProgress.value.length <= 1) {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+      return
+    }
+    progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
+  }, 3000)
+}
+// 表格里该文件已「提取完成/失败」的，不再保留旧的「正在提取…N%」进度项
+function filterLiveProgress(items: any[]) {
+  const doneNames = new Set(
+    invoiceRows.value
+      .filter((r) => r.extractStatus === 'success' || r.extractStatus === 'failed')
+      .map((r) => r.fileName),
+  )
+  return items.filter((it: any) => !doneNames.has(it.name))
+}
+// 轮询刷新列表后：用表格实际 extractStatus 清掉已完成文件的残留进度
+watch(invoiceRows, () => {
+  if (!uploadProgress.value.length) return
+  uploadProgress.value = filterLiveProgress(uploadProgress.value)
+})
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+onBeforeUnmount(stopProgressTimer)
 
 const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,

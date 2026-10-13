@@ -43,6 +43,10 @@
               </template>
               <template #parse="{ row }: any">
                 <t-loading v-if="row._reparsing" size="small" text="解析中" />
+                <t-tag v-else-if="isParseBusy(row)" size="small" theme="primary" variant="light-outline">
+                  <template #icon><t-icon name="loading" spin size="12px" /></template>
+                  {{ parseBusyLabel(row) }}
+                </t-tag>
                 <t-tooltip v-else-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
                 </t-tooltip>
@@ -50,6 +54,10 @@
               </template>
               <template #extract="{ row }: any">
                 <t-loading v-if="row._extracting" size="small" text="提取中" />
+                <t-tag v-else-if="isExtractBusy(row)" size="small" theme="primary" variant="light-outline">
+                  <template #icon><t-icon name="loading" spin size="12px" /></template>
+                  提取中
+                </t-tag>
                 <t-tooltip v-else-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
                 </t-tooltip>
@@ -142,10 +150,22 @@ const parseLabel = (s?: string) => {
   if (s === 'failed') return '解析失败'
   return '待解析'
 }
+// 解析进行中判定（含 pending/processing/finalizing），用于渲染与列表同款的
+// primary + loading spin 动态标签（列表「解析中」口径一致）
+const isParseBusy = (row: any) => {
+  const s = row.parse_status || ''
+  return s === 'pending' || s === 'processing' || s === 'finalizing'
+}
+const parseBusyLabel = (row: any) => (row.parse_status === 'finalizing' ? '定稿中' : '解析中')
+// 提取进行中判定：文件已完成解析但提取状态仍为 pending/processing
+const isExtractBusy = (row: any) => {
+  const s = extractStatus(row)
+  return s === 'pending' || s === 'processing'
+}
 const parseTheme = (s?: string) => {
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
-  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'warning'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'primary'
   return 'default'
 }
 const extractStatus = (row: any) => {
@@ -164,7 +184,7 @@ const extractTheme = (row: any) => {
   const s = extractStatus(row)
   if (s === 'success') return 'success'
   if (s === 'failed') return 'danger'
-  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'warning'
+  if (s === 'parsing' || s === 'pending' || s === 'processing') return 'primary'
   return 'default'
 }
 
@@ -273,6 +293,11 @@ const reparseRow = async (row: any) => {
 
 // ---- 重新提取 ----
 const reextractRow = async (row: any) => {
+  // 解析失败前置拦截：无正文内容可提取，必须先重新解析
+  if (row.parse_status === 'failed') {
+    MessagePlugin.warning('该文件解析失败，请先「重新解析」后再提取')
+    return
+  }
   row._extracting = true
   try {
     // 后端只认 cert_type（历史代码曾误传 doc_type 导致证照类型静默丢失）
@@ -422,9 +447,21 @@ onBeforeUnmount(() => {
 
 const onClose = () => emit('update:visible', false)
 
+// 需求：解析/提取状态与上传时的真实处理状态实时同步。
+// 抽屉打开期间以 3s 间隔静默轮询文件列表（不置全局 loading，避免整表闪烁），
+// 解析中/提取中/失败/完成的状态随后端实际进度自动更新；关闭即停止轮询。
+let pollTimer: ReturnType<typeof setInterval> | null = null
+const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 watch(() => props.visible, (v) => {
-  if (v) reload(1)
+  if (v) {
+    reload(1)
+    stopPolling()
+    pollTimer = setInterval(() => { reload(1) }, 3000)
+  } else {
+    stopPolling()
+  }
 }, { immediate: true })
+onBeforeUnmount(stopPolling)
 </script>
 
 <style scoped>
