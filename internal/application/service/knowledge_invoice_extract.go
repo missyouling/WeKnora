@@ -60,11 +60,83 @@ type InvoiceExtractionItem struct {
 }
 
 // InvoiceExtractionLine is one goods/service line inside an invoice.
+// 标准字段覆盖通用明细（name/qty/price/tax_rate）；分类特有的明细子列
+// （如通行费 plate_no/vehicle_type/travel_from/travel_to，电费 spec/unit/
+// amount/tax_amount）通过自定义 JSON 编解码收集进 Extra，随 items 行整体
+// 持久化并透传前端动态列渲染。
 type InvoiceExtractionLine struct {
 	Name    string   `json:"name"`
-	Qty     *float64 `json:"qty"`
-	Price   *float64 `json:"price"`
-	TaxRate *float64 `json:"tax_rate"`
+	Unit    string   `json:"unit,omitempty"`
+	Qty     *float64 `json:"qty,omitempty"`
+	Price   *float64 `json:"price,omitempty"`
+	Amount  *float64 `json:"amount,omitempty"`
+	TaxRate *float64 `json:"tax_rate,omitempty"`
+	TaxAmt  *float64 `json:"tax_amount,omitempty"`
+	// Extra 分类明细子列（业务语义 key，如 plate_no/vehicle_type/travel_from/
+	// travel_to/spec 等）；JSON 序列化时与标准键合并输出，反序列化时收集未知键。
+	Extra map[string]any `json:"-"`
+}
+
+// UnmarshalJSON 收集 items 行中不在标准键集合内的键（分类动态子列）到 Extra。
+func (l *InvoiceExtractionLine) UnmarshalJSON(b []byte) error {
+	type lineAlias InvoiceExtractionLine
+	var base lineAlias
+	if err := json.Unmarshal(b, &base); err != nil {
+		return err
+	}
+	*l = InvoiceExtractionLine(base)
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil
+	}
+	std := map[string]bool{
+		"name": true, "unit": true, "qty": true, "price": true,
+		"amount": true, "tax_rate": true, "tax_amount": true,
+	}
+	for k, v := range raw {
+		if std[k] {
+			continue
+		}
+		if l.Extra == nil {
+			l.Extra = map[string]any{}
+		}
+		var val any
+		if err := json.Unmarshal(v, &val); err == nil {
+			l.Extra[k] = val
+		}
+	}
+	return nil
+}
+
+// MarshalJSON 将标准键与 Extra 动态子列合并输出，保证分类明细子字段随行落库。
+func (l InvoiceExtractionLine) MarshalJSON() ([]byte, error) {
+	m := map[string]any{
+		"name": l.Name,
+	}
+	if l.Unit != "" {
+		m["unit"] = l.Unit
+	}
+	if l.Qty != nil {
+		m["qty"] = l.Qty
+	}
+	if l.Price != nil {
+		m["price"] = l.Price
+	}
+	if l.Amount != nil {
+		m["amount"] = l.Amount
+	}
+	if l.TaxRate != nil {
+		m["tax_rate"] = l.TaxRate
+	}
+	if l.TaxAmt != nil {
+		m["tax_amount"] = l.TaxAmt
+	}
+	for k, v := range l.Extra {
+		if _, dup := m[k]; !dup {
+			m[k] = v
+		}
+	}
+	return json.Marshal(m)
 }
 
 // InvoiceExtractionResult is the strict-JSON shape the model must return.
@@ -437,9 +509,54 @@ func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 		// 动态字段分离指令：关键业务信息（车牌号/通行日期等）常藏在备注中，
 		// 必须按字段口径分离到对应的独立输出字段，而不是只汇总在备注里。
 		sb.WriteString("分离要求：如果票面包含备注信息，请仔细分析备注内容，并按照上面的字段口径，将隐藏在备注中的关键数据（如车牌号、通行日期等）分离提取到对应的独立字段中输出；不要把这些数据只汇总在备注字段里。\n\n")
+		// 明细行子列口径：分类字段配置里 items 字段的 SubFields（单一权威源，
+		// 由 handler 从 categories.subs 注入），通行费/电费等分类的明细行因此
+		// 按票面真实结构输出，而不是固定 name/qty/price/tax_rate 四键。
+		if ins := invoiceItemsSubFieldsInstruction(cfg); ins != "" {
+			sb.WriteString(ins + "\n\n")
+		}
 	}
 	sb.WriteString(invoiceExtractionSystemPrompt)
 	return sb.String()
+}
+
+// invoiceItemsSubFieldsInstruction 根据 cfg.Fields 中 items 字段的 SubFields
+// 生成明细行提取指令：要求模型 items 每行按分类子列 key 输出（通行费/电费等
+// 分类的票面明细结构不同），分类特有字段（车牌号/通行日期等）务必提取到
+// 明细行对应键，而不是只写入 remark。无 items 子列口径时返回空串（保持
+// 默认 name/qty/price/tax_rate 四键行为）。
+func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	var keys []string
+	var labels []string
+	for _, f := range cfg.Fields {
+		if !f.Enabled || strings.TrimSpace(f.Name) == "" || f.Type != "items" {
+			continue
+		}
+		for _, sf := range f.SubFields {
+			k := strings.TrimSpace(sf.Key)
+			if k == "" {
+				continue
+			}
+			keys = append(keys, k)
+			lab := strings.TrimSpace(sf.Label)
+			if lab == "" {
+				lab = k
+			}
+			labels = append(labels, lab)
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"额外明细行规则：本分类发票的 items 明细行必须按以下子列键提取（键名严格使用）：%s（含义依次为：%s）。"+
+			"每行明细都输出这些键；票面存在但无法识别的键输出 null 或空字符串。若票面明细含车牌号、通行日期等分类特有信息"+
+			"（如通行费发票的车牌号/通行日期起止），必须提取到 items 行对应的键（plate_no/travel_from/travel_to 等），"+
+			"不要只写入 remark。",
+		strings.Join(keys, "/"), strings.Join(labels, "/"))
 }
 
 // ExtractInvoicesFromContentWithRules 与 ExtractInvoicesFromContent 相同，但支持注入
@@ -669,14 +786,19 @@ func dominantItemTaxRate(items []InvoiceExtractionLine) *float64 {
 	var best *float64
 	var bestAmt float64
 	for _, it := range items {
-		if it.Price == nil || it.TaxRate == nil {
+		if it.TaxRate == nil {
 			continue
 		}
-		qty := 1.0
-		if it.Qty != nil {
-			qty = *it.Qty
+		amt := 0.0
+		if it.Amount != nil {
+			amt = *it.Amount
+		} else if it.Price != nil {
+			qty := 1.0
+			if it.Qty != nil {
+				qty = *it.Qty
+			}
+			amt = *it.Price * qty
 		}
-		amt := *it.Price * qty
 		if amt > bestAmt {
 			bestAmt = amt
 			best = it.TaxRate
@@ -850,12 +972,20 @@ func joinCJKWords(s string) string {
 }
 
 // buildInvoiceFromHead 用号码行捕获组构造发票（号码行本身已含金额/税率/税额/
-// 车牌/通行日期起/购销方税号），价税合计等金额行字段留待配对后补充。
+// 车牌/车型/通行日期起/购销方税号），价税合计等金额行字段留待配对后补充。
+// 明细行 items 携带完整通行费字段（plate_no/vehicle_type/travel_from/amount/
+// tax_rate/tax_amount），供详情抽屉按分类子列自适应回显。
 func buildInvoiceFromHead(m []string) InvoiceExtractionItem {
 	// 日期补零统一为 YYYY-MM-DD（m[2]=年 m[3]=月 m[4]=日），避免 "2026-1-5" 导致字符串排序错序
 	year, _ := strconv.Atoi(m[2])
 	month, _ := strconv.Atoi(m[3])
 	day, _ := strconv.Atoi(m[4])
+	plate := strings.TrimSpace(m[9])
+	vehicleType := strings.TrimSpace(m[10])
+	passStart := strings.TrimSpace(m[11])
+	amount := parseAmountToFloat(m[12])
+	taxRate := parsePercentToFloat(m[13])
+	tax := parseAmountToFloat(m[14])
 	inv := InvoiceExtractionItem{
 		InvoiceNo:   m[1],
 		InvoiceDate: fmt.Sprintf("%04d-%02d-%02d", year, month, day),
@@ -864,21 +994,34 @@ func buildInvoiceFromHead(m []string) InvoiceExtractionItem {
 		SellerTaxNo: m[7],
 		BuyerTaxNo:  m[5],
 		Category:    "通行费发票", // 与上传分类名一致，供列表「细分分类」筛选精准命中
-		Amount:      parseAmountToFloat(m[12]),
-		Tax:         parseAmountToFloat(m[14]),
-		TaxRate:     parsePercentToFloat(m[13]),
-		Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", m[9], m[11]),
+		Amount:      amount,
+		Tax:         tax,
+		TaxRate:     taxRate,
+		Remark:      fmt.Sprintf("车牌号：%s；通行日期起：%s", plate, passStart),
 	}
 	// 车牌号写入动态字段扩展桶：行规则路径不经过 normalizeRuleFieldKeys（那是 LLM
 	// JSON 输出的清洗路径），这里与 LLM 路径的口径对齐——自定义分类字段（如通行费
 	// 发票「车牌号」）以分类 subs 的中文名作为 key 落入 fields 桶，前端列表/编辑
 	// 抽屉的动态列才能读到底层数据（否则车牌号只存在于 remark，独立列恒为空）。
-	if plate := strings.TrimSpace(m[9]); plate != "" {
+	if plate != "" {
 		inv.Fields = map[string]any{"车牌号": plate}
 	}
 	if it := strings.TrimSpace(m[8]); it != "" {
-		// 填充 price/tax_rate 供 Normalize 时 dominantItemTaxRate 计算列表税率列
-		inv.Items = []InvoiceExtractionLine{{Name: it, Price: inv.Amount, TaxRate: inv.TaxRate}}
+		line := InvoiceExtractionLine{Name: it, Amount: amount, TaxRate: taxRate, TaxAmt: tax}
+		extra := map[string]any{}
+		if plate != "" {
+			extra["plate_no"] = plate
+		}
+		if vehicleType != "" {
+			extra["vehicle_type"] = vehicleType
+		}
+		if passStart != "" {
+			extra["travel_from"] = passStart
+		}
+		if len(extra) > 0 {
+			line.Extra = extra
+		}
+		inv.Items = []InvoiceExtractionLine{line}
 	}
 	return inv
 }
@@ -895,8 +1038,16 @@ func fillInvoiceFromAmt(inv *InvoiceExtractionItem, m []string, plate, passStart
 	if m[7] != "" {
 		inv.Tax = parseAmountToFloat(m[7])
 	}
-	if m[5] != "" {
-		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", plate, passStart, m[5])
+	passEnd := strings.TrimSpace(m[5])
+	if passEnd != "" {
+		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", plate, passStart, passEnd)
+		// 明细行补通行日期止（号码行构造时已有车牌/车型/通行起）
+		if len(inv.Items) > 0 {
+			if inv.Items[0].Extra == nil {
+				inv.Items[0].Extra = map[string]any{}
+			}
+			inv.Items[0].Extra["travel_to"] = passEnd
+		}
 	}
 	// 号码行缺失时（孤立金额行兜底路径不调用本函数，直接构造）plate 可能为空；
 	// 兜底写入车牌号到 fields 桶，保持与 buildInvoiceFromHead 口径一致。
@@ -948,6 +1099,13 @@ func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool)
 		}
 		if end := strings.TrimSpace(m[19]); end != "" {
 			inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", m[9], m[11], end)
+			// 明细行补通行日期止（号码段构造时已有车牌/车型/通行起）
+			if len(inv.Items) > 0 {
+				if inv.Items[0].Extra == nil {
+					inv.Items[0].Extra = map[string]any{}
+				}
+				inv.Items[0].Extra["travel_to"] = end
+			}
 		}
 		// chunk overlap 去重：发票号/车牌/通行起止/金额/税额六元组身份键。
 		key := strings.Join([]string{m[1], m[9], m[11], m[19], m[12], m[14]}, "|")
@@ -1045,15 +1203,21 @@ func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool)
 		if a.consumed {
 			continue
 		}
+		amount := parseAmountToFloat(a.m[1])
+		tax := parseAmountToFloat(a.m[7])
 		inv := InvoiceExtractionItem{
 			InvoiceType: "普通发票",
 			Category:    "通行费发票",
 			Issuer:      a.m[3],
 			BuyerName:   strings.TrimSpace(a.m[6]),
-			Amount:      parseAmountToFloat(a.m[1]),
+			Amount:      amount,
 			TotalAmount: parseAmountToFloat(a.m[4]),
-			Tax:         parseAmountToFloat(a.m[7]),
+			Tax:         tax,
 			Remark:      "通行日期止：" + a.m[5],
+		}
+		// 明细行补一条通行费占位（金额/税额有值），保证详情抽屉明细区有行可编辑回显。
+		if amount != nil {
+			inv.Items = []InvoiceExtractionLine{{Name: "通行费", Amount: amount, TaxAmt: tax}}
 		}
 		res.Invoices = append(res.Invoices, inv)
 		a.consumed = true
@@ -1171,6 +1335,7 @@ func ExtractInvoicesByMarkdownTableRules(content, docHint string) (*InvoiceExtra
 			continue
 		}
 		plate := mdCleanText(d[2])
+		vehicleType := mdCleanText(d[3])
 		passStart := d[4]
 		passEnd := d[5]
 		amount := parseAmountToFloat(d[6])
@@ -1224,9 +1389,26 @@ func ExtractInvoicesByMarkdownTableRules(content, docHint string) (*InvoiceExtra
 		if plate != "" {
 			inv.Fields = map[string]any{"车牌号": plate}
 		}
-		// Items 填一条通行费明细（price + tax_rate），供 Normalize 的
-		// dominantItemTaxRate 计算列表税率列（否则税率列被覆盖为 nil）。
-		inv.Items = []InvoiceExtractionLine{{Name: "通行费", Price: amount, TaxRate: taxRate}}
+		// 明细行携带完整通行费字段（项目名称/车牌号/车辆类型/通行日期起止/金额/税率/税额），
+		// 供详情抽屉按分类子列自适应回显；车牌号同时保留 fields 桶兼容列表动态列。
+		line := InvoiceExtractionLine{Name: "通行费", Amount: amount, TaxRate: taxRate, TaxAmt: tax}
+		extra := map[string]any{}
+		if plate != "" {
+			extra["plate_no"] = plate
+		}
+		if vehicleType != "" {
+			extra["vehicle_type"] = vehicleType
+		}
+		if passStart != "" {
+			extra["travel_from"] = passStart
+		}
+		if passEnd != "" {
+			extra["travel_to"] = passEnd
+		}
+		if len(extra) > 0 {
+			line.Extra = extra
+		}
+		inv.Items = []InvoiceExtractionLine{line}
 		invoices = append(invoices, inv)
 	}
 

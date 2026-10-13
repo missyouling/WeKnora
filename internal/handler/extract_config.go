@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,6 +51,53 @@ func (h *BusinessExtractHandler) resolveInvoiceRuleCfg(ctx context.Context, kbID
 		}
 	}
 	return h.getExtractConfig(ctx, kbID, scope, "")
+}
+
+// injectInvoiceItemSubFields 从分类配置（fleet_categories，tenant_id=0，scope=invoice）
+// 实时读取 data_type=items 字段的 SubFields（子列口径的单一权威源，用户在字段设置里
+// 可编辑），注入提取规则 cfg.Fields 中 Type=items 的字段。分类缺失或 items 无子列
+// 配置时保持默认（items 四键 name/qty/price/tax_rate 兜底），保证非明细分类不受影响。
+// 该注入只影响本次提取的 Prompt 生成，不持久化到 extract_config 表。
+func (h *BusinessExtractHandler) injectInvoiceItemSubFields(ctx context.Context, certType string, cfg *types.KbExtractConfig) {
+	if cfg == nil {
+		return
+	}
+	name := strings.TrimSpace(certType)
+	if name == "" {
+		return
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL",
+			types.FleetCategoryScopeInvoice, name).
+		First(&cat).Error; err != nil {
+		return
+	}
+	var subs []types.FleetItemSubField
+	seen := map[string]bool{}
+	for _, s := range cat.Subs {
+		if s.DataType != "items" {
+			continue
+		}
+		for _, sf := range s.SubFields {
+			k := strings.TrimSpace(sf.Key)
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			subs = append(subs, sf)
+		}
+	}
+	if len(subs) == 0 {
+		return
+	}
+	// 稳定顺序：按 Key 字典序，保证 Prompt 每次生成一致
+	sort.Slice(subs, func(i, j int) bool { return subs[i].Key < subs[j].Key })
+	for i := range cfg.Fields {
+		if cfg.Fields[i].Type == "items" {
+			cfg.Fields[i].SubFields = subs
+		}
+	}
 }
 
 func validateExtractScope(scope string) bool {

@@ -121,13 +121,26 @@ type FleetRecord struct {
 
 func (FleetRecord) TableName() string { return "fleet_records" }
 
+// FleetItemSubField 明细（data_type=items 字段）的子列定义。
+// Key 为业务语义键（如通行费 plate_no/travel_from；电费 spec/unit/qty/price），
+// 由分类字段配置携带、随 subs JSON 透传，前端明细区按此动态渲染列与回显，
+// 提取 Prompt 也按此生成 items 行的 JSON Schema。
+type FleetItemSubField struct {
+	Key      string `json:"key"`       // 业务语义键：name/plate_no/vehicle_type/travel_from/travel_to/amount/tax_rate/tax_amount | spec/unit/qty/price...
+	Label    string `json:"label"`     // 列头显示名（项目名称/车牌号/车辆类型/通行日期起/通行日期止/金额/税率/税额）
+	DataType string `json:"data_type"` // text | number | date（决定编辑控件与联动）
+	Width    int    `json:"width"`     // 列宽（px）：0=按内容自适应
+}
+
 // FleetCategorySub 档案分类小项（大项=分类行，小项=解析提取的字段，可启/禁用）
 type FleetCategorySub struct {
 	Name      string `json:"name"`
 	Enabled   bool   `json:"enabled"`
 	IsDefault bool   `json:"is_default"` // 字段筛选器「重置」时默认勾选
-	DataType  string `json:"data_type"`  // text | number | date | array（影响提取骨架与编辑控件）
+	DataType  string `json:"data_type"`  // text | number | date | array | items（影响提取骨架与编辑控件）
 	Width     int    `json:"width"`      // 列表列宽（px）：0=按内容自适应；>0=固定宽度，前端按 min/max 兜底
+	// SubFields 明细子列定义（仅 data_type=items 时使用）；随 subs JSONB 一并持久化。
+	SubFields []FleetItemSubField `json:"sub_fields,omitempty"`
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

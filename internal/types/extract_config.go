@@ -10,6 +10,9 @@ type ExtractFieldConfig struct {
 	Type    string `json:"type"`    // string | array | date | number
 	Rule    string `json:"rule"`    // 提取规则/特殊说明
 	Enabled bool   `json:"enabled"` // 是否参与提取
+	// SubFields 明细行子列口径（仅 Type=items 时使用）：提取时由 handler 从分类
+	// categories.subs 的 items 字段实时注入（单一权威源），用于生成明细行 JSON Schema。
+	SubFields []FleetItemSubField `json:"sub_fields,omitempty"`
 }
 
 // KbExtractConfig 用户可配置的字段提取规则（知识库 × scope × 证照类型维度）。

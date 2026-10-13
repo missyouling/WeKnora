@@ -664,6 +664,9 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		}
 	}
 	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, ruleCertType)
+	// 明细行子列口径注入：从分类配置实时读取 items 字段的 SubFields（通行费/电费等
+	// 分类的票面明细结构不同），让规则与 LLM 两条提取路径都按分类真实结构输出明细。
+	h.injectInvoiceItemSubFields(ctx, ruleCertType, invoiceRuleCfg)
 	// 规则提取优先：系统生成的规整电子票据（通行费汇总单等）文本格式固定，
 	// 按「号码行+金额行」正则可 100% 全量命中（模型在高模板噪音长文本中会漏提，
 	// 实测 18 张通行费发票只提取出 1~8 张）；未命中该固定格式时才回退分批模型。

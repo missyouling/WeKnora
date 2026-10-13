@@ -310,51 +310,6 @@
                   </template>
                 </div>
               </div>
-              <!-- 明细 items（发票特有业务；字段配置开启 items 时显示） -->
-              <div v-if="hasItemsField" class="items-section">
-                <div class="items-header">
-                  <t-button size="small" variant="outline" @click="addItemRow">
-                    <template #icon><t-icon name="add" size="14px" /></template>
-                    添加明细
-                  </t-button>
-                </div>
-                <div v-if="(editForm.items || []).length" class="items-table">
-                  <div class="items-row items-row--head">
-                    <span class="item-cell item-name">项目名称</span>
-                    <span class="item-cell item-unit">单位</span>
-                    <span class="item-cell item-num">数量</span>
-                    <span class="item-cell item-num">单价</span>
-                    <span class="item-cell item-num">金额</span>
-                    <span class="item-cell item-num">税率</span>
-                    <span class="item-cell item-num">税额</span>
-                    <span class="item-cell item-op"></span>
-                  </div>
-                  <div v-for="(it, idx) in editForm.items || []" :key="idx" class="items-row">
-                    <t-input v-model="it.name" size="small" class="item-cell item-name" placeholder="" />
-                    <t-input v-model="it.unit" size="small" class="item-cell item-unit" placeholder="" />
-                    <t-input :value="numToStr(it.qty)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => { it.qty = parseNum(v); recalcItemRow(it, 'qty') }" />
-                    <t-input :value="numToStr(it.price)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => { it.price = parseNum(v); recalcItemRow(it, 'price') }" />
-                    <t-input :value="numToStr(it.amount)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => { it.amount = parseNum(v); recalcItemRow(it, 'amount') }" />
-                    <t-input :value="it.tax_rate" size="small" class="item-cell item-num" placeholder="" suffix="%"
-                      @input="(v: string) => { it.tax_rate = sanitizeNum(v); recalcItemRow(it, 'tax_rate') }" />
-                    <t-input :value="numToStr(it.tax_amount)" size="small" class="item-cell item-num" placeholder=""
-                      @input="(v: string) => (it.tax_amount = parseNum(v))" />
-                    <div class="item-cell item-op">
-                      <t-popconfirm theme="warning" :content="`确定删除明细「${it.name || '未命名'}」吗？删除后需保存才生效。`"
-                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                        @confirm="removeItemRow(Number(idx))">
-                        <t-button variant="text" theme="danger" size="small" @click.stop>
-                          <t-icon name="delete" />
-                        </t-button>
-                      </t-popconfirm>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="items-empty">暂无明细</div>
-              </div>
 
 
             </div>
@@ -1473,11 +1428,61 @@ const openDetail = async (row: InvoiceRow) => {
   } catch { /* 详情刷新失败不影响查看 */ }
 }
 
-const detailTitle = computed(() =>
-  currentRow.value?.invoiceNo ? `发票详情 · ${currentRow.value.invoiceNo}` : '发票详情'
-)
+const detailTitle = computed(() => {
+  const r = currentRow.value
+  if (!r?.invoiceNo) return '发票详情'
+  const pageTag = r.page && r.page >= 1 ? ` · P${r.page}` : ''
+  return `发票详情 · ${r.invoiceNo}${pageTag}`
+})
 
 // ---- 字段编辑 + 手动保存 ----
+// 明细子列口径（单一权威源 = 分类字段配置中 items 字段的 sub_fields，设置抽屉可编辑）。
+// 通行费发票 → 车牌号/车辆类型/通行日期起止；电费/普通等 → 规格型号/单位/数量/单价；
+// 分类未配置子列时回退标准 7 列（项目名称/单位/数量/单价/金额/税率/税额），
+// 保证非明细分类与旧数据仍可编辑。
+const fallbackItemSubFields = () => [
+  { key: 'name', label: '项目名称', dataType: 'text' },
+  { key: 'unit', label: '单位', dataType: 'text' },
+  { key: 'qty', label: '数量', dataType: 'number' },
+  { key: 'price', label: '单价', dataType: 'number' },
+  { key: 'amount', label: '金额', dataType: 'number' },
+  { key: 'tax_rate', label: '税率', dataType: 'number' },
+  { key: 'tax_amount', label: '税额', dataType: 'number' },
+]
+const ITEM_STD_KEYS = new Set(['name', 'unit', 'qty', 'price', 'amount', 'tax_rate', 'tax_amount'])
+const itemSubFields = computed(() => {
+  const r = currentRow.value
+  if (!r) return fallbackItemSubFields()
+  const targetType = r.invoiceType || r.category || filterInvoiceType.value || ''
+  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
+  const hit = cats.find((c: any) => c.name === targetType) || cats[0]
+  const itemsF = (hit?.subs || []).find((s: any) => s.name === 'items')
+  const sfs: any[] = itemsF?.sub_fields || []
+  return sfs.length ? sfs : fallbackItemSubFields()
+})
+// 列宽 class：按 dataType 映射（项目名称宽、数值窄、日期中、其它文本自适应）
+const itemCellClass = (sf: any) => {
+  if (sf.key === 'name') return 'item-cell--name'
+  if (sf.dataType === 'number') return 'item-cell--num'
+  if (sf.dataType === 'date') return 'item-cell--date'
+  return 'item-cell--text'
+}
+// 读取明细行子列值：标准键直接取行对象；分类子列从 extra 桶 / 行对象 / 历史字段兜底
+const itemValOf = (it: any, sf: any) => {
+  if (ITEM_STD_KEYS.has(sf.key)) return it?.[sf.key] ?? ''
+  return it?.[sf.key] ?? it?.extra?.[sf.key] ?? ''
+}
+// 写入明细行子列值：标准键写行对象；分类子列写 extra 桶（后端 UnmarshalJSON 自动收集）
+const setItemVal = (it: any, sf: any, v: any) => {
+  if (ITEM_STD_KEYS.has(sf.key)) {
+    it[sf.key] = v
+  } else {
+    if (!it.extra) it.extra = {}
+    it.extra[sf.key] = v
+    it[sf.key] = v // 同时平铺一份，保证持久化时行对象直接携带（兼容后端 extra 收集）
+  }
+}
+
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
@@ -1509,16 +1514,40 @@ const fillEditForm = () => {
   editForm.value = {
     invoice_no: r.invoiceNo || '',
     invoice_type: targetType,
-    items: Array.isArray(r.items) ? r.items.map(it => ({
-      name: it.name || '',
-      unit: it.unit || '',
-      qty: numToStr(it.qty),
-      price: numToStr(it.price),
-      amount: numToStr(it.amount),
-      // 税率以百分比显示（0.03 → "3"），保存时再转回小数
-      tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
-      tax_amount: numToStr(it.tax_amount),
-    })) : [],
+    items: Array.isArray(r.items) ? r.items.map((it: any) => {
+      const row: any = {
+        name: it.name || '',
+        unit: it.unit || '',
+        qty: numToStr(it.qty),
+        price: numToStr(it.price),
+        // 历史存量明细常缺 amount（早期仅 name/price/tax_rate）：数量为空时单价即金额
+        amount: numToStr(it.amount) || (it.qty === null || it.qty === undefined || it.qty === '' ? numToStr(it.price) : ''),
+        // 税率以百分比显示（0.03 → "3"），保存时再转回小数
+        tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
+        // 税额缺失时回退发票级税额（历史单行明细）
+        tax_amount: numToStr(it.tax_amount) || numToStr(r.tax),
+      }
+      // 分类子列回填：优先取提取结果（extra 桶/行对象），缺失时从行级 fields 扩展桶与
+      // remark 片段回填（存量通行费发票车牌号/通行日期等历史数据可回显）
+      const sfList = itemSubFields.value
+      for (const sf of sfList) {
+        if (ITEM_STD_KEYS.has(sf.key)) continue
+        let v: any = it?.[sf.key] ?? it?.extra?.[sf.key] ?? ''
+        if ((v === '' || v === null || v === undefined) && r.fields) {
+          v = r.fields?.[sf.label] ?? r.fields?.[sf.key] ?? ''
+        }
+        if ((v === '' || v === null || v === undefined) && r.remark) {
+          v = remarkPartOf(r.remark, sf.label) ?? ''
+        }
+        if (v === null || v === undefined) v = ''
+        row[sf.key] = v
+        if (sf.key !== 'name') {
+          row.extra = row.extra || {}
+          row.extra[sf.key] = v
+        }
+      }
+      return row
+    }) : [],
     remarkParts: rps,
     data: {
       invoiceNo: r.invoiceNo || '',
@@ -1613,7 +1642,7 @@ const persistEditForm = async (force: boolean) => {
       items: Array.isArray(editForm.value.items)
         ? editForm.value.items.map((it: any) => {
             const taxRate = toNumber(it.tax_rate)
-            return {
+            const base: any = {
               name: it.name || '',
               unit: it.unit || '',
               qty: toNumber(it.qty),
@@ -1623,6 +1652,13 @@ const persistEditForm = async (force: boolean) => {
               tax_rate: taxRate === undefined ? undefined : taxRate / 100,
               tax_amount: toNumber(it.tax_amount),
             }
+            // 分类子列（plate_no/travel_from/travel_to/spec 等）：行对象/extra 桶
+            // 原样写出行键，后端 InvoiceExtractionLine 反序列化时自动收集进 Extra 落库
+            const extraSrc: any = { ...(it.extra || {}), ...it }
+            for (const k of Object.keys(extraSrc)) {
+              if (!ITEM_STD_KEYS.has(k) && k !== 'extra') base[k] = extraSrc[k]
+            }
+            return base
           })
         : [],
     }
@@ -2517,11 +2553,18 @@ watch(printVisible, (v) => {
 .items-section { border-top: 1px solid var(--td-component-stroke); padding-top: 14px; margin-top: 4px;
   .items-header { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 10px; }
 }
-.items-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr 44px; gap: 8px; align-items: center; margin-bottom: 8px;
+// 明细行按分类 sub_fields 动态渲染（通行费/电费列不同），flex 布局 + 固定列宽类，
+// 表头与数据行共用同一组列宽类保证强对齐；列数多时横向滚动而非挤压
+.items-table { overflow-x: auto; }
+.items-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
   &--head { font-size: 12px; color: var(--td-text-color-secondary); margin-bottom: 4px; }
 }
 .item-cell { min-width: 0; }
-.item-op { display: flex; justify-content: center; }
+.item-cell--name { width: 140px; flex-shrink: 0; }
+.item-cell--text { width: 100px; flex-shrink: 0; }
+.item-cell--num { width: 90px; flex-shrink: 0; }
+.item-cell--date { width: 118px; flex-shrink: 0; }
+.item-op { width: 44px; flex-shrink: 0; display: flex; justify-content: center; }
 .items-empty { font-size: 13px; color: var(--td-text-color-placeholder); padding: 12px 0; }
 .detail-save-hint { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; color: var(--td-text-color-placeholder); }
 

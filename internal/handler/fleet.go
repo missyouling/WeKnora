@@ -1669,7 +1669,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "items", Enabled: true, IsDefault: true, DataType: "items"},
+			{Name: "items", Enabled: true, IsDefault: true, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		{"invoice", "专用发票", "invoice-vat", 2, []types.FleetCategorySub{
@@ -1688,7 +1688,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
 			{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-			{Name: "items", Enabled: true, IsDefault: true, DataType: "items"},
+			{Name: "items", Enabled: true, IsDefault: true, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		// 其它票据：系统内置兜底分类（任务 2）。废除 OCR 自动降级后，上传分类完全由用户
@@ -1712,7 +1712,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "remark", Enabled: true, IsDefault: false, DataType: "array"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-			{Name: "items", Enabled: true, IsDefault: false, DataType: "items"},
+			{Name: "items", Enabled: true, IsDefault: false, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
 		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
@@ -1761,6 +1761,11 @@ func (h *FleetHandler) seedBusinessCategories() {
 
 	// 其它票据：已存在分类补齐缺失字段（复用普通发票字段集，幂等、不覆盖已有字段）
 	h.seedInvoiceMiscSubsBackfill(ctx)
+
+	// 发票明细子列：按分类名幂等补齐 items 字段的 sub_fields（通行费/水电发票等用户
+	// 自建分类当前连 items 字段都没有；普通/专用/其它票据可能只有 items 无子列）。
+	// 「防覆盖」原则：items 已有非空 sub_fields 的分类绝不更新，只补缺失项。
+	h.seedInvoiceItemSubFields(ctx)
 
 	// 合同内置分类（服务合同/租赁合同）走专门的名称协调逻辑，兼容历史脏数据：
 	// 早期笼统「合同」分类退役、服务合同曾复用 builtin_key=contract、用户自建同名分类收编。
@@ -1856,6 +1861,97 @@ func (h *FleetHandler) seedInvoiceMiscSubsBackfill(ctx context.Context) {
 			logger.Warnf(ctx, "backfill misc invoice subs failed: %v", err)
 		} else {
 			logger.Infof(ctx, "backfilled misc invoice category %q subs (+%d fields)", cats[i].Name, added)
+		}
+	}
+}
+
+// invoiceItemSubFieldsStandard 标准票面明细子列（普通/专用/其它票据/水电/电费）：
+// 项目名称/规格型号/单位/数量/单价/金额/税率(征收率)/税额，8 列。
+func invoiceItemSubFieldsStandard() []types.FleetItemSubField {
+	return []types.FleetItemSubField{
+		{Key: "name", Label: "项目名称", DataType: "text", Width: 140},
+		{Key: "spec", Label: "规格型号", DataType: "text", Width: 110},
+		{Key: "unit", Label: "单位", DataType: "text", Width: 70},
+		{Key: "qty", Label: "数量", DataType: "number", Width: 80},
+		{Key: "price", Label: "单价", DataType: "number", Width: 90},
+		{Key: "amount", Label: "金额", DataType: "number", Width: 100},
+		{Key: "tax_rate", Label: "税率/征收率", DataType: "number", Width: 90},
+		{Key: "tax_amount", Label: "税额", DataType: "number", Width: 90},
+	}
+}
+
+// invoiceItemSubFieldsToll 通行费发票明细子列（用户口径）：
+// 项目名称/车牌号/车辆类型/通行日期起/通行日期止/金额/税率(征收率)/税额，8 列。
+func invoiceItemSubFieldsToll() []types.FleetItemSubField {
+	return []types.FleetItemSubField{
+		{Key: "name", Label: "项目名称", DataType: "text", Width: 120},
+		{Key: "plate_no", Label: "车牌号", DataType: "text", Width: 100},
+		{Key: "vehicle_type", Label: "车辆类型", DataType: "text", Width: 90},
+		{Key: "travel_from", Label: "通行日期起", DataType: "date", Width: 110},
+		{Key: "travel_to", Label: "通行日期止", DataType: "date", Width: 110},
+		{Key: "amount", Label: "金额", DataType: "number", Width: 100},
+		{Key: "tax_rate", Label: "税率/征收率", DataType: "number", Width: 90},
+		{Key: "tax_amount", Label: "税额", DataType: "number", Width: 90},
+	}
+}
+
+// seedInvoiceItemSubFields 按分类名幂等补齐发票 items 字段的 sub_fields（子列口径）。
+// 通行费发票 → 通行费子列；水电/电费/普通/专用/其它票据 → 标准子列。
+// 规则：分类缺少 items 字段 → 追加 items（默认启用）；items 存在但 sub_fields 为空
+// → 补子列；items 已有非空 sub_fields → 跳过（绝不覆盖用户编辑过的配置）。
+func (h *FleetHandler) seedInvoiceItemSubFields(ctx context.Context) {
+	tplByCategory := map[string][]types.FleetItemSubField{
+		"普通发票": invoiceItemSubFieldsStandard(),
+		"专用发票": invoiceItemSubFieldsStandard(),
+		"其它票据": invoiceItemSubFieldsStandard(),
+		"水电发票": invoiceItemSubFieldsStandard(),
+		"电费发票": invoiceItemSubFieldsStandard(),
+		"通行费发票": invoiceItemSubFieldsToll(),
+		"通行费":   invoiceItemSubFieldsToll(), // 兼容早期无「发票」后缀的自建分类名
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND deleted_at IS NULL", types.FleetCategoryScopeInvoice).
+		Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "seed invoice item sub_fields: list failed: %v", err)
+		return
+	}
+	for i := range cats {
+		tpl, ok := tplByCategory[cats[i].Name]
+		if !ok {
+			continue // 用户自建的非明细分类不动
+		}
+		subs := cats[i].Subs
+		changed := false
+		idx := -1
+		for j := range subs {
+			if subs[j].Name == "items" {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			// 缺 items 字段 → 追加（默认启用，供详情抽屉明细区使用）
+			subs = append(subs, types.FleetCategorySub{Name: "items", Enabled: true, IsDefault: true, DataType: "items", SubFields: tpl})
+			changed = true
+		} else if len(subs[idx].SubFields) == 0 {
+			// items 存在但无子列 → 补子列
+			subs[idx].SubFields = tpl
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		raw, merr := json.Marshal(subs)
+		if merr != nil {
+			logger.Warnf(ctx, "seed invoice item sub_fields marshal failed: %v", merr)
+			continue
+		}
+		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).Where("id = ?", cats[i].ID).
+			Update("subs", gorm.Expr("?::jsonb", string(raw))).Error; err != nil {
+			logger.Warnf(ctx, "seed invoice item sub_fields failed for %q: %v", cats[i].Name, err)
+		} else {
+			logger.Infof(ctx, "seeded invoice item sub_fields for category %q", cats[i].Name)
 		}
 	}
 }
