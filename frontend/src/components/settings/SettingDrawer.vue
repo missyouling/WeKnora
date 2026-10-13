@@ -26,7 +26,7 @@
             </slot>
           </div>
           <div class="setting-drawer__header-text">
-            <div class="setting-drawer__title">{{ title }}</div>
+            <div class="setting-drawer__title"><slot name="title">{{ title }}</slot></div>
             <div v-if="description || $slots.subtitle" class="setting-drawer__subtitle">
               <slot name="subtitle">{{ description }}</slot>
             </div>

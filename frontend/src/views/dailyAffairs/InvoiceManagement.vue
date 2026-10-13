@@ -268,6 +268,10 @@
 
     <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
+      <template #title>
+        <span class="detail-title-main">{{ detailTitle }}</span>
+        <span v-if="currentRow?.page && currentRow.page >= 1" class="row-page-badge">P{{ currentRow.page }}</span>
+      </template>
       <div class="invoice-detail-body">
         <!-- 发票字段（按分类配置动态渲染，字段来自设置-字段定义 subs） -->
         <section class="detail-block">
@@ -316,12 +320,6 @@
           </div>
         </section>
 
-        <!-- 保存/取消前置到表单底部（源文件预览上方），无需滚过 PDF 预览即可保存 -->
-        <div class="invoice-detail-footer">
-          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
-        </div>
-
         <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
         <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
           <t-collapse-panel value="preview" header="源文件预览">
@@ -332,6 +330,12 @@
             </div>
           </t-collapse-panel>
         </t-collapse>
+
+        <!-- 保存/取消置于源文件预览下方 -->
+        <div class="invoice-detail-footer">
+          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
+          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+        </div>
       </div>
     </SettingDrawer>
 
@@ -1428,12 +1432,9 @@ const openDetail = async (row: InvoiceRow) => {
   } catch { /* 详情刷新失败不影响查看 */ }
 }
 
-const detailTitle = computed(() => {
-  const r = currentRow.value
-  if (!r?.invoiceNo) return '发票详情'
-  const pageTag = r.page && r.page >= 1 ? ` · P${r.page}` : ''
-  return `发票详情 · ${r.invoiceNo}${pageTag}`
-})
+const detailTitle = computed(() =>
+  currentRow.value?.invoiceNo ? `发票详情 · ${currentRow.value.invoiceNo}` : '发票详情'
+)
 
 // ---- 字段编辑 + 手动保存 ----
 // 明细子列口径（单一权威源 = 分类字段配置中 items 字段的 sub_fields，设置抽屉可编辑）。
@@ -2499,15 +2500,21 @@ watch(printVisible, (v) => {
   gap: 8px;
 }
 
-// 详情抽屉底部取消/保存（对齐车队 meter-drawer-footer 行内保存）
+// 详情抽屉底部取消/保存（置于源文件预览下方，无分割线）
 .invoice-detail-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 4px 0 0;
-  border-top: 1px solid var(--td-component-stroke);
   margin-top: 0;
 }
+
+// 标题页码标签：与列表行发票号码后的 P1/P2 标签一致（浅绿底深绿字）
+.invoice-detail-drawer .setting-drawer__title { display: flex; align-items: center; }
+.invoice-detail-drawer .row-page-badge { display: inline-flex; align-items: center; }
+
+// 开票日期选择器与其它字段输入框对齐（同宽撑满 grid 单元格）
+.invoice-detail-drawer .field-grid :deep(.t-date-picker) { width: 100%; }
 .row-items { display: flex; flex-direction: column; gap: 2px; max-width: 100%; overflow: hidden; }
 .row-items-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 4px; align-items: baseline; color: var(--td-text-color-primary); }
 .row-items-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
