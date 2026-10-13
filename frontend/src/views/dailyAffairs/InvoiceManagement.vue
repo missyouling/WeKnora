@@ -286,7 +286,14 @@
                         filterable placeholder="选择或输入类型" />
                     </t-form-item>
                     <t-form-item v-else-if="f.name === 'extractStatus'" label="提取状态" label-width="110px">
-                      <span class="detail-readonly">{{ invoiceStatusText(editForm.data.extractStatus) }}</span>
+                      <t-tag v-if="statusOf(editForm.data).label !== '--'" size="small" :theme="statusOf(editForm.data).theme"
+                        variant="light-outline" class="row-status-tag">
+                        <template v-if="statusOf(editForm.data).icon" #icon>
+                          <t-icon :name="statusOf(editForm.data).icon!" :class="{ 'icon-spin': statusOf(editForm.data).spin }" />
+                        </template>
+                        {{ statusOf(editForm.data).label }}
+                      </t-tag>
+                      <span v-else class="row-muted">--</span>
                     </t-form-item>
                     <t-form-item v-else-if="f.name === 'tags'" label="标签" label-width="110px">
                       <div v-if="String(editForm.data.tags || '').trim()" class="detail-tags-readonly">
@@ -302,7 +309,7 @@
                         :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
                       <t-input v-else v-model="editForm.remarkParts[f.remarkPart]" placeholder="" />
                     </t-form-item>
-                    <t-form-item v-else-if="f.name !== 'items'" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' }">
+                    <t-form-item v-else-if="f.name !== 'items'" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' || f.name === 'fileName' }">
                       <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
                         format="YYYY-MM-DD" clearable allow-input />
                       <t-input v-else-if="f.dataType === 'number'" v-model="editForm.data[f.name]"
@@ -1563,6 +1570,7 @@ const fillEditForm = () => {
       issuer: r.issuer || '',
       remark: r.remark || '',
       extractStatus: r.extractStatus || '',
+      parseStatus: r.parseStatus || 'completed',
       tags,
       sellerTaxNo: r.sellerTaxNo || '',
       buyerTaxNo: r.buyerTaxNo || '',
@@ -2511,7 +2519,11 @@ watch(printVisible, (v) => {
 
 // 标题页码标签：与列表行发票号码后的 P1/P2 标签一致（浅绿底深绿字）
 .invoice-detail-drawer .setting-drawer__title { display: flex; align-items: center; }
-.invoice-detail-drawer .row-page-badge { display: inline-flex; align-items: center; }
+.invoice-detail-drawer .setting-drawer__title .row-page-badge {
+  display: inline-flex; align-items: center;
+  font-size: inherit;
+  height: 22px; line-height: 22px; padding: 0 10px; margin-left: 8px;
+}
 
 // 开票日期选择器与其它字段输入框对齐（同宽撑满 grid 单元格）
 .invoice-detail-drawer .field-grid :deep(.t-date-picker) { width: 100%; }
