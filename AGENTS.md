@@ -178,7 +178,7 @@
 
 ## 远端 VPS 生产部署与测试要点（强制）
 
-> **研发环境分工（最高原则）**：**本机 = 开发环境**（代码开发、调试、本地验证都在本机完成）；**GitHub Actions = 镜像构建**（push `daily-affairs-v2` 自动构建 `ghcr.io/missyouling/weknora-da:da-latest`）；**VPS = 生产运行**（watchtower 自动监视最新镜像并滚动更新，不做任何开发/调试）；**数据库 = 本机与 VPS 共用同一 Supabase 云库**。
+> **研发环境分工（最高原则）**：**本机 = 开发环境**（代码开发、调试、本地验证都在本机完成）；**GitHub Actions = 镜像构建**（push `daily-affairs-v3` 自动构建 `ghcr.io/missyouling/weknora-da:da-latest`）；**VPS = 生产运行**（watchtower 自动监视最新镜像并滚动更新，不做任何开发/调试）；**数据库 = 本机与 VPS 共用同一 Supabase 云库**。
 
 ### 1. 部署拓扑（三容器全部 `network_mode: host`）
 
@@ -210,7 +210,7 @@
 
 ### 4. 发布与更新链路
 
-1. 本机开发并**通过全部本地检查**（见下节）后，commit + push `daily-affairs-v2`。
+1. 本机开发并**通过全部本地检查**（见下节）后，commit + push `daily-affairs-v3`。
 2. CI（`.github/workflows/da-ci-cd.yml`）：quality-gate（前端 vue-tsc、`go vet`、`go test` 白名单）→ build-push 构建并推送 `da-latest`。
 3. VPS watchtower 每 4 小时自动部署新镜像；**需要立即生效时手动更新**：
    ```bash
