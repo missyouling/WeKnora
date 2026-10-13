@@ -3,8 +3,28 @@
   <div v-if="loading" class="dash-kpi-skeleton" aria-hidden="true">
     <div v-for="i in 5" :key="i" class="dash-kpi-skeleton__card" />
   </div>
-  <div v-else ref="groupRef" class="dash-kpi-group">
-    <!-- 溢出导航：滚动条被隐藏后，纯鼠标/触摸用户仍能点击箭头将不可见卡片滚入视口 -->
+  <div v-else class="dash-kpi-wrapper">
+    <div ref="groupRef" class="dash-kpi-group">
+      <div
+        v-for="card in cards"
+        :key="card.key"
+        class="dash-kpi-card"
+        :class="[card.cls, card.numCls, { 'is-active': isActive(card) }]"
+        @click="$emit('card-click', card)"
+      >
+        <div class="dash-kpi-card__icon">
+          <t-icon :name="card.icon" size="22px" />
+        </div>
+        <div class="dash-kpi-card__body">
+          <div class="dash-kpi-card__label">{{ card.label }}</div>
+          <div class="dash-kpi-card__num">
+            {{ card.value }}<span v-if="card.unit">{{ card.unit }}</span>
+          </div>
+          <div v-if="card.sub" class="dash-kpi-card__sub">{{ card.sub }}</div>
+        </div>
+      </div>
+    </div>
+    <!-- 溢出导航：箭头定位在 wrapper（不随滚动内容移动），滚动后仍固定在视口左右边缘 -->
     <button
       v-if="canLeft"
       type="button"
@@ -14,24 +34,6 @@
     >
       <t-icon name="chevron-left" />
     </button>
-    <div
-      v-for="card in cards"
-      :key="card.key"
-      class="dash-kpi-card"
-      :class="[card.cls, card.numCls, { 'is-active': isActive(card) }]"
-      @click="$emit('card-click', card)"
-    >
-      <div class="dash-kpi-card__icon">
-        <t-icon :name="card.icon" size="22px" />
-      </div>
-      <div class="dash-kpi-card__body">
-        <div class="dash-kpi-card__label">{{ card.label }}</div>
-        <div class="dash-kpi-card__num">
-          {{ card.value }}<span v-if="card.unit">{{ card.unit }}</span>
-        </div>
-        <div v-if="card.sub" class="dash-kpi-card__sub">{{ card.sub }}</div>
-      </div>
-    </div>
     <button
       v-if="canRight"
       type="button"
@@ -156,8 +158,13 @@ onBeforeUnmount(() => {
   border-radius: var(--td-radius-large);
   background: var(--td-bg-color-component);
 }
-.dash-kpi-group {
+.dash-kpi-wrapper {
   position: relative;
+  /* 负外边距抵消内部 group 的垂直 padding，保证与旧版整体布局间距一致 */
+  margin-top: -12px;
+  margin-bottom: -12px;
+}
+.dash-kpi-group {
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -165,10 +172,8 @@ onBeforeUnmount(() => {
   gap: 14px;
   /* 垂直/水平内边距：为 hover 上浮与 box-shadow（--td-shadow-1 最大 blur 10px）
      提供完整渲染空间，避免边缘卡片阴影/边框被 overflow 裁剪出平齐断层；
-     负外边距等量抵消内边距造成的布局位移，保证与旧版外观间距完全一致 */
+     对外布局的位移由外层 wrapper 的等量负外边距抵消 */
   padding: 12px 8px;
-  margin-top: -12px;
-  margin-bottom: -12px;
   /* 隐藏横向滚动条（Windows 原生滚动条占高度且不美观），保留滚轮/触控板滑动 */
   -ms-overflow-style: none;
   scrollbar-width: none;
