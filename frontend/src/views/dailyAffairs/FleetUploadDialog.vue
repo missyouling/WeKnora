@@ -45,7 +45,7 @@
               </template>
             </div>
           </div>
-          <t-button v-if="t.status === 'queued'" variant="text" size="small" shape="square" class="fu-item-del"
+          <t-button variant="text" size="small" shape="square" class="fu-item-del" title="删除该上传任务"
             @click.stop="removeTask(t.key)">
             <template #icon><t-icon name="close" size="16px" /></template>
           </t-button>
@@ -91,6 +91,8 @@ interface UpTask {
   progress: number
   msg?: string
   kid?: string
+  /** 用户点击 × 删除后置位：任务从列表移除，后续解析/提取阶段据此停止 */
+  cancelled?: boolean
 }
 
 /** 工具栏实时进度项：stage 对应任务阶段 */
@@ -202,7 +204,10 @@ function addFiles(files: File[]) {
 }
 
 function removeTask(key: string) {
-  tasks.value = tasks.value.filter((t) => t.key !== key)
+  // 无需二次确认：立即标记取消并从列表移除；进行中的任务在解析/提取阶段据此停止
+  const t = tasks.value.find((x) => x.key === key)
+  if (t) t.cancelled = true
+  tasks.value = tasks.value.filter((x) => x.key !== key)
 }
 
 // ---- 状态展示 ----
@@ -268,6 +273,7 @@ async function runTask(t: UpTask) {
     t.progress = 8
     const pollStart = Date.now()
     for (;;) {
+      if (t.cancelled) return // 用户已删除该任务：停止解析轮询，不再触发提取
       const kd: any = await getKnowledgeDetails(kid)
       const info = kd?.data || kd
       const ps = info?.parse_status || info?.status || ''
@@ -282,6 +288,7 @@ async function runTask(t: UpTask) {
     }
 
     // 解析完成后再打标（此时不会再被清空），然后排队提取
+    if (t.cancelled) return
     try {
       const kd: any = await getKnowledgeDetails(kid)
       let meta2 = kd?.data?.custom_metadata || kd?.custom_metadata || {}
@@ -290,6 +297,7 @@ async function runTask(t: UpTask) {
     } catch { /* 打标失败由列表轮询兜底 */ }
 
     extractQueue.push(async () => {
+      if (t.cancelled) return // 用户已删除该任务：跳过提取，不落库
       try {
         t.status = 'extracting'
         t.progress = 30
@@ -507,6 +515,23 @@ onBeforeUnmount(() => {
       &--dup { color: var(--td-warning-color); }
       &--err { color: var(--td-error-color); }
     }
+  }
+
+  // 删除（×）按钮：默认隐藏，悬浮任务行时显示；点击即删无需确认
+  .fu-item-del {
+    flex: none;
+    opacity: 0;
+    color: var(--td-text-color-placeholder);
+    transition: opacity 0.2s ease;
+
+    &:hover {
+      color: var(--td-error-color);
+    }
+  }
+
+  &:hover .fu-item-del,
+  .fu-item-del:focus-visible {
+    opacity: 1;
   }
 }
 
