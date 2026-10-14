@@ -1924,20 +1924,49 @@ const rateTextOf = (row: InvoiceRow): string => {
 }
 
 // ---- 浮动工具栏 ----
+// 批量解析/提取的并发上限：后端提取为串行模型调用（内部排队），前端无需无上限并发，
+// 3 并发足够掩盖请求排队抖动，又不至于把后端队列一次塞满。
+const BATCH_CONCURRENCY = 3
+
+// 轻量并发池：以 limit 上限消费 items，返回与入参同序的 allSettled 结果；
+// 单个任务失败不中断整体，语义与 Promise.allSettled 一致（避免引入第三方库）。
+async function settleInBatches<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<unknown>): Promise<PromiseSettledResult<unknown>[]> {
+  const results: PromiseSettledResult<unknown>[] = new Array(items.length)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < items.length) {
+      const i = cursor++
+      results[i] = await Promise.resolve().then(() => fn(items[i])).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
+}
+
 const selectedSingle = computed(() => {
   const rows = selectedRows.value
   return rows.length === 1 ? rows[0] : null
 })
 
 // 批量确认文案：单选显示文件名，多选显示文件数（selectedIds 已按 knowledgeId 去重）
+// 注意：多选 N 条记录若同属一个文件，selectedIds.length 为 1，此时取任一选中记录的文件名展示
 const reparseConfirmText = computed(() => {
   const ids = selectedIds.value
-  if (ids.length === 1) return `确定重新解析「${selectedSingle.value?.fileName || '该文件'}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定重新解析「${name}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  }
   return `确定重新解析选中的 ${ids.length} 个文件并重新拆页吗？将覆盖已有解析结果。`
 })
 const extractConfirmText = computed(() => {
   const ids = selectedIds.value
-  if (ids.length === 1) return `确定按最新提取规则重新提取「${selectedSingle.value?.fileName || '该文件'}」的所有发票字段吗？将覆盖已有提取结果。`
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定按最新提取规则重新提取「${name}」的所有发票字段吗？将覆盖已有提取结果。`
+  }
   return `确定按最新提取规则重新提取选中的 ${ids.length} 个文件的所有发票字段吗？将覆盖已有提取结果。`
 })
 
@@ -1951,7 +1980,8 @@ const handleReparse = async () => {
   let ok = 0
   let fail = 0
   try {
-    const results = await Promise.allSettled(ids.map(kid => reparseKnowledge(kid)))
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新解析一次
+    const results = await settleInBatches(ids, BATCH_CONCURRENCY, kid => reparseKnowledge(kid))
     results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
     loading.close()
     if (fail === 0) {
@@ -1980,8 +2010,11 @@ const handleFileExtract = async () => {
   try {
     // 携带当前细分分类（用户正在该分类视图下操作），锚定同文件多页发票的类型，
     // 避免历史文件缺 fleet_cert_type 打标时被错误降级为「其它票据」。
-    const results = await Promise.allSettled(
-      ids.map(kid => extractBusinessDocument(kbId.value, kid, 'invoice', filterInvoiceType.value || undefined)),
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新提取一次。
+    const results = await settleInBatches(
+      ids,
+      BATCH_CONCURRENCY,
+      kid => extractBusinessDocument(kbId.value, kid, 'invoice', filterInvoiceType.value || undefined),
     )
     let ok = 0
     results.forEach((r, i) => {
