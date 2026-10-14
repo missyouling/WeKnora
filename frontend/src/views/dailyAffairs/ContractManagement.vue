@@ -58,6 +58,9 @@
           </template>
         </BusinessListToolbar>
 
+      <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
+      <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
+
       <!-- 合同列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
@@ -178,19 +181,19 @@
         </div>
         <div class="batch-bar-actions">
           <t-popconfirm theme="warning"
-            :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件吗？将覆盖已有解析结果。`"
+            :content="reparseConfirmText"
             :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleReparse">
-            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" @click.stop>
               <template #icon><t-icon name="refresh" size="14px" /></template>
               重新解析
             </t-button>
           </t-popconfirm>
           <t-popconfirm theme="warning"
-            :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有合同字段吗？将覆盖已有提取结果。`"
+            :content="extractConfirmText"
             :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleFileExtract">
-            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" @click.stop>
               <template #icon><t-icon name="cloud-upload" size="14px" /></template>
               重新提取
             </t-button>
@@ -234,7 +237,7 @@
 
     <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="contract" title="上传合同"
-      :type-options="uploadTypeOptions" @done="onUploadDone" />
+      :type-options="uploadTypeOptions" @progress="onUploadProgress" @done="onUploadDone" />
 
     <!-- 历史记录（对齐发票基准：已上传文件抽屉，展示解析/提取状态与合同类型） -->
     <FleetUploadHistoryDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" scope="contract"
@@ -463,6 +466,7 @@ import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount 
 import { listFleetCategories } from '@/api/fleet'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
@@ -1163,6 +1167,9 @@ const ensureContractType = () => {
   const valid = new Set(contractTypeOptions.value.map((o) => o.value))
   // 「其它合同」为排除式筛选态（不在分类下拉 options 中，点击其它合同卡进入），分类重载时须放行
   if (filterContractType.value && (valid.has(filterContractType.value) || filterContractType.value === '其它合同')) return
+  // 空值 = 「全部」态（点击「全部合同」卡进入，对齐发票「已收录发票」卡）：放行避免被
+  // 弹回第一个分类；工具栏下拉本身禁清空，用户无法手动进入此态
+  if (filterContractType.value === '') return
   const cats = contractCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
   filterContractType.value = (cats.length ? cats[0] : contractTypeOptions.value[0]?.value) || ''
 }
@@ -1203,20 +1210,30 @@ const overviewCards = computed<KpiCard[]>(() => {
   const m = st.current_month || {}
   const total = Number(st.total || 0)
   const expiring = Number(st.expiring || 0)
-  const byType: Array<{ contract_type: string; count: number }> = st.by_contract_type || []
-  const typeCount = (name: string) => byType.find((t) => t.contract_type === name)?.count || 0
+  // 分类统计：后端按 contract_type 精确聚合（空归「未分类」）
+  const catCount: Record<string, number> = {}
+  for (const c of (st.by_category || [])) catCount[String(c.category)] = Number(c.count) || 0
   const cards: KpiCard[] = [
-    // 全部合同：全量总份数（含未分类/其它合同与待补录占位行），带单位「份」
-    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), unit: '份', sub: `本月新增 ${Number(m.count || 0)} 份`, theme: 'brand' },
+    // 全部合同：全量总份数（含未分类/其它合同与待补录占位行），点击清空筛选进入全部态（对齐发票）
+    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), unit: '份', sub: `本月新增 ${Number(m.count || 0)} 份`, theme: 'brand', action: 'all' },
   ]
-  // 类型分布卡：只显示内置分类（服务合同/租赁合同）；「其它合同」为排除式统计桶
-  // 固定追加末尾（收纳未匹配服务/租赁分类的记录），点击不联动筛选（发票基准「其它票据」同款）
-  const builtinTypeNames = ['服务合同', '租赁合同']
-  for (const name of builtinTypeNames) {
-    const typeIcon = name === '租赁合同' ? 'file-copy' : 'file-1'
-    cards.push({ key: `type-${name}`, label: name, icon: typeIcon, value: String(typeCount(name)), unit: '份', theme: 'neutral', action: 'type', typeValue: name })
+  // 类型分布卡：以合同分类列表（categories[scope=contract]）为权威源动态生成，顺序 = 分类数组顺序；
+  // enabled=false 的分类不出卡片（六同步：同时不出筛选下拉/上传选项）
+  const enabledCats = (contractCats.value || []).filter((c: any) => c.enabled !== false)
+  let catSum = 0
+  for (const c of enabledCats) {
+    // 「其它合同」为系统内置兜底分类：统计口径是排除式桶（total - 各启用分类之和），
+    // 跳过该分类卡且不计入 catSum，避免与下方排除式卡重复/口径错乱
+    if (c.name === '其它合同') continue
+    const cnt = catCount[String(c.name)] || 0
+    catSum += cnt
+    const typeIcon = c.name === '租赁合同' ? 'file-copy' : 'file-1'
+    cards.push({ key: `type-${c.name}`, label: c.name, icon: typeIcon, value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: c.name })
   }
-  cards.push({ key: 'type-其它合同', label: '其它合同', icon: 'file-unknown', value: String(typeCount('其它合同')), unit: '份', theme: 'neutral', action: 'type', typeValue: '其它合同' })
+  // 「其它合同」排除式统计桶（收纳未匹配任何启用分类的记录，含未分类/已停用分类存量），
+  // 无条件渲染（计数 0 兜底），避免卡片数量二次跳变
+  const otherCount = Math.max(0, total - catSum)
+  cards.push({ key: 'type-其它合同', label: '其它合同', icon: 'file-unknown', value: String(otherCount), unit: '份', theme: 'neutral', action: 'type', typeValue: '其它合同' })
   // 即将到期（未来 30 天内，全量口径）：warning 主题色警示
   cards.push({ key: 'expiring', label: '即将到期', icon: 'time', value: String(expiring), unit: '份', theme: 'warning', action: 'expiring' })
   // 历史记录（已上传文件，对齐发票基准 fileCount/failed）：异常文件数 sub 展示，点击打开已上传文件抽屉
@@ -1226,7 +1243,10 @@ const overviewCards = computed<KpiCard[]>(() => {
 })
 // 卡片点击联动（发票基准同款 action 分流：类型卡切筛选；即将到期卡切履约筛选；历史记录卡开抽屉）
 const onOverviewCardClick = (card: KpiCard) => {
-  if (card.action === 'type' && card.typeValue) {
+  // 「全部合同」卡：清空类型筛选显示全部记录（对齐发票「已收录发票」卡）
+  if (card.action === 'all') {
+    filterContractType.value = ''
+  } else if (card.action === 'type' && card.typeValue) {
     filterContractType.value = card.typeValue // watch 触发 clearSelectionSafe + applyFilter
   } else if (card.action === 'expiring') {
     filterFulfillStatus.value = '即将到期'
@@ -1318,13 +1338,16 @@ const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
   extractInFlight, extractFailed, pendingFiles,
-  start: startPolling, stop: stopPolling,
+  start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'contract'),
   onPendingFiles: (files) => {
-    const withRows = new Set(contractRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+    // 状态条展示所有「进行中」文件：不仅新上传待解析/待提取的文件，也包括
+    // 已产生合同行、正处于「重新解析/重新提取」中的文件（重解/重提选中的记录
+    // 必然已有合同行，若按行过滤会把它们排除出状态条，只剩 toast 提示）。
+    // 轮询已保证 pend 只含解析中/提取中文件，完成/失败的文件不会进入这里。
+    pendingFiles.value = files
   },
   onRemoved: (item) => {
     MessagePlugin.info(`「${item.file_name || item.title}」不是合同文件，已移至删除历史，可在删除历史中恢复`)
@@ -1332,6 +1355,92 @@ const {
   },
   onTick: () => loadFiles(),
 })
+
+// 需求：解析/提取完成后自动刷新 KPI 卡片统计。
+// pendingFiles 由轮询每 3s 更新：集合变化（有文件解析完成进入合同行 / 提取完成 / 失败）
+// 即触发概览统计重载，保证卡片数量与本轮真实状态一致。
+let lastPendingKey = ''
+watch(pendingFiles, (v) => {
+  const key = v.map((f: any) => f.id).sort().join(',')
+  if (key !== lastPendingKey) {
+    lastPendingKey = key
+    if (kbId.value) loadContractOverview()
+  }
+}, { deep: false })
+
+// 上传任务实时进度（来自上传弹窗 @progress，发票/车队同款）：多文件同时进行时轮播展示
+const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
+const progressIndex = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
+  uploadProgress.value = filterLiveProgress(items)
+  if (uploadProgress.value.length <= 1) {
+    progressIndex.value = 0
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+    return
+  }
+  if (progressTimer) return
+  progressTimer = setInterval(() => {
+    if (uploadProgress.value.length <= 1) {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+      return
+    }
+    progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
+  }, 3000)
+}
+// 表格里该文件已「提取完成/失败」的，不再保留旧的「正在提取…N%」进度项
+function filterLiveProgress(items: any[]) {
+  const doneNames = new Set(
+    contractRows.value
+      .filter((r) => r.extractStatus === 'success' || r.extractStatus === 'failed')
+      .map((r) => r.fileName),
+  )
+  return items.filter((it: any) => !doneNames.has(it.name))
+}
+// 轮询刷新列表后：用表格实际 extractStatus 清掉已完成文件的残留进度
+watch(contractRows, () => {
+  if (!uploadProgress.value.length) return
+  uploadProgress.value = filterLiveProgress(uploadProgress.value)
+})
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+onBeforeUnmount(stopProgressTimer)
+
+// 解析/提取实时进度（弹窗关闭后兜底数据源）：
+// 后端轮询只返回状态枚举（pending/processing/completed + extract_status），无真实百分比。
+// 沿用上传弹窗同款"按耗时估算"口径：parsing 8→92、extracting 30→100；
+// 起点 = 文件首次进入进行中集合的时刻（fileStartAt 记忆表）。
+const fileStartAt = new Map<string, number>()
+const liveProgress = computed(() => {
+  const now = Date.now()
+  return pendingFiles.value.map((f) => {
+    const id = f.id
+    if (!fileStartAt.has(id)) fileStartAt.set(id, now)
+    const start = fileStartAt.get(id)!
+    const elapsed = (now - start) / 1000
+    const ps = f.parse_status || ''
+    const es = f.custom_metadata?.extract_status || ''
+    const name = f.file_name || f.title || id
+    // 解析已完成、提取进行中 → 提取阶段；否则视为解析阶段
+    if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) {
+      return { name, stage: 'extracting' as const, percent: Math.min(100, Math.round(30 + elapsed * 2)) }
+    }
+    return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
+  })
+})
+// 文件离开进行中集合后清理起点记忆，避免 id 复用导致百分比从旧值续算
+watch(pendingFiles, (v) => {
+  const alive = new Set(v.map((f: any) => f.id))
+  for (const id of Array.from(fileStartAt.keys())) {
+    if (!alive.has(id)) fileStartAt.delete(id)
+  }
+})
+// 弹窗打开期间优先展示上传弹窗上报的真实进度（含真实上传百分比）；
+// 弹窗关闭后 uploadProgress 停更，自动切换到轮询派生的解析/提取进度，状态条不中断。
+const displayProgress = computed(() =>
+  uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
+)
 
 const { extractStatusOf, statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
@@ -1564,49 +1673,136 @@ const selectedSingle = computed(() => {
   return rows.length === 1 ? rows[0] : null
 })
 
-// 重新提取：重新解析选中行对应源文件，解析完成后自动触发合同字段提取
-// （合同一个文件一般只有一份合同，无需按页提取；打印也整文档预览）。
+// ---- 浮动工具栏 ----
+// 批量解析/提取的并发上限：后端提取为串行模型调用（内部排队），前端无需无上限并发，
+// 3 并发足够掩盖请求排队抖动，又不至于把后端队列一次塞满。
+const BATCH_CONCURRENCY = 3
+
+// 轻量并发池：以 limit 上限消费 items，返回与入参同序的 allSettled 结果；
+// 单个任务失败不中断整体，语义与 Promise.allSettled 一致（避免引入第三方库）。
+async function settleInBatches<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<unknown>): Promise<PromiseSettledResult<unknown>[]> {
+  const results: PromiseSettledResult<unknown>[] = new Array(items.length)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < items.length) {
+      const i = cursor++
+      results[i] = await Promise.resolve().then(() => fn(items[i])).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
+}
+
+// 批量确认文案：单选显示文件名，多选显示文件数（selectedIds 已按 knowledgeId 去重）
+// 注意：多选 N 条记录若同属一个文件，selectedIds.length 为 1，此时取任一选中记录的文件名展示
+const reparseConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定重新解析「${name}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  }
+  return `确定重新解析选中的 ${ids.length} 个文件并重新拆页吗？将覆盖已有解析结果。`
+})
+const extractConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定按最新提取规则重新提取「${name}」的所有合同字段吗？将覆盖已有提取结果。`
+  }
+  return `确定按最新提取规则重新提取选中的 ${ids.length} 个文件的所有合同字段吗？将覆盖已有提取结果。`
+})
+
+// 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认）
 const reparseBusy = ref(false)
-const extractBusy = ref(false)
 const handleReparse = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份合同'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const ids = selectedIds.value
+  if (!ids.length) { MessagePlugin.info('请先选中要重新解析的合同'); return }
   reparseBusy.value = true
+  // 过程态交给上方状态条实时展示（正在解析「文件名」进度 N%），
+  // 这里清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
+  let ok = 0
+  let fail = 0
   try {
-    await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析`)
-    // 解析完成后延迟刷新列表与概览卡（新记录/类型变化同步到卡片统计）
-    setTimeout(() => { loadFiles(true); loadContractOverview() }, 1500)
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新解析一次
+    const results = await settleInBatches(ids, BATCH_CONCURRENCY, kid => reparseKnowledge(kid))
+    results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
+    if (fail === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新解析`)
+    } else {
+      MessagePlugin.warning(`${ok} 个文件重新解析已提交，${fail} 个提交失败`)
+    }
+    // 提交后立即扫描一次：重解走异步队列，parse_status 很快进入 pending，
+    // 主动 scanOnce 缩短状态条出现的等待窗口（不必等下一轮 3s 轮询）
+    scanOnce()
+    loadFiles(true)
+    loadContractOverview()
   } catch (e: any) {
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
     reparseBusy.value = false
   }
 }
 
+// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部合同字段（支持多文件批量，二次确认）
+const extractBusy = ref(false)
 const handleFileExtract = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份合同'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const all = selectedIds.value
+  if (!all.length) { MessagePlugin.info('请先选中要重新提取的合同'); return }
+  // 跳过已在提取中的文件（轮询自动提取或前一次手动提交仍在途）：
+  // 后端 extractMu 按文件防重入，重复提交会 409；前端 in-flight 先挡一轮
+  const ids = all.filter(kid => !extractInFlight.value.has(kid))
+  const skipped = all.length - ids.length
+  if (!ids.length) {
+    MessagePlugin.info('所选文件均正在提取中，请稍候')
+    return
+  }
+  ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
+  // 过程态交给上方状态条实时展示（正在提取「文件名」进度 N%）：
+  // 后端提取请求在途时已写 extract_status=processing，轮询即可捕获；
+  // 清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
   try {
-    await extractBusinessDocument(kbId.value, row.knowledgeId, 'contract', filterContractType.value || undefined)
-    loading.close()
-    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新提取一次。
+    const results = await settleInBatches(
+      ids,
+      BATCH_CONCURRENCY,
+      kid => extractBusinessDocument(kbId.value, kid, 'contract', filterContractType.value || undefined),
+    )
+    let ok = 0
+    let conflict = 0
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { ok++; return }
+      // 409 冲突：后端 extractMu 判定该文件正被提取（另一标签/请求在途），
+      // 属重复提交而非提取失败——不写入 extractFailed，避免状态列误报「提取失败」。
+      // request.ts 非 2xx JSON 响应统一带 $httpStatus（非枚举属性）。
+      if ((r.reason as any)?.$httpStatus === 409) { conflict++; return }
+      extractFailed.value.set(ids[i], Date.now())
+    })
+    const fail = results.length - ok - conflict
+    if (fail === 0 && conflict === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
+    } else {
+      const parts: string[] = []
+      if (ok) parts.push(`${ok} 个已提交`)
+      if (conflict) parts.push(`${conflict} 个正在提取中`)
+      if (fail) parts.push(`${fail} 个提交失败`)
+      if (skipped) parts.push(`${skipped} 个已在提取中，未重复提交`)
+      MessagePlugin.warning(parts.join('，'))
+    }
+    // 提交后立即扫描一次：提取在途文件 extract_status=processing 已被后端写入，
+    // 主动 scanOnce 让状态条立即显示「正在提取」，不必等下一轮 3s 轮询
+    scanOnce()
     loadFiles(true)
     loadContractOverview()
   } catch (e: any) {
-    loading.close()
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
+    ids.forEach(kid => extractInFlight.value.delete(kid))
     extractBusy.value = false
   }
 }

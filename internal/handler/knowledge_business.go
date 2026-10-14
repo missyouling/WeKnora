@@ -119,7 +119,7 @@ func (h *BusinessExtractHandler) autoDeleteCount(ctx context.Context, knowledge 
 	return 0
 }
 
-func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
+func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
@@ -145,10 +145,33 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	defer h.extractMu.Delete(knowledgeID)
 
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
+	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
+	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
 	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
 	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
+
+	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
+	// 保证状态闭环，不允许永久转圈。
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "Contract extraction panic recovered: %v\n%s", r, debug.Stack())
+			if failMeta, jerr := json.Marshal(contractCustomMetadata{
+				Kind:          "contract",
+				ExtractStatus: "failed",
+				ExtractError:  fmt.Sprintf("contract extraction panic: %v", r),
+			}); jerr == nil {
+				if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+					logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
+				}
+			}
+			if !c.Writer.Written() {
+				c.Error(errors.NewInternalServerError(fmt.Sprintf("contract extraction panic: %v", r)))
+			}
+		}
+	}()
 
 	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
@@ -208,7 +231,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			ExtractError:  zhNotice,
 		})
 		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
 			}
 		}
@@ -223,8 +246,39 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 	merged := &service.ContractExtractionResult{Kind: "contract"}
 	var extractErr error
 	sawContract := false
-	// 用户配置的提取规则（scope=contract）：为空时 WithRules 行为与默认版一致
-	contractRuleCfg := h.resolveContractRuleCfg(extractCtx, kbID)
+	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
+	//「正在提取」（避免点重新提取后状态列短暂停留在旧值/failed）。合并保留既有字段
+	//（fleet_cert_type、旧 contracts 等），提取成功/失败路径会用终态整体覆盖。
+	procMeta := map[string]interface{}{"kind": "contract", "extract_status": "processing"}
+	if len(knowledge.CustomMetadata) > 0 {
+		var prev map[string]interface{}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &prev); jerr == nil {
+			for k, v := range prev {
+				if _, exists := procMeta[k]; !exists {
+					procMeta[k] = v
+				}
+			}
+		}
+	}
+	delete(procMeta, "extract_error")
+	if pmeta, jerr := json.Marshal(procMeta); jerr == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(pmeta)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist contract processing-state: %v", serr)
+		}
+	}
+	// 规则解析：优先请求携带的归档类型（上传弹窗 body.cert_type），未携带时回退文件级
+	// 打标 fleet_cert_type，再按 resolveContractRuleCfg 回退整体规则。
+	ruleCertType := certType
+	if ruleCertType == "" && len(knowledge.CustomMetadata) > 0 {
+		var mdMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			ruleCertType = mdMeta.FleetCertType
+		}
+	}
+	// 用户配置的提取规则（scope=contract）：按归档分类匹配，未配置时回退整体规则
+	contractRuleCfg := h.resolveContractRuleCfg(extractCtx, kbID, ruleCertType)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
@@ -253,7 +307,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			ExtractStatus: "failed",
 			ExtractError:  "contract extraction failed: " + extractErr.Error(),
 		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
 				logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
 			}
 		}
@@ -284,6 +338,10 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 			}
 		}
 	}
+	// 用户归档分类绝对优先（对齐发票）：ruleCertType（上传选择/文件级 fleet_cert_type
+	// 打标）非空时，同文件全部合同（含多页）的 ContractType 强制为该分类，覆盖模型与
+	// 自定义识别规则；ruleCertType 为空时校验类型落在已启用合同分类集合，否则降级"其它合同"。
+	h.applyContractUserCategoryPrecedence(extractCtx, &meta, ruleCertType)
 	if extracted.Kind == "not_contract" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为合同，置 manual 待补录，
 		// 不自动删除（解决"该是合同却没入库"的误判）。
@@ -294,7 +352,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 				meta.ExtractStatus = "manual"
 				meta.ExtractError = "识别规则命中，已认定为合同，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
 						logger.Warnf(ctx, "Failed to persist rule-rescued contract meta: %v", serr)
 					}
 				}
@@ -351,7 +409,24 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	// 合并而非覆盖：保留 custom_metadata 中提取流程不管理的字段（如
+	// auto_deleted_count），避免整 JSON 覆盖丢数据（与发票最终保存口径一致）。
+	mergedJSON := metaJSON
+	if len(knowledge.CustomMetadata) > 0 {
+		var existing map[string]interface{}
+		var fresh map[string]interface{}
+		if jerr1 := json.Unmarshal(knowledge.CustomMetadata, &existing); jerr1 == nil {
+			if jerr2 := json.Unmarshal(metaJSON, &fresh); jerr2 == nil {
+				for k, v := range fresh {
+					existing[k] = v
+				}
+				if mj, merr := json.Marshal(existing); merr == nil {
+					mergedJSON = mj
+				}
+			}
+		}
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(mergedJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist contract extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
@@ -433,6 +508,7 @@ type contractCustomMetadata struct {
 	Contracts     []service.ContractExtractionItem `json:"contracts"`
 	ExtractStatus string                           `json:"extract_status"`
 	ExtractError  string                           `json:"extract_error"`
+	FleetCertType string                           `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
 }
 
 // contractBatchesHaveText reports whether any extraction batch carries usable text.
@@ -465,6 +541,77 @@ func (h *BusinessExtractHandler) enabledInvoiceCategoryNames(ctx context.Context
 		}
 	}
 	return names
+}
+
+// enabledContractCategoryNames 返回当前已启用的合同分类名（scope=contract，
+// tenant_id=0 内置分类），按 sort_order 升序。与发票版口径一致。
+func (h *BusinessExtractHandler) enabledContractCategoryNames(ctx context.Context) []string {
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND enabled = TRUE AND deleted_at IS NULL", "contract").
+		Order("sort_order ASC, created_at ASC").Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "load enabled contract categories failed: %v", err)
+		return nil
+	}
+	names := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// applyContractUserCategoryPrecedence 在合同写库前执行「用户指定分类绝对优先 +
+// 停用分类隔离」，与发票 applyInvoiceUserCategoryPrecedence 口径对齐：
+//   - certType 非空（上传弹窗选择/文件级 fleet_cert_type 打标）：无视模型与自定义识别规则
+//     提议的类型，同文件下全部合同（含多页）的 ContractType 统一赋值为用户指定分类；
+//   - certType 为空（未打标的直连重提取）：提取类型必须落在当前已启用合同分类集合内，
+//     命中停用分类或无法匹配的类型降级「其它合同」；空类型保持为空（前端显示 --）。
+func (h *BusinessExtractHandler) applyContractUserCategoryPrecedence(ctx context.Context, meta *contractCustomMetadata, certType string) {
+	if meta == nil {
+		return
+	}
+	activeTypes := make(map[string]struct{})
+	for _, n := range h.enabledContractCategoryNames(ctx) {
+		activeTypes[n] = struct{}{}
+	}
+	if certType = strings.TrimSpace(certType); certType != "" {
+		for i := range meta.Contracts {
+			meta.Contracts[i].ContractType = certType
+		}
+		meta.FleetCertType = certType
+		return
+	}
+	for i := range meta.Contracts {
+		t := strings.TrimSpace(meta.Contracts[i].ContractType)
+		if t == "" {
+			continue
+		}
+		if _, ok := activeTypes[t]; ok {
+			continue
+		}
+		meta.Contracts[i].ContractType = "其它合同"
+	}
+	// certType 缺失（历史遗留文件无 fleet_cert_type）但同文件所有合同最终都归属同一个
+	// 启用分类时，补回文件级打标，避免这类文件每次直连重提都被错误降级。
+	if meta.FleetCertType == "" && len(meta.Contracts) > 0 {
+		first := strings.TrimSpace(meta.Contracts[0].ContractType)
+		if first != "" && first != "其它合同" {
+			allSame := true
+			for _, c := range meta.Contracts {
+				if strings.TrimSpace(c.ContractType) != first {
+					allSame = false
+					break
+				}
+			}
+			if allSame {
+				if _, ok := activeTypes[first]; ok {
+					meta.FleetCertType = first
+				}
+			}
+		}
+	}
 }
 
 // applyInvoiceUserCategoryPrecedence 在写库前对提取结果执行「用户指定分类绝对优先 +
@@ -2161,7 +2308,7 @@ func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	switch body.Scope {
 	case "contract":
-		h.ExtractContract(c)
+		h.ExtractContract(c, body.CertType)
 	case "invoice":
 		h.ExtractInvoice(c, body.CertType)
 	case "regulation":

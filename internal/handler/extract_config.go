@@ -811,8 +811,16 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 
 // resolveContractRuleCfg 合同提取规则解析：按 scope=contract 读取用户配置的提取规则。
 // 规则为空时返回 nil，调用方回退默认提取逻辑。
-func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
-	return h.getExtractConfig(ctx, kbID, "contract", "")
+func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
+	scope := "contract"
+	// 优先按归档分类（上传弹窗选择的合同类型，如"服务合同"）精确匹配分类规则；
+	// 未配置分类规则时回退合同整体规则（与发票 resolveInvoiceRuleCfg 回退链一致）。
+	if ct := strings.TrimSpace(certType); ct != "" {
+		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
+			return cfg
+		}
+	}
+	return h.getExtractConfig(ctx, kbID, scope, "")
 }
 
 // resolveRegulationRuleCfg 制度提取规则解析：按 scope=regulation 读取用户配置的提取规则。

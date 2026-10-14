@@ -88,7 +88,8 @@ type ContractOverviewStats struct {
 	FileCount      int                `json:"file_count"`       // 已上传文件数（含解析失败文件）
 	ParseFailed    int                `json:"parse_failed"`     // 解析失败文件数
 	ExtractFailed  int                `json:"extract_failed"`   // 提取失败合同数
-	ByContractType []ContractTypeStat `json:"by_contract_type"` // 按合同类型分组（服务合同/租赁合同/其它合同三桶）
+	ByContractType []ContractTypeStat     `json:"by_contract_type"` // 按合同类型分组（服务合同/租赁合同/其它合同三桶）
+	ByCategory     []ContractCategoryStat `json:"by_category"`      // 按用户定义分类（contract_type 精确值）分组，供主页类型卡遍历
 }
 
 // ContractMonthStat 是本月（签订日期）合同新增看板。
@@ -102,4 +103,13 @@ type ContractTypeStat struct {
 	ContractType string  `json:"contract_type"`
 	Count        int     `json:"count"`
 	SumTotal     float64 `json:"sum_total"`
+}
+
+// ContractCategoryStat 是单一用户分类（contract_type 精确值）的聚合统计；
+// contract_type 为空的记录归「未分类」。与发票 InvoiceCategoryStat 对齐，
+// 让主页类型卡能精确统计自定义分类（计数不再被硬编码三桶合并）。
+type ContractCategoryStat struct {
+	Category string  `json:"category"`
+	Count    int     `json:"count"`
+	SumTotal float64 `json:"sum_total"`
 }

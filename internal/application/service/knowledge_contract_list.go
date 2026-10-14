@@ -451,6 +451,7 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 
 	stats := &types.ContractOverviewStats{
 		ByContractType: []types.ContractTypeStat{},
+		ByCategory:     []types.ContractCategoryStat{},
 	}
 	stats.Total = len(records)
 	stats.FileCount = fileCount
@@ -511,6 +512,35 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 	for _, t := range typeByMap {
 		stats.ByContractType = append(stats.ByContractType, *t)
 	}
+	// 按用户定义分类（contract_type 精确值）分组：contract_type 为空/空白归「未分类」；
+	// 主页类型卡由前端按 categories(scope=contract) enabled 列表动态渲染，计数精确匹配分类名
+	//（与发票 ByCategory 口径一致），自定义分类不再被硬编码三桶合并为 0。
+	catByMap := map[string]*types.ContractCategoryStat{}
+	for _, r := range records {
+		cat := strings.TrimSpace(r.ContractType)
+		if cat == "" {
+			cat = "未分类"
+		}
+		c := catByMap[cat]
+		if c == nil {
+			c = &types.ContractCategoryStat{Category: cat}
+			catByMap[cat] = c
+		}
+		c.Count++
+		if r.ContractAmount != nil {
+			c.SumTotal += *r.ContractAmount
+		}
+	}
+	for _, t := range catByMap {
+		stats.ByCategory = append(stats.ByCategory, *t)
+	}
+	// 分类桶按份数降序、分类名升序，稳定排序（与发票 ByCategory 一致）
+	sort.Slice(stats.ByCategory, func(i, j int) bool {
+		if stats.ByCategory[i].Count != stats.ByCategory[j].Count {
+			return stats.ByCategory[i].Count > stats.ByCategory[j].Count
+		}
+		return stats.ByCategory[i].Category < stats.ByCategory[j].Category
+	})
 	// 保证服务/租赁/其它三桶固定出现（空桶补 0），前端类型卡稳定展示
 	seenType := map[string]bool{}
 	for _, t := range stats.ByContractType {
