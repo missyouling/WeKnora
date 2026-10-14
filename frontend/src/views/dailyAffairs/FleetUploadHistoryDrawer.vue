@@ -27,7 +27,6 @@
               row-key="id"
               size="small"
               :hover="true"
-              :loading="loading"
               max-height="100%"
               class="dh-table"
               :row-class-name="({ row }: any) => activeRow?.id === row.id ? 'is-selected' : ''"
