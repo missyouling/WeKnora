@@ -392,7 +392,7 @@ import BusinessColumnFilter from './BusinessColumnFilter.vue'
 const props = defineProps<{ recordType: string }>()
 const emit = defineEmits<{ (e: 'openSettings'): void }>()
 
-const KB_NAME = '车队管理'
+const KB_NAME = '日常事务-车队'
 const chatResources = useChatResourcesStore()
 
 // ---------------------------------------------------------------------------
@@ -1950,7 +1950,7 @@ async function ensureKb() {
     const cres: any = await createKnowledgeBase(payload)
     const kb = cres?.data || cres
     kbId.value = kb?.id || ''
-    if (kbId.value) MessagePlugin.success('车队管理知识库已创建')
+    if (kbId.value) MessagePlugin.success(`${KB_NAME}知识库已创建`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '知识库初始化失败')
   }

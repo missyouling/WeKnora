@@ -97,7 +97,7 @@ import ExtractTestDialog from './ExtractTestDialog.vue'
 
 const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
 
-const KB_NAME = computed(() => props.kbName || '车队管理')
+const KB_NAME = computed(() => props.kbName || '日常事务-车队')
 const kbId = ref('')
 
 // 默认字段底稿（无配置时按证照类型生成）：与证照配置内置字段一致
