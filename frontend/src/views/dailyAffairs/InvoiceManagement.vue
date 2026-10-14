@@ -64,8 +64,8 @@
       <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
 
-      <!-- 发票列表（自绘 grid，可横向滚动，字段可配置） -->
-      <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
+      <!-- 发票列表（自绘 grid，可横向滚动，字段可配置；虚拟滚动：>100 行自动仅渲染视口内 DOM） -->
+      <div class="doc-list-scroll" ref="listScrollRef">
         <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
           <t-table
         ref="invoiceTableRef"
@@ -81,6 +81,8 @@
         :selected-row-keys="selectedRowKeys"
         :sort="sortState"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
+        :scroll="{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 }"
+        @scroll="onListScroll"
         @row-click="({ row, e }: any) => onRowClick(row, e)"
         @select-change="onTableSelectChange"
         @sort-change="onSortChange"
@@ -155,7 +157,7 @@
         <template #items="{ row }: any">
           <t-tooltip v-if="(row.items || []).length" :content="itemsTextOf(row)" placement="top">
             <div class="row-items">
-              <div v-for="(it, i) in (row.items || []).slice(0, 3)" :key="i" class="row-items-line">
+              <div v-for="(it, i) in (row.items || []).slice(0, 1)" :key="i" class="row-items-line">
                 <span class="row-items-name">{{ it.name || '—' }}</span>
                 <template v-if="it.qty !== undefined && it.qty !== null && it.qty !== ''"><span class="row-items-qty">×{{ it.qty }}</span></template>
                 <template v-if="it.price !== undefined && it.price !== null && it.price !== ''"><span class="row-items-price">{{ formatAmount(it.price) }}</span></template>
@@ -1335,10 +1337,12 @@ watch(keyword, () => {
   keywordTimer = setTimeout(() => loadFiles(true), 300)
 })
 
-// 懒加载
+// 懒加载（触底翻页）：滚动发生在 t-table 内部内容容器（.t-table__content，外层 overflow:hidden），
+// 事件经 t-table @scroll 转发（params: { e: WheelEvent }），取 e.target 判触底。
 const listScrollRef = ref<HTMLElement>()
-const onListScroll = (e: Event) => {
-  const el = e.target as HTMLElement
+const onListScroll = ({ e }: any) => {
+  const el = e?.target as HTMLElement
+  if (!el) return
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200 && hasMore.value && !listLoading.value && !loadingMore.value) {
     loadFiles()
   }
@@ -2290,7 +2294,7 @@ watch(printVisible, (v) => {
 /* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
 .doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
 /* 多税率发票：多个税率档位并排标签展示 */
-.row-rate-tags { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.row-rate-tags { display: inline-flex; align-items: center; flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow: hidden; }
 .row-rate-tag { font-family: var(--td-font-family); }
 
 
