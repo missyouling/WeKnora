@@ -101,7 +101,7 @@
           <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
         <template #taxRate="{ row }: any">
-          <t-tooltip placement="top" theme="light" overlay-class="rate-detail-overlay" :show-arrow="true">
+          <t-tooltip placement="top" theme="light" overlay-class-name="rate-detail-overlay" :show-arrow="true">
             <template #content>
               <div class="rate-detail">
                 <table v-if="(row.items || []).length" class="rate-detail-table">
@@ -2321,14 +2321,20 @@ watch(printVisible, (v) => {
 /* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
 .doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
 /* 多税率发票：多个税率档位并排标签展示 */
-.rate-detail-overlay { max-width: 640px; }
-.rate-detail-table { border-collapse: collapse; font-size: 12px; line-height: 1.7; }
-.rate-detail-table th,
-.rate-detail-table td { padding: 2px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--td-component-stroke); }
-.rate-detail-table th { font-weight: 500; color: var(--td-text-color-secondary); }
-.rate-detail-table td { color: var(--td-text-color-primary); }
-.rate-detail-table .item-cell--num { text-align: right; }
-.rate-detail-empty { color: var(--td-text-color-secondary); font-size: 12px; padding: 4px 8px; }
+/* 浮层由 TDesign 渲染到 body 下，scoped 选择器无法命中，必须 :global 包裹 */
+:global(.rate-detail-overlay) { max-width: 760px; }
+:global(.rate-detail-overlay .t-popup__content) {
+  max-width: 760px !important;
+  width: max-content;
+  min-width: 680px;
+}
+:global(.rate-detail-overlay .rate-detail-table) { border-collapse: collapse; font-size: 12px; line-height: 1.7; width: 100%; min-width: 0; }
+:global(.rate-detail-overlay .rate-detail-table th),
+:global(.rate-detail-overlay .rate-detail-table td) { padding: 2px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--td-component-stroke); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+:global(.rate-detail-overlay .rate-detail-table th) { font-weight: 500; color: var(--td-text-color-secondary); }
+:global(.rate-detail-overlay .rate-detail-table td) { color: var(--td-text-color-primary); }
+:global(.rate-detail-overlay .rate-detail-table .item-cell--num) { text-align: right; }
+:global(.rate-detail-overlay .rate-detail-empty) { color: var(--td-text-color-secondary); font-size: 12px; padding: 4px 8px; }
 
 
 /* ---- 字段筛选弹层 ---- */
