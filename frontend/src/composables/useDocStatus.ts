@@ -34,8 +34,12 @@ export function useDocStatus(opts: Options) {
     if (ps === 'failed') return 'parse_failed'
     if (ps === 'completed') {
       if (row.knowledgeId != null && opts.extractInFlight.value.has(String(row.knowledgeId))) return 'processing'
-      if (row.knowledgeId != null && opts.extractFailed.value.has(String(row.knowledgeId))) return 'failed'
       const es = row.extractStatus
+      // 前端本地失败记录（extractFailed）仅在「后端尚无终态」时覆盖展示：
+      // 后端已明确 success/failed/not_x/manual 时以落库状态为权威，避免
+      // 轮询取数范围（前 100 条）外的文件失败记录永不清理、误报「提取失败」。
+      if (row.knowledgeId != null && opts.extractFailed.value.has(String(row.knowledgeId)) &&
+          (!es || es === 'pending' || es === 'processing')) return 'failed'
       if (!es || es === 'pending' || es === 'processing') return 'pending'
       if (es === 'success') return 'success'
       if (es === 'failed') return 'failed'

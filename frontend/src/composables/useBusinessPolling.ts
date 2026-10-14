@@ -72,7 +72,9 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
             needExtract.push(item)
           }
           if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
-          if (!es || es === 'pending' || es === 'processing') pend.push(item)
+          // 提取失败（前端本地 extractFailed 命中）的文件不进状态条：后端失败已落库
+          // failed 或仍在 processing 残留，状态条都不再显示「正在提取」，与状态列一致
+          if ((!es || es === 'pending' || es === 'processing') && !extractFailed.value.has(item.id)) pend.push(item)
         }
       }
 
