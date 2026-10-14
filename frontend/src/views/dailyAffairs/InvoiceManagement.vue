@@ -2008,8 +2008,16 @@ const handleReparse = async () => {
 // 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部发票字段（支持多文件批量，二次确认）
 const extractBusy = ref(false)
 const handleFileExtract = async () => {
-  const ids = selectedIds.value
-  if (!ids.length) { MessagePlugin.info('请先选中要重新提取的发票'); return }
+  const all = selectedIds.value
+  if (!all.length) { MessagePlugin.info('请先选中要重新提取的发票'); return }
+  // 跳过已在提取中的文件（轮询自动提取或前一次手动提交仍在途）：
+  // 后端 extractMu 按文件防重入，重复提交会 409；前端 in-flight 先挡一轮
+  const ids = all.filter(kid => !extractInFlight.value.has(kid))
+  const skipped = all.length - ids.length
+  if (!ids.length) {
+    MessagePlugin.info('所选文件均正在提取中，请稍候')
+    return
+  }
   ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
   // 过程态交给上方状态条实时展示（正在提取「文件名」进度 N%）：
@@ -2026,15 +2034,25 @@ const handleFileExtract = async () => {
       kid => extractBusinessDocument(kbId.value, kid, 'invoice', filterInvoiceType.value || undefined),
     )
     let ok = 0
+    let conflict = 0
     results.forEach((r, i) => {
       if (r.status === 'fulfilled') { ok++; return }
+      // 409 冲突：后端 extractMu 判定该文件正被提取（另一标签/请求在途），
+      // 属重复提交而非提取失败——不写入 extractFailed，避免状态列误报「提取失败」。
+      // request.ts 非 2xx JSON 响应统一带 $httpStatus（非枚举属性）。
+      if ((r.reason as any)?.$httpStatus === 409) { conflict++; return }
       extractFailed.value.set(ids[i], Date.now())
     })
-    const fail = results.length - ok
-    if (fail === 0) {
+    const fail = results.length - ok - conflict
+    if (fail === 0 && conflict === 0) {
       MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
     } else {
-      MessagePlugin.warning(`${ok} 个文件重新提取已提交，${fail} 个提交失败`)
+      const parts: string[] = []
+      if (ok) parts.push(`${ok} 个已提交`)
+      if (conflict) parts.push(`${conflict} 个正在提取中`)
+      if (fail) parts.push(`${fail} 个提交失败`)
+      if (skipped) parts.push(`${skipped} 个已在提取中，未重复提交`)
+      MessagePlugin.warning(parts.join('，'))
     }
     // 提交后立即扫描一次：提取在途文件 extract_status=processing 已被后端写入，
     // 主动 scanOnce 让状态条立即显示「正在提取」，不必等下一轮 3s 轮询

@@ -83,22 +83,34 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
 
       for (const item of needExtract.slice(0, 5)) {
         extractInFlight.value.add(item.id)
+        let conflict = false
         try {
           const r: any = await extractFn(kbId.value, item.id)
           if (r?.data?.removed) onRemoved?.(item)
-        } catch {
-          if (!extractFailed.value.has(item.id)) extractFailed.value.set(item.id, Date.now())
+        } catch (e: any) {
+          // 409：后端 extractMu 判定该文件正被其他请求提取（如手动重新提取持锁、
+          // 另一标签在途），属并发冲突而非提取失败——不写 extractFailed（否则状态列
+          // 误报「提取失败」），并保留 in-flight 让下轮扫描不再重复提交打 409。
+          conflict = (e as any)?.$httpStatus === 409
+          if (!conflict && !extractFailed.value.has(item.id)) {
+            extractFailed.value.set(item.id, Date.now())
+          }
         } finally {
-          // 无论成功失败都从 in-flight 移除：成功时后端已同步写 extract_status；
+          // 正常成败都移除 in-flight：成功时后端已同步写 extract_status；
           // 失败时靠 extractFailed 做 5 分钟退避。不移除会导致永久死锁——
-          // 若后端未写入 extract_status（如超时/崩溃/409），下轮扫描因
+          // 若后端未写入 extract_status（如超时/崩溃），下轮扫描因
           // extractInFlight.has(id) 而永不重试，文件永久卡在"提取中"。
-          extractInFlight.value.delete(item.id)
+          // 唯一例外：409 冲突时保留 in-flight，避免与在途请求每轮打架。
+          if (!conflict) extractInFlight.value.delete(item.id)
         }
       }
+      // 清理 in-flight 残留：仅当后端 es 已到终态（success/failed）才移除——
+      // es=processing 是提取请求自己写的过程态，请求仍在途，删除会触发下轮
+      // 重复提交（→409）；终态才说明该文件提取确实结束。
       for (const id of Array.from(extractInFlight.value)) {
         const it = arr.find(k => k.id === id)
-        if (it?.custom_metadata?.extract_status) extractInFlight.value.delete(id)
+        const es = it?.custom_metadata?.extract_status
+        if (es && es !== 'pending' && es !== 'processing') extractInFlight.value.delete(id)
       }
     } catch { /* 静默，下轮重试 */ }
     finally { busy = false }
