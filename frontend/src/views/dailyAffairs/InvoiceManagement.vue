@@ -210,22 +210,22 @@
               </t-button>
             </div>
             <div class="batch-bar-actions">
-              <!-- 重新解析：物理文件重新拆页/解析（单选，二次确认） -->
+              <!-- 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认） -->
               <t-popconfirm theme="warning"
-                :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件并重新拆页吗？将覆盖已有解析结果。`"
+                :content="reparseConfirmText"
                 :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="handleReparse">
-                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="!selectedIds.length" @click.stop>
                   <template #icon><t-icon name="refresh" size="14px" /></template>
                   重新解析
                 </t-button>
               </t-popconfirm>
-              <!-- 重新提取：大模型/OCR 按最新提取规则重新提取全部字段（单选，二次确认） -->
+              <!-- 重新提取：大模型/OCR 按最新提取规则重新提取全部字段（支持多文件批量，二次确认） -->
               <t-popconfirm theme="warning"
-                :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有发票字段吗？将覆盖已有提取结果。`"
+                :content="extractConfirmText"
                 :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="handleFileExtract">
-                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="!selectedIds.length" @click.stop>
                   <template #icon><t-icon name="cloud-upload" size="14px" /></template>
                   重新提取
                 </t-button>
@@ -1929,17 +1929,36 @@ const selectedSingle = computed(() => {
   return rows.length === 1 ? rows[0] : null
 })
 
-// 重新解析：物理文件重新拆页/解析（单选，二次确认）
+// 批量确认文案：单选显示文件名，多选显示文件数（selectedIds 已按 knowledgeId 去重）
+const reparseConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) return `确定重新解析「${selectedSingle.value?.fileName || '该文件'}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  return `确定重新解析选中的 ${ids.length} 个文件并重新拆页吗？将覆盖已有解析结果。`
+})
+const extractConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) return `确定按最新提取规则重新提取「${selectedSingle.value?.fileName || '该文件'}」的所有发票字段吗？将覆盖已有提取结果。`
+  return `确定按最新提取规则重新提取选中的 ${ids.length} 个文件的所有发票字段吗？将覆盖已有提取结果。`
+})
+
+// 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认）
 const reparseBusy = ref(false)
 const handleReparse = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一张发票'); return }
+  const ids = selectedIds.value
+  if (!ids.length) { MessagePlugin.info('请先选中要重新解析的发票'); return }
   reparseBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新解析「${row.fileName}」...`)
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新解析 ${ids.length} 个文件...`)
+  let ok = 0
+  let fail = 0
   try {
-    await reparseKnowledge(row.knowledgeId)
+    const results = await Promise.allSettled(ids.map(kid => reparseKnowledge(kid)))
+    results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
     loading.close()
-    MessagePlugin.success(`「${row.fileName}」重新解析完成`)
+    if (fail === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新解析`)
+    } else {
+      MessagePlugin.warning(`${ok} 个文件重新解析已提交，${fail} 个提交失败`)
+    }
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
@@ -1950,29 +1969,39 @@ const handleReparse = async () => {
   }
 }
 
-// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部发票字段（单选，二次确认）
+// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部发票字段（支持多文件批量，二次确认）
 const extractBusy = ref(false)
 const handleFileExtract = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一张发票'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const ids = selectedIds.value
+  if (!ids.length) { MessagePlugin.info('请先选中要重新提取的发票'); return }
+  ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
+  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取 ${ids.length} 个文件...`)
   try {
     // 携带当前细分分类（用户正在该分类视图下操作），锚定同文件多页发票的类型，
     // 避免历史文件缺 fleet_cert_type 打标时被错误降级为「其它票据」。
-    await extractBusinessDocument(kbId.value, row.knowledgeId, 'invoice', filterInvoiceType.value || undefined)
+    const results = await Promise.allSettled(
+      ids.map(kid => extractBusinessDocument(kbId.value, kid, 'invoice', filterInvoiceType.value || undefined)),
+    )
+    let ok = 0
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { ok++; return }
+      extractFailed.value.set(ids[i], Date.now())
+    })
+    const fail = results.length - ok
     loading.close()
-    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    if (fail === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
+    } else {
+      MessagePlugin.warning(`${ok} 个文件重新提取已提交，${fail} 个提交失败`)
+    }
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
     loading.close()
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
+    ids.forEach(kid => extractInFlight.value.delete(kid))
     extractBusy.value = false
   }
 }
