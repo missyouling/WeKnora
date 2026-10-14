@@ -328,3 +328,35 @@ func TestExtractInvoicesByLineRules_CompactSingleLine(t *testing.T) {
 	assert.InDelta(t, 291.20, *inv1.TotalAmount, 0.001)
 	assert.Equal(t, "渝C81022", inv1.Fields["车牌号"])
 }
+
+// cleanInvoiceItemSpec：票面规格列为空时模型常把单位列误填到 spec，
+// spec 与 unit 文本相同必须清空 spec；不同或其一为空保持原值。
+func TestCleanInvoiceItemSpec(t *testing.T) {
+	items := []InvoiceExtractionLine{
+		{Name: "供电*电费", Spec: "千瓦时", Unit: "千瓦时", Qty: ptrF64(666074), Price: ptrF64(0.6175)},
+		{Name: "通行费", Spec: "", Unit: "次", Qty: ptrF64(1), Price: ptrF64(225.98)},
+		{Name: "咨询服务", Spec: "A4", Unit: "份", Qty: ptrF64(2), Price: ptrF64(50)},
+		{Name: "水费", Spec: "吨", Unit: "吨", Qty: ptrF64(100), Price: ptrF64(3.5)},
+	}
+	cleanInvoiceItemSpec(items)
+	assert.Equal(t, "", items[0].Spec, "spec==unit（单位误填规格）时必须清空")
+	assert.Equal(t, "", items[1].Spec, "spec 为空保持空")
+	assert.Equal(t, "A4", items[2].Spec, "spec!=unit 保留原值")
+	assert.Equal(t, "", items[3].Spec, "spec==unit（单位误填规格）时必须清空")
+	assert.Equal(t, "吨", items[3].Unit, "unit 不受影响")
+
+	// NormalizeInvoiceExtractionResult 链路：结果级清洗同样生效
+	qty := 1.0
+	res := &InvoiceExtractionResult{
+		Kind: "invoice",
+		Invoices: []InvoiceExtractionItem{{
+			InvoiceNo: "26507000000186528429",
+			Items:     []InvoiceExtractionLine{{Name: "*供电*电费", Spec: "千瓦时", Unit: "千瓦时", Qty: &qty}},
+		}},
+	}
+	NormalizeInvoiceExtractionResult(res)
+	assert.Equal(t, "", res.Invoices[0].Items[0].Spec)
+}
+
+func ptrF64(v float64) *float64 { return &v }
+

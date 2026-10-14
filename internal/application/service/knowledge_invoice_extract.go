@@ -166,7 +166,7 @@ const invoiceExtractionSystemPrompt = `你是一个专业的发票信息提取�
 6. tax_rate（发票级）使用小数（如 3% 记为 0.03）；无法识别时返回 null。若发票包含多行明细且税率不同，发票级 tax_rate 取金额最大明细行（按票面「金额」列判定）的税率，其余税率在 items 各行分别保留。
 7. invoice_date 使用 YYYY-MM-DD 格式；无法识别时返回空字符串。
 8. 发票作废或冲红时，void_flag 设为 true。
-9. items 为货物或应税劳务明细，无法识别时返回空数组。每行明细必须与票面明细表格的行一一对应、逐列对齐「项目名称、规格型号、单位、数量、单价、金额、税率、税额」八列：name 取项目名称，qty 取数量，price 取单价，amount 取票面「金额」列（不含税额），tax_amount 取「税额」列，tax_rate 取该行税率（小数，如 3% 记为 0.03）。严禁把税额填到金额、把行错位或把票面合计行当作明细行；可用勾稽关系自检：单价×数量≈金额、金额×税率≈税额，不一致时以票面各列原值为准。多行明细税率不同时，各行分别保留各自税率，不要合并、不要取平均。
+9. items 为货物或应税劳务明细，无法识别时返回空数组。每行明细必须与票面明细表格的行一一对应、逐列对齐「项目名称、规格型号、单位、数量、单价、金额、税率、税额」八列：name 取项目名称，spec 只取票面「规格型号」列、该列为空时必须输出空字符串、严禁用单位列（unit）或其它列值填充，unit 取「单位」列，qty 取数量，price 取单价，amount 取票面「金额」列（不含税额），tax_amount 取「税额」列，tax_rate 取该行税率（小数，如 3% 记为 0.03）。严禁把税额填到金额、把行错位或把票面合计行当作明细行；可用勾稽关系自检：单价×数量≈金额、金额×税率≈税额，不一致时以票面各列原值为准。多行明细税率不同时，各行分别保留各自税率，不要合并、不要取平均。
 10. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 11. 销售方/购买方字段：seller_name/buyer_name 为名称，seller_tax_no/buyer_tax_no 为统一社会信用代码，seller_address/buyer_address 为注册地址，seller_phone/buyer_phone 为电话，seller_bank/buyer_bank 为开户行，seller_account/buyer_account 为银行账号；无法识别时返回空字符串。
 12. issuer 为开票人，remark 为备注/备注栏内容；无法识别时返回空字符串。
@@ -776,6 +776,9 @@ func NormalizeInvoiceExtractionResult(res *InvoiceExtractionResult) {
 		// Invoice type is resolved by keyword priority (see
 		// NormalizeInvoiceTypeFromTicket); empty stays empty (unrecognized).
 		inv.InvoiceType = NormalizeInvoiceTypeFromTicket(inv.InvoiceType)
+		// 规格型号兜底清洗：票面规格列为空时模型常把单位列误填到 spec，
+		// 此时 spec 与 unit 文本相同，确定性清空 spec（spec≠unit 时保留）。
+		cleanInvoiceItemSpec(inv.Items)
 		// 列表税率列展示"金额最大项"的税率（Q2：多档税率在抽屉明细中逐项展示）。
 		inv.TaxRate = dominantItemTaxRate(inv.Items)
 		page++
@@ -783,6 +786,19 @@ func NormalizeInvoiceExtractionResult(res *InvoiceExtractionResult) {
 		kept = append(kept, inv)
 	}
 	res.Invoices = kept
+}
+
+// cleanInvoiceItemSpec 清理明细行规格型号：规格型号（spec）与单位（unit）
+// 文本相同时，几乎必然是模型把单位误填到规格列（票面规格为空），此时清空
+// spec；spec 与 unit 不同或其一为空时保持原值。
+func cleanInvoiceItemSpec(items []InvoiceExtractionLine) {
+	for i := range items {
+		spec := strings.TrimSpace(items[i].Spec)
+		unit := strings.TrimSpace(items[i].Unit)
+		if spec != "" && unit != "" && spec == unit {
+			items[i].Spec = ""
+		}
+	}
 }
 
 // dominantItemTaxRate 返回金额最大（price×qty）项目明细的税率；无有效项时返回 nil。
