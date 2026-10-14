@@ -59,6 +59,29 @@ func newExtractionContext(effectiveTenantID uint64) (context.Context, context.Ca
 	return context.WithTimeout(base, extractionTimeout)
 }
 
+// mergeFailedStateMeta constructs the custom_metadata written when an extraction
+// fails at the model call (e.g. 429 rate limit) or on a recovered panic. It
+// preserves the previously extracted records (contracts/regulations/invoices/
+// award_punish) and file-level tags instead of overwriting them with a null
+// array, so a transient model/panic failure neither wipes existing data nor
+// drops the record from the list; only the status/error fields are updated.
+func mergeFailedStateMeta(prev []byte, kind, extractErr string) types.JSON {
+	merged := map[string]interface{}{}
+	if len(prev) > 0 {
+		if uerr := json.Unmarshal(prev, &merged); uerr != nil {
+			merged = map[string]interface{}{}
+		}
+	}
+	merged["kind"] = kind
+	merged["extract_status"] = "failed"
+	merged["extract_error"] = extractErr
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return types.JSON(prev)
+	}
+	return types.JSON(raw)
+}
+
 // parseSandboxPagination reads page/page_size from query with safe defaults.
 func parseSandboxPagination(c *gin.Context) (page, pageSize int) {
 	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -153,19 +176,19 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
+	var knowledge *types.Knowledge
 	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
 	// 保证状态闭环，不允许永久转圈。
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Errorf(ctx, "Contract extraction panic recovered: %v\n%s", r, debug.Stack())
-			if failMeta, jerr := json.Marshal(contractCustomMetadata{
-				Kind:          "contract",
-				ExtractStatus: "failed",
-				ExtractError:  fmt.Sprintf("contract extraction panic: %v", r),
-			}); jerr == nil {
-				if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-					logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
-				}
+			var panicPrev []byte
+			if knowledge != nil {
+				panicPrev = knowledge.CustomMetadata
+			}
+			failMeta := mergeFailedStateMeta(panicPrev, "contract", fmt.Sprintf("contract extraction panic: %v", r))
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
 			if !c.Writer.Written() {
 				c.Error(errors.NewInternalServerError(fmt.Sprintf("contract extraction panic: %v", r)))
@@ -173,7 +196,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 		}
 	}()
 
-	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for contract extraction", err)
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
@@ -225,15 +248,9 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 	// failed 让用户人工处理（配合删除历史，避免"监测检测合同"这类扫描件被误删）。
 	if !contractBatchesHaveText(batches) {
 		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
-		noTextMeta, jerr := json.Marshal(contractCustomMetadata{
-			Kind:          "contract",
-			ExtractStatus: "failed",
-			ExtractError:  zhNotice,
-		})
-		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
-			}
+		noTextMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "contract", zhNotice)
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, noTextMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Contract extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
@@ -302,14 +319,9 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 		merged.Kind = "not_contract"
 	}
 	if extractErr != nil {
-		if failMeta, jerr := json.Marshal(contractCustomMetadata{
-			Kind:          "contract",
-			ExtractStatus: "failed",
-			ExtractError:  "contract extraction failed: " + extractErr.Error(),
-		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
-			}
+		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "contract", "contract extraction failed: "+extractErr.Error())
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Contract extraction model call failed", extractErr)
 		c.Error(errors.NewInternalServerError("contract extraction failed: " + extractErr.Error()))
@@ -459,6 +471,7 @@ type regulationCustomMetadata struct {
 	Regulations   []types.RegulationExtractionItem `json:"regulations"`
 	ExtractStatus string                           `json:"extract_status"`
 	ExtractError  string                           `json:"extract_error"`
+	FleetCertType string                           `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
 }
 
 // awardPunishCustomMetadata is the persisted shape written into a knowledge
@@ -614,6 +627,77 @@ func (h *BusinessExtractHandler) applyContractUserCategoryPrecedence(ctx context
 	}
 }
 
+// enabledRegulationCategoryNames 返回当前已启用的制度分类名（scope=regulation，
+// tenant_id=0 内置分类），按 sort_order 升序。与发票/合同口径一致。
+func (h *BusinessExtractHandler) enabledRegulationCategoryNames(ctx context.Context) []string {
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND enabled = TRUE AND deleted_at IS NULL", "regulation").
+		Order("sort_order ASC, created_at ASC").Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "load enabled regulation categories failed: %v", err)
+		return nil
+	}
+	names := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// applyRegulationUserCategoryPrecedence 在制度写库前执行「用户指定分类绝对优先 +
+// 停用分类隔离」，与发票/合同 applyUserCategoryPrecedence 口径对齐：
+//   - certType 非空（上传弹窗选择）：无视模型与自定义识别规则提议的类型，同文件下全部
+//     制度的 RegType 统一赋值为用户指定分类；
+//   - certType 为空（直连重提取）：提取类型必须落在当前已启用制度分类集合内，命中停用
+//     分类或无法匹配的类型降级「其它制度」；空类型保持为空（前端显示 --）。
+func (h *BusinessExtractHandler) applyRegulationUserCategoryPrecedence(ctx context.Context, meta *regulationCustomMetadata, certType string) {
+	if meta == nil {
+		return
+	}
+	activeTypes := make(map[string]struct{})
+	for _, n := range h.enabledRegulationCategoryNames(ctx) {
+		activeTypes[n] = struct{}{}
+	}
+	if certType = strings.TrimSpace(certType); certType != "" {
+		for i := range meta.Regulations {
+			meta.Regulations[i].RegType = certType
+		}
+		meta.FleetCertType = certType
+		return
+	}
+	for i := range meta.Regulations {
+		t := strings.TrimSpace(meta.Regulations[i].RegType)
+		if t == "" {
+			continue
+		}
+		if _, ok := activeTypes[t]; ok {
+			continue
+		}
+		meta.Regulations[i].RegType = "其它制度"
+	}
+	// certType 缺失（历史遗留文件无 fleet_cert_type）但同文件所有制度最终都归属同一个
+	// 启用分类时，补回文件级打标，避免这类文件每次直连重提都被错误降级。
+	if meta.FleetCertType == "" && len(meta.Regulations) > 0 {
+		first := strings.TrimSpace(meta.Regulations[0].RegType)
+		if first != "" && first != "其它制度" {
+			allSame := true
+			for _, r := range meta.Regulations {
+				if strings.TrimSpace(r.RegType) != first {
+					allSame = false
+					break
+				}
+			}
+			if allSame {
+				if _, ok := activeTypes[first]; ok {
+					meta.FleetCertType = first
+				}
+			}
+		}
+	}
+}
+
 // applyInvoiceUserCategoryPrecedence 在写库前对提取结果执行「用户指定分类绝对优先 +
 // 停用分类隔离」：
 //   - certType 非空（上传弹窗选择/文件级 fleet_cert_type 打标）：无视 OCR、正则、
@@ -713,19 +797,19 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
+	var knowledge *types.Knowledge
 	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
 	// 保证状态闭环，不允许永久转圈。
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Errorf(ctx, "Invoice extraction panic recovered: %v\n%s", r, debug.Stack())
-			if failMeta, jerr := json.Marshal(invoiceCustomMetadata{
-				Kind:          "invoice",
-				ExtractStatus: "failed",
-				ExtractError:  fmt.Sprintf("invoice extraction panic: %v", r),
-			}); jerr == nil {
-				if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-					logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
-				}
+			var panicPrev []byte
+			if knowledge != nil {
+				panicPrev = knowledge.CustomMetadata
+			}
+			failMeta := mergeFailedStateMeta(panicPrev, "invoice", fmt.Sprintf("invoice extraction panic: %v", r))
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
 			if !c.Writer.Written() {
 				c.Error(errors.NewInternalServerError(fmt.Sprintf("invoice extraction panic: %v", r)))
@@ -733,7 +817,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		}
 	}()
 
-	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for invoice extraction", err)
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
@@ -777,15 +861,9 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// failed 让用户人工处理。
 	if !invoiceBatchesHaveText(batches) {
 		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
-		noTextMeta, jerr := json.Marshal(invoiceCustomMetadata{
-			Kind:          "invoice",
-			ExtractStatus: "failed",
-			ExtractError:  zhNotice,
-		})
-		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
-			}
+		noTextMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "invoice", zhNotice)
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, noTextMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
@@ -905,15 +983,12 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	}
 	if extractErr != nil {
 		// Persist a failed state so the UI shows "提取失败" (retriable via the
-		// floating toolbar) instead of looping forever as "提取中/待提取".
-		if failMeta, jerr := json.Marshal(invoiceCustomMetadata{
-			Kind:          "invoice",
-			ExtractStatus: "failed",
-			ExtractError:  "invoice extraction failed: " + extractErr.Error(),
-		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist invoice extraction failed-state: %v", serr)
-			}
+		// floating toolbar) instead of looping forever as "提取中/待提取". Preserve
+		// previously extracted invoices rather than overwriting them on a transient
+		// model failure.
+		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "invoice", "invoice extraction failed: "+extractErr.Error())
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist invoice extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Invoice extraction model call failed", extractErr)
 		c.Error(errors.NewInternalServerError("invoice extraction failed: " + extractErr.Error()))
@@ -1394,7 +1469,7 @@ func invoiceBatchesHaveText(batches []string) bool {
 	return false
 }
 
-func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
+func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType string) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
@@ -1420,12 +1495,35 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	defer h.extractMu.Delete(knowledgeID)
 
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
+	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
+	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
 	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
 	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
-	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	var knowledge *types.Knowledge
+	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
+	// 保证状态闭环，不允许永久转圈。
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "Regulation extraction panic recovered: %v\n%s", r, debug.Stack())
+			var panicPrev []byte
+			if knowledge != nil {
+				panicPrev = knowledge.CustomMetadata
+			}
+			failMeta := mergeFailedStateMeta(panicPrev, "regulation", fmt.Sprintf("regulation extraction panic: %v", r))
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
+			}
+			if !c.Writer.Written() {
+				c.Error(errors.NewInternalServerError(fmt.Sprintf("regulation extraction panic: %v", r)))
+			}
+		}
+	}()
+
+	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for regulation extraction", err)
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
@@ -1475,15 +1573,9 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	// failed 让用户人工处理（配合删除历史）。
 	if !regulationBatchesHaveText(batches) {
 		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
-		noTextMeta, jerr := json.Marshal(regulationCustomMetadata{
-			Kind:          "regulation",
-			ExtractStatus: "failed",
-			ExtractError:  zhNotice,
-		})
-		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist regulation no-text state: %v", serr)
-			}
+		noTextMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "regulation", zhNotice)
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, noTextMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist regulation no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Regulation extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
@@ -1496,8 +1588,39 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 	merged := &service.RegulationExtractionResult{Kind: "regulation"}
 	var extractErr error
 	sawRegulation := false
-	// 用户配置的提取规则（scope=regulation）：为空时 WithRules 行为与默认版一致
-	regulationRuleCfg := h.resolveRegulationRuleCfg(extractCtx, kbID)
+	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
+	//「正在提取」（避免点重新提取后状态列短暂停留在旧值/failed）。合并保留既有字段
+	//（fleet_cert_type、旧 regulations 等），提取成功/失败路径会用终态整体覆盖。
+	procMeta := map[string]interface{}{"kind": "regulation", "extract_status": "processing"}
+	if len(knowledge.CustomMetadata) > 0 {
+		var prev map[string]interface{}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &prev); jerr == nil {
+			for k, v := range prev {
+				if _, exists := procMeta[k]; !exists {
+					procMeta[k] = v
+				}
+			}
+		}
+	}
+	delete(procMeta, "extract_error")
+	if pmeta, jerr := json.Marshal(procMeta); jerr == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(pmeta)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist regulation processing-state: %v", serr)
+		}
+	}
+	// 规则解析：优先请求携带的归档类型（上传弹窗 body.cert_type），未携带时回退文件级
+	// 打标 fleet_cert_type，再按 resolveRegulationRuleCfg 回退整体规则。
+	ruleCertType := certType
+	if ruleCertType == "" && len(knowledge.CustomMetadata) > 0 {
+		var mdMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			ruleCertType = mdMeta.FleetCertType
+		}
+	}
+	// 用户配置的提取规则（scope=regulation）：按归档分类匹配，未配置时回退整体规则
+	regulationRuleCfg := h.resolveRegulationRuleCfg(extractCtx, kbID, ruleCertType)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
@@ -1521,14 +1644,9 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		merged.Kind = "not_regulation"
 	}
 	if extractErr != nil {
-		if failMeta, jerr := json.Marshal(regulationCustomMetadata{
-			Kind:          "regulation",
-			ExtractStatus: "failed",
-			ExtractError:  "regulation extraction failed: " + extractErr.Error(),
-		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist regulation extraction failed-state: %v", serr)
-			}
+		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "regulation", "regulation extraction failed: "+extractErr.Error())
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist regulation extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Regulation extraction model call failed", extractErr)
 		c.Error(errors.NewInternalServerError("regulation extraction failed: " + extractErr.Error()))
@@ -1557,6 +1675,10 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 			}
 		}
 	}
+	// 用户归档分类绝对优先（六同步核心）：上传弹窗选择的分类绝对优先于模型/识别规则结果，
+	// 同文件所有制度都归到该分类；certType 为空时按 enabled 分类做隔离/降级
+	//（与发票/合同 applyUserCategoryPrecedence 口径一致）。
+	h.applyRegulationUserCategoryPrecedence(extractCtx, &meta, certType)
 	if extracted.Kind == "not_regulation" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为制度，置 manual 待补录，
 		// 不自动删除（解决"该是制度却没入库"的误判）。
@@ -1567,7 +1689,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 				meta.ExtractStatus = "manual"
 				meta.ExtractError = "识别规则命中，已认定为制度，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
+					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
 						logger.Warnf(ctx, "Failed to persist rule-rescued regulation meta: %v", serr)
 					}
 				}
@@ -1624,7 +1746,24 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+	// 最终保存合并而非覆盖：序列化本次新 meta 后与 knowledge.CustomMetadata 旧值合并
+	//（保留 auto_deleted_count 等本次新 meta 不含的字段），再用 persistCtx 落库；
+	// 前端超时/取消请求后仍可写入（与发票/合同最终保存口径一致）。
+	if len(knowledge.CustomMetadata) > 0 {
+		var existing map[string]interface{}
+		if uerr := json.Unmarshal(knowledge.CustomMetadata, &existing); uerr == nil {
+			var fresh map[string]interface{}
+			if uerr := json.Unmarshal(metaJSON, &fresh); uerr == nil {
+				for k, v := range fresh {
+					existing[k] = v
+				}
+				if merged, merr := json.Marshal(existing); merr == nil {
+					metaJSON = merged
+				}
+			}
+		}
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist regulation extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
@@ -1690,6 +1829,8 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	defer h.extractMu.Delete(knowledgeID)
 
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
+	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库 failed 状态。
+	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
 	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
 	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
@@ -1745,15 +1886,9 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	// failed 让用户人工处理（配合删除历史）。
 	if !awardPunishBatchesHaveText(batches) {
 		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
-		noTextMeta, jerr := json.Marshal(awardPunishCustomMetadata{
-			Kind:          "award_punish",
-			ExtractStatus: "failed",
-			ExtractError:  zhNotice,
-		})
-		if jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(noTextMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
-			}
+		noTextMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "award_punish", zhNotice)
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, noTextMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Award/punish extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
@@ -1810,14 +1945,9 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		merged.Kind = "not_award_punish"
 	}
 	if extractErr != nil {
-		if failMeta, jerr := json.Marshal(awardPunishCustomMetadata{
-			Kind:          "award_punish",
-			ExtractStatus: "failed",
-			ExtractError:  "award/punish extraction failed: " + extractErr.Error(),
-		}); jerr == nil {
-			if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(failMeta)); serr != nil {
-				logger.Warnf(ctx, "Failed to persist award/punish extraction failed-state: %v", serr)
-			}
+		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "award_punish", "award/punish extraction failed: "+extractErr.Error())
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+			logger.Warnf(ctx, "Failed to persist award/punish extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Award/punish extraction model call failed", extractErr)
 		c.Error(errors.NewInternalServerError("award/punish extraction failed: " + extractErr.Error()))
@@ -2312,7 +2442,7 @@ func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	case "invoice":
 		h.ExtractInvoice(c, body.CertType)
 	case "regulation":
-		h.ExtractRegulation(c)
+		h.ExtractRegulation(c, body.CertType)
 	case "award_punish":
 		h.ExtractAwardPunish(c)
 	default:

@@ -824,8 +824,17 @@ func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbI
 }
 
 // resolveRegulationRuleCfg 制度提取规则解析：按 scope=regulation 读取用户配置的提取规则。
-func (h *BusinessExtractHandler) resolveRegulationRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
-	return h.getExtractConfig(ctx, kbID, "regulation", "")
+// 规则为空时返回 nil，调用方回退默认提取逻辑。
+func (h *BusinessExtractHandler) resolveRegulationRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
+	scope := "regulation"
+	// 优先按归档分类（上传弹窗选择的制度类型，如"人事管理"）精确匹配分类规则；
+	// 未配置分类规则时回退制度整体规则（与发票/合同 resolveRuleCfg 回退链一致）。
+	if ct := strings.TrimSpace(certType); ct != "" {
+		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
+			return cfg
+		}
+	}
+	return h.getExtractConfig(ctx, kbID, scope, "")
 }
 
 // resolveAwardPunishRuleCfg 奖惩提取规则解析：按 scope=award_punish 读取用户配置的提取规则。

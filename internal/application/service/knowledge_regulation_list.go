@@ -151,8 +151,32 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 	dateFrom, dateTo := strings.TrimSpace(filter.DateFrom), strings.TrimSpace(filter.DateTo)
 	kept := records[:0]
 	for _, r := range records {
-		if filter.RegType != "" && r.RegType != filter.RegType {
-			continue
+		if filter.RegType != "" {
+			// 「其它制度」为排除式桶，与 RegulationOverviewStats 卡片口径一致：
+			// reg_type 不属于启用分类集合（含空/已删除分类旧值）的记录归入此筛选。
+			// 前端卡片计数 = 总数 - 各启用分类卡之和（RegulationManagement.vue overviewCards）。
+			if filter.RegType == "其它制度" {
+				if len(filter.KnownCategories) > 0 {
+					known := make(map[string]struct{}, len(filter.KnownCategories))
+					for _, name := range filter.KnownCategories {
+						// 「其它制度」本身是排除式桶的归属目标，不作为「已分类」剔除
+						if name == "其它制度" {
+							continue
+						}
+						known[name] = struct{}{}
+					}
+					if r.RegType != "" {
+						if _, ok := known[r.RegType]; ok {
+							continue
+						}
+					}
+				} else if r.RegType != "" && r.RegType != "其它制度" {
+					// 向后兼容：未传分类集合时，非空且非其它制度的记录排除
+					continue
+				}
+			} else if r.RegType != filter.RegType {
+				continue
+			}
 		}
 		if filter.Status != "" && r.ExtractStatus != filter.Status {
 			continue
@@ -365,7 +389,8 @@ func (s *BusinessExtractService) RegulationOverviewStats(ctx context.Context, kb
 	}
 
 	stats := &types.RegulationOverviewStats{
-		ByRegType: []types.RegulationTypeStat{},
+		ByRegType:  []types.RegulationTypeStat{},
+		ByCategory: []types.RegulationCategoryStat{},
 	}
 	stats.Total = len(records)
 	stats.FileCount = fileCount
@@ -390,5 +415,31 @@ func (s *BusinessExtractService) RegulationOverviewStats(ctx context.Context, kb
 		stats.ByRegType = append(stats.ByRegType, types.RegulationTypeStat{RegType: t, Count: c})
 	}
 	sort.Slice(stats.ByRegType, func(i, j int) bool { return stats.ByRegType[i].Count > stats.ByRegType[j].Count })
+	// 按用户定义分类（reg_type 精确值）分组：reg_type 为空/空白归「未分类」；
+	// 主页类型卡由前端按 categories(scope=regulation) enabled 列表动态渲染，计数精确匹配分类名
+	//（与发票/合同 ByCategory 口径一致），自定义分类不再被硬编码桶合并。
+	catByMap := map[string]*types.RegulationCategoryStat{}
+	for _, r := range records {
+		cat := strings.TrimSpace(r.regType)
+		if cat == "" {
+			cat = "未分类"
+		}
+		c := catByMap[cat]
+		if c == nil {
+			c = &types.RegulationCategoryStat{Category: cat}
+			catByMap[cat] = c
+		}
+		c.Count++
+	}
+	for _, t := range catByMap {
+		stats.ByCategory = append(stats.ByCategory, *t)
+	}
+	// 分类桶按份数降序、分类名升序，稳定排序（与发票/合同 ByCategory 一致）
+	sort.Slice(stats.ByCategory, func(i, j int) bool {
+		if stats.ByCategory[i].Count != stats.ByCategory[j].Count {
+			return stats.ByCategory[i].Count > stats.ByCategory[j].Count
+		}
+		return stats.ByCategory[i].Category < stats.ByCategory[j].Category
+	})
 	return stats, nil
 }

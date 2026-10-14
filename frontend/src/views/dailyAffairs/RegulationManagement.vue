@@ -62,6 +62,9 @@
         </div>
       </div>
 
+      <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
+      <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
+
       <!-- 制度列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
@@ -170,33 +173,29 @@
       <div class="batch-bar-inner">
         <div class="batch-bar-left">
           <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
             清除
           </t-button>
         </div>
         <div class="batch-bar-actions">
           <t-popconfirm theme="warning"
-            :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件吗？将覆盖已有解析结果。`"
+            :content="reparseConfirmText"
             :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleReparse">
-            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" @click.stop>
               <template #icon><t-icon name="refresh" size="14px" /></template>
               重新解析
             </t-button>
           </t-popconfirm>
           <t-popconfirm theme="warning"
-            :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有制度字段吗？将覆盖已有提取结果。`"
+            :content="extractConfirmText"
             :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleFileExtract">
-            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" @click.stop>
               <template #icon><t-icon name="cloud-upload" size="14px" /></template>
               重新提取
             </t-button>
           </t-popconfirm>
-          <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-            <template #icon><t-icon name="edit" size="14px" /></template>
-            编辑数据
-          </t-button>
           <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
             <template #icon><t-icon name="print" size="14px" /></template>
             单页打印
@@ -205,9 +204,17 @@
             <template #icon><t-icon name="file-paste" size="14px" /></template>
             列表打印
           </t-button>
-          <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 个制度记录吗？删除后不可恢复。`"
-            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-            @confirm="handleBatchDelete">
+          <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+            :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+            <template #content>
+              <div class="del-pop-body">
+                <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个制度记录吗？删除后不可恢复。</div>
+                <div class="del-pop-actions">
+                  <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
+                  <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                </div>
+              </div>
+            </template>
             <t-button theme="danger" variant="outline" size="small" @click.stop>
               <template #icon><t-icon name="delete" size="14px" /></template>
               删除记录
@@ -219,15 +226,17 @@
 
     <!-- 创建知识库向导 -->
     <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-制度" kb-desc="制度管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析制度文件，自动提取制度字段" default-description="用于存放并解析制度文件，自动提取制度字段" model-tip="提取模型将复用下方「对话模型」，用于解析制度文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
+    <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
     <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="regulation" title="上传制度"
-      :type-options="uploadTypeOptions" @done="onUploadDone" />
-    <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
-    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'regulation'"
-      kb-name="日常事务-制度" title="制度设置" @saved="() => loadRegTypes()" />
+      :type-options="uploadTypeOptions" @progress="onUploadProgress" @done="onUploadDone" />
 
-    <!-- 删除历史（自动删除的非制度记录） -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="制度"
-      @changed="loadFiles(true)" @restored="onRestored" />
+    <!-- 设置抽屉（字段定义 + 提取规则双 Tab，黄金基准 StandardSettingDrawer） -->
+    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'regulation'"
+      kb-name="日常事务-制度" title="制度设置" @saved="() => reloadColumns(true)" />
+
+    <!-- 历史记录（对齐发票基准：已上传文件抽屉，展示解析/提取状态与制度类型） -->
+    <FleetUploadHistoryDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" scope="regulation"
+      @changed="onUploadHistoryChanged" />
 
 
     <!-- 制度详情抽屉（竖向区块，可拖宽，上下滚动） -->
@@ -416,7 +425,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -425,9 +435,7 @@ import { colWidthOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
-  uploadKnowledgeFile,
   getKnowledgeDetails,
-  delKnowledgeDetails,
   batchDeleteKnowledge,
   updateBusinessMetadata,
   listKnowledgeTags,
@@ -437,9 +445,6 @@ import {
   listRegulationTypes,
   previewKnowledgeFile,
   reparseKnowledge,
-  listDeletedKnowledge,
-  restoreDeletedKnowledge,
-  purgeDeletedKnowledge,
   getRecognitionConfig,
   listRegulationOverview,
 } from '@/api/knowledge-base'
@@ -448,12 +453,14 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
+import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-制度'
@@ -500,10 +507,10 @@ const {
   defaultColumns: DEFAULT_REGULATION_COLUMNS,
 })
 
+const route = useRoute()
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
-const fileInputRef = ref<HTMLInputElement>()
 
 interface KnowledgeItem {
   id: string
@@ -570,7 +577,7 @@ interface RegulationRow extends Record<string, any> {
 }
 
 const items = ref<KnowledgeItem[]>([])
-const regulationRows = ref<RegulationRow[]>([])
+const regulationRows = shallowRef<RegulationRow[]>([])
 
 // KPI 卡：总数、本月新增、按类型分布（前端基于已加载数据计算）
 const overviewStats = ref<any>(null)
@@ -586,25 +593,43 @@ const loadRegulationOverview = async () => {
     overviewLoading.value = false
   }
 }
-const overviewCards = computed(() => {
+// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：全部制度 → 各制度类型卡 → 其它制度 → 历史记录） ----
+// 数据源为后端全量概览 regulationOverview（不受工具栏类型/日期/搜索筛选影响）。
+const overviewCards = computed<KpiCard[]>(() => {
   const st = overviewStats.value || {}
   const total = Number(st.total || 0)
   const monthCount = Number(st.current_month || 0)
   const parseFailed = Number(st.parse_failed || 0)
-  const failed = parseFailed
   const fileCount = Number(st.file_count || 0)
-  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
-    { key: 'total', label: '已收录制度', icon: 'file', value: `${total}`, unit: '份', sub: `本月新增 ${monthCount} 份`, cls: '', action: 'all' },
+  // 分类统计：后端按 reg_type 精确聚合（空归「未分类」）
+  const catCount: Record<string, number> = {}
+  for (const c of (st.by_category || [])) catCount[String(c.category)] = Number(c.count) || 0
+  const cards: KpiCard[] = [
+    // 全部制度：全量总份数（含未分类/其它制度与待补录占位行），点击清空筛选进入全部态（对齐发票）
+    { key: 'total', label: '已收录制度', icon: 'file', value: String(total), unit: '份', sub: `本月新增 ${monthCount} 份`, theme: 'brand', action: 'all' },
   ]
-  for (const t of (st.by_reg_type || [])) {
-    const name = String(t.reg_type || '未分类')
-    cards.push({ key: `type-${name}`, label: name, icon: 'file-1', value: `${Number(t.count) || 0}`, unit: '份', sub: '', cls: 'is-type', action: 'type', typeValue: name })
+  // 类型分布卡：以制度分类列表（categories[scope=regulation]）为权威源动态生成，顺序 = 分类数组顺序；
+  // enabled=false 的分类不出卡片（六同步：同时不出筛选下拉/上传选项）
+  const enabledCats = (regCats.value || []).filter((c: any) => c.enabled !== false)
+  let catSum = 0
+  for (const c of enabledCats) {
+    // 「其它制度」为系统内置兜底分类：统计口径是排除式桶（total - 各启用分类之和），
+    // 跳过该分类卡且不计入 catSum，避免与下方排除式卡重复/口径错乱
+    if (c.name === '其它制度') continue
+    const cnt = catCount[String(c.name)] || 0
+    catSum += cnt
+    cards.push({ key: `type-${c.name}`, label: c.name, icon: 'file-1', value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: c.name })
   }
-  // 历史记录卡：点击打开删除历史抽屉
-  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
+  // 「其它制度」排除式统计桶（收纳未匹配任何启用分类的记录，含未分类/已停用分类存量），
+  // 无条件渲染（计数 0 兜底），避免卡片数量二次跳变
+  const otherCount = Math.max(0, total - catSum)
+  cards.push({ key: 'type-其它制度', label: '其它制度', icon: 'file-unknown', value: String(otherCount), unit: '份', theme: 'neutral', action: 'type', typeValue: '其它制度' })
+  // 历史记录（已上传文件，对齐发票基准 fileCount/parseFailed）：异常文件数 sub 展示，点击打开已上传文件抽屉
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: String(fileCount), unit: '份', sub: parseFailed ? `${parseFailed} 份异常` : '无异常文件', theme: parseFailed > 0 ? 'warning' : 'neutral', action: 'history' })
   return cards
 })
-const onOverviewCardClick = (card: any) => {
+// 卡片点击联动（发票基准同款 action 分流：类型卡切筛选；全部卡清空；历史记录卡开抽屉）
+const onOverviewCardClick = (card: KpiCard) => {
   if (card.action === 'all') {
     filterRegType.value = ''
   } else if (card.action === 'type' && card.typeValue) {
@@ -833,9 +858,17 @@ const loadFiles = async (reset = false) => {
     loadingMore.value = true
   }
   try {
+    // 「其它制度」为排除式筛选：附上启用分类名集合，后端按 reg_type 不属于该集合过滤，
+    // 与概览卡其它制度口径一致。「其它制度」本身作为归属目标不从集合剔除（后端防御）。
+    const knownCats = regCats.value
+      .filter((c: any) => c.enabled !== false)
+      .map((c: any) => String(c.name))
+      .filter((n: string) => Boolean(n))
     const res: any = await listRegulationRecords(kbId.value, {
       q: keyword.value || undefined,
       reg_type: filterRegType.value || undefined,
+      known_categories: filterRegType.value === '其它制度' && knownCats.length > 0
+        ? knownCats.join(',') : undefined,
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
       page: page.value,
@@ -1018,46 +1051,114 @@ const onListScroll = (e: Event) => {
   }
 }
 
-// ---- 上传 ----
-const triggerUpload = () => { fileInputRef.value?.click() }
-const onFileInputChange = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) handleUploadFiles(Array.from(input.files))
-  input.value = ''
-}
-
-const handleUploadFiles = async (files: File[]) => {
-  const valid = files.filter(f => {
-    const ext = (f.name.split('.').pop() || '').toLowerCase()
-    return ACCEPT_TYPES.includes(ext)
-  })
-  const invalidCount = files.length - valid.length
-  if (invalidCount) MessagePlugin.warning(`已忽略 ${invalidCount} 个不支持的文件（仅支持 PDF/JPG/PNG）`)
-  if (!valid.length) return
-  try {
-    for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
-    MessagePlugin.success(`已上传 ${valid.length} 个制度文件，正在解析...`)
-    await loadFiles(true)
-    startPolling()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '上传失败')
-  }
-}
+// 统一上传弹窗 FleetUploadDialog 是唯一上传入口（旧的原生 file input 已移除）。
 
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
   extractInFlight, extractFailed, pendingFiles,
-  start: startPolling, stop: stopPolling,
+  start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'regulation'),
   onPendingFiles: (files) => {
-    const withRows = new Set(regulationRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+    // 状态条展示所有「进行中」文件：不仅新上传待解析/待提取的文件，也包括
+    // 已产生制度行、正处于「重新解析/重新提取」中的文件（重解/重提选中的记录
+    // 必然已有制度行，若按行过滤会把它们排除出状态条，只剩 toast 提示）。
+    // 轮询已保证 pend 只含解析中/提取中文件，完成/失败的文件不会进入这里。
+    pendingFiles.value = files
   },
-  onRemoved: (item) => { MessagePlugin.info(`「${item.file_name || item.title}」不是制度文件，已移至删除历史，可在删除历史中恢复`) },
+  onRemoved: (item) => {
+    MessagePlugin.info(`「${item.file_name || item.title}」不是制度文件，已移至删除历史，可在删除历史中恢复`)
+    loadRegTypes()
+  },
   onTick: () => loadFiles(),
 })
+
+// 需求：解析/提取完成后自动刷新 KPI 卡片统计。
+// pendingFiles 由轮询每 3s 更新：集合变化（有文件解析完成进入制度行 / 提取完成 / 失败）
+// 即触发概览统计重载，保证卡片数量与本轮真实状态一致。
+let lastPendingKey = ''
+watch(pendingFiles, (v) => {
+  const key = v.map((f: any) => f.id).sort().join(',')
+  if (key !== lastPendingKey) {
+    lastPendingKey = key
+    if (kbId.value) loadRegulationOverview()
+  }
+}, { deep: false })
+
+// 上传任务实时进度（来自上传弹窗 @progress，发票/车队同款）：多文件同时进行时轮播展示
+const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
+const progressIndex = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
+  uploadProgress.value = filterLiveProgress(items)
+  if (uploadProgress.value.length <= 1) {
+    progressIndex.value = 0
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+    return
+  }
+  if (progressTimer) return
+  progressTimer = setInterval(() => {
+    if (uploadProgress.value.length <= 1) {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+      return
+    }
+    progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
+  }, 3000)
+}
+// 表格里该文件已「提取完成/失败」的，不再保留旧的「正在提取…N%」进度项
+function filterLiveProgress(items: any[]) {
+  const doneNames = new Set(
+    regulationRows.value
+      .filter((r) => r.extractStatus === 'success' || r.extractStatus === 'failed')
+      .map((r) => r.fileName),
+  )
+  return items.filter((it: any) => !doneNames.has(it.name))
+}
+// 轮询刷新列表后：用表格实际 extractStatus 清掉已完成文件的残留进度
+watch(regulationRows, () => {
+  if (!uploadProgress.value.length) return
+  uploadProgress.value = filterLiveProgress(uploadProgress.value)
+})
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+onBeforeUnmount(stopProgressTimer)
+
+// 解析/提取实时进度（弹窗关闭后兜底数据源）：
+// 后端轮询只返回状态枚举（pending/processing/completed + extract_status），无真实百分比。
+// 沿用上传弹窗同款"按耗时估算"口径：parsing 10→92、extracting 30→100；
+// 起点 = 文件首次进入进行中集合的时刻（fileStartAt 记忆表）。
+const fileStartAt = new Map<string, number>()
+const liveProgress = computed(() => {
+  const now = Date.now()
+  return pendingFiles.value.map((f) => {
+    const id = f.id
+    if (!fileStartAt.has(id)) fileStartAt.set(id, now)
+    const start = fileStartAt.get(id)!
+    const elapsed = (now - start) / 1000
+    const ps = f.parse_status || ''
+    const es = f.custom_metadata?.extract_status || ''
+    const name = f.file_name || f.title || id
+    // 解析已完成、提取进行中 → 提取阶段；否则视为解析阶段
+    if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) {
+      return { name, stage: 'extracting' as const, percent: Math.min(100, Math.round(30 + elapsed * 2)) }
+    }
+    return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
+  })
+})
+// 文件离开进行中集合后清理起点记忆，避免 id 复用导致百分比从旧值续算
+watch(pendingFiles, (v) => {
+  const alive = new Set(v.map((f: any) => f.id))
+  for (const id of Array.from(fileStartAt.keys())) {
+    if (!alive.has(id)) fileStartAt.delete(id)
+  }
+})
+// 弹窗打开期间优先展示上传弹窗上报的真实进度（含真实上传百分比）；
+// 弹窗关闭后 uploadProgress 停更，自动切换到轮询派生的解析/提取进度，状态条不中断。
+const displayProgress = computed(() =>
+  uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
+)
 
 const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
@@ -1091,26 +1192,14 @@ const detailTitle = computed(() =>
   currentRow.value?.regNo ? `制度详情 · ${currentRow.value.regNo}` : '制度详情'
 )
 
-// ---- 重新入库（恢复）后自动打开编辑抽屉 ----
-const onRestored = async (knowledgeId: string) => {
-  await loadFiles(true)
-  const row = regulationRows.value.find((r: any) => r.knowledgeId === knowledgeId)
-  if (row) {
-    openDetail(row)
-  } else {
-    // 列表可能因分页/懒加载未包含该行，用最小占位行打开编辑抽屉补录字段
-    openDetail({
-      rowKey: `manual-${knowledgeId}`,
-      knowledgeId,
-      fileName: '',
-      parseStatus: 'completed',
-      extractStatus: 'manual',
-      kind: 'regulation',
-      tags: [],
-      description: '',
-      page: 0,
-    } as RegulationRow)
+// 上传历史抽屉（删除/恢复）变更后同步：删除走乐观移除 + 延迟对账；其余全量刷新
+const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {
+  if (payload?.deletedIds?.length) {
+    optimisticRemoveRegulationRows(new Set(payload.deletedIds), new Set())
+    schedulePostDeleteRefresh()
+    return
   }
+  await Promise.all([loadFiles(true), loadRegulationOverview()])
 }
 
 // ---- 字段编辑 + 自动保存 ----
@@ -1204,26 +1293,29 @@ const saveEditForm = async (force = false) => {
       throw e
     }
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
-    // 同步列表行，保证编辑后列表立即刷新
+    // 同步列表行，保证编辑后列表立即刷新（shallowRef 铁律：不能按下标赋值，
+    // 必须 map 后整体替换数组，否则不触发更新）
     const listIdx = regulationRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) {
-      regulationRows.value[listIdx] = {
-        ...regulationRows.value[listIdx],
-        extractStatus: nextStatus,
-        extractError: nextError,
-        regNo: updated.reg_no,
-        regName: updated.reg_name,
-        regType: updated.reg_type,
-        dept: updated.dept,
-        version: updated.version,
-        issueDate: updated.issue_date,
-        pageCount: updated.page_count,
-        modifyCount: updated.modify_count,
-        scope: updated.scope,
-        effectiveDate: updated.effective_date,
-        confidentiality: updated.confidentiality,
-        remark: updated.remark,
-      }
+      regulationRows.value = regulationRows.value.map((r: any, i: number) =>
+        i === listIdx ? {
+          ...r,
+          extractStatus: nextStatus,
+          extractError: nextError,
+          regNo: updated.reg_no,
+          regName: updated.reg_name,
+          regType: updated.reg_type,
+          dept: updated.dept,
+          version: updated.version,
+          issueDate: updated.issue_date,
+          pageCount: updated.page_count,
+          modifyCount: updated.modify_count,
+          scope: updated.scope,
+          effectiveDate: updated.effective_date,
+          confidentiality: updated.confidentiality,
+          remark: updated.remark,
+        } : r,
+      )
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -1269,59 +1361,136 @@ const selectedSingle = computed(() => {
   return rows.length === 1 ? rows[0] : null
 })
 
-// 重新提取：重新解析选中行对应源文件，解析完成后自动触发制度字段提取
-// （制度一个文件一般只有一份制度，无需按页提取；打印也整文档预览）。
+// 批量重解析/重提取：制度一个文件一般只有一份制度，选中即对该文件操作（无需按页）。
 const reparseBusy = ref(false)
 const extractBusy = ref(false)
+const BATCH_CONCURRENCY = 3
+
+// 轻量并发池：以 limit 上限消费 items，返回与入参同序的 allSettled 结果；
+// 单个任务失败不中断整体，语义与 Promise.allSettled 一致（避免引入第三方库）。
+async function settleInBatches<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<unknown>): Promise<PromiseSettledResult<unknown>[]> {
+  const results: PromiseSettledResult<unknown>[] = new Array(items.length)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < items.length) {
+      const i = cursor++
+      results[i] = await Promise.resolve().then(() => fn(items[i])).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
+}
+
+// 批量确认文案：单选显示文件名，多选显示文件数（selectedIds 已按 knowledgeId 去重）
+// 注意：多选 N 条记录若同属一个文件，selectedIds.length 为 1，此时取任一选中记录的文件名展示
+const reparseConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定重新解析「${name}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  }
+  return `确定重新解析选中的 ${ids.length} 个文件并重新拆页吗？将覆盖已有解析结果。`
+})
+const extractConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定按最新提取规则重新提取「${name}」的所有制度字段吗？将覆盖已有提取结果。`
+  }
+  return `确定按最新提取规则重新提取选中的 ${ids.length} 个文件的所有制度字段吗？将覆盖已有提取结果。`
+})
+
+// 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认）
 const handleReparse = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份制度'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const ids = selectedIds.value
+  if (!ids.length) { MessagePlugin.info('请先选中要重新解析的制度'); return }
   reparseBusy.value = true
+  // 过程态交给上方状态条实时展示（正在解析「文件名」进度 N%），
+  // 这里清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
+  let ok = 0
+  let fail = 0
   try {
-    await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析`)
-    setTimeout(() => { loadFiles(true); loadRegulationOverview() }, 1500)
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新解析一次
+    const results = await settleInBatches(ids, BATCH_CONCURRENCY, kid => reparseKnowledge(kid))
+    results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
+    if (fail === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新解析`)
+    } else {
+      MessagePlugin.warning(`${ok} 个文件重新解析已提交，${fail} 个提交失败`)
+    }
+    // 提交后立即扫描一次：重解走异步队列，parse_status 很快进入 pending，
+    // 主动 scanOnce 缩短状态条出现的等待窗口（不必等下一轮 3s 轮询）
+    scanOnce()
+    loadFiles(true)
+    loadRegulationOverview()
   } catch (e: any) {
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
     reparseBusy.value = false
   }
 }
 
+// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部制度字段（支持多文件批量，二次确认）
 const handleFileExtract = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份制度'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const all = selectedIds.value
+  if (!all.length) { MessagePlugin.info('请先选中要重新提取的制度'); return }
+  // 跳过已在提取中的文件（轮询自动提取或前一次手动提交仍在途）：
+  // 后端 extractMu 按文件防重入，重复提交会 409；前端 in-flight 先挡一轮
+  const ids = all.filter(kid => !extractInFlight.value.has(kid))
+  const skipped = all.length - ids.length
+  if (!ids.length) {
+    MessagePlugin.info('所选文件均正在提取中，请稍候')
+    return
+  }
+  ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
+  // 过程态交给上方状态条实时展示（正在提取「文件名」进度 N%）：
+  // 后端提取请求在途时已写 extract_status=processing，轮询即可捕获；
+  // 清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
   try {
-    await extractBusinessDocument(kbId.value, row.knowledgeId, 'regulation', filterRegType.value || undefined)
-    loading.close()
-    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新提取一次。
+    const results = await settleInBatches(
+      ids,
+      BATCH_CONCURRENCY,
+      kid => extractBusinessDocument(kbId.value, kid, 'regulation', filterRegType.value || undefined),
+    )
+    let ok = 0
+    let conflict = 0
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { ok++; return }
+      // 409 冲突：后端 extractMu 判定该文件正被提取（另一标签/请求在途），
+      // 属重复提交而非提取失败——不写入 extractFailed，避免状态列误报「提取失败」。
+      // request.ts 非 2xx JSON 响应统一带 $httpStatus（非枚举属性）。
+      if ((r.reason as any)?.$httpStatus === 409) { conflict++; return }
+      extractFailed.value.set(ids[i], Date.now())
+    })
+    const fail = results.length - ok - conflict
+    if (fail === 0 && conflict === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
+    } else {
+      const parts: string[] = []
+      if (ok) parts.push(`${ok} 个已提交`)
+      if (conflict) parts.push(`${conflict} 个正在提取中`)
+      if (fail) parts.push(`${fail} 个提交失败`)
+      if (skipped) parts.push(`${skipped} 个已在提取中，未重复提交`)
+      MessagePlugin.warning(parts.join('，'))
+    }
+    // 提交后立即扫描一次：提取在途文件 extract_status=processing 已被后端写入，
+    // 主动 scanOnce 让状态条立即显示「正在提取」，不必等下一轮 3s 轮询
+    scanOnce()
     loadFiles(true)
     loadRegulationOverview()
   } catch (e: any) {
-    loading.close()
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
+    ids.forEach(kid => extractInFlight.value.delete(kid))
     extractBusy.value = false
   }
-}
-
-const handleBatchEdit = () => {
-  const rows = selectedRows.value
-  if (rows.length !== 1) {
-    MessagePlugin.info('请选中单行后编辑，或点击列表中的制度行进入编辑')
-    return
-  }
-  openDetail(rows[0])
 }
 
 // 打印：制度一个文件一般只有一份制度，打印预览整个文档（含多页），
@@ -1460,47 +1629,138 @@ const downloadCatalogPdf = () => {
   a.click()
 }
 
-// 删除记录：制度一份文件一份制度，直接删除整份源文件
-const handleBatchDelete = async () => {
-  const rows = selectedRows.value
-  if (!rows.length) return
-  try {
-    const fileDeleteIds = new Set<string>()
-    for (const r of rows) {
-      fileDeleteIds.add(r.knowledgeId)
-    }
-    if (fileDeleteIds.size) {
-      await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-    }
-    MessagePlugin.success('删除成功')
-    selectedRowKeys.value = []
-    await loadFiles(true)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+// 安全清空多选（表格无 ref 时仅重置 selectedRowKeys，与发票基准同口径）
+const clearSelectionSafe = () => {
+  clearSelection()
+}
+// 类型筛选锁定（发票基准同款）：当前选中项合法则保留（含路由/上传回填），
+// 否则按分类顺序选中第一个启用分类。
+// 「其它制度」为排除式筛选态（点击其它制度卡进入），分类重载时须放行；
+// 空值 = 「全部」态（点击「已收录制度」卡进入，对齐发票），放行避免被弹回。
+const ensureRegType = () => {
+  if (filterRegType.value === '其它制度' || filterRegType.value === '') return
+  const cats = regCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
+  if (filterRegType.value && cats.includes(filterRegType.value)) return
+  filterRegType.value = cats.length ? cats[0] : ''
+}
+// 类型切换：清空多选（防跨类型脏数据残留）+ 重建当前分类列 + 立即刷新列表（发票基准同款）
+watch(filterRegType, () => {
+  clearSelectionSafe()
+  reloadColumns()
+  loadFiles(true)
+})
+
+// ---- 删除链路 ----
+const delPopVisible = ref(false)
+const closeDelPop = () => { delPopVisible.value = false }
+// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页制度（制度一般用不到）
+const optimisticRemoveRegulationRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
+  regulationRows.value = regulationRows.value.filter((r) => {
+    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
+    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
+    return true
+  })
+}
+// 删除走 asynq 异步入队：200 仅代表入队，worker 启动后才置 parse_status=deleting
+// （列表据此排除）。立即刷新会读到旧数据，故先乐观移除，再分两次延迟权威对账。
+let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
+const schedulePostDeleteRefresh = () => {
+  deleteRefreshTimers.forEach(clearTimeout)
+  deleteRefreshTimers = []
+  loadRegulationOverview()
+  const reload = () => { loadFiles(true); loadRegulationOverview() }
+  deleteRefreshTimers.push(setTimeout(reload, 800))
+  deleteRefreshTimers.push(setTimeout(reload, 2600))
+}
+// 删除整份上传文件（含其全部制度记录，从知识库完全删除）
+const doFileDelete = async (rows: RegulationRow[]) => {
+  const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
+  if (ids.size) {
+    await batchDeleteKnowledge(kbId.value, Array.from(ids))
+    optimisticRemoveRegulationRows(ids as Set<string>, new Set())
   }
+}
+const finishDelete = async () => {
+  MessagePlugin.success('删除成功')
+  clearSelectionSafe()
+  // 异步删除：不立即 loadFiles（会把乐观移除的行又拉回来），交由延迟对账权威纠正
+  schedulePostDeleteRefresh()
+}
+// 制度一份文件一份制度，直接走文件删除
+const confirmFileDelete = async () => {
+  closeDelPop()
+  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+
+// ---- 动态列 + 六同步 ----
+// 六同步：字段/分类配置变更后重建动态列 + 重载分类（KPI 类型卡/上传弹窗分类同源）+ 刷新记录
+const onCategoriesChanged = () => {
+  reloadColumns(true)
+  loadRegCats()
+  loadFiles(true)
+  // 分类配置变更（改名/启停用）影响概览类型分桶，同步刷新卡片统计
+  loadRegulationOverview()
+}
+const loadRegCats = async () => {
+  try {
+    const res: any = await listFleetCategories({ scope: 'regulation' })
+    const cats = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+    regCats.value = cats
+  } catch { regCats.value = [] }
+  // 六同步：分类重载后若当前选中项已失效（禁用/改名/删除），回退第一个启用分类
+  ensureRegType()
+}
+// 从后端 categories（scope=regulation）重建动态列；无配置时回退内置默认。
+// 列按「当前选中分类」的字段配置生成（六同步：列表/字段筛选器/编辑抽屉/打印同源）。
+const lastColType = ref('')
+const reloadColumns = async (force = false) => {
+  try {
+    // 分类缓存：切换类型时直接用已拉取的分类重建列（省一次请求、切换更快）；
+    // 仅首次进入或设置保存/六同步事件（force=true）时重新请求后端
+    let cats: any[] = force ? [] : regCats.value
+    if (!cats || !cats.length) {
+      const res: any = await listFleetCategories({ scope: 'regulation' })
+      cats = res?.data || []
+      regCats.value = cats
+    }
+    const curCat = cats.find((c: any) => c.name === filterRegType.value && c.enabled !== false)
+    const baseCat = curCat || cats[0]
+    if (baseCat?.subs?.length) {
+      customColumns.value = baseCat.subs
+        .filter((s: any) => s.enabled !== false)
+        .map((s: any) => {
+          const builtin = DEFAULT_REGULATION_COLUMNS.find((b: any) => b.key === s.name)
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
+        })
+      // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。
+      // 首轮加载（lastColType 为空）时保留用户既有 localStorage 存档，但若存档缺当前分类
+      // 的默认列则补齐当前分类默认列（发票基准同款门控）
+      if (!lastColType.value) {
+        const defaults = customColumns.value.filter((c: any) => c.default).map((c: any) => c.key)
+        if (defaults.some((k: string) => !visibleColKeys.value.includes(k))) resetColumns()
+      } else if (force || lastColType.value !== filterRegType.value) {
+        resetColumns()
+      }
+      lastColType.value = filterRegType.value
+    }
+    // 分类重载后若当前选中项失效（被禁用/改名），回退第一个启用分类
+    ensureRegType()
+  } catch { /* 后端未配置时回退内置默认 */ }
 }
 
 // ---- 生命周期 ----
 onMounted(() => {
+  if (typeof route.query.type === 'string' && route.query.type) filterRegType.value = route.query.type
   loadKb()
-  void (async () => {
-    try {
-      const res: any = await listFleetCategories({ scope: 'regulation' })
-      const cats = res?.data || []
-      regCats.value = Array.isArray(cats) ? cats : []
-      if (cats[0]?.subs?.length) {
-        customColumns.value = cats[0].subs
-          .filter((s: any) => s.enabled !== false)
-          .map((s: any) => {
-            const builtin = DEFAULT_REGULATION_COLUMNS.find((b: any) => b.key === s.name)
-            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-          })
-      }
-    } catch { /* 后端未配置时回退内置默认 */ }
-  })()
+  loadRegCats()
+  reloadColumns()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 onBeforeUnmount(() => {
   stopPolling()
+  stopProgressTimer()
+  deleteRefreshTimers.forEach(clearTimeout)
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
 

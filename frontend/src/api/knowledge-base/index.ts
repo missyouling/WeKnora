@@ -1009,6 +1009,7 @@ export function listAwardPunishOverview(kbId: string) {
 export function listRegulationRecords(kbId: string, params: {
   q?: string;
   reg_type?: string;
+  known_categories?: string;
   date_from?: string;
   date_to?: string;
   page?: number;

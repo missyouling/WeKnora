@@ -1642,6 +1642,36 @@ func contractSeedSubs() []types.FleetCategorySub {
 	}
 }
 
+// regulationSeedSubs 为制度内置分类（人事/财务/生产/行政/安全/其它制度）的字段全集。
+// subs.name 为前端 RegulationRow 的 camelCase key，与 types.RegulationExtractionItem
+// JSON 字段同源；is_default 与前端 DEFAULT_REGULATION_COLUMNS 的 default 一致。
+func regulationSeedSubs() []types.FleetCategorySub {
+	return []types.FleetCategorySub{
+		// 制度信息（默认显示）
+		{Name: "regNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "regName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "regType", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "version", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "pageCount", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "issueDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "effectiveDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "scope", Enabled: true, IsDefault: true, DataType: "text"},
+		// 制度内容（默认不显示）
+		{Name: "dept", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "modifyCount", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "compiledBy", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "reviewedBy", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "approvedBy", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "confidentiality", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		// 系统字段
+		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+	}
+}
+
 // seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
 // 记录 tenant_id=0（全局共享），subs.name 为前端 row 的 camelCase key，data_type 标注类型。
 func (h *FleetHandler) seedBusinessCategories() {
@@ -1715,15 +1745,9 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "items", Enabled: true, IsDefault: false, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
 			{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 		}},
-		{"regulation", "制度", "regulation", 0, []types.FleetCategorySub{
-			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "docNumber", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "category", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "publishDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "effectiveDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-		}},
+		// 制度内置分类（人事/财务/生产/行政/安全/其它制度）统一走 reconcileRegulationCategories
+		// 名称协调，不再在本 seed 块中创建笼统「制度」分类（其早期 subs 用了 title/docNumber/
+		// category/publishDate/issuer 英文键，与 RegulationRow 字段不匹配）。
 		{"award_punish", "奖惩", "award_punish", 0, []types.FleetCategorySub{
 			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
@@ -1770,6 +1794,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 	// 合同内置分类（服务合同/租赁合同）走专门的名称协调逻辑，兼容历史脏数据：
 	// 早期笼统「合同」分类退役、服务合同曾复用 builtin_key=contract、用户自建同名分类收编。
 	h.reconcileContractCategories(ctx)
+
+	// 制度内置分类（人事/财务/生产/行政/安全/其它制度）走同样的名称协调逻辑，
+	// 退役笼统「制度」分类（subs 为 title/docNumber 等错误英文键），按类型建分类。
+	h.reconcileRegulationCategories(ctx)
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
@@ -2070,6 +2098,131 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 			logger.Warnf(ctx, "reconcile contract category %q update failed: %v", w.Name, err)
 		} else {
 			logger.Infof(ctx, "reconcile contract category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
+		}
+	}
+}
+
+// reconcileRegulationCategories 协调制度内置分类（幂等，每次启动执行）。
+// 终态：内置「人事管理 regulation-hr(sort=0)」「财务管理 regulation-finance(sort=1)」
+// 「生产管理 regulation-production(sort=2)」「行政管理 regulation-admin(sort=3)」
+// 「安全管理 regulation-safety(sort=4)」「其它制度 regulation-other(sort=99)」六个分类，
+// 各挂 regulationSeedSubs() 19 字段全集；早期笼统内置分类「制度」（subs 用 title/docNumber/
+// category/publishDate/issuer 英文键，与 RegulationRow 不匹配）软删除。
+// 兼容三类历史脏数据（与合同一致）：
+//  1. 早期笼统分类「制度」（id=seed-regulation、builtin_key=regulation）——退役，由各类型分类承接；
+//  2. 用户在前端自建、与内置同名的分类（UUID、builtin_key 为空）——收编为内置行；
+//  3. 同名重复行——保留最优一行（未删除优先、锚点匹配优先），其余 live 行软删。
+func (h *FleetHandler) reconcileRegulationCategories(ctx context.Context) {
+	now := timeNowUTC()
+
+	// 1) 退役笼统「制度」分类：按名称精确匹配（scope=regulation）
+	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", "regulation", "制度").
+		Update("deleted_at", now).Error; err != nil {
+		logger.Warnf(ctx, "retire legacy generic regulation category failed: %v", err)
+	}
+
+	wanted := []struct {
+		Name string
+		Key  string
+		Sort int
+	}{
+		{"人事管理", "regulation-hr", 0},
+		{"财务管理", "regulation-finance", 1},
+		{"生产管理", "regulation-production", 2},
+		{"行政管理", "regulation-admin", 3},
+		{"安全管理", "regulation-safety", 4},
+		{"其它制度", "regulation-other", 99},
+	}
+	fullSubs := regulationSeedSubs()
+
+	for _, w := range wanted {
+		// 查同名全部行（含软删；DeletedAt 为普通 *time.Time，无 GORM 自动软删作用域）
+		var rows []types.FleetCategory
+		if err := h.db.WithContext(ctx).
+			Where("tenant_id = 0 AND scope = ? AND name = ?", "regulation", w.Name).
+			Find(&rows).Error; err != nil {
+			logger.Warnf(ctx, "reconcile regulation category %q query failed: %v", w.Name, err)
+			continue
+		}
+
+		if len(rows) == 0 {
+			// 全新环境：直接创建内置分类
+			cat := types.FleetCategory{
+				ID:         "seed-regulation-" + w.Key,
+				TenantID:   0,
+				Scope:      "regulation",
+				GroupID:    "",
+				BuiltinKey: w.Key,
+				Name:       w.Name,
+				Subs:       fullSubs,
+				SortOrder:  w.Sort,
+				Enabled:    true,
+				CreatedAt:  now,
+				UpdatedAt:  now,
+			}
+			if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
+				logger.Warnf(ctx, "reconcile regulation category %q create failed: %v", w.Name, err)
+			} else {
+				logger.Infof(ctx, "reconcile regulation category %q created with %d subs", w.Name, len(fullSubs))
+			}
+			continue
+		}
+
+		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先
+		targetIdx := 0
+		for i := range rows {
+			cur, best := &rows[i], &rows[targetIdx]
+			curLive, bestLive := cur.DeletedAt == nil, best.DeletedAt == nil
+			if curLive && !bestLive {
+				targetIdx = i
+			} else if curLive == bestLive && cur.BuiltinKey == w.Key && best.BuiltinKey != w.Key {
+				targetIdx = i
+			}
+		}
+		target := rows[targetIdx]
+
+		// 同名重复的其它 live 行软删
+		for i := range rows {
+			if i == targetIdx || rows[i].DeletedAt != nil {
+				continue
+			}
+			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+				Where("id = ?", rows[i].ID).Update("deleted_at", now).Error; err != nil {
+				logger.Warnf(ctx, "reconcile regulation category %q dedup failed: %v", w.Name, err)
+			}
+		}
+
+		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
+		subs := target.Subs
+		have := make(map[string]bool, len(subs))
+		for _, s := range subs {
+			have[s.Name] = true
+		}
+		for _, f := range fullSubs {
+			if !have[f.Name] {
+				subs = append(subs, f)
+				have[f.Name] = true
+			}
+		}
+		raw, merr := json.Marshal(subs)
+		if merr != nil {
+			logger.Warnf(ctx, "reconcile regulation category %q marshal failed: %v", w.Name, merr)
+			continue
+		}
+		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("id = ?", target.ID).
+			Updates(map[string]any{
+				"deleted_at":  nil, // 恢复被误软删的行
+				"builtin_key": w.Key,
+				"sort_order":  w.Sort,
+				"enabled":     true,
+				"subs":        gorm.Expr("?::jsonb", string(raw)),
+				"updated_at":  now,
+			}).Error; err != nil {
+			logger.Warnf(ctx, "reconcile regulation category %q update failed: %v", w.Name, err)
+		} else {
+			logger.Infof(ctx, "reconcile regulation category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
 		}
 	}
 }
