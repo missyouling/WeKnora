@@ -101,7 +101,7 @@
           <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
         <template #taxRate="{ row }: any">
-          <t-tooltip placement="top" overlay-class="rate-detail-overlay" :show-arrow="true">
+          <t-tooltip placement="top" theme="light" overlay-class="rate-detail-overlay" :show-arrow="true">
             <template #content>
               <div class="rate-detail">
                 <table v-if="(row.items || []).length" class="rate-detail-table">
