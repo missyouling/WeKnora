@@ -146,6 +146,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 						Amount:    it.Amount,
 						TaxRate:   it.TaxRate,
 						TaxAmount: it.TaxAmt,
+						Extra:     it.Extra,
 					})
 				}
 				records = append(records, types.InvoiceRecord{
@@ -533,6 +534,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 						Amount:    it.Amount,
 						TaxRate:   it.TaxRate,
 						TaxAmount: it.TaxAmt,
+						Extra:     it.Extra,
 					})
 				}
 				records = append(records, types.InvoiceRecord{

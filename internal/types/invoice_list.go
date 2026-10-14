@@ -54,6 +54,10 @@ type InvoiceExtractionItemItems struct {
 	Amount    *float64 `json:"amount"`
 	TaxRate   *float64 `json:"tax_rate"`
 	TaxAmount *float64 `json:"tax_amount"`
+	// Extra 分类明细动态子列（如通行费发票 plate_no/vehicle_type/travel_from/
+	// travel_to），原样透传 service 层 InvoiceExtractionLine.Extra，供前端
+	// hover 回显/编辑抽屉按分类 sub_fields 键读取；空时省略避免 API 噪音。
+	Extra map[string]any `json:"extra,omitempty"`
 }
 
 // InvoiceListFilter 是发票级聚合列表查询参数。
