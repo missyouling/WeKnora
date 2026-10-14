@@ -66,6 +66,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata, listKnowledgeFiles } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
+import { sharedExtractInFlight } from '@/composables/useBusinessPolling'
 
 const props = defineProps<{
   visible: boolean
@@ -301,10 +302,32 @@ async function runTask(t: UpTask) {
       try {
         t.status = 'extracting'
         t.progress = 30
-        await extractFile(kid, scope, certType)
+        // 共享防重：列表页轮询/手动重新提取/其它并行上传任务可能已在提取同一文件。
+        // 若已有人在途，本通道不再重复提交（避免后端 extractMu 409 冲突），
+        // 转轮询等待后端 extract_status 落终态后跟随完成。
+        if (sharedExtractInFlight.has(kid)) {
+          const es = await waitExtractSettled(kid)
+          if (es === 'success') { /* 跟随成功，走下方统一置位 */ }
+          else if (es === 'failed') { t.status = 'failed'; t.msg = '提取失败'; return }
+          else { t.status = 'failed'; t.msg = '提取状态未知，请稍后在列表中重试'; return }
+        } else {
+          sharedExtractInFlight.add(kid)
+          try {
+            await extractFile(kid, scope, certType)
+          } finally {
+            sharedExtractInFlight.delete(kid)
+          }
+        }
         t.status = 'success'
         t.progress = 100
       } catch (err: any) {
+        // 兜底：即便共享防重仍撞上 409（如后端多实例/旧页面实例在途），
+        // 不判失败——转等待终态跟随，数据实际仍由持锁请求完成。
+        if ((err as any)?.$httpStatus === 409) {
+          const es = await waitExtractSettled(kid).catch(() => '')
+          if (es === 'success') { t.status = 'success'; t.progress = 100; return }
+          if (es === 'failed') { t.status = 'failed'; t.msg = '提取失败'; return }
+        }
         t.status = 'failed'
         t.msg = err?.message || '提取失败'
       }
@@ -348,6 +371,24 @@ async function extractFile(kid: string, scope: string, certType: string) {
     await extractBusinessDocument(props.kbId, kid, body)
   } else {
     await extractFleetDocument(props.kbId, kid, body)
+  }
+}
+
+// 等待后端提取状态落终态（供共享防重分支跟随在途请求）：
+// 轮询 getKnowledgeDetails 直到 custom_metadata.extract_status 为 success/failed；
+// 3 分钟超时兜底，避免与后端模型调用时长脱节导致死等。
+const waitExtractSettled = async (kid: string, timeoutMs = 180000): Promise<string> => {
+  const start = Date.now()
+  for (;;) {
+    const kd: any = await getKnowledgeDetails(kid)
+    const info = kd?.data || kd
+    let meta = info?.custom_metadata || {}
+    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
+    const es = meta?.extract_status || ''
+    if (es === 'success') return 'success'
+    if (es === 'failed') return 'failed'
+    if (Date.now() - start > timeoutMs) return 'timeout'
+    await sleep(2000)
   }
 }
 

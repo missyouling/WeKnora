@@ -10,6 +10,16 @@ export interface BusinessFileItem {
   [k: string]: any
 }
 
+/**
+ * 模块级共享提取防重状态：
+ * 发票/车队/合同/能耗等页面各自的 useBusinessPolling 实例，以及上传弹窗
+ * （FleetUploadDialog）的提取队列，全部读写同一份 in-flight/failed。
+ * 由此消除"上传弹窗提取、列表轮询提取、手动重新提取"多通道对同一文件
+ * 并发提交 → 后端 BusinessExtractHandler.extractMu 防重入 409 冲突。
+ */
+export const sharedExtractInFlight = new Set<string>()
+export const sharedExtractFailed = new Map<string, number>()
+
 export interface UseBusinessPollingOptions {
   /** 当前知识库 ID（ref，可异步就绪） */
   kbId: Ref<string>
@@ -37,9 +47,9 @@ export interface UseBusinessPollingOptions {
 export function useBusinessPolling(opts: UseBusinessPollingOptions) {
   const { kbId, extractFn, onPendingFiles, onRemoved, onTick, intervalMs = 3000, filter } = opts
 
-  const extractInFlight = ref<Set<string>>(new Set())
+  const extractInFlight = ref<Set<string>>(sharedExtractInFlight)
   // 失败记录：id -> 首次失败时间戳。5 分钟后允许重试，避免一次网络抖动永久拉黑
-  const extractFailed = ref<Map<string, number>>(new Map())
+  const extractFailed = ref<Map<string, number>>(sharedExtractFailed)
   const RETRY_AFTER_MS = 5 * 60 * 1000
   const pendingFiles = ref<BusinessFileItem[]>([])
 
