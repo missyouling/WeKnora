@@ -65,13 +65,14 @@ type InvoiceExtractionItem struct {
 // amount/tax_amount）通过自定义 JSON 编解码收集进 Extra，随 items 行整体
 // 持久化并透传前端动态列渲染。
 type InvoiceExtractionLine struct {
-	Name    string   `json:"name"`
-	Unit    string   `json:"unit,omitempty"`
-	Qty     *float64 `json:"qty,omitempty"`
-	Price   *float64 `json:"price,omitempty"`
-	Amount  *float64 `json:"amount,omitempty"`
-	TaxRate *float64 `json:"tax_rate,omitempty"`
-	TaxAmt  *float64 `json:"tax_amount,omitempty"`
+	Name     string   `json:"name"`
+	Spec     string   `json:"spec,omitempty"` // 规格型号（分类 items 子列键）
+	Unit     string   `json:"unit,omitempty"`
+	Qty      *float64 `json:"qty,omitempty"`
+	Price    *float64 `json:"price,omitempty"`
+	Amount   *float64 `json:"amount,omitempty"`
+	TaxRate  *float64 `json:"tax_rate,omitempty"`
+	TaxAmt   *float64 `json:"tax_amount,omitempty"`
 	// Extra 分类明细子列（业务语义 key，如 plate_no/vehicle_type/travel_from/
 	// travel_to/spec 等）；JSON 序列化时与标准键合并输出，反序列化时收集未知键。
 	Extra map[string]any `json:"-"`
@@ -90,7 +91,7 @@ func (l *InvoiceExtractionLine) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	std := map[string]bool{
-		"name": true, "unit": true, "qty": true, "price": true,
+		"name": true, "spec": true, "unit": true, "qty": true, "price": true,
 		"amount": true, "tax_rate": true, "tax_amount": true,
 	}
 	for k, v := range raw {
@@ -112,6 +113,9 @@ func (l *InvoiceExtractionLine) UnmarshalJSON(b []byte) error {
 func (l InvoiceExtractionLine) MarshalJSON() ([]byte, error) {
 	m := map[string]any{
 		"name": l.Name,
+	}
+	if l.Spec != "" {
+		m["spec"] = l.Spec
 	}
 	if l.Unit != "" {
 		m["unit"] = l.Unit

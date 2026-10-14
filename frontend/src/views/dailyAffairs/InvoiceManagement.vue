@@ -101,11 +101,26 @@
           <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
         <template #taxRate="{ row }: any">
-          <div v-if="rateVariants(row).length > 1" class="row-rate-tags">
-            <t-tag v-for="r in rateVariants(row)" :key="r" size="small" variant="outline" theme="default"
-              class="row-rate-tag">{{ formatRate(r) }}</t-tag>
-          </div>
-          <span v-else class="row-mono row-rate">{{ formatRate(row.taxRate) || '-' }}</span>
+          <t-tooltip placement="top" overlay-class="rate-detail-overlay" :show-arrow="true">
+            <template #content>
+              <div class="rate-detail">
+                <table v-if="(row.items || []).length" class="rate-detail-table">
+                  <thead>
+                    <tr>
+                      <th v-for="sf in subFieldsOfRow(row)" :key="sf.key">{{ sf.label }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(it, i) in row.items" :key="i">
+                      <td v-for="sf in subFieldsOfRow(row)" :key="sf.key" :class="itemCellClass(sf)">{{ formatItemCell(it, sf) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-else class="rate-detail-empty">暂无项目明细</div>
+              </div>
+            </template>
+            <span class="row-mono row-rate">{{ rateTextOf(row) || '-' }}</span>
+          </t-tooltip>
         </template>
         <template #tax="{ row }: any">
           <span class="row-mono">{{ formatAmount(row.tax) }}</span>
@@ -525,7 +540,7 @@ interface InvoiceItem {
   buyer_account?: string
   issuer?: string
   remark?: string
-  items?: Array<{ name?: string; unit?: string; qty?: number; price?: number; amount?: number; tax_rate?: number; tax_amount?: number }>
+  items?: Array<{ name?: string; spec?: string; unit?: string; qty?: number; price?: number; amount?: number; tax_rate?: number; tax_amount?: number }>
   void_flag?: boolean
   duplicate?: boolean
   page?: number
@@ -683,6 +698,7 @@ const tableColumns = computed(() => {
     const w = colWidthOf(c.width, c.label, rows.map(r => {
       if (rp) return remarkPartOf(r.remark || '', rp)
       if (c.key === 'items') return itemsTextOf(r)
+      if (c.key === 'taxRate') return rateTextOf(r)
       if (c.key === 'extractStatus') { const s = statusOf(r).label; return s === '--' ? '' : s }
       return colValue(r, c.key)
     }))
@@ -1526,24 +1542,26 @@ const detailTitle = computed(() =>
 // 保证非明细分类与旧数据仍可编辑。
 const fallbackItemSubFields = () => [
   { key: 'name', label: '项目名称', dataType: 'text' },
+  { key: 'spec', label: '规格型号', dataType: 'text' },
   { key: 'unit', label: '单位', dataType: 'text' },
   { key: 'qty', label: '数量', dataType: 'number' },
   { key: 'price', label: '单价', dataType: 'number' },
   { key: 'amount', label: '金额', dataType: 'number' },
-  { key: 'tax_rate', label: '税率', dataType: 'number' },
+  { key: 'tax_rate', label: '税率/征收率', dataType: 'number' },
   { key: 'tax_amount', label: '税额', dataType: 'number' },
 ]
-const ITEM_STD_KEYS = new Set(['name', 'unit', 'qty', 'price', 'amount', 'tax_rate', 'tax_amount'])
-const itemSubFields = computed(() => {
-  const r = currentRow.value
-  if (!r) return fallbackItemSubFields()
-  const targetType = r.invoiceType || r.category || filterInvoiceType.value || ''
+const ITEM_STD_KEYS = new Set(['name', 'spec', 'unit', 'qty', 'price', 'amount', 'tax_rate', 'tax_amount'])
+// 按行计算明细子列（列表行 hover 回显用；itemSubFields 复用同一口径，仅绑定当前编辑行）
+const subFieldsOfRow = (row: InvoiceRow | null) => {
+  if (!row) return fallbackItemSubFields()
+  const targetType = row.invoiceType || row.category || filterInvoiceType.value || ''
   const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
   const hit = cats.find((c: any) => c.name === targetType) || cats[0]
   const itemsF = (hit?.subs || []).find((s: any) => s.name === 'items')
   const sfs: any[] = itemsF?.sub_fields || []
   return sfs.length ? sfs : fallbackItemSubFields()
-})
+}
+const itemSubFields = computed(() => subFieldsOfRow(currentRow.value))
 // 列宽 class：按 dataType 映射（项目名称宽、数值窄、日期中、其它文本自适应）
 const itemCellClass = (sf: any) => {
   if (sf.key === 'name') return 'item-cell--name'
@@ -1555,6 +1573,14 @@ const itemCellClass = (sf: any) => {
 const itemValOf = (it: any, sf: any) => {
   if (ITEM_STD_KEYS.has(sf.key)) return it?.[sf.key] ?? ''
   return it?.[sf.key] ?? it?.extra?.[sf.key] ?? ''
+}
+// 明细行单元格格式化：数值保留两位、税率转百分比、缺值显示 '-'（tooltip 回显与编辑共用口径）
+const formatItemCell = (it: any, sf: any) => {
+  const v = itemValOf(it, sf)
+  if (v === undefined || v === null || v === '') return '-'
+  if (sf.key === 'tax_rate') return formatRate(Number(v))
+  if (sf.dataType === 'number') return formatAmount(Number(v))
+  return String(v)
 }
 // 写入明细行子列值：标准键写行对象；分类子列写 extra 桶（后端 UnmarshalJSON 自动收集）
 const setItemVal = (it: any, sf: any, v: any) => {
@@ -1889,6 +1915,12 @@ const rateVariants = (row: InvoiceRow): number[] => {
     if (Number.isFinite(t) && t > 0) set.add(Math.round(t * 10000) / 10000)
   }
   return [...set]
+}
+
+// 税率列紧凑文本：多档税率以顿号拼接（13%、9%、6%），单档直接显示
+const rateTextOf = (row: InvoiceRow): string => {
+  const vs = rateVariants(row)
+  return vs.length ? vs.map(formatRate).join('、') : formatRate(row.taxRate)
 }
 
 // ---- 浮动工具栏 ----
@@ -2289,8 +2321,14 @@ watch(printVisible, (v) => {
 /* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
 .doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
 /* 多税率发票：多个税率档位并排标签展示 */
-.row-rate-tags { display: inline-flex; align-items: center; flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow: hidden; }
-.row-rate-tag { font-family: var(--td-font-family); }
+.rate-detail-overlay { max-width: 640px; }
+.rate-detail-table { border-collapse: collapse; font-size: 12px; line-height: 1.7; }
+.rate-detail-table th,
+.rate-detail-table td { padding: 2px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--td-component-stroke); }
+.rate-detail-table th { font-weight: 500; color: var(--td-text-color-secondary); }
+.rate-detail-table td { color: var(--td-text-color-primary); }
+.rate-detail-table .item-cell--num { text-align: right; }
+.rate-detail-empty { color: var(--td-text-color-secondary); font-size: 12px; padding: 4px 8px; }
 
 
 /* ---- 字段筛选弹层 ---- */

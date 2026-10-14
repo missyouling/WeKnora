@@ -47,6 +47,8 @@ type InvoiceRecord struct {
 // InvoiceExtractionItemItems 是发票明细行（与 service 层结构对齐，避免跨包引用）。
 type InvoiceExtractionItemItems struct {
 	Name      string   `json:"name"`
+	Spec      string   `json:"spec"` // 规格型号（分类 items 子列键，透传前端明细回显）
+	Unit      string   `json:"unit"`
 	Qty       *float64 `json:"qty"`
 	Price     *float64 `json:"price"`
 	Amount    *float64 `json:"amount"`

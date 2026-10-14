@@ -139,6 +139,8 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
 						Name:      it.Name,
+						Spec:      invoiceItemSpec(it),
+						Unit:      it.Unit,
 						Qty:       it.Qty,
 						Price:     it.Price,
 						Amount:    it.Amount,
@@ -524,6 +526,8 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
 						Name:      it.Name,
+						Spec:      invoiceItemSpec(it),
+						Unit:      it.Unit,
 						Qty:       it.Qty,
 						Price:     it.Price,
 						Amount:    it.Amount,
@@ -705,4 +709,18 @@ func (s *BusinessExtractService) ListInvoiceTaxRates(ctx context.Context, kbID s
 	}
 	sort.Slice(rates, func(i, j int) bool { return rates[i].TaxRate < rates[j].TaxRate })
 	return rates, nil
+}
+
+// invoiceItemSpec 取明细行规格型号：显式字段优先，历史数据兜底 Extra 桶
+// （模型在 Spec 显式字段落地前输出过 spec 键，被收集进 Extra）。
+func invoiceItemSpec(it InvoiceExtractionLine) string {
+	if it.Spec != "" {
+		return it.Spec
+	}
+	if it.Extra != nil {
+		if v, ok := it.Extra["spec"].(string); ok {
+			return v
+		}
+	}
+	return ""
 }
