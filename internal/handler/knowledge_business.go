@@ -651,6 +651,26 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
 	sawInvoice := false
+	// 提取进行中标记：与合同/车队提取一致，先落 processing 中间态，让前端轮询
+	// 状态条实时显示「正在提取『文件名』进度 N%」。保留既有字段（fleet_cert_type、
+	// 旧 invoices 等），提取成功/失败路径会用终态整体覆盖。
+	procMeta := map[string]interface{}{"kind": "invoice", "extract_status": "processing"}
+	if len(knowledge.CustomMetadata) > 0 {
+		var prev map[string]interface{}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &prev); jerr == nil {
+			for k, v := range prev {
+				if _, exists := procMeta[k]; !exists {
+					procMeta[k] = v
+				}
+			}
+		}
+	}
+	delete(procMeta, "extract_error")
+	if pmeta, jerr := json.Marshal(procMeta); jerr == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(pmeta)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist invoice processing-state: %v", serr)
+		}
+	}
 	// 沙盒提取规则：优先按请求携带的归档类型（上传弹窗 body.cert_type，如"三联收据"）
 	// 精确匹配分类规则；请求未携带时回退文件级打标 fleet_cert_type；再按
 	// resolveInvoiceRuleCfg 内建回退链（分类→普通发票→整体规则→内置模板）。

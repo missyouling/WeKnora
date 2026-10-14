@@ -1390,13 +1390,16 @@ const onUploadHistoryChanged = (payload?: { deletedIds?: string[] }) => {
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
   extractInFlight, extractFailed, pendingFiles,
-  start: startPolling, stop: stopPolling,
+  start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'invoice'),
   onPendingFiles: (files) => {
-    const withRows = new Set(invoiceRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+    // 状态条展示所有「进行中」文件：不仅新上传待解析/待提取的文件，也包括
+    // 已产生发票行、正处于「重新解析/重新提取」中的文件（重解/重提选中的记录
+    // 必然已有发票行，若按行过滤会把它们排除出状态条，只剩 toast 提示）。
+    // 轮询已保证 pend 只含解析中/提取中文件，完成/失败的文件不会进入这里。
+    pendingFiles.value = files
   },
   onRemoved: (item) => {
     MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已保留待人工复核`)
@@ -1976,23 +1979,26 @@ const handleReparse = async () => {
   const ids = selectedIds.value
   if (!ids.length) { MessagePlugin.info('请先选中要重新解析的发票'); return }
   reparseBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新解析 ${ids.length} 个文件...`)
+  // 过程态交给上方状态条实时展示（正在解析「文件名」进度 N%），
+  // 这里清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
   let ok = 0
   let fail = 0
   try {
     // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新解析一次
     const results = await settleInBatches(ids, BATCH_CONCURRENCY, kid => reparseKnowledge(kid))
     results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
-    loading.close()
     if (fail === 0) {
       MessagePlugin.success(`已提交 ${ok} 个文件重新解析`)
     } else {
       MessagePlugin.warning(`${ok} 个文件重新解析已提交，${fail} 个提交失败`)
     }
+    // 提交后立即扫描一次：重解走异步队列，parse_status 很快进入 pending，
+    // 主动 scanOnce 缩短状态条出现的等待窗口（不必等下一轮 3s 轮询）
+    scanOnce()
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
-    loading.close()
     MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
     reparseBusy.value = false
@@ -2006,7 +2012,10 @@ const handleFileExtract = async () => {
   if (!ids.length) { MessagePlugin.info('请先选中要重新提取的发票'); return }
   ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取 ${ids.length} 个文件...`)
+  // 过程态交给上方状态条实时展示（正在提取「文件名」进度 N%）：
+  // 后端提取请求在途时已写 extract_status=processing，轮询即可捕获；
+  // 清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
+  uploadProgress.value = []
   try {
     // 携带当前细分分类（用户正在该分类视图下操作），锚定同文件多页发票的类型，
     // 避免历史文件缺 fleet_cert_type 打标时被错误降级为「其它票据」。
@@ -2022,16 +2031,17 @@ const handleFileExtract = async () => {
       extractFailed.value.set(ids[i], Date.now())
     })
     const fail = results.length - ok
-    loading.close()
     if (fail === 0) {
       MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
     } else {
       MessagePlugin.warning(`${ok} 个文件重新提取已提交，${fail} 个提交失败`)
     }
+    // 提交后立即扫描一次：提取在途文件 extract_status=processing 已被后端写入，
+    // 主动 scanOnce 让状态条立即显示「正在提取」，不必等下一轮 3s 轮询
+    scanOnce()
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
-    loading.close()
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     ids.forEach(kid => extractInFlight.value.delete(kid))
