@@ -70,7 +70,7 @@ func (s *BusinessExtractService) MaxAutoContractSeq(ctx context.Context, kbID st
 
 func (s *BusinessExtractService) MaxAutoAwardPunishSeq(ctx context.Context, kbID string) (int, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	prefix := "JC-" + time.Now().Format("20060102") + "-"
+	prefix := "TZ-" + time.Now().Format("20060102") + "-"
 	max := 0
 	page := 1
 	const batch = 1000

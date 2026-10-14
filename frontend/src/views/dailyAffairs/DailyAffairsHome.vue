@@ -65,16 +65,16 @@
           </div>
         </div>
 
-        <!-- 奖惩管理（已实现） -->
+        <!-- 通知公告（原奖惩管理，已实现） -->
         <div class="da-card da-card--enabled" @click="goAwardPunish">
           <div class="da-card-icon da-card-icon--reward">
             <t-icon name="certificate" size="24px" />
           </div>
           <div class="da-card-body">
             <div class="da-card-title">
-              <span>奖惩管理</span>
+              <span>通知公告</span>
             </div>
-            <p class="da-card-desc">上传奖惩通报，自动识别文号、类型、当事人与处罚决定并归档管理</p>
+            <p class="da-card-desc">上传通知公告，自动识别文号、类型、发布单位与处理决定并归档管理</p>
             <div class="da-card-footer">
               <span class="da-card-link">进入管理</span>
               <t-icon name="chevron-right" size="16px" />

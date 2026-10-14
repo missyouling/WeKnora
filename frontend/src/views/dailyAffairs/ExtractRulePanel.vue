@@ -92,6 +92,8 @@ import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
+import { regulationFieldLabel } from './regulationFieldLabels'
+import { noticeFieldLabel } from './noticeFieldLabels'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
@@ -597,7 +599,15 @@ function toggleEdit(name: string) {
 
 // 发票/合同字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
 function fieldLabel(n: string): string {
-  return props.scope === 'invoice' ? invoiceFieldLabel(n) : props.scope === 'contract' ? contractFieldLabel(n) : n
+  return props.scope === 'invoice'
+    ? invoiceFieldLabel(n)
+    : props.scope === 'contract'
+      ? contractFieldLabel(n)
+      : props.scope === 'regulation'
+        ? regulationFieldLabel(n)
+        : props.scope === 'award_punish'
+          ? noticeFieldLabel(n)
+          : n
 }
 
 function typeLabel(t: string) {

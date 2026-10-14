@@ -1,38 +1,36 @@
 <template>
-  <div class="awardPunish-management-container">
+  <div class="notice-management-container">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
       <div class="header-title">
-        <h2>奖惩管理</h2>
-        <p class="header-subtitle">奖惩档案自动归档</p>
+        <h2>通知公告</h2>
+        <p class="header-subtitle">通知公告自动归档</p>
       </div>
       <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="triggerUpload">
+        <t-button v-if="kbId" theme="primary" @click="uploadVisible = true">
           <template #icon><t-icon name="upload" /></template>
-          上传奖惩
+          上传公告
         </t-button>
       </div>
-      <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-        @change="onFileInputChange" />
     </div>
 
     <!-- 加载中 -->
     <div v-if="loading && !kbId" class="loading-area">
-      <t-loading size="large" text="正在初始化奖惩管理..." />
+      <t-loading size="large" text="正在初始化通知公告..." />
     </div>
 
     <!-- KB 不存在：空状态 -->
     <div v-else-if="!kbId" class="empty-area">
-      <t-empty description="尚未创建「日常事务-奖惩」知识库">
+      <t-empty description="尚未创建「日常事务-通知公告」知识库">
         <template #image><t-icon name="file-copy" size="64px" /></template>
       </t-empty>
-      <t-button theme="primary" @click="wizardVisible = true">创建奖惩知识库</t-button>
+      <t-button theme="primary" @click="wizardVisible = true">创建通知公告知识库</t-button>
     </div>
 
     <!-- KB 存在：主界面 -->
-    <div v-else class="awardPunish-main">
+    <div v-else class="notice-main">
       <!-- 概览 KPI 卡 -->
-      <DashboardKpiGroup :loading="overviewLoading" :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="awardpunish-kpi-group" />
+      <DashboardKpiGroup :loading="overviewLoading" :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="notice-kpi-group" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -41,7 +39,7 @@
             @clear-selection="clearSelection" hide-batch-bar>
             <template #type-extra>
               <div class="doc-filter-field doc-filter-field--wide">
-                <t-date-range-picker v-model="dateRange" placeholder="签发日期" class="doc-date-range doc-filter-field__control"
+                <t-date-range-picker v-model="dateRange" placeholder="发布日期" class="doc-date-range doc-filter-field__control"
                   clearable allow-input @change="applyFilter">
                   <template #prefixIcon><t-icon name="time" size="16px" /></template>
                 </t-date-range-picker>
@@ -57,14 +55,17 @@
               </t-button>
               <t-button theme="primary" size="small" @click="uploadVisible = true">
                 <template #icon><t-icon name="upload" size="14px" /></template>
-                上传奖惩
+                上传公告
               </t-button>
             </template>
           </BusinessListToolbar>
         </div>
       </div>
 
-      <!-- 奖惩列表（自绘 grid，可横向滚动，字段可配置） -->
+      <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
+      <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
+
+      <!-- 通知公告列表（t-table，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
         <div class="doc-list-view">
           <t-table
@@ -83,13 +84,25 @@
         @select-change="(val: string[]) => (selectedRowKeys = val)"
       >
         <template #apNo="{ row }: any">
-          <span class="row-awardPunish-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
+          <span class="row-notice-no" :title="row.apNo || row.fileName">{{ row.apNo }}</span>
         </template>
         <template #apTitle="{ row }: any">
           <span class="row-text" :title="row.apTitle || row.fileName">{{ row.apTitle || row.fileName }}</span>
         </template>
         <template #apType="{ row }: any">
           <span class="row-text" :title="row.apType">{{ row.apType }}</span>
+        </template>
+        <template #signDate="{ row }: any">
+          <span class="row-mono">{{ row.signDate }}</span>
+        </template>
+        <template #signer="{ row }: any">
+          <span class="row-text" :title="row.signer">{{ row.signer }}</span>
+        </template>
+        <template #issueDept="{ row }: any">
+          <span class="row-text" :title="row.issueDept">{{ row.issueDept }}</span>
+        </template>
+        <template #summary="{ row }: any">
+          <span class="row-text" :title="row.summary">{{ row.summary }}</span>
         </template>
         <template #person="{ row }: any">
           <span class="row-text" :title="row.person">{{ row.person }}</span>
@@ -98,19 +111,19 @@
           <span class="row-text" :title="row.dept">{{ row.dept }}</span>
         </template>
         <template #position="{ row }: any">
-          <span class="row-text">{{ row.position }}</span>
-        </template>
-        <template #signDate="{ row }: any">
-          <span class="row-mono">{{ row.signDate }}</span>
-        </template>
-        <template #signer="{ row }: any">
-          <span class="row-text">{{ row.signer }}</span>
+          <span class="row-text" :title="row.position">{{ row.position }}</span>
         </template>
         <template #measure="{ row }: any">
-          <span class="row-text">{{ row.measure }}</span>
+          <span class="row-text" :title="row.measure">{{ row.measure }}</span>
         </template>
-        <template #summary="{ row }: any">
-          <span class="row-text" :title="row.summary">{{ row.summary }}</span>
+        <template #basis="{ row }: any">
+          <span class="row-text" :title="row.basis">{{ row.basis }}</span>
+        </template>
+        <template #effectiveDate="{ row }: any">
+          <span class="row-mono">{{ row.effectiveDate }}</span>
+        </template>
+        <template #remark="{ row }: any">
+          <span class="row-text" :title="row.remark">{{ row.remark }}</span>
         </template>
         <template #extractStatus="{ row }: any">
           <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
@@ -135,26 +148,18 @@
             <span class="row-tag-add">+ 标签</span>
           </span>
         </template>
-        <template #basis="{ row }: any">
-          <span class="row-text" :title="row.basis">{{ row.basis }}</span>
-        </template>
-        <template #effectiveDate="{ row }: any">
-          <span class="row-mono">{{ row.effectiveDate }}</span>
-        </template>
-        <template #remark="{ row }: any">
-          <span class="row-text" :title="row.remark">{{ row.remark }}</span>
-        </template>
         <template #fileName="{ row }: any">
           <span class="row-text" :title="row.fileName">{{ row.fileName }}</span>
         </template>
       </t-table>
     </div>
-    </div>
+        </div>
 
-      <!-- 底部汇总（选中记录时显示选中奖惩汇总，未选中显示全部；选中时避让底部工具栏） -->
+      <!-- 底部汇总（选中记录时显示选中公告汇总，未选中显示全部；选中时避让底部工具栏） -->
       <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
-        <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
+        <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
       </div>
+
     </div>
 
     <!-- 自有批量浮条（发票基准同款） -->
@@ -162,33 +167,29 @@
       <div class="batch-bar-inner">
         <div class="batch-bar-left">
           <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">
+          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
             清除
           </t-button>
         </div>
         <div class="batch-bar-actions">
           <t-popconfirm theme="warning"
-            :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」的物理文件吗？将覆盖已有解析结果。`"
+            :content="reparseConfirmText"
             :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleReparse">
-            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" @click.stop>
               <template #icon><t-icon name="refresh" size="14px" /></template>
               重新解析
             </t-button>
           </t-popconfirm>
           <t-popconfirm theme="warning"
-            :content="`确定按最新提取规则重新提取「${selectedSingle?.fileName || '该文件'}」的所有奖惩字段吗？将覆盖已有提取结果。`"
+            :content="extractConfirmText"
             :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="handleFileExtract">
-            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="selectedRows.length !== 1" @click.stop>
+            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" @click.stop>
               <template #icon><t-icon name="cloud-upload" size="14px" /></template>
               重新提取
             </t-button>
           </t-popconfirm>
-          <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click="handleBatchEdit">
-            <template #icon><t-icon name="edit" size="14px" /></template>
-            编辑数据
-          </t-button>
           <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
             <template #icon><t-icon name="print" size="14px" /></template>
             单页打印
@@ -197,9 +198,17 @@
             <template #icon><t-icon name="file-paste" size="14px" /></template>
             列表打印
           </t-button>
-          <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedRowKeys.length} 条奖惩记录吗？删除后不可恢复。`"
-            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-            @confirm="handleBatchDelete">
+          <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+            :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+            <template #content>
+              <div class="del-pop-body">
+                <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个公告记录吗？删除后不可恢复。</div>
+                <div class="del-pop-actions">
+                  <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
+                  <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                </div>
+              </div>
+            </template>
             <t-button theme="danger" variant="outline" size="small" @click.stop>
               <template #icon><t-icon name="delete" size="14px" /></template>
               删除记录
@@ -210,21 +219,23 @@
     </div>
 
     <!-- 创建知识库向导 -->
-    <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-奖惩" kb-desc="奖惩管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析奖惩文件，自动提取奖惩字段" default-description="用于存放并解析奖惩文件，自动提取奖惩字段" model-tip="提取模型将复用下方「对话模型」，用于解析奖惩文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
-    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="award_punish" title="上传奖惩"
-      :type-options="uploadTypeOptions" @done="onUploadDone" />
-    <!-- 设置抽屉（字段定义 + 提取规则双 Tab） -->
+    <BusinessKbWizard v-model:visible="wizardVisible" kb-name="日常事务-通知公告" kb-desc="通知公告管理固定使用专用知识库，名称不可修改" description-placeholder="用于存放并解析通知公告文件，自动提取公告字段" default-description="用于存放并解析通知公告文件，自动提取公告字段" model-tip="提取模型将复用下方「对话模型」，用于解析通知公告文件。若列表为空，请先在系统设置中添加模型。" @created="onKbCreated" />
+    <!-- 上传弹窗（对齐发票/车队：分类选择 + 拖拽/选择/粘贴 + 进度 + 防重检测） -->
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="award_punish" title="上传公告"
+      :type-options="uploadTypeOptions" @progress="onUploadProgress" @done="onUploadDone" />
+
+    <!-- 设置抽屉（字段定义 + 提取规则双 Tab，黄金基准 StandardSettingDrawer） -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" :scope="'award_punish'"
-      kb-name="日常事务-奖惩" title="奖惩设置" />
+      kb-name="日常事务-通知公告" title="通知公告设置" @saved="() => reloadColumns(true)" />
 
-    <!-- 删除历史（自动删除的非奖惩记录） -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="奖惩"
-      @changed="loadFiles(true)" @restored="onRestored" />
+    <!-- 历史记录（对齐发票基准：已上传文件抽屉，展示解析/提取状态与公告类型） -->
+    <FleetUploadHistoryDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" scope="award_punish"
+      @changed="onUploadHistoryChanged" />
 
 
-    <!-- 奖惩详情抽屉（竖向区块，可拖宽，上下滚动） -->
-<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-awardpunish-drawer-width'" hide-footer destroy-on-close class="awardpunish-detail-drawer">
-      <div class="awardPunish-detail-body">
+    <!-- 通知公告详情抽屉（竖向区块，可拖宽，上下滚动） -->
+<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-notice-drawer-width'" hide-footer destroy-on-close class="notice-detail-drawer">
+      <div class="notice-detail-body">
         <!-- 摘要 -->
         <section class="detail-block">
           <div class="detail-block-title">摘要</div>
@@ -254,55 +265,69 @@
           </div>
         </section>
 
-        <!-- 奖惩字段 -->
+        <!-- 公告字段 -->
         <section class="detail-block">
           <div class="detail-block-content">
             <div class="detail-fields">
               <div class="field-group">
-                <div class="field-group-title">奖惩信息</div>
+                <div class="field-group-title">公告信息</div>
                 <div class="field-grid">
                   <t-form-item label="文号" label-width="110px">
-                    <t-input v-model="editForm.ap_no" placeholder="无编号时自动生成" />
+                    <t-input v-model="editForm.ap_no" placeholder="无文号时自动生成" />
                   </t-form-item>
                   <t-form-item label="标题" label-width="110px">
                     <t-input v-model="editForm.ap_title" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="奖惩类型" label-width="110px">
-                    <t-select v-model="editForm.ap_type" :options="apTypeOptions" clearable filterable
+                  <t-form-item label="文件类型" label-width="110px">
+                    <t-select v-model="editForm.ap_type" :options="noticeTypeOptions" clearable filterable
                       placeholder="选择类型" />
+                  </t-form-item>
+                  <t-form-item label="发布单位" label-width="110px">
+                    <t-input v-model="editForm.issue_dept" placeholder="" />
+                  </t-form-item>
+                  <t-form-item label="发布人" label-width="110px">
+                    <t-input v-model="editForm.signer" placeholder="" />
+                  </t-form-item>
+                  <t-form-item label="发布日期" label-width="110px">
+                    <t-date-picker v-model="editForm.sign_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
+                      allow-input />
                   </t-form-item>
                   <t-form-item label="部门" label-width="110px">
                     <t-input v-model="editForm.dept" placeholder="" />
                   </t-form-item>
-                  <t-form-item label="岗位" label-width="110px">
-                    <t-input v-model="editForm.position" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="签发日期" label-width="110px">
-                    <t-date-picker v-model="editForm.sign_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="措施" label-width="110px">
-                    <t-select :value="measureArray" multiple :options="measureOptions" filterable clearable
-                      placeholder="选择措施" @change="(v: string[]) => editForm.measure = (v || []).join(',')" />
-                  </t-form-item>
                   <t-form-item label="当事人" label-width="110px">
                     <t-input v-model="editForm.person" placeholder="" />
+                  </t-form-item>
+                  <t-form-item label="岗位" label-width="110px">
+                    <t-input v-model="editForm.position" placeholder="" />
                   </t-form-item>
                 </div>
               </div>
 
               <div class="field-group">
-                <div class="field-group-title">奖惩内容</div>
+                <div class="field-group-title">处理内容</div>
                 <div class="field-grid">
-                  <t-form-item label="依据" label-width="110px">
-                    <t-input v-model="editForm.basis" placeholder="" />
-                  </t-form-item>
                   <t-form-item label="生效日期" label-width="110px">
                     <t-date-picker v-model="editForm.effective_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
                       allow-input />
                   </t-form-item>
-                  <t-form-item label="签发人" label-width="110px">
-                    <t-input v-model="editForm.signer" placeholder="" />
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">处理决定</div>
+                <div class="field-grid field-grid--full">
+                  <t-form-item label="处理决定" label-width="110px">
+                    <t-textarea v-model="editForm.measure" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
+                  </t-form-item>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">依据</div>
+                <div class="field-grid field-grid--full">
+                  <t-form-item label="依据" label-width="110px">
+                    <t-textarea v-model="editForm.basis" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
                   </t-form-item>
                 </div>
               </div>
@@ -327,7 +352,7 @@
 
               <div class="detail-save-hint">
                 <t-icon name="check-circle" size="14px" />
-                <span>字段修改后将自动保存{{ autoSaving ? '（保存中...）' : '' }}</span>
+                <span>字段修改后点击底部保存{{ autoSaving ? '（保存中...）' : '' }}</span>
               </div>
             </div>
           </div>
@@ -338,21 +363,22 @@
           <t-collapse-panel value="preview" header="源文件预览">
             <div class="detail-block-content">
               <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-              :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
+                :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
             </div>
           </t-collapse-panel>
         </t-collapse>
+
         <!-- 手动保存：四模块统一为手动保存（2026-10-12 决策），替代原来的 1200ms 自动保存 -->
-        <div class="awardpunish-detail-footer">
+        <div class="notice-detail-footer">
           <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
           <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm()">保存</t-button>
         </div>
       </div>
     </SettingDrawer>
 
-    <!-- 奖惩文号重复二次确认 -->
-    <t-dialog v-model:visible="dupConfirmVisible" header="奖惩文号重复" width="420" @confirm="onDupConfirm">
-      <span>系统已存在相同的奖惩文号「{{ dupNo }}」，是否强制保存？</span>
+    <!-- 文号重复二次确认 -->
+    <t-dialog v-model:visible="dupConfirmVisible" header="文号重复" width="420" @confirm="onDupConfirm">
+      <span>系统已存在相同的文号「{{ dupNo }}」，是否强制保存？</span>
     </t-dialog>
 
     <!-- 标签编辑（复用原项目组件） -->
@@ -366,21 +392,21 @@
 
     <!-- 打印预览弹窗（自定义实现，完全可控；弃用 TDesign dialog） -->
     <teleport to="body">
-      <div v-if="printVisible" class="awardPunish-print-mask">
-        <div class="awardPunish-print-dialog">
-          <div class="awardPunish-print-header">
-            <span class="awardPunish-print-title">{{ printMode === 'catalog' ? `目录预览（${printCount} 条）` : `打印预览（${printCount} 份）` }}</span>
-            <t-button variant="text" size="small" class="awardPunish-print-close" @click="printVisible = false">
+      <div v-if="printVisible" class="notice-print-mask">
+        <div class="notice-print-dialog">
+          <div class="notice-print-header">
+            <span class="notice-print-title">{{ printMode === 'catalog' ? `目录预览（${printCount} 条）` : `打印预览（${printCount} 份）` }}</span>
+            <t-button variant="text" size="small" class="notice-print-close" @click="printVisible = false">
               <template #icon><t-icon name="close" size="16px" /></template>
             </t-button>
           </div>
-          <div class="awardPunish-print-body">
+          <div class="notice-print-body">
             <iframe v-if="printUrl" :src="printUrl" class="print-preview-frame" @load="printLoaded = true"></iframe>
             <div v-else class="print-preview-loading">
-              <t-loading size="small" :text="printMode === 'catalog' ? '正在生成目录…' : '正在合并奖惩 PDF…'" />
+              <t-loading size="small" :text="printMode === 'catalog' ? '正在生成目录…' : '正在合并公告 PDF…'" />
             </div>
           </div>
-          <div class="awardPunish-print-footer">
+          <div class="notice-print-footer">
             <t-button variant="outline" size="small" @click="printVisible = false">关闭</t-button>
             <t-button v-if="printMode === 'catalog'" variant="outline" size="small" :disabled="!printUrl"
               @click="downloadCatalogPdf">
@@ -399,7 +425,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -408,9 +435,7 @@ import { colWidthOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
-  uploadKnowledgeFile,
   getKnowledgeDetails,
-  delKnowledgeDetails,
   batchDeleteKnowledge,
   updateBusinessMetadata,
   listKnowledgeTags,
@@ -420,9 +445,6 @@ import {
   listAwardPunishTypes,
   previewKnowledgeFile,
   reparseKnowledge,
-  listDeletedKnowledge,
-  restoreDeletedKnowledge,
-  purgeDeletedKnowledge,
   getRecognitionConfig,
   listAwardPunishOverview,
 } from '@/api/knowledge-base'
@@ -431,40 +453,43 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
+import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
-const KB_NAME = '日常事务-奖惩'
+const KB_NAME = '日常事务-通知公告'
 const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
 const PAGE_SIZE = 20
 
-// 奖惩类型枚举（编辑/筛选推荐值）
-const AWARD_PUNISH_TYPES = ['处罚', '奖励', '通报', '其它奖惩']
+// 文件类型枚举（编辑/筛选推荐值）
+const NOTICE_TYPES = ['通知', '公告', '通报', '决定', '其它通知']
 
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
-const DEFAULT_AWARDPUNISH_COLUMNS: ColumnDef[] = [
+const DEFAULT_NOTICE_COLUMNS: ColumnDef[] = [
   { key: 'apNo', label: '文号', default: true, w: '1.4fr' },
   { key: 'apTitle', label: '标题', default: true, w: '1.8fr' },
-  { key: 'apType', label: '奖惩类型', default: true, w: '1fr' },
-  { key: 'person', label: '当事人', default: true, w: '1fr' },
-  { key: 'dept', label: '部门', default: false, w: '1.3fr' },
-  { key: 'position', label: '岗位', default: false, w: '0.7fr' },
-  { key: 'signDate', label: '签发日期', default: true, w: '1.1fr' },
-  { key: 'signer', label: '签发人', default: true, w: '0.8fr' },
-  { key: 'measure', label: '措施', default: true, w: '1.2fr' },
+  { key: 'apType', label: '文件类型', default: true, w: '1fr' },
+  { key: 'signDate', label: '发布日期', default: true, w: '1.1fr' },
+  { key: 'signer', label: '发布人', default: true, w: '1fr' },
+  { key: 'issueDept', label: '发布单位', default: true, w: '1.3fr' },
   { key: 'summary', label: '摘要', default: true, w: '2fr' },
-  { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
-  { key: 'tags', label: '标签', default: true, w: '1.2fr' },
+  { key: 'person', label: '当事人', default: false, w: '1fr' },
+  { key: 'dept', label: '部门', default: false, w: '1.2fr' },
+  { key: 'position', label: '岗位', default: false, w: '1fr' },
+  { key: 'measure', label: '处理决定', default: false, w: '1.8fr' },
   { key: 'basis', label: '依据', default: false, w: '1.6fr' },
   { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
   { key: 'remark', label: '备注', default: false, w: '1.4fr' },
+  { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
+  { key: 'tags', label: '标签', default: true, w: '1.2fr' },
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
 const {
@@ -474,14 +499,14 @@ const {
   selectedRowKeys, onSelectChange, clearSelection,
   colValue,
 } = useBusinessList({
-  storageKey: 'weknora-awardpunish-list-columns',
-  defaultColumns: DEFAULT_AWARDPUNISH_COLUMNS,
+  storageKey: 'weknora-notice-list-columns',
+  defaultColumns: DEFAULT_NOTICE_COLUMNS,
 })
 
+const route = useRoute()
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
-const fileInputRef = ref<HTMLInputElement>()
 
 interface KnowledgeItem {
   id: string
@@ -496,26 +521,25 @@ interface KnowledgeItem {
   [key: string]: any
 }
 
-interface AwardPunishItem {
+interface NoticeItem {
   ap_no?: string
   ap_title?: string
   ap_type?: string
+  issue_dept?: string
+  person?: string
   dept?: string
   position?: string
-  sign_date?: string
   measure?: string
   basis?: string
-  effective_date?: string
   signer?: string
+  sign_date?: string
+  effective_date?: string
   remark?: string
-  person?: string
-  reviewed_by?: string
-  approved_by?: string
   summary?: string
   page?: number
 }
 
-interface AwardPunishRow extends Record<string, any> {
+interface NoticeRow extends Record<string, any> {
   rowKey: string
   knowledgeId: string
   fileName: string
@@ -527,15 +551,16 @@ interface AwardPunishRow extends Record<string, any> {
   apNo?: string
   apTitle?: string
   apType?: string
+  issueDept?: string
+  person?: string
   dept?: string
   position?: string
-  signDate?: string
   measure?: string
   basis?: string
-  effectiveDate?: string
   signer?: string
+  signDate?: string
+  effectiveDate?: string
   remark?: string
-  person?: string
   summary?: string
   page?: number
   multiIndex?: string
@@ -543,14 +568,13 @@ interface AwardPunishRow extends Record<string, any> {
   description?: string
 }
 
-// ---- 列表 ----
 const items = ref<KnowledgeItem[]>([])
-const awardPunishRows = ref<AwardPunishRow[]>([])
+const noticeRows = shallowRef<NoticeRow[]>([])
 
-// KPI 卡：总数、本月新增、按类型（奖励/惩罚）分布
+// KPI 卡：总数、本月新增、按类型分布（后端全量概览 noticeOverview）
 const overviewStats = ref<any>(null)
 const overviewLoading = ref(true)
-const loadAwardPunishOverview = async () => {
+const loadNoticeOverview = async () => {
   if (!kbId.value) return
   try {
     const res: any = await listAwardPunishOverview(kbId.value)
@@ -561,24 +585,39 @@ const loadAwardPunishOverview = async () => {
     overviewLoading.value = false
   }
 }
-const overviewCards = computed(() => {
+// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：全部公告 → 各文件类型卡 → 其它通知 → 历史记录） ----
+const overviewCards = computed<KpiCard[]>(() => {
   const st = overviewStats.value || {}
   const total = Number(st.total || 0)
   const monthCount = Number(st.current_month || 0)
   const parseFailed = Number(st.parse_failed || 0)
-  const failed = parseFailed
   const fileCount = Number(st.file_count || 0)
-  const cards: Array<{ key: string; label: string; icon: string; value: string; unit: string; sub: string; cls: string; action: string; typeValue?: string }> = [
-    { key: 'total', label: '已收录奖惩', icon: 'file', value: `${total}`, unit: '条', sub: `本月新增 ${monthCount} 条`, cls: '', action: 'all' },
+  // 分类统计：后端按 ap_type 精确聚合（空归「未分类」）
+  const catCount: Record<string, number> = {}
+  for (const c of (st.by_category || [])) catCount[String(c.category)] = Number(c.count) || 0
+  const cards: KpiCard[] = [
+    // 全部公告：全量总份数（含未分类/其它通知与待补录占位行），点击清空筛选进入全部态
+    { key: 'total', label: '已收录公告', icon: 'file', value: String(total), unit: '份', sub: `本月新增 ${monthCount} 份`, theme: 'brand', action: 'all' },
   ]
-  for (const t of (st.by_ap_type || [])) {
-    const name = String(t.ap_type || '未分类')
-    cards.push({ key: `type-${name}`, label: name, icon: 'file-1', value: `${Number(t.count) || 0}`, unit: '条', sub: '', cls: 'is-type', action: 'type', typeValue: name })
+  // 类型分布卡：以通知公告分类列表（categories[scope=award_punish]）为权威源动态生成，顺序 = 分类数组顺序
+  const enabledCats = (noticeCats.value || []).filter((c: any) => c.enabled !== false)
+  let catSum = 0
+  for (const c of enabledCats) {
+    // 「其它通知」为系统内置兜底分类：排除式桶，跳过该分类卡且不计入 catSum
+    if (c.name === '其它通知') continue
+    const cnt = catCount[String(c.name)] || 0
+    catSum += cnt
+    cards.push({ key: `type-${c.name}`, label: c.name, icon: 'file-1', value: String(cnt), unit: '份', theme: 'neutral', action: 'type', typeValue: c.name })
   }
-  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
+  // 「其它通知」排除式统计桶（收纳未匹配任何启用分类的记录，含未分类/已停用分类存量），无条件渲染
+  const otherCount = Math.max(0, total - catSum)
+  cards.push({ key: 'type-其它通知', label: '其它通知', icon: 'file-unknown', value: String(otherCount), unit: '份', theme: 'neutral', action: 'type', typeValue: '其它通知' })
+  // 历史记录（已上传文件）：异常文件数 sub 展示，点击打开已上传文件抽屉
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: String(fileCount), unit: '份', sub: parseFailed ? `${parseFailed} 份异常` : '无异常文件', theme: parseFailed > 0 ? 'warning' : 'neutral', action: 'history' })
   return cards
 })
-const onOverviewCardClick = (card: any) => {
+// 卡片点击联动
+const onOverviewCardClick = (card: KpiCard) => {
   if (card.action === 'all') {
     filterApType.value = ''
   } else if (card.action === 'type' && card.typeValue) {
@@ -587,10 +626,7 @@ const onOverviewCardClick = (card: any) => {
     historyVisible.value = true
   }
 }
-// 进行中的文件（解析中/提取中/待提取），在奖惩级列表顶部以状态行展示
-const awardPunishSummary = ref<{ total: number; sumAmount: number; sumTotal: number }>({
-  total: 0, sumAmount: 0, sumTotal: 0,
-})
+const noticeSummary = ref<{ total: number }>({ total: 0 })
 const listLoading = ref(false)
 const loadingMore = ref(false)
 const page = ref(1)
@@ -598,39 +634,15 @@ const hasMore = ref(true)
 const keyword = ref('')
 const filterApType = ref('')
 const filterFulfillStatus = ref('')
-const apTypeOptions = ref<Array<{ value: string; label: string }>>([])
-const apCats = ref<any[]>([])
+const noticeTypeOptions = ref<Array<{ value: string; label: string }>>([])
+const noticeCats = ref<any[]>([])
 const uploadTypeOptions = computed(() => {
-  const cats = apCats.value.filter((c: any) => c.enabled !== false)
-  if (!cats.length) return [{ label: '奖惩通报', value: 'award_punish__奖惩通报' }]
+  const cats = noticeCats.value.filter((c: any) => c.enabled !== false)
+  if (!cats.length) return [{ label: '通知', value: 'award_punish__通知' }]
   return cats.map((c: any) => ({ label: c.name, value: `award_punish__${c.name}` }))
 })
 const onUploadDone = async () => {
-  await Promise.all([loadFiles(true), loadAwardPunishOverview()])
-}
-const measureList = ref<{ name: string; type: string }[]>([])
-
-// 措施多选：editForm.measure 以逗号分隔字符串存储，多选组件用数组适配
-const measureArray = computed(() =>
-  String(editForm.value.measure || '').split(/[,，]/).map(v => v.trim()).filter(Boolean)
-)
-const measureOptions = computed(() => {
-  const t = String(editForm.value.ap_type || '').trim()
-  const opts = measureList.value
-    .filter(m => !m.type || !t || m.type === t)
-    .map(m => ({ label: m.name, value: m.name }))
-  const names = new Set(opts.map(o => o.value))
-  measureArray.value.forEach(v => { if (!names.has(v)) opts.push({ label: v, value: v }) })
-  return opts
-})
-const loadMeasures = async () => {
-  if (!kbId.value) return
-  try {
-    const res: any = await getRecognitionConfig(kbId.value)
-    const c = res?.data || res
-    const arr = Array.isArray(c?.measures) ? c.measures : []
-    measureList.value = arr.filter((m: any) => m?.name).map((m: any) => ({ name: m.name, type: m.type || '' }))
-  } catch { /* 措施加载失败不阻塞 */ }
+  await Promise.all([loadFiles(true), loadNoticeOverview()])
 }
 const dateRange = ref<Array<string>>([])
 
@@ -647,23 +659,19 @@ const tableColumns = computed(() => {
   return cols
 })
 
-// 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
-// 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
-
 // ---- 标签 ----
 const tagList = ref<any[]>([])
 const tagDialogVisible = ref(false)
-const tagTarget = ref<AwardPunishRow | null>(null)
+const tagTarget = ref<NoticeRow | null>(null)
 const tagManageVisible = ref(false)
 const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 
 // ---- 详情抽屉 ----
 const detailVisible = ref(false)
 const previewExpanded = ref<string[]>([])
-const currentRow = ref<AwardPunishRow | null>(null)
+const currentRow = ref<NoticeRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
 const editForm = ref<Record<string, any>>({})
-// 手动保存模式：已删除 autoSaveTimer/autoSaveDirty/editFormSnapshot（原自动保存用）
 const autoSaving = ref(false)
 
 // 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
@@ -686,8 +694,6 @@ watch(() => currentDetail.value?.description, () => {
   nextTick(() => checkSummaryOverflow())
 })
 
-// 抽屉宽度（可拖动，localStorage 记忆）
-const DRAWER_WIDTH_KEY = 'weknora-awardPunish-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
@@ -710,11 +716,10 @@ const loadKb = async () => {
     kbId.value = found?.id || ''
     if (kbId.value) {
       await loadTags()
-      await loadApTypes()
-      await loadMeasures()
-      await cleanNonAwardPunishFiles()
+      await loadNoticeTypes()
+      await cleanNonNoticeFiles()
       await loadFiles()
-      await loadAwardPunishOverview()
+      await loadNoticeOverview()
       startPolling()
     }
   } catch (e: any) {
@@ -728,20 +733,19 @@ const onKbCreated = async (kb: any) => {
   kbId.value = kb?.id || ''
   if (kbId.value) {
     await loadTags()
-    await loadApTypes()
-    await loadMeasures()
-    await cleanNonAwardPunishFiles()
+    await loadNoticeTypes()
+    await cleanNonNoticeFiles()
     await loadFiles()
-    await loadAwardPunishOverview()
+    await loadNoticeOverview()
     startPolling()
   }
 }
 
-// ---- 存量非奖惩清理：扫描知识库中已标记 not_awardPunish 的文件并自动删除 ----
-let cleaningNonAwardPunish = false
-const cleanNonAwardPunishFiles = async () => {
-  if (!kbId.value || cleaningNonAwardPunish) return
-  cleaningNonAwardPunish = true
+// ---- 存量非通知公告清理：扫描知识库中已标记 not_award_punish 的文件并自动删除 ----
+let cleaningNonNotice = false
+const cleanNonNoticeFiles = async () => {
+  if (!kbId.value || cleaningNonNotice) return
+  cleaningNonNotice = true
   try {
     const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
     const data = res?.data || res?.list || []
@@ -750,24 +754,23 @@ const cleanNonAwardPunishFiles = async () => {
       it.custom_metadata?.kind === 'not_award_punish' || it.custom_metadata?.extract_status === 'not_award_punish')
     if (bad.length) {
       await batchDeleteKnowledge(kbId.value, bad.map((b: any) => b.id))
-      MessagePlugin.warning(`已移除 ${bad.length} 个非奖惩文件（旧数据清理）`)
-      loadApTypes()
-      loadMeasures()
+      MessagePlugin.warning(`已移除 ${bad.length} 个非通知公告文件（旧数据清理）`)
+      loadNoticeTypes()
     }
   } catch { /* 清理失败静默，下轮重试 */ }
-  finally { cleaningNonAwardPunish = false }
+  finally { cleaningNonNotice = false }
 }
 
-// ---- 奖惩类型下拉：从识别规则配置的分类列表加载（含自定义分类），
-// 未配置时兜底用知识库现有奖惩类型 + 枚举 ----
-const loadApTypes = async () => {
+// ---- 文件类型下拉：从识别规则配置的分类列表加载（含自定义分类），
+// 未配置时兜底用知识库现有类型 + 枚举 ----
+const loadNoticeTypes = async () => {
   if (!kbId.value) return
   try {
     const res: any = await getRecognitionConfig(kbId.value)
     const c = res?.data || res
     const types: string[] = Array.isArray(c?.types) ? c.types.filter(Boolean) : []
     if (types.length) {
-      apTypeOptions.value = types.map(t => ({ value: t, label: t }))
+      noticeTypeOptions.value = types.map(t => ({ value: t, label: t }))
       return
     }
   } catch { /* 走兜底 */ }
@@ -778,8 +781,8 @@ const loadApTypes = async () => {
     const dynamic = arr.map((r: any) => ({ value: r.ap_type, label: r.ap_type }))
     // 动态类型在前，未出现过的枚举类型补在后（allow 自定义）
     const seen = new Set(dynamic.map((d: any) => d.value))
-    const fixed = AWARD_PUNISH_TYPES.filter(t => !seen.has(t)).map(t => ({ value: t, label: t }))
-    apTypeOptions.value = [...dynamic, ...fixed]
+    const fixed = NOTICE_TYPES.filter(t => !seen.has(t)).map(t => ({ value: t, label: t }))
+    noticeTypeOptions.value = [...dynamic, ...fixed]
   } catch { /* 类型加载失败不阻塞 */ }
 }
 
@@ -793,7 +796,7 @@ const loadTags = async () => {
   } catch { /* 标签加载失败不阻塞 */ }
 }
 
-const openTagEdit = (row: AwardPunishRow) => {
+const openTagEdit = (row: NoticeRow) => {
   tagTarget.value = row
   tagDialogVisible.value = true
 }
@@ -819,12 +822,12 @@ const onTagManageChanged = () => {
 }
 
 
-// ---- 列表加载（奖惩级聚合列表，懒加载分页） ----
+// ---- 列表加载（公告级聚合列表，懒加载分页） ----
 const loadFiles = async (reset = false) => {
   if (!kbId.value) return
   if (reset) {
     page.value = 1
-    awardPunishRows.value = []
+    noticeRows.value = []
     items.value = []
     hasMore.value = true
     listLoading.value = true
@@ -834,9 +837,16 @@ const loadFiles = async (reset = false) => {
     loadingMore.value = true
   }
   try {
+    // 「其它通知」为排除式筛选：附上启用分类名集合，后端按 ap_type 不属于该集合过滤
+    const knownCats = noticeCats.value
+      .filter((c: any) => c.enabled !== false)
+      .map((c: any) => String(c.name))
+      .filter((n: string) => Boolean(n))
     const res: any = await listAwardPunishRecords(kbId.value, {
       q: keyword.value || undefined,
       ap_type: filterApType.value || undefined,
+      known_categories: filterApType.value === '其它通知' && knownCats.length > 0
+        ? knownCats.join(',') : undefined,
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
       page: page.value,
@@ -845,22 +855,22 @@ const loadFiles = async (reset = false) => {
     const data = res?.data || res?.list || []
     const arr = Array.isArray(data) ? data : []
     const total = Number(res?.total || arr.length || 0)
-    awardPunishSummary.value = { total, sumAmount: 0, sumTotal: 0 }
-    const existing = new Set(awardPunishRows.value.map(r => r.rowKey))
-    const fresh = arr.map(mapAwardPunishRecord).filter(r => !existing.has(r.rowKey))
-    awardPunishRows.value = [...awardPunishRows.value, ...fresh]
-    hasMore.value = awardPunishRows.value.length < total
+    noticeSummary.value = { total }
+    const existing = new Set(noticeRows.value.map(r => r.rowKey))
+    const fresh = arr.map(mapNoticeRecord).filter(r => !existing.has(r.rowKey))
+    noticeRows.value = [...noticeRows.value, ...fresh]
+    hasMore.value = noticeRows.value.length < total
     if (hasMore.value) page.value += 1
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '奖惩列表加载失败')
+    MessagePlugin.error(e?.message || '通知公告列表加载失败')
   } finally {
     listLoading.value = false
     loadingMore.value = false
   }
 }
 
-// 把后端奖惩级记录（AwardPunishRecord）映射为前端行
-const mapAwardPunishRecord = (r: any): AwardPunishRow => ({
+// 把后端公告级记录（AwardPunishRecord）映射为前端行
+const mapNoticeRecord = (r: any): NoticeRow => ({
   rowKey: r.rowKey || `${r.knowledge_id || 'kb'}-${r.page || 0}-${r.ap_no || ''}`,
   knowledgeId: r.knowledge_id || '',
   fileName: r.file_name || r.knowledge_title || '',
@@ -875,24 +885,25 @@ const mapAwardPunishRecord = (r: any): AwardPunishRow => ({
   apNo: r.ap_no || '',
   apTitle: r.ap_title || '',
   apType: r.ap_type || '',
+  issueDept: r.issue_dept || '',
+  person: r.person || '',
   dept: r.dept || '',
   position: r.position || '',
-  signDate: r.sign_date || '',
   measure: r.measure || '',
   basis: r.basis || '',
-  effectiveDate: r.effective_date || '',
   signer: r.signer || '',
+  signDate: r.sign_date || '',
+  effectiveDate: r.effective_date || '',
   remark: r.remark || '',
-  person: r.person || '',
   summary: r.summary || '',
   page: Number(r.page) || 0,
 })
 
 const rebuildRows = () => {
-  // 奖惩级列表数据已由后端去重/过滤/分页返回，无需前端重建
+  // 公告级列表数据已由后端去重/过滤/分页返回，无需前端重建
 }
 
-const parseCustomMetadata = (item: KnowledgeItem): AwardPunishRow[] => {
+const parseCustomMetadata = (item: KnowledgeItem): NoticeRow[] => {
   const meta = item.custom_metadata
   const fileName = item.file_name || item.title || item.id
   const parseStatus = item.parse_status || ''
@@ -926,15 +937,16 @@ const parseCustomMetadata = (item: KnowledgeItem): AwardPunishRow[] => {
     apNo: ct.ap_no || '',
     apTitle: ct.ap_title || '',
     apType: ct.ap_type || '',
+    issueDept: ct.issue_dept || '',
+    person: ct.person || '',
     dept: ct.dept || '',
     position: ct.position || '',
-    signDate: ct.sign_date || '',
     measure: ct.measure || '',
     basis: ct.basis || '',
-    effectiveDate: ct.effective_date || '',
     signer: ct.signer || '',
+    signDate: ct.sign_date || '',
+    effectiveDate: ct.effective_date || '',
     remark: ct.remark || '',
-    person: ct.person || '',
     summary: ct.summary || '',
     page: Number(ct.page) || 0,
   }))
@@ -946,9 +958,8 @@ const numOrUndef = (v: any): number | undefined => {
   return Number.isFinite(n) ? n : undefined
 }
 
-// 过滤/搜索/去重已由后端奖惩级接口完成，前端直接使用返回的分页数据；
-// 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
-const pendingRows = computed<AwardPunishRow[]>(() => pendingFiles.value.map((k) => {
+// 顶部合并"进行中文件"状态行
+const pendingRows = computed<NoticeRow[]>(() => pendingFiles.value.map((k) => {
   const ps = k.parse_status || ''
   const es = k.custom_metadata?.extract_status || ''
   let extractStatus = ''
@@ -963,9 +974,9 @@ const pendingRows = computed<AwardPunishRow[]>(() => pendingFiles.value.map((k) 
     extractError: k.custom_metadata?.extract_error || '',
     kind: 'pending',
     tags: Array.isArray(k.tags) ? k.tags : [],
-  } as AwardPunishRow
+  } as NoticeRow
 }))
-const filteredRows = computed(() => [...pendingRows.value, ...awardPunishRows.value])
+const filteredRows = computed(() => [...pendingRows.value, ...noticeRows.value])
 
 
 // ---- 多选 ----
@@ -988,18 +999,18 @@ const toggleRow = (rowKey: string, checked: boolean) => {
   }
 }
 const selectedRows = computed(() => {
-  const byKey = new Map(awardPunishRows.value.map(r => [r.rowKey, r]))
-  return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as AwardPunishRow[]
+  const byKey = new Map(noticeRows.value.map(r => [r.rowKey, r]))
+  return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as NoticeRow[]
 })
 const selectedIds = computed(() => Array.from(new Set(selectedRows.value.map(r => r.knowledgeId))))
 
-// 底部汇总：选中记录时显示选中奖惩的汇总，未选中时显示全部
+// 底部汇总：选中记录时显示选中公告汇总，未选中时显示全部
 const selectedSummary = computed(() => {
   const rows = selectedRows.value
   if (!rows.length) return null
-  return { total: rows.length, sumAmount: 0, sumTotal: 0 }
+  return { total: rows.length }
 })
-const displaySummary = computed(() => selectedSummary.value || awardPunishSummary.value)
+const displaySummary = computed(() => selectedSummary.value || noticeSummary.value)
 
 const applyFilter = () => { loadFiles(true) }
 const onKeywordChange = () => { loadFiles(true) }
@@ -1013,54 +1024,110 @@ const onListScroll = (e: Event) => {
   }
 }
 
-// ---- 上传 ----
-const triggerUpload = () => { fileInputRef.value?.click() }
-const onFileInputChange = (e: Event) => {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) handleUploadFiles(Array.from(input.files))
-  input.value = ''
-}
-
-const handleUploadFiles = async (files: File[]) => {
-  const valid = files.filter(f => {
-    const ext = (f.name.split('.').pop() || '').toLowerCase()
-    return ACCEPT_TYPES.includes(ext)
-  })
-  const invalidCount = files.length - valid.length
-  if (invalidCount) MessagePlugin.warning(`已忽略 ${invalidCount} 个不支持的文件（仅支持 PDF/JPG/PNG）`)
-  if (!valid.length) return
-  try {
-    for (const file of valid) await uploadKnowledgeFile(kbId.value, { file })
-    MessagePlugin.success(`已上传 ${valid.length} 个奖惩文件，正在解析...`)
-    await loadFiles(true)
-    startPolling()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '上传失败')
-  }
-}
-
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
   extractInFlight, extractFailed, pendingFiles,
-  start: startPolling, stop: stopPolling,
+  start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'award_punish'),
   onPendingFiles: (files) => {
-    const withRows = new Set(awardPunishRows.value.map(r => r.knowledgeId))
-    pendingFiles.value = files.filter(k => !withRows.has(k.id))
+    // 状态条展示所有「进行中」文件（含正处于重新解析/重新提取中的文件）
+    pendingFiles.value = files
   },
-  onRemoved: (item) => { MessagePlugin.info(`「${item.file_name || item.title}」不是奖惩文件，已移至删除历史，可在删除历史中恢复`) },
+  onRemoved: (item) => {
+    MessagePlugin.info(`「${item.file_name || item.title}」不是通知公告文件，已移至删除历史，可在删除历史中恢复`)
+    loadNoticeTypes()
+  },
   onTick: () => loadFiles(),
 })
 
+// pendingFiles 集合变化即触发概览统计重载
+let lastPendingKey = ''
+watch(pendingFiles, (v) => {
+  const key = v.map((f: any) => f.id).sort().join(',')
+  if (key !== lastPendingKey) {
+    lastPendingKey = key
+    if (kbId.value) loadNoticeOverview()
+  }
+}, { deep: false })
+
+// 上传任务实时进度（来自上传弹窗 @progress）：多文件同时进行时轮播展示
+const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
+const progressIndex = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]) {
+  uploadProgress.value = filterLiveProgress(items)
+  if (uploadProgress.value.length <= 1) {
+    progressIndex.value = 0
+    if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+    return
+  }
+  if (progressTimer) return
+  progressTimer = setInterval(() => {
+    if (uploadProgress.value.length <= 1) {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+      return
+    }
+    progressIndex.value = (progressIndex.value + 1) % uploadProgress.value.length
+  }, 3000)
+}
+// 表格里该文件已「提取完成/失败」的，不再保留旧进度项
+function filterLiveProgress(items: any[]) {
+  const doneNames = new Set(
+    noticeRows.value
+      .filter((r) => r.extractStatus === 'success' || r.extractStatus === 'failed')
+      .map((r) => r.fileName),
+  )
+  return items.filter((it: any) => !doneNames.has(it.name))
+}
+// 轮询刷新列表后：用表格实际 extractStatus 清掉已完成文件的残留进度
+watch(noticeRows, () => {
+  if (!uploadProgress.value.length) return
+  uploadProgress.value = filterLiveProgress(uploadProgress.value)
+})
+function stopProgressTimer() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null }
+}
+onBeforeUnmount(stopProgressTimer)
+
+// 解析/提取实时进度（弹窗关闭后兜底数据源），按耗时估算
+const fileStartAt = new Map<string, number>()
+const liveProgress = computed(() => {
+  const now = Date.now()
+  return pendingFiles.value.map((f) => {
+    const id = f.id
+    if (!fileStartAt.has(id)) fileStartAt.set(id, now)
+    const start = fileStartAt.get(id)!
+    const elapsed = (now - start) / 1000
+    const ps = f.parse_status || ''
+    const es = f.custom_metadata?.extract_status || ''
+    const name = f.file_name || f.title || id
+    if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) {
+      return { name, stage: 'extracting' as const, percent: Math.min(100, Math.round(30 + elapsed * 2)) }
+    }
+    return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
+  })
+})
+// 文件离开进行中集合后清理起点记忆
+watch(pendingFiles, (v) => {
+  const alive = new Set(v.map((f: any) => f.id))
+  for (const id of Array.from(fileStartAt.keys())) {
+    if (!alive.has(id)) fileStartAt.delete(id)
+  }
+})
+// 弹窗打开期间优先展示上传弹窗上报的真实进度；关闭后切换到轮询派生进度
+const displayProgress = computed(() =>
+  uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
+)
 
 const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
-  scope: 'award_punish', notLabel: '非奖惩',
+  scope: 'award_punish', notLabel: '非通知公告',
 })
+
 // ---- 详情抽屉 ----
-const openDetail = async (row: AwardPunishRow) => {
+const openDetail = async (row: NoticeRow) => {
   if (row.kind === 'pending') return
   currentRow.value = row
   currentDetail.value = null
@@ -1072,7 +1139,7 @@ const openDetail = async (row: AwardPunishRow) => {
       currentDetail.value = detail
       if (detail.custom_metadata) {
         const parsed = parseCustomMetadata(detail)
-        // 奖惩一份文件一份：优先按文号匹配详情（奖惩不按页匹配）
+        // 通知公告一份文件一份：优先按文号匹配，再按标题匹配
         const match = parsed.find(p => p.apNo && p.apNo === row.apNo)
           || parsed.find(p => p.apTitle === row.apTitle) || parsed[0]
         if (match) currentRow.value = { ...row, ...match }
@@ -1083,32 +1150,20 @@ const openDetail = async (row: AwardPunishRow) => {
 }
 
 const detailTitle = computed(() =>
-  currentRow.value?.apNo ? `奖惩详情 · ${currentRow.value.apNo}` : '奖惩详情'
+  currentRow.value?.apNo ? `公告详情 · ${currentRow.value.apNo}` : '公告详情'
 )
 
-// ---- 重新入库（恢复）后自动打开编辑抽屉 ----
-const onRestored = async (knowledgeId: string) => {
-  await loadFiles(true)
-  const row = awardPunishRows.value.find((r: any) => r.knowledgeId === knowledgeId)
-  if (row) {
-    openDetail(row)
-  } else {
-    // 列表可能因分页/懒加载未包含该行，用最小占位行打开编辑抽屉补录字段
-    openDetail({
-      rowKey: `manual-${knowledgeId}`,
-      knowledgeId,
-      fileName: '',
-      parseStatus: 'completed',
-      extractStatus: 'manual',
-      kind: 'award_punish',
-      tags: [],
-      description: '',
-      page: 0,
-    } as AwardPunishRow)
+// 上传历史抽屉（删除/恢复）变更后同步
+const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {
+  if (payload?.deletedIds?.length) {
+    optimisticRemoveNoticeRows(new Set(payload.deletedIds), new Set())
+    schedulePostDeleteRefresh()
+    return
   }
+  await Promise.all([loadFiles(true), loadNoticeOverview()])
 }
 
-// ---- 字段编辑 + 自动保存 ----
+// ---- 字段编辑 + 手动保存 ----
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
@@ -1116,23 +1171,21 @@ const fillEditForm = () => {
     ap_no: r.apNo || '',
     ap_title: r.apTitle || '',
     ap_type: r.apType || '',
+    issue_dept: r.issueDept || '',
+    person: r.person || '',
     dept: r.dept || '',
     position: r.position || '',
-    sign_date: r.signDate || '',
-      measure: r.measure || '',
+    measure: r.measure || '',
     basis: r.basis || '',
-    effective_date: r.effectiveDate || '',
     signer: r.signer || '',
+    sign_date: r.signDate || '',
+    effective_date: r.effectiveDate || '',
     remark: r.remark || '',
-    person: r.person || '',
     summary: r.summary || '',
   }
 }
 
-// 手动保存模式（2026-10-12 决策：四模块统一手动保存）：删除原来的 1200ms 自动保存 watcher，
-// 用户点「保存」按钮时才调用 saveEditForm。
-
-// 奖惩文号重复二次确认：后端 409 + DUPLICATE_AWARDPUNISH_NO 时先询问，确认后 force 重试
+// 文号重复二次确认
 const dupConfirmVisible = ref(false)
 const dupNo = ref('')
 const onDupConfirm = async () => {
@@ -1153,17 +1206,16 @@ const saveEditForm = async (force = false) => {
       ap_no: editForm.value.ap_no || '',
       ap_title: editForm.value.ap_title || '',
       ap_type: editForm.value.ap_type || '',
+      issue_dept: editForm.value.issue_dept || '',
+      person: editForm.value.person || '',
       dept: editForm.value.dept || '',
       position: editForm.value.position || '',
-      sign_date: editForm.value.sign_date || '',
-        measure: editForm.value.measure || '',
+      measure: editForm.value.measure || '',
       basis: editForm.value.basis || '',
-      effective_date: editForm.value.effective_date || '',
       signer: editForm.value.signer || '',
+      sign_date: editForm.value.sign_date || '',
+      effective_date: editForm.value.effective_date || '',
       remark: editForm.value.remark || '',
-      person: editForm.value.person || '',
-      reviewed_by: editForm.value.reviewed_by || '',
-      approved_by: editForm.value.approved_by || '',
       summary: editForm.value.summary || '',
     }
     const nowPage = now.page && now.page >= 1 ? now.page : 0
@@ -1176,17 +1228,17 @@ const saveEditForm = async (force = false) => {
     if (targetIdx >= 0) records[targetIdx] = { ...records[targetIdx], ...updated, page: nowPage || records[targetIdx]?.page }
     else records.push({ ...updated, page: nowPage || 0 })
     // 无任何有效字段 → 保持"待补录"状态，记录不因空数据而从列表消失
-    const hasAwardPunishData = records.some((c: any) =>
+    const hasNoticeData = records.some((c: any) =>
       (c.ap_no || '').trim() || (c.ap_title || '').trim() || (c.ap_type || '').trim() ||
-      (c.dept || '').trim() || (c.position || '').trim() || (c.sign_date || '').trim())
-    const nextStatus = hasAwardPunishData ? 'success' : 'manual'
-    const nextError = hasAwardPunishData ? '' : '人工入库待编辑，请补充字段'
+      (c.issue_dept || '').trim() || (c.signer || '').trim() || (c.sign_date || '').trim())
+    const nextStatus = hasNoticeData ? 'success' : 'manual'
+    const nextError = hasNoticeData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'award_punish', records, extract_status: nextStatus, extract_error: nextError }
     // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
     try {
       await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
     } catch (e: any) {
-      if (e?.status === 409 && String(e?.message || '').startsWith('DUPLICATE_AWARDPUNISH_NO')) {
+      if (e?.status === 409 && String(e?.message || '').startsWith('DUPLICATE_AP_NO')) {
         dupNo.value = String(e?.message || '').split(':').pop() || ''
         dupConfirmVisible.value = true
         return
@@ -1194,25 +1246,24 @@ const saveEditForm = async (force = false) => {
       throw e
     }
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
-    // 同步列表行，保证编辑后列表立即刷新
-    const listIdx = awardPunishRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
+    // 同步列表行（shallowRef 铁律：map 后整体替换数组）
+    const listIdx = noticeRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) {
-      awardPunishRows.value[listIdx] = {
-        ...awardPunishRows.value[listIdx],
-        extractStatus: nextStatus,
-        extractError: nextError,
-        apNo: updated.ap_no,
-        apTitle: updated.ap_title,
-        apType: updated.ap_type,
-        dept: updated.dept,
-        position: updated.position,
-        signDate: updated.sign_date,
-        measure: updated.measure,
-        basis: updated.basis,
-        effectiveDate: updated.effective_date,
-        signer: updated.signer,
-        remark: updated.remark,
-      }
+      noticeRows.value = noticeRows.value.map((r: any, i: number) =>
+        i === listIdx ? {
+          ...r,
+          extractStatus: nextStatus,
+          extractError: nextError,
+          apNo: updated.ap_no,
+          apTitle: updated.ap_title,
+          apType: updated.ap_type,
+          issueDept: updated.issue_dept,
+          signer: updated.signer,
+          signDate: updated.sign_date,
+          dept: updated.dept,
+          person: updated.person,
+        } : r,
+      )
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -1221,100 +1272,128 @@ const saveEditForm = async (force = false) => {
   }
 }
 
-const toNumber = (v: any): number | undefined => {
-  if (v === '' || v === null || v === undefined) return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
-}
-
-// 数字输入辅助：只允许数字与小数点，按实际输入显示（不补零、不保留多余小数）
-const sanitizeNum = (v: string): string => {
-  let s = (v ?? '').replace(/[^\d.]/g, '')
-  const firstDot = s.indexOf('.')
-  if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
-  return s
-}
-const parseNum = (v: string): number | null => {
-  const s = sanitizeNum(v)
-  if (s === '' || s === '.') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
-}
-const numToStr = (v: any): string =>
-  v === null || v === undefined || v === '' ? '' : String(v)
-
-const formatAmount = (v?: number) =>
-  v === undefined || v === null ? '' : `¥ ${Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
-// 税率以百分比显示且不保留小数（0.03 → 3%）
-const formatRate = (v?: number) => {
-  if (v === undefined || v === null) return ''
-  return `${Math.round(Number(v) * 100)}%`
-}
-
 // ---- 浮动工具栏 ----
 const selectedSingle = computed(() => {
   const rows = selectedRows.value
   return rows.length === 1 ? rows[0] : null
 })
 
-// 重新提取：重新解析选中行对应源文件，解析完成后自动触发奖惩字段提取
-// （奖惩一个文件一般只有一份奖惩，无需按页提取；打印也整文档预览）。
+// 批量重解析/重提取：一个文件一般只有一份公告，选中即对该文件操作
 const reparseBusy = ref(false)
 const extractBusy = ref(false)
+const BATCH_CONCURRENCY = 3
+
+// 轻量并发池：以 limit 上限消费 items，返回与入参同序的 allSettled 结果（避免引入第三方库）
+async function settleInBatches<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<unknown>): Promise<PromiseSettledResult<unknown>[]> {
+  const results: PromiseSettledResult<unknown>[] = new Array(items.length)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < items.length) {
+      const i = cursor++
+      results[i] = await Promise.resolve().then(() => fn(items[i])).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason }),
+      )
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
+}
+
+// 批量确认文案：单选显示文件名，多选显示文件数（selectedIds 已按 knowledgeId 去重）
+const reparseConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定重新解析「${name}」的物理文件并重新拆页吗？将覆盖已有解析结果。`
+  }
+  return `确定重新解析选中的 ${ids.length} 个文件并重新拆页吗？将覆盖已有解析结果。`
+})
+const extractConfirmText = computed(() => {
+  const ids = selectedIds.value
+  if (ids.length === 1) {
+    const name = selectedRows.value[0]?.fileName || selectedSingle.value?.fileName || '该文件'
+    return `确定按最新提取规则重新提取「${name}」的所有公告字段吗？将覆盖已有提取结果。`
+  }
+  return `确定按最新提取规则重新提取选中的 ${ids.length} 个文件的所有公告字段吗？将覆盖已有提取结果。`
+})
+
+// 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认）
 const handleReparse = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新解析仅支持单选，请选中一份奖惩'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const ids = selectedIds.value
+  if (!ids.length) { MessagePlugin.info('请先选中要重新解析的公告'); return }
   reparseBusy.value = true
+  uploadProgress.value = []
+  let ok = 0
+  let fail = 0
   try {
-    await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析`)
-    setTimeout(() => { loadFiles(true); loadAwardPunishOverview() }, 1500)
+    const results = await settleInBatches(ids, BATCH_CONCURRENCY, kid => reparseKnowledge(kid))
+    results.forEach(r => r.status === 'fulfilled' ? ok++ : fail++)
+    if (fail === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新解析`)
+    } else {
+      MessagePlugin.warning(`${ok} 个文件重新解析已提交，${fail} 个提交失败`)
+    }
+    scanOnce()
+    loadFiles(true)
+    loadNoticeOverview()
   } catch (e: any) {
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新解析失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
     reparseBusy.value = false
   }
 }
 
+// 重新提取：大模型/OCR 按最新提取规则重新提取选中文件全部公告字段（支持多文件批量，二次确认）
 const handleFileExtract = async () => {
-  const row = selectedSingle.value
-  if (!row) { MessagePlugin.info('重新提取仅支持单选，请选中一份奖惩'); return }
-  extractInFlight.value.add(row.knowledgeId)
-  extractFailed.value.delete(row.knowledgeId)
+  const all = selectedIds.value
+  if (!all.length) { MessagePlugin.info('请先选中要重新提取的公告'); return }
+  const ids = all.filter(kid => !extractInFlight.value.has(kid))
+  const skipped = all.length - ids.length
+  if (!ids.length) {
+    MessagePlugin.info('所选文件均正在提取中，请稍候')
+    return
+  }
+  ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
-  const loading = await MessagePlugin.loading(`任务已提交，正在重新提取「${row.fileName}」...`)
+  uploadProgress.value = []
   try {
-    await extractBusinessDocument(kbId.value, row.knowledgeId, 'award_punish', filterApType.value || undefined)
-    loading.close()
-    MessagePlugin.success(`「${row.fileName}」重新提取完成`)
+    const results = await settleInBatches(
+      ids,
+      BATCH_CONCURRENCY,
+      kid => extractBusinessDocument(kbId.value, kid, 'award_punish', filterApType.value || undefined),
+    )
+    let ok = 0
+    let conflict = 0
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') { ok++; return }
+      // 409 冲突：属重复提交而非提取失败，不写入 extractFailed
+      if ((r.reason as any)?.$httpStatus === 409) { conflict++; return }
+      extractFailed.value.set(ids[i], Date.now())
+    })
+    const fail = results.length - ok - conflict
+    if (fail === 0 && conflict === 0) {
+      MessagePlugin.success(`已提交 ${ok} 个文件重新提取`)
+    } else {
+      const parts: string[] = []
+      if (ok) parts.push(`${ok} 个已提交`)
+      if (conflict) parts.push(`${conflict} 个正在提取中`)
+      if (fail) parts.push(`${fail} 个提交失败`)
+      if (skipped) parts.push(`${skipped} 个已在提取中，未重复提交`)
+      MessagePlugin.warning(parts.join('，'))
+    }
+    scanOnce()
     loadFiles(true)
-    loadAwardPunishOverview()
+    loadNoticeOverview()
   } catch (e: any) {
-    loading.close()
-    extractFailed.value.set(row.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    extractInFlight.value.delete(row.knowledgeId)
+    ids.forEach(kid => extractInFlight.value.delete(kid))
     extractBusy.value = false
   }
 }
 
-const handleBatchEdit = () => {
-  const rows = selectedRows.value
-  if (rows.length !== 1) {
-    MessagePlugin.info('请选中单行后编辑，或点击列表中的奖惩行进入编辑')
-    return
-  }
-  openDetail(rows[0])
-}
-
-// 打印：奖惩一个文件一般只有一份奖惩，打印预览整个文档（含多页），
-// 支持跨文件任意组合合并为一个 PDF，单 iframe 预览打印。
+// 打印：公告一个文件一般只有一份，打印预览整个文档，支持跨文件合并
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
 const isImageRow = (r: any, blob: any) => {
   const ext = String(r.fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
@@ -1339,7 +1418,6 @@ const handleBatchPrint = async () => {
       if (!blob) { notes.push(`${r.apNo || r.fileName}（获取源文件失败）`); continue }
       try {
         const src = await blob.arrayBuffer()
-        // 图片格式奖惩：转为 PDF 页合并（支持跨文件/同文件任意组合）
         if (isImageRow(r, blob)) {
           const ext = String(r.fileType || '').toLowerCase()
           const isPng = ext.includes('png') || (blob?.type || '').toLowerCase().includes('png')
@@ -1349,18 +1427,25 @@ const handleBatchPrint = async () => {
           mergedPages++
           continue
         }
-        // 奖惩直接打印整个源文件（一份奖惩可能多页，如盖章扫描件），不做页抽取
         const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
+        const pageCount = pdf.getPageCount()
         const pages = await out.copyPages(pdf, pdf.getPageIndices())
         pages.forEach(p => out.addPage(p))
         mergedPages += pages.length
-        if (pdf.getPageCount() > 1) notes.push(`${r.apNo || r.fileName}（共 ${pdf.getPageCount()} 页）`)
+        if (pageCount > 1) notes.push(`${r.apNo || r.fileName}（共 ${pageCount} 页）`)
       } catch {
-        notes.push(`${r.apNo || r.fileName}（该文件无法合并，可单独打印）`)
+        notes.push(`${r.apNo || r.fileName}（页抽取失败，已并入整文件）`)
+        try {
+          const src = await blob.arrayBuffer()
+          const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
+          const pages = await out.copyPages(pdf, pdf.getPageIndices())
+          pages.forEach(p => out.addPage(p))
+          mergedPages += pages.length
+        } catch { /* 整文件也失败则跳过 */ }
       }
     }
     if (mergedPages === 0) {
-      MessagePlugin.error('未获取到可打印的奖惩页面')
+      MessagePlugin.error('未获取到可打印的公告页面')
       printVisible.value = false
       return
     }
@@ -1377,8 +1462,7 @@ const handleBatchPrint = async () => {
   }
 }
 
-// 打印：调用预览 iframe 内的 PDF 查看器打印（打印完整合并 PDF，
-// 无水印、无裁剪、含全部选中页面）
+// 打印：调用预览 iframe 内的 PDF 查看器打印
 const doPrint = () => {
   const frame = document.querySelector('.print-preview-frame') as HTMLIFrameElement | null
   if (frame?.contentWindow) {
@@ -1387,23 +1471,23 @@ const doPrint = () => {
   window.print()
 }
 
-// 目录生成：把选中记录按「当前列表展示字段」生成表格式清单 PDF（A4 横/纵自适应），
-// 复用打印弹窗预览，支持打印与下载
-const catalogValueOf = (row: AwardPunishRow, key: string): string => {
+// 目录生成：把选中记录按「当前列表展示字段」生成表格式清单 PDF
+const catalogValueOf = (row: NoticeRow, key: string): string => {
   switch (key) {
     case 'apNo': return row.apNo || ''
     case 'apTitle': return row.apTitle || ''
     case 'apType': return row.apType || ''
-    case 'position': return row.position || ''
     case 'signDate': return row.signDate || ''
+    case 'signer': return row.signer || ''
+    case 'issueDept': return row.issueDept || ''
+    case 'summary': return row.summary || ''
+    case 'person': return row.person || ''
     case 'dept': return row.dept || ''
+    case 'position': return row.position || ''
     case 'measure': return row.measure || ''
     case 'basis': return row.basis || ''
     case 'effectiveDate': return row.effectiveDate || ''
-    case 'signer': return row.signer || ''
     case 'remark': return row.remark || ''
-    case 'person': return row.person || ''
-    case 'summary': return row.summary || ''
     case 'extractStatus': { const s = statusOf(row).label; return s === '--' ? '' : s }
     case 'tags': return rowTags(row).map((t: any) => t.name).join('、')
     case 'fileName': return row.fileName || ''
@@ -1418,7 +1502,7 @@ const handleBatchCatalog = async () => {
     const cols: CatalogColumn[] = [
       ...visibleColDefs.value.map((c: any) => ({ key: c.key, label: c.label, value: (r: any) => catalogValueOf(r, c.key) })),
     ]
-    const bytes = await generateCatalogPdf({ title: '奖惩目录', columns: cols, rows })
+    const bytes = await generateCatalogPdf({ title: '通知公告目录', columns: cols, rows })
     printMode.value = 'catalog'
     printCount.value = rows.length
     if (printUrl.value) URL.revokeObjectURL(printUrl.value)
@@ -1434,56 +1518,133 @@ const downloadCatalogPdf = () => {
   if (!printUrl.value) return
   const a = document.createElement('a')
   a.href = printUrl.value
-  a.download = `奖惩目录-${Date.now()}.pdf`
+  a.download = `通知公告目录-${Date.now()}.pdf`
   a.click()
 }
 
-// 删除记录：奖惩一份文件一份奖惩，直接删除整份源文件
-const handleBatchDelete = async () => {
-  const rows = selectedRows.value
-  if (!rows.length) return
-  try {
-    const fileDeleteIds = new Set<string>()
-    for (const r of rows) {
-      fileDeleteIds.add(r.knowledgeId)
-    }
-    if (fileDeleteIds.size) {
-      await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-    }
-    MessagePlugin.success('删除成功')
-    selectedRowKeys.value = []
-    await loadFiles(true)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
+// 安全清空多选
+const clearSelectionSafe = () => {
+  clearSelection()
+}
+// 类型筛选锁定：空值 = 「全部」态（放行）；「其它通知」为排除式筛选态（放行）；
+// 当前选中项合法则保留，否则按分类顺序选中第一个启用分类
+const ensureApType = () => {
+  if (filterApType.value === '其它通知' || filterApType.value === '') return
+  const cats = noticeCats.value.filter((c: any) => c.enabled !== false).map((c: any) => c.name)
+  if (filterApType.value && cats.includes(filterApType.value)) return
+  filterApType.value = cats.length ? cats[0] : ''
+}
+// 类型切换：清空多选 + 重建当前分类列 + 立即刷新列表
+watch(filterApType, () => {
+  clearSelectionSafe()
+  reloadColumns()
+  loadFiles(true)
+})
+
+// ---- 删除链路 ----
+const delPopVisible = ref(false)
+const closeDelPop = () => { delPopVisible.value = false }
+// 乐观移除本地行
+const optimisticRemoveNoticeRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
+  noticeRows.value = noticeRows.value.filter((r) => {
+    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
+    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
+    return true
+  })
+}
+// 删除走 asynq 异步入队：先乐观移除，再分两次延迟权威对账
+let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
+const schedulePostDeleteRefresh = () => {
+  deleteRefreshTimers.forEach(clearTimeout)
+  deleteRefreshTimers = []
+  loadNoticeOverview()
+  const reload = () => { loadFiles(true); loadNoticeOverview() }
+  deleteRefreshTimers.push(setTimeout(reload, 800))
+  deleteRefreshTimers.push(setTimeout(reload, 2600))
+}
+// 删除整份上传文件（含其全部公告记录）
+const doFileDelete = async (rows: NoticeRow[]) => {
+  const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
+  if (ids.size) {
+    await batchDeleteKnowledge(kbId.value, Array.from(ids))
+    optimisticRemoveNoticeRows(ids as Set<string>, new Set())
   }
+}
+const finishDelete = async () => {
+  MessagePlugin.success('删除成功')
+  clearSelectionSafe()
+  schedulePostDeleteRefresh()
+}
+// 一份文件一份公告，直接走文件删除
+const confirmFileDelete = async () => {
+  closeDelPop()
+  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+
+// ---- 动态列 + 六同步 ----
+const onCategoriesChanged = () => {
+  reloadColumns(true)
+  loadNoticeCats()
+  loadFiles(true)
+  loadNoticeOverview()
+}
+const loadNoticeCats = async () => {
+  try {
+    const res: any = await listFleetCategories({ scope: 'award_punish' })
+    const cats = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : [])
+    noticeCats.value = cats
+  } catch { noticeCats.value = [] }
+  ensureApType()
+}
+// 从后端 categories（scope=award_punish）重建动态列；无配置时回退内置默认
+const lastColType = ref('')
+const reloadColumns = async (force = false) => {
+  try {
+    let cats: any[] = force ? [] : noticeCats.value
+    if (!cats || !cats.length) {
+      const res: any = await listFleetCategories({ scope: 'award_punish' })
+      cats = res?.data || []
+      noticeCats.value = cats
+    }
+    const curCat = cats.find((c: any) => c.name === filterApType.value && c.enabled !== false)
+    const baseCat = curCat || cats[0]
+    if (baseCat?.subs?.length) {
+      customColumns.value = baseCat.subs
+        .filter((s: any) => s.enabled !== false)
+        .map((s: any) => {
+          const builtin = DEFAULT_NOTICE_COLUMNS.find((b: any) => b.key === s.name)
+          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
+        })
+      if (!lastColType.value) {
+        const defaults = customColumns.value.filter((c: any) => c.default).map((c: any) => c.key)
+        if (defaults.some((k: string) => !visibleColKeys.value.includes(k))) resetColumns()
+      } else if (force || lastColType.value !== filterApType.value) {
+        resetColumns()
+      }
+      lastColType.value = filterApType.value
+    }
+    ensureApType()
+  } catch { /* 后端未配置时回退内置默认 */ }
 }
 
 // ---- 生命周期 ----
 onMounted(() => {
+  if (typeof route.query.type === 'string' && route.query.type) filterApType.value = route.query.type
   loadKb()
-  void (async () => {
-    try {
-      const res: any = await listFleetCategories({ scope: 'award_punish' })
-      const cats = res?.data || []
-      apCats.value = Array.isArray(cats) ? cats : []
-      if (cats[0]?.subs?.length) {
-        customColumns.value = cats[0].subs
-          .filter((s: any) => s.enabled !== false)
-          .map((s: any) => {
-            const builtin = DEFAULT_AWARDPUNISH_COLUMNS.find((b: any) => b.key === s.name)
-            return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-          })
-      }
-    } catch { /* 后端未配置时回退内置默认 */ }
-  })()
+  loadNoticeCats()
+  reloadColumns()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 onBeforeUnmount(() => {
   stopPolling()
+  stopProgressTimer()
+  deleteRefreshTimers.forEach(clearTimeout)
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
 
-<style basisd lang="less">
-.awardPunish-management-container {
+<style scoped lang="less">
+.notice-management-container {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1512,7 +1673,7 @@ onBeforeUnmount(() => {
   gap: 16px; min-height: 300px;
 }
 
-.awardPunish-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+.notice-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
 /* ---- 筛选工具栏 ---- */
 .doc-filter-bar {
@@ -1529,7 +1690,7 @@ onBeforeUnmount(() => {
 }
 
 /* ---- 字段筛选弹层 ---- */
-:global(.awardPunish-field-popup) {
+:global(.notice-field-popup) {
   padding: 0 !important;
 }
 .field-popup-content {
@@ -1551,7 +1712,7 @@ onBeforeUnmount(() => {
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
 .doc-list-scroll {
-  flex: 0 1 auto; /* 高度随内容自适应：1 条就包 1 条，多条向下扩展 */
+  flex: 0 1 auto;
   max-height: 100%;
   min-width: 0;
   overflow-y: auto;
@@ -1574,7 +1735,7 @@ onBeforeUnmount(() => {
     display: inline-flex; align-items: baseline; gap: 6px;
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
-  &.is-batch-visible { margin-bottom: 72px; } /* 选中时给底部浮动工具栏让位 */
+  &.is-batch-visible { margin-bottom: 72px; }
 }
 
 .doc-list-view {
@@ -1583,81 +1744,21 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 }
 
-.doc-list-header, .doc-list-row {
-  display: grid;
-  align-items: center;
-  padding: 0 16px;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-
-.doc-list-header {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  height: 40px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-secondarycontainer);
-  border-bottom: 1px solid var(--td-component-stroke);
-  .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-}
-
-.doc-list-body { display: flex; flex-direction: column; }
-
-.doc-list-row {
-  position: relative;
-  min-height: 52px;
-  font-size: 13px;
-  color: var(--td-text-color-primary);
-  border-bottom: 1px solid var(--td-component-stroke);
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-  &:last-child { border-bottom: 0; }
-  &:hover:not(.selected) { background: var(--td-bg-color-secondarycontainer); }
-  &.selected { background: var(--td-brand-color-1); }
-}
-
 .cell {
   display: flex;
   align-items: center;
-  justify-content: center; /* 表头/内容居中 */
+  justify-content: center;
   min-width: 0;
   padding: 0 8px;
   text-align: center;
 }
 
-.cell-check {
-  justify-content: center;
-  position: sticky;
-  left: 0;
-  z-index: 2;
-  background: transparent; /* 跟随行/容器背景，避免白色块 */
-  padding: 0;
-}
-
-.cell-apNo, .cell-apTitle, .cell-dept, .cell-basis, .cell-remark, .cell-fileName {
-  justify-content: flex-start;
-  text-align: left;
-}
-
-.doc-list-check :deep(.t-checkbox__label) { display: none !important; width: 0 !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; }
-.doc-list-check :deep(.t-checkbox__input-wrapper) { margin: 0; }
-
-.row-awardPunish-no {
+.row-notice-no {
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-size: 13px; font-weight: 600; color: var(--td-text-color-primary);
 }
-.row-page-badge {
-  flex-shrink: 0; margin-left: 6px; height: 18px; padding: 0 6px; border-radius: 999px;
-  background: var(--td-success-color-light); color: var(--td-success-color); font-size: 11px; line-height: 18px;
-  white-space: nowrap;
-}
 .row-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--td-text-color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
-.row-rate { font-size: 12px; color: var(--td-text-color-primary); }
 .row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-status-tag :deep(.t-icon) { margin-right: 2px; }
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
@@ -1678,24 +1779,63 @@ onBeforeUnmount(() => {
 .doc-load-more { display: flex; justify-content: center; padding: 12px 0; }
 
 /* ---- 底部浮动工具栏 ---- */
-.doc-batch-bar-fixed {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
-  width: 100%; max-width: 700px; padding: 0 4px; box-sizing: border-box;
+.doc-batch-bar {
+  position: fixed;
+  bottom: var(--wk-batch-bar-bottom);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--wk-batch-bar-z);
+  width: max-content;
+  max-width: calc(100vw - 48px);
+  box-sizing: border-box;
 }
 .batch-bar-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 12px; background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke); border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 8px 16px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-2);
 }
-.batch-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
-.batch-bar-count { font-size: 13px; font-weight: 500; color: var(--td-text-color-secondary); white-space: nowrap; }
-.batch-bar-clear { flex-shrink: 0; padding: 0 6px !important; height: 28px !important; font-size: 12px; color: var(--td-text-color-secondary) !important; &:hover { color: var(--td-brand-color) !important; } }
-.batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
-.batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
+.batch-bar-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.batch-bar-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+}
+.batch-bar-clear {
+  flex-shrink: 0;
+  padding: 0 6px !important;
+  height: 28px !important;
+  font-size: 12px;
+  color: var(--td-text-color-secondary) !important;
+  &:hover { color: var(--td-text-color-primary) !important; }
+}
+.batch-bar-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.batch-bar-actions > * { flex-shrink: 0; }
 
-/* ---- 详情抽屉：竖向区块 + 可拖宽（复用知识库文档抽屉上下滚动样式） ---- */
-.awardPunish-detail-drawer :deep(.t-drawer__body) {
+/* ---- 详情抽屉：竖向区块 + 可拖宽 ---- */
+.notice-detail-drawer :deep(.t-drawer__body) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -1703,20 +1843,19 @@ onBeforeUnmount(() => {
   padding: 0 24px 24px;
 }
 
-// 详情抽屉底部取消/保存（对齐发票 invoice-detail-footer）
-.awardpunish-detail-footer {
+.notice-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.notice-detail-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding-top: 16px;
   border-top: 1px solid var(--td-border-level-1-color);
   margin-top: 8px;
-}
-
-.awardPunish-detail-body {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
 }
 
 .detail-block { width: 100%; }
@@ -1732,7 +1871,7 @@ onBeforeUnmount(() => {
 }
 .detail-block-content { width: 100%; }
 
-// 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠 + 每条字段一行）
+// 摘要（复用知识库文档抽屉样式：线框 + 展开/折叠）
 .summary_wrapper {
   position: relative;
   background: var(--td-bg-color-container);
@@ -1779,11 +1918,17 @@ onBeforeUnmount(() => {
 
 .detail-save-hint { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; color: var(--td-text-color-placeholder); }
 
+/* 列内边距收紧 */
+.doc-list-view :deep(.t-table__cell),
+.doc-list-view :deep(.t-table__th) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
 </style>
 
 <style lang="less">
-/* 打印预览弹窗：自定义实现（弃用 TDesign dialog），Teleport 到 body，全局样式 */
-.awardPunish-print-mask {
+/* 打印预览弹窗：自定义实现，Teleport 到 body，全局样式 */
+.notice-print-mask {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   z-index: 3000;
@@ -1792,7 +1937,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
 }
-.awardPunish-print-dialog {
+.notice-print-dialog {
   width: min(900px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   height: 82vh;
@@ -1804,7 +1949,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
 }
-.awardPunish-print-header {
+.notice-print-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1813,27 +1958,27 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   background: var(--td-bg-color-container);
 }
-.awardPunish-print-title {
+.notice-print-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--td-text-color-primary);
 }
-.awardPunish-print-close {
+.notice-print-close {
   flex-shrink: 0;
 }
-.awardPunish-print-body {
+.notice-print-body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
   background: var(--td-bg-color-container);
 }
-.awardPunish-print-body .print-preview-frame {
+.notice-print-body .print-preview-frame {
   width: 100%;
   height: 100%;
   border: 0;
   display: block;
 }
-.awardPunish-print-body .print-preview-loading {
+.notice-print-body .print-preview-loading {
   width: 100%;
   height: 100%;
   display: flex;
@@ -1842,7 +1987,7 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-placeholder);
   font-size: 14px;
 }
-.awardPunish-print-footer {
+.notice-print-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;

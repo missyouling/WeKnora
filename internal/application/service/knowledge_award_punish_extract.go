@@ -23,81 +23,36 @@ type AwardPunishExtractionResult struct {
 }
 
 // awardPunishExtractionSystemPrompt instructs the model to return strict JSON
-// with the award/punish fields. A notice may carry several persons — the model
-// must emit one record per person.
-const awardPunishExtractionSystemPromptTemplate = `你是一个专业的公司奖惩通报文档信息提取助手。你的任务是从文档文本中识别并提取奖惩记录的关键字段信息。
+// with the notice/announcement fields. 通知公告模块（原奖惩）一份文件一份公告，
+// 涉及多人时合并为一条记录（person 用"、"分隔）。
+const awardPunishExtractionSystemPromptTemplate = `你是一个专业的公司通知公告文档信息提取助手。你的任务是从文档文本中识别并提取通知公告记录的关键字段信息。
 
 规则：
 1. 只提取文本中真实存在的信息，不要编造任何字段。
-2. 一份奖惩通报只输出一条记录（即使一份通报处罚多人，如"（一）（二）（三）"小节分别叙述每个人的违规事实与处理决定，也合并为一条记录）。person 为全部当事人姓名，多个姓名用"、"分隔（如"汪艳、王郑红"）；dept 为各部门（多个用"、"分隔）；正文没有当事人维度时（纯通报/通知）person/dept 返回空字符串。
-3. 如果文档内容与奖惩无关（如发票、合同、制度、清单、报表等），kind 设为 "not_award_punish"，records 返回空数组。
+2. 一份文件只输出一条记录（即使涉及多名当事人、多个事项，也合并为一条记录）。person 为全部当事人姓名，多个姓名用"、"分隔（如"汪艳、王郑红"）；dept 为当事人所属部门（多个用"、"分隔）；正文没有当事人维度时（纯通知/公告/制度性文件）person/dept 返回空字符串。
+3. 如果文档内容与通知公告无关（如发票、合同、制度正文、清单、报表等），kind 设为 "not_award_punish"，records 返回空数组。
 4. ap_no 为文号：提取文档中的文号（如"星达行政字〔2026〕11号"），格式保持原文；文档中确实没有时返回空字符串（不要编造）。
-5. ap_title 为标题：通常是文档标题（如"关于对汪艳、王郑红违规行为及质管部手机管理问题的处罚通报"）；无法识别时返回空字符串。
-6. ap_type 只从以下枚举中选择：处罚、奖励、通报、其它奖惩。根据处理内容判断：含「处罚」「罚款」「警告」「处分」「批评」「扣款」「记过」→处罚；含「奖励」「表彰」「嘉奖」「表扬」「奖金」「评优」「晋级」→奖励；文档为纯通报/通知性质（无具体奖惩决定）→通报；都不明确时用「其它奖惩」。
-7. person 为当事人姓名（多个用"、"分隔，如"汪艳、王郑红"）；dept 为当事人所属部门（多个用"、"分隔）；position 为岗位（多个用"、"分隔）；无法识别时返回空字符串。
-8. measure 仅从以下措施列表中选择原文明确提及的措施，可多选，用"、"分隔（如"经济处罚、书面警告"）；原文未提及列表中任何措施时返回空字符串。禁止把具体处罚细节（金额、重量、扣款方式、期限等）写入 measure，此类细节请写入 remark。措施列表：%s
-9. basis 为依据（如"依据《AD-018奖惩制度》"，可含制度名）；无法识别时返回空字符串。
-10. signer 为签发人（如"廖宏"）；sign_date 为签发日期（YYYY-MM-DD 格式）；effective_date 为生效日期（YYYY-MM-DD 格式，通常与签发日期相同或见"自发布之日起生效"）；无法识别时返回空字符串。
-11. remark 为备注（如整改要求、附加说明、具体处理决定细节）；summary 为摘要（用 2-4 句话概括通报目的、违规事实与处理结果）；无法识别时返回空字符串。
-12. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
+5. ap_title 为标题：通常是文档标题（如"关于加强安全生产管理的通知"）；无法识别时返回空字符串。
+6. ap_type 只从以下枚举中选择：通知、公告、通报、决定、其它通知。判断口径：含「通知」「安排」「部署」「要求」「开展」→通知；含「公告」「公示」「公布」「启事」→公告；含「通报」「情况说明」「通报批评」→通报；含「决定」「处分」「处罚」「任命」「表彰决定」→决定；都不明确时用「其它通知」。
+7. issue_dept 为发布单位（文件落款单位/发文部门，如"综合管理部""人力资源部"），无法识别时返回空字符串。
+8. person 为当事人姓名（多个用"、"分隔）；dept 为当事人所属部门（多个用"、"分隔）；position 为岗位（多个用"、"分隔）；无法识别时返回空字符串。
+9. measure 为处理决定（原文明确写明的处理结论，如"经济处罚200元、书面警告""予以通报表扬"），可多项用"、"分隔；原文未提及处理决定时返回空字符串。
+10. basis 为依据（如"依据《AD-018奖惩制度》"，可含制度/法规名）；无法识别时返回空字符串。
+11. signer 为发布人（落款签发人，如"廖宏"）；sign_date 为发布日期（YYYY-MM-DD 格式）；effective_date 为生效日期（YYYY-MM-DD 格式，通常与发布日期相同或见"自发布之日起生效"）；无法识别时返回空字符串。
+12. remark 为备注（附加说明、细节）；summary 为摘要（用 2-4 句话概括文件目的、核心事项与结论）；无法识别时返回空字符串。
+13. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 输出格式：
-{"kind":"award_punish","records":[{"ap_no":"","ap_title":"","ap_type":"","person":"","dept":"","position":"","measure":"","basis":"","signer":"","sign_date":"","effective_date":"","remark":"","summary":""}]}
+{"kind":"award_punish","records":[{"ap_no":"","ap_title":"","ap_type":"","issue_dept":"","person":"","dept":"","position":"","measure":"","basis":"","signer":"","sign_date":"","effective_date":"","remark":"","summary":""}]}
 
-示例（一份通报处罚两人，合并为一条记录，person 用"、"分隔多个当事人）：
+示例（一份通报处罚两人，合并为一条记录）：
 {"kind":"award_punish","records":[
-{"ap_no":"星达行政字〔2026〕11号","ap_title":"关于对汪艳、王郑红违规行为的处罚通报","ap_type":"处罚","person":"汪艳、王郑红","dept":"仓库、质管部","position":"仓库主管","measure":"经济处罚、书面警告","basis":"依据《AD-018奖惩制度》","signer":"廖宏","sign_date":"2026-07-02","effective_date":"","remark":"汪艳罚款200元，王郑红罚款300元并取消年度评优资格","summary":"汪艳因重复操作失误被处以经济罚款200元并给予书面警告；王郑红因夜班玩手机、睡觉被处以经济罚款300元、书面警告并取消年度评优资格。"}]}`
+{"ap_no":"星达行政字〔2026〕11号","ap_title":"关于对汪艳、王郑红违规行为的处罚通报","ap_type":"决定","issue_dept":"综合管理部","person":"汪艳、王郑红","dept":"仓库、质管部","position":"仓库主管","measure":"经济处罚、书面警告","basis":"依据《AD-018奖惩制度》","signer":"廖宏","sign_date":"2026-07-02","effective_date":"","remark":"汪艳罚款200元，王郑红罚款300元并取消年度评优资格","summary":"汪艳因重复操作失误被处以经济罚款200元并给予书面警告；王郑红因夜班玩手机、睡觉被处以经济罚款300元、书面警告并取消年度评优资格。"}]}`
 
-// buildAwardPunishExtractionSystemPrompt renders the extraction prompt with the
-// configured measure options so measure only holds choices from the library.
+// buildAwardPunishExtractionSystemPrompt renders the notice extraction prompt.
+// measures 仅作为处理决定参考，非强制约束（保留参数以兼容调用链）。
 func buildAwardPunishExtractionSystemPrompt(measures []string) string {
-	if len(measures) == 0 {
-		measures = []string{"书面警告", "经济处罚", "通报批评", "记过", "扣款", "取消评优资格", "降职", "停职检查", "通报表扬", "嘉奖", "记功", "奖金", "晋升", "评优评先"}
-	}
-	return fmt.Sprintf(awardPunishExtractionSystemPromptTemplate, strings.Join(measures, "、"))
-}
-
-// FilterMeasuresByLibrary keeps only measure parts that match the configured
-// measure library (fallback: built-in defaults). It normalizes free-text LLM
-// output like "扣除工资、书面警告" down to the library entries actually hit
-// ("书面警告"), so the edit drawer's multi-select never shows out-of-library
-// values as selected choices.
-func FilterMeasuresByLibrary(measure string, measures []string) string {
-	if strings.TrimSpace(measure) == "" {
-		return ""
-	}
-	if len(measures) == 0 {
-		for _, m := range types.DefaultAwardPunishRecognitionConfig().Measures {
-			if n := strings.TrimSpace(m.Name); n != "" {
-				measures = append(measures, n)
-			}
-		}
-	}
-	parts := strings.FieldsFunc(measure, func(r rune) bool {
-		return r == '、' || r == ',' || r == '，' || r == ';' || r == '；' || r == '/'
-	})
-	seen := map[string]bool{}
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		for _, m := range measures {
-			m = strings.TrimSpace(m)
-			if m == "" {
-				continue
-			}
-			if strings.Contains(p, m) || strings.Contains(m, p) {
-				if !seen[m] {
-					seen[m] = true
-					out = append(out, m)
-				}
-				break
-			}
-		}
-	}
-	return strings.Join(out, "、")
+	return awardPunishExtractionSystemPromptTemplate
 }
 
 // BuildAwardPunishExtractionContent assembles the document text sent to the model.
@@ -202,8 +157,8 @@ func BuildAwardPunishExtractionBatches(name, summary string, chunks []*types.Chu
 }
 
 // NormalizeAwardPunishExtractionResult cleans up a model reply: guarantees a
-// known kind, drops empty items, normalizes the award/punish type and
-// auto-numbers records without an explicit 文号 (JC-YYYYMMDD-NNN).
+// known kind, drops empty items, normalizes the notice type and
+// auto-numbers records without an explicit 文号 (TZ-YYYYMMDD-NNN).
 //
 // autoSeqStart is the highest auto-number already used in the knowledge base
 // for the current date, so generated numbers stay unique across files.
@@ -222,10 +177,10 @@ func NormalizeAwardPunishExtractionResult(res *AwardPunishExtractionResult, auto
 	for i, r := range res.Records {
 		r.ApType = NormalizeAwardPunishTypeFromName(r.ApType)
 		r.Page = i + 1
-		// 自动编号：无文号时按上传日期自动编号 JC-YYYYMMDD-NNN；
+		// 自动编号：无文号时按上传日期自动编号 TZ-YYYYMMDD-NNN；
 		// 同一文件拆出的多条记录共用同一自动文号（序号相同）。
 		if strings.TrimSpace(r.ApNo) == "" {
-			r.ApNo = fmt.Sprintf("JC-%s-%03d", now.Format("20060102"), autoSeqStart+1)
+			r.ApNo = fmt.Sprintf("TZ-%s-%03d", now.Format("20060102"), autoSeqStart+1)
 		}
 		kept = append(kept, r)
 	}
@@ -236,13 +191,14 @@ func NormalizeAwardPunishExtractionResult(res *AwardPunishExtractionResult, auto
 // records with an auto-generated number JC-YYYYMMDD-NNN for the current date
 // inside the knowledge base. Used to keep auto-numbers unique across files.
 
-// NormalizeAwardPunishTypeFromName maps a raw type string onto the fixed enum by
-// keyword priority:
+// NormalizeAwardPunishTypeFromName maps a raw type string onto the fixed notice
+// enum by keyword priority:
 //
-//	含"处罚"/"罚款"/"警告"/"处分"/"批评"/"扣款"/"记过" → 处罚
-//	含"奖励"/"表彰"/"嘉奖"/"表扬"/"奖金"/"评优"/"晋级" → 奖励
+//	含"决定"/"处分"/"处罚"/"任命"/"表彰决定" → 决定
+//	含"通知"/"安排"/"部署"/"要求"/"开展" → 通知
+//	含"公告"/"公示"/"公布"/"启事" → 公告
 //	含"通报" → 通报
-//	否则 → 其它奖惩
+//	否则 → 其它通知
 //
 // A blank input stays blank (model could not recognize a type).
 func NormalizeAwardPunishTypeFromName(raw string) string {
@@ -251,27 +207,29 @@ func NormalizeAwardPunishTypeFromName(raw string) string {
 		return ""
 	}
 	switch {
-	case strings.Contains(raw, "处罚") || strings.Contains(raw, "罚款") || strings.Contains(raw, "警告") ||
-		strings.Contains(raw, "处分") || strings.Contains(raw, "批评") || strings.Contains(raw, "扣款") ||
-		strings.Contains(raw, "记过"):
-		return "处罚"
-	case strings.Contains(raw, "奖励") || strings.Contains(raw, "表彰") || strings.Contains(raw, "嘉奖") ||
-		strings.Contains(raw, "表扬") || strings.Contains(raw, "奖金") || strings.Contains(raw, "评优") ||
-		strings.Contains(raw, "晋级"):
-		return "奖励"
+	case strings.Contains(raw, "决定") || strings.Contains(raw, "处分") || strings.Contains(raw, "处罚") ||
+		strings.Contains(raw, "任命"):
+		return "决定"
+	case strings.Contains(raw, "通知") || strings.Contains(raw, "安排") || strings.Contains(raw, "部署") ||
+		strings.Contains(raw, "要求") || strings.Contains(raw, "开展"):
+		return "通知"
+	case strings.Contains(raw, "公告") || strings.Contains(raw, "公示") || strings.Contains(raw, "公布") ||
+		strings.Contains(raw, "启事"):
+		return "公告"
 	case strings.Contains(raw, "通报"):
 		return "通报"
 	default:
-		return "其它奖惩"
+		return "其它通知"
 	}
 }
 
-// validAwardPunishTypes is the fixed award/punish type enum surfaced in the UI.
+// validAwardPunishTypes is the fixed notice type enum surfaced in the UI.
 var validAwardPunishTypes = map[string]struct{}{
-	"处罚":   {},
-	"奖励":   {},
+	"通知":   {},
+	"公告":   {},
 	"通报":   {},
-	"其它奖惩": {},
+	"决定":   {},
+	"其它通知": {},
 }
 
 // AwardPunishRecordsAllEmpty reports whether every record in the result is
@@ -288,7 +246,7 @@ func AwardPunishRecordsAllEmpty(recs []types.AwardPunishExtractionItem) bool {
 
 // ============ 规则提取（用户可配置字段口径） ============
 
-// buildAwardPunishRuleSystemPrompt 在默认奖惩提示词基础上注入用户配置的提取规则
+// buildAwardPunishRuleSystemPrompt 在默认通知公告提示词基础上注入用户配置的提取规则
 // （字段口径、高级模板）。规则为空时行为与默认版一致。
 func buildAwardPunishRuleSystemPrompt(cfg *types.KbExtractConfig, measures []string) string {
 	base := buildAwardPunishExtractionSystemPrompt(measures)
@@ -307,7 +265,7 @@ func buildAwardPunishRuleSystemPrompt(cfg *types.KbExtractConfig, measures []str
 		sb.WriteString("\n\n")
 	}
 	if hasFields {
-		sb.WriteString("提取要点（用户配置的字段口径，请按这些要点识别奖惩内容；输出结构仍严格按下方规则执行）:\n")
+		sb.WriteString("提取要点（用户配置的字段口径，请按这些要点识别通知公告内容；输出结构仍严格按下方规则执行）:\n")
 		for _, f := range cfg.Fields {
 			n := strings.TrimSpace(f.Name)
 			if n == "" || !f.Enabled {

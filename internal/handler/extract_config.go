@@ -837,7 +837,16 @@ func (h *BusinessExtractHandler) resolveRegulationRuleCfg(ctx context.Context, k
 	return h.getExtractConfig(ctx, kbID, scope, "")
 }
 
-// resolveAwardPunishRuleCfg 奖惩提取规则解析：按 scope=award_punish 读取用户配置的提取规则。
-func (h *BusinessExtractHandler) resolveAwardPunishRuleCfg(ctx context.Context, kbID string) *types.KbExtractConfig {
-	return h.getExtractConfig(ctx, kbID, "award_punish", "")
+// resolveNoticeRuleCfg 通知公告提取规则解析：按 scope=award_punish 读取用户配置的提取规则。
+// 规则为空时返回 nil，调用方回退默认提取逻辑。
+func (h *BusinessExtractHandler) resolveNoticeRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
+	scope := "award_punish"
+	// 优先按归档分类（上传弹窗选择的通知类型，如"通知""公告"）精确匹配分类规则；
+	// 未配置分类规则时回退通知公告整体规则（与发票/合同/制度 resolveRuleCfg 回退链一致）。
+	if ct := strings.TrimSpace(certType); ct != "" {
+		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
+			return cfg
+		}
+	}
+	return h.getExtractConfig(ctx, kbID, scope, "")
 }

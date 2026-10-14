@@ -1672,6 +1672,34 @@ func regulationSeedSubs() []types.FleetCategorySub {
 	}
 }
 
+// noticeSeedSubs 为通知公告内置分类（通知/公告/通报/决定/其它通知）的字段全集。
+// subs.name 为前端 NoticeRow 的 camelCase key，与 types.AwardPunishExtractionItem
+// JSON 字段同源；is_default 与前端 DEFAULT_NOTICE_COLUMNS 的 default 一致。
+func noticeSeedSubs() []types.FleetCategorySub {
+	return []types.FleetCategorySub{
+		// 文件信息（默认显示）
+		{Name: "apNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "apTitle", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "signer", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "issueDept", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: true, DataType: "text"},
+		// 当事人/处理细节（默认不显示）
+		{Name: "person", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "dept", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "position", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "measure", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "basis", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		// 系统字段
+		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+	}
+}
+
 // seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
 // 记录 tenant_id=0（全局共享），subs.name 为前端 row 的 camelCase key，data_type 标注类型。
 func (h *FleetHandler) seedBusinessCategories() {
@@ -1748,16 +1776,9 @@ func (h *FleetHandler) seedBusinessCategories() {
 		// 制度内置分类（人事/财务/生产/行政/安全/其它制度）统一走 reconcileRegulationCategories
 		// 名称协调，不再在本 seed 块中创建笼统「制度」分类（其早期 subs 用了 title/docNumber/
 		// category/publishDate/issuer 英文键，与 RegulationRow 字段不匹配）。
-		{"award_punish", "奖惩", "award_punish", 0, []types.FleetCategorySub{
-			{Name: "title", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "person", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "dept", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "eventDate", Enabled: true, IsDefault: true, DataType: "date"},
-			{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
-			{Name: "reason", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-		}},
+		// 通知公告内置分类（通知/公告/通报/决定/其它通知）统一走 reconcileNoticeCategories
+		// 名称协调，不再在本 seed 块中创建笼统「奖惩」分类（其早期 subs 用了 title/eventDate/
+		// reason/amount 等错误键，与 NoticeRow 字段不匹配）。
 	}
 	for _, s := range seeds {
 		var cnt int64
@@ -1798,6 +1819,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 	// 制度内置分类（人事/财务/生产/行政/安全/其它制度）走同样的名称协调逻辑，
 	// 退役笼统「制度」分类（subs 为 title/docNumber 等错误英文键），按类型建分类。
 	h.reconcileRegulationCategories(ctx)
+
+	// 通知公告内置分类（通知/公告/通报/决定/其它通知）走同样的名称协调逻辑，
+	// 退役笼统「奖惩」分类（subs 为 title/eventDate 等错误键），按类型建分类。
+	h.reconcileNoticeCategories(ctx)
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
@@ -2223,6 +2248,130 @@ func (h *FleetHandler) reconcileRegulationCategories(ctx context.Context) {
 			logger.Warnf(ctx, "reconcile regulation category %q update failed: %v", w.Name, err)
 		} else {
 			logger.Infof(ctx, "reconcile regulation category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
+		}
+	}
+}
+
+// reconcileNoticeCategories 协调通知公告内置分类（幂等，每次启动执行）。
+// 终态：内置「通知 notice-notice(sort=0)」「公告 notice-announcement(sort=1)」
+// 「通报 notice-bulletin(sort=2)」「决定 notice-decision(sort=3)」
+// 「其它通知 notice-other(sort=99)」五个分类，
+// 各挂 noticeSeedSubs() 17 字段全集；早期笼统内置分类「奖惩」（subs 用 title/eventDate/
+// reason/amount 等错误键，与 NoticeRow 不匹配）软删除。
+// 兼容三类历史脏数据（与合同/制度一致）：
+//  1. 早期笼统分类「奖惩」（id=seed-award_punish-award_punish、builtin_key=award_punish）——退役，由各类型分类承接；
+//  2. 用户在前端自建、与内置同名的分类（UUID、builtin_key 为空）——收编为内置行；
+//  3. 同名重复行——保留最优一行（未删除优先、锚点匹配优先），其余 live 行软删。
+func (h *FleetHandler) reconcileNoticeCategories(ctx context.Context) {
+	now := timeNowUTC()
+
+	// 1) 退役笼统「奖惩」分类：按名称精确匹配（scope=award_punish）
+	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", "award_punish", "奖惩").
+		Update("deleted_at", now).Error; err != nil {
+		logger.Warnf(ctx, "retire legacy generic notice category failed: %v", err)
+	}
+
+	wanted := []struct {
+		Name string
+		Key  string
+		Sort int
+	}{
+		{"通知", "notice-notice", 0},
+		{"公告", "notice-announcement", 1},
+		{"通报", "notice-bulletin", 2},
+		{"决定", "notice-decision", 3},
+		{"其它通知", "notice-other", 99},
+	}
+	fullSubs := noticeSeedSubs()
+
+	for _, w := range wanted {
+		// 查同名全部行（含软删；DeletedAt 为普通 *time.Time，无 GORM 自动软删作用域）
+		var rows []types.FleetCategory
+		if err := h.db.WithContext(ctx).
+			Where("tenant_id = 0 AND scope = ? AND name = ?", "award_punish", w.Name).
+			Find(&rows).Error; err != nil {
+			logger.Warnf(ctx, "reconcile notice category %q query failed: %v", w.Name, err)
+			continue
+		}
+
+		if len(rows) == 0 {
+			// 全新环境：直接创建内置分类
+			cat := types.FleetCategory{
+				ID:         "seed-notice-" + w.Key,
+				TenantID:   0,
+				Scope:      "award_punish",
+				GroupID:    "",
+				BuiltinKey: w.Key,
+				Name:       w.Name,
+				Subs:       fullSubs,
+				SortOrder:  w.Sort,
+				Enabled:    true,
+				CreatedAt:  now,
+				UpdatedAt:  now,
+			}
+			if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
+				logger.Warnf(ctx, "reconcile notice category %q create failed: %v", w.Name, err)
+			} else {
+				logger.Infof(ctx, "reconcile notice category %q created with %d subs", w.Name, len(fullSubs))
+			}
+			continue
+		}
+
+		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先
+		targetIdx := 0
+		for i := range rows {
+			cur, best := &rows[i], &rows[targetIdx]
+			curLive, bestLive := cur.DeletedAt == nil, best.DeletedAt == nil
+			if curLive && !bestLive {
+				targetIdx = i
+			} else if curLive == bestLive && cur.BuiltinKey == w.Key && best.BuiltinKey != w.Key {
+				targetIdx = i
+			}
+		}
+		target := rows[targetIdx]
+
+		// 同名重复的其它 live 行软删
+		for i := range rows {
+			if i == targetIdx || rows[i].DeletedAt != nil {
+				continue
+			}
+			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+				Where("id = ?", rows[i].ID).Update("deleted_at", now).Error; err != nil {
+				logger.Warnf(ctx, "reconcile notice category %q dedup failed: %v", w.Name, err)
+			}
+		}
+
+		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
+		subs := target.Subs
+		have := make(map[string]bool, len(subs))
+		for _, s := range subs {
+			have[s.Name] = true
+		}
+		for _, f := range fullSubs {
+			if !have[f.Name] {
+				subs = append(subs, f)
+				have[f.Name] = true
+			}
+		}
+		raw, merr := json.Marshal(subs)
+		if merr != nil {
+			logger.Warnf(ctx, "reconcile notice category %q marshal failed: %v", w.Name, merr)
+			continue
+		}
+		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("id = ?", target.ID).
+			Updates(map[string]any{
+				"deleted_at":  nil, // 恢复被误软删的行
+				"builtin_key": w.Key,
+				"sort_order":  w.Sort,
+				"enabled":     true,
+				"subs":        gorm.Expr("?::jsonb", string(raw)),
+				"updated_at":  now,
+			}).Error; err != nil {
+			logger.Warnf(ctx, "reconcile notice category %q update failed: %v", w.Name, err)
+		} else {
+			logger.Infof(ctx, "reconcile notice category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
 		}
 	}
 }

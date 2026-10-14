@@ -629,7 +629,7 @@ export function updateKnowledgeMetadata(knowledgeId: string, customMetadata: Rec
   return put(`/api/v1/knowledge/${knowledgeId}`, { custom_metadata: customMetadata });
 }
 
-// 业务元数据手动保存（发票/合同/制度/奖惩等数组型业务记录共用）：走二开 invoice-metadata 路由，
+// 业务元数据手动保存（发票/合同/制度/通知公告等数组型业务记录共用）：走二开 invoice-metadata 路由，
 // 持久化数组型元数据（绕过原生 custom_metadata 标量校验）。force=true 表示用户已确认单号重复，后端跳过查重强制保存
 export function updateBusinessMetadata(kbId: string, knowledgeId: string, customMetadata: Record<string, unknown>, force = false) {
   return put(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/invoice-metadata`, { custom_metadata: customMetadata, force });
@@ -1047,13 +1047,14 @@ export function extractBusinessDocument(
 }
 
 /**
- * 奖惩级聚合列表：服务端全字段搜索、奖惩类型/状态/签发日期筛选、排序与分页
- * （一个当事人一条记录，同一文件多个当事人共享文号）。
+ * 通知公告（原奖惩）级聚合列表：服务端全字段搜索、文件类型/状态/发布日期筛选、排序与分页
+ * （一份文件一份公告，同一文件不拆多条）。
  */
 
 export function listAwardPunishRecords(kbId: string, params: {
   q?: string;
   ap_type?: string;
+  known_categories?: string;
   status?: string;
   date_from?: string;
   date_to?: string;
@@ -1068,8 +1069,8 @@ export function listAwardPunishRecords(kbId: string, params: {
 }
 
 /**
- * 奖惩类型列表：返回该知识库下所有奖惩出现过的去重奖惩类型（含数量），
- * 用于奖惩类型筛选下拉框自动加载。
+ * 通知公告类型列表：返回该知识库下所有公告出现过的去重文件类型（含数量），
+ * 用于通知公告类型筛选下拉框自动加载。
  */
 
 export function listAwardPunishTypes(kbId: string) {

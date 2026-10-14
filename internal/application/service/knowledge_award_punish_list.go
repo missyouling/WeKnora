@@ -119,6 +119,7 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 					ApType:         r.ApType,
 					Person:         r.Person,
 					Dept:           r.Dept,
+					IssueDept:      r.IssueDept,
 					Position:       r.Position,
 					Measure:        r.Measure,
 					Basis:          r.Basis,
@@ -151,8 +152,32 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 	dateFrom, dateTo := strings.TrimSpace(filter.DateFrom), strings.TrimSpace(filter.DateTo)
 	kept := records[:0]
 	for _, r := range records {
-		if filter.ApType != "" && r.ApType != filter.ApType {
-			continue
+		if filter.ApType != "" {
+			// 「其它通知」为排除式桶，与 AwardPunishOverviewStats 卡片口径一致：
+			// ap_type 不属于启用分类集合（含空/已删除分类旧值）的记录归入此筛选。
+			// 前端卡片计数 = 总数 - 各启用分类卡之和。
+			if filter.ApType == "其它通知" {
+				if len(filter.KnownCategories) > 0 {
+					known := make(map[string]struct{}, len(filter.KnownCategories))
+					for _, name := range filter.KnownCategories {
+						// 「其它通知」本身是排除式桶的归属目标，不作为「已分类」剔除
+						if name == "其它通知" {
+							continue
+						}
+						known[name] = struct{}{}
+					}
+					if r.ApType != "" {
+						if _, ok := known[r.ApType]; ok {
+							continue
+						}
+					}
+				} else if r.ApType != "" && r.ApType != "其它通知" {
+					// 向后兼容：未传分类集合时，非空且非其它通知的记录排除
+					continue
+				}
+			} else if r.ApType != filter.ApType {
+				continue
+			}
 		}
 		if filter.Status != "" && r.ExtractStatus != filter.Status {
 			continue
@@ -232,7 +257,7 @@ func awardPunishDateInRange(date, from, to string) bool {
 // awardPunishRecordMatchKeyword 判断记录是否命中全字段搜索词（大小写不敏感）。
 func awardPunishRecordMatchKeyword(r types.AwardPunishRecord, kw string) bool {
 	fields := []string{
-		r.ApNo, r.ApTitle, r.ApType, r.Person, r.Dept, r.Position,
+		r.ApNo, r.ApTitle, r.ApType, r.Person, r.Dept, r.IssueDept, r.Position,
 		r.Measure, r.Basis, r.Signer, r.SignDate, r.EffectiveDate,
 		r.Remark, r.Summary,
 		r.FileName, r.KnowledgeTitle, r.ExtractStatus, r.ExtractError,
@@ -287,7 +312,7 @@ func (s *BusinessExtractService) ListAwardPunishTypes(ctx context.Context, kbID 
 	}
 	// 固定枚举顺序优先，再补自定义类型
 	ordered := []types.AwardPunishTypeCount{}
-	for _, t := range []string{"处罚", "奖励", "通报", "其它奖惩"} {
+	for _, t := range []string{"通知", "公告", "通报", "决定", "其它通知"} {
 		if c, ok := seen[t]; ok {
 			ordered = append(ordered, types.AwardPunishTypeCount{ApType: t, Count: c})
 			delete(seen, t)
@@ -370,8 +395,9 @@ func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, k
 		page++
 	}
 
-	stats := &types.AwardPunishOverviewStats{
-		ByApType: []types.AwardPunishTypeStat{},
+		stats := &types.AwardPunishOverviewStats{
+		ByApType:   []types.AwardPunishTypeStat{},
+		ByCategory: []types.NoticeCategoryStat{},
 	}
 	stats.Total = len(records)
 	stats.FileCount = fileCount
@@ -381,6 +407,8 @@ func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, k
 	monthPrefix := now.Format("2006-01")
 	monthPrefixCompact := now.Format("200601")
 	typeCount := make(map[string]int)
+	// 按用户定义分类（ap_type 精确值）分组：ap_type 为空/空白归「未分类」。
+	catByMap := map[string]*types.NoticeCategoryStat{}
 	for _, r := range records {
 		d := strings.TrimSpace(r.signDate)
 		if d != "" && (strings.HasPrefix(d, monthPrefix) || strings.HasPrefix(d, monthPrefixCompact)) {
@@ -388,13 +416,34 @@ func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, k
 		}
 		t := strings.TrimSpace(r.apType)
 		if t == "" {
-			t = "其它奖惩"
+			t = "其它通知"
 		}
 		typeCount[t]++
+
+		cat := strings.TrimSpace(r.apType)
+		if cat == "" {
+			cat = "未分类"
+		}
+		c := catByMap[cat]
+		if c == nil {
+			c = &types.NoticeCategoryStat{Category: cat}
+			catByMap[cat] = c
+		}
+		c.Count++
 	}
 	for t, c := range typeCount {
 		stats.ByApType = append(stats.ByApType, types.AwardPunishTypeStat{ApType: t, Count: c})
 	}
 	sort.Slice(stats.ByApType, func(i, j int) bool { return stats.ByApType[i].Count > stats.ByApType[j].Count })
+	for _, t := range catByMap {
+		stats.ByCategory = append(stats.ByCategory, *t)
+	}
+	// 分类桶按份数降序、分类名升序，稳定排序（与发票/合同/制度 ByCategory 一致）
+	sort.Slice(stats.ByCategory, func(i, j int) bool {
+		if stats.ByCategory[i].Count != stats.ByCategory[j].Count {
+			return stats.ByCategory[i].Count > stats.ByCategory[j].Count
+		}
+		return stats.ByCategory[i].Category < stats.ByCategory[j].Category
+	})
 	return stats, nil
 }

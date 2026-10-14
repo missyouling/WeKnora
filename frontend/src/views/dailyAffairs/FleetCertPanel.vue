@@ -169,6 +169,8 @@ import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
+import { regulationFieldLabel } from './regulationFieldLabels'
+import { noticeFieldLabel } from './noticeFieldLabels'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
@@ -184,12 +186,12 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   invoice: [{ key: 'invoice', label: '发票', scope: 'invoice', groupId: '' }],
   contract: [{ key: 'contract', label: '合同', scope: 'contract', groupId: '' }],
   regulation: [{ key: 'regulation', label: '制度', scope: 'regulation', groupId: '' }],
-  award_punish: [{ key: 'award_punish', label: '奖惩', scope: 'award_punish', groupId: '' }],
+  award_punish: [{ key: 'award_punish', label: '通知', scope: 'award_punish', groupId: '' }],
 }
 
 // 分类名称列文案：按 scope 语义化显示（证照/发票类型/合同类型）
 function scopeName(scope: string) {
-  return scope === 'maintain' ? '维保项名称' : scope === 'invoice' ? '发票类型' : scope === 'contract' ? '合同类型' : scope === 'regulation' ? '制度名称' : scope === 'award_punish' ? '奖惩名称' : '证照名称'
+  return scope === 'maintain' ? '维保项名称' : scope === 'invoice' ? '发票类型' : scope === 'contract' ? '合同类型' : scope === 'regulation' ? '制度名称' : scope === 'award_punish' ? '通知名称' : '证照名称'
 }
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
@@ -571,7 +573,15 @@ function toggleEdit(item: any) {
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
 const fieldDelPop = ref<any>(null)
-const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice' ? invoiceFieldLabel(fd.name) : group.value.scope === 'contract' ? contractFieldLabel(fd.name) : fd.desc || fd.name)
+const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice'
+  ? invoiceFieldLabel(fd.name)
+  : group.value.scope === 'contract'
+    ? contractFieldLabel(fd.name)
+    : group.value.scope === 'regulation'
+      ? regulationFieldLabel(fd.name)
+      : group.value.scope === 'award_punish'
+        ? noticeFieldLabel(fd.name)
+        : fd.desc || fd.name)
 const fieldMenuOptions = (fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },

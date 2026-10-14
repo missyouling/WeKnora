@@ -326,14 +326,24 @@ func (h *BusinessExtractHandler) ListAwardPunishRecords(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, pageSize := parseSandboxPagination(c)
+	// known_categories：启用分类名集合（逗号分隔），供「其它通知」排除式筛选使用
+	var knownCategories []string
+	if kc := c.Query("known_categories"); kc != "" {
+		for _, name := range strings.Split(kc, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				knownCategories = append(knownCategories, name)
+			}
+		}
+	}
 	filter := types.AwardPunishListFilter{
-		Keyword:  c.Query("q"),
-		ApType:   c.Query("ap_type"),
-		Status:   c.Query("status"),
-		DateFrom: c.Query("date_from"),
-		DateTo:   c.Query("date_to"),
-		Page:     page,
-		PageSize: pageSize,
+		Keyword:         c.Query("q"),
+		ApType:          c.Query("ap_type"),
+		KnownCategories: knownCategories,
+		Status:          c.Query("status"),
+		DateFrom:        c.Query("date_from"),
+		DateTo:          c.Query("date_to"),
+		Page:            page,
+		PageSize:        pageSize,
 	}
 
 	result, err := h.businessSvc.ListAwardPunishRecords(effCtx, kbID, filter)

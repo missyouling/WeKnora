@@ -476,12 +476,13 @@ type regulationCustomMetadata struct {
 
 // awardPunishCustomMetadata is the persisted shape written into a knowledge
 // entry's custom_metadata by ExtractAwardPunish. The frontend reads exactly
-// these keys to render the award/punish management list.
+// these keys to render the notice/announcement management list.
 type awardPunishCustomMetadata struct {
 	Kind          string                            `json:"kind"`
 	Records       []types.AwardPunishExtractionItem `json:"records"`
 	ExtractStatus string                            `json:"extract_status"`
 	ExtractError  string                            `json:"extract_error"`
+	FleetCertType string                            `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
 }
 
 // awardPunishBatchesHaveText reports whether any extraction batch carries usable
@@ -685,6 +686,77 @@ func (h *BusinessExtractHandler) applyRegulationUserCategoryPrecedence(ctx conte
 			allSame := true
 			for _, r := range meta.Regulations {
 				if strings.TrimSpace(r.RegType) != first {
+					allSame = false
+					break
+				}
+			}
+			if allSame {
+				if _, ok := activeTypes[first]; ok {
+					meta.FleetCertType = first
+				}
+			}
+		}
+	}
+}
+
+// enabledNoticeCategoryNames 返回当前已启用的通知公告分类名（scope=award_punish，
+// tenant_id=0 内置分类），按 sort_order 升序。与发票/合同/制度口径一致。
+func (h *BusinessExtractHandler) enabledNoticeCategoryNames(ctx context.Context) []string {
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND enabled = TRUE AND deleted_at IS NULL", "award_punish").
+		Order("sort_order ASC, created_at ASC").Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "load enabled notice categories failed: %v", err)
+		return nil
+	}
+	names := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// applyNoticeUserCategoryPrecedence 在通知公告写库前执行「用户指定分类绝对优先 +
+// 停用分类隔离」，与发票/合同/制度 applyUserCategoryPrecedence 口径对齐：
+//   - certType 非空（上传弹窗选择）：无视模型与自定义识别规则提议的类型，同文件下全部
+//     公告记录的 ApType 统一赋值为用户指定分类；
+//   - certType 为空（直连重提取）：提取类型必须落在当前已启用通知公告分类集合内，命中停用
+//     分类或无法匹配的类型降级「其它通知」；空类型保持为空（前端显示 --）。
+func (h *BusinessExtractHandler) applyNoticeUserCategoryPrecedence(ctx context.Context, meta *awardPunishCustomMetadata, certType string) {
+	if meta == nil {
+		return
+	}
+	activeTypes := make(map[string]struct{})
+	for _, n := range h.enabledNoticeCategoryNames(ctx) {
+		activeTypes[n] = struct{}{}
+	}
+	if certType = strings.TrimSpace(certType); certType != "" {
+		for i := range meta.Records {
+			meta.Records[i].ApType = certType
+		}
+		meta.FleetCertType = certType
+		return
+	}
+	for i := range meta.Records {
+		t := strings.TrimSpace(meta.Records[i].ApType)
+		if t == "" {
+			continue
+		}
+		if _, ok := activeTypes[t]; ok {
+			continue
+		}
+		meta.Records[i].ApType = "其它通知"
+	}
+	// certType 缺失（历史遗留文件无 fleet_cert_type）但同文件所有公告最终都归属同一个
+	// 启用分类时，补回文件级打标，避免这类文件每次直连重提都被错误降级。
+	if meta.FleetCertType == "" && len(meta.Records) > 0 {
+		first := strings.TrimSpace(meta.Records[0].ApType)
+		if first != "" && first != "其它通知" {
+			allSame := true
+			for _, r := range meta.Records {
+				if strings.TrimSpace(r.ApType) != first {
 					allSame = false
 					break
 				}
@@ -1803,7 +1875,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-award-punish [post]
 
-func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
+func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType string) {
 	ctx := c.Request.Context()
 	kbID := secutils.SanitizeForLog(c.Param("id"))
 	knowledgeID := secutils.SanitizeForLog(c.Param("knowledgeId"))
@@ -1818,7 +1890,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		return
 	}
 	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
-		c.Error(errors.NewForbiddenError("No permission to extract award/punish fields"))
+		c.Error(errors.NewForbiddenError("No permission to extract notice fields"))
 		return
 	}
 	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
@@ -1829,16 +1901,37 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	defer h.extractMu.Delete(knowledgeID)
 
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库 failed 状态。
+	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
+	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
 	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
 	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
-	knowledge, err := h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
+	var knowledge *types.Knowledge
+	// panic 兜底：提取协程任何 panic 都强制落 failed 状态（用独立 ctx），
+	// 保证状态闭环，不允许永久转圈。
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "Notice extraction panic recovered: %v\n%s", r, debug.Stack())
+			var panicPrev []byte
+			if knowledge != nil {
+				panicPrev = knowledge.CustomMetadata
+			}
+			failMeta := mergeFailedStateMeta(panicPrev, "award_punish", fmt.Sprintf("notice extraction panic: %v", r))
+			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
+				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
+			}
+			if !c.Writer.Written() {
+				c.Error(errors.NewInternalServerError(fmt.Sprintf("notice extraction panic: %v", r)))
+			}
+		}
+	}()
+
+	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
-		logger.Error(ctx, "Failed to get knowledge for award/punish extraction", err)
+		logger.Error(ctx, "Failed to get knowledge for notice extraction", err)
 		c.Error(errors.NewNotFoundError("Knowledge not found"))
 		return
 	}
@@ -1854,7 +1947,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 	var curAPMeta awardPunishCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curAPMeta)
 	if curAPMeta.ExtractStatus == "manual" {
-		logger.Infof(ctx, "Award/punish extraction skipped: knowledge %s is manual intake", knowledgeID)
+		logger.Infof(ctx, "Notice extraction skipped: knowledge %s is manual intake", knowledgeID)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "待补录记录，无需重复提取",
@@ -1877,7 +1970,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 
 	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
-		logger.Error(ctx, "Failed to list chunks for award/punish extraction", err)
+		logger.Error(ctx, "Failed to list chunks for notice extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
 		return
 	}
@@ -1888,9 +1981,9 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		zhNotice, enNotice := noExtractableTextNotice(knowledge.ParseStatus)
 		noTextMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "award_punish", zhNotice)
 		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, noTextMeta); serr != nil {
-			logger.Warnf(ctx, "Failed to persist award/punish no-text state: %v", serr)
+			logger.Warnf(ctx, "Failed to persist notice no-text state: %v", serr)
 		}
-		logger.Warnf(ctx, "Award/punish extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
+		logger.Warnf(ctx, "Notice extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": enNotice,
@@ -1899,40 +1992,53 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		return
 	}
 	merged := &service.AwardPunishExtractionResult{Kind: "award_punish"}
-	// 措施库约束：提取时 measure 仅从配置的措施列表中选取（用户自定义 + 默认兜底）
-	extractMeasures := make([]string, 0, 16)
-	measureSeen := map[string]bool{}
-	if measureCfg, merr := h.kgService.GetRecognitionConfig(extractCtx, kbID); merr == nil {
-		for _, m := range measureCfg.Measures {
-			if n := strings.TrimSpace(m.Name); n != "" && !measureSeen[n] {
-				measureSeen[n] = true
-				extractMeasures = append(extractMeasures, n)
-			}
-		}
-	}
-	if len(extractMeasures) == 0 {
-		for _, m := range types.DefaultAwardPunishRecognitionConfig().Measures {
-			if n := strings.TrimSpace(m.Name); n != "" && !measureSeen[n] {
-				measureSeen[n] = true
-				extractMeasures = append(extractMeasures, n)
-			}
-		}
-	}
 	var extractErr error
 	sawRecord := false
-	// 用户配置的提取规则（scope=award_punish）：为空时 WithRules 行为与默认版一致
-	awardPunishRuleCfg := h.resolveAwardPunishRuleCfg(extractCtx, kbID)
+	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
+	//「正在提取」（避免点重新提取后状态列短暂停留在旧值/failed）。合并保留既有字段
+	//（fleet_cert_type、旧 records 等），提取成功/失败路径会用终态整体覆盖。
+	procMeta := map[string]interface{}{"kind": "award_punish", "extract_status": "processing"}
+	if len(knowledge.CustomMetadata) > 0 {
+		var prev map[string]interface{}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &prev); jerr == nil {
+			for k, v := range prev {
+				if _, exists := procMeta[k]; !exists {
+					procMeta[k] = v
+				}
+			}
+		}
+	}
+	delete(procMeta, "extract_error")
+	if pmeta, jerr := json.Marshal(procMeta); jerr == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(pmeta)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist notice processing-state: %v", serr)
+		}
+	}
+	// 规则解析：优先请求携带的归档类型（上传弹窗 body.cert_type），未携带时回退文件级
+	// 打标 fleet_cert_type，再按 resolveNoticeRuleCfg 回退整体规则。
+	ruleCertType := certType
+	if ruleCertType == "" && len(knowledge.CustomMetadata) > 0 {
+		var mdMeta struct {
+			FleetCertType string `json:"fleet_cert_type"`
+		}
+		if jerr := json.Unmarshal(knowledge.CustomMetadata, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
+			ruleCertType = mdMeta.FleetCertType
+		}
+	}
+	// 用户配置的提取规则（scope=award_punish）：按归档分类匹配，未配置时回退整体规则
+	noticeRuleCfg := h.resolveNoticeRuleCfg(extractCtx, kbID, ruleCertType)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractAwardPunishesFromContentWithRules(extractCtx, chatModel, batch, extractMeasures, awardPunishRuleCfg)
+		// measures 传 nil：通知公告的「处理决定」为自由文本，不再约束到固定措施库
+		batchRes, berr := service.ExtractAwardPunishesFromContentWithRules(extractCtx, chatModel, batch, nil, noticeRuleCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
 				break
 			}
-			logger.Warnf(ctx, "Award/punish extraction batch %d failed (non-fatal): %v", i+1, berr)
+			logger.Warnf(ctx, "Notice extraction batch %d failed (non-fatal): %v", i+1, berr)
 			continue
 		}
 		if batchRes == nil || batchRes.Kind == "not_award_punish" {
@@ -1945,25 +2051,21 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		merged.Kind = "not_award_punish"
 	}
 	if extractErr != nil {
-		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "award_punish", "award/punish extraction failed: "+extractErr.Error())
+		failMeta := mergeFailedStateMeta(knowledge.CustomMetadata, "award_punish", "notice extraction failed: "+extractErr.Error())
 		if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
-			logger.Warnf(ctx, "Failed to persist award/punish extraction failed-state: %v", serr)
+			logger.Warnf(ctx, "Failed to persist notice extraction failed-state: %v", serr)
 		}
-		logger.Error(ctx, "Award/punish extraction model call failed", extractErr)
-		c.Error(errors.NewInternalServerError("award/punish extraction failed: " + extractErr.Error()))
+		logger.Error(ctx, "Notice extraction model call failed", extractErr)
+		c.Error(errors.NewInternalServerError("notice extraction failed: " + extractErr.Error()))
 		return
 	}
 	extracted := merged
-	// 自动编号去重：无文号的奖惩按当天已有最大序号 +1 顺序递增（跨文件唯一）
+	// 自动编号去重：无文号的通知按当天已有最大序号 +1 顺序递增（跨文件唯一）
 	autoSeq, seqErr := h.businessSvc.MaxAutoAwardPunishSeq(extractCtx, kbID)
 	if seqErr != nil {
-		logger.Warnf(ctx, "Failed to compute auto award/punish seq for %s: %v", kbID, seqErr)
+		logger.Warnf(ctx, "Failed to compute auto notice seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeAwardPunishExtractionResult(extracted, autoSeq)
-	// 措施二次清洗：仅保留措施库命中的选项，避免 LLM 输出库外自由文本
-	for i := range extracted.Records {
-		extracted.Records[i].Measure = service.FilterMeasuresByLibrary(extracted.Records[i].Measure, extractMeasures)
-	}
 
 	meta := awardPunishCustomMetadata{
 		Kind:          extracted.Kind,
@@ -1971,8 +2073,8 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		ExtractStatus: "success",
 		ExtractError:  extracted.ExtractError,
 	}
-	// 自定义识别规则：奖惩类型归类（用户可配置关键词/正则 → 奖惩类型），
-	// 按模型提取出的奖惩类型字段匹配，命中则覆盖模型结果。
+	// 自定义识别规则：通知类型归类（用户可配置关键词/正则 → 通知类型），
+	// 按模型提取出的通知类型字段匹配，命中则覆盖模型结果。
 	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 		for i := range meta.Records {
 			if t := service.ClassifyTypeFromRules(meta.Records[i].ApType, recCfg); t != "" {
@@ -1980,24 +2082,28 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 			}
 		}
 	}
+	// 用户归档分类绝对优先（六同步核心）：上传弹窗选择的分类绝对优先于模型/识别规则结果，
+	// 同文件所有公告都归到该分类；certType 为空时按 enabled 分类做隔离/降级
+	//（与发票/合同/制度 applyUserCategoryPrecedence 口径一致）。
+	h.applyNoticeUserCategoryPrecedence(extractCtx, &meta, certType)
 	if extracted.Kind == "not_award_punish" {
-		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为奖惩，置 manual 待补录，
-		// 不自动删除（解决"该是奖惩却没入库"的误判）。
+		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为通知公告，置 manual 待补录，
+		// 不自动删除（解决"该是通知公告却没入库"的误判）。
 		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
 			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
 				meta.Kind = "award_punish"
 				meta.Records = []types.AwardPunishExtractionItem{}
 				meta.ExtractStatus = "manual"
-				meta.ExtractError = "识别规则命中，已认定为奖惩，请编辑补录字段"
+				meta.ExtractError = "识别规则命中，已认定为通知公告，请编辑补录字段"
 				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(raw)); serr != nil {
-						logger.Warnf(ctx, "Failed to persist rule-rescued award/punish meta: %v", serr)
+					if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(raw)); serr != nil {
+						logger.Warnf(ctx, "Failed to persist rule-rescued notice meta: %v", serr)
 					}
 				}
-				logger.Infof(ctx, "Award/punish rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
+				logger.Infof(ctx, "Notice rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
 					"success": true,
-					"message": "识别规则命中，已认定为奖惩，请在列表中编辑补录字段",
+					"message": "识别规则命中，已认定为通知公告，请在列表中编辑补录字段",
 					"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "manual", "removed": false},
 				})
 				return
@@ -2005,36 +2111,36 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		}
 		meta.ExtractStatus = "not_award_punish"
 		if meta.ExtractError == "" {
-			meta.ExtractError = "document does not look like an award/punish notice"
+			meta.ExtractError = "document does not look like a notice/announcement"
 		}
 		// 防循环：auto_deleted_count >= 1 说明该文件曾被自动删除后由用户从删除历史
-		// 恢复，再次判定非奖惩不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
+		// 恢复，再次判定非通知公告不再自动删除，改为 failed 保留（避免 删除→恢复→删除 死循环）。
 		if h.autoDeleteCount(extractCtx, knowledge) > 0 {
 			meta.ExtractStatus = "failed"
-			meta.ExtractError = "系统判定非奖惩文件，但该文件已被人工恢复，已保留待人工处理"
-			logger.Warnf(ctx, "Award/punish re-extraction judged non-award/punish but row was restored before; keeping file %s", knowledgeID)
+			meta.ExtractError = "系统判定非通知公告文件，但该文件已被人工恢复，已保留待人工处理"
+			logger.Warnf(ctx, "Notice re-extraction judged non-notice but row was restored before; keeping file %s", knowledgeID)
 		} else {
-			// 非奖惩文件不能存在于奖惩知识库 → 提取判定后自动删除该文件（保留物理文件，
+			// 非通知公告文件不能存在于通知公告知识库 → 提取判定后自动删除该文件（保留物理文件，
 			// 写入删除历史，可在"删除历史"抽屉中查看/恢复/永久删除）
 			if delErr := h.kgService.AutoDeleteKnowledge(extractCtx, knowledgeID, "not_award_punish"); delErr != nil {
-				logger.Warnf(ctx, "auto-delete non-award/punish knowledge failed: %v", delErr)
+				logger.Warnf(ctx, "auto-delete non-notice knowledge failed: %v", delErr)
 			} else {
-				logger.Infof(ctx, "auto-deleted non-award/punish knowledge, ID: %s", knowledgeID)
+				logger.Infof(ctx, "auto-deleted non-notice knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
 					"success": true,
-					"message": "非奖惩文件已移至删除历史，可在删除历史中恢复",
+					"message": "非通知公告文件已移至删除历史，可在删除历史中恢复",
 					"data":    map[string]interface{}{"removed": true, "kind": "not_award_punish"},
 				})
 				return
 			}
 		}
 	}
-	// 空提取守卫：标记为奖惩但没有可用记录（空数组或全部空字段）→ failed 可重试
+	// 空提取守卫：标记为通知公告但没有可用记录（空数组或全部空字段）→ failed 可重试
 	if meta.Kind == "award_punish" {
 		if len(meta.Records) == 0 {
 			meta.ExtractStatus = "failed"
 			if meta.ExtractError == "" {
-				meta.ExtractError = "提取未返回任何奖惩记录，请重试"
+				meta.ExtractError = "提取未返回任何通知公告记录，请重试"
 			}
 		} else if service.AwardPunishRecordsAllEmpty(meta.Records) {
 			meta.ExtractStatus = "failed"
@@ -2047,22 +2153,39 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
 		return
 	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(extractCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
-		logger.Error(ctx, "Failed to persist award/punish extraction result", err)
+	// 最终保存合并而非覆盖：序列化本次新 meta 后与 knowledge.CustomMetadata 旧值合并
+	//（保留 auto_deleted_count 等本次新 meta 不含的字段），再用 persistCtx 落库；
+	// 前端超时/取消请求后仍可写入（与发票/合同/制度最终保存口径一致）。
+	if len(knowledge.CustomMetadata) > 0 {
+		var existing map[string]interface{}
+		if uerr := json.Unmarshal(knowledge.CustomMetadata, &existing); uerr == nil {
+			var fresh map[string]interface{}
+			if uerr := json.Unmarshal(metaJSON, &fresh); uerr == nil {
+				for k, v := range fresh {
+					existing[k] = v
+				}
+				if merged, merr := json.Marshal(existing); merr == nil {
+					metaJSON = merged
+				}
+			}
+		}
+	}
+	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
+		logger.Error(ctx, "Failed to persist notice extraction result", err)
 		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
 		return
 	}
 
-	logger.Infof(ctx, "Award/punish extraction succeeded, knowledge ID: %s, kind: %s, records: %d",
+	logger.Infof(ctx, "Notice extraction succeeded, knowledge ID: %s, kind: %s, records: %d",
 		knowledgeID, meta.Kind, len(meta.Records))
 	if meta.ExtractStatus == "failed" {
-		logger.Warnf(ctx, "Award/punish extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
+		logger.Warnf(ctx, "Notice extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
 		c.Error(errors.NewInternalServerError(meta.ExtractError))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "Award/punish extraction succeeded",
+		"message": "Notice extraction succeeded",
 		"data": map[string]interface{}{
 			"knowledge_id":   knowledgeID,
 			"kind":           meta.Kind,
@@ -2444,7 +2567,7 @@ func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	case "regulation":
 		h.ExtractRegulation(c, body.CertType)
 	case "award_punish":
-		h.ExtractAwardPunish(c)
+		h.ExtractAwardPunish(c, body.CertType)
 	default:
 		c.Error(errors.NewBadRequestError("unknown business scope: " + body.Scope))
 	}
