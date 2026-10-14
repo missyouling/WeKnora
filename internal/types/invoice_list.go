@@ -46,10 +46,12 @@ type InvoiceRecord struct {
 
 // InvoiceExtractionItemItems 是发票明细行（与 service 层结构对齐，避免跨包引用）。
 type InvoiceExtractionItemItems struct {
-	Name    string   `json:"name"`
-	Qty     *float64 `json:"qty"`
-	Price   *float64 `json:"price"`
-	TaxRate *float64 `json:"tax_rate"`
+	Name      string   `json:"name"`
+	Qty       *float64 `json:"qty"`
+	Price     *float64 `json:"price"`
+	Amount    *float64 `json:"amount"`
+	TaxRate   *float64 `json:"tax_rate"`
+	TaxAmount *float64 `json:"tax_amount"`
 }
 
 // InvoiceListFilter 是发票级聚合列表查询参数。

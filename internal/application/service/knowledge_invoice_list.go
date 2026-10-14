@@ -138,10 +138,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
-						Name:    it.Name,
-						Qty:     it.Qty,
-						Price:   it.Price,
-						TaxRate: it.TaxRate,
+						Name:      it.Name,
+						Qty:       it.Qty,
+						Price:     it.Price,
+						Amount:    it.Amount,
+						TaxRate:   it.TaxRate,
+						TaxAmount: it.TaxAmt,
 					})
 				}
 				records = append(records, types.InvoiceRecord{
@@ -521,10 +523,12 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
-						Name:    it.Name,
-						Qty:     it.Qty,
-						Price:   it.Price,
-						TaxRate: it.TaxRate,
+						Name:      it.Name,
+						Qty:       it.Qty,
+						Price:     it.Price,
+						Amount:    it.Amount,
+						TaxRate:   it.TaxRate,
+						TaxAmount: it.TaxAmt,
 					})
 				}
 				records = append(records, types.InvoiceRecord{

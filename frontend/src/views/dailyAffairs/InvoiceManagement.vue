@@ -700,11 +700,6 @@ const tableColumns = computed(() => {
         const v = colValue(row, c.key)
         return v === '-' ? '-' : formatAmount(Number(v))
       }
-    } else if (c.key === 'taxRate') {
-      base.cell = (_h: any, { row }: any) => {
-        const v = colValue(row, c.key)
-        return v === '-' ? '-' : formatRate(Number(v))
-      }
     } else if (!INVOICE_FIELD_LABELS[c.key]) {
       // 自定义动态字段列（如通行费发票「车牌号」）：数据存于 row.fields 扩展桶，
       // TDesign 默认只读 row[colKey] 不查 fields，导致这类列长期渲染为空。
