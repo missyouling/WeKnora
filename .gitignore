@@ -69,3 +69,6 @@ server.exe
 *.exe~
 duckdb.dll
 
+
+# AGENTS.md 仅本地/VM 维护，不进远端仓库
+AGENTS.md
