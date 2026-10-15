@@ -1802,7 +1802,16 @@ const handleFileExtract = async () => {
   } catch (e: any) {
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
-    ids.forEach(kid => extractInFlight.value.delete(kid))
+    // asynq 化后 POST 200 仅代表入队成功，不代表提取完成：
+    // 成功提交/409 的文件保留 in-flight，由 useBusinessPolling 轮询在 es 到
+    // 终态（success/failed）时统一回收——若此处提前删除，下一轮 3s 轮询
+    // 看到 es=processing 且不在 in-flight 会重复提交 → 后端 extractMu 409。
+    // 仅真实失败（非 409）删除 in-flight，避免文件因 in-flight 残留永久卡死。
+    results.forEach((r, i) => {
+      if (r.status === 'rejected' && (r.reason as any)?.$httpStatus !== 409) {
+        extractInFlight.value.delete(ids[i])
+      }
+    })
     extractBusy.value = false
   }
 }

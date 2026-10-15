@@ -77,7 +77,10 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           const es = item.custom_metadata?.extract_status
           const failedAt = extractFailed.value.get(item.id)
           const canRetry = !failedAt || Date.now() - failedAt > RETRY_AFTER_MS
-          if ((!es || es === 'pending' || es === 'processing') &&
+          // 只对「从未提取（空）或已入队待处理（pending）」提交；
+          // es=processing 是后端 worker 正在提取的过程态（extractMu 已持锁），
+          // 前端再次提交必然 409——processing 只进下方 pend 状态条展示，等终态。
+          if ((!es || es === 'pending') &&
               !extractInFlight.value.has(item.id) && canRetry) {
             needExtract.push(item)
           }
@@ -94,8 +97,10 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
       for (const item of needExtract.slice(0, 5)) {
         extractInFlight.value.add(item.id)
         let conflict = false
+        let succeeded = false
         try {
           const r: any = await extractFn(kbId.value, item.id)
+          succeeded = true
           if (r?.data?.removed) onRemoved?.(item)
         } catch (e: any) {
           // 409：后端 extractMu 判定该文件正被其他请求提取（如手动重新提取持锁、
@@ -106,12 +111,14 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
             extractFailed.value.set(item.id, Date.now())
           }
         } finally {
-          // 正常成败都移除 in-flight：成功时后端已同步写 extract_status；
-          // 失败时靠 extractFailed 做 5 分钟退避。不移除会导致永久死锁——
-          // 若后端未写入 extract_status（如超时/崩溃），下轮扫描因
-          // extractInFlight.has(id) 而永不重试，文件永久卡在"提取中"。
-          // 唯一例外：409 冲突时保留 in-flight，避免与在途请求每轮打架。
-          if (!conflict) extractInFlight.value.delete(item.id)
+          // asynq 化后 POST 200 仅代表入队成功，不代表提取完成：
+          // 成功入队/409 都保留 in-flight，由下方「终态清残留」在 es 到
+          // success/failed 时统一回收——若此处提前删除，下一轮扫描看到
+          // es=processing 且不在 in-flight 会重复提交 → 后端 extractMu 409。
+          // 仅真实失败（非 409 且未成功）删除 in-flight，允许下轮按
+          // extractFailed 5 分钟退避重试；否则该文件会因 in-flight 残留
+          // 永久无法再提取。
+          if (!succeeded && !conflict) extractInFlight.value.delete(item.id)
         }
       }
       // 清理 in-flight 残留：仅当后端 es 已到终态（success/failed）才移除——

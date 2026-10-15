@@ -347,9 +347,16 @@ async function runTask(t: UpTask) {
           sharedExtractInFlight.add(kid)
           try {
             await extractFile(kid, scope, certType)
-          } finally {
-            sharedExtractInFlight.delete(kid)
+          } catch (err: any) {
+            // 409：后端 extractMu 判定在途，保留 in-flight 由列表轮询终态回收，
+            // 外层 catch 走 waitExtractSettled 跟随；其他真实失败删除 in-flight
+            // 允许后续重试，避免残留永久卡死。
+            if ((err as any)?.$httpStatus !== 409) sharedExtractInFlight.delete(kid)
+            throw err
           }
+          // 成功入队（POST 200 不代表提取完成）：保留 in-flight，
+          // 由列表轮询在 es 到 success/failed 终态时统一回收，
+          // 避免下一轮轮询看到 es=processing 且不在 in-flight 重复提交 → 409。
         }
         t.status = 'success'
         t.progress = 100
