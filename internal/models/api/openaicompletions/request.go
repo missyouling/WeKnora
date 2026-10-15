@@ -354,9 +354,13 @@ func (c *Client) applyThinking(body map[string]any, opts *api.Options, stream bo
 		enabled = false
 	}
 	if !enabled && !levels.Supports(api.ReasoningOff) {
-		// Always-on reasoning model: there is nothing to switch off and the
-		// vendor rejects the attempt.
-		return
+		// Always-on reasoning model: thinking cannot be switched off and the
+		// vendor rejects `thinking.type: disabled`. Sending nothing would let
+		// the vendor default to its strongest thinking, which can burn the
+		// entire completion budget on reasoning and return empty content.
+		// Downgrade to the weakest supported graded level instead.
+		level = levels.Clamp(api.ReasoningMinimal)
+		enabled = level.Enabled()
 	}
 
 	effort := ""

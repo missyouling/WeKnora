@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -581,9 +582,21 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 	}
 	var parsed *InvoiceExtractionResult
 	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
+		logInvoiceReplyUnparsable(ctx, result.Content, err)
 		return nil, err
 	}
 	return parsed, nil
+}
+
+// logInvoiceReplyUnparsable 记录模型返回原文诊断信息，用于定位
+// "parse invoice extraction response: unexpected end of JSON input" 根因
+// （输出截断 / 空内容 / 非 JSON 包装）。
+func logInvoiceReplyUnparsable(ctx context.Context, raw string, err error) {
+	snippet := raw
+	if len(snippet) > 400 {
+		snippet = snippet[:400]
+	}
+	logger.Errorf(ctx, "invoice rule reply unparsable: content_len=%d head=%q err=%v", len(raw), snippet, err)
 }
 
 // ExtractInvoicesFromContentWithRulesGuided 与 ExtractInvoicesFromContentWithRules
@@ -610,6 +623,7 @@ func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.C
 	}
 	var parsed *InvoiceExtractionResult
 	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
+		logInvoiceReplyUnparsable(ctx, result.Content, err)
 		return nil, err
 	}
 	return parsed, nil
