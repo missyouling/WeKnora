@@ -342,9 +342,17 @@ func (c *Client) applyThinking(body map[string]any, opts *api.Options, stream bo
 	level, requested := opts.Reasoning()
 	if !requested {
 		if !s.ThinkingAlwaysSend {
-			return
+			// Always-on reasoning model: no explicit reasoning requested, but the
+			// vendor defaults to max thinking if we send nothing, burning the
+			// entire completion budget. Downgrade to minimal instead of skipping.
+			if !levels.Supports(api.ReasoningOff) {
+				level = levels.Clamp(api.ReasoningMinimal)
+			} else {
+				return
+			}
+		} else {
+			level = api.ReasoningOff
 		}
-		level = api.ReasoningOff
 	}
 	if level.Graded() {
 		level = levels.Clamp(level)
