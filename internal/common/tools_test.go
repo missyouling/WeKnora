@@ -25,6 +25,16 @@ func TestParseLLMJsonResponse(t *testing.T) {
 		{"trailing citation", `{"key":"cited"} — see section [1].`, "cited", false},
 		// Braces inside a string literal must not close the object early.
 		{"braces in string", `Result: {"key":"a}b"} done`, "a}b", false},
+		// MaxTokens 截断场景：反引号开头但围栏未闭合、对象被截断。
+		{"unclosed fence prefix", "```json\n{\"key\":\"fence\"}", "fence", false},
+		{"unclosed fence truncated", "```json\n{\"key\":\"trunc", "trunc", false},
+		{"bare backtick prefix", "`{\"key\":\"tick\"}", "tick", false},
+		{"truncated object", `{"key":"trunc`, "trunc", false},
+		{"truncated array", `{"key":["a","b`, "", true},
+		{"truncated array of str", `{"key":["a","b"`, "", true},
+		{"truncated nested partial", `{"key":"x","sub":{"a":"b`, "x", false},
+		{"truncated string keeps prose", `Sure: {"key":"trunc} done`, "trunc} done", false},
+		{"bare open brace", `{`, "", false},
 		{"not json", "just some text", "", true},
 	}
 

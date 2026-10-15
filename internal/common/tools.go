@@ -127,8 +127,181 @@ func ParseLLMJsonResponse(content string, target interface{}) error {
 		}
 	}
 
+	// Truncation-tolerant recovery: LLM replies cut off by MaxTokens can leave
+	// (a) an unclosed markdown fence before an otherwise complete payload,
+	// (b) a JSON object/array whose tail is missing. Strip a dangling fence
+	// prefix first, then try to repair a truncated payload by dropping the
+	// incomplete tail and re-closing open brackets.
+	if cleaned := stripUnclosedFencePrefix(content); cleaned != content {
+		if cleanErr := json.Unmarshal([]byte(cleaned), target); cleanErr == nil {
+			return nil
+		}
+		if extracted := ExtractBalancedJSON(cleaned); extracted != "" {
+			if scanErr := json.Unmarshal([]byte(extracted), target); scanErr == nil {
+				return nil
+			}
+		}
+	}
+	if repaired := repairTruncatedJSON(content); repaired != "" {
+		if repErr := json.Unmarshal([]byte(repaired), target); repErr == nil {
+			return nil
+		}
+	}
+
 	// Report the direct-parse failure, which is the most descriptive one.
 	return err
+}
+
+// stripUnclosedFencePrefix removes a leading markdown code-fence line
+// ("```json" / "```") when the closing fence is missing — a typical MaxTokens
+// truncation artifact — so the payload behind it can still be parsed.
+func stripUnclosedFencePrefix(s string) string {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "```") {
+		return s
+	}
+	if idx := strings.IndexByte(t, '\n'); idx >= 0 {
+		return t[idx+1:]
+	}
+	return ""
+}
+
+// firstJSONStartIndex returns the index of the first '{' or '[' in s, choosing
+// whichever opens first; -1 when neither exists.
+func firstJSONStartIndex(s string) int {
+	obj := strings.IndexByte(s, '{')
+	arr := strings.IndexByte(s, '[')
+	switch {
+	case obj < 0 && arr < 0:
+		return -1
+	case obj < 0:
+		return arr
+	case arr < 0:
+		return obj
+	case obj < arr:
+		return obj
+	default:
+		return arr
+	}
+}
+
+// repairTruncatedJSON attempts to salvage a JSON payload that was cut off
+// mid-stream (e.g. by MaxTokens). It starts at the first '{' or '[' and walks
+// backward from the end, dropping the incomplete tail — jumping straight past
+// a dangling string literal when present — and re-closing any still-open
+// brackets, until the prefix parses as valid JSON. Returns "" when nothing
+// usable can be recovered.
+func repairTruncatedJSON(content string) string {
+	start := firstJSONStartIndex(content)
+	if start < 0 || start >= len(content) {
+		return ""
+	}
+	s := content[start:]
+	if closed := tryCloseTruncatedJSON(s); closed != "" {
+		return closed
+	}
+	// Truncated inside a string literal: jump back to its opening quote so we
+	// don't drop the string one byte at a time.
+	if q := trailingStringStart(s); q >= 0 {
+		if closed := tryCloseTruncatedJSON(s[:q]); closed != "" {
+			return closed
+		}
+	}
+	// General bounded walk-back (worst case stays linear in the input length).
+	const maxTries = 1024
+	for i := 0; i < maxTries && len(s) > 1; i++ {
+		s = s[:len(s)-1]
+		if closed := tryCloseTruncatedJSON(s); closed != "" {
+			return closed
+		}
+	}
+	return ""
+}
+
+// trailingStringStart returns the index of the opening quote of the trailing
+// (unclosed) string literal in s, or -1 when the tail is not inside a string.
+func trailingStringStart(s string) int {
+	escaped := false
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		switch {
+		case c == '\\' && !escaped:
+			escaped = true
+			continue
+		case c == '"' && !escaped:
+			return i
+		default:
+			escaped = false
+		}
+	}
+	return -1
+}
+
+// tryCloseTruncatedJSON repairs s (which must start with '{' or '[') by closing
+// a dangling string literal and appending the minimum closing brackets needed to
+// balance it, returning the repaired JSON when it parses as valid JSON;
+// otherwise "". Returns "" when s is already balanced — the caller then drops
+// trailing characters and retries.
+func tryCloseTruncatedJSON(s string) string {
+	depth := 0
+	inString := false
+	escaped := false
+	closers := make([]byte, 0, 16)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+			closers = append(closers, '}')
+		case '[':
+			depth++
+			closers = append(closers, ']')
+		case '}':
+			if depth > 0 {
+				depth--
+				closers = closers[:len(closers)-1]
+			}
+		case ']':
+			if depth > 0 {
+				depth--
+				closers = closers[:len(closers)-1]
+			}
+		}
+		if depth < 0 {
+			return ""
+		}
+	}
+	repaired := s
+	if inString {
+		repaired += `"`
+	}
+	if depth > 0 {
+		// closers were appended in open order ({ then [), so close them in
+		// reverse (innermost first).
+		for i := len(closers) - 1; i >= 0; i-- {
+			repaired += string(closers[i])
+		}
+	}
+	if repaired == s {
+		return ""
+	}
+	if json.Valid([]byte(repaired)) {
+		return repaired
+	}
+	return ""
 }
 
 // ExtractBalancedJSON returns the first balanced JSON object or array embedded
