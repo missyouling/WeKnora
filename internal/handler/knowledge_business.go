@@ -2689,7 +2689,8 @@ func (h *BusinessExtractHandler) ProcessBusinessExtract(ctx context.Context, t *
 		// 业务性失败（无文本 / 未识别为发票 / 解析错误 / panic）返回 nil 不重试烧 token。
 		logger.Errorf(ctx, "Business extract task failed: scope=%s knowledge=%s err=%v", p.Scope, p.KnowledgeID, runErr)
 		if shouldRetryBusinessExtract(runErr) && retryBudgetLeft(ctx) {
-			logger.Warnf(ctx, "Business extract task will be retried by asynq: scope=%s knowledge=%s retried=%d", p.Scope, p.KnowledgeID, asynq.GetRetryCount(ctx))
+			retried, _ := asynq.GetRetryCount(ctx)
+			logger.Warnf(ctx, "Business extract task will be retried by asynq: scope=%s knowledge=%s retried=%d", p.Scope, p.KnowledgeID, retried)
 			return runErr
 		}
 		return nil
