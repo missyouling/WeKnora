@@ -1357,8 +1357,9 @@ const handleFileExtract = async () => {
   ids.forEach(kid => { extractInFlight.value.add(kid); extractFailed.value.delete(kid) })
   extractBusy.value = true
   uploadProgress.value = []
+  let results: PromiseSettledResult<unknown>[] = []
   try {
-    const results = await settleInBatches(
+    results = await settleInBatches(
       ids,
       BATCH_CONCURRENCY,
       kid => extractBusinessDocument(kbId.value, kid, 'award_punish', filterApType.value || undefined),

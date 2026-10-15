@@ -1766,9 +1766,10 @@ const handleFileExtract = async () => {
   // 后端提取请求在途时已写 extract_status=processing，轮询即可捕获；
   // 清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
   uploadProgress.value = []
+  let results: PromiseSettledResult<unknown>[] = []
   try {
     // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新提取一次。
-    const results = await settleInBatches(
+    results = await settleInBatches(
       ids,
       BATCH_CONCURRENCY,
       kid => extractBusinessDocument(kbId.value, kid, 'contract', filterContractType.value || undefined),

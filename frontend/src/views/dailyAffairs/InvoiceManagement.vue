@@ -2024,11 +2024,12 @@ const handleFileExtract = async () => {
   // 后端提取请求在途时已写 extract_status=processing，轮询即可捕获；
   // 清空上传弹窗残留进度，确保 displayProgress 走轮询派生的 liveProgress
   uploadProgress.value = []
+  let results: PromiseSettledResult<unknown>[] = []
   try {
     // 携带当前细分分类（用户正在该分类视图下操作），锚定同文件多页发票的类型，
     // 避免历史文件缺 fleet_cert_type 打标时被错误降级为「其它票据」。
     // selectedIds 已按 knowledgeId 去重：多选 N 条记录若同属一个文件，只对该文件重新提取一次。
-    const results = await settleInBatches(
+    results = await settleInBatches(
       ids,
       BATCH_CONCURRENCY,
       kid => extractBusinessDocument(kbId.value, kid, 'invoice', filterInvoiceType.value || undefined),
