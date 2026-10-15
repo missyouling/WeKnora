@@ -2683,10 +2683,54 @@ func (h *BusinessExtractHandler) ProcessBusinessExtract(ctx context.Context, t *
 		runErr = errors.NewInternalServerError("unknown business scope: " + p.Scope)
 	}
 	if runErr != nil {
-		// 失败状态已由 core 内 mergeFailedStateMeta 落库，返回 nil 避免 asynq 无限重试烧 token。
+		// 失败状态已由 core 内 mergeFailedStateMeta 落库（failed），保证 UI 不再长时间
+		// 停在「提取中」。瞬时模型故障（HTTP 5xx / 超时 / 网络瞬断等）返回 error 交给
+		// asynq 按投递时的 MaxRetry(2) 自动重试（重试成功会把状态覆盖为 success）；
+		// 业务性失败（无文本 / 未识别为发票 / 解析错误 / panic）返回 nil 不重试烧 token。
 		logger.Errorf(ctx, "Business extract task failed: scope=%s knowledge=%s err=%v", p.Scope, p.KnowledgeID, runErr)
+		if shouldRetryBusinessExtract(runErr) && retryBudgetLeft(ctx) {
+			logger.Warnf(ctx, "Business extract task will be retried by asynq: scope=%s knowledge=%s retried=%d", p.Scope, p.KnowledgeID, asynq.GetRetryCount(ctx))
+			return runErr
+		}
 		return nil
 	}
 	logger.Infof(ctx, "Business extract task succeeded: scope=%s knowledge=%s result=%v", p.Scope, p.KnowledgeID, resp)
 	return nil
+}
+
+// shouldRetryBusinessExtract 判断提取失败是否属于「可自动重试的瞬时错误」：
+// 模型 API HTTP 5xx、请求超时、网络瞬断等重试有实际成功概率；业务性失败
+// （无文本、未识别为发票、解析错误、panic）不重试烧 token。
+func shouldRetryBusinessExtract(runErr error) bool {
+	if runErr == nil {
+		return false
+	}
+	msg := runErr.Error()
+	lowered := strings.ToLower(msg)
+	if strings.Contains(msg, "status 5") || strings.Contains(lowered, "http 5") {
+		return true
+	}
+	if strings.Contains(lowered, "api request failed") ||
+		strings.Contains(lowered, "context deadline exceeded") ||
+		strings.Contains(lowered, "client.timeout") ||
+		strings.Contains(lowered, "connection refused") ||
+		strings.Contains(lowered, "read tcp") ||
+		strings.Contains(lowered, "write tcp") ||
+		strings.Contains(lowered, "temporary failure in name resolution") {
+		return true
+	}
+	return false
+}
+
+// retryBudgetLeft 返回 asynq 是否仍有余量自动重试（已重试次数 < MaxRetry）。
+func retryBudgetLeft(ctx context.Context) bool {
+	retried, ok := asynq.GetRetryCount(ctx)
+	if !ok {
+		return false
+	}
+	max, ok2 := asynq.GetMaxRetry(ctx)
+	if !ok2 {
+		return false
+	}
+	return retried < max
 }
