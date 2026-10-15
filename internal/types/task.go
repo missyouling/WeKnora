@@ -62,7 +62,7 @@ type QueueDefinition struct {
 
 var queueDefinitions = []QueueDefinition{
 	{Name: QueueDefault, Pool: WorkerPoolCore, Weight: 1, SharedWeight: 3, TaskTypes: []string{
-		TypeDocumentProcess, TypeManualProcess,
+		TypeDocumentProcess, TypeManualProcess, TypeBusinessExtract,
 	}},
 	// Interactive chat attachment parsing: higher core weight than the default
 	// queue so a large KB import cannot make chat uploads queue behind it.
@@ -255,6 +255,11 @@ const (
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 	// TypeMemoryExtract 长期记忆抽取任务（会话轮次防抖后异步执行）
 	TypeMemoryExtract = "memory:extract"
+	// TypeBusinessExtract 业务文档（发票/合同/制度/通知公告）异步提取任务。
+	// 原同步链路模型调用可达 6 分钟，超过网关读超时（524/500），handler 投递
+	// 后立即返回 200，由 asynq worker 执行原同步提取核心并照旧落库，前端轮询
+	// extract_status。
+	TypeBusinessExtract = "business:extract"
 )
 
 // MemoryExtractPayload carries everything the background distillation task
@@ -276,6 +281,25 @@ type MemoryExtractPayload struct {
 	// is what the settings UI promises.
 	ChatModelID string `json:"chat_model_id,omitempty"`
 	Language    string `json:"language,omitempty"`
+}
+
+// BusinessExtractPayload carries everything the background business-extraction
+// task needs. Scope (tenant + kb + knowledge + scope + cert type) travels in the
+// payload rather than being read from the worker context: asynq starts from a
+// bare context, so anything the request knew and the payload does not carry is
+// simply gone by the time the handler runs.
+type BusinessExtractPayload struct {
+	TracingContext
+	TenantID        uint64 `json:"tenant_id"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	KnowledgeID     string `json:"knowledge_id"`
+	// Scope is one of contract/invoice/regulation/award_punish, matching the
+	// extract-business request body scope.
+	Scope string `json:"scope"`
+	// CertType is the archive category picked in the upload dialog (e.g. 通行费发票);
+	// empty when the caller did not carry one and the worker falls back to the
+	// file-level fleet_cert_type metadata.
+	CertType string `json:"cert_type,omitempty"`
 }
 
 // ExtractChunkPayload represents the extract chunk task payload

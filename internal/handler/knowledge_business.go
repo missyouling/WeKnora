@@ -18,9 +18,11 @@ import (
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/filetransport"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
+	"github.com/hibiken/asynq"
 )
 
 // BusinessExtractHandler 承载 WeKnora 二次开发中「日常事务」模块的业务提取与记录管理。
@@ -31,6 +33,10 @@ type BusinessExtractHandler struct {
 	businessSvc     *service.BusinessExtractService
 	storageResolver interfaces.StorageBackendResolver
 	resourceCatalog interfaces.ResourceCatalog
+	// asynqClient 异步任务投递器：C 方案（extract-business 异步化）下 HTTP handler
+	// 投递任务即返 200，worker 通过 ProcessBusinessExtract 执行原同步提取核心，
+	// 避免 6 分钟级模型调用撞网关读超时（524/500）。
+	asynqClient interfaces.TaskEnqueuer
 	// extractMu 按 knowledgeID 防重入：同一文档并发提取会重复烧 token 且后写覆盖。
 	// 单实例内存锁（多实例部署时需换分布式锁）。
 	extractMu sync.Map // map[string]struct{}
@@ -39,10 +45,12 @@ type BusinessExtractHandler struct {
 // NewBusinessExtractHandler 构造业务提取 Handler。
 func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.ModelService, bsvc *service.BusinessExtractService,
 	storageResolver interfaces.StorageBackendResolver, resourceCatalog interfaces.ResourceCatalog,
+	asynqClient interfaces.TaskEnqueuer,
 ) *BusinessExtractHandler {
 	return &BusinessExtractHandler{
 		KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc,
 		storageResolver: storageResolver, resourceCatalog: resourceCatalog,
+		asynqClient: asynqClient,
 	}
 }
 
@@ -151,7 +159,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 		return
 	}
 
-	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -160,19 +168,40 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 		c.Error(errors.NewForbiddenError("No permission to extract contract fields"))
 		return
 	}
-	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
-	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
+	// 直接 409，避免连点重复投递。
+	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
 		c.Error(errors.NewConflictError("extraction already in progress for this document"))
 		return
 	}
-	defer h.extractMu.Delete(knowledgeID)
+	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "contract", certType)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to enqueue contract extraction for %s: %v", knowledgeID, err)
+		c.Error(errors.NewInternalServerError("enqueue contract extraction failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Contract extraction enqueued: knowledge=%s task=%s", knowledgeID, taskID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Contract extraction submitted",
+		"data": map[string]interface{}{
+			"knowledge_id":   knowledgeID,
+			"kind":           "contract",
+			"extract_status": "processing",
+			"task_id":        taskID,
+		},
+	})
+}
 
+// runContractCore 是不依赖 gin 的合同提取核心执行器（C 方案：HTTP handler 投递即返，
+// asynq worker 调用本方法执行原同步提取逻辑）。响应改为返回值/error，由调用方记录；
+// 失败状态照旧经 persistCtx 落库，模型调用失败不再因 HTTP 超时被连带掐断。
+func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, knowledgeID, certType string, effectiveTenantID uint64) (gin.H, error) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
-	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
+	// persistCtx 脱离任务/请求生命周期：任务超时/取消后仍可落库提取结果或
+	// failed 状态（否则 ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
-	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
-	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	// extractCtx 30 分钟硬上限：耗时的大模型调用不被任务取消连带掐断。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
@@ -190,56 +219,52 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
 				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
-			if !c.Writer.Written() {
-				c.Error(errors.NewInternalServerError(fmt.Sprintf("contract extraction panic: %v", r)))
-			}
 		}
 	}()
 
+	var err error
 	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for contract extraction", err)
-		c.Error(errors.NewNotFoundError("Knowledge not found"))
-		return
+		return nil, errors.NewNotFoundError("Knowledge not found")
 	}
 	if knowledge.KnowledgeBaseID != kbID {
-		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("Knowledge does not belong to the given knowledge base")
 	}
 	if businessExtractionInProgress(knowledge.ParseStatus) {
-		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
-		return
+		return nil, errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish")
 	}
 	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
 	var curContractMeta contractCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curContractMeta)
 	if curContractMeta.ExtractStatus == "manual" {
 		logger.Infof(ctx, "Contract extraction skipped: knowledge %s is manual intake", knowledgeID)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": "待补录记录，无需重复提取",
 			"data":    map[string]interface{}{"kind": "contract", "extract_status": "manual", "removed": false},
-		})
-		return
+		}, nil
 	}
 
+	// worker 上下文没有 gin 侧的 kb 绑定：重新按 kbID 取知识库配置（仅需 summary_model_id）。
+	kb, kberr := h.kbService.GetKnowledgeBaseByIDOnly(effCtx, kbID)
+	if kberr != nil || kb == nil {
+		return nil, errors.NewNotFoundError("Knowledge base not found")
+	}
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
-		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("no extraction model configured for the knowledge base")
 	}
 	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
-		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
 	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for contract extraction", err)
-		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
 	}
 	// 分批提取：超长多合同文档单次 LLM 调用不可靠，按 chunk 分批独立调用后合并，
 	// Normalize 时按文件内合同编号去重。
@@ -253,12 +278,11 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 			logger.Warnf(ctx, "Failed to persist contract no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Contract extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "contract", "extract_status": "failed", "removed": false},
-		})
-		return
+		}, nil
 	}
 	merged := &service.ContractExtractionResult{Kind: "contract"}
 	var extractErr error
@@ -324,8 +348,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 			logger.Warnf(ctx, "Failed to persist contract extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Contract extraction model call failed", extractErr)
-		c.Error(errors.NewInternalServerError("contract extraction failed: " + extractErr.Error()))
-		return
+		return nil, errors.NewInternalServerError("contract extraction failed: " + extractErr.Error())
 	}
 	extracted := merged
 	// 自动编号去重：无合同编号的合同按当天已有最大序号 +1 顺序递增（跨文件唯一）
@@ -369,12 +392,11 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 					}
 				}
 				logger.Infof(ctx, "Contract rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "识别规则命中，已认定为合同，请在列表中编辑补录字段",
 					"data":    map[string]interface{}{"kind": "contract", "extract_status": "manual", "removed": false},
-				})
-				return
+				}, nil
 			}
 		}
 		meta.ExtractStatus = "not_contract"
@@ -394,12 +416,11 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 				logger.Warnf(ctx, "auto-delete non-contract knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-contract knowledge, ID: %s", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "非合同文件已移至删除历史，可在删除历史中恢复",
 					"data":    map[string]interface{}{"removed": true, "kind": "not_contract"},
-				})
-				return
+				}, nil
 			}
 		}
 	}
@@ -418,8 +439,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
-		return
+		return nil, errors.NewInternalServerError("failed to encode extraction result")
 	}
 	// 合并而非覆盖：保留 custom_metadata 中提取流程不管理的字段（如
 	// auto_deleted_count），避免整 JSON 覆盖丢数据（与发票最终保存口径一致）。
@@ -440,18 +460,16 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(mergedJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist contract extraction result", err)
-		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("failed to save extraction result: " + err.Error())
 	}
 
 	logger.Infof(ctx, "Contract extraction succeeded, knowledge ID: %s, kind: %s, contracts: %d",
 		knowledgeID, meta.Kind, len(meta.Contracts))
 	if meta.ExtractStatus == "failed" {
 		logger.Warnf(ctx, "Contract extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
-		c.Error(errors.NewInternalServerError(meta.ExtractError))
-		return
+		return nil, errors.NewInternalServerError(meta.ExtractError)
 	}
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"success": true,
 		"message": "Contract extraction succeeded",
 		"data": map[string]interface{}{
@@ -460,7 +478,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 			"extract_status": meta.ExtractStatus,
 			"contracts":      meta.Contracts,
 		},
-	})
+	}, nil
 }
 
 // regulationCustomMetadata is the persisted shape written into a knowledge
@@ -842,7 +860,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		return
 	}
 
-	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -851,21 +869,40 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		c.Error(errors.NewForbiddenError("No permission to extract invoice fields"))
 		return
 	}
-	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
-	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
+	// 直接 409，避免连点重复投递。
+	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
 		c.Error(errors.NewConflictError("extraction already in progress for this document"))
 		return
 	}
-	defer h.extractMu.Delete(knowledgeID)
+	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "invoice", certType)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to enqueue invoice extraction for %s: %v", knowledgeID, err)
+		c.Error(errors.NewInternalServerError("enqueue invoice extraction failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Invoice extraction enqueued: knowledge=%s task=%s", knowledgeID, taskID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Invoice extraction submitted",
+		"data": map[string]interface{}{
+			"knowledge_id":   knowledgeID,
+			"kind":           "invoice",
+			"extract_status": "processing",
+			"task_id":        taskID,
+		},
+	})
+}
 
+// runInvoiceCore 是不依赖 gin 的发票提取核心执行器（C 方案：HTTP handler 投递即返，
+// asynq worker 调用本方法执行原同步提取逻辑）。响应改为返回值/error，由调用方记录；
+// 失败状态照旧经 persistCtx 落库，模型调用失败不再因 HTTP 超时被连带掐断。
+func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowledgeID, certType string, effectiveTenantID uint64) (gin.H, error) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
-	// failed 状态。否则 gin request ctx 被取消后，DB 写入报 context canceled，
-	// failed 状态写不进去，记录永久停在"提取中"（实测 3 分钟超时循环 5 次）。
+	// persistCtx 脱离任务/请求生命周期：任务超时/取消后仍可落库提取结果或
+	// failed 状态（否则 ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
-	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：耗时的大模型调用不再被
-	// 前端超时/切页面/网络抖动连带掐断（context canceled），提取在后台跑完，
-	// 前端轮询刷出最终状态。
+	// extractCtx 30 分钟硬上限：耗时的大模型调用不被任务取消连带掐断。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
@@ -883,48 +920,45 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
 				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
-			if !c.Writer.Written() {
-				c.Error(errors.NewInternalServerError(fmt.Sprintf("invoice extraction panic: %v", r)))
-			}
 		}
 	}()
 
+	var err error
 	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for invoice extraction", err)
-		c.Error(errors.NewNotFoundError("Knowledge not found"))
-		return
+		return nil, errors.NewNotFoundError("Knowledge not found")
 	}
 	if knowledge.KnowledgeBaseID != kbID {
-		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("Knowledge does not belong to the given knowledge base")
 	}
 	if businessExtractionInProgress(knowledge.ParseStatus) {
-		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
-		return
+		return nil, errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish")
 	}
 	// 注：不再对 manual（待补录）状态短路重提——前端自动提取链路（上传任务/列表兜底）
 	// 不会对已 manual 文件发起请求，此处短路只会挡死"用户配置好规则后手动重提"的合法路径。
 	// 重提会按所选归档类型规则重新提取并覆写 kind/invoices（manual 文件 invoices 恒为空，
 	// 无手工补录数据可丢失）。
 
+	// worker 上下文没有 gin 侧的 kb 绑定：重新按 kbID 取知识库配置（仅需 summary_model_id）。
+	kb, kberr := h.kbService.GetKnowledgeBaseByIDOnly(effCtx, kbID)
+	if kberr != nil || kb == nil {
+		return nil, errors.NewNotFoundError("Knowledge base not found")
+	}
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
-		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("no extraction model configured for the knowledge base")
 	}
 	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
-		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
 	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for invoice extraction", err)
-		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
 	}
 	// 分批提取：超长多发票文档（18/22 张）单次 LLM 调用不可靠（智谱 500 /
 	// 输出截断），按 chunk 分批独立调用后合并，Normalize 时按发票号去重。
@@ -938,12 +972,11 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			logger.Warnf(ctx, "Failed to persist invoice no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Invoice extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "invoice", "extract_status": "failed", "removed": false},
-		})
-		return
+		}, nil
 	}
 	merged := &service.InvoiceExtractionResult{Kind: "invoice"}
 	var extractErr error
@@ -1063,8 +1096,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			logger.Warnf(ctx, "Failed to persist invoice extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Invoice extraction model call failed", extractErr)
-		c.Error(errors.NewInternalServerError("invoice extraction failed: " + extractErr.Error()))
-		return
+		return nil, errors.NewInternalServerError("invoice extraction failed: " + extractErr.Error())
 	}
 	extracted := merged
 	service.NormalizeInvoiceExtractionResult(extracted)
@@ -1122,12 +1154,11 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 					}
 				}
 				logger.Infof(ctx, "Invoice rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "识别规则命中，已认定为发票，请在列表中编辑补录字段",
 					"data":    map[string]interface{}{"kind": "invoice", "extract_status": "manual", "removed": false},
-				})
-				return
+				}, nil
 			}
 		}
 		meta.ExtractStatus = "not_invoice"
@@ -1170,8 +1201,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
-		return
+		return nil, errors.NewInternalServerError("failed to encode extraction result")
 	}
 	// 合并而非覆盖：保留 custom_metadata 中提取流程不管理的字段
 	//（如 auto_deleted_count、历史 fleet_cert_type），避免整 JSON 覆盖丢数据。
@@ -1193,8 +1223,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(mergedJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist invoice extraction result", err)
-		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("failed to save extraction result: " + err.Error())
 	}
 
 	// 自动打标签功能已弃用（需求决策：不再自动创建/关联大类标签，
@@ -1204,10 +1233,9 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 		knowledgeID, meta.Kind, len(meta.Invoices))
 	if meta.ExtractStatus == "failed" {
 		logger.Warnf(ctx, "Invoice extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
-		c.Error(errors.NewInternalServerError(meta.ExtractError))
-		return
+		return nil, errors.NewInternalServerError(meta.ExtractError)
 	}
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"success": true,
 		"message": "Invoice extraction succeeded",
 		"data": map[string]interface{}{
@@ -1216,7 +1244,7 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 			"extract_status": meta.ExtractStatus,
 			"invoices":       meta.Invoices,
 		},
-	})
+	}, nil
 }
 
 // ExtractInvoicePage godoc
@@ -1550,7 +1578,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 		return
 	}
 
-	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -1559,19 +1587,40 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 		c.Error(errors.NewForbiddenError("No permission to extract regulation fields"))
 		return
 	}
-	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
-	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
+	// 直接 409，避免连点重复投递。
+	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
 		c.Error(errors.NewConflictError("extraction already in progress for this document"))
 		return
 	}
-	defer h.extractMu.Delete(knowledgeID)
+	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "regulation", certType)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to enqueue regulation extraction for %s: %v", knowledgeID, err)
+		c.Error(errors.NewInternalServerError("enqueue regulation extraction failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Regulation extraction enqueued: knowledge=%s task=%s", knowledgeID, taskID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Regulation extraction submitted",
+		"data": map[string]interface{}{
+			"knowledge_id":   knowledgeID,
+			"kind":           "regulation",
+			"extract_status": "processing",
+			"task_id":        taskID,
+		},
+	})
+}
 
+// runRegulationCore 是不依赖 gin 的制度提取核心执行器（C 方案：HTTP handler 投递即返，
+// asynq worker 调用本方法执行原同步提取逻辑）。响应改为返回值/error，由调用方记录；
+// 失败状态照旧经 persistCtx 落库，模型调用失败不再因 HTTP 超时被连带掐断。
+func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, knowledgeID, certType string, effectiveTenantID uint64) (gin.H, error) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
-	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
+	// persistCtx 脱离任务/请求生命周期：任务超时/取消后仍可落库提取结果或
+	// failed 状态（否则 ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
-	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
-	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	// extractCtx 30 分钟硬上限：耗时的大模型调用不被任务取消连带掐断。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
@@ -1589,56 +1638,52 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
 				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
-			if !c.Writer.Written() {
-				c.Error(errors.NewInternalServerError(fmt.Sprintf("regulation extraction panic: %v", r)))
-			}
 		}
 	}()
 
+	var err error
 	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for regulation extraction", err)
-		c.Error(errors.NewNotFoundError("Knowledge not found"))
-		return
+		return nil, errors.NewNotFoundError("Knowledge not found")
 	}
 	if knowledge.KnowledgeBaseID != kbID {
-		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("Knowledge does not belong to the given knowledge base")
 	}
 	if businessExtractionInProgress(knowledge.ParseStatus) {
-		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
-		return
+		return nil, errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish")
 	}
 	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
 	var curRegMeta regulationCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curRegMeta)
 	if curRegMeta.ExtractStatus == "manual" {
 		logger.Infof(ctx, "Regulation extraction skipped: knowledge %s is manual intake", knowledgeID)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": "待补录记录，无需重复提取",
 			"data":    map[string]interface{}{"kind": "regulation", "extract_status": "manual", "removed": false},
-		})
-		return
+		}, nil
 	}
 
+	// worker 上下文没有 gin 侧的 kb 绑定：重新按 kbID 取知识库配置（仅需 summary_model_id）。
+	kb, kberr := h.kbService.GetKnowledgeBaseByIDOnly(effCtx, kbID)
+	if kberr != nil || kb == nil {
+		return nil, errors.NewNotFoundError("Knowledge base not found")
+	}
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
-		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("no extraction model configured for the knowledge base")
 	}
 	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
-		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
 	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for regulation extraction", err)
-		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
 	}
 	batches := service.BuildRegulationExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
@@ -1650,12 +1695,11 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 			logger.Warnf(ctx, "Failed to persist regulation no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Regulation extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "regulation", "extract_status": "failed", "removed": false},
-		})
-		return
+		}, nil
 	}
 	merged := &service.RegulationExtractionResult{Kind: "regulation"}
 	var extractErr error
@@ -1721,8 +1765,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 			logger.Warnf(ctx, "Failed to persist regulation extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Regulation extraction model call failed", extractErr)
-		c.Error(errors.NewInternalServerError("regulation extraction failed: " + extractErr.Error()))
-		return
+		return nil, errors.NewInternalServerError("regulation extraction failed: " + extractErr.Error())
 	}
 	extracted := merged
 	// 自动编号去重：无制度编号的制度按当天已有最大序号 +1 顺序递增（跨文件唯一）
@@ -1766,12 +1809,11 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 					}
 				}
 				logger.Infof(ctx, "Regulation rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "识别规则命中，已认定为制度，请在列表中编辑补录字段",
 					"data":    map[string]interface{}{"kind": "regulation", "extract_status": "manual", "removed": false},
-				})
-				return
+				}, nil
 			}
 		}
 		meta.ExtractStatus = "not_regulation"
@@ -1791,12 +1833,11 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 				logger.Warnf(ctx, "auto-delete non-regulation knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-regulation knowledge, ID: %s", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "非制度文件已移至删除历史，可在删除历史中恢复",
 					"data":    map[string]interface{}{"removed": true, "kind": "not_regulation"},
-				})
-				return
+				}, nil
 			}
 		}
 	}
@@ -1815,8 +1856,7 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
-		return
+		return nil, errors.NewInternalServerError("failed to encode extraction result")
 	}
 	// 最终保存合并而非覆盖：序列化本次新 meta 后与 knowledge.CustomMetadata 旧值合并
 	//（保留 auto_deleted_count 等本次新 meta 不含的字段），再用 persistCtx 落库；
@@ -1837,18 +1877,16 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist regulation extraction result", err)
-		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("failed to save extraction result: " + err.Error())
 	}
 
 	logger.Infof(ctx, "Regulation extraction succeeded, knowledge ID: %s, kind: %s, regulations: %d",
 		knowledgeID, meta.Kind, len(meta.Regulations))
 	if meta.ExtractStatus == "failed" {
 		logger.Warnf(ctx, "Regulation extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
-		c.Error(errors.NewInternalServerError(meta.ExtractError))
-		return
+		return nil, errors.NewInternalServerError(meta.ExtractError)
 	}
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"success": true,
 		"message": "Regulation extraction succeeded",
 		"data": map[string]interface{}{
@@ -1857,8 +1895,9 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 			"extract_status": meta.ExtractStatus,
 			"regulations":    meta.Regulations,
 		},
-	})
+	}, nil
 }
+
 
 // ExtractAwardPunish godoc
 // @Summary      提取奖惩字段
@@ -1884,7 +1923,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 		return
 	}
 
-	kb, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
+	_, _, effectiveTenantID, permission, err := h.validateKnowledgeBaseAccessWithKBID(c, kbID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -1893,19 +1932,40 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 		c.Error(errors.NewForbiddenError("No permission to extract notice fields"))
 		return
 	}
-	// 防重入：同一文档正在提取时直接返回 409，避免重复烧 token 与后写覆盖
-	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
+	// 直接 409，避免连点重复投递。
+	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
 		c.Error(errors.NewConflictError("extraction already in progress for this document"))
 		return
 	}
-	defer h.extractMu.Delete(knowledgeID)
+	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "award_punish", certType)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to enqueue notice extraction for %s: %v", knowledgeID, err)
+		c.Error(errors.NewInternalServerError("enqueue notice extraction failed: " + err.Error()))
+		return
+	}
+	logger.Infof(ctx, "Notice extraction enqueued: knowledge=%s task=%s", knowledgeID, taskID)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Notice extraction submitted",
+		"data": map[string]interface{}{
+			"knowledge_id":   knowledgeID,
+			"kind":           "award_punish",
+			"extract_status": "processing",
+			"task_id":        taskID,
+		},
+	})
+}
 
+// runAwardPunishCore 是不依赖 gin 的通知公告提取核心执行器（C 方案：HTTP handler 投递即返，
+// asynq worker 调用本方法执行原同步提取逻辑）。响应改为返回值/error，由调用方记录；
+// 失败状态照旧经 persistCtx 落库，模型调用失败不再因 HTTP 超时被连带掐断。
+func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, knowledgeID, certType string, effectiveTenantID uint64) (gin.H, error) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	// persistCtx 脱离 HTTP 请求生命周期：前端超时/取消请求后，仍可落库提取结果或
-	// failed 状态（否则 gin request ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
+	// persistCtx 脱离任务/请求生命周期：任务超时/取消后仍可落库提取结果或
+	// failed 状态（否则 ctx 被取消，failed 状态写不进去，记录永久停在"提取中"）。
 	persistCtx := context.WithValue(context.Background(), types.TenantIDContextKey, effectiveTenantID)
-	// extractCtx 脱离 HTTP 请求生命周期 + 30 分钟硬上限：前端超时/切页面/网络抖动
-	// 导致请求被取消时，耗时的大模型调用不被连带掐断，提取在后台跑完并落库。
+	// extractCtx 30 分钟硬上限：耗时的大模型调用不被任务取消连带掐断。
 	extractCtx, extractCancel := newExtractionContext(effectiveTenantID)
 	defer extractCancel()
 
@@ -1923,56 +1983,52 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 			if serr := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, failMeta); serr != nil {
 				logger.Warnf(ctx, "Failed to persist panic failed-state: %v", serr)
 			}
-			if !c.Writer.Written() {
-				c.Error(errors.NewInternalServerError(fmt.Sprintf("notice extraction panic: %v", r)))
-			}
 		}
 	}()
 
+	var err error
 	knowledge, err = h.kgService.GetKnowledgeByIDOnly(effCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get knowledge for notice extraction", err)
-		c.Error(errors.NewNotFoundError("Knowledge not found"))
-		return
+		return nil, errors.NewNotFoundError("Knowledge not found")
 	}
 	if knowledge.KnowledgeBaseID != kbID {
-		c.Error(errors.NewBadRequestError("Knowledge does not belong to the given knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("Knowledge does not belong to the given knowledge base")
 	}
 	if businessExtractionInProgress(knowledge.ParseStatus) {
-		c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
-		return
+		return nil, errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish")
 	}
 	// 待补录豁免：manual 记录由用户人工维护，不自动重提取、不参与任何自动删除判定。
 	var curAPMeta awardPunishCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curAPMeta)
 	if curAPMeta.ExtractStatus == "manual" {
 		logger.Infof(ctx, "Notice extraction skipped: knowledge %s is manual intake", knowledgeID)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": "待补录记录，无需重复提取",
 			"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "manual", "removed": false},
-		})
-		return
+		}, nil
 	}
 
+	// worker 上下文没有 gin 侧的 kb 绑定：重新按 kbID 取知识库配置（仅需 summary_model_id）。
+	kb, kberr := h.kbService.GetKnowledgeBaseByIDOnly(effCtx, kbID)
+	if kberr != nil || kb == nil {
+		return nil, errors.NewNotFoundError("Knowledge base not found")
+	}
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
-		c.Error(errors.NewBadRequestError("no extraction model configured for the knowledge base"))
-		return
+		return nil, errors.NewBadRequestError("no extraction model configured for the knowledge base")
 	}
 	chatModel, err := h.modelService.GetChatModel(extractCtx, modelID)
 	if err != nil {
 		logger.Error(ctx, "Failed to load extraction model", err)
-		c.Error(errors.NewInternalServerError("get extraction model failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
 	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for notice extraction", err)
-		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
 	}
 	batches := service.BuildAwardPunishExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不要自动删除，保留文件并标记
@@ -1984,12 +2040,11 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 			logger.Warnf(ctx, "Failed to persist notice no-text state: %v", serr)
 		}
 		logger.Warnf(ctx, "Notice extraction skipped: no text layer for knowledge %s (parse_status=%s), file kept", knowledgeID, knowledge.ParseStatus)
-		c.JSON(http.StatusOK, gin.H{
+		return gin.H{
 			"success": true,
 			"message": enNotice,
 			"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "failed", "removed": false},
-		})
-		return
+		}, nil
 	}
 	merged := &service.AwardPunishExtractionResult{Kind: "award_punish"}
 	var extractErr error
@@ -2056,8 +2111,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 			logger.Warnf(ctx, "Failed to persist notice extraction failed-state: %v", serr)
 		}
 		logger.Error(ctx, "Notice extraction model call failed", extractErr)
-		c.Error(errors.NewInternalServerError("notice extraction failed: " + extractErr.Error()))
-		return
+		return nil, errors.NewInternalServerError("notice extraction failed: " + extractErr.Error())
 	}
 	extracted := merged
 	// 自动编号去重：无文号的通知按当天已有最大序号 +1 顺序递增（跨文件唯一）
@@ -2101,12 +2155,11 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 					}
 				}
 				logger.Infof(ctx, "Notice rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "识别规则命中，已认定为通知公告，请在列表中编辑补录字段",
 					"data":    map[string]interface{}{"kind": "award_punish", "extract_status": "manual", "removed": false},
-				})
-				return
+				}, nil
 			}
 		}
 		meta.ExtractStatus = "not_award_punish"
@@ -2126,12 +2179,11 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 				logger.Warnf(ctx, "auto-delete non-notice knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-notice knowledge, ID: %s", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
+				return gin.H{
 					"success": true,
 					"message": "非通知公告文件已移至删除历史，可在删除历史中恢复",
 					"data":    map[string]interface{}{"removed": true, "kind": "not_award_punish"},
-				})
-				return
+				}, nil
 			}
 		}
 	}
@@ -2150,8 +2202,7 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
-		c.Error(errors.NewInternalServerError("failed to encode extraction result"))
-		return
+		return nil, errors.NewInternalServerError("failed to encode extraction result")
 	}
 	// 最终保存合并而非覆盖：序列化本次新 meta 后与 knowledge.CustomMetadata 旧值合并
 	//（保留 auto_deleted_count 等本次新 meta 不含的字段），再用 persistCtx 落库；
@@ -2172,18 +2223,16 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(persistCtx, knowledgeID, types.JSON(metaJSON)); err != nil {
 		logger.Error(ctx, "Failed to persist notice extraction result", err)
-		c.Error(errors.NewInternalServerError("failed to save extraction result: " + err.Error()))
-		return
+		return nil, errors.NewInternalServerError("failed to save extraction result: " + err.Error())
 	}
 
 	logger.Infof(ctx, "Notice extraction succeeded, knowledge ID: %s, kind: %s, records: %d",
 		knowledgeID, meta.Kind, len(meta.Records))
 	if meta.ExtractStatus == "failed" {
 		logger.Warnf(ctx, "Notice extraction returned an unusable result, knowledge ID: %s, err: %s", knowledgeID, meta.ExtractError)
-		c.Error(errors.NewInternalServerError(meta.ExtractError))
-		return
+		return nil, errors.NewInternalServerError(meta.ExtractError)
 	}
-	c.JSON(http.StatusOK, gin.H{
+	return gin.H{
 		"success": true,
 		"message": "Notice extraction succeeded",
 		"data": map[string]interface{}{
@@ -2192,8 +2241,9 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 			"extract_status": meta.ExtractStatus,
 			"records":        meta.Records,
 		},
-	})
+	}, nil
 }
+
 
 // GetRecognitionConfig godoc
 // @Summary      获取识别规则配置
@@ -2571,4 +2621,72 @@ func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 	default:
 		c.Error(errors.NewBadRequestError("unknown business scope: " + body.Scope))
 	}
+}
+
+// enqueueBusinessExtract 投递业务文档异步提取任务（asynq）。原同步链路模型调用可达
+// 6 分钟（批次多发票合集 + MaxTokens 截断 + 上游排队），网关读超时直接 524 / 500；
+// 投递后立即返回，worker 执行 core 提取逻辑并照旧落库，前端轮询 extract_status。
+func (h *BusinessExtractHandler) enqueueBusinessExtract(
+	ctx context.Context, tenantID uint64, kbID, knowledgeID, scope, certType string,
+) (string, error) {
+	payload := types.BusinessExtractPayload{
+		TenantID:        tenantID,
+		KnowledgeBaseID: kbID,
+		KnowledgeID:     knowledgeID,
+		Scope:           scope,
+		CertType:        certType,
+	}
+	langfuse.InjectTracing(ctx, &payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal payload: %w", err)
+	}
+	task := asynq.NewTask(types.TypeBusinessExtract, payloadBytes,
+		asynq.Queue(types.QueueDefault), asynq.MaxRetry(2), asynq.Timeout(extractionTimeout))
+	info, err := h.asynqClient.Enqueue(task)
+	if err != nil {
+		return "", fmt.Errorf("enqueue task: %w", err)
+	}
+	return info.ID, nil
+}
+
+// ProcessBusinessExtract 是 asynq worker 入口：从 bare context 解析 payload 携带的
+// 租户/知识库/知识/scope/certType，执行不依赖 gin 的提取核心（响应改为返回值，
+// 由调用方记录而非序列化到 HTTP），失败状态照旧落库。
+func (h *BusinessExtractHandler) ProcessBusinessExtract(ctx context.Context, t *asynq.Task) error {
+	var p types.BusinessExtractPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		logger.Errorf(ctx, "failed to unmarshal business extract payload: %v", err)
+		return err
+	}
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, p.TenantID)
+	logger.Infof(ctx, "Business extract task started: scope=%s knowledge=%s kb=%s", p.Scope, p.KnowledgeID, p.KnowledgeBaseID)
+	// 防重入：同一文档已有任务在跑（含 HTTP 投递后尚未完成）时跳过，避免重复烧 token。
+	if _, loaded := h.extractMu.LoadOrStore(p.KnowledgeID, struct{}{}); loaded {
+		logger.Infof(ctx, "Business extract skipped: extraction already in progress for %s", p.KnowledgeID)
+		return nil
+	}
+	defer h.extractMu.Delete(p.KnowledgeID)
+
+	var resp gin.H
+	var runErr error
+	switch p.Scope {
+	case "contract":
+		resp, runErr = h.runContractCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
+	case "invoice":
+		resp, runErr = h.runInvoiceCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
+	case "regulation":
+		resp, runErr = h.runRegulationCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
+	case "award_punish":
+		resp, runErr = h.runAwardPunishCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
+	default:
+		runErr = errors.NewInternalServerError("unknown business scope: " + p.Scope)
+	}
+	if runErr != nil {
+		// 失败状态已由 core 内 mergeFailedStateMeta 落库，返回 nil 避免 asynq 无限重试烧 token。
+		logger.Errorf(ctx, "Business extract task failed: scope=%s knowledge=%s err=%v", p.Scope, p.KnowledgeID, runErr)
+		return nil
+	}
+	logger.Infof(ctx, "Business extract task succeeded: scope=%s knowledge=%s result=%v", p.Scope, p.KnowledgeID, resp)
+	return nil
 }

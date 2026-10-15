@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/middleware/asynqdl"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
@@ -47,6 +48,7 @@ type AsynqTaskParams struct {
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
 	TemporaryDocument    interfaces.TemporaryDocumentService
 	MemoryService        interfaces.MemoryService
+	BusinessExtract      *handler.BusinessExtractHandler
 	DeadLetterRepo       interfaces.TaskDeadLetterRepository
 	SpanTracker          service.SpanTracker
 }
@@ -318,6 +320,13 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 
 	// Register long-term memory distillation handler
 	mux.HandleFunc(types.TypeMemoryExtract, params.MemoryService.Handle)
+
+	// Register business document (invoice/contract/regulation/notice) extraction
+	// handler. HTTP handler enqueues the task and returns immediately; this
+	// worker executes the original synchronous extraction core off the HTTP
+	// request lifecycle, so multi-minute model calls no longer trip the gateway
+	// read timeout (524/500).
+	mux.HandleFunc(types.TypeBusinessExtract, params.BusinessExtract.ProcessBusinessExtract)
 
 	// Run the same mux on every pool. Shared and dedicated servers intentionally
 	// overlap, but Redis dequeue is atomic, so each task still executes once.
