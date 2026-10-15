@@ -160,25 +160,39 @@
 
 ## 后端构建与服务启动规范
 
+- **环境选择（2026-10-15 迁移后）**：开发测试一律在 **VM（Debian 12）** 编译运行（gcc/libsqlite3-dev/Go 1.26.9 已装）；本机 Windows UCRT 工具链仅作源码备份与紧急回退。
 - **CGO 环境依赖**：由于引入了 sqlite/duckdb 等依赖，必须在编译环境中配置支持 CGO 的 C 编译器（如 Windows 下必须确保环境变量中已配置 UCRT 版 WinLibs 工具链）。
-- **标准编译命令**：
+- **标准编译命令**（VM 上执行，产物 `server_linux.exe`）：
   ```bash
+  cd /opt/weknora-dev
   export CGO_ENABLED=1
   # 若有特定的 CFLAGS（如 sqlite3 头文件路径），请按需配置 CGO_CFLAGS
-  go build -o server.exe ./cmd/server
+  go build -o server_linux.exe ./cmd/server
 
 ```
 
 * **服务启动约定**：
-* 后端：默认端口 `8080`（如：`Start-ScheduledTask -TaskName WeKnoraServer`）。
-* 前端：默认端口 `5173`。
-* 解析服务 (docreader)：通过 gRPC 占用 `50051`，需在项目虚拟环境独立启动 Python 服务。
+* 后端：默认端口 `8080`（VM 上 `systemctl restart weknora-backend`；本机旧方式 `Start-ScheduledTask -TaskName WeKnoraServer` 已停用）。
+* 前端：默认端口 `5173`（VM 上 `systemctl restart weknora-vite`，访问 `http://10.10.10.239:5173/`）。
+* 解析服务 (docreader)：通过 gRPC 占用 `50051`，VM 上由 Docker 容器 `WeKnora-docreader` 提供（不再需要 venv 独立启动）。
 
 ---
 
 ## 远端 VPS 生产部署与测试要点（强制）
 
-> **研发环境分工（最高原则）**：**本机 = 开发环境**（代码开发、调试、本地验证都在本机完成）；**GitHub Actions = 镜像构建**（push `daily-affairs-v3` 自动构建 `ghcr.io/missyouling/weknora-da:da-latest`）；**VPS = 生产运行**（watchtower 自动监视最新镜像并滚动更新，不做任何开发/调试）；**数据库 = 本机与 VPS 共用同一 Supabase 云库**。
+> **研发环境分工（最高原则，2026-10-15 迁移后生效）**：**VM（Debian 12 `10.10.10.239`）= 开发测试环境**（代码开发、调试、Go 构建、前端 dev、三服务常驻全部在 VM 完成，豆包通过 SSH 操作 VM）；**本机 = 仅保留项目源码副本**（已停用计划任务并清理缓存，不再承担开发/运行，除非 VM 不可达才临时启用）；**GitHub Actions = 镜像构建**（push `daily-affairs-v3` 自动构建 `ghcr.io/missyouling/weknora-da:da-latest`）；**VPS = 生产运行**（watchtower 自动监视最新镜像并滚动更新，不做任何开发/调试）；**数据库 = VM 与 VPS 共用同一 Supabase 云库**。
+
+### 0. 开发测试环境（VM）管理与代码同步（强制）
+
+- **VM 连接**：`ssh -p 5522 root@10.10.10.239`（本机已配公钥免密）；代码根目录 `/opt/weknora-dev`（完整仓库含 .git/.env，后端产物 `server_linux.exe` 339M 无 anydoc tag）。`/tmp/vm_*.sh` 为迁移期脚本，仅参考。
+- **三服务常驻（2026-10-15 起 systemd + Docker）**：
+  - 后端 8080：`systemctl {status|restart|stop} weknora-backend`（`EnvironmentFile=/opt/weknora-dev/.env`，日志 `/opt/weknora-dev/data/server_vm.log`）。
+  - 前端 dev 5173：`systemctl {status|restart|stop} weknora-vite`（`npm run dev`，node 在 `/usr/local/node22/bin`，日志 `data/vite_vm.log`）。浏览器访问 `http://10.10.10.239:5173/`。
+  - docreader 50051 / Redis 6379：**Docker 容器** `WeKnora-docreader` / `WeKnora-redis`（restart=always/unless-stopped，`docker ps` 查看）；apt `redis-server.service` 已 disable 禁止与容器抢 6379。
+  - 后端验证：`curl http://10.10.10.239:8080/health` → `{"status":"ok"}`；启动日志须见 `asynq shared-pool server starting` 与 `wiki-pool`（完整 asynq 模式）。
+- **代码同步（git 方式，2026-10-15 起强制）**：VM 仓库 `daily-affairs-v3`、remote `git@github.com:missyouling/WeKnora.git`、身份 koujiang 已配置。**开发与提交在 VM 上完成**：VM 内改代码 → 本地检查 → `git commit`（Conventional Commits，小改动只 commit 不 push，大更新或累计 5 次才 push）→ push 触发 CI → VPS watchtower 自动部署。VM 的 `id_ed25519` 公钥已添加至 GitHub 与 VPS（见下）。**禁止再走 tar/scp 全量同步代码**（1.8G 镜像搬运慢且易损坏，仅迁移期使用）。
+- **VM → VPS 直连**：VM 已生成 `/root/.ssh/id_ed25519`，公钥已由用户添加至 VPS `root@43.155.185.216` authorized_keys，VM 可 `ssh -p 5522 root@43.155.185.216` 直连（部署前验证/手动 pull 用）。
+- **VM 后端能力差异（记住）**：VM 后端为普通构建（无 anydoc 静态库），Office 类解析引擎不可用，由 docreader 容器兜底；与 VPS 生产镜像（含 anydoc）不同。功能验证以 VPS 为准。
 
 ### 1. 部署拓扑（三容器全部 `network_mode: host`）
 
@@ -210,7 +224,7 @@
 
 ### 4. 发布与更新链路
 
-1. 本机开发并**通过全部本地检查**（见下节）后，commit + push `daily-affairs-v3`。
+1. 在 **VM**（`/opt/weknora-dev`）开发并**通过全部本地检查**（见下节）后，commit + push `daily-affairs-v3`。
 2. CI（`.github/workflows/da-ci-cd.yml`）：quality-gate（前端 vue-tsc、`go vet`、`go test` 白名单）→ build-push 构建并推送 `da-latest`。
 3. VPS watchtower 每 4 小时自动部署新镜像；**需要立即生效时手动更新**：
    ```bash
@@ -224,16 +238,17 @@
    curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/   # 期望 200（前端 HTML，非 401）
    ```
 
-### 5. 交付前本地测试要点（每次 push 前强制，全部必须真实执行通过）
+### 5. 交付前本地测试要点（每次 push 前强制，全部必须真实执行通过；在 VM `/opt/weknora-dev` 上执行）
 
-- 前端：`npm run type-check` 零报错；`npm run lint` 待落地（2026-10-12 起记为技术债）。
-- 后端（UCRT 工具链，命令见本文件「后端构建与服务启动规范」）：
-  - `go build -o server.exe ./cmd/server`
+- 前端：`cd frontend && npm run type-check` 零报错；`npm run lint` 待落地（2026-10-12 起记为技术债）。
+- 后端（VM 已装 gcc/libsqlite3-dev/Go 1.26.9，无需 Windows UCRT 工具链；命令见本文件「后端构建与服务启动规范」）：
+  - `CGO_ENABLED=1 go build -o server_linux.exe ./cmd/server`
   - `go vet ./internal/handler ./internal/application/service`
   - `go test -run "TestBusiness|TestExtract|TestDailyAffairs" ./internal/handler ./internal/application/service`（与 CI 白名单一致）
 - 涉及前端静态托管/路由改动时，追加 `go test -run "TestServeFrontendStatic|TestEmbed" ./internal/router`。
 - 涉及数据库 Seed/分类/提取规则的改动：遵守「防覆盖」原则（已存在的分类/规则绝不 Update 覆盖，只对缺失项 Create），改后重启验证存量数据不被冲掉。
-- **本机与生产共用同一 Supabase 库**：本机调试产生的测试数据会写入生产库；删除、清库、批量改库等高风险操作必须极其谨慎，优先使用可逆操作或先确认。
+- **VM 与生产共用同一 Supabase 库**：VM 调试产生的测试数据会写入生产库；删除、清库、批量改库等高风险操作必须极其谨慎，优先使用可逆操作或先确认。
+- 后端改动验证：`systemctl restart weknora-backend` 后 `curl http://10.10.10.239:8080/health`；前端改动验证：`systemctl restart weknora-vite` 后浏览器访问 `http://10.10.10.239:5173/`。
 
 ### 5.1 对象存储（腾讯云 COS，2026-10 起为生产存储）
 
@@ -241,7 +256,7 @@
 - **存量已全量迁移 COS（2026-10-11 完成）**：租户 10000 的 323 个存量 local 文件已通过 `POST /api/v1/system/migrate-local-to-cos?dry_run=false` 全部上传至 COS，`resources` 行已改写（`storage_backend_id`→System COS、`provider=cos`、`physical_path=storage://<cos-backend-id>/cos://...`），本机 `data\files\10000` 磁盘副本已删除（剩余 0MB）。**读路径始终按 resource 记录中的 `StorageBackendID` 解析，不依赖全局 STORAGE_TYPE**；迁移时 15 条本地物理文件早已丢失的残留记录（5 PDF + 10 exports jpg，无 knowledges/resource_bindings 引用，完全孤立）已于 2026-10-11 软删（`state=deleted`+`deleted_at`），`provider=local` 活跃行现为 0。`System LOCAL` backend 记录保留（其它行仍可解析）；迁移幂等——重复执行只统计。
 - **预览直连机制（2026-10-11 启用，2026-10-11 修正，2026-10-11 支持自定义域名，2026-10-11 签名方式定稿）**：前端预览不再走 axios Blob 整包下载。`GET /api/v1/knowledge/:id/preview-url`（或 KB 级 `GET /api/v1/knowledge-bases/:id/knowledge/:knowledgeId/preview-url`）按 resource 解析。**COS + 已配置 `COS_CUSTOM_DOMAIN`（如 `cos.mozuiapp.com`）时返回预签名直连 URL**：`internal/application/service/file/cos.go` 的 `GetFileURL` 用 **`presignClient` 直接以 `https://<customDomain>/` 为 BucketURL 构造签名 client** 生成 1h 预签名（附 `response-content-disposition=inline`），浏览器直连 COS 获得原生 Range（206）分块加载、零 VPS 带宽。**签名硬约束：host 必须由自定义域名直接签名——COS v5 签名把 Host 计入 `q-header-list=host`，任何"先按默认域名签名再字符串替换 Host"的做法都会 403 `SignatureDoesNotMatch`（实测踩坑，`rewriteHost` 已删除，禁止复活）**。另注意 SDK typed-nil 陷阱：`var opts *cos.PresignedURLOptions` 为 nil 时直接作为 `interface{}` 传入 `GetPresignedURL` 会被断言为 nil 指针解引用 panic（default 分支必须传 untyped `nil`）。**COS 未配置自定义域名时必须走 `/r/<token>` 授权代理**（`internal/router/files.go` serveResourceGrants → streamStoredFile）：腾讯云 2024-01-01 后创建的桶，默认域名强制 `Content-Disposition: attachment`，Chrome iframe 内 PDF 预览触发下载并 `ERR_ABORTED`（六组实测全 attachment）。注意：`COS_CUSTOM_DOMAIN` 生效前提是腾讯云 COS 控制台已完成该域名的桶绑定（否则 403 `AccessDenied`，DNS CNAME 与 HTTPS 证书就绪不够），且桶侧需配 CORS（Origin 白名单 `https://*.mozuiapp.com` 等）+ 防盗链白名单且**允许空 Referer**（浏览器新窗口直开预签名链接不带 Referer）；未绑定前保持不配置该变量、预览走 `/r/` 代理。`request.ts` `getDown` 超时已放宽至 120s。
 - **切换/回滚**：改 `STORAGE_TYPE` 与 `COS_*` 后必须 `scp deploy/.env → VPS`（LF 行尾）并 `docker compose up -d --force-recreate weknora-daily`；启动日志应见 `newCosClient: bucketURL: https://weknora-daily-1313344759.cos.ap-seoul.myqcloud.com/` 且 `storage_backends` 出现 `System COS`。回滚＝恢复 `.env.bak-*` 后重建。
-- **本机开发环境**：本机上传仍写 `STORAGE_TYPE=local` 时会落入本机磁盘（provider=local），VPS 按 local backend 读不到 → 公网预览失效。**本机与生产必须指向同一存储**：本机 `.env` 同步切 `STORAGE_TYPE=cos` + `COS_*`（已授权的口径），或接受"本机仅开发、生产文件一律公网上传"。改后重启验证 `storage_backends` 出现 `System COS`（本机已存在）。
+- **本机开发环境（2026-10-15 已停用）**：本机已停用计划任务并清理缓存，仅保留源码副本；存储口径保持 `STORAGE_TYPE=cos` 仅作源码备份参考。**VM `.env`（44 行）为开发测试环境权威配置**：`STORAGE_TYPE=cos` 同口径、已追加 `STREAM_MANAGER_TYPE=redis / REDIS_ADDR=127.0.0.1:6379 / REDIS_PASSWORD / REDIS_DB=0 / REDIS_PREFIX=stream:`（复用 Docker Redis）；**程序不自动读 .env**——本机靠 `scripts/start_server.bat` for/f 注入，VM 靠 systemd `EnvironmentFile=/opt/weknora-dev/.env`（或迁移期脚本 `vm_run_server.sh`）。改 `.env` 后 `systemctl restart weknora-backend`。
 - **密钥轮换**：改 `COS_SECRET_*` 后重启，`storage_backends` 的 `System COS` 记录会被 upsert 覆盖（AES 加密存储）；用户自建 backend 记录不受影响。
 
 ### 5.2 VPS 附加服务（Redis / Neo4j 知识图谱 / anydoc，2026-10 启用）
