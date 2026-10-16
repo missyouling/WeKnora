@@ -1,3 +1,6 @@
+// T 目前只用于让调用方在类型层面标注该协调器处理的值类型（接口体内暂未引用）。
+// 去掉它会连带改动 createVersionedRequestCoordinator 的返回类型签名，收益不大，故保留。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export interface VersionedRequestCoordinator<T> {
   fetch: (force?: boolean) => Promise<void>
   invalidate: () => void

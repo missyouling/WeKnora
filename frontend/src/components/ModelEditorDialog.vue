@@ -613,7 +613,7 @@
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  checkOllamaModels, checkRemoteModel, testEmbeddingModel, checkRerankModel, checkASRModel, listOllamaModels,
+  checkRemoteModel, testEmbeddingModel, checkRerankModel, checkASRModel, listOllamaModels,
   downloadOllamaModel, getDownloadProgress, checkOllamaStatus, resolveModelCatalog,
   type OllamaModelInfo, type ModelProviderOption, type ModelProviderExtraField,
   type ModelProviderExtraFieldOption, type ModelCatalogEntry,

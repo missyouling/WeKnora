@@ -641,7 +641,6 @@ const summaryAmount = computed(() => {
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
-const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || ['failed', 'parse_failed'].includes(r.extractStatus)))
 
 function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
@@ -984,32 +983,6 @@ const closeDetail = () => {
   detailVisible.value = false
 }
 // 字段失焦自动保存（与合同/发票一致；数字字段清洗后仅更新该字段）
-const saveDetailField = async (f: any) => {
-  if (!currentRow.value || !kbId.value) return
-  const key = f.key
-  if (f.type === 'number') {
-    const n = Number(detailForm.value[key])
-    detailForm.value[key] = Number.isFinite(n) ? n : 0
-  }
-  try {
-    const kid = currentRow.value.knowledgeId
-    const kd: any = await getKnowledgeDetails(kid)
-    let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
-    if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-    meta.kind = 'solar_bill'
-    meta.records = meta.records || []
-    if (meta.records.length) {
-      meta.records[0] = { ...(meta.records[0] || {}), [key]: detailForm.value[key] }
-    } else {
-      meta.records = [{ ...detailForm.value, gateways: currentRow.value.item?.gateways || [] }]
-    }
-    // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
-    await updateBusinessMetadata(kbId.value, kid, meta)
-    currentRow.value.item = { ...(currentRow.value.item || {}), ...detailForm.value }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  }
-}
 const saveDetailFields = async () => {
   if (!currentRow.value || !kbId.value) return
   try {

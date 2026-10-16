@@ -425,7 +425,7 @@ import {
   onMounted,
   onBeforeUnmount,
 } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -435,7 +435,6 @@ import {
   listKnowledgeBases,
   listKnowledgeFiles,
   getKnowledgeDetails,
-  delKnowledgeDetails,
   batchDeleteKnowledge,
   updateBusinessMetadata,
   listKnowledgeTags,
@@ -495,7 +494,7 @@ const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
 const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
-  resetColumns, selectAllColumns, colVisible,
+  resetColumns, selectAllColumns, 
   selectedRowKeys, clearSelection,
   colValue,
 } = useBusinessList({
@@ -506,7 +505,6 @@ const {
 const invoiceTableRef = ref<any>(null)
 
 const route = useRoute()
-const router = useRouter()
 
 const kbId = ref('')
 const loading = ref(true)
@@ -782,7 +780,6 @@ const editFieldDefs = computed(() => {
 })
 
 // 抽屉宽度（可拖动，localStorage 记忆）
-const DRAWER_WIDTH_KEY = 'weknora-invoice-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const uploadHistoryVisible = ref(false)
@@ -1053,9 +1050,6 @@ const mapInvoiceRecord = (r: any): InvoiceRow => ({
   page: Number(r.page) || 0,
 })
 
-const rebuildRows = () => {
-  // 发票级列表数据已由后端去重/过滤/分页返回，无需前端重建
-}
 
 const parseCustomMetadata = (item: KnowledgeItem): InvoiceRow[] => {
   const meta = item.custom_metadata
@@ -1259,23 +1253,6 @@ const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 
 const onTableSelectChange = (val: string[]) => {
   const valid = new Set(selectableRows.value.map(r => r.rowKey))
   selectedRowKeys.value = val.filter(k => valid.has(k))
-}
-const isAllSelected = computed(() =>
-  selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey))
-)
-const someSelected = computed(() => {
-  const sel = selectableRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)).length
-  return sel > 0 && sel < selectableRows.value.length
-})
-const toggleSelectAll = (checked: boolean) => {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
-const toggleRow = (rowKey: string, checked: boolean) => {
-  if (checked) {
-    if (!selectedRowKeys.value.includes(rowKey)) selectedRowKeys.value = [...selectedRowKeys.value, rowKey]
-  } else {
-    selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
-  }
 }
 const selectedRows = computed(() => {
   const byKey = new Map(invoiceRows.value.map(r => [r.rowKey, r]))
@@ -1501,7 +1478,7 @@ const displayProgress = computed(() =>
   uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
 )
 
-const { extractStatusOf, statusOf, rowTags } = useDocStatus({
+const { statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'invoice', notLabel: '非发票',
 })
@@ -1593,15 +1570,6 @@ const formatItemCell = (it: any, sf: any) => {
   return String(v)
 }
 // 写入明细行子列值：标准键写行对象；分类子列写 extra 桶（后端 UnmarshalJSON 自动收集）
-const setItemVal = (it: any, sf: any, v: any) => {
-  if (ITEM_STD_KEYS.has(sf.key)) {
-    it[sf.key] = v
-  } else {
-    if (!it.extra) it.extra = {}
-    it.extra[sf.key] = v
-    it[sf.key] = v // 同时平铺一份，保证持久化时行对象直接携带（兼容后端 extra 收集）
-  }
-}
 
 const fillEditForm = () => {
   const r = currentRow.value
@@ -1692,27 +1660,9 @@ const fillEditForm = () => {
   }
 }
 
-const addItemRow = () => {
-  editForm.value.items = [...(editForm.value.items || []), { name: '', unit: '', qty: '', price: '', amount: '', tax_rate: '', tax_amount: '' }]
-}
-const removeItemRow = (idx: number) => {
-  editForm.value.items = (editForm.value.items || []).filter((_: any, i: number) => i !== idx)
-}
 // 明细行联动计算（保留两位小数）：
 //   金额 = 数量 × 单价；税额 = 金额 × 税率(%)。
 // 手动改金额/税率时只联动税额，避免覆盖用户手填的金额。
-const round2 = (n: number | null): number | null =>
-  n === null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100
-const recalcItemRow = (it: any, changed: string) => {
-  const qty = parseNum(it.qty)
-  const price = parseNum(it.price)
-  const rate = parseNum(it.tax_rate) // 百分比显示值（如 3）
-  if (changed === 'qty' || changed === 'price') {
-    if (qty !== null && price !== null) it.amount = round2(qty * price)
-  }
-  const amt = parseNum(it.amount)
-  if (amt !== null && rate !== null) it.tax_amount = round2((amt * rate) / 100)
-}
 
 const saveEditForm = async () => {
   await persistEditForm(false)
@@ -1894,12 +1844,6 @@ const sanitizeNum = (v: string): string => {
   const firstDot = s.indexOf('.')
   if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
   return s
-}
-const parseNum = (v: string): number | null => {
-  const s = sanitizeNum(v)
-  if (s === '' || s === '.') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
 }
 const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)
@@ -2182,8 +2126,6 @@ const doPrint = () => {
 // 目录生成：把选中记录按「当前列表展示字段」生成表格式清单 PDF（A4 横/纵自适应），
 // 复用打印弹窗预览，支持打印与下载
 // 抽屉「提取状态」只读中文化（与列表 statusOf 中文口径一致）
-const invoiceStatusText = (s: string): string =>
-  ({ success: '提取成功', parse_failed: '解析失败', extract_failed: '提取失败', not_invoice: '非发票文件', manual: '待补录' } as Record<string, string>)[s] || s || '—'
 
 // 项目明细 → 多行文本（列表列宽 / tooltip / 打印共用）
 const itemsTextOf = (row: InvoiceRow): string =>
@@ -2194,7 +2136,6 @@ const itemsTextOf = (row: InvoiceRow): string =>
   }).join('\n')
 
 // 字段配置开启「项目明细」后，抽屉才渲染明细编辑面板
-const hasItemsField = computed(() => editFieldDefs.value.some((f: any) => f.name === 'items'))
 
 const catalogValueOf = (row: InvoiceRow, key: string): string => {
   switch (key) {

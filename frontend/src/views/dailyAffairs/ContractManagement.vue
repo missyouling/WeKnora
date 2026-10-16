@@ -597,41 +597,6 @@ interface KnowledgeItem {
   [key: string]: any
 }
 
-interface ContractItem {
-  contract_no?: string
-  contract_name?: string
-  contract_type?: string
-  sign_date?: string
-  effective_date?: string
-  expiry_date?: string
-  sign_place?: string
-  party_a_name?: string
-  party_a_tax_no?: string
-  party_a_address?: string
-  party_a_phone?: string
-  party_a_bank?: string
-  party_a_account?: string
-  party_b_name?: string
-  party_b_tax_no?: string
-  party_b_address?: string
-  party_b_phone?: string
-  party_b_bank?: string
-  party_b_account?: string
-  contract_amount?: number
-  tax_rate?: number
-  payment_method?: string
-  quality_bond?: number
-  liquidated_damages?: number
-  subject?: string
-  quantity?: number
-  unit_price?: number
-  performance_period?: string
-  handler?: string
-  department?: string
-  remark?: string
-  fulfill_status?: string
-  page?: number
-}
 
 interface ContractRow extends Record<string, any> {
   rowKey: string

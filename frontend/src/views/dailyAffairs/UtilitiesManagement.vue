@@ -759,7 +759,6 @@ import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
 import {
   listKnowledgeBases,
-  listKnowledgeFiles,
   uploadKnowledgeFile,
   getKnowledgeDetails,
   updateBusinessMetadata,
@@ -970,13 +969,7 @@ const summaryAmount = computed(() => {
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
-const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || ['failed', 'parse_failed'].includes(r.extractStatus)))
-const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
-const someSelected = computed(() => selectedRowKeys.value.length > 0 && !isAllSelected.value)
 
-function toggleSelectAll(checked: boolean) {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
 function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
   else selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== key)
@@ -1248,7 +1241,6 @@ const detailFieldDefs = computed(() => columnDefs.value)
 const feeExpanded = ref(false)
 const autoSaving = ref(false)
 let autoSaveDirty = false
-let editFormSnapshot = ''
 let feeItemsSnapshot = ''
 
 const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
@@ -1281,13 +1273,11 @@ const loadEditForm = async (row: Row) => {
     const item = records[idx] || row.item || {}
     feeOverrides.value = (item.overview_overrides && typeof item.overview_overrides === 'object') ? { ...item.overview_overrides } : {}
     editForm.value = { ...item, fee_items: Array.isArray(item.fee_items) ? item.fee_items.map((f: any) => ({ ...f })) : [] }
-    editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
   } catch {
     feeOverrides.value = {}
     editForm.value = { ...row.item, fee_items: Array.isArray(row.item?.fee_items) ? row.item.fee_items.map((f: any) => ({ ...f })) : [] }
-    editFormSnapshot = JSON.stringify(editForm.value)
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
   }
@@ -1540,6 +1530,9 @@ const billTotalOk = computed(() => {
   if (!v) return true
   return feeClose(overviewTotal.value, v)
 })
+// 误报：模板第 308 行在属性字符串内引用（`content="差值 {{ fmtRate6(overviewDiff) }}..."`），
+// vue-eslint-parser 不解析属性内的 mustache，故在此豁免。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const overviewDiff = computed(() => {
   const nominal = billTotal.value
   if (!nominal) return 0
@@ -1592,12 +1585,6 @@ const metricFeeTip = computed(() => {
   const pct = prev ? ((cur - prev) / prev) * 100 : 0
   return `本期电费 ${fmtMoney(cur)} 元，上期 ${fmtMoney(prev)} 元\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
 })
-const ovText = (f: { key: string; label: string }) => {
-  const v = editForm.value[f.key]
-  if (v === null || v === undefined || v === '') return ''
-  if (f.key === 'bill_period_start' || f.key === 'bill_period_end') return String(v).slice(0, 7)
-  return String(v)
-}
 // 用能分析
 const momText = computed(() => {
   const prev = prevEnergy.value.exists ? prevEnergy.value.total : 0
@@ -1625,12 +1612,6 @@ const momTip = computed(() => {
   const pct = ((cur - prev) / prev) * 100
   return `本期电量 ${fmtKwh(cur)} 千瓦时，上期 ${fmtKwh(prev)} 千瓦时\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
 })
-const peakValleyText = computed(() => {
-  const peak = (Number(editForm.value.deep_peak_kwh) || 0) + (Number(editForm.value.peak_kwh) || 0)
-  const valley = Number(editForm.value.valley_kwh) || 0
-  if (!peak && !valley) return '—'
-  return `${peak}:${valley}`
-})
 const pfText = computed(() => {
   const v = editForm.value.power_factor
   return v === null || v === undefined || v === '' ? '—' : String(v)
@@ -1649,10 +1630,6 @@ const pfTip = computed(() => {
   const prev = Number(prevEnergy.value.power_factor) || 0
   if (!cur && !prev) return '暂无上期数据'
   return `本期功率因数 ${cur}，上期 ${prev}\n变化 = ${pfDelta.value > 0 ? '+' : ''}${pfDelta.value.toFixed(2)}`
-})
-const demandText = computed(() => {
-  const v = Number(editForm.value.demand) || 0
-  return v ? `${fmtKwh(v)} kW` : '—'
 })
 const avgPriceText = computed(() => {
   const v = editForm.value.avg_price
@@ -1676,16 +1653,6 @@ const avgTip = computed(() => {
   if (!cur && !prev) return '暂无上期数据'
   const pct = prev ? ((cur - prev) / prev) * 100 : 0
   return `平均电价 = 本期电费 ÷ 本期电量 = ${cur} 元/千瓦时\n上期 ${prev} 元/千瓦时，变化 ${avgPriceDelta.value > 0 ? '+' : ''}${avgPriceDelta.value.toFixed(4)}（${pct.toFixed(2)}%）`
-})
-const energyBars = computed(() => {
-  const raw = [
-    { key: 'deep_peak', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
-    { key: 'peak', label: '峰', v: Number(editForm.value.peak_kwh) || 0 },
-    { key: 'flat', label: '平', v: Number(editForm.value.flat_kwh) || 0 },
-    { key: 'valley', label: '谷', v: Number(editForm.value.valley_kwh) || 0 },
-  ]
-  const max = Math.max(...raw.map(b => b.v), 1)
-  return raw.map(b => ({ ...b, pct: Math.max(Math.round((b.v / max) * 100), 2) }))
 })
 
 // ---- 上期分时数据（按账单周期取最近上一期） ----
@@ -1865,7 +1832,6 @@ const meterRows = computed(() => {
   })
 })
 const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
-const meterPct = (v: number, total: number) => (total ? `${(v / total * 100).toFixed(2)}%` : '--')
 
 // 电量明细编辑（9 字段）
 const meterEditVisible = ref(false)
@@ -1913,7 +1879,6 @@ watch(meterEditForm, () => {
 const feeItemEditVisible = ref(false)
 const feeItemEditForm = ref<Record<string, any>>({})
 const feeItemEditName = ref('')
-let feeItemEditTarget = ''
 let feeItemEditIdx = -1
 const feeItemEditableFee = computed(() => {
   const qty = Number(feeItemEditForm.value.qty) || 0
@@ -1928,7 +1893,6 @@ const recalcFeeItem = () => {
 const openFeeItemEdit = (menuKey: string, idx: number) => {
   const list = feeRowsOf(menuKey)
   const it = list[idx]
-  feeItemEditTarget = menuKey
   feeItemEditName.value = it?.name || '费用项'
   feeItemEditForm.value = { ...it }
   feeItemEditIdx = (editForm.value.fee_items || []).indexOf(it)
@@ -1947,22 +1911,6 @@ const staticEditVisible = ref(false)
 const staticEditForm = ref<Record<string, any>>({})
 const staticEditTitle = ref('')
 const staticEditFields = ref<{ key: string; label: string; type: string }[]>([])
-const openStaticEdit = (scope: 'capacity' | 'pf') => {
-  if (scope === 'capacity') {
-    staticEditTitle.value = '编辑输配容（需）量电费'
-    staticEditFields.value = CAPACITY_FIELDS
-  } else {
-    staticEditTitle.value = '编辑功率因素调整电费'
-    staticEditFields.value = PF_FIELDS
-  }
-  const form: Record<string, any> = {}
-  staticEditFields.value.forEach(f => {
-    if (f.type === 'number') form[f.key] = Number(editForm.value[f.key]) || 0
-    else form[f.key] = editForm.value[f.key] ?? ''
-  })
-  staticEditForm.value = form
-  staticEditVisible.value = true
-}
 watch(staticEditForm, () => {
   if (!staticEditVisible.value || !autoSaveDirty) return
   staticEditFields.value.forEach(f => {
@@ -2020,16 +1968,6 @@ watch(detailEditForm, () => {
   }
 }, { deep: true })
 
-const fmtField = (v: any, type: string) => {
-  if (v === undefined || v === null || v === '') return ''
-  if (type === 'number') return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
-  return String(v)
-}
-const fmtRate = (v: any) => {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return ''
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
-}
 
 
 // 保存方式：详情/编辑抽屉手动保存（点击「保存」按钮持久化）；行内编辑失焦保存走 commitFeeOverride/commitBillFeeOverride
@@ -2074,7 +2012,6 @@ const saveEditForm = async () => {
     feeItemsSnapshot = JSON.stringify(updated.fee_items)
     // records 等为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
     await updateBusinessMetadata(kbId.value, now.knowledgeId, nextMeta)
-    editFormSnapshot = JSON.stringify(editForm.value)
     // 同步列表行
     const listIdx = rows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) rows.value[listIdx] = { ...rows.value[listIdx], item: { ...rows.value[listIdx].item, ...updated } }
@@ -2101,9 +2038,6 @@ const DRAWER_WIDTH_KEY = 'weknora-utility-drawer-width'
 const DRAWER_DEFAULT_WIDTH = 720
 const DRAWER_MIN_WIDTH = 560
 const drawerWidth = ref(DRAWER_DEFAULT_WIDTH)
-const drawerResizing = ref(false)
-let drawerResizeStartX = 0
-let drawerResizeStartWidth = 0
 function loadDrawerWidth() {
   try {
     const v = Number(localStorage.getItem(DRAWER_WIDTH_KEY))
@@ -2247,7 +2181,6 @@ const fmtRate6 = (v: any) => {
   if (!Number.isFinite(n)) return ''
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
-const feeItemsOf = (row: Row): any[] => (Array.isArray(row.item?.fee_items) ? row.item.fee_items : [])
 
 // ---- 账单概况：容差判定 + 电费列手动覆盖 ----
 /** 计算值与账单提取值对比：允许 ±0.02 元（四舍五入误差）判为正常 */
@@ -2300,48 +2233,6 @@ const commitBillFeeOverride = async (r: any) => {
   await saveEditForm()
 }
 const hasBillFeeOverride = (key: string) => feeOverrides.value[key] !== undefined
-const sumFeeBy = (row: Row, pred: (it: any) => boolean): number =>
-  Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100
-const feeTextOf = (row: Row, pred: (it: any) => boolean): string => {
-  const v = sumFeeBy(row, pred)
-  return v === 0 ? '' : String(v)
-}
-// 列表费用列展示账单标称金额（fee_amount），与账单概况「账单电费」一致
-const sumBillFeeBy = (row: Row, pred: (it: any) => boolean): number =>
-  Math.round(feeItemsOf(row).filter(pred).reduce((s, it) => s + (Number(it.fee_amount) || 0), 0) * 100) / 100
-const billFeeTextOf = (row: Row, pred: (it: any) => boolean): string => {
-  const v = sumBillFeeBy(row, pred)
-  return v === 0 ? '' : String(v)
-}
-const cellText = (row: Row, key: string): string => {
-  if (key === 'bill_period') {
-    const raw = row.item?.bill_period_start || row.item?.bill_period_end
-    if (!raw) return ''
-    return String(raw).slice(0, 7)
-  }
-  if (key === 'market_amount') return billFeeTextOf(row, it => String(it.category || '').includes('市场化购电'))
-  if (key === 'line_amount') return billFeeTextOf(row, it => String(it.category || '').includes('上网环节线损'))
-  if (key === 'trans_amount') return billFeeTextOf(row, it => String(it.category || '').includes('输配电量'))
-  if (key === 'sys_amount') return billFeeTextOf(row, it => String(it.category || '').includes('系统运行'))
-  if (key === 'govI_amount') return billFeeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) >= 100000 && !String(it.name || '').includes('功率因数'))
-  if (key === 'catalog_amount') return billFeeTextOf(row, it => String(it.category || '').includes('目录电费'))
-  if (key === 'govR_amount') return billFeeTextOf(row, it => String(it.category || '').includes('政府性基金') && (Number(it.qty) || 0) < 100000 && !String(it.name || '').includes('功率因数'))
-  if (key === 'pf_adjust_amount') {
-    const direct = row.item?.[key]
-    if (direct !== null && direct !== undefined && direct !== '') return String(direct)
-    return billFeeTextOf(row, it => String(it.name || '').includes('功率因数'))
-  }
-  const v = row.item?.[key]
-  if (v === null || v === undefined || v === '') return ''
-  if (typeof v === 'number') {
-    if (key.includes('price') || key === 'avg_price' || key === 'power_factor' || key === 'adjust_ratio') {
-      return String(Math.round(v * 10000) / 10000)
-    }
-    return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100)
-  }
-  return String(v)
-}
-
 // ---- Tab 切换 ----
 const onTabChange = () => { /* 子组件自行加载 */ }
 const switchTab = (tab: 'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing') => {

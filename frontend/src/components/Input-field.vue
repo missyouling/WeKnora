@@ -2253,35 +2253,6 @@ const toggleAgentModeSelector = () => {
   }
 }
 
-const selectAgentMode = async (mode: 'quick-answer' | 'smart-reasoning') => {
-  if (!chatResources.isLoaded('models')) {
-    await loadChatModels()
-  }
-
-  const builtinAgentId = mode === 'smart-reasoning' ? BUILTIN_SMART_REASONING_ID : BUILTIN_QUICK_ANSWER_ID;
-  const builtinAgent = agents.value.find(a => a.id === builtinAgentId);
-
-  if (builtinAgent) {
-    const { keys: notReadyKeys, labels: notReadyReasons } = collectAgentNotReadyReasons(
-      builtinAgent,
-      mode === 'smart-reasoning',
-    );
-    if (notReadyReasons.length > 0) {
-      showAgentModeSelector.value = false;
-      showAgentNotReadyMessage(builtinAgent, notReadyReasons, notReadyKeys);
-      return;
-    }
-  }
-
-  const shouldEnableAgent = mode === 'smart-reasoning';
-  if (shouldEnableAgent !== isAgentEnabled.value) {
-    settingsStore.toggleAgent(shouldEnableAgent);
-    // 同时更新选中的智能体
-    settingsStore.selectAgent(shouldEnableAgent ? BUILTIN_SMART_REASONING_ID : BUILTIN_QUICK_ANSWER_ID);
-    MessagePlugin.success(shouldEnableAgent ? t('input.messages.agentSwitchedOn') : t('input.messages.agentSwitchedOff'));
-  }
-  showAgentModeSelector.value = false;
-}
 
 // 选择智能体（新版）；sourceTenantId 为共享智能体时传入
 const handleAgentNotReady = (

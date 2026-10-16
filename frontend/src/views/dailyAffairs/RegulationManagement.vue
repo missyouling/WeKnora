@@ -464,7 +464,6 @@ import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-制度'
-const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
 const PAGE_SIZE = 20
 
 // 制度类型枚举（编辑/筛选推荐值）
@@ -499,8 +498,8 @@ const DEFAULT_REGULATION_COLUMNS: ColumnDef[] = [
 const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
-  resetColumns, selectAllColumns, colVisible,
-  selectedRowKeys, onSelectChange, clearSelection,
+  resetColumns, selectAllColumns, 
+  selectedRowKeys, clearSelection,
   colValue,
 } = useBusinessList({
   storageKey: 'weknora-regulation-list-columns',
@@ -525,25 +524,6 @@ interface KnowledgeItem {
   [key: string]: any
 }
 
-interface RegulationItem {
-  reg_no?: string
-  reg_name?: string
-  reg_type?: string
-  dept?: string
-  version?: string
-  issue_date?: string
-  page_count?: string
-  modify_count?: string
-  scope?: string
-  effective_date?: string
-  confidentiality?: string
-  remark?: string
-  compiled_by?: string
-  reviewed_by?: string
-  approved_by?: string
-  summary?: string
-  page?: number
-}
 
 interface RegulationRow extends Record<string, any> {
   rowKey: string
@@ -648,7 +628,6 @@ const page = ref(1)
 const hasMore = ref(true)
 const keyword = ref('')
 const filterRegType = ref('')
-const filterFulfillStatus = ref('')
 const regTypeOptions = ref<Array<{ value: string; label: string }>>([])
 const regCats = ref<any[]>([])
 const uploadTypeOptions = computed(() => {
@@ -714,7 +693,6 @@ watch(() => currentDetail.value?.description, () => {
 })
 
 // 抽屉宽度（可拖动，localStorage 记忆）
-const DRAWER_WIDTH_KEY = 'weknora-regulation-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
@@ -923,9 +901,6 @@ const mapRegulationRecord = (r: any): RegulationRow => ({
   page: Number(r.page) || 0,
 })
 
-const rebuildRows = () => {
-  // 制度级列表数据已由后端去重/过滤/分页返回，无需前端重建
-}
 
 const parseCustomMetadata = (item: KnowledgeItem): RegulationRow[] => {
   const meta = item.custom_metadata
@@ -978,11 +953,6 @@ const parseCustomMetadata = (item: KnowledgeItem): RegulationRow[] => {
   }))
 }
 
-const numOrUndef = (v: any): number | undefined => {
-  if (v === null || v === undefined || v === '') return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
-}
 
 // 过滤/搜索/去重已由后端制度级接口完成，前端直接使用返回的分页数据；
 // 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
@@ -1007,24 +977,6 @@ const filteredRows = computed(() => [...pendingRows.value, ...regulationRows.val
 
 
 // ---- 多选 ----
-const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
-const isAllSelected = computed(() =>
-  selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey))
-)
-const someSelected = computed(() => {
-  const sel = selectableRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)).length
-  return sel > 0 && sel < selectableRows.value.length
-})
-const toggleSelectAll = (checked: boolean) => {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
-const toggleRow = (rowKey: string, checked: boolean) => {
-  if (checked) {
-    if (!selectedRowKeys.value.includes(rowKey)) selectedRowKeys.value = [...selectedRowKeys.value, rowKey]
-  } else {
-    selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
-  }
-}
 const selectedRows = computed(() => {
   const byKey = new Map(regulationRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as RegulationRow[]
@@ -1159,7 +1111,7 @@ const displayProgress = computed(() =>
   uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
 )
 
-const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+const { statusOf, summaryState, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'regulation', notLabel: '非制度',
 })
@@ -1323,36 +1275,11 @@ const saveEditForm = async (force = false) => {
   }
 }
 
-const toNumber = (v: any): number | undefined => {
-  if (v === '' || v === null || v === undefined) return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
-}
 
 // 数字输入辅助：只允许数字与小数点，按实际输入显示（不补零、不保留多余小数）
-const sanitizeNum = (v: string): string => {
-  let s = (v ?? '').replace(/[^\d.]/g, '')
-  const firstDot = s.indexOf('.')
-  if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
-  return s
-}
-const parseNum = (v: string): number | null => {
-  const s = sanitizeNum(v)
-  if (s === '' || s === '.') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
-}
-const numToStr = (v: any): string =>
-  v === null || v === undefined || v === '' ? '' : String(v)
 
-const formatAmount = (v?: number) =>
-  v === undefined || v === null ? '' : `¥ ${Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 // 税率以百分比显示且不保留小数（0.03 → 3%）
-const formatRate = (v?: number) => {
-  if (v === undefined || v === null) return ''
-  return `${Math.round(Number(v) * 100)}%`
-}
 
 // ---- 浮动工具栏 ----
 const selectedSingle = computed(() => {
