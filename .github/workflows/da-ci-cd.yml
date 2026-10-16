@@ -33,12 +33,20 @@ jobs:
           go-version: '1.26'
       - name: Install CGO dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
-      - name: Vet sandbox packages
-        run: go vet ./internal/handler ./internal/application/service
+      - name: Vet whitelisted packages
+        run: go vet ./internal/handler ./internal/application/service ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist
+      # 二开业务包：沿用 -run 正则白名单，隔离上游官方可能损坏的同包测试。
       - name: Test sandbox packages (whitelist regex)
         env:
           CGO_ENABLED: 1
         run: go test -run "TestBusiness|TestExtract|TestDailyAffairs" ./internal/handler ./internal/application/service
+      # 核心包：这些包在 VM 上稳定通过，且只依赖 miniredis / 内存 SQLite，无需外部服务，
+      # 故跑全量测试（不加 -run 过滤）。继续保持逐包显式指定，禁止改成 ./...。
+      # 新增包前必须先在 VM 跑通并确认无 Redis/Postgres/网络依赖，否则 CI 必然红。
+      - name: Test core packages (whitelist, full)
+        env:
+          CGO_ENABLED: 1
+        run: go test ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist
 
   build-push:
     needs: quality-gate
