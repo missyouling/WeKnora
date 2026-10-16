@@ -81,7 +81,12 @@ func RunExtractWithRetry(
 		if parse(raw) {
 			return raw, nil
 		}
-		lastRaw = raw
+		// 保留"信息量最大"的那份原始输出供诊断，而不是最后一次：
+		// 末次尝试常是流式空 content（智谱等供应商的典型表现），若只留最后一次，
+		// onFailure 拿到的就是空串，线上无法定位模型到底漂移到哪。
+		if len(raw) > len(lastRaw) {
+			lastRaw = raw
+		}
 		lastErr = fmt.Errorf("unparseable response (len=%d)", len(raw))
 		logger.Warnf(ctx, "extract attempt %d (%s) unparseable (len=%d)", i+1, a.Label, len(raw))
 	}
