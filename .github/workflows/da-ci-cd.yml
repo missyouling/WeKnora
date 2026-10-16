@@ -2,7 +2,8 @@ name: Daily-Affairs Sandbox CI/CD
 
 on:
   push:
-    branches: [daily-affairs-v3]
+    # v4 是当前二开分支（2026-10 起）；保留 v3 以免旧分支改动失去门禁。
+    branches: [daily-affairs-v3, daily-affairs-v4]
     tags: ['v*-da']
   workflow_dispatch:
 
