@@ -50,14 +50,41 @@ if [ "$missing" = "1" ]; then
 fi
 [ "$missing" = "0" ] && echo "  [OK] gojieba 5 个词典齐备"
 
-# 0.5 数据库连接方式提醒（免费版 Supabase：VM 无 IPv6，只能用共享池 Session 模式）。
+# 0.5 数据库连接方式校验（免费版 Supabase：VM 无 IPv6，只能用共享池 Session 模式）。
 echo "  [INFO] 当前 DB 配置:"
 grep -E '^DB_(HOST|USER|PORT|SSLMODE)=' "$ENVF" | sed 's/^/         /' || true
 if grep -q '^DB_HOST=db\.' "$ENVF"; then
+  # 从 db.<REF>.supabase.co 反解项目 ref，拼出正确的池用户名
+  REF=$(grep -m1 '^DB_HOST=db\.' "$ENVF" | sed -E 's/^DB_HOST=db\.([A-Za-z0-9]+)\..*/\1/')
+  # 东京区（新库所在区）；若库迁到其它区，同步改这一行
+  POOL_HOST="aws-0-ap-northeast-2.pooler.supabase.com"
   echo "  [WARN] DB_HOST 是直连域名(db.*)，但 VM 无 IPv6 出站、内网 DNS 劫持到 198.18.x.x，"
-  echo "         直连必失败。请改用共享池 Session 模式："
-  echo "           DB_HOST=aws-0-<REGION>.pooler.supabase.com"
-  echo "           DB_USER=postgres.<PROJECT_REF>   # 后缀即 Supavisor 租户标识，不可省"
+  echo "         直连必失败（psql 报 no tenant identifier 或连接超时）。"
+  echo "         应改用共享池 Session 模式："
+  echo "           DB_HOST=$POOL_HOST"
+  echo "           DB_USER=postgres.$REF   # 后缀即 Supavisor 租户标识，不可省"
+  echo "           DB_PORT=5432"
+  echo "  [FIX] 一键修复（先备份再 sed，可直接粘贴执行）："
+  echo "         cp -a $ENVF $ENVF.bak.\$(date +%s)"
+  echo "         sed -i 's|^DB_HOST=.*|DB_HOST=$POOL_HOST|' $ENVF"
+  echo "         sed -i 's|^DB_USER=.*|DB_USER=postgres.$REF|' $ENVF"
+  echo "         sed -i 's|^DB_PORT=.*|DB_PORT=5432|' $ENVF"
+  # 只在有 TTY 时交互确认：避免 ssh 远程非交互执行时 read 卡死
+  if [ -t 0 ]; then
+    printf "  >>> 现在自动修复？[y/N] "
+    read -r ans
+    if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+      cp -a "$ENVF" "$ENVF.bak.$(date +%s)"
+      sed -i "s|^DB_HOST=.*|DB_HOST=$POOL_HOST|" "$ENVF"
+      sed -i "s|^DB_USER=.*|DB_USER=postgres.$REF|" "$ENVF"
+      sed -i "s|^DB_PORT=.*|DB_PORT=5432|" "$ENVF"
+      echo "  [OK] 已改写为共享池 Session 模式，原配置已备份为 $ENVF.bak.*"
+    else
+      echo "  [SKIP] 保持原样——服务启动后会连不上库，请手动执行上面的 sed。"
+    fi
+  else
+    echo "  [HINT] 当前非交互模式（无 TTY），未自动改写；请手动执行上面三条 sed。"
+  fi
 fi
 
 echo "=== 1) 停掉现有 nohup 进程 ==="
