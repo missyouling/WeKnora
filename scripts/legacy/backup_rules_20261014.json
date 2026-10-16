@@ -1,0 +1,437 @@
+[
+  [
+    "ee354676-70c8-454e-97a2-e45d62cff7d0",
+    "其它票据",
+    2,
+    [
+      {
+        "desc": "发票号码",
+        "name": "invoiceNo",
+        "rule": "提取票面“发票号码 / 发票号”栏，去除多余空白。正规机打发票号码通常为 20 位数字，注意 0/O、1/I、7/1、8/3 等形近字符的识别，必要时结合发票代码与上下文交叉校验。",
+        "type": "string",
+        "label": "invoiceNo",
+        "enabled": true
+      },
+      {
+        "desc": "开票日期",
+        "name": "invoiceDate",
+        "rule": "提取票面“开票日期”栏，统一为 YYYY-MM-DD。",
+        "type": "string",
+        "label": "invoiceDate",
+        "enabled": true
+      },
+      {
+        "desc": "票据类型",
+        "name": "invoiceType",
+        "rule": "按票面标题识别：专用发票、普通发票、通行费发票、电费发票等；无法识别时保持为空。",
+        "type": "string",
+        "label": "invoiceType",
+        "enabled": true
+      },
+      {
+        "desc": "不含税金额",
+        "name": "amount",
+        "rule": "从票面“金额 / 不含税金额”栏提取数字金额，保留两位小数，不要货币符号。",
+        "type": "number",
+        "label": "amount",
+        "enabled": true
+      },
+      {
+        "desc": "税额",
+        "name": "tax",
+        "rule": "从票面“税额”栏提取数字金额，保留两位小数，不要货币符号。",
+        "type": "number",
+        "label": "tax",
+        "enabled": true
+      },
+      {
+        "desc": "价税合计",
+        "name": "totalAmount",
+        "rule": "从票面“价税合计 / 合计”栏提取数字金额，保留两位小数，不要货币符号。",
+        "type": "number",
+        "label": "totalAmount",
+        "enabled": true
+      },
+      {
+        "desc": "开票人",
+        "name": "issuer",
+        "rule": "从票面开票人、收款人或经办人栏识别提取姓名；原文无则留空。",
+        "type": "string",
+        "label": "issuer",
+        "enabled": true
+      },
+      {
+        "desc": "备注",
+        "name": "remark",
+        "rule": "保留票面备注原文。",
+        "type": "string",
+        "label": "remark",
+        "enabled": true
+      },
+      {
+        "desc": "提取状态",
+        "name": "extractStatus",
+        "rule": "系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写。",
+        "type": "string",
+        "label": "extractStatus",
+        "enabled": true
+      },
+      {
+        "desc": "发票标签",
+        "name": "tags",
+        "rule": "根据货物/劳务名称或销方类型归纳业务标签（如 差旅、办公用品、加油）；多个标签以数组返回。",
+        "type": "array",
+        "label": "tags",
+        "enabled": true
+      },
+      {
+        "desc": "源文件名",
+        "name": "fileName",
+        "rule": "取上传文件的原始文件名，无需识别。",
+        "type": "string",
+        "label": "fileName",
+        "enabled": true
+      },
+      {
+        "desc": "税率",
+        "name": "taxRate",
+        "rule": "提取票面税率（如 13%、9%、6%、3%、1%）；一张票含多行明细且税率不同时，发票级 tax_rate 取金额最大明细行（按票面「金额」列判定）的税率，其余税率保留在各 items 行；多档税率以英文逗号拼接（如：13%,9%,6%）。",
+        "type": "number",
+        "label": "taxRate",
+        "enabled": true
+      },
+      {
+        "desc": "购买方（受票方）名称",
+        "name": "buyerName",
+        "rule": "从票面“购买方 / 付款方 / 户名”栏识别提取。",
+        "type": "string",
+        "label": "buyerName",
+        "enabled": true
+      },
+      {
+        "desc": "购买方纳税人识别号",
+        "name": "buyerTaxNo",
+        "rule": "提取“购买方纳税人识别号 / 统一社会信用代码”栏，18 位数字或字母数字组合。",
+        "type": "string",
+        "label": "buyerTaxNo",
+        "enabled": true
+      },
+      {
+        "desc": "销售方（开票方）名称",
+        "name": "sellerName",
+        "rule": "从票面“销售方 / 收款方”栏识别提取。",
+        "type": "string",
+        "label": "sellerName",
+        "enabled": true
+      },
+      {
+        "desc": "销售方纳税人识别号",
+        "name": "sellerTaxNo",
+        "rule": "提取“销售方纳税人识别号”栏，18 位数字或字母数字组合。",
+        "type": "string",
+        "label": "sellerTaxNo",
+        "enabled": true
+      },
+      {
+        "desc": "项目明细行",
+        "name": "items",
+        "rule": "提取票面货物/服务明细，每行与票面明细表格行一一对应、逐列对齐「项目名称、规格型号、单位、数量、单价、金额、税率/征收率、税额」八列：name 取项目名称、spec 取规格型号、unit 取单位、qty 取数量、price 取单价、amount 取票面「金额」列（不含税）、tax_rate 取该行税率（小数，如 3% 记为 0.03）、tax_amount 取「税额」列。严禁把税额填到金额、把行错位或把票面合计行当作明细行；可用勾稽关系自检（单价×数量≈金额、金额×税率≈税额），不一致时以票面各列原值为准。",
+        "type": "array",
+        "label": "items",
+        "enabled": true
+      }
+    ],
+    false,
+    "你是一个票据信息提取助手。请从以下文档中提取结构化信息：{{document_text}}。\n此为非标准格式票据（如三联收据、手写票、非正规机打票等）。请尽最大能力识别并提取票面上的付款方（购买方）、收款方（销售方）、开票日期和合计金额。\n对于无法归入常规字段的有效业务信息（如事由、经办人等），请全部整合汇总提取至“备注”字段。\n需要提取的字段定义见 {{fields_schema}}，严格按字段名输出 JSON；未找到的字段输出 null，不臆造内容。"
+  ],
+  [
+    "25de0300-bf05-4658-84ac-56fcd28f80de",
+    "专用发票",
+    1,
+    [
+      {
+        "desc": "发票号码（持久化验证标记）",
+        "name": "invoiceNo",
+        "rule": "提取票面“发票号码 / 发票号”栏，去除多余空白。正规机打发票号码通常为 20 位数字，注意 0/O、1/I、7/1、8/3 等形近字符的识别，必要时结合发票代码与上下文交叉校验。",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "开票日期",
+        "name": "invoiceDate",
+        "rule": "提取“开票日期”栏，统一为 YYYY-MM-DD",
+        "type": "date",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "发票类型",
+        "name": "invoiceType",
+        "rule": "从 专用发票、普通发票、医疗收据、财政收据、其它票据 中识别；含通行费或电子发票归为普通发票",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "不含税金额",
+        "name": "amount",
+        "rule": "提取“金额 / 不含税金额”栏，保留两位小数；多张发票分别取值",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "适用税率",
+        "name": "taxRate",
+        "rule": "提取票面税率（如 13%、9%、6%、3%、1%）；一张票含多行明细且税率不同时，发票级 tax_rate 取金额最大明细行（按票面「金额」列判定）的税率，其余税率保留在各 items 行；多档税率以英文逗号拼接（如：13%,9%,6%）。",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "税额",
+        "name": "tax",
+        "rule": "提取“税额”栏，保留两位小数",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "价税合计",
+        "name": "totalAmount",
+        "rule": "提取“价税合计 / 合计”栏，保留两位小数",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "购买方（受票方）名称",
+        "name": "buyerName",
+        "rule": "提取“购买方名称”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "销售方（开票方）名称",
+        "name": "sellerName",
+        "rule": "提取“销售方名称”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "开票人姓名",
+        "name": "issuer",
+        "rule": "提取“开票人”栏；原文无则留空",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "提取状态",
+        "name": "extractStatus",
+        "rule": "系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "发票标签",
+        "name": "tags",
+        "rule": "根据货物/劳务名称或销方类型归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回",
+        "type": "array",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "销售方纳税人识别号",
+        "name": "sellerTaxNo",
+        "rule": "提取“销售方纳税人识别号”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "购买方纳税人识别号",
+        "name": "buyerTaxNo",
+        "rule": "提取“购买方纳税人识别号”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "源文件名",
+        "name": "fileName",
+        "rule": "取上传文件的原始文件名，无需识别",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "备注",
+        "name": "remark",
+        "rule": "发票原文备注栏内容；无则留空",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "项目明细",
+        "name": "items",
+        "rule": "提取票面货物/服务明细，每行与票面明细表格行一一对应、逐列对齐「项目名称、规格型号、单位、数量、单价、金额、税率/征收率、税额」八列：name 取项目名称、spec 取规格型号、unit 取单位、qty 取数量、price 取单价、amount 取票面「金额」列（不含税）、tax_rate 取该行税率（小数，如 3% 记为 0.03）、tax_amount 取「税额」列。严禁把税额填到金额、把行错位或把票面合计行当作明细行；可用勾稽关系自检（单价×数量≈金额、金额×税率≈税额），不一致时以票面各列原值为准。",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      }
+    ],
+    false,
+    ""
+  ],
+  [
+    "b5f27ce4-75bb-42d7-842c-24aefa22c69c",
+    "普通发票",
+    3,
+    [
+      {
+        "desc": "发票号码（持久化验证标记）",
+        "name": "invoiceNo",
+        "rule": "提取票面“发票号码 / 发票号”栏，去除多余空白。正规机打发票号码通常为 20 位数字，注意 0/O、1/I、7/1、8/3 等形近字符的识别，必要时结合发票代码与上下文交叉校验。",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "开票日期",
+        "name": "invoiceDate",
+        "rule": "提取“开票日期”栏，统一为 YYYY-MM-DD",
+        "type": "date",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "发票类型",
+        "name": "invoiceType",
+        "rule": "从 专用发票、普通发票、医疗收据、财政收据、其它票据 中识别；含通行费或电子发票归为普通发票",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "不含税金额",
+        "name": "amount",
+        "rule": "提取“金额 / 不含税金额”栏，保留两位小数；多张发票分别取值",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "适用税率",
+        "name": "taxRate",
+        "rule": "提取票面税率（如 13%、9%、6%、3%、1%）；一张票含多行明细且税率不同时，发票级 tax_rate 取金额最大明细行（按票面「金额」列判定）的税率，其余税率保留在各 items 行；多档税率以英文逗号拼接（如：13%,9%,6%）。",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "税额",
+        "name": "tax",
+        "rule": "提取“税额”栏，保留两位小数",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "价税合计",
+        "name": "totalAmount",
+        "rule": "提取“价税合计 / 合计”栏，保留两位小数",
+        "type": "number",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "购买方（受票方）名称",
+        "name": "buyerName",
+        "rule": "提取“购买方名称”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "销售方（开票方）名称",
+        "name": "sellerName",
+        "rule": "提取“销售方名称”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "开票人姓名",
+        "name": "issuer",
+        "rule": "提取“开票人”栏；原文无则留空",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "提取状态",
+        "name": "extractStatus",
+        "rule": "系统自动判断：提取成功 / 解析失败 / 提取失败；无需人工填写",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "发票标签",
+        "name": "tags",
+        "rule": "根据货物/劳务名称或销方类型归纳业务标签，如 差旅、办公用品、加油；多个标签以数组返回",
+        "type": "array",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "销售方纳税人识别号",
+        "name": "sellerTaxNo",
+        "rule": "提取“销售方纳税人识别号”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "购买方纳税人识别号",
+        "name": "buyerTaxNo",
+        "rule": "提取“购买方纳税人识别号”栏",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "源文件名",
+        "name": "fileName",
+        "rule": "取上传文件的原始文件名，无需识别",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "备注",
+        "name": "remark",
+        "rule": "发票原文备注栏内容；无则留空",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      },
+      {
+        "desc": "项目明细",
+        "name": "items",
+        "rule": "提取票面货物/服务明细，每行与票面明细表格行一一对应、逐列对齐「项目名称、规格型号、单位、数量、单价、金额、税率/征收率、税额」八列：name 取项目名称、spec 取规格型号、unit 取单位、qty 取数量、price 取单价、amount 取票面「金额」列（不含税）、tax_rate 取该行税率（小数，如 3% 记为 0.03）、tax_amount 取「税额」列。严禁把税额填到金额、把行错位或把票面合计行当作明细行；可用勾稽关系自检（单价×数量≈金额、金额×税率≈税额），不一致时以票面各列原值为准。",
+        "type": "string",
+        "label": "",
+        "enabled": true
+      }
+    ],
+    false,
+    ""
+  ]
+]

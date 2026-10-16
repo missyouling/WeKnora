@@ -21,6 +21,12 @@ node_modules/
 /dist/
 /build/
 *.log
+*.out
+
+# 本地调试捕获（agent chat 请求/响应转储、构建输出）
+agent-chat-*
+agent-test-out.txt
+push_err.txt
 
 # 临时文件
 tmp/
@@ -34,10 +40,11 @@ weknora-server
 cmd/desktop/build/bin/
 /models/
 test/data/mswag.txt
-data/files/
-data/weknora.db
-data/weknora.db-wal
-data/weknora.db-shm
+
+# 运行时数据目录：本地文件存储 + SQLite + 各类调试转存。
+# data/files/ 是 LOCAL_STORAGE_BASE_DIR 的默认落点，仅存本地副本；
+# 生产已全量迁腾讯云 COS，读路径按 resource 记录解析，不依赖此目录。
+data/
 skills-lock.json
 
 web/
