@@ -62,20 +62,25 @@ func BuildFieldsSchema(fields []types.ExtractFieldConfig) string {
 	return sb.String()
 }
 
-// BuildExtractSystemPrompt 由配置拼装 System Prompt。
+// BuildExtractSystemPrompt 由配置拼装 System Prompt（提取中台的通用入口）。
 // 高级模式（模板非空）→ 模板替换变量插槽；否则 → 结构化默认拼装 + JSON Schema。
-// 兼容现有输出结构：{kind, doc_type, vehicle_no, fields}。
+// 输出结构：{kind, doc_type, fields}。
+//
+// 本函数不含任何业务概念：kind 由 scope 推导，fields 全部来自配置。
+// 车队等需要附加键（如 vehicle_no）的业务，请使用各自的业务实现，
+// 不要往这里加硬编码（历史上曾硬编码 fleet_* 与 vehicle_no，已清理）。
 func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	if cfg == nil {
 		return ""
 	}
-	kind := "fleet_vehicle_document"
-	switch cfg.Scope {
-	case types.FleetCategoryScopeDriver:
-		kind = "fleet_driver_document"
-	case types.FleetCategoryScopeMaintain:
-		kind = "fleet_maintain_document"
+	// kind 由 scope 通用推导，不再硬编码 fleet 前缀：
+	// 本函数是提取中台的通用入口，不得内含任何具体业务概念。车队业务走自己的
+	// 实现（knowledge_fleet_document.go），那里保留 vehicle_no 等车队字段。
+	scopeKey := strings.TrimSpace(cfg.Scope)
+	if scopeKey == "" {
+		scopeKey = "document"
 	}
+	kind := scopeKey + "_document"
 	schema := BuildFieldsSchema(cfg.Fields)
 	certType := strings.TrimSpace(cfg.CertType)
 
@@ -95,7 +100,7 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 		sb.WriteString(kind)
 		sb.WriteString("\", \"doc_type\": \"")
 		sb.WriteString(certType)
-		sb.WriteString("\", \"vehicle_no\": \"车牌号（没有则空字符串）\", \"fields\": { 字段名: 值, ... }}\n")
+		sb.WriteString("\", \"fields\": { 字段名: 值, ... }}\n")
 		sb.WriteString("3. fields 必须直接以上述字段名作为键输出键值对，严禁把字段值嵌套进 properties/required/type 等 JSON Schema 结构。\n")
 		sb.WriteString("4. doc_type 必须严格等于「")
 		sb.WriteString(certType)
@@ -115,7 +120,7 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	sb.WriteString(kind)
 	sb.WriteString("\",\n  \"doc_type\": \"")
 	sb.WriteString(certType)
-	sb.WriteString("\",\n  \"vehicle_no\": \"车牌号（如没有则空字符串）\",\n  \"fields\": {\n")
+	sb.WriteString("\",\n  \"fields\": {\n")
 	firstField := true
 	for _, f := range cfg.Fields {
 		if !f.Enabled || strings.TrimSpace(f.Name) == "" {

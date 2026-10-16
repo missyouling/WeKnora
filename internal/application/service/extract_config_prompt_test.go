@@ -24,7 +24,7 @@ func TestBuildExtractSystemPrompt_DefaultMode(t *testing.T) {
 	}
 	p := BuildExtractSystemPrompt(cfg)
 	for _, want := range []string{
-		"fleet_vehicle_document",
+		"vehicle_document",
 		`"doc_type": "行驶证"`,
 		`"经营地址": "…"`,
 		"fields 必须直接输出上面列出的字段名作为键的键值对",
@@ -54,7 +54,7 @@ func TestBuildExtractSystemPrompt_AdvancedModeAddsJSONFallback(t *testing.T) {
 	for _, want := range []string{
 		"【系统强制输出约束】",
 		"只能输出一个合法的 JSON 对象",
-		`"kind": "fleet_vehicle_document"`,
+		`"kind": "vehicle_document"`,
 		`"doc_type": "行驶证"`,
 		"严禁把字段值嵌套进 properties/required/type",
 	} {
@@ -83,8 +83,9 @@ func TestBuildExtractSystemPrompt_AdvancedModeKeepsUserJSON(t *testing.T) {
 		PromptTemplate: "严格按 JSON 输出：{\"doc_type\": \"驾驶证\", \"fields\": {{fields_schema}}}",
 	}
 	p := BuildExtractSystemPrompt(cfg)
-	if !strings.Contains(p, `"kind": "fleet_driver_document"`) {
-		t.Errorf("driver scope kind must be fleet_driver_document")
+	// kind 由 scope 通用推导（driver → driver_document），不再带 fleet 前缀
+	if !strings.Contains(p, `"kind": "driver_document"`) {
+		t.Errorf("driver scope kind must be driver_document")
 	}
 	if !strings.Contains(p, "严格按 JSON 输出") {
 		t.Errorf("user JSON instruction must be preserved")
