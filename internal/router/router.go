@@ -26,78 +26,168 @@ import (
 	_ "github.com/Tencent/WeKnora/docs" // swagger docs
 )
 
-// RouterParams 路由参数
+// 路由依赖原本是 68 个平铺字段的 God-struct，现按域拆分为若干子参数集。
+// 每个子结构体都是独立的 dig 参数对象，RouterParams 嵌套它们：
+//   - 各路由组只需关心自己那个依赖集（每组 ≤10 个字段）；
+//   - 新增路由时改对应的子结构体，不必面对 68 个平铺字段。
+// 访问方式相应变为 params.<组>.<字段>，例如 params.Knowledge.KnowledgeHandler。
+
+// CoreRouteDeps 基础能力：配置、文件、存储、缓存、向量库
+type CoreRouteDeps struct {
+	dig.In
+
+	Config                 *config.Config
+	FileService            interfaces.FileService
+	RedisClient            *redis.Client
+	StorageBackendResolver interfaces.StorageBackendResolver
+	ResourceCatalog        interfaces.ResourceCatalog
+	StorageBackendHandler  *handler.StorageBackendHandler
+	VectorStoreHandler     *handler.VectorStoreHandler
+}
+
+// AuthTenantRouteDeps 认证、用户与租户
+type AuthTenantRouteDeps struct {
+	dig.In
+
+	UserService             interfaces.UserService
+	TenantService           interfaces.TenantService
+	TenantAPIKeyService     interfaces.TenantAPIKeyService
+	TenantMemberService     interfaces.TenantMemberService
+	TenantHandler           *handler.TenantHandler
+	TenantMemberHandler     *handler.TenantMemberHandler
+	TenantInvitationHandler *handler.TenantInvitationHandler
+	AuthHandler             *handler.AuthHandler
+	InitializationHandler   *handler.InitializationHandler
+	SystemHandler           *handler.SystemHandler
+}
+
+// KnowledgeRouteDeps 知识库、知识、分块、标签、FAQ、Wiki
+type KnowledgeRouteDeps struct {
+	dig.In
+
+	KBService        interfaces.KnowledgeBaseService
+	KnowledgeService interfaces.KnowledgeService
+	ChunkService     interfaces.ChunkService
+	KBShareService   interfaces.KBShareService
+	KBHandler        *handler.KnowledgeBaseHandler
+	KnowledgeHandler *handler.KnowledgeHandler
+	ChunkHandler     *handler.ChunkHandler
+	FAQHandler       *handler.FAQHandler
+	TagHandler       *handler.TagHandler
+	WikiPageHandler  *handler.WikiPageHandler
+}
+
+// SessionRouteDeps 会话与消息
+type SessionRouteDeps struct {
+	dig.In
+
+	SessionService           interfaces.SessionService
+	MessageService           interfaces.MessageService
+	SessionHandler           *session.Handler
+	MessageHandler           *handler.MessageHandler
+	MessageSuggestionHandler *handler.MessageSuggestionHandler
+}
+
+// ModelRouteDeps 模型、凭据与评估
+type ModelRouteDeps struct {
+	dig.In
+
+	ModelService            interfaces.ModelService
+	EvaluationService       interfaces.EvaluationService
+	ModelHandler            *handler.ModelHandler
+	ModelCredentialsHandler *handler.ModelCredentialsHandler
+	EvaluationHandler       *handler.EvaluationHandler
+}
+
+// AgentRouteDeps 智能体、技能、组织、收藏、记忆
+type AgentRouteDeps struct {
+	dig.In
+
+	AgentShareService   interfaces.AgentShareService
+	CustomAgentHandler  *handler.CustomAgentHandler
+	SkillHandler        *handler.SkillHandler
+	OrganizationHandler *handler.OrganizationHandler
+	UserFavoriteHandler *handler.UserResourceFavoriteHandler
+	MemoryHandler       *handler.MemoryHandler
+}
+
+// SandboxRouteDeps 沙箱配置与宿主沙箱
+type SandboxRouteDeps struct {
+	dig.In
+
+	SandboxConfigHandler *handler.SandboxConfigHandler
+	SandboxSkillHandler  *handler.SandboxSkillHandler
+	MeEnvVarHandler      *handler.MeEnvVarHandler
+	HostSandbox          service.HostSandboxManager
+}
+
+// MCPRouteDeps MCP 服务、凭据、OAuth 与端点
+type MCPRouteDeps struct {
+	dig.In
+
+	MCPServiceHandler     *handler.MCPServiceHandler
+	MCPCredentialsHandler *handler.MCPCredentialsHandler
+	MCPOAuthHandler       *handler.MCPOAuthHandler
+	MCPEndpointHandler    *handler.MCPEndpointHandler
+	MCPEndpointService    interfaces.MCPEndpointService
+	MCPServer             *mcpserver.Server
+}
+
+// WebSearchRouteDeps 网络搜索
+type WebSearchRouteDeps struct {
+	dig.In
+
+	WebSearchHandler            *handler.WebSearchHandler
+	WebSearchProviderHandler    *handler.WebSearchProviderHandler
+	WebSearchCredentialsHandler *handler.WebSearchProviderCredentialsHandler
+}
+
+// DataSourceRouteDeps 数据源接入
+type DataSourceRouteDeps struct {
+	dig.In
+
+	DataSourceHandler            *handler.DataSourceHandler
+	DataSourceCredentialsHandler *handler.DataSourceCredentialsHandler
+}
+
+// BusinessRouteDeps 二开业务：日常事务、车队、水电、账单、审计
+type BusinessRouteDeps struct {
+	dig.In
+
+	BusinessExtractHandler *handler.BusinessExtractHandler
+	UtilityHandler         *handler.UtilityHandler
+	BillingHandler         *handler.BillingHandler
+	FleetHandler           *handler.FleetHandler
+	WeKnoraCloudHandler    *handler.WeKnoraCloudHandler
+	AuditLogHandler        *handler.AuditLogHandler
+	AuditLogService        interfaces.AuditLogService
+}
+
+// IntegrationRouteDeps 外部集成：IM 机器人与嵌入渠道
+type IntegrationRouteDeps struct {
+	dig.In
+
+	IMHandler           *handler.IMHandler
+	EmbedChannelHandler *handler.EmbedChannelHandler
+	EmbedChannelService interfaces.EmbedChannelService
+}
+
+// RouterParams 路由参数（按域分组后的聚合入口）
 type RouterParams struct {
 	dig.In
 
-	Config                       *config.Config
-	FileService                  interfaces.FileService
-	UserService                  interfaces.UserService
-	KBService                    interfaces.KnowledgeBaseService
-	KnowledgeService             interfaces.KnowledgeService
-	ChunkService                 interfaces.ChunkService
-	SessionService               interfaces.SessionService
-	MessageService               interfaces.MessageService
-	ModelService                 interfaces.ModelService
-	EvaluationService            interfaces.EvaluationService
-	KBShareService               interfaces.KBShareService
-	AgentShareService            interfaces.AgentShareService
-	KBHandler                    *handler.KnowledgeBaseHandler
-	KnowledgeHandler             *handler.KnowledgeHandler
-	BusinessExtractHandler        *handler.BusinessExtractHandler
-	UtilityHandler               *handler.UtilityHandler
-	BillingHandler               *handler.BillingHandler
-	FleetHandler                 *handler.FleetHandler
-	TenantHandler                *handler.TenantHandler
-	TenantService                interfaces.TenantService
-	TenantAPIKeyService          interfaces.TenantAPIKeyService
-	TenantMemberService          interfaces.TenantMemberService
-	TenantMemberHandler          *handler.TenantMemberHandler
-	TenantInvitationHandler      *handler.TenantInvitationHandler
-	AuditLogHandler              *handler.AuditLogHandler
-	AuditLogService              interfaces.AuditLogService
-	ChunkHandler                 *handler.ChunkHandler
-	SessionHandler               *session.Handler
-	MessageHandler               *handler.MessageHandler
-	MessageSuggestionHandler     *handler.MessageSuggestionHandler
-	ModelHandler                 *handler.ModelHandler
-	ModelCredentialsHandler      *handler.ModelCredentialsHandler
-	SandboxConfigHandler         *handler.SandboxConfigHandler
-	SandboxSkillHandler          *handler.SandboxSkillHandler
-	MeEnvVarHandler              *handler.MeEnvVarHandler
-	EvaluationHandler            *handler.EvaluationHandler
-	AuthHandler                  *handler.AuthHandler
-	InitializationHandler        *handler.InitializationHandler
-	SystemHandler                *handler.SystemHandler
-	MCPServiceHandler            *handler.MCPServiceHandler
-	MCPCredentialsHandler        *handler.MCPCredentialsHandler
-	MCPOAuthHandler              *handler.MCPOAuthHandler
-	WebSearchHandler             *handler.WebSearchHandler
-	WebSearchProviderHandler     *handler.WebSearchProviderHandler
-	WebSearchCredentialsHandler  *handler.WebSearchProviderCredentialsHandler
-	VectorStoreHandler           *handler.VectorStoreHandler
-	StorageBackendHandler        *handler.StorageBackendHandler
-	StorageBackendResolver       interfaces.StorageBackendResolver
-	ResourceCatalog              interfaces.ResourceCatalog
-	FAQHandler                   *handler.FAQHandler
-	TagHandler                   *handler.TagHandler
-	CustomAgentHandler           *handler.CustomAgentHandler
-	UserFavoriteHandler          *handler.UserResourceFavoriteHandler
-	SkillHandler                 *handler.SkillHandler
-	OrganizationHandler          *handler.OrganizationHandler
-	IMHandler                    *handler.IMHandler
-	EmbedChannelHandler          *handler.EmbedChannelHandler
-	EmbedChannelService          interfaces.EmbedChannelService
-	MCPEndpointHandler           *handler.MCPEndpointHandler
-	MCPEndpointService           interfaces.MCPEndpointService
-	MCPServer                    *mcpserver.Server
-	RedisClient                  *redis.Client
-	DataSourceHandler            *handler.DataSourceHandler
-	DataSourceCredentialsHandler *handler.DataSourceCredentialsHandler
-	WeKnoraCloudHandler          *handler.WeKnoraCloudHandler
-	WikiPageHandler              *handler.WikiPageHandler
-	MemoryHandler                *handler.MemoryHandler
-	HostSandbox                  service.HostSandboxManager
+	Core        CoreRouteDeps
+	AuthTenant  AuthTenantRouteDeps
+	Knowledge   KnowledgeRouteDeps
+	Session     SessionRouteDeps
+	Model       ModelRouteDeps
+	Agent       AgentRouteDeps
+	Sandbox     SandboxRouteDeps
+	MCP         MCPRouteDeps
+	WebSearch   WebSearchRouteDeps
+	DataSource  DataSourceRouteDeps
+	Business    BusinessRouteDeps
+	Integration IntegrationRouteDeps
 }
 
 // NewRouter 创建新的路由
@@ -136,7 +226,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		AllowOrigins:               corsOrigins(),
 		AllowWildcard:              true,
 		AllowOriginWithContextFunc: corsSelfAuthenticatedSurfaceExempt,
-		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowMethods:               []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key", "X-Request-ID", "X-Tenant-ID",
 			"X-Embed-Session", "X-External-User-ID", "X-External-User-Token", "X-WeKnora-Desktop-Token",
@@ -177,57 +267,57 @@ func NewRouter(params RouterParams) *gin.Engine {
 	// allowed origins. This is the page-level counterpart to the API Origin
 	// allowlist enforced in EmbedAuth. Registered before the static handler so
 	// it runs for the embed HTML response.
-	if params.EmbedChannelService != nil {
-		r.Use(embedFrameAncestorsMiddleware(params.EmbedChannelService))
+	if params.Integration.EmbedChannelService != nil {
+		r.Use(embedFrameAncestorsMiddleware(params.Integration.EmbedChannelService))
 	}
 
 	// 前端静态文件（内嵌前端；web 目录不存在时 serveFrontendStatic 内部自动跳过）
 	serveFrontendStatic(r)
 
 	// IM 回调路由（在认证中间件之前注册，使用各平台自身的签名验证）
-	RegisterIMRoutes(r, params.IMHandler)
+	RegisterIMRoutes(r, params.Integration.IMHandler)
 
 	// Web embed 公开路由（使用 publish token 鉴权，不走全局 Auth）
 	RegisterEmbedPublicRoutes(
 		r,
-		params.EmbedChannelHandler,
-		params.EmbedChannelService,
-		params.TenantService,
-		params.RedisClient,
-		params.FileService,
-		params.StorageBackendResolver,
-		params.ResourceCatalog,
+		params.Integration.EmbedChannelHandler,
+		params.Integration.EmbedChannelService,
+		params.AuthTenant.TenantService,
+		params.Core.RedisClient,
+		params.Core.FileService,
+		params.Core.StorageBackendResolver,
+		params.Core.ResourceCatalog,
 	)
 
 	// Workspace MCP server surface (/mcp/:endpoint_id): bearer-token auth per
 	// endpoint, so it must precede the global Auth middleware.
-	RegisterMCPServerRoutes(r, params.MCPServer, params.MCPEndpointService, params.TenantService)
+	RegisterMCPServerRoutes(r, params.MCP.MCPServer, params.MCP.MCPEndpointService, params.AuthTenant.TenantService)
 
 	// Short-lived capability URLs for IM and other clients that cannot attach
 	// WeKnora authentication headers.
-	serveResourceGrants(r, params.ResourceCatalog, params.TenantService, params.FileService, params.StorageBackendResolver)
+	serveResourceGrants(r, params.Core.ResourceCatalog, params.AuthTenant.TenantService, params.Core.FileService, params.Core.StorageBackendResolver)
 
 	// Sandbox terminal WebSocket (self-authenticated via a short-lived
 	// query ticket — see RegisterSandboxTerminalRoutes; browsers cannot set
 	// auth headers on the WS handshake, so this must precede the global Auth
 	// middleware). The ticket is minted by an authenticated POST.
-	RegisterSandboxTerminalRoutes(r, params.SessionHandler)
-	RegisterSandboxDesktopRoutes(r, params.SessionHandler)
-	r.GET("/api/v1/local-browser/extension", params.SessionHandler.BrowserSkillExtension)
-	r.POST("/api/v1/local-browser/extension/authorize", params.SessionHandler.BrowserSkillAuthorize)
-	r.POST("/api/v1/local-browser/internal", params.SessionHandler.BrowserSkillInternal)
+	RegisterSandboxTerminalRoutes(r, params.Session.SessionHandler)
+	RegisterSandboxDesktopRoutes(r, params.Session.SessionHandler)
+	r.GET("/api/v1/local-browser/extension", params.Session.SessionHandler.BrowserSkillExtension)
+	r.POST("/api/v1/local-browser/extension/authorize", params.Session.SessionHandler.BrowserSkillAuthorize)
+	r.POST("/api/v1/local-browser/internal", params.Session.SessionHandler.BrowserSkillInternal)
 
 	// 认证中间件
-	r.Use(middleware.Auth(params.TenantService, params.UserService, params.TenantMemberService, params.TenantAPIKeyService, params.Config))
+	r.Use(middleware.Auth(params.AuthTenant.TenantService, params.AuthTenant.UserService, params.AuthTenant.TenantMemberService, params.AuthTenant.TenantAPIKeyService, params.Core.Config))
 
 	// 文件服务：统一代理本地/MinIO/COS/TOS存储后端（需要认证）
-	serveFilesWithResources(r, params.FileService, params.StorageBackendResolver, params.ResourceCatalog)
+	serveFilesWithResources(r, params.Core.FileService, params.Core.StorageBackendResolver, params.Core.ResourceCatalog)
 
 	// Presigned file access: no auth required, signature-verified.
-	servePresignedFiles(r, params.TenantService, params.StorageBackendResolver)
+	servePresignedFiles(r, params.AuthTenant.TenantService, params.Core.StorageBackendResolver)
 
 	// Diagnostic preview of presigned URLs (Admin only, behind auth middleware).
-	servePresignedPreview(r, params.Config, params.StorageBackendResolver, params.ResourceCatalog)
+	servePresignedPreview(r, params.Core.Config, params.Core.StorageBackendResolver, params.Core.ResourceCatalog)
 
 	// Langfuse observability — only active when LANGFUSE_* env vars are set.
 	// The middleware is registered unconditionally; when disabled it's a no-op.
@@ -238,7 +328,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 	// of the gin context. Provider is a no-op when AuditLogService is
 	// nil (e.g. lite mode without DB), so the rbac path degrades to
 	// "log to stderr only" instead of crashing.
-	r.Use(middleware.AuditServiceProvider(params.AuditLogService))
+	r.Use(middleware.AuditServiceProvider(params.Business.AuditLogService))
 
 	// 需要认证的API路由
 	v1 := r.Group("/api/v1")
@@ -249,17 +339,17 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// cfg.Tenant.EnableRBAC: when false, they log but pass through,
 		// preserving today's behaviour during the rollout window.
 		rbacGuards := newRBACGuards(
-			params.Config,
-			params.KBHandler,
-			params.CustomAgentHandler,
-			params.KnowledgeHandler,
-			params.ChunkHandler,
-			params.WikiPageHandler,
-			params.KBService,
-			params.KnowledgeService,
-			params.ChunkService,
-			params.KBShareService,
-			params.AgentShareService,
+			params.Core.Config,
+			params.Knowledge.KBHandler,
+			params.Agent.CustomAgentHandler,
+			params.Knowledge.KnowledgeHandler,
+			params.Knowledge.ChunkHandler,
+			params.Knowledge.WikiPageHandler,
+			params.Knowledge.KBService,
+			params.Knowledge.KnowledgeService,
+			params.Knowledge.ChunkService,
+			params.Knowledge.KBShareService,
+			params.Agent.AgentShareService,
 		)
 
 		// API-key gate: single authority for X-API-Key principals. Runs
@@ -269,22 +359,22 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// so that sub-groups inherit it.
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
-		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
-		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.TenantInvitationHandler, params.AuditLogHandler, rbacGuards)
-		RegisterMyInvitationRoutes(v1, params.TenantInvitationHandler)
-		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
-		RegisterImageAttrRoutes(v1, params.KBHandler, rbacGuards)
-		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)
+		RegisterAuthRoutes(v1, params.AuthTenant.AuthHandler, rbacGuards)
+		RegisterTenantRoutes(v1, params.AuthTenant.TenantHandler, params.AuthTenant.TenantMemberHandler, params.AuthTenant.TenantInvitationHandler, params.Business.AuditLogHandler, rbacGuards)
+		RegisterMyInvitationRoutes(v1, params.AuthTenant.TenantInvitationHandler)
+		RegisterKnowledgeBaseRoutes(v1, params.Knowledge.KBHandler, rbacGuards)
+		RegisterImageAttrRoutes(v1, params.Knowledge.KBHandler, rbacGuards)
+		RegisterKnowledgeBaseActivityRoutes(v1, params.Business.AuditLogHandler, rbacGuards)
 		// KB-scoped image proxy: lets tenants render images embedded in
 		// org-shared / agent-visible KB content, which the tenant-scoped
 		// /files route cannot serve because it enforces same-tenant paths.
 		serveKBScopedFiles(
 			v1,
 			rbacGuards,
-			params.TenantService,
-			params.FileService,
-			params.StorageBackendResolver,
-			params.ResourceCatalog,
+			params.AuthTenant.TenantService,
+			params.Core.FileService,
+			params.Core.StorageBackendResolver,
+			params.Core.ResourceCatalog,
 		)
 		// Message-scoped image proxy: shared-agent replies belong to the
 		// caller's session but may reference resources stored in the agent's
@@ -295,53 +385,53 @@ func NewRouter(params RouterParams) *gin.Engine {
 		serveMessageScopedFiles(
 			v1,
 			rbacGuards,
-			params.MessageService,
-			params.AgentShareService,
-			params.TenantService,
-			params.FileService,
-			params.StorageBackendResolver,
-			params.ResourceCatalog,
-			params.KBShareService,
-			params.KBService,
-			params.KnowledgeService,
+			params.Session.MessageService,
+			params.Agent.AgentShareService,
+			params.AuthTenant.TenantService,
+			params.Core.FileService,
+			params.Core.StorageBackendResolver,
+			params.Core.ResourceCatalog,
+			params.Knowledge.KBShareService,
+			params.Knowledge.KBService,
+			params.Knowledge.KnowledgeService,
 		)
-		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
-		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, params.BusinessExtractHandler, rbacGuards)
-		RegisterUtilityRoutes(v1, params.UtilityHandler, rbacGuards)
-		RegisterBillingRoutes(v1, params.BillingHandler, rbacGuards)
-		RegisterFleetRoutes(v1, params.FleetHandler, rbacGuards)
-		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
-		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
-		RegisterSessionRoutes(v1, params.SessionHandler, params.MessageSuggestionHandler, rbacGuards)
-		RegisterChatRoutes(v1, params.SessionHandler, rbacGuards)
-		RegisterMessageRoutes(v1, params.MessageHandler, rbacGuards)
-		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
-		RegisterSandboxConfigRoutes(v1, params.SandboxConfigHandler, params.SandboxSkillHandler, rbacGuards)
-		RegisterMyEnvVarRoutes(v1, params.MeEnvVarHandler)
-		v1.GET("/me/browser", params.SessionHandler.BrowserSkillAccount)
-		v1.GET("/me/browser/extension", params.SessionHandler.BrowserSkillDownload)
-		v1.POST("/me/browser", params.SessionHandler.BrowserSkillAccount)
-		RegisterEvaluationRoutes(v1, params.EvaluationHandler, rbacGuards)
-		RegisterInitializationRoutes(v1, params.InitializationHandler, rbacGuards)
-		params.SystemHandler.BindDeploymentCapabilities(deploymentCapabilitiesFromRouter(params))
-		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
-		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
-		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
-		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
-		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
-		RegisterVectorStoreRoutes(v1, params.VectorStoreHandler, rbacGuards)
-		RegisterStorageBackendRoutes(v1, params.StorageBackendHandler, rbacGuards)
-		RegisterCustomAgentRoutes(v1, params.CustomAgentHandler, rbacGuards)
-		RegisterUserFavoriteRoutes(v1, params.UserFavoriteHandler, rbacGuards)
-		RegisterSkillRoutes(v1, params.SkillHandler, rbacGuards)
-		RegisterOrganizationRoutes(v1, params.OrganizationHandler, rbacGuards)
-		RegisterIMChannelRoutes(v1, params.IMHandler, rbacGuards)
-		RegisterEmbedChannelRoutes(v1, params.EmbedChannelHandler, rbacGuards)
-		RegisterMCPEndpointRoutes(v1, params.MCPEndpointHandler, rbacGuards)
-		RegisterDataSourceRoutes(v1, params.DataSourceHandler, params.DataSourceCredentialsHandler, rbacGuards)
-		RegisterWeKnoraCloudRoutes(v1, params.WeKnoraCloudHandler, rbacGuards)
-		RegisterWikiPageRoutes(v1, params.WikiPageHandler, rbacGuards)
-		RegisterMemoryRoutes(v1, params.MemoryHandler, rbacGuards)
+		RegisterKnowledgeTagRoutes(v1, params.Knowledge.TagHandler, rbacGuards)
+		RegisterKnowledgeRoutes(v1, params.Knowledge.KnowledgeHandler, params.Business.BusinessExtractHandler, rbacGuards)
+		RegisterUtilityRoutes(v1, params.Business.UtilityHandler, rbacGuards)
+		RegisterBillingRoutes(v1, params.Business.BillingHandler, rbacGuards)
+		RegisterFleetRoutes(v1, params.Business.FleetHandler, rbacGuards)
+		RegisterFAQRoutes(v1, params.Knowledge.FAQHandler, rbacGuards)
+		RegisterChunkRoutes(v1, params.Knowledge.ChunkHandler, rbacGuards)
+		RegisterSessionRoutes(v1, params.Session.SessionHandler, params.Session.MessageSuggestionHandler, rbacGuards)
+		RegisterChatRoutes(v1, params.Session.SessionHandler, rbacGuards)
+		RegisterMessageRoutes(v1, params.Session.MessageHandler, rbacGuards)
+		RegisterModelRoutes(v1, params.Model.ModelHandler, params.Model.ModelCredentialsHandler, rbacGuards)
+		RegisterSandboxConfigRoutes(v1, params.Sandbox.SandboxConfigHandler, params.Sandbox.SandboxSkillHandler, rbacGuards)
+		RegisterMyEnvVarRoutes(v1, params.Sandbox.MeEnvVarHandler)
+		v1.GET("/me/browser", params.Session.SessionHandler.BrowserSkillAccount)
+		v1.GET("/me/browser/extension", params.Session.SessionHandler.BrowserSkillDownload)
+		v1.POST("/me/browser", params.Session.SessionHandler.BrowserSkillAccount)
+		RegisterEvaluationRoutes(v1, params.Model.EvaluationHandler, rbacGuards)
+		RegisterInitializationRoutes(v1, params.AuthTenant.InitializationHandler, rbacGuards)
+		params.AuthTenant.SystemHandler.BindDeploymentCapabilities(deploymentCapabilitiesFromRouter(params))
+		RegisterSystemRoutes(v1, params.AuthTenant.SystemHandler, rbacGuards)
+		RegisterSystemAdminRoutes(v1, params.AuthTenant.SystemHandler, params.Business.AuditLogHandler, rbacGuards)
+		RegisterMCPServiceRoutes(v1, params.MCP.MCPServiceHandler, params.MCP.MCPCredentialsHandler, params.MCP.MCPOAuthHandler, rbacGuards)
+		RegisterWebSearchRoutes(v1, params.WebSearch.WebSearchHandler, rbacGuards)
+		RegisterWebSearchProviderRoutes(v1, params.WebSearch.WebSearchProviderHandler, params.WebSearch.WebSearchCredentialsHandler, rbacGuards)
+		RegisterVectorStoreRoutes(v1, params.Core.VectorStoreHandler, rbacGuards)
+		RegisterStorageBackendRoutes(v1, params.Core.StorageBackendHandler, rbacGuards)
+		RegisterCustomAgentRoutes(v1, params.Agent.CustomAgentHandler, rbacGuards)
+		RegisterUserFavoriteRoutes(v1, params.Agent.UserFavoriteHandler, rbacGuards)
+		RegisterSkillRoutes(v1, params.Agent.SkillHandler, rbacGuards)
+		RegisterOrganizationRoutes(v1, params.Agent.OrganizationHandler, rbacGuards)
+		RegisterIMChannelRoutes(v1, params.Integration.IMHandler, rbacGuards)
+		RegisterEmbedChannelRoutes(v1, params.Integration.EmbedChannelHandler, rbacGuards)
+		RegisterMCPEndpointRoutes(v1, params.MCP.MCPEndpointHandler, rbacGuards)
+		RegisterDataSourceRoutes(v1, params.DataSource.DataSourceHandler, params.DataSource.DataSourceCredentialsHandler, rbacGuards)
+		RegisterWeKnoraCloudRoutes(v1, params.Business.WeKnoraCloudHandler, rbacGuards)
+		RegisterWikiPageRoutes(v1, params.Knowledge.WikiPageHandler, rbacGuards)
+		RegisterMemoryRoutes(v1, params.Agent.MemoryHandler, rbacGuards)
 		RegisterChunkerDebugRoutes(v1, rbacGuards)
 
 		// Fail fast if any declared API-key policy points at a route

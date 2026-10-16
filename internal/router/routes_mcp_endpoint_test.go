@@ -102,8 +102,9 @@ func TestPublishedMCPRouteProtocolAndAuthorization(t *testing.T) {
 	srv := mcpserver.NewServer(&protocolKBService{}, nil, nil, &protocolWikiService{}, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil)
 	r := NewRouter(RouterParams{
-		Config: &config.Config{Tenant: &config.TenantConfig{}}, SystemHandler: &handler.SystemHandler{},
-		MCPServer: srv, MCPEndpointService: &protocolEndpointService{}, TenantService: &protocolTenantService{},
+		Core:       CoreRouteDeps{Config: &config.Config{Tenant: &config.TenantConfig{}}},
+		AuthTenant: AuthTenantRouteDeps{SystemHandler: &handler.SystemHandler{}, TenantService: &protocolTenantService{}},
+		MCP:        MCPRouteDeps{MCPServer: srv, MCPEndpointService: &protocolEndpointService{}},
 	})
 	for _, version := range []string{"2025-11-25", "2026-07-28"} {
 		t.Run(version, func(t *testing.T) {
@@ -248,7 +249,8 @@ func TestMCPModernHeadersPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("LOCAL_STORAGE_BASE_DIR", t.TempDir())
 	r := NewRouter(RouterParams{
-		Config: &config.Config{Tenant: &config.TenantConfig{}}, SystemHandler: &handler.SystemHandler{},
+		Core:       CoreRouteDeps{Config: &config.Config{Tenant: &config.TenantConfig{}}},
+		AuthTenant: AuthTenantRouteDeps{SystemHandler: &handler.SystemHandler{}},
 	})
 	req := httptest.NewRequest(http.MethodOptions, "/mcp/ep-1", nil)
 	req.Header.Set("Origin", "https://client.example")
@@ -322,14 +324,16 @@ func TestMCPServerRoutesAreMountedAndReported(t *testing.T) {
 	}
 
 	params := RouterParams{
-		MCPEndpointHandler: handler.NewMCPEndpointHandler(nil),
-		MCPEndpointService: &stubMCPEndpointServiceForRoutes{},
-		MCPServer:          srv,
+		MCP: MCPRouteDeps{
+			MCPEndpointHandler: handler.NewMCPEndpointHandler(nil),
+			MCPEndpointService: &stubMCPEndpointServiceForRoutes{},
+			MCPServer:          srv,
+		},
 	}
 	if !deploymentCapabilitiesFromRouter(params).Capabilities["integrations.mcpserver"].Supported {
 		t.Fatal("integrations.mcpserver must be reported when the MCP server is wired")
 	}
-	params.MCPServer = nil
+	params.MCP.MCPServer = nil
 	if deploymentCapabilitiesFromRouter(params).Capabilities["integrations.mcpserver"].Supported {
 		t.Fatal("integrations.mcpserver must be off without the MCP server")
 	}
