@@ -26,9 +26,12 @@ type fakeRetryChat struct {
 	nonStreamIdx  int
 	calls         []string
 	formats       []string
+	// lastMessages 记录最近一次调用收到的消息，供断言（如自愈回灌是否截断）
+	lastMessages []chat.Message
 }
 
-func (f *fakeRetryChat) Chat(_ context.Context, _ []chat.Message, opts *chat.ChatOptions) (*types.ChatResponse, error) {
+func (f *fakeRetryChat) Chat(_ context.Context, msgs []chat.Message, opts *chat.ChatOptions) (*types.ChatResponse, error) {
+	f.lastMessages = msgs
 	f.calls = append(f.calls, "nonstream")
 	f.formats = append(f.formats, string(opts.Format))
 	i := f.nonStreamIdx
@@ -42,7 +45,8 @@ func (f *fakeRetryChat) Chat(_ context.Context, _ []chat.Message, opts *chat.Cha
 	return &types.ChatResponse{Content: ""}, nil
 }
 
-func (f *fakeRetryChat) ChatStream(_ context.Context, _ []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (f *fakeRetryChat) ChatStream(_ context.Context, msgs []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+	f.lastMessages = msgs
 	f.calls = append(f.calls, "stream")
 	f.formats = append(f.formats, string(opts.Format))
 	i := f.streamIdx

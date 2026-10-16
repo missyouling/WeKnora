@@ -661,6 +661,26 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 		logInvoiceReplyUnparsable(ctx, raw, perr)
 		return nil, perr
 	}
+
+	// 质量闭环：确定性校验 → 有 error 级问题就带着问题清单自愈一次 → 择优保留。
+	// 关键取舍：自愈结果只有在 error 级问题**严格减少**时才替换，绝不因为"再问了一次"
+	// 就丢掉原本可用的数据——空结果比有瑕疵的结果更糟。
+	issues := validateInvoiceExtraction(parsed, cfg)
+	if countIssues(issues, issueSeverityError) > 0 {
+		fixed, fixedIssues, rerr := repairInvoiceExtraction(
+			types.WithLLMCallMetadata(ctx, "invoice_extract_repair", ""),
+			model, messages, baseOpts, schema, cfg, raw, issues)
+		switch {
+		case rerr != nil:
+			logger.Warnf(ctx, "invoice repair failed: %v", rerr)
+		case countIssues(fixedIssues, issueSeverityError) < countIssues(issues, issueSeverityError):
+			parsed, issues = fixed, fixedIssues
+		default:
+			logger.Warnf(ctx, "invoice repair did not reduce errors (%d → %d), keeping original",
+				countIssues(issues, issueSeverityError), countIssues(fixedIssues, issueSeverityError))
+		}
+	}
+	logExtractIssues(ctx, issues)
 	return parsed, nil
 }
 
