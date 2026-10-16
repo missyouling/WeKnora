@@ -131,13 +131,19 @@ export default defineConfig(
       'vue/require-explicit-emits': 'warn',
       'vue/v-on-event-hyphenation': 'warn',
       'vue/attribute-hyphenation': 'warn',
-      'vue/no-static-inline-styles': 'warn',
-      'vue/prefer-separate-static-class': 'warn',
+      // no-static-inline-styles / prefer-separate-static-class 已关闭，见下方 off 区说明
       'vue/no-potential-component-option-typo': 'warn',
       'vue/no-reserved-keys': 'warn',
       'vue/require-render-return': 'warn',
 
       // ===== off：存量过大或与项目现状冲突，暂不开启 =====
+      // 静态内联样式：存量 129 + 61 处，全部是类似 style="width: 100%" 的常规写法，
+      // **零功能影响**。要消除就得把样式逐个抽成 class，会改动大量上游文件、
+      // 有 UI 视觉回归风险，而按 §5.9「二开不碰上游文件」的原则，这些改动
+      // 每次同步都要重新适配。收益为零、成本显著，故关闭。
+      // 真正需要约束的是「动态绑定大量样式」，那种情况另行 review。
+      'vue/no-static-inline-styles': 'off',
+      'vue/prefer-separate-static-class': 'off',
       // any 用量 2363 处，先关；AGENTS.md 已明令「严禁滥用 any」，
       // 待分批治理后再从 warn 起步。
       '@typescript-eslint/no-explicit-any': 'off',
