@@ -74,6 +74,31 @@ func TestGoldenParseInvoiceRuleReply(t *testing.T) {
 			},
 		},
 		{
+			// 真实数据验证：435 条 knowledges 中 20 条被模型写成 parseStatus，
+			// 而分类配置字段名是 extractStatus → 前端按配置键取值为空，该列渲染为空白。
+			name: "模型漂移键 parseStatus 归一到配置字段 extractStatus",
+			raw:  `{"kind":"invoice","invoices":[{"invoice_no":"12345678","parseStatus":"completed"}]}`,
+			cfg: &types.KbExtractConfig{
+				Scope:  "invoice",
+				Fields: []types.ExtractFieldConfig{{Name: "extractStatus", Type: "string", Enabled: true}},
+			},
+			check: func(t *testing.T, got *InvoiceExtractionResult) {
+				if len(got.Invoices) != 1 {
+					t.Fatalf("invoices = %d, want 1", len(got.Invoices))
+				}
+				fm := got.Invoices[0].Fields
+				if fm == nil {
+					t.Fatalf("fields 桶为空: %#v", fm)
+				}
+				if fm["extractStatus"] != "completed" {
+					t.Errorf("fields[extractStatus] = %v, want completed", fm["extractStatus"])
+				}
+				if _, bad := fm["parseStatus"]; bad {
+					t.Errorf("fields 仍残留 parseStatus: %v", fm["parseStatus"])
+				}
+			},
+		},
+		{
 			name: "非发票文档",
 			raw:  `{"kind":"not_invoice","invoices":[]}`,
 			cfg:  nil,

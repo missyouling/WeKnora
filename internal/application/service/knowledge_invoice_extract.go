@@ -66,14 +66,14 @@ type InvoiceExtractionItem struct {
 // amount/tax_amount）通过自定义 JSON 编解码收集进 Extra，随 items 行整体
 // 持久化并透传前端动态列渲染。
 type InvoiceExtractionLine struct {
-	Name     string   `json:"name"`
-	Spec     string   `json:"spec,omitempty"` // 规格型号（分类 items 子列键）
-	Unit     string   `json:"unit,omitempty"`
-	Qty      *float64 `json:"qty,omitempty"`
-	Price    *float64 `json:"price,omitempty"`
-	Amount   *float64 `json:"amount,omitempty"`
-	TaxRate  *float64 `json:"tax_rate,omitempty"`
-	TaxAmt   *float64 `json:"tax_amount,omitempty"`
+	Name    string   `json:"name"`
+	Spec    string   `json:"spec,omitempty"` // 规格型号（分类 items 子列键）
+	Unit    string   `json:"unit,omitempty"`
+	Qty     *float64 `json:"qty,omitempty"`
+	Price   *float64 `json:"price,omitempty"`
+	Amount  *float64 `json:"amount,omitempty"`
+	TaxRate *float64 `json:"tax_rate,omitempty"`
+	TaxAmt  *float64 `json:"tax_amount,omitempty"`
 	// Extra 分类明细子列（业务语义 key，如 plate_no/vehicle_type/travel_from/
 	// travel_to/spec 等）；JSON 序列化时与标准键合并输出，反序列化时收集未知键。
 	Extra map[string]any `json:"-"`
@@ -314,6 +314,13 @@ var invoiceFieldAliases = []struct{ alias, target string }{
 	{"审核", "remark"},
 	{"出纳", "remark"},
 	{"财务主管", "remark"},
+	// 提取状态：分类配置里的字段名是 extractStatus，模型常漂移成 parseStatus
+	// （实测 435 条真实数据中 20 条如此、extractStatus 反而 0 条），
+	// 导致前端按配置键 extractStatus 取值时该列渲染为空。
+	{"parseStatus", "extractStatus"},
+	{"parse_status", "extractStatus"},
+	{"解析状态", "extractStatus"},
+	{"提取状态", "extractStatus"},
 }
 
 // invoiceLineFieldAliases 明细行字段的中文别名。
@@ -596,12 +603,17 @@ func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
 	if len(keys) == 0 {
 		return ""
 	}
+	// 举例键一律取自配置的 SubFields.Key，不再写死 plate_no/travel_from/travel_to：
+	// 那些是通行费分类的历史硬编码，对其它分类（水电/合同等）是无效甚至误导的键名。
+	example := keys[0]
+	if len(keys) > 1 {
+		example = strings.Join(keys[:min(len(keys), 3)], "/")
+	}
 	return fmt.Sprintf(
 		"额外明细行规则：本分类发票的 items 明细行必须按以下子列键提取（键名严格使用）：%s（含义依次为：%s）。"+
-			"每行明细都输出这些键；票面存在但无法识别的键输出 null 或空字符串。若票面明细含车牌号、通行日期等分类特有信息"+
-			"（如通行费发票的车牌号/通行日期起止），必须提取到 items 行对应的键（plate_no/travel_from/travel_to 等），"+
-			"不要只写入 remark。",
-		strings.Join(keys, "/"), strings.Join(labels, "/"))
+			"每行明细都输出这些键；票面存在但无法识别的键输出 null 或空字符串。若票面明细含分类特有信息"+
+			"（如本分类的 %s），必须提取到 items 行对应的键，不要只写入 remark。",
+		strings.Join(keys, "/"), strings.Join(labels, "/"), example)
 }
 
 // ExtractInvoicesFromContentWithRules 与 ExtractInvoicesFromContent 相同，但支持注入
@@ -974,7 +986,7 @@ var (
 	// invoiceHeadLineRe 匹配发票「号码行」。
 	invoiceHeadLineRe = regexp.MustCompile(
 		`^(\d{20})\s+(\d{4})年(\d{1,2})月(\d{1,2})日\s+([0-9A-Z]{15,20})\s+(.+?)([0-9A-Z]{15,20})\s+\*([^*]*)\*通行费\s+(\S+)\s+(\S+)\s+(\d{8})\s+([\d.]+)\s+(\d+(?:\.\d+)?%)\s+([\d.]+)\s*$`)
-		// invoiceAmountLineRe 匹配发票「金额行」。
+	// invoiceAmountLineRe 匹配发票「金额行」。
 	invoiceAmountLineRe = regexp.MustCompile(
 		`^¥([\d.]+)\s+(.+?)\s+(\S+)\s+¥([\d.]+)\s+(\d{8})\s+(.+?)\s+¥([\d.]+)\s*$`)
 	// invoiceCompactLineRe 匹配 docreader 新输出的「单行紧凑」格式：号码段与
