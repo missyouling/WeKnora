@@ -203,7 +203,7 @@
                   :placeholder="systemPromptPlaceholder" :autosize="{ minRows: 10, maxRows: 25 }"
                   @input="handlePromptInput" class="system-prompt-textarea" />
                 <PromptTemplateSelector type="agentSystemPrompt" position="corner"
-                  :hasKnowledgeBase="hasKnowledgeBase" @select="handleSystemPromptTemplateSelect"
+                  :has-knowledge-base="hasKnowledgeBase" @select="handleSystemPromptTemplateSelect"
                   @reset-default="handleAgentSystemPromptResetDefault" />
               </div>
               <!-- 普通模式：单个提示词 -->
@@ -212,7 +212,7 @@
                   :placeholder="systemPromptPlaceholder" :autosize="{ minRows: 10, maxRows: 25 }"
                   @input="handlePromptInput" class="system-prompt-textarea" />
                 <PromptTemplateSelector type="systemPrompt" position="corner"
-                  :hasKnowledgeBase="hasKnowledgeBase" @select="handleSystemPromptTemplateSelect"
+                  :has-knowledge-base="hasKnowledgeBase" @select="handleSystemPromptTemplateSelect"
                   @reset-default="handleSystemPromptTemplateSelect" />
               </div>
               <!-- 占位符提示下拉框 -->
@@ -260,7 +260,7 @@
                   :placeholder="contextTemplatePlaceholder" :autosize="{ minRows: 8, maxRows: 20 }"
                   @input="handleContextTemplateInput" class="system-prompt-textarea" />
                 <PromptTemplateSelector type="contextTemplate" position="corner"
-                  :hasKnowledgeBase="hasKnowledgeBase" @select="handleContextTemplateSelect"
+                  :has-knowledge-base="hasKnowledgeBase" @select="handleContextTemplateSelect"
                   @reset-default="handleContextTemplateSelect" />
               </div>
               <!-- 上下文模板占位符提示下拉框 -->
@@ -479,7 +479,7 @@
                   <t-textarea v-model="formData.config.fallback_response"
                     :placeholder="defaultFallbackResponse || $t('agent.editor.fallbackResponsePlaceholder')"
                     :autosize="{ minRows: 2, maxRows: 6 }" />
-                  <PromptTemplateSelector type="fallback" position="corner" fallbackMode="fixed"
+                  <PromptTemplateSelector type="fallback" position="corner" fallback-mode="fixed"
                     @select="handleFallbackResponseTemplateSelect"
                     @reset-default="handleFallbackResponseTemplateSelect" />
                 </div>
@@ -508,7 +508,7 @@
                   <t-textarea ref="fallbackPromptTextareaRef" v-model="formData.config.fallback_prompt"
                     :placeholder="defaultFallbackPrompt || $t('agent.editor.fallbackPromptPlaceholder')"
                     :autosize="{ minRows: 4, maxRows: 10 }" @input="handleFallbackPromptInput" />
-                  <PromptTemplateSelector type="fallback" position="corner" fallbackMode="model"
+                  <PromptTemplateSelector type="fallback" position="corner" fallback-mode="model"
                     @select="handleFallbackPromptTemplateSelect"
                     @reset-default="handleFallbackPromptTemplateSelect" />
                 </div>
@@ -1149,7 +1149,7 @@
             <div class="setting-control setting-control-full">
               <t-checkbox-group v-model="formData.config.allowed_tools" class="tool-groups">
                 <section v-for="group in groupedAvailableTools" :key="group.key"
-                  :class="['tool-group', `tool-group--${group.key}`]">
+                  class="tool-group" :class="[`tool-group--${group.key}`]">
                   <header class="tool-group-header">
                     <span class="tool-group-bar" />
                     <span class="tool-group-title">{{ group.label }}</span>
@@ -1162,7 +1162,7 @@
                   <div class="tool-grid">
                     <t-checkbox v-for="tool in group.tools" :key="tool.value" :value="tool.value"
                       :disabled="tool.disabled"
-                      :class="['tool-card', { 'tool-card--disabled': tool.disabled, 'tool-card--danger': tool.danger }]">
+                      class="tool-card" :class="[{ 'tool-card--disabled': tool.disabled, 'tool-card--danger': tool.danger }]">
                       <div class="tool-card-body">
                         <div class="tool-card-head">
                           <span class="tool-card-name">{{ tool.label }}</span>
@@ -1197,7 +1197,7 @@
                 </template>
                 <template v-else>
                   <span v-for="item in effectiveTools" :key="item.value"
-                    :class="['effective-chip', { 'effective-chip--inactive': !item.active }]"
+                    class="effective-chip" :class="[{ 'effective-chip--inactive': !item.active }]"
                     :title="item.reason || ''">
                     <span class="effective-chip-label">{{ item.label }}</span>
                     <span v-if="!item.active" class="effective-chip-reason">{{ item.reason }}</span>

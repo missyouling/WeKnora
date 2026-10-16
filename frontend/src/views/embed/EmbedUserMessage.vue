@@ -13,7 +13,7 @@
       </div>
     </div>
     <div class="user_msg">{{ content }}</div>
-    <picturePreview :reviewImg="reviewImg" :reviewUrl="reviewUrl" @closePreImg="closePreImg" />
+    <picturePreview :review-img="reviewImg" :review-url="reviewUrl" @closePreImg="closePreImg" />
   </div>
 </template>
 

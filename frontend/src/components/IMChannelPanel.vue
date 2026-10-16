@@ -87,7 +87,7 @@
 
       <div class="im-steps">
         <div v-for="(title, i) in stepTitles" :key="i"
-          :class="['im-step', { active: wizardStep === i, done: wizardStep > i }]">
+          class="im-step" :class="[{ active: wizardStep === i, done: wizardStep > i }]">
           <span class="im-step-num">
             <t-icon v-if="wizardStep > i" name="check" class="im-step-check" />
             <template v-else>{{ i + 1 }}</template>

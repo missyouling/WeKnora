@@ -46,9 +46,9 @@ async function fixture(showFileUploadToggle = true) {
     isReplying: false, showFileUploadToggle,
     onSendMsg: (...args: any[]) => sent.push(args),
   })
-  app.component('t-textarea', defineComponent({ props: ['modelValue'], setup: (props, { attrs }) => () => h('textarea', { ...attrs, value: props.modelValue }) }))
-  app.component('t-icon', { render: () => null })
-  app.component('t-tooltip', defineComponent({ props: ['placement', 'content'], setup: (_props, { slots }) => () => slots.default?.() }))
+  app.component('TTextarea', defineComponent({ props: ['modelValue'], setup: (props, { attrs }) => () => h('textarea', { ...attrs, value: props.modelValue }) }))
+  app.component('TIcon', { render: () => null })
+  app.component('TTooltip', defineComponent({ props: ['placement', 'content'], setup: (_props, { slots }) => () => slots.default?.() }))
   const root = node('root')
   app.mount(root)
   await nextTick(); await nextTick()

@@ -43,8 +43,8 @@
                 </div>
                 <div class="doc-group-chunks" v-show="expandedGroups[group.key]">
                     <div v-for="(chunk, cIdx) in group.chunks" :key="'chunk-' + cIdx" class="doc-chunk-item">
-                        <t-popup overlayClassName="refer-to-layer" placement="bottom-left" width="400"
-                            :showArrow="false" trigger="click">
+                        <t-popup overlay-class-name="refer-to-layer" placement="bottom-left" width="400"
+                            :show-arrow="false" trigger="click">
                             <template #content>
                                 <ContentPopup :content="safeProcessContent(chunk.content)" :is-html="true" />
                             </template>

@@ -163,7 +163,7 @@
       <template #header-extra>
         <nav class="skill-add-steps" :aria-label="$t('settings.skills.addProgress')">
           <component :is="canJumpAddStep(index) ? 'button' : 'div'" v-for="(item, index) in addSteps" :key="item.key"
-            :type="canJumpAddStep(index) ? 'button' : undefined" :class="['skill-add-step', {
+            :type="canJumpAddStep(index) ? 'button' : undefined" class="skill-add-step" :class="[{
               'is-active': addStep === index,
               'is-done': addStep > index,
               'is-clickable': canJumpAddStep(index),

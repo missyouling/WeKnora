@@ -202,7 +202,7 @@ onBeforeUnmount(stopPolling)
           v-for="ds in dataSources"
           :key="ds.id"
           :type="canManageDataSource ? 'button' : undefined"
-          :class="['ds-card', `ds-card--${ds.type}`, { 'ds-card--clickable': canManageDataSource }]"
+          class="ds-card" :class="[`ds-card--${ds.type}`, { 'ds-card--clickable': canManageDataSource }]"
           @click="canManageDataSource ? openEdit(ds) : undefined"
         >
           <div class="ds-card__badge">

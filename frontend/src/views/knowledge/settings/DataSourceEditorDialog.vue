@@ -1437,7 +1437,7 @@ const drawerConfirmText = computed(() => {
       </t-button>
       <span
         v-if="testResult"
-        :class="['footer-test-message', testResult === 'success' ? 'success' : 'error']"
+        class="footer-test-message" :class="[testResult === 'success' ? 'success' : 'error']"
         :title="testResult === 'error' ? testErrorMsg : t('datasource.connected')"
       >
         {{
@@ -1459,7 +1459,7 @@ const drawerConfirmText = computed(() => {
       <div
         v-for="(title, i) in stepTitles"
         :key="i"
-        :class="['ds-step', { active: step === i, done: step > i }]"
+        class="ds-step" :class="[{ active: step === i, done: step > i }]"
       >
         <span class="ds-step-num">
           <t-icon v-if="step > i" name="check" class="ds-step-check" />
@@ -1477,7 +1477,7 @@ const drawerConfirmText = computed(() => {
           v-for="def in connectorDefs"
           :key="def.type"
           type="button"
-          :class="['ds-type-card', { disabled: !def.available }]"
+          class="ds-type-card" :class="[{ disabled: !def.available }]"
           :disabled="!def.available"
           @click="selectType(def)"
         >

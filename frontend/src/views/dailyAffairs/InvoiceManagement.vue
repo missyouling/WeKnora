@@ -47,7 +47,7 @@
               </t-date-range-picker>
             </template>
             <template #columns>
-              <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
+              <BusinessColumnFilter :columns="effectiveColumns" v-model:visible-keys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
               <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">

@@ -16,7 +16,7 @@ export default function (knowledgeBaseId?: string) {
   const route = useRoute();
   const { t } = useI18n();
   const { cardList, total } = storeToRefs(usemenuStore);
-  let moreIndex = ref(-1);
+  const moreIndex = ref(-1);
   const details = reactive({
     title: "",
     time: "",

@@ -276,7 +276,7 @@ onUnmounted(() => {
 
 </script>
 <template>
-  <t-config-provider :globalConfig="tdGlobalConfig">
+  <t-config-provider :global-config="tdGlobalConfig">
     <div id="app">
       <RouterView />
       <ManualKnowledgeEditor />

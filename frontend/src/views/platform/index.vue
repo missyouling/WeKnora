@@ -42,7 +42,7 @@ const route = useRoute();
 const router = useRouter();
 const commandPaletteStore = useCommandPaletteStore();
 const uiStore = useUIStore();
-let ismask = ref(false)
+const ismask = ref(false)
 const { t } = useI18n();
 
 const isRouterAlive = ref(true)

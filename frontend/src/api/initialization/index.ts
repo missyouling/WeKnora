@@ -166,10 +166,8 @@ export interface KBModelConfigRequest {
 
 export function updateKBConfig(kbId: string, config: KBModelConfigRequest): Promise<any> {
     return new Promise((resolve, reject) => {
-        console.log('Starting KB config update (simplified)...', kbId, config);
         put(`/api/v1/initialization/config/${kbId}`, config)
             .then((response: any) => {
-                console.log('KB config update completed', response);
                 resolve(response);
             })
             .catch((error: any) => {
@@ -182,10 +180,8 @@ export function updateKBConfig(kbId: string, config: KBModelConfigRequest): Prom
 // 根据知识库ID执行配置更新（旧版，保留兼容性）
 export function initializeSystemByKB(kbId: string, config: InitializationConfig): Promise<any> {
     return new Promise((resolve, reject) => {
-        console.log('Starting KB config update...', kbId, config);
         post(`/api/v1/initialization/initialize/${kbId}`, config)
             .then((response: any) => {
-                console.log('KB config update completed', response);
                 resolve(response);
             })
             .catch((error: any) => {

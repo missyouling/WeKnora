@@ -120,7 +120,7 @@ onUnmounted(() => {
     attach="body"
     :close-btn="true"
     :footer="false"
-    :class="['chat-attachment-preview-drawer', { 'chat-attachment-preview-drawer--resizing': mainDrawerResizing }]"
+    class="chat-attachment-preview-drawer" :class="[{ 'chat-attachment-preview-drawer--resizing': mainDrawerResizing }]"
     @close="close"
   >
     <template #header>

@@ -20,7 +20,7 @@
           class="doc-filter-select doc-filter-field__control" @change="onDocTypeChange" />
       </template>
       <template #columns>
-        <BusinessColumnFilter :columns="columnDefs" v-model:visibleKeys="visibleKeys"
+        <BusinessColumnFilter :columns="columnDefs" v-model:visible-keys="visibleKeys"
           @update:visible-keys="persistColumns" @reset="resetColumns" @select-all="selectAllColumns" />
       </template>
       <template #right-extra>
@@ -901,7 +901,7 @@ const overviewCards = computed(() => {
     items.forEach((t: any) => statByKey.set(t.doc_type, t))
     const typeCards: any[] = []
     currentScopes.value.forEach((sc: string) => {
-      ;(categories.value[sc] || []).forEach((c: any) => {
+      (categories.value[sc] || []).forEach((c: any) => {
         if (!c || c.enabled === false) return
         let stat = statByKey.get(c.name)
         if (!stat && c.builtin_key) stat = statByKey.get(c.builtin_key)
@@ -1100,7 +1100,7 @@ async function ensureFileRows(force = false) {
   if (!kbId.value) return
   if (!force && fileRows.value.length) return
   const fres: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-  let arr = Array.isArray(fres?.data) ? fres.data : Array.isArray(fres?.list) ? fres.list : []
+  const arr = Array.isArray(fres?.data) ? fres.data : Array.isArray(fres?.list) ? fres.list : []
   rawFileRows.value = arr
   fileRows.value = arr
     .filter((it: any) => {
@@ -1922,7 +1922,7 @@ async function ensureKb() {
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let extractingSet = new Set<string>()
+const extractingSet = new Set<string>()
 
 async function extractFile(kid: string, scope: string, certType?: string) {
   await extractFleetDocument(kbId.value, kid, certType ? { scope, cert_type: certType } : { scope })

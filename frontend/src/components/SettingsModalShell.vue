@@ -24,14 +24,14 @@
                 <slot name="nav">
                   <template v-for="group in navGroups" :key="group.key">
                     <div class="nav-group-title">{{ group.label }}</div>
-                    <div v-for="item in group.items" :key="item.key" :class="['nav-item', { active: modelValue === item.key }]"
+                    <div v-for="item in group.items" :key="item.key" class="nav-item" :class="[{ active: modelValue === item.key }]"
                       :data-guide="navItemGuidePrefix ? `${navItemGuidePrefix}-${item.key}` : undefined"
                       @click="emit('update:modelValue', item.key)">
                       <slot name="nav-icon" :item="item" :active="modelValue === item.key">
                         <t-icon :name="item.icon" class="nav-icon" />
                       </slot>
                       <span class="nav-label">{{ item.label }}</span>
-                      <span v-if="showBadge(item)" :class="['nav-badge', item.badgeClass]">{{ item.badge }}</span>
+                      <span v-if="showBadge(item)" class="nav-badge" :class="[item.badgeClass]">{{ item.badge }}</span>
                     </div>
                   </template>
                 </slot>

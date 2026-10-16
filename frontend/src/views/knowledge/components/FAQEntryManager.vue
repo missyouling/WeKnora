@@ -176,7 +176,7 @@
                         {{ entry.standard_question }}
                       </div>
                       <div class="faq-card-actions">
-                        <t-popup v-if="canManage" v-model="entry.showMore" overlayClassName="card-more-popup"
+                        <t-popup v-if="canManage" v-model="entry.showMore" overlay-class-name="card-more-popup"
                           trigger="click" destroy-on-close placement="bottom-right"
                           @visible-change="(visible: boolean) => (entry.showMore = visible)">
                           <div class="card-more-btn" @click.stop>

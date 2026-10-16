@@ -259,7 +259,7 @@ async function createNewSession(value: string, modelId: string, mentionedItems: 
 
 const navigateToSession = async (sessionId: string, value: string, modelId: string, mentionedItems: any[], imageFiles: any[] = [], attachmentFiles: any[] = [], options: SendMessageOptions = {}) => {
     const now = new Date().toISOString();
-    let obj = {
+    const obj = {
         title: t('createChat.newSessionTitle'),
         path: `chat/${sessionId}`,
         id: sessionId,

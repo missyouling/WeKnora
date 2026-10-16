@@ -56,7 +56,7 @@
               :mentioned_items="asUnknownArray(session.mentioned_items)"
               :images="asEmbedImages(session.images)"
               :attachments="asEmbedAttachments(session.attachments)"
-              :embeddedMode="true"
+              :embedded-mode="true"
               :embed-channel-id="channelId"
               :embed-token="token"
             />
@@ -101,7 +101,7 @@
 
     <div class="embed-chat__input">
       <EmbedInputField
-        :isReplying="isReplying"
+        :is-replying="isReplying"
         :show-web-search-toggle="showWebSearchToggle"
         v-model:web-search-enabled="webSearchEnabled"
         :show-file-upload-toggle="showFileUploadToggle"

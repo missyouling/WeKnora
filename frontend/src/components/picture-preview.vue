@@ -7,7 +7,7 @@ const close = () => {
 }
 </script>
 <template>
-    <t-image-viewer :visible="reviewImg" closeOnOverlay closeOnEscKeydown @close="close"
+    <t-image-viewer :visible="reviewImg" close-on-overlay close-on-esc-keydown @close="close"
         :images="reviewUrl ? [reviewUrl] : []">
     </t-image-viewer>
 </template>

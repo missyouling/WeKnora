@@ -6,10 +6,10 @@
 
     <t-popup
       v-if="showPopup"
-      :overlayClassName="`tool-result-popup tool-result-popup-${popupKey}`"
+      :overlay-class-name="`tool-result-popup tool-result-popup-${popupKey}`"
       placement="bottom-left"
       :width="400"
-      :showArrow="false"
+      :show-arrow="false"
       trigger="hover"
       destroy-on-close
     >

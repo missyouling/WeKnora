@@ -27,7 +27,7 @@
         <t-button
           variant="text"
           theme="default"
-          :class="['kb-upload-source-trigger', triggerClass]"
+          class="kb-upload-source-trigger" :class="[triggerClass]"
           :data-guide="dataGuide || undefined"
           :aria-label="tooltipText"
           size="small"

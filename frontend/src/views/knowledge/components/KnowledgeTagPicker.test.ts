@@ -77,7 +77,7 @@ async function fixture() {
   for (const [name, type] of [['t-input', 'input'], ['t-button', 'button'], ['t-checkbox', 'checkbox'], ['t-popconfirm', 'popconfirm'], ['t-tooltip', 'tooltip'], ['t-icon', 'icon'], ['t-loading', 'loading']]) {
     app.component(name!, vue.defineComponent({ setup: (_props, { slots }) => () => vue.h(type!, {}, slots.default?.()) }))
   }
-  app.component('t-popup', vue.defineComponent({
+  app.component('TPopup', vue.defineComponent({
     props: ['visible'], emits: ['visible-change'],
     setup: (props, { slots, emit }) => () => vue.h('popup', { onOpen: () => emit('visible-change', true) }, [slots.default?.(), props.visible ? slots.content?.() : null]),
   }))

@@ -318,7 +318,7 @@ export const useEditorResourcesStore = defineStore('editorResources', () => {
 
   function invalidate(...keys: EditorResourceKey[]) {
     if (keys.length === 0) {
-      ;(Object.keys(resources) as EditorResourceKey[]).forEach((k) => resources[k].invalidate())
+      (Object.keys(resources) as EditorResourceKey[]).forEach((k) => resources[k].invalidate())
       storageConfig.value = null
       storageStatus.value = []
       storageAllowedProviders.value = []

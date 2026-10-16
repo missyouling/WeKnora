@@ -17,14 +17,14 @@
                 </div>
                 <div class="permissions-compact-grid">
                   <div v-for="r in roleMatrixOrder" :key="r"
-                    :class="['perm-role-block', r, { 'is-me': currentRole === r }]">
+                    class="perm-role-block" :class="[r, { 'is-me': currentRole === r }]">
                     <div class="perm-role-tag">
                       <t-icon :name="roleMatrixIcon(r)" size="12px" />
                       <span>{{ $t('tenantMember.role.' + r) }}</span>
                       <span v-if="currentRole === r" class="me-badge">{{ $t('common.me') }}</span>
                     </div>
                     <div class="perm-items">
-                      <span v-for="(perm, i) in roleMatrix[r]" :key="i" :class="['perm-item', perm.has ? 'has' : 'no']">
+                      <span v-for="(perm, i) in roleMatrix[r]" :key="i" class="perm-item" :class="[perm.has ? 'has' : 'no']">
                         <t-icon :name="perm.has ? 'check' : 'close'" size="12px" />
                         {{ $t('tenantMember.permissions.' + perm.key) }}
                       </span>

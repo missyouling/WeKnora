@@ -21,7 +21,7 @@
         <div
           v-for="(kb, index) in filteredKnowledgeBases"
           :key="kb.id"
-          :class="['kb-item', { selected: isSelected(kb.id), highlighted: highlightedIndex === index }]"
+          class="kb-item" :class="[{ selected: isSelected(kb.id), highlighted: highlightedIndex === index }]"
           @click="toggleKb(kb.id)"
           @mouseenter="highlightedIndex = index"
         >
@@ -226,7 +226,6 @@ const updateDropdownPosition = () => {
   // Convert to CSS pixels so subsequent comparisons against the dropdown's
   // own width/height stay in one coordinate system.
   const rect = rectToCssPx(rawRect, zoom)
-  console.log('[KB Selector] Button rect (css px):', rect)
   const vw = vwFallback
   const vh = vhFallback
   
@@ -260,7 +259,6 @@ const updateDropdownPosition = () => {
     // 下方有足够空间，向下弹出
     actualHeight = Math.min(preferredDropdownHeight, spaceBelow - offsetY - 16)
     shouldOpenBelow = true
-    console.log('[KB Selector] Position: below button', { actualHeight })
   } else {
     // 向上弹出，优先使用 preferredHeight，必要时才扩展到 maxHeight
     const availableHeight = spaceAbove - offsetY - topMargin
@@ -272,14 +270,12 @@ const updateDropdownPosition = () => {
       actualHeight = Math.max(minDropdownHeight, availableHeight)
     }
     shouldOpenBelow = false
-    console.log('[KB Selector] Position: above button', { actualHeight })
   }
   
   // 根据弹出方向使用不同的定位方式
   if (shouldOpenBelow) {
     // 向下弹出：使用 top 定位
     const top = Math.floor(rect.bottom + offsetY)
-    console.log('[KB Selector] Opening below, top:', top)
     dropdownStyle.value = {
       position: 'fixed',
       width: `${dropdownWidth}px`,
@@ -293,7 +289,6 @@ const updateDropdownPosition = () => {
   } else {
     // 向上弹出：使用 bottom 定位
     const bottom = vh - rect.top + offsetY
-    console.log('[KB Selector] Opening above, bottom:', bottom)
     dropdownStyle.value = {
       position: 'fixed',
       width: `${dropdownWidth}px`,

@@ -46,7 +46,7 @@
               </div>
             </template>
             <template #columns>
-              <BusinessColumnFilter :columns="effectiveColumns" v-model:visibleKeys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
+              <BusinessColumnFilter :columns="effectiveColumns" v-model:visible-keys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
             </template>
             <template #right-extra>
               <t-button variant="outline" size="small" @click="settingsVisible = true">
@@ -252,7 +252,7 @@
               <!-- 摘要：复用知识库文档抽屉样式（线框 + 展开/折叠 + 每条字段一行） -->
               <div class="summary_wrapper" :class="{ 'summary_clickable': summaryOverflow || summaryExpanded }"
                 @click="(summaryOverflow || summaryExpanded) && (summaryExpanded = !summaryExpanded)">
-                <div ref="summaryRef" :class="['summary_content', { 'summary_collapsed': !summaryExpanded }]">{{
+                <div ref="summaryRef" class="summary_content" :class="[{ 'summary_collapsed': !summaryExpanded }]">{{
                   summaryLines
                 }}</div>
                 <div v-if="(summaryOverflow && !summaryExpanded) || summaryExpanded" class="summary_fade"

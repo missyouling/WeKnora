@@ -32,7 +32,7 @@
     <template #header-extra>
       <nav class="mcp-steps" :aria-label="t('mcpMetadata.setupProgress')">
         <button v-for="(label, index) in [t('mcpMetadata.connection'), t('mcpMetadata.toolsAndUsage')]"
-          :key="index" type="button" :class="['mcp-step', { 'is-active': step === index, 'is-done': step > index, 'is-clickable': true }]"
+          :key="index" type="button" class="mcp-step is-clickable" :class="[{ 'is-active': step === index, 'is-done': step > index }]"
           :aria-current="step === index ? 'step' : undefined" :disabled="submitting || metadataBusy || generatingUsage"
           @click="index === 0 ? step = 0 : (step === 0 && handleNext())">
           <span class="mcp-step__marker"><t-icon v-if="step > index" name="check" /><template v-else>{{ index + 1 }}</template></span>

@@ -24,7 +24,7 @@
     :close-on-overlay-click="true"
     destroy-on-close
     placement="right"
-    :class="['skill-files-drawer', { 'skill-files-drawer--resizing': resizing }]"
+    class="skill-files-drawer" :class="[{ 'skill-files-drawer--resizing': resizing }]"
     @close="onClose"
   >
     <div class="skill-files-drawer__shell">

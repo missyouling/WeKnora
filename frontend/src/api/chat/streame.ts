@@ -26,7 +26,7 @@ export function useStream() {
   let streamGeneration = 0
 
   // 流式渲染缓冲
-  let buffer: string[] = []
+  const buffer: string[] = []
 
   // 启动流式请求
   const startStream = async (params: { session_id: any; query: any; knowledge_base_ids?: string[]; knowledge_ids?: string[]; tag_ids?: string[]; agent_enabled?: boolean; agent_id?: string; agent_source_tenant_id?: string | number; web_search_enabled?: boolean; local_browser_enabled?: boolean; summary_model_id?: string; reasoning_effort?: string; mcp_service_ids?: string[]; skill_names?: string[]; mentioned_items?: Array<{id: string; name: string; type: string; kb_type?: string; kb_id?: string; kb_name?: string; service_id?: string; skill_name?: string}>; images?: Array<{data: string}>; attachment_uploads?: Array<{data: string; file_name: string; file_size: number}>; attachment_ids?: string[]; suggestion_attribution?: { suggestion_set_id: string; question_id: string }; question_origin?: { knowledge_base_id: string; knowledge_id?: string }; method: string; url: string; embed_token?: string; embed_session_sig?: string; embed_visitor_id?: string }) => {
@@ -64,16 +64,14 @@ export function useStream() {
     // server. This makes it possible to correlate the frontend-observed
     // latency with the backend "TTFB:first_answer_chunk" log line by
     // matching on X-Request-ID.
-    const sentAt = performance.now();
     const requestID = generateRandomString(12);
     let firstAnswerLogged = false;
 
     try {
-      let url =
+      const url =
         params.method == "POST"
           ? `${apiUrl}${params.url}/${params.session_id}`
           : `${apiUrl}${params.url}/${params.session_id}?message_id=${params.query}`;
-      console.log(`[TTFB] request:start request_id=${requestID} url=${url} sent_at=${Date.now()}`);
       
       // Prepare POST body with required fields for agent-chat
       // knowledge_base_ids array and agent_enabled can update Session's SessionAgentConfig
@@ -178,7 +176,6 @@ export function useStream() {
           // 401 is recoverable (refresh + replay); everything else is not.
           if (res.status === 401) throw new StreamAuthError(res.status);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           isLoading.value = false;
         },
 
@@ -190,7 +187,6 @@ export function useStream() {
           // calls, etc.) don't count as the "first token" arrival.
           if (!firstAnswerLogged && (parsed?.response_type === 'answer' || parsed?.type === 'answer')) {
             firstAnswerLogged = true;
-            console.log(`[TTFB] response:first_answer request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           }
           buffer.push(parsed); // 数据存入缓冲
           // 执行自定义处理

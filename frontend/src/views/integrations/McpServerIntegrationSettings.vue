@@ -102,7 +102,7 @@
           v-for="(title, i) in stepTitles"
           :key="i"
           type="button"
-          :class="['im-step', { active: wizardStep === i, done: wizardStep > i }]"
+          class="im-step" :class="[{ active: wizardStep === i, done: wizardStep > i }]"
           :disabled="!editing && i > 0"
           @click="goToWizardStep(i)"
         >

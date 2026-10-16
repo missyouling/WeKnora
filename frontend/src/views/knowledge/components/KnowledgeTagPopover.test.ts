@@ -61,10 +61,10 @@ async function fixture(fail = false) {
     ...state, 'onUpdate:visible': (value: boolean) => { state.visible = value }, onChanged: () => { changes++ },
   }) })
   app.config.globalProperties.$t = translate as typeof app.config.globalProperties.$t
-  app.component('t-popup', vue.defineComponent({
+  app.component('TPopup', vue.defineComponent({
     props: ['visible'], setup: (props, { slots }) => () => vue.h('popup', {}, props.visible ? slots.content?.() : []),
   }))
-  app.component('t-button', vue.defineComponent({ setup: (_props, { slots }) => () => vue.h('button', {}, slots.default?.()) }))
+  app.component('TButton', vue.defineComponent({ setup: (_props, { slots }) => () => vue.h('button', {}, slots.default?.()) }))
   app.mount(root)
   const settle = async () => { for (let i=0;i<5;i++) await vue.nextTick() }
   const find = (predicate: (el: Host) => boolean) => { const el = all(root,predicate)[0]; assert.ok(el); return el }

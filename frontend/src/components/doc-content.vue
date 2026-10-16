@@ -538,13 +538,13 @@ let pendingChunkPage: number | null = null;
 const isChunkPageTransition = computed(
   () => Boolean(props.details?.chunkLoading) && chunkPage.value !== loadedChunkPage.value,
 );
-let mdContentWrap = ref()
+const mdContentWrap = ref()
 // Drawer uses attach="body", so markdown nodes live outside mdContentWrap in the DOM.
 const docMarkdownRoot = ref<HTMLElement | null>(null)
 
 const getMarkdownRenderRoot = (): ParentNode | null =>
   docMarkdownRoot.value ?? (mdContentWrap.value as ParentNode | null) ?? null
-let url = ref('')
+const url = ref('')
 // 视图模式：chunks / merged / preview
 // file 类型默认「预览」，URL / 手动创建 默认「全文」
 const viewMode = ref<'chunks' | 'merged' | 'preview'>('merged');
@@ -843,12 +843,10 @@ watch(summaryStatusRefreshing, (refreshing) => {
 const renderMermaidDiagrams = async () => {
   try {
     const mermaidElements = getMarkdownRenderRoot()?.querySelectorAll('.mermaid');
-    console.log('[Mermaid] Found mermaid elements:', mermaidElements?.length);
     if (mermaidElements && mermaidElements.length > 0) {
       await mermaid.run({
         nodes: mermaidElements
       });
-      console.log('[Mermaid] Rendering complete');
       // 渲染完成后绑定点击事件
       nextTick(() => {
         bindMermaidClickEvents();
@@ -873,19 +871,16 @@ const handleMermaidClick = (e: Event) => {
 const bindMermaidClickEvents = () => {
   const renderRoot = getMarkdownRenderRoot();
   if (!renderRoot) {
-    console.log('[Mermaid] markdown render root is null');
     return;
   }
   // 绑定在 .mermaid div 上，而不是 SVG 上
   const mermaidDivs = renderRoot.querySelectorAll('.mermaid');
-  console.log('[Mermaid] Found mermaid divs:', mermaidDivs.length);
-  mermaidDivs.forEach((div, index) => {
+  mermaidDivs.forEach((div) => {
     const divEl = div as HTMLElement;
     divEl.style.cursor = 'pointer';
     // 移除旧的事件监听器（避免重复绑定）
     divEl.removeEventListener('click', handleMermaidClick);
     divEl.addEventListener('click', handleMermaidClick);
-    console.log(`[Mermaid] Bound click event to div ${index}`);
   });
 };
 
@@ -930,7 +925,7 @@ const processMarkdown = (markdownText) => {
   html = html.replace(/&lt;br\s*\/?&gt;/gi, '<br>');
 
   // 最终安全清理
-  let result = sanitizeHTML(html);
+  const result = sanitizeHTML(html);
 
   return result;
 };
@@ -1573,8 +1568,8 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
         <div class="doc-drawer-resize-line" />
       </div>
     </teleport>
-    <t-drawer :visible="visible" :zIndex="2000" :size="`${mainDrawerWidth}px`" attach="body" :closeBtn="true"
-      :footer="false" :class="['doc-main-drawer', { 'doc-main-drawer--resizing': mainDrawerResizing }]"
+    <t-drawer :visible="visible" :z-index="2000" :size="`${mainDrawerWidth}px`" attach="body" :close-btn="true"
+      :footer="false" class="doc-main-drawer" :class="[{ 'doc-main-drawer--resizing': mainDrawerResizing }]"
       @close="handleClose">
       <template #header>
         <div class="doc-drawer-header">
@@ -1620,9 +1615,9 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
           <div class="trace-drawer-resize-line" />
         </div>
       </teleport>
-      <t-drawer :visible="timelineDrawerVisible" :zIndex="2100" :size="`${timelineDrawerWidth}px`" attach="body"
-        :closeBtn="false" :footer="false" :header="false" :showOverlay="true" :closeOnOverlayClick="true"
-        placement="right" :class="['kp-secondary-drawer', { 'kp-secondary-drawer--resizing': timelineDrawerResizing }]"
+      <t-drawer :visible="timelineDrawerVisible" :z-index="2100" :size="`${timelineDrawerWidth}px`" attach="body"
+        :close-btn="false" :footer="false" :header="false" :show-overlay="true" :close-on-overlay-click="true"
+        placement="right" class="kp-secondary-drawer" :class="[{ 'kp-secondary-drawer--resizing': timelineDrawerResizing }]"
         @close="closeTimeline">
         <div class="kp-drawer-shell" :class="{ 'kp-drawer-shell--resizing': timelineDrawerResizing }">
           <KnowledgeProcessingTimeline v-if="details.id && timelineDrawerVisible" :knowledge-id="details.id"
@@ -1781,7 +1776,7 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
           <div v-else-if="details.description" class="summary_wrapper"
             :class="{ 'summary_clickable': summaryOverflow || summaryExpanded }"
             @click="(summaryOverflow || summaryExpanded) && (summaryExpanded = !summaryExpanded)">
-            <div ref="summaryRef" :class="['summary_content', { 'summary_collapsed': !summaryExpanded }]">{{
+            <div ref="summaryRef" class="summary_content" :class="[{ 'summary_collapsed': !summaryExpanded }]">{{
               details.description
             }}</div>
             <div v-if="(summaryOverflow && !summaryExpanded) || summaryExpanded" class="summary_fade"
@@ -2079,7 +2074,7 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
                                   </div>
                                   <pre v-else class="chunk-history-diff-body"><span
                                     v-for="(line, lineIndex) in compactChunkDiff(chunk.original)" :key="lineIndex"
-                                    :class="['chunk-history-diff-line', `chunk-history-diff-line--${line.type}`]">{{ diffLinePrefix(line.type) }}{{ line.text }}
+                                    class="chunk-history-diff-line" :class="[`chunk-history-diff-line--${line.type}`]">{{ diffLinePrefix(line.type) }}{{ line.text }}
 </span></pre>
                                 </div>
                               </div>
@@ -2128,7 +2123,7 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
           </div>
 
           <div v-else-if="viewMode === 'preview'">
-            <DocumentPreview :knowledgeId="details.id" :fileType="details.file_type" :fileName="details.title"
+            <DocumentPreview :knowledge-id="details.id" :file-type="details.file_type" :file-name="details.title"
               :active="viewMode === 'preview'" />
           </div>
         </section>

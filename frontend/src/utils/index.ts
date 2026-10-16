@@ -53,13 +53,13 @@ export function generateRandomString(length: number) {
 }
 
 export function formatStringDate(date: any) {
-  let data = new Date(date);
-  let year = data.getFullYear();
-  let month = String(data.getMonth() + 1).padStart(2, '0');
-  let day = String(data.getDate()).padStart(2, '0');
-  let hour = String(data.getHours()).padStart(2, '0');
-  let minute = String(data.getMinutes()).padStart(2, '0');
-  let second = String(data.getSeconds()).padStart(2, '0');
+  const data = new Date(date);
+  const year = data.getFullYear();
+  const month = String(data.getMonth() + 1).padStart(2, '0');
+  const day = String(data.getDate()).padStart(2, '0');
+  const hour = String(data.getHours()).padStart(2, '0');
+  const minute = String(data.getMinutes()).padStart(2, '0');
+  const second = String(data.getSeconds()).padStart(2, '0');
   return (
     year + "-" + month + "-" + day + " " + hour + ":" + minute + ":" + second
   );

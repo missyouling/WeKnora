@@ -5,7 +5,7 @@
       <template v-for="group in navGroups" :key="group.key">
         <div class="nav-group-title">{{ group.label }}</div>
         <template v-for="item in group.items" :key="item.key">
-          <div :class="['nav-item', {
+          <div class="nav-item" :class="[{
             'active': currentSection === item.key,
             'has-submenu': item.children && item.children.length > 0,
             'expanded': expandedMenus.includes(item.key)
@@ -50,7 +50,7 @@
           <Transition name="submenu">
             <div v-if="item.children && expandedMenus.includes(item.key)" class="submenu">
               <div v-for="(child, childIndex) in item.children" :key="childIndex"
-                :class="['submenu-item', { 'active': currentSubSection === child.key }]"
+                class="submenu-item" :class="[{ 'active': currentSubSection === child.key }]"
                 @click.stop="handleSubMenuClick(item.key, child.key)">
                 <span class="submenu-label">{{ child.label }}</span>
               </div>

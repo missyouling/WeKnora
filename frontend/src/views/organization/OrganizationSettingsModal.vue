@@ -253,7 +253,7 @@
                     </div>
                     <div class="permissions-compact-grid">
                       <div v-for="role in orgRoleMatrixOrder" :key="role"
-                        :class="['perm-role-block', role, { 'is-me': orgInfo?.my_role === role }]">
+                        class="perm-role-block" :class="[role, { 'is-me': orgInfo?.my_role === role }]">
                         <div class="perm-role-tag">
                           <t-icon :name="orgRoleIcon(role)" size="12px" />
                           <span>{{ $t(`organization.role.${role}`) }}</span>
@@ -261,7 +261,7 @@
                         </div>
                         <div class="perm-items">
                           <span v-for="(perm, idx) in orgRoleMatrix[role]" :key="idx"
-                            :class="['perm-item', perm.has ? 'has' : 'no']">
+                            class="perm-item" :class="[perm.has ? 'has' : 'no']">
                             <t-icon :name="perm.has ? 'check' : 'close'" size="12px" />
                             {{ $t(`organization.editor.${perm.key}`) }}
                           </span>
@@ -316,7 +316,7 @@
                         <label class="org-upgrade-field-label">{{ $t('organization.upgrade.selectRole') }}</label>
                         <div class="upgrade-role-pills">
                           <button v-for="opt in upgradeRoleOptions" :key="opt.value" type="button"
-                            :class="['upgrade-role-pill', { active: upgradeForm.requested_role === opt.value }]"
+                            class="upgrade-role-pill" :class="[{ active: upgradeForm.requested_role === opt.value }]"
                             @click="upgradeForm.requested_role = opt.value as 'editor' | 'admin'">
                             {{ opt.label }}
                           </button>

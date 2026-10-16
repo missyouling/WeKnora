@@ -1047,7 +1047,7 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
           message.usage = usage
         }
         if (message.agentEventStream) {
-          ;(message.agentEventStream as ChatMessage[]).push({
+          (message.agentEventStream as ChatMessage[]).push({
             type: 'agent_complete',
             total_duration_ms: dataPayload?.total_duration_ms || 0,
             total_steps: dataPayload?.total_steps || 0,

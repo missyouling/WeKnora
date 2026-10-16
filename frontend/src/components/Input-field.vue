@@ -76,7 +76,7 @@ const {
 } = storeToRefs(chatResources);
 const { t, locale } = useI18n();
 
-let query = ref("");
+const query = ref("");
 const showKbSelector = ref(false);
 
 // Image upload state
@@ -1218,7 +1218,6 @@ const updateModelDropdownPosition = () => {
     // 下方有足够空间，向下弹出
     actualHeight = Math.min(preferredDropdownHeight, spaceBelow - offsetY - 16);
     shouldOpenBelow = true;
-    console.log('[Model Dropdown] Position: below button', { actualHeight });
   } else {
     // 向上弹出，优先使用 preferredHeight，必要时才扩展到 maxHeight
     const availableHeight = spaceAbove - offsetY - topMargin;
@@ -1230,14 +1229,12 @@ const updateModelDropdownPosition = () => {
       actualHeight = Math.max(minDropdownHeight, availableHeight);
     }
     shouldOpenBelow = false;
-    console.log('[Model Dropdown] Position: above button', { actualHeight });
   }
 
   // 根据弹出方向使用不同的定位方式
   if (shouldOpenBelow) {
     // 向下弹出：使用 top 定位，左对齐
     const top = Math.floor(rect.bottom + offsetY);
-    console.log('[Model Dropdown] Opening below, top:', top);
     modelDropdownStyle.value = {
       position: 'fixed !important',
       width: `${dropdownWidth}px`,
@@ -1251,7 +1248,6 @@ const updateModelDropdownPosition = () => {
   } else {
     // 向上弹出：使用 bottom 定位，左对齐
     const bottom = vh - rect.top + offsetY;
-    console.log('[Model Dropdown] Opening above, bottom:', bottom);
     modelDropdownStyle.value = {
       position: 'fixed !important',
       width: `${dropdownWidth}px`,
@@ -1264,13 +1260,11 @@ const updateModelDropdownPosition = () => {
     };
   }
 
-  console.log('[Model Dropdown] Applied style:', modelDropdownStyle.value);
 };
 
 // Mention Logic
 let lastMentionQuery = '';
 const loadMentionItems = async (q: string, resetIndex = true, append = false) => {
-  console.log('[Mention] loadMentionItems called with query:', q, 'append:', append);
 
   if (!append) {
     mentionOffset.value = 0;
@@ -1485,7 +1479,6 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
         fileTypesParam,
         searchOptions
       );
-      console.log('[Mention] searchKnowledge response:', res);
       if (res.data && Array.isArray(res.data)) {
         let files = res.data;
         const rawTotal = typeof res.total === 'number' ? res.total : undefined;
@@ -1549,7 +1542,6 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
   } else {
     mentionItems.value = [...kbItems, ...tagItems, ...mcpItems, ...skillItems, ...fileItems];
   }
-  console.log('[Mention] Total items:', mentionItems.value.length, { kbItems: kbItems.length, fileItems: fileItems.length, tagItems: tagItems.length, mcpItems: mcpItems.length, skillItems: skillItems.length });
 
   // Only reset index if query changed or explicitly requested
   if (resetIndex || q !== lastMentionQuery) {
@@ -1601,7 +1593,6 @@ const onInput = (val: string | InputEvent) => {
   const cursor = textarea.selectionStart;
   const textBeforeCursor = inputVal.slice(0, cursor);
 
-  console.log('[Mention] onInput called', { inputVal, cursor, textBeforeCursor, showMention: showMention.value });
 
   if (showMention.value) {
     // 如果不是按钮触发的，检查 @ 符号
@@ -1640,7 +1631,6 @@ const onInput = (val: string | InputEvent) => {
         return;
       }
 
-      console.log('[Mention] @ detected, opening menu');
       isMentionTriggeredByButton.value = false;
       mentionStartPos.value = cursor - 1;
       showMention.value = true;
@@ -2204,7 +2194,6 @@ const updateAgentModeDropdownPosition = () => {
       margin: '0 !important',
       padding: '0 !important',
     };
-    console.log('[Agent Dropdown] Position: below button', { actualHeight });
   } else {
     // 向上弹出，使用 bottom 定位确保紧贴按钮
     const availableHeight = spaceAbove - offsetY - topMargin;
@@ -2226,7 +2215,6 @@ const updateAgentModeDropdownPosition = () => {
       margin: '0 !important',
       padding: '0 !important',
     };
-    console.log('[Agent Dropdown] Position: above button', { actualHeight, bottom });
   }
 };
 
@@ -2606,7 +2594,6 @@ const handleStop = async () => {
     return;
   }
 
-  console.log('[Stop] Stopping generation for message:', props.assistantMessageId);
 
   emit('stop-generation');
 
@@ -2737,12 +2724,12 @@ defineExpose({
           </div>
 
           <!-- Agent 选择器下拉菜单 -->
-          <AgentSelector :visible="showAgentModeSelector" :anchorEl="agentModeButtonRef"
-            :currentAgentId="selectedAgentId" :agents="enabledAgents" :all-models="allModels"
+          <AgentSelector :visible="showAgentModeSelector" :anchor-el="agentModeButtonRef"
+            :current-agent-id="selectedAgentId" :agents="enabledAgents" :all-models="allModels"
             @close="closeAgentModeSelector" @select="handleSelectAgent" @not-ready="handleAgentNotReady" />
 
           <t-tooltip v-if="settingsStore.isAgentStreamMode" placement="top" theme="light"
-            :popupProps="{ overlayClassName: 'input-field-tooltip' }">
+            :popup-props="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
               <div v-if="!browserConnection.knownOffline" class="browser-source-tooltip">
                 <strong>{{ $t('localBrowser.local') }}</strong>
@@ -2768,7 +2755,7 @@ defineExpose({
 
           <!-- WebSearch 开关按钮（智能体未启用时不显示） -->
           <t-tooltip v-if="showWebSearchButton" placement="top" theme="light"
-            :popupProps="{ overlayClassName: 'input-field-tooltip' }">
+            :popup-props="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
               <span v-if="isWebSearchConfigured">{{ isWebSearchEnabled ? $t('input.webSearch.toggleOff') :
                 $t('input.webSearch.toggleOn') }}</span>
@@ -2796,7 +2783,7 @@ defineExpose({
 
           <!-- 图片上传按钮（智能体未启用时不显示） -->
           <t-tooltip v-if="showImageUploadButton" placement="top" theme="light"
-            :popupProps="{ overlayClassName: 'input-field-tooltip' }">
+            :popup-props="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
               <span>{{ $t('chat.imageUploadTooltip') }}</span>
             </template>
@@ -2814,7 +2801,7 @@ defineExpose({
           </t-tooltip>
 
           <!-- 附件上传按钮 -->
-          <t-tooltip placement="top" theme="light" :popupProps="{ overlayClassName: 'input-field-tooltip' }">
+          <t-tooltip placement="top" theme="light" :popup-props="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
               <span>{{ uploadedAttachments.length > 0 ? $t('chat.attachmentWithCount', {
                 count: uploadedAttachments.length
@@ -2834,7 +2821,7 @@ defineExpose({
           </t-tooltip>
 
           <!-- @ 知识库/文件选择按钮 -->
-          <t-tooltip placement="top" theme="light" :popupProps="{ overlayClassName: 'input-field-tooltip' }">
+          <t-tooltip placement="top" theme="light" :popup-props="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
               <div v-if="isMentionDisabled && isKnowledgeBaseDisabledByAgent" class="tooltip-with-link">
                 <span>{{ $t('input.kbDisabledByAgent') }}</span>
@@ -2967,14 +2954,14 @@ defineExpose({
 
     <!-- Mention Selector -->
     <Teleport to="body">
-      <MentionSelector ref="mentionSelectorRef" :visible="showMention" :style="mentionStyle" :items="mentionItems" :hasMore="mentionHasMore"
-        :loading="mentionLoading" :emptyHint="mentionEmptyHint" :query="mentionQuery" :group-counts="mentionGroupCounts" v-model:activeIndex="mentionActiveIndex"
+      <MentionSelector ref="mentionSelectorRef" :visible="showMention" :style="mentionStyle" :items="mentionItems" :has-more="mentionHasMore"
+        :loading="mentionLoading" :empty-hint="mentionEmptyHint" :query="mentionQuery" :group-counts="mentionGroupCounts" v-model:active-index="mentionActiveIndex"
         @select="onMentionSelect" @loadMore="loadMoreMentionItems" />
     </Teleport>
 
     <!-- 知识库选择下拉（使用 Teleport 传送到 body，避免父容器定位影响） -->
     <Teleport to="body">
-      <KnowledgeBaseSelector v-model:visible="showKbSelector" :anchorEl="atButtonRef" @close="showKbSelector = false" />
+      <KnowledgeBaseSelector v-model:visible="showKbSelector" :anchor-el="atButtonRef" @close="showKbSelector = false" />
     </Teleport>
   </div>
 </template>

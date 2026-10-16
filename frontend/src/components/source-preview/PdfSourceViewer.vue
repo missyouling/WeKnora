@@ -253,7 +253,7 @@ function clearMarks() {
 }
 
 function addMark(page: number, mark: Mark) {
-  ;(marks[page] ||= []).push(mark)
+  (marks[page] ||= []).push(mark)
 }
 
 function scrollToPageFraction(page: number, fraction: number) {

@@ -278,7 +278,7 @@ export const useChatResourcesStore = defineStore('chatResources', () => {
 
   function invalidate(...keys: ResourceKey[]) {
     if (keys.length === 0) {
-      ;(Object.keys(resources) as ResourceKey[]).forEach((k) => resources[k].invalidate())
+      (Object.keys(resources) as ResourceKey[]).forEach((k) => resources[k].invalidate())
       rawKnowledgeBases.value = []
       agents.value = []
       disabledOwnAgentIds.value = []

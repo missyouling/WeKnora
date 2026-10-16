@@ -17,7 +17,7 @@
         </template>
         {{ checking ? $t('model.editor.testing') : $t('model.editor.testConnection') }}
       </t-button>
-      <span v-if="remoteChecked" :class="['connection-status', remoteAvailable ? 'success' : 'error']">
+      <span v-if="remoteChecked" class="connection-status" :class="[remoteAvailable ? 'success' : 'error']">
         {{ remoteAvailable ? $t('model.editor.connectionSuccess') : $t('model.editor.connectionFailed') }}
       </span>
     </template>
@@ -1416,12 +1416,10 @@ const getBaseUrlPlaceholder = () => {
 
 // 检查Ollama服务状态
 const checkOllamaServiceStatus = async () => {
-  console.log('开始检查Ollama服务状态...')
   checkingOllamaStatus.value = true
   try {
     const result = await checkOllamaStatus()
     ollamaServiceStatus.value = result.available
-    console.log('Ollama服务状态检查完成:', result.available)
   } catch (error) {
     console.error('检查Ollama服务状态失败:', error)
     ollamaServiceStatus.value = false
@@ -1437,7 +1435,6 @@ const checkOllamaServiceStatus = async () => {
 
 // 打开Ollama设置窗口
 const goToOllamaSettings = async () => {
-  console.log('点击跳转到Ollama设置按钮')
   // 关闭当前弹窗
   emit('update:visible', false)
 
@@ -1449,9 +1446,7 @@ const goToOllamaSettings = async () => {
   }
 
   // 打开设置窗口并直接跳转到Ollama设置
-  console.log('调用uiStore.openSettings')
   uiStore.openSettings('ollama')
-  console.log('uiStore.openSettings调用完成')
 }
 
 // 上一次打开时的 modelData id：用来判断切换模型/新增 vs. 同一次新增的连续打开
@@ -1806,9 +1801,6 @@ const checkOllamaDimension = async () => {
       dimensionMessage.value = t('model.editor.dimensionDetected', { value: result.dimension })
       MessagePlugin.success(dimensionMessage.value)
     } else {
-      if (result.message) {
-        console.debug('Backend dimension message:', result.message)
-      }
       dimensionMessage.value = t('model.editor.dimensionFailed')
       MessagePlugin.warning(dimensionMessage.value)
     }

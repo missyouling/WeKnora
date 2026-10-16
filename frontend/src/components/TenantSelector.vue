@@ -30,7 +30,7 @@
 
           <template v-else-if="tenants.length > 0">
             <div v-for="tenant in tenants" :key="tenant.id"
-              :class="['tenant-item', { selected: isSelected(tenant.id) }]" @click="selectTenant(tenant.id)">
+              class="tenant-item" :class="[{ selected: isSelected(tenant.id) }]" @click="selectTenant(tenant.id)">
               <div class="tenant-item-content">
                 <div class="tenant-item-avatar" :class="{ active: isSelected(tenant.id) }">
                   {{ tenant.name.charAt(0).toUpperCase() }}

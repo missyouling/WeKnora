@@ -86,7 +86,7 @@
                 <div class="wiki-rev-diff-block-label">{{ revisionDiffFieldLabel(section.field) }}</div>
                 <pre class="wiki-rev-diff-block-body"><span v-for="(line, idx) in section.lines"
                   :key="`${section.field}-${idx}`"
-                  :class="['wiki-rev-diff-line', `wiki-rev-diff-line--${line.type}`]">{{ diffPrefix(line.type) }}{{ line.text }}
+                  class="wiki-rev-diff-line" :class="[`wiki-rev-diff-line--${line.type}`]">{{ diffPrefix(line.type) }}{{ line.text }}
 </span></pre>
               </div>
             </template>

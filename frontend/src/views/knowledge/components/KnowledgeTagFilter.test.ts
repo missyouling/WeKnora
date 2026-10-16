@@ -70,13 +70,13 @@ function fixture(variant: 'documents' | 'faq') {
     onLoadMore: () => { events.loadMore++ }, onManage: () => { events.manage++ },
   }) })
   app.config.globalProperties.$t = translate as typeof app.config.globalProperties.$t
-  app.component('t-popup', vue.defineComponent({
+  app.component('TPopup', vue.defineComponent({
     props: ['visible'], emits: ['update:visible'],
     setup: (props, { emit, slots }) => () => vue.h('popup', {
       visible: props.visible, onOpen: () => emit('update:visible', true),
     }, [slots.default?.(), props.visible ? vue.h('overlay', {}, slots.content?.()) : null]),
   }))
-  app.component('t-input', vue.defineComponent({
+  app.component('TInput', vue.defineComponent({
     props: ['modelValue', 'modelModifiers'], emits: ['update:modelValue'],
     setup: (props, { emit }) => () => vue.h('input', {
       value: props.modelValue, onInput: (value: string) => emit('update:modelValue', value),

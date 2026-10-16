@@ -83,7 +83,7 @@
                 <t-tooltip :content="item.title" placement="right" :disabled="!uiStore.sidebarCollapsed">
                     <div @click="handleMenuClick(item.path)" @mouseenter="mouseenteMenu(item.path)"
                         @mouseleave="mouseleaveMenu(item.path)" :data-guide="`nav-${item.path}`"
-                        :class="['menu_item', item.childrenPath && item.childrenPath == currentpath ? 'menu_item_c_active' : isMenuItemActive(item.path) ? 'menu_item_active' : '']">
+                        class="menu_item" :class="[item.childrenPath && item.childrenPath == currentpath ? 'menu_item_c_active' : isMenuItemActive(item.path) ? 'menu_item_active' : '']">
                         <div class="menu_item-box">
                             <div class="menu_icon" :class="`menu_icon--${item.icon}`">
                                 <img class="icon"
@@ -380,7 +380,7 @@ const hasAnySession = computed(() =>
 );
 type MenuItem = { title: string; icon: string; path: string; childrenPath?: string; children?: any[] };
 const { menuArr, visibleMenuArr } = storeToRefs(usemenuStore);
-let activeSubmenu = ref<string>('');
+const activeSubmenu = ref<string>('');
 const isLiteEdition = ref(false);
 
 // 批量管理状态
@@ -1102,15 +1102,15 @@ watch([() => route.name, () => route.params], (newvalue, oldvalue) => {
         loadCurrentKbInfo((newvalue[1] as any)?.kbId as string);
     }
 });
-let knowledgeIcon = ref('zhishiku-green.svg');
-let prefixIcon = ref('prefixIcon.svg');
-let logoutIcon = ref('logout.svg');
-let settingIcon = ref('setting.svg');
-let agentIcon = ref('agent.svg');
-let artifactIcon = ref('artifact.svg');
-let toolboxIcon = ref('toolbox.svg');
-let organizationIcon = ref('organization.svg');
-let pathPrefix = ref(route.name)
+const knowledgeIcon = ref('zhishiku-green.svg');
+const prefixIcon = ref('prefixIcon.svg');
+const logoutIcon = ref('logout.svg');
+const settingIcon = ref('setting.svg');
+const agentIcon = ref('agent.svg');
+const artifactIcon = ref('artifact.svg');
+const toolboxIcon = ref('toolbox.svg');
+const organizationIcon = ref('organization.svg');
+const pathPrefix = ref(route.name)
 const getIcon = (_path: string) => {
     // 根据当前路由状态更新所有图标
     const kbActiveState = getIconActiveState('knowledge-bases');

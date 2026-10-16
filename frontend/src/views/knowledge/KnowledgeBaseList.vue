@@ -173,7 +173,7 @@
                      is now per-user and available to anyone who can see the KB
                      (backend route only requires KB read access). Settings /
                      Delete are mutations, so they stay behind canManageKBCard. -->
-                <t-popup overlayClassName="card-more-popup" trigger="click" destroy-on-close
+                <t-popup overlay-class-name="card-more-popup" trigger="click" destroy-on-close
                   placement="bottom-right">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" @click.stop>
                     <img class="more-icon" src="@/assets/img/more.png" alt="" />
@@ -410,7 +410,7 @@
                 </span>
                 <!-- See the matching block in the "all" tab template for why
                      this is no longer gated by canManageKBCard. -->
-                <t-popup v-model="kb.showMore" overlayClassName="card-more-popup"
+                <t-popup v-model="kb.showMore" overlay-class-name="card-more-popup"
                   :on-visible-change="onVisibleChange" trigger="click" destroy-on-close placement="bottom-right">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" @click.stop="openMore(index)"
                     :class="{ 'active-more': currentMoreIndex === index }">
@@ -1511,7 +1511,6 @@ const handleCreateKnowledgeBase = () => {
 
 // 知识库编辑器成功回调（创建或编辑成功）
 const handleKBEditorSuccess = (kbId: string) => {
-  console.log('[KnowledgeBaseList] knowledge operation success:', kbId)
   const shouldOpenDetailForUploadGuide = !isContextualGuideDone('kbDetail')
   // 列表页编辑同样要让单 KB 详情缓存失效，否则侧栏 / 详情页 60s 内仍显示旧信息
   chatResources.invalidateKnowledgeBaseDetail(kbId)

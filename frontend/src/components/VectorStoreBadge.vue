@@ -1,5 +1,5 @@
 <template>
-  <span :class="['vs-badge', `vs-badge-${effectiveSource}`, isUnavailable && 'vs-badge-warn']">
+  <span class="vs-badge" :class="[`vs-badge-${effectiveSource}`, isUnavailable && 'vs-badge-warn']">
     <t-icon :name="iconName" class="vs-badge-icon" />
     <span class="vs-badge-name">{{ displayName }}</span>
     <span

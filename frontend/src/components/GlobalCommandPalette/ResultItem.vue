@@ -1,7 +1,7 @@
 <template>
   <button
     type="button"
-    :class="['cmdk-item', { 'cmdk-item--selected': selected }]"
+    class="cmdk-item" :class="[{ 'cmdk-item--selected': selected }]"
     :data-cmdk-index="index"
     @click="$emit('primary')"
     @mousemove="onHover"
@@ -16,7 +16,7 @@
         <slot name="title">
           <span>{{ title }}</span>
         </slot>
-        <span v-if="badge" :class="['cmdk-item__badge', `cmdk-item__badge--${badgeVariant || 'default'}`]">
+        <span v-if="badge" class="cmdk-item__badge" :class="[`cmdk-item__badge--${badgeVariant || 'default'}`]">
           {{ badge }}
         </span>
         <span v-if="score != null" class="cmdk-item__score">{{ (score * 100).toFixed(0) }}%</span>

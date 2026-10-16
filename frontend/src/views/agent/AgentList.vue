@@ -184,7 +184,7 @@
                 </div>
                 <t-popup
                   v-if="agent.isMine && (canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin'))"
-                  :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
+                  :visible="openMoreAgentId === agent.id" trigger="click" overlay-class-name="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }"
@@ -211,7 +211,7 @@
                 </t-popup>
                 <t-popup v-else-if="!agent.isMine && authStore.hasRole('admin')"
                   :visible="openMoreAgentId === 'shared-' + agent.share_id" trigger="click"
-                  overlayClassName="card-more-popup" destroy-on-close placement="bottom-right"
+                  overlay-class-name="card-more-popup" destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? 'shared-' + agent.share_id : null }">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-' + agent.share_id }"
                     @click.stop>
@@ -366,7 +366,7 @@
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
                 <t-popup v-if="canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin')"
-                  :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
+                  :visible="openMoreAgentId === agent.id" trigger="click" overlay-class-name="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }"
@@ -522,7 +522,7 @@
                 </div>
                 <t-popup v-if="!shared.is_mine && authStore.hasRole('admin')"
                   :visible="openMoreAgentId === 'shared-tab-' + shared.share_id" trigger="click"
-                  overlayClassName="card-more-popup" destroy-on-close placement="bottom-right"
+                  overlay-class-name="card-more-popup" destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? 'shared-tab-' + shared.share_id : null }">
                   <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-tab-' + shared.share_id }"
                     @click.stop>
@@ -726,9 +726,9 @@
 
     <!-- 智能体编辑器弹窗 -->
     <AgentEditorModal :visible="editorVisible" :mode="editorMode" :agent="editingAgent"
-      :initialSection="editorInitialSection"
-      :initialHighlightField="editorInitialHighlightField"
-      :readOnly="editorMode === 'edit' && editingAgent != null && !canManageAgent(editingAgent as AgentWithUI)"
+      :initial-section="editorInitialSection"
+      :initial-highlight-field="editorInitialHighlightField"
+      :read-only="editorMode === 'edit' && editingAgent != null && !canManageAgent(editingAgent as AgentWithUI)"
       @update:visible="editorVisible = $event" @success="handleEditorSuccess" />
 
     <TenantModelsGuide :when="showAgentTenantModelsGuide" variant="agent" />

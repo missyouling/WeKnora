@@ -33,7 +33,7 @@
             </button>
             <p
               v-if="row.description"
-              :class="['mcp-item__desc', { 'is-open': openIndex === index }]"
+              class="mcp-item__desc" :class="[{ 'is-open': openIndex === index }]"
             >{{ openIndex === index ? row.description : mcpDescriptionLead(row.description) }}</p>
           </article>
         </div>
@@ -46,7 +46,7 @@
           </div>
           <p
             v-if="description"
-            :class="['mcp-define__desc', { 'is-collapsed': !descOpen && descriptionLong }]"
+            class="mcp-define__desc" :class="[{ 'is-collapsed': !descOpen && descriptionLong }]"
           >{{ description }}</p>
           <button
             v-if="descriptionLong"

@@ -101,7 +101,9 @@ export default defineConfig(
       '@typescript-eslint/no-this-alias': 'error',
 
       // ===== warn：风格与严格度，存量多，分批治理 =====
-      'no-console': 'warn',
+      // 分级：error / warn 保留（线上诊断有实际价值），只禁止 log / debug 这类调试残留。
+      // 存量 console.error 213 处、console.warn 33 处均属前者，不要为了清零而删掉它们。
+      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
       'no-var': 'warn',
       'prefer-const': 'warn',
       'eqeqeq': ['warn', 'smart'],
@@ -170,6 +172,20 @@ export default defineConfig(
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
+
+  // ---- CLI 工具脚本：console.log 就是它们的输出方式 ----
+  // 这些由 npm scripts 直接执行（scan-i18n-gaps / regenerate-i18n-locales），
+  // 打印到 stdout 是功能本身，不能当调试残留删掉（曾误删并恢复过一次）。
+  {
+    files: [
+      'src/i18n/localeGapScan.ts',
+      'src/i18n/regeneratePrunedLocales.ts',
+      'scripts/**',
+    ],
+    rules: {
+      'no-console': 'off',
     },
   },
 )

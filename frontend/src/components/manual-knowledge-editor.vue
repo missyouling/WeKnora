@@ -188,7 +188,7 @@ const clampRange = (start: number, end: number, length: number) => {
   let safeStart = Math.max(0, Math.min(start, length))
   let safeEnd = Math.max(0, Math.min(end, length))
   if (safeEnd < safeStart) {
-    ;[safeStart, safeEnd] = [safeEnd, safeStart]
+    [safeStart, safeEnd] = [safeEnd, safeStart]
   }
   return { safeStart, safeEnd }
 }

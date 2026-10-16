@@ -144,7 +144,7 @@
           </template>
           {{ checking ? $t('settings.parser.checking', $t('settings.parser.testConnection')) : $t('settings.parser.testConnection') }}
         </t-button>
-        <span v-if="checkMessage" :class="['footer-test-message', saveSuccess ? 'success' : 'error']" :title="checkMessage">
+        <span v-if="checkMessage" class="footer-test-message" :class="[saveSuccess ? 'success' : 'error']" :title="checkMessage">
           {{ checkMessage }}
         </span>
       </template>

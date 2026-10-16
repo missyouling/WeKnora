@@ -7,10 +7,10 @@
         class="result-item"
       >
         <t-popup 
-          :overlayClassName="`chunk-popup-${chunk.chunk_id}`"
+          :overlay-class-name="`chunk-popup-${chunk.chunk_id}`"
           placement="bottom-left"
           width="400"
-          :showArrow="false"
+          :show-arrow="false"
           trigger="click"
           destroy-on-close
         >

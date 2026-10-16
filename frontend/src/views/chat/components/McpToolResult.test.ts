@@ -36,8 +36,8 @@ after(async () => { await server?.close() })
 async function render(props: Record<string, unknown>) {
   const app = createSSRApp({ render: () => h(Renderer, props) })
   app.use(createI18n({ legacy: false, locale: 'en-US', messages: { 'en-US': en } }))
-  app.component('t-icon', { render: () => h('span') })
-  app.component('t-popup', { render: () => h('span') })
+  app.component('TIcon', { render: () => h('span') })
+  app.component('TPopup', { render: () => h('span') })
   return renderToString(app)
 }
 

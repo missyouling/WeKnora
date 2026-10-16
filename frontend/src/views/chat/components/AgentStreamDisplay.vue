@@ -174,7 +174,7 @@
                     class="plan-status-summary-fixed">
                     <div class="plan-status-text">
                       <template v-for="(part, partIndex) in getPlanStatusItems(event)" :key="partIndex">
-                        <t-icon :name="part.icon" :class="['status-icon', part.class]" />
+                        <t-icon :name="part.icon" class="status-icon" :class="[part.class]" />
                         <span>{{ part.label }} {{ part.count }}</span>
                         <span v-if="partIndex < getPlanStatusItems(event).length - 1" class="separator">·</span>
                       </template>
@@ -496,7 +496,7 @@
                   class="plan-status-summary-fixed">
                   <div class="plan-status-text">
                     <template v-for="(part, partIndex) in getPlanStatusItems(event)" :key="partIndex">
-                      <t-icon :name="part.icon" :class="['status-icon', part.class]" />
+                      <t-icon :name="part.icon" class="status-icon" :class="[part.class]" />
                       <span>{{ part.label }} {{ part.count }}</span>
                       <span v-if="partIndex < getPlanStatusItems(event).length - 1" class="separator">·</span>
                     </template>
@@ -583,7 +583,7 @@
   <ChatCitationFloat :float="citationFloat" :on-enter="cancelCitationClose" :on-leave="scheduleCitationClose" />
 
   <!-- Image Preview -->
-  <picturePreview :reviewImg="imagePreviewVisible" :reviewUrl="imagePreviewUrl" @closePreImg="closeImagePreview" />
+  <picturePreview :review-img="imagePreviewVisible" :review-url="imagePreviewUrl" @closePreImg="closeImagePreview" />
 
   <!-- Wiki Page Detail Drawer -->
   <!-- Mount on demand: a hidden TDesign drawer steals focus when each response mounts. -->
@@ -891,7 +891,7 @@ const wikiDrawerContent = computed(() => {
   const content = wikiDrawerPage.value.content || '';
 
   // Pre-process wiki links [[slug|name]] to custom HTML tags for the drawer
-  let preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
+  const preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
     const pipeIdx = inner.indexOf('|');
     const slug = pipeIdx > 0 ? inner.substring(0, pipeIdx).trim() : inner.trim();
     let display = slug;

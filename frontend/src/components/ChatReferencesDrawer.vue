@@ -222,6 +222,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', onViewportResize))
 
 const WIDTH_STORAGE_KEY = 'weknora.references-panel-widths'
 const preferredWidths = reactive<{ source?: number; list?: number }>({})
+// 保持 let：模板第 20 行 `@start="resizeStartWidth = panelWidth"` 会重新赋值，
+// vue-eslint-parser 识别不到模板里的赋值，prefer-const 会误判为可改 const。
+// eslint-disable-next-line prefer-const
 let resizeStartWidth = 0
 onMounted(() => {
   try {

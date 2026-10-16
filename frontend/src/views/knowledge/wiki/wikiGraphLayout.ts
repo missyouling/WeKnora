@@ -246,7 +246,7 @@ export function buildGraphLayout(
     if (visited.has(slug)) continue
     visited.add(slug)
     if (!adjacency.get(slug)!.size) {
-      ;(nodeBySlug.get(slug)!.link_count > 0 ? offscreen : unlinked).push(slug)
+      (nodeBySlug.get(slug)!.link_count > 0 ? offscreen : unlinked).push(slug)
       continue
     }
     const component = [slug]

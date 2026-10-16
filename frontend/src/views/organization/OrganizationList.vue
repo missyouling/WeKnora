@@ -95,7 +95,7 @@
                   <span class="card-title" :title="org.name">{{ org.name }}</span>
                 </div>
               </div>
-              <t-popup v-model="organizationMenuVisibility[org.id]" overlayClassName="card-more-popup"
+              <t-popup v-model="organizationMenuVisibility[org.id]" overlay-class-name="card-more-popup"
                 :on-visible-change="(visible: boolean) => onVisibleChange(visible, org)" trigger="click"
                 destroy-on-close placement="bottom-right">
                 <button type="button" :aria-label="$t('common.expand')" class="more-wrap" @click.stop :class="{ 'active-more': organizationMenuVisibility[org.id] }">
@@ -225,11 +225,11 @@
                 <div v-if="!invitePreviewLoading && !invitePreviewData"
                   class="invite-preview-body invite-preview-input">
                   <div class="join-mode-pills">
-                    <button type="button" :class="['join-mode-pill', { active: joinStep === 'invite' }]"
+                    <button type="button" class="join-mode-pill" :class="[{ active: joinStep === 'invite' }]"
                       @click="joinStep = 'invite'">
                       {{ $t('organization.join.byInviteCode') }}
                     </button>
-                    <button type="button" :class="['join-mode-pill', { active: joinStep === 'search' }]"
+                    <button type="button" class="join-mode-pill" :class="[{ active: joinStep === 'search' }]"
                       @click="handleSearchTabClick">
                       {{ $t('organization.join.searchSpaces') }}
                     </button>

@@ -38,7 +38,7 @@
           v-for="(item, index) in wizardSteps"
           :key="item.key"
           :type="canJumpTo(index) ? 'button' : undefined"
-          :class="['sandbox-step', {
+          class="sandbox-step" :class="[{
             'is-active': wizardStep === index,
             'is-done': wizardStep > index,
             'is-clickable': canJumpTo(index),
@@ -735,7 +735,7 @@
       ref="checkResultRef"
       class="check-result"
     >
-      <p :class="['check-result__title', checkResult.ok ? 'is-success' : 'is-error']">
+      <p class="check-result__title" :class="[checkResult.ok ? 'is-success' : 'is-error']">
         <t-icon :name="checkResult.ok ? 'check-circle-filled' : 'close-circle-filled'" />
         {{ checkResult.ok ? $t('settings.sandbox.checkPassed') : $t('settings.sandbox.checkFailed') }}
       </p>

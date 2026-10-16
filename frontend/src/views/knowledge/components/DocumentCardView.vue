@@ -357,7 +357,7 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
           <t-popup
             v-else-if="canEdit"
             :visible="activeMenuIndex === index"
-            overlayClassName="card-more"
+            overlay-class-name="card-more"
             :on-visible-change="(v: boolean) => onMenuVisibleChange(v, item, index)"
             trigger="click"
             destroy-on-close

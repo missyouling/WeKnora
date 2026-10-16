@@ -6,7 +6,7 @@
        row from treating the interaction as an expand/collapse toggle. -->
   <t-popup v-model:visible="open" trigger="click" placement="bottom-start" destroy-on-close
     :overlay-class-name="popupOverlayClass" @visible-change="onVisibleChange">
-    <span :class="['wiki-directory-action', 'wiki-directory-action--reveal', { 'is-open': open }]"
+    <span class="wiki-directory-action wiki-directory-action--reveal" :class="[{ 'is-open': open }]"
       :title="t('knowledgeEditor.wikiBrowser.folderActions')" @click.stop @dragstart.prevent.stop>
       <t-icon name="more" />
     </span>

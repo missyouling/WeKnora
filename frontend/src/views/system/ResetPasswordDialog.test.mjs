@@ -101,13 +101,13 @@ function mountResetRow(email = 'user@example.com') {
   const passthrough = { setup: (_, { slots }) => () => vue.h('div', slots.default?.()) }
   const app = renderer.createApp(Parent)
   for (const name of ['t-button', 't-tag', 't-icon', 't-input', 't-form-item']) app.component(name, passthrough)
-  app.component('t-form', {
+  app.component('TForm', {
     setup(_, { slots, expose }) {
       expose({ validate: async () => true, clearValidate() {} })
       return () => vue.h('form', slots.default?.())
     },
   })
-  app.component('t-popup', {
+  app.component('TPopup', {
     props: ['visible'],
     setup: (props, { slots }) => () => vue.h('div', [slots.default?.(), props.visible ? slots.content?.() : null]),
   })

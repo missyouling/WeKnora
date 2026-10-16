@@ -42,7 +42,7 @@
                     @rewind="emit('rewind', $event)"
                     @render-complete-change="emit('render-complete-change', $event)" />
             </template>
-            <deepThink :deepSession="session" v-if="session.showThink && !session.isAgentMode"></deepThink>
+            <deepThink :deep-session="session" v-if="session.showThink && !session.isAgentMode"></deepThink>
         </div>
         <!-- 非 Agent 模式下才显示传统的 markdown 渲染 -->
         <div ref="parentMd" v-if="!session.hideContent && !session.isAgentMode">
@@ -123,7 +123,7 @@
             <div v-if="isImgLoading" class="img_loading"><t-loading size="small"></t-loading><span>{{
                 $t('common.loading') }}</span></div>
         </div>
-        <picturePreview :reviewImg="reviewImg" :reviewUrl="reviewUrl" @closePreImg="closePreImg"></picturePreview>
+        <picturePreview :review-img="reviewImg" :review-url="reviewUrl" @closePreImg="closePreImg"></picturePreview>
         <Teleport to="body">
             <ChatCitationFloat :float="citationFloat" :on-enter="cancelCitationClose"
                 :on-leave="scheduleCitationClose" />
@@ -210,10 +210,10 @@ const mentionTagIcon = (item) => {
 const emit = defineEmits(['scroll-bottom', 'render-complete-change', 'fork', 'rewind'])
 const { t } = useI18n()
 const uiStore = useUIStore();
-let parentMd = ref()
-let reviewUrl = ref('')
-let reviewImg = ref(false)
-let isImgLoading = ref(false);
+const parentMd = ref()
+const reviewUrl = ref('')
+const reviewImg = ref(false)
+const isImgLoading = ref(false);
 const props = defineProps({
     // 必填项
     content: {

@@ -358,7 +358,7 @@ function buildItems(g0: any): any[] {
   })
   // 2) 内置未入库兜底（理论上初始化会写入全部内置，这里仅防御）：按内置顺序追加
   if (!gid) {
-    ;(BUILTIN[scope] || []).forEach((b) => {
+    (BUILTIN[scope] || []).forEach((b) => {
       const found = list.find((c: any) => c.builtin_key === b.name || c.name === b.name)
       if (!found) {
         merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })

@@ -1,6 +1,5 @@
 <template>
-  <div :class="[
-    'submenu_item',
+  <div class="submenu_item" :class="[
     !batchMode && activePath === item.path ? 'submenu_item_active' : '',
     batchMode && selectedIds.includes(item.id) ? 'submenu_item_selected' : '',
     batchMode ? 'submenu_item_batch' : '',
