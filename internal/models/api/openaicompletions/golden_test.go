@@ -128,13 +128,31 @@ func TestGolden(t *testing.T) {
 			},
 		},
 		{
-			name: "deepseek reasoner: always-on, off request sends nothing",
+			name: "deepseek reasoner: always-on, off request downgrades to weakest thinking",
 			mutate: func(c *Config) {
 				c.Settings.ThinkingFormat = api.ThinkingFormatThinkingType
 				c.ThinkingLevels = api.ThinkingLevelMap{api.ReasoningOff: nil}
 			},
 			opts: &api.Options{Thinking: ptrBool(false)},
-			want: map[string]any{"thinking": nil},
+			want: map[string]any{"thinking": map[string]any{"type": "enabled"}},
+		},
+		{
+			name: "zhipu glm-5.3-flash always-on: off request sends weakest effort",
+			mutate: func(c *Config) {
+				c.Settings.ThinkingFormat = api.ThinkingFormatThinkingType
+				c.Settings.SupportsReasoningEffort = true
+				c.ThinkingLevels = api.ThinkingLevelMap{
+					api.ReasoningOff:     nil,
+					api.ReasoningMinimal: api.StringPtr("low"),
+					api.ReasoningLow:     api.StringPtr("low"),
+					api.ReasoningMedium:  api.StringPtr("high"),
+					api.ReasoningHigh:    api.StringPtr("high"),
+					api.ReasoningXHigh:   api.StringPtr("max"),
+					api.ReasoningMax:     api.StringPtr("max"),
+				}
+			},
+			opts: &api.Options{Thinking: ptrBool(false)},
+			want: map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoning_effort": "low"},
 		},
 		{
 			name: "zhipu: thinking disabled explicitly",

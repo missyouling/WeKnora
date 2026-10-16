@@ -300,10 +300,10 @@ func TestLegacyWireParity(t *testing.T) {
 			want: map[string]any{"thinking": map[string]any{"type": "enabled"}},
 		},
 		{
-			name:     "lkeap deepseek r1 is always-on so no switch is sent",
+			name:     "lkeap deepseek r1 is always-on so off downgrades to weakest thinking",
 			provider: "lkeap", model: "deepseek-r1",
 			opts: &api.Options{Thinking: ptrBool(false)},
-			want: map[string]any{"thinking": nil, "enable_thinking": nil, "reasoning_effort": nil},
+			want: map[string]any{"thinking": map[string]any{"type": "enabled"}},
 		},
 		{
 			name: "generic uses chat_template_kwargs", provider: "generic", model: "Qwen/Qwen3-32B",
