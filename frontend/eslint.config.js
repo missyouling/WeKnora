@@ -14,6 +14,9 @@ export default defineConfig(
       'node_modules/**',
       '*.d.ts',
       'src/wailsjs/**', // Wails 自动生成产物
+      // 第三方图标库，文件头标注 "generated automatically ... DO NOT EDIT IT"；
+      // eslint --fix 曾改写过它，必须排除。
+      'public/tdesign-icons/**',
       'scripts/**',
     ],
   },

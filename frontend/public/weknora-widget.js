@@ -26,17 +26,17 @@
 (function (global) {
   'use strict';
 
-  var HOST_SOURCE = 'weknora-host';
-  var EMBED_SOURCE = 'weknora-embed';
-  var POSITIONS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
-  var DEFAULT_POSITION = 'bottom-right';
-  var DEFAULT_COLOR = '#07C05F';
-  var DEFAULT_TITLE = 'AI Assistant';
-  var DEFAULT_WIDTH = 400;
-  var DEFAULT_HEIGHT = 600;
+  const HOST_SOURCE = 'weknora-host';
+  const EMBED_SOURCE = 'weknora-embed';
+  const POSITIONS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
+  const DEFAULT_POSITION = 'bottom-right';
+  const DEFAULT_COLOR = '#07C05F';
+  const DEFAULT_TITLE = 'AI Assistant';
+  const DEFAULT_WIDTH = 400;
+  const DEFAULT_HEIGHT = 600;
 
-  var instance = null;
-  var listeners = {};
+  let instance = null;
+  let listeners = {};
 
   function normalizePosition(pos) {
     if (!pos || POSITIONS.indexOf(pos) < 0) return DEFAULT_POSITION;
@@ -44,9 +44,9 @@
   }
 
   function positionStyles(position, kind) {
-    var isLeft = position.indexOf('left') >= 0;
-    var isTop = position.indexOf('top') >= 0;
-    var horizontal = isLeft ? 'left:24px' : 'right:24px';
+    const isLeft = position.indexOf('left') >= 0;
+    const isTop = position.indexOf('top') >= 0;
+    const horizontal = isLeft ? 'left:24px' : 'right:24px';
     if (kind === 'launcher') {
       return horizontal + ';' + (isTop ? 'top:24px' : 'bottom:24px');
     }
@@ -54,7 +54,7 @@
   }
 
   function emit(event, payload) {
-    var handlers = listeners[event];
+    const handlers = listeners[event];
     if (!handlers) return;
     handlers.slice().forEach(function (fn) {
       try { fn(payload); } catch (e) { console.error('[WeKnora]', e); }
@@ -62,29 +62,29 @@
   }
 
   function createWidget(opts) {
-    var channelId = opts.channel || opts.channelId;
+    const channelId = opts.channel || opts.channelId;
     // Insecure mode: a long-lived publish token is embedded in the page.
-    var staticToken = opts.token;
+    const staticToken = opts.token;
     // Secure mode: the page never holds the publish token. Instead it points at
     // an endpoint on the integrator's own backend that mints a short-lived
     // session token (by server-side exchange of the publish token). The widget
     // fetches a fresh token here and refreshes it before expiry.
-    var tokenEndpoint = opts.tokenEndpoint || opts.token_endpoint || '';
+    const tokenEndpoint = opts.tokenEndpoint || opts.token_endpoint || '';
     if (!channelId || (!staticToken && !tokenEndpoint)) {
       console.warn('[WeKnora] channel and (token or tokenEndpoint) are required');
       return null;
     }
 
-    var currentToken = staticToken || '';
-    var tokenInFlight = null;
-    var refreshTimer = null;
+    let currentToken = staticToken || '';
+    let tokenInFlight = null;
+    let refreshTimer = null;
 
     function scheduleRefresh(expiresInSec) {
       if (!tokenEndpoint) return;
       if (refreshTimer) clearTimeout(refreshTimer);
-      var ttl = Number(expiresInSec) > 0 ? Number(expiresInSec) : 1800;
+      const ttl = Number(expiresInSec) > 0 ? Number(expiresInSec) : 1800;
       // Refresh at ~80% of the lifetime, never sooner than 30s.
-      var delayMs = Math.max(Math.floor(ttl * 0.8), 30) * 1000;
+      const delayMs = Math.max(Math.floor(ttl * 0.8), 30) * 1000;
       refreshTimer = setTimeout(function () {
         loadToken(true).then(function (tok) {
           if (tok) provideToken();
@@ -108,10 +108,10 @@
           return res.json();
         })
         .then(function (data) {
-          var d = data || {};
-          var inner = d.data || d;
-          var tok = inner.token || inner.session_token || '';
-          var expiresIn = inner.expiresIn || inner.expires_in || 0;
+          const d = data || {};
+          const inner = d.data || d;
+          const tok = inner.token || inner.session_token || '';
+          const expiresIn = inner.expiresIn || inner.expires_in || 0;
           if (!tok) throw new Error('token endpoint returned no token');
           currentToken = tok;
           scheduleRefresh(expiresIn);
@@ -125,12 +125,12 @@
       return tokenInFlight;
     }
 
-    var position = normalizePosition(opts.position);
-    var primaryColor = opts.primaryColor || opts.primary_color || DEFAULT_COLOR;
-    var title = opts.title || DEFAULT_TITLE;
-    var baseUrl = (opts.baseUrl || opts.base || '').replace(/\/$/, '');
+    const position = normalizePosition(opts.position);
+    const primaryColor = opts.primaryColor || opts.primary_color || DEFAULT_COLOR;
+    const title = opts.title || DEFAULT_TITLE;
+    let baseUrl = (opts.baseUrl || opts.base || '').replace(/\/$/, '');
     if (!baseUrl) {
-      var script = document.currentScript;
+      const script = document.currentScript;
       if (script && script.src) {
         baseUrl = script.src.replace(/\/weknora-widget\.js.*$/, '');
       } else {
@@ -138,10 +138,10 @@
       }
     }
 
-    var panelWidth = Number(opts.width) > 0 ? Number(opts.width) : DEFAULT_WIDTH;
-    var panelHeight = Number(opts.height) > 0 ? Number(opts.height) : DEFAULT_HEIGHT;
-    var embedUrl = baseUrl + '/embed/' + encodeURIComponent(channelId);
-    var embedOrigin = baseUrl;
+    const panelWidth = Number(opts.width) > 0 ? Number(opts.width) : DEFAULT_WIDTH;
+    const panelHeight = Number(opts.height) > 0 ? Number(opts.height) : DEFAULT_HEIGHT;
+    const embedUrl = baseUrl + '/embed/' + encodeURIComponent(channelId);
+    let embedOrigin = baseUrl;
     try {
       // Derive the exact origin (scheme + host + port) rather than trusting the
       // raw baseUrl string, so postMessage origin checks are precise.
@@ -149,12 +149,12 @@
     } catch (_e) {
       embedOrigin = baseUrl;
     }
-    var destroyed = false;
-    var panelOpen = false;
-    var iframeReady = false;
-    var iframeOrigin = '';
+    let destroyed = false;
+    let panelOpen = false;
+    let iframeReady = false;
+    let iframeOrigin = '';
 
-    var launcher = document.createElement('button');
+    const launcher = document.createElement('button');
     launcher.type = 'button';
     launcher.setAttribute('aria-label', title);
     launcher.textContent = '💬';
@@ -175,7 +175,7 @@
       positionStyles(position, 'launcher'),
     ].join(';');
 
-    var panel = document.createElement('div');
+    const panel = document.createElement('div');
     panel.style.cssText = [
       'position:fixed',
       'z-index:2147482999',
@@ -191,16 +191,16 @@
       positionStyles(position, 'panel'),
     ].join(';');
 
-    var iframe = document.createElement('iframe');
+    const iframe = document.createElement('iframe');
     iframe.src = embedUrl;
     iframe.style.cssText = 'width:100%;height:100%;border:none';
     iframe.setAttribute('allow', 'clipboard-write');
-    var hostOrigin = '';
+    let hostOrigin = '';
     try {
       hostOrigin = global.location ? global.location.origin : '';
     } catch (_e) { hostOrigin = ''; }
-    var crossOriginEmbed = hostOrigin && embedOrigin && hostOrigin !== embedOrigin;
-    var sandboxAttr = String(opts.sandbox || opts.sandboxMode || '').trim();
+    const crossOriginEmbed = hostOrigin && embedOrigin && hostOrigin !== embedOrigin;
+    let sandboxAttr = String(opts.sandbox || opts.sandboxMode || '').trim();
     if (!sandboxAttr && opts.scriptEl) {
       sandboxAttr = String(opts.scriptEl.getAttribute('data-sandbox') || '').trim();
     }
@@ -250,7 +250,7 @@
     }
 
     function whenIframeReady(fn, attempt) {
-      var tries = attempt || 0;
+      const tries = attempt || 0;
       if (iframeReady && iframe.contentWindow) {
         fn();
         return;
@@ -271,7 +271,7 @@
     }
 
     function openWithQuery(query) {
-      var text = String(query || '').trim();
+      const text = String(query || '').trim();
       if (!text) {
         console.warn('[WeKnora] openWithQuery requires a non-empty query');
         return;
@@ -283,7 +283,7 @@
     }
 
     function setLocale(locale) {
-      var loc = String(locale || '').trim();
+      const loc = String(locale || '').trim();
       if (!loc) {
         console.warn('[WeKnora] setLocale requires a locale string');
         return;
@@ -411,11 +411,11 @@
 
   global.WeKnora = api;
 
-  var legacyScript = document.currentScript;
+  const legacyScript = document.currentScript;
   if (legacyScript) {
-    var legacyChannel = legacyScript.getAttribute('data-channel');
-    var legacyToken = legacyScript.getAttribute('data-token');
-    var legacyTokenEndpoint = legacyScript.getAttribute('data-token-endpoint');
+    const legacyChannel = legacyScript.getAttribute('data-channel');
+    const legacyToken = legacyScript.getAttribute('data-token');
+    const legacyTokenEndpoint = legacyScript.getAttribute('data-token-endpoint');
     if (legacyChannel && (legacyToken || legacyTokenEndpoint)) {
       api.init({
         channel: legacyChannel,
