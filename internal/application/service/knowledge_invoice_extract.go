@@ -362,8 +362,48 @@ var invoiceStdFieldKeys = map[string]bool{
 // normalizeRuleFieldKeys 把模型输出的 JSON 里命中规则字段名的中文 key 替换为
 // 标准英文字段。只处理顶层 kind/invoices 与 invoices 元素、items 明细元素；
 // 无法解析或无需替换时原样返回。
+// cleanInvoiceNullStrings 把模型输出中字符串形式的 "null" 统一置空（递归到
+// 对象与数组元素）。模型把"未找到"写成 "null" 是常见坏习惯，若不清洗会以
+// 字符串形式落库并在前端展示为 null。解析失败时原样返回，交给上层处理。
+func cleanInvoiceNullStrings(raw string) string {
+	var root interface{}
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
+		return raw
+	}
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch n := v.(type) {
+		case map[string]interface{}:
+			for k, val := range n {
+				if s, ok := val.(string); ok && strings.EqualFold(strings.TrimSpace(s), "null") {
+					n[k] = ""
+					continue
+				}
+				walk(val)
+			}
+		case []interface{}:
+			for _, it := range n {
+				walk(it)
+			}
+		}
+	}
+	walk(root)
+	out, err := json.Marshal(root)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
 func normalizeRuleFieldKeys(raw string, cfg *types.KbExtractConfig) string {
-	if cfg == nil || len(cfg.Fields) == 0 || strings.TrimSpace(raw) == "" {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	// 字符串 "null" 清洗是通用健壮性处理（模型常把"未找到"写成 "null"），
+	// 与业务字段配置无关，必须无条件执行：否则未配置提取字段的知识库会把
+	// "null" 当作真实值落盘，前端列表直接显示 null。
+	raw = cleanInvoiceNullStrings(raw)
+	if cfg == nil || len(cfg.Fields) == 0 {
 		return raw
 	}
 	var root map[string]interface{}

@@ -40,7 +40,9 @@ jobs:
       - name: Test sandbox packages (whitelist regex)
         env:
           CGO_ENABLED: 1
-        run: go test -run "TestBusiness|TestExtract|TestDailyAffairs" ./internal/handler ./internal/application/service
+        # TestGolden* 是提取器的 golden 回归集（解析层，确定性、不依赖模型），
+        # 用于锁死「模型输出 → 结构化结果」的解析行为与提示词拼装，必须进 CI。
+        run: go test -run "TestBusiness|TestExtract|TestDailyAffairs|TestGolden" ./internal/handler ./internal/application/service
       # 核心包：这些包在 VM 上稳定通过，且只依赖 miniredis / 内存 SQLite，无需外部服务，
       # 故跑全量测试（不加 -run 过滤）。继续保持逐包显式指定，禁止改成 ./...。
       # 新增包前必须先在 VM 跑通并确认无 Redis/Postgres/网络依赖，否则 CI 必然红。
