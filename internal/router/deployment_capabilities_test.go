@@ -83,13 +83,13 @@ func TestBuildDeploymentCapabilitiesReflectsMissingRoutes(t *testing.T) {
 }
 
 func TestDeploymentCapabilitiesExposeHostWhenManagerPresent(t *testing.T) {
-	params := RouterParams{Sandbox: SandboxRouteDeps{SandboxConfigHandler: &handler.SandboxConfigHandler{}}}
+	params := RouterParams{SandboxConfigHandler: &handler.SandboxConfigHandler{}}
 	hostOff := deploymentCapabilitiesFromRouter(params).Capabilities["settings.sandbox.host"]
 	if hostOff.Supported {
 		t.Fatal("host capability must stay off when no host manager is provided")
 	}
 
-	params.Sandbox.HostSandbox = service.HostSandboxManager{Manager: stubHostCapabilityManager{}}
+	params.HostSandbox = service.HostSandboxManager{Manager: stubHostCapabilityManager{}}
 	hostOn := deploymentCapabilitiesFromRouter(params).Capabilities["settings.sandbox.host"]
 	if !hostOn.Supported {
 		t.Fatal("host capability must be on when the host manager is non-nil")

@@ -7,25 +7,25 @@ import (
 
 func deploymentCapabilitiesFromRouter(params RouterParams) handler.DeploymentCapabilitiesData {
 	return handler.BuildDeploymentCapabilities(handler.Edition, handler.DeploymentFeatureAvailability{
-		Organizations: params.Agent.OrganizationHandler != nil,
-		Agents:        params.Agent.CustomAgentHandler != nil,
-		IM:            params.Integration.IMHandler != nil,
+		Organizations: params.OrganizationHandler != nil,
+		Agents:        params.CustomAgentHandler != nil,
+		IM:            params.IMHandler != nil,
 		// Match RegisterEmbedChannelRoutes: management routes depend on handler only.
-		Embed: params.Integration.EmbedChannelHandler != nil,
+		Embed: params.EmbedChannelHandler != nil,
 		// Match RegisterMCPEndpointRoutes / RegisterMCPServerRoutes.
-		MCPServer: params.MCP.MCPEndpointHandler != nil && params.MCP.MCPServer != nil && params.MCP.MCPEndpointService != nil,
-		API:       params.AuthTenant.TenantHandler != nil && params.AuthTenant.TenantAPIKeyService != nil,
-		MCP: params.MCP.MCPServiceHandler != nil &&
-			params.MCP.MCPCredentialsHandler != nil &&
-			params.MCP.MCPOAuthHandler != nil,
-		WebSearch: params.WebSearch.WebSearchHandler != nil &&
-			params.WebSearch.WebSearchProviderHandler != nil &&
-			params.WebSearch.WebSearchCredentialsHandler != nil,
-		VectorStore:   params.Core.VectorStoreHandler != nil,
-		Storage:       params.Core.StorageBackendHandler != nil,
-		Sandbox:       params.Sandbox.SandboxConfigHandler != nil,
+		MCPServer: params.MCPEndpointHandler != nil && params.MCPServer != nil && params.MCPEndpointService != nil,
+		API:       params.TenantHandler != nil && params.TenantAPIKeyService != nil,
+		MCP: params.MCPServiceHandler != nil &&
+			params.MCPCredentialsHandler != nil &&
+			params.MCPOAuthHandler != nil,
+		WebSearch: params.WebSearchHandler != nil &&
+			params.WebSearchProviderHandler != nil &&
+			params.WebSearchCredentialsHandler != nil,
+		VectorStore:   params.VectorStoreHandler != nil,
+		Storage:       params.StorageBackendHandler != nil,
+		Sandbox:       params.SandboxConfigHandler != nil,
 		SandboxDocker: sandbox.DockerBackendEnabled(),
-		SandboxHost:   params.Sandbox.HostSandbox.Manager != nil,
-		SandboxRemote: params.Sandbox.SandboxConfigHandler != nil && !params.Sandbox.HostSandbox.Desktop,
+		SandboxHost:   params.HostSandbox.Manager != nil,
+		SandboxRemote: params.SandboxConfigHandler != nil && !params.HostSandbox.Desktop,
 	})
 }
