@@ -1019,7 +1019,6 @@ const periodsOf = (row: any) => {
   ]
 }
 
-const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every(r => selectedKeys.value.has(r.key)))
 // 单击行：单选该行并打开编辑抽屉（与发票管理一致）
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.key])

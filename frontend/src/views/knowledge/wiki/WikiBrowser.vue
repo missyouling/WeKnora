@@ -820,9 +820,8 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useMenuStore } from '@/stores/menu'
-import { useSettingsStore } from '@/stores/settings'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import { ensureLiteralSingleTildeOnGlobalMarked } from '@/utils/markedLiteralTilde'

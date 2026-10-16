@@ -342,30 +342,8 @@ const removeOne = async (row: any) => {
   }
 }
 
-const clearAll = async () => {
-  try {
-    let all: any[] = []
-    let p = 1
-    for (;;) {
-      const res: any = await listKnowledgeFiles(props.kbId, { page: p, page_size: 100 })
-      const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-      all.push(...arr)
-      if (arr.length < 100) break
-      p += 1
-    }
-    for (const row of all) await delKnowledgeDetails(row.id)
-    rows.value = []
-    total.value = 0
-    hasMore.value = false
-    MessagePlugin.success(`已删除 ${all.length} 个文件`)
-    emit("changed", { deletedIds: all.map((r: any) => r.id) })
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || "删除失败")
-  }
-}
 
 // ---- 行操作三点菜单 ----
-const IMG_EXT = ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tif', 'tiff']
 
 const rowMenuOptions = (_row: any) => {
   const opts: any[] = [

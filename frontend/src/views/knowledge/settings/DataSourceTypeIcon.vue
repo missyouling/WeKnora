@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { datasourceIconMap } from './datasourceIcons'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   type: string
   size?: number
   /** inline: 类型选择等小尺寸场景；badge: 嵌入 ds-card__badge 等父级徽章容器 */

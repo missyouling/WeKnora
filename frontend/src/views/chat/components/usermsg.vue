@@ -172,11 +172,6 @@ const rewindTooltip = computed(() => t('chat.rewind.tooltip'));
 
 const attachmentPreviewDrawer = useChatAttachmentPreviewDrawer();
 
-const channelLabelMap = {
-    web: () => t('chat.channelWeb'),
-    api: () => t('chat.channelApi'),
-    im: () => t('chat.channelIm'),
-};
 
 
 

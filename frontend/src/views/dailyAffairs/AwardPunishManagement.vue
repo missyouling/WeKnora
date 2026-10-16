@@ -494,8 +494,8 @@ const DEFAULT_NOTICE_COLUMNS: ColumnDef[] = [
 const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
-  resetColumns, selectAllColumns, colVisible,
-  selectedRowKeys, onSelectChange, clearSelection,
+  resetColumns, selectAllColumns,
+  selectedRowKeys, clearSelection,
   colValue,
 } = useBusinessList({
   storageKey: 'weknora-notice-list-columns',
@@ -953,7 +953,6 @@ const filteredRows = computed(() => [...pendingRows.value, ...noticeRows.value])
 
 
 // ---- 多选 ----
-const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
 const selectedRows = computed(() => {
   const byKey = new Map(noticeRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as NoticeRow[]

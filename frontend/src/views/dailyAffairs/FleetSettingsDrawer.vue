@@ -115,12 +115,6 @@ const vehicleCertRef = ref<any>(null)
 const driverCertRef = ref<any>(null)
 const maintainCertRef = ref<any>(null)
 // 标题栏右侧「新增」按钮：仅证照配置面板且停留在“证照配置”tab 时显示
-const activeCertRef = computed(() => {
-  if (panelKey.value === 'cert-vehicle' || (!panelKey.value && activeTab.value === 'vehicle')) return vehicleCertRef.value
-  if (panelKey.value === 'cert-driver' || (!panelKey.value && activeTab.value === 'driver')) return driverCertRef.value
-  if (panelKey.value === 'cert-maintain' || (!panelKey.value && activeTab.value === 'maintain')) return maintainCertRef.value
-  return null
-})
 // 切到提取规则页时重新拉取证照配置，保证字段名与证照配置实时同步
 function onVehicleTabChange(val: string | number) {
   if (val === 'rules') extractPanelRef.value?.refresh()

@@ -1776,22 +1776,6 @@ const formatModelSize = (bytes: number): string => {
 }
 
 // 检查模型状态（Ollama本地模型）
-const checkModelStatus = async () => {
-  if (!formData.value.modelName || formData.value.source !== 'local') {
-    return
-  }
-
-  try {
-    // 调用真实 Ollama API 检查模型是否存在
-    const result = await checkOllamaModels([formData.value.modelName])
-    modelChecked.value = true
-    modelAvailable.value = result.models[formData.value.modelName] || false
-  } catch (error) {
-    console.error('检查模型状态失败:', error)
-    modelChecked.value = false
-    modelAvailable.value = false
-  }
-}
 
 // 检查 Ollama 本地 Embedding 模型维度
 const checkOllamaDimension = async () => {

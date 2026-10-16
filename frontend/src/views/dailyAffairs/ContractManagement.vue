@@ -572,7 +572,7 @@ const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
 const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
-  resetColumns, selectAllColumns, colVisible,
+  resetColumns, selectAllColumns,
   selectedRowKeys, onSelectChange, clearSelection,
   colValue,
 } = useBusinessList({
@@ -1103,7 +1103,6 @@ const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'default' | 'dan
 
 
 // ---- 多选 ----
-const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
 const selectedRows = computed(() => {
   const byKey = new Map(contractRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as ContractRow[]
@@ -1973,10 +1972,6 @@ const finishDelete = async () => {
   schedulePostDeleteRefresh()
 }
 // 合同不需要按页操作，直接走文件删除
-const confirmPageDelete = async () => {
-  closeDelPop()
-  try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
-}
 const confirmFileDelete = async () => {
   closeDelPop()
   try { await doFileDelete(selectedRows.value); await finishDelete() } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }

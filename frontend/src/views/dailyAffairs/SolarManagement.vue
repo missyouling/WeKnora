@@ -642,7 +642,6 @@ const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKey
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
 const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || ['failed', 'parse_failed'].includes(r.extractStatus)))
-const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
 
 function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
@@ -698,10 +697,6 @@ const displayRows = computed(() => {
     (r.fileName || '').toLowerCase().includes(kw) || ((r as any).title || '').toLowerCase().includes(kw))
 })
 
-const meterReading = (row: Row) => {
-  const g = row.item?.gateways?.[0]
-  return g?.readings?.[0] || null
-}
 const metricPeriodOf = (it: any) => {
   if (!it) return ''
   const s = String(it.bill_period_start || '')

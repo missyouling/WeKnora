@@ -2587,9 +2587,6 @@ const renderAnswerContent = (content: unknown): string => {
 // Legacy Markdown rendering function (kept for summaries)
 
 // 渲染 Mermaid 图表的函数
-const renderMermaidDiagrams = async () => {
-  await enhanceMarkdownContainer(rootElement.value);
-};
 
 // Tool summary - extract key info to display externally
 const getToolSummary = (event: any): string => {

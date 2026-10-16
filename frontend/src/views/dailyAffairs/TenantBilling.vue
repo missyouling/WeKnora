@@ -882,10 +882,6 @@ const loadRecords = async () => {
   await loadAllData()
 }
 
-const onTenantChange = async () => {
-  clearSelection()
-  await loadAllData()
-}
 
 const onUseUnitChange = () => {
   clearSelection()
@@ -913,7 +909,6 @@ const summaryWaterFee = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return Math.round(arr.reduce((s, r) => s + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0), 0) * 100) / 100
 })
-const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every(r => selectedKeys.value.has(r.id)))
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.id])
   if (!isOwnerView.value) {
