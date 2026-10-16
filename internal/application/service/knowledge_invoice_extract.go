@@ -613,17 +613,41 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 	systemPrompt := buildInvoiceRuleSystemPrompt(cfg)
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+	messages := []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking})
+	}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking}
+
+	// 由用户配置的字段生成 JSON Schema，作为第 3 次尝试的强约束输出格式。
+	// 无字段配置时 schema 为空，该次尝试退化为普通非流式调用（与改动前一致）。
+	var schema json.RawMessage
+	if cfg != nil && len(cfg.Fields) > 0 {
+		if s := BuildFieldsSchema(cfg.Fields); s != "" {
+			schema = json.RawMessage(s)
+		}
+	}
+
+	// 走通用执行器：流式 → 非流式 → 非流式+schema 强约束 → 流式重试。
+	// 之前是单次调用、解析失败即抛错，是"提取不出来"的主要来源；现在最多 4 次机会，
+	// 且每步产出都先校验，成功即返回，不浪费后续 token。
+	raw, err := RunExtractWithRetry(
+		types.WithLLMCallMetadata(ctx, "invoice_extract", ""),
+		model, messages, baseOpts, DefaultExtractAttempts(schema),
+		func(raw string) bool {
+			_, perr := parseInvoiceRuleReply(raw, cfg)
+			return perr == nil
+		},
+		func(lastRaw string, lastErr error) { logInvoiceReplyUnparsable(ctx, lastRaw, lastErr) },
+	)
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice fields: %w", err)
 	}
-	var parsed *InvoiceExtractionResult
-	if parsed, err = parseInvoiceRuleReply(result.Content, cfg); err != nil {
-		logInvoiceReplyUnparsable(ctx, result.Content, err)
-		return nil, err
+	parsed, perr := parseInvoiceRuleReply(raw, cfg)
+	if perr != nil {
+		// 理论上不会走到这里（重试阶段已校验通过），保留兜底防止解析逻辑有副作用差异。
+		logInvoiceReplyUnparsable(ctx, raw, perr)
+		return nil, perr
 	}
 	return parsed, nil
 }
