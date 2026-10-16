@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -54,7 +56,14 @@ func RunExtractWithRetry(
 	var lastErr error
 	var lastRaw string
 
+	// 诊断上下文：提取卡住时最先要回答的就是"用的哪个模型、每次花了多久、拿到多少内容"。
+	modelName := ""
+	if model != nil {
+		modelName = model.GetModelName()
+	}
+
 	for i, a := range attempts {
+		start := time.Now()
 		opts := *baseOpts
 		if len(a.Schema) > 0 {
 			opts.Format = a.Schema
@@ -72,14 +81,23 @@ func RunExtractWithRetry(
 				raw = resp.Content
 			}
 		}
+		elapsed := time.Since(start)
 
 		if err != nil {
 			lastErr = err
-			logger.Warnf(ctx, "extract attempt %d (%s) error: %v", i+1, a.Label, err)
+			logger.Warnf(ctx, "extract attempt %d (%s) error: %v (elapsed=%s)", i+1, a.Label, err, elapsed)
 			continue
 		}
 		if parse(raw) {
+			logger.Infof(ctx, "extract attempt %d (%s) succeeded (len=%d elapsed=%s)", i+1, a.Label, len(raw), elapsed)
 			return raw, nil
+		}
+		// 空 content 单列一条告警：这是供应商侧问题（智谱等对"长输入 + 大输出"
+		// 偶发返回空），与解析逻辑无关。不单独提示时极易被误判成解析写错。
+		if strings.TrimSpace(raw) == "" {
+			logger.Warnf(ctx, "extract attempt %d (%s) returned EMPTY content: model=%s elapsed=%s — "+
+				"常见原因是显式传入 max_tokens（部分供应商在长输出时返回空），请检查 ChatOptions.MaxTokens 是否为 0",
+				i+1, a.Label, modelName, elapsed)
 		}
 		// 保留"信息量最大"的那份原始输出供诊断，而不是最后一次：
 		// 末次尝试常是流式空 content（智谱等供应商的典型表现），若只留最后一次，
@@ -88,7 +106,7 @@ func RunExtractWithRetry(
 			lastRaw = raw
 		}
 		lastErr = fmt.Errorf("unparseable response (len=%d)", len(raw))
-		logger.Warnf(ctx, "extract attempt %d (%s) unparseable (len=%d)", i+1, a.Label, len(raw))
+		logger.Warnf(ctx, "extract attempt %d (%s) unparseable: len=%d elapsed=%s model=%s", i+1, a.Label, len(raw), elapsed, modelName)
 	}
 
 	if lastErr == nil {

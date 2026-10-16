@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -60,7 +61,7 @@ func corsOrigins() []string {
 // Rejecting these here would pre-empt their own auth with a 403 and break live
 // third-party integrations, so the global layer defers to them. Everything
 // else stays on the WEKNORA_CORS_ORIGINS allowlist.
-func corsSelfAuthenticatedSurfaceExempt(c *gin.Context, _ string) bool {
+func corsSelfAuthenticatedSurfaceExempt(c *gin.Context, origin string) bool {
 	p := c.Request.URL.Path
 	switch {
 	case p == "/api/v1/embed-frame-policy":
@@ -72,5 +73,14 @@ func corsSelfAuthenticatedSurfaceExempt(c *gin.Context, _ string) bool {
 	case strings.HasPrefix(p, "/r/"):
 		return true
 	}
+	// 走到这里说明：请求带 Origin 头、Origin 不在 AllowOrigins、且不属于豁免面，
+	// 全局层随即返回 403。必须留下线索——CORS 拒绝发生在业务 handler 之前，
+	// 不会进 access log；没有这条日志时，前端只表现为"请求失败"，
+	// 而后端查不到任何记录，极易误判为服务异常（2026-10-17 VM 登录 403 踩坑）。
+	//
+	// 只记诊断必需的上下文，不打印 Authorization / Cookie / body 等敏感信息。
+	logger.Warnf(c.Request.Context(),
+		"cors rejected: origin=%q method=%s path=%s client_ip=%s",
+		origin, c.Request.Method, p, c.ClientIP())
 	return false
 }

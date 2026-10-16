@@ -218,7 +218,7 @@ func ExtractInvoicesFromContent(ctx context.Context, model chat.Chat, content st
 	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
 		{Role: "system", Content: invoiceExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking})
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice fields: %w", err)
 	}
@@ -629,7 +629,7 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
-	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
 
 	// 由用户配置的字段生成 JSON Schema，作为第 3 次尝试的强约束输出格式。
 	// 无字段配置时 schema 为空，该次尝试退化为普通非流式调用（与改动前一致）。
@@ -713,7 +713,7 @@ func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.C
 	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking})
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice fields: %w", err)
 	}
@@ -741,7 +741,7 @@ func ExtractInvoicePageFromContentWithRules(ctx context.Context, model chat.Chat
 	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking})
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice page: %w", err)
 	}
@@ -769,7 +769,7 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
 		{Role: "system", Content: invoiceExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 16384, Thinking: &thinking})
+	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
 	if err != nil {
 		return nil, fmt.Errorf("extract invoice page: %w", err)
 	}
