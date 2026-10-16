@@ -35,7 +35,7 @@ jobs:
       - name: Install CGO dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
       - name: Vet whitelisted packages
-        run: go vet ./internal/handler ./internal/application/service ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist
+        run: go vet ./internal/handler ./internal/application/service ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist ./internal/models/api/... ./internal/models/parity
       # 二开业务包：沿用 -run 正则白名单，隔离上游官方可能损坏的同包测试。
       - name: Test sandbox packages (whitelist regex)
         env:
@@ -47,7 +47,7 @@ jobs:
       - name: Test core packages (whitelist, full)
         env:
           CGO_ENABLED: 1
-        run: go test ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist
+        run: go test ./internal/router ./internal/container ./internal/middleware ./internal/types ./internal/event ./internal/common ./internal/config ./internal/ratelimit ./internal/storageallowlist ./internal/models/api/... ./internal/models/parity
 
   build-push:
     needs: quality-gate
