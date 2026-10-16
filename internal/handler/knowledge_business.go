@@ -1045,7 +1045,8 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
 		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
 		for i, batch := range batches {
-			if strings.TrimSpace(batch) == "" {
+			content := strings.TrimSpace(batch.Content)
+			if content == "" {
 				continue
 			}
 			// 分批提取多发票合集时，模型常因单批文本碎片化（模板噪音占比高、发票被跨 chunk
@@ -1058,10 +1059,10 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
 					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
 				knowledge.FileName, knowledge.Description, i+1, len(batches), enabledCategoryNames)
-			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(extractCtx, chatModel, batch, invoiceRuleCfg, guide)
+			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(extractCtx, chatModel, content, invoiceRuleCfg, guide)
 			if berr != nil {
 				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
-				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(extractCtx, chatModel, batch, invoiceRuleCfg); ferr == nil && fbRes != nil {
+				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(extractCtx, chatModel, content, invoiceRuleCfg); ferr == nil && fbRes != nil {
 					batchRes = fbRes
 					berr = nil
 				}
@@ -1078,6 +1079,13 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			}
 			if batchRes == nil || batchRes.Kind == "not_invoice" {
 				continue
+			}
+			// 页码归位（防"张冠李戴"红线）：用批次在原文档中的 chunk 区间 + 批内顺序
+			// 严格归位，覆盖服务层按结果序号赋的 Page。
+			// 批次循环是串行的，append 顺序即文档顺序；一旦改成并发就必须改为
+			// 预分配切片按批次索引写入，绝不能无序 append。
+			for j := range batchRes.Invoices {
+				batchRes.Invoices[j].Page = batch.StartIndex + 1 + j
 			}
 			sawInvoice = true
 			merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
@@ -1110,7 +1118,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 自定义识别规则：类型归类（用户可配置关键词/正则 → 发票类型），
 	// 按模型提取出的发票类型字段匹配，命中则覆盖内置关键字判定。
 	if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
-		fullText := strings.Join(batches, "\n")
+		fullText := invoiceBatchesFullText(batches)
 		for i := range meta.Invoices {
 			if t := service.ClassifyTypeFromRules(meta.Invoices[i].InvoiceType, recCfg); t != "" {
 				meta.Invoices[i].InvoiceType = t
@@ -1143,7 +1151,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
 		// 不自动删除（避免"该是发票却没入库"）。
 		if recCfg, rerr := h.kgService.GetRecognitionConfig(extractCtx, kbID); rerr == nil {
-			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
+			if service.MatchIncludeRules(invoiceBatchesFullText(batches), recCfg) {
 				meta.Kind = "invoice"
 				meta.Invoices = []service.InvoiceExtractionItem{}
 				meta.ExtractStatus = "manual"
@@ -1560,13 +1568,22 @@ type invoiceCustomMetadata struct {
 	ExtractError  string                          `json:"extract_error"`
 }
 
-func invoiceBatchesHaveText(batches []string) bool {
+func invoiceBatchesHaveText(batches []service.InvoiceExtractionBatch) bool {
 	for _, b := range batches {
-		if strings.TrimSpace(b) != "" {
+		if strings.TrimSpace(b.Content) != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// invoiceBatchesFullText 拼接全部批次文本（自定义识别规则在整篇文档上匹配）。
+func invoiceBatchesFullText(batches []service.InvoiceExtractionBatch) string {
+	parts := make([]string, 0, len(batches))
+	for _, b := range batches {
+		parts = append(parts, b.Content)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType string) {
@@ -1897,7 +1914,6 @@ func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, kn
 		},
 	}, nil
 }
-
 
 // ExtractAwardPunish godoc
 // @Summary      提取奖惩字段
@@ -2243,7 +2259,6 @@ func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, k
 		},
 	}, nil
 }
-
 
 // GetRecognitionConfig godoc
 // @Summary      获取识别规则配置

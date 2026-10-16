@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -16,6 +17,53 @@ import (
 //
 // 这一层是**确定性的**（不调用模型），因此可以在 CI 里跑。
 // 端到端精度（真实文档 → 字段）依赖模型，另以手工/定期脚本验证。
+
+// 分批切分测试：批次大小是"输出长度"与"上下文完整"的平衡点，两侧都踩过坑
+// （64 → 16 页合成 1 批输出超长返回空；历史小批 → 发票拆散漏提），必须锁死行为。
+func TestExtractBuildInvoiceBatchesSplitsByChunkCount(t *testing.T) {
+	chunks := make([]*types.Chunk, 0, 16)
+	for i := 0; i < 16; i++ {
+		chunks = append(chunks, &types.Chunk{
+			ChunkIndex: i,
+			ChunkType:  types.ChunkTypeText,
+			Content:    fmt.Sprintf("通行费发票第%d页 内容足够短不会触发rune上限", i),
+		})
+	}
+	batches := BuildInvoiceExtractionBatches("16页通行费.pdf", "汇总单", chunks, 0)
+	if len(batches) != 4 {
+		t.Fatalf("16 chunks / batchSize=5 应切 4 批（5+5+5+1），实际 %d 批", len(batches))
+	}
+	wantStarts := []int{0, 5, 10, 15}
+	for i, b := range batches {
+		if b.StartIndex != wantStarts[i] {
+			t.Errorf("批 %d StartIndex = %d, want %d", i, b.StartIndex, wantStarts[i])
+		}
+	}
+	// 每批内容都应带上文档头（模型需要知道这是发票合集）
+	for i, b := range batches {
+		if !strings.Contains(b.Content, "16页通行费.pdf") {
+			t.Errorf("批 %d 缺少文档名头部", i)
+		}
+	}
+}
+
+func TestExtractBuildInvoiceBatchesSingleBatchForShortDoc(t *testing.T) {
+	chunks := make([]*types.Chunk, 0, 3)
+	for i := 0; i < 3; i++ {
+		chunks = append(chunks, &types.Chunk{
+			ChunkIndex: i,
+			ChunkType:  types.ChunkTypeText,
+			Content:    fmt.Sprintf("单页发票 %d", i),
+		})
+	}
+	batches := BuildInvoiceExtractionBatches("短文档.pdf", "", chunks, 0)
+	if len(batches) != 1 {
+		t.Fatalf("3 chunks 应为 1 批，实际 %d", len(batches))
+	}
+	if batches[0].StartIndex != 0 || batches[0].EndIndex != 2 {
+		t.Errorf("StartIndex/EndIndex = %d/%d, want 0/2", batches[0].StartIndex, batches[0].EndIndex)
+	}
+}
 
 func TestGoldenParseInvoiceRuleReply(t *testing.T) {
 	cases := []struct {

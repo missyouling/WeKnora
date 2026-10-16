@@ -780,14 +780,27 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 	return &parsed, nil
 }
 
-// InvoiceExtractionBatchSize caps how many text/OCR chunks go into one LLM
-// call as a hard safety net. Batching is driven primarily by the rune limit
-// (invoiceExtractMaxContentRunes): a mid-size multi-invoice document stays in
-// one or two calls so the model sees the full document context, while very
-// long documents (dozens of invoices) still split reliably. Before the rune-
-// driven change, a 30-chunk / 18-invoice toll invoice PDF was cut into many
-// tiny batches (each seeing only 1-2 invoices) and the model dropped most.
-const InvoiceExtractionBatchSize = 64
+// InvoiceExtractionBatchSize 每批送入模型的 chunk 数上限（对按页切分的 PDF ≈ 页数）。
+//
+// 这是「输出长度」与「上下文完整」之间的平衡点，两侧都踩过坑：
+//   - 太大（原值 64）：16 页 / 16 张发票的 PDF 会被合成 1 批，模型需一次性吐出
+//     16 张发票的完整 JSON（含明细子列），输出超长 → 智谱等对长输出返回空 content
+//     → 4 次重试全空 → 提取失败且耗时约 12 分钟（2026-10-17 实测）。
+//   - 太小（历史值）：曾按 chunk 切出每批仅 1~2 张发票的碎片，发票被拆散、模型漏提
+//     （30-chunk / 18-invoice 通行费 PDF 只提取出 1~8 张）。
+//
+// 取 5：单批约 4~5 张发票，输出长度可控；且 PDF 通常一页一张发票，**发票边界即页边界**，
+// 按页切不会把单张发票拆到两批里——这正是比"按字符数切"更稳的原因。
+const InvoiceExtractionBatchSize = 5
+
+// InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。
+// 记录 chunk 索引区间是为了**结果页码归位**：分批提取必须按批次索引与原始位置
+// 严格归位，绝不能用无序并发 append（历史上出现过金额"张冠李戴"的错位事故）。
+type InvoiceExtractionBatch struct {
+	Content    string // 已拼装头部、可直接送模型的批文本
+	StartIndex int    // 本批首个 chunk 的 ChunkIndex（0-based）
+	EndIndex   int    // 本批最后一个 chunk 的 ChunkIndex
+}
 
 // BuildInvoiceExtractionBatches assembles the document text into independent
 // batches (each carries the document name/summary header), so long
@@ -795,7 +808,7 @@ const InvoiceExtractionBatchSize = 64
 // is flushed when its accumulated content exceeds the rune cap (or when the
 // chunk-count hard cap is hit), never earlier — this keeps related invoice
 // fragments in the same call.
-func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []string {
+func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []InvoiceExtractionBatch {
 	if batchSize <= 0 {
 		batchSize = InvoiceExtractionBatchSize
 	}
@@ -822,9 +835,10 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 	}
 	headStr := strings.Join(header, "\n\n")
 
-	var batches []string
+	var batches []InvoiceExtractionBatch
 	curParts := make([]string, 0, 64)
 	curRunes := 0
+	curStart, curEnd := -1, -1
 	flush := func() {
 		if len(curParts) == 0 {
 			return
@@ -834,9 +848,14 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 			parts = append(parts, headStr)
 		}
 		parts = append(parts, curParts...)
-		batches = append(batches, sampleLongContent(strings.Join(parts, "\n\n"), invoiceExtractMaxContentRunes))
+		batches = append(batches, InvoiceExtractionBatch{
+			Content:    sampleLongContent(strings.Join(parts, "\n\n"), invoiceExtractMaxContentRunes),
+			StartIndex: curStart,
+			EndIndex:   curEnd,
+		})
 		curParts = curParts[:0]
 		curRunes = 0
+		curStart, curEnd = -1, -1
 	}
 	for _, c := range usable {
 		part := strings.TrimSpace(c.Content)
@@ -844,17 +863,22 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 			continue
 		}
 		r := len([]rune(part))
-		// 主约束：累积 runes 超限才切批；chunk 数仅作极端兜底。只要单批内容
-		// 仍在模型可靠处理范围内就尽量整批，避免发票被拆散导致漏提。
-		if (curRunes+r > invoiceExtractMaxContentRunes || len(curParts) >= batchSize) && curRunes > 0 {
+		// 主约束：chunk 数（≈页数）达上限即切批，控制单批发票张数与输出长度；
+		// rune 上限保留为兜底，防止个别超长 chunk 撑爆单批。
+		// 不按"越多越好"整批，是因为单批发票过多会让模型输出超长 → 供应商返回空 content。
+		if curRunes > 0 && (len(curParts) >= batchSize || curRunes+r > invoiceExtractMaxContentRunes) {
 			flush()
 		}
+		if curStart < 0 {
+			curStart = c.ChunkIndex
+		}
+		curEnd = c.ChunkIndex
 		curParts = append(curParts, part)
 		curRunes += r
 	}
 	flush()
 	if len(batches) == 0 {
-		batches = []string{""}
+		batches = []InvoiceExtractionBatch{{Content: "", StartIndex: 0, EndIndex: 0}}
 	}
 	return batches
 }
