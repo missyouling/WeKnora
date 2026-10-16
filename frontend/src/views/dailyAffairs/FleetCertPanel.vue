@@ -582,7 +582,7 @@ const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice'
       : group.value.scope === 'award_punish'
         ? noticeFieldLabel(fd.name)
         : fd.desc || fd.name)
-const fieldMenuOptions = (fd: any) => [
+const fieldMenuOptions = (_fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
 ]

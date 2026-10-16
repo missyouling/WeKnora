@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getDatasourceIconUrl, datasourceIconMap } from './datasourceIcons'
+import { datasourceIconMap } from './datasourceIcons'
 
 const props = withDefaults(defineProps<{
   type: string

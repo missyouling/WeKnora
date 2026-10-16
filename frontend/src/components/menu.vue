@@ -427,13 +427,10 @@ const isInCreatChat = computed<boolean>(() => {
 });
 
 // 是否在对话详情页
-const isInChatDetail = computed<boolean>(() => route.name === 'chat');
 
 // 是否在智能体列表页面
-const isInAgentList = computed<boolean>(() => route.name === 'agentList');
 
 // 是否在组织列表页面
-const isInOrganizationList = computed<boolean>(() => route.name === 'organizationList');
 
 // 统一的菜单项激活状态判断
 const isMenuItemActive = (itemPath: string): boolean => {
@@ -1123,7 +1120,7 @@ let artifactIcon = ref('artifact.svg');
 let toolboxIcon = ref('toolbox.svg');
 let organizationIcon = ref('organization.svg');
 let pathPrefix = ref(route.name)
-const getIcon = (path: string) => {
+const getIcon = (_path: string) => {
     // 根据当前路由状态更新所有图标
     const kbActiveState = getIconActiveState('knowledge-bases');
     const creatChatActiveState = getIconActiveState('creatChat');
@@ -1228,9 +1225,9 @@ const getImgSrc = (url: string) => {
     return new URL(`/src/assets/img/${url}`, import.meta.url).href;
 }
 
-const mouseenteMenu = (path: string) => {
+const mouseenteMenu = (_path: string) => {
 }
-const mouseleaveMenu = (path: string) => {
+const mouseleaveMenu = (_path: string) => {
 }
 
 let sidebarResizeStartWidth = 0

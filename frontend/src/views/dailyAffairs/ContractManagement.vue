@@ -462,7 +462,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import {
+  ref,
+  shallowRef,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { listFleetCategories } from '@/api/fleet'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
@@ -1147,7 +1154,6 @@ const displaySummary = computed(() => {
 })
 
 const applyFilter = () => { loadFiles(true) }
-const onKeywordChange = () => { loadFiles(true) }
 
 // ---- 筛选联动闭环（黄金基准发票同款） ----
 // 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），
@@ -1301,7 +1307,7 @@ const loadContractOverview = async () => {
     contractOverviewLoaded.value = true
   }
 }
-const onUploadDone = async (typeName?: string) => {
+const onUploadDone = async (_typeName?: string) => {
   // 上传完成刷新列表与概览卡（合同记录的 contract_type 为 OCR 提取的业务类型，与上传所选字段分类不强制映射，
   // 不主动切换类型筛选，避免提取结果与分类名不一致时列表被过滤为空）
   await Promise.all([loadFiles(true), loadContractOverview()])

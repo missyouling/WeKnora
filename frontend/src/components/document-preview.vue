@@ -1,7 +1,14 @@
 // @ts-nocheck
 <script setup lang="ts">
 import { indexEmbeddedSourceImages } from '@/utils/sourceImage';
-import { ref, shallowRef, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
+import {
+  ref,
+  shallowRef,
+  watch,
+  onUnmounted,
+  nextTick,
+  defineAsyncComponent,
+} from 'vue';
 import { previewKnowledgeFile, getKnowledgePreviewUrl } from '@/api/knowledge-base/index';
 import { previewTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { downloadArtifact } from '@/api/chat';

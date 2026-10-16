@@ -93,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
+import { ref, watch, onBeforeUnmount, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
@@ -368,7 +368,7 @@ const clearAll = async () => {
 const IMG_EXT = ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tif', 'tiff']
 const isImg = (name: string) => IMG_EXT.includes(fileExt(name).toLowerCase())
 
-const rowMenuOptions = (row: any) => {
+const rowMenuOptions = (_row: any) => {
   const opts: any[] = [
     { content: '重新解析', value: 'reparse', prefixIcon: () => h(RefreshIcon, { size: '14px' }) },
     { content: '重新提取', value: 'reextract', prefixIcon: () => h(CloudUploadIcon, { size: '14px' }) },

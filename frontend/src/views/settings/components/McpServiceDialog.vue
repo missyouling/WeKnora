@@ -939,7 +939,7 @@ async function saveConnection(): Promise<MCPService | null> {
     savedService.value = saved
     emit('created', saved)
     return saved
-  } catch (error) {
+  } catch (_error) {
     MessagePlugin.error(t('mcpServiceDialog.toasts.updateFailed'))
     return null
   } finally { submitting.value = false }
@@ -986,7 +986,7 @@ const handleSubmit = async () => {
     await updateMCPService(id, { usage_instructions: instructions })
     MessagePlugin.success(t('mcpServiceDialog.toasts.updated'))
     emit('success')
-  } catch (error) { MessagePlugin.error(t('mcpServiceDialog.toasts.updateFailed')) }
+  } catch (_error) { MessagePlugin.error(t('mcpServiceDialog.toasts.updateFailed')) }
   finally { submitting.value = false }
 }
 

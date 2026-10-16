@@ -156,6 +156,8 @@ const saveMetadata = async () => {
     }
     metadataSaving.value = true;
     const result: any = await updateKnowledgeMetadata(props.details.id, value);
+    // details 是父组件共享的 reactive 引用（KnowledgeBase.vue 自身也直接写它），
+    // 这里同步写入是为了抽屉 UI 立即刷新；父组件只回写 cardList，不回写 details。
     props.details.custom_metadata = value;
     metadataEditing.value = false;
     if (result?.data) {
@@ -242,6 +244,9 @@ mermaid.initialize({
 const props = defineProps(["visible", "details", "knowledgeType", "sourceInfo", "canEditKB", "canDownloadKB", "parse_status", "kbId"]);
 const emit = defineEmits(["closeDoc", "getDoc", "questionDeleted", "summaryStateChange"]);
 
+// 注意：这里写 props.details.* 是有意为之（见 eslint.config.js 中
+// vue/no-mutating-props 的降级说明）。父组件的 summaryStateChange 只回写
+// cardList，抽屉 UI 读的是 props.details，去掉写入会导致状态不刷新。
 const applySummaryState = (summaryStatus?: string, description?: string) => {
   if (typeof summaryStatus === 'string' && summaryStatus) {
     props.details.summary_status = summaryStatus;
@@ -697,7 +702,7 @@ renderer.code = function ({ text, lang }) {
   if (lang && hljs.getLanguage(lang)) {
     try {
       highlighted = hljs.highlight(text, { language: lang }).value;
-    } catch (e) {
+    } catch (_e) {
       highlighted = hljs.highlightAuto(text).value;
       detectedLang = hljs.highlightAuto(text).language || lang;
     }
@@ -1494,7 +1499,7 @@ const loadParentContext = async (item: any, index: number) => {
         parentContextCache.value.set(parentId, result.data.content || '');
         parentContextCache.value = new Map(parentContextCache.value);
       }
-    } catch (err) {
+    } catch (_err) {
       MessagePlugin.error(t('knowledgeBase.parentContextLoadFailed'));
       parentContextPopup.value = '';
       return;
@@ -1559,7 +1564,7 @@ const downloadFile = () => {
         })
       }
     })
-    .catch((err) => {
+    .catch((_err) => {
       MessagePlugin.error(t('file.downloadFailed'));
     });
 };

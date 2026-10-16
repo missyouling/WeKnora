@@ -58,7 +58,7 @@ test('conversation settings stay reachable in smart-reasoning mode', () => {
   // The nav entry is pushed unconditionally; a re-introduced guard would indent it.
   const navItems = source.match(/const navItems = computed\(\(\) => \{([\s\S]*?)^\}\);/m)?.[1]
   assert.ok(navItems, 'expected to find the nav items computed')
-  assert.match(navItems, /^  items\.push\(\{ key: 'conversation'/m)
+  assert.match(navItems, /^ {2}items\.push\(\{ key: 'conversation'/m)
 
   // Switching to agent mode must not evict the user from the section.
   // Tolerates the watch being dropped entirely by a later cleanup.

@@ -139,7 +139,15 @@
     </div>
 </template>
 <script setup>
-import { onMounted, onBeforeUnmount, watch, computed, ref, reactive, nextTick, onUpdated } from 'vue';
+import {
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  computed,
+  ref,
+  nextTick,
+  onUpdated,
+} from 'vue';
 import 'katex/dist/katex.min.css';
 import docInfo from './docInfo.vue';
 import deepThink from './deepThink.vue';
@@ -456,7 +464,6 @@ const handleAddToKnowledge = () => {
     const question = (props.userQuery || '').trim();
     const manualContent = buildManualMarkdown(question, content);
     const manualTitle = formatManualTitle(question);
-    ``
     uiStore.openManualEditor({
         mode: 'create',
         title: manualTitle,

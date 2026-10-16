@@ -129,7 +129,6 @@ const activeCertRef = computed(() => {
   return null
 })
 const addBtnLabel = computed(() => activeCertRef.value?.addLabel || '新增')
-function onHeaderAdd() { activeCertRef.value?.startAdd?.() }
 // 切到提取规则页时重新拉取证照配置，保证字段名与证照配置实时同步
 function onVehicleTabChange(val: string | number) {
   if (val === 'rules') extractPanelRef.value?.refresh()

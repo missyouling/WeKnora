@@ -107,7 +107,7 @@ const checkKnowledgeBaseInitialization = async (): Promise<boolean> => {
             return false;
         }
         return true;
-    } catch (error) {
+    } catch (_error) {
         MessagePlugin.error(t('knowledgeBase.getInfoFailed'));
         return false;
     }

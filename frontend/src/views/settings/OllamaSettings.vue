@@ -311,7 +311,7 @@ const downloadModel = async () => {
           downloading.value = false
           downloadProgress.value = 0
         }
-      } catch (error) {
+      } catch (_error) {
         clearInterval(progressInterval)
         MessagePlugin.error(t('ollamaSettings.toasts.progressFailed'))
         downloading.value = false

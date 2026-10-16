@@ -8,7 +8,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Type declaration for test mock
 declare global {
-  // eslint-disable-next-line no-var
   var __mockFiles: any[] | undefined
 }
 

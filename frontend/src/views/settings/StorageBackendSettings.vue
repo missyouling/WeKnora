@@ -344,7 +344,11 @@ async function testRaw() {
     else { rawTestResult.value = 'error'; MessagePlugin.error(r.error || t('settings.storageBackend.testFailed')) }
   } finally { testing.value = false }
 }
-async function testSaved(backend: StorageBackend) { const r: any = await testStorageBackendByID(backend.id); r.success ? MessagePlugin.success(t('settings.storageBackend.testSuccess')) : MessagePlugin.error(r.error || t('settings.storageBackend.testFailed')) }
+async function testSaved(backend: StorageBackend) {
+  const r: any = await testStorageBackendByID(backend.id);
+  if (r.success) { MessagePlugin.success(t('settings.storageBackend.testSuccess')) }
+  else { MessagePlugin.error(r.error || t('settings.storageBackend.testFailed')) }
+}
 async function save() {
   if (!form.name.trim()) { MessagePlugin.warning(t('settings.storageBackend.nameRequired')); return }
   saving.value = true

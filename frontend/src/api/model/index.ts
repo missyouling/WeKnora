@@ -328,7 +328,7 @@ export interface WeKnoraCloudStatusResult {
 }
 
 export function getWeKnoraCloudStatus(): Promise<WeKnoraCloudStatusResult> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, _reject) => {
     get('/api/v1/models/weknoracloud/status')
       .then((response: any) => {
         // status 接口直接返回对象，不包在 success/data 中

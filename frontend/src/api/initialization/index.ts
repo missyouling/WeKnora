@@ -197,7 +197,7 @@ export function initializeSystemByKB(kbId: string, config: InitializationConfig)
 
 // 检查Ollama服务状态
 export function checkOllamaStatus(): Promise<{ available: boolean; version?: string; error?: string; baseUrl?: string }> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
         get('/api/v1/initialization/ollama/status')
             .then((response: any) => {
                 resolve(response.data || { available: false });
@@ -219,7 +219,7 @@ export interface OllamaModelInfo {
 
 // 列出已安装的 Ollama 模型（详细信息）
 export function listOllamaModels(): Promise<OllamaModelInfo[]> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
         get('/api/v1/initialization/ollama/models')
             .then((response: any) => {
                 resolve((response.data && response.data.models) || []);

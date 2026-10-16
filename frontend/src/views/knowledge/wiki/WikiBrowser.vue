@@ -2983,7 +2983,7 @@ async function loadStats() {
         loadGraph()
       }
     }
-  } catch (e) { /* ignore */ }
+  } catch (_e) { /* ignore */ }
 }
 
 // --- Manual page editing / version management ---------------------------

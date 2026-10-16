@@ -958,7 +958,7 @@ async function doSearchSearchable() {
   searchLoading.value = true
   try {
     await orgStore.fetchSearchableOrganizations(currentQuery, { limit: 20 })
-  } catch (e) {
+  } catch (_e) {
     orgStore.clearSearchableOrganizations()
   } finally {
     searchLoading.value = false

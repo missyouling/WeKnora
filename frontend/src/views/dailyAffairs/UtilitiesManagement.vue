@@ -745,7 +745,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, h } from 'vue'
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -2024,7 +2031,6 @@ const fmtRate = (v: any) => {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 
-const onFieldEdited = () => { /* 数值字段 change 即进入自动保存流程 */ }
 
 // 保存方式：详情/编辑抽屉手动保存（点击「保存」按钮持久化）；行内编辑失焦保存走 commitFeeOverride/commitBillFeeOverride
 const saveEditForm = async () => {

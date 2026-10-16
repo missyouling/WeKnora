@@ -1380,7 +1380,6 @@ function toggleSelect(row: any) {
   else selectedKeys.value.add(k)
   selectedKeys.value = new Set(selectedKeys.value)
 }
-function toggleAll(v: boolean) { selectedKeys.value = v ? new Set(displayRows.value.map((r) => rowKey(r))) : new Set() }
 function clearSelection() { selectedKeys.value = new Set() }
 const archiveDeleteHint = computed(() => {
   const n = selectedKeys.value.size
@@ -1963,7 +1962,7 @@ async function extractFile(kid: string, scope: string, certType?: string) {
   await extractFleetDocument(kbId.value, kid, certType ? { scope, cert_type: certType } : { scope })
 }
 
-async function loadPending(forceFetch = false) {
+async function loadPending(_forceFetch = false) {
   if (!kbId.value || !isArchive.value) return
   // 弹窗组件可能已更新 sessionStorage 上传记忆（含证照类型），轮询时重读保持同步
   pendingScopes.value = loadPendingScopes()

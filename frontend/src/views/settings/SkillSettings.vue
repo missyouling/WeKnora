@@ -84,7 +84,7 @@
               <p v-if="item.description" class="skill-card__desc" :title="item.description">
                 {{ compactText(item.description) }}
               </p>
-              <div v-for="view in [installsView(item)]" :key="'installs'" class="skill-card__installs">
+              <div v-for="view in [installsView(item)]" :key="view.key" class="skill-card__installs">
                 <span v-if="view.installs.length === 0 && !view.canAdd" class="skill-card__installs-label">
                   {{ skillText('noInstalls') }}
                 </span>
@@ -793,6 +793,9 @@ function installsView(item: SkillCatalogItem) {
   })
   const available = unusedTargets(item)
   return {
+    // 供模板 `v-for="view in [installsView(item)]" :key="view.key"` 使用：
+    // v-for 的 key 必须引用 v-for 自身定义的变量，不能直接用外层 item。
+    key: item.id,
     installs,
     available,
     upgradable: installs.filter((inst) => installUpgradable(item, inst)),

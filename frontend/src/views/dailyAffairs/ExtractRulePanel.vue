@@ -79,7 +79,7 @@
       </div>
     </template>
 
-    <ExtractTestDialog v-model:visible="testVisible" :kb-id="kbId" :scope="currentScope" :cert-type="certTypeName"
+    <ExtractTestDialog v-model:visible="testVisible" :kb-id="resolvedKbId" :scope="currentScope" :cert-type="certTypeName"
       :fields="fields" :advanced-enabled="advancedEnabled" :prompt-template="promptTemplate" />
   </div>
 </template>
@@ -100,7 +100,7 @@ import ExtractTestDialog from './ExtractTestDialog.vue'
 const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
 
 const KB_NAME = computed(() => props.kbName || '日常事务-车队')
-const kbId = ref('')
+const resolvedKbId = ref('')
 
 // 默认字段底稿（无配置时按证照类型生成）：与证照配置内置字段一致
 const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
@@ -665,21 +665,21 @@ function applyTemplateExample() {
 }
 
 async function ensureKb() {
-  if (kbId.value) return kbId.value
+  if (resolvedKbId.value) return resolvedKbId.value
   // 父组件直接传入 kbId（发票等业务模块与列表同库），免去按名称查找
   if (props.kbId) {
-    kbId.value = props.kbId
-    return kbId.value
+    resolvedKbId.value = props.kbId
+    return resolvedKbId.value
   }
   try {
     const res: any = await listKnowledgeBases({ page: 1, page_size: 100 } as any)
     const list = Array.isArray(res) ? res : res?.data || []
     const found = Array.isArray(list) ? list.find((kb: any) => kb.name === KB_NAME.value) : null
-    if (found) kbId.value = found.id
+    if (found) resolvedKbId.value = found.id
   } catch (e) {
     console.error('load kb failed', e)
   }
-  return kbId.value
+  return resolvedKbId.value
 }
 
 async function loadConfig() {
@@ -690,10 +690,10 @@ async function loadConfig() {
     return
   }
   await ensureKb()
-  if (!kbId.value) return
+  if (!resolvedKbId.value) return
   loadingCfg.value = true
   try {
-    const res: any = await getExtractConfig(kbId.value, currentScope.value, certTypeName.value)
+    const res: any = await getExtractConfig(resolvedKbId.value, currentScope.value, certTypeName.value)
     const data = res?.data
     const cfgMap = new Map<string, any>()
     if (data && Array.isArray(data.fields)) {
@@ -752,7 +752,7 @@ function draftByContains(draft: Record<string, any>, name: string): any {
 async function save() {
   if (!certType.value) return
   await ensureKb()
-  if (!kbId.value) {
+  if (!resolvedKbId.value) {
     MessagePlugin.error(`未找到${KB_NAME.value}知识库`)
     return
   }
@@ -776,7 +776,7 @@ async function save() {
   }
   saving.value = true
   try {
-    await saveExtractConfig(kbId.value, payload)
+    await saveExtractConfig(resolvedKbId.value, payload)
     MessagePlugin.success('提取规则已保存')
   } catch (e: any) {
     console.error('save extract config failed', e)
@@ -824,8 +824,8 @@ watch(
   () => props.kbId,
   (v) => {
     if (!v || isFleetScope.value) return
-    if (kbId.value === v) return
-    kbId.value = v
+    if (resolvedKbId.value === v) return
+    resolvedKbId.value = v
     refresh()
   },
 )

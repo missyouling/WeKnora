@@ -2493,8 +2493,6 @@ const toolGroups = computed(() => [
 ]);
 
 // 知识库分组：我的 vs 共享的
-const myKbOptions = computed(() => kbOptions.value.filter(kb => !kb.shared));
-const sharedKbOptions = computed(() => kbOptions.value.filter(kb => kb.shared));
 
 // 根据知识库配置动态计算是否有知识库能力
 const hasKnowledgeBase = computed(() => {
@@ -3676,9 +3674,12 @@ watch(() => props.visible, async (val) => {
         // so capture the baseline only after they have settled.
         clampReasoningEffortToModel();
         await nextTick();
-        if (generation !== editorInitializationGeneration || !props.visible) return;
-        modalShell.markClean();
-        editorInitializing.value = false;
+        // NOTE: 原先在 finally 里裸 return 会吞掉 try/catch 未处理的异常与返回值
+        // （no-unsafe-finally），这里改为正向条件，语义等价但不中断控制流。
+        if (generation === editorInitializationGeneration && props.visible) {
+          modalShell.markClean();
+          editorInitializing.value = false;
+        }
       }
     }
   } else {

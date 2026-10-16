@@ -536,9 +536,9 @@ function closeViewer() {
   // the card it stopped on into view so the grid picks up where it left off.
   const index = viewerIndex.value
   void nextTick(() => {
-    scrollEl.value
-      ?.querySelectorAll<HTMLElement>('.ig-card')
-      [index]?.scrollIntoView({ block: 'nearest' })
+    // 拆开写，避免 `)` 换行后紧跟 `[` 造成的 ASI 歧义（no-unexpected-multiline）。
+    const cards = scrollEl.value?.querySelectorAll<HTMLElement>('.ig-card')
+    cards?.[index]?.scrollIntoView({ block: 'nearest' })
   })
 }
 

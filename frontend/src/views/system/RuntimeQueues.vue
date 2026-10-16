@@ -808,14 +808,17 @@ async function fetchRuntimeTasks(reset: boolean) {
     }
     tasksError.value = err?.message || t('system.globalSettings.runtime.tasks.loadError')
   } finally {
-    if (requestID !== tasksRequestID) return
-    if (reset) {
-      tasksLoading.value = false
-    } else {
-      tasksLoadingMore.value = false
+    // NOTE: 不在 finally 里裸 return（no-unsafe-finally 会吞掉未处理异常），
+    // 改为正向条件包裹收尾逻辑，语义等价。
+    if (requestID === tasksRequestID) {
+      if (reset) {
+        tasksLoading.value = false
+      } else {
+        tasksLoadingMore.value = false
+      }
+      await nextTick()
+      attachTasksScrollObserver()
     }
-    await nextTick()
-    attachTasksScrollObserver()
   }
 }
 

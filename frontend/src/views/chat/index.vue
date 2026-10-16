@@ -82,7 +82,7 @@
                                         </p>
                                     </div>
                                     <div class="suggested-questions-grid">
-                                        <div v-for="(item, index) in suggestedQuestions" :key="item.question"
+                                        <div v-for="item in suggestedQuestions" :key="item.question"
                                             class="suggested-question-card"
                                             @click="handleSuggestedQuestionClick(item)">
                                             <span class="suggested-question-text">{{ item.question }}</span>

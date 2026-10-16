@@ -184,7 +184,6 @@ const channelLabel = computed(() => {
     return typeof label === 'function' ? label() : (label || props.channel);
 });
 
-const channelClass = computed(() => props.channel ? `channel-${props.channel}` : '');
 
 const containerRef = ref(null);
 const hasImages = computed(() => props.images && props.images.length > 0);

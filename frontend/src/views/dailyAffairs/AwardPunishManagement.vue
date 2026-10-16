@@ -579,7 +579,7 @@ const loadNoticeOverview = async () => {
   try {
     const res: any = await listAwardPunishOverview(kbId.value)
     overviewStats.value = res?.data || null
-  } catch (e: any) {
+  } catch (_e: any) {
     overviewStats.value = null
   } finally {
     overviewLoading.value = false
@@ -1013,7 +1013,6 @@ const selectedSummary = computed(() => {
 const displaySummary = computed(() => selectedSummary.value || noticeSummary.value)
 
 const applyFilter = () => { loadFiles(true) }
-const onKeywordChange = () => { loadFiles(true) }
 
 // 懒加载
 const listScrollRef = ref<HTMLElement>()

@@ -2071,7 +2071,7 @@ const getLastCompletedTaskId = (): string | null => {
   if (!props.kbId) return null
   try {
     return localStorage.getItem(getLastCompletedTaskKey())
-  } catch (error) {
+  } catch (_error) {
     return null
   }
 }
@@ -2152,7 +2152,7 @@ const formatImportTime = (timeStr?: string) => {
   try {
     const date = new Date(timeStr)
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-  } catch (e) {
+  } catch (_e) {
     return timeStr
   }
 }

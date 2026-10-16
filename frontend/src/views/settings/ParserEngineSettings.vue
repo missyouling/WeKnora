@@ -413,7 +413,6 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
-import { MessagePlugin } from 'tdesign-vue-next'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import {
   getParserEngines,
@@ -654,7 +653,8 @@ function buildConfigPayload(): ParserEngineConfig {
 }
 
 async function onCheck() {
-  if (!connected) {
+  // NOTE: `connected` 是 ref，必须取 .value —— 直接判空 ref 对象恒为真，守卫会失效。
+  if (!connected.value) {
     checkMessage.value = t('settings.parser.ensureDocreaderConnected')
     return
   }

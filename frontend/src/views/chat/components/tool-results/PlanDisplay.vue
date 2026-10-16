@@ -31,7 +31,7 @@ interface Props {
   data: PlanData;
 }
 
-const props = defineProps<Props>();
+defineProps<Props>()
 </script>
 
 <style lang="less" scoped>

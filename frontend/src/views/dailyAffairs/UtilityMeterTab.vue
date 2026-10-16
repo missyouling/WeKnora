@@ -1328,7 +1328,7 @@ const save = async () => {
     return
   }
   if (!form.value.meterId) {
-    MessagePlugin.warning(`请选择${meterLabel}`)
+    MessagePlugin.warning(`请选择${meterLabel.value}`)
     return
   }
   if (readingInvalid.value) {
@@ -1337,7 +1337,7 @@ const save = async () => {
   }
   // 新增时重复校验：同月同表已有记录则拦截，避免重复录入
   if (!editingItemId.value && !lastRecordId.value && duplicateWarning.value) {
-    MessagePlugin.warning(`该月该${meterLabel}已有记录，请在列表中选择该记录进行编辑`)
+    MessagePlugin.warning(`该月该${meterLabel.value}已有记录，请在列表中选择该记录进行编辑`)
     return
   }
   saving.value = true

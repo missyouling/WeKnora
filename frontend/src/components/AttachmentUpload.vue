@@ -76,7 +76,8 @@ onMounted(async () => {
 
 const maxFiles = computed(() => props.maxFiles || 5);
 const maxSizeMB = computed(() => props.maxSize || MAX_FILE_SIZE_MB);
-const maxSize = computed(() => maxSizeMB.value * 1024 * 1024); // Convert MB to bytes
+// NOTE: 原名 `maxSize` 会遮蔽同名的 props.maxSize，改名为 maxSizeBytes 以区分单位。
+const maxSizeBytes = computed(() => maxSizeMB.value * 1024 * 1024); // Convert MB to bytes
 
 const triggerFileSelect = () => {
   if (props.disabled) return;
@@ -102,7 +103,7 @@ const addFiles = async (files: File[]) => {
     }
     
     // Check file size
-    if (file.size > maxSize.value) {
+    if (file.size > maxSizeBytes.value) {
       MessagePlugin.warning(t('chat.attachmentTooLarge', { name: file.name, max: maxSizeMB.value }));
       continue;
     }

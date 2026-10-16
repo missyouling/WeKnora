@@ -1,4 +1,4 @@
-import { ref, computed, watch, type Ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 export interface ColumnDef {
   key: string

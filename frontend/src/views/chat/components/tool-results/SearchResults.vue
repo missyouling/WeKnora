@@ -25,8 +25,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { SearchResultsData, SearchResultItem, RelevanceLevel } from '@/types/tool-results';
-import { getMatchTypeIcon } from '@/utils/tool-icons';
+import type { SearchResultsData, RelevanceLevel } from '@/types/tool-results';
 import ResultRow from './ResultRow.vue';
 import { useI18n } from 'vue-i18n';
 
@@ -38,7 +37,6 @@ const props = defineProps<{
 const { t } = useI18n();
 
 const results = computed(() => props.data.results || []);
-const kbCounts = computed(() => props.data.kb_counts);
 
 interface GroupedResult {
   key: string;

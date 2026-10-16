@@ -211,7 +211,9 @@ export function textFragmentUrl(url: string, quote: string): string {
     // start,end form keeps the URL short for long passages.
     const head = clean.slice(0, 40).trim()
     const tail = clean.slice(-40).trim()
-    fragment = words.length > 1 || /[　-鿿]/u.test(clean)
+    // 原正则字面量含全角空格 U+3000（irregular whitespace），改用码点转义，
+    // 语义不变：匹配 U+3000–U+9FFF（CJK 符号/标点与汉字）。
+    fragment = words.length > 1 || /[\u3000-\u9fff]/u.test(clean)
       ? `${encodeTextFragment(head)},${encodeTextFragment(tail)}`
       : encodeTextFragment(head)
   }

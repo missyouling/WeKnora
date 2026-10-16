@@ -96,7 +96,6 @@ const props = defineProps<{
 const { t } = useI18n();
 
 const documents = computed(() => props.data?.documents ?? []);
-const errors = computed(() => props.data?.errors?.filter(Boolean) ?? []);
 const totalChunkCount = computed(() =>
   documents.value.reduce((sum, doc) => sum + (doc.chunk_count || 0), 0),
 );

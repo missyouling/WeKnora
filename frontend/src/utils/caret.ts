@@ -44,7 +44,6 @@ export function getCaretCoordinates(element: HTMLTextAreaElement, position: numb
   document.body.appendChild(div);
   
   const spanRect = span.getBoundingClientRect();
-  const divRect = div.getBoundingClientRect();
   
   const coordinates = {
     top: span.offsetTop + parseInt(style.borderTopWidth),

@@ -137,7 +137,11 @@ const resolveAnchorEl = () => {
 const isSelected = (id: string) => selectedKbIds.value.includes(id)
 
 const toggleKb = (id: string) => {
-  isSelected(id) ? settingsStore.removeKnowledgeBase(id) : settingsStore.addKnowledgeBase(id)
+  if (isSelected(id)) {
+    settingsStore.removeKnowledgeBase(id)
+  } else {
+    settingsStore.addKnowledgeBase(id)
+  }
 }
 
 const toggleSelection = () => {

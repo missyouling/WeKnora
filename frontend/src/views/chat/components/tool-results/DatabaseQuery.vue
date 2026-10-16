@@ -34,7 +34,7 @@ interface Props {
   data: DatabaseQueryData;
 }
 
-const props = defineProps<Props>();
+defineProps<Props>()
 const { t } = useI18n();
 
 const formatValue = (value: any): string => {

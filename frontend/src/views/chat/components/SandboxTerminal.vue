@@ -170,6 +170,7 @@ const actionLabel = computed(() => {
         case 'unauthorized':
         // no_sandbox 说的是"智能体没配沙箱后端，无处可建"。用户去配好后应该能
         // 直接重试，而不是只能关掉面板再打开——那是个没有任何操作入口的死角。
+        // falls through（必须紧邻下一个 case：no-fallthrough 只认最后一个注释）
         case 'no_sandbox':
             return t('chat.sandbox.retry');
         default:

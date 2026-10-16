@@ -37,7 +37,6 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import type { RelatedChunksData } from '@/types/tool-results';
 import ContentPopup from './ContentPopup.vue';
 

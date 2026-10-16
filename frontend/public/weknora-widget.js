@@ -146,7 +146,7 @@
       // Derive the exact origin (scheme + host + port) rather than trusting the
       // raw baseUrl string, so postMessage origin checks are precise.
       embedOrigin = new URL(embedUrl, global.location ? global.location.href : undefined).origin;
-    } catch (e) {
+    } catch (_e) {
       embedOrigin = baseUrl;
     }
     var destroyed = false;
@@ -198,7 +198,7 @@
     var hostOrigin = '';
     try {
       hostOrigin = global.location ? global.location.origin : '';
-    } catch (e) { hostOrigin = ''; }
+    } catch (_e) { hostOrigin = ''; }
     var crossOriginEmbed = hostOrigin && embedOrigin && hostOrigin !== embedOrigin;
     var sandboxAttr = String(opts.sandbox || opts.sandboxMode || '').trim();
     if (!sandboxAttr && opts.scriptEl) {

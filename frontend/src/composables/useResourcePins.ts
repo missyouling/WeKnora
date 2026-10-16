@@ -190,7 +190,7 @@ export function useResourcePins(): UseResourcePinsResult {
   })
 
   const recents = computed<PinEntry[]>(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // `_` 由 ESLint 的 varsIgnorePattern 豁免，无需 disable 指令。
     const _ = recentsRevision.value
     return readRecents().sort((a, b) => b.ts - a.ts)
   })

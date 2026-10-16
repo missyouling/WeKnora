@@ -587,7 +587,7 @@ const loadRegulationOverview = async () => {
   try {
     const res: any = await listRegulationOverview(kbId.value)
     overviewStats.value = res?.data || null
-  } catch (e: any) {
+  } catch (_e: any) {
     overviewStats.value = null
   } finally {
     overviewLoading.value = false
@@ -1040,7 +1040,6 @@ const selectedSummary = computed(() => {
 const displaySummary = computed(() => selectedSummary.value || regulationSummary.value)
 
 const applyFilter = () => { loadFiles(true) }
-const onKeywordChange = () => { loadFiles(true) }
 
 // 懒加载
 const listScrollRef = ref<HTMLElement>()

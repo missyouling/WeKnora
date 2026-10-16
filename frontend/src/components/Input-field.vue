@@ -10,7 +10,7 @@ import { useBrowserConnectionStore } from '@/stores/browserConnection';
 import { useUIStore } from '@/stores/ui';
 import BrowserIcon from '@/components/icons/BrowserIcon.vue';
 import { useMenuStore } from '@/stores/menu';
-import { listKnowledgeBases, searchKnowledge, batchQueryKnowledge, listKnowledgeTags } from '@/api/knowledge-base';
+import { searchKnowledge, batchQueryKnowledge, listKnowledgeTags } from '@/api/knowledge-base';
 import { listMCPServices, type MCPService } from '@/api/mcp-service';
 import { stopSession } from '@/api/chat';
 import type { SteerQueueItem } from '@/api/chat/steer';
@@ -82,7 +82,6 @@ const showKbSelector = ref(false);
 // Image upload state
 const uploadedImages = ref<Array<{ file: File; preview: string }>>([]);
 const imageInputRef = ref<HTMLInputElement>();
-const imageUploading = ref(false);
 
 // Attachment upload state
 const attachmentUploadRef = ref<InstanceType<typeof AttachmentUpload>>();
@@ -730,8 +729,6 @@ const modelButtonRef = ref<HTMLElement>();
 const modelDropdownStyle = ref<Record<string, string>>({});
 
 // 显示的知识库标签（最多显示2个）
-const displayedKbs = computed(() => selectedKbs.value.slice(0, 2));
-const remainingCount = computed(() => Math.max(0, selectedKbs.value.length - 2));
 
 // 加载知识库列表（自己的 + 共享的，用于 @ 提及等）
 const loadKnowledgeBases = async (force = false) => {

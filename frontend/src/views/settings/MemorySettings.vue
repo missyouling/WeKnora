@@ -652,7 +652,7 @@ const loadCounts = async () => {
         try {
           const response = await listMemoryItems({ status: value, limit: 1 })
           return response.total || 0
-        } catch (error: any) {
+        } catch (_error: any) {
           return 0
         }
       }),

@@ -611,7 +611,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
 import {
   checkOllamaModels, checkRemoteModel, testEmbeddingModel, checkRerankModel, checkASRModel, listOllamaModels,
   downloadOllamaModel, getDownloadProgress, checkOllamaStatus, resolveModelCatalog,

@@ -416,7 +416,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import {
+  ref,
+  shallowRef,
+  reactive,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -623,7 +631,7 @@ const loadInvoiceOverview = async () => {
   try {
     const res: any = await getInvoiceOverviewStats(kbId.value)
     overviewStats.value = res?.data || null
-  } catch (e: any) {
+  } catch (_e: any) {
     overviewStats.value = null
   } finally {
     overviewLoading.value = false
@@ -1307,7 +1315,6 @@ const summaryShowTotal = computed(() =>
   currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'totalAmount' && s.enabled !== false))
 
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
-const onKeywordChange = () => { loadFiles(true) }
 
 // ---- 表头排序（服务端排序）：sort_by=invoice_no|invoice_date ----
 const sortBy = ref('')

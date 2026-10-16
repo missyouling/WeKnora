@@ -144,7 +144,7 @@ const onAfterLeave = () => {
     }
 };
 
-const onEnter = (el: Element) => {
+const onEnter = (_el: Element) => {
     const c = sqContainerRef.value;
     if (!c) return;
     const startHeight = c.offsetHeight;

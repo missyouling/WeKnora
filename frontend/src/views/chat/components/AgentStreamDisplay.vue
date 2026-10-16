@@ -709,7 +709,7 @@ import {
   ensureMermaidInitialized,
   enhanceMarkdownContainer,
 } from '@/utils/mermaidShared';
-import { attachMarkdownEnhancementListeners, refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
+import { refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
 import { useTypewriter } from '@/composables/useTypewriter';
 import { vStableHtml } from '@/directives/stableHtml';
 
