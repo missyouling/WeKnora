@@ -770,16 +770,6 @@ watch(() => props.details?.id, (newId) => {
   }
 });
 
-const isTextFile = (fileType?: string): boolean => {
-  if (!fileType) return false;
-  const textTypes = ['txt', 'md', 'markdown', 'json', 'xml', 'html', 'css', 'js', 'ts', 'py', 'java', 'go', 'cpp', 'c', 'h', 'sh', 'yaml', 'yml', 'ini', 'conf', 'log'];
-  return textTypes.includes(fileType.toLowerCase());
-};
-const isMarkdownFile = (fileType?: string): boolean => {
-  if (!fileType) return false;
-  const markdownTypes = ['md', 'markdown'];
-  return markdownTypes.includes(fileType.toLowerCase());
-};
 
 // 音频文件判断与播放器状态
 const audioExtensions = new Set(['mp3', 'wav', 'm4a', 'flac', 'ogg']);

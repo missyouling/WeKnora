@@ -643,11 +643,7 @@ const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selecte
 const clearSelection = () => { selectedRowKeys.value = [] }
 const selectableRows = computed(() => displayRows.value.filter(r => r.kind !== 'pending' || ['failed', 'parse_failed'].includes(r.extractStatus)))
 const isAllSelected = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey)))
-const someSelected = computed(() => selectedRowKeys.value.length > 0 && !isAllSelected.value)
 
-function toggleSelectAll(checked: boolean) {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
 function toggleRow(key: string, checked: boolean) {
   if (checked) { if (!selectedRowKeys.value.includes(key)) selectedRowKeys.value.push(key) }
   else selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== key)
@@ -705,21 +701,6 @@ const displayRows = computed(() => {
 const meterReading = (row: Row) => {
   const g = row.item?.gateways?.[0]
   return g?.readings?.[0] || null
-}
-const cellText = (row: Row, key: string): string => {
-  if (row.kind === 'pending') return ''
-  if (key === 'bill_period') return metricPeriodOf(row.item)
-  if (key === 'meter_prev') { const r = meterReading(row); return r?.prev !== undefined && r?.prev !== null && r?.prev !== '' ? fmtKwh(Number(r.prev)) : '' }
-  if (key === 'meter_curr') { const r = meterReading(row); return r?.curr !== undefined && r?.curr !== null && r?.curr !== '' ? fmtKwh(Number(r.curr)) : '' }
-  if (key === 'meter_ratio') return displayMultiplier(meterReading(row))
-  if (key === 'meter_reading') { const r = meterReading(row); return r?.reading_kwh !== undefined && r?.reading_kwh !== null && r?.reading_kwh !== '' ? fmtKwh(Number(r.reading_kwh)) : '' }
-  if (key === 'meter_bill') { const r = meterReading(row); return r?.bill_kwh !== undefined && r?.bill_kwh !== null && r?.bill_kwh !== '' ? fmtKwh(Number(r.bill_kwh)) : '' }
-  const v = row.item?.[key]
-  if (v === undefined || v === null || v === '') return ''
-  const col = columnDefs.value.find(c => c.key === key)
-  if (col?.fieldType === 'number') return fmtKwh(Number(v))
-  if (col?.fieldType === 'amount') return fmtMoney(Number(v))
-  return String(v)
 }
 const metricPeriodOf = (it: any) => {
   if (!it) return ''

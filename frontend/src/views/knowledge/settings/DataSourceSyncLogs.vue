@@ -66,16 +66,6 @@ const stats = computed(() => {
 })
 
 // --- Helpers ---
-function statusIcon(status: string) {
-  switch (status) {
-    case 'success': return 'check-circle-filled'
-    case 'running': return 'loading'
-    case 'failed': return 'close-circle-filled'
-    case 'partial': return 'error-circle-filled'
-    case 'canceled': return 'minus-circle-filled'
-    default: return 'info-circle-filled'
-  }
-}
 
 function statusColor(status: string) {
   switch (status) {

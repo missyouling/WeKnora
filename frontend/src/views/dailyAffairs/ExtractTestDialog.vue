@@ -68,9 +68,6 @@ const successMap = ref<Record<Mode, boolean>>({ text: false, file: false })
 const originalText = ref('')
 const originalStatus = ref<'none' | 'loading' | 'done' | 'empty' | 'preview'>('none')
 
-const fileOptions = computed(() =>
-  files.value.map((f) => ({ label: f.file_name || f.title || f.id, value: f.id })),
-)
 const canRun = computed(() =>
   props.visible && (sourceMode.value === 'text' ? text.value.trim().length > 0 : !!knowledgeId.value),
 )

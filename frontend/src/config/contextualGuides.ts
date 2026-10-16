@@ -31,7 +31,6 @@ export const focusAgentEditorSection = (section: string) => {
   )
 }
 
-const focusKbEditorBasic = () => focusKbEditorSection('basic')
 
 export interface ContextualGuideTourConfig {
   storageKey: string

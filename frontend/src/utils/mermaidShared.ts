@@ -159,13 +159,6 @@ async function getMermaid() {
   return mermaidMod.default
 }
 
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 
 function highlightCode(text: string, lang?: string | null) {
   const language = (lang || '').trim()

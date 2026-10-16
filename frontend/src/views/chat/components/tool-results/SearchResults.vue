@@ -113,41 +113,10 @@ const highlightQuery = computed(() => {
 });
 
 // Check if there are search parameters to display (excluding query parameters which are in title)
-const hasSearchParams = computed(() => {
-  const args = parsedArguments.value;
-  if (!args || typeof args !== 'object') return false;
-  
-  return !!(
-    (Array.isArray(args.knowledge_base_ids) && args.knowledge_base_ids.length > 0) ||
-    args.top_k || args.vector_threshold || args.keyword_threshold || args.min_score);
-});
-
-const hasOtherParams = computed(() => {
-  const args = parsedArguments.value;
-  if (!args || typeof args !== 'object') return false;
-  return !!(args.top_k || args.vector_threshold || args.keyword_threshold || args.min_score);
-});
 
 
-const getRelevanceClass = (level: RelevanceLevel): string => {
-  const classMap: Record<RelevanceLevel, string> = {
-    'High Relevance': 'high',
-    'Medium Relevance': 'medium',
-    'Low Relevance': 'low',
-    'Weak Relevance': 'weak',
-  };
-  return classMap[level] || 'weak';
-};
 
-const getRelevanceLabel = (level: RelevanceLevel): string => {
-  const labelMap: Record<RelevanceLevel, string> = {
-    'High Relevance': t('chat.relevanceHigh'),
-    'Medium Relevance': t('chat.relevanceMedium'),
-    'Low Relevance': t('chat.relevanceLow'),
-    'Weak Relevance': t('chat.relevanceWeak'),
-  };
-  return labelMap[level] || level;
-};
+
 </script>
 
 <style lang="less" scoped>

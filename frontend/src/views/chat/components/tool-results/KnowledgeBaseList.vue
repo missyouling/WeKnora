@@ -37,7 +37,7 @@
 <script setup lang="ts">
 import type { KnowledgeBaseListData } from '@/types/tool-results';
 
-const props = defineProps<{
+defineProps<{
   data: KnowledgeBaseListData;
 }>();
 </script>

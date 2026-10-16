@@ -493,7 +493,6 @@ export function renderChatMarkdown(rawMarkdown: unknown, options: RenderChatMark
   // agent sanitizers (e.g. UUID stripping) cannot damage chunk_id attributes.
   const { content: markdownWithPlaceholders, htmlSnippets } =
     extractCitationHtmlPlaceholders(flankingSafeMarkdown, options.knowledgeReferences)
-  const escapedMarkdown = options.escapeMarkdown(markdownWithPlaceholders)
   const html = marked.parse(markdownWithPlaceholders, {
     renderer: options.renderer,
     breaks: true,

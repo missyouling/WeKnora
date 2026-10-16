@@ -178,27 +178,12 @@ const channelLabelMap = {
     im: () => t('chat.channelIm'),
 };
 
-const channelLabel = computed(() => {
-    if (!props.channel) return '';
-    const label = channelLabelMap[props.channel];
-    return typeof label === 'function' ? label() : (label || props.channel);
-});
 
 
 const containerRef = ref(null);
 const hasImages = computed(() => props.images && props.images.length > 0);
 const hasAttachments = computed(() => props.attachments && props.attachments.length > 0);
 
-const getAttachmentIcon = (fileNameOrType) => {
-    const ext = (fileNameOrType || '').split('.').pop()?.toLowerCase();
-    if (['pdf'].includes(ext)) return 'file-pdf';
-    if (['doc', 'docx'].includes(ext)) return 'file-word';
-    if (['xls', 'xlsx'].includes(ext)) return 'file-excel';
-    if (['ppt', 'pptx'].includes(ext)) return 'file-powerpoint';
-    if (['txt', 'md'].includes(ext)) return 'file';
-    if (['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'].includes(ext)) return 'sound';
-    return 'file';
-};
 
 const getFileExt = (fileName) => {
     return (fileName || '').split('.').pop()?.toUpperCase() || 'FILE';

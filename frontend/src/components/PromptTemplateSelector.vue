@@ -73,11 +73,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useI18n } from 'vue-i18n';
 import type { PromptTemplate, PromptTemplatesConfig } from '@/api/system';
 import { useEditorResourcesStore } from '@/stores/editorResources';
 
-const { t } = useI18n();
 
 const props = withDefaults(defineProps<{
   type: 'systemPrompt' | 'contextTemplate' | 'rewrite' | 'fallback' | 'agentSystemPrompt' | 'intentPrompt';

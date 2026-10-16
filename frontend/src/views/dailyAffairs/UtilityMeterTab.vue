@@ -1018,28 +1018,8 @@ const periodsOf = (row: any) => {
     mk('谷', row.valley_prev, row.valley_curr),
   ]
 }
-const toggleExpand = (row: any) => {
-  const next = new Set(expandedKeys.value)
-  if (next.has(row.key)) next.delete(row.key)
-  else next.add(row.key)
-  expandedKeys.value = next
-}
 
-const toggleSelect = (row: any, checked: any) => {
-  const key = row.key
-  const next = new Set(selectedKeys.value)
-  if (checked) next.add(key)
-  else next.delete(key)
-  selectedKeys.value = next
-}
 const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every(r => selectedKeys.value.has(r.key)))
-const someSelected = computed(() => displayRows.value.some(r => selectedKeys.value.has(r.key)) && !isAllSelected.value)
-const toggleSelectAll = (checked: any) => {
-  const next = new Set(selectedKeys.value)
-  if (checked) displayRows.value.forEach(r => next.add(r.key))
-  else displayRows.value.forEach(r => next.delete(r.key))
-  selectedKeys.value = next
-}
 // 单击行：单选该行并打开编辑抽屉（与发票管理一致）
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.key])
@@ -1600,7 +1580,6 @@ const handleDelete = async () => {
 
 // ---- 打印 ----
 const printVisible = ref(false)
-const printBusy = ref(false)
 const catalogBusy = ref(false)
 const printLoaded = ref(false)
 const printUrl = ref('')

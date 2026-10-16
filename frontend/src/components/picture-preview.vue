@@ -1,6 +1,6 @@
 <script setup lang="ts">
 
-const props = defineProps(['reviewImg', 'reviewUrl'])
+defineProps(['reviewImg', 'reviewUrl'])
 const emit = defineEmits(['closePreImg'])
 const close = () => {
     emit('closePreImg')

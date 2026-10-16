@@ -268,7 +268,6 @@ const {
   shouldShowGlobalTypingIndicator,
   getUserQuery,
   handleScroll,
-  scrollToBottom,
   onClickScrollToBottom,
   sendMsg,
   handleStopGeneration,

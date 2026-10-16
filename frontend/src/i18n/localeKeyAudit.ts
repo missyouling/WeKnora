@@ -37,7 +37,6 @@ export type LocaleName = keyof typeof LOCALE_BUNDLES
 const SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SOURCE_EXTENSIONS = /\.(vue|ts|js|mjs)$/
 const TEST_FILE_PATTERN = /\.test\.(ts|mjs|js)$/
-const I18N_SOURCE_HINTS = ['$t(', 'i18n.global.t(', "t('", 't("', ".t('", '.t("'] as const
 const STATIC_KEY_PATTERNS = [
   /\$t\(\s*['"]([^'"]+)['"]/g,
   /i18n\.global\.t\(\s*['"]([^'"]+)['"]/g,

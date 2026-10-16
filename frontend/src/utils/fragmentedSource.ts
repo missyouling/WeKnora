@@ -35,7 +35,7 @@ export function findSourceFragments(pages: string[], scope: string): Array<TextM
     anchorPages = common
   }
   const ranges: Array<TextMatch & { page: number; quote: string }> = []
-  for (const { quote, hits } of evidence) {
+  for (const { hits } of evidence) {
     const scoped = hits.length === 1 ? hits : hits.filter(hit => anchorPages.has(hit.page))
     if (scoped.length !== 1) continue
     const hit = scoped[0]!

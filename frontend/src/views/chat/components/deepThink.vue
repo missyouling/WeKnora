@@ -25,11 +25,9 @@
 </template>
 <script setup>
 import { watch, ref, onMounted, nextTick } from 'vue';
-import { useI18n } from 'vue-i18n';
 
 const isFold = ref(false)
 const contentInnerRef = ref(null)
-const { t } = useI18n()
 const props = defineProps({
     // 必填项
     deepSession: {

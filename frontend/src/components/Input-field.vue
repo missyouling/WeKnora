@@ -1815,10 +1815,6 @@ const onMentionSelect = (item: any) => {
   showMention.value = false;
 };
 
-const removeFile = (id: string) => {
-  settingsStore.removeFile(id);
-  delete fileIdToKbId.value[id];
-};
 
 const toggleModelSelector = () => {
   showReasoningSelector.value = false;
@@ -2625,13 +2621,7 @@ const toggleWebSearch = () => {
   MessagePlugin.success(newValue ? t('input.messages.webSearchEnabled') : t('input.messages.webSearchDisabled'));
 };
 
-const toggleKbSelector = () => {
-  showKbSelector.value = !showKbSelector.value;
-}
 
-const removeKb = (kbId: string) => {
-  settingsStore.removeKnowledgeBase(kbId);
-}
 
 const handleStop = async () => {
   if (!props.sessionId) {

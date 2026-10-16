@@ -417,14 +417,8 @@ const isInKnowledgeBase = computed<boolean>(() => {
 });
 
 // 是否在知识库列表页面
-const isInKnowledgeBaseList = computed<boolean>(() => {
-    return route.name === 'knowledgeBaseList';
-});
 
 // 是否在创建聊天页面
-const isInCreatChat = computed<boolean>(() => {
-    return route.name === 'globalCreatChat' || route.name === 'kbCreatChat';
-});
 
 // 是否在对话详情页
 
@@ -481,9 +475,6 @@ const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => TOP_MENU_PATHS.has(item.path));
 });
 
-const bottomMenuItems = computed<MenuItem[]>(() => {
-    return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => !TOP_MENU_PATHS.has(item.path));
-});
 
 // 当前知识库信息
 const currentKbName = ref<string>('')
@@ -1177,9 +1168,6 @@ const handleMenuClick = async (path: string) => {
 }
 
 // 处理退出登录确认
-const handleLogout = () => {
-    gotopage('logout')
-}
 
 const getCurrentKbId = async (): Promise<string | null> => {
     const kbId = (route.params as any)?.kbId as string

@@ -222,7 +222,7 @@ const router = useRouter()
 const uiStore = useUIStore()
 const authStore = useAuthStore()
 const { formatRole, roleIcon } = useRoleLabel()
-const { homeTenantId, isHomeTenantActive, isHomeTenant } = useHomeTenant()
+const { homeTenantId, isHomeTenant } = useHomeTenant()
 
 // 顶部用户卡片展示的空间名 / 当前角色：跟着 tenant 切换器实时变。
 // activeTenantName 优先用切换器选中的名字（含 fallback 到 home tenant 名字），

@@ -464,7 +464,6 @@ import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-通知公告'
-const ACCEPT_TYPES = ['pdf', 'jpg', 'jpeg', 'png']
 const PAGE_SIZE = 20
 
 // 文件类型枚举（编辑/筛选推荐值）
@@ -521,23 +520,6 @@ interface KnowledgeItem {
   [key: string]: any
 }
 
-interface NoticeItem {
-  ap_no?: string
-  ap_title?: string
-  ap_type?: string
-  issue_dept?: string
-  person?: string
-  dept?: string
-  position?: string
-  measure?: string
-  basis?: string
-  signer?: string
-  sign_date?: string
-  effective_date?: string
-  remark?: string
-  summary?: string
-  page?: number
-}
 
 interface NoticeRow extends Record<string, any> {
   rowKey: string
@@ -633,7 +615,6 @@ const page = ref(1)
 const hasMore = ref(true)
 const keyword = ref('')
 const filterApType = ref('')
-const filterFulfillStatus = ref('')
 const noticeTypeOptions = ref<Array<{ value: string; label: string }>>([])
 const noticeCats = ref<any[]>([])
 const uploadTypeOptions = computed(() => {
@@ -899,9 +880,6 @@ const mapNoticeRecord = (r: any): NoticeRow => ({
   page: Number(r.page) || 0,
 })
 
-const rebuildRows = () => {
-  // 公告级列表数据已由后端去重/过滤/分页返回，无需前端重建
-}
 
 const parseCustomMetadata = (item: KnowledgeItem): NoticeRow[] => {
   const meta = item.custom_metadata
@@ -952,11 +930,6 @@ const parseCustomMetadata = (item: KnowledgeItem): NoticeRow[] => {
   }))
 }
 
-const numOrUndef = (v: any): number | undefined => {
-  if (v === null || v === undefined || v === '') return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
-}
 
 // 顶部合并"进行中文件"状态行
 const pendingRows = computed<NoticeRow[]>(() => pendingFiles.value.map((k) => {
@@ -981,23 +954,6 @@ const filteredRows = computed(() => [...pendingRows.value, ...noticeRows.value])
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
-const isAllSelected = computed(() =>
-  selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey))
-)
-const someSelected = computed(() => {
-  const sel = selectableRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)).length
-  return sel > 0 && sel < selectableRows.value.length
-})
-const toggleSelectAll = (checked: boolean) => {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
-const toggleRow = (rowKey: string, checked: boolean) => {
-  if (checked) {
-    if (!selectedRowKeys.value.includes(rowKey)) selectedRowKeys.value = [...selectedRowKeys.value, rowKey]
-  } else {
-    selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
-  }
-}
 const selectedRows = computed(() => {
   const byKey = new Map(noticeRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as NoticeRow[]
@@ -1120,7 +1076,7 @@ const displayProgress = computed(() =>
   uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
 )
 
-const { extractStatusOf, statusOf, summaryState, rowTags } = useDocStatus({
+const { statusOf, summaryState, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'award_punish', notLabel: '非通知公告',
 })

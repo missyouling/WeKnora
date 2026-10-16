@@ -773,11 +773,6 @@ const BILLING_COLS: ColDef[] = [
 ]
 
 // 证照型固定列
-const ARCHIVE_FIXED: ColDef[] = [
-  { key: 'doc_type', label: '证照类型', def: true, tip: '证照类型', value: (r: any) => r.doc_type || '—' },
-  { key: 'file_name', label: '源文件', def: true, tip: '来源文件', value: (r: any) => r.file_name || '—' },
-  { key: 'vehicle', label: '车牌号', def: true, tip: '关联车辆', value: (r: any) => vehiclePlate(r.vehicle_id) },
-]
 
 // 证件状态：单选选项 + 按有效期自动计算（各证照类型统一，不依赖模型提取）
 const CERT_STATUS_OPTIONS = ['有效', '即将到期', '已过期']
@@ -812,12 +807,6 @@ function calcCertStatus(data: any): string {
   return '有效'
 }
 // 证件状态颜色：有效=绿、即将到期=橙、已过期=红，与上传/解析状态标签样式统一
-function certStatusTheme(v?: string): string {
-  if (v === '已过期') return 'danger'
-  if (v === '即将到期') return 'warning'
-  if (v === '有效') return 'success'
-  return 'default'
-}
 
 // 全部证照类型（文件维度）列：文件别名 / 证照类型 / 源文件 / 文件类型 / 上传状态 / 解析状态 / 提取状态 / 说明 / 上传时间 / 标签
 const FILE_UPLOAD_LABEL: Record<string, string> = { completed: '已完成', failed: '上传失败', pending: '上传中' }
@@ -879,10 +868,6 @@ const displayRows = computed(() => {
 })
 
 // 文件行（全部证照类型列表）标记与状态样式
-const isFileRow = (r: any) => isArchive.value && !filters.docType && r?.__file === true
-function cellTitle(col: ColDef, row: any) {
-  return typeof col.tip === 'function' ? String(col.tip(row) ?? '') : (col.tip || String(col.value(row) ?? ''))
-}
 const parseTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'parsing' || s === 'pending' || s === 'processing' ? 'warning' : 'default')
 const uploadTagTheme = (s?: string) => (s === 'completed' ? 'success' : s === 'failed' ? 'danger' : s === 'pending' ? 'warning' : 'default')
 const extractTagTheme = (r: any) => (r.extract_status === 'success' ? 'success' : r.extract_status === 'failed' ? 'danger' : r.parse_status === 'completed' ? 'warning' : 'default')
@@ -1371,15 +1356,7 @@ function initColumns() {
 // ---------------------------------------------------------------------------
 const selectedKeys = ref<Set<string>>(new Set())
 const rowKey = (r: any) => (r?.id ?? r?.key ?? '')
-const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every((r) => selectedKeys.value.has(rowKey(r))))
-const someSelected = computed(() => displayRows.value.some((r) => selectedKeys.value.has(rowKey(r))))
 const selectedRows = computed(() => displayRows.value.filter((r) => selectedKeys.value.has(rowKey(r))))
-function toggleSelect(row: any) {
-  const k = rowKey(row)
-  if (selectedKeys.value.has(k)) selectedKeys.value.delete(k)
-  else selectedKeys.value.add(k)
-  selectedKeys.value = new Set(selectedKeys.value)
-}
 function clearSelection() { selectedKeys.value = new Set() }
 const archiveDeleteHint = computed(() => {
   const n = selectedKeys.value.size
@@ -1715,12 +1692,6 @@ async function loadTagList() {
   } catch { /* 标签加载失败不阻塞 */ }
 }
 
-function onFileAction(action: any, row: any) {
-  const act = typeof action === 'string' ? action : action?.value
-  if (!row?.id) return
-  if (act === 'tags') { openTagEdit(row); return }
-  if (act === 'delete') { handleDelete() }
-}
 
 // 悬浮工具栏：批量重新解析 / 重新提取（仅文件行）
 const batchBusy = ref(false)
@@ -1821,11 +1792,6 @@ async function handlePrint() {
 function closePrint() {
   printVisible.value = false
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
-}
-function handleSourcePrint() {
-  const row = selectedRows.value[0]
-  if (!row) return
-  openDrawer(row)
 }
 
 // ---------------------------------------------------------------------------

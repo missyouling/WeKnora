@@ -743,7 +743,6 @@ const editForm = ref<Record<string, any>>({})
 const saving = ref(false)
 
 // 抽屉宽度（可拖动，localStorage 记忆）
-const DRAWER_WIDTH_KEY = 'weknora-contract-drawer-width'
 // 打印预览
 const printVisible = ref(false)
 const historyVisible = ref(false)
@@ -989,9 +988,6 @@ const mapContractRecord = (r: any): ContractRow => ({
   page: Number(r.page) || 0,
 })
 
-const rebuildRows = () => {
-  // 合同级列表数据已由后端去重/过滤/分页返回，无需前端重建
-}
 
 const parseCustomMetadata = (item: KnowledgeItem): ContractRow[] => {
   const meta = item.custom_metadata
@@ -1108,23 +1104,6 @@ const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'default' | 'dan
 
 // ---- 多选 ----
 const selectableRows = computed(() => filteredRows.value.filter(r => r.kind !== 'pending'))
-const isAllSelected = computed(() =>
-  selectableRows.value.length > 0 && selectableRows.value.every(r => selectedRowKeys.value.includes(r.rowKey))
-)
-const someSelected = computed(() => {
-  const sel = selectableRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)).length
-  return sel > 0 && sel < selectableRows.value.length
-})
-const toggleSelectAll = (checked: boolean) => {
-  selectedRowKeys.value = checked ? selectableRows.value.map(r => r.rowKey) : []
-}
-const toggleRow = (rowKey: string, checked: boolean) => {
-  if (checked) {
-    if (!selectedRowKeys.value.includes(rowKey)) selectedRowKeys.value = [...selectedRowKeys.value, rowKey]
-  } else {
-    selectedRowKeys.value = selectedRowKeys.value.filter(k => k !== rowKey)
-  }
-}
 const selectedRows = computed(() => {
   const byKey = new Map(contractRows.value.map(r => [r.rowKey, r]))
   return selectedRowKeys.value.map(k => byKey.get(k)).filter(Boolean) as ContractRow[]
@@ -1448,7 +1427,7 @@ const displayProgress = computed(() =>
   uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
 )
 
-const { extractStatusOf, statusOf, rowTags } = useDocStatus({
+const { statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'contract', notLabel: '非合同',
 })
@@ -1653,12 +1632,6 @@ const sanitizeNum = (v: string): string => {
   const firstDot = s.indexOf('.')
   if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
   return s
-}
-const parseNum = (v: string): number | null => {
-  const s = sanitizeNum(v)
-  if (s === '' || s === '.') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
 }
 const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)

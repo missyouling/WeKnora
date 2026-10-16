@@ -366,7 +366,6 @@ const clearAll = async () => {
 
 // ---- 行操作三点菜单 ----
 const IMG_EXT = ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tif', 'tiff']
-const isImg = (name: string) => IMG_EXT.includes(fileExt(name).toLowerCase())
 
 const rowMenuOptions = (_row: any) => {
   const opts: any[] = [

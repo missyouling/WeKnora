@@ -87,7 +87,6 @@
 import { ref } from 'vue'
 import { useUIStore } from '@/stores/ui'
 import ModelSelector from '@/components/ModelSelector.vue'
-import { useI18n } from 'vue-i18n'
 
 interface ModelConfig {
   llmModelId?: string
@@ -111,7 +110,6 @@ const emit = defineEmits<{
 }>()
 
 const uiStore = useUIStore()
-const { t } = useI18n()
 
 const llmSelectorRef = ref<InstanceType<typeof ModelSelector>>()
 const embeddingSelectorRef = ref<InstanceType<typeof ModelSelector>>()

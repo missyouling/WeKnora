@@ -221,17 +221,6 @@ const getFileExt = (fileName: string): string => {
   return fileName.split('.').pop()?.toUpperCase() || 'FILE';
 };
 
-const getFileIcon = (fileName: string): string => {
-  const ext = fileName.split('.').pop()?.toLowerCase();
-  if (['pdf'].includes(ext || '')) return 'file-pdf';
-  if (['doc', 'docx'].includes(ext || '')) return 'file-word';
-  if (['xls', 'xlsx'].includes(ext || '')) return 'file-excel';
-  if (['ppt', 'pptx'].includes(ext || '')) return 'file-powerpoint';
-  if (['epub', 'mhtml'].includes(ext || '')) return 'file';
-  if (['txt', 'md'].includes(ext || '')) return 'file';
-  if (['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac'].includes(ext || '')) return 'sound';
-  return 'file';
-};
 
 const statusLabel = (attachment: AttachmentFile): string => {
   if (attachment.status === 'uploading') return t('chat.attachmentUploading', { progress: attachment.progress || 0 });

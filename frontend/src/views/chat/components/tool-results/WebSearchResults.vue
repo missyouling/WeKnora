@@ -106,14 +106,6 @@ const groupedResults = computed<Group[]>(() => {
   return ordered;
 });
 
-const formatUrl = (url: string): string => {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname + urlObj.pathname;
-  } catch {
-    return url;
-  }
-};
 
 const safeHostname = (url: string): string => {
   try {
@@ -124,11 +116,6 @@ const safeHostname = (url: string): string => {
   }
 };
 
-const truncateContent = (content: string, maxLength: number = 300): string => {
-  if (!content) return '';
-  if (content.length <= maxLength) return content;
-  return content.substring(0, maxLength) + '...';
-};
 
 const formatDate = (dateStr: string): string => {
   try {

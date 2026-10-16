@@ -868,10 +868,8 @@ import {
   type WikiIndexEntryDTO,
 } from '@/api/wiki'
 
-const router = useRouter()
 const route = useRoute()
 const menuStore = useMenuStore()
-const settingsStore = useSettingsStore()
 
 ensureLiteralSingleTildeOnGlobalMarked()
 
@@ -1242,7 +1240,6 @@ const navFromSystemView = ref<'' | 'index'>('')
 // typeOrder drives the order of groups in the sidebar. Keep in sync
 // with WIKI_PAGE_TYPES on the backend; unknown types fall through to
 // the "other" bucket at the bottom of groupedPages.
-const typeOrder = ['summary', 'entity', 'concept', 'synthesis', 'comparison']
 
 // Entity and concept pages look and behave alike, so the sidebar merges all
 // non-summary content types under a single "knowledge" tab and distinguishes
@@ -3202,18 +3199,6 @@ function editSourceIcon(source?: string): string {
   }
 }
 
-function editSourceTheme(source?: string): 'primary' | 'success' | 'warning' | 'default' {
-  switch (source) {
-    case 'user':
-      return 'success'
-    case 'agent':
-      return 'primary'
-    case 'revert':
-      return 'warning'
-    default:
-      return 'default'
-  }
-}
 
 // Refresh the currently selected page's content without touching navigation history
 async function refreshSelectedPage() {

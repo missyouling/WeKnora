@@ -11,7 +11,7 @@
 import type { ThinkingData } from '@/types/tool-results';
 import { useI18n } from 'vue-i18n';
 
-const props = defineProps<{
+defineProps<{
   data: ThinkingData;
 }>();
 

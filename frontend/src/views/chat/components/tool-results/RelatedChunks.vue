@@ -40,7 +40,7 @@
 import type { RelatedChunksData } from '@/types/tool-results';
 import ContentPopup from './ContentPopup.vue';
 
-const props = defineProps<{
+defineProps<{
   data: RelatedChunksData;
 }>();
 

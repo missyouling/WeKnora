@@ -567,7 +567,6 @@ const persistColumns = () => { try { localStorage.setItem(colStorageKey.value, J
 const loading = ref(false)
 const tenants = ref<any[]>([])
 const activeTenantId = ref('')
-const tenantOptions = computed(() => tenants.value.map(t => ({ label: t.name, value: t.id })))
 const useUnitOptions = computed(() => {
   const units = new Set<string>([OWNER_UNIT])
   tenants.value.forEach((t: any) => { if (t.name) units.add(t.name) })
@@ -914,20 +913,7 @@ const summaryWaterFee = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return Math.round(arr.reduce((s, r) => s + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0), 0) * 100) / 100
 })
-const toggleSelect = (row: any, checked: any) => {
-  const next = new Set(selectedKeys.value)
-  if (checked) next.add(row.id)
-  else next.delete(row.id)
-  selectedKeys.value = next
-}
 const isAllSelected = computed(() => displayRows.value.length > 0 && displayRows.value.every(r => selectedKeys.value.has(r.id)))
-const someSelected = computed(() => displayRows.value.some(r => selectedKeys.value.has(r.id)) && !isAllSelected.value)
-const toggleSelectAll = (checked: any) => {
-  const next = new Set(selectedKeys.value)
-  if (checked) displayRows.value.forEach(r => next.add(r.id))
-  else displayRows.value.forEach(r => next.delete(r.id))
-  selectedKeys.value = next
-}
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.id])
   if (!isOwnerView.value) {

@@ -1285,9 +1285,6 @@ const handleAddASRModel = () => {
   uiStore.openSettings('models', 'asr')
 }
 
-const handleAddWikiModel = () => {
-  uiStore.openSettings('models', 'knowledgeqa')
-}
 
 const handleStorageProviderUpdate = (value: string) => {
   if (formData.value) {

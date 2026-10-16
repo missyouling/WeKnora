@@ -93,7 +93,6 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useUIStore } from '@/stores/ui'
 import { listVectorStores, type VectorStoreEntity } from '@/api/vector-store'
 import type { VectorStoreSource, VectorStoreStatus } from '@/api/knowledge-base'
@@ -114,7 +113,6 @@ const emit = defineEmits<{
   (e: 'update:vectorStoreId', id: string): void
 }>()
 
-const { t } = useI18n()
 const uiStore = useUIStore()
 
 const loading = ref(false)

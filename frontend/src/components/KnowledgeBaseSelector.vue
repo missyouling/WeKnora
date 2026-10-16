@@ -241,7 +241,6 @@ const updateDropdownPosition = () => {
 
   // 垂直定位：紧贴按钮，使用合理的高度避免空白
   const preferredDropdownHeight = 280 // 优选高度（紧凑且够用）
-  const maxDropdownHeight = 360 // 最大高度
   const minDropdownHeight = 200 // 最小高度
   const topMargin = 20 // 顶部留白
   const spaceBelow = vh - rect.bottom // 下方剩余空间

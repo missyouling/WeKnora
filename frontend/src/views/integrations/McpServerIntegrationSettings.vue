@@ -297,7 +297,6 @@ const catalog = ref<McpEndpointToolCatalog>({ groups: [], tools: [], default_too
 const kbLoading = ref(false)
 const knowledgeBases = ref<{ id: string; name: string }[]>([])
 const kbOptions = computed(() => knowledgeBases.value.map((kb) => ({ label: kb.name || kb.id, value: kb.id })))
-const kbNameById = computed(() => Object.fromEntries(knowledgeBases.value.map((kb) => [kb.id, kb.name || kb.id])))
 
 const agentsLoading = ref(false)
 const agents = ref<CustomAgent[]>([])
