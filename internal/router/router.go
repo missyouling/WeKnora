@@ -118,13 +118,24 @@ func NewRouter(params RouterParams) *gin.Engine {
 	}
 
 	// CORS 中间件应放在最前面。
-	// 注意：通配符 AllowOrigins 下浏览器会拒绝一切带凭据（cookie）的跨域
-	// 请求（CORS 规范禁止 "*" 与 credentials 组合），因此 AllowCredentials
-	// 实际只对未来改为回显具体 Origin 时才生效；当前认证全部走显式的
-	// Authorization / X-API-Key 头，不依赖 ambient 凭据。若引入 cookie
-	// 认证，必须先把 AllowOrigins 换成受控清单。
+	//
+	// 通配符 "*" 的历史问题：① 任何站点都能调用 API；② 与 credentials 组合
+	// 时浏览器直接拒绝，将来若引入 cookie 认证会静默失效。现收敛为受控清单，
+	// 来源为 WEKNORA_CORS_ORIGINS（逗号分隔；设为 "*" 可临时恢复全放开，
+	// 便于本地实验与紧急回滚）。
+	//
+	// 默认清单覆盖本地开发（vite 5173 / preview 4173 / 后端 8080）与生产域名
+	// （*.mozuiapp.com），全新部署不会因跨域打断前端。
+	//
+	// embed 例外：/api/v1/embed/**、/mcp/**、/r/** 面向第三方浏览器客户端
+	// （挂件 iframe / MCP 连接器 / 能力 URL），其凭据由各自的中间件校验
+	// （EmbedAuth per-channel、MCPEndpointAuth per-endpoint、grant token）。
+	// 若在此层先 403，会抢先于它们打断生产集成，故这些路径在本层放行、把校验
+	// 交回对应中间件。见 corsSelfAuthenticatedSurfaceExempt。
 	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"*"},
+		AllowOrigins:               corsOrigins(),
+		AllowWildcard:              true,
+		AllowOriginWithContextFunc: corsSelfAuthenticatedSurfaceExempt,
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			"Origin", "Content-Type", "Accept", "Authorization", "X-API-Key", "X-Request-ID", "X-Tenant-ID",
@@ -367,4 +378,72 @@ func trustedProxies() []string {
 		}
 	}
 	return proxies
+}
+
+// corsOrigins returns the cross-origin allowlist.
+//
+// Source of truth is WEKNORA_CORS_ORIGINS (comma-separated). "*" restores the
+// legacy allow-all behaviour, which is only meant for local experiments and
+// emergency rollback. When the variable is unset the defaults below apply, so
+// a fresh deployment works out of the box for local dev and production.
+//
+// Entries may contain a single "*" (gin-contrib/cors requires AllowWildcard),
+// e.g. "https://*.mozuiapp.com" matches any subdomain over https.
+func corsOrigins() []string {
+	raw, ok := os.LookupEnv("WEKNORA_CORS_ORIGINS")
+	if !ok {
+		return []string{
+			// 本地开发：vite dev / vite preview / 直接访问后端
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+			"http://localhost:4173",
+			"http://127.0.0.1:4173",
+			"http://localhost:8080",
+			"http://127.0.0.1:8080",
+			// 生产域名（显式 + 通配符子域，两者等价保留以便阅读）
+			"https://daily.mozuiapp.com",
+			"https://*.mozuiapp.com",
+			// Cloudflare 隧道（vite.config.ts 的 allowedHosts 同源）
+			"https://*.trycloudflare.com",
+		}
+	}
+	origins := make([]string, 0)
+	for _, o := range strings.Split(raw, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+	return origins
+}
+
+// corsSelfAuthenticatedSurfaceExempt lets surfaces that carry their own
+// credential through the global CORS layer. These are the browser-facing
+// routes whose auth does not rely on ambient credentials, so the global
+// allowlist cannot know their callers' origins in advance:
+//
+//   - /api/v1/embed/** and /api/v1/embed-frame-policy — per-channel allowlist
+//     enforced by middleware.EmbedAuth
+//   - /mcp/:endpoint_id — per-endpoint bearer token (browser MCP clients such
+//     as Cursor / Claude connectors)
+//   - /r/:token — short-lived capability URL for clients that cannot attach a
+//     WeKnora bearer token
+//
+// Rejecting these here would pre-empt their own auth with a 403 and break live
+// third-party integrations, so the global layer defers to them. Everything
+// else stays on the WEKNORA_CORS_ORIGINS allowlist.
+func corsSelfAuthenticatedSurfaceExempt(c *gin.Context, _ string) bool {
+	p := c.Request.URL.Path
+	switch {
+	case p == "/api/v1/embed-frame-policy":
+		return true
+	case strings.HasPrefix(p, "/api/v1/embed/"):
+		return true
+	case strings.HasPrefix(p, "/mcp/"):
+		return true
+	case strings.HasPrefix(p, "/r/"):
+		return true
+	}
+	return false
 }
