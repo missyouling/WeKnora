@@ -21,7 +21,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: cd frontend && npm ci
-      - run: cd frontend && npx vue-tsc --build
+      # type-check 必须走 npm script：vue-tsc 默认 V8 堆上限（约 2GB）会 OOM，
+      # package.json 里已固化为 node --max-old-space-size=8192。
+      - name: Type check (frontend)
+        run: cd frontend && npm run type-check
+      # ESLint：error 级会阻断（当前已清零），warning 级为存量风格债不阻断。
+      - name: Lint (frontend)
+        run: cd frontend && npm run lint
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
