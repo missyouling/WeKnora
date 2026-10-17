@@ -62,10 +62,13 @@ var builtinInvoiceFieldRegexes = map[string][]string{
 
 // invoiceFieldAccessors 可补洞字段的读写器。只有出现在这里的字段才会被补洞——
 // 明细子列（items[].extra）结构复杂且逐行对齐，不在此列。
-var invoiceFieldAccessors = map[string]struct {
+// invoiceFieldAccessor 一个可补洞字段的读写器。
+type invoiceFieldAccessor struct {
 	Get func(*InvoiceExtractionItem) string
 	Set func(*InvoiceExtractionItem, string)
-}{
+}
+
+var invoiceFieldAccessors = map[string]invoiceFieldAccessor{
 	"invoice_no": {
 		Get: func(i *InvoiceExtractionItem) string { return i.InvoiceNo },
 		Set: func(i *InvoiceExtractionItem, v string) { i.InvoiceNo = v },
@@ -105,6 +108,28 @@ var invoiceFieldAccessors = map[string]struct {
 var invoiceFieldOrder = []string{
 	"invoice_no", "invoice_code", "invoice_date",
 	"buyer_name", "buyer_tax_no", "seller_name", "seller_tax_no", "issuer",
+}
+
+// invoiceAccessorFor 按**用户配置里可能出现的任意键名**解析补洞读写器。
+//
+// 前端保存的是 camelCase（invoiceNo / buyerTaxNo），这里的内置字典是 snake_case。
+// 不做 canonical 归一，用户在规则面板填的正则永远匹配不到字段。返回的 key 是契约键
+// （snake_case），用于日志与补洞明细；issue 里仍用用户配置的原名，便于界面回显。
+func invoiceAccessorFor(field string) (string, invoiceFieldAccessor, bool) {
+	if acc, ok := invoiceFieldAccessors[field]; ok {
+		return field, acc, true
+	}
+	want := canonicalFieldKey(field)
+	if want == "" {
+		return "", invoiceFieldAccessor{}, false
+	}
+	// 按固定顺序遍历，保证同一份输入的结果可复现
+	for _, key := range invoiceFieldOrder {
+		if canonicalFieldKey(key) == want {
+			return key, invoiceFieldAccessors[key], true
+		}
+	}
+	return "", invoiceFieldAccessor{}, false
 }
 
 // RegexFallbackInvoiceFields 对发票结果执行后置正则补洞，返回本次补洞明细。
@@ -180,8 +205,10 @@ type fieldRegexPattern struct {
 func fieldRegexPatterns(field string, cfg *types.KbExtractConfig) []fieldRegexPattern {
 	var out []fieldRegexPattern
 	if cfg != nil {
+		want := canonicalFieldKey(field)
 		for _, f := range cfg.Fields {
-			if !f.Enabled || strings.TrimSpace(f.Name) != field {
+			// 配置键可能是 camelCase（invoiceNo）：统一按 canonical 比对
+			if !f.Enabled || canonicalFieldKey(strings.TrimSpace(f.Name)) != want {
 				continue
 			}
 			if re := strings.TrimSpace(f.Regex); re != "" {

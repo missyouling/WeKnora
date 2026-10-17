@@ -442,7 +442,20 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		return
 	}
 
-	// 缺失字段：按配置字段顺序，空值/空数组/0 视为缺失
+	// 质量闭环（Phase D）：测试沙箱此前只跑"提取"、不跑校验，所以界面上永远看不到
+	// 必填告警与正则补洞——用户配了 required/regex 也无从验证。这里把与正式提取
+	// 同一套确定性校验（日期归一化 + 必填 + 配置级正则补洞）跑一遍：
+	//   - 补洞直接回写 result.Fields（map 引用语义），前端看到的就是最终值；
+	//   - issues/patches 随响应返回，提取测试弹窗据此渲染分级告警与溯源徽章。
+	issues := []service.ExtractFieldIssue(nil)
+	patches := []service.RegexFieldPatch(nil)
+	if len(result.Fields) > 0 {
+		records := []service.GenericExtractRecord{service.NewGenericRecordFromMap(0, result.Fields)}
+		issues, patches = service.ValidateGenericExtraction(records, content, ec)
+	}
+
+	// 缺失字段：按配置字段顺序，空值/空数组/0 视为缺失。
+	// 必须在补洞之后重算：被正则回填的字段不该再报"未提取到"。
 	missing := make([]string, 0)
 	for _, f := range fields {
 		if !f.Enabled {
@@ -456,9 +469,12 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"doc_type": result.DocType,
-			"fields":   result.Fields,
-			"missing":  missing,
+			"doc_type":        result.DocType,
+			"fields":          result.Fields,
+			"missing":         missing,
+			"extract_issues":  issues,
+			"patched_by_regex": service.PatchedFieldNames(patches),
+			"regex_patches":   patches,
 		},
 	})
 }

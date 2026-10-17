@@ -294,6 +294,9 @@
         <span v-if="currentRow?.page && currentRow.page >= 1" class="row-page-badge">P{{ currentRow.page }}</span>
       </template>
       <div class="invoice-detail-body">
+        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
+        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
+
         <!-- 发票字段（按分类配置动态渲染，字段来自设置-字段定义 subs） -->
         <section class="detail-block">
           <div class="detail-block-content">
@@ -460,6 +463,9 @@ import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality } from './extractQuality'
+import { extractFieldLabel } from './extractFieldMeta'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 
 const KB_NAME = '日常事务-发票'
@@ -762,6 +768,22 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 const detailVisible = ref(false)
 const currentRow = ref<InvoiceRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
+
+// 质量与溯源（Phase D）：与发票列表同源的 custom_metadata，多张票时按当前张过滤。
+// 详情未返回前是空质量 → 面板静默，不会闪一下再消失。
+const detailQuality = computed(() =>
+  parseExtractQuality(
+    (currentDetail.value as any)?.custom_metadata,
+    indexOfMulti(currentRow.value?.multiIndex),
+  ),
+)
+const qualityLabel = (f: string) => extractFieldLabel('invoice', f)
+
+// "2/5" → 1（0 基）；单张/缺省 → undefined（全量展示，不做过滤）
+function indexOfMulti(multi?: string): number | undefined {
+  const n = Number(String(multi || '').split('/')[0])
+  return Number.isFinite(n) && n > 0 ? n - 1 : undefined
+}
 const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', items: [], data: {}, remarkParts: {} })
 const autoSaving = ref(false)
 

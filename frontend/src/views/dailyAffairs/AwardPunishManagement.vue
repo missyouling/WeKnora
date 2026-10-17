@@ -236,6 +236,9 @@
     <!-- 通知公告详情抽屉（竖向区块，可拖宽，上下滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-notice-drawer-width'" hide-footer destroy-on-close class="notice-detail-drawer">
       <div class="notice-detail-body">
+        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
+        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
+
         <!-- 摘要 -->
         <section class="detail-block">
           <div class="detail-block-title">摘要</div>
@@ -452,6 +455,9 @@ import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality } from './extractQuality'
+import { extractFieldLabel } from './extractFieldMeta'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
@@ -1106,6 +1112,19 @@ const openDetail = async (row: NoticeRow) => {
 const detailTitle = computed(() =>
   currentRow.value?.apNo ? `公告详情 · ${currentRow.value.apNo}` : '公告详情'
 )
+
+// 提取质量与溯源：详情接口的 custom_metadata（多条记录时按当前记录定位 index）。
+// 详情未返回前为空质量 → 面板静默，不抢占视觉。
+const detailQuality = computed(() => {
+  const meta = (currentDetail.value as any)?.custom_metadata
+  const list: any[] = Array.isArray(meta?.records) ? meta.records : []
+  let idx = -1
+  if (list.length > 1) {
+    idx = list.findIndex((r) => !!currentRow.value?.apNo && r?.ap_no === currentRow.value?.apNo)
+  }
+  return parseExtractQuality(meta, idx >= 0 ? idx : undefined)
+})
+const qualityLabel = (f: string) => extractFieldLabel('award_punish', f)
 
 // 上传历史抽屉（删除/恢复）变更后同步
 const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {

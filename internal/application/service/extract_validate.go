@@ -183,7 +183,9 @@ func validateInvoiceExtraction(res *InvoiceExtractionResult, cfg *types.KbExtrac
 		// 6) 用户配置的必填字段为空 → error（此前 Required 只是个没人读的字段）。
 		//    放在最后：跳过已被规则 1~3 报过的键，避免同一缺失被记两次。
 		for _, f := range requiredFields {
-			acc, ok := invoiceFieldAccessors[f]
+			// 配置键可能是 camelCase（invoiceNo）：归一后解析读写器，
+			// 但 issue.Field 保留用户配置的原名，前端才能按同一 key 高亮字段。
+			_, acc, ok := invoiceAccessorFor(f)
 			if !ok {
 				continue
 			}
@@ -200,9 +202,15 @@ func validateInvoiceExtraction(res *InvoiceExtractionResult, cfg *types.KbExtrac
 }
 
 // hasIssueForField 判断某张发票的某个字段是否已被记过问题（避免重复告警）。
+// 比对走 canonical 归一：规则 1~3 记的是契约键（invoice_no），用户配置可能写 invoiceNo，
+// 字面比对会让同一个缺失被记两次。
 func hasIssueForField(issues []ExtractFieldIssue, index int, field string) bool {
+	want := canonicalFieldKey(field)
 	for _, is := range issues {
-		if is.Index == index && is.Field == field {
+		if is.Index != index {
+			continue
+		}
+		if is.Field == field || canonicalFieldKey(is.Field) == want {
 			return true
 		}
 	}

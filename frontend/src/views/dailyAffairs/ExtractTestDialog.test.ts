@@ -138,3 +138,36 @@ test('底部操作区无分隔横线、整体无横向滚动', () => {
   assert.ok(!/border-top/.test(dialog.split('.test-footer')[1].split('.extract-test-layout')[1] || ''), 'footer 不再有 border-top')
   assert.match(dialog, /overflow-x: hidden/)
 })
+
+// ---- Phase D：测试结果区的质量与溯源可视化 ----
+const qualityPanel = readFileSync(new URL('./ExtractQualityPanel.vue', import.meta.url), 'utf8')
+
+test('测试结果区接入质量面板：解析 test 返回体里的 extract_issues / patched_by_regex', () => {
+  assert.match(resultPanel, /ExtractQualityPanel/)
+  assert.match(resultPanel, /parseExtractQuality\(props\.result\)/)
+  // 字段 key 走业务中文映射，而不是把 invoiceNo 直接怼给用户
+  assert.match(resultPanel, /extractFieldLabel\(props\.scope/)
+  assert.match(dialog, /:scope="scope"/)
+})
+
+test('质量面板静默优先：无问题无补洞时不渲染任何节点', () => {
+  assert.match(qualityPanel, /v-if="!isSilent"/)
+  assert.match(qualityPanel, /qualityIsEmpty/)
+})
+
+test('存在补洞时渲染蓝色「正则兜底」徽章，悬停可见补洞明细', () => {
+  assert.match(qualityPanel, /正则兜底:/)
+  assert.match(qualityPanel, /theme="primary"/)
+  assert.match(qualityPanel, /t-tooltip/)
+  assert.match(qualityPanel, /patchTip/)
+  assert.match(qualityPanel, /qualityPatchLabels/)
+})
+
+test('存在校验问题时按等级渲染 Alert（error 红 / warn 黄），明细带 #下标 与字段', () => {
+  assert.match(qualityPanel, /:theme="g\.theme"/)
+  assert.match(qualityPanel, /build\('warn', 'warning'/)
+  assert.match(qualityPanel, /build\('error', 'error'/)
+  assert.match(qualityPanel, /字段校验未通过/)
+  assert.match(qualityPanel, /字段格式需核对/)
+  assert.match(qualityPanel, /#\$\{it\.index \+ 1\}/)
+})

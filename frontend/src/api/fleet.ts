@@ -145,6 +145,10 @@ export interface ExtractFieldConfig {
   type?: string
   rule?: string
   enabled: boolean
+  /** 必填：开启后该字段为空会产出 error 级校验告警（不影响落库） */
+  required?: boolean
+  /** 正则兜底：LLM 漏抽时从原文回填（Go RE2 语法；仅标准契约字段生效） */
+  regex?: string
 }
 export function getExtractConfig(kbId: string, scope: string, certType: string) {
   const q = new URLSearchParams({ scope, cert_type: certType })

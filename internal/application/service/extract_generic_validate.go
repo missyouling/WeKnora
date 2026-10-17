@@ -35,6 +35,73 @@ type GenericExtractRecord struct {
 	Index int
 	// fields json 字段名 → 可寻址字段值（只收顶层字段）
 	fields map[string]reflect.Value
+	// mapFields 非 nil 时代表"扁平 map"视图（提取测试沙箱）：读写直接落到 map 上。
+	// 与 fields 互斥，mapFields 优先。
+	mapFields map[string]any
+}
+
+// canonicalFieldKey 归一化字段 key：小写 + 去掉非字母数字。
+//
+// 为什么需要它：前端配置里用户看到的是 camelCase（invoiceNo / signDate / partyATaxNo），
+// 后端结构体的 json tag 是 snake_case（invoice_no / sign_date / party_a_tax_no）。
+// 不做归一的话，界面上打开的"必填/正则兜底"永远匹配不到字段，功能等于没接。
+// 归一只用于**查找**，日志与问题清单里仍保留用户配置的原始键名，便于对账。
+func canonicalFieldKey(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// NewGenericRecordFromMap 用扁平 map[string]any 构造单条记录视图（提取测试接口用）。
+// map 是引用语义：setString 会直接改写调用方的 map，补洞值可直接回给前端。
+func NewGenericRecordFromMap(index int, m map[string]any) GenericExtractRecord {
+	if m == nil {
+		m = map[string]any{}
+	}
+	return GenericExtractRecord{Index: index, mapFields: m}
+}
+
+// isMapView 报告该记录是否为"扁平 map"视图（提取测试沙箱）。
+// 与强类型结构体视图的关键差异：map 里键缺失就是模型没提取到（等同空值，
+// 必须参与必填判定，handler 的 missing 列表同样是"缺键即缺失"口径）；
+// 而结构体视图字段缺失只代表用户配了结构体装不下的自定义 key（跳过，避免误报）。
+func (r GenericExtractRecord) isMapView() bool {
+	return r.mapFields != nil
+}
+
+// resolveField 把（可能是 camelCase 的）字段名解析成记录里真实存在的键。
+// 先精确命中，再按 canonical 归一命中；都不中返回 ok=false。
+func (r GenericExtractRecord) resolveField(field string) (string, bool) {
+	if r.mapFields != nil {
+		if _, ok := r.mapFields[field]; ok {
+			return field, true
+		}
+		want := canonicalFieldKey(field)
+		for k := range r.mapFields {
+			if canonicalFieldKey(k) == want {
+				return k, true
+			}
+		}
+		return "", false
+	}
+	if _, ok := r.fields[field]; ok {
+		return field, true
+	}
+	want := canonicalFieldKey(field)
+	for k := range r.fields {
+		if canonicalFieldKey(k) == want {
+			return k, true
+		}
+	}
+	return "", false
 }
 
 // NewGenericRecords 把强类型结果切片适配成统一视图。
@@ -87,26 +154,66 @@ func jsonFieldName(f reflect.StructField) string {
 // 没有的字段（用户配置的自定义 key、明细子列等）一律跳过——强类型结果装不下它，
 // 强行判"缺失"只会误报。
 func (r GenericExtractRecord) hasField(field string) bool {
-	_, ok := r.fields[field]
+	_, ok := r.resolveField(field)
 	return ok
 }
 
 // isEmpty 报告字段是否为空。第二个返回值为 false 表示字段不存在。
 // 判定口径：string 空串、指针 nil、数值 0、切片/映射长度 0 视为空。
 func (r GenericExtractRecord) isEmpty(field string) (bool, bool) {
-	v, ok := r.fields[field]
+	if r.mapFields != nil {
+		key, ok := r.resolveField(field)
+		if !ok {
+			return false, false
+		}
+		return isZeroAny(r.mapFields[key]), true
+	}
+	key, ok := r.resolveField(field)
 	if !ok {
 		return false, false
 	}
-	return isZeroValue(v), true
+	return isZeroValue(r.fields[key]), true
+}
+
+// isZeroAny map 视图的空值判定：与强类型口径保持一致（nil / 空串 / 0 / 空集合）。
+func isZeroAny(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(t) == ""
+	case []any:
+		return len(t) == 0
+	case map[string]any:
+		return len(t) == 0
+	case float64:
+		return t == 0
+	case int:
+		return t == 0
+	case int64:
+		return t == 0
+	case bool:
+		return false
+	default:
+		return false
+	}
 }
 
 // stringValue 读取 string（或 *string）字段的值；非字符串字段返回 ok=false。
 func (r GenericExtractRecord) stringValue(field string) (string, bool) {
-	v, ok := r.fields[field]
+	if r.mapFields != nil {
+		key, ok := r.resolveField(field)
+		if !ok {
+			return "", false
+		}
+		s, isStr := r.mapFields[key].(string)
+		return s, isStr
+	}
+	key, ok := r.resolveField(field)
 	if !ok {
 		return "", false
 	}
+	v := r.fields[key]
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() || v.Type().Elem().Kind() != reflect.String {
 			return "", false
@@ -121,8 +228,22 @@ func (r GenericExtractRecord) stringValue(field string) (string, bool) {
 
 // setString 写入 string 字段（非 string / 不可写时返回 false）。
 func (r GenericExtractRecord) setString(field, value string) bool {
-	v, ok := r.fields[field]
-	if !ok || v.Kind() != reflect.String || !v.CanSet() {
+	if r.mapFields != nil {
+		// map 视图：与强类型结构体"字段一定存在、只是零值"同口径——模型整键漏提取时，
+		// 正则从原文恢复的值也要能建键回填（resolveField 命中已有键则原样写）。
+		key, ok := r.resolveField(field)
+		if !ok {
+			key = field
+		}
+		r.mapFields[key] = value
+		return true
+	}
+	key, ok := r.resolveField(field)
+	if !ok {
+		return false
+	}
+	v := r.fields[key]
+	if v.Kind() != reflect.String || !v.CanSet() {
 		return false
 	}
 	v.SetString(value)
@@ -259,13 +380,20 @@ func ValidateGenericExtraction(
 				continue
 			}
 			name := strings.TrimSpace(f.Name)
-			if name == "" || !rec.hasField(name) {
+			if name == "" {
 				continue
 			}
-			if empty, _ := rec.isEmpty(name); !empty {
+			// 强类型结果里没有这个 json 字段（用户配了自定义 key）→ 跳过避免误报；
+			// 扁平 map 沙箱里键缺失就是模型没提取到 → 视同空值参与判定。
+			if !rec.isMapView() && !rec.hasField(name) {
 				continue
 			}
-			if patched := genericRegexPatch(rec, name, f.Regex, text, allowRegexPatch); patched != nil {
+			// isEmpty 第二返回值为 false 表示"键不存在"：map 视图缺键按空处理，
+			// 先试正则补洞（允许建键回填），补不到才报 error。
+			if empty, ok := rec.isEmpty(name); ok && !empty {
+				continue
+			}
+			if patched := genericRegexPatch(rec, name, f.Regex, text, allowRegexPatch, cfg); patched != nil {
 				patches = append(patches, *patched)
 				continue
 			}
@@ -291,6 +419,7 @@ func genericRegexPatch(
 	pattern string,
 	text string,
 	allowed bool,
+	cfg *types.KbExtractConfig,
 ) *RegexFieldPatch {
 	pattern = strings.TrimSpace(pattern)
 	if !allowed || pattern == "" || strings.TrimSpace(text) == "" {
@@ -309,7 +438,8 @@ func genericRegexPatch(
 		return nil
 	}
 	// 日期型字段补洞后同样要归一，否则补进来的还是"2026年7月2日"。
-	if isDateFieldName(field) {
+	// 除了内置标准日期键，用户显式声明 Type=date 的字段（可能写成 signDate）也要归一。
+	if isDateFieldName(field) || genericDateFieldConfigured(cfg, field) {
 		norm, ok := NormalizeDateValue(value)
 		if !ok {
 			return nil

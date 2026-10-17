@@ -15,6 +15,9 @@
       <t-alert v-else-if="alertVisible && result" theme="success" message="提取完成" close @close="alertVisible = false" />
 
       <template v-if="result">
+        <!-- 质量与溯源：静默优先（无问题无补洞时整块不渲染），字段 key 走业务中文映射 -->
+        <ExtractQualityPanel :quality="quality" :label-of="labelOf" />
+
         <!-- 手风琴折叠：字段映射 / 原始 JSON / 实际 Prompt，窗口高度固定、面板内垂直滚动 -->
         <div class="accordion-block">
           <div class="acc-panel" :class="{ 'acc-open': activePanels[0] === 'map' }">
@@ -55,6 +58,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import type { ExtractFieldConfig } from '@/api/fleet'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality } from './extractQuality'
+import { extractFieldLabel } from './extractFieldMeta'
 
 const props = defineProps<{
   testing: boolean
@@ -63,7 +69,14 @@ const props = defineProps<{
   result: any
   fields: ExtractFieldConfig[]
   promptPreview: string
+  /** 业务 scope（invoice/contract/...）：用于把字段 key 翻成中文标签 */
+  scope?: string
 }>()
+
+// 质量元数据：测试返回体（Phase D 起后端带 extract_issues / patched_by_regex）与
+// 详情接口的 custom_metadata 同键名，所以复用同一个解析器——解析层对缺键/脏数据全部兜底。
+const quality = computed(() => parseExtractQuality(props.result))
+const labelOf = (field: string) => extractFieldLabel(props.scope || '', field)
 
 // 手风琴：默认展开字段映射，同一时间只展开一个面板（自实现，避免 TDesign collapse 受控模式不稳定）
 const activePanels = ref<string[]>(['map'])

@@ -247,6 +247,9 @@
     <!-- 合同详情抽屉（竖向区块，可拖宽，上下滚动） -->
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-contract-drawer-width'" hide-footer destroy-on-close class="contract-detail-drawer">
       <div class="contract-detail-body">
+        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
+        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
+
         <!-- 合同字段（手动保存模式：不再自动保存，底部「保存/取消」统一提交） -->
         <section class="detail-block">
           <div class="detail-block-content">
@@ -475,6 +478,9 @@ import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality } from './extractQuality'
+import { extractFieldLabel } from './extractFieldMeta'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -1423,6 +1429,19 @@ const openDetail = async (row: ContractRow) => {
 const detailTitle = computed(() =>
   currentRow.value?.contractNo ? `合同详情 · ${currentRow.value.contractNo}` : '合同详情'
 )
+
+// 提取质量与溯源：详情接口的 custom_metadata（多份合同时按当前合同定位 index）。
+// 详情未返回前为空质量 → 面板静默，不抢占视觉。
+const detailQuality = computed(() => {
+  const meta = (currentDetail.value as any)?.custom_metadata
+  const list: any[] = Array.isArray(meta?.contracts) ? meta.contracts : []
+  let idx = -1
+  if (list.length > 1) {
+    idx = list.findIndex((c) => !!currentRow.value?.contractNo && c?.contract_no === currentRow.value?.contractNo)
+  }
+  return parseExtractQuality(meta, idx >= 0 ? idx : undefined)
+})
+const qualityLabel = (f: string) => extractFieldLabel('contract', f)
 
 // ---- 字段编辑 + 手动保存（黄金基准发票同款：底部「保存/取消」统一提交） ----
 const fillEditForm = () => {

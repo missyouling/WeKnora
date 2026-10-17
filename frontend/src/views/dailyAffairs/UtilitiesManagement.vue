@@ -535,6 +535,9 @@
       :close-on-overlay-click="true" @close="closeDetail"
       @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
+        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
+        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
+
         <!-- 字段编辑 -->
         <section class="detail-block">
           <div class="detail-block-title">账单字段</div>
@@ -779,6 +782,8 @@ import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
 import UtilitySettingsDrawer from './UtilitySettingsDrawer.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 
 const KB_NAME = '日常事务-电费'
@@ -1262,6 +1267,10 @@ const openDetail = async (row: Row) => {
   activeMenu.value = 'overview'
 }
 
+// 提取质量与溯源：详情接口的 custom_metadata（按账单页定位记录 index）
+const detailQuality = ref<ExtractQuality>(EMPTY_QUALITY)
+const qualityLabel = (f: string) => f
+
 const loadEditForm = async (row: Row) => {
   autoSaveDirty = false
   try {
@@ -1270,12 +1279,15 @@ const loadEditForm = async (row: Row) => {
     const meta = detail?.custom_metadata || {}
     const records = Array.isArray(meta.records) ? meta.records : []
     const idx = Math.max(0, (row.page || 1) - 1)
+    detailQuality.value = parseExtractQuality(meta, records.length > 1 ? idx : undefined)
     const item = records[idx] || row.item || {}
     feeOverrides.value = (item.overview_overrides && typeof item.overview_overrides === 'object') ? { ...item.overview_overrides } : {}
     editForm.value = { ...item, fee_items: Array.isArray(item.fee_items) ? item.fee_items.map((f: any) => ({ ...f })) : [] }
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])
     autoSaveDirty = true
   } catch {
+    // 详情拉取失败：质量面板保持静默，不阻塞手工编辑
+    detailQuality.value = EMPTY_QUALITY
     feeOverrides.value = {}
     editForm.value = { ...row.item, fee_items: Array.isArray(row.item?.fee_items) ? row.item.fee_items.map((f: any) => ({ ...f })) : [] }
     feeItemsSnapshot = JSON.stringify(editForm.value.fee_items || [])

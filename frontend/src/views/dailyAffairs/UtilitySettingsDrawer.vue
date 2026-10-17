@@ -8,155 +8,164 @@
       class="utility-settings-drawer" :close-on-overlay-click="true" @close="onClose"
       @update:visible="(v: boolean) => (v || onClose())">
       <div class="us-body">
-        <!-- 字段配置（按分组卡片） -->
-        <div class="us-section">
-          <div class="us-section-head">
-            <span class="us-section-title">字段配置</span>
-            <span class="us-state">分组管理各菜单列字段，修改后点击保存生效</span>
-          </div>
-          <div class="us-hint">点击分组卡片管理字段：新增、删除、排序、默认显示；删除字段不影响历史记录数据。</div>
-          <div class="us-card-grid">
-            <div v-for="g in groups" :key="g.key" class="us-card" @click="openGroupEdit(g.key)">
-              <div class="us-card-head">
-                <span class="us-card-title">{{ g.label }}</span>
+        <!-- 主视图：字段分组卡片 + 包含判定 -->
+        <template v-if="!groupView">
+          <!-- 字段配置（按分组卡片） -->
+          <div class="us-section">
+            <div class="us-section-head">
+              <span class="us-section-title">字段配置</span>
+              <span class="us-state">分组管理各菜单列字段，修改后点击保存生效</span>
+            </div>
+            <div class="us-hint">点击分组卡片管理字段：新增、删除、排序、默认显示；删除字段不影响历史记录数据。</div>
+            <div class="us-card-grid">
+              <div v-for="g in groups" :key="g.key" class="us-card" @click="openGroupEdit(g.key)">
+                <div class="us-card-head">
+                  <span class="us-card-title">{{ g.label }}</span>
+                </div>
+                <div class="us-card-line">{{ groupFieldCount(g.key) }} 个字段</div>
+                <div class="us-card-line us-card-action">点击管理</div>
               </div>
-              <div class="us-card-line">{{ groupFieldCount(g.key) }} 个字段</div>
-              <div class="us-card-line us-card-action">点击管理</div>
             </div>
           </div>
-        </div>
 
-        <!-- 包含判定 -->
-        <div class="us-section">
-          <div class="us-section-head">
-            <span class="us-section-title">包含判定</span>
-            <t-switch v-model="cfg.enabled" size="small" />
-            <span class="us-state">{{ cfg.enabled ? '生效' : '停用' }}</span>
-            <span class="us-spacer" />
-            <t-button variant="outline" size="small" @click="addIncludeRule">
-              <template #icon><t-icon name="add" size="14px" /></template>
-              添加
+          <!-- 包含判定 -->
+          <div class="us-section">
+            <div class="us-section-head">
+              <span class="us-section-title">包含判定</span>
+              <t-switch v-model="cfg.enabled" size="small" />
+              <span class="us-state">{{ cfg.enabled ? '生效' : '停用' }}</span>
+              <span class="us-spacer" />
+              <t-button variant="outline" size="small" @click="addIncludeRule">
+                <template #icon><t-icon name="add" size="14px" /></template>
+                添加
+              </t-button>
+            </div>
+            <div class="us-hint">模型判定非账单但规则命中 → 认定为账单，置待补录。</div>
+            <div v-if="!cfg.include_rules.length" class="us-empty">暂无规则，模型判定为准</div>
+            <div v-for="(r, i) in cfg.include_rules" :key="r.id" class="us-row">
+              <div class="us-row-main">
+                <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" />
+                <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" />
+                <t-textarea v-if="r.match_type === 'keyword'" v-model="keywordsText[i]" placeholder="关键词，逗号分隔"
+                  :autosize="{ minRows: 1, maxRows: 2 }" size="small" class="us-keywords" @change="syncKeywords(i)" />
+                <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" />
+                <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" />
+              </div>
+              <div class="us-row-side">
+                <t-switch v-model="r.enabled" size="small" />
+                <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1)">
+                  <template #icon><t-icon name="delete" size="15px" /></template>
+                </t-button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 手动保存 -->
+          <div class="us-save-bar">
+            <t-button theme="primary" size="small" :loading="saving" @click="persistAll">保存</t-button>
+          </div>
+        </template>
+
+        <!-- 字段分组编辑视图：同一层抽屉内切换，不再弹第二层抽屉 -->
+        <template v-else>
+          <div class="us-sub-head">
+            <t-button variant="text" size="small" @click="closeGroupEdit">
+              <template #icon><t-icon name="chevron-left" size="16px" /></template>
+              返回
             </t-button>
+            <span class="us-sub-title">字段 · {{ groupEditLabel }}</span>
           </div>
-          <div class="us-hint">模型判定非账单但规则命中 → 认定为账单，置待补录。</div>
-          <div v-if="!cfg.include_rules.length" class="us-empty">暂无规则，模型判定为准</div>
-          <div v-for="(r, i) in cfg.include_rules" :key="r.id" class="us-row">
-            <div class="us-row-main">
-              <t-input v-model="r.name" placeholder="规则名" size="small" class="us-name" />
-              <t-select v-model="r.match_type" size="small" class="us-match" :options="MATCH_TYPE_OPTS" />
-              <t-textarea v-if="r.match_type === 'keyword'" v-model="keywordsText[i]" placeholder="关键词，逗号分隔"
-                :autosize="{ minRows: 1, maxRows: 2 }" size="small" class="us-keywords" @change="syncKeywords(i)" />
-              <t-input v-else v-model="r.regex" placeholder="正则" size="small" class="us-keywords" />
-              <t-select v-if="r.match_type === 'keyword'" v-model="r.logic" size="small" class="us-logic" :options="LOGIC_OPTS" />
-            </div>
-            <div class="us-row-side">
-              <t-switch v-model="r.enabled" size="small" />
-              <t-button variant="text" size="small" shape="square" @click="cfg.include_rules.splice(i, 1)">
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
-            </div>
+          <div class="us-hint">列字段对应菜单列表的列；默认显示控制列显隐。行字段对应菜单列表的行标题，可改名、排序、增删，删除行仅隐藏不影响历史数据。</div>
+          <div class="us-group-tabs">
+            <span class="us-group-tab" :class="{ active: groupTab === 'cols' }" @click="groupTab = 'cols'">列字段配置</span>
+            <span v-if="hasRowGroup" class="us-group-tab" :class="{ active: groupTab === 'rows' }" @click="groupTab = 'rows'">行字段配置</span>
           </div>
-        </div>
-
-        <!-- 手动保存 -->
-        <div class="us-save-bar">
-          <t-button theme="primary" size="small" :loading="saving" @click="persistAll">保存</t-button>
-        </div>
-      </div>
-    </t-drawer>
-
-    <!-- 字段分组管理抽屉 -->
-    <t-drawer v-if="groupEditVisible" :visible="true" :header="`字段 · ${groupEditLabel}`" :size="'520px'" :footer="false"
-      :close-on-overlay-click="true" @close="groupEditVisible = false" @update:visible="(v: boolean) => (v || (groupEditVisible = false))">
-      <div class="us-hint">列字段对应菜单列表的列；默认显示控制列显隐。行字段对应菜单列表的行标题，可改名、排序、增删，删除行仅隐藏不影响历史数据。</div>
-      <div class="us-group-tabs">
-        <span class="us-group-tab" :class="{ active: groupTab === 'cols' }" @click="groupTab = 'cols'">列字段配置</span>
-        <span v-if="hasRowGroup" class="us-group-tab" :class="{ active: groupTab === 'rows' }" @click="groupTab = 'rows'">行字段配置</span>
-      </div>
-      <!-- 列字段配置 -->
-      <template v-if="groupTab === 'cols'">
-        <div class="us-cfg">
-          <div class="us-cfg-head">
-            <span class="us-col-label">字段名</span>
-            <span class="us-col-type">类型</span>
-            <span class="us-col-visible">默认显示</span>
-            <span class="us-col-order">排序</span>
-            <span class="us-col-del">操作</span>
-          </div>
-          <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-cfg-row">
-            <div class="us-cell us-col-label">
-              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" />
-            </div>
-            <div class="us-cell us-col-type">
-              <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" />
-            </div>
-            <div class="us-cell us-col-visible">
-              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
-            </div>
-            <div class="us-cell us-col-order">
-              <div class="us-cell-order">
-                <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
-                  <template #icon><t-icon name="arrow-up" size="14px" /></template>
-                </t-button>
-                <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
-                  <template #icon><t-icon name="arrow-down" size="14px" /></template>
-                </t-button>
+          <!-- 列字段配置 -->
+          <template v-if="groupTab === 'cols'">
+            <div class="us-cfg">
+              <div class="us-cfg-head">
+                <span class="us-col-label">字段名</span>
+                <span class="us-col-type">类型</span>
+                <span class="us-col-visible">默认显示</span>
+                <span class="us-col-order">排序</span>
+                <span class="us-col-del">操作</span>
               </div>
-            </div>
-            <div class="us-cell us-col-del">
-              <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
-            </div>
-          </div>
-          <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
-        </div>
-      </template>
-      <!-- 行字段配置（与列字段同 5 列，类型固定文本） -->
-      <template v-else>
-        <div class="us-cfg">
-          <div class="us-cfg-head">
-            <span class="us-col-label">字段名</span>
-            <span class="us-col-type">类型</span>
-            <span class="us-col-visible">默认显示</span>
-            <span class="us-col-order">排序</span>
-            <span class="us-col-del">操作</span>
-          </div>
-          <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-cfg-row">
-            <div class="us-cell us-col-label">
-              <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="行标题" />
-            </div>
-            <div class="us-cell us-col-type"><span class="us-fixed-type">文本</span></div>
-            <div class="us-cell us-col-visible">
-              <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
-            </div>
-            <div class="us-cell us-col-order">
-              <div class="us-cell-order">
-                <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
-                  <template #icon><t-icon name="arrow-up" size="14px" /></template>
-                </t-button>
-                <t-button variant="text" size="small" shape="square" :disabled="i === rowFields.length - 1" @click="moveGroupField(i, 1)">
-                  <template #icon><t-icon name="arrow-down" size="14px" /></template>
-                </t-button>
+              <div v-for="(f, i) in groupFields" :key="f.field_key" class="us-cfg-row">
+                <div class="us-cell us-col-label">
+                  <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="字段名" />
+                </div>
+                <div class="us-cell us-col-type">
+                  <t-select v-model="f.field_type" size="small" class="us-cfg-select" :options="FIELD_TYPE_OPTS" />
+                </div>
+                <div class="us-cell us-col-visible">
+                  <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
+                </div>
+                <div class="us-cell us-col-order">
+                  <div class="us-cell-order">
+                    <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+                      <template #icon><t-icon name="arrow-up" size="14px" /></template>
+                    </t-button>
+                    <t-button variant="text" size="small" shape="square" :disabled="i === groupFields.length - 1" @click="moveGroupField(i, 1)">
+                      <template #icon><t-icon name="arrow-down" size="14px" /></template>
+                    </t-button>
+                  </div>
+                </div>
+                <div class="us-cell us-col-del">
+                  <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+                    <template #icon><t-icon name="delete" size="15px" /></template>
+                  </t-button>
+                </div>
               </div>
+              <div v-if="!groupFields.length" class="us-empty">暂无字段，点击下方新增</div>
             </div>
-            <div class="us-cell us-col-del">
-              <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
+          </template>
+          <!-- 行字段配置（与列字段同 5 列，类型固定文本） -->
+          <template v-else>
+            <div class="us-cfg">
+              <div class="us-cfg-head">
+                <span class="us-col-label">字段名</span>
+                <span class="us-col-type">类型</span>
+                <span class="us-col-visible">默认显示</span>
+                <span class="us-col-order">排序</span>
+                <span class="us-col-del">操作</span>
+              </div>
+              <div v-for="(f, i) in rowFields" :key="f.field_key" class="us-cfg-row">
+                <div class="us-cell us-col-label">
+                  <t-input v-model="f.label" size="small" class="us-cfg-input" placeholder="行标题" />
+                </div>
+                <div class="us-cell us-col-type"><span class="us-fixed-type">文本</span></div>
+                <div class="us-cell us-col-visible">
+                  <t-switch v-model="f.default_visible" size="small" class="us-cfg-switch" />
+                </div>
+                <div class="us-cell us-col-order">
+                  <div class="us-cell-order">
+                    <t-button variant="text" size="small" shape="square" :disabled="i === 0" @click="moveGroupField(i, -1)">
+                      <template #icon><t-icon name="arrow-up" size="14px" /></template>
+                    </t-button>
+                    <t-button variant="text" size="small" shape="square" :disabled="i === rowFields.length - 1" @click="moveGroupField(i, 1)">
+                      <template #icon><t-icon name="arrow-down" size="14px" /></template>
+                    </t-button>
+                  </div>
+                </div>
+                <div class="us-cell us-col-del">
+                  <t-button variant="text" size="small" shape="square" @click="removeGroupField(i)">
+                    <template #icon><t-icon name="delete" size="15px" /></template>
+                  </t-button>
+                </div>
+              </div>
+              <div v-if="!rowFields.length" class="us-empty">暂无行，点击下方新增</div>
             </div>
+          </template>
+          <div class="us-actions">
+            <t-button variant="outline" size="small" @click="addGroupField">
+              <template #icon><t-icon name="add" size="14px" /></template>
+              {{ groupTab === 'rows' ? '新增行' : '新增字段' }}
+            </t-button>
+            <span class="us-actions-spacer" />
+            <t-button variant="outline" size="small" @click="closeGroupEdit">取消</t-button>
+            <t-button size="small" :loading="saving" @click="saveGroupEdit">保存</t-button>
           </div>
-          <div v-if="!rowFields.length" class="us-empty">暂无行，点击下方新增</div>
-        </div>
-      </template>
-      <div class="us-actions">
-        <t-button variant="outline" size="small" @click="addGroupField">
-          <template #icon><t-icon name="add" size="14px" /></template>
-          {{ groupTab === 'rows' ? '新增行' : '新增字段' }}
-        </t-button>
-        <span class="us-actions-spacer" />
-        <t-button variant="outline" size="small" @click="groupEditVisible = false">取消</t-button>
-        <t-button size="small" :loading="saving" @click="saveGroupEdit">保存</t-button>
+        </template>
       </div>
     </t-drawer>
   </div>
@@ -283,8 +292,8 @@ const addIncludeRule = () => {
   keywordsText.value.push('')
 }
 
-// ---- 字段分组管理 ----
-const groupEditVisible = ref(false)
+// ---- 字段分组管理（单层抽屉内切换视图，不再弹第二层抽屉）----
+const groupView = ref(false)
 const groupEditLabel = ref('')
 const groupEditKey = ref('')
 const groupTab = ref<'cols' | 'rows'>('cols')
@@ -302,7 +311,7 @@ const openGroupEdit = async (key: string) => {
   groupTab.value = 'cols'
   groupFields.value = []
   rowFields.value = []
-  groupEditVisible.value = true
+  groupView.value = true
   try {
     const res: any = await listUtilityFieldConfigsByGroup(props.category, key)
     const list = res?.data || res
@@ -339,8 +348,21 @@ const saveGroupFields = (): Promise<any> => {
     .finally(() => { saving.value = false })
 }
 const saveGroupEdit = async () => {
-  await saveGroupFields()
-  groupEditVisible.value = false
+  const res = await saveGroupFields()
+  // 保存失败（返回 null）时留在编辑态，避免用户以为已保存又回不去修改
+  if (res === null) return
+  MessagePlugin.success('字段已保存')
+  groupView.value = false
+}
+
+// 返回主视图：不落库（与"取消"同义），改动随下次进入重新拉取
+const closeGroupEdit = () => {
+  groupView.value = false
+}
+
+// 关闭抽屉时回到主视图，下次打开不会停在上次的分组页
+const resetGroupView = () => {
+  groupView.value = false
 }
 const addGroupField = () => {
   const isRow = groupTab.value === 'rows' && hasRowGroup.value
@@ -438,7 +460,10 @@ const load = async () => {
   await loadGroupCounts()
 }
 
-watch(() => props.visible, (v) => { if (v) load() })
+watch(() => props.visible, (v) => {
+  if (v) load()
+  else resetGroupView()
+})
 
 const onClose = () => emit('update:visible', false)
 
@@ -691,6 +716,24 @@ const persistAll = async () => {
   color: var(--td-text-color-secondary);
   font-size: 12px;
   line-height: 24px;
+}
+
+.us-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--td-component-stroke);
+
+  .us-sub-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .us-group-tabs {

@@ -11,7 +11,7 @@
         </t-col>
         <t-col :span="7" class="col-right">
           <TestResultPanel :testing="testing" :error="error" :success="success" :result="result" :fields="props.fields"
-            :prompt-preview="previewPrompt" />
+            :scope="scope" :prompt-preview="previewPrompt" />
         </t-col>
       </t-row>
     </div>

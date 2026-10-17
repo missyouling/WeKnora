@@ -253,3 +253,150 @@ func TestNormalizeDateValue(t *testing.T) {
 		}
 	}
 }
+
+// ---- Phase D：前端配置用的是 camelCase（invoiceNo / signDate），后端契约是 snake_case。
+// 两边必须靠 canonical 归一才能对上，否则用户在界面上打开"必填/正则"后完全不生效。
+
+func TestExtractGenericMatchesCamelCaseConfigKeys(t *testing.T) {
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "contractName", Enabled: true, Required: true, Type: "string",
+			Regex: `合同名称[:：]\s*([^\s]+)`},
+		{Name: "signDate", Enabled: true, Type: "date"},
+	}}
+	contracts := []ContractExtractionItem{{ContractNo: "HT-2026-009", SignDate: "2026年7月2日"}}
+	text := "合同名称： 设备采购合同\n"
+
+	issues, patches := ValidateGenericExtraction(NewGenericRecords(contracts), text, cfg)
+
+	if got := contracts[0].ContractName; got != "设备采购合同" {
+		t.Fatalf("camelCase 配置键应能补洞到 snake_case 字段，实际 %q", got)
+	}
+	if got := contracts[0].SignDate; got != "2026-07-02" {
+		t.Errorf("camelCase 声明 Type=date 也应归一化，实际 %q", got)
+	}
+	if len(patches) != 1 || patches[0].Field != "contractName" {
+		t.Fatalf("补洞明细应保留用户配置的键名: %+v", patches)
+	}
+	for _, it := range issues {
+		if it.Severity == issueSeverityError {
+			t.Errorf("已补洞的必填字段不应再报 error: %+v", it)
+		}
+	}
+}
+
+func TestExtractGenericFlatMapRecordValidatesAndPatches(t *testing.T) {
+	// 提取测试接口走的是"扁平 map"沙箱结果，不是强类型结构体；同一套校验必须能用。
+	fields := map[string]any{
+		"invoiceNo":   "",
+		"invoiceDate": "2026年7月2日",
+		"amount":      0,
+	}
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "invoiceNo", Enabled: true, Required: true, Regex: `发票号码[:：]?\s*(\d{20})`},
+		{Name: "buyerName", Enabled: true, Required: true},
+		{Name: "invoiceDate", Enabled: true, Type: "date"},
+	}}
+	text := "发票号码：26507000000266963455\n"
+
+	records := []GenericExtractRecord{NewGenericRecordFromMap(0, fields)}
+	issues, patches := ValidateGenericExtraction(records, text, cfg)
+
+	if got := fields["invoiceNo"]; got != "26507000000266963455" {
+		t.Fatalf("map 记录应被补洞回写，实际 %v", got)
+	}
+	if got := fields["invoiceDate"]; got != "2026-07-02" {
+		t.Errorf("map 记录日期应归一化，实际 %v", got)
+	}
+	if len(patches) != 1 || patches[0].Field != "invoiceNo" {
+		t.Fatalf("补洞明细异常: %+v", patches)
+	}
+	var missing []string
+	for _, it := range issues {
+		if it.Severity == issueSeverityError {
+			missing = append(missing, it.Field)
+		}
+	}
+	if len(missing) != 1 || missing[0] != "buyerName" {
+		t.Fatalf("只应为 buyerName 报 error，实际 %v (issues=%+v)", missing, issues)
+	}
+}
+
+// ---- Phase D 收尾：模型整键漏提取时，map 视图的必填字段也应能靠正则**建键**回填，
+// 与强类型结构体"字段一定存在、只是零值"同口径；正则也补不到才报 missing。
+
+func TestExtractGenericFlatMapRecordRegexCreatesAbsentKey(t *testing.T) {
+	fields := map[string]any{
+		"amount": 0,
+	}
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "invoiceNo", Enabled: true, Required: true, Regex: `发票号码[:：]?\s*(\d{20})`},
+	}}
+	text := "发票号码：26507000000266963455\n"
+
+	records := []GenericExtractRecord{NewGenericRecordFromMap(0, fields)}
+	issues, patches := ValidateGenericExtraction(records, text, cfg)
+
+	if got := fields["invoiceNo"]; got != "26507000000266963455" {
+		t.Fatalf("缺键的必填字段应被正则建键回填，实际 %v", got)
+	}
+	if len(patches) != 1 || patches[0].Field != "invoiceNo" {
+		t.Fatalf("补洞明细异常: %+v", patches)
+	}
+	for _, it := range issues {
+		if it.Severity == issueSeverityError {
+			t.Errorf("补洞成功的字段不应再报 error: %+v", it)
+		}
+	}
+}
+
+// ---- Phase D：发票侧同样要认 camelCase 配置键（规则面板保存的就是 invoiceNo/buyerName）。
+
+func TestExtractInvoiceConfigCamelCaseRegexPatchesMissingNo(t *testing.T) {
+	res := &InvoiceExtractionResult{
+		Kind:     "invoice",
+		Invoices: []InvoiceExtractionItem{{TotalAmount: f64(88.5)}},
+	}
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "invoiceNo", Enabled: true, Required: true, Regex: `发票号码[:：]\s*(\d{20})`},
+	}}
+	text := "重庆增值税电子普通发票\n发票号码: 26507904700100036197\n"
+
+	issues := FinalizeInvoiceRuleResult(context.Background(), res, text, cfg)
+
+	if got := res.Invoices[0].InvoiceNo; got != "26507900100036197" && got != "26507904700100036197" {
+		t.Fatalf("camelCase 配置的正则应参与补洞，实际 %q", got)
+	}
+	if len(res.PatchedByRegex) == 0 {
+		t.Fatalf("补洞来源应透出（patched_by_regex）")
+	}
+	for _, it := range issues {
+		if it.Field == "invoiceNo" && it.Severity == issueSeverityError {
+			t.Errorf("已补洞的必填字段不应再报 error: %+v", it)
+		}
+	}
+}
+
+func TestExtractInvoiceRequiredCamelCaseReportsError(t *testing.T) {
+	res := &InvoiceExtractionResult{
+		Kind: "invoice",
+		Invoices: []InvoiceExtractionItem{{
+			InvoiceNo:   "26507904700100036197",
+			InvoiceDate: "2026-07-02",
+			TotalAmount: f64(101.72),
+		}},
+	}
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "buyerName", Enabled: true, Required: true},
+	}}
+	issues := FinalizeInvoiceRuleResult(context.Background(), res, "", cfg)
+
+	found := false
+	for _, it := range issues {
+		if it.Field == "buyerName" && it.Severity == issueSeverityError {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("camelCase 必填缺失应产出 error 级 issue，实际 %+v", issues)
+	}
+}

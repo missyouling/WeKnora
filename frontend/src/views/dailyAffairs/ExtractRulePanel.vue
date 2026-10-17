@@ -1,5 +1,5 @@
 <template>
-  <div class="extract-rule-panel">
+  <div ref="rootRef" class="extract-rule-panel" :class="{ 'eq-narrow': narrow }">
     <div class="extract-toolbar">
       <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="isFleetScope ? (scope === 'maintain' ? '选择维保类型' : '选择证照类型') : '选择发票类型'" @change="onCertTypeChange" />
       <span v-else class="cert-type-static">整体提取规则</span>
@@ -15,6 +15,8 @@
         <span>字段名称</span>
         <span>字段描述</span>
         <span>数据类型</span>
+        <span class="col-required">必填</span>
+        <span class="col-regex">正则兜底</span>
         <span>状态</span>
         <span></span>
       </div>
@@ -23,6 +25,19 @@
           <span class="rtr-name" :class="{ 'rtr-disabled': !f.enabled }">{{ fieldLabel(f.name) }}</span>
           <span class="rtr-desc" :title="f.desc || f.name">{{ f.desc || '—' }}</span>
           <span class="rtr-type">{{ typeLabel(f.type || '') }}</span>
+          <!-- 必填：控制该字段为空时是否产出 error 级校验告警 -->
+          <span class="rtr-required" @click.stop>
+            <t-tooltip :content="requiredTip" placement="top">
+              <t-switch v-model="f.required" size="small" :disabled="!isStdField(f.name)" />
+            </t-tooltip>
+          </span>
+          <!-- 正则兜底：LLM 漏抽时从原文回填（Go RE2）。行内只做快速填写，完整编辑在展开区 -->
+          <span class="rtr-regex" @click.stop>
+            <t-tooltip :content="regexTip(f.name)" placement="top">
+              <t-input v-model="f.regex" size="small" class="rtr-regex-input" placeholder="未配置"
+                :disabled="!isStdField(f.name)" @click.stop />
+            </t-tooltip>
+          </span>
           <span class="rtr-status">
             <t-switch v-model="f.enabled" size="small" @click.stop @change="() => {}" />
           </span>
@@ -39,6 +54,38 @@
             <div class="rule-form-item">
               <label>数据类型</label>
               <t-select v-model="f.type" size="small" :options="typeOptions" />
+            </div>
+            <div class="rule-form-item">
+              <label>必填校验</label>
+              <div class="rule-form-inline">
+                <t-switch v-model="f.required" size="small" :disabled="!isStdField(f.name)" />
+                <span class="rule-form-hint">开启后该字段为空会产出 error 级告警（不影响提取结果落库）</span>
+              </div>
+            </div>
+            <div class="rule-form-item">
+              <label>正则兜底</label>
+              <t-input v-model="f.regex" size="small" placeholder="如 \b\d{20}\b"
+                :disabled="!isStdField(f.name)" />
+              <div class="rule-form-hint" :class="{ 'hint-danger': !!regexHintOf(f) }">
+                {{ regexHintOf(f) || '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）' }}
+              </div>
+            </div>
+            <div class="rule-form-item rule-form-item--full">
+              <label>常用正则</label>
+              <div class="rule-quick">
+                <span class="rule-quick-title">一键填入</span>
+                <t-tooltip v-for="p in REGEX_PRESETS" :key="p.name" :content="p.hint" placement="top">
+                  <t-tag size="small" variant="outline" theme="primary" class="rule-quick-tag"
+                    :class="{ 'quick-disabled': !isStdField(f.name) }" @click="applyRegexPreset(f, p)">
+                    {{ p.name }}
+                  </t-tag>
+                </t-tooltip>
+                <t-button v-if="f.regex" variant="text" size="small" @click="f.regex = ''">清空</t-button>
+              </div>
+              <t-alert v-if="!fieldRulesSupported(scope)" theme="info" variant="light" class="rule-form-alert"
+                message="本模块暂未接入字段级校验与正则补洞（目前仅发票/合同/制度/奖惩生效）" />
+              <t-alert v-else-if="!isStdField(f.name)" theme="info" variant="light" class="rule-form-alert"
+                message="自定义扩展字段仅注入 AI 提取 Prompt，后置正则补洞仅对系统标准字段生效" />
             </div>
             <div class="rule-form-item rule-form-item--full">
               <label>提取规则</label>
@@ -85,15 +132,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/api/fleet'
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
-import { invoiceFieldLabel } from './invoiceFieldLabels'
-import { contractFieldLabel } from './contractFieldLabels'
-import { regulationFieldLabel } from './regulationFieldLabels'
-import { noticeFieldLabel } from './noticeFieldLabels'
+import {
+  REGEX_PRESETS,
+  extractFieldLabel,
+  fieldRulesSupported,
+  isStandardField,
+  regexSyntaxHint,
+  type RegexPreset,
+} from './extractFieldMeta'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
 
@@ -597,17 +648,38 @@ function toggleEdit(name: string) {
   editingName.value = editingName.value === name ? '' : name
 }
 
-// 发票/合同字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
+// 发票/合同/制度/通知字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
 function fieldLabel(n: string): string {
-  return props.scope === 'invoice'
-    ? invoiceFieldLabel(n)
-    : props.scope === 'contract'
-      ? contractFieldLabel(n)
-      : props.scope === 'regulation'
-        ? regulationFieldLabel(n)
-        : props.scope === 'award_punish'
-          ? noticeFieldLabel(n)
-          : n
+  return extractFieldLabel(props.scope, n)
+}
+
+// 字段级规则（必填/正则）是否可用：该模块已接入通用校验 + 字段确实是标准契约键。
+// 自定义扩展中文 key 只进 Prompt，后端补洞器装不下它 —— UI 必须置灰而不是装作能用。
+const isStdField = (name: string) => fieldRulesSupported(props.scope) && isStandardField(props.scope, name)
+
+const requiredTip = computed(() =>
+  fieldRulesSupported(props.scope)
+    ? '开启后该字段为空会产出 error 级校验告警'
+    : '本模块暂未接入字段级校验（仅发票/合同/制度/奖惩生效）',
+)
+
+function regexTip(name: string): string {
+  if (!fieldRulesSupported(props.scope)) return '本模块暂未接入正则补洞（仅发票/合同/制度/奖惩生效）'
+  if (!isStandardField(props.scope, name)) return '自定义扩展字段仅注入 AI 提取 Prompt，后置正则补洞仅对系统标准字段生效'
+  return '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）'
+}
+
+function regexHintOf(f: ExtractFieldConfig): string {
+  if (!isStdField(f.name)) return ''
+  return regexSyntaxHint(f.regex || '')
+}
+
+function applyRegexPreset(f: ExtractFieldConfig, p: RegexPreset) {
+  if (!isStdField(f.name)) {
+    MessagePlugin.warning('自定义扩展字段不支持正则兜底')
+    return
+  }
+  f.regex = p.value
 }
 
 function typeLabel(t: string) {
@@ -619,7 +691,7 @@ function applyExample(f: ExtractFieldConfig, text: string) {
 }
 
 function makeField(name: string): ExtractFieldConfig {
-  return { name, desc: '', type: 'string', rule: '', enabled: true }
+  return { name, desc: '', type: 'string', rule: '', enabled: true, required: false, regex: '' }
 }
 
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
@@ -715,6 +787,10 @@ async function loadConfig() {
         type: c?.type || ({ text: 'string', number: 'number', date: 'date', array: 'array' } as Record<string,string>)[a.dataType] || 'string',
         rule: c?.rule || d.rule || '',
         enabled: c && c.enabled !== undefined ? !!c.enabled : a.enabled,
+        // 必填/正则兜底：配置里有就沿用（历史配置没有这两个键 → 关闭/空），
+        // 不写进 DEFAULT_RULES 底稿：默认开必填会让存量文档一上线就满屏 error。
+        regex: c?.regex || '',
+        required: c && c.required !== undefined ? !!c.required : false,
       }
     })
     if (!fields.value.length) fields.value.push(makeField(''))
@@ -830,7 +906,22 @@ watch(
   },
 )
 
+// ---- 紧凑模式：抽屉可拖宽（560~1100），列多了必然挤压 ----
+// 监听自身宽度而不是 viewport：同一个面板既在 760px 设置抽屉里，也在可拖宽的车队抽屉里，
+// 用 media query 会按窗口宽度误判。窄于 640px 时收起"字段描述"列，把宽度让给正则输入。
+const NARROW_WIDTH = 640
+const rootRef = ref<HTMLElement | null>(null)
+const narrow = ref(false)
+let ro: ResizeObserver | null = null
+
 onMounted(async () => {
+  if (typeof ResizeObserver !== 'undefined' && rootRef.value) {
+    ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width || 0
+      narrow.value = w > 0 && w < NARROW_WIDTH
+    })
+    ro.observe(rootRef.value)
+  }
   await ensureKb()
   await refresh()
   const first = pickFirstOption()
@@ -838,6 +929,11 @@ onMounted(async () => {
     certType.value = first
     await loadConfig()
   }
+})
+
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
 })
 
 // 兜底：categories 异步加载完成后，若仍未选中类型则自动选中第一个（默认加载第一个分类）
@@ -939,11 +1035,24 @@ watch(certTypeOptions, (groups) => {
   .rule-table-head,
   .rule-table-row {
     display: grid;
-    grid-template-columns: minmax(110px, 1.2fr) minmax(120px, 2fr) 0.7fr 0.6fr 22px;
+    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态 / 展开箭头
+       正则列给 minmax(120px,…) 保底：Input 再窄就无法辨认正则片段 */
+    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px 18px;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     padding: 7px 12px;
     font-size: 12px;
+  }
+
+  /* 窄态：收起字段描述列，把宽度让给正则输入（避免抽屉内水平挤压/错位） */
+  .extract-rule-panel.eq-narrow & {
+    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px 16px;
+
+    /* 只隐藏"字段描述"列（行内第 2 格 / 表头第 2 格），必填与正则列必须保留 */
+    .rtr-desc,
+    .rule-table-head > span:nth-child(2) {
+      display: none;
+    }
   }
 
   .rule-table-head {
@@ -977,6 +1086,25 @@ watch(certTypeOptions, (groups) => {
       color: var(--td-text-color-secondary);
     }
     .rtr-type { font-variant-numeric: tabular-nums; }
+    .rtr-required {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      :deep(.t-switch) { margin: 0 auto; }
+    }
+    .rtr-regex {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      .rtr-regex-input {
+        width: 100%;
+        min-width: 0;
+        :deep(input) {
+          font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
+          font-size: 11px;
+        }
+      }
+    }
     .rtr-status {
       display: flex;
       align-items: center;
@@ -1047,6 +1175,30 @@ watch(certTypeOptions, (groups) => {
       white-space: nowrap;
     }
     .rule-quick-tag { cursor: pointer; }
+    .quick-disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  }
+
+  .rule-form-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+  }
+
+  .rule-form-hint {
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: 4px;
+    color: var(--td-text-color-placeholder);
+
+    &.hint-danger { color: var(--td-error-color); }
+  }
+
+  .rule-form-alert {
+    margin-top: 8px;
   }
 
   .rule-form-actions {

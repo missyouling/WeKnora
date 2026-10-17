@@ -392,6 +392,9 @@
       :close-on-overlay-click="true" @close="closeDetail"
       @update:visible="(v: boolean) => (v || closeDetail())">
       <div class="utility-detail-drawer">
+        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
+        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
+
         <!-- 字段编辑 -->
         <section class="detail-block">
           <div class="detail-block-title">账单字段</div>
@@ -532,6 +535,8 @@ import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vu
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import SolarSettingsDrawer from './SolarSettingsDrawer.vue'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
@@ -970,14 +975,28 @@ const detailFields = computed(() => [
   { key: 'remark', label: '备注', type: 'text' },
 ])
 
+// 提取质量与溯源：详情接口的 custom_metadata（光伏账单一份文件通常一条记录）
+const detailQuality = ref<ExtractQuality>(EMPTY_QUALITY)
+const qualityLabel = (f: string) => f
+
 const openDetail = async (row: Row) => {
   currentRow.value = row
   detailForm.value = { ...(row.item || {}) }
+  detailQuality.value = EMPTY_QUALITY
   detailVisible.value = true
   try {
     const pv: any = await previewKnowledgeFile(row.knowledgeId)
     printUrl.value = pv?.data?.url || pv?.url || ''
   } catch { printUrl.value = '' }
+  try {
+    const kd: any = await getKnowledgeDetails(row.knowledgeId)
+    const meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
+    const page = Number(row.item?.page)
+    detailQuality.value = parseExtractQuality(meta, Number.isFinite(page) && page > 0 ? page - 1 : undefined)
+  } catch {
+    // 详情拉取失败不影响查看：质量面板保持静默（历史数据本来也可能没有这些键）
+    detailQuality.value = EMPTY_QUALITY
+  }
 }
 const closeDetail = () => {
   detailVisible.value = false
