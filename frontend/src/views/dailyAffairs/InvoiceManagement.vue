@@ -350,14 +350,10 @@
 
         <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
         <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
-          <t-collapse-panel value="preview" :header="previewHeader">
+          <t-collapse-panel value="preview" header="源文件预览">
             <div class="detail-block-content">
-              <!-- page 传 0（不跳页）：records[].page 是"第几张票"，不是 PDF 真实页码。
-                   OCR 引擎（paddleocr_vl_cloud）的输出不含任何页标记，后端无法得知真实页；
-                   当票序号 > PDF 页数时，iframe 的 #page=N 会让浏览器停在末页
-                   （表现为「第 15 张却显示 12 页」）。宁可不跳，也不误导。 -->
               <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :page="0" :file-type="currentRow?.fileType || ''"
+                :page="currentRow.page" :file-type="currentRow?.fileType || ''"
                 :file-name="currentRow?.fileName || ''" :active="true" />
             </div>
           </t-collapse-panel>
@@ -1553,13 +1549,6 @@ const openDetail = async (row: InvoiceRow) => {
 const detailTitle = computed(() =>
   currentRow.value?.invoiceNo ? `发票详情 · ${currentRow.value.invoiceNo}` : '发票详情'
 )
-
-// 预览面板标题：带上「第 N/M 张」，让用户知道该发票在文件中的位置，
-// 因为不再自动跳页（page 是票序号，与 PDF 真实页无对应关系）。
-const previewHeader = computed(() => {
-  const mi = String(currentRow.value?.multiIndex || '').trim()
-  return mi ? `源文件预览（本文件第 ${mi.split('/')[0]} 张，共 ${mi.split('/')[1]} 张，请手动翻页查找）` : '源文件预览'
-})
 
 // ---- 字段编辑 + 手动保存 ----
 // 明细子列口径（单一权威源 = 分类字段配置中 items 字段的 sub_fields，设置抽屉可编辑）。
