@@ -1058,6 +1058,18 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			logger.Infof(ctx, "Invoice extraction by markdown-table rules: %d invoices from knowledge %s", len(mdRes.Invoices), knowledgeID)
 		}
 	}
+	if !ruleOK {
+		// 第三套：扁平布局规则（docreader 实际输出格式）——发票代码/号码/开票日期
+		// 独立成行，明细行字段顺序固定（项目 车牌 车型 通行起 通行止 金额 税率 税额），
+		// 可确定性解析，毫秒级完成且不会把『机器编号』误当发票号。
+		// 为什么排在 LLM 之前：实测 16 页票据即使缩到 8 chunk/批，LLM 仍会因
+		// "多张票 × 8 个子列"的输出量触发 5 分钟超时，稳定性远不如规则。
+		if flatRes, flatOK := service.ExtractInvoicesByFlatLayoutFromChunks(chunks); flatOK {
+			ruleRes = flatRes
+			ruleOK = true
+			logger.Infof(ctx, "Invoice extraction by flat-layout rules: %d invoices from knowledge %s", len(flatRes.Invoices), knowledgeID)
+		}
+	}
 	if ruleOK {
 		merged = ruleRes
 		sawInvoice = len(ruleRes.Invoices) > 0
@@ -1179,6 +1191,12 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	}
 	extracted := merged
 	service.NormalizeInvoiceExtractionResult(extracted)
+	// 确定性覆盖层：用票面明确标签纠正 LLM 易错字段——发票号码（实测曾误取
+	// 机器编号 499098302394 而非『发票号码 64869484』）与明细子列（车牌/车型/
+	// 通行日期起止）。张数不一致时该函数不改动任何字段（防按序错位）。
+	if n := service.OverlayDeterministicInvoiceFields(extracted, chunks); n > 0 {
+		logger.Infof(ctx, "Invoice extraction: deterministic overlay applied (%d invoices) knowledge=%s", n, knowledgeID)
+	}
 
 	meta := service.InvoiceCustomMetadata{
 		Kind:          extracted.Kind,

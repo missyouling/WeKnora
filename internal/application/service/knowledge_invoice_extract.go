@@ -583,6 +583,13 @@ func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 			sb.WriteString(ins + "\n\n")
 		}
 	}
+	// 号码口径（通用防错）：票面上往往并排多个数字串（发票号码/机器编号/校验码/
+	// 发票代码/密码区密文），模型很容易取错。实测 16 页通行费票据时，模型把
+	// 『机器编号 499098302394』当成了 invoice_no，而真正的『发票号码 64869484』
+	// 就在同一页——用户直接反馈"发票号码不正确"。
+	sb.WriteString("号码口径（必须严格遵守）：invoice_no 只能取票面明确标注『发票号码』（含『发票号码:』『发票号』『No.』等写法）标签之后的数字串；" +
+		"票面上的『机器编号』『校验码』『发票代码』『密码区』密文，以及任何没有明确标签的长数字串，一律不得写入 invoice_no。" +
+		"若该张票面确实没有『发票号码』标签，invoice_no 输出空字符串，不要用其它数字顶替。\n\n")
 	sb.WriteString(invoiceExtractionSystemPrompt)
 	return sb.String()
 }
@@ -831,7 +838,7 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 //     总时长翻倍（10 批 × 约 2 分钟），且单批内容过少导致模型漏提
 //     （实测 16 张只提出 6 张）。
 //   - 取值过大（历史 64）→ 整篇合成 1 批，单批输出超长，供应商返回空 content。
-const InvoiceExtractionBatchSize = 24
+const InvoiceExtractionBatchSize = 8
 
 // InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。
 // 记录 chunk 索引区间是为了**结果页码归位**：分批提取必须按批次索引与原始位置
@@ -1631,4 +1638,325 @@ func ExtractInvoicesByMarkdownTableRulesFromChunks(chunks []*types.Chunk, docHin
 		return nil, false
 	}
 	return ExtractInvoicesByMarkdownTableRules(strings.Join(parts, "\n"), docHint)
+}
+
+// ---- 扁平格式确定性覆盖层 ----
+//
+// 背景：LLM 对"票面上并排的多个数字串"判断不可靠——实测把『机器编号
+// 499098302394』当成了 invoice_no，而真正的『发票号码 64869484』就在同页。
+// 该层不改动 LLM 的语义字段（购销方/地址/开户行等），只用票面明确标签做
+// 确定性覆盖：发票号码 + 明细数据行里的车牌号/车辆类型/通行日期起止。
+
+var (
+	// flatInvoiceNoLabelRe 只认明确标签，不含『机器编号』『校验码』。
+	flatInvoiceNoLabelRe = regexp.MustCompile(`发票号码\s*[:：]\s*(\d{6,20})`)
+	// flatItemRowRe 匹配明细数据行（docreader 输出的固定结构）：
+	//   *经营租赁*通行费 渝C87567 货车 20251024 20251024 93.32 9% 8.40
+	//   └项目名称        └车牌   └车型 └通行起  └通行止 └金额 └税率 └税额
+	flatItemRowRe = regexp.MustCompile(
+		`(\*[^\s]+\*\S*)\s+([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Za-z0-9]{4,8})\s+(\S{1,8})\s+(\d{8})\s+(\d{8})\s+([\d.]+)\s+(\d+(?:\.\d+)?%)\s+([\d.]+)`)
+)
+
+// OverlayDeterministicInvoiceFields 用文本中的确定性信息覆盖 LLM 结果的易错字段：
+//   - invoice_no：只取『发票号码』标签值，杜绝误取机器编号/校验码
+//   - items 子列：车牌号 / 车辆类型 / 通行日期起止（票面数据行结构固定）
+//
+// 覆盖条件（保守）：文本识别出的张数与结果张数**完全相等**才按序覆盖；否则一律
+// 不动——张数不一致时按序对齐必然错位，宁可让用户复核，也不能把 A 票的号码写到
+// B 票上（历史上踩过"张冠李戴"）。返回覆盖的张数。
+func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*types.Chunk) int {
+	if res == nil || res.Kind == "not_invoice" || len(res.Invoices) == 0 {
+		return 0
+	}
+	var sb strings.Builder
+	for _, c := range chunks {
+		if c == nil {
+			continue
+		}
+		if c.ChunkType != types.ChunkTypeText &&
+			c.ChunkType != types.ChunkTypeImageOCR &&
+			c.ChunkType != types.ChunkTypeImageCaption {
+			continue
+		}
+		sb.WriteString(c.Content)
+		sb.WriteString("\n")
+	}
+	full := sb.String()
+
+	nos := flatInvoiceNoLabelRe.FindAllStringSubmatch(full, -1)
+	if len(nos) != len(res.Invoices) {
+		return 0
+	}
+	rows := flatItemRowRe.FindAllStringSubmatch(full, -1)
+	overlaid := 0
+	for i := range res.Invoices {
+		res.Invoices[i].InvoiceNo = strings.TrimSpace(nos[i][1])
+		if i < len(rows) {
+			applyFlatItemRow(&res.Invoices[i], rows[i])
+		}
+		overlaid++
+	}
+	return overlaid
+}
+
+// applyFlatItemRow 把数据行回填到明细行（m 见 flatItemRowRe 的分组）。
+func applyFlatItemRow(inv *InvoiceExtractionItem, m []string) {
+	if inv == nil || len(m) < 9 {
+		return
+	}
+	if len(inv.Items) == 0 {
+		inv.Items = []InvoiceExtractionLine{{}}
+	}
+	line := &inv.Items[0]
+	if line.Extra == nil {
+		line.Extra = map[string]any{}
+	}
+	if v := strings.TrimSpace(m[1]); v != "" {
+		line.Name = v
+	}
+	line.Extra["plate_no"] = strings.TrimSpace(m[2])
+	line.Extra["vehicle_type"] = strings.TrimSpace(m[3])
+	if v := mdDateFromCompact(m[4]); v != "" {
+		line.Extra["travel_from"] = v
+	}
+	if v := mdDateFromCompact(m[5]); v != "" {
+		line.Extra["travel_to"] = v
+	}
+	if v := parseAmountToFloat(m[6]); v != nil {
+		line.Amount = v
+	}
+	if v := parsePercentToFloat(m[7]); v != nil {
+		line.TaxRate = v
+	}
+	if v := parseAmountToFloat(m[8]); v != nil {
+		line.TaxAmt = v
+	}
+}
+
+// flatSegmentAnchorRe 票段锚点：docreader 对每张票都会输出「发票代码: X」，
+// 以此为界把一个 chunk 里的多张票切成独立段，避免跨票串号。
+var flatSegmentAnchorRe = regexp.MustCompile(`发票代码\s*[:：]\s*(\d{10,12})`)
+
+// flatDateLineRe 抓取「开票日期: 2025年11月04日」。
+var flatDateLineRe = regexp.MustCompile(`开票日期\s*[:：]\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日`)
+
+// flatTitleRe 抓取票种标题（docreader 用 markdown 高亮包裹，如
+// `# <u>重庆增值税电子普通发票</u>`）。
+var flatTitleRe = regexp.MustCompile(`<u>\s*([^<]+?)\s*</u>`)
+
+// ExtractInvoicesByFlatLayout 从 docreader 票据文本中**确定性**解析全部发票，
+// 不依赖大模型。返回 (result, true) 表示命中该格式。
+//
+// 为什么需要它：LLM 在"每张票 8 个子列 × 多张"的输出量下极不稳定（实测 16 页
+// 票据即使缩到 8 chunk/批仍会触发 5 分钟超时），且会把『机器编号』当成发票号。
+// 该格式的票面结构固定（号码/代码/日期独立成行、明细行字段顺序固定），
+// 正则可以 100% 命中，毫秒级完成。
+//
+// 命中判据：至少解析出 1 张且**每张都有明确发票号码**；号码缺失的段直接跳过
+// （宁可漏也不猜——票面上并排的机器编号/校验码极易被误当号码）。
+func ExtractInvoicesByFlatLayout(content string) (*InvoiceExtractionResult, bool) {
+	if strings.TrimSpace(content) == "" {
+		return nil, false
+	}
+	locs := flatSegmentAnchorRe.FindAllStringSubmatchIndex(content, -1)
+	if len(locs) == 0 {
+		return nil, false
+	}
+	invs := make([]InvoiceExtractionItem, 0, len(locs))
+	for i, loc := range locs {
+		start := loc[0]
+		end := len(content)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		seg := content[start:end]
+		inv, ok := parseFlatInvoiceSegment(seg)
+		if !ok {
+			continue
+		}
+		inv.Page = len(invs) + 1
+		invs = append(invs, inv)
+	}
+	if len(invs) == 0 {
+		return nil, false
+	}
+	return &InvoiceExtractionResult{Kind: "invoice", Invoices: invs}, true
+}
+
+// parseFlatInvoiceSegment 解析单张票段。返回 false 表示该段缺少发票号码（不可靠）。
+func parseFlatInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
+	var inv InvoiceExtractionItem
+	if m := flatInvoiceNoLabelRe.FindStringSubmatch(seg); len(m) > 1 {
+		inv.InvoiceNo = strings.TrimSpace(m[1])
+	}
+	if inv.InvoiceNo == "" {
+		return inv, false
+	}
+	if m := flatSegmentAnchorRe.FindStringSubmatch(seg); len(m) > 1 {
+		inv.InvoiceCode = strings.TrimSpace(m[1])
+	}
+	if m := flatDateLineRe.FindStringSubmatch(seg); len(m) > 3 {
+		inv.InvoiceDate = mdDateFromCompact(fmt.Sprintf("%s%02d%02d",
+			m[1], atoiOrZero(m[2]), atoiOrZero(m[3])))
+	}
+	if m := flatTitleRe.FindStringSubmatch(seg); len(m) > 1 {
+		inv.InvoiceType = NormalizeInvoiceTypeFromTicket(strings.TrimSpace(m[1]))
+	}
+	// 明细行：一张通行费票通常只有一个通行区间。优先纯文本布局（docreader），
+	// 其次 HTML 表格（OCR 引擎 paddleocr_vl_cloud 的输出格式）。
+	if m := flatItemRowRe.FindStringSubmatch(seg); len(m) > 8 {
+		applyFlatItemRow(&inv, m)
+	} else if vals := htmlTableDataRow(seg); len(vals) > 0 {
+		applyHTMLItemRow(&inv, vals)
+	}
+	if len(inv.Items) > 0 {
+		line := inv.Items[0]
+		if line.Amount != nil {
+			inv.Amount = line.Amount
+		}
+		if line.TaxAmt != nil {
+			inv.Tax = line.TaxAmt
+		}
+		if inv.Amount != nil && inv.Tax != nil {
+			total := *inv.Amount + *inv.Tax
+			inv.TotalAmount = &total
+		}
+	}
+	// 价税合计以票面「(小写) ¥101.72」为准（比按明细相加更可靠，能覆盖汇总口径）。
+	if m := flatHTMLTotalRe.FindStringSubmatch(seg); len(m) > 1 {
+		if v := parseAmountToFloat(strings.ReplaceAll(m[1], ",", "")); v != nil {
+			inv.TotalAmount = v
+		}
+	}
+	return inv, true
+}
+
+// atoiOrZero 解析小整数（年月日），非法返回 0。
+func atoiOrZero(s string) int {
+	n := 0
+	for _, r := range strings.TrimSpace(s) {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// ExtractInvoicesByFlatLayoutFromChunks 拼接文本类 chunk 后按扁平布局规则解析。
+// chunk 边界可能切开单张票，但按顺序拼接后内容连续，按「发票代码」切段即可复原。
+func ExtractInvoicesByFlatLayoutFromChunks(chunks []*types.Chunk) (*InvoiceExtractionResult, bool) {
+	var sb strings.Builder
+	for _, c := range chunks {
+		if c == nil {
+			continue
+		}
+		if c.ChunkType != types.ChunkTypeText &&
+			c.ChunkType != types.ChunkTypeImageOCR &&
+			c.ChunkType != types.ChunkTypeImageCaption {
+			continue
+		}
+		sb.WriteString(c.Content)
+		sb.WriteString("\n")
+	}
+	return ExtractInvoicesByFlatLayout(sb.String())
+}
+
+// ---- HTML 表格行解析（OCR 解析引擎的输出格式） ----
+//
+// paddleocr_vl_cloud 输出的票面是标准 HTML 表格：
+//
+//	<tr><td>…通行费</td><td>渝C87567</td><td>货车</td><td>20251024</td><td>20251024</td>
+//	    <td>93.32</td><td>9%</td><td>8.40</td></tr>
+//
+// 与纯文本布局（docreader）字段顺序一致，但分隔符不同，需要单独解析。
+var (
+	flatHTMLTrRe = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
+	flatHTMLTdRe = regexp.MustCompile(`(?is)<td[^>]*>(.*?)</td>`)
+	// flatHTMLTotalRe 抓价税合计小写金额：<td colspan=7>…(小写) ¥101.72</td>
+	flatHTMLTotalRe = regexp.MustCompile(`(?is)小写\D{0,4}([\d,]+(?:\.\d+)?)`)
+)
+
+// stripHTMLTags 去掉内联标签与实体，保留可见文本。
+func stripHTMLTags(s string) string {
+	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, "")
+	s = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "&", "&quot;", `"`, "&nbsp;", " ").Replace(s)
+	return strings.TrimSpace(s)
+}
+
+// plateLike 判断是否像车牌（省份简称开头的 6~8 位）。
+func plateLike(s string) bool {
+	const prov = "京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼"
+	r := []rune(s)
+	if len(r) < 6 || len(r) > 9 {
+		return false
+	}
+	return strings.ContainsRune(prov, r[0])
+}
+
+// isCompact8Date 判断 8 位紧凑日期。
+func isCompact8Date(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// htmlTableDataRow 从票段中找出明细数据行（项目/车牌/车型/通行起/通行止/金额/税率/税额）。
+func htmlTableDataRow(seg string) []string {
+	for _, tr := range flatHTMLTrRe.FindAllStringSubmatch(seg, -1) {
+		cells := flatHTMLTdRe.FindAllStringSubmatch(tr[1], -1)
+		if len(cells) < 8 {
+			continue
+		}
+		vals := make([]string, 0, len(cells))
+		for _, c := range cells {
+			vals = append(vals, stripHTMLTags(c[1]))
+		}
+		// 数据行特征：第 2 列像车牌、第 4/5 列是 8 位日期。
+		if plateLike(vals[1]) && isCompact8Date(vals[3]) && isCompact8Date(vals[4]) {
+			return vals
+		}
+	}
+	return nil
+}
+
+// applyHTMLItemRow 把 HTML 表格数据行回填到明细行。
+// vals = [项目, 车牌, 车型, 通行起, 通行止, 金额, 税率, 税额]
+func applyHTMLItemRow(inv *InvoiceExtractionItem, vals []string) {
+	if inv == nil || len(vals) < 8 {
+		return
+	}
+	if len(inv.Items) == 0 {
+		inv.Items = []InvoiceExtractionLine{{}}
+	}
+	line := &inv.Items[0]
+	if line.Extra == nil {
+		line.Extra = map[string]any{}
+	}
+	// 项目名里 OCR 会带入 ^ {{*}} 之类的标记，清洗为「*经营租赁*通行费」。
+	name := strings.NewReplacer("^", "", "{{*}}", "*", " $", "", "$", "").Replace(vals[0])
+	line.Name = strings.TrimSpace(name)
+	line.Extra["plate_no"] = vals[1]
+	line.Extra["vehicle_type"] = vals[2]
+	if v := mdDateFromCompact(vals[3]); v != "" {
+		line.Extra["travel_from"] = v
+	}
+	if v := mdDateFromCompact(vals[4]); v != "" {
+		line.Extra["travel_to"] = v
+	}
+	if v := parseAmountToFloat(strings.TrimSpace(vals[5])); v != nil {
+		line.Amount = v
+	}
+	if v := parsePercentToFloat(strings.TrimSpace(vals[6])); v != nil {
+		line.TaxRate = v
+	}
+	if v := parseAmountToFloat(strings.TrimSpace(vals[7])); v != nil {
+		line.TaxAmt = v
+	}
 }
