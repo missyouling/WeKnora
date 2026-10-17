@@ -139,6 +139,18 @@ func parseSandboxPagination(c *gin.Context) (page, pageSize int) {
 	return page, pageSize
 }
 
+// extractInProgressReason 是「同一文档已有提取任务在途」的机器可读标识。
+// 409 是同一 HTTP 状态但语义分两类：本值代表并发重复提交（数据仍会由持锁
+// 请求完成），另一类是业务性冲突（单号重复）。前端据此把前者判为「已在提取
+// 中」并转轮询跟随，而不是当成提取失败。
+const extractInProgressReason = "extract_in_progress"
+
+// extractInProgressDetails 构造 409 响应体 details：附带 knowledge_id/scope
+// 便于前端与日志定位是哪份文档的哪条通道被拒。
+func extractInProgressDetails(knowledgeID, scope string) gin.H {
+	return gin.H{"reason": extractInProgressReason, "knowledge_id": knowledgeID, "scope": scope}
+}
+
 // businessExtractionInProgress 判断业务提取（发票/合同/制度/奖惩）是否因文档
 // 仍处于解析流水线中而必须拦截。仅拦截 pending/processing/finalizing/deleting；
 // completed 直接放行；failed/cancelled 也放行——docreader 短暂不可用会留下 failed，
@@ -207,7 +219,8 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
 	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
-		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		c.Error(errors.NewConflictError("extraction already in progress for this document").
+			WithDetails(extractInProgressDetails(knowledgeID, "contract")))
 		return
 	}
 	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "contract", certType)
@@ -932,7 +945,8 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
 	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
-		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		c.Error(errors.NewConflictError("extraction already in progress for this document").
+			WithDetails(extractInProgressDetails(knowledgeID, "invoice")))
 		return
 	}
 	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "invoice", certType)
@@ -1777,7 +1791,8 @@ func (h *BusinessExtractHandler) ExtractRegulation(c *gin.Context, certType stri
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
 	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
-		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		c.Error(errors.NewConflictError("extraction already in progress for this document").
+			WithDetails(extractInProgressDetails(knowledgeID, "regulation")))
 		return
 	}
 	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "regulation", certType)
@@ -2131,7 +2146,8 @@ func (h *BusinessExtractHandler) ExtractAwardPunish(c *gin.Context, certType str
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
 	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
-		c.Error(errors.NewConflictError("extraction already in progress for this document"))
+		c.Error(errors.NewConflictError("extraction already in progress for this document").
+			WithDetails(extractInProgressDetails(knowledgeID, "award_punish")))
 		return
 	}
 	taskID, err := h.enqueueBusinessExtract(ctx, effectiveTenantID, kbID, knowledgeID, "award_punish", certType)

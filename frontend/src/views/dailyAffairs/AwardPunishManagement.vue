@@ -468,6 +468,7 @@ import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
+import { isExtractInProgress } from '@/composables/extractConflict'
 
 const KB_NAME = '日常事务-通知公告'
 const PAGE_SIZE = 20
@@ -1342,7 +1343,7 @@ const handleFileExtract = async () => {
     results.forEach((r, i) => {
       if (r.status === 'fulfilled') { ok++; return }
       // 409 冲突：属重复提交而非提取失败，不写入 extractFailed
-      if ((r.reason as any)?.$httpStatus === 409) { conflict++; return }
+      if (isExtractInProgress(r.reason)) { conflict++; return }
       extractFailed.value.set(ids[i], Date.now())
     })
     const fail = results.length - ok - conflict
@@ -1368,7 +1369,7 @@ const handleFileExtract = async () => {
     // 看到 es=processing 且不在 in-flight 会重复提交 → 后端 extractMu 409。
     // 仅真实失败（非 409）删除 in-flight，避免文件因 in-flight 残留永久卡死。
     results.forEach((r, i) => {
-      if (r.status === 'rejected' && (r.reason as any)?.$httpStatus !== 409) {
+      if (r.status === 'rejected' && !isExtractInProgress(r.reason)) {
         extractInFlight.value.delete(ids[i])
       }
     })

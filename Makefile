@@ -76,6 +76,15 @@ help:
 BINARY_NAME=WeKnora
 MAIN_PATH=./cmd/server
 
+# 版本戳：把 Git SHA / 构建时刻写进二进制，/api/v1/system/info 才能报出
+# 真实的 commit_id（默认 unknown，无法把运行实例对应到具体提交）。
+# 容器镜像走 Dockerfile.da 的 ARG GIT_COMMIT，本地/VM 直编走这里。
+GIT_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION_STAMP := github.com/Tencent/WeKnora/internal/handler
+VERSION_LDFLAGS := -X $(VERSION_STAMP).CommitID=$(GIT_COMMIT) -X $(VERSION_STAMP).BuildTime=$(BUILD_TIME)
+export GIT_COMMIT
+
 # Docker related variables
 DOCKER_IMAGE=wechatopenai/weknora-app
 DOCKER_TAG=latest
@@ -93,7 +102,7 @@ endif
 
 # Build the application
 build:
-	go build -o $(BINARY_NAME) $(MAIN_PATH)
+	go build -ldflags="$(VERSION_LDFLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 
 # Build the anydoc static archive (Rust) that the `anydoc` build tag links.
 # Override the platform with TARGET=<rust-target-triple>.
@@ -102,7 +111,7 @@ anydoc-lib:
 
 # Build the application with the in-process anydoc parser engine linked in.
 build-anydoc: anydoc-lib
-	go build -tags anydoc -o $(BINARY_NAME) $(MAIN_PATH)
+	go build -tags anydoc -ldflags="$(VERSION_LDFLAGS)" -o $(BINARY_NAME) $(MAIN_PATH)
 
 # Run the application
 run: build

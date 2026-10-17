@@ -1,5 +1,6 @@
 import { ref, onBeforeUnmount, type Ref } from 'vue'
 import { listKnowledgeFiles } from '@/api/knowledge-base'
+import { isExtractInProgress } from './extractConflict'
 
 export interface BusinessFileItem {
   id: string
@@ -19,6 +20,40 @@ export interface BusinessFileItem {
  */
 export const sharedExtractInFlight = new Set<string>()
 export const sharedExtractFailed = new Map<string, number>()
+
+// ---- 跨刷新防重 ----
+// 模块级 in-flight 是纯内存状态，页面刷新 / Vite HMR 全量 reload 后会清空。
+// 此刻后端 extract_status 往往还停在 processing（终态要等模型跑完才落），
+// 下一轮 3s 轮询就会认为「没人在途」再提交一次，撞后端 extractMu 的 409。
+// 把集合快照进 sessionStorage，模块初始化时回填，即可跨刷新续上防重。
+const FLIGHT_STORAGE_KEY = 'weknora-extract-inflight'
+// 兜底 TTL：提取最长 30 分钟硬上限，超时快照按失效处理，避免异常残留
+// 让某个文件再也无法自动提取。终态到达时仍由 scanOnce 正常回收。
+const FLIGHT_TTL_MS = 30 * 60 * 1000
+
+function loadFlightSnapshot(): void {
+  try {
+    const raw = sessionStorage.getItem(FLIGHT_STORAGE_KEY)
+    if (!raw) return
+    const snap = JSON.parse(raw) as Record<string, number>
+    const now = Date.now()
+    for (const [id, at] of Object.entries(snap || {})) {
+      if (typeof at === 'number' && now - at < FLIGHT_TTL_MS) sharedExtractInFlight.add(id)
+    }
+  } catch { /* sessionStorage 不可用（SSR/无痕模式）时静默降级为纯内存防重 */ }
+}
+
+/** 把当前 in-flight 集合写入 sessionStorage，供下次加载回填。 */
+export function saveFlightSnapshot(): void {
+  try {
+    const now = Date.now()
+    const snap: Record<string, number> = {}
+    for (const id of sharedExtractInFlight) snap[id] = now
+    sessionStorage.setItem(FLIGHT_STORAGE_KEY, JSON.stringify(snap))
+  } catch { /* ignore */ }
+}
+
+loadFlightSnapshot()
 
 export interface UseBusinessPollingOptions {
   /** 当前知识库 ID（ref，可异步就绪） */
@@ -111,7 +146,7 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           // 409：后端 extractMu 判定该文件正被其他请求提取（如手动重新提取持锁、
           // 另一标签在途），属并发冲突而非提取失败——不写 extractFailed（否则状态列
           // 误报「提取失败」），并保留 in-flight 让下轮扫描不再重复提交打 409。
-          conflict = (e as any)?.$httpStatus === 409
+          conflict = isExtractInProgress(e)
           if (!conflict && !extractFailed.value.has(item.id)) {
             extractFailed.value.set(item.id, Date.now())
           }
@@ -135,7 +170,11 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
         if (es && es !== 'pending' && es !== 'processing') extractInFlight.value.delete(id)
       }
     } catch { /* 静默，下轮重试 */ }
-    finally { busy = false }
+    finally {
+      // 每轮落盘：刷新后模块级 in-flight 能被回填，避免重复提交撞 409
+      saveFlightSnapshot()
+      busy = false
+    }
   }
 
   const tick = async () => {

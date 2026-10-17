@@ -377,6 +377,7 @@ import {
 } from '@/api/knowledge-base'
 import { listFleetVehicles, listFleetDrivers, listFleetFuelCards, listFleetRecords, createFleetRecord, updateFleetRecord, deleteFleetRecord, listFleetCategories, getFleetSummary, listFleetGroupAliases, extractFleetDocument } from '@/api/fleet'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { isExtractInProgress } from '@/composables/extractConflict'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '../knowledge/components/TagEditDialog.vue'
@@ -1631,7 +1632,9 @@ async function saveFileRecord() {
       const row = fileRows.value.find((f: any) => f.id === kid)
       if (row && row.parse_status === 'completed') {
         extractFile(kid, scope, form.doc_type).catch((e: any) => {
-          MessagePlugin.error(e?.message || '提取失败')
+          // 409：该文件已有提取任务在途（列表轮询/上传弹窗刚提交过），属重复
+          // 提交而非提取失败——数据仍由持锁请求完成，静默即可，不弹红色报错。
+          if (!isExtractInProgress(e)) MessagePlugin.error(e?.message || '提取失败')
           loadPending()
         })
       } else {
@@ -1749,6 +1752,13 @@ async function retryFile(row: any, kind: 'parse' | 'extract') {
     }
     loadRecords()
   } catch (e: any) {
+    // 409：该文件已有提取任务在途，属重复提交而非提取失败——按在途处理，
+    // 不当成「重试失败」，避免把一次正常的并发去重误报成红色错误。
+    if (isExtractInProgress(e)) {
+      MessagePlugin.info('该文件正在提取中，请稍候刷新查看结果')
+      loadRecords()
+      return
+    }
     MessagePlugin.error(e?.message || '重试失败')
   } finally {
     retryingId.value = ''

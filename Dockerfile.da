@@ -30,7 +30,15 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable && \
     bash ./scripts/build-anydoc-lib.sh
-RUN go build -tags anydoc -o WeKnora ./cmd/server
+# 版本戳：/api/v1/system/info 的 commit_id / build_time 默认都是 "unknown"，
+# 线上排查无法把运行中的实例对应到具体提交。由 ARG 注入 Git SHA（CI 传
+# github.sha），构建时刻生成 UTC 时间戳；两者经 -ldflags -X 写入包变量。
+# 未显式传参时退回 unknown，不改变本地/CI 之外的构建行为。
+ARG GIT_COMMIT=unknown
+RUN BUILD_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && \
+    go build -tags anydoc \
+      -ldflags "-X github.com/Tencent/WeKnora/internal/handler.CommitID=${GIT_COMMIT} -X github.com/Tencent/WeKnora/internal/handler.BuildTime=${BUILD_STAMP}" \
+      -o WeKnora ./cmd/server
 
 # ---------- Stage 3: 运行时 ----------
 FROM debian:12-slim

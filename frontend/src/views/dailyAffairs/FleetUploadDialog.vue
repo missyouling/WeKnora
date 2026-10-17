@@ -66,7 +66,8 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata, listKnowledgeFiles } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
-import { sharedExtractInFlight } from '@/composables/useBusinessPolling'
+import { sharedExtractInFlight, saveFlightSnapshot } from '@/composables/useBusinessPolling'
+import { isExtractInProgress } from '@/composables/extractConflict'
 
 const props = defineProps<{
   visible: boolean
@@ -345,13 +346,20 @@ async function runTask(t: UpTask) {
           else { t.status = 'failed'; t.msg = '提取状态未知，请稍后在列表中重试'; return }
         } else {
           sharedExtractInFlight.add(kid)
+          // 立即落盘：提交后若页面刷新（HMR/手动刷新），回填的快照能挡住
+          // 下一轮轮询对同一文件的重复提交（否则必撞后端 extractMu 409）
+          saveFlightSnapshot()
           try {
             await extractFile(kid, scope, certType)
           } catch (err: any) {
             // 409：后端 extractMu 判定在途，保留 in-flight 由列表轮询终态回收，
             // 外层 catch 走 waitExtractSettled 跟随；其他真实失败删除 in-flight
             // 允许后续重试，避免残留永久卡死。
-            if ((err as any)?.$httpStatus !== 409) sharedExtractInFlight.delete(kid)
+            if (!isExtractInProgress(err)) {
+              sharedExtractInFlight.delete(kid)
+              // 同步落盘：否则刷新后回填回旧快照，该文件会被误判为「在途」而无法重试
+              saveFlightSnapshot()
+            }
             throw err
           }
           // 成功入队（POST 200 不代表提取完成）：保留 in-flight，
@@ -363,7 +371,7 @@ async function runTask(t: UpTask) {
       } catch (err: any) {
         // 兜底：即便共享防重仍撞上 409（如后端多实例/旧页面实例在途），
         // 不判失败——转等待终态跟随，数据实际仍由持锁请求完成。
-        if ((err as any)?.$httpStatus === 409) {
+        if (isExtractInProgress(err)) {
           const es = await waitExtractSettled(kid).catch(() => '')
           if (es === 'success') { t.status = 'success'; t.progress = 100; return }
           if (es === 'failed') { t.status = 'failed'; t.msg = '提取失败'; return }

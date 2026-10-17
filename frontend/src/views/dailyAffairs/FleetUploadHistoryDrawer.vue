@@ -98,6 +98,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
+import { isExtractInProgress } from '@/composables/extractConflict'
 
 const props = defineProps<{
   visible: boolean
@@ -316,6 +317,14 @@ const reextractRow = async (row: any) => {
     reload(1)
     emit('changed')
   } catch (e: any) {
+    // 409：该文件已有提取任务在途（上传弹窗/列表轮询/另一通道刚提交过），
+    // 属重复提交而非提取失败——数据仍由持锁请求完成，按在途处理跟随即可，
+    // 否则会把一次正常的并发去重误报成红色「重新提取失败」。
+    if (isExtractInProgress(e)) {
+      MessagePlugin.info('该文件正在提取中，请稍候刷新查看结果')
+      reload(1)
+      return
+    }
     MessagePlugin.error(e?.message || '重新提取失败')
   } finally {
     row._extracting = false
