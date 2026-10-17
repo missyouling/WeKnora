@@ -39,6 +39,15 @@ func DefaultExtractAttempts(schema json.RawMessage) []ExtractAttempt {
 	}
 }
 
+// SingleAttemptExtractAttempts 只尝试一次（非流式）。
+//
+// 专供分批回退路径：主调用（Guided）失败时通常已吃满一次长超时，若回退再叠加
+// 默认 4 次尝试，单批最坏耗时 = 5 + 4×5 = 25 分钟，批次串行后总时长失控
+// （2026-10-17 实测：16 页 5 批，用户等待 10+ 分钟无结果）。
+func SingleAttemptExtractAttempts() []ExtractAttempt {
+	return []ExtractAttempt{{Label: "fallback-once"}}
+}
+
 // RunExtractWithRetry 按尝试序列执行模型调用，每次产出交给 parse 校验。
 //   - parse 返回 true → 该原始文本可用，立即返回，不再尝试后续策略；
 //   - 全部失败 → 返回最后一次错误，并把最后一份原始输出交给 onFailure（可为 nil）做诊断落盘。

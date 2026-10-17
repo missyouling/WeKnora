@@ -633,7 +633,24 @@ func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
 
 // ExtractInvoicesFromContentWithRules 与 ExtractInvoicesFromContent 相同，但支持注入
 // 沙盒发票整体规则（高级模板与字段口径），规则为空时行为与默认版一致。
+// 走默认 4 次尝试序列（流式 → 非流式 → 非流式+schema → 流式重试）。
 func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
+	return extractInvoicesWithRulesAttempts(ctx, model, content, cfg, nil)
+}
+
+// ExtractInvoicesWithRulesOnce 与 WithRules 相同，但**只尝试一次**模型调用。
+//
+// 专供分批提取的回退路径使用：Guided 调用失败时往往已经吃满一次长超时
+// （实测 context deadline exceeded），若回退再叠加默认 4 次尝试，单批最坏耗时
+// = 5（Guided 超时）+ 4×5（回退重试）= 25 分钟，批次串行后总时长可达 1~2 小时，
+// 用户侧表现为"进度 100% 却迟迟不出结果"。回退只求"再试一把"。
+func ExtractInvoicesWithRulesOnce(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*InvoiceExtractionResult, error) {
+	return extractInvoicesWithRulesAttempts(ctx, model, content, cfg, SingleAttemptExtractAttempts())
+}
+
+// extractInvoicesWithRulesAttempts 是上面两个入口的共同实现。
+// attempts 为 nil 时使用默认 4 次尝试序列。
+func extractInvoicesWithRulesAttempts(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig, attempts []ExtractAttempt) (*InvoiceExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &InvoiceExtractionResult{Kind: "not_invoice", ExtractError: "no text content to extract"}, nil
 	}
@@ -655,12 +672,16 @@ func ExtractInvoicesFromContentWithRules(ctx context.Context, model chat.Chat, c
 		}
 	}
 
+	if attempts == nil {
+		attempts = DefaultExtractAttempts(schema)
+	}
+
 	// 走通用执行器：流式 → 非流式 → 非流式+schema 强约束 → 流式重试。
 	// 之前是单次调用、解析失败即抛错，是"提取不出来"的主要来源；现在最多 4 次机会，
 	// 且每步产出都先校验，成功即返回，不浪费后续 token。
 	raw, err := RunExtractWithRetry(
 		types.WithLLMCallMetadata(ctx, "invoice_extract", ""),
-		model, messages, baseOpts, DefaultExtractAttempts(schema),
+		model, messages, baseOpts, attempts,
 		func(raw string) bool {
 			_, perr := parseInvoiceRuleReply(raw, cfg)
 			return perr == nil

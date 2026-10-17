@@ -178,6 +178,21 @@ func TestExtractExecutorErrorContinuesToNextAttempt(t *testing.T) {
 	}
 }
 
+func TestExtractExecutorSingleAttemptStopsAfterOne(t *testing.T) {
+	// 分批回退路径专用：Guided 已可能吃满一次长超时，回退再叠加 4 次尝试会让
+	// 单批最坏耗时 = 5 + 4×5 = 25 分钟。这里锁死"只尝试一次"。
+	m := &fakeRetryChat{nonStreamOut: []string{"not json"}}
+	_, err := RunExtractWithRetry(context.Background(), m,
+		[]chat.Message{{Role: "user", Content: "x"}},
+		&chat.ChatOptions{}, SingleAttemptExtractAttempts(), parseable, nil)
+	if err == nil {
+		t.Fatal("不可解析时应返回错误")
+	}
+	if len(m.calls) != 1 {
+		t.Errorf("单次尝试序列应只调用 1 次，实际 %d: %v", len(m.calls), m.calls)
+	}
+}
+
 func TestExtractExecutorDoesNotMutateBaseOpts(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
 	base := &chat.ChatOptions{}

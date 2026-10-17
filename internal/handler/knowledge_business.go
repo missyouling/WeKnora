@@ -58,6 +58,14 @@ func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.
 // 避免无人值守的提取任务永久运行烧 token。
 const extractionTimeout = 30 * time.Minute
 
+// invoiceBatchBudget 单批发票提取的时间预算（Guided 主调用 + 至多一次回退）。
+//
+// 为什么需要它：Guided 调用可能吃满一次长超时（实测 5 分钟，供应商对某些批次
+// 直接不返回），而回退路径若使用默认 4 次尝试序列，单批最坏耗时 = 5 + 4×5 = 25 分钟；
+// 16 页文档切 5 批串行后总时长可达 1~2 小时，用户侧表现为"进度 100% 却迟迟不出结果"。
+// 有了每批预算，最坏单批 8 分钟；某批失败只丢失该批，其余批次照常提取并落库。
+const invoiceBatchBudget = 8 * time.Minute
+
 // newExtractionContext 返回脱离 HTTP 请求生命周期的提取上下文。
 // 场景：前端超时/切页面/网络抖动导致 gin request ctx 被取消时，耗时的大模型
 // 调用不会被连带掐断（context canceled），提取继续在后台跑完并落库，
@@ -1044,6 +1052,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	} else {
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
 		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
+		failedBatches := 0
 		for i, batch := range batches {
 			content := strings.TrimSpace(batch.Content)
 			if content == "" {
@@ -1059,14 +1068,22 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
 					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
 				knowledge.FileName, knowledge.Description, i+1, len(batches), enabledCategoryNames)
-			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(extractCtx, chatModel, content, invoiceRuleCfg, guide)
+			// 每批独立时间预算：Guided 调用可能吃满一次长超时（实测 5 分钟），
+			// 回退若再叠加多次重试，单批最坏耗时可达 25 分钟；批次串行后总时长
+			// 远超用户的合理等待，表现为"进度 100% 却迟迟不出结果"。
+			// 预算内失败即放弃该批（记日志 + 继续后续批次），保住其余批次成果。
+			batchCtx, cancelBatch := context.WithTimeout(extractCtx, invoiceBatchBudget)
+			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(batchCtx, chatModel, content, invoiceRuleCfg, guide)
 			if berr != nil {
-				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain: %v", i+1, berr)
-				if fbRes, ferr := service.ExtractInvoicesFromContentWithRules(extractCtx, chatModel, content, invoiceRuleCfg); ferr == nil && fbRes != nil {
+				// 回退只再试一次（ExtractInvoicesWithRulesOnce）：主调用失败时通常已
+				// 吃满一次超时，再叠加默认 4 次尝试会让单批最坏耗时翻数倍。
+				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain (single attempt): %v", i+1, berr)
+				if fbRes, ferr := service.ExtractInvoicesWithRulesOnce(batchCtx, chatModel, content, invoiceRuleCfg); ferr == nil && fbRes != nil {
 					batchRes = fbRes
 					berr = nil
 				}
 			}
+			cancelBatch()
 			if berr != nil {
 				// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
 				// 后续批失败仅告警跳过，保留已提取的部分。
@@ -1075,6 +1092,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 					break
 				}
 				logger.Warnf(ctx, "Invoice extraction batch %d failed (non-fatal): %v", i+1, berr)
+				failedBatches++
 				continue
 			}
 			if batchRes == nil || batchRes.Kind == "not_invoice" {
@@ -1089,6 +1107,14 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			}
 			sawInvoice = true
 			merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
+		}
+		// 部分完成提示：有批次在预算内失败时，把"结果可能不完整"写入 ExtractError
+		// （状态仍为 success——已有可用数据，不该因个别批次丢掉整份成果）。
+		// 用户据此知道需要复核哪些页码，而不是以为全部提取成功。
+		if failedBatches > 0 && len(merged.Invoices) > 0 {
+			merged.ExtractError = fmt.Sprintf(
+				"部分批次未完成（%d/%d 批失败，可能因模型超时或返回异常），已保留其余批次结果，建议复核",
+				failedBatches, len(batches))
 		}
 	}
 	if !sawInvoice {
