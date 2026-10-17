@@ -71,7 +71,7 @@ const invoiceBatchBudget = 8 * time.Minute
 // 批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），16 页文档 4 批约 12 分钟，
 // 是"慢"的主因。取 2：总时长约减半，同时避免高并发触发供应商限流（429）。
 // 并发下**必须**用预分配切片按批次索引写结果，禁止无序 append（会导致页码错位）。
-const invoiceBatchConcurrency = 2
+const invoiceBatchConcurrency = 4
 
 // newExtractionContext 返回脱离 HTTP 请求生命周期的提取上下文。
 // 场景：前端超时/切页面/网络抖动导致 gin request ctx 被取消时，耗时的大模型

@@ -4,7 +4,7 @@
   <div v-if="liveCount || pendingFiles.length" class="parse-status-bar">
     <t-loading size="small" />
     <template v-if="progress.length">
-      <span>{{ stageLabel(progress[progressIndex].stage) }}「{{ progress[progressIndex].name }}」进度 {{ progress[progressIndex].percent }}%</span>
+      <span>{{ progressText(progress[progressIndex]) }}</span>
       <span v-if="progress.length > 1" class="parse-status-count">{{ progressIndex + 1 }}/{{ progress.length }}</span>
     </template>
     <span v-else>正在解析 {{ pendingFiles.length }} 个文件，解析完成后自动提取字段...</span>
@@ -17,7 +17,8 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 export interface ParseProgressItem {
   name: string
   stage: 'uploading' | 'parsing' | 'extracting'
-  percent: number
+  /** null = 该阶段无真实进度数据（如提取阶段后端只返回状态枚举），只展示"进行中" */
+  percent: number | null
 }
 export interface ParseStatusFile {
   id: string
@@ -34,6 +35,11 @@ const props = defineProps<{
 
 const STAGE_LABEL: Record<string, string> = { uploading: '正在上传', parsing: '正在解析', extracting: '正在提取' }
 function stageLabel(stage: string) { return STAGE_LABEL[stage] || stage }
+// 有真实百分比才显示数字；提取阶段后端没有进度数据，显示"进行中"而不是假百分比。
+function progressText(p: ParseProgressItem) {
+  const head = `${stageLabel(p.stage)}「${p.name}」`
+  return p.percent === null ? `${head}进行中…` : `${head}进度 ${p.percent}%`
+}
 
 // 兜底计数：仅统计真正进行中的文件（pending/processing/finalizing/提取中），
 // 解析失败的文件由历史记录抽屉承接人工处理，不在横幅计数内

@@ -691,6 +691,19 @@ const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
 
+// 列表列取值：通用 colValue 只看 row[key] 与 row.fields[key]，而分类子列
+// （车牌号/车辆类型/通行日期起止等 plate_no/vehicle_type/travel_from/travel_to）
+// 实际存在**明细行** items[0][key] 里——新数据不再冗余写 fields 扩展桶，
+// 导致「车牌号」等列长期渲染为空。此处补一层 items[0] 回退，只作用于发票列表。
+const invoiceColValue = (row: any, key: string): any => {
+  const v = colValue(row, key)
+  if (v !== '-') return v
+  const it = Array.isArray(row?.items) ? row.items[0] : null
+  if (!it || typeof it !== 'object') return '-'
+  const iv = it[key]
+  return iv === undefined || iv === null || iv === '' ? '-' : iv
+}
+
 const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 44 }]
@@ -706,7 +719,7 @@ const tableColumns = computed(() => {
       if (c.key === 'items') return itemsTextOf(r)
       if (c.key === 'taxRate') return rateTextOf(r)
       if (c.key === 'extractStatus') { const s = statusOf(r).label; return s === '--' ? '' : s }
-      return colValue(r, c.key)
+      return invoiceColValue(r, c.key)
     }))
     const base: any = i === vis.length - 1
       ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
@@ -719,14 +732,14 @@ const tableColumns = computed(() => {
       // 金额类字段统一格式化（千分位 + 两位小数），消除自定义分类 colKey 不匹配
       // #amount 插槽导致的显示差异；所有分类风格一致。
       base.cell = (_h: any, { row }: any) => {
-        const v = colValue(row, c.key)
+        const v = invoiceColValue(row, c.key)
         return v === '-' ? '-' : formatAmount(Number(v))
       }
     } else if (!INVOICE_FIELD_LABELS[c.key]) {
       // 自定义动态字段列（如通行费发票「车牌号」）：数据存于 row.fields 扩展桶，
       // TDesign 默认只读 row[colKey] 不查 fields，导致这类列长期渲染为空。
       // 内置契约键列（invoiceNo/sellerTaxNo/items…）走 #colKey 具名插槽，不在此列。
-      base.cell = (_h: any, { row }: any) => colValue(row, c.key)
+      base.cell = (_h: any, { row }: any) => invoiceColValue(row, c.key)
     }
     cols.push(base)
   })
@@ -1460,7 +1473,11 @@ const liveProgress = computed(() => {
     const name = f.file_name || f.title || id
     // 解析已完成、提取进行中 → 提取阶段；否则视为解析阶段
     if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) {
-      return { name, stage: 'extracting' as const, percent: Math.min(100, Math.round(30 + elapsed * 2)) }
+      // 提取阶段**不显示百分比**：后端只返回状态枚举（pending/processing），没有真实
+      // 进度数据；此前的 30 + elapsed*2 估算在 35 秒后就封顶 100%，用户看到的是
+      // "进度 100% 却迟迟不出结果"（实为假进度，2026-10-17 用户反馈）。
+      // 这里给 percent=null，组件只展示阶段与文件名，不再误导。
+      return { name, stage: 'extracting' as const, percent: null }
     }
     return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
   })

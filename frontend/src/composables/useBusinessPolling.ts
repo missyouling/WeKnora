@@ -80,8 +80,13 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           // 只对「从未提取（空）或已入队待处理（pending）」提交；
           // es=processing 是后端 worker 正在提取的过程态（extractMu 已持锁），
           // 前端再次提交必然 409——processing 只进下方 pend 状态条展示，等终态。
-          if ((!es || es === 'pending') &&
-              !extractInFlight.value.has(item.id) && canRetry) {
+          // 只对「从未提取」（extract_status 为空）的文件自动投递。
+          //
+          // 旧逻辑把 es='pending'（已入队、后端 worker 会处理）也算作待提取，
+          // 而 in-flight 集合是模块级内存状态、刷新页面即重置——于是每次刷新都会
+          // 对 pending 文件重新提交一次，用户观感是"刷新就重新提取、永远提取不完"。
+          // pending 的实际含义是"已入队"，前端不应替后端重投。
+          if (!es && !extractInFlight.value.has(item.id) && canRetry) {
             needExtract.push(item)
           }
           if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)

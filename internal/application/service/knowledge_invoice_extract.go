@@ -831,7 +831,7 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 //     总时长翻倍（10 批 × 约 2 分钟），且单批内容过少导致模型漏提
 //     （实测 16 张只提出 6 张）。
 //   - 取值过大（历史 64）→ 整篇合成 1 批，单批输出超长，供应商返回空 content。
-const InvoiceExtractionBatchSize = 12
+const InvoiceExtractionBatchSize = 24
 
 // InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。
 // 记录 chunk 索引区间是为了**结果页码归位**：分批提取必须按批次索引与原始位置
