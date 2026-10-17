@@ -336,9 +336,14 @@ func jsonFleetValue(v any) string {
 }
 
 // ExtractFleetDocumentFromContent calls the configured chat model and parses
-// its strict-JSON reply. 与电费/光伏提取一致的"流式优先、多次重试"策略。
-// certType 非空时固定输出该证照类型；fieldNames 非空时按字段清单提取；
-// systemPrompt 非空时使用用户可配置的提取规则 Prompt（否则回退内置拼装）。
+// its strict-JSON reply. certType 非空时固定输出该证照类型；fieldNames 非空时按
+// 字段清单提取；systemPrompt 非空时使用用户可配置的提取规则 Prompt（否则回退内置拼装）。
+//
+// 已收编到通用执行器（extract_executor.go）：此前是手写的第 4 套重试循环
+// （光伏/电费/车队各一份，策略顺序还不一样），改动一处永远漏掉另外两处。
+// 车队保留自己的**策略顺序**（JSON 约束优先：response_format=json_object 从第一重
+// 开始，能显著减少"模型输出非 JSON / 自造字段名"），其余能力（思考参数自适应、
+// 单次硬超时、<think>/千分位清洗层）全部由执行器统一提供。
 func ExtractFleetDocumentFromContent(ctx context.Context, model chat.Chat, content, scope, certType string, fieldNames []string, systemPrompt string) (*FleetDocumentExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &FleetDocumentExtractionResult{Kind: "fleet_empty"}, nil
@@ -353,58 +358,32 @@ func ExtractFleetDocumentFromContent(ctx context.Context, model chat.Chat, conte
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
-	mkOpts := func() *chat.ChatOptions {
-		return &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	attempts := []ExtractAttempt{
+		{Label: "nonstream-jsonobject", Schema: json.RawMessage(`{"type":"json_object"}`)},
+		{Label: "stream-free", Stream: true},
+		{Label: "nonstream-free"},
+		{Label: "stream-free-2", Stream: true},
 	}
-	var lastErr error
-	attempts := []struct {
-		label string
-		run   func() (string, error)
-	}{
-		{"nonstream-jsonobject", func() (string, error) {
-			// JSON 约束优先：response_format=json_object 从第一重开始，
-			// 极大减少"模型输出非 JSON / 自造字段名"的情况
-			opts := mkOpts()
-			opts.Format = json.RawMessage(`{"type":"json_object"}`)
-			resp, err := model.Chat(llmCtx, messages, opts)
-			if err != nil {
-				return "", err
-			}
-			return resp.Content, nil
-		}},
-		{"stream-free", func() (string, error) {
-			return chatStreamCollect(llmCtx, model, messages, mkOpts())
-		}},
-		{"nonstream-free", func() (string, error) {
-			resp, err := model.Chat(llmCtx, messages, mkOpts())
-			if err != nil {
-				return "", err
-			}
-			return resp.Content, nil
-		}},
-		{"stream-free-2", func() (string, error) {
-			return chatStreamCollect(llmCtx, model, messages, mkOpts())
-		}},
+
+	var parsed FleetDocumentExtractionResult
+	raw, err := RunExtractWithRetry(llmCtx, model, messages, baseOpts, attempts,
+		func(raw string) bool {
+			var probe FleetDocumentExtractionResult
+			return tryParseFleetDocJSON(raw, &probe)
+		},
+		func(lastRaw string, lastErr error) {
+			logger.Warnf(ctx, "fleet document extraction unusable after retries: %v (len=%d)", lastErr, len(lastRaw))
+		})
+	if err != nil {
+		return nil, err
 	}
-	for i, a := range attempts {
-		raw, err := a.run()
-		if err != nil {
-			lastErr = err
-			logger.Warnf(ctx, "fleet document extraction attempt %d (%s) error: %v", i+1, a.label, err)
-			continue
-		}
-		var parsed FleetDocumentExtractionResult
-		if tryParseFleetDocJSON(raw, &parsed) {
-			// 统一清洗：有效期→状态自动计算、驾驶证号校验、记录拆数组
-			parsed.Fields = sanitizeFleetFields(scope, certType, parsed.Fields)
-			return &parsed, nil
-		}
-		lastErr = errParseLLMOutput
+	if !tryParseFleetDocJSON(raw, &parsed) {
+		return nil, errParseLLMOutput
 	}
-	if lastErr == nil {
-		lastErr = errParseLLMOutput
-	}
-	return nil, lastErr
+	// 统一清洗：有效期→状态自动计算、驾驶证号校验、记录拆数组
+	parsed.Fields = sanitizeFleetFields(scope, certType, parsed.Fields)
+	return &parsed, nil
 }
 
 var errParseLLMOutput = &parseLLMOutputError{}

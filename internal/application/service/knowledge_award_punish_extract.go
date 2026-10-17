@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -84,20 +85,52 @@ func BuildAwardPunishExtractionContent(name, summary string, chunks []*types.Chu
 // strict-JSON reply into an AwardPunishExtractionResult. measures constrains the
 // measure field to choices from the award/punish measure library.
 func ExtractAwardPunishesFromContent(ctx context.Context, model chat.Chat, content string, measures []string) (*AwardPunishExtractionResult, error) {
+	return extractAwardPunishesWithSystemPrompt(ctx, model, buildAwardPunishExtractionSystemPrompt(measures), content)
+}
+
+// extractAwardPunishesWithSystemPrompt 是通知公告提取的唯一实现：走通用执行器
+// （4 次尝试 + 跨模型清洗层）。此前是单次非流式调用且 MaxTokens=8192。
+func extractAwardPunishesWithSystemPrompt(
+	ctx context.Context,
+	model chat.Chat,
+	systemPrompt string,
+	content string,
+) (*AwardPunishExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &AwardPunishExtractionResult{Kind: "not_award_punish", ExtractError: "no text content to extract"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "award_punish_extract", ""), []chat.Message{
-		{Role: "system", Content: buildAwardPunishExtractionSystemPrompt(measures)},
+	messages := []chat.Message{
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	raw, err := RunExtractWithRetry(
+		types.WithLLMCallMetadata(ctx, "award_punish_extract", ""),
+		model, messages, baseOpts, DefaultExtractAttempts(nil),
+		func(raw string) bool {
+			_, perr := parseAwardPunishReply(raw)
+			return perr == nil
+		},
+		func(lastRaw string, lastErr error) {
+			logger.Warnf(ctx, "award/punish extraction unusable after retries: %v (len=%d)", lastErr, len(lastRaw))
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("extract award/punish fields: %w", err)
 	}
+	parsed, perr := parseAwardPunishReply(raw)
+	if perr != nil {
+		return nil, fmt.Errorf("extract award/punish fields: %w", perr)
+	}
+	return parsed, nil
+}
+
+// parseAwardPunishReply 解析通知公告提取回复（统一走 ParseLLMJsonResponse 清洗层）。
+func parseAwardPunishReply(raw string) (*AwardPunishExtractionResult, error) {
 	var parsed AwardPunishExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+	if err := common.ParseLLMJsonResponse(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("parse award/punish extraction response: %w", err)
 	}
 	return &parsed, nil
@@ -293,22 +326,5 @@ func buildAwardPunishRuleSystemPrompt(cfg *types.KbExtractConfig, measures []str
 // ExtractAwardPunishesFromContentWithRules 与 ExtractAwardPunishesFromContent 相同，但支持注入
 // 用户配置的提取规则（字段口径、高级模板），规则为空时行为与默认版一致。
 func ExtractAwardPunishesFromContentWithRules(ctx context.Context, model chat.Chat, content string, measures []string, cfg *types.KbExtractConfig) (*AwardPunishExtractionResult, error) {
-	if strings.TrimSpace(content) == "" {
-		return &AwardPunishExtractionResult{Kind: "not_award_punish", ExtractError: "no text content to extract"}, nil
-	}
-	systemPrompt := buildAwardPunishRuleSystemPrompt(cfg, measures)
-	userPrompt := "<document>\n" + content + "\n</document>"
-	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "award_punish_extract", ""), []chat.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
-	if err != nil {
-		return nil, fmt.Errorf("extract award/punish fields: %w", err)
-	}
-	var parsed AwardPunishExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse award/punish extraction response: %w", err)
-	}
-	return &parsed, nil
+	return extractAwardPunishesWithSystemPrompt(ctx, model, buildAwardPunishRuleSystemPrompt(cfg, measures), content)
 }

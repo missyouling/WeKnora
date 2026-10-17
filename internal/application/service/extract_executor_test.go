@@ -28,6 +28,9 @@ type fakeRetryChat struct {
 	formats       []string
 	// thinkings 记录每次调用传入的 Thinking 取值（nil 表示"不发送思考参数"）
 	thinkings []*bool
+	// maxTokens 记录每次调用传入的 MaxTokens（提取业务必须恒为 0：显式传值会让
+	// 部分供应商在长输出时直接返回空 content）
+	maxTokens []int
 	modelName string
 	// lastMessages 记录最近一次调用收到的消息，供断言（如自愈回灌是否截断）
 	lastMessages []chat.Message
@@ -38,6 +41,7 @@ func (f *fakeRetryChat) Chat(_ context.Context, msgs []chat.Message, opts *chat.
 	f.calls = append(f.calls, "nonstream")
 	f.formats = append(f.formats, string(opts.Format))
 	f.thinkings = append(f.thinkings, opts.Thinking)
+	f.maxTokens = append(f.maxTokens, opts.MaxTokens)
 	i := f.nonStreamIdx
 	f.nonStreamIdx++
 	if i < len(f.nonStreamErrs) && f.nonStreamErrs[i] != nil {
@@ -54,6 +58,7 @@ func (f *fakeRetryChat) ChatStream(_ context.Context, msgs []chat.Message, opts 
 	f.calls = append(f.calls, "stream")
 	f.formats = append(f.formats, string(opts.Format))
 	f.thinkings = append(f.thinkings, opts.Thinking)
+	f.maxTokens = append(f.maxTokens, opts.MaxTokens)
 	i := f.streamIdx
 	f.streamIdx++
 	ch := make(chan types.StreamResponse, 2)

@@ -112,9 +112,14 @@ func tryParseSolarBillJSON(raw string, parsed *SolarBillExtractionResult) bool {
 
 // ExtractSolarBillsFromContent calls the configured chat model and parses
 // its strict-JSON reply into a SolarBillExtractionResult.
-// 与电费提取一致：智谱等供应商对长输入+大输出偶发返回空 content，
-// 采用"流式优先、多次重试"策略（无 Format 流式 → 无 Format 非流式 → json_object 非流式 → 无 Format 流式），
-// 且不传 max_tokens（智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空）。
+//
+// 已收编到通用执行器（extract_executor.go）：此前这里是手写的一套 4 次重试循环，
+// 与电费/发票/合同各写一份、行为还不一致。改走 RunExtractWithRetry 后统一获得：
+//   - 思考参数自适应（强制思考模型不下发 thinking、供应商拒绝时同尝试内重发）；
+//   - 单次调用硬超时（供应商挂起不会让任务永久 processing）；
+//   - ParseLLMJsonResponse 的跨模型清洗层（<think> 块剥离 / 尾逗号 / 引号金额）。
+//
+// 不传 max_tokens（智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空）。
 func ExtractSolarBillsFromContent(ctx context.Context, model chat.Chat, content string) (*SolarBillExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &SolarBillExtractionResult{Kind: "not_solar_bill"}, nil
@@ -126,58 +131,27 @@ func ExtractSolarBillsFromContent(ctx context.Context, model chat.Chat, content 
 		{Role: "system", Content: solarBillExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
-	mkOpts := func() *chat.ChatOptions {
-		return &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	attempts := DefaultExtractAttempts(json.RawMessage(solarBillExtractionOutputSchema))
+
+	var parsed SolarBillExtractionResult
+	raw, err := RunExtractWithRetry(llmCtx, model, messages, baseOpts, attempts,
+		func(raw string) bool {
+			var probe SolarBillExtractionResult
+			return tryParseSolarBillJSON(raw, &probe)
+		},
+		func(lastRaw string, lastErr error) {
+			logger.Warnf(ctx, "solar bill extraction unusable after retries: %v; raw(first 20000)=%s",
+				lastErr, utilityTruncateForLog(lastRaw, 20000))
+		})
+	if err != nil {
+		return nil, fmt.Errorf("parse solar bill extraction response: %w", err)
 	}
-	var lastErr error
-	var lastRaw string
-	attempts := []struct {
-		label string
-		run   func() (string, error)
-	}{
-		{"stream-free", func() (string, error) {
-			return chatStreamCollect(llmCtx, model, messages, mkOpts())
-		}},
-		{"nonstream-free", func() (string, error) {
-			resp, err := model.Chat(llmCtx, messages, mkOpts())
-			if err != nil {
-				return "", err
-			}
-			return resp.Content, nil
-		}},
-		{"nonstream-jsonobject", func() (string, error) {
-			opts := mkOpts()
-			opts.Format = json.RawMessage(solarBillExtractionOutputSchema)
-			resp, err := model.Chat(llmCtx, messages, opts)
-			if err != nil {
-				return "", err
-			}
-			return resp.Content, nil
-		}},
-		{"stream-free-2", func() (string, error) {
-			return chatStreamCollect(llmCtx, model, messages, mkOpts())
-		}},
+	// 执行器只保证"这段内容可解析"，真正的落值在这里做一次（解析函数无副作用假设）。
+	if !tryParseSolarBillJSON(raw, &parsed) {
+		return nil, fmt.Errorf("parse solar bill extraction response: unparseable response (len=%d)", len(raw))
 	}
-	for i, a := range attempts {
-		raw, err := a.run()
-		if err != nil {
-			lastErr = err
-			logger.Warnf(ctx, "solar bill extraction attempt %d (%s) error: %v", i+1, a.label, err)
-			continue
-		}
-		var parsed SolarBillExtractionResult
-		if tryParseSolarBillJSON(raw, &parsed) {
-			return &parsed, nil
-		}
-		lastRaw = raw
-		lastErr = fmt.Errorf("unparseable response (len=%d)", len(raw))
-		logger.Warnf(ctx, "solar bill extraction attempt %d (%s) unparseable (len=%d)", i+1, a.label, len(raw))
-	}
-	logger.Warnf(ctx, "solar bill extraction raw response (first 20000 chars): %s", utilityTruncateForLog(lastRaw, 20000))
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no usable response")
-	}
-	return nil, fmt.Errorf("parse solar bill extraction response: %w", lastErr)
+	return &parsed, nil
 }
 
 // NormalizeSolarBillExtractionResult normalizes one record per bill and

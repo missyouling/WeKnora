@@ -18,11 +18,15 @@ import (
 // utilityBillCustomMetadata mirrors the custom_metadata shape persisted on a
 // knowledge row in the utility-bill KB.
 type utilityBillCustomMetadata struct {
-	Kind             string                           `json:"kind"`
+	Kind             string                            `json:"kind"`
 	Records          []types.UtilityBillExtractionItem `json:"records"`
-	ExtractStatus    string                           `json:"extract_status"`
-	ExtractError     string                           `json:"extract_error"`
-	AutoDeletedCount int                              `json:"auto_deleted_count"`
+	ExtractStatus    string                            `json:"extract_status"`
+	ExtractError     string                            `json:"extract_error"`
+	AutoDeletedCount int                               `json:"auto_deleted_count"`
+	// 通用质量闭环元数据（与发票同口径）：字段级问题、正则补洞溯源。
+	ExtractIssues  []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
+	PatchedByRegex []string                    `json:"patched_by_regex,omitempty"`
+	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
 // ExtractUtilityBill godoc
@@ -182,11 +186,23 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 		}
 	}
 
+	// 通用质量闭环（非发票业务口径）：账单周期/打印日/交费截止日等标准日期字段归一化。
+	// 电费账单无字段级规则配置（无 scope），故 cfg 传 nil——只做日期归一化。
+	utilityIssues, utilityPatches := service.ValidateGenericExtraction(
+		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), nil)
+	if len(utilityIssues) > 0 || len(utilityPatches) > 0 {
+		logger.Infof(ctx, "Utility bill extraction quality: issues=%d patched=%v knowledge=%s",
+			len(utilityIssues), service.PatchedFieldNames(utilityPatches), knowledgeID)
+	}
+
 	meta := utilityBillCustomMetadata{
-		Kind:          extracted.Kind,
-		Records:       extracted.Records,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Records:        extracted.Records,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  utilityIssues,
+		PatchedByRegex: service.PatchedFieldNames(utilityPatches),
+		RegexPatches:   utilityPatches,
 	}
 
 	if extracted.Kind == "not_utility_bill" {
@@ -227,9 +243,9 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 			} else {
 				logger.Infof(ctx, "auto-deleted non-utility-bill knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非电费账单文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_utility_bill"},
+					"success": true,
+					"message": "非电费账单文件已移至删除历史，可在删除历史中恢复",
+					"data":    map[string]interface{}{"removed": true, "kind": "not_utility_bill"},
 				})
 				return
 			}

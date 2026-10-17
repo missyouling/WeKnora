@@ -18,11 +18,15 @@ import (
 // solarBillCustomMetadata mirrors the custom_metadata shape persisted on a
 // knowledge row in the shared utility/solar KB.
 type solarBillCustomMetadata struct {
-	Kind             string                           `json:"kind"`
+	Kind             string                          `json:"kind"`
 	Records          []types.SolarBillExtractionItem `json:"records"`
-	ExtractStatus    string                           `json:"extract_status"`
-	ExtractError     string                           `json:"extract_error"`
-	AutoDeletedCount int                              `json:"auto_deleted_count"`
+	ExtractStatus    string                          `json:"extract_status"`
+	ExtractError     string                          `json:"extract_error"`
+	AutoDeletedCount int                             `json:"auto_deleted_count"`
+	// 通用质量闭环元数据（与发票同口径）：字段级问题、正则补洞溯源。
+	ExtractIssues  []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
+	PatchedByRegex []string                    `json:"patched_by_regex,omitempty"`
+	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
 // ExtractSolarBill godoc
@@ -172,12 +176,23 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	}
 	extracted := merged
 	service.NormalizeSolarBillExtractionResult(extracted)
+	// 通用质量闭环（非发票业务口径）：账单周期起止等标准日期字段归一化。
+	// 光伏/电费账单没有字段级规则配置（无 scope），故 cfg 传 nil——只做日期归一化。
+	solarIssues, solarPatches := service.ValidateGenericExtraction(
+		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), nil)
+	if len(solarIssues) > 0 || len(solarPatches) > 0 {
+		logger.Infof(ctx, "Solar bill extraction quality: issues=%d patched=%v knowledge=%s",
+			len(solarIssues), service.PatchedFieldNames(solarPatches), knowledgeID)
+	}
 
 	meta := solarBillCustomMetadata{
-		Kind:          extracted.Kind,
-		Records:       extracted.Records,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Records:        extracted.Records,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  solarIssues,
+		PatchedByRegex: service.PatchedFieldNames(solarPatches),
+		RegexPatches:   solarPatches,
 	}
 
 	if extracted.Kind == "not_solar_bill" {
@@ -218,9 +233,9 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 			} else {
 				logger.Infof(ctx, "auto-deleted non-solar-bill knowledge, ID: %s", knowledgeID)
 				c.JSON(http.StatusOK, gin.H{
-					"success":  true,
-					"message":  "非光伏账单文件已移至删除历史，可在删除历史中恢复",
-					"data":     map[string]interface{}{"removed": true, "kind": "not_solar_bill"},
+					"success": true,
+					"message": "非光伏账单文件已移至删除历史，可在删除历史中恢复",
+					"data":    map[string]interface{}{"removed": true, "kind": "not_solar_bill"},
 				})
 				return
 			}

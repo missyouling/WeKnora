@@ -733,11 +733,8 @@ func extractInvoicesWithRulesAttempts(ctx context.Context, model chat.Chat, cont
 	}
 	// 收尾：后置字段级正则补洞 → 问题清单透出（供前端展示）。
 	// 补洞可能消掉 error（如号码原本为空），所以补完再重新校验一次，保证清单准确。
-	parsed.ExtractIssues = issues
-	if patches := RegexFallbackInvoiceFields(parsed, content, cfg); len(patches) > 0 {
-		logger.Infof(ctx, "invoice regex fallback patched %d field(s): %v", len(patches), patchFieldNames(patches))
-		parsed.ExtractIssues = validateInvoiceExtraction(parsed, cfg)
-	}
+	// 与规则路径共用 FinalizeInvoiceRuleResult，保证两条路径的元数据口径一致。
+	parsed.ExtractIssues = FinalizeInvoiceRuleResult(ctx, parsed, content, cfg)
 	logExtractIssues(ctx, parsed.ExtractIssues)
 	return parsed, nil
 }

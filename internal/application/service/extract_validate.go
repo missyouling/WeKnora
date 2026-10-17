@@ -290,9 +290,36 @@ func logExtractIssues(ctx context.Context, issues []ExtractFieldIssue) {
 		return
 	}
 	for _, it := range issues {
-		logger.Warnf(ctx, "extract issue [%s] invoice#%d field=%s kind=%s: %s",
+		logger.Warnf(ctx, "extract issue [%s] record#%d field=%s kind=%s: %s",
 			it.Severity, it.Index, it.Field, it.Kind, it.Detail)
 	}
+}
+
+// FinalizeInvoiceRuleResult 对**前置规则命中**（Line / MarkdownTable / FlatLayout）的
+// 发票结果做与 LLM 路径完全一致的收尾：
+//  1. 确定性校验（日期归一化为 YYYY-MM-DD + 发票专属交叉校验 + 配置必填）；
+//  2. 后置字段级正则补洞（零 token 成本，**不触发 LLM Repair**——规则路径本来就是
+//     为了省掉模型调用才存在的）；
+//  3. 补洞后再校验一次（补洞可能消掉 error 级问题，清单必须准确）。
+//
+// 返回并写回 res.ExtractIssues；PatchedByRegex / RegexPatches 由补洞器就地写入。
+// 修复的是"同一个字段，走规则路径就没有任何质量元数据、日期格式还各不相同"的不一致。
+func FinalizeInvoiceRuleResult(
+	ctx context.Context,
+	res *InvoiceExtractionResult,
+	text string,
+	cfg *types.KbExtractConfig,
+) []ExtractFieldIssue {
+	if res == nil {
+		return nil
+	}
+	issues := validateInvoiceExtraction(res, cfg)
+	if patches := RegexFallbackInvoiceFields(res, text, cfg); len(patches) > 0 {
+		logger.Infof(ctx, "invoice regex fallback patched %d field(s): %v", len(patches), patchFieldNames(patches))
+		issues = validateInvoiceExtraction(res, cfg)
+	}
+	res.ExtractIssues = issues
+	return issues
 }
 
 // ExtractValidationIssues 暴露给上层（handler）用于把质量问题回传给前端。

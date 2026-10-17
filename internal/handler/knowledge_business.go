@@ -393,12 +393,24 @@ func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, know
 		logger.Warnf(ctx, "Failed to compute auto contract seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeContractExtractionResult(extracted, autoSeq)
+	// 通用质量闭环（非发票业务口径）：标准日期字段归一化为 YYYY-MM-DD，
+	// 用户配置为必填（Enabled && Required）的字段先用该字段的 Regex 补洞，
+	// 补不到才记 error。发票专属规则（号码/代码二选一、金额交叉校验）不在此列。
+	contractIssues, contractPatches := service.ValidateGenericExtraction(
+		service.NewGenericRecords(extracted.Contracts), strings.Join(batches, "\n"), contractRuleCfg)
+	if len(contractIssues) > 0 || len(contractPatches) > 0 {
+		logger.Infof(ctx, "Contract extraction quality: issues=%d patched=%v knowledge=%s",
+			len(contractIssues), service.PatchedFieldNames(contractPatches), knowledgeID)
+	}
 
 	meta := contractCustomMetadata{
-		Kind:          extracted.Kind,
-		Contracts:     extracted.Contracts,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Contracts:      extracted.Contracts,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  contractIssues,
+		PatchedByRegex: service.PatchedFieldNames(contractPatches),
+		RegexPatches:   contractPatches,
 	}
 	// 自定义识别规则：合同类型归类（用户可配置关键词/正则 → 合同类型），
 	// 按模型提取出的合同类型字段匹配，命中则覆盖模型结果。
@@ -526,6 +538,10 @@ type regulationCustomMetadata struct {
 	ExtractStatus string                           `json:"extract_status"`
 	ExtractError  string                           `json:"extract_error"`
 	FleetCertType string                           `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
+	// 通用质量闭环元数据（与发票同口径）：字段级问题、正则补洞溯源。
+	ExtractIssues  []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
+	PatchedByRegex []string                    `json:"patched_by_regex,omitempty"`
+	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
 // awardPunishCustomMetadata is the persisted shape written into a knowledge
@@ -537,6 +553,10 @@ type awardPunishCustomMetadata struct {
 	ExtractStatus string                            `json:"extract_status"`
 	ExtractError  string                            `json:"extract_error"`
 	FleetCertType string                            `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
+	// 通用质量闭环元数据（与发票同口径）：字段级问题、正则补洞溯源。
+	ExtractIssues  []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
+	PatchedByRegex []string                    `json:"patched_by_regex,omitempty"`
+	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
 // awardPunishBatchesHaveText reports whether any extraction batch carries usable
@@ -577,6 +597,10 @@ type contractCustomMetadata struct {
 	ExtractStatus string                           `json:"extract_status"`
 	ExtractError  string                           `json:"extract_error"`
 	FleetCertType string                           `json:"fleet_cert_type,omitempty"` // 归档分类打标（上传弹窗选择），供重提取选规则/绝对优先
+	// 通用质量闭环元数据（与发票同口径）：字段级问题、正则补洞溯源。
+	ExtractIssues  []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
+	PatchedByRegex []string                    `json:"patched_by_regex,omitempty"`
+	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
 // contractBatchesHaveText reports whether any extraction batch carries usable text.
@@ -1234,6 +1258,18 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 通行日期起止）。张数不一致时该函数不改动任何字段（防按序错位）。
 	if n := service.OverlayDeterministicInvoiceFields(extracted, chunks); n > 0 {
 		logger.Infof(ctx, "Invoice extraction: deterministic overlay applied (%d invoices) knowledge=%s", n, knowledgeID)
+	}
+	// 规则路径（Line / MarkdownTable / FlatLayout）此前**完全没有质量元数据**：
+	// 走规则就永远看不到 extract_issues，日期也保持票面原样（"2026年7月2日" 与
+	// "2026-07-02" 混在同一个列表里，排序/筛选全错）。这里补上与 LLM 路径一致的
+	// 确定性收尾——日期归一化 + 配置级必填校验 + 后置正则补洞，零 token 成本，
+	// 且**不触发 LLM Repair**（规则路径存在的意义就是省掉模型调用）。
+	// 放在 overlay 之后：overlay 会用票面标签纠正号码/明细，先校验会报"已被修正"的假问题。
+	if ruleOK && extracted.Kind == "invoice" {
+		issues := service.FinalizeInvoiceRuleResult(
+			extractCtx, extracted, invoiceBatchesFullText(batches), invoiceRuleCfg)
+		logger.Infof(ctx, "Invoice extraction: rule path finalized, issues=%d patched=%v knowledge=%s",
+			len(issues), extracted.PatchedByRegex, knowledgeID)
 	}
 
 	meta := service.InvoiceCustomMetadata{
@@ -1925,12 +1961,22 @@ func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, kn
 		logger.Warnf(ctx, "Failed to compute auto regulation seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeRegulationExtractionResult(extracted, autoSeq)
+	// 通用质量闭环（非发票业务口径）：日期归一化 + 配置级必填补洞/告警。
+	regulationIssues, regulationPatches := service.ValidateGenericExtraction(
+		service.NewGenericRecords(extracted.Regulations), strings.Join(batches, "\n"), regulationRuleCfg)
+	if len(regulationIssues) > 0 || len(regulationPatches) > 0 {
+		logger.Infof(ctx, "Regulation extraction quality: issues=%d patched=%v knowledge=%s",
+			len(regulationIssues), service.PatchedFieldNames(regulationPatches), knowledgeID)
+	}
 
 	meta := regulationCustomMetadata{
-		Kind:          extracted.Kind,
-		Regulations:   extracted.Regulations,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Regulations:    extracted.Regulations,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  regulationIssues,
+		PatchedByRegex: service.PatchedFieldNames(regulationPatches),
+		RegexPatches:   regulationPatches,
 	}
 	// 自定义识别规则：制度类型归类（用户可配置关键词/正则 → 制度类型），
 	// 按模型提取出的制度类型字段匹配，命中则覆盖模型结果。
@@ -2270,12 +2316,22 @@ func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, k
 		logger.Warnf(ctx, "Failed to compute auto notice seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeAwardPunishExtractionResult(extracted, autoSeq)
+	// 通用质量闭环（非发票业务口径）：日期归一化（签发/生效日）+ 配置级必填补洞/告警。
+	noticeIssues, noticePatches := service.ValidateGenericExtraction(
+		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), noticeRuleCfg)
+	if len(noticeIssues) > 0 || len(noticePatches) > 0 {
+		logger.Infof(ctx, "Notice extraction quality: issues=%d patched=%v knowledge=%s",
+			len(noticeIssues), service.PatchedFieldNames(noticePatches), knowledgeID)
+	}
 
 	meta := awardPunishCustomMetadata{
-		Kind:          extracted.Kind,
-		Records:       extracted.Records,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Records:        extracted.Records,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  noticeIssues,
+		PatchedByRegex: service.PatchedFieldNames(noticePatches),
+		RegexPatches:   noticePatches,
 	}
 	// 自定义识别规则：通知类型归类（用户可配置关键词/正则 → 通知类型），
 	// 按模型提取出的通知类型字段匹配，命中则覆盖模型结果。

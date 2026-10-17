@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -70,20 +71,53 @@ func BuildRegulationExtractionContent(name, summary string, chunks []*types.Chun
 // ExtractRegulationsFromContent calls the configured chat model and parses its
 // strict-JSON reply into a RegulationExtractionResult.
 func ExtractRegulationsFromContent(ctx context.Context, model chat.Chat, content string) (*RegulationExtractionResult, error) {
+	return extractRegulationsWithSystemPrompt(ctx, model, regulationExtractionSystemPrompt, content)
+}
+
+// extractRegulationsWithSystemPrompt 是制度提取的唯一实现：走通用执行器
+// （4 次尝试 + 跨模型清洗层）。此前是单次非流式调用且 MaxTokens=8192，
+// 一次解析失败即抛错；制度正文长、表格多，是最容易被截断的文档类型之一。
+func extractRegulationsWithSystemPrompt(
+	ctx context.Context,
+	model chat.Chat,
+	systemPrompt string,
+	content string,
+) (*RegulationExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &RegulationExtractionResult{Kind: "not_regulation", ExtractError: "no text content to extract"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "regulation_extract", ""), []chat.Message{
-		{Role: "system", Content: regulationExtractionSystemPrompt},
+	messages := []chat.Message{
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	raw, err := RunExtractWithRetry(
+		types.WithLLMCallMetadata(ctx, "regulation_extract", ""),
+		model, messages, baseOpts, DefaultExtractAttempts(nil),
+		func(raw string) bool {
+			_, perr := parseRegulationReply(raw)
+			return perr == nil
+		},
+		func(lastRaw string, lastErr error) {
+			logger.Warnf(ctx, "regulation extraction unusable after retries: %v (len=%d)", lastErr, len(lastRaw))
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("extract regulation fields: %w", err)
 	}
+	parsed, perr := parseRegulationReply(raw)
+	if perr != nil {
+		return nil, fmt.Errorf("extract regulation fields: %w", perr)
+	}
+	return parsed, nil
+}
+
+// parseRegulationReply 解析制度提取回复（统一走 ParseLLMJsonResponse 清洗层）。
+func parseRegulationReply(raw string) (*RegulationExtractionResult, error) {
 	var parsed RegulationExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+	if err := common.ParseLLMJsonResponse(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("parse regulation extraction response: %w", err)
 	}
 	return &parsed, nil
@@ -287,22 +321,5 @@ func buildRegulationRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 // ExtractRegulationsFromContentWithRules 与 ExtractRegulationsFromContent 相同，但支持注入
 // 用户配置的提取规则（字段口径、高级模板），规则为空时行为与默认版一致。
 func ExtractRegulationsFromContentWithRules(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*RegulationExtractionResult, error) {
-	if strings.TrimSpace(content) == "" {
-		return &RegulationExtractionResult{Kind: "not_regulation", ExtractError: "no text content to extract"}, nil
-	}
-	systemPrompt := buildRegulationRuleSystemPrompt(cfg)
-	userPrompt := "<document>\n" + content + "\n</document>"
-	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "regulation_extract", ""), []chat.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
-	if err != nil {
-		return nil, fmt.Errorf("extract regulation fields: %w", err)
-	}
-	var parsed RegulationExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse regulation extraction response: %w", err)
-	}
-	return &parsed, nil
+	return extractRegulationsWithSystemPrompt(ctx, model, buildRegulationRuleSystemPrompt(cfg), content)
 }

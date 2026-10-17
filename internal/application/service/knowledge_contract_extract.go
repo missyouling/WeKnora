@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -113,20 +114,69 @@ func BuildContractExtractionContent(name, summary string, chunks []*types.Chunk)
 // ExtractContractsFromContent calls the configured chat model and parses its
 // strict-JSON reply into a ContractExtractionResult.
 func ExtractContractsFromContent(ctx context.Context, model chat.Chat, content string) (*ContractExtractionResult, error) {
+	return extractContractsWithSystemPrompt(ctx, model, contractExtractionSystemPrompt, content)
+}
+
+// extractContractsWithSystemPrompt 是合同提取的唯一实现：走通用执行器
+// （流式 → 非流式 → 非流式+schema → 流式重试），并复用跨模型清洗层
+// （<think> 块剥离 / 尾逗号 / 千分位与引号金额）。
+//
+// 此前这里是单次非流式调用、MaxTokens=8192，一次解析失败就直接抛错——合同是长文本，
+// 恰恰最容易触发供应商空 content 与输出截断（2026-10 实测）。收编后统一为 4 次机会。
+// MaxTokens 收敛为 0：显式传 max_tokens 是部分供应商返回空 content 的诱因。
+func extractContractsWithSystemPrompt(
+	ctx context.Context,
+	model chat.Chat,
+	systemPrompt string,
+	content string,
+) (*ContractExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &ContractExtractionResult{Kind: "not_contract", ExtractError: "no text content to extract"}, nil
 	}
-	userPrompt := "<document>\n" + content + "\n</document>"
+	return extractContractsWithUserPrompt(ctx, model, systemPrompt,
+		"<document>\n"+content+"\n</document>", DefaultExtractAttempts(nil))
+}
+
+// extractContractsWithUserPrompt 是执行器调用的最内层实现：userPrompt 可被调用方改写
+// （单份合同重提取会追加"只提取第 N 份"的引导），attempts 可退化为单次尝试。
+func extractContractsWithUserPrompt(
+	ctx context.Context,
+	model chat.Chat,
+	systemPrompt string,
+	userPrompt string,
+	attempts []ExtractAttempt,
+) (*ContractExtractionResult, error) {
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "contract_extract", ""), []chat.Message{
-		{Role: "system", Content: contractExtractionSystemPrompt},
+	messages := []chat.Message{
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	}
+	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
+	raw, err := RunExtractWithRetry(
+		types.WithLLMCallMetadata(ctx, "contract_extract", ""),
+		model, messages, baseOpts, attempts,
+		func(raw string) bool {
+			_, perr := parseContractReply(raw)
+			return perr == nil
+		},
+		func(lastRaw string, lastErr error) {
+			logger.Warnf(ctx, "contract extraction unusable after retries: %v (len=%d)", lastErr, len(lastRaw))
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("extract contract fields: %w", err)
 	}
+	parsed, perr := parseContractReply(raw)
+	if perr != nil {
+		return nil, fmt.Errorf("extract contract fields: %w", perr)
+	}
+	return parsed, nil
+}
+
+// parseContractReply 解析合同提取回复（统一走 ParseLLMJsonResponse 清洗层）。
+func parseContractReply(raw string) (*ContractExtractionResult, error) {
 	var parsed ContractExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
+	if err := common.ParseLLMJsonResponse(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("parse contract extraction response: %w", err)
 	}
 	return &parsed, nil
@@ -144,19 +194,14 @@ func ExtractContractPageFromContent(ctx context.Context, model chat.Chat, conten
 	userPrompt := fmt.Sprintf(
 		"以下文档中包含多份合同。请只提取文档中的第 %d 份合同（合同按文档中出现的先后顺序从 1 开始编号）。contracts 数组只包含这一份合同，字段规则不变；若无法确定第 %d 份合同，contracts 返回空数组。\n<document>\n%s\n</document>",
 		page, page, strings.TrimSpace(content))
-	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "contract_extract", ""), []chat.Message{
-		{Role: "system", Content: contractExtractionSystemPrompt},
-		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
+	// 单份重提取同样走执行器（清洗层 + 思考参数自适应 + 单次硬超时），
+	// 但**只尝试一次**：这是用户主动触发的定点修复，4 次尝试会把成本翻四倍。
+	res, err := extractContractsWithUserPrompt(ctx, model, contractExtractionSystemPrompt,
+		userPrompt, SingleAttemptExtractAttempts())
 	if err != nil {
 		return nil, fmt.Errorf("extract contract page: %w", err)
 	}
-	var parsed ContractExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse contract page response: %w", err)
-	}
-	return &parsed, nil
+	return res, nil
 }
 
 // ContractExtractionBatchSize caps how many chunks go into one LLM call.
@@ -382,22 +427,5 @@ func buildContractRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 // ExtractContractsFromContentWithRules 与 ExtractContractsFromContent 相同，但支持注入
 // 用户配置的提取规则（字段口径、高级模板），规则为空时行为与默认版一致。
 func ExtractContractsFromContentWithRules(ctx context.Context, model chat.Chat, content string, cfg *types.KbExtractConfig) (*ContractExtractionResult, error) {
-	if strings.TrimSpace(content) == "" {
-		return &ContractExtractionResult{Kind: "not_contract", ExtractError: "no text content to extract"}, nil
-	}
-	systemPrompt := buildContractRuleSystemPrompt(cfg)
-	userPrompt := "<document>\n" + content + "\n</document>"
-	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "contract_extract", ""), []chat.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 8192, Thinking: &thinking})
-	if err != nil {
-		return nil, fmt.Errorf("extract contract fields: %w", err)
-	}
-	var parsed ContractExtractionResult
-	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
-		return nil, fmt.Errorf("parse contract extraction response: %w", err)
-	}
-	return &parsed, nil
+	return extractContractsWithSystemPrompt(ctx, model, buildContractRuleSystemPrompt(cfg), content)
 }
