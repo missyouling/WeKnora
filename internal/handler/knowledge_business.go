@@ -1032,7 +1032,12 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	if len(docHint) > 8 {
 		docHint = docHint[:8]
 	}
+	// 规则提取阶段此前完全无日志：一旦卡在这里（大文档正则/字符串处理慢），
+	// 日志里只有 "task started" 然后长时间静默，无法判断卡在规则还是模型调用。
+	logger.Infof(ctx, "Invoice extraction: start rule extraction (%d chunks, %d batches) knowledge=%s",
+		len(chunks), len(batches), knowledgeID)
 	ruleRes, ruleOK := service.ExtractInvoicesByLineRulesFromChunks(chunks)
+	logger.Infof(ctx, "Invoice extraction: line rules done, hit=%v knowledge=%s", ruleOK, knowledgeID)
 	if ruleOK {
 		logger.Infof(ctx, "Invoice extraction by line rules: %d invoices from knowledge %s", len(ruleRes.Invoices), knowledgeID)
 	}
@@ -1053,6 +1058,8 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
 		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
 		failedBatches := 0
+		logger.Infof(ctx, "Invoice extraction: rule miss, entering LLM batching (%d batches) knowledge=%s",
+			len(batches), knowledgeID)
 		for i, batch := range batches {
 			content := strings.TrimSpace(batch.Content)
 			if content == "" {
@@ -1072,6 +1079,8 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			// 回退若再叠加多次重试，单批最坏耗时可达 25 分钟；批次串行后总时长
 			// 远超用户的合理等待，表现为"进度 100% 却迟迟不出结果"。
 			// 预算内失败即放弃该批（记日志 + 继续后续批次），保住其余批次成果。
+			logger.Infof(ctx, "Invoice extraction batch %d/%d start: chunks=%d-%d runes=%d",
+				i+1, len(batches), batch.StartIndex, batch.EndIndex, len([]rune(content)))
 			batchCtx, cancelBatch := context.WithTimeout(extractCtx, invoiceBatchBudget)
 			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(batchCtx, chatModel, content, invoiceRuleCfg, guide)
 			if berr != nil {
