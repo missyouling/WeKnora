@@ -187,11 +187,17 @@ watch(
 
 function onPreviewFrameLoad() {
   // 直连 PDF 首次/跨文件加载完成：撤掉遮罩层，避免 loading 状态长期盖住内容。
-  if (iframePending.value) {
-    iframePending.value = false;
-  }
-  if (document.activeElement === previewContent.value || document.activeElement === previewRoot.value) {
-    focusPreviewContent();
+  // 整个回调包 try/catch：iframe 的 load 是无主语原生事件，任何抛出都会升级成
+  // Vue errorHandler 的 "native event handler" 未处理异常（曾导致抽屉点击崩溃）。
+  try {
+    if (iframePending.value) {
+      iframePending.value = false;
+    }
+    if (document.activeElement === previewContent.value || document.activeElement === previewRoot.value) {
+      focusPreviewContent();
+    }
+  } catch {
+    /* 预览加载回调异常不影响抽屉使用 */
   }
 }
 
@@ -387,6 +393,12 @@ async function loadPreview() {
   loadingPromise = doLoadPreview(sourceKey);
   try {
     await loadingPromise;
+  } catch (err: any) {
+    // 兜底：doLoadPreview 内部已捕获绝大多数异常，这里防线性拒绝逃逸成
+    // 未处理 Promise rejection（watcher/事件上下文里会被 Vue errorHandler
+    // 包装成 "native event handler" 崩溃）。
+    console.error('Document preview failed:', err);
+    error.value = err?.message || t('preview.loadFailed');
   } finally {
     if (loadingForKey === sourceKey) {
       loadingForKey = '';
@@ -431,6 +443,23 @@ async function doLoadPreview(sourceKey: string) {
         if (direct) setDirectUrlCache(props.knowledgeId, direct);
       }
     }
+    // 防串车：await 期间用户可能已切换到其它文件（快速连续点击两张票）。
+    // 过期加载必须立刻返回，绝不能继续执行下面的 cleanup()——那会把新文件的
+    // 已提交状态清空，再把旧 URL 赋进去（抽屉“闪回”上一张票）。
+    if (getPreviewSourceKey() !== sourceKey) return;
+    // /r/ 代理短链（本地存储或 COS 回退代理）先 HEAD 探活：
+    // 多环境共库不共盘时，本机没有文件字节，iframe 内的 404 错误页无法被外层
+    // 感知（iframe 不对外抛 error）。探到非 2xx 就丢弃直连，走下面的 Blob
+    // 回退路径——它会经请求拦截器产出明确的“预览失败”提示，而不是白屏。
+    if (direct.startsWith('/r/')) {
+      try {
+        const probe = await fetch(direct, { method: 'HEAD' });
+        if (!probe.ok) direct = '';
+      } catch {
+        direct = '';
+      }
+      if (getPreviewSourceKey() !== sourceKey) return;
+    }
     const preliminaryKind = resolvePreviewKind(ft);
     if (
       direct &&
@@ -455,6 +484,8 @@ async function doLoadPreview(sourceKey: string) {
     // 直连不可用：回退 Blob 整包下载（此时才清理旧内容）。
     cleanup();
     const rawBlob = await fetchPreviewBlob();
+    // 下载期间再次切换源：丢弃过期结果，避免把上一张票的内容写进新抽屉。
+    if (getPreviewSourceKey() !== sourceKey) return;
     let kind = resolvePreviewKind(ft);
     if (kind === 'unsupported') {
       const sample = new Uint8Array(await rawBlob.slice(0, FILE_PREVIEW_SNIFF_BYTES).arrayBuffer());
@@ -549,7 +580,11 @@ function cleanup() {
   iframePending.value = false;
   if (blobUrl.value) {
     // blobUrl 可能带 #page=N 后缀（多页定位），revoke 时按基础 URL 清理。
-    URL.revokeObjectURL(blobUrl.value.split('#')[0]);
+    try {
+      URL.revokeObjectURL(blobUrl.value.split('#')[0]);
+    } catch {
+      /* URL 可能已被回收或非 blob: 协议，忽略 */
+    }
     blobUrl.value = '';
   }
   textContent.value = '';
@@ -560,7 +595,13 @@ function cleanup() {
   htmlViewMode.value = 'render';
   pptxData.value = null;
   pdfData.value = null;
-  for (const url of epubObjectUrls) URL.revokeObjectURL(url);
+  for (const url of epubObjectUrls) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* 同上：回收失败不影响状态清理 */
+    }
+  }
   epubObjectUrls = [];
   epubHtml.value = '';
   excelSheetNames = [];

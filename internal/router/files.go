@@ -269,13 +269,17 @@ func serveResourceGrants(
 	}
 	handler := func(c *gin.Context) {
 		ctx := c.Request.Context()
-		resource, err := resourceCatalog.ResolveAccessGrant(ctx, c.Param("token"))
+		token := c.Param("token")
+		resource, err := resourceCatalog.ResolveAccessGrant(ctx, token)
 		if err != nil || resource == nil {
+			logger.Warnf(ctx, "[Router] /r/%s 404: access grant not resolvable (unknown/expired/revoked token) err=%v", token, err)
 			c.Status(http.StatusNotFound)
 			return
 		}
 		tenant, err := tenantService.GetTenantByID(ctx, resource.TenantID)
 		if err != nil || tenant == nil {
+			logger.Warnf(ctx, "[Router] /r/%s 404: tenant resolve failed resource_id=%s tenant_id=%d err=%v",
+				token, resource.ID, resource.TenantID, err)
 			c.Status(http.StatusNotFound)
 			return
 		}
@@ -291,12 +295,17 @@ func serveResourceGrants(
 			fileSvc = globalFileService
 		}
 		if err != nil || fileSvc == nil {
-			logger.Warnf(ctx, "[Router] resource grant storage resolution failed: resource_id=%s err=%v", resource.ID, err)
+			logger.Warnf(ctx, "[Router] /r/%s 404: storage resolution failed resource_id=%s tenant_id=%d backend_id=%s provider=%q physical_path=%q err=%v",
+				token, resource.ID, resource.TenantID, resource.StorageBackendID, provider, resource.PhysicalPath, err)
 			c.Status(http.StatusNotFound)
 			return
 		}
 		reader, err := fileSvc.GetFile(ctx, resource.PhysicalPath)
 		if err != nil {
+			// 本地后端最常见的 404：文件字节不在本机磁盘（多环境共库不共盘，或文件已被清理）。
+			// 打印完整定位信息，杜绝黑盒排查。
+			logger.Warnf(ctx, "[Router] /r/%s 404: physical file unreadable resource_id=%s tenant_id=%d backend_id=%s provider=%q physical_path=%q err=%v",
+				token, resource.ID, resource.TenantID, resource.StorageBackendID, provider, resource.PhysicalPath, err)
 			c.Status(http.StatusNotFound)
 			return
 		}
