@@ -11,17 +11,17 @@
       </t-tooltip>
     </div>
 
-    <!-- 校验问题：按等级合并成 1~2 条，明细里带 #下标 + 字段，便于定位到具体记录 -->
+    <!-- 校验问题：按等级合并成 1~2 条，明细里带 #下标 + 字段，便于定位到具体记录。
+         注意：tdesign-vue-next 1.19.2 的 Alert 只有 #title 与 #message（默认）两个槽位，
+         没有 #description（那是 prop 名），放错槽位会被静默丢弃、只剩标题。 -->
     <t-alert v-for="g in groups" :key="g.severity" :theme="g.theme" variant="light" class="eq-alert">
-      <template #message>
+      <template #title>
         <span class="eq-alert-title">{{ g.title }}</span>
       </template>
-      <template #description>
-        <div class="eq-alert-body">
-          <div v-for="(line, i) in g.lines" :key="i" class="eq-alert-line">{{ line }}</div>
-          <div v-if="g.rest > 0" class="eq-alert-more">…等共 {{ g.total }} 处</div>
-        </div>
-      </template>
+      <div class="eq-alert-body">
+        <div v-for="(line, i) in g.lines" :key="i" class="eq-alert-line">{{ line }}</div>
+        <div v-if="g.rest > 0" class="eq-alert-more">…等共 {{ g.total }} 处</div>
+      </div>
     </t-alert>
   </div>
 </template>
@@ -138,6 +138,7 @@ const groups = computed<AlertGroup[]>(() => {
 }
 
 .eq-alert {
+  :deep(.t-alert__title),
   :deep(.t-alert__message) {
     font-weight: 500;
   }

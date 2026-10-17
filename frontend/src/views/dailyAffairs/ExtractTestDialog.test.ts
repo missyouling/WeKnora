@@ -171,3 +171,13 @@ test('存在校验问题时按等级渲染 Alert（error 红 / warn 黄），明
   assert.match(qualityPanel, /字段格式需核对/)
   assert.match(qualityPanel, /#\$\{it\.index \+ 1\}/)
 })
+
+test('Alert 槽位回归：明细必须在默认插槽，标题在 #title（E2E 抓出的静默丢内容 bug）', () => {
+  // tdesign-vue-next 1.19.2 的 Alert 只渲染 #title 与 #message/默认插槽，
+  // 没有 #description（那是 prop 名）：放错槽位不报错、但内容整块消失。
+  assert.match(qualityPanel, /<template #title>/)
+  assert.doesNotMatch(qualityPanel, /<template #description>/)
+  // 明细行 div 必须位于 t-alert 标签内部（默认插槽区域）
+  const alertBlock = qualityPanel.slice(qualityPanel.indexOf('<t-alert'))
+  assert.match(alertBlock, /eq-alert-line/)
+})
