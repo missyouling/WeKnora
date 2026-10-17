@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // 提取质量闭环测试（确定性，不调真实模型）。
@@ -158,4 +159,59 @@ func validateRepeatString(s string, n int) string {
 		out = append(out, s...)
 	}
 	return string(out)
+}
+
+// 用户配置的必填字段（ExtractFieldConfig.Required）此前只存在于结构体里、无人消费。
+// 这里锁死它的行为：只对标准契约键生效，缺则报 error，有值不报，未知中文名不误报。
+func TestExtractValidateRequiredFieldFromConfig(t *testing.T) {
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "seller_tax_no", Required: true, Enabled: true},
+	}}
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
+		InvoiceNo:   "64869484",
+		TotalAmount: f64(101.72),
+	}}}
+	issues := validateInvoiceExtraction(res, cfg)
+	found := false
+	for _, is := range issues {
+		if is.Field == "seller_tax_no" && is.Severity == issueSeverityError {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("必填字段为空应报 error，实际 issues=%+v", issues)
+	}
+}
+
+func TestExtractValidateRequiredFieldSatisfied(t *testing.T) {
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "seller_tax_no", Required: true, Enabled: true},
+	}}
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
+		InvoiceNo:   "64869484",
+		TotalAmount: f64(101.72),
+		SellerTaxNo: "91500227MA5U54AJ0A",
+	}}}
+	for _, is := range validateInvoiceExtraction(res, cfg) {
+		if is.Field == "seller_tax_no" {
+			t.Fatalf("字段有值不应报问题，实际 %+v", is)
+		}
+	}
+}
+
+// 配置里写的是中文展示名（如「车牌号」）或明细子列时，不属于标准契约键，
+// 校验器不得凭空报错（否则每个分类都会刷出假告警）。
+func TestExtractValidateRequiredIgnoresNonContractNames(t *testing.T) {
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "车牌号", Required: true, Enabled: true},
+	}}
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
+		InvoiceNo:   "64869484",
+		TotalAmount: f64(101.72),
+	}}}
+	for _, is := range validateInvoiceExtraction(res, cfg) {
+		if is.Field == "车牌号" {
+			t.Fatalf("非标准契约键不应被校验，实际 %+v", is)
+		}
+	}
 }

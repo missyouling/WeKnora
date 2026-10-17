@@ -99,6 +99,20 @@ func validateInvoiceExtraction(res *InvoiceExtractionResult, cfg *types.KbExtrac
 	if res.Kind != "invoice" {
 		return issues
 	}
+	// 用户配置的必填字段（ExtractFieldConfig.Required）。只对**标准契约键**生效：
+	// 配置里可能写中文名（"车牌号"）或明细子列，那类字段的判定不在本校验器职责内，
+	// 强行映射会误报。规则 2/3 已覆盖的键不再重复报（去重见 hasIssueForField）。
+	var requiredFields []string
+	if cfg != nil {
+		for _, f := range cfg.Fields {
+			if !f.Enabled || !f.Required {
+				continue
+			}
+			if n := strings.TrimSpace(f.Name); n != "" {
+				requiredFields = append(requiredFields, n)
+			}
+		}
+	}
 	for i := range res.Invoices {
 		inv := &res.Invoices[i]
 
@@ -165,8 +179,34 @@ func validateInvoiceExtraction(res *InvoiceExtractionResult, cfg *types.KbExtrac
 				})
 			}
 		}
+
+		// 6) 用户配置的必填字段为空 → error（此前 Required 只是个没人读的字段）。
+		//    放在最后：跳过已被规则 1~3 报过的键，避免同一缺失被记两次。
+		for _, f := range requiredFields {
+			acc, ok := invoiceFieldAccessors[f]
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(acc.Get(inv)) != "" || hasIssueForField(issues, i, f) {
+				continue
+			}
+			issues = append(issues, ExtractFieldIssue{
+				Index: i, Field: f, Kind: "missing",
+				Detail: "用户配置为必填，但未提取到该字段", Severity: issueSeverityError,
+			})
+		}
 	}
 	return issues
+}
+
+// hasIssueForField 判断某张发票的某个字段是否已被记过问题（避免重复告警）。
+func hasIssueForField(issues []ExtractFieldIssue, index int, field string) bool {
+	for _, is := range issues {
+		if is.Index == index && is.Field == field {
+			return true
+		}
+	}
+	return false
 }
 
 func countIssues(issues []ExtractFieldIssue, severity string) int {
