@@ -158,6 +158,14 @@ export default defineConfig({
         target: DEV_PROXY_TARGET,
         changeOrigin: true,
         secure: false,
+      },
+      // 文件预览代理路径：/preview-url 返回 { kind:'proxy', url:'/r/<token>' }，
+      // 前端用 iframe/PDF 查看器直接加载该相对路径。生产由 nginx 反代到后端；
+      // 开发环境缺此代理则预览 404（表现为"详情抽屉源文件预览空白"，而 VPS 正常）。
+      '/r/': {
+        target: DEV_PROXY_TARGET,
+        changeOrigin: true,
+        secure: false,
       }
     }
   },
