@@ -72,8 +72,12 @@ miniprogram/project.private.config.json
 # Locally built BrowserSkill runtime and extension bundles
 /artifacts/browserskill/
 
-server.exe
+# 本地构建产物 / 编辑器与临时备份（P0-2：防 550MB 级文件再次误提交）
+*.exe
 *.exe~
+*.bak
+*.tmp
+.tmp_*
 duckdb.dll
 
 
