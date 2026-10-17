@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -18,6 +19,18 @@ import (
 // extraction model so the prompt stays inside a normal context window
 // even for long PDFs.
 const invoiceExtractMaxContentRunes = 24000
+
+// invoiceExtractCallTimeout 单次模型调用的硬超时。
+// 2026-10-17 实测：供应商偶发挂起连接（无响应、无错误返回），调用方无限等待，
+// 提取任务永久停在 processing（CPU 0%、日志静默无任何 attempt 记录），
+// UI 表现为"进度 100% 但永不返回"。有了超时，挂起转为错误 → 走重试/失败路径
+// → 状态最终落 failed，UI 不再悬死。
+const invoiceExtractCallTimeout = 5 * time.Minute
+
+// withExtractCallTimeout 给单次模型调用包上硬超时。
+func withExtractCallTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, invoiceExtractCallTimeout)
+}
 
 // InvoiceExtractionItem mirrors one invoice found in a document.
 // Numeric fields use pointers so an unrecognized value stays null on the
@@ -215,7 +228,9 @@ func ExtractInvoicesFromContent(ctx context.Context, model chat.Chat, content st
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+	callCtx, cancelCall := withExtractCallTimeout(types.WithLLMCallMetadata(ctx, "invoice_extract", ""))
+	defer cancelCall()
+	result, err := model.Chat(callCtx, []chat.Message{
 		{Role: "system", Content: invoiceExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
 	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
@@ -710,7 +725,9 @@ func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.C
 		userPrompt = strings.TrimSpace(guide) + "\n\n" + userPrompt
 	}
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+	callCtx, cancelCall := withExtractCallTimeout(types.WithLLMCallMetadata(ctx, "invoice_extract", ""))
+	defer cancelCall()
+	result, err := model.Chat(callCtx, []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
@@ -738,7 +755,9 @@ func ExtractInvoicePageFromContentWithRules(ctx context.Context, model chat.Chat
 		"以下文档中包含多张发票。请只提取文档中的第 %d 张发票（发票按文档中出现的先后顺序从 1 开始编号）。invoices 数组只包含这一张发票，字段规则不变；若无法确定第 %d 张发票，invoices 返回空数组。\n<document>\n%s\n</document>",
 		page, page, strings.TrimSpace(content))
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+	callCtx, cancelCall := withExtractCallTimeout(types.WithLLMCallMetadata(ctx, "invoice_extract", ""))
+	defer cancelCall()
+	result, err := model.Chat(callCtx, []chat.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})
@@ -766,7 +785,9 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 		"以下文档中包含多张发票。请只提取文档中的第 %d 张发票（发票按文档中出现的先后顺序从 1 开始编号）。invoices 数组只包含这一张发票，字段规则不变；若无法确定第 %d 张发票，invoices 返回空数组。\n<document>\n%s\n</document>",
 		page, page, strings.TrimSpace(content))
 	thinking := false
-	result, err := model.Chat(types.WithLLMCallMetadata(ctx, "invoice_extract", ""), []chat.Message{
+	callCtx, cancelCall := withExtractCallTimeout(types.WithLLMCallMetadata(ctx, "invoice_extract", ""))
+	defer cancelCall()
+	result, err := model.Chat(callCtx, []chat.Message{
 		{Role: "system", Content: invoiceExtractionSystemPrompt},
 		{Role: "user", Content: userPrompt},
 	}, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking})

@@ -71,16 +71,20 @@ func RunExtractWithRetry(
 
 		var raw string
 		var err error
+		// 每次尝试都带硬超时：供应商偶发挂起连接（无响应、无错误）会让调用方
+		// 无限等待，任务永久停在 processing。超时转为错误后走重试/失败路径。
+		callCtx, cancelCall := withExtractCallTimeout(ctx)
 		if a.Stream {
-			raw, err = chatStreamCollect(ctx, model, messages, &opts)
+			raw, err = chatStreamCollect(callCtx, model, messages, &opts)
 		} else {
-			resp, cerr := model.Chat(ctx, messages, &opts)
+			resp, cerr := model.Chat(callCtx, messages, &opts)
 			if cerr != nil {
 				err = cerr
 			} else {
 				raw = resp.Content
 			}
 		}
+		cancelCall()
 		elapsed := time.Since(start)
 
 		if err != nil {
