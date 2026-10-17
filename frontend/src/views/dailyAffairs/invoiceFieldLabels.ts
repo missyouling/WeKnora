@@ -52,6 +52,12 @@ export const INVOICE_FIELD_KEY_ALIASES: Record<string, string> = {
   开票人: 'issuer', 收款人: 'issuer', 经办: 'issuer', 经办人: 'issuer',
   备注: 'remark',
   项目明细: 'items', 明细: 'items',
+  // 分类明细子列（通行费/车队等）：值存放在 items[0].extra[<英文键>]，
+  // 列 key 必须是英文键才能与数据对齐；此前未映射导致「车牌号」列长期空白。
+  车牌号: 'plate_no', 车牌: 'plate_no',
+  车辆类型: 'vehicle_type', 车型: 'vehicle_type',
+  通行日期起: 'travel_from', 通行日期止: 'travel_to',
+  项目名称: 'name', 规格型号: 'spec', 单位: 'unit', 数量: 'qty', 单价: 'price',
   提取状态: 'extractStatus', 状态: 'extractStatus',
   标签: 'tags',
   文件名: 'fileName', 文件名称: 'fileName',

@@ -1235,7 +1235,11 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// certType 非空 → 同文件全部发票的 InvoiceType 与 Category 统一赋值为用户指定分类
 	// （无视 OCR/规则/自定义识别规则）；certType 为空 → 类型必须落在已启用分类集合内，
 	// 命中停用分类或无法匹配的类型降级「其它票据」。
-	h.applyInvoiceUserCategoryPrecedence(extractCtx, &meta, certType)
+	// 用 ruleCertType 而不是 certType：自动提取链路（前端轮询）不带 cert_type，
+	// 此时 certType 为空会导致「用户选择的分类」失效、回退成票面推断的类型，
+	// 推断结果不在启用列表时就被降级成「其它票据」（用户反馈 2026-10-17）。
+	// ruleCertType 已做 certType → 文件级 fleet_cert_type 的回退。
+	h.applyInvoiceUserCategoryPrecedence(extractCtx, &meta, ruleCertType)
 	if extracted.Kind == "not_invoice" {
 		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为发票，置 manual 待补录，
 		// 不自动删除（避免"该是发票却没入库"）。

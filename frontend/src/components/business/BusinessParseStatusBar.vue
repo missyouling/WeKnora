@@ -17,8 +17,10 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 export interface ParseProgressItem {
   name: string
   stage: 'uploading' | 'parsing' | 'extracting'
-  /** null = 该阶段无真实进度数据（如提取阶段后端只返回状态枚举），只展示"进行中" */
+  /** null = 该阶段无真实进度数据（如提取阶段后端只返回状态枚举），不展示百分比 */
   percent: number | null
+  /** 已用时秒数：无百分比时用它反映"确实在推进"（真实数据，不估算） */
+  elapsedSec?: number
 }
 export interface ParseStatusFile {
   id: string
@@ -35,10 +37,20 @@ const props = defineProps<{
 
 const STAGE_LABEL: Record<string, string> = { uploading: '正在上传', parsing: '正在解析', extracting: '正在提取' }
 function stageLabel(stage: string) { return STAGE_LABEL[stage] || stage }
-// 有真实百分比才显示数字；提取阶段后端没有进度数据，显示"进行中"而不是假百分比。
+// 有真实百分比才显示数字；没有时展示**真实已用时长**（后端无进度数据，
+// 但耗时是可观测的事实，比"假 98%"或空洞的"进行中"更能反映推进）。
+function formatElapsed(sec?: number) {
+  if (!sec || sec < 1) return ''
+  if (sec < 60) return `${sec} 秒`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`
+}
 function progressText(p: ParseProgressItem) {
   const head = `${stageLabel(p.stage)}「${p.name}」`
-  return p.percent === null ? `${head}进行中…` : `${head}进度 ${p.percent}%`
+  if (p.percent !== null) return `${head}进度 ${p.percent}%`
+  const dur = formatElapsed(p.elapsedSec)
+  return dur ? `${head}已用 ${dur}` : `${head}进行中…`
 }
 
 // 兜底计数：仅统计真正进行中的文件（pending/processing/finalizing/提取中），

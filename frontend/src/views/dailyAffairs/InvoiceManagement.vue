@@ -1392,7 +1392,9 @@ const {
   start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
-  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'invoice'),
+  // 传入当前细分分类：自动提取（轮询）此前不带 cert_type，后端只能靠票面推断，
+  // 推断结果不在启用列表时就降级成「其它票据」，覆盖了用户上传时选择的分类。
+  extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'invoice', filterInvoiceType.value || undefined),
   onPendingFiles: (files) => {
     // 状态条展示所有「进行中」文件：不仅新上传待解析/待提取的文件，也包括
     // 已产生发票行、正处于「重新解析/重新提取」中的文件（重解/重提选中的记录
@@ -1479,9 +1481,11 @@ const liveProgress = computed(() => {
       // 进度数据；此前的 30 + elapsed*2 估算在 35 秒后就封顶 100%，用户看到的是
       // "进度 100% 却迟迟不出结果"（实为假进度，2026-10-17 用户反馈）。
       // 这里给 percent=null，组件只展示阶段与文件名，不再误导。
-      return { name, stage: 'extracting' as const, percent: null }
+      return { name, stage: 'extracting' as const, percent: null, elapsedSec: Math.round(elapsed) }
     }
-    return { name, stage: 'parsing' as const, percent: Math.min(92, Math.round(10 + elapsed * 4)) }
+    // 解析阶段同样没有真实百分比（后端只给状态枚举），统一展示"已用时长"，
+    // 不用 10+elapsed*4 这类估算——用户已明确要求"算不准就换一种方式反映进度"。
+    return { name, stage: 'parsing' as const, percent: null, elapsedSec: Math.round(elapsed) }
   })
 })
 // 文件离开进行中集合后清理起点记忆，避免 id 复用导致百分比从旧值续算
@@ -1606,6 +1610,10 @@ const fillEditForm = () => {
   // 自定义动态字段（如通行费发票「车牌号」）：无标准契约键、非 remark 片段，
   // 数据存于行级 fields 扩展桶（后端 fields JSON 透传），按 subs.name 读回表单
   const dynamic: Record<string, any> = {}
+  // 明细子列（plate_no/vehicle_type/travel_from/travel_to 等）的值在 items[0].extra，
+  // 不在发票级字段里；抽屉按发票级字段渲染，必须显式回填，否则「车牌号」永远空白。
+  const itemExtra: Record<string, any> = Array.isArray(r.items) ? (r.items[0]?.extra || {}) : {}
+  const stdKeys = ['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName', 'items']
   for (const s of hitCat?.subs || []) {
     const rawName = String(s.name || '')
     if (isRemarkPartField(rawName)) {
@@ -1613,9 +1621,11 @@ const fillEditForm = () => {
       continue
     }
     const key = invoiceFieldKeyOf(rawName)
-    // 未映射到标准契约键的中文字段名 → 动态字段（如「车牌号」）
-    if (!INVOICE_FIELD_LABELS[key] && key === rawName && !['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName', 'items'].includes(key)) {
-      dynamic[rawName] = r.fields?.[rawName] ?? r[rawName] ?? ''
+    // 非标准契约键 → 动态字段（细分分类的专属字段，如通行费的车牌号）。
+    // 用 key 作为表单字段名（与 editFieldDefs 的 f.name 对齐），
+    // 取值优先级：fields 扩展桶 → 行对象 → 明细行 extra。
+    if (!INVOICE_FIELD_LABELS[key] && !stdKeys.includes(key)) {
+      dynamic[key] = r.fields?.[key] ?? r.fields?.[rawName] ?? r[key] ?? itemExtra[key] ?? ''
     }
   }
   editForm.value = {
