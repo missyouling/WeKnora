@@ -1532,7 +1532,12 @@ const openDetail = async (row: InvoiceRow) => {
         const match = parsed.find(p => row.page && p.page === row.page)
           || parsed.find(p => p.invoiceNo === row.invoiceNo) || parsed[0]
         if (match) {
-          currentRow.value = { ...row, ...match }
+          // items 优先用列表行：列表接口返回的明细已带 extra（plate_no/vehicle_type/
+          // travel_from/travel_to 等分类子列），而详情接口的 items 结构可能不含 extra。
+          // 直接 {...row, ...match} 会让 match 的空 items 覆盖掉列表值，表现就是
+          // 抽屉先显示车牌号、1 秒后（详情返回重填时）又消失。
+          const keepItems = Array.isArray(row.items) && row.items.length ? row.items : (match.items || [])
+          currentRow.value = { ...row, ...match, items: keepItems }
           // 详情数据到达后重填一次（发票类型/字段值以落库数据为准）
           fillEditForm()
         }
