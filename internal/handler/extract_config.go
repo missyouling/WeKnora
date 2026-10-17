@@ -39,7 +39,7 @@ func (h *BusinessExtractHandler) getExtractConfig(ctx context.Context, kbID, sco
 }
 
 // resolveInvoiceRuleCfg 发票提取规则解析：优先按上传打标的分类规则（certType）读取，
-// 分类规则缺失时回退「普通发票」规则（内置通用兜底），再缺失回退整体规则（'' / __all__）。
+// 分类规则缺失时回退「普通发票」规则（内置通用兜底），再缺失回退整体规则（” / __all__）。
 func (h *BusinessExtractHandler) resolveInvoiceRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
 	scope := types.FleetCategoryScopeInvoice
 	if ct := strings.TrimSpace(certType); ct != "" {
@@ -93,10 +93,30 @@ func (h *BusinessExtractHandler) injectInvoiceItemSubFields(ctx context.Context,
 	}
 	// 稳定顺序：按 Key 字典序，保证 Prompt 每次生成一致
 	sort.Slice(subs, func(i, j int) bool { return subs[i].Key < subs[j].Key })
+	injected := false
 	for i := range cfg.Fields {
-		if cfg.Fields[i].Type == "items" {
-			cfg.Fields[i].SubFields = subs
+		if cfg.Fields[i].Type != "items" {
+			continue
 		}
+		cfg.Fields[i].SubFields = subs
+		// 强制启用：Prompt 生成会跳过未启用字段（knowledge_invoice_extract.go 的
+		// buildInvoiceRuleSystemPrompt / invoiceItemsSubFieldsInstruction 都判 !Enabled），
+		// 字段被禁用时子列根本不会进 Prompt，模型自然不会输出车牌号/车辆类型/
+		// 通行日期（2026-10-17 实测：items.enabled=false 导致 4 个子列全丢）。
+		cfg.Fields[i].Enabled = true
+		injected = true
+	}
+	// 规则里没有 items 字段时追加一个：否则上面的循环一次都不执行，子列无处注入，
+	// Prompt 只字不提明细子列。实测该 KB「通行费发票」规则的 fields 为空数组，
+	// 正是子列全部缺失的直接原因（只开分类里的 items 开关并不够）。
+	if !injected {
+		cfg.Fields = append(cfg.Fields, types.ExtractFieldConfig{
+			Name:      "items",
+			Label:     "明细",
+			Type:      "items",
+			Enabled:   true,
+			SubFields: subs,
+		})
 	}
 }
 
@@ -188,12 +208,12 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Scope           string                    `json:"scope"`
-		CertType        string                    `json:"cert_type"`
+		Scope           string                     `json:"scope"`
+		CertType        string                     `json:"cert_type"`
 		Fields          []types.ExtractFieldConfig `json:"fields"`
-		AdvancedEnabled bool                      `json:"advanced_enabled"`
-		PromptTemplate  string                    `json:"prompt_template"`
-		Remark          string                    `json:"remark"`
+		AdvancedEnabled bool                       `json:"advanced_enabled"`
+		PromptTemplate  string                     `json:"prompt_template"`
+		Remark          string                     `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -335,13 +355,13 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Scope           string                    `json:"scope"`
-		CertType        string                    `json:"cert_type"`
-		Text            string                    `json:"text"`
-		KnowledgeID     string                    `json:"knowledge_id"`
+		Scope           string                     `json:"scope"`
+		CertType        string                     `json:"cert_type"`
+		Text            string                     `json:"text"`
+		KnowledgeID     string                     `json:"knowledge_id"`
 		Fields          []types.ExtractFieldConfig `json:"fields"`
-		AdvancedEnabled bool                      `json:"advanced_enabled"`
-		PromptTemplate  string                    `json:"prompt_template"`
+		AdvancedEnabled bool                       `json:"advanced_enabled"`
+		PromptTemplate  string                     `json:"prompt_template"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -621,6 +641,7 @@ func invoiceGenericRuleFor(catName string) string {
 //   - 底稿有、现状缺失的字段 → 追加（desc/rule 按底稿）；
 //   - 已有字段 rule 为空，或 rule 等于底稿泛用兜底文案（seed 未精配）→ 升级 desc/rule；
 //   - 已有字段 rule 非空且非泛用兜底（用户手工精配）→ 严格保留，不覆盖。
+//
 // 返回合并后的字段列表与是否有变化。
 func mergeInvoiceRuleFields(cur, draft []types.ExtractFieldConfig, catName string) ([]types.ExtractFieldConfig, bool) {
 	generic := invoiceGenericRuleFor(catName)

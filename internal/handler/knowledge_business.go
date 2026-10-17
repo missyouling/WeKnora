@@ -66,6 +66,13 @@ const extractionTimeout = 30 * time.Minute
 // 有了每批预算，最坏单批 8 分钟；某批失败只丢失该批，其余批次照常提取并落库。
 const invoiceBatchBudget = 8 * time.Minute
 
+// invoiceBatchConcurrency 分批提取的最大并发批次数。
+//
+// 批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），16 页文档 4 批约 12 分钟，
+// 是"慢"的主因。取 2：总时长约减半，同时避免高并发触发供应商限流（429）。
+// 并发下**必须**用预分配切片按批次索引写结果，禁止无序 append（会导致页码错位）。
+const invoiceBatchConcurrency = 2
+
 // newExtractionContext 返回脱离 HTTP 请求生命周期的提取上下文。
 // 场景：前端超时/切页面/网络抖动导致 gin request ctx 被取消时，耗时的大模型
 // 调用不会被连带掐断（context canceled），提取继续在后台跑完并落库，
@@ -1058,66 +1065,95 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
 		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
 		failedBatches := 0
-		logger.Infof(ctx, "Invoice extraction: rule miss, entering LLM batching (%d batches) knowledge=%s",
-			len(batches), knowledgeID)
+		logger.Infof(ctx, "Invoice extraction: rule miss, entering LLM batching (%d batches, concurrency=%d) knowledge=%s",
+			len(batches), invoiceBatchConcurrency, knowledgeID)
+
+		// 受控并发：批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），
+		// 是"慢"的主因；并发 2 可把 4 批从 12 分钟压到 6~7 分钟，上限 2 兼顾
+		// 供应商限流风险（更高并发容易触发 429）。
+		//
+		// 防"张冠李戴"红线：结果写入**预分配切片按批次索引**（results[idx]），
+		// 绝不 append —— 并发 append 顺序不定，会让发票与页码错位。
+		// 合并阶段回到主 goroutine 顺序遍历，保证 Page 归位与文档顺序一致。
+		results := make([]*service.InvoiceExtractionResult, len(batches))
+		errs := make([]error, len(batches))
+		sem := make(chan struct{}, invoiceBatchConcurrency)
+		var wg sync.WaitGroup
 		for i, batch := range batches {
 			content := strings.TrimSpace(batch.Content)
 			if content == "" {
 				continue
 			}
-			// 分批提取多发票合集时，模型常因单批文本碎片化（模板噪音占比高、发票被跨 chunk
-			// 拆开）而漏提本批中的部分发票（典型：18 张通行费发票只提取出 8 张）。因此
-			// 主调用直接使用"发票合集 + 第 N/M 批"引导，要求模型提取本批全部可见发票；
-			// guided 调用失败时再回退普通调用兜底。
-			guide := fmt.Sprintf(
-				"重要提示：文档《%s》是包含多张电子发票的合集（文档描述：%s）。以下文本是该文档的第 %d/%d 批内容，本批文本中包含若干张发票。"+
-					"请逐张提取本批文本中出现的全部发票（特征：发票号码、金额、税率/征收率、税额、价税合计、购销方信息、开票人、发票类型等），一张都不可遗漏。"+
-					"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
-					"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
-				knowledge.FileName, knowledge.Description, i+1, len(batches), enabledCategoryNames)
-			// 每批独立时间预算：Guided 调用可能吃满一次长超时（实测 5 分钟），
-			// 回退若再叠加多次重试，单批最坏耗时可达 25 分钟；批次串行后总时长
-			// 远超用户的合理等待，表现为"进度 100% 却迟迟不出结果"。
-			// 预算内失败即放弃该批（记日志 + 继续后续批次），保住其余批次成果。
-			logger.Infof(ctx, "Invoice extraction batch %d/%d start: chunks=%d-%d runes=%d",
-				i+1, len(batches), batch.StartIndex, batch.EndIndex, len([]rune(content)))
-			batchCtx, cancelBatch := context.WithTimeout(extractCtx, invoiceBatchBudget)
-			batchRes, berr := service.ExtractInvoicesFromContentWithRulesGuided(batchCtx, chatModel, content, invoiceRuleCfg, guide)
-			if berr != nil {
-				// 回退只再试一次（ExtractInvoicesWithRulesOnce）：主调用失败时通常已
-				// 吃满一次超时，再叠加默认 4 次尝试会让单批最坏耗时翻数倍。
-				logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain (single attempt): %v", i+1, berr)
-				if fbRes, ferr := service.ExtractInvoicesWithRulesOnce(batchCtx, chatModel, content, invoiceRuleCfg); ferr == nil && fbRes != nil {
-					batchRes = fbRes
-					berr = nil
+			wg.Add(1)
+			go func(idx int, content string, batch service.InvoiceExtractionBatch) {
+				defer wg.Done()
+				// goroutine 内未捕获的 panic 会终止整个进程，必须逐批兜住。
+				defer func() {
+					if r := recover(); r != nil {
+						errs[idx] = fmt.Errorf("batch %d panic: %v", idx+1, r)
+						logger.Errorf(ctx, "Invoice extraction batch %d panic: %v\n%s", idx+1, r, debug.Stack())
+					}
+				}()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				// 分批提取多发票合集时，模型常因单批文本碎片化（模板噪音占比高、发票被
+				// 跨 chunk 拆开）而漏提本批中的部分发票（典型：18 张只提取出 8 张）。
+				// 主调用用"发票合集 + 第 N/M 批"引导，要求提取本批全部可见发票；
+				// 失败时再回退普通调用兜底一次。
+				guide := fmt.Sprintf(
+					"重要提示：文档《%s》是包含多张电子发票的合集（文档描述：%s）。以下文本是该文档的第 %d/%d 批内容，本批文本中包含若干张发票。"+
+						"请逐张提取本批文本中出现的全部发票（特征：发票号码、金额、税率/征收率、税额、价税合计、购销方信息、开票人、发票类型等），一张都不可遗漏。"+
+						"文本可能因文档分页/拆分而不完整，只要出现发票号码或金额信息即应作为一张发票提取；禁止因文本不完整而将 kind 设为 not_invoice。"+
+						"类型约束：invoice_type 只能从当前已启用的发票类型中选择：%s；禁止输出该列表之外的任何类型。",
+					knowledge.FileName, knowledge.Description, idx+1, len(batches), enabledCategoryNames)
+
+				// 每批独立时间预算：Guided 可能吃满一次长超时（实测 5 分钟），
+				// 回退若再叠加多次重试，单批最坏耗时可达 25 分钟。
+				logger.Infof(ctx, "Invoice extraction batch %d/%d start: chunks=%d-%d runes=%d",
+					idx+1, len(batches), batch.StartIndex, batch.EndIndex, len([]rune(content)))
+				batchCtx, cancelBatch := context.WithTimeout(extractCtx, invoiceBatchBudget)
+				defer cancelBatch()
+				res, berr := service.ExtractInvoicesFromContentWithRulesGuided(batchCtx, chatModel, content, invoiceRuleCfg, guide)
+				if berr != nil {
+					// 回退只再试一次：主调用失败时通常已吃满一次超时。
+					logger.Warnf(ctx, "Invoice extraction batch %d guided failed, fallback to plain (single attempt): %v", idx+1, berr)
+					res, berr = service.ExtractInvoicesWithRulesOnce(batchCtx, chatModel, content, invoiceRuleCfg)
 				}
-			}
-			cancelBatch()
-			if berr != nil {
-				// 首批失败且无任何结果 → 整体失败（记录 failed 状态可重试）；
-				// 后续批失败仅告警跳过，保留已提取的部分。
-				if i == 0 && len(merged.Invoices) == 0 {
-					extractErr = berr
-					break
-				}
-				logger.Warnf(ctx, "Invoice extraction batch %d failed (non-fatal): %v", i+1, berr)
+				results[idx], errs[idx] = res, berr
+			}(i, content, batch)
+		}
+		wg.Wait()
+
+		// 顺序合并 + 页码归位（并发期间各批只写自己的 results[idx]，此处单线程合并）
+		for i := range batches {
+			if errs[i] != nil {
 				failedBatches++
+				logger.Warnf(ctx, "Invoice extraction batch %d/%d failed (non-fatal): %v", i+1, len(batches), errs[i])
 				continue
 			}
+			batchRes := results[i]
 			if batchRes == nil || batchRes.Kind == "not_invoice" {
 				continue
 			}
-			// 页码归位（防"张冠李戴"红线）：用批次在原文档中的 chunk 区间 + 批内顺序
-			// 严格归位，覆盖服务层按结果序号赋的 Page。
-			// 批次循环是串行的，append 顺序即文档顺序；一旦改成并发就必须改为
-			// 预分配切片按批次索引写入，绝不能无序 append。
+			// 页码归位（防"张冠李戴"红线）：批次在原文档中的 chunk 区间 + 批内顺序，
+			// 覆盖服务层按结果序号赋的 Page。
 			for j := range batchRes.Invoices {
-				batchRes.Invoices[j].Page = batch.StartIndex + 1 + j
+				batchRes.Invoices[j].Page = batches[i].StartIndex + 1 + j
 			}
 			sawInvoice = true
 			merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
 		}
-		// 部分完成提示：有批次在预算内失败时，把"结果可能不完整"写入 ExtractError
+		// 全部批次失败且无任何产出 → 整体失败（记 failed、可重试）；
+		// 只要有一批成功就保留部分结果，不因个别批次丢掉整份成果。
+		if failedBatches == len(batches) && len(merged.Invoices) == 0 {
+			if errs[0] != nil {
+				extractErr = errs[0]
+			} else {
+				extractErr = fmt.Errorf("all %d extraction batches failed", len(batches))
+			}
+		}
+		// 部分完成提示：有批次失败但仍拿到数据时，把"结果可能不完整"写入 ExtractError
 		// （状态仍为 success——已有可用数据，不该因个别批次丢掉整份成果）。
 		// 用户据此知道需要复核哪些页码，而不是以为全部提取成功。
 		if failedBatches > 0 && len(merged.Invoices) > 0 {
