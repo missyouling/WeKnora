@@ -1617,7 +1617,9 @@ const fillEditForm = () => {
   const dynamic: Record<string, any> = {}
   // 明细子列（plate_no/vehicle_type/travel_from/travel_to 等）的值在 items[0].extra，
   // 不在发票级字段里；抽屉按发票级字段渲染，必须显式回填，否则「车牌号」永远空白。
-  const itemExtra: Record<string, any> = Array.isArray(r.items) ? (r.items[0]?.extra || {}) : {}
+  const itemExtra: Record<string, any> = Array.isArray(r.items)
+    ? ((r.items[0] as any)?.extra || {})
+    : {}
   const stdKeys = ['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName', 'items']
   for (const s of hitCat?.subs || []) {
     const rawName = String(s.name || '')

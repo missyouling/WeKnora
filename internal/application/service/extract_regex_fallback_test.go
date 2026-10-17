@@ -7,12 +7,14 @@ import (
 )
 
 // Phase B：后置字段级正则补洞器的测试。
+// 命名以 TestExtract 开头，确保被 Daily-Affairs CI 白名单正则
+// (-run "TestBusiness|TestExtract|TestDailyAffairs|TestGolden") 覆盖到。
 //
 // 定位：LLM（含自愈）跑完之后，对**仍为空**的字段，用确定性正则在**本批原文**里
 // 回填。作用域限定单批，且只在"唯一明确命中"时回填——多张票混在一批时宁可空着，
 // 也不能把 A 票的号码写到 B 票上（历史上踩过"张冠李戴"）。
 
-func TestRegexFallbackFillsMissingInvoiceNoFromLabel(t *testing.T) {
+func TestExtractRegexFallbackFillsMissingInvoiceNoFromLabel(t *testing.T) {
 	res := &InvoiceExtractionResult{
 		Kind:     "invoice",
 		Invoices: []InvoiceExtractionItem{{InvoiceNo: ""}},
@@ -36,7 +38,7 @@ func TestRegexFallbackFillsMissingInvoiceNoFromLabel(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackFillsFromBareTwentyDigit(t *testing.T) {
+func TestExtractRegexFallbackFillsFromBareTwentyDigit(t *testing.T) {
 	// 票面只印了号码、没有「发票号码」标签时，靠 20 位全电票号形状兜底。
 	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
 	text := "机器编号 499098302394\n全电票号 26507904700100036197\n"
@@ -46,7 +48,7 @@ func TestRegexFallbackFillsFromBareTwentyDigit(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackDoesNotOverwriteExisting(t *testing.T) {
+func TestExtractRegexFallbackDoesNotOverwriteExisting(t *testing.T) {
 	res := &InvoiceExtractionResult{
 		Kind:     "invoice",
 		Invoices: []InvoiceExtractionItem{{InvoiceNo: "64869484"}},
@@ -61,7 +63,7 @@ func TestRegexFallbackDoesNotOverwriteExisting(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackSkipsAmbiguousMatches(t *testing.T) {
+func TestExtractRegexFallbackSkipsAmbiguousMatches(t *testing.T) {
 	// 同批两张票的号码都在文本里 → 唯一性不成立，禁止按序猜（防串号）。
 	res := &InvoiceExtractionResult{
 		Kind:     "invoice",
@@ -79,7 +81,7 @@ func TestRegexFallbackSkipsAmbiguousMatches(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackUsesConfiguredRegex(t *testing.T) {
+func TestExtractRegexFallbackUsesConfiguredRegex(t *testing.T) {
 	cfg := &types.KbExtractConfig{
 		Fields: []types.ExtractFieldConfig{
 			{Name: "invoice_no", Regex: `票号[-:：]\s*([0-9]{6,20})`, Enabled: true},
@@ -96,7 +98,7 @@ func TestRegexFallbackUsesConfiguredRegex(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackNormalizesInvoiceDate(t *testing.T) {
+func TestExtractRegexFallbackNormalizesInvoiceDate(t *testing.T) {
 	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
 	text := "开票日期: 2025年11月04日"
 	RegexFallbackInvoiceFields(res, text, nil)
@@ -105,7 +107,7 @@ func TestRegexFallbackNormalizesInvoiceDate(t *testing.T) {
 	}
 }
 
-func TestRegexFallbackIgnoresNotInvoice(t *testing.T) {
+func TestExtractRegexFallbackIgnoresNotInvoice(t *testing.T) {
 	res := &InvoiceExtractionResult{Kind: "not_invoice"}
 	patches := RegexFallbackInvoiceFields(res, "发票号码: 26507904700100036197", nil)
 	if len(patches) != 0 {
@@ -115,7 +117,7 @@ func TestRegexFallbackIgnoresNotInvoice(t *testing.T) {
 
 // 端到端语义：校验器判定的 error（号码为空）应能被后置补洞消除——
 // 这正是"提取成功但号码为空也能入库"这条隐性质量问题的修复点。
-func TestRegexFallbackClearsValidationError(t *testing.T) {
+func TestExtractRegexFallbackClearsValidationError(t *testing.T) {
 	res := &InvoiceExtractionResult{
 		Kind:     "invoice",
 		Invoices: []InvoiceExtractionItem{{TotalAmount: f64(101.72)}},
