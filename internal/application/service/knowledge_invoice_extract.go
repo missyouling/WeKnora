@@ -822,18 +822,16 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 	return &parsed, nil
 }
 
-// InvoiceExtractionBatchSize 每批送入模型的 chunk 数上限（对按页切分的 PDF ≈ 页数）。
+// InvoiceExtractionBatchSize 每批送入模型的 chunk 数上限，即"一批大约几页"。
 //
-// 这是「输出长度」与「上下文完整」之间的平衡点，两侧都踩过坑：
-//   - 太大（原值 64）：16 页 / 16 张发票的 PDF 会被合成 1 批，模型需一次性吐出
-//     16 张发票的完整 JSON（含明细子列），输出超长 → 智谱等对长输出返回空 content
-//     → 4 次重试全空 → 提取失败且耗时约 12 分钟（2026-10-17 实测）。
-//   - 太小（历史值）：曾按 chunk 切出每批仅 1~2 张发票的碎片，发票被拆散、模型漏提
-//     （30-chunk / 18-invoice 通行费 PDF 只提取出 1~8 张）。
-//
-// 取 5：单批约 4~5 张发票，输出长度可控；且 PDF 通常一页一张发票，**发票边界即页边界**，
-// 按页切不会把单张发票拆到两批里——这正是比"按字符数切"更稳的原因。
-const InvoiceExtractionBatchSize = 5
+// **关键前提：chunk ≠ 页**（2026-10-17 实测）。同一份 16 页通行费 PDF 被解析成
+// **49 个 chunk**（约每页 3 个，票据排版碎片化）。因此：
+//   - 按"页"估算批次大小时必须除以约 3。取 12 ≈ 4 页，符合"每批 4~5 页"的目标。
+//   - 曾经取值 5（误以为 chunk≈页）→ 49 chunks 被切成 10 批、每批仅 1.6 页：
+//     总时长翻倍（10 批 × 约 2 分钟），且单批内容过少导致模型漏提
+//     （实测 16 张只提出 6 张）。
+//   - 取值过大（历史 64）→ 整篇合成 1 批，单批输出超长，供应商返回空 content。
+const InvoiceExtractionBatchSize = 12
 
 // InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。
 // 记录 chunk 索引区间是为了**结果页码归位**：分批提取必须按批次索引与原始位置
@@ -851,9 +849,6 @@ type InvoiceExtractionBatch struct {
 // chunk-count hard cap is hit), never earlier — this keeps related invoice
 // fragments in the same call.
 func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []InvoiceExtractionBatch {
-	if batchSize <= 0 {
-		batchSize = InvoiceExtractionBatchSize
-	}
 	usable := make([]*types.Chunk, 0, len(chunks))
 	for _, chunk := range chunks {
 		if chunk == nil {
@@ -867,6 +862,11 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 		if strings.TrimSpace(chunk.Content) != "" {
 			usable = append(usable, chunk)
 		}
+	}
+	// 调用方未显式指定时用每批上限（12 个 chunk ≈ 4 页）。
+	// 注意 chunk ≠ 页，见 InvoiceExtractionBatchSize 的说明。
+	if batchSize <= 0 {
+		batchSize = InvoiceExtractionBatchSize
 	}
 	header := make([]string, 0, 2)
 	if name = strings.TrimSpace(name); name != "" {
