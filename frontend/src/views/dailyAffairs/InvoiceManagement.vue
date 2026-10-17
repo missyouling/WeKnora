@@ -700,7 +700,9 @@ const invoiceColValue = (row: any, key: string): any => {
   if (v !== '-') return v
   const it = Array.isArray(row?.items) ? row.items[0] : null
   if (!it || typeof it !== 'object') return '-'
-  const iv = it[key]
+  // 明细子列在 API 里是 items[0].extra[key]（如 plate_no/vehicle_type/travel_from），
+  // 兼容平铺在 items[0][key] 的历史结构。
+  const iv = it[key] !== undefined ? it[key] : it.extra?.[key]
   return iv === undefined || iv === null || iv === '' ? '-' : iv
 }
 

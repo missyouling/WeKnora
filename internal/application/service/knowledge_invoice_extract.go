@@ -1828,6 +1828,8 @@ func parseFlatInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
 			inv.TotalAmount = v
 		}
 	}
+	// 购销方 / 开票人（HTML 单元格内的固定标签）
+	applyFlatParties(&inv, seg)
 	return inv, true
 }
 
@@ -1958,5 +1960,62 @@ func applyHTMLItemRow(inv *InvoiceExtractionItem, vals []string) {
 	}
 	if v := parseAmountToFloat(strings.TrimSpace(vals[7])); v != nil {
 		line.TaxAmt = v
+	}
+}
+
+// 购销方单元格：<td>购买方</td><td colspan=3>名 称：X\n纳税人识别号：Y\n地 址、电 话：Z\n开户行及账号：W</td>
+var (
+	flatPartyCellRe = regexp.MustCompile(`(?is)<td>\s*(购买方|销售方)\s*</td>\s*<td[^>]*>(.*?)</td>`)
+	flatNameLikeRe  = regexp.MustCompile(`名\s*称\s*[:：]\s*([^\n\\]+)`)
+	flatTaxNoLikeRe = regexp.MustCompile(`纳税人识别号\s*[:：]\s*([0-9A-Z]{15,20})`)
+	flatAddrPhoneRe = regexp.MustCompile(`地\s*址、\s*电\s*话\s*[:：]\s*([^\n\\]+)`)
+	flatBankAcctRe  = regexp.MustCompile(`开户行及账号\s*[:：]\s*([^\n\\]+)`)
+	flatIssuerCell  = regexp.MustCompile(`开票人\s*[:：]\s*([^\s<\\]+)`)
+	flatPhoneTailRe = regexp.MustCompile(`\s*((?:\d{3,4}-\d{7,8}(?:-\d{1,6})?)|(?:1\d{10}))\s*$`)
+	flatAcctTailRe  = regexp.MustCompile(`\s*(\d{10,25})\s*$`)
+)
+
+// firstSub 返回第一个捕获组（无匹配返回空串）。
+func firstSub(re *regexp.Regexp, s string) string {
+	if m := re.FindStringSubmatch(s); len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+// splitTrailing 把「正文 + 尾部电话/账号」拆开（地址电话、开户行账号共用）。
+func splitTrailing(s string, tail *regexp.Regexp) (head, tailVal string) {
+	s = strings.TrimSpace(s)
+	if m := tail.FindStringSubmatch(s); len(m) > 1 {
+		return strings.TrimSpace(strings.TrimSuffix(s, m[0])), m[1]
+	}
+	return s, ""
+}
+
+// applyFlatParties 回填购买方/销售方/开票人。OCR 与 docreader 的 HTML 表格里，
+// 购销方信息集中在单元格内按「名 称 / 纳税人识别号 / 地 址、电 话 / 开户行及账号」
+// 四行排列，可用固定标签确定性解析。
+func applyFlatParties(inv *InvoiceExtractionItem, seg string) {
+	if inv == nil {
+		return
+	}
+	for _, m := range flatPartyCellRe.FindAllStringSubmatch(seg, -1) {
+		body := m[2]
+		name := firstSub(flatNameLikeRe, body)
+		taxNo := firstSub(flatTaxNoLikeRe, body)
+		addr, phone := splitTrailing(firstSub(flatAddrPhoneRe, body), flatPhoneTailRe)
+		bank, account := splitTrailing(firstSub(flatBankAcctRe, body), flatAcctTailRe)
+		if strings.Contains(m[1], "购买") {
+			inv.BuyerName, inv.BuyerTaxNo = name, taxNo
+			inv.BuyerAddr, inv.BuyerPhone = addr, phone
+			inv.BuyerBank, inv.BuyerAcct = bank, account
+		} else {
+			inv.SellerName, inv.SellerTaxNo = name, taxNo
+			inv.SellerAddr, inv.SellerPhone = addr, phone
+			inv.SellerBank, inv.SellerAcct = bank, account
+		}
+	}
+	if inv.Issuer == "" {
+		inv.Issuer = firstSub(flatIssuerCell, seg)
 	}
 }
