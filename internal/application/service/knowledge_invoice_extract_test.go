@@ -359,4 +359,3 @@ func TestCleanInvoiceItemSpec(t *testing.T) {
 }
 
 func ptrF64(v float64) *float64 { return &v }
-

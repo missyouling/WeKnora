@@ -163,6 +163,14 @@ type InvoiceExtractionResult struct {
 	Invoices      []InvoiceExtractionItem `json:"invoices"`
 	ExtractError  string                  `json:"extract_error"`
 	FleetCertType string                  `json:"fleet_cert_type,omitempty"` // 上传/重提取时的归档分类打标，供后续重提取选规则兜底
+	// ExtractIssues 字段级校验问题（error/warn）。此前只在服务内部记日志，前端完全
+	// 看不到质量问题（"提取成功但号码为空"就是这种）。随结果透出后，前端详情页与
+	// 提取测试对话框可直接展示。
+	ExtractIssues []ExtractFieldIssue `json:"extract_issues,omitempty"`
+	// PatchedByRegex 本次由后置正则补齐的字段名（去重），前端据此标注"值来源=正则"。
+	PatchedByRegex []string `json:"patched_by_regex,omitempty"`
+	// RegexPatches 补洞明细（字段/取值/来源），用于定位"这个值到底哪来的"。
+	RegexPatches []RegexFieldPatch `json:"regex_patches,omitempty"`
 }
 
 // invoiceExtractionSystemPrompt instructs the model to return strict JSON
@@ -723,8 +731,24 @@ func extractInvoicesWithRulesAttempts(ctx context.Context, model chat.Chat, cont
 				countIssues(issues, issueSeverityError), countIssues(fixedIssues, issueSeverityError))
 		}
 	}
-	logExtractIssues(ctx, issues)
+	// 收尾：后置字段级正则补洞 → 问题清单透出（供前端展示）。
+	// 补洞可能消掉 error（如号码原本为空），所以补完再重新校验一次，保证清单准确。
+	parsed.ExtractIssues = issues
+	if patches := RegexFallbackInvoiceFields(parsed, content, cfg); len(patches) > 0 {
+		logger.Infof(ctx, "invoice regex fallback patched %d field(s): %v", len(patches), patchFieldNames(patches))
+		parsed.ExtractIssues = validateInvoiceExtraction(parsed, cfg)
+	}
+	logExtractIssues(ctx, parsed.ExtractIssues)
 	return parsed, nil
+}
+
+// patchFieldNames 提取补洞记录里的字段名（日志用）。
+func patchFieldNames(patches []RegexFieldPatch) []string {
+	out := make([]string, 0, len(patches))
+	for _, p := range patches {
+		out = append(out, p.Field)
+	}
+	return out
 }
 
 // logInvoiceReplyUnparsable 记录模型返回原文诊断信息，用于定位
@@ -767,6 +791,13 @@ func ExtractInvoicesFromContentWithRulesGuided(ctx context.Context, model chat.C
 		logInvoiceReplyUnparsable(ctx, result.Content, err)
 		return nil, err
 	}
+	// 分批路径（Guided）同样做后置正则补洞：本函数只负责单批，作用域天然正确，
+	// 不会跨批串号。补洞后再做**本批**校验——问题清单随批结果透出，由 handler
+	// 偏移下标后合并成整份结果的问题清单（否则真实的分批链路里永远看不到告警）。
+	if patches := RegexFallbackInvoiceFields(parsed, content, cfg); len(patches) > 0 {
+		logger.Infof(ctx, "invoice batch regex fallback patched %d field(s): %v", len(patches), patchFieldNames(patches))
+	}
+	parsed.ExtractIssues = validateInvoiceExtraction(parsed, cfg)
 	return parsed, nil
 }
 
@@ -826,18 +857,24 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 	if err := common.ParseLLMJsonResponse(result.Content, &parsed); err != nil {
 		return nil, fmt.Errorf("parse invoice page response: %w", err)
 	}
+	parsed.ExtractIssues = validateInvoiceExtraction(&parsed, nil)
 	return &parsed, nil
 }
 
-// InvoiceExtractionBatchSize 每批送入模型的 chunk 数上限，即"一批大约几页"。
+// InvoiceExtractionBatchSize 每批送入模型的 chunk 数上限。
 //
 // **关键前提：chunk ≠ 页**（2026-10-17 实测）。同一份 16 页通行费 PDF 被解析成
-// **49 个 chunk**（约每页 3 个，票据排版碎片化）。因此：
-//   - 按"页"估算批次大小时必须除以约 3。取 12 ≈ 4 页，符合"每批 4~5 页"的目标。
-//   - 曾经取值 5（误以为 chunk≈页）→ 49 chunks 被切成 10 批、每批仅 1.6 页：
-//     总时长翻倍（10 批 × 约 2 分钟），且单批内容过少导致模型漏提
-//     （实测 16 张只提出 6 张）。
-//   - 取值过大（历史 64）→ 整篇合成 1 批，单批输出超长，供应商返回空 content。
+// **49 个 chunk**（约每页 3 个，票据排版碎片化）。因此按"页"估算批次大小必须除以约 3。
+//
+// 取 8 的依据（多轮实测收敛，约束其实是**输出长度**而非输入长度）：
+//   - 太小的历史值 5（误以为 chunk≈页）→ 49 chunks 切成 10 批、每批仅 1.6 页，
+//     总时长翻倍且单批内容过少导致漏提（16 张只出 6 张）。
+//   - 过大（历史 64）→ 整篇 1 批，单批输出超长，供应商直接返回空 content。
+//   - 12 / 16 / 24 chunk 在 items 子列（8 列）开启后均触到 5 分钟单批硬超时
+//     ——每张票的输出体积随子列翻倍，瓶颈在输出而非输入。
+//   - 8 chunk（约 4~5 张票）可稳定完成；配合并发 4，16 页文档约 3~4 分钟。
+//
+// 注：扁平/HTML 规则提取器命中时根本不走 LLM，本常量只影响兜底路径。
 const InvoiceExtractionBatchSize = 8
 
 // InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。

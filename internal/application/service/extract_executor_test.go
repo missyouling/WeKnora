@@ -26,6 +26,9 @@ type fakeRetryChat struct {
 	nonStreamIdx  int
 	calls         []string
 	formats       []string
+	// thinkings 记录每次调用传入的 Thinking 取值（nil 表示"不发送思考参数"）
+	thinkings []*bool
+	modelName string
 	// lastMessages 记录最近一次调用收到的消息，供断言（如自愈回灌是否截断）
 	lastMessages []chat.Message
 }
@@ -34,6 +37,7 @@ func (f *fakeRetryChat) Chat(_ context.Context, msgs []chat.Message, opts *chat.
 	f.lastMessages = msgs
 	f.calls = append(f.calls, "nonstream")
 	f.formats = append(f.formats, string(opts.Format))
+	f.thinkings = append(f.thinkings, opts.Thinking)
 	i := f.nonStreamIdx
 	f.nonStreamIdx++
 	if i < len(f.nonStreamErrs) && f.nonStreamErrs[i] != nil {
@@ -49,6 +53,7 @@ func (f *fakeRetryChat) ChatStream(_ context.Context, msgs []chat.Message, opts 
 	f.lastMessages = msgs
 	f.calls = append(f.calls, "stream")
 	f.formats = append(f.formats, string(opts.Format))
+	f.thinkings = append(f.thinkings, opts.Thinking)
 	i := f.streamIdx
 	f.streamIdx++
 	ch := make(chan types.StreamResponse, 2)
@@ -70,8 +75,13 @@ func (f *fakeRetryChat) ChatStream(_ context.Context, msgs []chat.Message, opts 
 	return ch, nil
 }
 
-func (f *fakeRetryChat) GetModelName() string { return "fake-model" }
-func (f *fakeRetryChat) GetModelID() string   { return "fake-model-id" }
+func (f *fakeRetryChat) GetModelName() string {
+	if f.modelName != "" {
+		return f.modelName
+	}
+	return "fake-model"
+}
+func (f *fakeRetryChat) GetModelID() string { return "fake-model-id" }
 
 // parseable 模拟调用方的校验：必须是含 "kind" 的 JSON 对象。
 func parseable(raw string) bool {
@@ -205,5 +215,74 @@ func TestExtractExecutorDoesNotMutateBaseOpts(t *testing.T) {
 		base, DefaultExtractAttempts(schema), parseable, nil)
 	if base.Format != nil {
 		t.Errorf("baseOpts 不应被写入 Format，实际 %q", string(base.Format))
+	}
+}
+
+// ---- Phase A3：思考参数自适应 ----
+
+// 部分供应商（或强制思考模型）不接受 thinking:false，会直接 400。
+// 执行器必须在**同一次尝试内**去掉该参数重发，而不是浪费一次完整策略。
+func TestExtractExecutorDropsThinkingWhenProviderRejects(t *testing.T) {
+	thinking := false
+	m := &fakeRetryChat{
+		streamErrs: []error{errors.New(
+			`create chat completion: API request failed with status 400: {"error":{"message":"thinking is not supported for this model"}}`)},
+		// 第 1 个 stream 名额被"报错那次"消耗，重发的第 2 次才拿到 JSON
+		streamOut: []string{"", `{"kind":"invoice","invoices":[]}`},
+	}
+	got, err := RunExtractWithRetry(context.Background(), m,
+		[]chat.Message{{Role: "user", Content: "x"}},
+		&chat.ChatOptions{Thinking: &thinking}, DefaultExtractAttempts(nil), parseable, nil)
+	if err != nil {
+		t.Fatalf("去掉不支持参数后应成功: %v", err)
+	}
+	if !strings.Contains(got, `"kind"`) {
+		t.Errorf("返回内容异常: %q", got)
+	}
+	if len(m.calls) != 2 {
+		t.Fatalf("应在同一次尝试内重发 1 次（共 2 次调用），实际 %d: %v", len(m.calls), m.calls)
+	}
+	if m.thinkings[0] == nil {
+		t.Error("第 1 次应带 thinking 参数（调用方的偏好）")
+	}
+	if m.thinkings[1] != nil {
+		t.Errorf("第 2 次必须去掉 thinking，实际 %v", *m.thinkings[1])
+	}
+}
+
+// 强制思考模型（reasoner/r1/z1 等）默认就是思考态，传 thinking:false 会被拒或无效，
+// 执行器应直接不发送该参数，让模型走自己默认。
+func TestExtractExecutorOmitsThinkingForReasoningModel(t *testing.T) {
+	thinking := false
+	m := &fakeRetryChat{
+		modelName:    "deepseek-reasoner",
+		nonStreamOut: []string{`{"kind":"invoice","invoices":[]}`},
+	}
+	_, err := RunExtractWithRetry(context.Background(), m,
+		[]chat.Message{{Role: "user", Content: "x"}},
+		&chat.ChatOptions{Thinking: &thinking}, SingleAttemptExtractAttempts(), parseable, nil)
+	if err != nil {
+		t.Fatalf("应成功: %v", err)
+	}
+	if len(m.thinkings) != 1 {
+		t.Fatalf("应只调用 1 次，实际 %d", len(m.thinkings))
+	}
+	if m.thinkings[0] != nil {
+		t.Errorf("思考模型不应发送 thinking 参数，实际 %v", *m.thinkings[0])
+	}
+}
+
+// 普通模型仍需保留调用方的 thinking 偏好（不能一律置空）。
+func TestExtractExecutorKeepsThinkingForNormalModel(t *testing.T) {
+	thinking := false
+	m := &fakeRetryChat{nonStreamOut: []string{`{"kind":"invoice","invoices":[]}`}}
+	_, err := RunExtractWithRetry(context.Background(), m,
+		[]chat.Message{{Role: "user", Content: "x"}},
+		&chat.ChatOptions{Thinking: &thinking}, SingleAttemptExtractAttempts(), parseable, nil)
+	if err != nil {
+		t.Fatalf("应成功: %v", err)
+	}
+	if m.thinkings[0] == nil || *m.thinkings[0] != false {
+		t.Errorf("普通模型应保留 thinking=false，实际 %v", m.thinkings[0])
 	}
 }

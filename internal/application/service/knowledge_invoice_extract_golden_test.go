@@ -21,7 +21,7 @@ import (
 // 分批切分测试：批次大小是"输出长度"与"上下文完整"的平衡点，两侧都踩过坑
 // （64 → 16 页合成 1 批输出超长返回空；历史小批 → 发票拆散漏提），必须锁死行为。
 // chunk ≠ 页：实测 16 页通行费 PDF 被解析成 49 个 chunk（约每页 3 个）。
-// 批次大小必须按 chunk 数换算（12 chunk ≈ 4 页），否则会把文档切成过多小批：
+// 批次大小必须按 chunk 数换算（8 chunk ≈ 2~3 页，受"输出长度"约束），否则会把文档切成过多小批：
 // 曾误按"每批 5 chunk"处理 → 49 chunks 切出 10 批、每批仅 1.6 页，
 // 总时长翻倍且因单批内容过少而漏提（16 张只出 6 张）。
 func TestExtractBuildInvoiceBatchesDynamicSize(t *testing.T) {
@@ -31,9 +31,10 @@ func TestExtractBuildInvoiceBatchesDynamicSize(t *testing.T) {
 		desc        string
 	}{
 		{3, 1, "小文档单批"},
-		{16, 2, "16 chunk → 2 批（每批 12 chunk ≈ 4 页）"},
-		{49, 5, "实测 49 chunk（16 页 PDF）应切 5 批，而不是 10 批"},
-		{240, 20, "240 chunk → 20 批（每批 12）"},
+		{8, 1, "恰好一批"},
+		{16, 2, "16 chunk → 2 批（每批 8 chunk ≈ 2~3 页）"},
+		{49, 7, "实测 49 chunk（16 页 PDF）应切 7 批，而不是 10 批"},
+		{240, 30, "240 chunk → 30 批（每批 8）"},
 	}
 	for _, c := range cases {
 		chunks := make([]*types.Chunk, 0, c.chunks)
@@ -62,9 +63,9 @@ func TestExtractBuildInvoiceBatchesSplitsByChunkCount(t *testing.T) {
 	}
 	batches := BuildInvoiceExtractionBatches("16页通行费.pdf", "汇总单", chunks, 0)
 	if len(batches) != 2 {
-		t.Fatalf("16 chunks / 每批 12 应切 2 批（12+4），实际 %d 批", len(batches))
+		t.Fatalf("16 chunks / 每批 8 应切 2 批（8+8），实际 %d 批", len(batches))
 	}
-	wantStarts := []int{0, 12}
+	wantStarts := []int{0, 8}
 	for i, b := range batches {
 		if b.StartIndex != wantStarts[i] {
 			t.Errorf("批 %d StartIndex = %d, want %d", i, b.StartIndex, wantStarts[i])

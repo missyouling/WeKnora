@@ -75,3 +75,92 @@ func BenchmarkParseLLMJsonResponse_Fenced(b *testing.B) {
 		_ = ParseLLMJsonResponse(content, &p)
 	}
 }
+
+// ---- Phase A：思考模型兼容与脏 JSON 容错 ----
+
+func TestStripReasoningBlocks(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"闭合 think 整体移除", `<think>{"draft":1}</think>{"real":2}`, `{"real":2}`},
+		{"闭合 thought 整体移除", "<thought>hmm</thought>\n{\"real\":2}", "{\"real\":2}"},
+		{"未闭合 think 切到 JSON 起始", `<think>让我想想……{"real":2}`, `{"real":2}`},
+		{"未闭合 think 切到围栏", "<think>思考中\n```json\n{\"real\":2}", "```json\n{\"real\":2}"},
+		{"无 think 原样返回", `{"real":2}`, `{"real":2}`},
+		{"全文都在 think 内保留原串", `<think>只有思考，没有 JSON`, `<think>只有思考，没有 JSON`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StripReasoningBlocks(tt.in); got != tt.want {
+				t.Errorf("StripReasoningBlocks(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// 思考模型混合输出：草稿 JSON 在 <think> 内、正式结果在围栏内且带尾逗号。
+// 若不做剥离，ExtractBalancedJSON 可能抓到草稿 {"wrong":1}。
+func TestParseLLMJsonResponseStripsThinkAndTrailingComma(t *testing.T) {
+	type payload struct {
+		Right int `json:"right"`
+		Wrong int `json:"wrong"`
+	}
+	content := "<think>{\"wrong\": 1}</think>\n```json\n{\"right\": 2,}\n```"
+	var got payload
+	if err := ParseLLMJsonResponse(content, &got); err != nil {
+		t.Fatalf("应能解析，实际报错: %v", err)
+	}
+	if got.Right != 2 {
+		t.Errorf("right = %d, want 2", got.Right)
+	}
+	if got.Wrong != 0 {
+		t.Errorf("不应采用 <think> 内的草稿：wrong = %d", got.Wrong)
+	}
+}
+
+// 千分位/货币符号金额必须能解析为浮点；长编码（发票号/税号）必须原样保留，
+// 不能被转成裸数字丢精度。
+func TestParseLLMJsonResponseSanitizesMoneyKeepsCodes(t *testing.T) {
+	type payload struct {
+		Amount    float64 `json:"amount"`
+		Tax       float64 `json:"tax"`
+		InvoiceNo string  `json:"invoice_no"`
+		Code      string  `json:"code"`
+	}
+	content := `{"amount": "3,258.99", "tax": "¥93.32", "invoice_no": "12345678901234567890", "code": "050002400112"}`
+	var got payload
+	if err := ParseLLMJsonResponse(content, &got); err != nil {
+		t.Fatalf("应能解析，实际报错: %v", err)
+	}
+	if got.Amount != 3258.99 {
+		t.Errorf("amount = %v, want 3258.99", got.Amount)
+	}
+	if got.Tax != 93.32 {
+		t.Errorf("tax = %v, want 93.32", got.Tax)
+	}
+	if got.InvoiceNo != "12345678901234567890" {
+		t.Errorf("20 位发票号被破坏: %q", got.InvoiceNo)
+	}
+	if got.Code != "050002400112" {
+		t.Errorf("发票代码被破坏: %q", got.Code)
+	}
+}
+
+func TestSanitizeLooseJSONKeepsNormalText(t *testing.T) {
+	// 正常文本里的逗号、中文说明不得被改动。
+	in := `{"name": "重庆, 中国", "note": "金额 3,258.99 元"}`
+	if got := SanitizeLooseJSON(in); got != in {
+		t.Errorf("非数值字符串不应被改写:\n in=%s\nout=%s", in, got)
+	}
+}
+
+// 尾逗号修复必须只作用于结构位置，不能改到字符串内容。
+func TestSanitizeLooseJSONKeepsCommaBraceInText(t *testing.T) {
+	in := `{"note": "逗号,}", "list": [1,2,],}`
+	want := `{"note": "逗号,}", "list": [1,2]}`
+	if got := SanitizeLooseJSON(in); got != want {
+		t.Errorf("SanitizeLooseJSON:/n in=%s\nout=%s\nwant=%s", in, got, want)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,11 +49,56 @@ func SingleAttemptExtractAttempts() []ExtractAttempt {
 	return []ExtractAttempt{{Label: "fallback-once"}}
 }
 
+// forcedReasoningModelRE 识别"思考态无法关闭"的模型：对它们发送 thinking:false
+// 要么被供应商拒绝（400），要么被忽略，都会白白浪费一次调用。
+// 只认明确命名特征，避免误判普通模型（如 glm-4-flash 不应命中）。
+var forcedReasoningModelRE = regexp.MustCompile(`(?i)(reasoner|reasoning|thinking|qwq|qwen3|(^|[-_.])r1([-_.]|$)|(^|[-_.])z1([-_.]|$)|(^|[-_.])o[1-4]([-_.]|$))`)
+
+// modelForcesThinking 报告该模型是否强制思考（此时不应下發任何 thinking 开关）。
+func modelForcesThinking(modelName string) bool {
+	name := strings.TrimSpace(modelName)
+	if name == "" {
+		return false
+	}
+	// 去掉常见的厂商前缀（如 "deepseek/deepseek-reasoner"）不影响匹配，直接整体匹配。
+	return forcedReasoningModelRE.MatchString(name)
+}
+
+// thinkingParamRejected 判断错误是否为"供应商不接受 thinking/reasoning 参数"。
+// 判定要保守：必须同时出现思考相关词与参数非法类词，避免把网络错误当成参数问题。
+func thinkingParamRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	mentionsThinking := strings.Contains(msg, "thinking") ||
+		strings.Contains(msg, "reasoning") ||
+		strings.Contains(msg, "推理")
+	if !mentionsThinking {
+		return false
+	}
+	for _, hint := range []string{
+		"not support", "unsupported", "invalid", "unknown", "unrecognized",
+		"unexpected", "not allowed", "illegal", "不支持", "无效",
+	} {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+	return false
+}
+
 // RunExtractWithRetry 按尝试序列执行模型调用，每次产出交给 parse 校验。
 //   - parse 返回 true → 该原始文本可用，立即返回，不再尝试后续策略；
 //   - 全部失败 → 返回最后一次错误，并把最后一份原始输出交给 onFailure（可为 nil）做诊断落盘。
 //
-// baseOpts 会被逐次浅拷贝后覆盖 Format，调用方传入的 baseOpts 不会被修改。
+// baseOpts 会被逐次浅拷贝后覆盖 Format / Thinking，调用方传入的 baseOpts 不会被修改。
+//
+// 思考参数自适应（跨模型兼容）：
+//   - 模型本身强制思考（reasoner/r1/z1/qwen3 等）→ 不发送 thinking 字段，
+//     让供应商走默认；发送 false 会被拒或无效。
+//   - 供应商明确回报"不接受该参数"→ **在同一次尝试内**去掉该参数重发一次，
+//     不浪费一次完整策略（4 次尝试很贵，且每次都有硬超时）。
 func RunExtractWithRetry(
 	ctx context.Context,
 	model chat.Chat,
@@ -70,30 +116,55 @@ func RunExtractWithRetry(
 	if model != nil {
 		modelName = model.GetModelName()
 	}
+	forceThinking := modelForcesThinking(modelName)
+	if forceThinking {
+		logger.Infof(ctx, "extract: model %q forces thinking, omitting thinking switch", modelName)
+	}
 
 	for i, a := range attempts {
 		start := time.Now()
-		opts := *baseOpts
-		if len(a.Schema) > 0 {
-			opts.Format = a.Schema
-		}
+		var (
+			raw     string
+			err     error
+			parseOK bool
+		)
 
-		var raw string
-		var err error
-		// 每次尝试都带硬超时：供应商偶发挂起连接（无响应、无错误）会让调用方
-		// 无限等待，任务永久停在 processing。超时转为错误后走重试/失败路径。
-		callCtx, cancelCall := withExtractCallTimeout(ctx)
-		if a.Stream {
-			raw, err = chatStreamCollect(callCtx, model, messages, &opts)
-		} else {
-			resp, cerr := model.Chat(callCtx, messages, &opts)
-			if cerr != nil {
-				err = cerr
-			} else {
-				raw = resp.Content
+		// 最多 2 次：第 2 次仅在"供应商拒绝 thinking 参数"时触发。
+		for try := 0; try < 2; try++ {
+			opts := *baseOpts
+			if forceThinking || try > 0 {
+				opts.Thinking = nil
+				opts.ReasoningEffort = ""
 			}
+			if len(a.Schema) > 0 {
+				opts.Format = a.Schema
+			}
+
+			raw, err = "", nil
+			// 每次尝试都带硬超时：供应商偶发挂起连接（无响应、无错误）会让调用方
+			// 无限等待，任务永久停在 processing。超时转为错误后走重试/失败路径。
+			callCtx, cancelCall := withExtractCallTimeout(ctx)
+			if a.Stream {
+				raw, err = chatStreamCollect(callCtx, model, messages, &opts)
+			} else {
+				resp, cerr := model.Chat(callCtx, messages, &opts)
+				if cerr != nil {
+					err = cerr
+				} else if resp != nil {
+					raw = resp.Content
+				}
+			}
+			cancelCall()
+
+			if err != nil && try == 0 && !forceThinking && thinkingParamRejected(err) {
+				logger.Warnf(ctx, "extract attempt %d (%s) rejected thinking parameter, retrying without it: %v", i+1, a.Label, err)
+				continue
+			}
+			if err == nil {
+				parseOK = parse(raw)
+			}
+			break
 		}
-		cancelCall()
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -101,7 +172,7 @@ func RunExtractWithRetry(
 			logger.Warnf(ctx, "extract attempt %d (%s) error: %v (elapsed=%s)", i+1, a.Label, err, elapsed)
 			continue
 		}
-		if parse(raw) {
+		if parseOK {
 			logger.Infof(ctx, "extract attempt %d (%s) succeeded (len=%d elapsed=%s)", i+1, a.Label, len(raw), elapsed)
 			return raw, nil
 		}

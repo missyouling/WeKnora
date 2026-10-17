@@ -82,6 +82,27 @@ func newExtractionContext(effectiveTenantID uint64) (context.Context, context.Ca
 	return context.WithTimeout(base, extractionTimeout)
 }
 
+// appendUniqueStrings 追加字符串并去重（保持首次出现顺序）。
+// 用于合并多批结果的正则补洞字段列表——同一字段可能被多批各补一次。
+func appendUniqueStrings(dst []string, add ...string) []string {
+	for _, v := range add {
+		if v == "" {
+			continue
+		}
+		found := false
+		for _, existing := range dst {
+			if existing == v {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, v)
+		}
+	}
+	return dst
+}
+
 // mergeFailedStateMeta constructs the custom_metadata written when an extraction
 // fails at the model call (e.g. 429 rate limit) or on a recovered panic. It
 // preserves the previously extracted records (contracts/regulations/invoices/
@@ -1154,6 +1175,23 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 				batchRes.Invoices[j].Page = batches[i].StartIndex + 1 + j
 			}
 			sawInvoice = true
+			// 观测性透传：把每批的校验问题与正则补洞溯源合并到整份结果。
+			// 批内下标是**批局部**的，合并时要偏移成整份结果的下标，否则前端
+			// 按 index 定位会指到别的发票（Index=-1 是结果级问题，保持原样）。
+			base := len(merged.Invoices)
+			for _, issue := range batchRes.ExtractIssues {
+				if issue.Index >= 0 {
+					issue.Index += base
+				}
+				merged.ExtractIssues = append(merged.ExtractIssues, issue)
+			}
+			for _, patch := range batchRes.RegexPatches {
+				if patch.Index >= 0 {
+					patch.Index += base
+				}
+				merged.RegexPatches = append(merged.RegexPatches, patch)
+			}
+			merged.PatchedByRegex = appendUniqueStrings(merged.PatchedByRegex, batchRes.PatchedByRegex...)
 			merged.Invoices = append(merged.Invoices, batchRes.Invoices...)
 		}
 		// 全部批次失败且无任何产出 → 整体失败（记 failed、可重试）；
@@ -1199,10 +1237,13 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	}
 
 	meta := service.InvoiceCustomMetadata{
-		Kind:          extracted.Kind,
-		Invoices:      extracted.Invoices,
-		ExtractStatus: "success",
-		ExtractError:  extracted.ExtractError,
+		Kind:           extracted.Kind,
+		Invoices:       extracted.Invoices,
+		ExtractStatus:  "success",
+		ExtractError:   extracted.ExtractError,
+		ExtractIssues:  extracted.ExtractIssues,
+		PatchedByRegex: extracted.PatchedByRegex,
+		RegexPatches:   extracted.RegexPatches,
 	}
 	// 自定义识别规则：类型归类（用户可配置关键词/正则 → 发票类型），
 	// 按模型提取出的发票类型字段匹配，命中则覆盖内置关键字判定。

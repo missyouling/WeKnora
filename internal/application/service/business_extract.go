@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"context"
@@ -109,7 +109,6 @@ func (s *BusinessExtractService) MaxAutoAwardPunishSeq(ctx context.Context, kbID
 	return max, nil
 }
 
-
 func (s *BusinessExtractService) MaxAutoRegulationSeq(ctx context.Context, kbID string) (int, error) {
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	prefix := "ZD-" + time.Now().Format("20060102") + "-"
@@ -196,6 +195,13 @@ type InvoiceCustomMetadata struct {
 	ExtractStatus string                  `json:"extract_status"`
 	ExtractError  string                  `json:"extract_error"`
 	FleetCertType string                  `json:"fleet_cert_type,omitempty"` // 归档分类打标，供重提取选规则兜底
+	// ExtractIssues 字段级校验问题（error/warn）。落库后详情页与提取测试对话框可读，
+	// 让"提取成功但某字段为空"这类隐性质量问题变得可见。
+	ExtractIssues []ExtractFieldIssue `json:"extract_issues,omitempty"`
+	// PatchedByRegex 由后置正则补齐的字段名（去重）。
+	PatchedByRegex []string `json:"patched_by_regex,omitempty"`
+	// RegexPatches 补洞明细（取值 + 来源），用于回答"这个值从哪来"。
+	RegexPatches []RegexFieldPatch `json:"regex_patches,omitempty"`
 }
 
 // ListDeletedKnowledge lists soft-deleted rows in a KB.
