@@ -128,8 +128,39 @@
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
                 </div>
               </div>
+              <!-- 明细子列（sub_fields）：仅 data_type=items 的字段有子列口径，
+                   它随 subs 一并持久化，是提取 Prompt 与列表列的唯一权威源。
+                   在此处可展开查看/增删改，避免「智能字段生成」给出的子列无处微调。 -->
+              <div v-if="itemSubFieldsField" class="sub-fields-block">
+                <div class="sub-fields-head">
+                  <span class="sub-fields-title">明细子列 · {{ fieldLabelOf(itemSubFieldsField) }}</span>
+                  <span class="sub-fields-tip">子列随字段配置一并保存，提取时按此生成明细行输出口径</span>
+                </div>
+                <div v-if="itemSubFieldsField.subFields?.length" class="sub-fields-list">
+                  <div v-for="(sf, si) in itemSubFieldsField.subFields" :key="sf.key" class="sub-fields-row">
+                    <span class="sf-idx">{{ si + 1 }}</span>
+                    <t-input v-model="sf.key" size="small" class="sf-key" placeholder="子列键（英文）" />
+                    <t-input v-model="sf.label" size="small" class="sf-label" placeholder="列头显示名" />
+                    <t-select v-model="sf.dataType" size="small" class="sf-type" :options="dataTypeOptions" />
+                    <t-input-number v-model="sf.width" size="small" class="sf-width" :min="0" :max="400" placeholder="0=自适应" />
+                    <t-button variant="text" size="small" theme="danger" @click="removeSubField(sf)">删除</t-button>
+                  </div>
+                </div>
+                <div v-else class="sub-fields-empty">该明细字段暂无子列，添加后将用于生成明细行输出口径</div>
+                <div class="sub-fields-add">
+                  <t-input v-model="newSubFieldKey" size="small" class="sf-add-key" placeholder="子列键（英文，如 account_no）" />
+                  <t-input v-model="newSubFieldLabel" size="small" class="sf-add-label" placeholder="列头显示名（如 户号）" />
+                  <t-button variant="outline" size="small" @click="addSubField">新增子列</t-button>
+                </div>
+              </div>
             </div>
             <div class="meter-form-actions">
+              <t-button
+                v-if="group.scope === 'invoice' || group.scope === 'contract' || group.scope === 'regulation' || group.scope === 'award_punish'"
+                variant="outline" size="small" class="btn-ai-field" @click="openAiFieldSuggest">
+                智能生成字段
+              </t-button>
+              <div class="spacer" />
               <t-button variant="outline" size="small" @click="editingId = ''">取消</t-button>
               <t-button theme="primary" size="small" :loading="saving" @click="commitEdit">保存</t-button>
             </div>
@@ -159,18 +190,37 @@
         </div>
       </div>
     </div>
+  <!-- 智能字段生成：上传样票 → 识别三类建议 → 并入字段配置（仍需用户点保存才落库） -->
+    <AiFieldSuggestDialog
+      v-model:visible="aiFieldVisible"
+      :kb-id="props.kbId || ''"
+      :scope="group.scope"
+      :cert-type="editingCertName"
+      :has-items-field="!!itemSubFieldsField"
+      @apply="onAiFieldApply"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
 import { regulationFieldLabel } from './regulationFieldLabels'
 import { noticeFieldLabel } from './noticeFieldLabels'
+import {
+  fromSubsPayload,
+  toSubsPayload,
+  subsPayloadFromNames,
+  type EditableField,
+  type EditableSubField,
+} from './fleetCategorySubs'
+import AiFieldSuggestDialog from './AiFieldSuggestDialog.vue'
+import { mergeAiFieldSuggestions } from './aiFieldMerge'
+import { cacheSampleText } from './sampleTextCache'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
@@ -546,8 +596,35 @@ async function commitAdd() {
 // ---- 编辑（点击行展开）----
 const editingId = ref('')
 const editForm = reactive({ name: '' })
-const fieldsEditable = ref<{ name: string; enabled: boolean; isDefault: boolean; dataType: string; width: number }[]>([])
+// 字段编辑态一律经 fleetCategorySubs 的纯函数与后端 subs 互转：
+// 早前这里有三份内联 map（toggleEdit 读 / commitEdit 写 / duplicateItem 复制），
+// 三份都漏搬 sub_fields，导致「字段定义」保存一次就把明细子列抹空。
+const fieldsEditable = ref<EditableField[]>([])
 const newFieldName = ref('')
+const newSubFieldKey = ref('')
+const newSubFieldLabel = ref('')
+// 编辑态里唯一的明细字段（data_type=items）：子列编辑器挂在它下面
+const itemSubFieldsField = computed(
+  () => fieldsEditable.value.find((f) => f.dataType === 'items') || null,
+)
+const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
+function addSubField() {
+  const key = newSubFieldKey.value.trim()
+  if (!key) { MessagePlugin.warning('请输入子列键'); return }
+  if (!SUB_KEY_RE.test(key)) { MessagePlugin.warning('子列键需以英文字母开头，仅含字母/数字/下划线'); return }
+  const host = itemSubFieldsField.value
+  if (!host) { MessagePlugin.warning('请先将字段的数据类型设为「明细」'); return }
+  const subs = host.subFields || (host.subFields = [])
+  if (subs.some((s) => s.key === key)) { MessagePlugin.warning('该子列键已存在'); return }
+  subs.push({ key, label: newSubFieldLabel.value.trim() || key, dataType: 'text', width: 0 })
+  newSubFieldKey.value = ''
+  newSubFieldLabel.value = ''
+}
+function removeSubField(sf: EditableSubField) {
+  const host = itemSubFieldsField.value
+  if (!host?.subFields) return
+  host.subFields = host.subFields.filter((s) => s !== sf)
+}
 const dataTypeOptions = [
   { label: '文本', value: 'text' },
   { label: '数字', value: 'number' },
@@ -559,15 +636,14 @@ function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
   editForm.name = item.name
   newFieldName.value = ''
-  // 字段来源：已入库 subs（含解析提取字段）优先，否则内置 base+detail
+  newSubFieldKey.value = ''
+  newSubFieldLabel.value = ''
+  // 字段来源：已入库 subs（含 sub_fields）优先，否则内置 base+detail 底稿
   const b = (BUILTIN[group.value.scope] || []).find((x: any) => x.name === item.name)
   const raw = Array.isArray(item.subs) && item.subs.length
     ? item.subs
-    : [...(b?.base || []), ...(b?.detail || [])].map((n) => ({ name: n, enabled: true, isDefault: false, width: 0 }))
-  const seen = new Set<string>()
-  fieldsEditable.value = raw
-    .map((s: any) => ({ name: String(s.name || s), enabled: s.enabled !== false, isDefault: s.is_default === true, dataType: s.data_type || 'text', width: Number(s.width) || 0 }))
-    .filter((s: any) => { if (seen.has(s.name)) return false; seen.add(s.name); return true })
+    : subsPayloadFromNames([...(b?.base || []), ...(b?.detail || [])])
+  fieldsEditable.value = fromSubsPayload(raw)
   editingId.value = item.id
   loadUsedFields(group.value.scope, item.name)
 }
@@ -595,13 +671,21 @@ const onFieldPopRemove = async () => {
   fieldDelPop.value = null
   if (fd) await removeField(fd)
 }
-// 复制字段：字段配置全量复制为新字段（名称去重递增），提取映射由分类保存时统一落库
+// 复制字段：字段配置全量复制为新字段（含明细子列），提取映射由分类保存时统一落库
 function duplicateField(fd: any) {
   const exists = (n: string) => fieldsEditable.value.some((f: any) => f.name === n)
   let n = 1
   let nm = `${fd.name}_copy`
   while (exists(nm)) { n += 1; nm = `${fd.name}_copy${n}` }
-  fieldsEditable.value.push({ name: nm, enabled: !!fd.enabled, isDefault: !!fd.isDefault, dataType: fd.dataType || 'text', width: Number(fd.width) || 0 })
+  fieldsEditable.value.push({
+    name: nm,
+    enabled: !!fd.enabled,
+    isDefault: !!fd.isDefault,
+    dataType: fd.dataType || 'text',
+    width: Number(fd.width) || 0,
+    // 子列一并复制，否则复制出的 items 字段会是个空壳
+    subFields: Array.isArray(fd.subFields) ? fd.subFields.map((s: EditableSubField) => ({ ...s })) : undefined,
+  })
   MessagePlugin.success('已复制字段')
 }
 function addField() {
@@ -620,9 +704,10 @@ async function commitEdit() {
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入分类名称' : '请输入证照名称')); return }
-  const subs = fieldsEditable.value
-    .map((f) => ({ name: String(f.name).trim(), enabled: !!f.enabled, is_default: !!f.isDefault, data_type: f.dataType || 'text', width: Number(f.width) || 0 }))
-    .filter((f) => f.name)
+  const subs = toSubsPayload(fieldsEditable.value)
+  // 本次保存是否由「智能生成字段」发起（发起时保存后询问是否去配置规则）
+  const aiContext = pendingAiSample.value
+  pendingAiSample.value = ''
   saving.value = true
   try {
     if (item.builtin && item.id.startsWith('builtin-')) {
@@ -644,12 +729,66 @@ async function commitEdit() {
       notifyCategoriesChanged()
     }
     editingId.value = ''
+    // 字段已落库后询问是否顺带去「提取规则」——此时字段名权威源已是最新，
+    // 规则面板会读到刚保存的 subs（含智能识别出的明细子列）。
+    if (aiContext) await askGoRules(name, aiContext)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     saving.value = false
   }
 }
+
+// ---- 智能字段生成 ----
+const aiFieldVisible = ref(false)
+const editingCertName = ref('')
+const pendingAiSample = ref('')
+
+function openAiFieldSuggest() {
+  if (!editingId.value) { MessagePlugin.warning('请先选择要编辑的分类'); return }
+  editingCertName.value = editForm.name.trim()
+  aiFieldVisible.value = true
+}
+
+function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: any[]; sampleText: string }) {
+  const merged = mergeAiFieldSuggestions(
+    fieldsEditable.value,
+    payload.standard,
+    payload.subFields,
+    payload.custom,
+    payload.subFields.map((s: any) => s.key),
+    payload.custom.map((c: any) => c.name),
+  )
+  fieldsEditable.value = merged.fields
+  pendingAiSample.value = payload.sampleText || ''
+  aiFieldVisible.value = false
+  if (merged.addedCount) MessagePlugin.success(`已并入 ${merged.addedCount} 项，确认后点「保存」生效`)
+  else MessagePlugin.warning('没有可并入的新项（可能都已存在）')
+  if (merged.skipped.length) MessagePlugin.warning(`${merged.skipped.length} 项未并入：${merged.skipped[0]?.reason || ''}`)
+}
+
+// askGoRules 保存成功后询问是否跳到「提取规则」，并把样票文本交给规则面板。
+// 确认 → 冒泡 ai-guide 事件（StandardSettingDrawer 是直接父级，无需经过列表页）。
+async function askGoRules(certType: string, sampleText: string) {
+  if (!sampleText) return
+  cacheSampleText(certType, sampleText)
+  try {
+    const confirm = await DialogPlugin.confirm({
+      header: '字段已保存',
+      body: `是否立即前往「提取规则」，为「${certType}」智能生成提取规则？（将带上刚才的样票做正则唯一命中校验）`,
+      confirmBtn: { content: '前往生成', theme: 'primary' },
+      cancelBtn: { content: '稍后再说' },
+    })
+    emit('ai-guide', { certType, sampleText, autoSuggest: true })
+    void confirm
+  } catch {
+    /* 用户取消：不跳转，样票文本仍已缓存，稍后手动点「智能生成规则」时会自动带上 */
+  }
+}
+
+const emit = defineEmits<{
+  (e: 'ai-guide', payload: { certType: string; sampleText: string; autoSuggest: boolean }): void
+}>()
 
 // ---- 启用/禁用 ----
 async function toggleEnabled(item: any, v: boolean) {
@@ -720,16 +859,16 @@ async function duplicateItem(item: any) {
   let n = 1
   let name = `${base}的副本${n}`
   while (names.has(name)) { n += 1; name = `${base}的副本${n}` }
-  // 字段全量复制：已入库分类取 subs 原样拷贝；内置未入库回退内置底稿
+  // 字段全量复制：已入库分类取 subs 原样拷贝（含明细 sub_fields）；内置未入库回退内置底稿
   let subs: any[] = []
   if (Array.isArray(item.subs) && item.subs.length) {
-    subs = item.subs
-      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, is_default: s.is_default === true, data_type: s.data_type || 'text', width: Number(s.width) || 0 }))
-      .filter((s: any) => s.name)
+    subs = toSubsPayload(fromSubsPayload(item.subs))
   } else if (item.builtin) {
     const def = (BUILTIN as any)[scope] || []
     const b = def.find((x: any) => x.name === base)
-    if (b) subs = [...b.base, ...b.detail].map((nm: string) => ({ name: nm, enabled: true, is_default: b.base.includes(nm), data_type: 'text', width: 0 }))
+    if (b) {
+      subs = subsPayloadFromNames([...b.base, ...b.detail]).map((s) => ({ ...s, is_default: b.base.includes(s.name) }))
+    }
   }
   saving.value = true
   try {
@@ -943,8 +1082,13 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   .meter-form-actions {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 8px;
     margin-top: 14px;
+    .spacer { flex: 1; }
+    .btn-ai-field {
+      font-weight: 500;
+    }
   }
 }
 
@@ -1127,6 +1271,77 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
     .fc-add-input {
       flex: 1;
+      min-width: 0;
+    }
+  }
+
+  /* 明细子列编辑区：与字段表同视觉语言，缩进表示层级归属 */
+  .sub-fields-block {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--td-component-stroke);
+    border-radius: 8px;
+    background: var(--td-bg-color-container);
+  }
+
+  .sub-fields-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+
+    .sub-fields-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+    }
+    .sub-fields-tip {
+      font-size: 12px;
+      color: var(--td-text-color-placeholder);
+    }
+  }
+
+  .sub-fields-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sub-fields-row {
+    display: grid;
+    grid-template-columns: 22px minmax(96px, 1fr) minmax(96px, 1fr) 90px 84px 56px;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+
+  .sf-idx {
+    font-size: 11px;
+    color: var(--td-text-color-placeholder);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sub-fields-empty {
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    padding: 4px 0 8px;
+  }
+
+  .sub-fields-add {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+
+    .sf-add-key {
+      flex: 1 1 160px;
+      min-width: 0;
+    }
+    .sf-add-label {
+      flex: 1 1 160px;
       min-width: 0;
     }
   }

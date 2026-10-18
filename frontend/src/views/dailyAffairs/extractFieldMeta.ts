@@ -58,6 +58,58 @@ export function isStandardField(scope: string, name: string): boolean {
   return set.has(canonicalFieldKey(name))
 }
 
+// ---- 正则可配白名单（与后端「补洞白名单」严格对齐）----
+//
+// 这是一处**已知的历史落差**，必须显式收窄：
+//   - `isStandardField('invoice', …)` 认22 个发票标准键（用于 required 判定，
+//     因为通用校验器 ValidateGenericExtraction 对全部标准键做日期归一与必填告警）；
+//   - 但发票**正式提取链路**的后置正则补洞只认 8 个
+//     （后端 `internal/application/service/extract_regex_fallback.go` 的
+//     `invoiceFieldOrder`，即 invoiceFieldAccessors 的全部键）。
+//
+// 此前 UI 用同一把尺子判"正则可配"，用户给 totalAmount / taxRate 配了正则，
+// 正式提取时根本不执行——静默失效比直接置灰更糟（用户以为配了就生效）。
+// 现在把两把尺子拆开：required 走 isStandardField，regex 走 isRegexPatchable。
+// 新增可补洞字段时必须同时改后端 invoiceFieldOrder，否则会出现"配了不执行"。
+
+/** 后端发票补洞真正支持的标准键（snake_case 契约键，顺序与后端一致）。 */
+export const REGEX_PATCHABLE_KEYS = [
+  'invoice_no',
+  'invoice_code',
+  'invoice_date',
+  'buyer_name',
+  'buyer_tax_no',
+  'seller_name',
+  'seller_tax_no',
+  'issuer',
+]
+
+const REGEX_PATCHABLE_SET = new Set(REGEX_PATCHABLE_KEYS.map(canonicalFieldKey))
+
+/**
+ * 该字段能否配置后置正则兜底。
+ *
+ * 判定口径 = 后端补洞器实际支持集合（当前仅发票 8 个键）。
+ * 其余 scope（合同/制度/通知）后端尚未接入字段级补洞，一律 false。
+ * 大小写与下划线差异由 canonicalFieldKey 归一（invoiceNo ≡ invoice_no）。
+ */
+export function isRegexPatchable(scope: string, name: string): boolean {
+  if (scope !== 'invoice') return false
+  const key = canonicalFieldKey(name)
+  if (!key) return false
+  return REGEX_PATCHABLE_SET.has(key)
+}
+
+/** 正则输入被置灰的原因（Tooltip 文案）。空串代表可配。 */
+export function regexDisabledReason(scope: string, name: string): string {
+  if (scope !== 'invoice') return '本模块暂未接入后置正则补洞（当前仅发票生效）'
+  if (isRegexPatchable(scope, name)) return ''
+  if (isStandardField(scope, name)) {
+    return '该字段是标准字段，但后端补洞器只支持发票号/发票代码/开票日期/购销方名称/购销方税号/开票人这 8 个字段，配置后正式提取不会执行'
+  }
+  return '自定义扩展字段仅注入 AI 提取 Prompt，后端后置正则补洞仅对系统标准字段生效'
+}
+
 const LABELERS: Record<string, (name: string) => string> = {
   invoice: (n) => INVOICE_FIELD_LABELS[n] || n,
   contract: (n) => CONTRACT_FIELD_LABELS[n] || n,

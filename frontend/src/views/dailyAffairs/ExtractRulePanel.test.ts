@@ -45,11 +45,13 @@ test('内置正则预设可一键填入，且都是 RE2 兼容写法（无环视
   assert.match(panel, /REGEX_PRESETS/)
 })
 
-test('自定义扩展字段：正则输入置灰并给出 Tooltip 说明，标准契约字段可编辑', () => {
-  assert.match(panel, /isStdField/)
-  assert.match(panel, /自定义扩展字段仅注入 AI 提取 Prompt/)
-  // 置灰逻辑：非标准键 / 该模块未接入字段级校验 → disabled
-  assert.match(panel, /:disabled="!isStdField\(f\.name\)/)
+test('正则置灰判定与必填判定必须分开（required 认全部标准键，regex 只认后端 8 键）', () => {
+  // 必填仍走通用校验器 → isStdField 认全部 22 个标准键
+  assert.match(panel, /:disabled="!isStdField\(f\.name\)"/)
+  // 正则走后端补洞器实际支持集合 → regexPatchable，避免"配了不执行"的静默失效
+  assert.match(panel, /:disabled="!regexPatchable\(f\.name\)"/)
+  const disabled = (panel.match(/:disabled="!regexPatchable\(f\.name\)"/g) || []).length
+  assert.equal(disabled, 2, '行内与展开区两处正则输入都应置灰')
 })
 
 test('标准契约定界：camelCase / snake_case 都算标准键，中文自定义 key 不算', () => {

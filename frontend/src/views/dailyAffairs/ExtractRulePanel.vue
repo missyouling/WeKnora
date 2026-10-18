@@ -7,7 +7,42 @@
       <t-switch v-model="advancedEnabled" size="small">
         <template #label>高级模式</template>
       </t-switch>
+      <t-button variant="outline" theme="primary" :disabled="!certType || aiSuggesting" :loading="aiSuggesting" @click="runAiSuggest">
+        智能生成规则
+      </t-button>
+      <t-tooltip :content="aiSampleHint" placement="top">
+        <t-button variant="text" size="small" :disabled="!certType || !sampleTextAvailable" @click="clearCachedSample">
+          {{ sampleTextAvailable ? '清除样票缓存' : '无样票' }}
+        </t-button>
+      </t-tooltip>
       <t-button variant="outline" theme="primary" :disabled="!certType" @click="openTest">测试规则</t-button>
+    </div>
+
+    <!-- AI 建议预览：非破坏性展示，确认后才写入 fields（仍需用户点保存落库） -->
+    <div v-if="aiSuggestions.length" class="ai-suggest-panel">
+      <div class="ai-suggest-head">
+        <span class="ai-suggest-title">AI 建议（勾选后应用）</span>
+        <span class="ai-suggest-tip">
+          共 {{ aiSuggestions.length }} 项，已勾选 {{ aiPickedCount }} 项
+          <template v-if="!aiSampleTextUsed"> · 未带样票，正则全部无法验证唯一命中</template>
+        </span>
+        <div class="spacer" />
+        <t-button variant="text" size="small" @click="aiSuggestions = []">收起</t-button>
+        <t-button theme="primary" size="small" :disabled="!aiPickedCount" @click="applyAiSuggestions">
+          应用到规则
+        </t-button>
+      </div>
+      <div class="ai-suggest-list">
+        <div v-for="s in aiSuggestions" :key="s.name" class="ai-suggest-row">
+          <t-checkbox v-model="s.picked" />
+          <span class="ai-suggest-name">{{ fieldLabel(s.name) }}</span>
+          <span class="ai-suggest-desc">{{ s.desc || '（无描述）' }}</span>
+          <t-tag v-if="s.required" size="small" variant="outline" theme="warning">必填</t-tag>
+          <span class="ai-suggest-regex" :class="{ 'regex-bad': s.regex_status !== 'accepted' }">
+            {{ s.regex_status === 'accepted' ? s.regex : (s.regex_reason || s.regex_status) }}
+          </span>
+        </div>
+      </div>
     </div>
 
     <div class="rule-table">
@@ -35,7 +70,7 @@
           <span class="rtr-regex" @click.stop>
             <t-tooltip :content="regexTip(f.name)" placement="top">
               <t-input v-model="f.regex" size="small" class="rtr-regex-input" placeholder="未配置"
-                :disabled="!isStdField(f.name)" @click.stop />
+                :disabled="!regexPatchable(f.name)" @click.stop />
             </t-tooltip>
           </span>
           <span class="rtr-status">
@@ -65,7 +100,7 @@
             <div class="rule-form-item">
               <label>正则兜底</label>
               <t-input v-model="f.regex" size="small" placeholder="如 \b\d{20}\b"
-                :disabled="!isStdField(f.name)" />
+                :disabled="!regexPatchable(f.name)" />
               <div class="rule-form-hint" :class="{ 'hint-danger': !!regexHintOf(f) }">
                 {{ regexHintOf(f) || '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）' }}
               </div>
@@ -76,16 +111,16 @@
                 <span class="rule-quick-title">一键填入</span>
                 <t-tooltip v-for="p in REGEX_PRESETS" :key="p.name" :content="p.hint" placement="top">
                   <t-tag size="small" variant="outline" theme="primary" class="rule-quick-tag"
-                    :class="{ 'quick-disabled': !isStdField(f.name) }" @click="applyRegexPreset(f, p)">
+                    :class="{ 'quick-disabled': !regexPatchable(f.name) }" @click="applyRegexPreset(f, p)">
                     {{ p.name }}
                   </t-tag>
                 </t-tooltip>
                 <t-button v-if="f.regex" variant="text" size="small" @click="f.regex = ''">清空</t-button>
               </div>
               <t-alert v-if="!fieldRulesSupported(scope)" theme="info" variant="light" class="rule-form-alert"
-                message="本模块暂未接入字段级校验与正则补洞（目前仅发票/合同/制度/奖惩生效）" />
-              <t-alert v-else-if="!isStdField(f.name)" theme="info" variant="light" class="rule-form-alert"
-                message="自定义扩展字段仅注入 AI 提取 Prompt，后置正则补洞仅对系统标准字段生效" />
+                message="本模块暂未接入字段级校验与正则补洞（目前仅发票支持）" />
+              <t-alert v-else-if="!regexPatchable(f.name)" theme="info" variant="light" class="rule-form-alert"
+                :message="regexDisabledReason(scope, f.name)" />
             </div>
             <div class="rule-form-item rule-form-item--full">
               <label>提取规则</label>
@@ -134,7 +169,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig } from '@/api/fleet'
+import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig, type AiSuggestRulesResult, aiSuggestRules } from '@/api/fleet'
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import {
@@ -142,11 +177,14 @@ import {
   extractFieldLabel,
   fieldRulesSupported,
   isStandardField,
+  isRegexPatchable,
+  regexDisabledReason,
   regexSyntaxHint,
   type RegexPreset,
 } from './extractFieldMeta'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestDialog from './ExtractTestDialog.vue'
+import { cacheSampleText, dropSampleText, readSampleText } from './sampleTextCache'
 
 const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
 
@@ -653,9 +691,14 @@ function fieldLabel(n: string): string {
   return extractFieldLabel(props.scope, n)
 }
 
-// 字段级规则（必填/正则）是否可用：该模块已接入通用校验 + 字段确实是标准契约键。
+// 字段级规则（必填/正则）是否可用。该模块已接入通用校验 + 字段确实是标准契约键。
 // 自定义扩展中文 key 只进 Prompt，后端补洞器装不下它 —— UI 必须置灰而不是装作能用。
 const isStdField = (name: string) => fieldRulesSupported(props.scope) && isStandardField(props.scope, name)
+
+// 正则可配判定**独立于**必填判定：必填走通用校验器认的全部 22 个标准键，
+// 正则走后端补洞器实际支持的 8 个 invoiceFieldOrder 键（extract_regex_fallback.go）。
+// 此前二者共用 isStdField，导致用户给 totalAmount 配了正则却不执行（静默失效）。
+const regexPatchable = (name: string) => fieldRulesSupported(props.scope) && isRegexPatchable(props.scope, name)
 
 const requiredTip = computed(() =>
   fieldRulesSupported(props.scope)
@@ -664,19 +707,18 @@ const requiredTip = computed(() =>
 )
 
 function regexTip(name: string): string {
-  if (!fieldRulesSupported(props.scope)) return '本模块暂未接入正则补洞（仅发票/合同/制度/奖惩生效）'
-  if (!isStandardField(props.scope, name)) return '自定义扩展字段仅注入 AI 提取 Prompt，后置正则补洞仅对系统标准字段生效'
-  return '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）'
+  if (regexPatchable(name)) return '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）'
+  return regexDisabledReason(props.scope, name)
 }
 
 function regexHintOf(f: ExtractFieldConfig): string {
-  if (!isStdField(f.name)) return ''
+  if (!regexPatchable(f.name)) return ''
   return regexSyntaxHint(f.regex || '')
 }
 
 function applyRegexPreset(f: ExtractFieldConfig, p: RegexPreset) {
-  if (!isStdField(f.name)) {
-    MessagePlugin.warning('自定义扩展字段不支持正则兜底')
+  if (!regexPatchable(f.name)) {
+    MessagePlugin.warning(regexDisabledReason(props.scope, f.name) || '该字段不支持正则兜底')
     return
   }
   f.regex = p.value
@@ -805,6 +847,10 @@ async function loadConfig() {
 }
 
 async function onCertTypeChange() {
+  // 切换分类时清掉上一分类的 AI 建议预览：它们的字段清单与当前分类无关，
+  // 留着会让用户误以为这些建议适用于新分类。
+  aiSuggestions.value = []
+  aiSampleTextUsed.value = false
   await loadConfig()
 }
 
@@ -867,6 +913,132 @@ function openTest() {
   testVisible.value = true
 }
 
+// ---- 智能配置规则（纯建议：只填表，不落库；落库仍由用户点「保存」触发） ----
+interface AiSuggestionRow {
+  name: string
+  desc: string
+  rule: string
+  required: boolean
+  regex: string
+  regex_status: string
+  regex_reason?: string
+  /** 是否已有内容：overwrite=false 的语义是"只填空值"，已有内容的字段默认不勾选。 */
+  filled: boolean
+  picked: boolean
+}
+
+const aiSuggesting = ref(false)
+const aiSuggestions = ref<AiSuggestionRow[]>([])
+const aiSampleTextUsed = ref(false)
+const sampleTextAvailable = computed(() => !!readSampleText(certTypeName.value))
+const aiPickedCount = computed(() => aiSuggestions.value.filter((s) => s.picked).length)
+const aiSampleHint = computed(() =>
+  sampleTextAvailable.value
+    ? '已缓存该分类的样票文本：生成的正则会做唯一命中校验。点击可清除缓存。'
+    : '尚未缓存样票文本。可先在「字段定义」Tab 用「智能生成字段」上传样票，或直接生成（此时正则无法验证唯一命中，会被全部丢弃）。',
+)
+
+/**
+ * 一键智能生成规则。
+ *
+ * overwrite 固定传false：后端只填空值字段，用户手写内容一律保留——
+ * AI 建议的价值是"补全空白"，不是"覆盖已有配置"。
+ */
+async function runAiSuggest(payload?: { sampleText?: string }) {
+  if (!certType.value) return
+  await ensureKb()
+  if (!resolvedKbId.value) {
+    MessagePlugin.error(`未找到${KB_NAME.value}知识库`)
+    return
+  }
+  const sample = String(payload?.sampleText || readSampleText(certTypeName.value) || '')
+  if (payload?.sampleText && certTypeName.value) cacheSampleText(certTypeName.value, sample)
+  aiSuggesting.value = true
+  try {
+    const res: any = await aiSuggestRules(resolvedKbId.value, {
+      scope: currentScope.value,
+      cert_type: certTypeName.value,
+      fields: fields.value
+        .filter((f) => f.name)
+        .map((f) => ({ name: f.name, data_type: f.type || 'string' })),
+      sample_text: sample,
+      overwrite: false,
+    })
+    const data = (res?.data || res) as AiSuggestRulesResult
+    if (!data || !Array.isArray(data.fields)) throw new Error('建议结果格式异常')
+    const byName = new Map(fields.value.map((f) => [f.name, f]))
+    aiSuggestions.value = data.fields
+      .filter((f) => !!f.name)
+      .map((f) => {
+        const cur = byName.get(f.name)
+        const filled = !!(cur && ((cur.desc && cur.desc.trim()) || (cur.rule && cur.rule.trim())))
+        return {
+          name: f.name,
+          desc: f.desc || '',
+          rule: f.rule || '',
+          required: !!f.required,
+          regex: f.regex || '',
+          regex_status: f.regex_status || 'rejected_empty',
+          regex_reason: f.regex_reason,
+          filled,
+          // 已有内容的字段默认不勾选：避免"手写配置被建议覆盖"的错觉
+          picked: !filled,
+        }
+      })
+    aiSampleTextUsed.value = !!data.sample_text_used
+    if (data.prompt_template && data.prompt_template.trim()) {
+      // 只填空的模板不覆盖用户已保存的高级模板
+      if (!promptTemplate.value.trim()) promptTemplate.value = data.prompt_template.trim()
+    }
+    const usable = aiSuggestions.value.filter((s) => s.picked).length
+    if (!usable) MessagePlugin.warning('AI 未产出可应用的建议（现有字段均已配置）')
+    else MessagePlugin.success(`已生成 ${aiSuggestions.value.length} 项建议，勾选后可应用`)
+  } catch (e: any) {
+    console.error('ai suggest rules failed', e)
+    MessagePlugin.error(e?.message || '智能生成规则失败')
+  } finally {
+    aiSuggesting.value = false
+  }
+}
+
+/** 把勾选的建议写进 fields（仍需用户点「保存」才落库）。 */
+function applyAiSuggestions() {
+  const picked = aiSuggestions.value.filter((s) => s.picked)
+  if (!picked.length) return
+  let applied = 0
+  fields.value = fields.value.map((f) => {
+    const s = picked.find((x) => x.name === f.name)
+    if (!s) return f
+    const next: ExtractFieldConfig = { ...f }
+    if (s.desc && !next.desc?.trim()) next.desc = s.desc
+    if (s.rule && !next.rule?.trim()) next.rule = s.rule
+    if (s.regex && s.regex_status === 'accepted') next.regex = s.regex
+    if (s.required) next.required = true
+    applied++
+    return next
+  })
+  aiSuggestions.value = []
+  MessagePlugin.success(`已应用 ${applied} 项建议，确认无误后点「保存」生效`)
+}
+
+function clearCachedSample() {
+  if (!certTypeName.value) return
+  dropSampleText(certTypeName.value)
+  MessagePlugin.success('已清除该分类的样票缓存')
+}
+
+/** 被外部（抽屉）调用：切到指定分类，可选立即智能生成规则。 */
+async function focusCertType(p?: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
+  const target = String(p?.certType || '').trim()
+  if (!target) return
+  // 先确保分类列表已加载，否则 certTypeOptions 里还没有该分类
+  await refresh()
+  const composite = typeComposite(props.scope, target)
+  certType.value = composite
+  await loadConfig()
+  if (p?.autoSuggest) void runAiSuggest({ sampleText: p.sampleText })
+}
+
 // 重新拉取证照配置（公司证照 vehicle + 司机证照 driver，含自定义分组类型）
 async function refresh() {
   try {
@@ -884,7 +1056,7 @@ async function refresh() {
   }
   await loadConfig()
 }
-defineExpose({ refresh })
+defineExpose({ refresh, focusCertType })
 
 watch(
   () => props.scope,
@@ -1208,6 +1380,71 @@ watch(certTypeOptions, (groups) => {
     margin-top: 12px;
   }
 }
+/* AI 建议预览区：非破坏性展示，确认后才写入 fields */
+.ai-suggest-panel {
+  border: 1px solid var(--td-brand-color-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--td-brand-color-1);
+}
+.ai-suggest-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  .spacer { flex: 1; }
+}
+.ai-suggest-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+.ai-suggest-tip {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+.ai-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.ai-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--td-component-stroke);
+  &:last-child { border-bottom: none; }
+}
+.ai-suggest-name {
+  min-width: 88px;
+  color: var(--td-text-color-primary);
+  flex: 0 0 auto;
+}
+.ai-suggest-desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--td-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-suggest-regex {
+  flex: 0 1 260px;
+  min-width: 0;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 11px;
+  color: var(--td-success-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  &.regex-bad { color: var(--td-text-color-placeholder); font-family: inherit; }
+}
+
 .advanced-block {
   margin-top: 8px;
   border-top: 1px solid var(--td-component-stroke);

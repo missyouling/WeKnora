@@ -569,7 +569,19 @@ func (s *temporaryDocumentService) applyImageUnderstanding(
 func (s *temporaryDocumentService) understandImagesWithVLM(
 	ctx context.Context, vlmModelID string, images [][]byte, scanned, captionFallback bool,
 ) string {
-	model, err := s.modelService.GetVLMModel(ctx, vlmModelID)
+	return understandImagesWithVLMSvc(ctx, s.modelService, vlmModelID, images, scanned, captionFallback)
+}
+
+// understandImagesWithVLMSvc 是上面的纯函数形态：只依赖 ModelService，不绑定
+// temporaryDocumentService 的其余字段。智能字段生成的样票解析（extract_suggest_parse.go）
+// 需要同一套 OCR 兜底但没有临时文档实例，故拆出此函数供两处共用。
+func understandImagesWithVLMSvc(
+	ctx context.Context, modelService interfaces.ModelService, vlmModelID string, images [][]byte, scanned, captionFallback bool,
+) string {
+	if modelService == nil {
+		return ""
+	}
+	model, err := modelService.GetVLMModel(ctx, vlmModelID)
 	if err != nil {
 		logger.Warnf(ctx, "temporary document VLM model load failed: %v", err)
 		return ""
