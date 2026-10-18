@@ -13,12 +13,24 @@
 //   前端编辑态 camelCase  ⇄  后端 JSONB snake_case
 //   SubFields 带 omitempty → 非 items 字段不写 sub_fields，保持与 seed 形态一致。
 
+import { INVOICE_FIELD_KEY_ALIASES } from './invoiceFieldLabels'
+
 /** 明细子列（前端编辑态形态）。 */
 export interface EditableSubField {
   key: string
   label: string
   dataType: string
   width: number
+  /** 缺省（undefined）= 启用。只在显式关闭时下发 false，保持旧数据结构不被污染。 */
+  enabled?: boolean
+  /** 系统内置子列：禁止删除（可改文案/类型/宽度）。 */
+  builtin?: boolean
+  /** 提取口径（给模型的自然语言说明）。 */
+  desc?: string
+  /** 提取提示词里的子项规则（与 desc 同源，历史命名）。 */
+  rule?: string
+  /** 该子项的正则兜底（单票单明细行时回填）。 */
+  regex?: string
 }
 
 /** 分类字段（前端编辑态形态）。 */
@@ -31,6 +43,8 @@ export interface EditableField {
   isDefault: boolean
   dataType: string
   width: number
+  /** 系统内置字段：禁止删除。 */
+  builtin?: boolean
   /** 仅 dataType === 'items' 时有值；随 subs 一并持久化，是明细子列的权威源。 */
   subFields?: EditableSubField[]
 }
@@ -43,11 +57,17 @@ export interface SubPayload {
   is_default: boolean
   data_type: string
   width: number
+  builtin?: boolean
   sub_fields?: Array<{
     key: string
     label: string
     data_type: string
     width: number
+    enabled?: boolean
+    builtin?: boolean
+    desc?: string
+    rule?: string
+    regex?: string
   }>
 }
 
@@ -55,9 +75,45 @@ const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
 const MAX_SUB_FIELDS = 64
 const MAX_WIDTH = 400
 
+/** 子列是否启用（缺省视为启用，兼容存量 JSON 里没有 enabled 的情况）。 */
+export function subFieldEnabled(sf: EditableSubField): boolean {
+  return sf.enabled !== false
+}
+
+/**
+ * 系统内置明细子项键：与后端 invoiceItemSubFieldsStandard 的 8 个键一致。
+ * 这些键是提取/列表渲染的硬编码口径（items[].name/spec/… 或 extra[plate_no]），
+ * 删掉会让对应列永远空白，因此前端不允许删除。
+ */
+export const STANDARD_SUB_FIELD_KEYS: readonly string[] = [
+  'name', 'spec', 'unit', 'qty', 'price', 'amount', 'tax_rate', 'tax_amount',
+]
+
+/**
+ * 由中文子项名生成合法的子列键（用户不再手填 key）。
+ *
+ * 生成顺序：
+ *   1. 命中文档化的中文→契约键表（规格型号→spec、车牌号→plate_no…）且未被占用 → 直接用；
+ *   2. 输入本身已是合法英文键且未被占用 → 直接用（用户直接敲英文也行）；
+ *   3. 否则递增 `sub_N`，保证 `^[A-Za-z][A-Za-z0-9_]*$` 且不重名。
+ */
+export function subFieldKeyForLabel(label: string, existing: readonly string[]): string {
+  const clean = String(label ?? '').trim()
+  const used = new Set(existing.map((k) => String(k).trim()))
+  const alias = INVOICE_FIELD_KEY_ALIASES[clean]
+  if (alias && SUB_KEY_RE.test(alias) && !used.has(alias)) return alias
+  if (SUB_KEY_RE.test(clean) && !used.has(clean)) return clean
+  let n = 1
+  while (used.has(`sub_${n}`)) n += 1
+  return `sub_${n}`
+}
+
 /**
  * 清洗明细子列：丢弃空键、非法键与超量数据，数字宽度做安全兜底。
  * 不抛异常——脏数据来自历史库/seed，最坏结果是少几个子列，而不是整个面板打不开。
+ *
+ * 默认值不下发到编辑态对象上（enabled=true / builtin=false / 空口径），
+ * 这样 `fromSubsPayload → toSubsPayload` 对存量数据保持字节级互逆。
  */
 export function normalizeSubFields(raw: unknown): EditableSubField[] {
   if (!Array.isArray(raw)) return []
@@ -68,12 +124,21 @@ export function normalizeSubFields(raw: unknown): EditableSubField[] {
     const key = String(r.key ?? '').trim()
     if (!key || !SUB_KEY_RE.test(key)) continue
     const width = Number(r.width)
-    out.push({
+    const sf: EditableSubField = {
       key,
       label: String(r.label ?? key).trim() || key,
       dataType: String(r.data_type ?? r.dataType ?? 'text').trim() || 'text',
       width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), MAX_WIDTH) : 0,
-    })
+    }
+    if (r.enabled === false) sf.enabled = false
+    if (r.builtin === true) sf.builtin = true
+    const desc = String(r.desc ?? '').trim()
+    if (desc) sf.desc = desc
+    const rule = String(r.rule ?? '').trim()
+    if (rule) sf.rule = rule
+    const regex = String(r.regex ?? '').trim()
+    if (regex) sf.regex = regex
+    out.push(sf)
     if (out.length >= MAX_SUB_FIELDS) break
   }
   return out
@@ -106,6 +171,7 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
     }
     // label 与 name 分离：name 是契约身份（改名会让历史数据错位），label 只是表头文案。
     if (label && label !== name) field.label = label
+    if (r.builtin === true) field.builtin = true
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
     if (dataType === 'items' && subFields.length) field.subFields = subFields
     out.push(field)
@@ -136,15 +202,25 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
     // 与 fromSubsPayload 互逆：label 为空或等于 name 时不下发（保持旧数据结构）
     const label = String(f.label ?? '').trim()
     if (label && label !== name) payload.label = label
+    if (f.builtin) payload.builtin = true
     const subs = normalizeSubFields(f.subFields)
     // omitempty 语义：非 items 或无子列时不下发 sub_fields，保持与后端 seed 一致。
     if (dataType === 'items' && subs.length) {
-      payload.sub_fields = subs.map((s) => ({
-        key: s.key,
-        label: s.label,
-        data_type: s.dataType,
-        width: s.width,
-      }))
+      payload.sub_fields = subs.map((s) => {
+        const out: NonNullable<SubPayload['sub_fields']>[number] = {
+          key: s.key,
+          label: s.label,
+          data_type: s.dataType,
+          width: s.width,
+        }
+        // 默认值一律省略，保证存量 subs 往返后结构不变。
+        if (s.enabled === false) out.enabled = false
+        if (s.builtin) out.builtin = true
+        if (s.desc) out.desc = s.desc
+        if (s.rule) out.rule = s.rule
+        if (s.regex) out.regex = s.regex
+        return out
+      })
     }
     out.push(payload)
   }

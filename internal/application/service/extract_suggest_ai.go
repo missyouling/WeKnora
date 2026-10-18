@@ -88,14 +88,18 @@ var broadAIRegexPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^\W*\\[SWsw](\+|\*|\{\d+(,\d*)?\}\+?)\W*$`),
 }
 
-// REGEX_PATCHABLE_INVOICE_KEYS 是「后端补洞器真正支持的发票键」的服务端镜像。
-// 与 invoiceFieldOrder 严格同源（导出为切片以便单测断言二者一致）。
+// REGEX_PATCHABLE_INVOICE_KEYS 是「后端补洞器支持的发票标准键」的服务端镜像。
+// 2026-10-18 起补洞范围放开到全部标准字段（见 extract_regex_fallback.go 的
+// invoiceFieldOrder），这里仍导出给前端做展示与单测断言。
 var REGEX_PATCHABLE_INVOICE_KEYS = invoiceFieldOrder
 
-// guardAIRegexPatchable 护栏一：字段是否在后端补洞白名单内。
-// 返回空串代表通过（accepted），否则返回拒绝码。
+// guardAIRegexPatchable 护栏一：字段是否在补洞器可执行范围内。
+//
+// 2026-10-18 起发票补洞器覆盖「全部标准字段 + 自定义扩展字段（Fields 桶）+
+// 明细子项（items[].extra）」，不再有"这个键装不下"的结构性缺口，
+// 因此这里恒通过；保留函数是为了让护栏链路顺序与诊断码保持稳定。
 func guardAIRegexPatchable(field string) string {
-	if _, _, ok := invoiceAccessorFor(field); !ok {
+	if strings.TrimSpace(field) == "" {
 		return regexRejectNotStandard
 	}
 	return ""
@@ -673,7 +677,6 @@ func assignCustomFieldKey(modelKey, name string, used map[string]bool) string {
 	return base
 }
 
-
 // verifiedSample 防幻觉核心：模型给的样值必须在样票原文里**逐字出现**。
 // 模型最常见的幻觉是编一个"看起来很像"的号码；不校验就会让用户误以为
 // 票面上真有这个值。命中失败一律清空（用户仍能按字段名手工配置）。
@@ -777,13 +780,19 @@ func buildRuleSuggestPrompt(certType string, fields []AIRuleFieldInput, sampleTe
 	sb.WriteString("- 原文没有时明确写「无则留空」，禁止让模型臆造。\n")
 	sb.WriteString("- 不得与本分类其它字段的 rule 完全相同。\n")
 	sb.WriteString("【required 要求】仅对「票面必然存在」的核心字段置 true（发票号码/开票日期/价税合计/销售方名称等）；可选字段一律 false。\n")
-	sb.WriteString("【regex 要求】\n")
-	sb.WriteString("- 仅对下列字段给出：")
-	sb.WriteString(strings.Join(REGEX_PATCHABLE_INVOICE_KEYS, ", "))
-	sb.WriteString("。其余字段的 regex 一律输出空字符串。\n")
-	sb.WriteString("- 必须是 Go RE2 语法：可用字符类、量词、\\b 边界、捕获组；禁止环视 (?=)(?!)、反向引用、递归。\n")
-	sb.WriteString("- 必须是「形状唯一」的，能在原文中唯一命中（如 \\b\\d{20}\\b），不要 (?s).* 这类宽泛式。\n")
-	sb.WriteString("- 不需要或无法保证唯一时输出空字符串，不要硬凑。\n")
+	// 有无样票是两种任务：没有样票时"生成正则"是无根据的猜测（无法验证唯一命中），
+	// 只会产出一批必然被护栏丢弃的垃圾；有样票才让它连同正则一起给。
+	if strings.TrimSpace(sampleText) == "" {
+		sb.WriteString("【regex 要求】本次**未提供样票**，无法验证唯一命中，因此所有字段的 regex 必须输出空字符串（不要尝试编造正则）。\n")
+	} else {
+		sb.WriteString("【regex 要求】\n")
+		sb.WriteString("- 每个字段都可给出后置兜底正则（标准字段、扩展字段、明细子项同口径），不需要时输出空字符串。\n")
+		sb.WriteString("- 必须是 Go RE2 语法：可用字符类、量词、\\b 边界、捕获组；禁止环视 (?=)(?!)、反向引用、递归。\n")
+		sb.WriteString("- 必须锚定票面标签（如 `价税合计\\s*[:：]?\\s*[¥￥]?\\s*([\\d,]+\\.\\d{2})`），确保在下述原文中**唯一命中**；\n")
+		sb.WriteString("  纯形状匹配（`\\d+`、`.*`、`\\d{2,}`）会被系统直接丢弃。\n")
+		sb.WriteString("- 数值字段的捕获组只保留数字与千分位，不要带货币符号（清洗由系统做）。\n")
+		sb.WriteString("- 无法保证唯一时输出空字符串，不要硬凑。\n")
+	}
 	sb.WriteString("\n【输出结构】")
 	sb.WriteString(`{"fields":[{"name":"","desc":"","rule":"","required":false,"regex":""}],"prompt_template":""}`)
 	sb.WriteString("\n")
@@ -998,21 +1007,17 @@ func normalizeAISuggestRules(
 // 只有状态为 accepted 时正则才非空；其余一律返回空串，让前端展示原因而不是
 // 一个"配了但不生效"的输入框。
 func guardAIRuleRegex(field, pattern, sampleText string) (string, string, string) {
-	// 顺序要紧：**白名单先于空值判定**。
-	// 对"自定义扩展字段"而言，"模型没给正则"（rejected_empty）是**偶然**的，
-	// 下次模型可能就给了；而"该字段永远不参与补洞"（rejected_not_standard）是
-	// **结构性**事实。返回后者才真正回答了用户"我为什么配不了正则"。
+	// 顺序要紧：**范围判定先于空值判定**。
+	// 「模型没给正则」是偶然的，而「这个字段根本不能补洞」是结构性事实；
+	// 返回后者才真正回答了用户"我为什么配不了正则"。
 	if st := guardAIRegexPatchable(field); st != "" {
-		if st == regexRejectNotStandard {
-			// 两种"不可配"要说不同的话：用户自定义的中文 key 与"系统标准字段但补洞器
-			// 装不下"（如 total_amount / tax_rate）需要的下一步动作完全不同——
-			// 前者只能改抽取方式，后者是有意不补洞。
-			if invoiceContractCanonicalKeys[canonicalFieldKey(strings.TrimSpace(field))] {
-				return "", st, "该字段是系统标准字段，但后端补洞器只支持发票号/发票代码/开票日期/购销方名称/购销方税号/开票人这 8 个字段"
-			}
-			return "", st, "自定义扩展字段不参与后置正则补洞"
-		}
-		return "", st, "该字段不在后端补洞白名单内"
+		return "", st, "字段名为空，无法定位补洞目标"
+	}
+	// 无样票：本轮只出自然语言规则，正则一律留空。
+	// 理由：正则的价值全在"唯一命中"，没有样票根本无法证明，生成出来必被丢弃；
+	// 与其让用户看到一堆 rejected_not_unique，不如明确告知"这次不生成正则"。
+	if strings.TrimSpace(sampleText) == "" {
+		return "", regexRejectNoSample, "未提供样票，本次不生成正则（有样票才能校验唯一命中）"
 	}
 	raw := strings.TrimSpace(pattern)
 	if raw == "" {

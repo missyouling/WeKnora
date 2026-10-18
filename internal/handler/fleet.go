@@ -859,9 +859,9 @@ func isBusinessCategoryScope(scope string) bool {
 // invoice 系统字段：列表/编辑抽屉/六同步依赖的列（提取状态、标签、票据类型）。
 // 新建/复制发票分类时自动补齐，避免自定义分类缺失这三列导致渲染不齐。
 var invoiceSystemFields = []types.FleetCategorySub{
-	{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
-	{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
-	{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+	{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text", Builtin: true},
+	{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text", Builtin: true},
+	{Name: "tags", Enabled: true, IsDefault: true, DataType: "array", Builtin: true},
 }
 
 // ensureInvoiceSystemFields 保证发票分类 subs 始终包含系统字段（按 name 去重，保留用户已有定义）
@@ -877,6 +877,40 @@ func ensureInvoiceSystemFields(subs []types.FleetCategorySub) []types.FleetCateg
 		if !have[sys.Name] {
 			subs = append(subs, sys)
 		}
+	}
+	return subs
+}
+
+// invoiceDefaultStandardSubs 新建发票分类的默认字段集。
+//
+// 用户口径：新建分类不能是一张白纸——至少要有发票号码/日期/金额/价税合计等标准字段，
+// 且「提取状态」「标签」必须默认启用（列表、筛选器、六同步都依赖这两列）。
+// 与内置「普通发票」seed 保持同一份清单，避免新建分类与内置分类表现不一致。
+//
+// 全部标记 Builtin=true：这批是系统契约字段（提取/列表/筛选器/六同步都按名取用），
+// 前端据此隐藏删除入口，避免用户删掉 invoiceNo 后整条链路静默失效。
+func invoiceDefaultStandardSubs() []types.FleetCategorySub {
+	subs := []types.FleetCategorySub{
+		{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "invoiceDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "invoiceType", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "tax", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "totalAmount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "buyerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "items", Enabled: true, IsDefault: true, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
+		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+	}
+	for i := range subs {
+		subs[i].Builtin = true
 	}
 	return subs
 }
@@ -969,6 +1003,11 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 	// invoice scope 自动补齐系统字段（invoiceType/extractStatus/tags），
 	// 保证新建/复制分类的列表、编辑抽屉、六同步立即可用
 	if req.Scope == "invoice" {
+		// 用户口径：新建分类直接给一套默认标准字段（含默认启用的提取状态/标签），
+		// 而不是一张白纸——否则列表、筛选器、明细区在用户配字段之前全是空列。
+		if len(req.Subs) == 0 {
+			req.Subs = invoiceDefaultStandardSubs()
+		}
 		req.Subs = ensureInvoiceSystemFields(req.Subs)
 	}
 	queryTenant := tenantID
@@ -1920,31 +1959,92 @@ func (h *FleetHandler) seedInvoiceMiscSubsBackfill(ctx context.Context) {
 
 // invoiceItemSubFieldsStandard 标准票面明细子列（普通/专用/其它票据/水电/电费）：
 // 项目名称/规格型号/单位/数量/单价/金额/税率(征收率)/税额，8 列。
+// invoiceItemSubFieldsStandard 标准发票明细子列（内置子项：前端禁止删除）。
 func invoiceItemSubFieldsStandard() []types.FleetItemSubField {
 	return []types.FleetItemSubField{
-		{Key: "name", Label: "项目名称", DataType: "text", Width: 140},
-		{Key: "spec", Label: "规格型号", DataType: "text", Width: 110},
-		{Key: "unit", Label: "单位", DataType: "text", Width: 70},
-		{Key: "qty", Label: "数量", DataType: "number", Width: 80},
-		{Key: "price", Label: "单价", DataType: "number", Width: 90},
-		{Key: "amount", Label: "金额", DataType: "number", Width: 100},
-		{Key: "tax_rate", Label: "税率/征收率", DataType: "number", Width: 90},
-		{Key: "tax_amount", Label: "税额", DataType: "number", Width: 90},
+		builtinItemSubField("name", "项目名称", "text", 140),
+		builtinItemSubField("spec", "规格型号", "text", 110),
+		builtinItemSubField("unit", "单位", "text", 70),
+		builtinItemSubField("qty", "数量", "number", 80),
+		builtinItemSubField("price", "单价", "number", 90),
+		builtinItemSubField("amount", "金额", "number", 100),
+		builtinItemSubField("tax_rate", "税率/征收率", "number", 90),
+		builtinItemSubField("tax_amount", "税额", "number", 90),
 	}
+}
+
+// builtinItemSubField 构造一个内置明细子项：默认启用 + builtin 标记。
+// Enabled 用指针是为了兼容历史 JSON（无该键 = 启用），内置项显式写 true。
+func builtinItemSubField(key, label, dataType string, width int) types.FleetItemSubField {
+	enabled := true
+	return types.FleetItemSubField{
+		Key: key, Label: label, DataType: dataType, Width: width,
+		Enabled: &enabled, Builtin: true,
+	}
+}
+
+// markBuiltinSubFields 给存量子列补 builtin 标记（只认模板里出现过的键）。
+// 返回是否发生变化，调用方据此决定是否需要回写。
+// markBuiltinFields 给存量发票分类的标准字段补 builtin 标记（只加不减、不改用户文案）。
+//
+// 为什么需要：builtin 是本轮新加的字段，存量 subs 的 JSONB 里没有它。
+// 前端虽有「标准键字典」兜底，但接口返回的口径应当自洽——否则任何非标准前端
+// 消费方都会把 invoiceNo 当成可删字段。
+func markBuiltinFields(subs, tpl []types.FleetCategorySub) bool {
+	builtinNames := make(map[string]bool, len(tpl))
+	for _, t := range tpl {
+		if t.Builtin {
+			builtinNames[t.Name] = true
+		}
+	}
+	changed := false
+	for i := range subs {
+		if !builtinNames[subs[i].Name] || subs[i].Builtin {
+			continue
+		}
+		subs[i].Builtin = true
+		changed = true
+	}
+	return changed
+}
+
+func markBuiltinSubFields(subs, tpl []types.FleetItemSubField) bool {
+	builtinKeys := make(map[string]bool, len(tpl))
+	for _, t := range tpl {
+		if t.Builtin {
+			builtinKeys[t.Key] = true
+		}
+	}
+	enabled := true
+	changed := false
+	for i := range subs {
+		if !builtinKeys[subs[i].Key] {
+			continue
+		}
+		if !subs[i].Builtin {
+			subs[i].Builtin = true
+			changed = true
+		}
+		if subs[i].Enabled == nil {
+			subs[i].Enabled = &enabled
+			changed = true
+		}
+	}
+	return changed
 }
 
 // invoiceItemSubFieldsToll 通行费发票明细子列（用户口径）：
 // 项目名称/车牌号/车辆类型/通行日期起/通行日期止/金额/税率(征收率)/税额，8 列。
 func invoiceItemSubFieldsToll() []types.FleetItemSubField {
 	return []types.FleetItemSubField{
-		{Key: "name", Label: "项目名称", DataType: "text", Width: 120},
-		{Key: "plate_no", Label: "车牌号", DataType: "text", Width: 100},
-		{Key: "vehicle_type", Label: "车辆类型", DataType: "text", Width: 90},
-		{Key: "travel_from", Label: "通行日期起", DataType: "date", Width: 110},
-		{Key: "travel_to", Label: "通行日期止", DataType: "date", Width: 110},
-		{Key: "amount", Label: "金额", DataType: "number", Width: 100},
-		{Key: "tax_rate", Label: "税率/征收率", DataType: "number", Width: 90},
-		{Key: "tax_amount", Label: "税额", DataType: "number", Width: 90},
+		builtinItemSubField("name", "项目名称", "text", 120),
+		builtinItemSubField("plate_no", "车牌号", "text", 100),
+		builtinItemSubField("vehicle_type", "车辆类型", "text", 90),
+		builtinItemSubField("travel_from", "通行日期起", "date", 110),
+		builtinItemSubField("travel_to", "通行日期止", "date", 110),
+		builtinItemSubField("amount", "金额", "number", 100),
+		builtinItemSubField("tax_rate", "税率/征收率", "number", 90),
+		builtinItemSubField("tax_amount", "税额", "number", 90),
 	}
 }
 
@@ -1954,11 +2054,11 @@ func invoiceItemSubFieldsToll() []types.FleetItemSubField {
 // → 补子列；items 已有非空 sub_fields → 跳过（绝不覆盖用户编辑过的配置）。
 func (h *FleetHandler) seedInvoiceItemSubFields(ctx context.Context) {
 	tplByCategory := map[string][]types.FleetItemSubField{
-		"普通发票": invoiceItemSubFieldsStandard(),
-		"专用发票": invoiceItemSubFieldsStandard(),
-		"其它票据": invoiceItemSubFieldsStandard(),
-		"水电发票": invoiceItemSubFieldsStandard(),
-		"电费发票": invoiceItemSubFieldsStandard(),
+		"普通发票":  invoiceItemSubFieldsStandard(),
+		"专用发票":  invoiceItemSubFieldsStandard(),
+		"其它票据":  invoiceItemSubFieldsStandard(),
+		"水电发票":  invoiceItemSubFieldsStandard(),
+		"电费发票":  invoiceItemSubFieldsStandard(),
 		"通行费发票": invoiceItemSubFieldsToll(),
 		"通行费":   invoiceItemSubFieldsToll(), // 兼容早期无「发票」后缀的自建分类名
 	}
@@ -1990,6 +2090,17 @@ func (h *FleetHandler) seedInvoiceItemSubFields(ctx context.Context) {
 		} else if len(subs[idx].SubFields) == 0 {
 			// items 存在但无子列 → 补子列
 			subs[idx].SubFields = tpl
+			changed = true
+		} else {
+			// 存量分类的子列是旧 seed 写的，没有 builtin/enabled 标记。
+			// 按模板键打标（只加标记，不动用户的 label/width/顺序），
+			// 前端据此禁用内置子项删除入口。
+			if markBuiltinSubFields(subs[idx].SubFields, tpl) {
+				changed = true
+			}
+		}
+		// 标准字段本身也补 builtin 标记（同一批历史数据同样缺这个键）
+		if markBuiltinFields(subs, invoiceDefaultStandardSubs()) {
 			changed = true
 		}
 		if !changed {
@@ -2049,17 +2160,17 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 		if len(rows) == 0 {
 			// 全新环境：直接创建内置分类
 			cat := types.FleetCategory{
-				ID:        "seed-contract-" + w.Key,
-				TenantID:  0,
-				Scope:     "contract",
-				GroupID:   "",
+				ID:         "seed-contract-" + w.Key,
+				TenantID:   0,
+				Scope:      "contract",
+				GroupID:    "",
 				BuiltinKey: w.Key,
-				Name:      w.Name,
-				Subs:      fullSubs,
-				SortOrder: w.Sort,
-				Enabled:   true,
-				CreatedAt: now,
-				UpdatedAt: now,
+				Name:       w.Name,
+				Subs:       fullSubs,
+				SortOrder:  w.Sort,
+				Enabled:    true,
+				CreatedAt:  now,
+				UpdatedAt:  now,
 			}
 			if err := h.db.WithContext(ctx).Create(&cat).Error; err != nil {
 				logger.Warnf(ctx, "reconcile contract category %q create failed: %v", w.Name, err)
@@ -2113,7 +2224,7 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 		if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
 			Where("id = ?", target.ID).
 			Updates(map[string]any{
-				"deleted_at": nil, // 恢复被误软删的行
+				"deleted_at":  nil, // 恢复被误软删的行
 				"builtin_key": w.Key,
 				"sort_order":  w.Sort,
 				"enabled":     true,

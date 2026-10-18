@@ -138,6 +138,18 @@ export function deleteFleetETCCard(id: string) {
 }
 
 // ---- 可配置字段提取规则 ----
+export interface ExtractSubFieldConfig {
+  key: string
+  label?: string
+  data_type?: string
+  width?: number
+  enabled?: boolean
+  desc?: string
+  rule?: string
+  /** 子项正则兜底：仅「单票单明细行」时回填，多行不猜归属 */
+  regex?: string
+}
+
 export interface ExtractFieldConfig {
   name: string
   label?: string
@@ -147,8 +159,10 @@ export interface ExtractFieldConfig {
   enabled: boolean
   /** 必填：开启后该字段为空会产出 error 级校验告警（不影响落库） */
   required?: boolean
-  /** 正则兜底：LLM 漏抽时从原文回填（Go RE2 语法；仅标准契约字段生效） */
+  /** 正则兜底：LLM 漏抽时从原文回填（Go RE2 语法；全字段生效） */
   regex?: string
+  /** 仅 type=items 时有值：明细子项口径（规则 + 正则）随字段一并持久化 */
+  sub_fields?: ExtractSubFieldConfig[]
 }
 export function getExtractConfig(kbId: string, scope: string, certType: string) {
   const q = new URLSearchParams({ scope, cert_type: certType })

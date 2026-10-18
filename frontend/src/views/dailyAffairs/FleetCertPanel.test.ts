@@ -6,6 +6,7 @@ import {
   toSubsPayload,
   normalizeSubFields,
   subsPayloadFromNames,
+  subFieldKeyForLabel,
   type EditableField,
 } from './fleetCategorySubs'
 
@@ -101,10 +102,83 @@ test('FleetCertPanel 三处 subs 读写均已收敛到 toSubsPayload/fromSubsPay
   assert.ok(reads >= 2, `读路径应至少 2 处调用 fromSubsPayload，实际 ${reads}`)
 })
 
-test('items 字段提供 sub_fields 子列编辑入口（展开查看/增删改）', () => {
-  assert.match(panel, /sub-fields/, '模板应有 sub_fields 区域')
-  assert.match(panel, /addSubField|新增子列/, '应提供新增子列入口')
-  assert.match(panel, /removeSubField|removeSub|删除子列/, '应提供删除子列入口')
+test('明细子项内联展开在 items 字段行正下方，不再有底部独立区块', () => {
+  // 旧结构：字段表底部的 .sub-fields-block（要滚到最下面才能配子项）
+  assert.doesNotMatch(panel, /sub-fields-block/)
+  assert.doesNotMatch(panel, /sub-fields-head/)
+  // 新结构：点字段名在该行正下方展开，子行复用主行网格
+  assert.match(panel, /class="fc-name fc-name-toggle"/)
+  assert.match(panel, /@click="toggleSubFields\(fd\)"/)
+  assert.match(panel, /class="field-config-row sub-row"/)
+  assert.match(panel, /@enter="addSubField\(fd\)"/)
+  assert.match(panel, /removeSubField\(fd, sf\)/)
+})
+
+test('子项行隐藏 key 输入：只留名称/类型/启用/列宽', () => {
+  const subRow = panel.slice(panel.indexOf('class="field-config-row sub-row"'),
+    panel.indexOf('class="field-config-add sub-inline-add"'))
+  assert.doesNotMatch(subRow, /v-model="sf\.key"/, '子项 key 不允许手改')
+  assert.match(subRow, /v-model="sf\.label"/)
+  assert.match(subRow, /v-model="sf\.dataType"/)
+  assert.match(subRow, /v-model="sf\.width"/)
+  assert.match(subRow, /subFieldEnabled\(sf\)/)
+})
+
+test('新建子项由系统生成合法 key（中文名映射 / 递增 sub_N）', () => {
+  const fields: EditableField[] = [
+    { name: 'items', enabled: true, isDefault: true, dataType: 'items', width: 0, subFields: [] },
+  ]
+  // 中文名命中文档化别名表
+  assert.equal(subFieldKeyForLabel('规格型号', []), 'spec')
+  assert.equal(subFieldKeyForLabel('车牌号', []), 'plate_no')
+  // 未命中且非英文 → 递增
+  assert.equal(subFieldKeyForLabel('批次号', []), 'sub_1')
+  assert.equal(subFieldKeyForLabel('批次号', ['sub_1', 'sub_2']), 'sub_3')
+  // 已是合法英文键直接用
+  assert.equal(subFieldKeyForLabel('account_no', []), 'account_no')
+  // 别名被占用时退化为递增，绝不重名
+  assert.equal(subFieldKeyForLabel('规格型号', ['spec']), 'sub_1')
+  void fields
+})
+
+test('系统内置字段与内置子项禁止删除，仅自建扩展字段可删', () => {
+  assert.match(panel, /function isBuiltinField/)
+  assert.match(panel, /function isBuiltinSubField/)
+  assert.match(panel, /系统内置字段，不可删除/)
+  assert.match(panel, /系统内置子项，不可删除/)
+  // 内置行渲染锁图标而不是删除入口
+  assert.match(panel, /<template v-if="isBuiltinField\(fd\)">[\s\S]{0,200}lock-on/)
+  assert.match(panel, /<template v-if="isBuiltinSubField\(sf\)">[\s\S]{0,200}lock-on/)
+  // 存量分类没带 builtin 标记时，发票标准键仍按内置处理
+  assert.match(panel, /INVOICE_FIELD_LABELS, fd\.name/)
+  assert.match(panel, /STANDARD_SUB_KEYS\.has\(sf\.key\)/)
+})
+
+test('子项 contract 扩展字段（enabled/builtin/desc/rule/regex）严格往返', () => {
+  const raw = [
+    { name: 'items', enabled: true, is_default: true, data_type: 'items', width: 0,
+      sub_fields: [
+        { key: 'spec', label: '规格型号', data_type: 'text', width: 120, builtin: true,
+          rule: '取型号列', regex: '规格型号\\s*[:：]\\s*([A-Za-z0-9]+)' },
+        { key: 'batch_no', label: '批次号', data_type: 'text', width: 0, enabled: false, desc: '生产批次' },
+      ] },
+  ]
+  const fields = fromSubsPayload(raw)
+  assert.equal(fields[0]!.subFields![0]!.builtin, true)
+  assert.equal(fields[0]!.subFields![0]!.rule, '取型号列')
+  assert.equal(fields[0]!.subFields![1]!.enabled, false)
+  assert.equal(fields[0]!.subFields![1]!.desc, '生产批次')
+  assert.deepEqual(toSubsPayload(fields), raw, '扩展字段必须零丢失往返')
+})
+
+test('默认值不下发：enabled=true / builtin=false 不污染存量结构', () => {
+  const out = toSubsPayload([
+    { name: 'items', enabled: true, isDefault: false, dataType: 'items', width: 0,
+      subFields: [{ key: 'name', label: '项目名称', dataType: 'text', width: 0, enabled: true }] },
+  ])
+  assert.deepEqual((out[0] as any).sub_fields, [
+    { key: 'name', label: '项目名称', data_type: 'text', width: 0 },
+  ])
 })
 test('label（自定义中文表头）严格往返：name 身份不变，空 label 不下发', () => {
   const raw = [

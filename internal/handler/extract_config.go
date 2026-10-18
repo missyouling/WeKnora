@@ -98,7 +98,24 @@ func (h *BusinessExtractHandler) injectInvoiceItemSubFields(ctx context.Context,
 		if cfg.Fields[i].Type != "items" {
 			continue
 		}
-		cfg.Fields[i].SubFields = subs
+		// 按 key 合并：结构（label/type/width/builtin）以分类配置为权威，
+		// 口径（desc/rule/regex/enabled）以 extract_config 为权威。
+		// 直接覆盖会让用户在「提取规则」面板为明细子项配的规则在下次提取时静默丢失。
+		existing := make(map[string]types.FleetItemSubField, len(cfg.Fields[i].SubFields))
+		for _, old := range cfg.Fields[i].SubFields {
+			existing[strings.TrimSpace(old.Key)] = old
+		}
+		merged := make([]types.FleetItemSubField, 0, len(subs))
+		for _, sf := range subs {
+			if old, ok := existing[sf.Key]; ok {
+				sf.Desc, sf.Rule, sf.Regex = old.Desc, old.Rule, old.Regex
+				if old.Enabled != nil {
+					sf.Enabled = old.Enabled
+				}
+			}
+			merged = append(merged, sf)
+		}
+		cfg.Fields[i].SubFields = merged
 		// 强制启用：Prompt 生成会跳过未启用字段（knowledge_invoice_extract.go 的
 		// buildInvoiceRuleSystemPrompt / invoiceItemsSubFieldsInstruction 都判 !Enabled），
 		// 字段被禁用时子列根本不会进 Prompt，模型自然不会输出车牌号/车辆类型/
@@ -469,12 +486,12 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"doc_type":        result.DocType,
-			"fields":          result.Fields,
-			"missing":         missing,
-			"extract_issues":  issues,
+			"doc_type":         result.DocType,
+			"fields":           result.Fields,
+			"missing":          missing,
+			"extract_issues":   issues,
 			"patched_by_regex": service.PatchedFieldNames(patches),
-			"regex_patches":   patches,
+			"regex_patches":    patches,
 		},
 	})
 }

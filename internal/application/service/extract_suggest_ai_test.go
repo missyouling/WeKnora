@@ -20,17 +20,11 @@ import (
 func TestExtractSuggestAIRegexGuards(t *testing.T) {
 	const sample = "发票号码 24312000000012345678 开票日期 2026-07-05 销售方 国家电网"
 
-	t.Run("护栏一：非后端 8 键一律 rejected_not_standard", func(t *testing.T) {
-		for _, name := range []string{"totalAmount", "taxRate", "户号", "车牌号", "invoiceType"} {
-			got := guardAIRegexPatchable(name)
-			if got != regexRejectNotStandard {
-				t.Fatalf("%s: got %q, want %q", name, got, regexRejectNotStandard)
-			}
-		}
-	})
-
-	t.Run("护栏一：8 键及其camelCase 形式通过", func(t *testing.T) {
+	t.Run("护栏一：全字段放开（标准/扩展/明细都不再有白名单缺口）", func(t *testing.T) {
+		// 2026-10-18 用户口径：补洞器已覆盖全部标准字段 + 自定义 Fields 桶 + 明细子项，
+		// 因此不再有「这个键装不下」的结构性拒绝。
 		for _, name := range []string{
+			"totalAmount", "taxRate", "户号", "车牌号", "invoiceType",
 			"invoice_no", "invoice_code", "invoice_date", "buyer_name",
 			"buyer_tax_no", "seller_name", "seller_tax_no", "issuer",
 			"invoiceNo", "invoiceDate", "buyerTaxNo", "sellerName",
@@ -38,6 +32,9 @@ func TestExtractSuggestAIRegexGuards(t *testing.T) {
 			if got := guardAIRegexPatchable(name); got != "" {
 				t.Fatalf("%s: got %q, want accepted", name, got)
 			}
+		}
+		if got := guardAIRegexPatchable("   "); got != regexRejectNotStandard {
+			t.Fatalf("空字段名应拒绝，got %q", got)
 		}
 	})
 
@@ -128,16 +125,20 @@ func TestExtractSuggestAIFieldPostProcess(t *testing.T) {
 	const text = "发票号码 24312000000012345678\n开票日期 2026-07-05\n户号 5001234567\n项目名称 电费 用电量 100"
 	dict := InvoiceStandardFieldDictionary()
 
-	t.Run("字典与后端补洞白名单一致（8 键）", func(t *testing.T) {
+	t.Run("字典与后端补洞范围一致（全部标准键均可补洞）", func(t *testing.T) {
+		// 2026-10-18 起白名单放开：字典里每个标准键都必须能补洞，
+		// 否则规则面板会出现「能配正则但不执行」的静默失效。
 		patchable := 0
 		for _, f := range dict {
 			if guardAIRegexPatchable(f.Key) == "" {
 				patchable++
 			}
 		}
-		if patchable != len(REGEX_PATCHABLE_INVOICE_KEYS) {
-			t.Fatalf("dictionary has %d patchable keys, backend supports %d",
-				patchable, len(REGEX_PATCHABLE_INVOICE_KEYS))
+		if patchable != len(dict) {
+			t.Fatalf("dictionary has %d keys but only %d patchable", len(dict), patchable)
+		}
+		if len(REGEX_PATCHABLE_INVOICE_KEYS) == 0 {
+			t.Fatal("补洞键镜像不应为空")
 		}
 	})
 
@@ -365,8 +366,8 @@ func TestExtractSuggestAIRuleNormalize(t *testing.T) {
 	if hu.Name != "户号" {
 		t.Fatalf("unexpected field %q", hu.Name)
 	}
-	if hu.Regex != "" || hu.RegexStatus != regexRejectNotStandard {
-		t.Fatalf("custom field regex must be rejected as not-standard: %+v", hu)
+	if hu.Regex != "" || hu.RegexStatus != regexRejectEmpty {
+		t.Fatalf("自定义字段未给正则时应报 rejected_empty: %+v", hu)
 	}
 	if hu.RegexReason == "" {
 		t.Fatalf("rejected regex must carry a human-readable reason")
@@ -405,9 +406,8 @@ func TestExtractSuggestAIRuleOverwriteSemantics(t *testing.T) {
 
 // TestExtractSuggestAIRuleStatusSurvivesMerge 回归一个实测踩到的缺陷：
 // 护栏结论（regex_status/regex_reason）如果只停留在「建议」阶段、合并时被丢掉，
-// 前端只能按"有没有正则"重新猜，于是自定义字段明明该报
-// rejected_not_standard，却显示成信息量为零的 rejected_empty。
-// 这条测试锁定「结论必须跟着值流到最终响应」。
+// 前端只能按"有没有正则"重新猜，把「形态太宽泛」这类真正有用的诊断
+// 抹平成信息量为零的 rejected_empty。这条测试锁定「结论必须跟着值流到最终响应」。
 func TestExtractSuggestAIRuleStatusSurvivesMerge(t *testing.T) {
 	fields := []AIRuleFieldInput{
 		{Name: "invoiceNo", DataType: "string"},
@@ -435,22 +435,19 @@ func TestExtractSuggestAIRuleStatusSurvivesMerge(t *testing.T) {
 	if byName["invoiceNo"].Regex == "" {
 		t.Fatalf("invoiceNo should carry the validated regex")
 	}
-	// 自定义中文 key：必须报 not_standard，而不是被抹平成 rejected_empty
-	if byName["车牌号"].RegexStatus != regexRejectNotStandard {
-		t.Fatalf("车牌号 should report rejected_not_standard, got %q", byName["车牌号"].RegexStatus)
+	// 自定义 key 现在也可补洞，但 `\d{20}` 这种纯形状式仍必须被形态护栏拦下
+	//（它会命中票面上任意 20 位数字串，误补风险极高）。
+	if byName["车牌号"].RegexStatus != regexRejectTooBroad {
+		t.Fatalf("车牌号 should report rejected_too_broad, got %q", byName["车牌号"].RegexStatus)
 	}
 	if byName["车牌号"].RegexReason == "" {
 		t.Fatalf("车牌号 must carry a diagnostic reason")
 	}
-	// 标准键但补洞器不支持：同样报 not_standard，但原因文案必须与自定义字段区分开
-	if byName["totalAmount"].RegexStatus != regexRejectNotStandard {
-		t.Fatalf("totalAmount should report rejected_not_standard, got %q", byName["totalAmount"].RegexStatus)
+	if byName["totalAmount"].RegexStatus != regexRejectTooBroad {
+		t.Fatalf("totalAmount should report rejected_too_broad, got %q", byName["totalAmount"].RegexStatus)
 	}
-	if !strings.Contains(byName["totalAmount"].RegexReason, "标准字段") {
-		t.Fatalf("totalAmount is a standard field; reason must say so, got %q", byName["totalAmount"].RegexReason)
-	}
-	if !strings.Contains(byName["车牌号"].RegexReason, "自定义扩展字段") {
-		t.Fatalf("车牌号 is a custom key; reason must say so, got %q", byName["车牌号"].RegexReason)
+	if !strings.Contains(byName["totalAmount"].RegexReason, "宽泛") {
+		t.Fatalf("totalAmount reason must explain broadness, got %q", byName["totalAmount"].RegexReason)
 	}
 	// 护栏未通过的值里绝不能残留正则（否则可能被保存进库）
 	for _, f := range got.Fields {
@@ -530,5 +527,95 @@ func TestExtractSuggestAICustomFieldsChineseKeys(t *testing.T) {
 	}, "户号", dict)
 	if len(dup.CustomFields) != 1 {
 		t.Fatalf("exact duplicate names must still be deduped, got %+v", dup.CustomFields)
+	}
+}
+
+// ---- 2026-10-18 第二轮：有无样本差异化 + 全字段开放 ----
+
+// TestExtractSuggestAIRulesNoSampleSkipsRegex 锁定「无样票不生成正则」：
+// 正则的价值全在唯一命中，没有样票就无法证明，产出一批必然被丢弃的建议
+// 只会让用户误以为系统坏了。
+func TestExtractSuggestAIRulesNoSampleSkipsRegex(t *testing.T) {
+	fields := []AIRuleFieldInput{
+		{Name: "invoiceNo", DataType: "string"},
+		{Name: "totalAmount", DataType: "number"},
+		{Name: "户号", DataType: "string"},
+	}
+	suggested := []AISuggestRule{
+		{Name: "invoiceNo", Desc: "发票号码", Rule: "提取号码栏", Regex: `发票号码\s*[:：]?\s*(\d{8,20})`},
+		{Name: "totalAmount", Desc: "价税合计", Rule: "提取合计栏", Regex: `价税合计\s*[:：]?\s*([\d,.]+)`},
+		{Name: "户号", Desc: "用电户号", Rule: "提取户号栏", Regex: `户号\s*[:：]?\s*(\d{7,12})`},
+	}
+	// sampleText 为空 = 用户没贴样票
+	values, _ := MergeAIRuleSuggestions(fields, suggested, nil, false, "")
+	got := NewAISuggestRulesResult("普通发票", fields, values)
+
+	if len(got.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(got.Fields))
+	}
+	for _, f := range got.Fields {
+		if f.Regex != "" {
+			t.Fatalf("无样票时 %q 不得携带正则，实际 %q", f.Name, f.Regex)
+		}
+		if f.RegexStatus != regexRejectNoSample {
+			t.Fatalf("无样票时 %q 应报 rejected_no_sample，实际 %q", f.Name, f.RegexStatus)
+		}
+		if f.RegexReason == "" {
+			t.Fatalf("无样票时 %q 必须给出原因", f.Name)
+		}
+	}
+	// 自然语言规则必须照常生成——无样票只是不生成正则，不是不生成规则。
+	for _, f := range got.Fields {
+		if f.Rule == "" || f.Desc == "" {
+			t.Fatalf("%q 的 desc/rule 不应为空: %+v", f.Name, f)
+		}
+	}
+}
+
+// TestExtractSuggestAIRulesCustomFieldRegexAccepted 锁定「扩展字段也能配正则」：
+// 补洞器已把自定义字段写进 Fields 桶，护栏不应再按老白名单拒绝。
+func TestExtractSuggestAIRulesCustomFieldRegexAccepted(t *testing.T) {
+	fields := []AIRuleFieldInput{
+		{Name: "户号", DataType: "string"},
+		{Name: "totalAmount", DataType: "number"},
+	}
+	suggested := []AISuggestRule{
+		{Name: "户号", Desc: "用电户号", Rule: "提取户号栏", Regex: `户号\s*[:：]?\s*(\d{7,12})`},
+		{Name: "totalAmount", Desc: "价税合计", Rule: "提取合计栏", Regex: `价税合计\s*[:：]?\s*[¥￥]?\s*([\d,]+\.\d{2})`},
+	}
+	const sample = "户号: 5001234567\n价税合计: ¥1,234.56\n"
+	values, _ := MergeAIRuleSuggestions(fields, suggested, nil, false, sample)
+	got := NewAISuggestRulesResult("水电发票", fields, values)
+	byName := map[string]AISuggestRuleValues{}
+	for _, f := range got.Fields {
+		byName[f.Name] = f
+	}
+	if byName["户号"].RegexStatus != regexStatusAccepted || byName["户号"].Regex == "" {
+		t.Fatalf("自定义字段的正则应被接受: %+v", byName["户号"])
+	}
+	if byName["totalAmount"].RegexStatus != regexStatusAccepted || byName["totalAmount"].Regex == "" {
+		t.Fatalf("数值标准字段的正则应被接受: %+v", byName["totalAmount"])
+	}
+}
+
+// TestExtractSuggestAIRulesPromptOmitsRegexWithoutSample 锁定 Prompt 层也要分叉：
+// 无样票时若仍要求模型"给出正则"，模型一定会编，护栏再丢掉等于白烧 token。
+func TestExtractSuggestAIRulesPromptOmitsRegexWithoutSample(t *testing.T) {
+	fields := []AIRuleFieldInput{{Name: "invoiceNo", DataType: "string"}}
+
+	noSample := buildRuleSuggestPrompt("普通发票", fields, "")
+	if !strings.Contains(noSample, "未提供样票") || !strings.Contains(noSample, "空字符串") {
+		t.Fatalf("无样票 Prompt 必须明确要求 regex 为空:\n%s", noSample)
+	}
+	if strings.Contains(noSample, "样票原文") {
+		t.Fatalf("无样票 Prompt 不得包含样票原文段:\n%s", noSample)
+	}
+
+	withSample := buildRuleSuggestPrompt("普通发票", fields, "发票号码 24312000000012345678")
+	if !strings.Contains(withSample, "样票原文") {
+		t.Fatalf("有样票 Prompt 必须带样票原文段:\n%s", withSample)
+	}
+	if strings.Contains(withSample, "未提供样票") {
+		t.Fatalf("有样票 Prompt 不得出现「未提供样票」:\n%s", withSample)
 	}
 }

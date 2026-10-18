@@ -69,17 +69,25 @@
             <div class="form-grid">
               <div class="form-item">
                 <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
-                <t-input v-model="editForm.name" @enter="commitEdit" />
+                <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
+                <div class="form-item-inline">
+                  <t-input v-model="editForm.name" @enter="commitEdit" />
+                  <t-tooltip :content="aiPanelOpen ? '收起字段生成' : '用样票生成字段'" placement="top">
+                    <t-button class="ai-toggle-btn" :class="{ 'ai-toggle-btn--on': aiPanelOpen }"
+                      variant="outline" shape="square" size="small" @click="toggleAiPanel">
+                      <template #icon><AiSparkIcon size="16px" /></template>
+                    </t-button>
+                  </t-tooltip>
+                </div>
               </div>
             </div>
-            <!-- 智能字段生成：内嵌在「发票类型」下方、「字段配置」上方，
-                 上传样票→识别→勾选→并入本编辑态，用户点保存才落库。 -->
+            <!-- 字段生成：内嵌在「发票类型」下方、「字段配置」上方，
+                 上传样票→识别→勾选→保存字段，直接落库。 -->
             <AiFieldSuggestPanel
               v-model:visible="aiPanelOpen"
               :kb-id="props.kbId || ''"
               :scope="group.scope"
               :cert-type="editingCertName"
-              :has-items-field="!!itemSubFieldsField"
               @apply="onAiFieldApply"
             />
             <!-- 字段配置：增删改 + 启用/禁用（同步字段筛选器） -->
@@ -98,69 +106,97 @@
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
                 </div>
-                <div v-for="(fd, i) in fieldsEditable" :key="fd.name" class="field-config-row"
-                  :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragIndex === i }]"
-                  draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
-                  @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
-                  <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
-                  <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || invoiceFieldLabel(fd.name) }}</span>
-                  <span v-else-if="group.scope === 'contract'" class="fc-name fc-name-static">{{ contractFieldLabel(fd.name) }}</span>
-                  <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
-                  <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
-                  <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
-                    <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
-                  </t-tooltip>
-                  <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
-                    <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
-                  </t-tooltip>
-                  <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
-                  <template v-if="usedFields.has(fd.name)">
-                    <t-tooltip :content="`该字段已被证照记录引用，不能删除`" placement="top">
-                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                <!-- 明细子项不再是独立的底部区块：点「项目明细」字段行就在它正下方展开，
+                     子项行与主字段行共用同一套网格/行高/圆角/间距（.field-config-row）。 -->
+                <template v-for="(fd, i) in fieldsEditable" :key="fd.name">
+                  <div class="field-config-row"
+                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragIndex === i }]"
+                    draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
+                    @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
+                    <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
+                    <!-- items 字段：字段名即展开开关，点击在下方展开子项 -->
+                    <button v-if="fd.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
+                      :title="`${fd.label || fieldLabelOf(fd)} · 点击${isSubFieldsOpen(fd) ? '收起' : '展开'}明细子项`"
+                      @click="toggleSubFields(fd)">
+                      <t-icon :name="isSubFieldsOpen(fd) ? 'chevron-down' : 'chevron-right'" size="14px" class="fc-caret" />
+                      <span class="fc-name-text">{{ fieldLabelOf(fd) }}</span>
+                      <span class="fc-sub-count">{{ subFieldsOf(fd).length }}</span>
+                    </button>
+                    <span v-else-if="group.scope === 'invoice'" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || invoiceFieldLabel(fd.name) }}</span>
+                    <span v-else-if="group.scope === 'contract'" class="fc-name fc-name-static">{{ contractFieldLabel(fd.name) }}</span>
+                    <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
+                    <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
+                    <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
+                      <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
                     </t-tooltip>
-                  </template>
-                  <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === fd.name" placement="left"
-                    :content="`确定删除字段「${fieldLabelOf(fd)}」吗？该字段将不可恢复。`"
-                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
-                    @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
-                    @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
-                    <t-dropdown :options="fieldMenuOptions(fd)" placement="bottom-right" min-column-width="110px"
-                      @click="(ctx: any) => onFieldMenu(fd, ctx.value)">
-                      <t-button variant="text" size="small" shape="square">
-                        <template #icon><t-icon name="more" size="15px" /></template>
-                      </t-button>
-                    </t-dropdown>
-                  </t-popconfirm>
-                </div>
+                    <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
+                      <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
+                    </t-tooltip>
+                    <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
+                    <template v-if="isBuiltinField(fd)">
+                      <t-tooltip content="系统内置字段，不可删除" placement="top">
+                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                      </t-tooltip>
+                    </template>
+                    <template v-else-if="usedFields.has(fd.name)">
+                      <t-tooltip :content="`该字段已被证照记录引用，不能删除`" placement="top">
+                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                      </t-tooltip>
+                    </template>
+                    <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === fd.name" placement="left"
+                      :content="`确定删除字段「${fieldLabelOf(fd)}」吗？该字段将不可恢复。`"
+                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                      @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
+                      @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
+                      <t-dropdown :options="fieldMenuOptions(fd)" placement="bottom-right" min-column-width="110px"
+                        @click="(ctx: any) => onFieldMenu(fd, ctx.value)">
+                        <t-button variant="text" size="small" shape="square">
+                          <template #icon><t-icon name="more" size="15px" /></template>
+                        </t-button>
+                      </t-dropdown>
+                    </t-popconfirm>
+                  </div>
+
+                  <!-- 明细子项内联展开区：紧贴 items 字段行，复用主字段行网格 -->
+                  <div v-if="fd.dataType === 'items' && isSubFieldsOpen(fd)" class="sub-inline">
+                    <div
+                      v-for="(sf, si) in subFieldsOf(fd)" :key="sf.key"
+                      class="field-config-row sub-row" :class="{ 'has-width': showWidthCol }">
+                      <span class="fc-drag sub-drag" :title="`子项编码：${sf.key}`">{{ si + 1 }}</span>
+                      <!-- 子项隐藏 key 输入：key 是数据对齐口径，新建时由系统按中文名生成 -->
+                      <t-input v-model="sf.label" size="small" class="fc-name" :title="`子项编码：${sf.key}`"
+                        placeholder="子项名称" />
+                      <t-select v-model="sf.dataType" size="small" class="fc-type" :options="subDataTypeOptions" />
+                      <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
+                        <t-input-number v-model="sf.width" size="small" class="fc-width" :min="0" :max="400"
+                          placeholder="0=自适应" theme="normal" />
+                      </t-tooltip>
+                      <span class="sub-blank"></span>
+                      <t-switch :model-value="subFieldEnabled(sf)" size="small"
+                        @change="(v: any) => (sf.enabled = !!v)" />
+                      <template v-if="isBuiltinSubField(sf)">
+                        <t-tooltip content="系统内置子项，不可删除" placement="top">
+                          <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                        </t-tooltip>
+                      </template>
+                      <t-tooltip v-else content="删除子项" placement="top">
+                        <t-button variant="text" size="small" shape="square" theme="danger"
+                          @click="removeSubField(fd, sf)">
+                          <template #icon><t-icon name="delete" size="15px" /></template>
+                        </t-button>
+                      </t-tooltip>
+                    </div>
+                    <div class="field-config-add sub-inline-add">
+                      <t-input v-model="newSubFieldLabel" size="small" class="fc-add-input"
+                        placeholder="新增子项名称（如 规格型号）" @enter="addSubField(fd)" />
+                      <t-button variant="outline" size="small" @click="addSubField(fd)">添加</t-button>
+                    </div>
+                  </div>
+                </template>
                 <div class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                     @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
-                </div>
-              </div>
-              <!-- 明细子列（sub_fields）：仅 data_type=items 的字段有子列口径，
-                   它随 subs 一并持久化，是提取 Prompt 与列表列的唯一权威源。
-                   在此处可展开查看/增删改，避免「智能字段生成」给出的子列无处微调。 -->
-              <div v-if="itemSubFieldsField" class="sub-fields-block">
-                <div class="sub-fields-head">
-                  <span class="sub-fields-title">明细子列 · {{ fieldLabelOf(itemSubFieldsField) }}</span>
-                  <span class="sub-fields-tip">子列随字段配置一并保存，提取时按此生成明细行输出口径</span>
-                </div>
-                <div v-if="itemSubFieldsField.subFields?.length" class="sub-fields-list">
-                  <div v-for="(sf, si) in itemSubFieldsField.subFields" :key="sf.key" class="sub-fields-row">
-                    <span class="sf-idx">{{ si + 1 }}</span>
-                    <t-input v-model="sf.key" size="small" class="sf-key" placeholder="子列键（英文）" />
-                    <t-input v-model="sf.label" size="small" class="sf-label" placeholder="列头显示名" />
-                    <t-select v-model="sf.dataType" size="small" class="sf-type" :options="dataTypeOptions" />
-                    <t-input-number v-model="sf.width" size="small" class="sf-width" :min="0" :max="400" placeholder="0=自适应" />
-                    <t-button variant="text" size="small" theme="danger" @click="removeSubField(sf)">删除</t-button>
-                  </div>
-                </div>
-                <div v-else class="sub-fields-empty">该明细字段暂无子列，添加后将用于生成明细行输出口径</div>
-                <div class="sub-fields-add">
-                  <t-input v-model="newSubFieldKey" size="small" class="sf-add-key" placeholder="子列键（英文，如 account_no）" />
-                  <t-input v-model="newSubFieldLabel" size="small" class="sf-add-label" placeholder="列头显示名（如 户号）" />
-                  <t-button variant="outline" size="small" @click="addSubField">新增子列</t-button>
                 </div>
               </div>
             </div>
@@ -195,15 +231,24 @@
         </div>
       </div>
     </div>
+
+    <!-- 保存字段后的引导：是否顺带去「提取规则」生成规则 -->
+    <InvoiceRulesGuide
+      :visible="rulesGuide.visible"
+      :cert-type="rulesGuide.certType"
+      @update:visible="(v: boolean) => (rulesGuide.visible = v)"
+      @confirm="onRulesGuideConfirm"
+      @cancel="onRulesGuideCancel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
-import { CopyIcon, DeleteIcon, StarIcon } from 'tdesign-icons-vue-next'
+import { MessagePlugin } from 'tdesign-vue-next'
+import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
-import { invoiceFieldLabel } from './invoiceFieldLabels'
+import { invoiceFieldLabel, INVOICE_FIELD_LABELS } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
 import { regulationFieldLabel } from './regulationFieldLabels'
 import { noticeFieldLabel } from './noticeFieldLabels'
@@ -211,10 +256,15 @@ import {
   fromSubsPayload,
   toSubsPayload,
   subsPayloadFromNames,
+  subFieldEnabled,
+  subFieldKeyForLabel,
+  STANDARD_SUB_FIELD_KEYS,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
+import AiSparkIcon from './AiSparkIcon.vue'
+import InvoiceRulesGuide from './InvoiceRulesGuide.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
@@ -581,7 +631,7 @@ async function commitAdd() {
       addVisible.value = false
       MessagePlugin.success('证照类型已创建')
       notifyCategoriesChanged()
-      // 连贯工作流：新建即展开编辑并打开「智能字段生成」，引导用户上传样票一键配齐字段
+      // 连贯工作流：新建即展开编辑并打开「字段生成」，引导用户上传样票一键配齐字段
       await nextTick()
       const createdItem = groupItems.value.find((it: any) => it.id === record.id)
       if (createdItem) openAiPanel(createdItem)
@@ -601,29 +651,53 @@ const editForm = reactive({ name: '' })
 // 三份都漏搬 sub_fields，导致「字段定义」保存一次就把明细子列抹空。
 const fieldsEditable = ref<EditableField[]>([])
 const newFieldName = ref('')
-const newSubFieldKey = ref('')
 const newSubFieldLabel = ref('')
-// 编辑态里唯一的明细字段（data_type=items）：子列编辑器挂在它下面
-const itemSubFieldsField = computed(
-  () => fieldsEditable.value.find((f) => f.dataType === 'items') || null,
-)
-const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
-function addSubField() {
-  const key = newSubFieldKey.value.trim()
-  if (!key) { MessagePlugin.warning('请输入子列键'); return }
-  if (!SUB_KEY_RE.test(key)) { MessagePlugin.warning('子列键需以英文字母开头，仅含字母/数字/下划线'); return }
-  const host = itemSubFieldsField.value
-  if (!host) { MessagePlugin.warning('请先将字段的数据类型设为「明细」'); return }
-  const subs = host.subFields || (host.subFields = [])
-  if (subs.some((s) => s.key === key)) { MessagePlugin.warning('该子列键已存在'); return }
-  subs.push({ key, label: newSubFieldLabel.value.trim() || key, dataType: 'text', width: 0 })
-  newSubFieldKey.value = ''
+
+// ---- 明细子项：点「项目明细」字段行在其正下方内联展开 ----
+const openSubFieldName = ref('')
+function isSubFieldsOpen(fd: EditableField) {
+  return openSubFieldName.value === fd.name
+}
+function toggleSubFields(fd: EditableField) {
+  openSubFieldName.value = isSubFieldsOpen(fd) ? '' : fd.name
+}
+function subFieldsOf(fd: EditableField): EditableSubField[] {
+  return fd.subFields || []
+}
+// 子项可选类型不含「明细」——明细行里再套明细是无效结构
+const subDataTypeOptions = [
+  { label: '文本', value: 'text' },
+  { label: '数字', value: 'number' },
+  { label: '日期', value: 'date' },
+]
+const STANDARD_SUB_KEYS = new Set(STANDARD_SUB_FIELD_KEYS)
+/**
+ * 系统内置字段：不允许删除（隐藏删除入口）。
+ * 除后端下发的 builtin 标记外，发票 scope 里出现在标准标签字典中的键也视为内置——
+ * 存量分类的 subs 未必带 builtin，少了这条兜底就会把 invoiceNo 也放出去删。
+ */
+function isBuiltinField(fd: EditableField) {
+  if (fd.builtin) return true
+  return group.value.scope === 'invoice' && Object.prototype.hasOwnProperty.call(INVOICE_FIELD_LABELS, fd.name)
+}
+function isBuiltinSubField(sf: EditableSubField) {
+  return !!sf.builtin || STANDARD_SUB_KEYS.has(sf.key)
+}
+
+/** 新增子项：只填中文名，key 由系统按中文名映射或递增生成。 */
+function addSubField(fd: EditableField) {
+  const label = newSubFieldLabel.value.trim()
+  if (!label) { MessagePlugin.warning('请输入子项名称'); return }
+  const subs = fd.subFields || (fd.subFields = [])
+  const key = subFieldKeyForLabel(label, subs.map((s) => s.key))
+  if (subs.some((s) => s.key === key)) { MessagePlugin.warning('该子项已存在'); return }
+  subs.push({ key, label, dataType: 'text', width: 0 })
   newSubFieldLabel.value = ''
 }
-function removeSubField(sf: EditableSubField) {
-  const host = itemSubFieldsField.value
-  if (!host?.subFields) return
-  host.subFields = host.subFields.filter((s) => s !== sf)
+function removeSubField(fd: EditableField, sf: EditableSubField) {
+  if (isBuiltinSubField(sf)) { MessagePlugin.warning('系统内置子项不可删除'); return }
+  if (!fd.subFields) return
+  fd.subFields = fd.subFields.filter((s) => s !== sf)
 }
 const dataTypeOptions = [
   { label: '文本', value: 'text' },
@@ -636,8 +710,8 @@ function toggleEdit(item: any) {
   if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
   editForm.name = item.name
   newFieldName.value = ''
-  newSubFieldKey.value = ''
   newSubFieldLabel.value = ''
+  openSubFieldName.value = ''
   // 换分类编辑时先收起 AI 面板：它属于"上一行"的上下文
   aiPanelOpen.value = false
   // 字段来源：已入库 subs（含 sub_fields）优先，否则内置 base+detail 底稿
@@ -647,6 +721,7 @@ function toggleEdit(item: any) {
     : subsPayloadFromNames([...(b?.base || []), ...(b?.detail || [])])
   fieldsEditable.value = fromSubsPayload(raw)
   editingId.value = item.id
+  editingCertName.value = item.name
   loadUsedFields(group.value.scope, item.name)
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
@@ -741,7 +816,7 @@ async function commitEdit() {
   }
 }
 
-// ---- 智能字段生成（内嵌面板，无模态遮罩）----
+// ---- 字段生成（内嵌面板，无模态遮罩）----
 // aiPanelOpen 与编辑行绑定：换一行编辑时先收起，避免"看着 A 分类的字段、
 // 其实面板属于 B 分类"的错位。
 const aiPanelOpen = ref(false)
@@ -760,6 +835,24 @@ function openAiPanel(item: any) {
   })
 }
 
+/** 「发票类型」右侧的 AI 图标按钮：与 ⋮ 菜单里的「字段生成」等价，再点收起。 */
+function toggleAiPanel() {
+  editingCertName.value = editForm.name.trim()
+  aiPanelOpen.value = !aiPanelOpen.value
+  if (aiPanelOpen.value) {
+    nextTick(() => {
+      document.querySelector('.ai-field-panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
+  }
+}
+
+/**
+ * 「保存字段」= 并入编辑态 + 立刻调后端保存接口落库。
+ *
+ * 为什么不再让用户点第二次保存：并入只是内存动作，用户看到按钮变成"已并入 N 项"
+ * 却还要滚到下面再点「保存」才落库，中途切走就白配了。这里直接衔接 commitEdit。
+ * Toast 也只留一条（保存结果），不再叠加"已自动创建父字段 + 已并入 N 项"两条。
+ */
 function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: any[]; sampleText: string }) {
   const merged = mergeAiFieldSuggestions(
     fieldsEditable.value,
@@ -773,32 +866,35 @@ function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: an
   fieldsEditable.value = merged.fields
   pendingAiSample.value = payload.sampleText || ''
   aiPanelOpen.value = false
-  if (merged.createdItemsHost) {
-    // 勾了明细子列但分类原本没有 items 字段：已自动补建「项目明细」父字段
-    MessagePlugin.info('已自动创建「项目明细」父字段，用于承载勾选的明细子列')
+  // 明细父字段由 mergeAiFieldSuggestions 静默补建，不再弹提示打断流程
+  if (merged.skipped.length) {
+    MessagePlugin.warning(`${merged.skipped.length} 项未并入：${merged.skipped[0]?.reason || ''}`)
   }
-  if (merged.addedCount) MessagePlugin.success(`已并入 ${merged.addedCount} 项，确认后点「保存」生效`)
-  else MessagePlugin.warning('没有可并入的新项（可能都已存在）')
-  if (merged.skipped.length) MessagePlugin.warning(`${merged.skipped.length} 项未并入：${merged.skipped[0]?.reason || ''}`)
+  if (!merged.addedCount) {
+    if (!merged.skipped.length) MessagePlugin.warning('没有可并入的新项（可能都已存在）')
+    return
+  }
+  // 并入成功 → 直接落库，用户无需再点一次保存
+  void commitEdit()
 }
 
-// askGoRules 保存成功后询问是否跳到「提取规则」，并把样票文本交给规则面板。
-// 确认 → 冒泡 ai-guide 事件（StandardSettingDrawer 是直接父级，无需经过列表页）。
-async function askGoRules(certType: string, sampleText: string) {
+// 保存成功后的引导弹窗：问是否顺带去「提取规则」为当前分类生成规则。
+// 用自绘弹窗而非命令式确认框 —— 后者无法复刻「创建知识库」引导弹窗的
+// 圆角/头部排版/主次按钮配色，视觉上与产品其它引导流程割裂。
+const rulesGuide = reactive({ visible: false, certType: '', sampleText: '' })
+function askGoRules(certType: string, sampleText: string) {
   if (!sampleText) return
   cacheSampleText(certType, sampleText)
-  try {
-    const confirm = await DialogPlugin.confirm({
-      header: '字段已保存',
-      body: `是否立即前往「提取规则」，为「${certType}」智能生成提取规则？（将带上刚才的样票做正则唯一命中校验）`,
-      confirmBtn: { content: '前往生成', theme: 'primary' },
-      cancelBtn: { content: '稍后再说' },
-    })
-    emit('ai-guide', { certType, sampleText, autoSuggest: true })
-    void confirm
-  } catch {
-    /* 用户取消：不跳转，样票文本仍已缓存，稍后手动点「智能生成规则」时会自动带上 */
-  }
+  rulesGuide.certType = certType
+  rulesGuide.sampleText = sampleText
+  rulesGuide.visible = true
+}
+function onRulesGuideConfirm() {
+  rulesGuide.visible = false
+  emit('ai-guide', { certType: rulesGuide.certType, sampleText: rulesGuide.sampleText, autoSuggest: true })
+}
+function onRulesGuideCancel() {
+  rulesGuide.visible = false
 }
 
 const emit = defineEmits<{
@@ -846,10 +942,10 @@ async function removeItem(item: any) {
   }
 }
 
-// ---- 分类行操作：竖向三点菜单（复制 / 删除，图标+文字）----
+// ---- 分类行操作：竖向三点菜单（字段生成 / 复制 / 删除，图标+文字）----
 const itemMenuOptions = (item: any) => {
   const opts: any[] = [
-    { content: '智能生成字段', value: 'ai', prefixIcon: () => h(StarIcon, { size: '14px' }) },
+    { content: '字段生成', value: 'ai', prefixIcon: () => h(AiSparkIcon, { size: '14px' }) },
     { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   ]
   if (!item.builtin) opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
@@ -1096,6 +1192,32 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
   }
 
+  /* 发票类型输入框 + 右侧 AI 图标按钮同行 */
+  .form-item-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    :deep(.t-input__wrap) { flex: 1; min-width: 0; }
+  }
+
+  /* AI 图标按钮：默认无强调，展开时主色高亮（激活态） */
+  .ai-toggle-btn {
+    flex: none;
+    color: var(--td-text-color-secondary);
+
+    &:hover {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+    }
+
+    &--on {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+      background: var(--td-brand-color-1);
+    }
+  }
+
   .meter-form-actions {
     display: flex;
     justify-content: flex-end;
@@ -1289,75 +1411,78 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
   }
 
-  /* 明细子列编辑区：与字段表同视觉语言，缩进表示层级归属 */
-  .sub-fields-block {
-    margin-top: 12px;
-    padding: 10px 12px;
-    border: 1px dashed var(--td-component-stroke);
-    border-radius: 8px;
-    background: var(--td-bg-color-container);
+  /* items 字段名即展开开关：去掉按钮外观，只保留 caret + 文案 + 子项数 */
+  .fc-name-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    height: 32px;
+    padding: 0 4px;
+    border: none;
+    border-radius: var(--td-radius-default);
+    background: transparent;
+    font-size: 13px;
+    color: var(--td-text-color-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+
+    &:hover { background: var(--td-bg-color-secondarycontainer); }
+
+    .fc-caret { flex: none; color: var(--td-text-color-placeholder); }
+    .fc-name-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fc-sub-count {
+      flex: none;
+      font-size: 11px;
+      line-height: 16px;
+      padding: 0 6px;
+      border-radius: 8px;
+      color: var(--td-text-color-secondary);
+      background: var(--td-bg-color-component);
+      font-variant-numeric: tabular-nums;
+    }
   }
 
-  .sub-fields-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
-
-    .sub-fields-title {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--td-text-color-primary);
-    }
-    .sub-fields-tip {
-      font-size: 12px;
-      color: var(--td-text-color-placeholder);
-    }
-  }
-
-  .sub-fields-list {
+  /* 明细子项内联展开区：紧贴 items 字段行，子行复用 .field-config-row 的网格/行高/圆角 */
+  .sub-inline {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    /* 抵消 .field-config-list 的 6px 行间距，让子项区紧贴 items 字段行 */
+    margin: -6px 0 0;
   }
 
-  .sub-fields-row {
-    display: grid;
-    grid-template-columns: 22px minmax(96px, 1fr) minmax(96px, 1fr) 90px 84px 56px;
+  .sub-row {
+    /* 复用主行尺寸，只换底色 + 左侧主色细线表示层级归属（不用 border-left，避免位移 1px） */
+    background: var(--td-bg-color-secondarycontainer);
+    box-shadow: inset 2px 0 0 var(--td-brand-color-3);
+
+    &:hover { background: var(--td-bg-color-component); }
+  }
+
+  /* 子行的首列显示序号而非拖拽把手（子项排序不参与主字段排序） */
+  .sub-drag {
+    display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 3px 0;
-  }
-
-  .sf-idx {
+    justify-content: center;
     font-size: 11px;
     color: var(--td-text-color-placeholder);
-    text-align: center;
+    cursor: default;
     font-variant-numeric: tabular-nums;
   }
 
-  .sub-fields-empty {
-    font-size: 12px;
-    color: var(--td-text-color-placeholder);
-    padding: 4px 0 8px;
-  }
+  /* 「默认表头」列在子项上无意义，占位保持网格列对齐 */
+  .sub-blank { display: block; }
 
-  .sub-fields-add {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-    flex-wrap: wrap;
-
-    .sf-add-key {
-      flex: 1 1 160px;
-      min-width: 0;
-    }
-    .sf-add-label {
-      flex: 1 1 160px;
-      min-width: 0;
-    }
+  .sub-inline-add {
+    padding-left: 24px;
+    margin-top: 2px;
   }
 }
 </style>

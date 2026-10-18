@@ -4,24 +4,24 @@
       <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="isFleetScope ? (scope === 'maintain' ? '选择维保类型' : '选择证照类型') : '选择发票类型'" @change="onCertTypeChange" />
       <span v-else class="cert-type-static">整体提取规则</span>
       <div class="spacer" />
-      <t-switch v-model="advancedEnabled" size="small">
-        <template #label>高级模式</template>
-      </t-switch>
-      <!-- 图标按钮 + Tooltip：工具栏只留高频动作，避免大按钮挤压字段筛选 -->
+      <!-- 高级模式：左侧文字标签 + 右侧开关（不再用 t-switch 内嵌 label，避免文字随开关漂移） -->
+      <span class="adv-label">高级模式</span>
+      <t-switch v-model="advancedEnabled" size="medium" class="adv-switch" />
+      <!-- 图标按钮一律无边框（variant="text"），hover 仅给柔和底色，避免整排描边按钮抢视线 -->
       <t-tooltip :content="aiBatchTip" placement="top">
-        <t-button variant="outline" theme="primary" shape="square" size="small"
+        <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
           :disabled="!certType || aiSuggesting" :loading="aiSuggesting" @click="runAiSuggest()">
-          <template #icon><t-icon name="star" /></template>
+          <template #icon><AiSparkIcon size="16px" /></template>
         </t-button>
       </t-tooltip>
       <t-tooltip :content="aiSampleHint" placement="top">
-        <t-button variant="text" size="small" shape="square"
+        <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
           :disabled="!certType || !sampleTextAvailable" @click="clearCachedSample">
-          <template #icon><t-icon name="delete" /></template>
+          <template #icon><t-icon name="refresh" /></template>
         </t-button>
       </t-tooltip>
       <t-tooltip content="测试规则（在页面内展开测试区，边改边测）" placement="top">
-        <t-button variant="outline" theme="primary" shape="square" size="small"
+        <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
           :class="{ 'is-active': testVisible }" :disabled="!certType" @click="toggleTest">
           <template #icon><t-icon name="play-circle" /></template>
         </t-button>
@@ -41,7 +41,6 @@
         <span class="col-required">必填</span>
         <span class="col-regex">正则兜底</span>
         <span>状态</span>
-        <span></span>
         <span></span>
       </div>
       <template v-for="(f, i) in fields" :key="f.name + '-' + i">
@@ -74,19 +73,18 @@
               <t-loading v-if="aiFieldBusy === f.name" size="small" />
               <t-button v-else variant="text" size="small" shape="square" class="rtr-ai-btn"
                 :disabled="aiSuggesting" @click.stop="generateFieldRule(f)">
-                <template #icon><t-icon name="star" size="15px" /></template>
+                <template #icon><AiSparkIcon size="15px" /></template>
               </t-button>
             </t-tooltip>
           </span>
-          <span class="rtr-toggle"><t-icon name="chevron-down" size="15px" /></span>
         </div>
-        <!-- 行内展开配置（复刻证照配置展开编辑） -->
+          <!-- 行内展开配置（复刻证照配置展开编辑） -->
         <div v-if="editingName === f.name" class="rule-form rule-form--inline">
           <div class="rule-form-title">
             配置「{{ fieldLabel(f.name) }}」
             <t-button variant="text" size="small" class="rule-form-ai" :loading="aiFieldBusy === f.name"
               :disabled="aiSuggesting" @click.stop="generateFieldRule(f)">
-              <template #icon><t-icon name="star" size="14px" /></template>生成该字段规则
+              <template #icon><AiSparkIcon size="14px" /></template>生成该字段规则
             </t-button>
           </div>
           <div class="rule-form-grid">
@@ -107,6 +105,7 @@
             </div>
             <div class="rule-form-item">
               <label>正则兜底</label>
+              <!-- 全字段开放：标准字段 / 扩展字段 / 明细子项都可配；置灰只剩「本模块是否接入」这一条 -->
               <t-input v-model="f.regex" size="small" placeholder="如 \b\d{20}\b"
                 :disabled="!regexPatchable(f.name)" />
               <div class="rule-form-hint" :class="{ 'hint-danger': !!regexHintOf(f) }">
@@ -119,7 +118,7 @@
                 <span class="rule-quick-title">一键填入</span>
                 <t-tooltip v-for="p in REGEX_PRESETS" :key="p.name" :content="p.hint" placement="top">
                   <t-tag size="small" variant="outline" theme="primary" class="rule-quick-tag"
-                    :class="{ 'quick-disabled': !regexPatchable(f.name) }" @click="applyRegexPreset(f, p)">
+                    @click="applyRegexPreset(f, p)">
                     {{ p.name }}
                   </t-tag>
                 </t-tooltip>
@@ -127,8 +126,6 @@
               </div>
               <t-alert v-if="!fieldRulesSupported(scope)" theme="info" variant="light" class="rule-form-alert"
                 message="本模块暂未接入字段级校验与正则补洞（目前仅发票支持）" />
-              <t-alert v-else-if="!regexPatchable(f.name)" theme="info" variant="light" class="rule-form-alert"
-                :message="regexDisabledReason(scope, f.name)" />
             </div>
             <div class="rule-form-item rule-form-item--full">
               <label>提取规则</label>
@@ -141,6 +138,33 @@
               </div>
             </div>
           </div>
+
+          <!-- 明细子项规则：点明细行的展开区，逐个配「项目明细」下的子项口径。
+               规则/正则随 ExtractFieldConfig.sub_fields 持久化；正则只在
+               「单票单明细行」时回填，多行不猜归属（与后端同一条铁律）。 -->
+          <div v-if="isItemsField(f)" class="sub-rule-block">
+            <div class="sub-rule-head">
+              <span class="sub-rule-title">明细子项规则</span>
+              <span class="sub-rule-tip">子项正则仅在单票单明细行时回填</span>
+            </div>
+            <div v-if="!(f.sub_fields || []).length" class="sub-rule-empty">
+              该明细字段暂无子项，请先在「字段定义」里添加
+            </div>
+            <div v-for="sf in f.sub_fields || []" :key="sf.key" class="sub-rule-row" :class="{ 'is-off': sf.enabled === false }">
+              <div class="sub-rule-name">
+                <span class="sub-rule-label">{{ sf.label || sf.key }}</span>
+                <span class="sub-rule-key">{{ sf.key }}</span>
+              </div>
+              <t-input v-model="sf.rule" size="small" class="sub-rule-input" placeholder="提取口径（可空）" />
+              <t-input v-model="sf.regex" size="small" class="sub-rule-regex" placeholder="正则（可空）" />
+              <t-switch :model-value="sf.enabled !== false" size="small" class="sub-rule-switch"
+                @change="(v: any) => (sf.enabled = !!v)" />
+            </div>
+            <div class="rule-form-hint">
+              子项正则示例：规格型号 <code>\s*规格型号\s*[:：]\s*([A-Za-z0-9]+)</code>
+            </div>
+          </div>
+
           <div class="rule-form-actions">
             <t-button variant="outline" size="small" @click="editingName = ''">收起</t-button>
             <t-button theme="primary" size="small" :loading="saving" @click="save">保存</t-button>
@@ -175,7 +199,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig, type AiSuggestRulesResult, aiSuggestRules } from '@/api/fleet'
+import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig, type ExtractSubFieldConfig, type AiSuggestRulesResult, aiSuggestRules } from '@/api/fleet'
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import {
@@ -190,6 +214,7 @@ import {
 } from './extractFieldMeta'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestPanel from './ExtractTestPanel.vue'
+import AiSparkIcon from './AiSparkIcon.vue'
 import { cacheSampleText, dropSampleText, readSampleText } from './sampleTextCache'
 
 const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
@@ -739,12 +764,55 @@ function applyExample(f: ExtractFieldConfig, text: string) {
 }
 
 function makeField(name: string): ExtractFieldConfig {
-  return { name, desc: '', type: 'string', rule: '', enabled: true, required: false, regex: '' }
+  return { name, desc: '', type: 'string', rule: '', enabled: true, required: false, regex: '', sub_fields: [] }
+}
+
+/** 该行是否明细字段（决定展开区是否显示「明细子项规则」）。 */
+function isItemsField(f: ExtractFieldConfig): boolean {
+  return f.type === 'items' || f.name === 'items'
+}
+
+/** 把证照配置里的 sub_fields 原样搬成编辑态（结构以证照配置为权威）。 */
+function subFieldsFromSubs(raw: unknown): ExtractSubFieldConfig[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((s: any) => s && typeof s === 'object' && String(s.key || '').trim())
+    .map((s: any) => {
+      const sf: ExtractSubFieldConfig = {
+        key: String(s.key).trim(),
+        label: String(s.label || s.key).trim(),
+        data_type: s.data_type || s.dataType || 'text',
+        width: Number(s.width) || 0,
+        rule: String(s.rule || '').trim(),
+        regex: String(s.regex || '').trim(),
+      }
+      if (s.enabled === false) sf.enabled = false
+      return sf
+    })
+}
+
+/**
+ * 子项口径合并：结构/文案以证照配置为准，口径（rule/regex/enabled）以提取配置为准。
+ * 与后端 handler.injectInvoiceItemSubFields 的同名合并方向一致，避免两边互相覆盖。
+ */
+function mergeSubFieldRules(base: ExtractSubFieldConfig[], saved?: ExtractSubFieldConfig[]): ExtractSubFieldConfig[] {
+  if (!saved?.length) return base
+  const byKey = new Map(saved.map((s) => [String(s.key || ''), s]))
+  return base.map((b) => {
+    const s = byKey.get(b.key)
+    if (!s) return b
+    const out: ExtractSubFieldConfig = { ...b }
+    if (s.rule) out.rule = String(s.rule)
+    if (s.regex) out.regex = String(s.regex)
+    if (s.desc) out.desc = String(s.desc)
+    if (s.enabled === false) out.enabled = false
+    return out
+  })
 }
 
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
-function authorityFields(): { name: string; enabled: boolean; dataType: string }[] {
+function authorityFields(): { name: string; enabled: boolean; dataType: string; subFields: ExtractSubFieldConfig[] }[] {
   const scope = currentScope.value
   const catList = categories.value[scope] || []
   // 非车队 scope：按选中类型取 subs，未选中/无匹配回退第一个分类
@@ -755,14 +823,19 @@ function authorityFields(): { name: string; enabled: boolean; dataType: string }
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
-      .map((s: any) => ({ name: String(s.name || '').trim(), enabled: s.enabled !== false, dataType: s.data_type || 'text' }))
+      .map((s: any) => ({
+        name: String(s.name || '').trim(),
+        enabled: s.enabled !== false,
+        dataType: s.data_type || 'text',
+        subFields: subFieldsFromSubs(s.sub_fields),
+      }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
   if (isFleetScope.value) {
     const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
     const seen = new Set<string>()
     return defaults
-      .map((n) => ({ name: n, enabled: true, dataType: 'text' }))
+      .map((n) => ({ name: n, enabled: true, dataType: 'text', subFields: [] as ExtractSubFieldConfig[] }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
   return []
@@ -839,6 +912,8 @@ async function loadConfig() {
         // 不写进 DEFAULT_RULES 底稿：默认开必填会让存量文档一上线就满屏 error。
         regex: c?.regex || '',
         required: c && c.required !== undefined ? !!c.required : false,
+        // 明细子项：结构来自证照配置，规则/正则来自提取配置（两端都为空就是空数组）
+        sub_fields: mergeSubFieldRules(a.subFields, c?.sub_fields),
       }
     })
     if (!fields.value.length) fields.value.push(makeField(''))
@@ -1185,6 +1260,25 @@ watch(certTypeOptions, (groups) => {
   .spacer {
     flex: 1;
   }
+  /* 高级模式：左文字（13px 次要色）+ 右开关，与无边框图标按钮垂直居中 */
+  .adv-label {
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    white-space: nowrap;
+  }
+  .adv-switch {
+    margin-right: 4px;
+  }
+  /* 无边框图标按钮：hover 只给柔和底色，不画描边 */
+  .tb-icon-btn {
+    color: var(--td-text-color-secondary);
+    border: none;
+
+    &:hover {
+      color: var(--td-text-color-primary);
+      background: var(--td-bg-color-secondarycontainer);
+    }
+  }
 }
 .rule-example-bar {
   display: flex;
@@ -1241,9 +1335,10 @@ watch(certTypeOptions, (groups) => {
   .rule-table-head,
   .rule-table-row {
     display: grid;
-    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态 / 展开箭头
+    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态 / 单字段 AI
+       行尾展开箭头已去掉：整行非控件区即展开热区，少一列多一分宽度给正则。
        正则列给 minmax(120px,…) 保底：Input 再窄就无法辨认正则片段 */
-    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px 26px 18px;
+    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px 26px;
     align-items: center;
     gap: 8px;
     padding: 7px 12px;
@@ -1252,7 +1347,7 @@ watch(certTypeOptions, (groups) => {
 
   /* 窄态：收起字段描述列，把宽度让给正则输入（避免抽屉内水平挤压/错位） */
   .extract-rule-panel.eq-narrow & {
-    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px 24px 16px;
+    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px 24px;
 
     /* 只隐藏"字段描述"列（行内第 2 格 / 表头第 2 格），必填与正则列必须保留 */
     .rtr-desc,
@@ -1316,14 +1411,6 @@ watch(certTypeOptions, (groups) => {
       align-items: center;
       .rtr-on { font-size: 12px; color: var(--td-success-color); }
     }
-    .rtr-toggle {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--td-text-color-placeholder);
-      transition: transform 0.15s;
-    }
-    &.editing .rtr-toggle { transform: rotate(180deg); }
   }
 }
 
@@ -1381,10 +1468,6 @@ watch(certTypeOptions, (groups) => {
       white-space: nowrap;
     }
     .rule-quick-tag { cursor: pointer; }
-    .quick-disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
   }
 
   .rule-form-inline {
@@ -1394,6 +1477,70 @@ watch(certTypeOptions, (groups) => {
     min-height: 24px;
   }
 
+  /* 明细子项规则：一行一个子项（名称/口径/正则/启用） */
+  .sub-rule-block {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px dashed var(--td-component-stroke);
+    border-radius: 8px;
+    background: var(--td-bg-color-container);
+  }
+  .sub-rule-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+
+    .sub-rule-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+    }
+    .sub-rule-tip {
+      font-size: 11px;
+      color: var(--td-text-color-placeholder);
+    }
+  }
+  .sub-rule-empty {
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    padding: 4px 0;
+  }
+  .sub-rule-row {
+    display: grid;
+    grid-template-columns: 128px minmax(120px, 1fr) minmax(140px, 1.2fr) 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+
+    &.is-off { opacity: 0.55; }
+
+    .sub-rule-name {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      line-height: 1.25;
+    }
+    .sub-rule-label {
+      font-size: 12px;
+      color: var(--td-text-color-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sub-rule-key {
+      font-size: 10px;
+      font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
+      color: var(--td-text-color-placeholder);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sub-rule-switch {
+      justify-self: center;
+    }
+  }
+
   .rule-form-hint {
     font-size: 11px;
     line-height: 1.5;
@@ -1401,6 +1548,13 @@ watch(certTypeOptions, (groups) => {
     color: var(--td-text-color-placeholder);
 
     &.hint-danger { color: var(--td-error-color); }
+    code {
+      font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
+      font-size: 10px;
+      padding: 0 4px;
+      border-radius: 3px;
+      background: var(--td-bg-color-secondarycontainer);
+    }
   }
 
   .rule-form-alert {

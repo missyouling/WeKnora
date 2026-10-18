@@ -1,20 +1,14 @@
 <template>
   <!--
-    内嵌式「智能字段生成」面板（取代原 AiFieldSuggestDialog 模态框）。
+    内嵌式「字段生成」面板（取代旧模态框实现）。
     为什么去弹窗：用户在场内改的是某个分类的字段，弹窗遮罩把"我在改哪个分类"
     的上下文盖掉了；内嵌在编辑面板顶部，上传→识别→勾选→保存视线不跳。
   -->
   <section v-if="visible" class="ai-field-panel">
     <div class="afp-head">
-      <span class="afp-title"><t-icon name="star" size="15px" /> 智能字段生成</span>
-      <span class="afp-sub">上传「{{ certType }}」样票，AI 识别票面字段并映射到系统字段</span>
-      <div class="spacer" />
-      <t-button variant="text" size="small" @click="onClose">收起</t-button>
+      <span class="afp-title"><AiSparkIcon size="15px" /> 字段生成</span>
+      <span class="afp-sub">上传「{{ certType }}」样票，识别票面字段</span>
     </div>
-
-    <t-alert theme="info" variant="light" class="afp-alert">
-      识别结果仅供参考，需你勾选并点「保存」后才会写入字段配置；样票文本会被临时缓存，供「提取规则」页校验正则。
-    </t-alert>
 
     <!-- 输入区：识别成功后自动折叠。
          为什么折叠：粘贴模式 textarea 占 270px 以上，识别完还摊着会把下方
@@ -23,8 +17,10 @@
       <div class="afp-upload">
         <t-upload v-model:files="fileList" :auto-upload="false" :max-size="20" accept=".pdf,.png,.jpg,.jpeg,.txt"
           placeholder="支持 PDF / PNG / JPG / TXT，最大 20MB" />
-        <t-button variant="text" size="small" @click="textMode = !textMode">
-          {{ textMode ? '改为上传样票' : '改为粘贴票面文本' }}
+        <!-- 粘贴文本：与「选择文件」并排的普通按钮，点击展开轻量文本框 -->
+        <t-button variant="outline" size="small" class="afp-paste-btn"
+          :class="{ 'afp-paste-btn--on': textMode }" @click="textMode = !textMode">
+          {{ textMode ? '收起文本' : '粘贴文本' }}
         </t-button>
         <div class="spacer" />
         <t-button theme="primary" size="small" :loading="loading" :disabled="!canRun" @click="runSuggest">
@@ -56,17 +52,18 @@
       </div>
 
       <div v-if="!totalCount" class="afp-empty">
-        未能从该样票中识别出可用字段。可换一张票面更完整的样票，或改用「粘贴票面文本」。
+        未能从该样票中识别出可用字段。可换一张票面更完整的样票，或改用「粘贴文本」。
       </div>
 
       <!-- 三个分组固定展示：某一组本样票没有命中时给空态，避免用户以为"少了一类"。
            结果区限高内滚：字段多时（20 项以上）不能把下方「字段配置」顶出视口。 -->
-      <div class="afp-scroll">
+      <!-- tabindex：让内容超高的滚动容器可被键盘聚焦滚动（鼠标滚轮在 flex 容器里
+           曾因缺少 min-height:0 而失效，这里同时给了可聚焦的兜底）。 -->
+      <div class="afp-scroll" tabindex="0">
         <template v-for="g in groups" :key="g.key">
         <div class="afp-group">
           <div class="afp-group-head">
             <span class="afp-group-title">{{ g.title }}</span>
-            <span class="afp-group-hint">{{ g.hint }}</span>
           </div>
           <div class="afp-grid afp-grid--head">
             <span></span>
@@ -97,13 +94,11 @@
       </div>
 
       <div class="afp-actions">
-        <span v-if="pickedSubCount && !hasItemsField" class="afp-auto-hint">
-          <t-icon name="info-circle" size="13px" /> 当前分类没有「明细」字段，保存时会自动创建「项目明细」父字段
-        </span>
         <div class="spacer" />
         <t-button variant="outline" size="small" @click="onClose">取消</t-button>
+        <!-- 「保存字段」= 并入编辑态 + 立即调后端保存接口落库，用户不必再点一次保存 -->
         <t-button theme="primary" size="small" :disabled="!pickedCount" @click="emitApply">
-          并入字段配置（{{ pickedCount }}）
+          保存字段{{ pickedCount ? `（${pickedCount}）` : '' }}
         </t-button>
       </div>
     </div>
@@ -115,6 +110,7 @@ import { computed, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { UploadFile } from 'tdesign-vue-next'
 import { aiSuggestFields, type AiSuggestFieldsResult } from '@/api/fleet'
+import AiSparkIcon from './AiSparkIcon.vue'
 
 /**
  * t-upload 的文件项直接复用 TDesign 的 UploadFile 类型。
@@ -126,8 +122,6 @@ const props = defineProps<{
   kbId: string
   scope: string
   certType: string
-  /** 当前分类是否已有「明细」类型字段（决定是否需要提示自动补建父字段）。 */
-  hasItemsField?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -173,28 +167,14 @@ const pickedCount = computed(() =>
   + subRows.value.filter((r) => r.picked).length
   + customRows.value.filter((r) => r.picked).length,
 )
-const pickedSubCount = computed(() => subRows.value.filter((r) => r.picked).length)
 const totalCount = computed(() => standardRows.value.length + subRows.value.length + customRows.value.length)
 
+// 组名一律干练，不再挂技术黑话（编码不可改/映射契约键之类）——那是实现细节，
+// 用户只需要知道"这三堆分别是什么"。
 const groups = computed(() => [
-  {
-    key: 'standard',
-    title: '标准字段',
-    hint: '映射到系统契约键，编码不可改（保证提取与正则补洞命中）',
-    rows: standardRows.value,
-  },
-  {
-    key: 'custom',
-    title: '扩展字段',
-    hint: '票面有、字典里没有的信息；编码由系统生成且只读',
-    rows: customRows.value,
-  },
-  {
-    key: 'sub',
-    title: '明细字段',
-    hint: '挂到「项目明细」父字段下，作为明细行输出口径',
-    rows: subRows.value,
-  },
+  { key: 'standard', title: '标准字段', rows: standardRows.value },
+  { key: 'custom', title: '扩展字段', rows: customRows.value },
+  { key: 'sub', title: '明细子项', rows: subRows.value },
 ])
 
 watch(() => props.visible, (v) => {
@@ -329,6 +309,15 @@ function onClose() {
   border-radius: 6px;
   .spacer { flex: 1; }
 }
+/* 「粘贴文本」是普通按钮（不是文字链），与「选择文件」并排，激活时给主色边框 */
+.afp-paste-btn {
+  flex: none;
+  &--on {
+    color: var(--td-brand-color);
+    border-color: var(--td-brand-color);
+    background: var(--td-brand-color-1);
+  }
+}
 .afp-textarea {
   width: 100%;
   font-family: Consolas, Monaco, 'Courier New', monospace;
@@ -346,14 +335,30 @@ function onClose() {
   .afp-collapsed-text { font-size: 12px; }
   .spacer { flex: 1; }
 }
-/* 结果区限高内滚：字段多时锁住面板高度，保证「字段配置」与「保存」仍在视口附近 */
+/* 结果区限高内滚：字段多时锁住面板高度，保证「字段配置」与「保存」仍在视口附近。
+   两个必须同时成立的约束：
+     1) min-height:0 —— flex 子项的默认 min-height:auto 会让内容撑开容器，max-height 形同虚设；
+     2) 子项 flex:none —— 否则内容超高时浏览器会**压缩**每个分组的高度（flex-shrink 默认 1），
+        分组被挤扁后各自 overflow:hidden 把行裁掉，表现就是"没有滚动条、下面的行看不见"。
+   实测症状：20 个字段时第一组 12 行全塞进 109px，滚动条不出现。 */
 .afp-scroll {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: min(46vh, 420px);
   overflow-y: auto;
-  padding-right: 2px;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  outline: none;
+
+  > * { flex: none; }
+}
+.afp-scroll::-webkit-scrollbar { width: 6px; }
+.afp-scroll::-webkit-scrollbar-thumb {
+  background: var(--td-scrollbar-color, var(--td-component-stroke));
+  border-radius: 3px;
 }
 
 .afp-result { display: flex; flex-direction: column; gap: 10px; }
@@ -374,7 +379,6 @@ function onClose() {
   padding: 6px 10px;
   background: var(--td-bg-color-secondarycontainer);
   .afp-group-title { font-size: 12px; font-weight: 600; color: var(--td-text-color-primary); }
-  .afp-group-hint { font-size: 11px; color: var(--td-text-color-placeholder); }
 }
 
 /* 三分组统一五列：勾选 22 / 编码 0.9fr / 名称 1fr / 类型 96 / 样本 1fr */
@@ -426,12 +430,5 @@ function onClose() {
   align-items: center;
   gap: 8px;
   .spacer { flex: 1; }
-  .afp-auto-hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--td-warning-color);
-  }
 }
 </style>

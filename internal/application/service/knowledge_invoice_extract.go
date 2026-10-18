@@ -613,13 +613,15 @@ func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
 	}
 	var keys []string
 	var labels []string
+	var subRules []string
 	for _, f := range cfg.Fields {
 		if !f.Enabled || strings.TrimSpace(f.Name) == "" || f.Type != "items" {
 			continue
 		}
 		for _, sf := range f.SubFields {
 			k := strings.TrimSpace(sf.Key)
-			if k == "" {
+			// 子项启用开关：关掉的列既不进 Prompt，也不参与正则补洞。
+			if k == "" || !sf.IsEnabled() {
 				continue
 			}
 			keys = append(keys, k)
@@ -628,6 +630,11 @@ func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
 				lab = k
 			}
 			labels = append(labels, lab)
+			// 子项级口径（规则面板「项目明细」展开区配置的自然语言规则）必须进 Prompt，
+			// 否则用户为「车牌号」写的"取『车牌号码』栏，不含省份简称"这类要求完全不生效。
+			if r := strings.TrimSpace(sf.Rule); r != "" {
+				subRules = append(subRules, k+"（"+r+"）")
+			}
 		}
 	}
 	if len(keys) == 0 {
@@ -639,11 +646,15 @@ func invoiceItemsSubFieldsInstruction(cfg *types.KbExtractConfig) string {
 	if len(keys) > 1 {
 		example = strings.Join(keys[:min(len(keys), 3)], "/")
 	}
-	return fmt.Sprintf(
+	ins := fmt.Sprintf(
 		"额外明细行规则：本分类发票的 items 明细行必须按以下子列键提取（键名严格使用）：%s（含义依次为：%s）。"+
 			"每行明细都输出这些键；票面存在但无法识别的键输出 null 或空字符串。若票面明细含分类特有信息"+
 			"（如本分类的 %s），必须提取到 items 行对应的键，不要只写入 remark。",
 		strings.Join(keys, "/"), strings.Join(labels, "/"), example)
+	if len(subRules) > 0 {
+		ins += "子项口径：" + strings.Join(subRules, "；") + "。"
+	}
+	return ins
 }
 
 // ExtractInvoicesFromContentWithRules 与 ExtractInvoicesFromContent 相同，但支持注入

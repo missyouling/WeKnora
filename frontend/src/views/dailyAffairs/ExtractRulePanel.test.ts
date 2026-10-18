@@ -128,11 +128,14 @@ test('AI 更新行有徽章与高亮，并自动展开第一条', () => {
   assert.match(panelSrc, /editingName\.value = filled\[0\]/, '自动展开第一条被更新的行')
 })
 
-test('工具栏改为图标按钮 + Tooltip（star / play-circle）', () => {
+test('工具栏改为无边框图标按钮 + Tooltip（AI / refresh / play-circle）', () => {
   assert.match(panelSrc, /<t-tooltip :content="aiBatchTip"/)
-  assert.match(panelSrc, /<t-icon name="star" \/>/)
+  assert.match(panelSrc, /<AiSparkIcon size="16px" \/>/)
   assert.match(panelSrc, /<t-icon name="play-circle" \/>/)
   assert.match(panelSrc, /shape="square"/, '图标按钮使用方形紧凑形态')
+  // 2026-10-18 二轮：整排按钮去描边，hover 只给柔和底色
+  assert.doesNotMatch(panelSrc, /<t-button variant="outline" theme="primary" shape="square"/)
+  assert.match(panelSrc, /class="tb-icon-btn"/)
 })
 
 test('测试规则改为内嵌面板（无模态弹窗）', () => {

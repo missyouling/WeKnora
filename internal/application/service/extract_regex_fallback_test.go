@@ -1,6 +1,8 @@
 package service
 
 import (
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -132,5 +134,128 @@ func TestExtractRegexFallbackClearsValidationError(t *testing.T) {
 	if countIssues(after, issueSeverityError) >= countIssues(before, issueSeverityError) {
 		t.Fatalf("补洞后 error 应减少：before=%d after=%d",
 			countIssues(before, issueSeverityError), countIssues(after, issueSeverityError))
+	}
+}
+
+// ---- 2026-10-18 第二轮：正则补洞从 8 个文本键扩到「全部标准 + 扩展 + 明细子项」----
+//
+// 用户口径：只要配了合法 RE2 且在本批原文唯一命中，正式提取就要执行回填；
+// 数值字段必须走统一清洗（货币符/千分位）再转 float64，转不了就放弃，
+// 多行明细无法唯一归属时一律不猜。
+
+func TestExtractRegexFallbackPatchesNumericStandardFields(t *testing.T) {
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
+	text := "价税合计: ¥1,234.56\n税额：¥101.94\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "totalAmount", Enabled: true, Regex: `价税合计\s*[:：]?\s*[¥￥]?\s*([\d,]+\.\d{2})`},
+		{Name: "tax", Enabled: true, Regex: `税额\s*[:：]?\s*[¥￥]?\s*([\d,]+\.\d{2})`},
+	}}
+	patches := RegexFallbackInvoiceFields(res, text, cfg)
+
+	got := res.Invoices[0]
+	if got.TotalAmount == nil || math.Abs(*got.TotalAmount-1234.56) > 0.001 {
+		t.Fatalf("total_amount 应被清洗千分位并回填 1234.56，实际 %v", got.TotalAmount)
+	}
+	if got.Tax == nil || math.Abs(*got.Tax-101.94) > 0.001 {
+		t.Fatalf("tax 应回填 101.94，实际 %v", got.Tax)
+	}
+	if len(patches) != 2 {
+		t.Fatalf("应记录 2 条补洞，实际 %d: %+v", len(patches), patches)
+	}
+}
+
+func TestExtractRegexFallbackNumericSkipUnparsable(t *testing.T) {
+	// 捕获到「壹仟贰佰」这类不能转数值的内容时，宁可留空也不写 0。
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
+	text := "价税合计: 壹仟贰佰元整\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "totalAmount", Enabled: true, Regex: `价税合计\s*[:：]?\s*(.{1,12})`},
+	}}
+	RegexFallbackInvoiceFields(res, text, cfg)
+	if res.Invoices[0].TotalAmount != nil {
+		t.Fatalf("不可解析的金额必须放弃，实际 %v", *res.Invoices[0].TotalAmount)
+	}
+}
+
+func TestExtractRegexFallbackPatchesCustomFieldBucket(t *testing.T) {
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
+	text := "户号: 5001234567\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "account_no", Enabled: true, Regex: `户号\s*[:：]?\s*(\d{7,12})`},
+	}}
+	patches := RegexFallbackInvoiceFields(res, text, cfg)
+
+	fields := res.Invoices[0].Fields
+	if fields == nil || fields["account_no"] != "5001234567" {
+		t.Fatalf("自定义扩展字段应写入 Fields 桶，实际 %v", fields)
+	}
+	if len(patches) != 1 || patches[0].Field != "account_no" {
+		t.Fatalf("补洞记录异常: %+v", patches)
+	}
+}
+
+func TestExtractRegexFallbackPatchesSubFieldOnSingleItemRow(t *testing.T) {
+	// 标准子项（spec/unit/qty…）必须落结构体字段，否则前端明细列读不到；
+	// 自定义子项才落 Extra。两条路径都验。
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{
+		{Items: []InvoiceExtractionLine{{Name: "钢材"}}},
+	}}
+	text := "项目名称: 钢材\n规格型号: Q235B\n批次号: B2024-77\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "items", Type: "items", Enabled: true, SubFields: []types.FleetItemSubField{
+			{Key: "spec", Label: "规格型号", Regex: `规格型号\s*[:：]?\s*([A-Za-z0-9]+)`},
+			{Key: "batch_no", Label: "批次号", Regex: `批次号\s*[:：]?\s*([A-Za-z0-9-]+)`},
+		}},
+	}}
+	patches := RegexFallbackInvoiceFields(res, text, cfg)
+
+	line := res.Invoices[0].Items[0]
+	if line.Spec != "Q235B" {
+		t.Fatalf("标准子项 spec 应写入结构体字段，实际 %q", line.Spec)
+	}
+	if line.Extra == nil || line.Extra["batch_no"] != "B2024-77" {
+		t.Fatalf("自定义子项应写入 Extra，实际 %v", line.Extra)
+	}
+	if len(patches) != 2 {
+		t.Fatalf("应有两条子项补洞记录，实际 %+v", patches)
+	}
+	if patches[0].Field != "items.spec" || patches[1].Field != "items.batch_no" {
+		t.Fatalf("子项补洞记录异常: %+v", patches)
+	}
+}
+
+func TestExtractRegexFallbackSkipsSubFieldWithMultipleItemRows(t *testing.T) {
+	// 两行明细无法判断该值属于哪一行——按序猜测就是串号。
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{
+		{Items: []InvoiceExtractionLine{{Name: "钢材"}, {Name: "铜板"}}},
+	}}
+	text := "规格型号: Q235B\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "items", Type: "items", Enabled: true, SubFields: []types.FleetItemSubField{
+			{Key: "spec", Label: "规格型号", Regex: `规格型号\s*[:：]?\s*([A-Za-z0-9]+)`},
+		}},
+	}}
+	patches := RegexFallbackInvoiceFields(res, text, cfg)
+	for _, p := range patches {
+		if strings.HasPrefix(p.Field, "items.") {
+			t.Fatalf("多行明细不得补子项，实际 %+v", p)
+		}
+	}
+	for _, line := range res.Invoices[0].Items {
+		if line.Spec != "" || line.Extra["spec"] != nil {
+			t.Fatalf("多行明细的子项必须保持为空，实际 Spec=%q Extra=%v", line.Spec, line.Extra)
+		}
+	}
+}
+
+func TestExtractRegexFallbackPatchesTextStandardField(t *testing.T) {
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{}}}
+	text := "备注: 车牌号 渝A12345 通行\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "remark", Enabled: true, Regex: `备注\s*[:：]?\s*(.+?)\s*$`},
+	}}
+	patches := RegexFallbackInvoiceFields(res, text, cfg)
+	if res.Invoices[0].Remark != "车牌号 渝A12345 通行" {
+		t.Fatalf("remark 应被回填，实际 %q（patches=%+v）", res.Invoices[0].Remark, patches)
 	}
 }
