@@ -1,9 +1,20 @@
 <template>
-  <t-dialog :visible="visible" header="测试规则" :width="'62%'" :close-on-overlay-click="false" :footer="false"
-    :attach="'body'" @update:visible="(v: boolean) => emit('update:visible', v)" @close="onClose">
+  <!--
+    内嵌式「测试规则」面板（取代 ExtractTestDialog 模态框）。
+    为什么内嵌：改一行正则就想验证一次，弹窗开关会打断"改—测"循环；
+    锚点放在工具栏与规则表之间，做到同屏对照。
+  -->
+  <section v-if="visible" class="extract-test-panel">
+    <div class="etp-head">
+      <span class="etp-title"><t-icon name="play-circle" size="15px" /> 测试规则</span>
+      <span class="etp-sub">用样票原文/知识库文件跑一次提取，验证字段规则与正则补洞</span>
+      <div class="spacer" />
+      <t-button variant="text" size="small" :disabled="testing || saving" @click="onClose">收起</t-button>
+    </div>
+
     <div class="extract-test-layout">
-      <!-- 左 5/12：输入与原文预览（限高内滚）；右 7/12：提取结果 -->
-      <t-row :gutter="24">
+      <!-- 左 5/12：输入与原文预览；右 7/12：提取结果 -->
+      <t-row :gutter="16">
         <t-col :span="5" class="col-left">
           <TestInputPanel v-model:source-mode="sourceMode" v-model:text="text" v-model:knowledge-id="knowledgeId"
             :files="files" :loading-files="loadingFiles" :original-text="originalText" :original-status="originalStatus"
@@ -16,16 +27,17 @@
       </t-row>
     </div>
 
-    <div class="test-footer">
-      <t-button theme="primary" :loading="testing" :disabled="!canRun || testing" @click="runTest">
+    <div class="etp-footer">
+      <t-button theme="primary" size="small" :loading="testing" :disabled="!canRun || testing" @click="runTest">
         <template #icon><t-icon name="play-circle" /></template>运行测试
       </t-button>
-      <t-button v-if="success && !testing" theme="success" variant="outline" :loading="saving" @click="saveRule">
+      <t-button v-if="success && !testing" theme="success" variant="outline" size="small" :loading="saving" @click="saveRule">
         <template #icon><t-icon name="check-circle" /></template>确认规则并保存
       </t-button>
-      <t-button variant="outline" :disabled="testing || saving" @click="onClose">关闭</t-button>
+      <div class="spacer" />
+      <t-button variant="outline" size="small" :disabled="testing || saving" @click="onClose">关闭</t-button>
     </div>
-  </t-dialog>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -259,5 +271,45 @@ watch(
   gap: 8px;
   padding-top: 14px;
   margin-top: 14px;
+}
+</style>
+
+<style lang="less" scoped>
+.extract-test-panel {
+  margin: 8px 0 12px;
+  padding: 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.etp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  .etp-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  .etp-sub { font-size: 12px; color: var(--td-text-color-placeholder); }
+  .spacer { flex: 1; }
+}
+.extract-test-layout {
+  min-height: 320px;
+  overflow-x: hidden;
+  :deep(.col-left),
+  :deep(.col-right) { height: 100%; }
+}
+.etp-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  .spacer { flex: 1; }
 }
 </style>

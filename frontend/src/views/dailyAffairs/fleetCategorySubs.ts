@@ -23,7 +23,10 @@ export interface EditableSubField {
 
 /** 分类字段（前端编辑态形态）。 */
 export interface EditableField {
+  /** 字段身份：标准字段是契约键（invoice_no），扩展字段是后端分配的 snake_case 键。 */
   name: string
+  /** 自定义中文表头；空=按内置字典显示。改它不影响 name 身份。 */
+  label?: string
   enabled: boolean
   isDefault: boolean
   dataType: string
@@ -35,6 +38,7 @@ export interface EditableField {
 /** 后端 subs 条目（读入形态；字段均为 snake_case）。 */
 export interface SubPayload {
   name: string
+  label?: string
   enabled: boolean
   is_default: boolean
   data_type: string
@@ -92,6 +96,7 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
     const dataType = String(r.data_type ?? r.dataType ?? 'text').trim() || 'text'
     const width = Number(r.width)
     const subFields = normalizeSubFields(r.sub_fields)
+    const label = String(r.label ?? '').trim()
     const field: EditableField = {
       name,
       enabled: r.enabled !== false,
@@ -99,6 +104,8 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
       dataType,
       width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), MAX_WIDTH) : 0,
     }
+    // label 与 name 分离：name 是契约身份（改名会让历史数据错位），label 只是表头文案。
+    if (label && label !== name) field.label = label
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
     if (dataType === 'items' && subFields.length) field.subFields = subFields
     out.push(field)
@@ -126,6 +133,9 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
       data_type: dataType,
       width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), MAX_WIDTH) : 0,
     }
+    // 与 fromSubsPayload 互逆：label 为空或等于 name 时不下发（保持旧数据结构）
+    const label = String(f.label ?? '').trim()
+    if (label && label !== name) payload.label = label
     const subs = normalizeSubFields(f.subFields)
     // omitempty 语义：非 items 或无子列时不下发 sub_fields，保持与后端 seed 一致。
     if (dataType === 'items' && subs.length) {

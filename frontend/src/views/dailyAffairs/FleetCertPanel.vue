@@ -72,6 +72,16 @@
                 <t-input v-model="editForm.name" @enter="commitEdit" />
               </div>
             </div>
+            <!-- 智能字段生成：内嵌在「发票类型」下方、「字段配置」上方，
+                 上传样票→识别→勾选→并入本编辑态，用户点保存才落库。 -->
+            <AiFieldSuggestPanel
+              v-model:visible="aiPanelOpen"
+              :kb-id="props.kbId || ''"
+              :scope="group.scope"
+              :cert-type="editingCertName"
+              :has-items-field="!!itemSubFieldsField"
+              @apply="onAiFieldApply"
+            />
             <!-- 字段配置：增删改 + 启用/禁用（同步字段筛选器） -->
             <div class="field-config">
               <div class="field-config-head">
@@ -93,7 +103,7 @@
                   draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
                   @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
                   <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
-                  <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static">{{ invoiceFieldLabel(fd.name) }}</span>
+                  <span v-if="group.scope === 'invoice'" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || invoiceFieldLabel(fd.name) }}</span>
                   <span v-else-if="group.scope === 'contract'" class="fc-name fc-name-static">{{ contractFieldLabel(fd.name) }}</span>
                   <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                   <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
@@ -155,11 +165,6 @@
               </div>
             </div>
             <div class="meter-form-actions">
-              <t-button
-                v-if="group.scope === 'invoice' || group.scope === 'contract' || group.scope === 'regulation' || group.scope === 'award_punish'"
-                variant="outline" size="small" class="btn-ai-field" @click="openAiFieldSuggest">
-                智能生成字段
-              </t-button>
               <div class="spacer" />
               <t-button variant="outline" size="small" @click="editingId = ''">取消</t-button>
               <t-button theme="primary" size="small" :loading="saving" @click="commitEdit">保存</t-button>
@@ -190,22 +195,13 @@
         </div>
       </div>
     </div>
-  <!-- 智能字段生成：上传样票 → 识别三类建议 → 并入字段配置（仍需用户点保存才落库） -->
-    <AiFieldSuggestDialog
-      v-model:visible="aiFieldVisible"
-      :kb-id="props.kbId || ''"
-      :scope="group.scope"
-      :cert-type="editingCertName"
-      :has-items-field="!!itemSubFieldsField"
-      @apply="onAiFieldApply"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
-import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
+import { CopyIcon, DeleteIcon, StarIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
@@ -218,7 +214,7 @@ import {
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
-import AiFieldSuggestDialog from './AiFieldSuggestDialog.vue'
+import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
@@ -585,6 +581,10 @@ async function commitAdd() {
       addVisible.value = false
       MessagePlugin.success('证照类型已创建')
       notifyCategoriesChanged()
+      // 连贯工作流：新建即展开编辑并打开「智能字段生成」，引导用户上传样票一键配齐字段
+      await nextTick()
+      const createdItem = groupItems.value.find((it: any) => it.id === record.id)
+      if (createdItem) openAiPanel(createdItem)
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '创建失败')
@@ -638,6 +638,8 @@ function toggleEdit(item: any) {
   newFieldName.value = ''
   newSubFieldKey.value = ''
   newSubFieldLabel.value = ''
+  // 换分类编辑时先收起 AI 面板：它属于"上一行"的上下文
+  aiPanelOpen.value = false
   // 字段来源：已入库 subs（含 sub_fields）优先，否则内置 base+detail 底稿
   const b = (BUILTIN[group.value.scope] || []).find((x: any) => x.name === item.name)
   const raw = Array.isArray(item.subs) && item.subs.length
@@ -649,7 +651,7 @@ function toggleEdit(item: any) {
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
 const fieldDelPop = ref<any>(null)
-const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice'
+const fieldLabelOf = (fd: any) => (fd?.label || (group.value.scope === 'invoice'
   ? invoiceFieldLabel(fd.name)
   : group.value.scope === 'contract'
     ? contractFieldLabel(fd.name)
@@ -657,7 +659,7 @@ const fieldLabelOf = (fd: any) => (group.value.scope === 'invoice'
       ? regulationFieldLabel(fd.name)
       : group.value.scope === 'award_punish'
         ? noticeFieldLabel(fd.name)
-        : fd.desc || fd.name)
+        : fd.desc || fd.name))
 const fieldMenuOptions = (_fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
@@ -739,15 +741,23 @@ async function commitEdit() {
   }
 }
 
-// ---- 智能字段生成 ----
-const aiFieldVisible = ref(false)
+// ---- 智能字段生成（内嵌面板，无模态遮罩）----
+// aiPanelOpen 与编辑行绑定：换一行编辑时先收起，避免"看着 A 分类的字段、
+// 其实面板属于 B 分类"的错位。
+const aiPanelOpen = ref(false)
 const editingCertName = ref('')
 const pendingAiSample = ref('')
 
-function openAiFieldSuggest() {
-  if (!editingId.value) { MessagePlugin.warning('请先选择要编辑的分类'); return }
+/** 展开某分类的编辑面板并打开内嵌 AI 生成区（分类行 ⋮ 菜单 / 新建分类后调用）。 */
+function openAiPanel(item: any) {
+  if (!item) return
+  if (editingId.value !== item.id) toggleEdit(item)
   editingCertName.value = editForm.name.trim()
-  aiFieldVisible.value = true
+  aiPanelOpen.value = true
+  // 等 v-if 渲染出编辑区再滚动，否则滚不到目标
+  nextTick(() => {
+    document.querySelector('.ai-field-panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
 }
 
 function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: any[]; sampleText: string }) {
@@ -757,11 +767,16 @@ function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: an
     payload.subFields,
     payload.custom,
     payload.subFields.map((s: any) => s.key),
-    payload.custom.map((c: any) => c.name),
+    // 扩展字段用后端分配的只读 key 作为身份（中文名只是可改的 label）
+    payload.custom.map((c: any) => String(c.key || '').trim() || String(c.name || '').trim()),
   )
   fieldsEditable.value = merged.fields
   pendingAiSample.value = payload.sampleText || ''
-  aiFieldVisible.value = false
+  aiPanelOpen.value = false
+  if (merged.createdItemsHost) {
+    // 勾了明细子列但分类原本没有 items 字段：已自动补建「项目明细」父字段
+    MessagePlugin.info('已自动创建「项目明细」父字段，用于承载勾选的明细子列')
+  }
   if (merged.addedCount) MessagePlugin.success(`已并入 ${merged.addedCount} 项，确认后点「保存」生效`)
   else MessagePlugin.warning('没有可并入的新项（可能都已存在）')
   if (merged.skipped.length) MessagePlugin.warning(`${merged.skipped.length} 项未并入：${merged.skipped[0]?.reason || ''}`)
@@ -834,13 +849,15 @@ async function removeItem(item: any) {
 // ---- 分类行操作：竖向三点菜单（复制 / 删除，图标+文字）----
 const itemMenuOptions = (item: any) => {
   const opts: any[] = [
+    { content: '智能生成字段', value: 'ai', prefixIcon: () => h(StarIcon, { size: '14px' }) },
     { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   ]
   if (!item.builtin) opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
   return opts
 }
 function onItemMenu(item: any, value: string) {
-  if (value === 'copy') void duplicateItem(item)
+  if (value === 'ai') openAiPanel(item)
+  else if (value === 'copy') void duplicateItem(item)
   else if (value === 'delete') delItemPop.value = item
 }
 const delItemPop = ref<any>(null)
@@ -1086,9 +1103,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     gap: 8px;
     margin-top: 14px;
     .spacer { flex: 1; }
-    .btn-ai-field {
-      font-weight: 500;
-    }
   }
 }
 

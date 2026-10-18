@@ -106,3 +106,25 @@ test('items 字段提供 sub_fields 子列编辑入口（展开查看/增删改�
   assert.match(panel, /addSubField|新增子列/, '应提供新增子列入口')
   assert.match(panel, /removeSubField|removeSub|删除子列/, '应提供删除子列入口')
 })
+test('label（自定义中文表头）严格往返：name 身份不变，空 label 不下发', () => {
+  const raw = [
+    { name: 'invoice_date', label: '开票日', enabled: true, is_default: true, data_type: 'date', width: 0 },
+    { name: 'invoice_no', enabled: true, is_default: false, data_type: 'text', width: 0 },
+  ]
+  const fields = fromSubsPayload(raw)
+  assert.equal(fields[0]!.name, 'invoice_date')
+  assert.equal(fields[0]!.label, '开票日')
+  assert.equal(fields[1]!.label, undefined, '没有自定义表头时不产生 label')
+
+  const back = toSubsPayload(fields)
+  assert.equal(back[0]!.label, '开票日')
+  assert.equal('label' in back[1]!, false, '空 label 必须省略，保持旧数据结构')
+  assert.deepEqual(toSubsPayload(fromSubsPayload(back)), back, '往返必须严格互逆')
+})
+
+test('label 与 name 相同时不重复下发（语义等价去重）', () => {
+  const out = toSubsPayload([
+    { name: 'items', label: 'items', enabled: true, isDefault: false, dataType: 'items', width: 0 },
+  ])
+  assert.equal('label' in out[0]!, false)
+})

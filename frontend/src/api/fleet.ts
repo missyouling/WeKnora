@@ -183,6 +183,11 @@ export interface AiSuggestSubField {
 
 /** 接口 A 返回的新增自定义字段建议。 */
 export interface AiSuggestCustomField {
+  /**
+   * 后端分配的唯一英文编码（^[a-z][a-z0-9_]{1,31}$），前端**只读展示**。
+   * 它是字段身份：用户改中文名不影响它，落库按它索引。
+   */
+  key?: string
   name: string
   data_type?: string
   sample?: string

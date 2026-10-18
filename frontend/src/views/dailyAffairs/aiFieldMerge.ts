@@ -41,19 +41,44 @@ export interface AiFieldMergeResult {
   addedCount: number
   /** 被跳过的条目与原因（前端以 warning 展示，避免"我明明勾了却没进去"）。 */
   skipped: Array<{ name: string; reason: string }>
+  /** 是否自动补建了「项目明细」父字段（勾了子列但当前分类没有 items 字段）。 */
+  createdItemsHost?: boolean
+}
+
+/**
+ * 扩展字段的合并身份：优先用后端分配的英文 key，没有 key 才退回中文名。
+ *
+ * 为什么不能用中文名当身份：中文名会被用户随时改（它只是表头）。
+ * key 是只读的 snake_case 身份，改中文名不会让同一字段被重复追加。
+ */
+export function customFieldIdentity(c: AiSuggestCustomField): string {
+  return String(c?.key || '').trim() || String(c?.name || '').trim()
+}
+
+/** 「项目明细」父字段的兜底定义（勾了子列但没有 items 宿主时自动补建）。 */
+export const AUTO_ITEMS_HOST: EditableField = {
+  name: 'items',
+  label: '项目明细',
+  enabled: true,
+  isDefault: false,
+  dataType: 'items',
+  width: 0,
+  subFields: [],
 }
 
 /**
  * 把智能字段建议并入当前字段列表。
  *
- * 语义（三条铁律）：
+ * 语义（四条铁律）：
  *  1. **勾选的才并入**：`standard` 只处理 `enable=true` 的条目；
- *     明细子列与自定义字段由调用方用勾选集合（`pickedSubKeys` / `pickedCustomNames`）控制。
- *  2. **不改已存在的字段**：已在列表里的字段名一律保留现状
- *     （改 data_type / enabled 会破坏用户既有配置），只在它是 items 且
- *     建议里带了子列时**补充缺失的子列**。
- *  3. **同名不重复**：标准键按 canonical 归一去重；自定义字段名与
- *     已存在字段 / 标准键冲突时跳过并给出原因。
+ *     明细子列与扩展字段由调用方用勾选集合（`pickedSubKeys` / `pickedCustomIds`）控制。
+ *  2. **不改已存在的字段**：已在列表里的字段一律保留现状（name 身份不变，
+ *     data_type / enabled 不被覆盖），只在它是 items 且建议里带了子列时
+ *     **补充缺失的子列**。
+ *  3. **同名不重复**：标准键按 canonical 归一去重；扩展字段按 key 身份去重，
+ *     中文显示名同名也算重复（避免两个"开户银行"）。
+ *  4. **勾了子列就必须有宿主**：当前分类没有 dataType==='items' 的字段时，
+ *     自动补建「项目明细」父字段，不再把子列丢弃并报"无处挂载"。
  */
 export function mergeAiFieldSuggestions(
   current: readonly EditableField[],
@@ -61,7 +86,7 @@ export function mergeAiFieldSuggestions(
   subFields: readonly AiSuggestSubField[] = [],
   custom: readonly AiSuggestCustomField[] = [],
   pickedSubKeys: readonly string[] = [],
-  pickedCustomNames: readonly string[] = [],
+  pickedCustomIds: readonly string[] = [],
 ): AiFieldMergeResult {
   const fields = current.map<EditableField>((f) => ({
     ...f,
@@ -72,9 +97,11 @@ export function mergeAiFieldSuggestions(
 
   const nameSet = new Set<string>()
   const canonSet = new Set<string>()
+  const labelSet = new Set<string>()
   for (const f of fields) {
     nameSet.add(f.name)
     canonSet.add(canonicalFieldKey(f.name))
+    if (f.label) labelSet.add(f.label.trim())
   }
 
   // ① 标准字段：勾选启用且尚不存在 → 追加（用契约键作为字段名，与后端落库契约同源）
@@ -89,8 +116,11 @@ export function mergeAiFieldSuggestions(
     }
     if (nameSet.has(key) || canonSet.has(canon)) continue
     const name = key
+    const label = String(s.label || '').trim()
     fields.push({
       name,
+      // 用户/AI 给的中文表头：与契约键分离保存，改表头不动身份
+      ...(label && label !== name ? { label } : {}),
       enabled: true,
       // 新识别出的字段不默认勾选为"默认表头"：用户还没确认它是否常用
       isDefault: false,
@@ -99,61 +129,73 @@ export function mergeAiFieldSuggestions(
     })
     nameSet.add(name)
     canonSet.add(canon)
+    if (label) labelSet.add(label)
     addedCount++
   }
 
-  // ② 明细子列：只补给"已存在的 items 字段"；找不到 items 字段就跳过并说明，
-  //    否则用户勾了半天发现没生效。
+  // ② 明细子列：补给 items 字段；没有宿主就自动补建「项目明细」父字段。
   const pickedSubs = new Set(pickedSubKeys.map((k) => String(k).trim()).filter(Boolean))
+  let createdItemsHost = false
   if (pickedSubs.size) {
-    const host = fields.find((f) => f.dataType === 'items')
+    let host = fields.find((f) => f.dataType === 'items')
     if (!host) {
-      for (const k of pickedSubs) {
-        skipped.push({ name: k, reason: '当前分类没有「明细」类型字段，明细子列无处挂载' })
+      host = { ...AUTO_ITEMS_HOST, subFields: [] }
+      fields.push(host)
+      nameSet.add(host.name)
+      canonSet.add(canonicalFieldKey(host.name))
+      addedCount++
+      createdItemsHost = true
+    }
+    host.subFields = host.subFields || []
+    const subKeys = new Set(host.subFields.map((s) => s.key))
+    for (const s of subFields) {
+      const key = String(s?.key || '').trim()
+      if (!key || !pickedSubs.has(key)) continue
+      if (subKeys.has(key)) continue
+      const normalized: EditableSubField = {
+        key,
+        label: String(s.label || key).trim() || key,
+        dataType: s.data_type || 'text',
+        width: Number(s.width) > 0 ? Number(s.width) : 0,
       }
-    } else {
-      host.subFields = host.subFields || []
-      const subKeys = new Set(host.subFields.map((s) => s.key))
-      for (const s of subFields) {
-        const key = String(s?.key || '').trim()
-        if (!key || !pickedSubs.has(key)) continue
-        if (subKeys.has(key)) continue
-        const normalized: EditableSubField = {
-          key,
-          label: String(s.label || key).trim() || key,
-          dataType: s.data_type || 'text',
-          width: Number(s.width) > 0 ? Number(s.width) : 0,
-        }
-        host.subFields.push(normalized)
-        subKeys.add(key)
-        addedCount++
-      }
+      host.subFields.push(normalized)
+      subKeys.add(key)
+      addedCount++
     }
   }
 
-  // ③ 自定义字段：中文名去重，且不与已有字段/标准契约键冲突
-  const pickedCustom = new Set(pickedCustomNames.map((n) => String(n).trim()).filter(Boolean))
+  // ③ 扩展字段：按 key 身份去重，中文名（label）也参与查重
+  const pickedCustom = new Set(
+    pickedCustomIds.map((id) => String(id).trim()).filter(Boolean),
+  )
   for (const c of custom) {
-    const name = String(c?.name || '').trim()
-    if (!name || !pickedCustom.has(name)) continue
-    const canon = canonicalFieldKey(name)
-    if (nameSet.has(name) || (canon && canonSet.has(canon))) {
-      skipped.push({ name, reason: '已存在同名字段' })
+    const identity = customFieldIdentity(c)
+    const label = String(c?.name || '').trim()
+    if (!identity) continue
+    // 兼容调用方传中文名（旧口径）或传 key（新口径）
+    if (!pickedCustom.has(identity) && !pickedCustom.has(label)) continue
+    const canon = canonicalFieldKey(identity)
+    if (nameSet.has(identity) || (canon && canonSet.has(canon)) || (label && labelSet.has(label))) {
+      skipped.push({ name: label || identity, reason: '已存在同名字段' })
       continue
     }
     fields.push({
-      name,
+      name: identity,
+      ...(label && label !== identity ? { label } : {}),
       enabled: true,
       isDefault: false,
-      dataType: c.data_type === 'number' || c.data_type === 'date' ? c.data_type : 'text',
+      dataType: c.data_type === 'number' || c.data_type === 'date' || c.data_type === 'array'
+        ? c.data_type
+        : 'text',
       width: 0,
     })
-    nameSet.add(name)
+    nameSet.add(identity)
     if (canon) canonSet.add(canon)
+    if (label) labelSet.add(label)
     addedCount++
   }
 
-  return { fields, addedCount, skipped }
+  return { fields, addedCount, skipped, createdItemsHost }
 }
 
 /** 供预览展示用：标准建议的中文名（前后端展示口径统一在这里收敛）。 */

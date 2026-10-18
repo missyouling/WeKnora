@@ -93,3 +93,50 @@ test('表格紧凑：窄屏收缩描述列，正则列保底宽度，避免抽�
   assert.match(stylePart, /minmax\(1[0-9]{2}px/)
   assert.match(panel, /eq-narrow/)
 })
+
+// ---------------------------------------------------------------------------
+// 2026-10-18 交互重构：图标工具栏 + 直接回填 + 单字段生成 + 内嵌测试
+// ---------------------------------------------------------------------------
+
+const panelSrc = readFileSync(new URL('./ExtractRulePanel.vue', import.meta.url), 'utf8')
+
+test('智能生成规则不再走中间预览框，结果直接回填规则表格', () => {
+  assert.doesNotMatch(panelSrc, /ai-suggest-panel/, '中间绿色预览框必须移除')
+  assert.doesNotMatch(panelSrc, /applyAiSuggestions/, '不再有"勾选后应用"的二次确认')
+  assert.match(panelSrc, /async function fillRulesFromAI/, '必须有直接回填实现')
+  assert.match(panelSrc, /fields\.value = fields\.value\.map/, '回填必须写回 fields')
+})
+
+test('批量生成只补空值，不清掉用户手写内容（overwrite=false）', () => {
+  assert.match(panelSrc, /fillRulesFromAI\(targets, false, payload\)/, '批量必须传 overwrite=false')
+  assert.match(panelSrc, /overwrite \|\| !next\.desc\?\.trim\(\)/, '已有 desc 不覆盖')
+  assert.match(panelSrc, /overwrite \|\| !next\.rule\?\.trim\(\)/, '已有 rule 不覆盖')
+})
+
+test('单字段生成：只传一行且 overwrite=true，并有行级 loading', () => {
+  assert.match(panelSrc, /async function generateFieldRule/)
+  assert.match(panelSrc, /fillRulesFromAI\(\[\{ name: f\.name \}\], true\)/, '单字段必须 overwrite=true')
+  assert.match(panelSrc, /aiFieldBusy = ref\(''\)/, '行级 loading 状态')
+  assert.match(panelSrc, /class="rtr-ai"/, '行内必须有生成图标')
+  assert.match(panelSrc, /生成该字段规则/, '展开区也要有生成入口')
+})
+
+test('AI 更新行有徽章与高亮，并自动展开第一条', () => {
+  assert.match(panelSrc, /aiFilled = ref<Set<string>>\(new Set\(\)\)/)
+  assert.match(panelSrc, /class="rtr-ai-badge">AI</)
+  assert.match(panelSrc, /'ai-filled': aiFilled\.has\(f\.name\)/)
+  assert.match(panelSrc, /editingName\.value = filled\[0\]/, '自动展开第一条被更新的行')
+})
+
+test('工具栏改为图标按钮 + Tooltip（star / play-circle）', () => {
+  assert.match(panelSrc, /<t-tooltip :content="aiBatchTip"/)
+  assert.match(panelSrc, /<t-icon name="star" \/>/)
+  assert.match(panelSrc, /<t-icon name="play-circle" \/>/)
+  assert.match(panelSrc, /shape="square"/, '图标按钮使用方形紧凑形态')
+})
+
+test('测试规则改为内嵌面板（无模态弹窗）', () => {
+  assert.match(panelSrc, /<ExtractTestPanel/)
+  assert.doesNotMatch(panelSrc, /ExtractTestDialog/)
+  assert.match(panelSrc, /function toggleTest\(\)/)
+})

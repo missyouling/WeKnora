@@ -803,7 +803,7 @@ const editFieldDefs = computed(() => {
         const remarkPart = isRemarkPartField(String(x.name)) ? String(x.name) : ''
         return {
           name: remarkPart ? String(x.name) : invoiceFieldKeyOf(String(x.name)),
-          label: INVOICE_FIELD_LABELS[String(x.name)] || String(x.name),
+          label: String(x.label || '').trim() || INVOICE_FIELD_LABELS[String(x.name)] || String(x.name),
           dataType: x.data_type || 'text',
           remarkPart,
         }
@@ -1245,7 +1245,7 @@ const reloadColumns = async (force = false) => {
           const remarkPart = isRemarkPartField(String(s.name)) ? String(s.name) : ''
           return {
             key: remarkPart ? String(s.name) : invoiceFieldKeyOf(String(s.name)),
-            label: INVOICE_FIELD_LABELS[String(s.name)] || String(s.name),
+            label: String(s.label || '').trim() || INVOICE_FIELD_LABELS[String(s.name)] || String(s.name),
             default: isDefault,
             w: builtin?.w || '1fr',
             width,

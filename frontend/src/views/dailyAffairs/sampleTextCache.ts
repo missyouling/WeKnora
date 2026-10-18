@@ -3,7 +3,7 @@
 //
 // 为什么必须缓存而不是直接透传：
 //   两个 Tab 在 StandardSettingDrawer 里是**兄弟组件**，字段定义 Tab 的
-//   AiFieldSuggestDialog 是它的子组件，dialog 关掉后文本就没了；
+//   AiFieldSuggestPanel 是它的内嵌子组件，收起/保存后文本就没了；
 //   而提取规则 Tab 的正则护栏**必须**拿到同一份样票原文才能验证唯一命中。
 //
 // 存储形态对齐既有的 weknora-extract-inflight（sessionStorage + TTL）：

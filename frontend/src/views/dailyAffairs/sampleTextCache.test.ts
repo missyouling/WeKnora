@@ -101,9 +101,10 @@ test('ExtractRulePanel 暴露 focusCertType 与 runAiSuggest，且工具栏有�
   assert.match(src, /智能生成规则/)
 })
 
-test('FleetCertPanel 挂载智能字段生成弹窗，并在保存后询问是否跳转', () => {
+// 2026-10-18 改造：字段生成已从弹窗改为编辑面板内嵌，测试名同步（断言不变）
+test('FleetCertPanel 内嵌智能字段生成面板，并在保存后询问是否跳转', () => {
   const src = readFileSync(new URL('./FleetCertPanel.vue', import.meta.url), 'utf8')
-  assert.match(src, /AiFieldSuggestDialog/)
+  assert.match(src, /AiFieldSuggestPanel/)
   assert.match(src, /智能生成字段/)
   // 保存成功后必须提示跳转（这是需求里"保存 → 询问 → 跳转"的一环）
   assert.match(src, /DialogPlugin\.confirm|ai-guide/)

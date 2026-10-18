@@ -60,12 +60,15 @@ test('明细子列只补给已有的 items 字段，并去重', () => {
   assert.equal(r.addedCount, 1, '只有 account_no 是新增')
 })
 
-test('没有 items 字段时，明细子列被跳过并说明原因（不给静默失败）', () => {
+// 2026-10-18 需求变更：原行为是"没有 items 字段就把子列丢掉并提示无处挂载"，
+// 用户反馈这等于让人先去改字段类型才能保存。现改为自动补建「项目明细」父字段。
+test('没有 items 字段时自动补建父字段（不再丢弃子列）', () => {
   const current: EditableField[] = [{ name: 'invoiceNo', enabled: true, isDefault: true, dataType: 'text', width: 0 }]
   const r = mergeAiFieldSuggestions(current, [], [{ key: 'qty', label: '数量' }], [], ['qty'])
-  assert.equal(r.addedCount, 0)
-  assert.equal(r.skipped.length, 1)
-  assert.match(r.skipped[0]!.reason, /明细/)
+  assert.equal(r.createdItemsHost, true)
+  const host = r.fields.find((f) => f.dataType === 'items')!
+  assert.deepEqual(host.subFields?.map((s) => s.key), ['qty'])
+  assert.equal(r.skipped.length, 0)
 })
 
 test('自定义字段按中文名去重，且与已有字段冲突时跳过', () => {
@@ -105,4 +108,74 @@ test('标准键的中文名解析（snake_case 契约键 → 中文展示名）'
   assert.equal(aiStandardFieldLabel('invoice_date'), '开票日期')
   // 模型给了 label 就用模型的
   assert.equal(aiStandardFieldLabel('invoice_no', '发票号码（20位）'), '发票号码（20位）')
+})
+// ---------------------------------------------------------------------------
+// 2026-10-18 重构：三分组四列 + 扩展字段 key + 自动补建明细父字段
+// ---------------------------------------------------------------------------
+
+test('扩展字段按 key 身份去重：改中文名不会重复追加同一字段', () => {
+  const current: EditableField[] = []
+  const r1 = mergeAiFieldSuggestions(current, [], [], [{ key: 'bank_account', name: '开户账号' }], [], ['bank_account'])
+  assert.equal(r1.addedCount, 1)
+  const pushed = r1.fields[0]!
+  assert.equal(pushed.name, 'bank_account', '身份用后端 key')
+  assert.equal(pushed.label, '开户账号', '中文名存 label，不占 name')
+
+  // 第二次换了个中文名，但 key 相同：不应再追加
+  const r2 = mergeAiFieldSuggestions(r1.fields, [], [], [{ key: 'bank_account', name: '银行账号' }], [], ['bank_account'])
+  assert.equal(r2.addedCount, 0)
+  assert.equal(r2.fields.length, 1)
+})
+
+test('扩展字段中文名与已有字段 label 冲突时跳过并给原因', () => {
+  const current: EditableField[] = [
+    { name: 'custom_a', label: '开户账号', enabled: true, isDefault: false, dataType: 'text', width: 0 },
+  ]
+  const r = mergeAiFieldSuggestions(current, [], [], [{ key: 'bank_account', name: '开户账号' }], [], ['bank_account'])
+  assert.equal(r.addedCount, 0)
+  assert.equal(r.skipped.length, 1)
+  assert.match(r.skipped[0]!.reason, /同名/)
+})
+
+test('勾选明细子列但分类没有 items 字段：自动补建「项目明细」父字段', () => {
+  const current: EditableField[] = [
+    { name: 'invoice_no', enabled: true, isDefault: true, dataType: 'text', width: 0 },
+  ]
+  const r = mergeAiFieldSuggestions(
+    current,
+    [], [{ key: 'plate_no', label: '车牌号', data_type: 'text' }], [],
+    ['plate_no'], [],
+  )
+  assert.equal(r.createdItemsHost, true, '应自动创建 items 父字段')
+  const host = r.fields.find((f) => f.dataType === 'items')
+  assert.ok(host, 'items 父字段必须存在')
+  assert.equal(host!.name, 'items')
+  assert.equal(host!.label, '项目明细')
+  assert.equal(host!.enabled, true)
+  assert.deepEqual(host!.subFields?.map((s) => s.key), ['plate_no'])
+  // 不再出现"无处挂载"的跳过原因
+  assert.equal(r.skipped.filter((s) => /无处挂载/.test(s.reason)).length, 0)
+})
+
+test('标准字段的中文名可改：写入 label，契约键 name 不变', () => {
+  const r = mergeAiFieldSuggestions(
+    [],
+    [{ key: 'invoice_date', label: '开票日', data_type: 'date', enable: true }],
+  )
+  assert.equal(r.fields[0]!.name, 'invoice_date', '契约键不可被中文名替换')
+  assert.equal(r.fields[0]!.label, '开票日')
+  assert.equal(r.fields[0]!.dataType, 'date')
+})
+
+test('扩展字段支持 array 数据类型（后端已放宽），非法类型回落 text', () => {
+  const r = mergeAiFieldSuggestions(
+    [], [], [],
+    [
+      { key: 'attach_list', name: '附件清单', data_type: 'array' },
+      { key: 'weird', name: '怪类型', data_type: 'bogus' },
+    ],
+    [], ['attach_list', 'weird'],
+  )
+  assert.equal(r.fields.find((f) => f.name === 'attach_list')!.dataType, 'array')
+  assert.equal(r.fields.find((f) => f.name === 'weird')!.dataType, 'text')
 })
