@@ -103,16 +103,19 @@
         <template #taxRate="{ row }: any">
           <t-tooltip placement="top" theme="light" overlay-class-name="rate-detail-overlay" :show-arrow="true">
             <template #content>
-              <div class="rate-detail">
+              <!-- 宽度随「启用子项列数 + 各自配置列宽」自适应（不再是写死的 680px） -->
+              <div class="rate-detail" :style="{ width: itemsPopoverWidth(row) + 'px' }">
                 <table v-if="(row.items || []).length" class="rate-detail-table">
                   <thead>
                     <tr>
-                      <th v-for="sf in subFieldsOfRow(row)" :key="sf.key">{{ sf.label }}</th>
+                      <th v-for="sf in enabledSubFieldsOfRow(row)" :key="sf.key"
+                        :style="sf.width ? { width: sf.width + 'px' } : undefined">{{ sf.label }}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="(it, i) in row.items" :key="i">
-                      <td v-for="sf in subFieldsOfRow(row)" :key="sf.key" :class="itemCellClass(sf)">{{ formatItemCell(it, sf) }}</td>
+                      <td v-for="sf in enabledSubFieldsOfRow(row)" :key="sf.key" :class="itemCellClass(sf)"
+                        :style="sf.width ? { width: sf.width + 'px' } : undefined">{{ formatItemCell(it, sf) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -478,7 +481,7 @@ const INVOICE_TYPES = ['专用发票', '普通发票', '医疗收据', '财政�
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
-import { INVOICE_FIELD_LABELS, invoiceFieldKeyOf, isRemarkPartField, remarkPartOf, setRemarkPart } from './invoiceFieldLabels'
+import { INVOICE_FIELD_LABELS, invoiceFieldKeyOf, invoiceFieldLabel, isRemarkPartField, remarkPartOf, setRemarkPart, toCamelKey, toSnakeKey } from './invoiceFieldLabels'
 const DEFAULT_INVOICE_COLUMNS: ColumnDef[] = [
   { key: 'invoiceNo', label: '发票号码', default: true, w: '1.5fr' },
   { key: 'invoiceDate', label: '开票日期', default: true, w: '1.1fr' },
@@ -705,6 +708,13 @@ const dateRange = ref<Array<string>>([])
 const invoiceColValue = (row: any, key: string): any => {
   const v = colValue(row, key)
   if (v !== '-') return v
+  // 键名归一兜底：列 key 可能来自分类 subs 的 snake_case（invoice_code），
+  // 而行数据是 camelCase（invoiceCode）。不兜这一下，列会整列为空。
+  for (const alt of [toCamelKey(key), toSnakeKey(key)]) {
+    if (alt === key) continue
+    const av = colValue(row, alt)
+    if (av !== '-') return av
+  }
   const it = Array.isArray(row?.items) ? row.items[0] : null
   if (!it || typeof it !== 'object') return '-'
   // 明细子列在 API 里是 items[0].extra[key]（如 plate_no/vehicle_type/travel_from），
@@ -1245,7 +1255,7 @@ const reloadColumns = async (force = false) => {
           const remarkPart = isRemarkPartField(String(s.name)) ? String(s.name) : ''
           return {
             key: remarkPart ? String(s.name) : invoiceFieldKeyOf(String(s.name)),
-            label: String(s.label || '').trim() || INVOICE_FIELD_LABELS[String(s.name)] || String(s.name),
+            label: String(s.label || '').trim() || invoiceFieldLabel(String(s.name)),
             default: isDefault,
             w: builtin?.w || '1fr',
             width,
@@ -1598,6 +1608,42 @@ const subFieldsOfRow = (row: InvoiceRow | null) => {
   const itemsF = (hit?.subs || []).find((s: any) => s.name === 'items')
   const sfs: any[] = itemsF?.sub_fields || []
   return sfs.length ? sfs : fallbackItemSubFields()
+}
+
+/**
+ * 明细浮层专用：只保留启用的子项列。
+ *
+ * 与 subFieldsOfRow 分开的原因：详情抽屉的明细编辑表需要"一定有几列可填"，
+ * 所以它保留 fallback；而浮层是只读展示，用户关掉的列必须真的消失。
+ */
+const enabledSubFieldsOfRow = (row: InvoiceRow | null) => {
+  const all = subFieldsOfRow(row)
+  const sfs: any[] = row ? ((((invoiceCats.value || []).filter((c: any) => c.enabled !== false)
+    .find((c: any) => c.name === (row.invoiceType || row.category || filterInvoiceType.value || ''))?.subs || [])
+    .find((x: any) => x.name === 'items')?.sub_fields) || []) : []
+  // 分类没配子列（走 fallback）时全部保留；配了子列就按 enabled 过滤
+  if (!sfs.length) return all
+  return all.filter((sf: any) => {
+    const hit = sfs.find((x: any) => String(x.key || '') === String(sf.key || ''))
+    return !hit || hit.enabled !== false
+  })
+}
+
+/**
+ * 明细浮层宽度：启用子项的列宽之和（0/缺省按 96px 估），再夹在 [280, 820]。
+ *
+ * 为什么不再写死 680px：通行费发票只有 6 列、普通发票有 8 列，
+ * 固定宽度要么留大片空白要么把列挤成省略号。
+ */
+const ITEM_POP_MIN = 280
+const ITEM_POP_MAX = 820
+const ITEM_POP_DEFAULT_COL = 96
+const itemsPopoverWidth = (row: InvoiceRow | null) => {
+  const cols = enabledSubFieldsOfRow(row)
+  if (!cols.length) return ITEM_POP_MIN
+  const sum = cols.reduce((acc: number, sf: any) => acc + (Number(sf.width) > 0 ? Number(sf.width) : ITEM_POP_DEFAULT_COL), 0)
+  // + 20px 给浮层的左右内距
+  return Math.min(ITEM_POP_MAX, Math.max(ITEM_POP_MIN, sum + 20))
 }
 const itemSubFields = computed(() => subFieldsOfRow(currentRow.value))
 // 列宽 class：按 dataType 映射（项目名称宽、数值窄、日期中、其它文本自适应）
@@ -2429,11 +2475,12 @@ watch(printVisible, (v) => {
 .doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
 /* 多税率发票：多个税率档位并排标签展示 */
 /* 浮层由 TDesign 渲染到 body 下，scoped 选择器无法命中，必须 :global 包裹 */
-:global(.rate-detail-overlay) { max-width: 760px; }
+:global(.rate-detail-overlay) { max-width: 840px; }
 :global(.rate-detail-overlay .t-popup__content) {
-  max-width: 760px !important;
+  /* 宽度由内层 .rate-detail 的行内 width 决定（按启用列自适应） */
+  max-width: 840px !important;
   width: max-content;
-  min-width: 680px;
+  min-width: 0;
 }
 :global(.rate-detail-overlay .rate-detail-table) { border-collapse: collapse; font-size: 12px; line-height: 1.7; width: 100%; min-width: 0; }
 :global(.rate-detail-overlay .rate-detail-table th),

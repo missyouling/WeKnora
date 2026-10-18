@@ -141,17 +141,27 @@ test('新建子项由系统生成合法 key（中文名映射 / 递增 sub_N）'
   void fields
 })
 
-test('系统内置字段与内置子项禁止删除，仅自建扩展字段可删', () => {
-  assert.match(panel, /function isBuiltinField/)
-  assert.match(panel, /function isBuiltinSubField/)
-  assert.match(panel, /系统内置字段，不可删除/)
-  assert.match(panel, /系统内置子项，不可删除/)
-  // 内置行渲染锁图标而不是删除入口
+test('系统内置字段只有 3 个（发票类型/提取状态/标签），其余一律可删', () => {
+  assert.match(panel, /const SYSTEM_FIELD_KEYS = \['invoiceType', 'extractStatus', 'tags'\]/)
   assert.match(panel, /<template v-if="isBuiltinField\(fd\)">[\s\S]{0,200}lock-on/)
-  assert.match(panel, /<template v-if="isBuiltinSubField\(sf\)">[\s\S]{0,200}lock-on/)
-  // 存量分类没带 builtin 标记时，发票标准键仍按内置处理
-  assert.match(panel, /INVOICE_FIELD_LABELS, fd\.name/)
-  assert.match(panel, /STANDARD_SUB_KEYS\.has\(sf\.key\)/)
+  assert.match(panel, /系统内置字段，不可删除/)
+  // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除
+  assert.doesNotMatch(panel, /系统内置子项，不可删除/)
+  assert.match(panel, /class="field-config-row sub-row"/)
+  // 不再用「标准键字典」兜底把 invoiceNo/amount 也锁死
+  assert.doesNotMatch(panel, /INVOICE_FIELD_LABELS, fd\.name/)
+})
+
+test('明细子项删除走冒泡二次确认；items 行无箭头、无默认表头开关', () => {
+  // 冒泡确认
+  const subBlock = panel.slice(panel.indexOf('class="field-config-row sub-row"'))
+  assert.match(subBlock.slice(0, 2200), /<t-popconfirm[\s\S]{0,300}removeSubField\(fd, sf\)/)
+  assert.match(subBlock.slice(0, 2200), /确认删除子项/)
+  // 无展开箭头（点击字段名本体展开/收起）
+  assert.doesNotMatch(panel, /fc-caret/, 'items 行不再渲染箭头图标')
+  assert.match(panel, /class="fc-name fc-name-toggle"/)
+  // items 行的「默认表头」列改成占位，保持网格对齐
+  assert.match(panel, /<span v-if="fd\.dataType === 'items'" class="sub-blank"><\/span>/)
 })
 
 test('子项 contract 扩展字段（enabled/builtin/desc/rule/regex）严格往返', () => {

@@ -887,8 +887,9 @@ func ensureInvoiceSystemFields(subs []types.FleetCategorySub) []types.FleetCateg
 // 且「提取状态」「标签」必须默认启用（列表、筛选器、六同步都依赖这两列）。
 // 与内置「普通发票」seed 保持同一份清单，避免新建分类与内置分类表现不一致。
 //
-// 全部标记 Builtin=true：这批是系统契约字段（提取/列表/筛选器/六同步都按名取用），
-// 前端据此隐藏删除入口，避免用户删掉 invoiceNo 后整条链路静默失效。
+// **只有 3 个系统字段标记 Builtin**（发票类型/提取状态/标签）：它们是列表渲染、
+// 筛选器与六同步的硬依赖，删掉会让整条链路静默失效。其余标准字段（发票号码/金额…）
+// 与扩展字段、明细子项一律由用户自由增删——用户口径：内置字段仅限这 3 个。
 func invoiceDefaultStandardSubs() []types.FleetCategorySub {
 	subs := []types.FleetCategorySub{
 		{Name: "invoiceNo", Enabled: true, IsDefault: true, DataType: "text"},
@@ -909,9 +910,7 @@ func invoiceDefaultStandardSubs() []types.FleetCategorySub {
 		{Name: "items", Enabled: true, IsDefault: true, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
 		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 	}
-	for i := range subs {
-		subs[i].Builtin = true
-	}
+	markBuiltinFields(subs, invoiceSystemFields)
 	return subs
 }
 
@@ -1985,11 +1984,14 @@ func builtinItemSubField(key, label, dataType string, width int) types.FleetItem
 
 // markBuiltinSubFields 给存量子列补 builtin 标记（只认模板里出现过的键）。
 // 返回是否发生变化，调用方据此决定是否需要回写。
-// markBuiltinFields 给存量发票分类的标准字段补 builtin 标记（只加不减、不改用户文案）。
+// markBuiltinFields 把 subs 的 builtin 标记**对齐**到系统字段清单（双向同步）。
 //
-// 为什么需要：builtin 是本轮新加的字段，存量 subs 的 JSONB 里没有它。
-// 前端虽有「标准键字典」兜底，但接口返回的口径应当自洽——否则任何非标准前端
-// 消费方都会把 invoiceNo 当成可删字段。
+// 为什么是双向而不是"只加"：builtin 的口径变过两次——
+//   第一版没有这个键 → 存量分类全是 false，前端得靠字典兜底；
+//   第二版全量置 true（17 个字段都不可删）→ 用户反馈"只有一个字段删不掉"；
+//   现在口径收敛到 3 个系统字段。只加不减会让第二版写下的错误标记永久留在库里，
+//   所以这里按清单重算：命中清单 → true，未命中 → false。
+// 只改 builtin 一个布尔位，不碰 label/enabled/width/顺序。
 func markBuiltinFields(subs, tpl []types.FleetCategorySub) bool {
 	builtinNames := make(map[string]bool, len(tpl))
 	for _, t := range tpl {
@@ -1999,11 +2001,11 @@ func markBuiltinFields(subs, tpl []types.FleetCategorySub) bool {
 	}
 	changed := false
 	for i := range subs {
-		if !builtinNames[subs[i].Name] || subs[i].Builtin {
-			continue
+		want := builtinNames[subs[i].Name]
+		if subs[i].Builtin != want {
+			subs[i].Builtin = want
+			changed = true
 		}
-		subs[i].Builtin = true
-		changed = true
 	}
 	return changed
 }
@@ -2099,8 +2101,8 @@ func (h *FleetHandler) seedInvoiceItemSubFields(ctx context.Context) {
 				changed = true
 			}
 		}
-		// 标准字段本身也补 builtin 标记（同一批历史数据同样缺这个键）
-		if markBuiltinFields(subs, invoiceDefaultStandardSubs()) {
+		// 系统字段补 builtin 标记（只认发票类型/提取状态/标签这 3 个）
+		if markBuiltinFields(subs, invoiceSystemFields) {
 			changed = true
 		}
 		if !changed {

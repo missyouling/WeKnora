@@ -143,3 +143,45 @@ test('测试规则改为内嵌面板（无模态弹窗）', () => {
   assert.doesNotMatch(panelSrc, /ExtractTestDialog/)
   assert.match(panelSrc, /function toggleTest\(\)/)
 })
+
+// ---- 2026-10-18 终轮：工具栏图标语义 + 六同步 ----
+
+test('样票图标改 ticket：缓存存在时常驻绿色，hover 平滑变主题绿', () => {
+  assert.match(panelSrc, /<t-icon name="ticket" \/>/)
+  assert.doesNotMatch(panelSrc, /<t-icon name="refresh" \/>/, '样票不再用 refresh（易被当成刷新按钮）')
+  assert.match(panelSrc, /:class="\{ 'is-hot': sampleTextAvailable \}"/)
+  assert.match(panelSrc, /&\.is-hot \{\s*color: var\(--td-brand-color\);/, '缓存态常驻绿色')
+  assert.match(panelSrc, /transition: color 0\.2s ease/)
+  assert.match(panelSrc, /&:hover:not\(:disabled\) \{\s*color: var\(--td-brand-color\)/, 'hover 变主题绿')
+})
+
+test('字段中文名优先取分类自定义 label（六同步：改表头后规则表同步）', () => {
+  assert.match(panelSrc, /function categoryLabelOf/)
+  assert.match(panelSrc, /return categoryLabelOf\(n\) \|\| extractFieldLabel\(props\.scope, n\)/)
+  assert.match(panelSrc, /function currentCategory/)
+})
+
+test('监听 fleet-categories-changed 广播，无需刷新浏览器即可同步字段增删', () => {
+  assert.match(panelSrc, /window\.addEventListener\('fleet-categories-changed', onCategoriesChanged\)/)
+  assert.match(panelSrc, /window\.removeEventListener\('fleet-categories-changed', onCategoriesChanged\)/)
+  const fn = panelSrc.slice(panelSrc.indexOf('function onCategoriesChanged'), panelSrc.indexOf('function onCategoriesChanged') + 80)
+  assert.match(fn, /refresh\(\)/)
+})
+
+test('提取规则底稿按三种键形态查找（snake_case 行不再显示「描述 —」）', () => {
+  assert.match(panelSrc, /function draftByKeyForms/)
+  assert.match(panelSrc, /const d = draftByKeyForms\(draft, a\.name\)/)
+  assert.match(panelSrc, /\|\| draftByContains\(draft, a\.name\)/)
+})
+
+test('发票公共底稿兜底：发票代码/项目明细等跨分类键也有描述（不再显示「—」）', () => {
+  assert.match(panelSrc, /const INVOICE_COMMON_RULES/)
+  assert.match(panelSrc, /invoiceCode: \{[\s\S]{0,120}desc: '发票代码'/)
+  assert.match(panelSrc, /items: \{[\s\S]{0,120}desc: '项目明细行'/)
+  assert.match(panelSrc, /draftByKeyForms\(INVOICE_COMMON_RULES, a\.name\)/)
+})
+
+test('底稿无命中返回 null（否则空对象真值会短路公共底稿查找）', () => {
+  const fn = panelSrc.slice(panelSrc.indexOf('function draftByContains'), panelSrc.indexOf('function draftByContains') + 700)
+  assert.match(fn, /return best \|\| null/)
+})

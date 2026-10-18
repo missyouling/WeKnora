@@ -18,8 +18,9 @@
       </t-tab-panel>
     </t-tabs>
 
-    <!-- VLM 识别原文 -->
-    <div class="original-block">
+    <!-- VLM 识别原文：只在「文件提取测试」下有意义。
+         文本模式下用户自己就是原文来源，再挂一个只读预览框纯属噪音。 -->
+    <div v-if="sourceMode === 'file'" class="original-block">
       <div class="original-head">
         <span class="original-title">VLM 识别原文</span>
         <t-tag v-if="originalStatus === 'loading'" size="small" theme="warning" variant="light-outline">

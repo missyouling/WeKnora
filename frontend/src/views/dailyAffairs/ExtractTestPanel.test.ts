@@ -44,3 +44,36 @@ test('VLM 原文区仍在输入面板中（原有契约不回退）', () => {
   assert.match(inputPanel, /VLM 识别原文/)
   assert.match(inputPanel, /original-area/)
 })
+
+// ---- 2026-10-18 终轮：测试面板交互收口 ----
+
+const etp = readFileSync(new URL('./ExtractTestPanel.vue', import.meta.url), 'utf8')
+const tip = readFileSync(new URL('./TestInputPanel.vue', import.meta.url), 'utf8')
+const trp = readFileSync(new URL('./TestResultPanel.vue', import.meta.url), 'utf8')
+
+test('面板内不再有「收起」「关闭」按钮（开关由工具栏图标控制）', () => {
+  assert.doesNotMatch(etp, />收起</)
+  assert.doesNotMatch(etp, />关闭</)
+  assert.match(etp, /工具栏的「测试规则」图标按钮控制/)
+})
+
+test('测试反馈统一走 Toast，不再挂会自己消失的内嵌提示条', () => {
+  assert.doesNotMatch(trp, /t-alert/)
+  assert.doesNotMatch(trp, /alertVisible/)
+  assert.match(etp, /MessagePlugin\.success\(`提取完成/)
+  assert.match(etp, /MessagePlugin\.error\(/)
+})
+
+test('文本提取测试 Tab 不渲染「VLM 识别原文」预览框', () => {
+  assert.match(tip, /<div v-if="sourceMode === 'file'" class="original-block">/)
+})
+
+test('字段映射第一列显示中文名；列表限高内滚', () => {
+  assert.match(trp, /return \{ name: f\.label \|\| labelOf\(f\.name\), valueText, status \}/)
+  assert.match(trp, /class="map-scroll"/)
+  assert.match(trp, /\.map-scroll \{\s*max-height: 300px;\s*overflow-y: auto;/)
+})
+
+test('左右两栏顶部对齐并等高', () => {
+  assert.match(etp, /:deep\(\.t-row\) \{ align-items: stretch; \}/)
+})

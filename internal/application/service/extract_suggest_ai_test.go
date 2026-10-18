@@ -244,32 +244,51 @@ func TestExtractSuggestAIFieldPostProcess(t *testing.T) {
 	// 实测踩到：契约键是 snake_case（total_amount），自定义名走的是 camelCase
 	// （totalAmount）。直接查 contract[name] 会漏判，于是"标准字段但补洞器不支持"
 	// 被说成"自定义扩展字段"——两句文案对用户意味着完全不同的下一步动作。
-	t.Run("自定义名与契约键的 camelCase 变体也判冲突（canonical 归一后比对）", func(t *testing.T) {
+	// 2026-10-18 终轮：canonical 同义不再"丢弃"，而是**提升为标准字段**。
+	// 否则模型把发票代码给成 invoice_code（snake）时会新增一行扩展字段，
+	// 界面上就多出一条裸英文 invoice_code。
+	t.Run("扩展字段 key 与契约键 canonical 同义时提升为标准字段", func(t *testing.T) {
 		for _, name := range []string{"totalAmount", "total_amount", "TOTAL_AMOUNT"} {
 			got := postProcessAISuggestFields(&AISuggestFieldsRaw{
 				CustomFields: []AISuggestCustomFieldRaw{{Name: name, Sample: ""}},
 			}, text, dict)
 			if len(got.CustomFields) != 0 {
-				t.Fatalf("%q should be rejected as a contract-key conflict, got %+v", name, got.CustomFields)
+				t.Fatalf("%q 应提升为标准字段而不是扩展字段，实际 %+v", name, got.CustomFields)
 			}
-			if len(got.Skipped) == 0 || !strings.Contains(got.Skipped[0].Reason, "标准字段") {
-				t.Fatalf("%q must be reported as skipped with a reason, got %+v", name, got.Skipped)
+			if len(got.StandardFields) != 1 || got.StandardFields[0].Key != "total_amount" {
+				t.Fatalf("%q 应归一到契约键 total_amount，实际 %+v", name, got.StandardFields)
+			}
+			if got.StandardFields[0].Label != "价税合计" {
+				t.Fatalf("提升后应取字典中文名，实际 %q", got.StandardFields[0].Label)
 			}
 		}
 	})
 
-	t.Run("白名单外的标准字段键被丢弃但给出原因（不给静默失败）", func(t *testing.T) {
+	// 2026-10-18 终轮：契约外 key **不丢弃**，降级为扩展字段并补中文名。
+	// 模型经常给出票面上真实存在、只是不在系统契约里的栏位（item_name/spec/…）。
+	t.Run("白名单外的标准字段键降级为扩展字段（不丢弃、不报错）", func(t *testing.T) {
 		got := postProcessAISuggestFields(&AISuggestFieldsRaw{
-			StandardFields: []AISuggestStandardFieldRaw{{Key: "模型自造键", Enable: true, Sample: text}},
+			StandardFields: []AISuggestStandardFieldRaw{
+				{Key: "item_name", Enable: true, Sample: text},
+				{Key: "模型自造键", Enable: true, Sample: text},
+			},
 		}, text, dict)
 		if len(got.StandardFields) != 0 {
-			t.Fatalf("non-contract key must be dropped, got %+v", got.StandardFields)
+			t.Fatalf("契约外 key 不应留在标准字段里，实际 %+v", got.StandardFields)
 		}
-		if len(got.Skipped) != 1 || got.Skipped[0].Name != "模型自造键" {
-			t.Fatalf("expected one skip entry naming the offending key, got %+v", got.Skipped)
+		if len(got.Skipped) != 0 {
+			t.Fatalf("契约外 key 不应再产生告警，实际 %+v", got.Skipped)
 		}
-		if got.Skipped[0].Reason == "" {
-			t.Fatalf("skip entry must carry a human-readable reason")
+		if len(got.CustomFields) != 2 {
+			t.Fatalf("契约外 key 应全部降级为扩展字段，实际 %+v", got.CustomFields)
+		}
+		// 常见英文键自动补中文名
+		if got.CustomFields[0].Name != "项目名称" || got.CustomFields[0].Key != "item_name" {
+			t.Fatalf("item_name 应映射为「项目名称」，实际 %+v", got.CustomFields[0])
+		}
+		// 查不到映射时退回原 key，但绝不丢
+		if got.CustomFields[1].Name != "模型自造键" {
+			t.Fatalf("未命中映射时应保留原键，实际 %+v", got.CustomFields[1])
 		}
 	})
 
@@ -510,15 +529,19 @@ func TestExtractSuggestAICustomFieldsChineseKeys(t *testing.T) {
 		t.Fatalf("model-provided key must be kept, got %+v", withModelKey.CustomFields)
 	}
 
-	// 模型给的 key 与契约键冲突：必须换一个，不能覆盖标准字段
+	// 模型给的 key 与契约键冲突：**提升为标准字段**（同一个存储位，不能建两个字段），
+	// 且中文名保留模型给的语义（含税总额），不被字典默认值覆盖。
 	conflict := postProcessAISuggestFields(&AISuggestFieldsRaw{
 		CustomFields: []AISuggestCustomFieldRaw{{Key: "total_amount", Name: "含税总额"}},
 	}, "含税总额", dict)
-	if len(conflict.CustomFields) != 1 {
-		t.Fatalf("conflicting-key field must still be kept, got %+v", conflict.CustomFields)
+	if len(conflict.CustomFields) != 0 {
+		t.Fatalf("与契约键同义应提升为标准字段，实际仍留在扩展字段 %+v", conflict.CustomFields)
 	}
-	if conflict.CustomFields[0].Key == "total_amount" {
-		t.Fatalf("custom key must not collide with contract key total_amount")
+	if len(conflict.StandardFields) != 1 || conflict.StandardFields[0].Key != "total_amount" {
+		t.Fatalf("应提升为契约键 total_amount，实际 %+v", conflict.StandardFields)
+	}
+	if conflict.StandardFields[0].Label != "含税总额" {
+		t.Fatalf("提升后应保留模型给的中文名，实际 %q", conflict.StandardFields[0].Label)
 	}
 
 	// 真正同名的字段仍必须去重（不能因为修 bug 就把去重整个去掉）

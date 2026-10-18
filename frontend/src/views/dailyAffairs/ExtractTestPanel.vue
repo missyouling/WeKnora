@@ -5,11 +5,11 @@
     锚点放在工具栏与规则表之间，做到同屏对照。
   -->
   <section v-if="visible" class="extract-test-panel">
+    <!-- 展开/关闭统一由工具栏的「测试规则」图标按钮控制：
+         面板内不再重复提供「收起/关闭」，少两个入口也就少两种关闭语义。 -->
     <div class="etp-head">
       <span class="etp-title"><t-icon name="play-circle" size="15px" /> 测试规则</span>
       <span class="etp-sub">用样票原文/知识库文件跑一次提取，验证字段规则与正则补洞</span>
-      <div class="spacer" />
-      <t-button variant="text" size="small" :disabled="testing || saving" @click="onClose">收起</t-button>
     </div>
 
     <div class="extract-test-layout">
@@ -21,7 +21,7 @@
             :disabled="testing" @reload-files="loadFiles" />
         </t-col>
         <t-col :span="7" class="col-right">
-          <TestResultPanel :testing="testing" :error="error" :success="success" :result="result" :fields="props.fields"
+          <TestResultPanel :testing="testing" :error="error" :result="result" :fields="props.fields"
             :scope="scope" :prompt-preview="previewPrompt" />
         </t-col>
       </t-row>
@@ -34,8 +34,6 @@
       <t-button v-if="success && !testing" theme="success" variant="outline" size="small" :loading="saving" @click="saveRule">
         <template #icon><t-icon name="check-circle" /></template>确认规则并保存
       </t-button>
-      <div class="spacer" />
-      <t-button variant="outline" size="small" :disabled="testing || saving" @click="onClose">关闭</t-button>
     </div>
   </section>
 </template>
@@ -200,12 +198,17 @@ async function runTest() {
     if (data) {
       resultMap.value[sourceMode.value] = data
       successMap.value[sourceMode.value] = true
+      // 反馈统一用 Toast：面板内不再挂会自己消失的提示条（占位且易被忽略）
+      const hit = Number(data?.fields ? Object.values(data.fields).filter((v) => v !== '' && v !== null && v !== undefined).length : 0)
+      MessagePlugin.success(`提取完成${hit ? `，命中 ${hit} 个字段` : ''}`)
     } else {
       errorMap.value[sourceMode.value] = '未返回提取结果'
+      MessagePlugin.warning('未返回提取结果')
     }
   } catch (e: any) {
     console.error('test extract failed', e)
     errorMap.value[sourceMode.value] = e?.message || '测试失败，请检查规则配置或模型服务'
+    MessagePlugin.error(e?.message || '测试失败，请检查规则配置或模型服务')
   } finally {
     testing.value = false
   }
@@ -303,8 +306,15 @@ watch(
 .extract-test-layout {
   min-height: 320px;
   overflow-x: hidden;
+  /* 左右两栏顶部对齐 + 等高：t-row 默认 align=top，右栏内容更高时会"错位下坠" */
+  :deep(.t-row) { align-items: stretch; }
   :deep(.col-left),
-  :deep(.col-right) { height: 100%; }
+  :deep(.col-right) {
+    height: 100%;
+    display: flex;
+  }
+  :deep(.col-left > *),
+  :deep(.col-right > *) { flex: 1; min-width: 0; }
 }
 .etp-footer {
   display: flex;

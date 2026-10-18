@@ -15,9 +15,11 @@
         </t-button>
       </t-tooltip>
       <t-tooltip :content="aiSampleHint" placement="top">
+        <!-- 票据图标：缓存里有样票时**常驻绿色**（is-hot），提示"这次生成能校验唯一命中" -->
         <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
+          :class="{ 'is-hot': sampleTextAvailable }"
           :disabled="!certType || !sampleTextAvailable" @click="clearCachedSample">
-          <template #icon><t-icon name="refresh" /></template>
+          <template #icon><t-icon name="ticket" /></template>
         </t-button>
       </t-tooltip>
       <t-tooltip content="测试规则（在页面内展开测试区，边改边测）" placement="top">
@@ -202,6 +204,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig, type ExtractSubFieldConfig, type AiSuggestRulesResult, aiSuggestRules } from '@/api/fleet'
 import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
 import { sortCertsByLocalOrder } from './useCertOrder'
+import { toCamelKey, toSnakeKey } from './invoiceFieldLabels'
 import {
   REGEX_PRESETS,
   extractFieldLabel,
@@ -255,6 +258,32 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
 // 默认提取规则底稿：每个字段的 desc + rule 预设，加载时自动填充（已保存配置优先）。
 // 便于用户直接使用或在此基础上微调。
 type RuleDraft = { desc: string; rule: string }
+
+/**
+ * 发票公共底稿：分类底稿里没有的契约键统一在这里兜底。
+ *
+ * 为什么单独一张表：invoice 下有 5 个内置分类，各自抄一份"发票代码/项目明细"
+ * 只会漂移；而这几个键是跨分类通用的。键写成 camelCase，查找时经
+ * draftByKeyForms 兼容 snake_case（invoice_code）与中文写法。
+ */
+const INVOICE_COMMON_RULES: Record<string, RuleDraft> = {
+  invoiceCode: {
+    desc: '发票代码',
+    rule: '提取“发票代码”栏（10~12 位纯数字）；全电发票/数电票通常无此栏，留空',
+  },
+  items: {
+    desc: '项目明细行',
+    rule: '逐行提取货物或服务明细（项目名称/规格型号/单位/数量/单价/金额/税率/税额）；原文无明细行则返回空数组',
+  },
+  车牌号: {
+    desc: '车牌号码',
+    rule: '提取“车牌号 / 车牌号码”栏，格式如“渝A12345”；无则留空',
+  },
+  车辆类型: {
+    desc: '车辆类型',
+    rule: '提取“车型 / 车辆类型”栏，如“一类车”“客车”；无则留空',
+  },
+}
 const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> = {
   vehicle: {
     车辆登记证书: {
@@ -717,9 +746,27 @@ function toggleEdit(name: string) {
   editingName.value = editingName.value === name ? '' : name
 }
 
-// 发票/合同/制度/通知字段契约键显示为中文；其它 scope 原样显示（字段名即中文）
+// 当前选中分类的 subs（字段名/中文名/子项的唯一权威源）
+function currentCategory(): any {
+  const scope = currentScope.value
+  const list = categories.value[scope] || []
+  let c = list.find((x: any) => x.name === certTypeName.value)
+  if (!isFleetScope.value && !c) {
+    c = list.find((x: any) => Array.isArray(x.subs)) || list[0]
+  }
+  return c
+}
+/** 分类里给该字段配置的中文表头（无则空串） */
+function categoryLabelOf(n: string): string {
+  const subs: any[] = currentCategory()?.subs || []
+  const want = String(n || '').trim().toLowerCase()
+  const hit = subs.find((x: any) => String(x?.name || '').trim().toLowerCase() === want)
+  return String(hit?.label || '').trim()
+}
+// 字段中文名：分类自定义 label 优先（用户在「字段定义」改过名，规则表必须同步），
+// 其次走契约字典（camelCase / snake_case 都认）；其它 scope 的字段名本身就是中文。
 function fieldLabel(n: string): string {
-  return extractFieldLabel(props.scope, n)
+  return categoryLabelOf(n) || extractFieldLabel(props.scope, n)
 }
 
 // 字段级规则（必填/正则）是否可用。该模块已接入通用校验 + 字段确实是标准契约键。
@@ -814,12 +861,8 @@ function mergeSubFieldRules(base: ExtractSubFieldConfig[], saved?: ExtractSubFie
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
 function authorityFields(): { name: string; enabled: boolean; dataType: string; subFields: ExtractSubFieldConfig[] }[] {
   const scope = currentScope.value
-  const catList = categories.value[scope] || []
   // 非车队 scope：按选中类型取 subs，未选中/无匹配回退第一个分类
-  let c = catList.find((x: any) => x.name === certTypeName.value)
-  if (!isFleetScope.value && !c) {
-    c = catList.find((x: any) => Array.isArray(x.subs)) || catList[0]
-  }
+  const c = currentCategory()
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
@@ -901,7 +944,10 @@ async function loadConfig() {
       const c = cfgMap.get(a.name)
       // 底稿别名回退：自定义分类 subs 可能为中文（车牌号）或英文（invoiceNo），
       // 精确 miss 时按最长包含命中（与后端 invoiceFieldAliases 同思路），仅影响 desc/rule 展示
-      const d = draft[a.name] || draftByContains(draft, a.name) || {}
+      const d = draftByKeyForms(draft, a.name)
+        || draftByContains(draft, a.name)
+        || (currentScope.value === 'invoice' ? draftByKeyForms(INVOICE_COMMON_RULES, a.name) : undefined)
+        || {}
       return {
         name: a.name,
         desc: c?.desc || d.desc || '',
@@ -936,8 +982,25 @@ async function onCertTypeChange() {
   await loadConfig()
 }
 
+/**
+ * 底稿按 key 直查，三种写法都试（原名 → camelCase → snake_case）。
+ *
+ * 为什么需要：分类 subs 历史上混用两种写法（invoiceNo / invoice_code），
+ * 而 DEFAULT_RULES 的键只写了一种。只查一种，另一种就渲染成「描述 —」的裸英文行。
+ */
+function draftByKeyForms(draft: Record<string, any>, name: string): any {
+  const k = String(name || '').trim()
+  if (!k) return undefined
+  if (draft[k]) return draft[k]
+  const camel = toCamelKey(k)
+  if (draft[camel]) return draft[camel]
+  const snake = toSnakeKey(k)
+  if (draft[snake]) return draft[snake]
+  return undefined
+}
+
 // 底稿别名回退：subs 名（车牌号/invoiceNo）与底稿键存在包含关系时，
-// 按最长包含命中返回对应底稿条目；无命中返回空对象（与后端 invoiceFieldAliases 同思路）。
+// 按最长包含命中返回对应底稿条目；无命中返回 null（与后端 invoiceFieldAliases 同思路）。
 function draftByContains(draft: Record<string, any>, name: string): any {
   let best: any = null
   let bestLen = 0
@@ -950,7 +1013,10 @@ function draftByContains(draft: Record<string, any>, name: string): any {
       }
     }
   }
-  return best || {}
+  // 关键：无命中必须返回 null。此前返回 {}，而空对象是**真值**，
+  // 让 `draftByKeyForms(...) || draftByContains(...) || 公共底稿` 这条链在第二步就短路，
+  // 公共底稿永远不会被查到（发票代码一行的描述因此一直是「—」）。
+  return best || null
 }
 
 async function save() {
@@ -1196,6 +1262,7 @@ const narrow = ref(false)
 let ro: ResizeObserver | null = null
 
 onMounted(async () => {
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
   if (typeof ResizeObserver !== 'undefined' && rootRef.value) {
     ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width || 0
@@ -1212,9 +1279,16 @@ onMounted(async () => {
   }
 })
 
+// 六同步：字段定义保存后派发 fleet-categories-changed，这里跟着重载
+//（否则用户切回本 Tab 前看到的还是旧字段清单）。
+function onCategoriesChanged() {
+  void refresh()
+}
+
 onBeforeUnmount(() => {
   ro?.disconnect()
   ro = null
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 
 // 兜底：categories 异步加载完成后，若仍未选中类型则自动选中第一个（默认加载第一个分类）
@@ -1269,14 +1343,20 @@ watch(certTypeOptions, (groups) => {
   .adv-switch {
     margin-right: 4px;
   }
-  /* 无边框图标按钮：hover 只给柔和底色，不画描边 */
+  /* 无边框图标按钮：hover 图标平滑变主题绿 + 柔和底色，不画描边 */
   .tb-icon-btn {
     color: var(--td-text-color-secondary);
     border: none;
+    transition: color 0.2s ease, background-color 0.2s ease;
 
-    &:hover {
-      color: var(--td-text-color-primary);
-      background: var(--td-bg-color-secondarycontainer);
+    &:hover:not(:disabled) {
+      color: var(--td-brand-color);
+      background: var(--td-brand-color-1);
+    }
+
+    /* 样票已缓存：常驻绿色高亮 */
+    &.is-hot {
+      color: var(--td-brand-color);
     }
   }
 }

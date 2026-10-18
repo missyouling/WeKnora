@@ -10,7 +10,7 @@
 //   camelCase（invoiceNo / signDate）。两边靠 canonicalFieldKey 归一后比较，
 //   所以这里判断标准键也走 canonical，不做字面前缀匹配。
 
-import { INVOICE_FIELD_LABELS } from './invoiceFieldLabels'
+import { INVOICE_FIELD_LABELS, toCamelKey, toSnakeKey } from './invoiceFieldLabels'
 import { CONTRACT_FIELD_LABELS } from './contractFieldLabels'
 import { REGULATION_FIELD_LABELS } from './regulationFieldLabels'
 import { NOTICE_FIELD_LABELS } from './noticeFieldLabels'
@@ -124,11 +124,23 @@ export function isInvoiceStructKey(name: string): boolean {
   return INVOICE_STRUCT_SET.has(canonicalFieldKey(name))
 }
 
+/** 字典查中文名：原名 → camelCase → snake_case（同一字段的三种写法都要认） */
+function lookupLabel(dict: Record<string, string>, name: string): string {
+  const k = String(name ?? '').trim()
+  if (!k) return ''
+  if (dict[k]) return dict[k]
+  const camel = toCamelKey(k)
+  if (dict[camel]) return dict[camel]
+  const snake = toSnakeKey(k)
+  if (dict[snake]) return dict[snake]
+  return k
+}
+
 const LABELERS: Record<string, (name: string) => string> = {
-  invoice: (n) => INVOICE_FIELD_LABELS[n] || n,
-  contract: (n) => CONTRACT_FIELD_LABELS[n] || n,
-  regulation: (n) => REGULATION_FIELD_LABELS[n] || n,
-  award_punish: (n) => NOTICE_FIELD_LABELS[n] || n,
+  invoice: (n) => lookupLabel(INVOICE_FIELD_LABELS, n),
+  contract: (n) => lookupLabel(CONTRACT_FIELD_LABELS, n),
+  regulation: (n) => lookupLabel(REGULATION_FIELD_LABELS, n),
+  award_punish: (n) => lookupLabel(NOTICE_FIELD_LABELS, n),
 }
 
 /** 字段中文名（无映射时原样返回；车队等 scope 的字段本来就是中文） */

@@ -7,14 +7,32 @@
 
 import type { AiSuggestCustomField, AiSuggestStandardField, AiSuggestSubField } from '@/api/fleet'
 import { canonicalFieldKey } from './extractFieldMeta'
-import { invoiceFieldLabel } from './invoiceFieldLabels'
+import { INVOICE_FIELD_LABELS, invoiceFieldLabel, toCamelKey } from './invoiceFieldLabels'
 import type { EditableField, EditableSubField } from './fleetCategorySubs'
 
 /** 标准契约键 → 前端展示名（snake_case 契约键经 invoiceFieldLabels 转中文）。 */
 function labelOfStandardKey(key: string): string {
-  // invoiceFieldLabels 的表是 camelCase 键，这里把契约键也试一次
-  const camel = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
-  return invoiceFieldLabel(camel) || invoiceFieldLabel(key) || key
+  return invoiceFieldLabel(key) || key
+}
+
+/**
+ * 标准建议键 → 落库字段名（**键名归一化的唯一入口**）。
+ *
+ * 后端字典与契约是 snake_case（invoice_no），而业务分类的 subs 历史用 camelCase
+ * （invoiceNo）。直接拿建议键当字段名，会让同一个分类里同时出现 invoiceNo 与
+ * invoice_code 两种写法——界面就多一行裸英文。
+ * 所以：能在字典里查到 camelCase 形态的一律归一到 camelCase。
+ */
+export function standardFieldName(key: string): string {
+  const k = String(key || '').trim()
+  if (!k) return ''
+  const camel = toCamelKey(k)
+  return INVOICE_FIELD_LABELS[camel] ? camel : k
+}
+
+/** 字段名 → snake_case（用作 dataType 口径查表的键） */
+function toSnakeKeyOf(name: string): string {
+  return String(name || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
 }
 
 /** 标准契约键 → 数据类型（与后端 InvoiceStandardFieldDictionary 口径一致）。 */
@@ -115,7 +133,8 @@ export function mergeAiFieldSuggestions(
       continue
     }
     if (nameSet.has(key) || canonSet.has(canon)) continue
-    const name = key
+    const name = standardFieldName(key)
+    if (nameSet.has(name)) continue
     const label = String(s.label || '').trim()
     fields.push({
       name,
@@ -124,7 +143,7 @@ export function mergeAiFieldSuggestions(
       enabled: true,
       // 新识别出的字段不默认勾选为"默认表头"：用户还没确认它是否常用
       isDefault: false,
-      dataType: s.data_type || dataTypeOfStandardKey(key),
+      dataType: s.data_type || dataTypeOfStandardKey(toSnakeKeyOf(name)),
       width: 0,
     })
     nameSet.add(name)

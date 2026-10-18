@@ -10,10 +10,6 @@
 
     <!-- 测试完成 -->
     <template v-else>
-      <!-- 结果提示：几秒后自动关闭 -->
-      <t-alert v-if="alertVisible && error" theme="error" :message="error" close @close="alertVisible = false" />
-      <t-alert v-else-if="alertVisible && result" theme="success" message="提取完成" close @close="alertVisible = false" />
-
       <template v-if="result">
         <!-- 质量与溯源：静默优先（无问题无补洞时整块不渲染），字段 key 走业务中文映射 -->
         <ExtractQualityPanel :quality="quality" :label-of="labelOf" />
@@ -27,8 +23,11 @@
               <span class="acc-doc-type">{{ result.doc_type || '-' }}</span>
             </div>
             <div v-show="activePanels[0] === 'map'" class="acc-body">
-              <t-table :data="rows" :columns="columns" row-key="name" size="small" :bordered="false"
-                :hover="true" table-layout="fixed" :pagination="null" />
+              <!-- 字段映射可能几十行：限高内滚，避免把下面两个折叠面板挤出视口 -->
+              <div class="map-scroll">
+                <t-table :data="rows" :columns="columns" row-key="name" size="small" :bordered="false"
+                  :hover="true" table-layout="fixed" :pagination="null" />
+              </div>
             </div>
           </div>
           <div class="acc-panel" :class="{ 'acc-open': activePanels[0] === 'json' }">
@@ -56,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import type { ExtractFieldConfig } from '@/api/fleet'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
@@ -65,7 +64,6 @@ import { extractFieldLabel } from './extractFieldMeta'
 const props = defineProps<{
   testing: boolean
   error: string
-  success: boolean
   result: any
   fields: ExtractFieldConfig[]
   promptPreview: string
@@ -83,25 +81,6 @@ const activePanels = ref<string[]>(['map'])
 function togglePanel(v: string) {
   activePanels.value = activePanels.value[0] === v ? [] : [v]
 }
-
-// 结果提示自动关闭：测试完成数秒后隐藏
-const alertVisible = ref(false)
-let alertTimer: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => [props.success, props.error],
-  () => {
-    if (props.success || props.error) {
-      alertVisible.value = true
-      if (alertTimer) clearTimeout(alertTimer)
-      alertTimer = setTimeout(() => {
-        alertVisible.value = false
-      }, 4000)
-    }
-  },
-)
-onBeforeUnmount(() => {
-  if (alertTimer) clearTimeout(alertTimer)
-})
 
 type RowStatus = 'ok' | 'missing' | 'format'
 interface FieldRow {
@@ -138,7 +117,9 @@ const rows = computed<FieldRow[]>(() => {
       const valueText = Array.isArray(v) ? v.join('、') : isEmpty ? '' : String(v)
       let status: RowStatus = isEmpty || missing.has(f.name) ? 'missing' : 'ok'
       if (status === 'ok' && isFormatAbnormal(f, v)) status = 'format'
-      return { name: f.name, valueText, status }
+      // 第一列显示中文名：用户改过的表头（label）优先，其次契约字典，
+      // 最后才回落 name——绝不把 invoiceNo/invoice_code 这类裸键直接摆给人看。
+      return { name: f.label || labelOf(f.name), valueText, status }
     })
 })
 
@@ -242,6 +223,11 @@ function isFormatAbnormal(f: ExtractFieldConfig, v: any): boolean {
       }
     }
   }
+}
+/* 字段映射列表：固定最大高度 + 内滚（问题：右栏比左栏高，底部折叠面板被挤出视口） */
+.map-scroll {
+  max-height: 300px;
+  overflow-y: auto;
 }
 .mono-area {
   :deep(textarea) {

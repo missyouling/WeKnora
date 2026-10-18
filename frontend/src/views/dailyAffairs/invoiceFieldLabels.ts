@@ -3,6 +3,22 @@
 // 展示层（字段配置、提取规则、详情抽屉）一律经 invoiceFieldLabel 映射为中文。
 export const INVOICE_FIELD_LABELS: Record<string, string> = {
   invoiceNo: '发票号码',
+  // ---- snake_case 同义键 ----
+  // 为什么两种形态都要列：分类 subs 历史用 camelCase（invoiceNo），
+  // 而 AI 标准字段字典与后端契约用 snake_case（invoice_no）。
+  // 只认一种，另一种就会在规则表里露成裸英文（历史 bug：invoice_code 一行 + 描述「—」）。
+  invoice_no: '发票号码',
+  invoice_code: '发票代码',
+  invoice_date: '开票日期',
+  invoice_type: '发票类型',
+  buyer_name: '购买方',
+  seller_name: '销售方',
+  buyer_tax_no: '购买方税号',
+  seller_tax_no: '销售方税号',
+  total_amount: '价税合计',
+  tax_rate: '税率',
+  tax_amount: '税额',
+  extract_status: '提取状态',
   invoiceCode: '发票代码',
   invoiceType: '发票类型',
   invoiceDate: '开票日期',
@@ -26,8 +42,31 @@ export const INVOICE_FIELD_LABELS: Record<string, string> = {
   items: '项目明细',
 }
 
+/** camelCase → snake_case（invoiceNo → invoice_no） */
+export function toSnakeKey(name: string): string {
+  return String(name || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+}
+
+/** snake_case → camelCase（invoice_no → invoiceNo） */
+export function toCamelKey(name: string): string {
+  return String(name || '').replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase())
+}
+
+/**
+ * 契约键 → 中文显示名（三种形态都认）。
+ *
+ * name 可能来自三条链路：分类 subs（camelCase）、AI 标准字典（snake_case）、
+ * 用户手敲。任何一条认不出就会在界面上露出英文裸键，所以这里统一兜底。
+ */
 export function invoiceFieldLabel(name: string): string {
-  return INVOICE_FIELD_LABELS[name] || name
+  const k = String(name ?? '').trim()
+  if (!k) return ''
+  if (INVOICE_FIELD_LABELS[k]) return INVOICE_FIELD_LABELS[k]
+  const camel = toCamelKey(k)
+  if (INVOICE_FIELD_LABELS[camel]) return INVOICE_FIELD_LABELS[camel]
+  const snake = toSnakeKey(k)
+  if (INVOICE_FIELD_LABELS[snake]) return INVOICE_FIELD_LABELS[snake]
+  return k
 }
 
 // ---- 自定义分类中文字段名 → 标准英文契约键 ----

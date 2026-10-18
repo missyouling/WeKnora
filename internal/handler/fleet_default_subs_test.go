@@ -40,13 +40,23 @@ func TestBusinessInvoiceDefaultSubsCoversSystemFields(t *testing.T) {
 			t.Fatalf("缺少标准字段 %s", k)
 		}
 	}
-	// 全量标记 builtin：前端据此隐藏删除入口
+	// 2026-10-18 终轮：内置字段**仅限 3 个系统字段**，其余一律可删
+	builtinNames := []string{}
 	for _, s := range subs {
-		if !s.Builtin {
-			t.Fatalf("%s 必须标记为内置字段（否则前端会放出去删）", s.Name)
+		if s.Builtin {
+			builtinNames = append(builtinNames, s.Name)
 		}
 	}
-	// items 的标准子项也要齐备且带内置标记
+	want := map[string]bool{"invoiceType": true, "extractStatus": true, "tags": true}
+	if len(builtinNames) != len(want) {
+		t.Fatalf("内置字段应恰好 3 个，实际 %v", builtinNames)
+	}
+	for _, n := range builtinNames {
+		if !want[n] {
+			t.Fatalf("%s 不应被标记为内置字段", n)
+		}
+	}
+	// 明细子项全部带标准子列且默认启用（内置标记不再参与前端删除判定）
 	items := byName["items"]
 	if len(items.SubFields) < 7 {
 		t.Fatalf("items 应带标准明细子项，实际 %d 个", len(items.SubFields))
@@ -54,9 +64,6 @@ func TestBusinessInvoiceDefaultSubsCoversSystemFields(t *testing.T) {
 	for _, sf := range items.SubFields {
 		if !sf.IsEnabled() {
 			t.Fatalf("子项 %s 应默认启用", sf.Key)
-		}
-		if !sf.Builtin {
-			t.Fatalf("子项 %s 必须标记 builtin", sf.Key)
 		}
 	}
 }
@@ -88,24 +95,26 @@ func TestBusinessEnsureInvoiceSystemFieldsKeepsUserDefinition(t *testing.T) {
 }
 
 func TestBusinessMarkBuiltinFieldsUpgradesLegacy(t *testing.T) {
-	// 存量发票分类的 subs 没有 builtin 键：seed 时按标准字段清单补标记
+	// 存量发票分类的 builtin 标记需要**双向对齐**到 3 个系统字段：
+	// 上一版把 17 个字段全标了 true，必须把多余的错误标记清掉。
 	subs := []types.FleetCategorySub{
-		{Name: "invoiceNo", Enabled: true, DataType: "text"},
-		{Name: "items", Enabled: true, DataType: "items"},
-		{Name: "account_no", Label: "户号", Enabled: true, DataType: "text"}, // 用户自建扩展字段
+		{Name: "invoiceNo", Enabled: true, DataType: "text", Builtin: true}, // 上一版错标
+		{Name: "items", Enabled: true, DataType: "items", Builtin: true},    // 上一版错标
+		{Name: "account_no", Label: "户号", Enabled: true, DataType: "text"},
+		{Name: "extractStatus", Enabled: true, DataType: "text"},
 	}
-	if !markBuiltinFields(subs, invoiceDefaultStandardSubs()) {
-		t.Fatal("存量标准字段应被标记")
+	if !markBuiltinFields(subs, invoiceSystemFields) {
+		t.Fatal("builtin 标记不一致时应返回 changed")
 	}
-	if !subs[0].Builtin || !subs[1].Builtin {
-		t.Fatal("标准字段与 items 都应标记 builtin")
+	if subs[0].Builtin || subs[1].Builtin || subs[2].Builtin {
+		t.Fatalf("非系统字段必须清掉 builtin 标记：%+v", subs)
 	}
-	if subs[2].Builtin {
-		t.Fatal("用户自建扩展字段不得被标记为内置")
+	if !subs[3].Builtin {
+		t.Fatal("extractStatus 应被标记 builtin")
 	}
 	// 幂等
-	if markBuiltinFields(subs, invoiceDefaultStandardSubs()) {
-		t.Fatal("已标记的数据不应重复写库")
+	if markBuiltinFields(subs, invoiceSystemFields) {
+		t.Fatal("已对齐的数据不应重复写库")
 	}
 }
 

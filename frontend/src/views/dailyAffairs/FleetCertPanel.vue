@@ -118,7 +118,6 @@
                     <button v-if="fd.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
                       :title="`${fd.label || fieldLabelOf(fd)} · 点击${isSubFieldsOpen(fd) ? '收起' : '展开'}明细子项`"
                       @click="toggleSubFields(fd)">
-                      <t-icon :name="isSubFieldsOpen(fd) ? 'chevron-down' : 'chevron-right'" size="14px" class="fc-caret" />
                       <span class="fc-name-text">{{ fieldLabelOf(fd) }}</span>
                       <span class="fc-sub-count">{{ subFieldsOf(fd).length }}</span>
                     </button>
@@ -129,7 +128,9 @@
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
                       <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
                     </t-tooltip>
-                    <t-tooltip content="默认字段：重置字段筛选器时自动勾选" placement="top">
+                    <!-- 明细行不作为普通文本列平铺在主表头里，「默认表头」开关对它没有意义 -->
+                    <span v-if="fd.dataType === 'items'" class="sub-blank"></span>
+                    <t-tooltip v-else content="默认字段：重置字段筛选器时自动勾选" placement="top">
                       <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
                     </t-tooltip>
                     <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
@@ -174,17 +175,16 @@
                       <span class="sub-blank"></span>
                       <t-switch :model-value="subFieldEnabled(sf)" size="small"
                         @change="(v: any) => (sf.enabled = !!v)" />
-                      <template v-if="isBuiltinSubField(sf)">
-                        <t-tooltip content="系统内置子项，不可删除" placement="top">
-                          <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                      <t-popconfirm theme="warning" placement="left"
+                        :content="`确认删除子项「${sf.label || sf.key}」吗？`"
+                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                        @confirm="removeSubField(fd, sf)">
+                        <t-tooltip content="删除子项" placement="top">
+                          <t-button variant="text" size="small" shape="square" theme="danger">
+                            <template #icon><t-icon name="delete" size="15px" /></template>
+                          </t-button>
                         </t-tooltip>
-                      </template>
-                      <t-tooltip v-else content="删除子项" placement="top">
-                        <t-button variant="text" size="small" shape="square" theme="danger"
-                          @click="removeSubField(fd, sf)">
-                          <template #icon><t-icon name="delete" size="15px" /></template>
-                        </t-button>
-                      </t-tooltip>
+                      </t-popconfirm>
                     </div>
                     <div class="field-config-add sub-inline-add">
                       <t-input v-model="newSubFieldLabel" size="small" class="fc-add-input"
@@ -232,14 +232,6 @@
       </div>
     </div>
 
-    <!-- 保存字段后的引导：是否顺带去「提取规则」生成规则 -->
-    <InvoiceRulesGuide
-      :visible="rulesGuide.visible"
-      :cert-type="rulesGuide.certType"
-      @update:visible="(v: boolean) => (rulesGuide.visible = v)"
-      @confirm="onRulesGuideConfirm"
-      @cancel="onRulesGuideCancel"
-    />
   </div>
 </template>
 
@@ -248,7 +240,7 @@ import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
-import { invoiceFieldLabel, INVOICE_FIELD_LABELS } from './invoiceFieldLabels'
+import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
 import { regulationFieldLabel } from './regulationFieldLabels'
 import { noticeFieldLabel } from './noticeFieldLabels'
@@ -258,13 +250,11 @@ import {
   subsPayloadFromNames,
   subFieldEnabled,
   subFieldKeyForLabel,
-  STANDARD_SUB_FIELD_KEYS,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
-import InvoiceRulesGuide from './InvoiceRulesGuide.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
@@ -670,18 +660,18 @@ const subDataTypeOptions = [
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
 ]
-const STANDARD_SUB_KEYS = new Set(STANDARD_SUB_FIELD_KEYS)
 /**
- * 系统内置字段：不允许删除（隐藏删除入口）。
- * 除后端下发的 builtin 标记外，发票 scope 里出现在标准标签字典中的键也视为内置——
- * 存量分类的 subs 未必带 builtin，少了这条兜底就会把 invoiceNo 也放出去删。
+ * 系统内置字段**只有 3 个**：发票类型 / 提取状态 / 标签。
+ *
+ * 它们是列表渲染、筛选器与六同步的硬依赖（少一列整条链路就静默失效）；
+ * 其余标准字段（发票号码/金额/明细…）、扩展字段、明细子项一律允许用户删除。
+ * 用户口径明确：上一轮"17 个字段全锁"过宽，导致删不掉任何标准列。
  */
+const SYSTEM_FIELD_KEYS = ['invoiceType', 'extractStatus', 'tags']
+const SYSTEM_FIELD_KEY_SET = new Set(SYSTEM_FIELD_KEYS.map((k) => k.toLowerCase()))
 function isBuiltinField(fd: EditableField) {
-  if (fd.builtin) return true
-  return group.value.scope === 'invoice' && Object.prototype.hasOwnProperty.call(INVOICE_FIELD_LABELS, fd.name)
-}
-function isBuiltinSubField(sf: EditableSubField) {
-  return !!sf.builtin || STANDARD_SUB_KEYS.has(sf.key)
+  if (group.value.scope !== 'invoice') return false
+  return SYSTEM_FIELD_KEY_SET.has(String(fd.name || '').toLowerCase())
 }
 
 /** 新增子项：只填中文名，key 由系统按中文名映射或递增生成。 */
@@ -802,13 +792,16 @@ async function commitEdit() {
       const list = categories.value[group.value.scope]
       const idx = list.findIndex((c: any) => c.id === item.id)
       if (idx >= 0) list[idx] = { ...list[idx], name, subs }
-      MessagePlugin.success('已保存')
+      // AI 保存路径会给出「字段已保存，已为您切换至提取规则」，这里不再叠加第二条
+      if (!aiContext) MessagePlugin.success('已保存')
       notifyCategoriesChanged()
     }
     editingId.value = ''
-    // 字段已落库后询问是否顺带去「提取规则」——此时字段名权威源已是最新，
-    // 规则面板会读到刚保存的 subs（含智能识别出的明细子列）。
-    if (aiContext) await askGoRules(name, aiContext)
+    // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
+    if (aiContext) {
+      goRulesAfterAiSave(name, aiContext)
+      MessagePlugin.success('字段已保存，已为您切换至提取规则')
+    }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -878,23 +871,14 @@ function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: an
   void commitEdit()
 }
 
-// 保存成功后的引导弹窗：问是否顺带去「提取规则」为当前分类生成规则。
-// 用自绘弹窗而非命令式确认框 —— 后者无法复刻「创建知识库」引导弹窗的
-// 圆角/头部排版/主次按钮配色，视觉上与产品其它引导流程割裂。
-const rulesGuide = reactive({ visible: false, certType: '', sampleText: '' })
-function askGoRules(certType: string, sampleText: string) {
-  if (!sampleText) return
-  cacheSampleText(certType, sampleText)
-  rulesGuide.certType = certType
-  rulesGuide.sampleText = sampleText
-  rulesGuide.visible = true
-}
-function onRulesGuideConfirm() {
-  rulesGuide.visible = false
-  emit('ai-guide', { certType: rulesGuide.certType, sampleText: rulesGuide.sampleText, autoSuggest: true })
-}
-function onRulesGuideCancel() {
-  rulesGuide.visible = false
+// 保存字段后**直接跳到「提取规则」**（不再弹确认框）。
+//
+// 用户口径：字段已落库，下一步必然是配规则，再弹一次"要不要去"纯属多一次点击。
+// 样票文本先写缓存，规则面板挂载时即可带上它做正则唯一命中校验。
+function goRulesAfterAiSave(certType: string, sampleText: string) {
+  if (!certType) return
+  if (sampleText) cacheSampleText(certType, sampleText)
+  emit('ai-guide', { certType, sampleText, autoSuggest: !!sampleText })
 }
 
 const emit = defineEmits<{
@@ -1430,7 +1414,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
     &:hover { background: var(--td-bg-color-secondarycontainer); }
 
-    .fc-caret { flex: none; color: var(--td-text-color-placeholder); }
     .fc-name-text {
       min-width: 0;
       overflow: hidden;

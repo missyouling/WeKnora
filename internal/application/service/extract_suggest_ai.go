@@ -247,21 +247,6 @@ type AISuggestFieldsRaw struct {
 	CustomFields   []AISuggestCustomFieldRaw   `json:"custom_fields"`
 }
 
-// invoiceContractCanonicalKeys 契约键的 canonical 形态集合。
-//
-// 配置里的字段名可能是 camelCase（totalAmount）而契约键是 snake_case
-// （total_amount），直接查会漏判，导致"标准字段但补洞器不支持"被说成
-// "自定义扩展字段"——两句文案对用户意味着完全不同的下一步动作。
-var invoiceContractCanonicalKeys = func() map[string]bool {
-	out := map[string]bool{}
-	for k := range invoiceContractKeys() {
-		if c := canonicalFieldKey(k); c != "" {
-			out[c] = true
-		}
-	}
-	return out
-}()
-
 // invoiceContractKeys 反射 InvoiceExtractionItem 的 json tag，得到真正的落库契约键集合。
 //
 // 用反射而不是手抄常量：手抄清单迟早与结构体漂移，而模型被要求"只许用字典里的键"——
@@ -414,9 +399,16 @@ func suggestFieldsFromText(
 
 // postProcessAISuggestFields 防幻觉后处理（**不信任模型输出的唯一入口**）：
 //
-//	standard_fields：key 必须在落库契约键集合内；sample 必须是 sample_text 的真实子串。
+//	standard_fields：key 必须在落库契约键集合内——**契约外的 key 不再丢弃**，
+//	                 而是降级成扩展字段（custom_fields），并尽量补一个中文名；
 //	item_sub_fields：key 必须匹配 ^[a-z][a-z0-9_]{1,31}$；按 key 去重。
-//	custom_fields ：中文名去重、排除与标准契约键同名（canonical 归一后）、sample 必须是原文子串。
+//	custom_fields ：中文名去重、与标准契约键 canonical 同义的**提升为标准字段**、
+//	                 sample 必须是原文子串。
+//
+// 为什么「契约外就丢弃」是错的：模型经常给出 item_name/spec/unit/quantity/price
+// 这类票面上真实存在、只是不在系统契约里的字段；丢掉它们等于让用户重填一遍，
+// 还会在界面上堆一条"有 N 项建议未被采纳"的告警。降级为扩展字段既保住信息，
+// 又不会污染标准列。
 func postProcessAISuggestFields(
 	raw *AISuggestFieldsRaw, sampleText string, dict []InvoiceStandardField,
 ) *AISuggestFieldsResult {
@@ -436,6 +428,8 @@ func postProcessAISuggestFields(
 	}
 	skipped := []AISuggestSkipInfo{}
 	sampleNorm := sampleText
+	// 被降级为标准字段的扩展建议：稍后与 raw.CustomFields 一起走同一套分配/去重逻辑
+	demoted := make([]AISuggestCustomFieldRaw, 0, len(raw.StandardFields))
 
 	// ① 标准字段
 	seenStd := map[string]bool{}
@@ -445,11 +439,13 @@ func postProcessAISuggestFields(
 			continue
 		}
 		if !contract[key] {
-			// 白名单外的 key 一律丢弃，但要让用户知道为什么——
-			// 模型自造 key 往往意味着它没读懂字典，提示出来用户才能自己纠正。
-			skipped = append(skipped, AISuggestSkipInfo{
-				Name:   key,
-				Reason: "不是系统标准字段键，已忽略（如需保留请在扩展字段中填写）",
+			// 契约外 key：**不丢弃**，降级为扩展字段（中文名优先取模型 label，
+			// 其次按常见英文键查表，最后退回 key 本身）。
+			demoted = append(demoted, AISuggestCustomFieldRaw{
+				Key:      key,
+				Name:     demotedFieldLabel(key, f.Label),
+				DataType: strings.TrimSpace(f.DataType),
+				Sample:   f.Sample,
 			})
 			continue
 		}
@@ -533,8 +529,20 @@ func postProcessAISuggestFields(
 	for _, s := range out.ItemSubFields {
 		usedKeys[s.Key] = true
 	}
+	// canonical → 契约键：模型常把 invoice_code（snake）当扩展字段提出来，
+	// 而分类里同义的很可能是 invoiceCode（camel）。两边 canonical 相同就说明是同一个字段，
+	// 必须并回标准字段，否则界面会出现 invoice_code 与 invoiceCode 两行、或一行裸英文。
+	contractByCanonical := make(map[string]string, len(contract))
+	for k := range contract {
+		if c := canonicalFieldKey(k); c != "" {
+			contractByCanonical[c] = k
+		}
+	}
 	seenCustomName := map[string]bool{}
-	for _, c := range raw.CustomFields {
+	customQueue := make([]AISuggestCustomFieldRaw, 0, len(demoted)+len(raw.CustomFields))
+	customQueue = append(customQueue, demoted...)
+	customQueue = append(customQueue, raw.CustomFields...)
+	for _, c := range customQueue {
 		name := strings.TrimSpace(c.Name)
 		if name == "" {
 			continue
@@ -547,9 +555,39 @@ func postProcessAISuggestFields(
 		// 用 canonical 集合判冲突：契约键是 snake_case（total_amount），
 		// 而自定义名可能是 camelCase（totalAmount）或中文，直接查 contract[name]
 		// 会漏判，于是"标准字段但补洞器不支持"被误报为"自定义扩展字段"。
-		if ck := canonicalFieldKey(name); ck != "" && invoiceContractCanonicalKeys[ck] {
-			// 与标准契约键同名：它应出现在 standard_fields，不该是扩展字段
-			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与系统标准字段同名，应归入标准字段"})
+		stdKey := contractByCanonical[canonicalFieldKey(name)]
+		if stdKey == "" {
+			stdKey = contractByCanonical[canonicalFieldKey(c.Key)]
+		}
+		if stdKey != "" {
+			// 与标准契约键同义 → 提升为标准字段（而不是丢弃/重复建一行）
+			if seenStd[stdKey] {
+				continue
+			}
+			seenStd[stdKey] = true
+			label := name
+			if canonicalFieldKey(label) == canonicalFieldKey(stdKey) {
+				label = "" // 传进来的"名字"其实就是键，換字典里的中文名
+			}
+			dtype := strings.TrimSpace(c.DataType)
+			if d, ok := dictByKey[stdKey]; ok {
+				if label == "" {
+					label = d.Label
+				}
+				if dtype == "" {
+					dtype = d.DataType
+				}
+			}
+			if label == "" {
+				label = stdKey
+			}
+			out.StandardFields = append(out.StandardFields, AISuggestStandardField{
+				Key:      stdKey,
+				Label:    label,
+				DataType: dtype,
+				Enable:   true,
+				Sample:   verifiedSample(c.Sample, sampleNorm, true),
+			})
 			continue
 		}
 		seenCustomName[name] = true
@@ -573,6 +611,63 @@ func postProcessAISuggestFields(
 	}
 	out.Skipped = skipped
 	return out
+}
+
+// nonContractKeyLabels 模型自造（契约外）的英文键 → 中文名。
+//
+// 这批键几乎都是票面上真实存在的栏位（明细列/通行信息），只是不在系统契约里。
+// 降级成扩展字段时必须给个像样的中文名，否则用户看到一列 item_name 等于没降级。
+// 表里没有的键：先用模型自己给的 label，再退回 key 本身。
+var nonContractKeyLabels = map[string]string{
+	"item_name":    "项目名称",
+	"name":         "项目名称",
+	"spec":         "规格型号",
+	"unit":         "单位",
+	"quantity":     "数量",
+	"qty":          "数量",
+	"price":        "单价",
+	"unit_price":   "单价",
+	"amount":       "金额",
+	"tax_rate":     "税率",
+	"tax_amount":   "税额",
+	"tax":          "税额",
+	"plate_no":     "车牌号",
+	"vehicle_type": "车辆类型",
+	"travel_from":  "通行日期起",
+	"travel_to":    "通行日期止",
+	"account_no":   "户号",
+	"batch_no":     "批次号",
+	"remark":       "备注",
+	"category":     "票据大类",
+}
+
+// demotedFieldLabel 给降级为扩展字段的建议挑一个中文显示名。
+// 优先级：中文名映射表 → 模型给的 label（且不能只是一个英文键）→ key 本身。
+func demotedFieldLabel(key, modelLabel string) string {
+	if zh, ok := nonContractKeyLabels[strings.ToLower(strings.TrimSpace(key))]; ok {
+		return zh
+	}
+	label := strings.TrimSpace(modelLabel)
+	if label != "" && canonicalFieldKey(label) != canonicalFieldKey(key) {
+		return label
+	}
+	if label != "" && !isASCIIKeyLike(label) {
+		return label
+	}
+	return key
+}
+
+// isASCIIKeyLike 判断一个字符串是否"就是英文键"（纯 ASCII 且无空格/中文）。
+func isASCIIKeyLike(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r > 127 || r == ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 // customFieldKeyHints 中文扩展字段名 → 规范英文键的映射表。

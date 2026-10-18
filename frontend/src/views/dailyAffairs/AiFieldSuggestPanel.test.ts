@@ -91,8 +91,9 @@ test('标题统一为「字段生成」，并去掉右上角「收起」按钮',
   assert.match(panel, /<t-button variant="outline" size="small" @click="onClose">取消<\/t-button>/)
 })
 
-test('「粘贴文本」是并排的普通按钮，点击展开轻量输入框', () => {
-  assert.match(panel, /<t-button variant="outline" size="small" class="afp-paste-btn"/)
+test('「粘贴文本」与「选择文件」同尺寸并带图标，点击展开轻量输入框', () => {
+  assert.match(panel, /<t-button variant="outline" size="medium" class="afp-paste-btn"/)
+  assert.match(panel, /<template #icon><t-icon name="paste" \/><\/template>/, '补前置剪贴板图标')
   assert.match(panel, /粘贴文本/, '文案精简为「粘贴文本」')
   assert.doesNotMatch(panel, /粘贴票面文本/)
   // 按钮位于 t-upload 之后（并排），textarea 仍由 textMode 控制
@@ -100,6 +101,11 @@ test('「粘贴文本」是并排的普通按钮，点击展开轻量输入框',
   const paste = panel.indexOf('afp-paste-btn')
   assert.ok(upload !== -1 && paste !== -1 && upload < paste, '粘贴按钮在「选择文件」右侧')
   assert.match(panel, /<t-textarea v-if="textMode"/)
+  // 容器 inline-flex + flex-start（t-upload 高度含下方提示文案，center 会让按钮低半行）+ 32px 同高
+  assert.match(panel, /display: inline-flex;/)
+  assert.match(panel, /align-items: flex-start;/)
+  assert.match(panel, /align-self: flex-start;/)
+  assert.match(panel, /height: 32px;/)
 })
 
 test('移除绿色长提示与三分组技术黑话', () => {
@@ -132,15 +138,15 @@ test('「发票类型」右侧有 AI 图标开关，可切换展开/收起并高
   assert.match(cert, /aiPanelOpen\.value = !aiPanelOpen\.value/)
 })
 
-test('保存字段后用自绘引导弹窗（复刻创建知识库弹窗风格）替代 DialogPlugin.confirm', () => {
-  assert.doesNotMatch(cert, /DialogPlugin\.confirm/)
+test('保存字段后直接切到「提取规则」并只弹一条 Toast（不再有引导弹窗）', () => {
+  // 2026-10-18 终轮：确认弹窗被移除——字段已落库，下一步必然是配规则
+  assert.doesNotMatch(cert, /InvoiceRulesGuide/)
+  assert.doesNotMatch(cert, /rulesGuide/)
   assert.doesNotMatch(cert, /DialogPlugin/)
-  assert.match(cert, /<InvoiceRulesGuide/)
-  const guide = readFileSync(new URL('./InvoiceRulesGuide.vue', import.meta.url), 'utf8')
-  assert.match(guide, /width="520px"/)
-  assert.match(guide, /class="wizard-footer"/)
-  assert.match(guide, /padding-top: 16px;/)
-  assert.match(guide, /border-top: 1px solid var\(--td-component-stroke\)/)
-  assert.match(guide, /<t-button variant="outline" @click="emit\('cancel'\)">稍后再说<\/t-button>/)
-  assert.match(guide, /<t-button theme="primary" @click="emit\('confirm'\)">前往生成<\/t-button>/)
+  const fn = cert.slice(cert.indexOf('function goRulesAfterAiSave'), cert.indexOf('function goRulesAfterAiSave') + 600)
+  assert.match(fn, /emit\('ai-guide'/, '直接冒泡跳转事件')
+  assert.ok(fn.indexOf('cacheSampleText') < fn.indexOf("emit('ai-guide'"), '先缓存样票再跳转')
+  // 单条 Toast：AI 路径下不再叠加「已保存」
+  assert.match(cert, /字段已保存，已为您切换至提取规则/)
+  assert.match(cert, /if \(!aiContext\) MessagePlugin\.success\('已保存'\)/)
 })

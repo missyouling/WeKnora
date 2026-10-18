@@ -17,9 +17,11 @@
       <div class="afp-upload">
         <t-upload v-model:files="fileList" :auto-upload="false" :max-size="20" accept=".pdf,.png,.jpg,.jpeg,.txt"
           placeholder="支持 PDF / PNG / JPG / TXT，最大 20MB" />
-        <!-- 粘贴文本：与「选择文件」并排的普通按钮，点击展开轻量文本框 -->
-        <t-button variant="outline" size="small" class="afp-paste-btn"
+        <!-- 粘贴文本：与「选择文件」同尺寸（32px 高 / 同内距 / 同字号）+ 前置图标，
+             容器 inline-flex + center 保证严格水平对齐 -->
+        <t-button variant="outline" size="medium" class="afp-paste-btn"
           :class="{ 'afp-paste-btn--on': textMode }" @click="textMode = !textMode">
+          <template #icon><t-icon name="paste" /></template>
           {{ textMode ? '收起文本' : '粘贴文本' }}
         </t-button>
         <div class="spacer" />
@@ -85,12 +87,6 @@
         </div>
       </template>
 
-        <t-alert v-if="skipped.length" theme="warning" variant="light" class="afp-alert">
-          有 {{ skipped.length }} 项建议未被采纳：
-          <ul class="afp-skip-list">
-            <li v-for="(s, i) in skipped" :key="`skip-${i}`"><b>{{ s.name }}</b> — {{ s.reason }}</li>
-          </ul>
-        </t-alert>
       </div>
 
       <div class="afp-actions">
@@ -155,7 +151,6 @@ const result = ref<AiSuggestFieldsResult | null>(null)
 const standardRows = ref<SuggestRow[]>([])
 const subRows = ref<SuggestRow[]>([])
 const customRows = ref<SuggestRow[]>([])
-const skipped = ref<Array<{ name: string; reason: string }>>([])
 
 const canRun = computed(() => {
   if (loading.value) return false
@@ -188,7 +183,6 @@ function resetState() {
   standardRows.value = []
   subRows.value = []
   customRows.value = []
-  skipped.value = []
   loading.value = false
   textMode.value = false
   inputCollapsed.value = false
@@ -237,8 +231,6 @@ async function runSuggest() {
       sample: '',
       picked: true,
     }))
-    // 后端丢弃的建议要能看到原因，否则用户会以为"模型漏识别了"
-    skipped.value = data.skipped || []
     const n = totalCount.value
     // 识别成功即折叠输入区，把屏幕让给结果表与下方「字段配置」
     if (n) inputCollapsed.value = true
@@ -298,20 +290,34 @@ function onClose() {
   .spacer { flex: 1; }
 }
 .afp-alert { font-size: 12px; line-height: 1.6; }
-.afp-skip-list { margin: 4px 0 0; padding-left: 18px; }
 
+/* 上传行：inline-flex + center 保证「选择文件」与「粘贴文本」基线严格对齐 */
 .afp-upload {
-  display: flex;
-  align-items: center;
+  display: inline-flex;
+  /* 用 flex-start 而不是 center：t-upload 的高度是「按钮 + 下方提示文案」，
+     center 会让粘贴按钮对准整个块的中线，看起来比「选择文件」低半行。 */
+  align-items: flex-start;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 10px;
   border: 1px dashed var(--td-component-stroke);
   border-radius: 6px;
   .spacer { flex: 1; }
+  :deep(.t-upload) { display: inline-flex; align-items: center; }
 }
-/* 「粘贴文本」是普通按钮（不是文字链），与「选择文件」并排，激活时给主色边框 */
+/* 「粘贴文本」与「选择文件」同尺寸（32px / 0 12px 内距 / 14px 字号），激活时主色高亮 */
 .afp-paste-btn {
   flex: none;
+  align-self: flex-start;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   &--on {
     color: var(--td-brand-color);
     border-color: var(--td-brand-color);

@@ -3,6 +3,7 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import {
   INVOICE_STRUCT_KEYS,
+  extractFieldLabel,
   isInvoiceStructKey,
   isRegexPatchable,
   regexDisabledReason,
@@ -111,14 +112,49 @@ test('高级模式：左侧 13px 文字标签 + 右侧 medium 开关', () => {
   assert.doesNotMatch(panel, /<template #label>高级模式<\/template>/)
 })
 
-test('工具栏图标按钮无边框（variant="text"），五角星换 AI 图标、垃圾桶换 refresh', () => {
+test('工具栏图标按钮无边框（variant="text"），五角星换 AI 图标、垃圾桶换票据图标', () => {
   const toolbar = panel.slice(panel.indexOf('<div class="extract-toolbar">'), panel.indexOf('<!-- 测试区锚点'))
   assert.doesNotMatch(toolbar, /variant="outline"/)
   assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 3, '三个图标按钮都应是无边框 text 变体')
   assert.doesNotMatch(toolbar, /name="star"/)
   assert.doesNotMatch(toolbar, /name="delete"/)
   assert.match(toolbar, /<AiSparkIcon size="16px" \/>/)
-  assert.match(toolbar, /<t-icon name="refresh" \/>/)
-  // hover 只给柔和底色
-  assert.match(panel, /\.tb-icon-btn[\s\S]{0,200}background: var\(--td-bg-color-secondarycontainer\)/)
+  // 2026-10-18 终轮：样票按钮由 refresh 换成 ticket（refresh 容易被当成"刷新数据"）
+  assert.match(toolbar, /<t-icon name="ticket" \/>/)
+  // hover 给主题绿图标 + 柔和底色（终轮口径：颜色才是主反馈）
+  assert.match(panel, /\.tb-icon-btn[\s\S]{0,300}background: var\(--td-brand-color-1\)/)
+})
+
+// ---- 2026-10-18 终轮：键名三形态归一（杜绝界面裸英文）----
+
+test('invoice 标签三种形态都能翻成中文（含历史裸英文 invoice_code）', () => {
+  for (const k of ['invoiceCode', 'invoice_code']) {
+    assert.equal(extractFieldLabel('invoice', k), '发票代码', `${k} 必须翻成「发票代码」`)
+  }
+  const pairs: Array<[string, string]> = [
+    ['invoiceNo', '发票号码'],
+    ['invoice_no', '发票号码'],
+    ['invoiceDate', '开票日期'],
+    ['invoice_date', '开票日期'],
+    ['totalAmount', '价税合计'],
+    ['total_amount', '价税合计'],
+    ['taxRate', '税率'],
+    ['tax_rate', '税率'],
+    ['taxAmount', '税额'],
+    ['tax_amount', '税额'],
+    ['buyerName', '购买方'],
+    ['buyer_name', '购买方'],
+    ['sellerTaxNo', '销售方税号'],
+    ['seller_tax_no', '销售方税号'],
+    ['extractStatus', '提取状态'],
+    ['extract_status', '提取状态'],
+  ]
+  for (const [key, want] of pairs) {
+    assert.equal(extractFieldLabel('invoice', key), want, `${key} 应翻成「${want}」`)
+  }
+})
+
+test('未收录的扩展键原样返回（不硬凑中文名）', () => {
+  assert.equal(extractFieldLabel('invoice', 'account_no'), 'account_no')
+  assert.equal(extractFieldLabel('invoice', '户号'), '户号')
 })

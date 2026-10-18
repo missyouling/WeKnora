@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mergeAiFieldSuggestions, aiStandardFieldLabel } from './aiFieldMerge'
+import { mergeAiFieldSuggestions, standardFieldName, aiStandardFieldLabel } from './aiFieldMerge'
 import type { EditableField } from './fleetCategorySubs'
 
 // 智能字段建议的合并语义三条铁律：
@@ -19,9 +19,10 @@ test('只并入勾选（enable=true）的标准字段建议', () => {
     { key: 'seller_tax_no', enable: true },
   ])
   const names = r.fields.map((f) => f.name)
-  assert.ok(names.includes('buyer_name'), `实际: ${names.join(',')}`)
-  assert.ok(names.includes('seller_tax_no'), `实际: ${names.join(',')}`)
-  assert.equal(names.includes('tax_rate'), false, 'enable=false 的建议不得并入')
+  // 2026-10-18 终轮：建议键统一归一为 camelCase 落库名（与分类 subs 写法一致）
+  assert.ok(names.includes('buyerName'), `实际: ${names.join(',')}`)
+  assert.ok(names.includes('sellerTaxNo'), `实际: ${names.join(',')}`)
+  assert.equal(names.includes('taxRate'), false, 'enable=false 的建议不得并入')
   assert.equal(r.addedCount, 2)
 })
 
@@ -162,7 +163,8 @@ test('标准字段的中文名可改：写入 label，契约键 name 不变', ()
     [],
     [{ key: 'invoice_date', label: '开票日', data_type: 'date', enable: true }],
   )
-  assert.equal(r.fields[0]!.name, 'invoice_date', '契约键不可被中文名替换')
+  // 2026-10-18 终轮：契约键归一到分类写法（invoiceDate），但绝不被中文名替换
+  assert.equal(r.fields[0]!.name, 'invoiceDate', '契约键应归一为 camelCase')
   assert.equal(r.fields[0]!.label, '开票日')
   assert.equal(r.fields[0]!.dataType, 'date')
 })
@@ -178,4 +180,34 @@ test('扩展字段支持 array 数据类型（后端已放宽），非法类型�
   )
   assert.equal(r.fields.find((f) => f.name === 'attach_list')!.dataType, 'array')
   assert.equal(r.fields.find((f) => f.name === 'weird')!.dataType, 'text')
+})
+
+// ---- 2026-10-18 终轮：标准建议键归一到分类既有写法 ----
+
+test('standardFieldName 把 snake_case 契约键归一为 camelCase 字段名', () => {
+  assert.equal(standardFieldName('invoice_no'), 'invoiceNo')
+  assert.equal(standardFieldName('invoice_code'), 'invoiceCode')
+  assert.equal(standardFieldName('total_amount'), 'totalAmount')
+  // 已经是 camelCase / 字典里没有的键：原样保留
+  assert.equal(standardFieldName('invoiceNo'), 'invoiceNo')
+  assert.equal(standardFieldName('account_no'), 'account_no')
+})
+
+test('合入标准字段时用 camelCase 命名，且与既有字段 canonical 去重', () => {
+  const current: EditableField[] = [
+    { name: 'invoiceNo', enabled: true, isDefault: true, dataType: 'text', width: 0 },
+  ]
+  const merged = mergeAiFieldSuggestions(
+    current,
+    [
+      { key: 'invoice_no', label: '发票号码', data_type: 'text', enable: true },
+      { key: 'invoice_code', label: '发票代码', data_type: 'text', enable: true },
+    ],
+    [],
+    [],
+  )
+  const names = merged.fields.map((f) => f.name)
+  assert.ok(!names.includes('invoice_no'), '不得新增 snake_case 重复行')
+  assert.ok(names.includes('invoiceCode'), '缺失的标准字段应以 camelCase 追加')
+  assert.equal(merged.addedCount, 1)
 })
