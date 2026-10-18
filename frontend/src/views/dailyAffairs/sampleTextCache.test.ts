@@ -93,12 +93,14 @@ test('StandardSettingDrawer 暴露 goRules 并能切到提取规则 Tab', () => 
   assert.match(src, /@ai-guide|onAiGuide/)
 })
 
-test('ExtractRulePanel 暴露 focusCertType 与 runAiSuggest，且工具栏有智能生成规则按钮', () => {
+test('ExtractRulePanel 暴露 focusCertType；批量生成入口已下线，样票缓存仍生效', () => {
   const src = readFileSync(new URL('./ExtractRulePanel.vue', import.meta.url), 'utf8')
   assert.match(src, /function focusCertType\(/)
-  assert.match(src, /function runAiSuggest\(/)
   assert.match(src, /defineExpose\(\{[^}]*focusCertType/)
-  assert.match(src, /智能生成规则/)
+  // 2026-10-18 终轮：批量按钮与 runAiSuggest 一并删除，跳转时仍写样票缓存
+  assert.doesNotMatch(src, /function runAiSuggest\(/)
+  assert.doesNotMatch(src, /智能生成规则（批量）/)
+  assert.match(src, /if \(p\?\.sampleText\) cacheSampleText\(target, p\.sampleText\)/)
 })
 
 // 2026-10-18 改造：字段生成已从弹窗改为编辑面板内嵌，测试名同步（断言不变）

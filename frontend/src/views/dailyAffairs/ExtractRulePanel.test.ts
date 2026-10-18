@@ -107,31 +107,37 @@ test('智能生成规则不再走中间预览框，结果直接回填规则表�
   assert.match(panelSrc, /fields\.value = fields\.value\.map/, '回填必须写回 fields')
 })
 
-test('批量生成只补空值，不清掉用户手写内容（overwrite=false）', () => {
-  assert.match(panelSrc, /fillRulesFromAI\(targets, false, payload\)/, '批量必须传 overwrite=false')
-  assert.match(panelSrc, /overwrite \|\| !next\.desc\?\.trim\(\)/, '已有 desc 不覆盖')
-  assert.match(panelSrc, /overwrite \|\| !next\.rule\?\.trim\(\)/, '已有 rule 不覆盖')
+test('批量「智能生成规则」已下线：无按钮、无函数、无状态', () => {
+  // 2026-10-18 终轮：批量按钮与功能一并移除，只保留逐字段生成
+  assert.doesNotMatch(panelSrc, /aiBatchTip/)
+  assert.doesNotMatch(panelSrc, /智能生成规则（批量）/)
+  assert.doesNotMatch(panelSrc, /async function runAiSuggest/)
+  assert.doesNotMatch(panelSrc, /aiSuggesting/)
 })
 
 test('单字段生成：只传一行且 overwrite=true，并有行级 loading', () => {
   assert.match(panelSrc, /async function generateFieldRule/)
   assert.match(panelSrc, /fillRulesFromAI\(\[\{ name: f\.name \}\], true\)/, '单字段必须 overwrite=true')
   assert.match(panelSrc, /aiFieldBusy = ref\(''\)/, '行级 loading 状态')
-  assert.match(panelSrc, /class="rtr-ai"/, '行内必须有生成图标')
-  assert.match(panelSrc, /生成该字段规则/, '展开区也要有生成入口')
+  // 行尾 AI 图标已移除，生成入口只在展开区
+  assert.doesNotMatch(panelSrc, /class="rtr-ai"/)
+  assert.match(panelSrc, /生成该字段规则/, '展开区保留唯一生成入口')
 })
 
-test('AI 更新行有徽章与高亮，并自动展开第一条', () => {
+test('AI 更新行有徽章与高亮', () => {
   assert.match(panelSrc, /aiFilled = ref<Set<string>>\(new Set\(\)\)/)
   assert.match(panelSrc, /class="rtr-ai-badge">AI</)
   assert.match(panelSrc, /'ai-filled': aiFilled\.has\(f\.name\)/)
-  assert.match(panelSrc, /editingName\.value = filled\[0\]/, '自动展开第一条被更新的行')
+  assert.match(panelSrc, /editingName\.value = f\.name/, '单字段生成后展开该行')
 })
 
-test('工具栏改为无边框图标按钮 + Tooltip（AI / refresh / play-circle）', () => {
-  assert.match(panelSrc, /<t-tooltip :content="aiBatchTip"/)
-  assert.match(panelSrc, /<AiSparkIcon size="16px" \/>/)
+test('工具栏只剩样票(ticket)与测试(play-circle)两个无边框图标', () => {
+  assert.match(panelSrc, /<t-icon name="ticket" \/>/)
   assert.match(panelSrc, /<t-icon name="play-circle" \/>/)
+  // 工具栏不再有 AI 批量图标
+  const toolbar = panelSrc.slice(panelSrc.indexOf('<div class="extract-toolbar">'), panelSrc.indexOf('<!-- 测试区锚点'))
+  assert.doesNotMatch(toolbar, /AiSparkIcon/)
+  assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 2, '工具栏只应有两个图标按钮')
   assert.match(panelSrc, /shape="square"/, '图标按钮使用方形紧凑形态')
   // 2026-10-18 二轮：整排按钮去描边，hover 只给柔和底色
   assert.doesNotMatch(panelSrc, /<t-button variant="outline" theme="primary" shape="square"/)

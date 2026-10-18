@@ -1008,6 +1008,8 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 			req.Subs = invoiceDefaultStandardSubs()
 		}
 		req.Subs = ensureInvoiceSystemFields(req.Subs)
+		// 明细子列去重（同义键 tax/tax_amount、price/unit_price… 只留一条）
+		req.Subs, _ = normalizeInvoiceCategorySubs(req.Scope, req.Subs)
 	}
 	queryTenant := tenantID
 	if isBusinessCategoryScope(req.Scope) {
@@ -1073,6 +1075,14 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 		updates["name"] = req.Name
 	}
 	if req.Subs != nil {
+		// 明细子列去重：用户/AI 可能保存出同义子项（tax 与 tax_amount 都是「税额」），
+		// 落库前统一收敛，避免明细浮层出现两列同名。
+		if normalized, _ := normalizeInvoiceCategorySubs(existing.Scope, req.Subs); normalized != nil {
+			req.Subs = normalized
+			if raw, merr := json.Marshal(req.Subs); merr == nil {
+				dataJSON = raw
+			}
+		}
 		updates["subs"] = string(dataJSON)
 	}
 	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
@@ -2103,6 +2113,11 @@ func (h *FleetHandler) seedInvoiceItemSubFields(ctx context.Context) {
 		}
 		// 系统字段补 builtin 标记（只认发票类型/提取状态/标签这 3 个）
 		if markBuiltinFields(subs, invoiceSystemFields) {
+			changed = true
+		}
+		// 存量重复子列（tax / tax_amount 同名「税额」）一次性收敛
+		if normalized, ok := normalizeInvoiceCategorySubs(types.FleetCategoryScopeInvoice, subs); ok {
+			subs = normalized
 			changed = true
 		}
 		if !changed {

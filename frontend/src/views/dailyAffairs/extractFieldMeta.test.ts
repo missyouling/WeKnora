@@ -112,13 +112,13 @@ test('高级模式：左侧 13px 文字标签 + 右侧 medium 开关', () => {
   assert.doesNotMatch(panel, /<template #label>高级模式<\/template>/)
 })
 
-test('工具栏图标按钮无边框（variant="text"），五角星换 AI 图标、垃圾桶换票据图标', () => {
+test('工具栏图标按钮无边框（variant="text"）：样票用票据图标，不再有批量 AI 图标', () => {
   const toolbar = panel.slice(panel.indexOf('<div class="extract-toolbar">'), panel.indexOf('<!-- 测试区锚点'))
   assert.doesNotMatch(toolbar, /variant="outline"/)
-  assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 3, '三个图标按钮都应是无边框 text 变体')
+  assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 2, '样票 + 测试两个无边框图标按钮')
   assert.doesNotMatch(toolbar, /name="star"/)
   assert.doesNotMatch(toolbar, /name="delete"/)
-  assert.match(toolbar, /<AiSparkIcon size="16px" \/>/)
+  assert.doesNotMatch(toolbar, /AiSparkIcon/, '批量 AI 图标已下线')
   // 2026-10-18 终轮：样票按钮由 refresh 换成 ticket（refresh 容易被当成"刷新数据"）
   assert.match(toolbar, /<t-icon name="ticket" \/>/)
   // hover 给主题绿图标 + 柔和底色（终轮口径：颜色才是主反馈）

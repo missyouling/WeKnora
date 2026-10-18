@@ -193,6 +193,15 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 	}
 	ec := h.getExtractConfig(ctx, kbID, scope, certType)
 	if ec == nil {
+		// 发票分类没有配置时，按「分类对应的发票类型」现场合成一份底稿返回
+		// （不落库）：新建的分类无需重启服务就能看到对应规则与正则。
+		// 合成前同样走 matchInvoiceRuleTemplate 的类型校验，类型对不上只给通用规则。
+		if scope == types.FleetCategoryScopeInvoice && certType != "" {
+			if synth := h.synthesizeInvoiceRuleConfig(ctx, certType); synth != nil {
+				c.JSON(http.StatusOK, gin.H{"success": true, "data": synth})
+				return
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
 			"scope": scope, "cert_type": certType,
 			"fields": []types.ExtractFieldConfig{}, "advanced_enabled": false, "prompt_template": "", "version": 0,
@@ -729,6 +738,12 @@ func mergeInvoiceRuleFields(cur, draft []types.ExtractFieldConfig, catName strin
 				changed = true
 			}
 		}
+		// 正则补洞：只在现状为空时回填底稿正则；
+		// 用户手配/手改过的正则一律保留（防覆盖铁律同样适用于正则）。
+		if strings.TrimSpace(c.Regex) == "" && strings.TrimSpace(d.Regex) != "" {
+			c.Regex = d.Regex
+			changed = true
+		}
 	}
 	out := make([]types.ExtractFieldConfig, 0, len(order))
 	for _, n := range order {
@@ -752,34 +767,73 @@ func invoiceRuleTypeFor(dt string) string {
 }
 
 // defaultInvoiceRuleFields 按分类 subs（名称权威）生成内置提取规则底稿字段。
-// 底稿覆盖：通行费发票（车牌号/通行区间）、水电发票（购/销方与用量明细）、其它票据（泛用兜底）。
-// 其余分类返回 nil（保持现状，不主动建配置、不覆盖）。
+//
+// 覆盖范围：**全部发票分类**（普通/专用/水电/通行费/其它票据/用户自建），
+// 每条底稿含 desc + rule + regex 三段。
+//
+// 类型校验（补全前必做）：先经 matchInvoiceRuleTemplate 判定「分类名 + 核心字段」
+// 是否与某类发票模板匹配——
+//   - 匹配 → 套用该类型模板，并补上形状确定字段的正则；
+//   - 不匹配/歧义 → 只给通用语义规则，**不给任何正则**，避免把 A 类型的正则
+//     当成 B 类型的兜底（那会把票面上别的数字误填进来）。
 func defaultInvoiceRuleFields(catName string, subs []types.FleetCategorySub) []types.ExtractFieldConfig {
 	name := strings.TrimSpace(catName)
 	if name == "" || len(subs) == 0 {
 		return nil
 	}
-	covered := strings.Contains(name, "通行费") || strings.Contains(name, "水电") ||
-		strings.Contains(name, "电费") || strings.Contains(name, "其它票据")
-	if !covered {
-		return nil
-	}
+	tpl := matchInvoiceRuleTemplate(name, subs)
 	out := make([]types.ExtractFieldConfig, 0, len(subs))
 	for _, s := range subs {
 		if strings.TrimSpace(s.Name) == "" || !s.Enabled {
 			continue
 		}
 		desc, rule := invoiceRuleDescFor(s.Name, name)
+		regex := ""
+		if tpl != nil {
+			regex = invoiceFieldRegexFor(s.Name, name)
+		}
 		out = append(out, types.ExtractFieldConfig{
 			Name:    s.Name,
 			Label:   s.Name,
 			Desc:    desc,
 			Type:    invoiceRuleTypeFor(s.DataType),
 			Rule:    rule,
+			Regex:   regex,
 			Enabled: true,
 		})
 	}
 	return out
+}
+
+// synthesizeInvoiceRuleConfig 按分类 subs 现场合成一份发票提取规则底稿（不落库）。
+//
+// 用途：新建的发票分类在服务未重启时也能立刻看到「按类型」的 desc/rule/regex；
+// 用户点保存后才会写库（与启动回填共用同一套底稿函数，口径不会分叉）。
+// 返回 nil 表示该分类不存在/已禁用/没有启用字段——调用方回空配置。
+func (h *BusinessExtractHandler) synthesizeInvoiceRuleConfig(ctx context.Context, certType string) *types.KbExtractConfig {
+	name := strings.TrimSpace(certType)
+	if name == "" {
+		return nil
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", types.FleetCategoryScopeInvoice, name).
+		First(&cat).Error; err != nil {
+		return nil
+	}
+	fields := defaultInvoiceRuleFields(name, cat.Subs)
+	if len(fields) == 0 {
+		return nil
+	}
+	return &types.KbExtractConfig{
+		Scope:           types.FleetCategoryScopeInvoice,
+		CertType:        name,
+		Fields:          fields,
+		AdvancedEnabled: false,
+		PromptTemplate:  defaultInvoicePromptTemplate(name),
+		Version:         0, // 0 = 尚未落库（前端保存后才会变成 1）
+		Enabled:         true,
+	}
 }
 
 // SeedInvoiceExtractRuleBackfill 幂等回填发票分类提取规则底稿（启动时调用一次）。

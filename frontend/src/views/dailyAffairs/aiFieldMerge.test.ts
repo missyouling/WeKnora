@@ -211,3 +211,32 @@ test('合入标准字段时用 camelCase 命名，且与既有字段 canonical �
   assert.ok(names.includes('invoiceCode'), '缺失的标准字段应以 camelCase 追加')
   assert.equal(merged.addedCount, 1)
 })
+
+// ---- 2026-10-18 终轮：明细子项合并去重（同义键 / 同列头）----
+
+test('AI 建议的明细子项与已有子项同义时不重复追加', () => {
+  const current: EditableField[] = [
+    {
+      name: 'items', enabled: true, isDefault: true, dataType: 'items', width: 0,
+      subFields: [
+        { key: 'tax_amount', label: '税额', dataType: 'number', width: 0 },
+        { key: 'price', label: '单价', dataType: 'number', width: 0 },
+      ],
+    },
+  ]
+  const r = mergeAiFieldSuggestions(
+    current, [],
+    [
+      { key: 'tax', label: '税额' },
+      { key: 'unit_price', label: '单价(元)' },
+      { key: 'plate_no', label: '车牌号' },
+    ],
+    [],
+    ['tax', 'unit_price', 'plate_no'],
+  )
+  const host = r.fields.find((f) => f.dataType === 'items')!
+  assert.deepEqual(host.subFields!.map((s) => s.key), ['tax_amount', 'price', 'plate_no'])
+  assert.equal(r.addedCount, 1, '只有车牌号是新增')
+  assert.equal(r.skipped.length, 2, '两个同义项应被跳过并给出原因')
+  assert.match(r.skipped[0]!.reason, /同义/)
+})

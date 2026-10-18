@@ -250,6 +250,7 @@ import {
   subsPayloadFromNames,
   subFieldEnabled,
   subFieldKeyForLabel,
+  findDuplicateSubField,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
@@ -680,14 +681,29 @@ function addSubField(fd: EditableField) {
   if (!label) { MessagePlugin.warning('请输入子项名称'); return }
   const subs = fd.subFields || (fd.subFields = [])
   const key = subFieldKeyForLabel(label, subs.map((s) => s.key))
-  if (subs.some((s) => s.key === key)) { MessagePlugin.warning('该子项已存在'); return }
+  // 去重：同义键（税额 tax / tax_amount）与同列头都算重复，避免浮层出现两列同名
+  const dup = findDuplicateSubField(subs, { key, label })
+  if (dup) {
+    MessagePlugin.warning(`子项「${dup.label || dup.key}」已存在（与「${label}」同义），无需重复添加`)
+    return
+  }
   subs.push({ key, label, dataType: 'text', width: 0 })
   newSubFieldLabel.value = ''
 }
+/**
+ * 删除明细子项。
+ *
+ * 之前这里调用了一个已被删除的 `isBuiltinSubField`（上一轮取消子项锁定后忘了同步），
+ * 每次点击都会抛 ReferenceError → 弹窗关掉了但子项还在，表现就是「删不掉」。
+ * 现在按「引用相等 ∨ key 相等」移除，双保险：v-for 传进来的对象一定在数组里，
+ * 但若上游克隆过数组，key 兜底仍然生效。
+ */
 function removeSubField(fd: EditableField, sf: EditableSubField) {
-  if (isBuiltinSubField(sf)) { MessagePlugin.warning('系统内置子项不可删除'); return }
-  if (!fd.subFields) return
-  fd.subFields = fd.subFields.filter((s) => s !== sf)
+  if (!fd.subFields?.length) return
+  const key = String(sf?.key || '')
+  const next = fd.subFields.filter((s) => s !== sf && String(s?.key || '') !== key)
+  if (next.length === fd.subFields.length) return
+  fd.subFields = next
 }
 const dataTypeOptions = [
   { label: '文本', value: 'text' },

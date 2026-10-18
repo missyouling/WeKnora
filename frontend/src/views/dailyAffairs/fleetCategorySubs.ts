@@ -75,6 +75,68 @@ const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
 const MAX_SUB_FIELDS = 64
 const MAX_WIDTH = 400
 
+// ---- 明细子项去重（同义键 / 同列头）----
+//
+// 与后端 handler/fleet_item_subs.go 的同义分组保持一份口径：
+// AI 建议与历史 seed 会同时产出 tax_amount(税额) 与 tax(税额)、price 与 unit_price，
+// 界面上就会出现两列同名「税额」，用户既分不清也删不干净。
+
+/** 同义键分组：同组内只保留一个，第一个元素是该语义的标准键。 */
+const SUB_FIELD_ALIAS_GROUPS: readonly string[][] = [
+  ['name', 'item_name', 'project_name', 'goods_name', 'product_name'],
+  ['spec', 'model', 'specification', 'type_spec'],
+  ['unit', 'uom', 'measure_unit'],
+  ['qty', 'quantity', 'num', 'count'],
+  ['price', 'unit_price', 'deal_price'],
+  ['amount', 'total', 'money', 'subtotal'],
+  ['tax_rate', 'rate', 'taxrate', 'tax_percent'],
+  ['tax_amount', 'tax', 'taxamt', 'tax_money'],
+]
+
+/** 归一键：小写 + 去非字母数字（保留中文，避免自定义中文键互相误判）。 */
+export function canonicalSubFieldKey(key: string): string {
+  return String(key || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+}
+
+/** 该键所属的同义组（返回组首=标准键）；无分组返回空串。 */
+export function subFieldAliasGroup(key: string): string {
+  const cn = canonicalSubFieldKey(key)
+  if (!cn) return ''
+  for (const g of SUB_FIELD_ALIAS_GROUPS) {
+    if (g.some((k) => canonicalSubFieldKey(k) === cn)) return g[0]
+  }
+  return ''
+}
+
+/** 列头归一：去空白、统一中英文括号。 */
+export function normalizeSubFieldLabel(label: string): string {
+  return String(label || '')
+    .replace(/[（]/g, '(')
+    .replace(/[）]/g, ')')
+    .replace(/\s+/g, '')
+}
+
+/**
+ * 判断新子项是否与已有子项「同义或同列头」。
+ * 返回命中的已有子项（无冲突返回 null），调用方据此提示用户。
+ */
+export function findDuplicateSubField(
+  list: readonly EditableSubField[],
+  candidate: { key?: string; label: string },
+): EditableSubField | null {
+  const key = canonicalSubFieldKey(candidate.key || '')
+  const group = subFieldAliasGroup(candidate.key || '')
+  const label = normalizeSubFieldLabel(candidate.label || candidate.key || '')
+  for (const sf of list) {
+    if (key && canonicalSubFieldKey(sf.key) === key) return sf
+    if (group && subFieldAliasGroup(sf.key) === group) return sf
+    if (label && normalizeSubFieldLabel(sf.label) === label) return sf
+  }
+  return null
+}
+
 /** 子列是否启用（缺省视为启用，兼容存量 JSON 里没有 enabled 的情况）。 */
 export function subFieldEnabled(sf: EditableSubField): boolean {
   return sf.enabled !== false

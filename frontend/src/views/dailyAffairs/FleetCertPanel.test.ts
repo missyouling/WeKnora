@@ -7,7 +7,9 @@ import {
   normalizeSubFields,
   subsPayloadFromNames,
   subFieldKeyForLabel,
+  findDuplicateSubField,
   type EditableField,
+  type EditableSubField,
 } from './fleetCategorySubs'
 
 // ---------------------------------------------------------------------------
@@ -211,4 +213,36 @@ test('label 与 name 相同时不重复下发（语义等价去重）', () => {
     { name: 'items', label: 'items', enabled: true, isDefault: false, dataType: 'items', width: 0 },
   ])
   assert.equal('label' in out[0]!, false)
+})
+
+// ---- 2026-10-18 终轮：明细子项去重 + 删除修复 ----
+
+test('子项去重：同义键（税额 tax/tax_amount、单价 price/unit_price）视为同一项', () => {
+  const subs: EditableSubField[] = [
+    { key: 'tax_amount', label: '税额', dataType: 'number', width: 0 },
+    { key: 'price', label: '单价', dataType: 'number', width: 0 },
+  ]
+  assert.ok(findDuplicateSubField(subs, { key: 'tax', label: '税额' }), 'tax 应判为 tax_amount 的同义项')
+  assert.ok(findDuplicateSubField(subs, { key: 'unit_price', label: '单价(元)' }), 'unit_price 应判为 price 的同义项')
+  assert.equal(findDuplicateSubField(subs, { key: 'plate_no', label: '车牌号' }), null, '不同语义不应误判')
+})
+
+test('子项去重：同列头也算重复（浮层里两列同名无法区分）', () => {
+  const subs: EditableSubField[] = [{ key: 'batch_no', label: '备注', dataType: 'text', width: 0 }]
+  const dup = findDuplicateSubField(subs, { key: 'memo', label: ' 备注 ' })
+  assert.ok(dup)
+  assert.equal(dup!.key, 'batch_no')
+})
+
+test('子项删除不再调用已删除的 isBuiltinSubField，并按 key 兜底移除', () => {
+  const fn = panel.slice(panel.indexOf('function removeSubField'), panel.indexOf('function removeSubField') + 700)
+  assert.doesNotMatch(fn, /isBuiltinSubField/, '上一轮删掉的函数不能再被调用（否则运行时报错→删不掉）')
+  assert.match(fn, /s !== sf/, '按引用移除')
+  assert.match(fn, /String\(s\?\.key \|\| ''\) !== key/, '按 key 兜底移除')
+})
+
+test('新增子项先查同义/同列头再落库', () => {
+  const fn = panel.slice(panel.indexOf('function addSubField'), panel.indexOf('function addSubField') + 800)
+  assert.match(fn, /findDuplicateSubField\(subs, \{ key, label \}\)/)
+  assert.match(fn, /已存在/)
 })

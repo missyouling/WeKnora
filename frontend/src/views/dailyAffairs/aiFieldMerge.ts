@@ -8,7 +8,7 @@
 import type { AiSuggestCustomField, AiSuggestStandardField, AiSuggestSubField } from '@/api/fleet'
 import { canonicalFieldKey } from './extractFieldMeta'
 import { INVOICE_FIELD_LABELS, invoiceFieldLabel, toCamelKey } from './invoiceFieldLabels'
-import type { EditableField, EditableSubField } from './fleetCategorySubs'
+import { findDuplicateSubField, type EditableField, type EditableSubField } from './fleetCategorySubs'
 
 /** 标准契约键 → 前端展示名（snake_case 契约键经 invoiceFieldLabels 转中文）。 */
 function labelOfStandardKey(key: string): string {
@@ -166,19 +166,23 @@ export function mergeAiFieldSuggestions(
       createdItemsHost = true
     }
     host.subFields = host.subFields || []
-    const subKeys = new Set(host.subFields.map((s) => s.key))
     for (const s of subFields) {
       const key = String(s?.key || '').trim()
       if (!key || !pickedSubs.has(key)) continue
-      if (subKeys.has(key)) continue
       const normalized: EditableSubField = {
         key,
         label: String(s.label || key).trim() || key,
         dataType: s.data_type || 'text',
         width: Number(s.width) > 0 ? Number(s.width) : 0,
       }
+      // 去重口径与后端一致：同义键（税额 tax / tax_amount、单价 price / unit_price）
+      // 与同列头都算重复，否则明细浮层会出现两列同名「税额」。
+      const dup = findDuplicateSubField(host.subFields, { key, label: normalized.label })
+      if (dup) {
+        skipped.push({ name: normalized.label, reason: `与已有子项「${dup.label || dup.key}」同义` })
+        continue
+      }
       host.subFields.push(normalized)
-      subKeys.add(key)
       addedCount++
     }
   }

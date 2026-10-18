@@ -7,13 +7,8 @@
       <!-- 高级模式：左侧文字标签 + 右侧开关（不再用 t-switch 内嵌 label，避免文字随开关漂移） -->
       <span class="adv-label">高级模式</span>
       <t-switch v-model="advancedEnabled" size="medium" class="adv-switch" />
-      <!-- 图标按钮一律无边框（variant="text"），hover 仅给柔和底色，避免整排描边按钮抢视线 -->
-      <t-tooltip :content="aiBatchTip" placement="top">
-        <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
-          :disabled="!certType || aiSuggesting" :loading="aiSuggesting" @click="runAiSuggest()">
-          <template #icon><AiSparkIcon size="16px" /></template>
-        </t-button>
-      </t-tooltip>
+      <!-- 图标按钮一律无边框（variant="text"），hover 仅给柔和底色，避免整排描边按钮抢视线。
+           批量「智能生成规则」已下线：逐字段生成（展开区「生成该字段规则」）反馈更可控。 -->
       <t-tooltip :content="aiSampleHint" placement="top">
         <!-- 票据图标：缓存里有样票时**常驻绿色**（is-hot），提示"这次生成能校验唯一命中" -->
         <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
@@ -43,7 +38,6 @@
         <span class="col-required">必填</span>
         <span class="col-regex">正则兜底</span>
         <span>状态</span>
-        <span></span>
       </div>
       <template v-for="(f, i) in fields" :key="f.name + '-' + i">
         <div class="rule-table-row" :class="{ editing: editingName === f.name, 'ai-filled': aiFilled.has(f.name) }" @click="toggleEdit(f.name)">
@@ -69,23 +63,13 @@
           <span class="rtr-status">
             <t-switch v-model="f.enabled" size="small" @click.stop @change="() => {}" />
           </span>
-          <!-- 单字段级智能生成：只刷新本行的描述/规则/正则 -->
-          <span class="rtr-ai" @click.stop>
-            <t-tooltip content="生成该字段规则" placement="top">
-              <t-loading v-if="aiFieldBusy === f.name" size="small" />
-              <t-button v-else variant="text" size="small" shape="square" class="rtr-ai-btn"
-                :disabled="aiSuggesting" @click.stop="generateFieldRule(f)">
-                <template #icon><AiSparkIcon size="15px" /></template>
-              </t-button>
-            </t-tooltip>
-          </span>
         </div>
           <!-- 行内展开配置（复刻证照配置展开编辑） -->
         <div v-if="editingName === f.name" class="rule-form rule-form--inline">
           <div class="rule-form-title">
             配置「{{ fieldLabel(f.name) }}」
             <t-button variant="text" size="small" class="rule-form-ai" :loading="aiFieldBusy === f.name"
-              :disabled="aiSuggesting" @click.stop="generateFieldRule(f)">
+              @click.stop="generateFieldRule(f)">
               <template #icon><AiSparkIcon size="14px" /></template>生成该字段规则
             </t-button>
           </div>
@@ -1072,7 +1056,6 @@ function onTestPanelSaved() {
 // 动线为什么这么改：原先"生成 → 中间绿色预览框勾选 → 应用 → 再回表格"绕了两跳，
 // 用户看不到建议落到哪一行。现在生成即填进表格对应行（空值才填，保护手写内容），
 // 更新行加 AI 徽章与高亮、自动展开第一行，核对后直接保存。
-const aiSuggesting = ref(false)
 /** 本行正在单字段生成（行级 loading，不阻塞其它行）。 */
 const aiFieldBusy = ref('')
 /** 本次被 AI 填充过的字段名（用于徽章/高亮，保存或重新生成时清空）。 */
@@ -1083,12 +1066,6 @@ const aiSampleHint = computed(() =>
     ? '已缓存该分类的样票文本：生成的正则会做唯一命中校验。点击可清除缓存。'
     : '尚未缓存样票文本。可先在「字段定义」Tab 用「智能生成字段」上传样票，或直接生成（此时正则无法验证唯一命中，会被全部丢弃）。',
 )
-const aiBatchTip = computed(() =>
-  sampleTextAvailable.value
-    ? '智能生成规则（批量）：为空字段填充描述/规则/正则，直接写入表格待你核对'
-    : '智能生成规则（批量）：未带样票时正则无法验证唯一命中，将被后端丢弃',
-)
-
 /** 取当前分类的样票文本（缓存优先，其次调用方传入）。 */
 function resolveSampleText(payload?: { sampleText?: string }) {
   const sample = String(payload?.sampleText || readSampleText(certTypeName.value) || '')
@@ -1147,31 +1124,6 @@ async function fillRulesFromAI(
   return { filled, total: data.fields.length }
 }
 
-/** 批量生成：直接回填 + 高亮更新行 + 自动展开第一行。 */
-async function runAiSuggest(payload?: { sampleText?: string }) {
-  if (!certType.value) return
-  const targets = fields.value.filter((f) => f.name)
-  if (!targets.length) { MessagePlugin.warning('当前分类还没有字段，请先在「字段定义」中添加'); return }
-  aiSuggesting.value = true
-  aiFilled.value = new Set()
-  try {
-    const { filled, total } = await fillRulesFromAI(targets, false, payload)
-    aiFilled.value = new Set(filled)
-    if (!filled.length) {
-      MessagePlugin.warning(total ? 'AI 未能补全任何字段（现有字段都已配置）' : 'AI 未产出可用规则')
-      return
-    }
-    // 自动展开第一条更新行：让用户立刻看到"填了什么"
-    editingName.value = filled[0] || ''
-    MessagePlugin.success(`已填充 ${filled.length} 项规则，核对无误后点「保存」生效`)
-  } catch (e: any) {
-    console.error('ai suggest rules failed', e)
-    MessagePlugin.error(e?.message || '智能生成规则失败')
-  } finally {
-    aiSuggesting.value = false
-  }
-}
-
 /**
  * 单字段生成：只传这一行 + overwrite=true，覆盖该字段的 desc/rule/regex。
  * 为什么允许覆盖：用户是明确针对这一行点的 ✨，语义就是"重新给我写一遍"。
@@ -1202,16 +1154,22 @@ function clearCachedSample() {
   MessagePlugin.success('已清除该分类的样票缓存')
 }
 
-/** 被外部（抽屉）调用：切到指定分类，可选立即智能生成规则。 */
+/**
+ * 被外部（抽屉）调用：切到指定分类。
+ *
+ * 批量智能生成已下线，这里只负责"选中分类 + 载入规则"；
+ * 需要生成时由用户在展开区点「生成该字段规则」（逐字段，反馈可控）。
+ * sampleText 仍会先落缓存，供那次单字段生成做正则唯一命中校验。
+ */
 async function focusCertType(p?: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
   const target = String(p?.certType || '').trim()
   if (!target) return
+  if (p?.sampleText) cacheSampleText(target, p.sampleText)
   // 先确保分类列表已加载，否则 certTypeOptions 里还没有该分类
   await refresh()
   const composite = typeComposite(props.scope, target)
   certType.value = composite
   await loadConfig()
-  if (p?.autoSuggest) void runAiSuggest({ sampleText: p.sampleText })
 }
 
 // 重新拉取证照配置（公司证照 vehicle + 司机证照 driver，含自定义分组类型）
@@ -1415,10 +1373,10 @@ watch(certTypeOptions, (groups) => {
   .rule-table-head,
   .rule-table-row {
     display: grid;
-    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态 / 单字段 AI
-       行尾展开箭头已去掉：整行非控件区即展开热区，少一列多一分宽度给正则。
-       正则列给 minmax(120px,…) 保底：Input 再窄就无法辨认正则片段 */
-    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px 26px;
+    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态
+       行尾的展开箭头与 AI 图标都已下线：整行非控件区即展开热区，
+       少两列把宽度让给正则输入。 */
+    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px;
     align-items: center;
     gap: 8px;
     padding: 7px 12px;
@@ -1427,7 +1385,7 @@ watch(certTypeOptions, (groups) => {
 
   /* 窄态：收起字段描述列，把宽度让给正则输入（避免抽屉内水平挤压/错位） */
   .extract-rule-panel.eq-narrow & {
-    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px 24px;
+    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px;
 
     /* 只隐藏"字段描述"列（行内第 2 格 / 表头第 2 格），必填与正则列必须保留 */
     .rtr-desc,
@@ -1656,12 +1614,6 @@ watch(certTypeOptions, (groups) => {
 }
 .rule-table-row.ai-filled {
   background: var(--td-brand-color-1);
-}
-.rtr-ai {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  .rtr-ai-btn { color: var(--td-brand-color); }
 }
 .rule-form-title {
   display: flex;
