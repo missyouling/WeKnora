@@ -37,6 +37,11 @@ type BusinessExtractHandler struct {
 	// 投递任务即返 200，worker 通过 ProcessBusinessExtract 执行原同步提取核心，
 	// 避免 6 分钟级模型调用撞网关读超时（524/500）。
 	asynqClient interfaces.TaskEnqueuer
+	// documentReader / tenantService 供「智能字段生成」样票解析使用
+	//（service.ParseFileForExtractSuggest 需要解析器与租户引擎配置）。
+	// 二者都是可选依赖：未装配时接口 A 仍可用 text 直传路径。
+	documentReader interfaces.DocumentReader
+	tenantService  interfaces.TenantService
 	// extractMu 按 knowledgeID 防重入：同一文档并发提取会重复烧 token 且后写覆盖。
 	// 单实例内存锁（多实例部署时需换分布式锁）。
 	extractMu sync.Map // map[string]struct{}
@@ -46,11 +51,13 @@ type BusinessExtractHandler struct {
 func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.ModelService, bsvc *service.BusinessExtractService,
 	storageResolver interfaces.StorageBackendResolver, resourceCatalog interfaces.ResourceCatalog,
 	asynqClient interfaces.TaskEnqueuer,
+	documentReader interfaces.DocumentReader, tenantService interfaces.TenantService,
 ) *BusinessExtractHandler {
 	return &BusinessExtractHandler{
 		KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc,
 		storageResolver: storageResolver, resourceCatalog: resourceCatalog,
 		asynqClient: asynqClient,
+		documentReader: documentReader, tenantService: tenantService,
 	}
 }
 

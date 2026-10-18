@@ -1,4 +1,4 @@
-import { get, post, put, del } from '@/utils/request'
+import { get, post, put, del, postUpload } from '@/utils/request'
 
 // ---- 车辆 ----
 export function listFleetVehicles() {
@@ -159,6 +159,110 @@ export function saveExtractConfig(kbId: string, payload: Record<string, unknown>
 }
 export function testExtractConfig(kbId: string, payload: Record<string, unknown>, signal?: AbortSignal) {
   return post(`/api/v1/knowledge-bases/${kbId}/extract-config/test`, payload, { timeout: 120000, signal })
+}
+
+// ---- 智能配置（纯建议接口：只返回建议，绝不落库）----
+
+/** 接口 A 返回的标准字段启用建议。 */
+export interface AiSuggestStandardField {
+  key: string
+  label?: string
+  data_type?: string
+  enable: boolean
+  /** 样本值。**必然是样票原文的逐字子串**（后端防幻觉校验，不命中即清空）。 */
+  sample?: string
+}
+
+/** 接口 A 返回的明细子列建议（挂在 data_type=items 的字段上）。 */
+export interface AiSuggestSubField {
+  key: string
+  label?: string
+  data_type?: string
+  width?: number
+}
+
+/** 接口 A 返回的新增自定义字段建议。 */
+export interface AiSuggestCustomField {
+  name: string
+  data_type?: string
+  sample?: string
+  /** fields=落动态扩展桶；remark=并入备注片段（前端按此提示用户）。 */
+  store?: 'fields' | 'remark'
+  remark_part?: boolean
+}
+
+export interface AiSuggestFieldsResult {
+  cert_type?: string
+  /** 解析后的样票纯文本（≤12000 字符），前端缓存后透传给接口 B。 */
+  sample_text: string
+  sample_text_truncated?: boolean
+  standard_fields: AiSuggestStandardField[]
+  item_sub_fields: AiSuggestSubField[]
+  custom_fields: AiSuggestCustomField[]
+}
+
+/** 接口 B 的正则护栏判定结果；非 accepted 时 regex 必为空串。 */
+export type AiRegexStatus =
+  | 'accepted'
+  | 'rejected_not_standard'
+  | 'rejected_compile'
+  | 'rejected_not_unique'
+  | 'rejected_no_sample'
+  | 'rejected_too_broad'
+  | 'rejected_empty'
+
+export interface AiSuggestRuleValue {
+  name: string
+  desc?: string
+  rule?: string
+  required?: boolean
+  regex?: string
+  regex_status: AiRegexStatus
+  regex_reason?: string
+}
+
+export interface AiSuggestRulesResult {
+  cert_type?: string
+  fields: AiSuggestRuleValue[]
+  prompt_template?: string
+  /** 本次是否有实质变化（1/0；前端用于提示"是否有可应用的变更"）。 */
+  applied_field_count?: number
+  /** 是否带了样票：未带时正则会全部按 rejected_no_sample 丢弃。 */
+  sample_text_used?: boolean
+}
+
+/**
+ * 智能字段生成：上传样票（或直传文本），返回字段建议。
+ *
+ * 用 multipart 而非 JSON：样票可能是扫描 PDF，走 FormData 才能带上二进制。
+ * 超时放宽到 180s：内部含解析（含可能的 VLM OCR）+ 一次 LLM 调用。
+ */
+export function aiSuggestFields(kbId: string, payload: {
+  scope: string
+  cert_type: string
+  file?: File | null
+  text?: string
+}) {
+  const form = new FormData()
+  form.append('scope', payload.scope)
+  form.append('cert_type', payload.cert_type)
+  if (payload.file) form.append('file', payload.file)
+  if (payload.text) form.append('text', payload.text)
+  return postUpload(`/api/v1/knowledge-bases/${kbId}/extract-config/ai-suggest-fields`, form, undefined, { timeout: 180000 })
+}
+
+/**
+ * 智能配置规则：按字段清单生成 desc/rule/required/regex + 高级 Prompt 模板。
+ * overwrite=false（默认）只填空值字段，保护用户手写内容。
+ */
+export function aiSuggestRules(kbId: string, payload: {
+  scope: string
+  cert_type: string
+  fields: Array<{ name: string; data_type?: string }>
+  sample_text?: string
+  overwrite?: boolean
+}) {
+  return post(`/api/v1/knowledge-bases/${kbId}/extract-config/ai-suggest-rules`, payload, { timeout: 180000 })
 }
 
 // ---- 证照提取 ----

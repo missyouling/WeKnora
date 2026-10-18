@@ -141,6 +141,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 				kbDirectRead.GET("/extract-config", g.Viewer(), g.KBAccessRead("id"), business.GetExtractConfig)
 				kbDirect.POST("/extract-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.SaveExtractConfig)
 				kbDirect.POST("/extract-config/test", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.TestExtractConfig)
+				// 智能配置（纯建议接口，不落库）：建议只在响应里返回，
+				// 落库一律由用户在界面上点「保存」触发既有接口。
+				kbDirect.POST("/extract-config/ai-suggest-fields", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.AISuggestFields)
+				kbDirect.POST("/extract-config/ai-suggest-rules", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.AISuggestRules)
 			}
 		}
 	}

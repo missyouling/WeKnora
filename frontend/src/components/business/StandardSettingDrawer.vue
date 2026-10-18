@@ -10,7 +10,7 @@
   >
     <t-tabs v-model="activeTab" class="standard-settings-tabs" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
-        <FleetCertPanel :scope="scope" :kb-id="kbId || ''" />
+        <FleetCertPanel :scope="scope" :kb-id="kbId || ''" @ai-guide="onAiGuide" />
       </t-tab-panel>
       <t-tab-panel value="rules" label="提取规则">
         <ExtractRulePanel ref="extractRef" :scope="scope" :kb-name="kbName" :kb-id="kbId || ''" />
@@ -20,10 +20,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import FleetCertPanel from '@/views/dailyAffairs/FleetCertPanel.vue'
 import ExtractRulePanel from '@/views/dailyAffairs/ExtractRulePanel.vue'
+import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 
 // 标准设置抽屉（中台统一组件）：
 // 「字段定义 / 提取规则」双 Tab 规范，复刻自 InvoiceSettingsDrawer ——
@@ -62,6 +63,21 @@ const extractRef = ref()
 function onTabChange(val: string | number) {
   if (val === 'rules') extractRef.value?.refresh()
 }
+
+// 「字段定义 → 智能生成字段 → 保存」后由子组件冒泡上来：切到提取规则 Tab、
+// 选中对应分类，并把样票文本交给规则面板触发一键智能生成规则。
+function onAiGuide(payload: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
+  goRules(payload)
+}
+
+// goRules 切到「提取规则」Tab 并聚焦到指定分类（可选立即触发智能生成规则）。
+// 暴露给父组件用：发票页等可在保存后由外部直接驱动这段联动。
+function goRules(payload?: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
+  activeTab.value = 'rules'
+  if (payload?.sampleText && payload?.certType) cacheSampleText(payload.certType, payload.sampleText)
+  nextTick(() => extractRef.value?.focusCertType?.(payload))
+}
+defineExpose({ goRules })
 
 // FleetCertPanel 保存分类/字段后派发全局事件：刷新列表列定义与提取规则面板
 function onCategoriesChanged() {

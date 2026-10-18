@@ -1,0 +1,351 @@
+package service
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// ---------------------------------------------------------------------------
+// 「智能配置规则」（接口 B ai-suggest-rules）的**正则三重护栏**。
+//
+// 这是 Phase B/D 已确立的安全边界：正则兜底的价值在于确定性，代价是误补
+// （把 A 票的号码写到 B 票上）。历史上真正出过事的不是"正则写错"，而是
+// "正则太宽泛"——\b\d{8}\b 在真实票据里能命中 136 个 8 位数字串。
+//
+// 因此 AI 生成的任何正则都必须过三关，任何一关不过就丢弃并给出可见原因，
+// 绝不下发给前端、绝不写库。
+// ---------------------------------------------------------------------------
+
+func TestExtractSuggestAIRegexGuards(t *testing.T) {
+	const sample = "发票号码 24312000000012345678 开票日期 2026-07-05 销售方 国家电网"
+
+	t.Run("护栏一：非后端 8 键一律 rejected_not_standard", func(t *testing.T) {
+		for _, name := range []string{"totalAmount", "taxRate", "户号", "车牌号", "invoiceType"} {
+			got := guardAIRegexPatchable(name)
+			if got != regexRejectNotStandard {
+				t.Fatalf("%s: got %q, want %q", name, got, regexRejectNotStandard)
+			}
+		}
+	})
+
+	t.Run("护栏一：8 键及其camelCase 形式通过", func(t *testing.T) {
+		for _, name := range []string{
+			"invoice_no", "invoice_code", "invoice_date", "buyer_name",
+			"buyer_tax_no", "seller_name", "seller_tax_no", "issuer",
+			"invoiceNo", "invoiceDate", "buyerTaxNo", "sellerName",
+		} {
+			if got := guardAIRegexPatchable(name); got != "" {
+				t.Fatalf("%s: got %q, want accepted", name, got)
+			}
+		}
+	})
+
+	t.Run("护栏二：非法 RE2 rejected_compile（不下发）", func(t *testing.T) {
+		// 环视是 RE2 不支持的经典写法；未闭合括号同理
+		for _, bad := range []string{
+			`(?=发票)\d{20}`,
+			`(\d{20}`,
+			`\d{20}(?!x)`,
+			`(?<name>\d{20})`,
+		} {
+			if _, err := regexp.Compile(bad); err == nil {
+				// Go RE2 实际接受 (?P<name>..) 但不接受 (?<name>..)；这里只断言确实编译失败的
+				continue
+			}
+			st := guardAIRegexPattern(bad, sample)
+			if st != regexRejectCompile {
+				t.Fatalf("%s: got %q, want %q", bad, st, regexRejectCompile)
+			}
+		}
+	})
+
+	t.Run("护栏二：合法 RE2 通过编译关", func(t *testing.T) {
+		if st := guardAIRegexPattern(`\b\d{20}\b`, sample); st != "" {
+			t.Fatalf("got %q, want accepted", st)
+		}
+	})
+
+	t.Run("护栏三：样票上非唯一命中 rejected_not_unique", func(t *testing.T) {
+		// 同一段文本里出现两个不同取值 → 无法判断匹配到的是哪个字段
+		twoInvoices := "发票号码 24312000000012345678 另有一张 24312000000087654321"
+		st := guardAIRegexPattern(`\b\d{20}\b`, twoInvoices)
+		if st != regexRejectNotUnique {
+			t.Fatalf("got %q, want %q", st, regexRejectNotUnique)
+		}
+	})
+
+	t.Run("护栏三：无样票文本时按 not_unique 保守丢弃", func(t *testing.T) {
+		// 没有样票就无法证明"唯一命中"，而宽泛正则的代价是误补→宁可不给。
+		st := guardAIRegexPattern(`\b\d{20}\b`, "")
+		if st != regexRejectNoSample {
+			t.Fatalf("got %q, want %q", st, regexRejectNoSample)
+		}
+	})
+
+	t.Run("护栏三：样票上唯一命中 accepted", func(t *testing.T) {
+		if st := guardAIRegexPattern(`\b\d{20}\b`, sample); st != "" {
+			t.Fatalf("got %q, want accepted", st)
+		}
+	})
+
+	t.Run("宽泛表达式一律丢弃（形状不唯一 / 超长 / 裸通配）", func(t *testing.T) {
+		long := strings.Repeat("a", maxAIRegexLen+1)
+		for _, bad := range []string{
+			`\d+`,
+			`.*`,
+			`\w+`,
+			`[0-9]+`,
+			long,
+		} {
+			if !narrowEnoughAIRegex(bad) {
+				continue
+			}
+			t.Fatalf("broad pattern should be rejected: %q", bad)
+		}
+	})
+
+	t.Run("形态合理的窄正则不被误杀", func(t *testing.T) {
+		for _, ok := range []string{
+			`\b\d{20}\b`,
+			`发票号码\s*[:：]?\s*([0-9]{8,20})`,
+			`\b[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}\b`,
+			`\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?`,
+		} {
+			if !narrowEnoughAIRegex(ok) {
+				t.Fatalf("should be considered narrow: %q", ok)
+			}
+		}
+	})
+}
+
+// TestExtractSuggestAIFieldPostProcess 覆盖接口 A 的**防幻觉后处理**：
+//   - standard_fields[].key 必须是落库契约键（InvoiceExtractionItem 的 json tag）；
+//   - item_sub_fields[].key 必须是小写下划线英文键；
+//   - custom_fields[].name 去重且不与标准键冲突；
+//   - sample 必须是 sample_text 的真实子串（模型最常见的幻觉是编造样值）。
+func TestExtractSuggestAIFieldPostProcess(t *testing.T) {
+	const text = "发票号码 24312000000012345678\n开票日期 2026-07-05\n户号 5001234567\n项目名称 电费 用电量 100"
+	dict := InvoiceStandardFieldDictionary()
+
+	t.Run("字典与后端补洞白名单一致（8 键）", func(t *testing.T) {
+		patchable := 0
+		for _, f := range dict {
+			if guardAIRegexPatchable(f.Key) == "" {
+				patchable++
+			}
+		}
+		if patchable != len(REGEX_PATCHABLE_INVOICE_KEYS) {
+			t.Fatalf("dictionary has %d patchable keys, backend supports %d",
+				patchable, len(REGEX_PATCHABLE_INVOICE_KEYS))
+		}
+	})
+
+	t.Run("字典键全部是 InvoiceExtractionItem 的落库契约键", func(t *testing.T) {
+		known := invoiceContractKeys()
+		for _, f := range dict {
+			if !known[f.Key] {
+				t.Fatalf("dictionary key %q is not a contract key of InvoiceExtractionItem", f.Key)
+			}
+		}
+	})
+
+	t.Run("standard_fields 白名单过滤 + sample 必须命中原文", func(t *testing.T) {
+		raw := &AISuggestFieldsRaw{
+			StandardFields: []AISuggestStandardFieldRaw{
+				{Key: "invoice_no", Enable: true, Sample: "24312000000012345678"},
+				{Key: "invoice_date", Enable: true, Sample: "2026-07-05"},
+				{Key: "幻觉键", Enable: true, Sample: "24312000000012345678"},
+				{Key: "seller_name", Enable: true, Sample: "不存在的公司名"},
+				{Key: "tax_rate", Enable: false, Sample: ""},
+			},
+			ItemSubFields: []AISuggestSubFieldRaw{
+				{Key: "name", Label: "项目名称"},
+				{Key: "account_no", Label: "户号"},
+				{Key: "Bad-Key", Label: "非法"},
+				{Key: "1abc", Label: "数字开头"},
+				{Key: "a", Label: "过短"},
+			},
+			CustomFields: []AISuggestCustomFieldRaw{
+				{Name: "户号", Sample: "5001234567"},
+				{Name: "户号", Sample: "5001234567"},
+				{Name: "invoice_no", Sample: "24312000000012345678"},
+				{Name: "缴费期", Sample: "2026-06"},
+				{Name: "抄表读数", Sample: "凭空捏造的读数"},
+			},
+		}
+		got := postProcessAISuggestFields(raw, text, dict)
+
+		// 标准字段：幻觉键被丢弃；sample 未命中原文时被清空
+		byKey := map[string]AISuggestStandardField{}
+		for _, f := range got.StandardFields {
+			byKey[f.Key] = f
+		}
+		if _, bad := byKey["幻觉键"]; bad {
+			t.Fatalf("non-contract key must be dropped, got %+v", bad)
+		}
+		if byKey["invoice_no"].Sample != "24312000000012345678" {
+			t.Fatalf("invoice_no sample lost: %+v", byKey["invoice_no"])
+		}
+		if byKey["seller_name"].Sample != "" {
+			t.Fatalf("hallucinated sample must be cleared, got %q", byKey["seller_name"].Sample)
+		}
+
+		// 明细子列：只保留 ^[a-z][a-z0-9_]{1,31}$ 的键
+		var keys []string
+		for _, s := range got.ItemSubFields {
+			keys = append(keys, s.Key)
+		}
+		if len(keys) != 2 {
+			t.Fatalf("expected 2 valid sub field keys, got %v", keys)
+		}
+		for _, k := range keys {
+			if !aiSubFieldKeyRe.MatchString(k) {
+				t.Fatalf("sub field key %q should have been rejected", k)
+			}
+		}
+
+		// 自定义字段：去重 + 排除与标准键冲突 + sample 必须命中原文
+		var names []string
+		for _, c := range got.CustomFields {
+			names = append(names, c.Name)
+		}
+		for _, bad := range []string{"invoice_no", "抄表读数"} {
+			for _, n := range names {
+				if n == bad {
+					t.Fatalf("custom field %q should have been rejected (conflict/hallucination)", bad)
+				}
+			}
+		}
+		dup := 0
+		for _, n := range names {
+			if n == "户号" {
+				dup++
+			}
+		}
+		if dup != 1 {
+			t.Fatalf("custom field name must be deduped, got %d occurrences", dup)
+		}
+	})
+
+	t.Run("nil 输入不 panic", func(t *testing.T) {
+		got := postProcessAISuggestFields(nil, text, dict)
+		if got == nil {
+			t.Fatalf("must return non-nil result")
+		}
+	})
+}
+
+// TestExtractSuggestAIRuleDecodedGeneration 锁定「防重启覆盖」：
+// AI 生成的 rule 不能与 invoiceGenericRuleFor 的泛用兜底文案完全相同，
+// 否则服务重启时 SeedInvoiceExtractRuleBackfill → mergeInvoiceRuleFields
+// 会把它当成"seed 未精配"再覆盖一次，用户的配置静默消失。
+func TestExtractSuggestAIRuleDecodedGeneration(t *testing.T) {
+	for _, cat := range []string{"其它票据", "普通发票", "水电发票"} {
+		generic := InvoiceGenericRuleFor(cat)
+		decoded := differentiateAIRule(generic)
+		if decoded == generic {
+			t.Fatalf("category %q: differentiated rule is identical to the generic fallback", cat)
+		}
+		if !strings.Contains(decoded, generic) {
+			t.Fatalf("category %q: differentiated rule should keep the generic sentence as its base", cat)
+		}
+	}
+	// 空输入不应凭空造文案
+	if differentiateAIRule("  ") != "" {
+		t.Fatalf("blank rule must stay blank")
+	}
+}
+
+// TestExtractSuggestAIRuleJSONParsing 覆盖模型输出的宽容解析：
+// 代码围栏、前后缀废话、中文引号都是历史实际出现过的形态。
+func TestExtractSuggestAIRuleJSONParsing(t *testing.T) {
+	const fenced = "好的，以下是结果：\n```json\n{\"fields\":[{\"name\":\"invoice_no\",\"desc\":\"发票号码\",\"rule\":\"提取发票号码栏\",\"required\":true,\"regex\":\"\\\\b\\\\d{20}\\\\b\"}],\"prompt_template\":\"模板\"}\n```"
+	var out AISuggestRules
+	if !tryParseAISuggestRulesJSON(fenced, &out) {
+		t.Fatalf("fenced JSON should parse")
+	}
+	if len(out.Fields) != 1 || out.Fields[0].Name != "invoice_no" {
+		t.Fatalf("unexpected parse result: %+v", out)
+	}
+	if out.Fields[0].Regex != `\b\d{20}\b` {
+		t.Fatalf("regex mangled by escape handling: %q", out.Fields[0].Regex)
+	}
+
+	// 非 JSON 一律失败（不得返回半个结果）
+	var bad AISuggestRules
+	if tryParseAISuggestRulesJSON("这不是 JSON", &bad) {
+		t.Fatalf("non-JSON should not parse")
+	}
+}
+
+// TestExtractSuggestAIRuleNormalize 确认返回给前端的字段名与请求字段**逐一对齐**：
+// 模型擅自增加的字段必须丢弃（字段名的唯一权威源是「字段定义」Tab 的 subs）。
+func TestExtractSuggestAIRuleNormalize(t *testing.T) {
+	requested := []AIRuleFieldInput{
+		{Name: "invoiceNo", DataType: "text"},
+		{Name: "户号", DataType: "text"},
+	}
+	suggested := []AISuggestRule{
+		{Name: "invoiceNo", Desc: "发票号码", Rule: "提取号码栏", Regex: `\b\d{20}\b`},
+		{Name: "户号", Desc: "用电户号", Rule: "提取户号栏"},
+		{Name: "模型自造字段", Desc: "x", Rule: "y"},
+	}
+	got := normalizeAISuggestRules(requested, suggested, "发票号码 24312000000012345678")
+
+	if len(got.Fields) != 2 {
+		t.Fatalf("expected exactly 2 fields (matching request), got %d: %+v", len(got.Fields), got.Fields)
+	}
+	for _, f := range got.Fields {
+		if f.Name == "模型自造字段" {
+			t.Fatalf("model-invented field must be dropped")
+		}
+	}
+	no := got.Fields[0]
+	if no.Name != "invoiceNo" {
+		t.Fatalf("field name must be echoed as requested, got %q", no.Name)
+	}
+	if no.RegexStatus != regexStatusAccepted {
+		t.Fatalf("invoice_no regex should be accepted, got %q", no.RegexStatus)
+	}
+	hu := got.Fields[1]
+	if hu.Name != "户号" {
+		t.Fatalf("unexpected field %q", hu.Name)
+	}
+	if hu.Regex != "" || hu.RegexStatus != regexRejectNotStandard {
+		t.Fatalf("custom field regex must be rejected as not-standard: %+v", hu)
+	}
+	if hu.RegexReason == "" {
+		t.Fatalf("rejected regex must carry a human-readable reason")
+	}
+}
+
+// TestExtractSuggestAIRuleOverwriteSemantics 锁定 overwrite=false 的防覆盖语义：
+// 后端只对**空值**字段填建议，用户已手写的内容原样保留。
+func TestExtractSuggestAIRuleOverwriteSemantics(t *testing.T) {
+	requested := []AIRuleFieldInput{{Name: "invoiceNo", DataType: "text"}}
+	suggested := []AISuggestRule{{Name: "invoiceNo", Desc: "AI描述", Rule: "AI规则"}}
+	existing := map[string]AIRuleFieldValues{
+		"invoiceNo": {Desc: "用户手写描述", Rule: "用户手写规则"},
+	}
+	keep, changed := mergeAISuggestRules(requested, suggested, existing, false)
+	if changed {
+		t.Fatalf("overwrite=false must not report changes for hand-written fields")
+	}
+	if keep["invoiceNo"].Desc != "用户手写描述" || keep["invoiceNo"].Rule != "用户手写规则" {
+		t.Fatalf("hand-written content must be preserved: %+v", keep["invoiceNo"])
+	}
+
+	// overwrite=true 时才允许覆盖
+	_, changed2 := mergeAISuggestRules(requested, suggested, existing, true)
+	if !changed2 {
+		t.Fatalf("overwrite=true should report changes")
+	}
+
+	// 空值字段无论如何都会被填上（这是 AI 建议的核心价值）
+	empty := map[string]AIRuleFieldValues{"invoiceNo": {}}
+	keep3, changed3 := mergeAISuggestRules(requested, suggested, empty, false)
+	if !changed3 || keep3["invoiceNo"].Desc != "AI描述" {
+		t.Fatalf("empty fields must be filled regardless of overwrite: %+v", keep3)
+	}
+}

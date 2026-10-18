@@ -646,11 +646,12 @@ func defaultInvoicePromptTemplate(catName string) string {
 
 // invoiceGenericRuleFor 返回该分类底稿 default 分支的泛用兜底 rule 文案，
 // 用于识别「未精配」的 seed 泛用规则（可升级为按字段精准规则），不误伤用户手写文案。
+//
+// 文案本体在 service 层（InvoiceGenericRuleFor）——智能配置规则接口需要同一条文案
+// 来判断"AI 产出的 rule 是否与泛用兜底一字不差"（防重启被 mergeInvoiceRuleFields 覆盖）。
+// 两处硬编码必然漂移，故此处只做委托。
 func invoiceGenericRuleFor(catName string) string {
-	if strings.Contains(catName, "其它票据") {
-		return "此为非标准格式票据（如三联收据、手写票、非正规机打票等）。请尽最大能力识别并提取票面上的付款方（购买方）、收款方（销售方）、开票日期和合计金额。对于无法归入常规字段的有效业务信息（如事由、经办人等），请全部整合汇总提取至‘备注’字段。"
-	}
-	return "从票面及备注信息中尽力识别并提取该字段对应内容。"
+	return service.InvoiceGenericRuleFor(catName)
 }
 
 // mergeInvoiceRuleFields 字段级增量合并（防覆盖铁律的字段级实现）：
