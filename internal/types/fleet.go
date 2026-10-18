@@ -135,6 +135,7 @@ type FleetItemSubField struct {
 // FleetCategorySub 档案分类小项（大项=分类行，小项=解析提取的字段，可启/禁用）
 type FleetCategorySub struct {
 	Name      string `json:"name"`
+	Label     string `json:"label,omitempty"` // 自定义中文表头；空=前端按内置字典显示（Name 仍是契约身份）
 	Enabled   bool   `json:"enabled"`
 	IsDefault bool   `json:"is_default"` // 字段筛选器「重置」时默认勾选
 	DataType  string `json:"data_type"`  // text | number | date | array | items（影响提取骨架与编辑控件）

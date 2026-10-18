@@ -179,7 +179,12 @@ type AISuggestSubField struct {
 }
 
 // AISuggestCustomField 新增自定义字段建议。
+//
+// Key 是**后端分配的稳定英文编码**（^[a-z][a-z0-9_]{1,31}$），前端只读展示。
+// 为什么不让前端用中文名当键：提取结果落库按字段名索引，中文名一改列就错位；
+// 而契约键（invoice_no）只覆盖标准字段，扩展字段必须有自己的 snake_case 身份。
 type AISuggestCustomField struct {
+	Key        string `json:"key"`
 	Name       string `json:"name"`
 	DataType   string `json:"data_type"`
 	Sample     string `json:"sample"`
@@ -223,6 +228,7 @@ type AISuggestSubFieldRaw struct {
 }
 
 type AISuggestCustomFieldRaw struct {
+	Key        string `json:"key"`
 	Name       string `json:"name"`
 	DataType   string `json:"data_type"`
 	Sample     string `json:"sample"`
@@ -338,13 +344,14 @@ func buildFieldSuggestPrompt(certType string, dict []InvoiceStandardField) strin
 	sb.WriteString("sample 必须逐字来自原文，禁止改写或臆造。未出现的 enable=false 且 sample 写空字符串。\n")
 	sb.WriteString("3. item_sub_fields：仅在票面存在明细/项目行表格时输出。key 用小写下划线英文")
 	sb.WriteString("（name/spec/unit/qty/price/amount/tax_rate/tax_amount 为通用键；额外的用业务语义英文）。\n")
-	sb.WriteString("4. custom_fields：票面上有、但字典里没有的信息（如户号、缴费期、抄表读数）在此给出中文名与 sample。")
+	sb.WriteString("4. custom_fields：票面上有、但字典里没有的信息（如户号、缴费期、抄表读数）在此给出中文名 name、")
+	sb.WriteString("规范英文 key（小写字母开头，仅 a-z0-9_，如 account_no / bank_account）与 sample。")
 	sb.WriteString("若该信息没有独立存储位，store 填 remark，否则填 fields。\n")
 	sb.WriteString("5. 不要输出字典中不存在、票面上也没出现的字段。\n")
 	sb.WriteString("6. 输出结构固定为：")
 	sb.WriteString(`{"standard_fields":[{"key":"","label":"","data_type":"","enable":false,"sample":""}],`)
 	sb.WriteString(`"item_sub_fields":[{"key":"","label":"","data_type":"","width":0}],`)
-	sb.WriteString(`"custom_fields":[{"name":"","data_type":"","sample":"","store":"fields","remark_part":false}]}`)
+	sb.WriteString(`"custom_fields":[{"key":"","name":"","data_type":"","sample":"","store":"fields","remark_part":false}]}`)
 	sb.WriteString("\n【号码口径】invoice_no 只能取明确标注『发票号码/发票号/No.』标签后的数字串；")
 	sb.WriteString("『机器编号』『校验码』『密码区』一律不算。\n")
 	return sb.String()
@@ -508,30 +515,43 @@ func postProcessAISuggestFields(
 		})
 	}
 
-	// ③ 自定义字段：去重 + 排除与标准契约键冲突 + sample 必须是原文子串
-	seenCustom := map[string]bool{}
+	// ③ 自定义字段：先分配唯一英文 key，再按「真实中文名」去重，最后校验 sample。
+	//
+	// 历史 bug（实测 7 项全丢）：去重键曾取 canonicalFieldKey(name)，而该函数
+	// 只保留 ASCII 字母数字——纯中文名一律归一成空串。第一个中文扩展字段把
+	// seenCustom[""] 置真，其后**每个**中文名都命中"重复"而被丢弃。
+	// 现在：空 key 不参与身份判定；同名才算重复；key 由 assignCustomFieldKey
+	// 保证在「契约键 + 子列键 + 已分配 key」空间内唯一。
+	usedKeys := make(map[string]bool, len(contract)+len(out.ItemSubFields))
+	for k := range contract {
+		usedKeys[k] = true
+	}
+	for _, s := range out.ItemSubFields {
+		usedKeys[s.Key] = true
+	}
+	seenCustomName := map[string]bool{}
 	for _, c := range raw.CustomFields {
 		name := strings.TrimSpace(c.Name)
 		if name == "" {
 			continue
 		}
-		// 与本次已建议的扩展字段去重（canonical 归一，覆盖 invoiceNo / InvoiceNo 之类）
-		ck := canonicalFieldKey(name)
+		// 与本次已建议的扩展字段去重（同名才合并）
+		if seenCustomName[name] {
+			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与前面建议的扩展字段重名"})
+			continue
+		}
 		// 用 canonical 集合判冲突：契约键是 snake_case（total_amount），
 		// 而自定义名可能是 camelCase（totalAmount）或中文，直接查 contract[name]
 		// 会漏判，于是"标准字段但补洞器不支持"被误报为"自定义扩展字段"。
-		if ck != "" && invoiceContractCanonicalKeys[ck] {
+		if ck := canonicalFieldKey(name); ck != "" && invoiceContractCanonicalKeys[ck] {
 			// 与标准契约键同名：它应出现在 standard_fields，不该是扩展字段
 			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与系统标准字段同名，应归入标准字段"})
 			continue
 		}
-		if seenCustom[ck] {
-			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与前面建议的扩展字段重名"})
-			continue
-		}
-		seenCustom[ck] = true
+		seenCustomName[name] = true
+		key := assignCustomFieldKey(c.Key, name, usedKeys)
 		dtype := strings.TrimSpace(c.DataType)
-		if dtype != "number" && dtype != "date" {
+		if dtype != "number" && dtype != "date" && dtype != "array" {
 			dtype = "text"
 		}
 		store := strings.TrimSpace(c.Store)
@@ -539,6 +559,7 @@ func postProcessAISuggestFields(
 			store = "fields"
 		}
 		out.CustomFields = append(out.CustomFields, AISuggestCustomField{
+			Key:        key,
 			Name:       name,
 			DataType:   dtype,
 			Sample:     verifiedSample(c.Sample, sampleNorm, true),
@@ -549,6 +570,109 @@ func postProcessAISuggestFields(
 	out.Skipped = skipped
 	return out
 }
+
+// customFieldKeyHints 中文扩展字段名 → 规范英文键的映射表。
+//
+// 只覆盖发票/收据上高频出现的栏位；命中不到时退回 custom_field + 序号，
+// 保证「每个扩展字段都拿得到唯一 key」这件事不依赖模型听话。
+// 顺序敏感：更具体的词（银行账号）必须排在泛词（账号）之前。
+var customFieldKeyHints = []struct {
+	keywords []string
+	key      string
+}{
+	{[]string{"开户行", "开户银行"}, "bank_name"},
+	{[]string{"银行账号", "银行账户", "账号", "账户"}, "bank_account"},
+	{[]string{"户号", "用户号", "客户号"}, "account_no"},
+	{[]string{"业务名称", "业务类型"}, "business_name"},
+	{[]string{"车牌号", "车牌"}, "plate_no"},
+	{[]string{"办理时间", "受理时间", "办理日期"}, "handle_time"},
+	{[]string{"复核人", "复核", "审核人"}, "reviewer"},
+	{[]string{"抄表读数", "抄表", "读数"}, "meter_reading"},
+	{[]string{"缴费期", "账期", "所属期"}, "billing_period"},
+	{[]string{"用电量", "水量", "用量"}, "usage"},
+	{[]string{"单价"}, "unit_price"},
+	{[]string{"数量"}, "quantity"},
+	{[]string{"规格型号", "规格"}, "spec"},
+	{[]string{"地址", "住址", "经营地址"}, "address"},
+	{[]string{"电话", "联系电话", "手机"}, "phone"},
+	{[]string{"项目名称", "品名"}, "item_name"},
+}
+
+// customFieldKeyHint 按中文名查推荐键（未命中返回空串）。
+func customFieldKeyHint(name string) string {
+	for _, h := range customFieldKeyHints {
+		for _, kw := range h.keywords {
+			if strings.Contains(name, kw) {
+				return h.key
+			}
+		}
+	}
+	return ""
+}
+
+// sanitizeCustomKey 把模型给的 key 规整成 ^[a-z][a-z0-9_]{1,31}$；不合规返回空串。
+func sanitizeCustomKey(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevUnderscore = false
+		default:
+			if !prevUnderscore && b.Len() > 0 {
+				b.WriteByte('_')
+				prevUnderscore = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" || out[0] < 'a' || out[0] > 'z' {
+		return ""
+	}
+	if len(out) > aiSubFieldKeyMaxLen {
+		out = strings.TrimRight(out[:aiSubFieldKeyMaxLen], "_")
+	}
+	if !aiSubFieldKeyRe.MatchString(out) {
+		return ""
+	}
+	return out
+}
+
+// assignCustomFieldKey 为一条扩展字段分配唯一英文 key（会写 used）。
+//
+// 优先级：模型给的合法 key → 中文名映射 → custom_field；
+// 任一候选被占用（契约键/子列键/其它扩展字段）就加 _2/_3 后缀直到唯一。
+// 唯一性是硬要求：key 会作为提取结果的 JSON 键，重复会让两个字段互相覆盖。
+func assignCustomFieldKey(modelKey, name string, used map[string]bool) string {
+	candidates := make([]string, 0, 3)
+	if k := sanitizeCustomKey(modelKey); k != "" {
+		candidates = append(candidates, k)
+	}
+	if k := customFieldKeyHint(name); k != "" {
+		candidates = append(candidates, k)
+	}
+	candidates = append(candidates, "custom_field")
+
+	for _, base := range candidates {
+		if !used[base] {
+			used[base] = true
+			return base
+		}
+	}
+	base := candidates[len(candidates)-1]
+	for i := 2; i < 1000; i++ {
+		cand := fmt.Sprintf("%s_%d", base, i)
+		if !used[cand] {
+			used[cand] = true
+			return cand
+		}
+	}
+	// 理论上不可达（1000 个同名字段），保底返回不 panic。
+	return base
+}
+
 
 // verifiedSample 防幻觉核心：模型给的样值必须在样票原文里**逐字出现**。
 // 模型最常见的幻觉是编一个"看起来很像"的号码；不校验就会让用户误以为

@@ -205,17 +205,22 @@ func TestExtractSuggestAIFieldPostProcess(t *testing.T) {
 			}
 		}
 
-		// 自定义字段：去重 + 排除与标准键冲突 + sample 必须命中原文
+		// 自定义字段：同名去重 + 排除与标准键冲突 + sample 必须命中原文。
+		// 注意：幻觉 sample **只清空 sample，不丢弃字段**（与标准字段同口径）——
+		// 旧断言把「抄表读数」写成应被丢弃，其实是把去重 bug 的副产物当成了正确行为。
 		var names []string
+		byName := map[string]AISuggestCustomField{}
 		for _, c := range got.CustomFields {
 			names = append(names, c.Name)
+			byName[c.Name] = c
 		}
-		for _, bad := range []string{"invoice_no", "抄表读数"} {
-			for _, n := range names {
-				if n == bad {
-					t.Fatalf("custom field %q should have been rejected (conflict/hallucination)", bad)
-				}
-			}
+		if _, bad := byName["invoice_no"]; bad {
+			t.Fatalf("custom field %q must be rejected as contract-key conflict", "invoice_no")
+		}
+		if c, ok := byName["抄表读数"]; !ok {
+			t.Fatalf("Chinese custom field 抄表读数 must be kept (bug: dropped as duplicate)")
+		} else if c.Sample != "" {
+			t.Fatalf("hallucinated custom sample must be cleared, got %q", c.Sample)
 		}
 		dup := 0
 		for _, n := range names {
@@ -452,5 +457,78 @@ func TestExtractSuggestAIRuleStatusSurvivesMerge(t *testing.T) {
 		if f.RegexStatus != regexStatusAccepted && f.Regex != "" {
 			t.Fatalf("field %q carries a regex that failed the guards: %q", f.Name, f.Regex)
 		}
+	}
+}
+
+// TestExtractSuggestAICustomFieldsChineseKeys 锁定实测 bug：
+// 票面上的 7 个中文扩展字段（地址电话/业务名称/车牌/办理时间/复核…）
+// 被误判为"与前面建议的扩展字段重名"全部丢弃。
+//
+// 根因：custom 去重键取 canonicalFieldKey(name)，而该函数只保留 ASCII
+// 字母数字——纯中文名一律归一为空串。第一个中文扩展字段把 seenCustom[""]
+// 置真，其后每个中文名都命中"重复"。空键绝不能当作身份参与去重。
+func TestExtractSuggestAICustomFieldsChineseKeys(t *testing.T) {
+	dict := InvoiceStandardFieldDictionary()
+	names := []string{"地址、电话", "业务名称", "车牌", "办理时间", "复核", "户号", "抄表读数"}
+	raw := &AISuggestFieldsRaw{}
+	for _, n := range names {
+		raw.CustomFields = append(raw.CustomFields, AISuggestCustomFieldRaw{Name: n})
+	}
+	sample := strings.Join(names, "\n")
+	got := postProcessAISuggestFields(raw, sample, dict)
+
+	if len(got.CustomFields) != len(names) {
+		t.Fatalf("all %d Chinese custom fields must survive, got %d: %+v (skipped=%+v)",
+			len(names), len(got.CustomFields), got.CustomFields, got.Skipped)
+	}
+	seenKey := map[string]bool{}
+	for i, c := range got.CustomFields {
+		if c.Name != names[i] {
+			t.Fatalf("custom[%d] name = %q, want %q", i, c.Name, names[i])
+		}
+		// 每个扩展字段都必须拿到唯一、合法的 snake_case 编码（前端只读展示/落库按它索引）
+		if !aiSubFieldKeyRe.MatchString(c.Key) || len(c.Key) > aiSubFieldKeyMaxLen {
+			t.Fatalf("custom[%d] key %q is not a legal snake_case key", i, c.Key)
+		}
+		if seenKey[c.Key] {
+			t.Fatalf("duplicate custom key %q", c.Key)
+		}
+		seenKey[c.Key] = true
+	}
+	// 语义映射：能认得的中文名给出有意义键，而不是清一色 custom_field_2/3
+	wantKeys := map[string]string{
+		"户号": "account_no", "车牌": "plate_no", "办理时间": "handle_time",
+	}
+	for _, c := range got.CustomFields {
+		if want, ok := wantKeys[c.Name]; ok && c.Key != want {
+			t.Fatalf("custom %q key = %q, want %q", c.Name, c.Key, want)
+		}
+	}
+
+	// 模型自己给了合法 key：直接采用（尊重模型的语义命名）
+	withModelKey := postProcessAISuggestFields(&AISuggestFieldsRaw{
+		CustomFields: []AISuggestCustomFieldRaw{{Key: "bank_account", Name: "开户银行及账号"}},
+	}, "开户银行及账号", dict)
+	if len(withModelKey.CustomFields) != 1 || withModelKey.CustomFields[0].Key != "bank_account" {
+		t.Fatalf("model-provided key must be kept, got %+v", withModelKey.CustomFields)
+	}
+
+	// 模型给的 key 与契约键冲突：必须换一个，不能覆盖标准字段
+	conflict := postProcessAISuggestFields(&AISuggestFieldsRaw{
+		CustomFields: []AISuggestCustomFieldRaw{{Key: "total_amount", Name: "含税总额"}},
+	}, "含税总额", dict)
+	if len(conflict.CustomFields) != 1 {
+		t.Fatalf("conflicting-key field must still be kept, got %+v", conflict.CustomFields)
+	}
+	if conflict.CustomFields[0].Key == "total_amount" {
+		t.Fatalf("custom key must not collide with contract key total_amount")
+	}
+
+	// 真正同名的字段仍必须去重（不能因为修 bug 就把去重整个去掉）
+	dup := postProcessAISuggestFields(&AISuggestFieldsRaw{
+		CustomFields: []AISuggestCustomFieldRaw{{Name: "户号"}, {Name: "户号"}},
+	}, "户号", dict)
+	if len(dup.CustomFields) != 1 {
+		t.Fatalf("exact duplicate names must still be deduped, got %+v", dup.CustomFields)
 	}
 }
