@@ -191,6 +191,12 @@ export interface AiSuggestCustomField {
   remark_part?: boolean
 }
 
+/** 被后端丢弃的一条建议及原因（前端要展示，不给静默失败）。 */
+export interface AiSuggestSkip {
+  name: string
+  reason: string
+}
+
 export interface AiSuggestFieldsResult {
   cert_type?: string
   /** 解析后的样票纯文本（≤12000 字符），前端缓存后透传给接口 B。 */
@@ -199,6 +205,8 @@ export interface AiSuggestFieldsResult {
   standard_fields: AiSuggestStandardField[]
   item_sub_fields: AiSuggestSubField[]
   custom_fields: AiSuggestCustomField[]
+  /** 被丢弃的建议（键不在白名单、子列键形态非法、与标准键同名等）。 */
+  skipped?: AiSuggestSkip[]
 }
 
 /** 接口 B 的正则护栏判定结果；非 accepted 时 regex 必为空串。 */

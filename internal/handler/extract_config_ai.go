@@ -205,7 +205,7 @@ func (h *BusinessExtractHandler) AISuggestRules(c *gin.Context) {
 	// 现状值来自已保存的 extract-config（只读）：用于 overwrite=false 时判断"哪些字段是空的"。
 	// 注意此处**只读不写**：SaveExtractConfig 由用户点「保存」时另行触发。
 	existing := loadSuggestExistingFieldValues(effCtx, h, kbID, scope, certType)
-	values, changed := service.MergeAIRuleSuggestions(fields, suggested.Fields, existing, req.Overwrite)
+	values, changed := service.MergeAIRuleSuggestions(fields, suggested.Fields, existing, req.Overwrite, sampleText)
 
 	result := service.NewAISuggestRulesResult(certType, fields, values)
 	// changed 是布尔；AppliedFieldCount 需要数量。数量对用户没有额外信息量

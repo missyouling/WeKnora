@@ -234,6 +234,54 @@ func TestExtractSuggestAIFieldPostProcess(t *testing.T) {
 			t.Fatalf("must return non-nil result")
 		}
 	})
+
+	// 实测踩到：契约键是 snake_case（total_amount），自定义名走的是 camelCase
+	// （totalAmount）。直接查 contract[name] 会漏判，于是"标准字段但补洞器不支持"
+	// 被说成"自定义扩展字段"——两句文案对用户意味着完全不同的下一步动作。
+	t.Run("自定义名与契约键的 camelCase 变体也判冲突（canonical 归一后比对）", func(t *testing.T) {
+		for _, name := range []string{"totalAmount", "total_amount", "TOTAL_AMOUNT"} {
+			got := postProcessAISuggestFields(&AISuggestFieldsRaw{
+				CustomFields: []AISuggestCustomFieldRaw{{Name: name, Sample: ""}},
+			}, text, dict)
+			if len(got.CustomFields) != 0 {
+				t.Fatalf("%q should be rejected as a contract-key conflict, got %+v", name, got.CustomFields)
+			}
+			if len(got.Skipped) == 0 || !strings.Contains(got.Skipped[0].Reason, "标准字段") {
+				t.Fatalf("%q must be reported as skipped with a reason, got %+v", name, got.Skipped)
+			}
+		}
+	})
+
+	t.Run("白名单外的标准字段键被丢弃但给出原因（不给静默失败）", func(t *testing.T) {
+		got := postProcessAISuggestFields(&AISuggestFieldsRaw{
+			StandardFields: []AISuggestStandardFieldRaw{{Key: "模型自造键", Enable: true, Sample: text}},
+		}, text, dict)
+		if len(got.StandardFields) != 0 {
+			t.Fatalf("non-contract key must be dropped, got %+v", got.StandardFields)
+		}
+		if len(got.Skipped) != 1 || got.Skipped[0].Name != "模型自造键" {
+			t.Fatalf("expected one skip entry naming the offending key, got %+v", got.Skipped)
+		}
+		if got.Skipped[0].Reason == "" {
+			t.Fatalf("skip entry must carry a human-readable reason")
+		}
+	})
+
+	t.Run("明细子列非法键被丢弃并说明原因", func(t *testing.T) {
+		got := postProcessAISuggestFields(&AISuggestFieldsRaw{
+			ItemSubFields: []AISuggestSubFieldRaw{
+				{Key: "Bad-Key", Label: "含连字符"},
+				{Key: "1abc", Label: "数字开头"},
+				{Key: "a", Label: "过短"},
+			},
+		}, text, dict)
+		if len(got.ItemSubFields) != 0 {
+			t.Fatalf("all illegal sub field keys must be dropped, got %+v", got.ItemSubFields)
+		}
+		if len(got.Skipped) != 3 {
+			t.Fatalf("expected 3 skip entries, got %d: %+v", len(got.Skipped), got.Skipped)
+		}
+	})
 }
 
 // TestExtractSuggestAIRuleDecodedGeneration 锁定「防重启覆盖」：
@@ -347,5 +395,62 @@ func TestExtractSuggestAIRuleOverwriteSemantics(t *testing.T) {
 	keep3, changed3 := mergeAISuggestRules(requested, suggested, empty, false)
 	if !changed3 || keep3["invoiceNo"].Desc != "AI描述" {
 		t.Fatalf("empty fields must be filled regardless of overwrite: %+v", keep3)
+	}
+}
+
+// TestExtractSuggestAIRuleStatusSurvivesMerge 回归一个实测踩到的缺陷：
+// 护栏结论（regex_status/regex_reason）如果只停留在「建议」阶段、合并时被丢掉，
+// 前端只能按"有没有正则"重新猜，于是自定义字段明明该报
+// rejected_not_standard，却显示成信息量为零的 rejected_empty。
+// 这条测试锁定「结论必须跟着值流到最终响应」。
+func TestExtractSuggestAIRuleStatusSurvivesMerge(t *testing.T) {
+	fields := []AIRuleFieldInput{
+		{Name: "invoiceNo", DataType: "string"},
+		{Name: "车牌号", DataType: "string"},
+		{Name: "totalAmount", DataType: "number"},
+	}
+	suggested := []AISuggestRule{
+		{Name: "invoiceNo", Desc: "发票号码", Rule: "提取号码栏", Regex: `\b\d{20}\b`},
+		{Name: "车牌号", Desc: "车牌号", Rule: "从备注中分离车牌号", Regex: `\d{20}`},
+		{Name: "totalAmount", Desc: "价税合计", Rule: "提取合计栏", Regex: `\d+`},
+	}
+	const sample = "发票号码 24312000000012345678 备注 车牌号：渝C87567"
+	values, _ := MergeAIRuleSuggestions(fields, suggested, nil, false, sample)
+	got := NewAISuggestRulesResult("通行费发票", fields, values)
+
+	byName := map[string]AISuggestRuleValues{}
+	for _, f := range got.Fields {
+		byName[f.Name] = f
+	}
+
+	// 8 键白名单内的字段：正则过护栏 → accepted
+	if byName["invoiceNo"].RegexStatus != regexStatusAccepted {
+		t.Fatalf("invoiceNo should be accepted, got %q", byName["invoiceNo"].RegexStatus)
+	}
+	if byName["invoiceNo"].Regex == "" {
+		t.Fatalf("invoiceNo should carry the validated regex")
+	}
+	// 自定义中文 key：必须报 not_standard，而不是被抹平成 rejected_empty
+	if byName["车牌号"].RegexStatus != regexRejectNotStandard {
+		t.Fatalf("车牌号 should report rejected_not_standard, got %q", byName["车牌号"].RegexStatus)
+	}
+	if byName["车牌号"].RegexReason == "" {
+		t.Fatalf("车牌号 must carry a diagnostic reason")
+	}
+	// 标准键但补洞器不支持：同样报 not_standard，但原因文案必须与自定义字段区分开
+	if byName["totalAmount"].RegexStatus != regexRejectNotStandard {
+		t.Fatalf("totalAmount should report rejected_not_standard, got %q", byName["totalAmount"].RegexStatus)
+	}
+	if !strings.Contains(byName["totalAmount"].RegexReason, "标准字段") {
+		t.Fatalf("totalAmount is a standard field; reason must say so, got %q", byName["totalAmount"].RegexReason)
+	}
+	if !strings.Contains(byName["车牌号"].RegexReason, "自定义扩展字段") {
+		t.Fatalf("车牌号 is a custom key; reason must say so, got %q", byName["车牌号"].RegexReason)
+	}
+	// 护栏未通过的值里绝不能残留正则（否则可能被保存进库）
+	for _, f := range got.Fields {
+		if f.RegexStatus != regexStatusAccepted && f.Regex != "" {
+			t.Fatalf("field %q carries a regex that failed the guards: %q", f.Name, f.Regex)
+		}
 	}
 }

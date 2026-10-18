@@ -9,8 +9,8 @@
 
       <!-- 上传区 -->
       <div class="ai-upload">
-        <t-upload v-model="fileList" :auto-upload="false" :max-size="20" accept=".pdf,.png,.jpg,.jpeg,.txt"
-          :files="fileList" @change="onFileChange" placeholder="支持 PDF / PNG / JPG / TXT，最大 20MB" />
+        <t-upload v-model:files="fileList" :auto-upload="false" :max-size="20" accept=".pdf,.png,.jpg,.jpeg,.txt"
+          placeholder="支持 PDF / PNG / JPG / TXT，最大 20MB" />
       </div>
 
       <div class="ai-actions">
@@ -94,7 +94,10 @@
       </div>
 
       <t-alert v-if="skipped.length" theme="warning" variant="light" class="ai-field-alert">
-        有 {{ skipped.length }} 项未并入：{{ skippedPreview }}
+        有 {{ skipped.length }} 项建议未被采纳：
+        <ul class="ai-skip-list">
+          <li v-for="(s, i) in skipped" :key="`skip-${i}`"><b>{{ s.name }}</b> — {{ s.reason }}</li>
+        </ul>
       </t-alert>
 
       <div class="ai-actions">
@@ -110,11 +113,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import type { UploadFile } from 'tdesign-vue-next'
 import { aiSuggestFields, type AiSuggestFieldsResult } from '@/api/fleet'
 import { aiStandardFieldLabel } from './aiFieldMerge'
 
-/** t-upload 的文件项：只用到 .file（原始 File 对象），其余字段我们不关心。 */
-interface UploadedFile { file?: File | null }
+/**
+ * t-upload 的文件项直接复用 TDesign 的 UploadFile 类型。
+ * 注意：原生 File 在 `.raw`（TDesign 1.x 契约），不存在 `.file` ——
+ * 之前误读 `.file` 导致上传后「开始识别」永远置灰，UI 实测才发现。
+ */
 
 const props = defineProps<{
   visible: boolean
@@ -134,7 +141,7 @@ interface StandardRow { key: string; label?: string; data_type?: string; sample?
 interface SubRow { key: string; label?: string; data_type?: string; width?: number; picked: boolean }
 interface CustomRow { name: string; data_type?: string; sample?: string; store?: string; picked: boolean }
 
-const fileList = ref<UploadedFile[]>([])
+const fileList = ref<UploadFile[]>([])
 const sampleText = ref('')
 const textMode = ref(false)
 const loading = ref(false)
@@ -146,7 +153,7 @@ const skipped = ref<Array<{ name: string; reason: string }>>([])
 
 const canRun = computed(() => {
   if (loading.value) return false
-  const file = fileList.value[0]?.file
+  const file = fileList.value[0]?.raw
   return file ? true : !!sampleText.value.trim()
 })
 const pickedCount = computed(
@@ -157,15 +164,11 @@ const pickedCount = computed(
 const totalCount = computed(
   () => standardPicked.value.length + subFields.value.length + customFields.value.length,
 )
-const skippedPreview = computed(() => skipped.value.slice(0, 3).map((s) => `${s.name}（${s.reason}）`).join('；'))
 
 function labelOf(f: StandardRow): string {
   return aiStandardFieldLabel(f.key, f.label)
 }
 
-function onFileChange(ctx: { files?: UploadedFile[] }) {
-  fileList.value = ctx?.files?.slice(0, 1) || []
-}
 
 watch(() => props.visible, (v) => {
   if (!v) {
@@ -185,7 +188,7 @@ async function runSuggest() {
   if (!props.kbId) { MessagePlugin.error('缺少知识库 ID'); return }
   loading.value = true
   try {
-    const file = textMode.value ? null : (fileList.value[0]?.file || null)
+    const file = textMode.value ? null : (fileList.value[0]?.raw || null)
     const res: any = await aiSuggestFields(props.kbId, {
       scope: props.scope || 'invoice',
       cert_type: props.certType,
@@ -203,7 +206,8 @@ async function runSuggest() {
       .map((f) => ({ ...f, picked: true }))
     subFields.value = (data.item_sub_fields || []).map((s) => ({ ...s, picked: true }))
     customFields.value = (data.custom_fields || []).map((c) => ({ ...c, picked: !!c.sample }))
-    skipped.value = []
+    // 后端丢弃的建议要能看到原因，否则用户会以为"模型漏识别了"
+    skipped.value = data.skipped || []
     const n = totalCount.value
     if (!n) MessagePlugin.warning('未能从该样票识别出字段，建议换一张票面更完整的样票')
     else MessagePlugin.success(`识别完成，共 ${n} 项建议`)
@@ -326,6 +330,12 @@ function onClose() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ai-skip-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  li { line-height: 1.7; }
+}
+
 .ai-sample-empty {
   font-style: italic;
   color: var(--td-text-color-placeholder);

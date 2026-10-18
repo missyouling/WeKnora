@@ -187,6 +187,13 @@ type AISuggestCustomField struct {
 	RemarkPart bool   `json:"remark_part"`
 }
 
+// AISuggestSkipInfo 一条被丢弃的建议及原因。
+// 前端要能看到"我明明勾了却没进去"的原因——静默丢弃比报错更让人困惑。
+type AISuggestSkipInfo struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
 // AISuggestFieldsResult 接口 A 的最终返回（已过后处理）。
 type AISuggestFieldsResult struct {
 	CertType            string                   `json:"cert_type"`
@@ -195,6 +202,7 @@ type AISuggestFieldsResult struct {
 	StandardFields      []AISuggestStandardField `json:"standard_fields"`
 	ItemSubFields       []AISuggestSubField      `json:"item_sub_fields"`
 	CustomFields        []AISuggestCustomField   `json:"custom_fields"`
+	Skipped             []AISuggestSkipInfo      `json:"skipped"`
 }
 
 // ---- 模型原始输出（宽容解析用的宽松结构） ----
@@ -229,6 +237,21 @@ type AISuggestFieldsRaw struct {
 	CustomFields   []AISuggestCustomFieldRaw   `json:"custom_fields"`
 }
 
+// invoiceContractCanonicalKeys 契约键的 canonical 形态集合。
+//
+// 配置里的字段名可能是 camelCase（totalAmount）而契约键是 snake_case
+// （total_amount），直接查会漏判，导致"标准字段但补洞器不支持"被说成
+// "自定义扩展字段"——两句文案对用户意味着完全不同的下一步动作。
+var invoiceContractCanonicalKeys = func() map[string]bool {
+	out := map[string]bool{}
+	for k := range invoiceContractKeys() {
+		if c := canonicalFieldKey(k); c != "" {
+			out[c] = true
+		}
+	}
+	return out
+}()
+
 // invoiceContractKeys 反射 InvoiceExtractionItem 的 json tag，得到真正的落库契约键集合。
 //
 // 用反射而不是手抄常量：手抄清单迟早与结构体漂移，而模型被要求"只许用字典里的键"——
@@ -247,46 +270,36 @@ func invoiceContractKeys() map[string]bool {
 	return out
 }
 
-// invoiceLabelLookup 反查契约键的中文名（来自 invoiceFieldAliases 的正向表）。
-var invoiceLabelLookup = func() map[string]string {
-	out := map[string]string{}
-	for _, kv := range invoiceFieldAliases {
-		zh, en := kv.alias, kv.target
-		if en == "" {
-			continue
-		}
-		if _, ok := out[en]; !ok {
-			out[en] = zh
-		}
-	}
-	return out
-}()
-
 // InvoiceStandardFieldDictionary 发票标准字段字典（喂给模型的唯一可选键集合）。
+//
+// 中文名**显式写在这里**，不从 invoiceFieldAliases 反查：那张表是「中文 → 英文」的
+// 别名表（收据编号/发票号码/票号…都映射到 invoice_no），反向取"第一条别名"得到的是
+// 任意一个别名（可能正是"收据编号"），拿去当标准字段名会误导用户。
 func InvoiceStandardFieldDictionary() []InvoiceStandardField {
 	keys := invoiceContractKeys()
 	type spec struct {
 		key   string
+		label string
 		dtype string
 		hint  string
 	}
 	specs := []spec{
-		{"invoice_no", "text", "明确标注『发票号码/发票号/No.』后的数字串；机器编号、校验码、密码区一律不算"},
-		{"invoice_code", "text", "发票代码（10~12 位）；全电发票通常无此栏"},
-		{"invoice_date", "date", "开票日期，统一为 YYYY-MM-DD"},
-		{"invoice_type", "text", "票面标题所示的票据种类"},
-		{"total_amount", "number", "价税合计（小数），无货币符号"},
-		{"amount", "number", "不含税金额（小数）"},
-		{"tax", "number", "税额（小数）"},
-		{"tax_rate", "number", "税率（数字，13 表示 13%）"},
-		{"seller_name", "text", "销售方（开票方）名称"},
-		{"seller_tax_no", "text", "销售方纳税人识别号/统一社会信用代码"},
-		{"buyer_name", "text", "购买方（受票方）名称"},
-		{"buyer_tax_no", "text", "购买方纳税人识别号/统一社会信用代码"},
-		{"issuer", "text", "开票人/收款人/经办人姓名"},
-		{"remark", "text", "票面备注栏原文"},
-		{"category", "text", "票据大类，如增值税专用发票"},
-		{"items", "array", "货物/服务明细行"},
+		{"invoice_no", "发票号码", "text", "明确标注『发票号码/发票号/No.』后的数字串；机器编号、校验码、密码区一律不算"},
+		{"invoice_code", "发票代码", "text", "发票代码（10~12 位）；全电发票通常无此栏"},
+		{"invoice_date", "开票日期", "date", "开票日期，统一为 YYYY-MM-DD"},
+		{"invoice_type", "发票类型", "text", "票面标题所示的票据种类"},
+		{"total_amount", "价税合计", "number", "价税合计（小数），无货币符号"},
+		{"amount", "不含税金额", "number", "不含税金额（小数）"},
+		{"tax", "税额", "number", "税额（小数）"},
+		{"tax_rate", "税率", "number", "税率（数字，13 表示 13%）"},
+		{"seller_name", "销售方名称", "text", "销售方（开票方）名称"},
+		{"seller_tax_no", "销售方纳税人识别号", "text", "销售方纳税人识别号/统一社会信用代码"},
+		{"buyer_name", "购买方名称", "text", "购买方（受票方）名称"},
+		{"buyer_tax_no", "购买方纳税人识别号", "text", "购买方纳税人识别号/统一社会信用代码"},
+		{"issuer", "开票人", "text", "开票人/收款人/经办人姓名"},
+		{"remark", "备注", "text", "票面备注栏原文"},
+		{"category", "票据大类", "text", "票据大类，如增值税专用发票"},
+		{"items", "项目明细", "array", "货物/服务明细行"},
 	}
 	out := make([]InvoiceStandardField, 0, len(specs))
 	for _, s := range specs {
@@ -296,11 +309,7 @@ func InvoiceStandardFieldDictionary() []InvoiceStandardField {
 				"invoice standard dictionary: %q is not a contract key of InvoiceExtractionItem", s.key)
 			continue
 		}
-		label := invoiceLabelLookup[s.key]
-		if label == "" {
-			label = s.key
-		}
-		out = append(out, InvoiceStandardField{Key: s.key, Label: label, DataType: s.dtype, Hint: s.hint})
+		out = append(out, InvoiceStandardField{Key: s.key, Label: s.label, DataType: s.dtype, Hint: s.hint})
 	}
 	return out
 }
@@ -414,13 +423,23 @@ func postProcessAISuggestFields(
 	for _, d := range dict {
 		dictByKey[d.Key] = d
 	}
+	skipped := []AISuggestSkipInfo{}
 	sampleNorm := sampleText
 
 	// ① 标准字段
 	seenStd := map[string]bool{}
 	for _, f := range raw.StandardFields {
 		key := strings.TrimSpace(f.Key)
-		if key == "" || seenStd[key] || !contract[key] {
+		if key == "" || seenStd[key] {
+			continue
+		}
+		if !contract[key] {
+			// 白名单外的 key 一律丢弃，但要让用户知道为什么——
+			// 模型自造 key 往往意味着它没读懂字典，提示出来用户才能自己纠正。
+			skipped = append(skipped, AISuggestSkipInfo{
+				Name:   key,
+				Reason: "不是系统标准字段键，已忽略（如需保留请在扩展字段中填写）",
+			})
 			continue
 		}
 		seenStd[key] = true
@@ -435,7 +454,10 @@ func postProcessAISuggestFields(
 			}
 		}
 		if label == "" {
-			label = invoiceLabelLookup[key]
+			// 模型没给 label 且字典里也没有：退回 key 本身。
+			// 不再从 invoiceFieldAliases 反查——那张表反向取"第一条别名"得到的是
+			// 任意别名（可能正是"收据编号"），当标准字段名会误导用户。
+			label = key
 		}
 		out.StandardFields = append(out.StandardFields, AISuggestStandardField{
 			Key:      key,
@@ -451,7 +473,21 @@ func postProcessAISuggestFields(
 	seenSub := map[string]bool{}
 	for _, s := range raw.ItemSubFields {
 		key := strings.TrimSpace(s.Key)
-		if key == "" || seenSub[key] || len(key) > aiSubFieldKeyMaxLen || !aiSubFieldKeyRe.MatchString(key) {
+		if key == "" {
+			continue
+		}
+		// 键形态是硬约束：子列键会写进 items[].extra 的 JSON key 与前端列定义，
+		// 放进中文/连字符会让模型输出与列名校验两套口径打架。丢弃时说明原因，
+		// 否则用户看到"勾了没反应"无从下手。
+		if len(key) > aiSubFieldKeyMaxLen || !aiSubFieldKeyRe.MatchString(key) {
+			skipped = append(skipped, AISuggestSkipInfo{
+				Name:   key,
+				Reason: "子列键需为小写字母开头的小写下划线英文（如 name / qty / account_no）",
+			})
+			continue
+		}
+		if seenSub[key] {
+			skipped = append(skipped, AISuggestSkipInfo{Name: key, Reason: "与前面建议的明细子列重名"})
 			continue
 		}
 		seenSub[key] = true
@@ -479,12 +515,18 @@ func postProcessAISuggestFields(
 		if name == "" {
 			continue
 		}
-		if contract[name] || (canonicalFieldKey(name) != "" && contract[canonicalFieldKey(name)]) {
-			continue // 与标准契约键同名：它应出现在 standard_fields，不该是扩展字段
-		}
 		// 与本次已建议的扩展字段去重（canonical 归一，覆盖 invoiceNo / InvoiceNo 之类）
 		ck := canonicalFieldKey(name)
+		// 用 canonical 集合判冲突：契约键是 snake_case（total_amount），
+		// 而自定义名可能是 camelCase（totalAmount）或中文，直接查 contract[name]
+		// 会漏判，于是"标准字段但补洞器不支持"被误报为"自定义扩展字段"。
+		if ck != "" && invoiceContractCanonicalKeys[ck] {
+			// 与标准契约键同名：它应出现在 standard_fields，不该是扩展字段
+			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与系统标准字段同名，应归入标准字段"})
+			continue
+		}
 		if seenCustom[ck] {
+			skipped = append(skipped, AISuggestSkipInfo{Name: name, Reason: "与前面建议的扩展字段重名"})
 			continue
 		}
 		seenCustom[ck] = true
@@ -504,6 +546,7 @@ func postProcessAISuggestFields(
 			RemarkPart: store == "remark" || c.RemarkPart,
 		})
 	}
+	out.Skipped = skipped
 	return out
 }
 
@@ -573,11 +616,18 @@ type AISuggestRulesResult struct {
 }
 
 // AIRuleFieldValues 现有字段值（合并时的"现状"侧）。
+//
+// 注意 RegexStatus/RegexReason 必须随值一起流动：护栏结论如果只留在建议里，
+// 合并阶段一丢，前端就只能看到"未配置正则兜底"这种无信息量的文案，
+// 白白丢掉"自定义字段不参与补洞""样票上无法唯一命中"这些真正有用的诊断。
 type AIRuleFieldValues struct {
 	Desc     string
 	Rule     string
 	Required bool
 	Regex    string
+	// RegexStatus/RegexReason 是本轮护栏对该字段的结论（仅本轮建议涉及的字段会填）。
+	RegexStatus string
+	RegexReason string
 }
 
 // buildRuleSuggestPrompt 拼接口 B 的 Prompt。
@@ -648,15 +698,52 @@ func SuggestInvoiceRulesForFields(
 }
 
 // MergeAIRuleSuggestions 按 overwrite 语义把建议合并进现状，返回 (合并值, 是否有实质变化)。
+//
+// 与内层 mergeAISuggestRules 的差别：这里多跑一遍正则护栏，并把
+// regex_status/regex_reason 一起写进结果值——护栏结论必须跟着值流到前端，
+// 否则界面只会显示"未配置正则兜底"，把"自定义字段不参与补洞"这类真正有用的
+// 诊断抹平（实测踩过：车牌号明明该报 not_standard，却显示 rejected_empty）。
 func MergeAIRuleSuggestions(
 	fields []AIRuleFieldInput, suggested []AISuggestRule,
-	existing map[string]AIRuleFieldValues, overwrite bool,
+	existing map[string]AIRuleFieldValues, overwrite bool, sampleText string,
 ) (map[string]AIRuleFieldValues, bool) {
-	return mergeAISuggestRules(fields, suggested, existing, overwrite)
+	// 先把护栏结论映射回建议（按 canonical 匹配，容忍模型回 camelCase 变体）
+	guarded := make(map[string][2]string, len(suggested)) // canonical -> (status, reason)
+	regexByName := make(map[string]string, len(suggested))
+	for _, s := range suggested {
+		n := strings.TrimSpace(s.Name)
+		if n == "" {
+			continue
+		}
+		_, status, reason := guardAIRuleRegex(n, s.Regex, sampleText)
+		guarded[canonicalFieldKey(n)] = [2]string{status, reason}
+		if status == regexStatusAccepted {
+			regexByName[n] = strings.TrimSpace(s.Regex)
+		}
+	}
+	merged, changed := mergeAISuggestRules(fields, suggested, existing, overwrite)
+	for name, v := range merged {
+		if g, ok := guarded[canonicalFieldKey(name)]; ok {
+			v.RegexStatus, v.RegexReason = g[0], g[1]
+			// 护栏没通过时不要把模型给的宽泛正则留在值里：前端只看 regex 字段，
+			// 一个未通过校验的正则混进去就可能被保存进库。
+			if g[0] != regexStatusAccepted {
+				v.Regex = ""
+			} else if re, ok := regexByName[name]; ok {
+				v.Regex = re
+			}
+			merged[name] = v
+		}
+	}
+	return merged, changed
 }
 
-// NewAISuggestRulesResult 组装接口 B 的响应：把合并后的字段值按请求顺序排列，
-// 并为每个字段带上正则护栏结论（accepted 时才有非空 regex）。
+// NewAISuggestRulesResult 组装接口 B 的响应：把合并后的字段值按请求顺序排列。
+//
+// regex_status/regex_reason 取自合并阶段携带的护栏结论（AIRuleFieldValues 里），
+// 而不是在这里按"有没有正则"重新猜——后者会把"自定义字段不参与补洞"这类
+// 真正有用的诊断抹平成"未配置正则兜底"。
+// 兜底仅用于**本轮未被建议覆盖**的字段（沿用已保存的正则）。
 func NewAISuggestRulesResult(
 	certType string, fields []AIRuleFieldInput, values map[string]AIRuleFieldValues,
 ) *AISuggestRulesResult {
@@ -671,14 +758,18 @@ func NewAISuggestRulesResult(
 			continue
 		}
 		v := values[name]
+		status, reason := v.RegexStatus, v.RegexReason
+		if status == "" {
+			status, reason = regexStatusOf(v.Regex), regexReasonOf(v.Regex)
+		}
 		out.Fields = append(out.Fields, AISuggestRuleValues{
 			Name:        name,
 			Desc:        v.Desc,
 			Rule:        v.Rule,
 			Required:    v.Required,
 			Regex:       v.Regex,
-			RegexStatus: regexStatusOf(v.Regex),
-			RegexReason: regexReasonOf(v.Regex),
+			RegexStatus: status,
+			RegexReason: reason,
 		})
 	}
 	return out
@@ -789,6 +880,12 @@ func guardAIRuleRegex(field, pattern, sampleText string) (string, string, string
 	// **结构性**事实。返回后者才真正回答了用户"我为什么配不了正则"。
 	if st := guardAIRegexPatchable(field); st != "" {
 		if st == regexRejectNotStandard {
+			// 两种"不可配"要说不同的话：用户自定义的中文 key 与"系统标准字段但补洞器
+			// 装不下"（如 total_amount / tax_rate）需要的下一步动作完全不同——
+			// 前者只能改抽取方式，后者是有意不补洞。
+			if invoiceContractCanonicalKeys[canonicalFieldKey(strings.TrimSpace(field))] {
+				return "", st, "该字段是系统标准字段，但后端补洞器只支持发票号/发票代码/开票日期/购销方名称/购销方税号/开票人这 8 个字段"
+			}
 			return "", st, "自定义扩展字段不参与后置正则补洞"
 		}
 		return "", st, "该字段不在后端补洞白名单内"
