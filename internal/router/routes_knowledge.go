@@ -121,6 +121,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			{
 				kbDirectRead.GET("/invoices", g.Viewer(), g.KBAccessRead("id"), business.ListInvoiceRecords)
 				kbDirectRead.GET("/invoice-overview-stats", g.Viewer(), g.KBAccessRead("id"), business.InvoiceOverviewStats)
+				// 源文件 ↔ 发票列表 100% 对齐巡检（只读，返回孤儿清单与原因）
+				kbDirectRead.GET("/invoice-alignment-summary", g.Viewer(), g.KBAccessRead("id"), business.InvoiceAlignmentSummaryHandler)
+				kbDirectRead.GET("/invoice-pending-delete-sweep", g.Viewer(), g.KBAccessRead("id"), business.InvoicePendingDeleteSweepHandler)
 
 				kbDirectRead.GET("/invoice-tax-rates", g.Viewer(), g.KBAccessRead("id"), business.ListInvoiceTaxRates)
 				kbDirectRead.GET("/contracts", g.Viewer(), g.KBAccessRead("id"), business.ListContractRecords)

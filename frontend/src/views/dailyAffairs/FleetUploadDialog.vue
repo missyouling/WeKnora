@@ -36,6 +36,9 @@
               <template v-else-if="t.status === 'duplicate'">
                 <span class="fu-item-status fu-item-status--dup">{{ t.msg || '知识库中已有相同文件' }}</span>
               </template>
+              <template v-else-if="t.status === 'recovered'">
+                <span class="fu-item-status fu-item-status--ok">已重新提取：{{ t.msg || '' }}</span>
+              </template>
               <template v-else-if="t.status === 'failed'">
                 <span class="fu-item-status fu-item-status--err">{{ t.msg || '提取失败' }}</span>
               </template>
@@ -64,7 +67,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata, listKnowledgeFiles } from '@/api/knowledge-base'
+import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { sharedExtractInFlight, saveFlightSnapshot } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
@@ -89,7 +92,8 @@ interface UpTask {
   file: File
   name: string
   size: number
-  status: 'queued' | 'uploading' | 'parsing' | 'extracting' | 'success' | 'failed' | 'duplicate'
+  // recovered：重复上传命中库中已有文件，已自动按其现状恢复（重新提取 / 仅提示）
+  status: 'queued' | 'uploading' | 'parsing' | 'extracting' | 'success' | 'failed' | 'duplicate' | 'recovered'
   progress: number
   msg?: string
   kid?: string
@@ -170,11 +174,11 @@ let autoCloseTimer: ReturnType<typeof setTimeout> | null = null
 // 深度监听任务列表：进度实时上报；全部任务结束后延迟自动关闭弹窗（手动关闭后后台任务仍会继续，结束时同样自动关闭）
 watch(tasks, (list) => {
   emitProgress()
-  const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed' || t.status === 'duplicate')
+  const allDone = list.length > 0 && list.every((t) => t.status === 'success' || t.status === 'failed' || t.status === 'duplicate' || t.status === 'recovered')
   if (allDone) {
-    // 仅当本批存在真正新增（success）的记录时才通知父组件联动刷新与切换；
-    // 全为重复/失败时不扰动当前列表（与原项目 uploadQueue 的 uploaded 口径一致）
-    if (list.some((t) => t.status === 'success')) emit('done', certTypeName.value)
+    // 仅当本批存在真正新增（success）或自动恢复重提取（recovered）的记录时才通知
+    // 父组件联动刷新；其余（重复/失败）不扰动当前列表。
+    if (list.some((t) => t.status === 'success' || t.status === 'recovered')) emit('done', certTypeName.value)
     if (!autoCloseTimer) {
       autoCloseTimer = setTimeout(() => {
         emit('update:visible', false)
@@ -248,12 +252,14 @@ function removeTask(key: string) {
 // ---- 状态展示 ----
 function taskIcon(t: UpTask) {
   if (t.status === 'success') return 'check-circle-filled'
+  if (t.status === 'recovered') return 'check-circle-filled'
   if (t.status === 'duplicate') return 'info-circle-filled'
   if (t.status === 'failed') return 'error-circle-filled'
   return 'file'
 }
 function taskColor(t: UpTask) {
   if (t.status === 'success') return 'var(--td-success-color)'
+  if (t.status === 'recovered') return 'var(--td-success-color)'
   if (t.status === 'duplicate') return 'var(--td-warning-color)'
   if (t.status === 'failed') return 'var(--td-error-color)'
   return 'var(--td-brand-color)'
@@ -384,22 +390,87 @@ async function runTask(t: UpTask) {
   } catch (err: any) {
     const code = err?.code ?? err?.error?.code ?? err?.data?.code
     const msg = err?.message || '上传失败'
-    // 复用原项目知识库重复文件机制：后端返回 duplicate_file（409），任务标记为「已存在」
+    // 复用知识库重复文件机制：后端返回 duplicate_file（409）+ recovery 摘要。
+    // 关键：不再把用户丢在一句无下一步操作的错误上，而是按 recovery 智能恢复：
+    //   ① can_reextract——库中文件没有可用票据 → 自动把分类改为本次所选并重新提取；
+    //   ② normal——库中文件已有正常票据 → 提示当前分类/开票日期 + 手动重新提取入口；
+    //   ③ 无法判定（删除中/解析失败/非票据等）→ 明确说明原因，提示重新上传。
     if (code === 'duplicate_file' || err?.status === 409 || /already exists|文件重复|重复上传/i.test(msg)) {
-      t.status = 'duplicate'
-      t.msg = '知识库中已有相同文件'
-      // 已存在文件同样补打标，供列表轮询提取
-      try {
-        const fl: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: 100 })
-        const arr = Array.isArray(fl?.data) ? fl.data : Array.isArray(fl?.list) ? fl.list : []
-        const hit = arr.find((k: any) => k.name === t.name || k.file_name === t.name)
-        if (hit?.id) savePending(hit.id, scope, certType)
-      } catch { /* ignore */ }
+      const recovery: any = err?.recovery || err?.data?.recovery || null
+      // 优先用 recovery 里的 knowledge id；取不到再回落到"已存在文件"响应体
+      const existingId: string = recovery?.knowledge_id
+        || err?.data?.id || err?.data?.knowledge_id || ''
+      handleDuplicateUpload(t, recovery, existingId)
     } else {
       t.status = 'failed'
       t.msg = msg
     }
   }
+}
+
+/**
+ * 上传去重冲突的智能恢复。
+ *
+ * 设计原则（对应「知识库源文件 ↔ 发票列表 100% 对齐」铁律）：
+ * 库里有文件却提取不出票据时，用户唯一自救路径是"重新提取"，而旧逻辑用
+ * 「知识库中已有相同文件」把这条路堵死了，只能重传——而重传又被哈希锁拦住，
+ * 形成死循环。这里直接复用同一个 knowledge，改分类 + 触发重新提取。
+ */
+async function handleDuplicateUpload(t: UpTask, recovery: any, existingId: string) {
+  const scope = currentScope.value
+  const certType = certTypeName.value
+  const reason: string = recovery?.reason || ''
+
+  // ① 库中文件没有可用票据 → 自动改分类 + 重新提取
+  if (recovery?.can_reextract) {
+    t.status = 'extracting'
+    t.progress = 40
+    t.msg = '库中该文件未提取出票据，正在按当前分类重新提取'
+    try {
+      if (t.kid || existingId) {
+        const kid = t.kid || existingId
+        t.kid = kid
+        // 先按本次所选分类归档，再触发提取（分类写进 fleet_cert_type）
+        try {
+          await updateKnowledgeMetadata(kid, certType
+            ? { fleet_scope: scope, fleet_cert_type: certType }
+            : { fleet_scope: scope })
+        } catch { /* 打标失败由列表轮询兜底 */ }
+        savePending(kid, scope, certType)
+        if (!sharedExtractInFlight.has(kid)) {
+          sharedExtractInFlight.add(kid)
+          saveFlightSnapshot()
+          await extractFile(kid, scope, certType)
+          sharedExtractInFlight.delete(kid)
+        }
+      }
+      t.status = 'recovered'
+      t.msg = '已自动重新提取'
+    } catch (e: any) {
+      t.status = 'failed'
+      t.msg = e?.message || '重新提取失败，请在列表中手动重试'
+    }
+    return
+  }
+
+  // ② 库中文件已有正常票据 → 提示当前分类/开票日期 + 手动重新提取入口
+  const cat = recovery?.category ? `（分类：${recovery.category}` : ''
+  const date = recovery?.invoice_date ? `，开票日期：${recovery.invoice_date}` : ''
+  const count = Number(recovery?.invoice_count || 0)
+  const tail = cat || date ? `${cat}${date}）` : ''
+  if (recovery?.normal) {
+    t.status = 'duplicate'
+    t.msg = `知识库中已有相同文件${count ? `（已提取 ${count} 张` : '（已提取'}${tail}，可在列表中查看或重新提取`
+    if (existingId) savePending(existingId, scope, certType)
+    return
+  }
+
+  // ③ 无法自动恢复：明确原因，不误导用户重传（重传仍会被哈希锁拦住）
+  t.status = 'duplicate'
+  t.msg = reason
+    ? `知识库中已有相同文件（${reason}）`
+    : '知识库中已有相同文件，请在列表中查看或删除后重试'
+  if (existingId) savePending(existingId, scope, certType)
 }
 
 function drainExtractQueue() {

@@ -56,7 +56,7 @@ func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.
 	return &BusinessExtractHandler{
 		KnowledgeHandler: kh, db: db, modelService: ms, businessSvc: bsvc,
 		storageResolver: storageResolver, resourceCatalog: resourceCatalog,
-		asynqClient: asynqClient,
+		asynqClient:    asynqClient,
 		documentReader: documentReader, tenantService: tenantService,
 	}
 }
@@ -1686,54 +1686,41 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 		return
 	}
 
-	// 移除该页发票
-	targetIdx := -1
-	for i, inv := range meta.Invoices {
-		if i == page-1 || inv.Page == page {
-			targetIdx = i
-			break
-		}
-	}
-	if targetIdx < 0 {
-		targetIdx = page - 1
-	}
-	meta.Invoices = append(meta.Invoices[:targetIdx], meta.Invoices[targetIdx+1:]...)
-	// 后续发票页码前移，保持页码=文档内出现顺序
-	for i := range meta.Invoices {
-		meta.Invoices[i].Page = i + 1
-	}
-
-	// 删空：整份文档一并删除
-	if len(meta.Invoices) == 0 {
-		if _, err := h.enqueueKnowledgeListDelete(effCtx, effectiveTenantID, kbID, []string{knowledgeID}); err != nil {
-			logger.Error(ctx, "Failed to enqueue knowledge delete after removing last invoice", err)
-			c.Error(errors.NewInternalServerError("failed to schedule delete: " + err.Error()))
+	// 移除该页发票 + 删空时级联删除源文件（service 层实现，见 knowledge_invoice_cascade_delete.go）。
+	// 级联顺序：先落 invoices=[] + pending_file_delete + parse_status=deleting（一次两列），
+	// 再 repo.DeleteKnowledge —— 保证即便异步清理失败也不会留下空壳孤儿挡住用户重传。
+	deletedFile, remaining, rerr := h.businessSvc.RemoveInvoicePage(effCtx, kbID, knowledgeID, page)
+	if rerr != nil {
+		logger.Error(ctx, "Failed to remove invoice page", rerr)
+		msg := rerr.Error()
+		if isInvalidInvoicePageDelete(msg) {
+			c.Error(errors.NewBadRequestError(msg))
 			return
+		}
+		c.Error(errors.NewInternalServerError("failed to remove invoice page: " + msg))
+		return
+	}
+	if deletedFile {
+		// 源文件已删（或已置 deleting）。入队清理 chunks / 向量 / 存储对象；
+		// 入队失败不影响上一步的删除结果，仅记录告警由巡检兜底。
+		if _, qerr := h.enqueueKnowledgeListDelete(effCtx, effectiveTenantID, kbID, []string{knowledgeID}); qerr != nil {
+			logger.Warn(ctx, "last invoice removed but enqueue knowledge delete failed (will be swept)", qerr)
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"success":      true,
-			"message":      "Invoice removed, source file scheduled for deletion",
+			"message":      "Invoice removed, source file deleted",
 			"deleted_file": true,
 		})
 		return
 	}
-
-	metaBytes, jerr := json.Marshal(meta)
-	if jerr != nil {
-		logger.Error(ctx, "Failed to encode invoice metadata after delete", jerr)
-		c.Error(errors.NewInternalServerError("failed to encode metadata"))
-		return
-	}
-	if err := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(metaBytes)); err != nil {
-		logger.Error(ctx, "Failed to persist invoice metadata after delete", err)
-		c.Error(errors.NewInternalServerError("failed to save metadata: " + err.Error()))
-		return
-	}
+	// 仍有剩余发票：service 已持久化剩余 invoices（页码已重排）。
+	// ⚠️ 此处**不得**再用函数开头解析出的 meta 回写 —— 那是删除前的全量快照，
+	// 会把刚删掉的发票写回去（联级删除与逐张删除都会静默失效）。
 	c.JSON(http.StatusOK, gin.H{
 		"success":      true,
 		"message":      "Invoice record deleted",
 		"deleted_file": false,
-		"data":         meta.Invoices,
+		"data":         remaining,
 	})
 }
 
@@ -1751,6 +1738,16 @@ func (h *BusinessExtractHandler) DeleteInvoicePage(c *gin.Context) {
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/{knowledgeId}/extract-contract-page [post]
+
+// isInvalidInvoicePageDelete 判断删除失败是否属于「调用方参数/状态错误」，
+// 这类错误应回 400 而不是 500（避免用户看到"系统错误"而反复重试无效操作）。
+func isInvalidInvoicePageDelete(msg string) bool {
+	return strings.Contains(msg, "out of range") ||
+		strings.Contains(msg, "positive integer") ||
+		strings.Contains(msg, "does not belong") ||
+		strings.Contains(msg, "no invoice extraction data") ||
+		strings.Contains(msg, "not found")
+}
 
 type invoiceCustomMetadata struct {
 	Kind          string                          `json:"kind"`

@@ -229,12 +229,19 @@ func (h *KnowledgeHandler) handleDuplicateKnowledgeError(c *gin.Context,
 	if dupErr, ok := err.(*types.DuplicateKnowledgeError); ok {
 		ctx := c.Request.Context()
 		logger.Warnf(ctx, "Detected duplicate %s: %s", duplicateType, secutils.SanitizeForLog(dupErr.Error()))
-		c.JSON(http.StatusConflict, gin.H{
+		resp := gin.H{
 			"success": false,
 			"message": dupErr.Error(),
 			"data":    knowledge, // knowledge contains the existing document
 			"code":    fmt.Sprintf("duplicate_%s", duplicateType),
-		})
+		}
+		// recovery：上传弹窗据此做「智能恢复」而不是把用户挡在冲突错误外。
+		// CanReextract=true 时前端自动改分类 + 重新提取；Normal 时提示现有
+		// 分类/开票日期并给手动重新提取入口。
+		if dupErr.Recovery != nil {
+			resp["recovery"] = dupErr.Recovery
+		}
+		c.JSON(http.StatusConflict, resp)
 		return true
 	}
 	return false
@@ -436,6 +443,11 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	knowledge, err := h.kgService.CreateKnowledgeFromFile(ctx, kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides)
 	// Check for duplicate knowledge error
 	if err != nil {
+		if dupErr, ok := err.(*types.DuplicateKnowledgeError); ok {
+			if h.handleDuplicateKnowledgeError(c, dupErr, dupErr.Knowledge, "file") {
+				return
+			}
+		}
 		if h.handleDuplicateKnowledgeError(c, err, knowledge, "file") {
 			return
 		}

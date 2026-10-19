@@ -1,4 +1,4 @@
-﻿// Package sandbox holds integration smoke tests for the daily-affairs sandbox
+// Package sandbox holds integration smoke tests for the daily-affairs sandbox
 // routes. The goal is regression protection: after a refactor, the 14 business
 // list/config endpoints must remain wired (not accidentally dropped to 404).
 package handler
@@ -32,6 +32,8 @@ func TestSandboxRoutesWired(t *testing.T) {
 	g := r.Group("/api/v1/knowledge-bases/:id")
 	{
 		g.GET("/invoices", h.ListInvoiceRecords)
+		g.GET("/invoice-alignment-summary", h.InvoiceAlignmentSummaryHandler)
+		g.GET("/invoice-pending-delete-sweep", h.InvoicePendingDeleteSweepHandler)
 		g.GET("/invoice-tax-rates", h.ListInvoiceTaxRates)
 		g.GET("/contracts", h.ListContractRecords)
 		g.GET("/contract-types", h.ListContractTypes)
@@ -52,6 +54,8 @@ func TestSandboxRoutesWired(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/knowledge-bases/kb1/invoices"},
+		{http.MethodGet, "/api/v1/knowledge-bases/kb1/invoice-alignment-summary"},
+		{http.MethodGet, "/api/v1/knowledge-bases/kb1/invoice-pending-delete-sweep"},
 		{http.MethodGet, "/api/v1/knowledge-bases/kb1/invoice-tax-rates"},
 		{http.MethodGet, "/api/v1/knowledge-bases/kb1/contracts"},
 		{http.MethodGet, "/api/v1/knowledge-bases/kb1/contract-types"},

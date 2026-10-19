@@ -88,7 +88,10 @@
         @sort-change="onSortChange"
       >
         <template #invoiceNo="{ row }: any">
-          <span class="row-invoice-no" :title="row.invoiceNo || row.fileName">{{ row.invoiceNo || row.fileName }}</span>
+          <span v-if="row.isPlaceholder" class="row-placeholder-badge" :title="row.placeholderReason">
+            <t-tag size="small" theme="warning" variant="light-outline">{{ row.placeholderReason || '未提取出票据' }}</t-tag>
+          </span>
+          <span v-else class="row-invoice-no" :title="row.invoiceNo || row.fileName">{{ row.invoiceNo || row.fileName }}</span>
           <span v-if="pageBadgeOf(row)" class="row-page-badge">{{ pageBadgeOf(row) }}</span>
         </template>
         <template #invoiceDate="{ row }: any">
@@ -604,6 +607,11 @@ interface InvoiceRow extends Record<string, any> {
   multiIndex?: string
   tags?: any[]
   description?: string
+  // 文件级占位行：该源文件没有任何可展示的发票明细（提取失败 / 未提取出票据 /
+  // 删空待清理），但文件仍在知识库中。占位行是"知识库 ↔ 列表 100% 对齐"的兜底，
+  // 严禁被静默过滤——否则用户既看不见它，又被相同文件哈希挡住重传。
+  isPlaceholder?: boolean
+  placeholderReason?: string
 }
 
 
@@ -1069,6 +1077,10 @@ const mapInvoiceRecord = (r: any): InvoiceRow => ({
   kind: 'invoice',
   tags: Array.isArray(r.tags) ? r.tags.map((t: any) => (typeof t === 'string' ? { id: t, name: t } : t)) : [],
   description: '',
+  // 文件级占位行透传：后端对"无任何发票明细但文件仍在库中"的记录置位，
+  // 前端绝不静默过滤（知识库 ↔ 列表 100% 对齐铁律）。
+  isPlaceholder: !!r.is_placeholder,
+  placeholderReason: r.placeholder_reason || '',
   invoiceNo: r.invoice_no || '',
   invoiceDate: r.invoice_date || '',
   invoiceType: r.invoice_type || '',
@@ -2736,6 +2748,11 @@ watch(printVisible, (v) => {
 .row-invoice-no {
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-size: 13px; font-weight: 600; color: var(--td-text-color-primary);
+}
+/* 文件级占位行徽章：源文件仍在库但未提取出票据，提示用户可重新提取/删除 */
+.row-placeholder-badge {
+  flex-shrink: 0; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .row-page-badge {
   flex-shrink: 0; margin-left: 6px; height: 18px; padding: 0 6px; border-radius: 999px;

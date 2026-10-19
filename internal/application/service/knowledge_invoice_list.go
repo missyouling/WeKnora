@@ -82,17 +82,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 		}
 		// 2. 平铺 invoices
 		for _, k := range knowledges {
-			if k == nil || len(k.CustomMetadata) == 0 {
+			if k == nil {
 				continue
 			}
-			var meta invoiceMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
-				continue
-			}
-			// 旧版恢复行兜底：meta 无 kind 但保留 auto_deleted_count（曾被自动删除后
-			// 人工恢复）→ 视作待补录占位行，避免这类记录刷新后从列表消失。
-			legacyManual := meta.Kind != "invoice" && meta.AutoDeletedCount > 0
-			if meta.Kind != "invoice" && !legacyManual {
+			// 解析/提取中的文件由列表顶部状态条展示，不以占位行占用列表
+			// （既有交互契约，见 InvoiceManagement.vue 顶部 BusinessParseStatusBar）。
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
 				continue
 			}
 			tags := make([]string, 0, len(k.Tags))
@@ -101,28 +96,65 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					tags = append(tags, t.Name)
 				}
 			}
+			// 铁律一（知识库 ↔ 列表 100% 对齐）：文件还在知识库里，就绝不允许从
+			// 列表里静默消失。凡是无法产出任何发票行的文件，一律渲染文件级占位行，
+			// 让它能被看见、能重新提取或删除 —— 否则它会变成"既看不见、又被相同
+			// 文件哈希挡住重传"的孤儿数据。
+			placeholderFor := func(reason string, extractStatus, extractError string) {
+				records = append(records, types.InvoiceRecord{
+					KnowledgeID:       k.ID,
+					KnowledgeTitle:    k.Title,
+					FileName:          k.FileName,
+					FileType:          k.FileType,
+					Tags:              tags,
+					ExtractStatus:     extractStatus,
+					ExtractError:      extractError,
+					KBID:              k.KnowledgeBaseID,
+					CreatedAt:         k.CreatedAt,
+					IsPlaceholder:     true,
+					PlaceholderReason: reason,
+				})
+			}
+			if len(k.CustomMetadata) == 0 {
+				placeholderFor(invoicePlaceholderReason("", "", k.ParseStatus), "", "")
+				continue
+			}
+			var meta invoiceMetadata
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				placeholderFor("文件记录异常", "", "")
+				continue
+			}
+			// 旧版恢复行兜底：meta 无 kind 但保留 auto_deleted_count（曾被自动删除后
+			// 人工恢复）→ 视作待补录占位行，避免这类记录刷新后从列表消失。
+			legacyManual := meta.Kind != "invoice" && meta.AutoDeletedCount > 0
+			if meta.Kind != "invoice" && !legacyManual {
+				// 发票库里被判定为非票据的文件（误传合同/收据等）同样必须可见，
+				// 并明确标注原因，否则用户既找不到它、也无法通过重传纠正分类。
+				reason := "未识别为发票"
+				if meta.Kind == "not_invoice" && strings.TrimSpace(meta.ExtractError) != "" {
+					reason = "未识别为发票：" + strings.TrimSpace(meta.ExtractError)
+				}
+				placeholderFor(reason, meta.ExtractStatus, meta.ExtractError)
+				continue
+			}
 			// 人工入库占位行：恢复（重新入库）后 extract_status=manual，字段待用户
 			// 编辑补录 —— 列表必须立即显示该记录（用户可点开编辑）。
 			// 同时兜底：提取/保存后仍无任何有效字段（success + 全空）的记录同样
 			// 显示为待补录占位，避免"打开弹窗未编辑→自动保存空字段"后记录从列表消失。
 			if invoiceItemsAllBlank(meta.Invoices) &&
 				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
-				records = append(records, types.InvoiceRecord{
-					KnowledgeID:    k.ID,
-					KnowledgeTitle: k.Title,
-					FileName:       k.FileName,
-					FileType:       k.FileType,
-					Tags:           tags,
-					ExtractStatus:  "manual",
-					ExtractError:   meta.ExtractError,
-					KBID:           k.KnowledgeBaseID,
-					CreatedAt:      k.CreatedAt,
-				})
+				placeholderFor("待补录", "manual", meta.ExtractError)
 				continue
 			}
 			if len(meta.Invoices) == 0 {
+				// invoices 为空且不在上面的兜底分支里：提取失败 / 解析出 0 张 /
+				// 最后一票被删后正待清理 —— 同样渲染文件级占位行。
+				placeholderFor(
+					invoicePlaceholderReason(meta.ExtractStatus, meta.ExtractError, k.ParseStatus),
+					meta.ExtractStatus, meta.ExtractError)
 				continue
 			}
+			appendedForFile := 0
 			for _, inv := range meta.Invoices {
 				// 过滤"空提取"记录：LLM 提取失败返回的空对象（无发票号且无任何
 				// 有效内容）不作为发票展示，避免列表出现无意义的空行。
@@ -186,6 +218,25 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					ExtractError:   meta.ExtractError,
 					KBID:           k.KnowledgeBaseID,
 					CreatedAt:      k.CreatedAt,
+				})
+				appendedForFile++
+			}
+			// 铁律一（续）：invoices 非空但每张都是空白提取（LLM 空对象）时，
+			// 上面的循环一条都没追加 —— 这正是"知识库里有文件、列表 0 条"的
+			// 隐身路径。同样渲染文件级占位行，而不是静默丢弃整份文件。
+			if appendedForFile == 0 {
+				records = append(records, types.InvoiceRecord{
+					KnowledgeID:       k.ID,
+					KnowledgeTitle:    k.Title,
+					FileName:          k.FileName,
+					FileType:          k.FileType,
+					Tags:              tags,
+					ExtractStatus:     meta.ExtractStatus,
+					ExtractError:      meta.ExtractError,
+					KBID:              k.KnowledgeBaseID,
+					CreatedAt:         k.CreatedAt,
+					IsPlaceholder:     true,
+					PlaceholderReason: invoicePlaceholderReason(meta.ExtractStatus, meta.ExtractError, k.ParseStatus),
 				})
 			}
 		}
@@ -260,7 +311,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 		if filter.Status != "" && r.ExtractStatus != filter.Status {
 			continue
 		}
-		if !invoiceDateInRange(r.InvoiceDate, dateFrom, dateTo) {
+		if !invoiceRecordDateInRange(r, dateFrom, dateTo) {
 			continue
 		}
 		kept = append(kept, r)
@@ -354,6 +405,28 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	}, nil
 }
 
+// invoicePlaceholderReason 生成占位行原因文案，直接可展示给用户。
+// 优先级：文件删除中 > 解析失败 > 提取失败 > 提取中 > 未提取。
+func invoicePlaceholderReason(extractStatus, extractError, parseStatus string) string {
+	switch {
+	case parseStatus == "deleting":
+		return "文件删除中"
+	case parseStatus == "failed":
+		return "解析失败"
+	case extractStatus == "failed":
+		if strings.TrimSpace(extractError) != "" {
+			return "提取失败：" + strings.TrimSpace(extractError)
+		}
+		return "提取失败"
+	case extractStatus == "pending" || extractStatus == "processing":
+		return "提取中"
+	case strings.TrimSpace(extractError) != "":
+		return "未提取出票据：" + strings.TrimSpace(extractError)
+	default:
+		return "未提取"
+	}
+}
+
 // invoiceItemsAllBlank 判断提取列表是否完全没有有效数据（空数组或每项都为空提取）。
 func invoiceItemsAllBlank(invs []InvoiceExtractionItem) bool {
 	if len(invs) == 0 {
@@ -430,6 +503,16 @@ func invoiceDateInRange(date, from, to string) bool {
 }
 
 // invoiceRecordMatchKeyword 判断记录是否命中全字段搜索词（大小写不敏感）。
+//
+// 穿透范围（缺一不可，历史踩坑）：
+//   - 顶层发票字段 + 标签 + 金额 + 税率；
+//   - invoices[].fields 自定义动态字段桶（通行费「车牌号」就落在这里，
+//     顶层 InvoiceNo/SellerName 全都不含它 → 只搜顶层等于搜不到）；
+//   - items[] 的 Name/Spec/Unit/Extra 明细子列值（同一份文件的车牌号也可能
+//     只在明细行里）。
+//
+// 曾因只搜顶层字段，用户按车牌 `87567` 查询 13 张已在库的通行费发票得到
+// 「共 0 条」，误判数据丢失后重新上传又被「知识库中已有相同文件」挡住。
 func invoiceRecordMatchKeyword(r types.InvoiceRecord, kw string) bool {
 	fields := []string{
 		r.InvoiceNo, r.InvoiceCode, r.InvoiceDate, r.InvoiceType,
@@ -453,6 +536,21 @@ func invoiceRecordMatchKeyword(r types.InvoiceRecord, kw string) bool {
 			return true
 		}
 	}
+	// 发票级自定义动态字段（fields 桶）key + value：车牌号/自定义编码等
+	if mapContainsKeyword(r.Fields, kw) {
+		return true
+	}
+	// 明细子列（items）Name/Spec/Unit + Extra 桶：车牌号、通行日期、车辆类型等
+	for _, it := range r.Items {
+		for _, f := range []string{it.Name, it.Spec, it.Unit} {
+			if strings.Contains(strings.ToLower(f), kw) {
+				return true
+			}
+		}
+		if mapContainsKeyword(it.Extra, kw) {
+			return true
+		}
+	}
 	// 税率匹配：输入"3%" → 0.03；输入 "0.03" 直接匹配小数
 	if r.TaxRate != nil {
 		pct := kw
@@ -470,6 +568,132 @@ func invoiceRecordMatchKeyword(r types.InvoiceRecord, kw string) bool {
 		}
 	}
 	return false
+}
+
+// mapContainsKeyword 判断 JSONB 明细 map 的 key 或 string/number/bool value
+// 是否命中关键词。数字值按 %g/%f 双格式匹配，防止模型把车牌号写成 12345678
+// （数字）后再次从搜索中隐身。
+func mapContainsKeyword(m map[string]any, kw string) bool {
+	for k, v := range m {
+		if kw != "" && strings.Contains(strings.ToLower(k), kw) {
+			return true
+		}
+		switch val := v.(type) {
+		case string:
+			if strings.Contains(strings.ToLower(val), kw) {
+				return true
+			}
+		case float64:
+			if strings.Contains(strconv.FormatFloat(val, 'f', -1, 64), kw) {
+				return true
+			}
+			if strings.Contains(fmt.Sprintf("%.2f", val), kw) {
+				return true
+			}
+		case bool:
+			if strings.Contains(strconv.FormatBool(val), kw) {
+				return true
+			}
+		case json.Number:
+			if strings.Contains(strings.ToLower(val.String()), kw) {
+				return true
+			}
+		case []any:
+			for _, e := range val {
+				if s, ok := e.(string); ok && strings.Contains(strings.ToLower(s), kw) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// invoiceRecordDateInRange 判断记录是否落在日期区间 [from, to]（含，空端不限）。
+//
+// 两路命中（OR）：
+//  1. 顶层开票日期 invoice_date 落在区间内；
+//  2. 明细子列的通行日期起止（travel_from / travel_to，含中文同义键
+//     「通行日期起/止」「入口/出口日期」）与区间**有交集**。
+//
+// 为什么需要第 2 路：通行费电子票据汇总单常按次月汇总开票（票面开票日期
+// 2025-11-xx），而用户脑子里筛的是「通行日期在 2025-10」。只比顶层日期会
+// 把已入库的票整批筛掉，造成「明明上传过却查不到」。
+func invoiceRecordDateInRange(r types.InvoiceRecord, from, to string) bool {
+	if invoiceDateInRange(r.InvoiceDate, from, to) {
+		return true
+	}
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" && to == "" {
+		return true
+	}
+	// 明细通行日期：取该明细自身起止区间与筛选区间的交集
+	for _, it := range r.Items {
+		if it.Extra == nil {
+			continue
+		}
+		itemFrom := firstNonEmptyExtra(it.Extra, travelDateFromKeys...)
+		itemTo := firstNonEmptyExtra(it.Extra, travelDateToKeys...)
+		if itemFrom == "" && itemTo == "" {
+			continue
+		}
+		if dateRangeOverlaps(itemFrom, itemTo, from, to) {
+			return true
+		}
+	}
+	return false
+}
+
+// travelDateFromKeys / travelDateToKeys 通行日期起止的同义键（后端 snake_case
+// 与中文自定义键都要覆盖）。
+var (
+	travelDateFromKeys = []string{"travel_from", "travelfrom", "通行日期起", "入口日期", "上站日期"}
+	travelDateToKeys   = []string{"travel_to", "travelto", "通行日期止", "出口日期", "下站日期"}
+)
+
+// firstNonEmptyExtra 按候选键顺序取 Extra 桶里第一个非空字符串值。
+func firstNonEmptyExtra(extra map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := extra[k]; ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+// dateRangeOverlaps 判断明细起止区间 [a1,a2] 与筛选区间 [b1,b2] 是否有交集。
+// 日期统一去横线成 YYYYMMDD 后按字典序比较；明细侧缺一端时视为单点。
+func dateRangeOverlaps(aFrom, aTo, bFrom, bTo string) bool {
+	norm := func(s string) string {
+		return strings.ReplaceAll(strings.TrimSpace(s), "-", "")
+	}
+	a1, a2 := norm(aFrom), norm(aTo)
+	b1, b2 := norm(bFrom), norm(bTo)
+	if a1 == "" {
+		a1 = a2
+	}
+	if a2 == "" {
+		a2 = a1
+	}
+	if a1 > a2 {
+		a1, a2 = a2, a1
+	}
+	if b1 == "" {
+		b1 = b2
+	}
+	if b2 == "" {
+		b2 = b1
+	}
+	if b1 > b2 {
+		b1, b2 = b2, b1
+	}
+	if a1 == "" || b1 == "" {
+		return false
+	}
+	// 区间有交集：a1 <= b2 且 b1 <= a2（任一端为空表示该端不限）
+	return a1 <= b2 && (b1 == "" || b1 <= a2)
 }
 
 // approxEqualFloat 浮点税率比较（小数，1e-9 精度）。
