@@ -413,6 +413,9 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 	// 发票沙箱需要原始 chunk（走与生产一致的分批/规则管线），其它 scope 只吃拼装文本。
 	var testChunks []*types.Chunk
 	var testKnowledgeID string
+	// 被测文件持久化的权威分类（上传时选定）。沙箱的"用户分类绝对优先"必须与
+	// 正式提取同源：上传所选的分类会强制锁定所有票的类型与细分分类。
+	var testKnowledgeMeta types.JSON
 	if strings.TrimSpace(req.Text) != "" {
 		content = req.Text
 	} else if kid := strings.TrimSpace(req.KnowledgeID); kid != "" {
@@ -437,6 +440,7 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 			return
 		}
 		testChunks = chunks
+		testKnowledgeMeta = knowledge.CustomMetadata
 		content = buildFleetExtractionContent(knowledge.FileName, knowledge.Description, chunks)
 	} else {
 		c.Error(errors.NewBadRequestError("text 或 knowledge_id 至少提供一个"))
@@ -489,6 +493,31 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 			c.Error(errors.NewInternalServerError("提取失败: " + ierr.Error()))
 			return
 		}
+		// —— 与正式提取同源的后处理（runInvoiceCore 同序）——
+		// 1) 自定义识别规则归类：票面类型为空时用全文兜底。缺失这一步会假报
+		// "未提取到"——正式库里的类型就是这一步补的（实测：沙箱 invoice_type
+		// 空、库中"其它票据"）。
+		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
+			src := service.BuildExtractSourceText(testChunks)
+			for i := range invRes.Invoices {
+				if t := service.ClassifyTypeFromRules(invRes.Invoices[i].InvoiceType, recCfg); t != "" {
+					invRes.Invoices[i].InvoiceType = t
+				} else if invRes.Invoices[i].InvoiceType == "" {
+					if t := service.ClassifyTypeFromRules(src.Content, recCfg); t != "" {
+						invRes.Invoices[i].InvoiceType = t
+					}
+				}
+			}
+		}
+		// 2) 用户分类绝对优先 + 停用分类隔离：上传所选分类强制锁定所有票的
+		//    类型与细分分类（铁律）；未选时按启用分类集合隔离。ruleCertType 的
+		//    解析顺序与正式提取一致：请求 cert_type > 文件 invoice_category >
+		//    历史 fleet_cert_type。
+		ruleCertType := service.ResolveInvoiceCertType(certType, testKnowledgeMeta)
+		meta := service.InvoiceCustomMetadata{Invoices: invRes.Invoices}
+		h.applyInvoiceUserCategoryPrecedence(effCtx, &meta, ruleCertType)
+		invRes.Invoices = meta.Invoices
+
 		issues = invRes.ExtractIssues
 		patches = invRes.RegexPatches
 		invoiceCount = len(invRes.Invoices)
