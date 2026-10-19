@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -168,6 +169,35 @@ func ExtractInvoiceForSandbox(
 		res.ExtractIssues = append(res.ExtractIssues, *sampledIssue)
 	}
 	return res, nil
+}
+
+// InvoiceSandboxFields 把一张发票压成「配置字段名 → 值」的 map，供沙箱响应复用
+// 既有的 fields/missing 渲染逻辑。
+//
+// 键名必须落在**配置空间**（camelCase，如 invoiceNo）：发票结构体的 JSON tag 是
+// snake_case（invoice_no），而测试弹窗按配置字段名取值、判缺失 —— 若直接把
+// marshal 结果下发，所有字段都会键不匹配，被误报成"未提取到"。
+// 归一用 canonicalFieldKey（与 ValidateGenericExtraction 同一把尺子）。
+func InvoiceSandboxFields(item InvoiceExtractionItem, fields []types.ExtractFieldConfig) map[string]any {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return map[string]any{}
+	}
+	src := map[string]any{}
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return map[string]any{}
+	}
+	byCanon := make(map[string]any, len(src))
+	for k, v := range src {
+		byCanon[canonicalFieldKey(k)] = v
+	}
+	out := make(map[string]any, len(fields))
+	for _, f := range fields {
+		if v, ok := byCanon[canonicalFieldKey(f.Name)]; ok {
+			out[f.Name] = v
+		}
+	}
+	return out
 }
 
 // MergeInvoiceResults 把多批结果合并成一份（按发票号去重，保留首次出现）。

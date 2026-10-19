@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -494,9 +493,10 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		patches = invRes.RegexPatches
 		invoiceCount = len(invRes.Invoices)
 		if invoiceCount > 0 {
-			// 沙箱语义是「按一份样票验证配置」：取首张票字段回显，
+			// 沙箱语义是「按一份样票验证配置」：取首张票字段回显（键名落在配置
+			// 空间，否则 missing 会把所有字段误报为未提取到）。
 			// invoice_count 告知本文件实际识别出几张。
-			resultFields = invoiceItemFieldsMap(invRes.Invoices[0])
+			resultFields = service.InvoiceSandboxFields(invRes.Invoices[0], fields)
 			docType = invRes.Invoices[0].InvoiceType
 		}
 	} else {
@@ -542,20 +542,6 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 			"invoice_count":    invoiceCount,
 		},
 	})
-}
-
-// invoiceItemFieldsMap 把一张发票压成 map 视图（snake_case 契约键），
-// 供沙箱响应复用既有的 fields/missing 渲染逻辑。
-func invoiceItemFieldsMap(item service.InvoiceExtractionItem) map[string]any {
-	raw, err := json.Marshal(item)
-	if err != nil {
-		return map[string]any{}
-	}
-	out := map[string]any{}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return map[string]any{}
-	}
-	return out
 }
 
 func isEmptyExtractValue(v any) bool {

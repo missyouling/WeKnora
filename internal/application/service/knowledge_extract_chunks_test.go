@@ -242,3 +242,35 @@ func TestSandboxInvoicePipelineMatchesRules(t *testing.T) {
 	assert.Equal(t, 3, got.Invoices[0].PageNo, "沙箱也要回填物理页码")
 	assert.Equal(t, "invoice", got.Kind)
 }
+
+// TestSandboxFieldsLandInConfigKeySpace 锁定「沙箱回显键名必须落在配置空间」：
+// 配置字段名是 camelCase（invoiceNo），而发票结构体的 JSON tag 是 snake_case
+// （invoice_no）—— 若直接下发 marshal 结果，missing 会把全部字段误报为未提取到。
+func TestSandboxFieldsLandInConfigKeySpace(t *testing.T) {
+	chunks := []*types.Chunk{mkChunk(0, types.ChunkTypeText, flatSample("34013247"), 3)}
+	cfg := &types.KbExtractConfig{
+		Scope: "invoice",
+		Fields: []types.ExtractFieldConfig{
+			{Name: "invoiceNo", Enabled: true},
+			{Name: "invoiceCode", Enabled: true},
+			{Name: "buyerName", Enabled: true},
+			{Name: "totalAmount", Enabled: true},
+		},
+	}
+	got, err := ExtractInvoiceForSandbox(context.Background(), nil, chunks, cfg, "f")
+	require.NoError(t, err)
+	require.Len(t, got.Invoices, 1)
+
+	fields := InvoiceSandboxFields(got.Invoices[0], cfg.Fields)
+	// 每个配置字段名都要能取到值，且键名与配置一字不差（camelCase）。
+	require.Len(t, fields, len(cfg.Fields), "配置字段必须全部命中: %+v", fields)
+	for name, v := range fields {
+		assert.NotEmpty(t, v, "字段 %s 有键无值", name)
+	}
+	assert.Equal(t, "34013247", fields["invoiceNo"])
+	assert.Contains(t, fields, "invoiceCode")
+	// snake_case tag 不得出现在回显键里。
+	for k := range fields {
+		assert.NotContains(t, k, "_", "回显键必须落在配置空间: %q", k)
+	}
+}
