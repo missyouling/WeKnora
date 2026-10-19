@@ -104,29 +104,11 @@
           <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
         <template #taxRate="{ row }: any">
-          <t-tooltip placement="top" theme="light" overlay-class-name="rate-detail-overlay" :show-arrow="true">
-            <template #content>
-              <!-- 宽度随「启用子项列数 + 各自配置列宽」自适应（不再是写死的 680px） -->
-              <div class="rate-detail" :style="{ width: itemsPopoverWidth(row) + 'px' }">
-                <table v-if="(row.items || []).length" class="rate-detail-table">
-                  <thead>
-                    <tr>
-                      <th v-for="sf in enabledSubFieldsOfRow(row)" :key="sf.key"
-                        :style="sf.width ? { width: sf.width + 'px' } : undefined">{{ sf.label }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="(it, i) in row.items" :key="i">
-                      <td v-for="sf in enabledSubFieldsOfRow(row)" :key="sf.key" :class="itemCellClass(sf)"
-                        :style="sf.width ? { width: sf.width + 'px' } : undefined">{{ formatItemCell(it, sf) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <div v-else class="rate-detail-empty">暂无项目明细</div>
-              </div>
-            </template>
+          <!-- 明细浮层走中台组件 BusinessSubItemsPopover（宽度自适应与取值兜底同源码搬入） -->
+          <BusinessSubItemsPopover :items="row.items" :sub-fields="enabledSubFieldsOfRow(row)"
+            empty-text="暂无项目明细">
             <span class="row-mono row-rate">{{ rateTextOf(row) || '-' }}</span>
-          </t-tooltip>
+          </BusinessSubItemsPopover>
         </template>
         <template #tax="{ row }: any">
           <span class="row-mono">{{ formatAmount(row.tax) }}</span>
@@ -459,6 +441,8 @@ import {
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
 import { pdfPageOf } from './pdfPage'
+import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
+import { formatAmount, formatRate, ITEM_STD_KEYS } from './businessFormat'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
@@ -1633,7 +1617,6 @@ const fallbackItemSubFields = () => [
   { key: 'tax_rate', label: '税率/征收率', dataType: 'number' },
   { key: 'tax_amount', label: '税额', dataType: 'number' },
 ]
-const ITEM_STD_KEYS = new Set(['name', 'spec', 'unit', 'qty', 'price', 'amount', 'tax_rate', 'tax_amount'])
 // 按行计算明细子列（列表行 hover 回显用；itemSubFields 复用同一口径，仅绑定当前编辑行）
 const subFieldsOfRow = (row: InvoiceRow | null) => {
   if (!row) return fallbackItemSubFields()
@@ -1664,43 +1647,7 @@ const enabledSubFieldsOfRow = (row: InvoiceRow | null) => {
   })
 }
 
-/**
- * 明细浮层宽度：启用子项的列宽之和（0/缺省按 96px 估），再夹在 [280, 820]。
- *
- * 为什么不再写死 680px：通行费发票只有 6 列、普通发票有 8 列，
- * 固定宽度要么留大片空白要么把列挤成省略号。
- */
-const ITEM_POP_MIN = 280
-const ITEM_POP_MAX = 820
-const ITEM_POP_DEFAULT_COL = 96
-const itemsPopoverWidth = (row: InvoiceRow | null) => {
-  const cols = enabledSubFieldsOfRow(row)
-  if (!cols.length) return ITEM_POP_MIN
-  const sum = cols.reduce((acc: number, sf: any) => acc + (Number(sf.width) > 0 ? Number(sf.width) : ITEM_POP_DEFAULT_COL), 0)
-  // + 20px 给浮层的左右内距
-  return Math.min(ITEM_POP_MAX, Math.max(ITEM_POP_MIN, sum + 20))
-}
 const itemSubFields = computed(() => subFieldsOfRow(currentRow.value))
-// 列宽 class：按 dataType 映射（项目名称宽、数值窄、日期中、其它文本自适应）
-const itemCellClass = (sf: any) => {
-  if (sf.key === 'name') return 'item-cell--name'
-  if (sf.dataType === 'number') return 'item-cell--num'
-  if (sf.dataType === 'date') return 'item-cell--date'
-  return 'item-cell--text'
-}
-// 读取明细行子列值：标准键直接取行对象；分类子列从 extra 桶 / 行对象 / 历史字段兜底
-const itemValOf = (it: any, sf: any) => {
-  if (ITEM_STD_KEYS.has(sf.key)) return it?.[sf.key] ?? ''
-  return it?.[sf.key] ?? it?.extra?.[sf.key] ?? ''
-}
-// 明细行单元格格式化：数值保留两位、税率转百分比、缺值显示 '-'（tooltip 回显与编辑共用口径）
-const formatItemCell = (it: any, sf: any) => {
-  const v = itemValOf(it, sf)
-  if (v === undefined || v === null || v === '') return '-'
-  if (sf.key === 'tax_rate') return formatRate(Number(v))
-  if (sf.dataType === 'number') return formatAmount(Number(v))
-  return String(v)
-}
 // 写入明细行子列值：标准键写行对象；分类子列写 extra 桶（后端 UnmarshalJSON 自动收集）
 
 const fillEditForm = () => {
@@ -1988,15 +1935,7 @@ const sanitizeNum = (v: string): string => {
 const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)
 
-const formatAmount = (v?: number) =>
-  v === undefined || v === null ? '' : Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-// 税率以百分比显示且不保留小数（0.03 → 3%）
-const formatRate = (v?: number) => {
-  if (v === undefined || v === null) return ''
-  return `${Math.round(Number(v) * 100)}%`
-}
-
+// formatAmount / formatRate 已收入 businessFormat.ts（明细浮层中台组件共用同一口径）
 // 发票内所有不同税率档（用于 tooltip 展示全部档位；列表展示金额最大项税率）
 const rateVariants = (row: InvoiceRow): number[] => {
   const set = new Set<number>()
@@ -2512,21 +2451,7 @@ watch(printVisible, (v) => {
 /* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
 .doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
 /* 多税率发票：多个税率档位并排标签展示 */
-/* 浮层由 TDesign 渲染到 body 下，scoped 选择器无法命中，必须 :global 包裹 */
-:global(.rate-detail-overlay) { max-width: 840px; }
-:global(.rate-detail-overlay .t-popup__content) {
-  /* 宽度由内层 .rate-detail 的行内 width 决定（按启用列自适应） */
-  max-width: 840px !important;
-  width: max-content;
-  min-width: 0;
-}
-:global(.rate-detail-overlay .rate-detail-table) { border-collapse: collapse; font-size: 12px; line-height: 1.7; width: 100%; min-width: 0; }
-:global(.rate-detail-overlay .rate-detail-table th),
-:global(.rate-detail-overlay .rate-detail-table td) { padding: 2px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--td-component-stroke); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
-:global(.rate-detail-overlay .rate-detail-table th) { font-weight: 500; color: var(--td-text-color-secondary); }
-:global(.rate-detail-overlay .rate-detail-table td) { color: var(--td-text-color-primary); }
-:global(.rate-detail-overlay .rate-detail-table .item-cell--num) { text-align: right; }
-:global(.rate-detail-overlay .rate-detail-empty) { color: var(--td-text-color-secondary); font-size: 12px; padding: 4px 8px; }
+/* 明细浮层样式随组件走：见 BusinessSubItemsPopover.vue（.biz-sub-popover） */
 
 
 /* ---- 字段筛选弹层 ---- */
