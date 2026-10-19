@@ -55,6 +55,20 @@ export function saveFlightSnapshot(): void {
 
 loadFlightSnapshot()
 
+/**
+ * 轮询失败退避上限。后端 503（例如上游数据库连接池打满）时若仍按 3s 死循环
+ * 重试，只会把已经过载的后端压得更死，形成「轮询风暴 → 连接池耗尽 → 更多
+ * 503」的正反馈。改为指数退避，给后端留出恢复窗口。
+ */
+export const POLLING_MAX_BACKOFF_MS = 60_000
+
+/** 计算下一轮轮询延迟：无失败用基础间隔，失败按 2^n 退避并封顶。 */
+export function pollingBackoffDelay(baseMs: number, failures: number): number {
+  if (!Number.isFinite(failures) || failures <= 0) return baseMs
+  const factor = Math.pow(2, Math.min(failures, 5))
+  return Math.min(baseMs * factor, POLLING_MAX_BACKOFF_MS)
+}
+
 export interface UseBusinessPollingOptions {
   /** 当前知识库 ID（ref，可异步就绪） */
   kbId: Ref<string>
@@ -88,12 +102,20 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
   const RETRY_AFTER_MS = 5 * 60 * 1000
   const pendingFiles = ref<BusinessFileItem[]>([])
 
-  let timer: ReturnType<typeof setInterval> | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
   let busy = false
+  // 整轮（扫描 + onTick 刷新列表）在途锁。此前只有 scanOnce 有 busy 护栏，
+  // onTick（发票页 loadFiles）没有——列表接口一旦超过 intervalMs，每 3s 就会
+  // 新起一轮 onTick，请求层层叠加堆积，最终压垮后端连接池。
+  let tickBusy = false
+  let running = false
+  /** 连续失败轮数，驱动指数退避；任一轮成功即归零。 */
+  const consecutiveFailures = ref(0)
 
-  const scanOnce = async () => {
-    if (!kbId.value || busy) return
+  const scanOnce = async (): Promise<boolean> => {
+    if (!kbId.value || busy) return true
     busy = true
+    let ok = true
     try {
       const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
       const data = res?.data || res?.list || []
@@ -169,29 +191,66 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
         const es = it?.custom_metadata?.extract_status
         if (es && es !== 'pending' && es !== 'processing') extractInFlight.value.delete(id)
       }
-    } catch { /* 静默，下轮重试 */ }
-    finally {
+    } catch {
+      // 不抛给外层：本轮失败只用于驱动退避，下轮继续（旧行为是纯静默，
+      // 会把 503 风暴藏起来且永不降频）。
+      ok = false
+    } finally {
       // 每轮落盘：刷新后模块级 in-flight 能被回填，避免重复提交撞 409
       saveFlightSnapshot()
       busy = false
     }
+    return ok
   }
 
-  const tick = async () => {
-    if (!kbId.value || document.hidden) return
-    await scanOnce()
-    if (onTick) await onTick()
+  /**
+   * 一轮完整轮询：扫描文件 + 业务侧刷新（onTick）。
+   * 返回本轮是否整体成功，供调度器决定退避。
+   */
+  const tick = async (): Promise<boolean> => {
+    // document 在 SSR / Node 单测环境不存在，必须显式判空再取 hidden。
+    if (!kbId.value || (typeof document !== 'undefined' && document.hidden)) return true
+    // 上一轮尚未结束：直接跳过本轮，绝不叠加并发请求。
+    if (tickBusy) return true
+    tickBusy = true
+    try {
+      const scanOk = await scanOnce()
+      let refreshOk = true
+      if (onTick) {
+        try {
+          await onTick()
+        } catch {
+          refreshOk = false
+        }
+      }
+      const ok = scanOk && refreshOk
+      // 退避计数内聚在 tick 里：只要一轮真实执行过，就按结果记成功/失败，
+      // 调度器只负责读取，避免"跳过轮次"被误计为失败。
+      consecutiveFailures.value = ok
+        ? 0
+        : Math.min(consecutiveFailures.value + 1, 6)
+      return ok
+    } finally {
+      tickBusy = false
+    }
   }
 
   const start = () => {
-    if (timer) return
-    timer = setInterval(async () => { await tick() }, intervalMs)
+    if (running) return
+    running = true
+    const loop = async () => {
+      await tick()
+      if (!running) return
+      timer = setTimeout(loop, pollingBackoffDelay(intervalMs, consecutiveFailures.value))
+    }
+    timer = setTimeout(loop, intervalMs)
   }
   const stop = () => {
-    if (timer) { clearInterval(timer); timer = null }
+    running = false
+    if (timer) { clearTimeout(timer); timer = null }
   }
 
   onBeforeUnmount(stop)
 
-  return { extractInFlight, extractFailed, pendingFiles, start, stop, scanOnce }
+  return { extractInFlight, extractFailed, pendingFiles, consecutiveFailures, start, stop, scanOnce, tick }
 }

@@ -963,11 +963,58 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		// prevents "database is locked" errors from concurrent goroutines.
 		sqlDB.SetMaxOpenConns(1)
 	} else {
-		sqlDB.SetMaxIdleConns(10)
+		// 网络型数据库必须显式设上限：database/sql 的 MaxOpenConns 默认 0，
+		// 语义是"无限"。上游 Supabase session pooler 的 pool_size 通常只有 15，
+		// 提取高峰（图片多模态 + span 追踪每张图一条 INSERT）并发抢连接会打穿
+		// 上限，pooler 回 FATAL(EMAXCONNSESSION)；此时连鉴权用的 token 查询都
+		// 拿不到连接，请求被映射成 401/503，前端整页失败。
+		// 设上限后多余请求在本地排队等待，而不是硬失败。
+		maxOpen, maxIdle := dbPoolSettings(os.Getenv)
+		sqlDB.SetMaxOpenConns(maxOpen)
+		sqlDB.SetMaxIdleConns(maxIdle)
+		// 闲置连接及时归还，避免长时间占着上游有限的 pool 槽位。
+		sqlDB.SetConnMaxIdleTime(2 * time.Minute)
+		logger.Infof(
+			context.Background(),
+			"DB pool configured: max_open=%d max_idle=%d",
+			maxOpen, maxIdle,
+		)
 	}
 	sqlDB.SetConnMaxLifetime(time.Duration(10) * time.Minute)
 
 	return db, nil
+}
+
+// dbPoolSettings 解析应用侧连接池上限，支持环境变量覆盖。
+//
+// 默认 8/4 的选择依据：上游 Supabase session 模式 pooler 的 pool_size 为 15，
+// 必须留出余量给 psql 巡检、迁移工具与其它客户端；同时 8 条足以支撑日常
+// 事务页的读写（单查询 ~360ms 时约 20+ QPS）。
+//
+// getenv 以函数注入，便于单测不依赖进程环境。
+func dbPoolSettings(getenv func(string) string) (maxOpen, maxIdle int) {
+	const (
+		defMaxOpen = 8
+		defMaxIdle = 4
+	)
+	parse := func(key string, def int) int {
+		raw := strings.TrimSpace(getenv(key))
+		if raw == "" {
+			return def
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			// 非法值（含 0/-1）一律回落默认，绝不把池设成"无限"。
+			return def
+		}
+		return n
+	}
+	maxOpen = parse("DB_MAX_OPEN_CONNS", defMaxOpen)
+	maxIdle = parse("DB_MAX_IDLE_CONNS", defMaxIdle)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	return maxOpen, maxIdle
 }
 
 // resolveStorageProviderPending replaces the "__pending_env__" sentinel in
