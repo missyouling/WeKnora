@@ -443,6 +443,7 @@ import DocumentPreview from '@/components/document-preview.vue'
 import { pdfPageOf } from './pdfPage'
 import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate, ITEM_STD_KEYS } from './businessFormat'
+import { useBusinessListSync } from './useBusinessListSync'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
@@ -2272,59 +2273,20 @@ const downloadCatalogPdf = () => {
 // 删除记录：有页码的行按页删除该发票（同文件其它发票保留）；无页码（历史数据）删整份文件
 // 批量删除二选一：选中记录若来自多页文件集合，先让用户选择「仅删选中发票」或「整份删除该文件」；
 // 仅删选中：按页删除（无页码的行等价整份删除该文件）；整份删除：对选中行涉及的文件整体软删并从上传历史移除。
-// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页发票
-const optimisticRemoveInvoiceRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
-  invoiceRows.value = invoiceRows.value.filter((r) => {
-    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
-    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
-    return true
-  })
-}
-// 删除走 asynq 异步入队：接口返回 200 仅代表任务入队，worker 启动后才会把
-// parse_status 置为 deleting（列表查询据此排除）。立即刷新会读到旧数据，表现为
-// “删除后不消失、手动刷新才消失”。这里先做乐观本地移除，再分两次延迟做权威对账，
-// 覆盖 worker 调度抖动（800ms 常规、2600ms 兜底）。
-let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
-const schedulePostDeleteRefresh = () => {
-  deleteRefreshTimers.forEach(clearTimeout)
-  deleteRefreshTimers = []
-  loadInvoiceOverview()
-  deleteRefreshTimers.push(setTimeout(() => { loadFiles(true); loadInvoiceOverview() }, 800))
-  deleteRefreshTimers.push(setTimeout(() => { loadFiles(true); loadInvoiceOverview() }, 2600))
-}
-const doPageDelete = async (rows: InvoiceRow[]) => {
-  const fileDeleteIds = new Set<string>()
-  const pageKeys = new Set<string>()
-  const pageDeleteIds: Array<{ knowledgeId: string; page: number }> = []
-  for (const r of rows) {
-    if (r.page && r.page >= 1) pageDeleteIds.push({ knowledgeId: r.knowledgeId, page: r.page })
-    else fileDeleteIds.add(r.knowledgeId)
-  }
-  // 同文件多页删除时，先删大页码再删小页码（后端删后重排页码）
-  pageDeleteIds.sort((a, b) => b.page - a.page)
-  for (const pd of pageDeleteIds) {
-    try {
-      const res: any = await deleteInvoicePage(kbId.value, pd.knowledgeId, pd.page)
-      // 乐观移除该页；若后端反馈整文件已删（最后一张），整文件移除
-      if (res?.deleted_file) fileDeleteIds.add(pd.knowledgeId)
-      else pageKeys.add(`${pd.knowledgeId}::${pd.page}`)
-    } catch (e: any) {
-      MessagePlugin.error(e?.message || `删除发票（${pd.page}）失败`)
-      return
-    }
-  }
-  if (fileDeleteIds.size) {
-    await batchDeleteKnowledge(kbId.value, Array.from(fileDeleteIds))
-  }
-  optimisticRemoveInvoiceRows(fileDeleteIds, pageKeys)
-}
-const doFileDelete = async (rows: InvoiceRow[]) => {
-  const fileIds = Array.from(new Set(rows.map((r) => r.knowledgeId).filter((x): x is string => !!x)))
-  if (fileIds.length) {
-    await batchDeleteKnowledge(kbId.value, fileIds)
-    optimisticRemoveInvoiceRows(new Set(fileIds), new Set())
-  }
-}
+// 删除编排走中台 useBusinessListSync：乐观移除 + 延迟对账 + 级联顺序（先大页码）
+// 全部由它负责，本页只注入发票自己的删除接口与文案。
+const listSync = useBusinessListSync(invoiceRows, {
+  reload: (silent) => loadFiles(!!silent),
+  reloadStats: () => loadInvoiceOverview(),
+  deletePage: (kid, page) => deleteInvoicePage(kbId.value, kid, page),
+  deleteFiles: (ids) => batchDeleteKnowledge(kbId.value, ids),
+  onError: (e, ctx) => MessagePlugin.error(e?.message || (ctx.page ? `删除发票（${ctx.page}）失败` : '删除失败')),
+})
+const optimisticRemoveInvoiceRows = (fileIds: Set<string>, pageKeys: Set<string>) =>
+  listSync.removeRows(fileIds, pageKeys)
+const schedulePostDeleteRefresh = () => listSync.schedulePostDeleteRefresh()
+const doPageDelete = (rows: InvoiceRow[]) => listSync.deletePages(rows)
+const doFileDelete = (rows: InvoiceRow[]) => listSync.deleteFiles(rows)
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   selectedRowKeys.value = []
@@ -2393,7 +2355,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
-  deleteRefreshTimers.forEach(clearTimeout)
+  listSync.destroy()
   revokePrintUrl()
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
