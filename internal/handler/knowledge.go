@@ -466,6 +466,22 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 		secutils.SanitizeForLog(knowledge.ID),
 		secutils.SanitizeForLog(knowledge.Title),
 	)
+	// 分类铁律：上传即持久化用户选择的发票分类。
+	// 为什么必须在**创建记录的第一时间**写：旧实现是 parse 完成后由前端另发一次
+	// PUT，而提取流程落库会把 custom_metadata 合并覆盖，两者竞态导致同批上传的
+	// 文件交替丢失分类（实测 5 个文件 2 个落入「其它票据」）。写入放在本响应
+	// 返回之前，前端拿到 id 时分类已在库里，后续任何提取都读得到。
+	if cat := strings.TrimSpace(c.PostForm("invoice_category")); cat != "" {
+		seed := service.SeedInvoiceCategoryMeta(cat, c.PostForm("fleet_scope"))
+		if seed != nil {
+			if err := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledge.ID, seed); err != nil {
+				// 不阻断上传：分类丢失可由后续提取按请求 cert_type 再锁定
+				logger.Warnf(ctx, "Failed to persist upload invoice category for %s: %v", knowledge.ID, err)
+			} else {
+				logger.Infof(ctx, "Persisted upload invoice category %q for knowledge %s", cat, knowledge.ID)
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    knowledge,

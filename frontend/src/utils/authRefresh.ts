@@ -96,10 +96,34 @@ async function defaultRefresh(refreshToken: string): Promise<TokenRefreshResult>
 }
 
 /**
+ * 判断刷新失败是否属于「基础设施故障」而非「登录态真的失效」。
+ *
+ * 关键区别：
+ *  - 5xx / 503（auth_backend_unavailable）/ 网络错误 / 超时 → 后端数据库或网关
+ *    暂时不可用。此时 refresh token 本身没坏，**绝不能**清凭据跳登录 ——
+ *    否则一次连接池抖动就会把所有在线用户踢下线（实测 Supabase session 模式
+ *    连接池上限 15 被打满时，50 秒解析轮询期间连踢数次）。
+ *  - 401 / 400 才是「这个 refresh token 确实无效」。
+ */
+function isTransientRefreshFailure(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as Record<string, any>
+  const status = Number(e.$httpStatus ?? e.status ?? e.response?.status ?? 0)
+  if (status >= 500) return true
+  // 网络层失败（无响应）由 request.ts 统一转成 message，没有状态码
+  if (!status) {
+    const msg = String(e.message ?? '')
+    return /network|timeout|failed to fetch|networkerror/i.test(msg)
+  }
+  return false
+}
+
+/**
  * Refresh the access token, de-duplicated across all callers.
  *
- * Resolves with the new access token. On failure it has already cleared
- * credentials and redirected to /login.
+ * Resolves with the new access token. On **auth** failure it has already cleared
+ * credentials and redirected to /login. On transient infrastructure failure it
+ * rejects without touching the session, so polling can simply retry.
  */
 export async function refreshAccessTokenShared(
   options: RefreshAccessTokenOptions = {},
@@ -140,6 +164,11 @@ export async function refreshAccessTokenShared(
     processQueue(null, token)
     return token
   } catch (refreshError) {
+    if (isTransientRefreshFailure(refreshError)) {
+      // 基础设施抖动：保留登录态，让调用方重试（不清 storage、不跳登录）
+      processQueue(refreshError, null)
+      throw refreshError
+    }
     clearAuthStorage()
     processQueue(refreshError, null)
     redirectToLogin()

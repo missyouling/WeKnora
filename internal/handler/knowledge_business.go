@@ -884,16 +884,26 @@ func (h *BusinessExtractHandler) applyInvoiceUserCategoryPrecedence(ctx context.
 		activeTypes[n] = struct{}{}
 	}
 	if certType = strings.TrimSpace(certType); certType != "" {
+		// 铁律：上传所选分类是唯一权威。每张票的 invoice_type 与 category 都
+		// 强制锁定，模型/规则返回的任何值一律无效（含空串与「其它票据」）。
 		for i := range meta.Invoices {
 			meta.Invoices[i].InvoiceType = certType
 			meta.Invoices[i].Category = certType
 		}
+		meta.InvoiceCategory = certType
 		meta.FleetCertType = certType
 		return
 	}
 	for i := range meta.Invoices {
 		t := strings.TrimSpace(meta.Invoices[i].InvoiceType)
 		if t == "" {
+			// 模型没给大类时，先用已启用的细分分类兜底，避免整行留空被归入
+			// 「其它票据」（空 category 会被排除式桶吞掉）。
+			if cat := strings.TrimSpace(meta.Invoices[i].Category); cat != "" {
+				if _, ok := activeTypes[cat]; ok {
+					meta.Invoices[i].InvoiceType = cat
+				}
+			}
 			continue
 		}
 		if _, ok := activeTypes[t]; ok {
@@ -1082,18 +1092,11 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			logger.Warnf(ctx, "Failed to persist invoice processing-state: %v", serr)
 		}
 	}
-	// 沙盒提取规则：优先按请求携带的归档类型（上传弹窗 body.cert_type，如"三联收据"）
-	// 精确匹配分类规则；请求未携带时回退文件级打标 fleet_cert_type；再按
-	// resolveInvoiceRuleCfg 内建回退链（分类→普通发票→整体规则→内置模板）。
-	ruleCertType := certType
-	if ruleCertType == "" && len(knowledge.CustomMetadata) > 0 {
-		var mdMeta struct {
-			FleetCertType string `json:"fleet_cert_type"`
-		}
-		if jerr := json.Unmarshal(knowledge.CustomMetadata, &mdMeta); jerr == nil && mdMeta.FleetCertType != "" {
-			ruleCertType = mdMeta.FleetCertType
-		}
-	}
+	// 沙盒提取规则：权威分类优先级 = 请求 body.cert_type（上传弹窗/手动重提）
+	// > custom_metadata.invoice_category（上传即持久化的权威值）
+	// > custom_metadata.fleet_cert_type（历史字段）。
+	// 三者全空才回退规则/模型推断。
+	ruleCertType := service.ResolveInvoiceCertType(certType, knowledge.CustomMetadata)
 	invoiceRuleCfg := h.resolveInvoiceRuleCfg(ctx, kbID, ruleCertType)
 	// 明细行子列口径注入：从分类配置实时读取 items 字段的 SubFields（通行费/电费等
 	// 分类的票面明细结构不同），让规则与 LLM 两条提取路径都按分类真实结构输出明细。
@@ -1134,6 +1137,34 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			ruleRes = flatRes
 			ruleOK = true
 			logger.Infof(ctx, "Invoice extraction by flat-layout rules: %d invoices from knowledge %s", len(flatRes.Invoices), knowledgeID)
+		}
+	}
+	if ruleOK {
+		// 半残守卫：规则命中不等于规则**提全**。若产出的发票缺金额/购销方等核心
+		// 字段，直接短路会让用户永久停留在「金额/税率/税额全是 -、购销方全空」的
+		// 半成品上（MinerU 格式变更即触发）。这里按缺失程度区别处理：
+		//   - 全部发票都缺 → 视为规则未命中，回退 LLM 重新提（规则对该格式失效）；
+		//   - 部分发票缺  → 保留规则结果（已有一半正确数据），但记录问题供复核。
+		if service.InvoiceRuleResultIncomplete(ruleRes) {
+			total := len(ruleRes.Invoices)
+			incomplete := 0
+			for _, inv := range ruleRes.Invoices {
+				if service.InvoiceRuleResultIncomplete(&service.InvoiceExtractionResult{
+					Kind: "invoice", Invoices: []service.InvoiceExtractionItem{inv},
+				}) {
+					incomplete++
+				}
+			}
+			if incomplete >= total && total > 0 {
+				logger.Warnf(ctx, "Invoice rules produced %d incomplete invoices (all); falling back to LLM, knowledge=%s", total, knowledgeID)
+				ruleOK = false
+				ruleRes = nil
+			} else {
+				logger.Warnf(ctx, "Invoice rules produced %d/%d incomplete invoices; keeping rule result and flagging, knowledge=%s",
+					incomplete, total, knowledgeID)
+				ruleRes.ExtractError = fmt.Sprintf(
+					"规则提取有 %d/%d 张票字段不完整（可能票面格式变化），建议复核", incomplete, total)
+			}
 		}
 	}
 	if ruleOK {

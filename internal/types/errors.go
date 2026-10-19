@@ -2,8 +2,20 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// ErrTokenStoreUnavailable 标记「鉴权数据存储不可用」——与「token 确实无效」
+// 是两类完全不同的故障：
+//   - 前者是基础设施故障（DB 连接池打满/网络断），重试即可恢复，**绝不能**
+//     让前端清空登录态；
+//   - 后者才应该返回 401 并引导用户重新登录。
+//
+// 实测事故：Supabase session 模式连接池上限 15 被打满，鉴权 SQL 报
+// EMAXCONNSESSION，`ValidateToken` 把它当错误返回、中间件一律映射成 401，
+// 前端随即清 token 跳登录页——用户在一次 50 秒解析轮询里被踢下线数次。
+var ErrTokenStoreUnavailable = errors.New("token store unavailable")
 
 // StorageQuotaExceededError represents the storage quota exceeded error
 type StorageQuotaExceededError struct {

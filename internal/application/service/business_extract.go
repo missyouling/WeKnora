@@ -195,6 +195,9 @@ type InvoiceCustomMetadata struct {
 	ExtractStatus string                  `json:"extract_status"`
 	ExtractError  string                  `json:"extract_error"`
 	FleetCertType string                  `json:"fleet_cert_type,omitempty"` // 归档分类打标，供重提取选规则兜底
+	// InvoiceCategory 上传创建记录时即持久化的权威分类（铁律来源）。
+	// 历史数据只有 fleet_cert_type，故两者并存、读取时 invoice_category 优先。
+	InvoiceCategory string `json:"invoice_category,omitempty"`
 	// ExtractIssues 字段级校验问题（error/warn）。落库后详情页与提取测试对话框可读，
 	// 让"提取成功但某字段为空"这类隐性质量问题变得可见。
 	ExtractIssues []ExtractFieldIssue `json:"extract_issues,omitempty"`

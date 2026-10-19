@@ -885,6 +885,35 @@ func ExtractInvoicePageFromContent(ctx context.Context, model chat.Chat, content
 // 注：扁平/HTML 规则提取器命中时根本不走 LLM，本常量只影响兜底路径。
 const InvoiceExtractionBatchSize = 8
 
+// InvoiceRuleResultIncomplete 判断前置规则产出的发票是否「半残」——任何一张
+// 缺核心字段即视为不完整。
+//
+// 为什么需要它：规则命中后调用方会直接短路跳过 LLM（见 knowledge_business.go
+// 的 ruleOK 分支）。若规则只抓到发票号/价税合计却漏掉金额、税率、税额、购销方，
+// 用户看到的就是「金额/税率/税额全是 -、购销方全空」的半成品，且因为短路而
+// 永远等不到 LLM 补齐。调用方据此决定是否回退 LLM。
+//
+// 空结果返回 false（由调用方按 ruleOK=false 处理，不算半残）。
+func InvoiceRuleResultIncomplete(res *InvoiceExtractionResult) bool {
+	if res == nil || len(res.Invoices) == 0 {
+		return false
+	}
+	for _, inv := range res.Invoices {
+		// 金额/税额/价税合计三者全空 → 票面金额整体没抓到
+		if inv.Amount == nil && inv.Tax == nil && inv.TotalAmount == nil {
+			return true
+		}
+		// 购销方名称与税号全空 → 票头/票尾整体没抓到
+		if strings.TrimSpace(inv.BuyerName) == "" && strings.TrimSpace(inv.BuyerTaxNo) == "" {
+			return true
+		}
+		if strings.TrimSpace(inv.SellerName) == "" && strings.TrimSpace(inv.SellerTaxNo) == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // InvoiceExtractionBatch 一批待提取文本，及其在原文档中的位置。
 // 记录 chunk 索引区间是为了**结果页码归位**：分批提取必须按批次索引与原始位置
 // 严格归位，绝不能用无序并发 append（历史上出现过金额"张冠李戴"的错位事故）。
@@ -1847,9 +1876,12 @@ func parseFlatInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
 	if m := flatTitleRe.FindStringSubmatch(seg); len(m) > 1 {
 		inv.InvoiceType = NormalizeInvoiceTypeFromTicket(strings.TrimSpace(m[1]))
 	}
-	// 明细行：一张通行费票通常只有一个通行区间。优先纯文本布局（docreader），
-	// 其次 HTML 表格（OCR 引擎 paddleocr_vl_cloud 的输出格式）。
-	if m := flatItemRowRe.FindStringSubmatch(seg); len(m) > 8 {
+	// 明细行：一张通行费票通常只有一个通行区间。
+	// 优先级：HTML「标签+数值同格」（MinerU API）→ 纯文本布局（docreader）
+	// → HTML「一格一值」（老 OCR 引擎），前者与列序解耦，最稳。
+	if labels, ok := htmlItemRowByLabels(seg); ok {
+		applyHTMLItemLabels(&inv, labels)
+	} else if m := flatItemRowRe.FindStringSubmatch(seg); len(m) > 8 {
 		applyFlatItemRow(&inv, m)
 	} else if vals := htmlTableDataRow(seg); len(vals) > 0 {
 		applyHTMLItemRow(&inv, vals)
@@ -1861,6 +1893,11 @@ func parseFlatInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
 		}
 		if line.TaxAmt != nil {
 			inv.Tax = line.TaxAmt
+		}
+		// 税率此前漏回填：明细行解析出 TaxRate 但发票级 tax_rate 恒为 nil，
+		// 列表「税率」列因此全空（实测 27 张通行费票无一例外）。
+		if line.TaxRate != nil {
+			inv.TaxRate = line.TaxRate
 		}
 		if inv.Amount != nil && inv.Tax != nil {
 			total := *inv.Amount + *inv.Tax
@@ -1955,6 +1992,7 @@ func isCompact8Date(s string) bool {
 }
 
 // htmlTableDataRow 从票段中找出明细数据行（项目/车牌/车型/通行起/通行止/金额/税率/税额）。
+// 仅适用于「一格一值」的表格；MinerU 输出的「标签+数值同格」走 htmlItemRowByLabels。
 func htmlTableDataRow(seg string) []string {
 	for _, tr := range flatHTMLTrRe.FindAllStringSubmatch(seg, -1) {
 		cells := flatHTMLTdRe.FindAllStringSubmatch(tr[1], -1)
@@ -1971,6 +2009,141 @@ func htmlTableDataRow(seg string) []string {
 		}
 	}
 	return nil
+}
+
+// MinerU 明细行是「标签 + 数值」合并进同一个单元格：
+//
+//	<td>车牌号渝C12345</td><td>类型货车</td><td>通行日期起20250505</td>
+//	<td>通行日期止20250528</td><td>金额234.25</td><td>税率3%</td><td>税额7.03</td>
+//
+// 位置式解析（htmlTableDataRow 要求纯车牌/纯日期）会全部失配 → 明细行为空 →
+// 金额/税率/税额丢失、只剩价税合计。这里改为**按标签取值**，与列序解耦，
+// 同时兼容「金额158.51¥158.51」「税额14.27¥14.27」这类重复数值。
+// 每个标签都**锚定单元格开头**：MinerU 把它们各自放进独立 <td>，
+// 锚定可避免「类型货车通行日期起…」这种跨标签贪婪吞字。
+var (
+	htmlLabelPlateRe  = regexp.MustCompile(`^\s*车\s*牌\s*号\s*[:：]?\s*(.+?)\s*$`)
+	htmlLabelVehRe    = regexp.MustCompile(`^\s*类\s*型\s*[:：]?\s*(.+?)\s*$`)
+	htmlLabelFromRe   = regexp.MustCompile(`^\s*通\s*行\s*日\s*期\s*起\s*[:：]?\s*(\d{8})`)
+	htmlLabelToRe     = regexp.MustCompile(`^\s*通\s*行\s*日\s*期\s*止\s*[:：]?\s*(\d{8})`)
+	htmlLabelAmountRe = regexp.MustCompile(`^\s*金\s*额\s*[:：]?\s*[¥￥]?\s*([\d,]+(?:\.\d+)?)`)
+	htmlLabelRateRe   = regexp.MustCompile(`^\s*税\s*率\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%`)
+	htmlLabelTaxRe    = regexp.MustCompile(`^\s*税\s*额\s*[:：]?\s*[¥￥]?\s*([\d,]+(?:\.\d+)?)`)
+	// 明细行里的项目名前缀与合并进来的「合计」字样
+	htmlItemNamePrefixRe = regexp.MustCompile(`^\s*项\s*目\s*名\s*称\s*[:：]?\s*`)
+	htmlItemNameTotalRe  = regexp.MustCompile(`\s*合\s*计\s*$`)
+)
+
+// htmlItemLabelValues 是标签驱动的明细行取值结果（空串表示该标签未出现）。
+type htmlItemLabelValues struct {
+	Name    string
+	Plate   string
+	Vehicle string
+	From    string
+	To      string
+	Amount  string
+	Rate    string
+	Tax     string
+}
+
+// htmlItemRowByLabels 在票段中定位明细行并按标签取值。
+// 命中判据：同一 <tr> 内同时出现车牌与「通行日期起」，且至少出现金额或税额之一。
+// 逐**单元格**匹配标签，避免跨格贪婪吞字。
+func htmlItemRowByLabels(seg string) (htmlItemLabelValues, bool) {
+	for _, tr := range flatHTMLTrRe.FindAllStringSubmatch(seg, -1) {
+		var cells []string
+		for _, c := range flatHTMLTdRe.FindAllStringSubmatch(tr[1], -1) {
+			cells = append(cells, stripHTMLTags(c[1]))
+		}
+		if len(cells) == 0 {
+			continue
+		}
+		var vals htmlItemLabelValues
+		for _, cell := range cells {
+			if vals.Plate == "" {
+				vals.Plate = firstSub(htmlLabelPlateRe, cell)
+			}
+			if vals.Vehicle == "" {
+				vals.Vehicle = firstSub(htmlLabelVehRe, cell)
+			}
+			if vals.From == "" {
+				vals.From = firstSub(htmlLabelFromRe, cell)
+			}
+			if vals.To == "" {
+				vals.To = firstSub(htmlLabelToRe, cell)
+			}
+			if vals.Amount == "" {
+				vals.Amount = firstSub(htmlLabelAmountRe, cell)
+			}
+			if vals.Rate == "" {
+				vals.Rate = firstSub(htmlLabelRateRe, cell)
+			}
+			if vals.Tax == "" {
+				vals.Tax = firstSub(htmlLabelTaxRe, cell)
+			}
+		}
+		if vals.Plate == "" || vals.From == "" || (vals.Amount == "" && vals.Tax == "") {
+			continue
+		}
+		// 项目名：取该行第一个非空单元格（MinerU 把「项目名称」标签与商品名、
+		// 甚至「合计」一起塞进这一格）。
+		for _, cell := range cells {
+			if strings.TrimSpace(cell) == "" {
+				continue
+			}
+			name := htmlItemNamePrefixRe.ReplaceAllString(cell, "")
+			name = htmlItemNameTotalRe.ReplaceAllString(name, "")
+			vals.Name = strings.TrimSpace(name)
+			break
+		}
+		return vals, true
+	}
+	return htmlItemLabelValues{}, false
+}
+
+// applyHTMLItemLabels 把标签驱动解析出的明细行回填到发票。
+func applyHTMLItemLabels(inv *InvoiceExtractionItem, vals htmlItemLabelValues) {
+	if inv == nil {
+		return
+	}
+	if len(inv.Items) == 0 {
+		inv.Items = []InvoiceExtractionLine{{}}
+	}
+	line := &inv.Items[0]
+	if line.Extra == nil {
+		line.Extra = map[string]any{}
+	}
+	if vals.Name != "" {
+		line.Name = strings.TrimSpace(strings.NewReplacer("^", "", "{{*}}", "*", " $", "", "$", "").Replace(vals.Name))
+	}
+	if vals.Plate != "" {
+		line.Extra["plate_no"] = vals.Plate
+		// 车牌同时写入发票级 fields，供列表动态列直接读取
+		if inv.Fields == nil {
+			inv.Fields = map[string]any{}
+		}
+		if _, exists := inv.Fields["plate_no"]; !exists {
+			inv.Fields["plate_no"] = vals.Plate
+		}
+	}
+	if vals.Vehicle != "" {
+		line.Extra["vehicle_type"] = vals.Vehicle
+	}
+	if v := mdDateFromCompact(vals.From); v != "" {
+		line.Extra["travel_from"] = v
+	}
+	if v := mdDateFromCompact(vals.To); v != "" {
+		line.Extra["travel_to"] = v
+	}
+	if v := parseAmountToFloat(strings.ReplaceAll(vals.Amount, ",", "")); v != nil {
+		line.Amount = v
+	}
+	if v := parsePercentToFloat(vals.Rate); v != nil {
+		line.TaxRate = v
+	}
+	if v := parseAmountToFloat(strings.ReplaceAll(vals.Tax, ",", "")); v != nil {
+		line.TaxAmt = v
+	}
 }
 
 // applyHTMLItemRow 把 HTML 表格数据行回填到明细行。
@@ -2000,25 +2173,54 @@ func applyHTMLItemRow(inv *InvoiceExtractionItem, vals []string) {
 	if v := parseAmountToFloat(strings.TrimSpace(vals[5])); v != nil {
 		line.Amount = v
 	}
-	if v := parsePercentToFloat(strings.TrimSpace(vals[6])); v != nil {
+	// 税率/税额：免税票的税率列字面写「不征税/免税/零税率」，税额列往往是 OCR
+	// 乱码。这类票税额本来就应为 0 —— 留空会让列表显示「-」，与「未提取到」混淆。
+	rateStr := strings.TrimSpace(vals[6])
+	if v := parsePercentToFloat(rateStr); v != nil {
 		line.TaxRate = v
+	} else if taxExemptRe.MatchString(rateStr) {
+		zero := 0.0
+		line.TaxRate = &zero
 	}
-	if v := parseAmountToFloat(strings.TrimSpace(vals[7])); v != nil {
+	taxStr := strings.TrimSpace(vals[7])
+	if v := parseAmountToFloat(taxStr); v != nil {
 		line.TaxAmt = v
+	} else if taxExemptRe.MatchString(taxStr) || (line.TaxRate != nil && *line.TaxRate == 0) {
+		zero := 0.0
+		line.TaxAmt = &zero
 	}
 }
 
 // 购销方单元格：<td>购买方</td><td colspan=3>名 称：X\n纳税人识别号：Y\n地 址、电 话：Z\n开户行及账号：W</td>
+//
+// MinerU API 的两处差异（实测 27 张通行费票）：
+//  1. 标签内可能夹空格：「购 买 方」「销 售 方」「名 称」「纳 税 人 识 别 号」；
+//  2. 一个单元格内**没有任何换行**，四个字段首尾相连：
+//     名 称:X纳税人识别号:Y地址、电话:Z开户行及账号:W
+//     因此名称不能用 [^\n\\]+ 直接吃到行尾，必须在下一个标签处收住。
 var (
-	flatPartyCellRe = regexp.MustCompile(`(?is)<td>\s*(购买方|销售方)\s*</td>\s*<td[^>]*>(.*?)</td>`)
-	flatNameLikeRe  = regexp.MustCompile(`名\s*称\s*[:：]\s*([^\n\\]+)`)
-	flatTaxNoLikeRe = regexp.MustCompile(`纳税人识别号\s*[:：]\s*([0-9A-Z]{15,20})`)
-	flatAddrPhoneRe = regexp.MustCompile(`地\s*址、\s*电\s*话\s*[:：]\s*([^\n\\]+)`)
-	flatBankAcctRe  = regexp.MustCompile(`开户行及账号\s*[:：]\s*([^\n\\]+)`)
+	flatPartyCellRe = regexp.MustCompile(`(?is)<td>\s*(购\s*买\s*方|销\s*售\s*方)\s*</td>\s*<td[^>]*>(.*?)</td>`)
+	// 名称：非贪婪吃到下一个标签（纳税人识别号 / 地址电话 / 开户行账号）或串尾
+	flatNameLikeRe  = regexp.MustCompile(`名\s*称\s*[:：]\s*(.+?)(?:纳\s*税\s*人\s*识\s*别\s*号|地\s*址|开\s*户\s*行|$)`)
+	flatTaxNoLikeRe = regexp.MustCompile(`纳\s*税\s*人\s*识\s*别\s*号\s*[:：]\s*([0-9A-Z]{15,20})`)
+	flatAddrPhoneRe = regexp.MustCompile(`地\s*址、\s*电\s*话\s*[:：]\s*(.+?)(?:开\s*户\s*行|$)`)
+	flatBankAcctRe  = regexp.MustCompile(`开\s*户\s*行\s*及\s*账\s*号\s*[:：]\s*(.+?)$`)
 	flatIssuerCell  = regexp.MustCompile(`开票人\s*[:：]\s*([^\s<\\]+)`)
 	flatPhoneTailRe = regexp.MustCompile(`\s*((?:\d{3,4}-\d{7,8}(?:-\d{1,6})?)|(?:1\d{10}))\s*$`)
 	flatAcctTailRe  = regexp.MustCompile(`\s*(\d{10,25})\s*$`)
+	// taxExemptRe 免税/不征税标记：命中即视为税率 0%、税额 0
+	taxExemptRe = regexp.MustCompile(`不征税|免税|零税率|不征收`)
 )
+
+// cleanLiteralEscapes 清掉 MinerU 偶尔输出的**字面量**转义序列（`\n` `\t` `\r`）。
+// 这些不是真换行，而是两个字符，会污染「购销方名称」等字段（实测出现
+// 「重庆通渝科技有限公司\n」）。真换行不在处理范围。
+func cleanLiteralEscapes(s string) string {
+	for _, esc := range []string{`\r\n`, `\r`, `\n`, `\t`, `\\`} {
+		s = strings.ReplaceAll(s, esc, " ")
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+}
 
 // firstSub 返回第一个捕获组（无匹配返回空串）。
 func firstSub(re *regexp.Regexp, s string) string {
@@ -2046,11 +2248,12 @@ func applyFlatParties(inv *InvoiceExtractionItem, seg string) {
 	}
 	for _, m := range flatPartyCellRe.FindAllStringSubmatch(seg, -1) {
 		body := m[2]
-		name := firstSub(flatNameLikeRe, body)
+		name := cleanLiteralEscapes(firstSub(flatNameLikeRe, body))
 		taxNo := firstSub(flatTaxNoLikeRe, body)
-		addr, phone := splitTrailing(firstSub(flatAddrPhoneRe, body), flatPhoneTailRe)
-		bank, account := splitTrailing(firstSub(flatBankAcctRe, body), flatAcctTailRe)
-		if strings.Contains(m[1], "购买") {
+		addr, phone := splitTrailing(cleanLiteralEscapes(firstSub(flatAddrPhoneRe, body)), flatPhoneTailRe)
+		bank, account := splitTrailing(cleanLiteralEscapes(firstSub(flatBankAcctRe, body)), flatAcctTailRe)
+		// 标签可能带空格（「购 买 方」），先归一再去空格判断方向
+		if strings.Contains(strings.ReplaceAll(m[1], " ", ""), "购买") {
 			inv.BuyerName, inv.BuyerTaxNo = name, taxNo
 			inv.BuyerAddr, inv.BuyerPhone = addr, phone
 			inv.BuyerBank, inv.BuyerAcct = bank, account

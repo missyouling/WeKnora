@@ -1218,7 +1218,12 @@ func (s *knowledgeService) SaveInvoiceCustomMetadata(ctx context.Context, knowle
 	if err != nil {
 		return err
 	}
-	record.CustomMetadata = meta
+	// 合并而非整列替换：提取结果只包含 kind/invoices/extract_status 等它自己
+	// 管理的键，而 invoice_category / fleet_cert_type / auto_deleted_count 等
+	// 用户与其它流程拥有的键必须保留。
+	// 为什么必须在这里做：分类是上传时写入的，若提取落库整列覆盖，就会把分类
+	// 冲成空 → 列表落入「其它票据」（实测同批 5 个文件 2 个被冲掉）。
+	record.CustomMetadata = mergeInvoiceMetaPreservingUserKeys(record.CustomMetadata, meta)
 	if err := s.repo.UpdateKnowledge(ctx, record); err != nil {
 		logger.Errorf(ctx, "Failed to persist invoice custom metadata: %v", err)
 		return err

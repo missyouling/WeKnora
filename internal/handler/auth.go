@@ -590,6 +590,14 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	accessToken, newRefreshToken, err := h.userService.RefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to refresh token: %v", err)
+		// 鉴权存储不可用是基础设施故障：回 503 让客户端重试并**保留登录态**。
+		// 若这里回 401，前端会把它当成「refresh token 失效」直接清凭据跳登录，
+		// 一次连接池抖动就会把用户踢下线（实测 Supabase session 池满时连踢数次）。
+		if stderrors.Is(err, types.ErrTokenStoreUnavailable) {
+			c.Error(errors.NewServiceUnavailableError("Token refresh temporarily unavailable").
+				WithDetails(err.Error()))
+			return
+		}
 		appErr := errors.NewUnauthorizedError("Token refresh failed").WithDetails(err.Error())
 		c.Error(appErr)
 		return

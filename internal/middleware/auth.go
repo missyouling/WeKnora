@@ -155,6 +155,16 @@ func Auth(
 				return
 			}
 			logger.Warnf(c.Request.Context(), "[auth] bearer token rejected: %v", err)
+			// 鉴权存储不可用 ≠ 登录失效：返回 503 让客户端重试，绝不 401
+			// （401 会触发前端清空 token + 跳登录页，把在线用户全踢下线）。
+			if errors.Is(err, types.ErrTokenStoreUnavailable) {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": "Service temporarily unavailable: authentication backend unreachable",
+					"code":  "auth_backend_unavailable",
+				})
+				c.Abort()
+				return
+			}
 		}
 
 		// 尝试X-API-Key认证（兼容模式）

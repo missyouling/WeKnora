@@ -1314,9 +1314,11 @@ func (s *userService) ValidateToken(ctx context.Context, tokenString string) (*t
 	// Check if token is revoked. A failed lookup is an infrastructure error and
 	// is reported as such: collapsing it into "token is revoked" claims a
 	// revocation that never happened and sends operators down the wrong path.
+	// 同时用 ErrTokenStoreUnavailable 打标，让中间件回 503 而不是 401 ——
+	// 否则连接池打满会把所有在线用户直接踢下线。
 	tokenRecord, err := s.tokenRepo.GetTokenByValue(ctx, tokenString)
 	if err != nil {
-		return nil, 0, fmt.Errorf("look up token: %w", err)
+		return nil, 0, fmt.Errorf("%w: look up token: %v", types.ErrTokenStoreUnavailable, err)
 	}
 	if tokenRecord == nil || tokenRecord.IsRevoked {
 		return nil, 0, errors.New("token is revoked")
@@ -1479,7 +1481,7 @@ func (s *userService) RefreshToken(
 	// reported as a revocation.
 	tokenRecord, err := s.tokenRepo.GetTokenByValue(ctx, refreshTokenString)
 	if err != nil {
-		return "", "", fmt.Errorf("look up refresh token: %w", err)
+		return "", "", fmt.Errorf("%w: look up refresh token: %v", types.ErrTokenStoreUnavailable, err)
 	}
 	if tokenRecord == nil || tokenRecord.IsRevoked {
 		return "", "", errors.New("refresh token is revoked")

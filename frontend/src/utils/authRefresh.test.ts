@@ -216,3 +216,74 @@ test('chat stream wires the shared retry and keeps the abort controller', () => 
   assert.match(source, /streamAbort/)
   assert.doesNotMatch(source, /forceReloginRedirect/)
 })
+
+// ---------------------------------------------------------------------------
+// 基础设施故障 vs 登录态失效
+//
+// 事故：MinerU 解析轮询期间（50~60s，3s 一次）后端 Supabase session 连接池
+// 打满（上限 15），鉴权 SQL 失败被映射成 401，前端把 refresh 失败一律当成
+// 「登录失效」→ 清 token + 跳登录页，用户被反复踢下线。
+// 修复：5xx / 网络错误属于临时故障，必须保留登录态只让调用方重试。
+// ---------------------------------------------------------------------------
+
+test('refresh 遇到 503（鉴权后端不可用）不得清凭据、不得跳登录', async () => {
+  const { store, location } = installBrowser()
+  store.weknora_refresh_token = 'rt-1'
+  store.weknora_token = 'at-1'
+
+  await assert.rejects(
+    () =>
+      refreshAccessTokenShared({
+        refresh: async () => {
+          throw { $httpStatus: 503, message: 'Token refresh temporarily unavailable' }
+        },
+      }),
+    (err: any) => err?.$httpStatus === 503,
+  )
+
+  assert.equal(store.weknora_refresh_token, 'rt-1', 'refresh token 必须保留')
+  assert.equal(store.weknora_token, 'at-1', 'access token 必须保留')
+  assert.notEqual(location.href, '/login', '不得跳登录页')
+})
+
+test('refresh 遇到网络错误（无状态码）不得清凭据', async () => {
+  const { store, location } = installBrowser()
+  store.weknora_refresh_token = 'rt-1'
+
+  await assert.rejects(() =>
+    refreshAccessTokenShared({
+      refresh: async () => {
+        throw { message: 'Network Error' }
+      },
+    }),
+  )
+
+  assert.equal(store.weknora_refresh_token, 'rt-1')
+  assert.notEqual(location.href, '/login')
+})
+
+test('refresh 返回 401（refresh token 确实失效）必须清凭据并跳登录', async () => {
+  const { store, location } = installBrowser()
+  store.weknora_refresh_token = 'rt-1'
+  store.weknora_token = 'at-1'
+
+  await assert.rejects(() =>
+    refreshAccessTokenShared({
+      refresh: async () => {
+        throw { $httpStatus: 401, message: 'Token refresh failed' }
+      },
+    }),
+  )
+
+  assert.equal(store.weknora_refresh_token, undefined, '真失效必须清 refresh token')
+  assert.equal(location.href, '/login', '真失效必须跳登录')
+})
+
+test('refresh 缺少 refresh token 仍按失效处理（无凭据可保留）', async () => {
+  const { store, location } = installBrowser()
+  store.weknora_token = 'at-1'
+
+  await assert.rejects(() => refreshAccessTokenShared({ refresh: async () => ({ success: false }) }))
+  assert.notEqual(store.weknora_token, 'at-1')
+  assert.equal(location.href, '/login')
+})

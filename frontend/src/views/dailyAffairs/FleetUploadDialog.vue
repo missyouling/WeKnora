@@ -300,7 +300,14 @@ async function runTask(t: UpTask) {
   try {
     t.status = 'uploading'
     t.progress = 0
-    const res: any = await uploadKnowledgeFile(props.kbId, { file: t.file }, (ev: any) => {
+    // 分类铁律：把用户所选分类**随上传一起提交**，由后端在创建知识库记录的
+    // 第一时间写入 custom_metadata.invoice_category。旧实现依赖 parse 完成后
+    // 另发一次 PUT，会和提取落库竞态 → 同批文件交替丢失分类落入「其它票据」。
+    const res: any = await uploadKnowledgeFile(props.kbId, {
+      file: t.file,
+      ...(certType ? { invoice_category: certType } : {}),
+      ...(scope ? { fleet_scope: scope } : {}),
+    }, (ev: any) => {
       if (ev?.total) t.progress = Math.round((ev.loaded / ev.total) * 100)
     })
     const knowledge = res?.data || res
