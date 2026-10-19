@@ -111,6 +111,17 @@ type KnowledgeListFilter struct {
 	UpdatedFrom time.Time
 	// UpdatedTo, when non-zero, keeps rows with updated_at <= UpdatedTo.
 	UpdatedTo time.Time
+	// SkipTotalCount 跳过 COUNT(*) 查询。
+	//
+	// 为什么需要：Supabase 跨区 pooler 下**每次数据库往返约 350ms**，而发票聚合
+	// 列表自己会在内存里重算 total，仓储层的 COUNT 结果被直接丢弃 —— 等于白付
+	// 一次往返（约占总耗时 1/3）。仅当调用方不需要精确 total 时置 true。
+	SkipTotalCount bool
+	// OmitDescription 查询时不取 description 大字段。
+	//
+	// description 存的是整篇摘要 Markdown，列表页一个字都不展示；聚合类接口
+	// 只需要 file_name / custom_metadata 等轻字段，带上它纯属浪费带宽与扫描量。
+	OmitDescription bool
 	// FolderPath is the folder navigated to in the sidebar tree. It is only
 	// applied when FolderScope is not FolderScopeAny, so the empty string can
 	// unambiguously mean "the knowledge base root".

@@ -72,7 +72,7 @@ func (h *BusinessExtractHandler) AISuggestFields(c *gin.Context) {
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
-	scope, certType, text, truncated, ferr := h.bindSuggestSampleRequest(c)
+	scope, certType, text, truncated, ferr := h.bindSuggestSampleRequest(c, kb)
 	if ferr != nil {
 		c.Error(ferr)
 		return
@@ -220,9 +220,33 @@ func (h *BusinessExtractHandler) AISuggestRules(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
+// resolveSampleParserEngine 决定样票解析用哪个引擎。
+//
+// 优先级：请求显式 parser_engine > 该知识库的解析引擎规则（与正式上传一致）
+// > 空（交回租户/类型默认）。
+//
+// 为什么必须读 KB 规则：正式上传走 ChunkingConfig.ResolveParserEngine
+// (knowledge_process.go:4212)，而样票此前走 tenant.ChatParserEngineRules ——
+// 后者全代码库没有任何写入点，永远为空，于是样票固定用默认引擎。
+// 用户把知识库配成 MinerU 后，"智能字段生成"看到的文本与正式提取不同源。
+func resolveSampleParserEngine(c *gin.Context, kb *types.KnowledgeBase, fileName string) string {
+	engine := strings.TrimSpace(c.PostForm("parser_engine"))
+	if engine != "" && !strings.EqualFold(engine, "auto") {
+		return engine
+	}
+	if kb == nil {
+		return ""
+	}
+	return strings.TrimSpace(kb.ChunkingConfig.ResolveParserEngine(filepath.Ext(fileName)))
+}
+
 // bindSuggestSampleRequest 同时兼容 multipart 与 JSON 两种取样方式。
 // 返回 (scope, certType, 文本, 是否被截断)；无任何可用文本时返回错误。
-func (h *BusinessExtractHandler) bindSuggestSampleRequest(c *gin.Context) (string, string, string, bool, error) {
+// kb 用于「样票解析与正式上传同源」：未显式指定 parser_engine 时，
+// 按该知识库的 ChunkingConfig.ParserEngineRules 选择引擎。
+func (h *BusinessExtractHandler) bindSuggestSampleRequest(
+	c *gin.Context, kb *types.KnowledgeBase,
+) (string, string, string, bool, error) {
 	ct := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		scope := strings.TrimSpace(c.PostForm("scope"))
@@ -264,7 +288,7 @@ func (h *BusinessExtractHandler) bindSuggestSampleRequest(c *gin.Context) (strin
 			FileName:           fh.Filename,
 			Ext:                filepath.Ext(fh.Filename),
 			Data:               data,
-			ParserEngine:       strings.TrimSpace(c.PostForm("parser_engine")),
+			ParserEngine:       resolveSampleParserEngine(c, kb, fh.Filename),
 			VLMModelID:         h.suggestVLMModelID(ctxOf(c)),
 			OCRMaxPages:        0,
 			ImageUnderstanding: true,

@@ -1353,6 +1353,19 @@ const summaryShowTotal = computed(() =>
 
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 
+// ---- 筛选合并（300ms） ----
+// 问题：类型/税率/关键词三个 watch 各自触发 applyFilter，而 applyFilter 同时打
+// /invoices + /invoices/overview-stats 两个接口 —— 一次操作就能连发 3~4 个请求。
+// 统一收敛到一个 300ms 合并窗口：窗口内的多次变更只发一次。
+let filterTimer: ReturnType<typeof setTimeout> | null = null
+const scheduleFilter = () => {
+  if (filterTimer) clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => {
+    filterTimer = null
+    applyFilter()
+  }, 300)
+}
+
 // ---- 表头排序（服务端排序）：sort_by=invoice_no|invoice_date ----
 const sortBy = ref('')
 const sortDirection = ref('desc')
@@ -1375,21 +1388,21 @@ const onSortChange = (ctx: any) => {
 // 同时重载列表列（列宽跟随当前分类配置生效）。
 // 状态隔离：切换类型时清空多选，防止浮条「已选 N 项」残留上一类型的脏数据。
 watch(filterInvoiceType, () => {
+  // 本地副作用（清多选、重建列）立即执行；网络请求走合并窗口。
   clearSelectionSafe()
   reloadColumns()
-  applyFilter()
+  scheduleFilter()
 })
 // 税率筛选联动：变更时清空多选并刷新（税率不影响列定义，无需 reloadColumns）
 watch(taxRateFilter, () => {
   clearSelectionSafe()
-  applyFilter()
+  scheduleFilter()
 })
 // 关键词防抖 300ms 后刷新。关键词、税率、日期、类型为 AND 复合查询：
 // 输入关键词时不再清空类型筛选，四个条件同时发送后端取交集。
-let keywordTimer: ReturnType<typeof setTimeout> | null = null
 watch(keyword, () => {
-  if (keywordTimer) clearTimeout(keywordTimer)
-  keywordTimer = setTimeout(() => loadFiles(true), 300)
+  // 与类型/税率共用同一个 300ms 窗口：连续操作只发一次 /invoices。
+  scheduleFilter()
 })
 
 // 懒加载（触底翻页）：滚动发生在 t-table 内部内容容器（.t-table__content，外层 overflow:hidden），
@@ -1434,7 +1447,7 @@ const onUploadHistoryChanged = (payload?: { deletedIds?: string[] }) => {
 // ---- 轮询解析 + 提取（统一 composable） ----
 const {
   extractInFlight, extractFailed, pendingFiles,
-  start: startPolling, stop: stopPolling, scanOnce,
+  start: startPolling, stop: stopPolling, scanOnce, setPollingInterval,
 } = useBusinessPolling({
   kbId,
   // 传入当前细分分类：自动提取（轮询）此前不带 cert_type，后端只能靠票面推断，
@@ -1453,18 +1466,6 @@ const {
   },
   onTick: () => loadFiles(),
 })
-
-// 需求：解析/提取完成后自动刷新 KPI 卡片统计。
-// pendingFiles 由轮询每 3s 更新：集合变化（有文件解析完成进入发票行 / 提取完成 / 失败）
-// 即触发概览统计重载，保证卡片数量与本轮真实状态一致。
-let lastPendingKey = ''
-watch(pendingFiles, (v) => {
-  const key = v.map((f: any) => f.id).sort().join(',')
-  if (key !== lastPendingKey) {
-    lastPendingKey = key
-    if (kbId.value) loadInvoiceOverview()
-  }
-}, { deep: false })
 
 // 上传任务实时进度（来自上传弹窗 @progress，车队同款）：多文件同时进行时轮播展示
 const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
@@ -1533,12 +1534,25 @@ const liveProgress = computed(() => {
     return { name, stage: 'parsing' as const, percent: null, elapsedSec: Math.round(elapsed) }
   })
 })
-// 文件离开进行中集合后清理起点记忆，避免 id 复用导致百分比从旧值续算
+// pendingFiles 的唯一订阅点（原先有两个重复 watch，每轮轮询各跑一次）：
+//  1) 集合变化 → 重载 KPI（解析/提取完成后卡片数字要跟着动）；
+//  2) 清理已离开集合的进度起点（避免 id 复用导致百分比从旧值续算）；
+//  3) 空闲降频：没有在途文件时把轮询从 3s 退到 15s，有新任务立刻回到 3s。
+//     这一步直接削减了空转时 80% 的 /invoices 请求。
+const IDLE_POLL_MS = 15000
+const ACTIVE_POLL_MS = 3000
+let lastPendingKey = ''
 watch(pendingFiles, (v) => {
+  const key = v.map((f: any) => f.id).sort().join(',')
+  if (key !== lastPendingKey) {
+    lastPendingKey = key
+    if (kbId.value) loadInvoiceOverview()
+  }
   const alive = new Set(v.map((f: any) => f.id))
   for (const id of Array.from(fileStartAt.keys())) {
     if (!alive.has(id)) fileStartAt.delete(id)
   }
+  setPollingInterval(v.length > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS)
 })
 // 弹窗打开期间优先展示上传弹窗上报的真实进度（含真实上传百分比）；
 // 弹窗关闭后 uploadProgress 停更，自动切换到轮询派生的解析/提取进度，状态条不中断。

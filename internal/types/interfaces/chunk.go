@@ -175,6 +175,15 @@ type ChunkService interface {
 	GetChunkByIDOnly(ctx context.Context, id string) (*types.Chunk, error)
 	// ListChunksByKnowledgeID lists chunks by knowledge id
 	ListChunksByKnowledgeID(ctx context.Context, knowledgeID string) ([]*types.Chunk, error)
+	// ListChunksByKnowledgeIDAndTypes lists the knowledge's chunks restricted to
+	// the given types, ordered by chunk_index ASC.
+	//
+	// 业务提取必须走这个方法并传入 service.ExtractSourceChunkTypes()：
+	// ListChunksByKnowledgeID 只返回 chunk_type='text'，纯扫描件的正文在
+	// image_ocr / image_caption 里，用它取数会得到空文本。
+	ListChunksByKnowledgeIDAndTypes(
+		ctx context.Context, knowledgeID string, chunkTypes []types.ChunkType,
+	) ([]*types.Chunk, error)
 	// ListPagedChunksByKnowledgeID lists paged chunks by knowledge id
 	ListPagedChunksByKnowledgeID(
 		ctx context.Context,

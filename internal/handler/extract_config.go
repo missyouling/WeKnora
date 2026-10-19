@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -410,6 +411,9 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 
 	// 测试内容：直接文本优先，否则复用知识库已解析文件
 	var content string
+	// 发票沙箱需要原始 chunk（走与生产一致的分批/规则管线），其它 scope 只吃拼装文本。
+	var testChunks []*types.Chunk
+	var testKnowledgeID string
 	if strings.TrimSpace(req.Text) != "" {
 		content = req.Text
 	} else if kid := strings.TrimSpace(req.KnowledgeID); kid != "" {
@@ -426,12 +430,14 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 			c.Error(errors.NewBadRequestError("document has not been parsed yet, please wait for parsing to finish"))
 			return
 		}
-		chunks, cerr := h.chunkService.ListChunksByKnowledgeID(effCtx, kid)
+		testKnowledgeID = kid
+		chunks, cerr := h.chunkService.ListChunksByKnowledgeIDAndTypes(effCtx, kid, service.ExtractSourceChunkTypes())
 		if cerr != nil {
 			logger.Error(ctx, "Failed to list chunks for extract config test", cerr)
 			c.Error(errors.NewInternalServerError("list chunks failed: " + cerr.Error()))
 			return
 		}
+		testChunks = chunks
 		content = buildFleetExtractionContent(knowledge.FileName, knowledge.Description, chunks)
 	} else {
 		c.Error(errors.NewBadRequestError("text 或 knowledge_id 至少提供一个"))
@@ -459,25 +465,57 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		Scope: scope, CertType: certType, Fields: fields,
 		AdvancedEnabled: req.AdvancedEnabled, PromptTemplate: strings.TrimSpace(req.PromptTemplate),
 	}
-	sysPrompt := service.BuildExtractSystemPrompt(ec)
-	fieldNames := service.EnabledExtractFieldNames(fields)
-	result, xerr := service.ExtractFleetDocumentFromContent(effCtx, chatModel, content, scope, certType, fieldNames, sysPrompt)
-	if xerr != nil {
-		logger.Error(ctx, "Extract config test model call failed", xerr)
-		c.Error(errors.NewInternalServerError("提取失败: " + xerr.Error()))
-		return
-	}
 
-	// 质量闭环（Phase D）：测试沙箱此前只跑"提取"、不跑校验，所以界面上永远看不到
-	// 必填告警与正则补洞——用户配了 required/regex 也无从验证。这里把与正式提取
-	// 同一套确定性校验（日期归一化 + 必填 + 配置级正则补洞）跑一遍：
-	//   - 补洞直接回写 result.Fields（map 引用语义），前端看到的就是最终值；
-	//   - issues/patches 随响应返回，提取测试弹窗据此渲染分级告警与溯源徽章。
-	issues := []service.ExtractFieldIssue(nil)
-	patches := []service.RegexFieldPatch(nil)
-	if len(result.Fields) > 0 {
-		records := []service.GenericExtractRecord{service.NewGenericRecordFromMap(0, result.Fields)}
-		issues, patches = service.ValidateGenericExtraction(records, content, ec)
+	// 结果统一容器：发票走结构体管线，其它 scope 走通用 map 管线，最后汇成同一种响应。
+	var (
+		resultFields map[string]any
+		issues       []service.ExtractFieldIssue
+		patches      []service.RegexFieldPatch
+		docType      string
+		invoiceCount int
+	)
+
+	if strings.EqualFold(scope, types.FleetCategoryScopeInvoice) && len(testChunks) > 0 {
+		// P0-2（2026-10-19 审查）：沙箱与正式提取必须同管线。
+		// 旧实现走 ExtractFleetDocumentFromContent（120000 bytes、无前置规则、无分类
+		// 锁定），正式提取走「三套规则 → 分批 LLM → Normalize → 确定性覆盖」并限
+		// 24000 runes，两边差异导致"沙箱通过、生产失败"。
+		docHint := testKnowledgeID
+		if len(docHint) > 8 {
+			docHint = docHint[:8]
+		}
+		invRes, ierr := service.ExtractInvoiceForSandbox(effCtx, chatModel, testChunks, ec, docHint)
+		if ierr != nil {
+			logger.Error(ctx, "Extract config test invoice pipeline failed", ierr)
+			c.Error(errors.NewInternalServerError("提取失败: " + ierr.Error()))
+			return
+		}
+		issues = invRes.ExtractIssues
+		patches = invRes.RegexPatches
+		invoiceCount = len(invRes.Invoices)
+		if invoiceCount > 0 {
+			// 沙箱语义是「按一份样票验证配置」：取首张票字段回显，
+			// invoice_count 告知本文件实际识别出几张。
+			resultFields = invoiceItemFieldsMap(invRes.Invoices[0])
+			docType = invRes.Invoices[0].InvoiceType
+		}
+	} else {
+		sysPrompt := service.BuildExtractSystemPrompt(ec)
+		fieldNames := service.EnabledExtractFieldNames(fields)
+		result, xerr := service.ExtractFleetDocumentFromContent(effCtx, chatModel, content, scope, certType, fieldNames, sysPrompt)
+		if xerr != nil {
+			logger.Error(ctx, "Extract config test model call failed", xerr)
+			c.Error(errors.NewInternalServerError("提取失败: " + xerr.Error()))
+			return
+		}
+		resultFields = result.Fields
+		docType = result.DocType
+		// 质量闭环（Phase D）：把与正式提取同一套确定性校验（日期归一化 + 必填 +
+		// 配置级正则补洞）跑一遍，issues/patches 随响应返回供测试弹窗渲染。
+		if len(result.Fields) > 0 {
+			records := []service.GenericExtractRecord{service.NewGenericRecordFromMap(0, result.Fields)}
+			issues, patches = service.ValidateGenericExtraction(records, content, ec)
+		}
 	}
 
 	// 缺失字段：按配置字段顺序，空值/空数组/0 视为缺失。
@@ -487,7 +525,7 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 		if !f.Enabled {
 			continue
 		}
-		if isEmptyExtractValue(result.Fields[f.Name]) {
+		if isEmptyExtractValue(resultFields[f.Name]) {
 			missing = append(missing, f.Name)
 		}
 	}
@@ -495,14 +533,29 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"doc_type":         result.DocType,
-			"fields":           result.Fields,
+			"doc_type":         docType,
+			"fields":           resultFields,
 			"missing":          missing,
 			"extract_issues":   issues,
 			"patched_by_regex": service.PatchedFieldNames(patches),
 			"regex_patches":    patches,
+			"invoice_count":    invoiceCount,
 		},
 	})
+}
+
+// invoiceItemFieldsMap 把一张发票压成 map 视图（snake_case 契约键），
+// 供沙箱响应复用既有的 fields/missing 渲染逻辑。
+func invoiceItemFieldsMap(item service.InvoiceExtractionItem) map[string]any {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 func isEmptyExtractValue(v any) bool {

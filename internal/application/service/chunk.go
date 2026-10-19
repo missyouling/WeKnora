@@ -172,6 +172,27 @@ func (s *chunkService) ListChunksByKnowledgeID(ctx context.Context, knowledgeID 
 	return chunks, nil
 }
 
+// ListChunksByKnowledgeIDAndTypes 按类型集合取 chunk（按 chunk_index 升序）。
+//
+// 业务提取统一入口：传入 ExtractSourceChunkTypes() 即可同时拿到正文与图片理解
+// 产物（image_ocr / image_caption）。不要再用 ListChunksByKnowledgeID ——
+// 那个方法只返回 chunk_type='text'，纯扫描件会取不到任何文本。
+func (s *chunkService) ListChunksByKnowledgeIDAndTypes(
+	ctx context.Context, knowledgeID string, chunkTypes []types.ChunkType,
+) ([]*types.Chunk, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	chunks, err := s.chunkRepository.ListChunksByKnowledgeIDAndTypes(ctx, tenantID, knowledgeID, chunkTypes)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{
+			"knowledge_id": knowledgeID,
+			"tenant_id":    tenantID,
+		})
+		return nil, err
+	}
+	logger.Infof(ctx, "Retrieved %d chunks (types=%v) for knowledge %s", len(chunks), chunkTypes, knowledgeID)
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 // This method retrieves chunks with pagination support for better performance with large datasets
 // Parameters:

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
@@ -425,16 +426,9 @@ func buildFleetExtractionContent(name, summary string, chunks []*types.Chunk) st
 		sb.WriteString(summary)
 		sb.WriteString("\n")
 	}
-	for _, chunk := range chunks {
-		if chunk == nil {
-			continue
-		}
-		if chunk.ChunkType != types.ChunkTypeText &&
-			chunk.ChunkType != types.ChunkTypeImageOCR &&
-			chunk.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		text := strings.TrimSpace(chunk.Content)
+	for _, chunk := range service.ChunksForExtraction(chunks) {
+		// 二次归一：部分引擎/历史 chunk 可能残留裸 HTML 表格。
+		text := strings.TrimSpace(docparser.NormalizeHTMLTables(chunk.Content))
 		if text == "" {
 			continue
 		}
@@ -467,7 +461,6 @@ func truncateErr(s string, n int) string {
 	}
 	return s[:n]
 }
-
 
 // FleetOverviewStats 证照档案首页轻量统计：只返回按证照类型分组的文件数与
 // 状态计数，不返回文件行与 OCR 全文（description），避免首屏拉取全量大字段。

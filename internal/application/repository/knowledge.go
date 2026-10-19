@@ -236,11 +236,22 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 		)
 	}
 
-	if err := scope(r.db.WithContext(ctx).Model(&types.Knowledge{})).Count(&total).Error; err != nil {
-		return nil, 0, err
+	// 聚合类调用方自带内存计数，跳过 COUNT 可省一次跨区往返（约 350ms）。
+	if !filter.SkipTotalCount {
+		if err := scope(r.db.WithContext(ctx).Model(&types.Knowledge{})).Count(&total).Error; err != nil {
+			return nil, 0, err
+		}
 	}
 
-	if err := scope(r.db.WithContext(ctx)).
+	q := scope(r.db.WithContext(ctx))
+	if filter.OmitDescription {
+		// 只取聚合需要的列：description 是整篇摘要，列表页不展示。
+		q = q.Select(
+			"id, tenant_id, knowledge_base_id, title, file_name, file_type, file_size, " +
+				"parse_status, custom_metadata, created_at, updated_at",
+		)
+	}
+	if err := q.
 		Order(knowledgeListOrderClause(filter)).
 		// 相同排序值使用主键兜底，保证 OFFSET 分页顺序稳定。
 		Order("id ASC").

@@ -63,7 +63,12 @@ func NewBusinessExtractHandler(kh *KnowledgeHandler, db *gorm.DB, ms interfaces.
 
 // extractionTimeout 提取任务总超时：脱离 HTTP 请求生命周期后仍需硬上限，
 // 避免无人值守的提取任务永久运行烧 token。
-const extractionTimeout = 30 * time.Minute
+//
+// 45 分钟的依据（2026-10-19 调优）：27 张票的汇总单约 89 chunk → 每批 8 chunk
+// → 12 批，并发 4 即 3 波；单批硬超时 5 分钟，最坏 15 分钟，但供应商抖动时
+// 单批可逼近 8~10 分钟，3 波即触到 30 分钟上限，表现为"提取到一半被判超时"。
+// 放宽到 45 分钟留出 1.5 倍余量；真正的兜底仍由单批 5 分钟超时负责。
+const extractionTimeout = 45 * time.Minute
 
 // invoiceBatchBudget 单批发票提取的时间预算（Guided 主调用 + 至多一次回退）。
 //
@@ -317,7 +322,7 @@ func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, know
 		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeIDAndTypes(extractCtx, knowledgeID, service.ExtractSourceChunkTypes())
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for contract extraction", err)
 		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
@@ -1046,14 +1051,15 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeIDAndTypes(extractCtx, knowledgeID, service.ExtractSourceChunkTypes())
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for invoice extraction", err)
 		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
 	}
 	// 分批提取：超长多发票文档（18/22 张）单次 LLM 调用不可靠（智谱 500 /
 	// 输出截断），按 chunk 分批独立调用后合并，Normalize 时按发票号去重。
-	batches := service.BuildInvoiceExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	batchReport := service.BuildInvoiceExtractionBatchesWithReport(knowledge.FileName, knowledge.Description, chunks, 0)
+	batches := batchReport.Batches
 	// 扫描件防御：无文本层（扫描件 PDF / 纯图片）时不自动删除，保留文件并标记
 	// failed 让用户人工处理。
 	if !invoiceBatchesHaveText(batches) {
@@ -1112,60 +1118,23 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 日志里只有 "task started" 然后长时间静默，无法判断卡在规则还是模型调用。
 	logger.Infof(ctx, "Invoice extraction: start rule extraction (%d chunks, %d batches) knowledge=%s",
 		len(chunks), len(batches), knowledgeID)
-	ruleRes, ruleOK := service.ExtractInvoicesByLineRulesFromChunks(chunks)
-	logger.Infof(ctx, "Invoice extraction: line rules done, hit=%v knowledge=%s", ruleOK, knowledgeID)
-	if ruleOK {
-		logger.Infof(ctx, "Invoice extraction by line rules: %d invoices from knowledge %s", len(ruleRes.Invoices), knowledgeID)
+	ruleOutcome := service.ExtractInvoiceByRules(chunks, docHint)
+	ruleRes, ruleOK := ruleOutcome.Result, ruleOutcome.Hit
+	ruleCount := 0
+	if ruleRes != nil {
+		ruleCount = len(ruleRes.Invoices)
 	}
-	if !ruleOK {
-		// 新版 docreader（invoice2.html）输出 Markdown 表格，旧纯文本「号码行+金额行」
-		// 规则不命中；改用 Markdown 表格规则确定性提取（税号/车牌/日期/金额/税率/税额
-		// 均为 ASCII），避免回退 LLM 在乱码长文本上耗时 3 分钟超时。
-		if mdRes, mdOK := service.ExtractInvoicesByMarkdownTableRulesFromChunks(chunks, docHint); mdOK {
-			ruleRes = mdRes
-			ruleOK = true
-			logger.Infof(ctx, "Invoice extraction by markdown-table rules: %d invoices from knowledge %s", len(mdRes.Invoices), knowledgeID)
-		}
-	}
-	if !ruleOK {
-		// 第三套：扁平布局规则（docreader 实际输出格式）——发票代码/号码/开票日期
-		// 独立成行，明细行字段顺序固定（项目 车牌 车型 通行起 通行止 金额 税率 税额），
-		// 可确定性解析，毫秒级完成且不会把『机器编号』误当发票号。
-		// 为什么排在 LLM 之前：实测 16 页票据即使缩到 8 chunk/批，LLM 仍会因
-		// "多张票 × 8 个子列"的输出量触发 5 分钟超时，稳定性远不如规则。
-		if flatRes, flatOK := service.ExtractInvoicesByFlatLayoutFromChunks(chunks); flatOK {
-			ruleRes = flatRes
-			ruleOK = true
-			logger.Infof(ctx, "Invoice extraction by flat-layout rules: %d invoices from knowledge %s", len(flatRes.Invoices), knowledgeID)
-		}
-	}
-	if ruleOK {
-		// 半残守卫：规则命中不等于规则**提全**。若产出的发票缺金额/购销方等核心
-		// 字段，直接短路会让用户永久停留在「金额/税率/税额全是 -、购销方全空」的
-		// 半成品上（MinerU 格式变更即触发）。这里按缺失程度区别处理：
-		//   - 全部发票都缺 → 视为规则未命中，回退 LLM 重新提（规则对该格式失效）；
-		//   - 部分发票缺  → 保留规则结果（已有一半正确数据），但记录问题供复核。
-		if service.InvoiceRuleResultIncomplete(ruleRes) {
-			total := len(ruleRes.Invoices)
-			incomplete := 0
-			for _, inv := range ruleRes.Invoices {
-				if service.InvoiceRuleResultIncomplete(&service.InvoiceExtractionResult{
-					Kind: "invoice", Invoices: []service.InvoiceExtractionItem{inv},
-				}) {
-					incomplete++
-				}
-			}
-			if incomplete >= total && total > 0 {
-				logger.Warnf(ctx, "Invoice rules produced %d incomplete invoices (all); falling back to LLM, knowledge=%s", total, knowledgeID)
-				ruleOK = false
-				ruleRes = nil
-			} else {
-				logger.Warnf(ctx, "Invoice rules produced %d/%d incomplete invoices; keeping rule result and flagging, knowledge=%s",
-					incomplete, total, knowledgeID)
-				ruleRes.ExtractError = fmt.Sprintf(
-					"规则提取有 %d/%d 张票字段不完整（可能票面格式变化），建议复核", incomplete, total)
-			}
-		}
+	logger.Infof(ctx, "Invoice extraction: rules done, kind=%q hit=%v invoices=%d incomplete=%d/%d knowledge=%s",
+		ruleOutcome.Kind, ruleOK, ruleCount, ruleOutcome.IncompleteCount, ruleOutcome.Total, knowledgeID)
+	if ruleOutcome.AllIncomplete() {
+		logger.Warnf(ctx, "Invoice rules produced %d incomplete invoices (all); falling back to LLM, knowledge=%s",
+			ruleOutcome.Total, knowledgeID)
+		ruleOK = false
+		ruleRes = nil
+	} else if ruleOK && ruleOutcome.IncompleteCount > 0 {
+		logger.Warnf(ctx, "Invoice rules produced %d/%d incomplete invoices; keeping rule result and flagging, knowledge=%s",
+			ruleOutcome.IncompleteCount, ruleOutcome.Total, knowledgeID)
+		ruleRes.ExtractError = service.InvoiceRuleIncompleteNotice(ruleOutcome.IncompleteCount, ruleOutcome.Total)
 	}
 	if ruleOK {
 		merged = ruleRes
@@ -1305,6 +1274,12 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	}
 	extracted := merged
 	service.NormalizeInvoiceExtractionResult(extracted)
+	// 超长采样告警：单批内容超过 rune 上限时会走「头60%+中20%+尾20%」采样，
+	// 中段票据被静默丢弃。必须让用户在质量面板看到，否则只会表现为"少了几张"。
+	if batchReport.Sampled {
+		extracted.ExtractIssues = append(extracted.ExtractIssues, service.NewExtractSamplingIssue(batchReport.MaxRunes))
+		logger.Warnf(ctx, "Invoice extraction: batch content sampled (cap=%d runes) knowledge=%s", batchReport.MaxRunes, knowledgeID)
+	}
 	// 确定性覆盖层：用票面明确标签纠正 LLM 易错字段——发票号码（实测曾误取
 	// 机器编号 499098302394 而非『发票号码 64869484』）与明细子列（车牌/车型/
 	// 通行日期起止）。张数不一致时该函数不改动任何字段（防按序错位）。
@@ -1572,7 +1547,7 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		return
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(effCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeIDAndTypes(effCtx, knowledgeID, service.ExtractSourceChunkTypes())
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for invoice page extraction", err)
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
@@ -1917,7 +1892,7 @@ func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, kn
 		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeIDAndTypes(extractCtx, knowledgeID, service.ExtractSourceChunkTypes())
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for regulation extraction", err)
 		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())
@@ -2272,7 +2247,7 @@ func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, k
 		return nil, errors.NewInternalServerError("get extraction model failed: " + err.Error())
 	}
 
-	chunks, err := h.chunkService.ListChunksByKnowledgeID(extractCtx, knowledgeID)
+	chunks, err := h.chunkService.ListChunksByKnowledgeIDAndTypes(extractCtx, knowledgeID, service.ExtractSourceChunkTypes())
 	if err != nil {
 		logger.Error(ctx, "Failed to list chunks for notice extraction", err)
 		return nil, errors.NewInternalServerError("list chunks failed: " + err.Error())

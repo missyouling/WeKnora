@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -70,7 +71,14 @@ type InvoiceExtractionItem struct {
 	// It is assigned by the backend (in extraction-result order) so the
 	// floating toolbar can target a single page for re-extraction; legacy
 	// records without it keep 0.
+	// **它同时是删除接口的定位键**（delete-invoice-page?page=N），因此必须保持
+	// 「1..N 连续序号」语义，不能改成物理页码。
 	Page int `json:"page"`
+	// PageNo is the **physical** 1-based page in the source PDF/file, resolved
+	// from `Chunk.SourceLocators`. It equals Page when the parser reported no
+	// positions (pure-text engines), so the frontend can always prefer PageNo
+	// for preview jumps without losing the ordinal semantics of Page.
+	PageNo int `json:"page_no,omitempty"`
 }
 
 // InvoiceExtractionLine is one goods/service line inside an invoice.
@@ -195,10 +203,11 @@ const invoiceExtractionSystemPrompt = `你是一个专业的发票信息提取�
 13. invoice_type 只从以下枚举中选择：专用发票、普通发票、医疗收据、财政收据、其它票据；含「通行费」或「电子发票」的票据一律归为「普通发票」（通行费电子发票均为增值税普通发票）；无法识别时返回空字符串。
 14. category 为发票大分类，只从以下枚举中选择：通行费、办公费、差旅费、餐饮费、通讯费、加油费、住宿费、材料费、设备购置费、服务费、广告费、培训费、会议费、租赁费、其它。根据发票的商品或劳务名称、销方类型判断最匹配的一个大类；无法判定时用「其它」。
 15. 如果发票包含车牌号、通行日期等运输信息（如 ETC 通行费发票），将车牌号、通行日期起止以「车牌号：XX；通行日期起：XX；通行日期止：XX」格式写入 remark 字段（与已有备注内容用分号拼接）；无则保持原样。
-16. 发票级 total_amount/amount/tax 为价税合计/金额/税额（税额为全部明细税额之和）；无法识别时返回 null。
+16. 原文中若出现形如 [Page 3] 的页码锚点，请为该锚点之后出现的发票输出 page_no（整数，取该锚点的数字）；没有任何锚点时省略 page_no 字段，不要猜测。
+17. 发票级 total_amount/amount/tax 为价税合计/金额/税额（税额为全部明细税额之和）；无法识别时返回 null。
 
 输出格式：
-{"kind":"invoice","invoices":[{"invoice_no":"","invoice_code":"","invoice_date":"","invoice_type":"","total_amount":0,"amount":0,"tax":0,"tax_rate":0,"seller_name":"","seller_tax_no":"","seller_address":"","seller_phone":"","seller_bank":"","seller_account":"","buyer_name":"","buyer_tax_no":"","buyer_address":"","buyer_phone":"","buyer_bank":"","buyer_account":"","issuer":"","remark":"","category":"","void_flag":false,"duplicate":false,"items":[{"name":"","qty":1,"price":0,"amount":0,"tax_rate":0,"tax_amount":0}]}]}`
+{"kind":"invoice","invoices":[{"invoice_no":"","invoice_code":"","invoice_date":"","invoice_type":"","page_no":0,"total_amount":0,"amount":0,"tax":0,"tax_rate":0,"seller_name":"","seller_tax_no":"","seller_address":"","seller_phone":"","seller_bank":"","seller_account":"","buyer_name":"","buyer_tax_no":"","buyer_address":"","buyer_phone":"","buyer_bank":"","buyer_account":"","issuer":"","remark":"","category":"","void_flag":false,"duplicate":false,"items":[{"name":"","qty":1,"price":0,"amount":0,"tax_rate":0,"tax_amount":0}]}]}`
 
 // BuildInvoiceExtractionContent assembles the document text sent to the
 // model, mirroring the auto-tag content builder: document name + summary
@@ -211,18 +220,9 @@ func BuildInvoiceExtractionContent(name, summary string, chunks []*types.Chunk) 
 	if summary = strings.TrimSpace(summary); summary != "" {
 		parts = append(parts, "Existing summary: "+summary)
 	}
-	for _, chunk := range chunks {
-		if chunk == nil {
-			continue
-		}
-		if chunk.ChunkType != types.ChunkTypeText &&
-			chunk.ChunkType != types.ChunkTypeImageOCR &&
-			chunk.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		if text := strings.TrimSpace(chunk.Content); text != "" {
-			parts = append(parts, text)
-		}
+	// 统一取数层：过滤 chunk 类型、去重相邻重复文本、二次归一 HTML 表格。
+	if src := BuildExtractSourceText(chunks); strings.TrimSpace(src.Content) != "" {
+		parts = append(parts, strings.TrimSpace(src.Content))
 	}
 	return sampleLongContent(strings.Join(parts, "\n\n"), invoiceExtractMaxContentRunes)
 }
@@ -929,21 +929,30 @@ type InvoiceExtractionBatch struct {
 // is flushed when its accumulated content exceeds the rune cap (or when the
 // chunk-count hard cap is hit), never earlier — this keeps related invoice
 // fragments in the same call.
+// InvoiceBatchBuildReport 是分批构建的完整产物：批次 + 是否发生时序采样。
+//
+// Sampled=true 代表有批次内容超过单批 rune 上限、被 sampleLongContent 的
+// 「头60%+中20%+尾20%」策略截断——中段票会被静默丢弃。调用方必须把这条
+// 事实变成一条 warn 级 extract_issue，否则用户只会看到「少了几张票」而无从解释。
+type InvoiceBatchBuildReport struct {
+	Batches   []InvoiceExtractionBatch
+	Sampled   bool
+	MaxRunes  int
+	TotalChar int
+}
+
 func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []InvoiceExtractionBatch {
-	usable := make([]*types.Chunk, 0, len(chunks))
-	for _, chunk := range chunks {
-		if chunk == nil {
-			continue
-		}
-		if chunk.ChunkType != types.ChunkTypeText &&
-			chunk.ChunkType != types.ChunkTypeImageOCR &&
-			chunk.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		if strings.TrimSpace(chunk.Content) != "" {
-			usable = append(usable, chunk)
-		}
-	}
+	return BuildInvoiceExtractionBatchesWithReport(name, summary, chunks, batchSize).Batches
+}
+
+// BuildInvoiceExtractionBatchesWithReport 与 BuildInvoiceExtractionBatches 同源，
+// 额外回报「是否发生采样截断」。
+//
+// 页码锚点：每个 chunk 若带 SourceLocators.Page，就在其正文前插入一行
+// `[Page N]`（独立成行，不污染 Markdown 表格行的 ^| 锚定），让模型有能力
+// 回报物理页码；无页码的引擎不插锚点，结果回退序号。
+func BuildInvoiceExtractionBatchesWithReport(name, summary string, chunks []*types.Chunk, batchSize int) InvoiceBatchBuildReport {
+	usable := ChunksForExtraction(chunks)
 	// 调用方未显式指定时用每批上限（12 个 chunk ≈ 4 页）。
 	// 注意 chunk ≠ 页，见 InvoiceExtractionBatchSize 的说明。
 	if batchSize <= 0 {
@@ -958,6 +967,7 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 	}
 	headStr := strings.Join(header, "\n\n")
 
+	report := InvoiceBatchBuildReport{MaxRunes: invoiceExtractMaxContentRunes}
 	var batches []InvoiceExtractionBatch
 	curParts := make([]string, 0, 64)
 	curRunes := 0
@@ -971,8 +981,12 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 			parts = append(parts, headStr)
 		}
 		parts = append(parts, curParts...)
+		joined := strings.Join(parts, "\n\n")
+		if len([]rune(joined)) > invoiceExtractMaxContentRunes {
+			report.Sampled = true
+		}
 		batches = append(batches, InvoiceExtractionBatch{
-			Content:    sampleLongContent(strings.Join(parts, "\n\n"), invoiceExtractMaxContentRunes),
+			Content:    sampleLongContent(joined, invoiceExtractMaxContentRunes),
 			StartIndex: curStart,
 			EndIndex:   curEnd,
 		})
@@ -981,10 +995,16 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 		curStart, curEnd = -1, -1
 	}
 	for _, c := range usable {
-		part := strings.TrimSpace(c.Content)
+		// 二次归一：历史 chunk / 样票临时解析可能绕过入库前的 NormalizeHTMLTables，
+		// 裸 HTML 表格会让模型读成噪声。对已是 Markdown 的文本是幂等 no-op。
+		part := strings.TrimSpace(docparser.NormalizeHTMLTables(c.Content))
 		if part == "" {
 			continue
 		}
+		if page := ChunkPage(c); page > 0 {
+			part = extractPageMarker(page) + "\n" + part
+		}
+		report.TotalChar += len([]rune(part))
 		r := len([]rune(part))
 		// 主约束：chunk 数（≈页数）达上限即切批，控制单批发票张数与输出长度；
 		// rune 上限保留为兜底，防止个别超长 chunk 撑爆单批。
@@ -1003,7 +1023,8 @@ func BuildInvoiceExtractionBatches(name, summary string, chunks []*types.Chunk, 
 	if len(batches) == 0 {
 		batches = []InvoiceExtractionBatch{{Content: "", StartIndex: 0, EndIndex: 0}}
 	}
-	return batches
+	report.Batches = batches
+	return report
 }
 
 // NormalizeInvoiceExtractionResult cleans up a model reply: it guarantees a
@@ -1040,6 +1061,11 @@ func NormalizeInvoiceExtractionResult(res *InvoiceExtractionResult) {
 		inv.TaxRate = dominantItemTaxRate(inv.Items)
 		page++
 		inv.Page = page
+		// 物理页码：规则/LLM 已回填则保留；解析引擎没给位置信息时回退序号，
+		// 让前端永远有一个可跳转的值（PageNo 缺失时会退化成 Page）。
+		if inv.PageNo <= 0 {
+			inv.PageNo = page
+		}
 		kept = append(kept, inv)
 	}
 	res.Invoices = kept
@@ -1505,20 +1531,16 @@ func ExtractInvoicesByLineRules(content string) (*InvoiceExtractionResult, bool)
 // ExtractInvoicesByLineRulesFromChunks 将 text/OCR chunks 按页序拼接后执行
 // 规则提取。返回 (result, true) 表示规则命中；否则 (nil, false)。
 func ExtractInvoicesByLineRulesFromChunks(chunks []*types.Chunk) (*InvoiceExtractionResult, bool) {
-	var parts []string
-	for _, c := range chunks {
-		if c == nil || c.Content == "" {
-			continue
-		}
-		if c.ChunkType != types.ChunkTypeText && c.ChunkType != types.ChunkTypeImageOCR {
-			continue
-		}
-		parts = append(parts, c.Content)
-	}
-	if len(parts) == 0 {
+	src := BuildExtractSourceText(chunks)
+	if strings.TrimSpace(src.Content) == "" {
 		return nil, false
 	}
-	return ExtractInvoicesByLineRules(strings.Join(parts, "\n"))
+	res, ok := ExtractInvoicesByLineRules(src.Content)
+	if ok && res != nil {
+		// 规则按出现顺序产出，用发票号在原文中的位置反查物理页码。
+		AssignPhysicalPages(src, res.Invoices)
+	}
+	return res, ok
 }
 
 // ============ 规则提取（Markdown 表格模板，invoice2.html 渲染） ============
@@ -1698,20 +1720,15 @@ func ExtractInvoicesByMarkdownTableRules(content, docHint string) (*InvoiceExtra
 // ExtractInvoicesByMarkdownTableRulesFromChunks 将 text/OCR chunks 按页序
 // 拼接后执行 Markdown 表格规则提取。
 func ExtractInvoicesByMarkdownTableRulesFromChunks(chunks []*types.Chunk, docHint string) (*InvoiceExtractionResult, bool) {
-	var parts []string
-	for _, c := range chunks {
-		if c == nil || c.Content == "" {
-			continue
-		}
-		if c.ChunkType != types.ChunkTypeText && c.ChunkType != types.ChunkTypeImageOCR {
-			continue
-		}
-		parts = append(parts, c.Content)
-	}
-	if len(parts) == 0 {
+	src := BuildExtractSourceText(chunks)
+	if strings.TrimSpace(src.Content) == "" {
 		return nil, false
 	}
-	return ExtractInvoicesByMarkdownTableRules(strings.Join(parts, "\n"), docHint)
+	res, ok := ExtractInvoicesByMarkdownTableRules(src.Content, docHint)
+	if ok && res != nil {
+		AssignPhysicalPages(src, res.Invoices)
+	}
+	return res, ok
 }
 
 // ---- 扁平格式确定性覆盖层 ----
@@ -1742,20 +1759,11 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 	if res == nil || res.Kind == "not_invoice" || len(res.Invoices) == 0 {
 		return 0
 	}
-	var sb strings.Builder
-	for _, c := range chunks {
-		if c == nil {
-			continue
-		}
-		if c.ChunkType != types.ChunkTypeText &&
-			c.ChunkType != types.ChunkTypeImageOCR &&
-			c.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		sb.WriteString(c.Content)
-		sb.WriteString("\n")
-	}
-	full := sb.String()
+	src := BuildExtractSourceText(chunks)
+	full := src.Content
+	// 物理页码与「张数是否对齐」无关：按发票号在原文中的位置逐张回填，
+	// 即使下面因张数不一致而跳过号码覆盖，页码仍然是可信的。
+	AssignPhysicalPages(src, res.Invoices)
 
 	nos := flatInvoiceNoLabelRe.FindAllStringSubmatch(full, -1)
 	if len(nos) != len(res.Invoices) {
@@ -1930,20 +1938,15 @@ func atoiOrZero(s string) int {
 // ExtractInvoicesByFlatLayoutFromChunks 拼接文本类 chunk 后按扁平布局规则解析。
 // chunk 边界可能切开单张票，但按顺序拼接后内容连续，按「发票代码」切段即可复原。
 func ExtractInvoicesByFlatLayoutFromChunks(chunks []*types.Chunk) (*InvoiceExtractionResult, bool) {
-	var sb strings.Builder
-	for _, c := range chunks {
-		if c == nil {
-			continue
-		}
-		if c.ChunkType != types.ChunkTypeText &&
-			c.ChunkType != types.ChunkTypeImageOCR &&
-			c.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		sb.WriteString(c.Content)
-		sb.WriteString("\n")
+	src := BuildExtractSourceText(chunks)
+	if strings.TrimSpace(src.Content) == "" {
+		return nil, false
 	}
-	return ExtractInvoicesByFlatLayout(sb.String())
+	res, ok := ExtractInvoicesByFlatLayout(src.Content)
+	if ok && res != nil {
+		AssignPhysicalPages(src, res.Invoices)
+	}
+	return res, ok
 }
 
 // ---- HTML 表格行解析（OCR 解析引擎的输出格式） ----

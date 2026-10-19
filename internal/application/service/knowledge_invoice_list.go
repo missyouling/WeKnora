@@ -55,30 +55,18 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	const batch = 1000
 	for {
 		p := &types.Pagination{Page: page, PageSize: batch}
-		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
+		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{
+			// 本函数在内存里重算 total，仓储 COUNT 的结果被直接丢弃 —— 跳过它可
+			// 省一次数据库往返（Supabase 跨区 pooler 下约 350ms）。
+			SkipTotalCount: true,
+			// description 是整篇摘要 Markdown，列表页一个字都不展示。
+			OmitDescription: true,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("list knowledge for invoice records: %w", err)
 		}
 		if len(knowledges) == 0 {
 			break
-		}
-		// 加载标签：repo 层分页列表不返回 tags，需单独补取（与文档列表保持一致）
-		{
-			ids := make([]string, 0, len(knowledges))
-			for _, k := range knowledges {
-				if k != nil {
-					ids = append(ids, k.ID)
-				}
-			}
-			if tagMap, err := s.repo.GetKnowledgeTags(ctx, ids); err == nil {
-				for _, k := range knowledges {
-					if k != nil {
-						if tags, ok := tagMap[k.ID]; ok {
-							k.Tags = tags
-						}
-					}
-				}
-			}
 		}
 		// 2. 平铺 invoices
 		for _, k := range knowledges {
@@ -394,8 +382,29 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	if end > total {
 		end = total
 	}
+	pageRows := records[start:end]
+	// 标签只对**当前页**回填：列表只展示 20 行，而按全部文件取标签会多传上百行
+	// 数据；标签也不参与筛选/排序，放在分页之后是安全的。
+	if len(pageRows) > 0 {
+		ids := make([]string, 0, len(pageRows))
+		for i := range pageRows {
+			ids = append(ids, pageRows[i].KnowledgeID)
+		}
+		if tagMap, terr := s.repo.GetKnowledgeTags(ctx, ids); terr == nil {
+			for i := range pageRows {
+				names := make([]string, 0, 2)
+				for _, t := range tagMap[pageRows[i].KnowledgeID] {
+					if t != nil && t.Name != "" {
+						names = append(names, t.Name)
+					}
+				}
+				pageRows[i].Tags = names
+			}
+		}
+	}
+
 	return &types.InvoiceListResult{
-		Data:      records[start:end],
+		Data:      pageRows,
 		Total:     total,
 		SumAmount: sumAmount,
 		SumTax:    sumTax,

@@ -186,7 +186,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { getExtractConfig, saveExtractConfig, type ExtractFieldConfig, type ExtractSubFieldConfig, type AiSuggestRulesResult, aiSuggestRules } from '@/api/fleet'
-import { listFleetCategories, listFleetGroupAliases } from '@/api/fleet'
+import { listFleetGroupAliases } from '@/api/fleet'
+import { useExtractCatalog } from './useExtractCatalog'
 import { sortCertsByLocalOrder } from './useCertOrder'
 import { toCamelKey, toSnakeKey } from './invoiceFieldLabels'
 import {
@@ -624,6 +625,8 @@ const typeOptions = [
 const slots = ['{{fields_schema}}', '{{document_text}}']
 
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
+// 分类字典缓存（30s TTL + 并发去重）：切 Tab/切 scope 会反复 refresh。
+const catalog = useExtractCatalog()
 
 // 分组别名：与设置抽屉 FleetCertPanel 同 key（`${scope}:${builtinGroupKey}`），builtin group_key = company/driver/maintain
 const BUILTIN_GROUP_KEY: Record<string, string> = { vehicle: 'company', driver: 'driver', maintain: 'maintain' }
@@ -1176,8 +1179,9 @@ async function focusCertType(p?: { certType: string; sampleText?: string; autoSu
 async function refresh() {
   try {
     const scopes = isFleetScope.value ? ['vehicle', 'driver', 'maintain'] : [props.scope]
+    // 走分类缓存：切 Tab 时 refresh 会被反复触发，此前每次都真发 1~3 个请求。
     const [results] = await Promise.all([
-      Promise.all(scopes.map((s) => listFleetCategories({ scope: s }))),
+      Promise.all(scopes.map((s) => catalog.list(s))),
       isFleetScope.value ? loadGroupAliases() : Promise.resolve(),
     ])
     scopes.forEach((s, i) => {

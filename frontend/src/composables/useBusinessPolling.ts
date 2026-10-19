@@ -235,22 +235,47 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
     }
   }
 
+  // 当前生效的轮询间隔：空闲时业务层可调到 15s，一旦有新任务立刻回到 3s。
+  // 用 ref 而非闭包常量，才能在不重启定时器的情况下改变下一轮延迟。
+  const activeInterval = ref(intervalMs)
+  let loopFn: (() => Promise<void>) | null = null
+
   const start = () => {
     if (running) return
     running = true
     const loop = async () => {
       await tick()
       if (!running) return
-      timer = setTimeout(loop, pollingBackoffDelay(intervalMs, consecutiveFailures.value))
+      timer = setTimeout(loop, pollingBackoffDelay(activeInterval.value, consecutiveFailures.value))
     }
-    timer = setTimeout(loop, intervalMs)
+    loopFn = loop
+    timer = setTimeout(loop, activeInterval.value)
   }
   const stop = () => {
     running = false
+    loopFn = null
     if (timer) { clearTimeout(timer); timer = null }
+  }
+
+  /**
+   * 调整轮询间隔（空闲降频 / 有任务回升）。
+   *
+   * 语义：只影响**下一轮**的排期。为避免"刚设了 15s 又要等 15s 才响应新任务"，
+   * 在运行中且当前挂起的等待比新间隔更长时，会立即重排一次。
+   */
+  const setPollingInterval = (ms: number) => {
+    const next = Math.max(1000, Math.floor(ms))
+    if (next === activeInterval.value) return
+    activeInterval.value = next
+    if (!running || !timer || !loopFn) return
+    clearTimeout(timer)
+    timer = setTimeout(loopFn, pollingBackoffDelay(next, consecutiveFailures.value))
   }
 
   onBeforeUnmount(stop)
 
-  return { extractInFlight, extractFailed, pendingFiles, consecutiveFailures, start, stop, scanOnce, tick }
+  return {
+    extractInFlight, extractFailed, pendingFiles, consecutiveFailures, activeInterval,
+    start, stop, scanOnce, tick, setPollingInterval,
+  }
 }

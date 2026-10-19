@@ -239,7 +239,8 @@
 import { ref, reactive, computed, onMounted, watch, nextTick, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
-import { listFleetCategories, createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
+import { useExtractCatalog } from './useExtractCatalog'
+import { createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
 import { invoiceFieldLabel } from './invoiceFieldLabels'
 import { contractFieldLabel } from './contractFieldLabels'
 import { regulationFieldLabel } from './regulationFieldLabels'
@@ -398,6 +399,8 @@ function certFieldCount(b: CertDef) {
 
 const activeGroup = ref('company')
 const categories = ref<Record<string, any[]>>({ vehicle: [], driver: [], maintain: [] })
+// 分类字典缓存（30s TTL + 并发去重），避免每次打开设置抽屉重复拉取。
+const catalog = useExtractCatalog()
 const saving = ref(false)
 
 const group = computed(() => groupList.value.find((g) => g.key === activeGroup.value) || groupList.value[0])
@@ -543,19 +546,12 @@ async function migrateDefaultFlags(scope: string, list: any[]) {
 async function load() {
   try {
     const scopes = [...new Set(groupList.value.map((g) => g.scope))]
-    const resList = await Promise.all(scopes.map((s) => listFleetCategories({ scope: s })))
-    scopes.forEach(async (s, i) => {
-      let list = resList[i].data || []
-      // 内置类型更名迁移：旧「营运证」→「道路运输经营许可证」（车辆档案组）
-      if (s === 'vehicle') {
-        const legacy = list.find((c: any) => c.name === '营运证')
-        if (legacy?.id) {
-          try {
-            await updateFleetCategory(legacy.id, { name: '道路运输经营许可证', subs: legacy.subs || [], enabled: legacy.enabled })
-            list = list.map((c: any) => (c.id === legacy.id ? { ...c, name: '道路运输经营许可证' } : c))
-          } catch { /* 迁移失败保持原样，不阻塞 */ }
-        }
-      }
+    // 走 useExtractCatalog：30s TTL + 同 scope 并发去重。
+    // 打开设置抽屉平均要为 1~3 个 scope 各拉一次分类，跨区 pooler 下每次往返
+    // 约 350ms，缓存后重复打开基本零请求。
+    const resList = await Promise.all(scopes.map((s) => catalog.list(s)))
+    scopes.forEach((s, i) => {
+      const list = resList[i] || []
       categories.value[s] = list
       usedFields.value = new Set()
       migrateDefaultFlags(s, list)
