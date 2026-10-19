@@ -108,7 +108,10 @@ func (h *BusinessExtractHandler) AISuggestFields(c *gin.Context) {
 		return
 	}
 
-	dict := service.InvoiceStandardFieldDictionary()
+	// 字典 Schema 驱动（蓝图 P2-2）：按 scope 读注册表的标准字段契约。
+	// 发票 = 22 补洞面 + category/items；其它已注册 scope 字典为空（模型只产
+	// 自定义字段）；未注册 scope = nil。
+	dict := service.StandardFieldDictionaryForScope(scope)
 	result, serr := service.SuggestInvoiceFieldsFromText(effCtx, chatModel, certType, text, dict)
 	if serr != nil {
 		logger.Error(ctx, "AI field suggest failed", serr)

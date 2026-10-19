@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -641,4 +644,53 @@ func TestExtractSuggestAIRulesPromptOmitsRegexWithoutSample(t *testing.T) {
 	if strings.Contains(withSample, "未提供样票") {
 		t.Fatalf("有样票 Prompt 不得出现「未提供样票」:\n%s", withSample)
 	}
+}
+
+// TestStandardFieldDictionaryForScope 锁定蓝图 P2-2：AI 字段字典全面 Schema 驱动。
+//
+// 三条红线：
+//  1. 发票字典内容与重构前逐项一致（label/type/hint 都不能变，Prompt 契约）；
+//  2. 非发票已注册 scope 字典为空（此前错拿发票字典，会给合同建议发票键）；
+//  3. 未注册 scope 返回 nil（调用方按"无字典"处理，不静默回落发票）。
+func TestStandardFieldDictionaryForScope(t *testing.T) {
+	t.Run("发票字典与 Schema 补洞面 + 字典专属字段一致", func(t *testing.T) {
+		dict := StandardFieldDictionaryForScope("invoice")
+		require.NotEmpty(t, dict)
+
+		// 键序 = Schema 声明序 + category/items 殿后（补洞遍历序可复现）。
+		schemaKeys := ScopeSchemaStandardKeys("invoice")
+		require.Len(t, dict, len(schemaKeys)+2, "字典 = 补洞面 + category/items")
+
+		// 契约键必须真实存在于 InvoiceExtractionItem（reflect 校验，防手抄漂移）。
+		contract := invoiceContractKeys()
+		for _, f := range dict[:len(schemaKeys)] {
+			assert.True(t, contract[f.Key], "字典键 %q 不是 InvoiceExtractionItem 的 json tag", f.Key)
+			assert.NotEmpty(t, f.Label, "%q 缺中文名", f.Key)
+		}
+		assert.Equal(t, "category", dict[len(dict)-2].Key)
+		assert.Equal(t, "items", dict[len(dict)-1].Key)
+		assert.Equal(t, "array", dict[len(dict)-1].DataType, "items 字典项必须是 array 类型")
+	})
+
+	t.Run("document scope 字典为空", func(t *testing.T) {
+		for _, scope := range []string{"contract", "regulation", "notice", "award_punish", "utility", "solar"} {
+			dict := StandardFieldDictionaryForScope(scope)
+			assert.NotNil(t, dict, "%s 已注册，空字典也应返回非 nil 空切片", scope)
+			assert.Empty(t, dict, "%s 无标准字段，字典必须为空", scope)
+		}
+	})
+
+	t.Run("未注册 scope 返回 nil", func(t *testing.T) {
+		assert.Nil(t, StandardFieldDictionaryForScope("not-a-scope"))
+	})
+
+	t.Run("发票 schema 已注册且声明三件套", func(t *testing.T) {
+		schema, ok := GetScopeSchema("invoice")
+		require.True(t, ok)
+		assert.Equal(t, "invoice", schema.Kind)
+		assert.True(t, schema.RegexPatchable)
+		assert.Equal(t, "Fields", schema.DynamicBucket)
+		assert.Equal(t, "items", schema.ItemBucket)
+		assert.Equal(t, "Extra", schema.ItemField)
+	})
 }

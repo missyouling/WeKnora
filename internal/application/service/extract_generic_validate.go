@@ -35,9 +35,26 @@ type GenericExtractRecord struct {
 	Index int
 	// fields json 字段名 → 可寻址字段值（只收顶层字段）
 	fields map[string]reflect.Value
+	// goNames json 字段名 → Go 字段名（dynamicBucket/itemLines 按 Go 字段名
+	// 定位非 json 序列化的字段，如发票的 Fields/Extra）
+	goNames map[string]string
 	// mapFields 非 nil 时代表"扁平 map"视图（提取测试沙箱）：读写直接落到 map 上。
 	// 与 fields 互斥，mapFields 优先。
 	mapFields map[string]any
+}
+
+// ItemLineRecord 一行明细的统一读写视图（层次同 GenericExtractRecord，浅一层）。
+// 标准子列走 json tag 反射；分类动态子列（如通行费 plate_no）写 itemGoBucket
+// 指定的动态桶（发票 = Extra，json tag "-"，只能按 Go 字段名反射）。
+// 动态桶惰性创建：只有真写入才建 map，没补洞的明细行保持 Extra == nil。
+type ItemLineRecord struct {
+	Index   int
+	fields  map[string]reflect.Value
+	goNames map[string]string
+	dynamic map[string]any
+	// bucketField 动态桶的结构体字段（惰性建桶用）；hasBucket 报告字段存在性。
+	bucketField reflect.Value
+	hasBucket   bool
 }
 
 // canonicalFieldKey 归一化字段 key：小写 + 去掉非字母数字。
@@ -115,7 +132,7 @@ func NewGenericRecords[T any](items []T) []GenericExtractRecord {
 }
 
 func newGenericRecord(index int, ptr any) GenericExtractRecord {
-	rec := GenericExtractRecord{Index: index, fields: map[string]reflect.Value{}}
+	rec := GenericExtractRecord{Index: index, fields: map[string]reflect.Value{}, goNames: map[string]string{}}
 	if ptr == nil {
 		return rec
 	}
@@ -134,6 +151,7 @@ func newGenericRecord(index int, ptr any) GenericExtractRecord {
 			continue
 		}
 		rec.fields[name] = elem.Field(i)
+		rec.goNames[name] = t.Field(i).Name
 	}
 	return rec
 }
@@ -248,6 +266,123 @@ func (r GenericExtractRecord) setString(field, value string) bool {
 	}
 	v.SetString(value)
 	return true
+}
+
+// 以下四个方法是 Schema 驱动补洞（extract_schema_patch.go）的统一视图能力。
+// 与上面的 string 读写并列：补洞要处理文本、数值、动态桶、明细行四种位，
+// 缺一种就会把对应字段的补洞悄悄降级成"不补"。
+
+// textValue 读取任意受支持标量字段的**文本形态**（补洞的"当前值"判定用）。
+// string 与 *string 原样返回；*float64 走 floatFieldText（nil → ""，0 → "0"，
+// 与旧发票读写器的口径一致：显式 0 视为已填，不补）。
+func (r GenericExtractRecord) textValue(field string) (string, bool) {
+	if s, ok := r.stringValue(field); ok {
+		return s, true
+	}
+	key, ok := r.resolveField(field)
+	if !ok {
+		return "", false
+	}
+	if r.mapFields != nil {
+		return toStringValue(r.mapFields[key]), true
+	}
+	v := r.fields[key]
+	if v.Kind() == reflect.Ptr && !v.IsNil() && v.Type().Elem().Kind() == reflect.Float64 {
+		return floatFieldText(v.Interface().(*float64)), true
+	}
+	if v.Kind() == reflect.Float64 {
+		f := v.Float()
+		return floatFieldText(&f), true
+	}
+	return "", false
+}
+
+// setNumber 用 parsePatchedNumber 清洗后写入 *float64 字段。
+// 非数值字段/不可写/解析失败一律返回 false（调用方放弃该补洞，绝不留脏值）。
+func (r GenericExtractRecord) setNumber(field, raw string) bool {
+	if r.mapFields != nil {
+		f, ok := parsePatchedNumber(raw)
+		if !ok {
+			return false
+		}
+		key, ok := r.resolveField(field)
+		if !ok {
+			key = field
+		}
+		r.mapFields[key] = f
+		return true
+	}
+	key, ok := r.resolveField(field)
+	if !ok {
+		return false
+	}
+	v := r.fields[key]
+	if v.Kind() != reflect.Ptr || v.Type().Elem().Kind() != reflect.Float64 || !v.CanSet() {
+		return false
+	}
+	f, ok := parsePatchedNumber(raw)
+	if !ok {
+		return false
+	}
+	v.Set(reflect.ValueOf(&f))
+	return true
+}
+
+// dynamicBucket 取记录级扩展字段桶（Go 字段名定位，如发票 "Fields"）。
+// create=false 时纯读取（nil 桶返回 nil,false，**不建 map**——读取绝不能
+// 突变结构体，否则没补洞的记录也会被写上空 Fields）；create=true 用于写入前
+// 的惰性初始化。map 视图沙箱本身就是桶，无需创建。
+func (r GenericExtractRecord) dynamicBucket(goField string, create bool) (map[string]any, bool) {
+	if r.mapFields != nil {
+		return r.mapFields, true
+	}
+	if goField == "" {
+		return nil, false
+	}
+	for jsonKey, goName := range r.goNames {
+		if goName != goField {
+			continue
+		}
+		fv := r.fields[jsonKey]
+		if fv.Kind() != reflect.Map || fv.Type().Key().Kind() != reflect.String {
+			return nil, false
+		}
+		if fv.IsNil() {
+			if !create || !fv.CanSet() {
+				return nil, false
+			}
+			fv.Set(reflect.MakeMap(fv.Type()))
+		}
+		// reflect 的 map 值是引用：直接拿底层 map，写入能落回结构体。
+		out, _ := fv.Interface().(map[string]any)
+		return out, out != nil
+	}
+	return nil, false
+}
+
+// itemLines 取某明细数组字段（json tag 定位，如发票 "items"）的行视图切片。
+// 行视图支持标准子列读写 + ItemField 动态桶（Go 字段名定位，如发票 "Extra"）。
+func (r GenericExtractRecord) itemLines(jsonField, itemGoBucket string) []ItemLineRecord {
+	if r.mapFields != nil {
+		return nil // map 视图无结构体明细
+	}
+	key, ok := r.resolveField(jsonField)
+	if !ok {
+		return nil
+	}
+	v := r.fields[key]
+	if v.Kind() != reflect.Slice {
+		return nil
+	}
+	out := make([]ItemLineRecord, 0, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i)
+		if elem.Kind() != reflect.Struct || !elem.CanAddr() {
+			continue
+		}
+		out = append(out, newItemLineRecord(i, elem, itemGoBucket))
+	}
+	return out
 }
 
 func isZeroValue(v reflect.Value) bool {

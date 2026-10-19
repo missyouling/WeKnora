@@ -183,13 +183,12 @@ func validateInvoiceExtraction(res *InvoiceExtractionResult, cfg *types.KbExtrac
 		// 6) 用户配置的必填字段为空 → error（此前 Required 只是个没人读的字段）。
 		//    放在最后：跳过已被规则 1~3 报过的键，避免同一缺失被记两次。
 		for _, f := range requiredFields {
-			// 配置键可能是 camelCase（invoiceNo）：归一后解析读写器，
-			// 但 issue.Field 保留用户配置的原名，前端才能按同一 key 高亮字段。
-			_, acc, ok := invoiceAccessorFor(f)
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(acc.Get(inv)) != "" || hasIssueForField(issues, i, f) {
+			// 配置键可能是 camelCase（invoiceNo）：record 视图的 resolveField 已做
+			// canonical 归一解析。结构体里没有这个 json 字段（用户配了结构体装不下
+			// 的自定义 key）→ isEmpty 第二返回 false，继续跳过，与旧 accessor 判定
+			// 口径一致；issue.Field 保留用户配置原名，前端才能按同一 key 高亮。
+			empty, exists := newGenericRecord(i, inv).isEmpty(f)
+			if !exists || !empty || hasIssueForField(issues, i, f) {
 				continue
 			}
 			issues = append(issues, ExtractFieldIssue{

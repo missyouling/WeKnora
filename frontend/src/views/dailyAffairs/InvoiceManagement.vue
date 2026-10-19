@@ -297,7 +297,7 @@
 <SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
       <template #title>
         <span class="detail-title-main">{{ detailTitle }}</span>
-        <span v-if="currentRow?.page && currentRow.page >= 1" class="row-page-badge">P{{ currentRow.page }}</span>
+        <span v-if="pdfPageOf(currentRow) >= 1" class="row-page-badge">P{{ pdfPageOf(currentRow) }}</span>
       </template>
       <div class="invoice-detail-body">
         <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
@@ -362,7 +362,7 @@
           <t-collapse-panel value="preview" header="源文件预览">
             <div class="detail-block-content">
               <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :page="currentRow.page" :file-type="currentRow?.fileType || ''"
+                :page="pdfPageOf(currentRow)" :file-type="currentRow?.fileType || ''"
                 :file-name="currentRow?.fileName || ''" :active="true" />
             </div>
           </t-collapse-panel>
@@ -458,6 +458,7 @@ import {
   getRecognitionConfig,
 } from '@/api/knowledge-base'
 import DocumentPreview from '@/components/document-preview.vue'
+import { pdfPageOf } from './pdfPage'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
@@ -578,6 +579,11 @@ interface InvoiceRow extends Record<string, any> {
   // 列表动态列/详情抽屉按分类 subs.name 读取（colValue 已做回退）
   fields?: Record<string, any>
   invoiceNo?: string
+  // page 是票号序号（删除接口定位键，保持 1..N 连续语义）。
+  page?: number
+  // pageNo 是 PDF 物理页（SourceLocators 解析），预览跳转/批量打印认它，
+  // 缺失时由 pdfPageOf 回退 page。
+  pageNo?: number
   invoiceDate?: string
   invoiceType?: string
   totalAmount?: number
@@ -1108,6 +1114,7 @@ const mapInvoiceRecord = (r: any): InvoiceRow => ({
   duplicate: !!r.duplicate,
   fields: r.fields && typeof r.fields === 'object' ? r.fields : {},
   page: Number(r.page) || 0,
+  pageNo: Number(r.page_no ?? r.pageNo) || 0,
 })
 
 
@@ -1202,7 +1209,10 @@ const pageBadgeOf = (row: InvoiceRow): string => {
   if (!row.knowledgeId) return ''
   const count = fileInvoiceCounts.value.get(row.knowledgeId) || 0
   if (count <= 1) return ''
-  if (row.page && row.page >= 1) return `P${row.page}`
+  // 物理页码优先（与预览/打印同一判据 pdfPageOf）；没有物理页的老数据
+  // （page_no 缺失）回落序号。同页两票显示同一 P 号是正确的。
+  const physical = pdfPageOf(row)
+  if (physical >= 1) return `P${physical}`
   const same = invoiceRows.value.filter(r => r.knowledgeId === row.knowledgeId)
   const idx = same.findIndex(r => r.rowKey === row.rowKey)
   return idx >= 0 ? `${idx + 1}/${count}` : ''
@@ -2197,13 +2207,16 @@ const handleBatchPrint = async () => {
         }
         const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
         const pageCount = pdf.getPageCount()
-        if (r.page && r.page >= 1) {
-          if (r.page <= pageCount) {
-            const [pg] = await out.copyPages(pdf, [r.page - 1])
+        // 物理页码优先：page_no（SourceLocators）才是 PDF 里的真实页，
+        // page 是票号序号（同页两票/同票跨页时两者不等）。
+        const pdfPage = pdfPageOf(r)
+        if (pdfPage >= 1) {
+          if (pdfPage <= pageCount) {
+            const [pg] = await out.copyPages(pdf, [pdfPage - 1])
             out.addPage(pg)
             mergedPages++
           } else {
-            notes.push(`${r.invoiceNo || r.fileName}（页码 ${r.page} 超出文件 ${pageCount} 页，已并入整文件）`)
+            notes.push(`${r.invoiceNo || r.fileName}（页码 ${pdfPage} 超出文件 ${pageCount} 页，已并入整文件）`)
             const pages = await out.copyPages(pdf, pdf.getPageIndices())
             pages.forEach(p => out.addPage(p))
             mergedPages += pages.length

@@ -89,9 +89,10 @@ var broadAIRegexPatterns = []*regexp.Regexp{
 }
 
 // REGEX_PATCHABLE_INVOICE_KEYS 是「后端补洞器支持的发票标准键」的服务端镜像。
-// 2026-10-18 起补洞范围放开到全部标准字段（见 extract_regex_fallback.go 的
-// invoiceFieldOrder），这里仍导出给前端做展示与单测断言。
-var REGEX_PATCHABLE_INVOICE_KEYS = invoiceFieldOrder
+// 2026-10-18 起补洞范围放开到全部标准字段（见 ScopeSchema 的 StandardFields），
+// 2026-10-19 起改从 ScopeSchema 单一权威源派生（蓝图 P2-1），仍导出给前端做
+// 展示与单测断言。
+var REGEX_PATCHABLE_INVOICE_KEYS = ScopeSchemaStandardKeys(types.FleetCategoryScopeInvoice)
 
 // guardAIRegexPatchable 护栏一：字段是否在补洞器可执行范围内。
 //
@@ -267,44 +268,39 @@ func invoiceContractKeys() map[string]bool {
 
 // InvoiceStandardFieldDictionary 发票标准字段字典（喂给模型的唯一可选键集合）。
 //
-// 中文名**显式写在这里**，不从 invoiceFieldAliases 反查：那张表是「中文 → 英文」的
-// 别名表（收据编号/发票号码/票号…都映射到 invoice_no），反向取"第一条别名"得到的是
-// 任意一个别名（可能正是"收据编号"），拿去当标准字段名会误导用户。
+// 中文名**显式声明在 ScopeSchema 里**（extract_schema_registry.go），不从
+// invoiceFieldAliases 反查：那张表是「中文 → 英文」的别名表（收据编号/发票号码/
+// 票号…都映射到 invoice_no），反向取"第一条别名"得到的是任意一个别名（可能正是
+// "收据编号"），拿去当标准字段名会误导用户。
 func InvoiceStandardFieldDictionary() []InvoiceStandardField {
-	keys := invoiceContractKeys()
-	type spec struct {
-		key   string
-		label string
-		dtype string
-		hint  string
+	return StandardFieldDictionaryForScope(types.FleetCategoryScopeInvoice)
+}
+
+// StandardFieldDictionaryForScope 按 scope 的 ScopeSchema 生成标准字段字典
+// （蓝图 P2-2：AI 字段/规则建议全面 Schema 驱动）。
+//
+// 发票：Schema 的补洞面 22 项 + 字典专属的 category/items（见注册表注释）。
+// 其它已注册 scope：StandardFields 为空 → 返回空字典，模型只能产自定义字段
+// （此前它们错拿发票字典，会建议一堆合同/制度里根本不存在的键）。
+// 未注册 scope：nil（调用方按"无字典"处理）。
+func StandardFieldDictionaryForScope(scope string) []InvoiceStandardField {
+	schema, ok := GetScopeSchema(scope)
+	if !ok {
+		return nil
 	}
-	specs := []spec{
-		{"invoice_no", "发票号码", "text", "明确标注『发票号码/发票号/No.』后的数字串；机器编号、校验码、密码区一律不算"},
-		{"invoice_code", "发票代码", "text", "发票代码（10~12 位）；全电发票通常无此栏"},
-		{"invoice_date", "开票日期", "date", "开票日期，统一为 YYYY-MM-DD"},
-		{"invoice_type", "发票类型", "text", "票面标题所示的票据种类"},
-		{"total_amount", "价税合计", "number", "价税合计（小数），无货币符号"},
-		{"amount", "不含税金额", "number", "不含税金额（小数）"},
-		{"tax", "税额", "number", "税额（小数）"},
-		{"tax_rate", "税率", "number", "税率（数字，13 表示 13%）"},
-		{"seller_name", "销售方名称", "text", "销售方（开票方）名称"},
-		{"seller_tax_no", "销售方纳税人识别号", "text", "销售方纳税人识别号/统一社会信用代码"},
-		{"buyer_name", "购买方名称", "text", "购买方（受票方）名称"},
-		{"buyer_tax_no", "购买方纳税人识别号", "text", "购买方纳税人识别号/统一社会信用代码"},
-		{"issuer", "开票人", "text", "开票人/收款人/经办人姓名"},
-		{"remark", "备注", "text", "票面备注栏原文"},
-		{"category", "票据大类", "text", "票据大类，如增值税专用发票"},
-		{"items", "项目明细", "array", "货物/服务明细行"},
+	if len(schema.StandardFields) == 0 {
+		return []InvoiceStandardField{}
 	}
-	out := make([]InvoiceStandardField, 0, len(specs))
-	for _, s := range specs {
-		if !keys[s.key] {
-			// 结构体改名后立刻暴露，不静默产出一个无效字典
-			logger.Warnf(context.Background(),
-				"invoice standard dictionary: %q is not a contract key of InvoiceExtractionItem", s.key)
-			continue
-		}
-		out = append(out, InvoiceStandardField{Key: s.key, Label: s.label, DataType: s.dtype, Hint: s.hint})
+	fields := schema.StandardFields
+	if schema.Kind == "invoice" {
+		fields = append(append([]types.FieldDef(nil), fields...), invoiceDictionaryExtraFields()...)
+	}
+	out := make([]InvoiceStandardField, 0, len(fields))
+	for _, fd := range fields {
+		out = append(out, InvoiceStandardField{
+			Key: fd.Key, Label: fd.Label,
+			DataType: string(fd.Type), Hint: fd.Hint,
+		})
 	}
 	return out
 }
