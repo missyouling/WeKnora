@@ -11,6 +11,8 @@ import {
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
+import '../../registry'
+import { getScope, isBuiltinFieldOf } from '../../registry'
 
 // ---------------------------------------------------------------------------
 // 回归锁定：FleetCertPanel 曾经在三处把 subs 的sub_fields 整体丢掉
@@ -144,7 +146,13 @@ test('新建子项由系统生成合法 key（中文名映射 / 递增 sub_N）'
 })
 
 test('系统内置字段只有 3 个（发票类型/提取状态/标签），其余一律可删', () => {
-  assert.match(panel, /const SYSTEM_FIELD_KEYS = \['invoiceType', 'extractStatus', 'tags'\]/)
+  // 内置键声明在 BusinessScopeRegistry（registry/invoice.ts 的 builtinFieldKeys），
+  // 面板按 scope 查询不再有 scope 硬编码分支。
+  assert.deepEqual(getScope('invoice')?.builtinFieldKeys, ['invoiceType', 'extractStatus', 'tags'])
+  assert.equal(getScope('vehicle')?.builtinFieldKeys, undefined)
+  assert.equal(isBuiltinFieldOf('invoice', 'invoiceType'), true)
+  assert.equal(isBuiltinFieldOf('invoice', 'invoiceNo'), false)
+  assert.equal(isBuiltinFieldOf('vehicle', 'invoiceType'), false)
   assert.match(panel, /<template v-if="isBuiltinField\(fd\)">[\s\S]{0,200}lock-on/)
   assert.match(panel, /系统内置字段，不可删除/)
   // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除

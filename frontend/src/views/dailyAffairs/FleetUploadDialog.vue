@@ -71,6 +71,7 @@ import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata } fro
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { sharedExtractInFlight, saveFlightSnapshot } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
+import { getScope } from '../../registry'
 
 const props = defineProps<{
   visible: boolean
@@ -114,38 +115,13 @@ const dragOver = ref(false)
 const tasks = ref<UpTask[]>([])
 let taskSeq = 0
 
-// 发票/合同/制度/通知公告 scope 复用车队上传弹窗：文案与提取接口差异化
-const isInvoice = computed(() => props.scope === 'invoice')
-const isContract = computed(() => props.scope === 'contract')
-const isRegulation = computed(() => props.scope === 'regulation')
-const isNotice = computed(() => props.scope === 'award_punish')
-const dialogTitle = computed(() => props.title || (isInvoice.value
-  ? '上传发票'
-  : isContract.value
-    ? '上传合同'
-    : isRegulation.value
-      ? '上传制度'
-      : isNotice.value
-        ? '上传公告'
-        : '上传证照'))
-const typeFieldLabel = computed(() => (isInvoice.value
-  ? '发票类型'
-  : isContract.value
-    ? '合同类型'
-    : isRegulation.value
-      ? '制度类型'
-      : isNotice.value
-        ? '公告类型'
-        : '证照类型'))
-const typeTip = computed(() => (isInvoice.value
-  ? '选择发票类型，上传后按所选类型归档归类'
-  : isContract.value
-    ? '选择合同类型，上传后按所选类型归类提取'
-    : isRegulation.value
-      ? '选择制度类型，上传后按所选类型归类提取'
-      : isNotice.value
-        ? '选择公告类型，上传后按所选类型归类提取'
-        : '必须选择证照类型，上传后按所选类型归类提取'))
+// 发票/合同/制度/通知公告 scope 复用车队上传弹窗：文案与提取接口全部由
+// BusinessScopeRegistry 驱动（新增业务只改 registry/<scope>.ts，本文件零改动）。
+const scopeDesc = computed(() => getScope(props.scope))
+const isInvoice = computed(() => scopeDesc.value?.kind === 'invoice')
+const dialogTitle = computed(() => props.title || `上传${scopeDesc.value?.uploadNoun || '证照'}`)
+const typeFieldLabel = computed(() => scopeDesc.value?.uploadTypeLabel || '证照类型')
+const typeTip = computed(() => scopeDesc.value?.uploadTypeTip || `必须选择${typeFieldLabel.value}，上传后按所选类型归类提取`)
 
 // 证照类型选项必须响应式：父组件 uploadTypeOptions 随分类加载/设置变更更新，
 // 若用一次性求值会冻结为初始快照（分类尚未加载时只有内置类型，自定义类型缺失）
@@ -213,15 +189,7 @@ function addFiles(files: File[]) {
   if (!props.kbId) { MessagePlugin.warning('知识库尚未就绪'); return }
   // 必选类型：发票 scope 必须先选发票类型（防误分类），车队必须先选证照类型
   if (!selectedType.value) {
-    MessagePlugin.warning(isInvoice.value
-      ? '请先选择发票类型'
-      : isContract.value
-        ? '请先选择合同类型'
-        : isRegulation.value
-          ? '请先选择制度类型'
-          : isNotice.value
-            ? '请先选择公告类型'
-            : '请先选择证照类型')
+    MessagePlugin.warning(`请先选择${typeFieldLabel.value}`)
     return
   }
   const allowed = /\.(pdf|png|jpg|jpeg|webp|bmp)$/i
@@ -493,7 +461,7 @@ function drainExtractQueue() {
 
 async function extractFile(kid: string, scope: string, certType: string) {
   const body = certType ? { scope, cert_type: certType } : { scope }
-  if (isInvoice.value) {
+  if (scopeDesc.value?.api.extract === 'business') {
     await extractBusinessDocument(props.kbId, kid, body)
   } else {
     await extractFleetDocument(props.kbId, kid, body)

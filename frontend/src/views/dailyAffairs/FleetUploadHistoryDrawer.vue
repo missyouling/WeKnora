@@ -99,6 +99,7 @@ import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { isExtractInProgress } from '@/composables/extractConflict'
+import { getScope } from '../../registry'
 
 const props = defineProps<{
   visible: boolean
@@ -127,7 +128,7 @@ const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '84px' },
   { colKey: 'extract', title: '提取', width: '84px' },
-  { colKey: 'docType', title: props.scope === 'invoice' ? '发票类型' : props.scope === 'contract' ? '合同类型' : '证照类型', width: '110px' },
+  { colKey: 'docType', title: getScope(props.scope || '')?.categoryLabel || '证照类型', width: '110px' },
   { colKey: 'createdAt', title: '上传时间', width: '160px' },
   { colKey: 'op', title: '操作', width: '48px' },
 ]
@@ -307,8 +308,9 @@ const reextractRow = async (row: any) => {
   row._extracting = true
   try {
     // 后端只认 cert_type（历史代码曾误传 doc_type 导致证照类型静默丢失）
-    const payload = { scope: props.scope === 'invoice' ? 'invoice' : (props.scope || 'vehicle'), cert_type: row.doc_type || undefined }
-    if (props.scope === 'invoice') {
+    const scope = props.scope || 'vehicle'
+    const payload = { scope, cert_type: row.doc_type || undefined }
+    if (getScope(scope)?.api.extract === 'business') {
       await extractBusinessDocument(props.kbId, row.id, payload)
     } else {
       await extractFleetDocument(props.kbId, row.id, payload)

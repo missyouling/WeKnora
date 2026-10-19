@@ -608,7 +608,6 @@ interface InvoiceRow extends Record<string, any> {
   category?: string
   voidFlag?: boolean
   duplicate?: boolean
-  page?: number
   taxRate?: number
   multiIndex?: string
   tags?: any[]

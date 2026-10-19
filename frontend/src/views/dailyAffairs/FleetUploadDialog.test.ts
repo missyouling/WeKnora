@@ -2,21 +2,31 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
+import '../../registry'
+import { getScope } from '../../registry'
+
 const dialog = readFileSync(new URL('./FleetUploadDialog.vue', import.meta.url), 'utf8')
 
-test('上传弹窗证照类型必选：删除「自动识别」，占位符改为「请选择证照类型」', () => {
+test('上传弹窗证照类型必选：删除「自动识别」，占位符为「请选择类型」', () => {
   assert.ok(!dialog.includes('自动识别'), '不再提供自动识别选项')
   assert.ok(!/t-select[^>]*clearable/.test(dialog), '证照类型选择框不可清空')
-  assert.match(dialog, /placeholder="请选择证照类型"/)
+  // 占位文案由 registry 驱动（车队=证照类型，发票=发票类型）
+  assert.match(dialog, /:placeholder="typeFieldLabel"/)
+  assert.equal(getScope('vehicle')?.uploadTypeLabel, '证照类型')
+  assert.equal(getScope('invoice')?.uploadTypeLabel, '发票类型')
 })
 
 test('上传提示文案明确必选：必须选择证照类型，按所选类型归类提取', () => {
-  assert.match(dialog, /必须选择证照类型，上传后按所选类型归类提取/)
+  // 文案收进 registry：车队保留「必须选择…」口径，发票为「选择发票类型…」
+  assert.equal(getScope('vehicle')?.uploadTypeTip, '必须选择证照类型，上传后按所选类型归类提取')
+  assert.equal(getScope('invoice')?.uploadTypeTip, '选择发票类型，上传后按所选类型归档归类')
+  assert.match(dialog, /uploadTypeTip/)
 })
 
 test('未选择证照类型时禁止添加文件并提示', () => {
   assert.match(dialog, /if \(!selectedType\.value\)/)
-  assert.match(dialog, /MessagePlugin\.warning\('请先选择证照类型'\)/)
+  assert.match(dialog, /MessagePlugin\.warning\(`请先选择\$\{typeFieldLabel\.value\}`\)/)
+  assert.equal(`请先选择${getScope('vehicle')?.uploadTypeLabel}`, '请先选择证照类型')
   assert.ok(dialog.indexOf('!selectedType.value') < dialog.indexOf('const allowed'), '类型校验先于文件类型校验')
 })
 

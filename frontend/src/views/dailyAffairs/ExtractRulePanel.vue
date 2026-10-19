@@ -1,7 +1,7 @@
 <template>
   <div ref="rootRef" class="extract-rule-panel" :class="{ 'eq-narrow': narrow }">
     <div class="extract-toolbar">
-      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="isFleetScope ? (scope === 'maintain' ? '选择维保类型' : '选择证照类型') : '选择发票类型'" @change="onCertTypeChange" />
+      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="`选择${getScope(scope)?.uploadTypeLabel || '证照类型'}`" @change="onCertTypeChange" />
       <span v-else class="cert-type-static">整体提取规则</span>
       <div class="spacer" />
       <!-- 高级模式：左侧文字标签 + 右侧开关（不再用 t-switch 内嵌 label，避免文字随开关漂移） -->
@@ -204,6 +204,7 @@ import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestPanel from './ExtractTestPanel.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
 import { cacheSampleText, dropSampleText, readSampleText } from './sampleTextCache'
+import { getScope } from '../../registry'
 
 const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
 
@@ -244,31 +245,9 @@ const DEFAULT_FIELDS: Record<string, Record<string, string[]>> = {
 // 便于用户直接使用或在此基础上微调。
 type RuleDraft = { desc: string; rule: string }
 
-/**
- * 发票公共底稿：分类底稿里没有的契约键统一在这里兜底。
- *
- * 为什么单独一张表：invoice 下有 5 个内置分类，各自抄一份"发票代码/项目明细"
- * 只会漂移；而这几个键是跨分类通用的。键写成 camelCase，查找时经
- * draftByKeyForms 兼容 snake_case（invoice_code）与中文写法。
- */
-const INVOICE_COMMON_RULES: Record<string, RuleDraft> = {
-  invoiceCode: {
-    desc: '发票代码',
-    rule: '提取“发票代码”栏（10~12 位纯数字）；全电发票/数电票通常无此栏，留空',
-  },
-  items: {
-    desc: '项目明细行',
-    rule: '逐行提取货物或服务明细（项目名称/规格型号/单位/数量/单价/金额/税率/税额）；原文无明细行则返回空数组',
-  },
-  车牌号: {
-    desc: '车牌号码',
-    rule: '提取“车牌号 / 车牌号码”栏，格式如“渝A12345”；无则留空',
-  },
-  车辆类型: {
-    desc: '车辆类型',
-    rule: '提取“车型 / 车辆类型”栏，如“一类车”“客车”；无则留空',
-  },
-}
+// 公共底稿（发票的「发票代码 / 项目明细 / 车牌号」等跨分类通用键）已迁入
+// BusinessScopeRegistry：`registry/invoice.ts` 的 commonRuleDrafts。
+// 本组件只按当前 scope 取用，不再内嵌任何 scope 专属字典。
 const DEFAULT_RULES: Record<string, Record<string, Record<string, RuleDraft>>> = {
   vehicle: {
     车辆登记证书: {
@@ -705,6 +684,10 @@ const certTypeName = computed(() => {
   const parts = certType.value.split('__')
   return parts.length > 1 ? parts.slice(1).join('__') : certType.value
 })
+// 跨分类公共规则底稿（scope 级兜底）；未声明的 scope 为空对象
+const commonDrafts = computed<Record<string, RuleDraft>>(
+  () => (getScope(currentScope.value)?.commonRuleDrafts || {}) as Record<string, RuleDraft>,
+)
 
 const certType = ref('')
 const fields = ref<ExtractFieldConfig[]>([])
@@ -933,7 +916,7 @@ async function loadConfig() {
       // 精确 miss 时按最长包含命中（与后端 invoiceFieldAliases 同思路），仅影响 desc/rule 展示
       const d = draftByKeyForms(draft, a.name)
         || draftByContains(draft, a.name)
-        || (currentScope.value === 'invoice' ? draftByKeyForms(INVOICE_COMMON_RULES, a.name) : undefined)
+        || draftByKeyForms(commonDrafts.value, a.name)
         || {}
       return {
         name: a.name,

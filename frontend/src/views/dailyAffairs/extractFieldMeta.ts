@@ -5,15 +5,18 @@
 //   都要把字段 key 翻成中文、都要判断"这个字段是不是标准契约键"。三处各写一份
 //   必然漂移，尤其"自定义扩展中文 key"的判定——它是正则兜底的硬边界。
 //
+// 2026-10-19（蓝图 P1-1/P1-2）：本模块的判定数据全部改从 BusinessScopeRegistry
+// （../registry）读取——标准键集合、中文名、接入范围都以 scope 描述为准，
+// 不再在本文件维护第二份字典。公开 API（isStandardField / isRegexPatchable /
+// extractFieldLabel …）保持不变，消费方零改动。
+//
 // 与后端的对应关系：
-//   后端 `standardDateFields` / `invoiceFieldAccessors` 用 snake_case，前端配置用
-//   camelCase（invoiceNo / signDate）。两边靠 canonicalFieldKey 归一后比较，
-//   所以这里判断标准键也走 canonical，不做字面前缀匹配。
+//   后端 ScopeSchema（internal/types/extract_schema.go）用 snake_case，前端配置用
+//   camelCase（invoiceNo / signDate）。两边靠 canonicalFieldKey 归一后比较。
 
-import { INVOICE_FIELD_LABELS, toCamelKey, toSnakeKey } from './invoiceFieldLabels'
-import { CONTRACT_FIELD_LABELS } from './contractFieldLabels'
-import { REGULATION_FIELD_LABELS } from './regulationFieldLabels'
-import { NOTICE_FIELD_LABELS } from './noticeFieldLabels'
+import { getScope, isStandardFieldOf, labelOf, INVOICE_STRUCT_KEYS } from '../../registry'
+
+export { INVOICE_STRUCT_KEYS }
 
 /** 归一化字段 key：小写 + 去掉非字母数字（invoiceNo / invoice_no / InvoiceNO → invoiceno） */
 export function canonicalFieldKey(name: string): string {
@@ -22,40 +25,19 @@ export function canonicalFieldKey(name: string): string {
     .replace(/[^a-z0-9]/g, '')
 }
 
-// 各业务**结构体内置**的标准契约键（即后端校验器/补洞器认识的字段）。
-// 不在这里的中文 key 属于用户自定义扩展字段：只注入 Prompt，不参与后置正则补洞。
-const STANDARD_KEYS: Record<string, string[]> = {
-  invoice: [
-    ...Object.keys(INVOICE_FIELD_LABELS),
-    // 后端发票契约里存在但中文映射表未列出的键（补洞/必填会用到）
-    'invoice_no',
-    'invoice_code',
-    'invoice_date',
-    'buyer_tax_no',
-    'seller_tax_no',
-    'buyer_name',
-    'seller_name',
-    'tax_amount',
-  ],
-  contract: [...Object.keys(CONTRACT_FIELD_LABELS), 'sign_date', 'effective_date', 'expiry_date'],
-  regulation: [...Object.keys(REGULATION_FIELD_LABELS), 'reg_no', 'issue_date'],
-  award_punish: [...Object.keys(NOTICE_FIELD_LABELS), 'ap_no', 'issue_date', 'sign_date'],
-}
-
-const STANDARD_KEY_SETS: Record<string, Set<string>> = Object.fromEntries(
-  Object.entries(STANDARD_KEYS).map(([scope, keys]) => [scope, new Set(keys.map(canonicalFieldKey))]),
-)
-
-/** 该 scope 是否已接入字段级校验/补洞（决定 required 与 regex 是否可用） */
+/**
+ * 该 scope 是否已接入字段级校验（决定 required 与正则是否可用）。
+ *
+ * 判定 = registry 里注册了标准字段（档案/账单类 scope 标准字段为空，视为未接入）。
+ */
 export function fieldRulesSupported(scope: string): boolean {
-  return !!STANDARD_KEY_SETS[scope]
+  const d = getScope(scope)
+  return !!d && d.standardFields.length > 0
 }
 
 /** 是否标准契约字段（自定义扩展中文 key 返回 false） */
 export function isStandardField(scope: string, name: string): boolean {
-  const set = STANDARD_KEY_SETS[scope]
-  if (!set) return false
-  return set.has(canonicalFieldKey(name))
+  return isStandardFieldOf(scope, name)
 }
 
 // ---- 正则可配范围 ----
@@ -68,84 +50,40 @@ export function isStandardField(scope: string, name: string): boolean {
 //   2. 自定义扩展字段（写入 InvoiceExtractionItem.Fields 动态桶）；
 //   3. 明细子项（`items.<key>`，仅单票单明细行时回填，多行不猜归属）。
 // 因此前端不再按字段名设限——只要字段名非空、且该 scope 已接入字段级校验，就可配正则。
-// 唯一保留的边界是「本模块是否接入」（合同/制度/通知暂未接入后置补洞）。
-
-/** 发票结构体内置字段键（snake_case）：正则命中后写标准列，其余写扩展字段桶。 */
-export const INVOICE_STRUCT_KEYS = [
-  'invoice_no',
-  'invoice_code',
-  'invoice_date',
-  'invoice_type',
-  'buyer_name',
-  'buyer_tax_no',
-  'buyer_address',
-  'buyer_phone',
-  'buyer_bank',
-  'buyer_account',
-  'seller_name',
-  'seller_tax_no',
-  'seller_address',
-  'seller_phone',
-  'seller_bank',
-  'seller_account',
-  'issuer',
-  'remark',
-  'total_amount',
-  'amount',
-  'tax',
-  'tax_rate',
-]
-
-const INVOICE_STRUCT_SET = new Set(INVOICE_STRUCT_KEYS.map(canonicalFieldKey))
+// 「本模块是否接入」由 registry 的 regexPatchable 声明（与后端
+// ScopeSchema.RegexPatchable 同一口径：当前仅发票为 true）。
 
 /**
  * 该字段能否配置后置正则兜底。
  *
- * 判定口径 = 本模块是否接入后置补洞（当前仅发票）+ 字段名非空。
+ * 判定口径 = registry 声明该 scope 接入后置补洞 + 字段名非空。
  * 不再按字段名收窄：标准字段、自定义扩展字段、明细子项一律可配。
  *
  * 注意这里**不能**用 canonicalFieldKey 判空——它只保留 ASCII，
  * 纯中文 key（车牌号/户号）会被归一成空串而误判为"没命名"。
  */
 export function isRegexPatchable(scope: string, name: string): boolean {
-  if (scope !== 'invoice') return false
+  if (getScope(scope)?.regexPatchable !== true) return false
   return String(name ?? '').trim().length > 0
 }
 
 /** 正则输入被置灰的原因（Tooltip 文案）。空串代表可配。 */
 export function regexDisabledReason(scope: string, name: string): string {
-  if (scope !== 'invoice') return '本模块暂未接入后置正则补洞（当前仅发票生效）'
+  if (getScope(scope)?.regexPatchable !== true) return '本模块暂未接入后置正则补洞（当前仅发票生效）'
   if (!String(name ?? '').trim()) return '请先给字段命名，再配置正则'
   return ''
 }
 
 /** 该发票字段是否落在结构体标准列（决定补洞写标准列还是扩展字段桶）。 */
 export function isInvoiceStructKey(name: string): boolean {
-  return INVOICE_STRUCT_SET.has(canonicalFieldKey(name))
-}
-
-/** 字典查中文名：原名 → camelCase → snake_case（同一字段的三种写法都要认） */
-function lookupLabel(dict: Record<string, string>, name: string): string {
-  const k = String(name ?? '').trim()
-  if (!k) return ''
-  if (dict[k]) return dict[k]
-  const camel = toCamelKey(k)
-  if (dict[camel]) return dict[camel]
-  const snake = toSnakeKey(k)
-  if (dict[snake]) return dict[snake]
-  return k
-}
-
-const LABELERS: Record<string, (name: string) => string> = {
-  invoice: (n) => lookupLabel(INVOICE_FIELD_LABELS, n),
-  contract: (n) => lookupLabel(CONTRACT_FIELD_LABELS, n),
-  regulation: (n) => lookupLabel(REGULATION_FIELD_LABELS, n),
-  award_punish: (n) => lookupLabel(NOTICE_FIELD_LABELS, n),
+  const want = String(name ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!want) return false
+  return INVOICE_STRUCT_KEYS.some((k) => k.toLowerCase().replace(/[^a-z0-9]/g, '') === want)
 }
 
 /** 字段中文名（无映射时原样返回；车队等 scope 的字段本来就是中文） */
 export function extractFieldLabel(scope: string, name: string): string {
-  return (LABELERS[scope] || ((n: string) => n))(name)
+  return labelOf(scope, name)
 }
 
 export interface RegexPreset {

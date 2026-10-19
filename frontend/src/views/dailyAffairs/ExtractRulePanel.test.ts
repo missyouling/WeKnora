@@ -9,6 +9,8 @@ import {
   isStandardField,
   regexSyntaxHint,
 } from './extractFieldMeta'
+import '../../registry'
+import { getScope } from '../../registry'
 
 const panel = readFileSync(new URL('./ExtractRulePanel.vue', import.meta.url), 'utf8')
 
@@ -181,10 +183,15 @@ test('提取规则底稿按三种键形态查找（snake_case 行不再显示「
 })
 
 test('发票公共底稿兜底：发票代码/项目明细等跨分类键也有描述（不再显示「—」）', () => {
-  assert.match(panelSrc, /const INVOICE_COMMON_RULES/)
-  assert.match(panelSrc, /invoiceCode: \{[\s\S]{0,120}desc: '发票代码'/)
-  assert.match(panelSrc, /items: \{[\s\S]{0,120}desc: '项目明细行'/)
-  assert.match(panelSrc, /draftByKeyForms\(INVOICE_COMMON_RULES, a\.name\)/)
+  // 底稿已迁入 BusinessScopeRegistry（registry/invoice.ts 的 commonRuleDrafts），
+  // 面板只按 scope 取用，不再内嵌 invoice 专属常量。
+  const drafts = getScope('invoice')?.commonRuleDrafts || {}
+  assert.equal(drafts.invoiceCode?.desc, '发票代码')
+  assert.equal(drafts.items?.desc, '项目明细行')
+  assert.equal(drafts['车牌号']?.desc, '车牌号码')
+  assert.equal(getScope('contract')?.commonRuleDrafts, undefined)
+  assert.match(panelSrc, /draftByKeyForms\(commonDrafts\.value, a\.name\)/)
+  assert.doesNotMatch(panelSrc, /currentScope\.value === 'invoice'/)
 })
 
 test('底稿无命中返回 null（否则空对象真值会短路公共底稿查找）', () => {

@@ -121,8 +121,9 @@
                       <span class="fc-name-text">{{ fieldLabelOf(fd) }}</span>
                       <span class="fc-sub-count">{{ subFieldsOf(fd).length }}</span>
                     </button>
-                    <span v-else-if="group.scope === 'invoice'" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || invoiceFieldLabel(fd.name) }}</span>
-                    <span v-else-if="group.scope === 'contract'" class="fc-name fc-name-static">{{ contractFieldLabel(fd.name) }}</span>
+                    <!-- 有字段字典的 scope（发票/合同/制度/通知）字段名只读展示中文名；
+                         档案与账单类无字典，字段名由用户自由输入 -->
+                    <span v-else-if="hasFieldDict(group.scope)" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || labelOf(group.scope, fd.name) }}</span>
                     <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
                     <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
@@ -211,7 +212,7 @@
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
         <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
-          <span class="panel-empty-text">{{ group.scope === 'maintain' ? '暂无维保类型' : group.scope === 'invoice' ? '暂无发票类型' : group.scope === 'contract' ? '暂无合同类型' : '暂无证照类型' }}</span>
+          <span class="panel-empty-text">{{ emptyTextOf(group.scope) }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
@@ -241,10 +242,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { useExtractCatalog } from './useExtractCatalog'
 import { createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
-import { invoiceFieldLabel } from './invoiceFieldLabels'
-import { contractFieldLabel } from './contractFieldLabels'
-import { regulationFieldLabel } from './regulationFieldLabels'
-import { noticeFieldLabel } from './noticeFieldLabels'
+import { getScope, labelOf, hasFieldDict, isBuiltinFieldOf } from '../../registry'
 import {
   fromSubsPayload,
   toSubsPayload,
@@ -277,10 +275,13 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   award_punish: [{ key: 'award_punish', label: '通知', scope: 'award_punish', groupId: '' }],
 }
 
-// 分类名称列文案：按 scope 语义化显示（证照/发票类型/合同类型）
+// 分类名称列文案：统一走 BusinessScopeRegistry（新增业务只改 registry/<scope>.ts）
 function scopeName(scope: string) {
-  return scope === 'maintain' ? '维保项名称' : scope === 'invoice' ? '发票类型' : scope === 'contract' ? '合同类型' : scope === 'regulation' ? '制度名称' : scope === 'award_punish' ? '通知名称' : '证照名称'
+  return getScope(scope)?.categoryLabel || '证照名称'
 }
+const emptyTextOf = (scope: string) => getScope(scope)?.emptyText || '暂无证照类型'
+const namePlaceholderOf = (scope: string) => getScope(scope)?.namePlaceholder || '请输入证照名称'
+const categoryNounOf = (scope: string) => getScope(scope)?.categoryNoun || '证照类型'
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
   try {
@@ -514,34 +515,10 @@ function notifyCategoriesChanged() {
   window.dispatchEvent(new CustomEvent('fleet-categories-changed'))
 }
 
-// 一次性迁移：对已入库分类，若从未设置过默认字段，则把其内置 base 字段在 subs 中标记 is_default=true 并保存。
-// 之后用户在字段配置里可自行调整；以 localStorage 标记按 scope 只跑一次。
-async function migrateDefaultFlags(scope: string, list: any[]) {
-  try {
-    const flagKey = `weknora-fleet-default-migrated-${scope}`
-    if (localStorage.getItem(flagKey)) return
-    const builtinList = (BUILTIN as any)[scope] || []
-    for (const c of list) {
-      if (!c.id || String(c.id).startsWith('builtin-')) continue
-      const subs = Array.isArray(c.subs) ? c.subs : []
-      if (!subs.length) continue
-      if (subs.some((x: any) => x.is_default === true)) continue
-      const b = builtinList.find((x: any) => x.name === c.name)
-      const baseSet = new Set((b && b.base) || [])
-      if (!baseSet.size) continue
-      let changed = false
-      const newSubs = subs.map((x: any) => {
-        const isDef = baseSet.has(String(x.name))
-        if (isDef) changed = true
-        return { ...x, is_default: isDef }
-      })
-      if (changed) {
-        try { await updateFleetCategory(c.id, { name: c.name, subs: newSubs, enabled: c.enabled !== false }) } catch { /* 迁移失败不阻塞 */ }
-      }
-    }
-    localStorage.setItem(flagKey, '1')
-  } catch { /* ignore */ }
-}
+// 注意：这里曾经有一次性的 `migrateDefaultFlags`——在一次 GET 分类列表的副作用里
+// 静默写库（给内置 base 字段打 is_default=true）。它把"读"变成了"写"，且迁移结果
+// 依赖 localStorage 标记，换设备/清缓存就会重跑一遍写库。已移除：默认字段以用户
+// 在字段配置里显式勾选为准（蓝图 P1-8）。
 
 async function load() {
   try {
@@ -554,7 +531,6 @@ async function load() {
       const list = resList[i] || []
       categories.value[s] = list
       usedFields.value = new Set()
-      migrateDefaultFlags(s, list)
     })
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
@@ -598,14 +574,14 @@ function startAdd() {
   })
 }
 // 供抽屉标题栏右侧「新增」按钮调用（FleetSettingsDrawer header）
-const addLabel = computed(() => props.scope === 'invoice' ? '新增分类' : `新增${group.value.label}`)
-// 列表末尾「新增」行文案：发票 scope 按用户口径固定为「新增分类」
-const addRowLabel = computed(() => props.scope === 'invoice' ? '新增分类' : `新增${group.value.label}`)
+// 列表末尾「新增」行文案：registry 声明了 addLabel 的 scope（发票=「新增分类」）优先
+const addLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)
+const addRowLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)
 defineExpose({ startAdd, addLabel })
 async function commitAdd() {
   const name = addForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入分类名称' : '请输入证照名称')); return }
-  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning(`该${props.scope === 'invoice' ? '分类' : props.scope === 'maintain' ? '维保类型' : '证照类型'}已存在`); return }
+  if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }
+  if (groupItems.value.some((it: any) => it.name === name)) { MessagePlugin.warning(`该${categoryNounOf(props.scope)}已存在`); return }
   saving.value = true
   try {
     // enabled 显式传 true：新分类默认启用，避免后端缺省关闭导致抽屉重开后被 enabled 过滤而“消失”
@@ -664,11 +640,8 @@ const subDataTypeOptions = [
  * 其余标准字段（发票号码/金额/明细…）、扩展字段、明细子项一律允许用户删除。
  * 用户口径明确：上一轮"17 个字段全锁"过宽，导致删不掉任何标准列。
  */
-const SYSTEM_FIELD_KEYS = ['invoiceType', 'extractStatus', 'tags']
-const SYSTEM_FIELD_KEY_SET = new Set(SYSTEM_FIELD_KEYS.map((k) => k.toLowerCase()))
 function isBuiltinField(fd: EditableField) {
-  if (group.value.scope !== 'invoice') return false
-  return SYSTEM_FIELD_KEY_SET.has(String(fd.name || '').toLowerCase())
+  return isBuiltinFieldOf(group.value.scope, String(fd.name || ''))
 }
 
 /** 新增子项：只填中文名，key 由系统按中文名映射或递增生成。 */
@@ -728,15 +701,8 @@ function toggleEdit(item: any) {
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
 const fieldDelPop = ref<any>(null)
-const fieldLabelOf = (fd: any) => (fd?.label || (group.value.scope === 'invoice'
-  ? invoiceFieldLabel(fd.name)
-  : group.value.scope === 'contract'
-    ? contractFieldLabel(fd.name)
-    : group.value.scope === 'regulation'
-      ? regulationFieldLabel(fd.name)
-      : group.value.scope === 'award_punish'
-        ? noticeFieldLabel(fd.name)
-        : fd.desc || fd.name))
+// 字段名展示：自定义 label → registry 字典中文名 → 无字典 scope 回退 desc/原名
+const fieldLabelOf = (fd: any) => (fd?.label || labelOf(group.value.scope, fd.name) || fd.desc || fd.name)
 const fieldMenuOptions = (_fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
@@ -782,7 +748,7 @@ async function commitEdit() {
   const item = groupItems.value.find((it: any) => it.id === editingId.value)
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
-  if (!name) { MessagePlugin.warning(props.scope === 'maintain' ? '请输入维保项名称' : (props.scope === 'invoice' ? '请输入分类名称' : '请输入证照名称')); return }
+  if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }
   const subs = toSubsPayload(fieldsEditable.value)
   // 本次保存是否由「智能生成字段」发起（发起时保存后询问是否去配置规则）
   const aiContext = pendingAiSample.value
