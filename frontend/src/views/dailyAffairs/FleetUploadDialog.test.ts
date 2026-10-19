@@ -57,5 +57,9 @@ test('全部任务结束后自动关闭弹窗：延迟 emit update:visible false
   assert.match(dialog, /emit\('update:visible', false\)/)
   assert.match(dialog, /\}, 1200\)/)
   assert.match(dialog, /clearTimeout\(autoCloseTimer\)/)
-  assert.match(dialog, /list\.every\(\(t\) => t\.status === 'success' \|\| t\.status === 'failed'\)/)
+  // 终态含 duplicate（重复上传）与 recovered（命中库内已有文件并自动恢复），
+  // 二者也算"结束"，否则弹窗会永远停在最后一条重复任务上不关闭。
+  assert.match(dialog, /list\.every\(\(t\) => t\.status === 'success' \|\| t\.status === 'failed' \|\| t\.status === 'duplicate' \|\| t\.status === 'recovered'\)/)
+  // 仅真正新增/自动恢复时才通知父组件刷新，纯重复不扰动当前列表
+  assert.match(dialog, /list\.some\(\(t\) => t\.status === 'success' \|\| t\.status === 'recovered'\)/)
 })

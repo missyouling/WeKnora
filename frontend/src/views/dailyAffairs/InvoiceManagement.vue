@@ -254,88 +254,38 @@
       :type-options="uploadTypeOptions" :default-type="filterInvoiceType || ''" @done="onUploadDone"
       @progress="onUploadProgress" />
 
-    <!-- 发票详情抽屉（三 tab，可拖宽，竖向滚动） -->
-<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-invoice-drawer-width'" hide-footer destroy-on-close class="invoice-detail-drawer">
-      <template #title>
-        <span class="detail-title-main">{{ detailTitle }}</span>
-        <span v-if="pdfPageOf(currentRow) >= 1" class="row-page-badge">P{{ pdfPageOf(currentRow) }}</span>
+    <!-- 发票详情抽屉：中台 BusinessSplitDetailDrawer（左预览 / 右表单 + 质量溯源） -->
+    <BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="currentRow"
+      :page-no="pdfPageOf(currentRow)" :form="editForm" :fields="editFieldDefs" :sub-fields="itemSubFields"
+      supports-sub-fields item-label="项目明细" :block-title="editForm.invoice_type || '发票信息'"
+      :quality="detailQuality" :label-of="qualityLabel" :dirty="detailDirty" :saving="autoSaving"
+      :storage-key="'weknora-invoice-drawer-width'" @save="saveEditForm" @delete="onDetailDelete"
+      @re-extract="onDetailReExtract">
+      <!-- 业务特有控件：类型下拉（改类型会联动归档分类，必须走页面自己的 options） -->
+      <template #field-invoiceType>
+        <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
+          filterable placeholder="选择或输入类型" />
       </template>
-      <div class="invoice-detail-body">
-        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
-        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
-
-        <!-- 发票字段（按分类配置动态渲染，字段来自设置-字段定义 subs） -->
-        <section class="detail-block">
-          <div class="detail-block-content">
-            <div class="detail-fields">
-              <div class="field-group">
-                <div class="field-group-title">{{ editForm.invoice_type || '发票信息' }}</div>
-                <div class="field-grid">
-                  <template v-for="f in editFieldDefs" :key="f.name">
-                    <t-form-item v-if="f.name === 'invoiceType'" label="发票类型" label-width="110px">
-                      <t-select v-model="editForm.invoice_type" :options="invoiceTypeOptions" clearable allow-create
-                        filterable placeholder="选择或输入类型" />
-                    </t-form-item>
-                    <t-form-item v-else-if="f.name === 'extractStatus'" label="提取状态" label-width="110px">
-                      <t-tag v-if="statusOf(editForm.data).label !== '--'" size="small" :theme="statusOf(editForm.data).theme"
-                        variant="light-outline" class="row-status-tag">
-                        <template v-if="statusOf(editForm.data).icon" #icon>
-                          <t-icon :name="statusOf(editForm.data).icon!" :class="{ 'icon-spin': statusOf(editForm.data).spin }" />
-                        </template>
-                        {{ statusOf(editForm.data).label }}
-                      </t-tag>
-                      <span v-else class="row-muted">--</span>
-                    </t-form-item>
-                    <t-form-item v-else-if="f.name === 'tags'" label="标签" label-width="110px">
-                      <div v-if="String(editForm.data.tags || '').trim()" class="detail-tags-readonly">
-                        <t-tag v-for="t in String(editForm.data.tags).split('\n').map((x: string) => x.trim()).filter(Boolean)" :key="t"
-                          size="small" variant="light-outline" class="row-tag">
-                          {{ t }}
-                        </t-tag>
-                      </div>
-                      <span v-else class="row-muted">—</span>
-                    </t-form-item>
-                    <t-form-item v-else-if="f.remarkPart" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'items' || f.dataType === 'array' }">
-                      <t-textarea v-if="f.dataType === 'items' || f.dataType === 'array'" v-model="editForm.remarkParts[f.remarkPart]"
-                        :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
-                      <t-input v-else v-model="editForm.remarkParts[f.remarkPart]" placeholder="" />
-                    </t-form-item>
-                    <t-form-item v-else-if="f.name !== 'items'" :label="f.label" label-width="110px" :class="{ 'field-grid__full': f.dataType === 'array' || f.name === 'fileName' }">
-                      <t-date-picker v-if="f.dataType === 'date'" v-model="editForm.data[f.name]" value-type="YYYY-MM-DD"
-                        format="YYYY-MM-DD" clearable allow-input />
-                      <t-input v-else-if="f.dataType === 'number'" v-model="editForm.data[f.name]"
-                        @input="(v: string) => (editForm.data[f.name] = sanitizeNum(v))" />
-                      <t-textarea v-else-if="f.dataType === 'array'" v-model="editForm.data[f.name]"
-                        :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
-                      <t-input v-else v-model="editForm.data[f.name]" />
-                    </t-form-item>
-                  </template>
-                </div>
-              </div>
-
-
-            </div>
-          </div>
-        </section>
-
-        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
-        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
-          <t-collapse-panel value="preview" header="源文件预览">
-            <div class="detail-block-content">
-              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :page="pdfPageOf(currentRow)" :file-type="currentRow?.fileType || ''"
-                :file-name="currentRow?.fileName || ''" :active="true" />
-            </div>
-          </t-collapse-panel>
-        </t-collapse>
-
-        <!-- 保存/取消置于源文件预览下方 -->
-        <div class="invoice-detail-footer">
-          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm">保存</t-button>
+      <template #field-extractStatus>
+        <t-tag v-if="statusOf(editForm.data).label !== '--'" size="small" :theme="statusOf(editForm.data).theme"
+          variant="light-outline" class="row-status-tag">
+          <template v-if="statusOf(editForm.data).icon" #icon>
+            <t-icon :name="statusOf(editForm.data).icon!" :class="{ 'icon-spin': statusOf(editForm.data).spin }" />
+          </template>
+          {{ statusOf(editForm.data).label }}
+        </t-tag>
+        <span v-else class="row-muted">--</span>
+      </template>
+      <template #field-tags>
+        <div v-if="String(editForm.data.tags || '').trim()" class="detail-tags-readonly">
+          <t-tag v-for="t in String(editForm.data.tags).split('\n').map((x: string) => x.trim()).filter(Boolean)" :key="t"
+            size="small" variant="light-outline" class="row-tag">
+            {{ t }}
+          </t-tag>
         </div>
-      </div>
-    </SettingDrawer>
+        <span v-else class="row-muted">—</span>
+      </template>
+    </BusinessSplitDetailDrawer>
 
     <!-- 单号重复二次确认：强制保存前询问（确认后带 force 重试，取消留在编辑态） -->
     <t-dialog v-model:visible="dupConfirmVisible" header="发票号码重复" width="420" @confirm="onDupConfirm">
@@ -418,10 +368,14 @@ import {
   previewKnowledgeFile,
   getRecognitionConfig,
 } from '@/api/knowledge-base'
-import DocumentPreview from '@/components/document-preview.vue'
 import { pdfPageOf } from './pdfPage'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import {
+  buildDetailPayload, cascadeInvoiceType, extractStatusOf, fillDetailForm, findInvoiceIndex,
+  hasInvoiceData, isDetailFormDirty, mergeRowAfterSave,
+} from './businessDetailForm'
 import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
-import { formatAmount, formatRate, ITEM_STD_KEYS } from './businessFormat'
+import { formatAmount, formatRate } from './businessFormat'
 import { useBusinessListSync } from './useBusinessListSync'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
@@ -433,8 +387,6 @@ import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
-import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
@@ -1652,102 +1604,30 @@ const enabledSubFieldsOfRow = (row: InvoiceRow | null) => {
 const itemSubFields = computed(() => subFieldsOfRow(currentRow.value))
 // 写入明细行子列值：标准键写行对象；分类子列写 extra 桶（后端 UnmarshalJSON 自动收集）
 
+// 行数据 → 编辑表单：口径全部在 businessDetailForm.ts（纯函数 + 单测锁定），
+// 本页只注入发票自己的字典与工具函数（分类/备注片段/契约键归一）。
+const detailBaseline = ref<any>(null)
+const detailDirty = ref(false)
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
-  const tags = Array.isArray(r.tags)
-    ? r.tags.map((t: any) => (typeof t === 'string' ? t : t?.name ?? t)).join('\n')
-    : (r.tags || '')
-  // 分类优先：行级 category（细分分类如「三联收据」）> 提取类型 > 当前列表筛选类型，
-  // 保证自定义分类记录按自己配置的字段渲染，而非回退到普通发票
-  const targetType = r.invoiceType || r.category || filterInvoiceType.value || ''
-  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
-  const hitCat = cats.find((c: any) => c.name === targetType) || cats[0]
-  // 无标准存储位字段（收款方式/收款事由/审核…）：从 remark「字段名：值」片段提取各字段值
-  const rps: Record<string, string> = {}
-  // 自定义动态字段（如通行费发票「车牌号」）：无标准契约键、非 remark 片段，
-  // 数据存于行级 fields 扩展桶（后端 fields JSON 透传），按 subs.name 读回表单
-  const dynamic: Record<string, any> = {}
-  // 明细子列（plate_no/vehicle_type/travel_from/travel_to 等）的值在 items[0].extra，
-  // 不在发票级字段里；抽屉按发票级字段渲染，必须显式回填，否则「车牌号」永远空白。
-  const itemExtra: Record<string, any> = Array.isArray(r.items)
-    ? ((r.items[0] as any)?.extra || {})
-    : {}
-  const stdKeys = ['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName', 'items']
-  for (const s of hitCat?.subs || []) {
-    const rawName = String(s.name || '')
-    if (isRemarkPartField(rawName)) {
-      rps[rawName] = remarkPartOf(r.remark || '', rawName)
-      continue
-    }
-    const key = invoiceFieldKeyOf(rawName)
-    // 非标准契约键 → 动态字段（细分分类的专属字段，如通行费的车牌号）。
-    // 用 key 作为表单字段名（与 editFieldDefs 的 f.name 对齐），
-    // 取值优先级：fields 扩展桶 → 行对象 → 明细行 extra。
-    if (!INVOICE_FIELD_LABELS[key] && !stdKeys.includes(key)) {
-      dynamic[key] = r.fields?.[key] ?? r.fields?.[rawName] ?? r[key] ?? itemExtra[key] ?? ''
-    }
-  }
-  editForm.value = {
-    invoice_no: r.invoiceNo || '',
-    invoice_type: targetType,
-    items: Array.isArray(r.items) ? r.items.map((it: any) => {
-      const row: any = {
-        name: it.name || '',
-        unit: it.unit || '',
-        qty: numToStr(it.qty),
-        price: numToStr(it.price),
-        // 历史存量明细常缺 amount（早期仅 name/price/tax_rate）：数量为空时单价即金额
-        amount: numToStr(it.amount) || (it.qty === null || it.qty === undefined || it.qty === '' ? numToStr(it.price) : ''),
-        // 税率以百分比显示（0.03 → "3"），保存时再转回小数
-        tax_rate: it.tax_rate === null || it.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
-        // 税额缺失时回退发票级税额（历史单行明细）
-        tax_amount: numToStr(it.tax_amount) || numToStr(r.tax),
-      }
-      // 分类子列回填：优先取提取结果（extra 桶/行对象），缺失时从行级 fields 扩展桶与
-      // remark 片段回填（存量通行费发票车牌号/通行日期等历史数据可回显）
-      const sfList = itemSubFields.value
-      for (const sf of sfList) {
-        if (ITEM_STD_KEYS.has(sf.key)) continue
-        let v: any = it?.[sf.key] ?? it?.extra?.[sf.key] ?? ''
-        if ((v === '' || v === null || v === undefined) && r.fields) {
-          v = r.fields?.[sf.label] ?? r.fields?.[sf.key] ?? ''
-        }
-        if ((v === '' || v === null || v === undefined) && r.remark) {
-          v = remarkPartOf(r.remark, sf.label) ?? ''
-        }
-        if (v === null || v === undefined) v = ''
-        row[sf.key] = v
-        if (sf.key !== 'name') {
-          row.extra = row.extra || {}
-          row.extra[sf.key] = v
-        }
-      }
-      return row
-    }) : [],
-    remarkParts: rps,
-    data: {
-      invoiceNo: r.invoiceNo || '',
-      invoiceDate: r.invoiceDate || '',
-      invoiceType: r.invoiceType || '',
-      amount: numToStr(r.amount),
-      taxRate: numToStr(r.taxRate),
-      tax: numToStr(r.tax),
-      totalAmount: numToStr(r.totalAmount),
-      buyerName: r.buyerName || '',
-      sellerName: r.sellerName || '',
-      issuer: r.issuer || '',
-      remark: r.remark || '',
-      extractStatus: r.extractStatus || '',
-      parseStatus: r.parseStatus || 'completed',
-      tags,
-      sellerTaxNo: r.sellerTaxNo || '',
-      buyerTaxNo: r.buyerTaxNo || '',
-      fileName: r.fileName || '',
-      ...dynamic,
-    },
-  }
+  editForm.value = fillDetailForm({
+    row: r,
+    cats: invoiceCats.value || [],
+    filterType: filterInvoiceType.value || '',
+    itemSubFields: itemSubFields.value,
+    isRemarkPart: (n: string) => isRemarkPartField(n),
+    remarkPartOf: (remark: string, n: string) => remarkPartOf(remark, n),
+    fieldKeyOf: (n: string) => invoiceFieldKeyOf(n),
+    dict: INVOICE_FIELD_LABELS,
+  })
+  // 脏检查基线：保存按钮按"是否真改动"启用，避免打开抽屉就允许空保存
+  detailBaseline.value = JSON.parse(JSON.stringify(editForm.value))
+  detailDirty.value = false
 }
+watch(editForm, () => {
+  detailDirty.value = isDetailFormDirty(detailBaseline.value, editForm.value)
+}, { deep: true })
 
 // 明细行联动计算（保留两位小数）：
 //   金额 = 数量 × 单价；税额 = 金额 × 税率(%)。
@@ -1765,9 +1645,7 @@ const onDupConfirm = async () => {
   await persistEditForm(true)
 }
 
-// 源文件预览折叠面板（默认折叠，展开时才挂载 DocumentPreview）
-const previewExpanded = ref<string[]>([])
-
+// 源文件预览：默认折叠、展开才挂载，由 BusinessSplitDetailDrawer 负责
 const persistEditForm = async (force: boolean) => {
   const now = currentRow.value
   if (!now) return
@@ -1777,92 +1655,26 @@ const persistEditForm = async (force: boolean) => {
     const detail = res?.data || res
     const meta = detail?.custom_metadata || {}
     const invoices = Array.isArray(meta.invoices) ? [...meta.invoices] : []
-    const d = editForm.value.data || {}
-    // 无标准存储位字段（收款方式/收款事由/审核…）：各片段合并回 remark 后再整体写入
-    const rps = (editForm.value.remarkParts || {}) as Record<string, string>
-    for (const [part, val] of Object.entries(rps)) d.remark = setRemarkPart(d.remark, part, val)
-    const updated: any = {
-      invoice_no: d.invoiceNo || '',
-      invoice_date: d.invoiceDate || '',
-      invoice_type: editForm.value.invoice_type || '',
-      // 归档分类与发票类型联动：列表筛选/概览卡按 category 精确匹配（本轮统一口径），
-      // 保存时必须同步，否则改类型后记录会从对应分类视图消失
-      category: editForm.value.invoice_type || '',
-      total_amount: toNumber(d.totalAmount),
-      amount: toNumber(d.amount),
-      tax: toNumber(d.tax),
-      tax_rate: toNumber(d.taxRate),
-      seller_name: d.sellerName || '',
-      seller_tax_no: d.sellerTaxNo || '',
-      buyer_name: d.buyerName || '',
-      buyer_tax_no: d.buyerTaxNo || '',
-      issuer: d.issuer || '',
-      remark: d.remark || '',
-      tags: Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split('\n').map((x: string) => x.trim()).filter(Boolean) : []),
-      items: Array.isArray(editForm.value.items)
-        ? editForm.value.items.map((it: any) => {
-            const taxRate = toNumber(it.tax_rate)
-            const base: any = {
-              name: it.name || '',
-              unit: it.unit || '',
-              qty: toNumber(it.qty),
-              price: toNumber(it.price),
-              amount: toNumber(it.amount),
-              // 税率由百分比字符串转回小数（"3" → 0.03）
-              tax_rate: taxRate === undefined ? undefined : taxRate / 100,
-              tax_amount: toNumber(it.tax_amount),
-            }
-            // 分类子列（plate_no/travel_from/travel_to/spec 等）：行对象/extra 桶
-            // 原样写出行键，后端 InvoiceExtractionLine 反序列化时自动收集进 Extra 落库
-            const extraSrc: any = { ...(it.extra || {}), ...it }
-            for (const k of Object.keys(extraSrc)) {
-              if (!ITEM_STD_KEYS.has(k) && k !== 'extra') base[k] = extraSrc[k]
-            }
-            return base
-          })
-        : [],
-    }
-    // 自定义动态字段（如「车牌号」）：data 中非标准契约键的字段收集进 fields 扩展桶
-    // 随 updated 合并写回（覆盖旧值），与后端 fields JSON 透传口径一致
-    const stdDataKeys = new Set(['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'buyerName', 'sellerName', 'issuer', 'remark', 'extractStatus', 'tags', 'sellerTaxNo', 'buyerTaxNo', 'fileName'])
-    const dynamicFields: Record<string, any> = {}
-    for (const [k, v] of Object.entries(d)) {
-      if (!stdDataKeys.has(k) && k !== 'fields') dynamicFields[k] = v ?? ''
-    }
-    if (Object.keys(dynamicFields).length > 0) updated.fields = dynamicFields
+    // 表单 → 载荷：税率百分比↔小数、备注片段回写、动态字段入 fields 桶全部走纯函数
+    const updated = buildDetailPayload({
+      data: editForm.value.data || {},
+      remarkParts: editForm.value.remarkParts || {},
+      invoiceType: editForm.value.invoice_type || '',
+      items: editForm.value.items,
+      setRemarkPart,
+    })
     const nowPage = now.page && now.page >= 1 ? now.page : 0
-    let targetIdx = -1
-    if (nowPage >= 1) {
-      targetIdx = invoices.findIndex((inv: any, i: number) =>
-        i === nowPage - 1 || Number(inv.page) === nowPage || inv.invoice_no === now.invoiceNo)
-    }
-    if (targetIdx < 0) targetIdx = invoices.findIndex((inv: any) => inv.invoice_no === now.invoiceNo)
+    const targetIdx = findInvoiceIndex(invoices, nowPage, now.invoiceNo)
     if (targetIdx >= 0) {
-      const prevType = String((invoices[targetIdx] as any)?.invoice_type || '')
-      const nextType = String(updated.invoice_type || '')
-      // 同文件级联：发票类型实质性变更时，将该文件（同一 knowledge 的 invoices 数组）下
-      // 所有发票的类型同步为最新值（对齐标签行级同步逻辑；保存整包写回天然原子）。
-      // category 与 invoice_type 联动更新，保证概览卡（category 精确）与列表口径一致。
-      if (nextType && nextType !== prevType) {
-        invoices.forEach((inv: any, i: number) => {
-          if (i !== targetIdx) {
-            inv.invoice_type = nextType
-            inv.category = nextType
-          }
-        })
-      }
+      // 同文件级联：发票类型实质性变更时同步该文件下所有发票（概览卡按 category 精确匹配）
+      cascadeInvoiceType(invoices, targetIdx, updated.invoice_type)
       invoices[targetIdx] = { ...invoices[targetIdx], ...updated, page: nowPage || invoices[targetIdx]?.page }
     }
     else invoices.push({ ...updated, page: nowPage || 0 })
     // 无任何有效字段 → 保持"待补录"状态，记录不因空数据而从列表消失
-    const hasInvoiceData = invoices.some((inv: any) =>
-      (inv.invoice_no || '').trim() || (inv.invoice_date || '').trim() || (inv.invoice_type || '').trim() ||
-      (inv.buyer_name || '').trim() || (inv.seller_name || '').trim() ||
-      Number(inv.amount) > 0 || Number(inv.total_amount) > 0)
-    const nextStatus = hasInvoiceData ? 'success' : 'manual'
-    const nextError = hasInvoiceData ? '' : '人工入库待编辑，请补充字段'
-    // 文件级归档分类同步为最新发票类型：列表平铺以文件级 fleet_cert_type 为优先
-    // （见后端 ListInvoiceRecords cat 取值），不同步会导致改类型后仍按旧分类展示
+    const { status: nextStatus, error: nextError } = extractStatusOf(hasInvoiceData(invoices))
+    // 文件级归档分类同步为最新发票类型：列表平铺以文件级 fleet_cert_type 为优先，
+    // 不同步会导致改类型后仍按旧分类展示
     const newMeta = {
       ...meta,
       kind: 'invoice',
@@ -1873,28 +1685,11 @@ const persistEditForm = async (force: boolean) => {
     }
     await updateBusinessMetadata(kbId.value, now.knowledgeId, newMeta, force)
     if (currentRow.value) currentRow.value = { ...currentRow.value, ...updated, extractStatus: nextStatus }
-    // 同步列表行，保证编辑（如备注）后列表立即刷新（shallowRef：整体替换数组触发更新）
+    // 同步列表行，保证编辑后列表立即刷新（shallowRef：整体替换数组触发更新）
     const listIdx = invoiceRows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) {
-      const nextRow: any = {
-        ...invoiceRows.value[listIdx],
-        extractStatus: nextStatus,
-        extractError: nextError,
-        invoiceNo: updated.invoice_no,
-        invoiceDate: updated.invoice_date,
-        invoiceType: updated.invoice_type,
-        amount: updated.amount,
-        tax: updated.tax,
-        totalAmount: updated.total_amount,
-        buyerName: updated.buyer_name,
-        sellerName: updated.seller_name,
-        issuer: updated.issuer,
-        remark: updated.remark,
-        voidFlag: !!invoiceRows.value[listIdx].voidFlag,
-        items: updated.items,
-        fields: updated.fields || invoiceRows.value[listIdx].fields || {},
-      }
-      invoiceRows.value = invoiceRows.value.map((r: any, i: number) => (i === listIdx ? nextRow : r))
+      invoiceRows.value = invoiceRows.value.map((r: any, i: number) =>
+        (i === listIdx ? mergeRowAfterSave(r, updated, nextStatus, nextError) : r))
     }
     // 同文件级联后，同步列表中同一文件的其他行类型展示（loadFiles 随后全量刷新兜底）
     if (updated.invoice_type && now.knowledgeId) {
@@ -1905,7 +1700,7 @@ const persistEditForm = async (force: boolean) => {
     }
     // 手动保存：成功后关闭详情抽屉（对齐车队行内保存）
     detailVisible.value = false
-    // 记录修改后自动刷新：列表汇总与概览卡片（金额/类型/历史记录数）随最新数据同步
+    // 记录修改后自动刷新：列表汇总与概览卡片随最新数据同步
     loadFiles(true)
     loadInvoiceOverview()
   } catch (e: any) {
@@ -1921,21 +1716,28 @@ const persistEditForm = async (force: boolean) => {
   }
 }
 
-const toNumber = (v: any): number | undefined => {
-  if (v === '' || v === null || v === undefined) return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
+// 抽屉底部动作：删除（按页/整份，走中台 listSync 的级联编排）与重新提取
+const onDetailDelete = async () => {
+  const r = currentRow.value
+  if (!r) return
+  try {
+    await doPageDelete([r])
+    await finishDelete()
+    detailVisible.value = false
+  } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
 }
-
-// 数字输入辅助：只允许数字与小数点，按实际输入显示（不补零、不保留多余小数）
-const sanitizeNum = (v: string): string => {
-  let s = (v ?? '').replace(/[^\d.]/g, '')
-  const firstDot = s.indexOf('.')
-  if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
-  return s
+const onDetailReExtract = async () => {
+  const r = currentRow.value
+  if (!r?.knowledgeId) return
+  try {
+    await extractBusinessDocument(kbId.value, r.knowledgeId, 'invoice', filterInvoiceType.value || undefined)
+    MessagePlugin.success('已提交重新提取')
+    detailVisible.value = false
+    loadFiles(true)
+  } catch (e: any) {
+    if (!isExtractInProgress(e)) MessagePlugin.error(e?.message || '重新提取失败')
+  }
 }
-const numToStr = (v: any): string =>
-  v === null || v === undefined || v === '' ? '' : String(v)
 
 // formatAmount / formatRate 已收入 businessFormat.ts（明细浮层中台组件共用同一口径）
 // 发票内所有不同税率档（用于 tooltip 展示全部档位；列表展示金额最大项税率）
