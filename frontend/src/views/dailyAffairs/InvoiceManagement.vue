@@ -31,35 +31,14 @@
       <!-- 发票列表 -->
       <div class="invoice-list-view">
       <!-- 筛选工具栏（对齐车队标准中台组件） -->
-          <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            @refresh="applyFilter" :selected-count="selectedRowKeys.length"
-            @clear-selection="clearSelection" hide-batch-bar>
-            <template #type-extra>
-              <div class="doc-filter-field">
-                <t-select v-model="taxRateFilter" :options="taxRateOptions" placeholder="税率筛选" clearable
-                  class="doc-tax-select doc-filter-field__control">
-                  <template #prefixIcon><t-icon name="percent" size="16px" /></template>
-                </t-select>
-              </div>
-              <t-date-range-picker v-model="dateRange" placeholder="开票日期" clearable allow-input @change="applyFilter"
-                class="invoice-date-range">
-                <template #prefixIcon><t-icon name="time" size="16px" /></template>
-              </t-date-range-picker>
-            </template>
-            <template #columns>
-              <BusinessColumnFilter :columns="effectiveColumns" v-model:visible-keys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
-            </template>
-            <template #right-extra>
-              <t-button variant="outline" size="small" @click="invoiceSettingsVisible = true">
-                <template #icon><t-icon name="setting" size="14px" /></template>
-                设置
-              </t-button>
-              <t-button theme="primary" size="small" @click="uploadVisible = true">
-                <template #icon><t-icon name="upload" size="14px" /></template>
-                上传发票
-              </t-button>
-            </template>
-          </BusinessListToolbar>
+          <!-- 筛选工具栏走中台 BusinessFilterBar：4 个筛选器改为 FilterFieldSpec 声明 -->
+          <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+            :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
+            settings-text="设置" :primary-action="{ text: '上传发票', icon: 'upload' }" hide-batch-bar
+            @columns-change="onVisibleColKeysChange" @reset-columns="resetColumns"
+            @select-all-columns="selectAllColumns" @filter-change="applyFilter"
+            @settings="invoiceSettingsVisible = true" @primary="uploadVisible = true"
+            @clear-selection="clearSelection" />
 
       <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
@@ -444,6 +423,8 @@ import { pdfPageOf } from './pdfPage'
 import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate, ITEM_STD_KEYS } from './businessFormat'
 import { useBusinessListSync } from './useBusinessListSync'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
@@ -453,8 +434,6 @@ import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
-import BusinessListToolbar from './BusinessListToolbar.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
@@ -698,6 +677,31 @@ const onOverviewCardClick = (card: any) => {
 const taxRateFilter = ref<number | string>('')
 const taxRateOptions = ref<Array<{ value: string | number; label: string }>>([])
 const dateRange = ref<Array<string>>([])
+
+// ---- BusinessFilterBar（P1-3）：4 个筛选器改为 FilterFieldSpec 声明 ----
+// 扁平筛选态与上面四个 ref 双向桥接，组件只发不可变更新；
+// 页面原有的筛选语义（AND 复合查询、300ms 防抖）保持不变。
+const filterState = computed<FilterState>({
+  get: () => ({
+    keyword: keyword.value,
+    invoiceType: filterInvoiceType.value,
+    taxRate: taxRateFilter.value,
+    dateRange: dateRange.value,
+  }),
+  set: (v) => {
+    keyword.value = String(v?.keyword ?? '')
+    filterInvoiceType.value = String(v?.invoiceType ?? '')
+    taxRateFilter.value = v?.taxRate ?? ''
+    dateRange.value = Array.isArray(v?.dateRange) ? v.dateRange : []
+  },
+})
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'invoiceType', type: 'select', placeholder: '发票类型', icon: 'file', options: invoiceTypeOptions.value },
+  { key: 'taxRate', type: 'select', placeholder: '税率筛选', icon: 'percent', options: taxRateOptions.value },
+  { key: 'dateRange', type: 'date-range', placeholder: '开票日期', icon: 'time' },
+])
+const onVisibleColKeysChange = (keys: string[]) => { visibleColKeys.value = keys }
 
 // 列表列取值：通用 colValue 只看 row[key] 与 row.fields[key]，而分类子列
 // （车牌号/车辆类型/通行日期起止等 plate_no/vehicle_type/travel_from/travel_to）
@@ -1382,20 +1386,17 @@ const onSortChange = (ctx: any) => {
 // 同时重载列表列（列宽跟随当前分类配置生效）。
 // 状态隔离：切换类型时清空多选，防止浮条「已选 N 项」残留上一类型的脏数据。
 watch(filterInvoiceType, () => {
-  // 本地副作用（清多选、重建列）立即执行；网络请求走合并窗口。
+  // 本地副作用（清多选、重建列）立即执行；网络请求走下方 filterState 的合并窗口。
   clearSelectionSafe()
   reloadColumns()
-  scheduleFilter()
 })
-// 税率筛选联动：变更时清空多选并刷新（税率不影响列定义，无需 reloadColumns）
+// 税率筛选联动：变更时清空多选（税率不影响列定义，无需 reloadColumns）
 watch(taxRateFilter, () => {
   clearSelectionSafe()
-  scheduleFilter()
 })
-// 关键词防抖 300ms 后刷新。关键词、税率、日期、类型为 AND 复合查询：
-// 输入关键词时不再清空类型筛选，四个条件同时发送后端取交集。
-watch(keyword, () => {
-  // 与类型/税率共用同一个 300ms 窗口：连续操作只发一次 /invoices。
+// 关键词、税率、日期、类型为 AND 复合查询：输入关键词时不再清空类型筛选，
+// 四个条件同时发送后端取交集。四个筛选统一走 300ms 合并窗口（连续操作只发一次 /invoices）。
+watch(filterState, () => {
   scheduleFilter()
 })
 
@@ -2409,10 +2410,7 @@ watch(printVisible, (v) => {
   flex: 1; min-height: 0;
 }
 /* ---- 筛选工具栏 ---- */
-.invoice-date-range { width: 240px; flex-shrink: 0; }
-/* 税率下拉随选项内容自适应宽度，禁止收缩避免截断（对齐原类型下拉样式） */
-.doc-tax-select { width: auto; flex-shrink: 0; min-width: max-content; }
-/* 多税率发票：多个税率档位并排标签展示 */
+/* 筛选控件样式随组件走：见 BusinessFilterBar.vue（.bfs-select / .bfs-date-range） */
 /* 明细浮层样式随组件走：见 BusinessSubItemsPopover.vue（.biz-sub-popover） */
 
 
