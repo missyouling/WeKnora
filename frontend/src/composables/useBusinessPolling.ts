@@ -104,6 +104,11 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let busy = false
+  // 僵尸在途兜底：id -> 首次进入「进行中」的时间戳。
+  // 后端任务若在重启/超时中被丢弃，extract_status 会永远停在 processing，
+  // 状态条就一直显示「正在提取…」不消失（真机曾挂到 11 分 3 秒）。
+  const PENDING_STALE_MS = 15 * 60 * 1000
+  const pendingSince = new Map<string, number>()
   // 整轮（扫描 + onTick 刷新列表）在途锁。此前只有 scanOnce 有 busy 护栏，
   // onTick（发票页 loadFiles）没有——列表接口一旦超过 intervalMs，每 3s 就会
   // 新起一轮 onTick，请求层层叠加堆积，最终压垮后端连接池。
@@ -153,8 +158,34 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
         }
       }
 
-      pendingFiles.value = pend
-      onPendingFiles?.(pend)
+      // 僵尸在途清理：超过 15 分钟仍在 pending/processing 的文件，判定后端任务已丢失
+      // （重启/超时/任务被丢弃），强制移出状态条并记一次本地失败，避免永久转圈。
+      const nowTs = Date.now()
+      const liveIds = new Set(pend.map((f) => f.id))
+      for (const id of Array.from(pendingSince.keys())) {
+        if (!liveIds.has(id)) pendingSince.delete(id)
+      }
+      const staleIds: string[] = []
+      for (const f of pend) {
+        const seenAt = pendingSince.get(f.id)
+        if (seenAt == null) {
+          pendingSince.set(f.id, nowTs)
+          continue
+        }
+        if (nowTs - seenAt > PENDING_STALE_MS) staleIds.push(f.id)
+      }
+      let visiblePend = pend
+      if (staleIds.length) {
+        const staleSet = new Set(staleIds)
+        visiblePend = pend.filter((f) => !staleSet.has(f.id))
+        for (const id of staleIds) {
+          pendingSince.delete(id)
+          if (!extractFailed.value.has(id)) extractFailed.value.set(id, nowTs)
+        }
+      }
+
+      pendingFiles.value = visiblePend
+      onPendingFiles?.(visiblePend)
 
       for (const item of needExtract.slice(0, 5)) {
         extractInFlight.value.add(item.id)
@@ -183,13 +214,17 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
           if (!succeeded && !conflict) extractInFlight.value.delete(item.id)
         }
       }
-      // 清理 in-flight 残留：仅当后端 es 已到终态（success/failed）才移除——
-      // es=processing 是提取请求自己写的过程态，请求仍在途，删除会触发下轮
-      // 重复提交（→409）；终态才说明该文件提取确实结束。
+      // 清理 in-flight 残留（三种情况都清）：
+      //   1. es 已到终态（success/failed/not_x/manual）→ 提取确实结束；
+      //   2. es 仍是 pending/processing → 后端在跑，**保留**（删了会重复提交撞 409）；
+      //   3. es 为空 → 后端连"已入队"都没记录，说明任务丢了（worker 重启/队列丢失）。
+      //      旧实现只在终态清理，这种文件会永久留在 in-flight：状态条一直转圈、
+      //      而且因为 in-flight 存在，前端再也不会重新提交它（僵尸在途）。
+      //      重复提交的风险由后端 extractMu 兜住（409 → conflict，保持 in-flight）。
       for (const id of Array.from(extractInFlight.value)) {
         const it = arr.find(k => k.id === id)
         const es = it?.custom_metadata?.extract_status
-        if (es && es !== 'pending' && es !== 'processing') extractInFlight.value.delete(id)
+        if (!es || (es !== 'pending' && es !== 'processing')) extractInFlight.value.delete(id)
       }
     } catch {
       // 不抛给外层：本轮失败只用于驱动退避，下轮继续（旧行为是纯静默，

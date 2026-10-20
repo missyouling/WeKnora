@@ -23,7 +23,10 @@
     <template #title>
       <slot name="title">
         <span class="detail-title-main">{{ title }}</span>
-        <span v-if="pageNo >= 1" class="row-page-badge">P{{ pageNo }}</span>
+        <!-- 物理页码胶囊：与列表 P 标同一套绿底样式。此前用 row-page-badge，
+             而该类只在父页面 scoped 样式里定义、命中不到子组件，渲染成裸文本，
+             标题变成「发票详情 · 26507903330500014563P9」。 -->
+        <span v-if="pageNo >= 1" class="bsd-page-badge">P{{ pageNo }}</span>
       </slot>
     </template>
 
@@ -212,6 +215,22 @@ function close() {
   padding: var(--td-comp-margin-m) var(--td-comp-margin-m) 0;
 }
 .bsd-block { margin-bottom: var(--td-comp-margin-s); }
+.bsd-page-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  background: var(--td-success-color-1, #e8f8f2);
+  color: var(--td-success-color, #00a870);
+  border: 1px solid var(--td-success-color-3, #94e3c5);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.detail-title-main { font-weight: 600; }
 .bsd-block-title {
   font-size: 13px;
   font-weight: 600;

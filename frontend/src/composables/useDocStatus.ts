@@ -25,6 +25,14 @@ interface Options {
   scope: 'contract' | 'invoice' | 'regulation' | 'award_punish'
   /** "非XX" 文案，如 "非合同" / "非发票" */
   notLabel: string
+  /**
+   * 是否以「后端已落库的 success」为最高优先级（发票页面启用）。
+   *
+   * 背景：文件级提取状态在重提期间会在 pending/processing/failed 之间波动，
+   * 而单张票的字段早已完整落库。开启后，只要记录本身 extract_status=success
+   * 就恒显示「提取成功」，不再被打回「提取中/待提取」（真机第 7~10 行状态跳变）。
+   */
+  preferRecordedSuccess?: boolean
 }
 
 export function useDocStatus(opts: Options) {
@@ -33,6 +41,8 @@ export function useDocStatus(opts: Options) {
     if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
     if (ps === 'failed') return 'parse_failed'
     if (ps === 'completed') {
+      // 行级 success 优先于文件级在途状态（见 preferRecordedSuccess 注释）
+      if (opts.preferRecordedSuccess && row.extractStatus === 'success') return 'success'
       if (row.knowledgeId != null && opts.extractInFlight.value.has(String(row.knowledgeId))) return 'processing'
       const es = row.extractStatus
       // 前端本地失败记录（extractFailed）仅在「后端尚无终态」时覆盖展示：

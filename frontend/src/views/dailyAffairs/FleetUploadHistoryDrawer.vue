@@ -24,8 +24,13 @@
               @clear="onKeywordClear">
               <template #prefix-icon><t-icon name="search" /></template>
             </t-input>
+            <!-- 发票类型筛选：默认「全部分类」，选项来自数据里真实出现的分类 -->
+            <t-select v-model="typeFilter" class="dh-type-select" :options="typeOptions"
+              :popup-props="{ attach: 'body' }" @change="onTypeChange" />
+            <!-- 占位符必须用数组形式：单字符串会被当成两端的同一文案，
+                 渲染成「上传开始日期 - ... - 上传开始日期 - ...」 -->
             <t-date-range-picker v-model="dateRange" class="dh-date-range" clearable
-              value-type="YYYY-MM-DD" placeholder="上传开始日期 - 上传结束日期"
+              value-type="YYYY-MM-DD" :placeholder="['开始日期', '结束日期']"
               @change="onDateRangeChange" />
           </div>
           <div ref="listScrollRef" class="doc-list-scroll" @scroll="onListScroll">
@@ -150,6 +155,8 @@ const loading = ref(false)
 const keywordInput = ref('')
 const keyword = ref('')
 const dateRange = ref<string[]>([])
+// 发票类型筛选：空串 = 全部分类（默认，不筛掉任何文件）
+const typeFilter = ref('')
 const statusFilter = ref<'all' | 'running' | 'abnormal'>('all')
 const visibleCount = ref(DEFAULT_PAGE_SIZE)
 const listScrollRef = ref<HTMLElement>()
@@ -163,6 +170,7 @@ const onKeywordClear = () => {
   resetPaging()
 }
 const onDateRangeChange = () => resetPaging()
+const onTypeChange = () => resetPaging()
 const onStatusCardClick = (key: 'all' | 'running' | 'abnormal') => {
   statusFilter.value = key
   resetPaging()
@@ -270,11 +278,40 @@ const rowDocType = (r: any) => invDocType(r)
 // 状态归类（唯一口径）：解析中/提取中 → running；解析失败/提取失败 → abnormal。
 const ROW_PARSE_RUNNING = new Set(['pending', 'processing', 'parsing', 'finalizing'])
 const ROW_EXTRACT_RUNNING = new Set(['pending', 'processing', 'parsing'])
-const isRowRunning = (r: any) =>
-  ROW_PARSE_RUNNING.has(String(r.parse_status || '')) ||
-  ROW_EXTRACT_RUNNING.has(String(extractStatus(r) || ''))
+const isRowRunning = (r: any) => {
+  const ps = String(r.parse_status || '')
+  if (ROW_PARSE_RUNNING.has(ps)) return true
+  if (ps !== 'completed') return false
+  const es = String(extractStatus(r) || '')
+  // parse 已完成但「从未提取/待提取/提取中」也算正在执行：
+  // 主列表这几行显示「待提取」，历史记录若不计入，两边数量就对不上
+  // （真机：主列表 4 行待提取，历史记录「正在执行 0」）。
+  return !es || ROW_EXTRACT_RUNNING.has(es)
+}
 const isRowAbnormal = (r: any) =>
   String(r.parse_status || '') === 'failed' || String(extractStatus(r) || '') === 'failed'
+
+// 文件归属的发票分类：上传即持久化的 invoice_category 优先，历史字段兜底。
+const invoiceTypeOf = (r: any): string => {
+  const m = r.custom_metadata || {}
+  return String(m.invoice_category || m.fleet_cert_type || '').trim()
+}
+
+// 发票类型下拉选项：全部分类 + 数据里真实出现的分类（按出现次数降序）。
+// 不从分类字典接口取，是因为历史文件可能挂着已停用的旧分类名——只列实际存在的
+// 才能保证「选了就一定筛得出数据」。
+const typeOptions = computed(() => {
+  const counts = new Map<string, number>()
+  for (const r of allRows.value) {
+    const t = invoiceTypeOf(r)
+    if (!t) continue
+    counts.set(t, (counts.get(t) || 0) + 1)
+  }
+  const rest = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([value, n]) => ({ label: `${value}（${n}）`, value }))
+  return [{ label: '全部分类', value: '' }, ...rest]
+})
 
 // 状态卡（计数基于全量快照，与搜索/日期条件无关——卡片表达的是「库里有多少」）
 const statusCards = computed(() => {
@@ -293,6 +330,7 @@ const filteredRows = computed(() => {
   return allRows.value.filter((r: any) => {
     if (statusFilter.value === 'running' && !isRowRunning(r)) return false
     if (statusFilter.value === 'abnormal' && !isRowAbnormal(r)) return false
+    if (typeFilter.value && invoiceTypeOf(r) !== typeFilter.value) return false
     // 上传时间（created_at）区间：按自然日包含两端
     if (from || to) {
       const day = String(r.created_at || '').slice(0, 10)
@@ -671,7 +709,10 @@ onBeforeUnmount(stopPolling)
 .dh-toolbar { display: flex; gap: 8px; align-items: center; }
 .dh-search { flex: 1; min-width: 0; }
 /* 上传时间区间：与搜索框同高同圆角，宽度固定避免挤压搜索框 */
-.dh-date-range { flex: 0 0 300px; width: 300px; }
+.dh-date-range { flex: 0 0 260px; width: 260px; }
+/* 发票类型下拉：与搜索框/日期框同高同圆角，固定宽度不抢搜索框空间 */
+.dh-type-select { flex: 0 0 150px; width: 150px; }
+.dh-type-select :deep(.t-input) { border-radius: var(--td-radius-default, 6px); }
 .dh-date-range :deep(.t-input) { border-radius: var(--td-radius-default, 6px); }
 /* ---- 状态统计筛选小卡片 ---- */
 .dh-status-cards { display: flex; gap: 8px; }

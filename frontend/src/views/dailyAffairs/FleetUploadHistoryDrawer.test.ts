@@ -67,7 +67,8 @@ test('历史记录：工具栏无独立「搜索」按钮（即输即搜 + 防�
 test('历史记录：工具栏含上传时间范围选择器', () => {
   assert.match(src, /<t-date-range-picker/)
   assert.match(src, /v-model="dateRange"/)
-  assert.match(src, /placeholder="上传开始日期 - 上传结束日期"/)
+  // 2026-10-20 变更：占位符改为数组形式（单字符串会被两端重复渲染）
+  assert.match(src, /:placeholder="\['开始日期', '结束日期'\]"/)
   assert.match(src, /clearable/)
 })
 
@@ -79,4 +80,35 @@ test('历史记录：搜索 / 时间 / 状态三者 AND 组合过滤', () => {
   assert.match(src, /String\(r\.created_at \|\| ''\)\.slice\(0, 10\)/)
   // 文件名搜索命中 title/file_name/doc_type
   assert.match(src, /\[r\.title, r\.file_name, r\.doc_type\]/)
+})
+
+// ---- 2026-10-20 第二批：发票类型下拉 / 日期占位符 / pending 计入正在执行 ----
+
+test('历史记录：工具栏有「发票类型」下拉框，默认全部分类', () => {
+  // 下拉框位于搜索框与日期区间之间
+  assert.match(src, /<t-select v-model="typeFilter"[^>]*class="dh-type-select"/)
+  // 默认值必须是空串（= 全部分类），不能默认筛掉任何文件
+  assert.match(src, /const typeFilter = ref\(''\)/)
+  assert.match(src, /label: '全部分类', value: ''/)
+  // 选项来自数据里真实出现的分类，且排除空值
+  assert.match(src, /const typeOptions = computed/)
+  assert.match(src, /if \(!t\) continue/)
+})
+
+test('历史记录：日期区间占位符用数组形式，避免「开始 - 结束」重复拼接', () => {
+  assert.match(src, /:placeholder="\['开始日期', '结束日期'\]"/)
+  // 旧的单字符串占位符必须移除
+  assert.equal(/placeholder="上传开始日期 - 上传结束日期"/.test(src), false)
+})
+
+test('历史记录：pending（待提取）必须计入「正在执行」卡片并可筛出', () => {
+  // parse 已完成 + extract_status 为空（主列表显示「待提取」）也算正在执行
+  assert.match(src, /const es = String\(extractStatus\(r\) \|\| ''\)/)
+  assert.match(src, /return !es \|\| ROW_EXTRACT_RUNNING\.has\(es\)/)
+  // pending 明确在集合里
+  assert.match(src, /ROW_EXTRACT_RUNNING = new Set\(\['pending', 'processing', 'parsing'\]\)/)
+})
+
+test('历史记录：发票类型与关键词/日期/状态构成 AND 组合过滤', () => {
+  assert.match(src, /if \(typeFilter\.value && invoiceTypeOf\(r\) !== typeFilter\.value\) return false/)
 })

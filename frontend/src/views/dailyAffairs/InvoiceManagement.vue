@@ -1163,10 +1163,13 @@ const fileInvoiceCounts = computed(() => {
 const pageBadgeOf = (row: InvoiceRow): string => {
   if (!row.knowledgeId) return ''
   const count = fileInvoiceCounts.value.get(row.knowledgeId) || 0
-  if (count <= 1) return ''
   // 物理页码优先（与预览/打印同一判据 pdfPageOf）；没有物理页的老数据
   // （page_no 缺失）回落序号。同页两票显示同一 P 号是正确的。
   const physical = pdfPageOf(row)
+  // 物理页码 ≥2 时**无条件**展示：用户按票号搜索时列表只剩这一行，
+  // 若按「同文件多张才显示」判断，页码就会消失，而此刻恰恰最需要它去翻 PDF。
+  if (physical >= 2) return `P${physical}`
+  if (count <= 1) return ''
   if (physical >= 1) return `P${physical}`
   const same = invoiceRows.value.filter(r => r.knowledgeId === row.knowledgeId)
   const idx = same.findIndex(r => r.rowKey === row.rowKey)
@@ -1525,6 +1528,9 @@ const displayProgress = computed(() =>
 const { statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'invoice', notLabel: '非发票',
+  // 发票行级状态以后端归一结果为准：单张票核心字段完整就是「提取成功」，
+  // 不因同文件重提（文件级 pending/processing/failed）被打回中间态。
+  preferRecordedSuccess: true,
 })
 
 // ---- 详情抽屉 ----
@@ -2483,15 +2489,32 @@ watch(printVisible, (v) => {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .row-page-badge {
-  flex-shrink: 0; margin-left: 6px; height: 18px; padding: 0 6px; border-radius: 999px;
-  background: var(--td-success-color-light); color: var(--td-success-color); font-size: 11px; line-height: 18px;
+  flex-shrink: 0; margin-left: 6px; height: 18px; padding: 0 6px; border-radius: 4px;
+  background: var(--td-success-color-1, #e8f8f2); color: var(--td-success-color, #00a870);
+  border: 1px solid var(--td-success-color-3, #94e3c5);
+  font-size: 11px; font-weight: 600; line-height: 16px; box-sizing: border-box;
   white-space: nowrap;
 }
 .row-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--td-text-color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
 .row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row-status-tag :deep(.t-icon) { margin-right: 2px; }
+/* 提取成功 / 提取失败 / 待提取 三种状态标签必须完全同尺寸：
+   t-tag 的 small 尺寸在内联图标（close-circle / loading）存在时会按内容收缩，
+   导致「提取失败」看起来比「提取成功」更小。这里用固定盒模型锁死。 */
+.row-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  :deep(.t-icon) { margin-right: 0; font-size: 12px; }
+}
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
 
 .row-tag-chips {

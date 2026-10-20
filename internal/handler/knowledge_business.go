@@ -18,6 +18,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/filetransport"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -1133,8 +1134,12 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	if ruleRes != nil {
 		ruleCount = len(ruleRes.Invoices)
 	}
-	logger.Infof(ctx, "Invoice extraction: rules done, kind=%q hit=%v invoices=%d incomplete=%d/%d knowledge=%s",
-		ruleOutcome.Kind, ruleOK, ruleCount, ruleOutcome.IncompleteCount, ruleOutcome.Total, knowledgeID)
+	// 票面锚点数（原文里真实存在的票号个数）：提取完整性的唯一硬标准。
+	// 规则或模型都可能在多页文件里漏抓某几页，而抓到的票字段完整 →
+	// 半残守卫判「完整」→ 短路 → 漏掉的票被静默丢弃。锚点数就是"应该有几十张"。
+	anchorCount := service.CountInvoiceAnchors(chunks)
+	logger.Infof(ctx, "Invoice extraction: rules done, kind=%q hit=%v invoices=%d incomplete=%d/%d anchors=%d knowledge=%s",
+		ruleOutcome.Kind, ruleOK, ruleCount, ruleOutcome.IncompleteCount, ruleOutcome.Total, anchorCount, knowledgeID)
 	if ruleOutcome.AllIncomplete() {
 		logger.Warnf(ctx, "Invoice rules produced %d incomplete invoices (all); falling back to LLM, knowledge=%s",
 			ruleOutcome.Total, knowledgeID)
@@ -1145,7 +1150,16 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			ruleOutcome.IncompleteCount, ruleOutcome.Total, knowledgeID)
 		ruleRes.ExtractError = service.InvoiceRuleIncompleteNotice(ruleOutcome.IncompleteCount, ruleOutcome.Total)
 	}
-	if ruleOK {
+	// 张数核对（P0）：规则命中但张数少于原文锚点数，说明有页面被漏抓（版式微变 /
+	// 跨 chunk 截断 / OCR 噪声）。此时即便已抓到的票字段完整，也绝不能短路——
+	// 真机「通行费电子票据汇总单(发票).pdf」6 页 6 张，规则/模型只产出 4 张，
+	// 就是因为「字段完整」被当成「文档提完」。
+	ruleShort := ruleOK && anchorCount > ruleCount
+	if ruleShort {
+		logger.Warnf(ctx, "Invoice extraction: rule result shorter than anchors (%d<%d), supplementing knowledge=%s",
+			ruleCount, anchorCount, knowledgeID)
+	}
+	if ruleOK && !ruleShort {
 		merged = ruleRes
 		sawInvoice = len(ruleRes.Invoices) > 0
 	} else {
@@ -1255,7 +1269,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		}
 		// 全部批次失败且无任何产出 → 整体失败（记 failed、可重试）；
 		// 只要有一批成功就保留部分结果，不因个别批次丢掉整份成果。
-		if failedBatches == len(batches) && len(merged.Invoices) == 0 {
+		if !ruleOK && failedBatches == len(batches) && len(merged.Invoices) == 0 {
 			if errs[0] != nil {
 				extractErr = errs[0]
 			} else {
@@ -1270,6 +1284,31 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 				"部分批次未完成（%d/%d 批失败，可能因模型超时或返回异常），已保留其余批次结果，建议复核",
 				failedBatches, len(batches))
 		}
+		if ruleOK {
+			// 规则结果优先，模型只补规则漏掉的票号（不能整份换掉：规则对固定版式
+			// 的票号/金额更准，模型的价值仅在"补漏"）。
+			merged = service.MergeInvoiceSupplement(ruleRes, merged)
+			sawInvoice = len(merged.Invoices) > 0
+		}
+	}
+	// 二次定向补提：整份 LLM 跑完仍少于锚点数，就按「缺哪张票、在哪一页」逐页补提。
+	// 整份调用在长文档上会因上下文挤占再次漏票，逐页片段小、信噪比高，命中率更高。
+	// 每轮最多 8 页（成本上限），最多两轮（覆盖 15 页级汇总单）；某轮无进展立即停，
+	// 不做无意义的重复烧 token。
+	for pass := 0; pass < 2 && anchorCount > len(merged.Invoices); pass++ {
+		before := len(merged.Invoices)
+		sup := h.supplementMissingInvoices(extractCtx, chatModel, invoiceRuleCfg, chunks, merged.Invoices, knowledgeID)
+		merged = service.MergeInvoiceSupplement(merged, sup)
+		logger.Warnf(ctx, "Invoice extraction: supplement pass %d: %d -> %d invoices (anchors=%d) knowledge=%s",
+			pass+1, before, len(merged.Invoices), anchorCount, knowledgeID)
+		sawInvoice = sawInvoice || len(merged.Invoices) > 0
+		if len(merged.Invoices) == before {
+			break
+		}
+	}
+	if anchorCount > len(merged.Invoices) {
+		merged.ExtractIssues = append(merged.ExtractIssues,
+			service.NewExtractMissingInvoicesIssue(anchorCount-len(merged.Invoices), anchorCount))
 	}
 	if !sawInvoice {
 		merged.Kind = "not_invoice"
@@ -2992,4 +3031,74 @@ func retryBudgetLeft(ctx context.Context) bool {
 		return false
 	}
 	return retried < max
+}
+
+// supplementMissingInvoices 针对「原文有锚点、结果里没有」的票做定向补提。
+//
+// 实现策略（先廉价后昂贵）：
+//  1. 对每张缺票所在页的原文片段，先跑三套确定性规则（毫秒级、零 token）；
+//  2. 规则不命中该片段时，才用模型补提这一页（片段小、信噪比高，比整份重跑稳）；
+//  3. 页码强制回填为该锚点的物理页码——片段里没有 SourceLocators，模型自己
+//     只能给出 P1，不覆盖就会把第 5 页的票标成 P1。
+//
+// 单次最多 8 页（超过说明整份版式崩坏，逐页补提成本不可控，交给用户人工处理）。
+func (h *BusinessExtractHandler) supplementMissingInvoices(
+	ctx context.Context,
+	chatModel chat.Chat,
+	cfg *types.KbExtractConfig,
+	chunks []*types.Chunk,
+	have []service.InvoiceExtractionItem,
+	knowledgeID string,
+) *service.InvoiceExtractionResult {
+	out := &service.InvoiceExtractionResult{Kind: "invoice"}
+	targets := service.FindSupplementTargets(chunks, have, 8)
+	if len(targets) == 0 {
+		return out
+	}
+	docHint := knowledgeID
+	if len(docHint) > 8 {
+		docHint = docHint[:8]
+	}
+	for _, tg := range targets {
+		// 1) 规则优先：同一页只含一张票，规则命中即是确定值
+		segChunk := []*types.Chunk{{
+			ChunkIndex: 0,
+			ChunkType:  types.ChunkTypeText,
+			Content:    tg.Text,
+			IsEnabled:  true,
+		}}
+		if oc := service.ExtractInvoiceByRules(segChunk, docHint); oc.Hit && oc.Result != nil && len(oc.Result.Invoices) > 0 {
+			for _, inv := range oc.Result.Invoices {
+				if strings.TrimSpace(inv.InvoiceNo) == "" {
+					inv.InvoiceNo = tg.InvoiceNo
+				}
+				if tg.Page > 0 {
+					inv.PageNo = tg.Page
+				}
+				out.Invoices = append(out.Invoices, inv)
+			}
+			logger.Infof(ctx, "Invoice supplement: rule hit page=%d no=%s knowledge=%s", tg.Page, tg.InvoiceNo, knowledgeID)
+			continue
+		}
+		// 2) 规则不命中：只把这一页交给模型
+		if chatModel == nil {
+			continue
+		}
+		res, err := service.ExtractInvoicesWithRulesOnce(ctx, chatModel, tg.Text, cfg)
+		if err != nil || res == nil || res.Kind == "not_invoice" || len(res.Invoices) == 0 {
+			logger.Warnf(ctx, "Invoice supplement: page=%d no=%s failed: %v knowledge=%s", tg.Page, tg.InvoiceNo, err, knowledgeID)
+			continue
+		}
+		for _, inv := range res.Invoices {
+			if strings.TrimSpace(inv.InvoiceNo) == "" {
+				inv.InvoiceNo = tg.InvoiceNo
+			}
+			if tg.Page > 0 {
+				inv.PageNo = tg.Page
+			}
+			out.Invoices = append(out.Invoices, inv)
+		}
+		logger.Infof(ctx, "Invoice supplement: LLM page=%d got=%d knowledge=%s", tg.Page, len(res.Invoices), knowledgeID)
+	}
+	return out
 }

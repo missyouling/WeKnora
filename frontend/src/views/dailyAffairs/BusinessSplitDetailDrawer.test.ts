@@ -95,3 +95,22 @@ test('源预览上分割线与抽屉底栏分割线等宽（负 margin 拉通内
   assert.match(block, /padding: var\(--td-comp-margin-s\) var\(--td-comp-margin-m\) 0/)
   assert.match(block, /border-top: 1px solid var\(--td-component-stroke\)/)
 })
+
+// ---- 抽屉标题页码标签：独立绿底胶囊（此前是裸文本，与票号连成「...563P9」）----
+
+test('抽屉标题：页码是独立绿底胶囊标签', () => {
+  assert.match(src, /class="bsd-page-badge">P\{\{ pageNo \}\}/)
+  // 旧的 row-page-badge 类在本组件内没有样式定义（scoped 命中不到），必须换掉
+  assert.equal(/class="row-page-badge"/.test(src), false)
+})
+
+test('抽屉标题：页码胶囊绿底绿字 + 细边框，与列表 P 标风格一致', () => {
+  const block = src.slice(src.indexOf('.bsd-page-badge {'), src.indexOf('.bsd-page-badge {') + 700)
+  assert.match(block, /margin-left: 6px/)
+  assert.match(block, /background: var\(--td-success-color-1, #e8f8f2\)/)
+  assert.match(block, /color: var\(--td-success-color, #00a870\)/)
+  assert.match(block, /border: 1px solid var\(--td-success-color-3, #94e3c5\)/)
+  assert.match(block, /border-radius: 4px/)
+  assert.match(block, /font-size: 12px/)
+  assert.match(block, /font-weight: 600/)
+})

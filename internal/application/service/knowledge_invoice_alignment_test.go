@@ -123,10 +123,13 @@ func TestBusinessInvoiceKeywordPenetratesCustomFieldsValue(t *testing.T) {
 	assert.Len(t, res.Data, 1, "数字型 fields 值也必须可搜")
 }
 
-// TestBusinessInvoiceDateFilterMatchesTravelDates 锁定日期筛选兼容通行日期：
-// 汇总单次月开票（2025-11-05）但通行日期落在 2025-10 区间 → 仍应命中，
-// 避免用户按「通行月份」筛选时把已入库的票筛掉。
-func TestBusinessInvoiceDateFilterMatchesTravelDates(t *testing.T) {
+// TestBusinessInvoiceDateFilterStrictlyByInvoiceDate 锁定日期筛选口径：
+// **只看开票日期**，不许用明细通行日期兜底。
+//
+// 契约变更（2026-10-20 真机）：旧口径「开票日期 OR 通行日期」导致筛 2026-09
+// 时混进 2026-10-08 开票的发票，用户看到列表与筛选条件自相矛盾。现在汇总单
+// （开票 2025-11-05、通行日期 2025-10）按 10 月筛选必须不命中。
+func TestBusinessInvoiceDateFilterStrictlyByInvoiceDate(t *testing.T) {
 	meta := map[string]interface{}{
 		"kind":           "invoice",
 		"extract_status": "success",
@@ -152,19 +155,26 @@ func TestBusinessInvoiceDateFilterMatchesTravelDates(t *testing.T) {
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 
-	// 顶层 invoice_date 是 2025-11-05，2025-10 区间不命中它，但通行日期命中
+	// 开票日期是 2025-11-05：按 10 月（通行日期所在月）筛选不得命中
 	res, err := svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{
 		DateFrom: "2025-10-01", DateTo: "2025-10-31", Page: 1, PageSize: 20,
 	})
 	require.NoError(t, err)
-	assert.Len(t, res.Data, 1, "按通行月份筛选必须命中次月开票的汇总单")
+	assert.Empty(t, res.Data, "日期筛选严格按开票日期：通行日期在 10 月也不能把 11 月开票的票筛出来")
+
+	// 按开票月份筛选才命中
+	res, err = svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{
+		DateFrom: "2025-11-01", DateTo: "2025-11-30", Page: 1, PageSize: 20,
+	})
+	require.NoError(t, err)
+	assert.Len(t, res.Data, 1, "按开票月份筛选必须命中")
 
 	// 完全不相关的月份不得命中
 	res, err = svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{
 		DateFrom: "2025-08-01", DateTo: "2025-08-31", Page: 1, PageSize: 20,
 	})
 	require.NoError(t, err)
-	assert.Empty(t, res.Data, "通行日期与顶层日期都不在区间内时不得命中")
+	assert.Empty(t, res.Data, "开票日期不在区间内时不得命中")
 }
 
 // TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow 锁定铁律一（非失败态）：

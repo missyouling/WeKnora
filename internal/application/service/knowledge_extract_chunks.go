@@ -1,6 +1,7 @@
 package service
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
@@ -132,7 +133,216 @@ func BuildExtractSourceText(chunks []*types.Chunk) ExtractSourceText {
 		sb.WriteString(text)
 		sb.WriteString("\n")
 	}
+	// 解析引擎没回填 SourceLocators（纯文本引擎 / 旧 anydoc）时，按票面页眉
+	// 「电子发票」出现次数推算物理页码——绝不能让数组序号冒充物理页码
+	// （真机 6 页 PDF 曾被标成 P1~P4，用户无法据此去源文件核对）。
+	if len(markers) == 0 {
+		markers = inferPageMarkersFromInvoiceHeaders(sb.String())
+	}
 	return ExtractSourceText{Content: sb.String(), Markers: markers}
+}
+
+// invoicePageHeaderRe 匹配一页票据的页眉（如「## 电子发票（普通发票） 国家税务总局」）。
+// 只认行首/带 # 前缀的形式，避免命中正文里偶然提到的「电子发票」。
+var invoicePageHeaderRe = regexp.MustCompile(`(?m)^[ \t]*#{0,3}[ \t]*电子发票[（(]`)
+
+// summaryPageHintRe 匹配「汇总单」字样，用于识别首页是汇总表而非票据页。
+var summaryPageHintRe = regexp.MustCompile(`汇总单|汇总清单|票据汇总`)
+
+// inferPageMarkersFromInvoiceHeaders 用票面页眉推算物理页码。
+//
+// 规则：
+//  1. 每个「电子发票（…）」页眉即一页票据，按出现顺序编号 1..N；
+//  2. 若首个页眉之前的内容是汇总表（含「汇总单」等字样），说明首页是汇总页，
+//     票据页整体后移一页（P2..PN），与用户在 PDF 预览器里看到的页码一致。
+//
+// 文本里一个页眉都没有时返回 nil（调用方保持「无页码信息」语义）。
+func inferPageMarkersFromInvoiceHeaders(content string) []PageMarker {
+	if content == "" {
+		return nil
+	}
+	locs := invoicePageHeaderRe.FindAllStringIndex(content, -1)
+	if len(locs) == 0 || len(locs) > 500 {
+		return nil
+	}
+	base := 1
+	if summaryPageHintRe.MatchString(content[:locs[0][0]]) {
+		base = 2
+	}
+	markers := make([]PageMarker, 0, len(locs))
+	for i, loc := range locs {
+		markers = append(markers, PageMarker{Offset: loc[0], Page: base + i})
+	}
+	return markers
+}
+
+// invoiceNo20Re 匹配 20 位电子发票号码。
+var invoiceNo20Re = regexp.MustCompile(`[0-9]{20}`)
+
+// invoiceNoLabelRe 匹配「发票号码：」标签（旧版 8 位票号文件的锚点）。
+var invoiceNoLabelRe = regexp.MustCompile(`发票号码\s*[:：]`)
+
+// standaloneDigits 判断 s[start:end] 是否是独立数字串（左右都不是数字）。
+// 21 位校验码不能被截出 20 位，否则锚点数会虚高、触发无谓的补提。
+func standaloneDigits(s string, start, end int) bool {
+	if start > 0 && s[start-1] >= '0' && s[start-1] <= '9' {
+		return false
+	}
+	if end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		return false
+	}
+	return true
+}
+
+// CountInvoiceAnchors 统计源文档里「真实存在的票据锚点数」，用于核对提取完整性。
+//
+// 为什么必须有这个口径：多页 PDF 里只要某 1~2 页版式微变/跨 chunk 截断，
+// 规则或模型就会漏抓那两页；而抓到的票字段完整，半残守卫判「完整」后直接
+// 短路，漏掉的票被静默丢弃（真机 6 页只落 4 张）。锚点数就是「应该有几十张」。
+//
+// 优先数 20 位票号（去重，票号是票面唯一标识）；没有 20 位票号时退回数
+// 「发票号码：」标签出现次数（一票一标签）。
+func CountInvoiceAnchors(chunks []*types.Chunk) int {
+	src := BuildExtractSourceText(chunks)
+	if src.Content == "" {
+		return 0
+	}
+	seen := make(map[string]struct{}, 8)
+	for _, m := range invoiceNo20Re.FindAllStringIndex(src.Content, -1) {
+		if !standaloneDigits(src.Content, m[0], m[1]) {
+			continue
+		}
+		seen[src.Content[m[0]:m[1]]] = struct{}{}
+	}
+	if len(seen) > 0 {
+		return len(seen)
+	}
+	return len(invoiceNoLabelRe.FindAllStringIndex(src.Content, -1))
+}
+
+// InvoiceSupplementTarget 是一张「原文里有、提取结果里没有」的票及其补提素材。
+type InvoiceSupplementTarget struct {
+	InvoiceNo string
+	Page      int    // 物理页码（0 表示无法判定）
+	Text      string // 该票所在页的原文（含票号/金额/购销方，够独立识别）
+}
+
+// FindSupplementTargets 定位「原文有锚点但结果里没有」的票，供上层补提。
+//
+// 行为约定：
+//   - 结果里一张票都没有时返回 nil（调用方应走整份文档的常规提取路径）；
+//   - 同一页有多个漏提锚点时只产出一个目标（一次调用即可覆盖整页）；
+//   - 每段文本取该页的完整原文，最多 6000 字节（防止单页异常放大烧 token）。
+func FindSupplementTargets(chunks []*types.Chunk, extracted []InvoiceExtractionItem, max int) []InvoiceSupplementTarget {
+	if max <= 0 {
+		max = 8
+	}
+	if len(extracted) == 0 {
+		return nil
+	}
+	have := make(map[string]struct{}, len(extracted))
+	for _, inv := range extracted {
+		if no := strings.TrimSpace(inv.InvoiceNo); no != "" {
+			have[no] = struct{}{}
+		}
+	}
+	src := BuildExtractSourceText(chunks)
+	if src.Content == "" {
+		return nil
+	}
+
+	type anchor struct {
+		no     string
+		offset int
+	}
+	anchors := make([]anchor, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	for _, m := range invoiceNo20Re.FindAllStringIndex(src.Content, -1) {
+		if !standaloneDigits(src.Content, m[0], m[1]) {
+			continue
+		}
+		no := src.Content[m[0]:m[1]]
+		if _, dup := seen[no]; dup {
+			continue
+		}
+		seen[no] = struct{}{}
+		anchors = append(anchors, anchor{no: no, offset: m[0]})
+	}
+
+	out := make([]InvoiceSupplementTarget, 0, 2)
+	usedPage := make(map[int]struct{}, 2)
+	for _, a := range anchors {
+		if _, ok := have[a.no]; ok {
+			continue // 这张已经提出来了
+		}
+		page := src.PageAt(a.offset)
+		if page > 0 {
+			if _, dup := usedPage[page]; dup {
+				continue // 同页只补一次
+			}
+			usedPage[page] = struct{}{}
+		}
+		text := pageSegmentText(src, a.offset, page)
+		if text == "" {
+			continue
+		}
+		out = append(out, InvoiceSupplementTarget{InvoiceNo: a.no, Page: page, Text: text})
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+// pageSegmentText 取出锚点所在页的原文；无页码信息时退回锚点附近的窗口。
+func pageSegmentText(src ExtractSourceText, offset, page int) string {
+	start, end := 0, len(src.Content)
+	if page > 0 && len(src.Markers) > 0 {
+		pageStart := -1
+		for _, m := range src.Markers {
+			if m.Page == page {
+				pageStart = m.Offset
+				break
+			}
+		}
+		if pageStart >= 0 {
+			pageEnd := len(src.Content)
+			for _, m := range src.Markers {
+				if m.Offset > pageStart {
+					pageEnd = m.Offset
+					break
+				}
+			}
+			start, end = pageStart, pageEnd
+		}
+	}
+	if page <= 0 {
+		start = offset - 1200
+		if start < 0 {
+			start = 0
+		}
+		end = offset + 2400
+		if end > len(src.Content) {
+			end = len(src.Content)
+		}
+	}
+	if start >= end {
+		return ""
+	}
+	const maxBytes = 6000
+	if end-start > maxBytes {
+		end = start + maxBytes
+	}
+	seg := strings.TrimSpace(src.Content[start:end])
+	if seg == "" {
+		return ""
+	}
+	// 页级片段重新归一一次表格：拼接时表格可能被 chunk 边界切断（`<table>` 在
+	// 前一个 chunk、数据行在后一个），整页切片后才是完整的 table，此时归一
+	// 才能把 HTML 表格变成规则引擎认得的 Markdown 行——不归一的话补提只能靠模型。
+	seg = docparser.NormalizeHTMLTables(seg)
+	seg = strings.TrimSpace(splitMultiLabelHeaderCells(seg))
+	return seg
 }
 
 // AssignPhysicalPages 按「发票号在原文中的首次出现位置」反查物理页码。

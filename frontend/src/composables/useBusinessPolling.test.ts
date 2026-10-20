@@ -150,3 +150,28 @@ test('扫描失败（模拟 503）累计连续失败次数，成功后归零', a
   assert.equal(await tick(), true, '恢复后本轮成功')
   assert.equal(consecutiveFailures.value, 0, '成功必须把退避计数归零')
 })
+
+test('僵尸在途：processing 超过 15 分钟必须移出状态条（不再永久显示「已用 N 分」）', async () => {
+  const realNow = Date.now
+  let fake = 1_700_000_000_000
+  Date.now = () => fake
+  try {
+    globalThis.__mockFiles = [{
+      id: 'stuck-processing',
+      parse_status: 'completed',
+      custom_metadata: { extract_status: 'processing' },
+    }]
+    const { tick, pendingFiles } = useBusinessPolling({
+      kbId: ref('kb-1'),
+      extractFn: async () => ({ data: {} }),
+    })
+    await tick()
+    assert.equal(pendingFiles.value.length, 1, '首轮应计入在途状态条')
+    // 后端任务丢失（重启/超时）→ 状态永远停在 processing
+    fake += 16 * 60 * 1000
+    await tick()
+    assert.equal(pendingFiles.value.length, 0, '超时后必须移出状态条，交给「提取失败 + 手动重提」')
+  } finally {
+    Date.now = realNow
+  }
+})

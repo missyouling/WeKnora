@@ -31,17 +31,21 @@ type InvoiceRecord struct {
 	VoidFlag      bool                         `json:"void_flag"`
 	// Fields 自定义动态字段扩展桶（如通行费发票「车牌号」），透传自 service 层，
 	// 前端动态列/详情抽屉按分类 subs.name 读取。
-	Fields         map[string]any `json:"fields,omitempty"`
-	Page           int            `json:"page"`
-	KnowledgeID    string         `json:"knowledge_id"`
-	KnowledgeTitle string         `json:"knowledge_title"`
-	FileName       string         `json:"file_name"`
-	FileType       string         `json:"file_type"`
-	Tags           []string       `json:"tags"`
-	ExtractStatus  string         `json:"extract_status"`
-	ExtractError   string         `json:"extract_error"`
-	KBID           string         `json:"knowledge_base_id"`
-	CreatedAt      time.Time      `json:"created_at"`
+	Fields map[string]any `json:"fields,omitempty"`
+	Page   int            `json:"page"`
+	// PageNo 是该票在源文件中的**物理页码**（1-based PDF 页），来自解析引擎的
+	// SourceLocators 或按票面页眉推算。前端预览/打印按它跳页，绝不能拿数组序号
+	// 冒充（真机 6 页 PDF 曾在列表里显示 P1~P4，用户据此翻原件必然翻错）。
+	PageNo         int       `json:"page_no"`
+	KnowledgeID    string    `json:"knowledge_id"`
+	KnowledgeTitle string    `json:"knowledge_title"`
+	FileName       string    `json:"file_name"`
+	FileType       string    `json:"file_type"`
+	Tags           []string  `json:"tags"`
+	ExtractStatus  string    `json:"extract_status"`
+	ExtractError   string    `json:"extract_error"`
+	KBID           string    `json:"knowledge_base_id"`
+	CreatedAt      time.Time `json:"created_at"`
 	// IsPlaceholder 标记「文件级占位行」：该源文件没有任何可展示的发票明细
 	// （提取失败 / 解析出 0 张 / 最后一票被删后待清理），但文件仍在知识库中。
 	// 占位行是知识库 ↔ 列表 100% 对齐的兜底：绝不把这种文件静默跳过，
@@ -112,18 +116,18 @@ type InvoiceListResult struct {
 // InvoiceOverviewStats 是发票台账概览统计（纯只读聚合，不涉及任何状态流）。
 // 口径与列表完全一致：按发票号去重（保留 created_at 最新）、剔除空提取项。
 type InvoiceOverviewStats struct {
-	Total         int                   `json:"total"`           // 库内有效发票总数（去重后）
-	FileCount     int                   `json:"file_count"`      // 已上传的发票类文件数（含解析失败文件，不含已删除）
-	ParseFailed   int                   `json:"parse_failed"`    // 文件级解析失败数
-	ExtractFailed int                   `json:"extract_failed"`  // 发票级提取失败数
+	Total         int `json:"total"`          // 库内有效发票总数（去重后）
+	FileCount     int `json:"file_count"`     // 已上传的发票类文件数（含解析失败文件，不含已删除）
+	ParseFailed   int `json:"parse_failed"`   // 文件级解析失败数
+	ExtractFailed int `json:"extract_failed"` // 发票级提取失败数
 	// ExtractFailedFiles：文件级提取失败数（含"一张票都没提出来"的失败文件）。
 	// 供「历史记录」KPI 卡片副标题展示「N 份提取失败」——按记录计数时这类文件
 	// 恒为 0，批量限流失败后用户看不到任何提示。
-	ExtractFailedFiles int `json:"extract_failed_files"`
-	CurrentMonth  InvoiceMonthStat      `json:"current_month"`   // 本月（开票日期）收录看板
-	SumTotal      float64               `json:"sum_total"`       // 库内全部有效发票价税合计总额
-	ByInvoiceType []InvoiceTypeStat     `json:"by_invoice_type"` // 按发票类型分组（张数 + 金额）
-	ByCategory    []InvoiceCategoryStat `json:"by_category"`     // 按用户定义分类（category 细分）分组
+	ExtractFailedFiles int                   `json:"extract_failed_files"`
+	CurrentMonth       InvoiceMonthStat      `json:"current_month"`   // 本月（开票日期）收录看板
+	SumTotal           float64               `json:"sum_total"`       // 库内全部有效发票价税合计总额
+	ByInvoiceType      []InvoiceTypeStat     `json:"by_invoice_type"` // 按发票类型分组（张数 + 金额）
+	ByCategory         []InvoiceCategoryStat `json:"by_category"`     // 按用户定义分类（category 细分）分组
 }
 
 // InvoiceMonthStat 是本月发票收录看板。

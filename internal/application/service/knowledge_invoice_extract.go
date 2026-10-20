@@ -1272,11 +1272,13 @@ func invoiceTaxExemptEvidence(inv *InvoiceExtractionItem, srcText string) bool {
 
 // backfillInvoiceMath 用确定性数学关系补齐缺失的金额字段（纯后处理，不调模型）。
 //
-// 覆盖三类真机缺口：
+// 覆盖四类真机缺口：
 //  1. 有金额+税额、缺税率 → tax_rate = round(tax/amount, 2)
 //     （真机第 91 行：23.69 / 0.71 → 3%）；
 //  2. 有价税合计+税额、缺金额 → amount = total - tax；
-//  3. 只有价税合计且票面确为免税（taxExempt 为真）→ amount = total, tax = 0, rate = 0。
+//  3. 只有价税合计且票面确为免税（taxExempt 为真）→ amount = total, tax = 0, rate = 0；
+//  4. **正向补齐**：有金额+税率、税额或价税合计缺失 → tax = round(amount×rate, 2)、
+//     total = round(amount+tax, 2)（真机 26507904440700023289：51.95×3% → 1.56 / 53.51）。
 //
 // 安全边界（宁缺毋滥，绝不写荒谬值）：
 //   - 已有的值一律不被覆盖；
@@ -1295,6 +1297,20 @@ func backfillInvoiceMath(inv *InvoiceExtractionItem, taxExempt bool) {
 			if rate >= 0 && rate <= 1 {
 				inv.TaxRate = &rate
 			}
+		}
+	}
+	// 3) 正向补齐：有金额 + 税率，但税额或价税合计缺失/为 0 → 按税率正算。
+	//    真机 26507904440700023289：amount=51.95、tax_rate=3%，tax/total 全空，
+	//    列表显示为「-」；正算得 tax=1.56、total=53.51。
+	//    只补空值（nil 或 0），已有非零税额/合计一律不动。
+	if inv.TaxRate != nil && *inv.TaxRate > 0 && *inv.TaxRate < 1 && inv.Amount != nil && *inv.Amount > 0 {
+		if inv.Tax == nil || *inv.Tax == 0 {
+			tax := round2(*inv.Amount * *inv.TaxRate)
+			inv.Tax = &tax
+		}
+		if (inv.TotalAmount == nil || *inv.TotalAmount == 0) && inv.Tax != nil {
+			total := round2(*inv.Amount + *inv.Tax)
+			inv.TotalAmount = &total
 		}
 	}
 	// 2) 金额反算
@@ -1342,6 +1358,21 @@ func sanitizeInvoiceNo(invs []InvoiceExtractionItem, fileName, srcText string) i
 		}
 	}
 	return cleaned
+}
+
+// NewExtractMissingInvoicesIssue 提取张数少于原文票面锚点数时的告警。
+//
+// 为什么要暴露给用户：多页 PDF 漏提是**静默**的——列表看起来一切正常，只是少了
+// 几张票。补提后仍缺时至少要让用户在质量面板看到「原文 6 张，只提到 4 张」，
+// 而不是永远不知道。
+func NewExtractMissingInvoicesIssue(missing, anchors int) ExtractFieldIssue {
+	return ExtractFieldIssue{
+		Index:    -1,
+		Field:    "invoiceNo",
+		Kind:     "missing",
+		Detail:   fmt.Sprintf("原文共 %d 张发票锚点，仅提取到 %d 张，另有 %d 张未能提取（可能版式异常或扫描不清），建议复核源文件", anchors, anchors-missing, missing),
+		Severity: issueSeverityWarn,
+	}
 }
 
 // NewExtractInvoiceNoSanitizedIssue 票号被清洗（原值是中文文件名/描述词）时
@@ -1439,6 +1470,52 @@ func splitTollHeaderLabels(body string) []string {
 		s = strings.TrimSpace(s[len(matched):])
 	}
 	return out
+}
+
+// MergeInvoiceSupplement 把「补提结果」并入主结果：主结果优先，补提只填主结果
+// 里没有的票号。
+//
+// 为什么不直接 append：补提是按页/按锚点单独调用的，同一张票可能被规则与模型
+// 各提一次；不判重会出现「一份文件里两张一样的票」。无票号的补提结果无法判重，
+// 一律丢弃（宁可少一张，也不写重复脏数据）；对应地，调用方在补提后仍会拿
+// 锚点数复核，若仍缺会记 warning。
+func MergeInvoiceSupplement(primary, supplement *InvoiceExtractionResult) *InvoiceExtractionResult {
+	if primary == nil {
+		return supplement
+	}
+	if supplement == nil || len(supplement.Invoices) == 0 {
+		return primary
+	}
+	seen := make(map[string]struct{}, len(primary.Invoices))
+	for _, inv := range primary.Invoices {
+		if no := strings.TrimSpace(inv.InvoiceNo); no != "" {
+			seen[no] = struct{}{}
+		}
+	}
+	added := 0
+	for _, inv := range supplement.Invoices {
+		no := strings.TrimSpace(inv.InvoiceNo)
+		if no == "" {
+			continue
+		}
+		if _, dup := seen[no]; dup {
+			continue
+		}
+		seen[no] = struct{}{}
+		primary.Invoices = append(primary.Invoices, inv)
+		added++
+	}
+	// 只并「结果级」问题（Index<0）：补提结果里的字段级 issue 下标是补提批局部
+	// 的，直接搬过来会指到主结果的其它发票上。
+	for _, issue := range supplement.ExtractIssues {
+		if issue.Index < 0 {
+			primary.ExtractIssues = append(primary.ExtractIssues, issue)
+		}
+	}
+	if added > 0 && primary.ExtractError == "" {
+		primary.ExtractError = supplement.ExtractError
+	}
+	return primary
 }
 
 func InvoiceRuleResultIncomplete(res *InvoiceExtractionResult) bool {

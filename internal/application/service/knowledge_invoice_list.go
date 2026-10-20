@@ -273,12 +273,13 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					VoidFlag:       inv.VoidFlag,
 					Fields:         inv.Fields,
 					Page:           inv.Page,
+					PageNo:         inv.PageNo,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,
 					FileType:       k.FileType,
 					Tags:           mergeInvoiceTags(tags, inv.Tags),
-					ExtractStatus:  meta.ExtractStatus,
+					ExtractStatus:  invoiceRecordExtractStatus(meta.ExtractStatus, inv),
 					ExtractError:   meta.ExtractError,
 					KBID:           k.KnowledgeBaseID,
 					CreatedAt:      k.CreatedAt,
@@ -786,6 +787,37 @@ func mapContainsKeyword(m map[string]any, kw string) bool {
 	return false
 }
 
+// invoiceItemCoreComplete 判断单张发票的核心字段是否已完整提取。
+//
+// 口径与用户看到的「提取成功」一致：票号 + 开票日期 + 金额 + 价税合计 + 购销方。
+// 明细子项（车牌/通行日期等）不参与判定 —— 它们缺失属于「字段不全」，
+// 由质量面板提示，不影响这张票已被成功提取的事实。
+func invoiceItemCoreComplete(inv InvoiceExtractionItem) bool {
+	if strings.TrimSpace(inv.InvoiceNo) == "" || strings.TrimSpace(inv.InvoiceDate) == "" {
+		return false
+	}
+	if inv.Amount == nil || inv.TotalAmount == nil || *inv.TotalAmount <= 0 {
+		return false
+	}
+	if strings.TrimSpace(inv.BuyerName) == "" || strings.TrimSpace(inv.SellerName) == "" {
+		return false
+	}
+	return true
+}
+
+// invoiceRecordExtractStatus 归一「行级」提取状态。
+//
+// 背景（真机第 7~10 行一会儿「提取失败」一会儿「待提取」）：文件级状态会在重提
+// 期间在 pending/processing/failed 之间波动，而单张票的字段早已落库且完整。
+// 行级状态必须以**这张票本身**为准：核心字段齐备就是「提取成功」；不完整才
+// 回落文件级状态（failed 表示这张票确实没提到，pending 表示还在重提）。
+func invoiceRecordExtractStatus(fileStatus string, inv InvoiceExtractionItem) string {
+	if invoiceItemCoreComplete(inv) {
+		return "success"
+	}
+	return fileStatus
+}
+
 // invoiceRecordDateInRange 判断记录是否落在日期区间 [from, to]（含，空端不限）。
 //
 // 两路命中（OR）：
@@ -797,80 +829,14 @@ func mapContainsKeyword(m map[string]any, kw string) bool {
 // 2025-11-xx），而用户脑子里筛的是「通行日期在 2025-10」。只比顶层日期会
 // 把已入库的票整批筛掉，造成「明明上传过却查不到」。
 func invoiceRecordDateInRange(r types.InvoiceRecord, from, to string) bool {
-	if invoiceDateInRange(r.InvoiceDate, from, to) {
-		return true
-	}
 	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
 	if from == "" && to == "" {
 		return true
 	}
-	// 明细通行日期：取该明细自身起止区间与筛选区间的交集
-	for _, it := range r.Items {
-		if it.Extra == nil {
-			continue
-		}
-		itemFrom := firstNonEmptyExtra(it.Extra, travelDateFromKeys...)
-		itemTo := firstNonEmptyExtra(it.Extra, travelDateToKeys...)
-		if itemFrom == "" && itemTo == "" {
-			continue
-		}
-		if dateRangeOverlaps(itemFrom, itemTo, from, to) {
-			return true
-		}
-	}
-	return false
-}
-
-// travelDateFromKeys / travelDateToKeys 通行日期起止的同义键（后端 snake_case
-// 与中文自定义键都要覆盖）。
-var (
-	travelDateFromKeys = []string{"travel_from", "travelfrom", "通行日期起", "入口日期", "上站日期"}
-	travelDateToKeys   = []string{"travel_to", "travelto", "通行日期止", "出口日期", "下站日期"}
-)
-
-// firstNonEmptyExtra 按候选键顺序取 Extra 桶里第一个非空字符串值。
-func firstNonEmptyExtra(extra map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := extra[k]; ok {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-	return ""
-}
-
-// dateRangeOverlaps 判断明细起止区间 [a1,a2] 与筛选区间 [b1,b2] 是否有交集。
-// 日期统一去横线成 YYYYMMDD 后按字典序比较；明细侧缺一端时视为单点。
-func dateRangeOverlaps(aFrom, aTo, bFrom, bTo string) bool {
-	norm := func(s string) string {
-		return strings.ReplaceAll(strings.TrimSpace(s), "-", "")
-	}
-	a1, a2 := norm(aFrom), norm(aTo)
-	b1, b2 := norm(bFrom), norm(bTo)
-	if a1 == "" {
-		a1 = a2
-	}
-	if a2 == "" {
-		a2 = a1
-	}
-	if a1 > a2 {
-		a1, a2 = a2, a1
-	}
-	if b1 == "" {
-		b1 = b2
-	}
-	if b2 == "" {
-		b2 = b1
-	}
-	if b1 > b2 {
-		b1, b2 = b2, b1
-	}
-	if a1 == "" || b1 == "" {
-		return false
-	}
-	// 区间有交集：a1 <= b2 且 b1 <= a2（任一端为空表示该端不限）
-	return a1 <= b2 && (b1 == "" || b1 <= a2)
+	// 严格按「开票日期」筛选：明细里的通行日期（travel_from/travel_to）不参与。
+	// 旧口径把通行日期当兜底，导致筛 2026-09-01~2026-09-30 时混进开票日期
+	// 为 2026-10-08 的发票（通行日期落在 9 月），用户看到的列表与筛选条件矛盾。
+	return invoiceDateInRange(r.InvoiceDate, from, to)
 }
 
 // approxEqualFloat 浮点税率比较（小数，1e-9 精度）。

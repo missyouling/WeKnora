@@ -3,23 +3,21 @@
        无活动上传任务时回退到列表轮询兜底（正在解析 N 个文件）。 -->
   <div v-if="liveCount || pendingFiles.length" class="parse-status-bar">
     <t-loading size="small" />
-    <template v-if="progress.length">
-      <span>{{ progressText(progress[progressIndex]) }}</span>
-      <span v-if="progress.length > 1" class="parse-status-count">{{ progressIndex + 1 }}/{{ progress.length }}</span>
-    </template>
-    <span v-else>正在解析 {{ pendingFiles.length }} 个文件，解析完成后自动提取字段...</span>
+    <span class="parse-status-text">{{ statusText }}</span>
+    <span v-if="multiCount > 1" class="parse-status-count">{{ progressIndex + 1 }}/{{ multiCount }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 export interface ParseProgressItem {
   name: string
   stage: 'uploading' | 'parsing' | 'extracting'
   /** null = 该阶段无真实进度数据（如提取阶段后端只返回状态枚举），不展示百分比 */
   percent: number | null
-  /** 已用时秒数：无百分比时用它反映"确实在推进"（真实数据，不估算） */
+  /** 耗时秒数：保留字段以兼容父组件入参，但**不展示** —— 耗时与百分比混排
+   *  会让用户以为卡死（见 statusText 注释）。 */
   elapsedSec?: number
 }
 export interface ParseStatusFile {
@@ -37,34 +35,38 @@ const props = defineProps<{
 
 const STAGE_LABEL: Record<string, string> = { uploading: '正在上传', parsing: '正在解析', extracting: '正在提取' }
 function stageLabel(stage: string) { return STAGE_LABEL[stage] || stage }
-// 有真实百分比才显示数字；没有时展示**真实已用时长**（后端无进度数据，
-// 但耗时是可观测的事实，比"假 98%"或空洞的"进行中"更能反映推进）。
-function formatElapsed(sec?: number) {
-  if (!sec || sec < 1) return ''
-  if (sec < 60) return `${sec} 秒`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`
-}
-function progressText(p: ParseProgressItem) {
-  const head = `${stageLabel(p.stage)}「${p.name}」`
-  if (p.percent !== null) return `${head}进度 ${p.percent}%`
-  const dur = formatElapsed(p.elapsedSec)
-  return dur ? `${head}已用 ${dur}` : `${head}进行中…`
-}
 
 // 兜底计数：仅统计真正进行中的文件（pending/processing/finalizing/提取中），
-// 解析失败的文件由历史记录抽屉承接人工处理，不在横幅计数内
-const liveCount = ref(0)
-watch(() => props.pendingFiles, (v) => {
-  liveCount.value = v.filter(f => {
-    const ps = f.parse_status || ''
-    const es = f.custom_metadata?.extract_status || ''
-    if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return true
-    if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) return true
-    return false
-  }).length
-}, { immediate: true })
+// 解析失败的文件由历史记录抽屉承接人工处理，不在横幅计数内。
+// 用 computed 而不是 watch+ref：watch 只在数组引用变化时触发，后端返回同一批
+// 文件但状态已终态时不会重算，横幅就「挂在页面上不消失」。
+const liveCount = computed(() => props.pendingFiles.filter(f => {
+  const ps = f.parse_status || ''
+  const es = f.custom_metadata?.extract_status || ''
+  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') return true
+  if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) return true
+  return false
+}).length)
+
+// 轮播份数：上传进度条数可能多于待解析文件数（上传完成才开始解析）
+const multiCount = computed(() => Math.max(props.progress.length, liveCount.value))
+
+// 统一文案：**绝不显示耗时读数**。
+// 旧实现没有真实百分比时改显耗时，于是同一份文件一会儿「进度 100%」、
+// 一会儿「耗时 11 分 3 秒」，用户以为卡死。现在只保留两种口径：
+//   上传阶段 → 真实百分比（后端也确实给的是百分比）；
+//   解析/提取 → 文件名 + 剩余份数（不猜进度、不报耗时）。
+const statusText = computed(() => {
+  const p = props.progress[progressIndex.value]
+  if (!p) {
+    const n = props.pendingFiles.length || liveCount.value
+    return `正在解析/提取 ${n} 个文件，完成后自动提取字段...`
+  }
+  const head = `${stageLabel(p.stage)}「${p.name}」`
+  if (p.stage === 'uploading' && p.percent !== null) return `${head} ${p.percent}%`
+  const rest = multiCount.value - 1
+  return rest > 0 ? `${head}（剩余 ${rest} 份）...` : `${head}...`
+})
 
 // 多文件同时上传/解析时 3s 轮播切换展示
 const progressIndex = ref(0)
@@ -102,6 +104,13 @@ onBeforeUnmount(stopProgressTimer)
   color: var(--td-brand-color);
   border-radius: var(--td-radius-large);
   font-size: var(--td-font-size-body-small);
+
+  .parse-status-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .parse-status-count {
     margin-left: auto;
