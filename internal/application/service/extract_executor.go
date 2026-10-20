@@ -129,39 +129,62 @@ func RunExtractWithRetry(
 			parseOK bool
 		)
 
-		// 最多 2 次：第 2 次仅在"供应商拒绝 thinking 参数"时触发。
-		for try := 0; try < 2; try++ {
-			opts := *baseOpts
-			if forceThinking || try > 0 {
-				opts.Thinking = nil
-				opts.ReasoningEffort = ""
-			}
-			if len(a.Schema) > 0 {
-				opts.Format = a.Schema
-			}
-
-			raw, err = "", nil
-			// 每次尝试都带硬超时：供应商偶发挂起连接（无响应、无错误）会让调用方
-			// 无限等待，任务永久停在 processing。超时转为错误后走重试/失败路径。
-			callCtx, cancelCall := withExtractCallTimeout(ctx)
-			if a.Stream {
-				raw, err = chatStreamCollect(callCtx, model, messages, &opts)
-			} else {
-				resp, cerr := model.Chat(callCtx, messages, &opts)
-				if cerr != nil {
-					err = cerr
-				} else if resp != nil {
-					raw = resp.Content
+		// 限流退避重试：命中 429/1302 时**不推进** attempts（那是 Prompt 降级序列，
+		// 每降一级都要重新烧一遍 token），而是原地等待后重发同一策略，最多
+		// maxExtractRateLimitRetries 次。批量上传 20 份文件时靠这段排队自愈。
+	rateLimitLoop:
+		for rl := 0; ; rl++ {
+			// 最多 2 次：第 2 次仅在"供应商拒绝 thinking 参数"时触发。
+			for try := 0; try < 2; try++ {
+				opts := *baseOpts
+				if forceThinking || try > 0 {
+					opts.Thinking = nil
+					opts.ReasoningEffort = ""
 				}
-			}
-			cancelCall()
+				if len(a.Schema) > 0 {
+					opts.Format = a.Schema
+				}
 
-			if err != nil && try == 0 && !forceThinking && thinkingParamRejected(err) {
-				logger.Warnf(ctx, "extract attempt %d (%s) rejected thinking parameter, retrying without it: %v", i+1, a.Label, err)
-				continue
+				raw, err = "", nil
+				// 全局并发削峰：拿不到槽位就排队等待（响应 ctx 取消）。
+				// 槽位只覆盖「模型调用」本身 —— 退避睡眠必须在释放之后进行，
+				// 否则一个退避中的请求会长期占用额度，把并发上限打回 1。
+				release, acqErr := acquireExtractLLMSlot(ctx)
+				if acqErr != nil {
+					err = acqErr
+					break
+				}
+				// 每次尝试都带硬超时：供应商偶发挂起连接（无响应、无错误）会让调用方
+				// 无限等待，任务永久停在 processing。超时转为错误后走重试/失败路径。
+				callCtx, cancelCall := withExtractCallTimeout(ctx)
+				if a.Stream {
+					raw, err = chatStreamCollect(callCtx, model, messages, &opts)
+				} else {
+					resp, cerr := model.Chat(callCtx, messages, &opts)
+					if cerr != nil {
+						err = cerr
+					} else if resp != nil {
+						raw = resp.Content
+					}
+				}
+				cancelCall()
+				release()
+
+				if err != nil && try == 0 && !forceThinking && thinkingParamRejected(err) {
+					logger.Warnf(ctx, "extract attempt %d (%s) rejected thinking parameter, retrying without it: %v", i+1, a.Label, err)
+					continue
+				}
+				if err == nil {
+					parseOK = parse(raw)
+				}
+				break
 			}
-			if err == nil {
-				parseOK = parse(raw)
+
+			if err != nil && IsExtractRateLimitError(err) && rl < maxExtractRateLimitRetries {
+				if !sleepRateLimitBackoff(ctx, rl) {
+					break rateLimitLoop // ctx 已取消：放弃重试，按失败处理
+				}
+				continue
 			}
 			break
 		}

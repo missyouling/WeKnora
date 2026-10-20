@@ -167,14 +167,17 @@ func TestBusinessInvoiceDateFilterMatchesTravelDates(t *testing.T) {
 	assert.Empty(t, res.Data, "通行日期与顶层日期都不在区间内时不得命中")
 }
 
-// TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow 锁定铁律一：
-// kind=invoice 且 invoices 为空（提取失败 / 解析出 0 张 / 删空残留）的文件，
+// TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow 锁定铁律一（非失败态）：
+// kind=invoice、invoices 为空但**未标记提取失败**（解析出 0 张 / 删空残留）的文件，
 // 必须渲染一条文件级占位行，严禁静默跳过造成孤儿数据。
+//
+// 2026-10-20 契约变更：extract_status="failed" 的文件改由「历史记录」抽屉承载
+// （见 TestBusinessInvoiceExtractFailedExcludedFromMainList），不再在此占位。
 func TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow(t *testing.T) {
 	meta := map[string]interface{}{
 		"kind":           "invoice",
-		"extract_status": "failed",
-		"extract_error":  "LLM returned empty extraction",
+		"extract_status": "success",
+		"extract_error":  "解析出 0 张发票",
 		"invoices":       []interface{}{},
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
@@ -187,13 +190,12 @@ func TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow(t *testing.T) {
 
 	res, err := svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{Page: 1, PageSize: 20})
 	require.NoError(t, err)
-	require.Len(t, res.Data, 1, "空 invoices 文件必须渲染占位行，不得静默跳过")
+	require.Len(t, res.Data, 1, "非失败态的空 invoices 文件必须渲染占位行，不得静默跳过")
 	row := res.Data[0]
 	assert.True(t, row.IsPlaceholder, "该行必须是文件级占位行")
 	assert.Equal(t, "k_orphan", row.KnowledgeID)
 	assert.Equal(t, "通行费电子票据汇总单(发票).pdf", row.FileName)
-	assert.Equal(t, "failed", row.ExtractStatus)
-	assert.NotEmpty(t, row.PlaceholderReason, "占位行必须给出原因（提取失败/未提取出票据）")
+	assert.NotEmpty(t, row.PlaceholderReason, "占位行必须给出原因（未提取出票据）")
 }
 
 // TestBusinessInvoicePlaceholderRowSearchableByFileName 锁定占位行仍可被搜索：
@@ -203,7 +205,7 @@ func TestBusinessInvoicePlaceholderRowSearchableByFileName(t *testing.T) {
 		{ID: "k_orphan", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "通行费电子票据汇总单(发票).pdf",
 			CustomMetadata: mustJSON(t, map[string]interface{}{
-				"kind": "invoice", "extract_status": "failed", "invoices": []interface{}{},
+				"kind": "invoice", "extract_status": "success", "invoices": []interface{}{},
 			})},
 	}}
 	svc := &BusinessExtractService{repo: repo}
@@ -212,7 +214,94 @@ func TestBusinessInvoicePlaceholderRowSearchableByFileName(t *testing.T) {
 		Keyword: "通行费电子票据汇总单", Page: 1, PageSize: 20,
 	})
 	require.NoError(t, err)
-	assert.Len(t, res.Data, 1, "占位行必须能按文件名搜到")
+	assert.Len(t, res.Data, 1, "非失败态占位行必须能按文件名搜到")
+}
+
+// TestBusinessInvoiceExtractFailedExcludedFromMainList：提取失败的文件
+// **不得**出现在发票主列表（含「其它票据」），也不得被搜索命中 ——
+// 批量上传触发 429/1302 限流时，一批文件会同时提取失败，若各自占位会把
+// 「其它票据」整屏染成橙色失败行。它们的归宿是「历史记录」抽屉。
+func TestBusinessInvoiceExtractFailedExcludedFromMainList(t *testing.T) {
+	repo := &taxRateFakeRepo{items: []*types.Knowledge{
+		{ID: "k_failed", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			FileName: "通行费电子票据汇总单(发票).pdf",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "failed",
+				"extract_error": "API request failed with status 429", "invoices": []interface{}{},
+			})},
+		// 全空白提取（LLM 空对象）+ failed：同样属于"一张票都没提出来"
+		{ID: "k_failed_blank", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			FileName: "空白提取.pdf",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "failed",
+				"invoices": []interface{}{map[string]interface{}{}},
+			})},
+	}}
+	svc := &BusinessExtractService{repo: repo}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+
+	res, err := svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	assert.Empty(t, res.Data, "提取失败且无有效发票的文件不得进入主列表")
+
+	res, err = svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{
+		Keyword: "通行费电子票据汇总单", Page: 1, PageSize: 20,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Data, "提取失败文件不得被主列表搜索命中")
+}
+
+// TestBusinessInvoiceExtractFailedPartialStillVisible：失败状态但仍提取出有效票据
+// 的文件（部分成功）必须照常展示 —— 数据不得因一次失败整体隐身。
+func TestBusinessInvoiceExtractFailedPartialStillVisible(t *testing.T) {
+	repo := &taxRateFakeRepo{items: []*types.Knowledge{
+		{ID: "k_partial", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			FileName: "部分成功.pdf",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "failed",
+				"invoices": []interface{}{map[string]interface{}{
+					"invoice_no": "12345678", "invoice_date": "2025-02-08",
+				}},
+			})},
+	}}
+	svc := &BusinessExtractService{repo: repo}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	res, err := svc.ListInvoiceRecords(ctx, "kb1", types.InvoiceListFilter{Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	require.Len(t, res.Data, 1, "部分成功的文件必须展示已提取出的票据")
+	assert.Equal(t, "12345678", res.Data[0].InvoiceNo)
+}
+
+// TestBusinessInvoiceOverviewCountsExtractFailedFiles：概览统计必须给出
+// **文件级**提取失败数（供「历史记录」卡片显示「N 份提取失败」）。
+func TestBusinessInvoiceOverviewCountsExtractFailedFiles(t *testing.T) {
+	repo := &taxRateFakeRepo{items: []*types.Knowledge{
+		{ID: "k_f1", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "failed", "invoices": []interface{}{},
+			})},
+		{ID: "k_f2", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "failed", "invoices": []interface{}{},
+			})},
+		{ID: "k_ok", KnowledgeBaseID: "kb1", ParseStatus: "completed",
+			CustomMetadata: mustJSON(t, map[string]interface{}{
+				"kind": "invoice", "extract_status": "success",
+				"invoices": []interface{}{map[string]interface{}{"invoice_no": "111", "invoice_type": "通行费发票"}},
+			})},
+	}}
+	svc := &BusinessExtractService{repo: repo}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	stats, err := svc.InvoiceOverviewStats(ctx, "kb1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, stats.ExtractFailedFiles, "文件级提取失败数应为 2")
+	assert.Equal(t, 1, stats.Total, "有效发票总数应为 1（失败文件不计数）")
+	// 失败文件无发票 → 不进「其它票据」桶
+	for _, stat := range stats.ByInvoiceType {
+		if stat.InvoiceType == "其它票据" {
+			assert.Equal(t, 1, stat.Count, "其它票据只应计入真实票据，不含失败占位")
+		}
+	}
 }
 
 // TestBusinessInvoicePlaceholderForNonInvoiceKind 铁律一（补齐）：

@@ -257,9 +257,25 @@ function savePending(kid: string, scope: string, certType: string) {
 const extractQueue: (() => Promise<void>)[] = []
 let extractWorkerRunning = false
 
-function startQueued() {
+// 上传并发上限（与后端全局 LLM 提取信号量配套削峰）：
+// 20 份文件同时上传 → 同时解析 → 同时触发提取，单文件内部还有批次并发，
+// 叠加后必然打爆供应商限流（2026-10-20 实测 429/1302，7 份提取失败）。
+// 这里只放 2 个上传任务在飞，其余排队；提取通道本身已是严格单飞（drainExtractQueue）。
+const UPLOAD_CONCURRENCY = 2
+
+async function startQueued() {
   const queued = tasks.value.filter((t) => t.status === 'queued')
-  queued.forEach((t) => { void runTask(t) })
+  if (!queued.length) return
+  let cursor = 0
+  const worker = async () => {
+    for (;;) {
+      const t = queued[cursor++]
+      if (!t) return
+      await runTask(t)
+    }
+  }
+  const lanes = Math.min(UPLOAD_CONCURRENCY, queued.length)
+  await Promise.all(Array.from({ length: lanes }, worker))
 }
 
 async function runTask(t: UpTask) {

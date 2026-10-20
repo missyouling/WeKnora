@@ -73,3 +73,25 @@ test('发票页已切换：内联抽屉模板与重复表单逻辑移出', () =>
   assert.match(pageSrc, /findInvoiceIndex\(invoices, nowPage, now\.invoiceNo\)/)
   assert.match(pageSrc, /extractStatusOf\(hasInvoiceData\(invoices\)\)/)
 })
+
+test('两栏表单输入控件宽度统一：开票日期与税率/价税合计右边缘对齐', () => {
+  // 栅格里所有输入类控件必须强制 100% 宽 + 允许收缩 + border-box，
+  // 否则 t-date-picker 的固有宽度会撑破列宽，右边缘比下方输入框更靠右。
+  const gridBlock = src.slice(src.indexOf('.bsd-fields {'), src.indexOf('.bsd-fields :deep(.bsd-field--full)'))
+  for (const sel of ['.t-date-picker', '.t-select', '.t-input-number', '.t-input', '.t-textarea']) {
+    assert.ok(gridBlock.includes(sel), `栅格宽度约束缺少 ${sel}`)
+  }
+  assert.match(gridBlock, /width: 100%;/)
+  assert.match(gridBlock, /min-width: 0;/)
+  assert.match(gridBlock, /box-sizing: border-box;/)
+})
+
+test('源预览上分割线与抽屉底栏分割线等宽（负 margin 拉通内容区全宽）', () => {
+  const block = src.slice(src.indexOf('.bsd-preview-block {'), src.indexOf('.bsd-preview-toggle {'))
+  // 用等量负 margin 抵消 .bsd-body 的左右内边距，使 border-top 贯穿全宽
+  assert.match(block, /margin-left: calc\(-1 \* var\(--td-comp-margin-m\)\)/)
+  assert.match(block, /margin-right: calc\(-1 \* var\(--td-comp-margin-m\)\)/)
+  // 内容必须用等量 padding 推回原位，否则整块文字会贴边
+  assert.match(block, /padding: var\(--td-comp-margin-s\) var\(--td-comp-margin-m\) 0/)
+  assert.match(block, /border-top: 1px solid var\(--td-component-stroke\)/)
+})

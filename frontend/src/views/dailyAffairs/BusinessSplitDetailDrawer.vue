@@ -224,6 +224,21 @@ function close() {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 0 var(--td-comp-margin-m);
 }
+/* 对齐红线：左/右两列所有输入控件的左、右边缘必须垂直方向 100% 对齐。
+   TDesign 的 t-date-picker / t-select 等带有自身固有宽度（min-width 内联样式），
+   在栅格里会撑破列宽，导致「开票日期」比下方的「税率/价税合计」更宽 ——
+   统一强制 100% + min-width:0（允许收缩）+ border-box（padding/border 计入宽度）。 */
+.bsd-fields :deep(.t-date-picker),
+.bsd-fields :deep(.t-select),
+.bsd-fields :deep(.t-input-number),
+.bsd-fields :deep(.t-input),
+.bsd-fields :deep(.t-textarea),
+.bsd-fields :deep(.t-input__wrap),
+.bsd-fields :deep(.t-tag-input) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 .bsd-fields :deep(.bsd-field--full) { grid-column: 1 / -1; }
 /* 明细表格：只保留本容器自身的横向滚动条，且不超过父级宽度（杜绝双滚动条） */
 .bsd-items { overflow-x: auto; max-width: 100%; }
@@ -247,11 +262,16 @@ function close() {
 .bsd-items-table td { color: var(--td-text-color-primary); }
 .bsd-items-table :deep(.item-cell--num) { text-align: right; }
 .bsd-muted { color: var(--td-text-color-placeholder); font-size: 12px; }
-/* 源文件预览：永远位于最底部；折叠态不挂载重型资源 */
+/* 源文件预览：永远位于最底部；折叠态不挂载重型资源。
+   分割线对齐：.bsd-body 有左右内边距，若直接画 border-top，这条线会比抽屉底部
+   操作栏的分割线（贯穿全宽）短一截，形成长短错位。用等量负 margin 把边界拉到
+   抽屉内容区全宽，再用等量 padding 把内容推回对齐位置。 */
 .bsd-preview-block {
   margin-top: var(--td-comp-margin-s);
+  margin-left: calc(-1 * var(--td-comp-margin-m));
+  margin-right: calc(-1 * var(--td-comp-margin-m));
   border-top: 1px solid var(--td-component-stroke);
-  padding-top: var(--td-comp-margin-s);
+  padding: var(--td-comp-margin-s) var(--td-comp-margin-m) 0;
 }
 .bsd-preview-toggle {
   display: flex;

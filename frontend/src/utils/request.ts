@@ -206,6 +206,34 @@ instance.interceptors.response.use(
       }, ERR_ENTITY_TOO_LARGE));
     }
 
+    // 重复文件上传（409 duplicate_file）：这是**已知业务分支**而非故障 ——
+    // 知识库按文件哈希去重，重复上传必然冲突。标注 silent 后由调用方转成友好状态提示
+    // （"知识库中已有相同文件，可重新提取"），不再当作异常往控制台抛红字。
+    const ERR_CONFLICT = 409;
+    if (error.response.status === ERR_CONFLICT) {
+      const conflictData = error.response.data;
+      const conflictCode = conflictData?.error?.code || conflictData?.code;
+      const conflictMsg: string | undefined = typeof conflictData === 'object'
+        ? (typeof conflictData?.error === 'string'
+          ? conflictData.error
+          : (conflictData?.error?.message || conflictData?.message))
+        : (typeof conflictData === 'string' ? conflictData : undefined);
+      if (
+        conflictCode === 'duplicate_file' ||
+        conflictCode === 'duplicate_file_hash' ||
+        /already exists|文件重复|重复上传|duplicate/i.test(String(conflictMsg || ''))
+      ) {
+        return Promise.reject(withHttpStatus({
+          status: ERR_CONFLICT,
+          code: 'duplicate_file',
+          message: conflictMsg || '知识库中已有相同文件',
+          recovery: conflictData?.recovery || conflictData?.error?.details?.recovery || null,
+          silent: true,
+          ...(typeof conflictData === 'object' ? conflictData : {}),
+        }, ERR_CONFLICT));
+      }
+    }
+
     const { status, data } = error.response;
     // 将HTTP状态码一并抛出，方便上层判断401等场景
     // 后端返回格式: { success: false, error: { code, message, details } }

@@ -33,9 +33,11 @@
               @row-click="({ row }: any) => (activeRow = row)"
             >
               <template #file="{ row }: any">
-                <div class="dh-file">
+                <!-- 双击文件名 → 全屏预览源文件（历史记录里直接大图核对原件） -->
+                <div class="dh-file dh-file--clickable" @dblclick="openFullPreview(row)"
+                  :title="`${row.title || row.file_name} · ${fmtSize(row.file_size)} · 双击全屏预览源文件`">
                   <span class="dh-file-icon">{{ fileExt(row.file_name) }}</span>
-                  <span class="dh-file-name" :title="`${row.title || row.file_name} · ${fmtSize(row.file_size)}`">
+                  <span class="dh-file-name">
                     {{ row.title || row.file_name }}<span class="dh-file-size"> · {{ fmtSize(row.file_size) }}</span>
                   </span>
                 </div>
@@ -46,7 +48,8 @@
                   <template #icon><t-icon name="loading" spin size="12px" /></template>
                   {{ parseBusyLabel(row) }}
                 </t-tag>
-                <t-tooltip v-else-if="row.parse_status === 'failed'" :content="parseError(row)" placement="top">
+                <t-tooltip v-else-if="row.parse_status === 'failed'"
+                  :content="formatExtractErrorMessage(parseError(row)) || '解析失败'" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">解析失败</t-tag>
                 </t-tooltip>
                 <t-tag v-else size="small" :theme="parseTheme(row.parse_status)" variant="light-outline">{{ parseLabel(row.parse_status) }}</t-tag>
@@ -57,7 +60,8 @@
                   <template #icon><t-icon name="loading" spin size="12px" /></template>
                   提取中
                 </t-tag>
-                <t-tooltip v-else-if="extractStatus(row) === 'failed'" :content="extractError(row)" placement="top">
+                <t-tooltip v-else-if="extractStatus(row) === 'failed'"
+                  :content="formatExtractErrorMessage(extractError(row)) || '提取失败'" placement="top">
                   <t-tag size="small" theme="danger" variant="light-outline">提取失败</t-tag>
                 </t-tooltip>
                 <t-tag v-else size="small" :theme="extractTheme(row)" variant="light-outline">{{ extractLabel(row) }}</t-tag>
@@ -89,17 +93,28 @@
         </div>
       </div>
     </t-drawer>
+
+    <!-- 双击文件名 → 全屏源文件预览（历史记录里直接大图核对原件） -->
+    <t-dialog v-model:visible="previewVisible" :header="previewTitle" :footer="false" width="92vw"
+      placement="center" destroy-on-close class="dh-full-preview" @close="closeFullPreview">
+      <div class="dh-full-preview__body">
+        <DocumentPreview v-if="previewVisible && previewRow" :knowledge-id="previewRow.id"
+          :file-type="previewFileType" :file-name="previewFileName" :active="true" fill-height />
+      </div>
+    </t-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, h } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { isExtractInProgress } from '@/composables/extractConflict'
 import { getScope } from '../../registry'
+import DocumentPreview from '@/components/document-preview.vue'
+import { formatExtractErrorMessage } from './extractErrorMessage'
 
 const props = defineProps<{
   visible: boolean
@@ -274,9 +289,32 @@ const onListScroll = (e: Event) => {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadMore()
 }
 
-// ---- 失败原因 ----
+// ---- 失败原因（展示前统一转译为中文短句，不透出英文栈/裸 JSON） ----
 const parseError = (row: any) => row.custom_metadata?.parse_error || row.custom_metadata?.error || ''
 const extractError = (row: any) => row.custom_metadata?.extract_error || row.custom_metadata?.error || ''
+
+// ---- 双击文件名：全屏预览源文件 ----
+const previewVisible = ref(false)
+const previewRow = ref<any>(null)
+const previewTitle = computed(() => previewRow.value?.title || previewRow.value?.file_name || '源文件预览')
+const previewFileName = computed(() => previewRow.value?.file_name || previewRow.value?.title || '')
+const previewFileType = computed(() => {
+  const row = previewRow.value
+  if (!row) return ''
+  if (row.file_type) return row.file_type
+  const m = String(row.file_name || '').match(/\.([^.]+)$/)
+  return m ? m[1].toLowerCase() : ''
+})
+// 双击文件名打开全屏预览：历史记录场景下用户只想核对原件，不需要先回列表再点开详情抽屉
+function openFullPreview(row: any) {
+  if (!row?.id) return
+  previewRow.value = row
+  previewVisible.value = true
+}
+function closeFullPreview() {
+  previewVisible.value = false
+  previewRow.value = null
+}
 
 // ---- 重新解析 ----
 const reparseRow = async (row: any) => {
@@ -599,6 +637,12 @@ onBeforeUnmount(stopPolling)
   padding: 28px 0;
 }
 .dh-file { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 双击文件名可全屏预览源文件：给出可点击的视觉提示 */
+.dh-file--clickable { cursor: pointer; }
+.dh-file--clickable:hover .dh-file-name { color: var(--td-brand-color); }
+/* 全屏源文件预览：铺满视口，PDF/图片在历史记录里直接大图核对 */
+.dh-full-preview :deep(.t-dialog__body) { padding: 0; overflow: hidden; }
+.dh-full-preview__body { height: 86vh; width: 100%; overflow: auto; }
 .dh-file-icon {
   flex-shrink: 0;
   width: 32px;

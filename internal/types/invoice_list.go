@@ -109,6 +109,10 @@ type InvoiceOverviewStats struct {
 	FileCount     int                   `json:"file_count"`      // 已上传的发票类文件数（含解析失败文件，不含已删除）
 	ParseFailed   int                   `json:"parse_failed"`    // 文件级解析失败数
 	ExtractFailed int                   `json:"extract_failed"`  // 发票级提取失败数
+	// ExtractFailedFiles：文件级提取失败数（含"一张票都没提出来"的失败文件）。
+	// 供「历史记录」KPI 卡片副标题展示「N 份提取失败」——按记录计数时这类文件
+	// 恒为 0，批量限流失败后用户看不到任何提示。
+	ExtractFailedFiles int `json:"extract_failed_files"`
 	CurrentMonth  InvoiceMonthStat      `json:"current_month"`   // 本月（开票日期）收录看板
 	SumTotal      float64               `json:"sum_total"`       // 库内全部有效发票价税合计总额
 	ByInvoiceType []InvoiceTypeStat     `json:"by_invoice_type"` // 按发票类型分组（张数 + 金额）

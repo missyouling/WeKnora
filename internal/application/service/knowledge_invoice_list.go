@@ -112,6 +112,17 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				placeholderFor("文件记录异常", "", "")
 				continue
 			}
+			// 交互契约（2026-10-20）：**提取失败**的文件不进发票主列表（含「其它票据」）。
+			// 背景：批量上传触发 429/1302 限流时，一批文件会同时提取失败并各自生成
+			// 一条「提取失败：…」占位行，把「其它票据」列表整屏染成橙色占位行，
+			// 真实的票据反而被淹没。这类文件的归宿是「历史记录」抽屉（那里以
+			// 「提取失败」状态呈现并可一键重提），不在主列表占位。
+			// 注意：仅当它确实没有任何有效发票时才跳过 —— 部分成功的文件仍要展示
+			// 已提取出的票据（数据不能因为一次失败就整体隐身）。
+			skipExtractFailed := invoiceExtractFailedWithoutInvoices(meta.ExtractStatus, meta.Invoices)
+			if skipExtractFailed {
+				continue
+			}
 			// 旧版恢复行兜底：meta 无 kind 但保留 auto_deleted_count（曾被自动删除后
 			// 人工恢复）→ 视作待补录占位行，避免这类记录刷新后从列表消失。
 			legacyManual := meta.Kind != "invoice" && meta.AutoDeletedCount > 0
@@ -436,6 +447,21 @@ func invoicePlaceholderReason(extractStatus, extractError, parseStatus string) s
 	}
 }
 
+// invoiceExtractFailedWithoutInvoices 判定「提取失败且无任何有效发票」。
+//
+// 这类文件按 2026-10-20 交互契约从发票主列表（含「其它票据」）排除，只在
+// 「历史记录」抽屉里以「提取失败」状态呈现：批量上传触发限流时，一批文件会同时
+// 提取失败，若各自生成占位行会把列表整屏污染，真实票据反而被淹没。
+//
+// 保守判定：只有 extract_status=="failed" **且** 确实没有任何有效发票时才排除；
+// 部分成功（失败状态但仍提取出若干张）的文件必须照常展示已提取的票据。
+func invoiceExtractFailedWithoutInvoices(extractStatus string, invs []InvoiceExtractionItem) bool {
+	if strings.TrimSpace(extractStatus) != "failed" {
+		return false
+	}
+	return invoiceItemsAllBlank(invs)
+}
+
 // invoiceItemsAllBlank 判断提取列表是否完全没有有效数据（空数组或每项都为空提取）。
 func invoiceItemsAllBlank(invs []InvoiceExtractionItem) bool {
 	if len(invs) == 0 {
@@ -719,6 +745,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 
 	records := make([]types.InvoiceRecord, 0, 256)
 	parseFailedFiles := 0
+	extractFailedFiles := 0
 	fileCount := 0
 	page := 1
 	const batch = 1000
@@ -745,7 +772,16 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 				continue
 			}
 			var meta invoiceMetadata
-			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "invoice" {
+			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
+				continue
+			}
+			// 文件级提取失败数：供「历史记录」KPI 卡片副标题显示「N 份提取失败」。
+			// 必须按**文件**计数（不是按发票记录），否则 0 张票的失败文件永远统计不到 ——
+			// 恰恰是限流批量失败时最需要被看见的那一类。
+			if strings.TrimSpace(meta.ExtractStatus) == "failed" {
+				extractFailedFiles++
+			}
+			if meta.Kind != "invoice" {
 				continue
 			}
 			// 已打标 invoice 的文件计入已上传文件数（解析失败文件在上面已计，避免重复）
@@ -809,6 +845,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 	stats.Total = len(records)
 	stats.FileCount = fileCount
 	stats.ParseFailed = parseFailedFiles
+	stats.ExtractFailedFiles = extractFailedFiles
 
 	// 当前月（基于开票日期 YYYY-MM-DD 或 YYYYMMDD）
 	now := time.Now()

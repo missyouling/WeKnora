@@ -78,11 +78,14 @@ const extractionTimeout = 45 * time.Minute
 // 有了每批预算，最坏单批 8 分钟；某批失败只丢失该批，其余批次照常提取并落库。
 const invoiceBatchBudget = 8 * time.Minute
 
-// invoiceBatchConcurrency 分批提取的最大并发批次数。
+// invoiceBatchConcurrency 分批提取的最大并发批次数（绝对上限）。
 //
 // 批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），16 页文档 4 批约 12 分钟，
-// 是"慢"的主因。取 2：总时长约减半，同时避免高并发触发供应商限流（429）。
-// 并发下**必须**用预分配切片按批次索引写结果，禁止无序 append（会导致页码错位）。
+// 是"慢"的主因。并发下**必须**用预分配切片按批次索引写结果，禁止无序 append（会导致页码错位）。
+//
+// 注意：实际并发度不再直接用本常量，而走 service.InvoiceEffectiveBatchConcurrency()——
+// 它由全局 LLM 并发上限派生（留 1 个槽给其它文件），保证批量上传 20 份文件时
+// 单文件不会吃满全局额度触发 429/1302。本常量仅在无全局限流的退化场景兜底。
 const invoiceBatchConcurrency = 4
 
 // newExtractionContext 返回脱离 HTTP 请求生命周期的提取上下文。
@@ -130,7 +133,13 @@ func mergeFailedStateMeta(prev []byte, kind, extractErr string) types.JSON {
 	}
 	merged["kind"] = kind
 	merged["extract_status"] = "failed"
-	merged["extract_error"] = extractErr
+	// 落库前统一转译为中文短句：原始错误是「英文调用栈 + 裸 JSON」
+	// （invoice extraction failed: ... status 429: {"error":{"code":"1302",...}}），
+	// 直接进 Tooltip 用户看不懂。原文另存 extract_error_raw 供排障，不影响展示。
+	merged["extract_error"] = service.FormatExtractErrorMessage(extractErr)
+	if strings.TrimSpace(extractErr) != "" && merged["extract_error"] != extractErr {
+		merged["extract_error_raw"] = extractErr
+	}
 	raw, err := json.Marshal(merged)
 	if err != nil {
 		return types.JSON(prev)
@@ -1143,19 +1152,24 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		// 已启用发票类型列表在批次间不变，提至循环外避免每批重复查库
 		enabledCategoryNames := strings.Join(h.enabledInvoiceCategoryNames(extractCtx), "、")
 		failedBatches := 0
+		batchConcurrency := service.InvoiceEffectiveBatchConcurrency()
 		logger.Infof(ctx, "Invoice extraction: rule miss, entering LLM batching (%d batches, concurrency=%d) knowledge=%s",
-			len(batches), invoiceBatchConcurrency, knowledgeID)
+			len(batches), batchConcurrency, knowledgeID)
 
-		// 受控并发：批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），
-		// 是"慢"的主因；并发 2 可把 4 批从 12 分钟压到 6~7 分钟，上限 2 兼顾
-		// 供应商限流风险（更高并发容易触发 429）。
-		//
-		// 防"张冠李戴"红线：结果写入**预分配切片按批次索引**（results[idx]），
-		// 绝不 append —— 并发 append 顺序不定，会让发票与页码错位。
-		// 合并阶段回到主 goroutine 顺序遍历，保证 Page 归位与文档顺序一致。
-		results := make([]*service.InvoiceExtractionResult, len(batches))
-		errs := make([]error, len(batches))
-		sem := make(chan struct{}, invoiceBatchConcurrency)
+	// 受控并发：批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），
+	// 是"慢"的主因；并发 2 可把 4 批从 12 分钟压到 6~7 分钟。
+	//
+	// 并发度由全局 LLM 限额派生（service.InvoiceEffectiveBatchConcurrency）：
+	// 批量上传时多个文件会同时进来，若每个文件都按绝对上限 4 并发，叠加后必然
+	// 打爆供应商限流 —— 2026-10-20 实测 20 份文件批量上传即触发 429/1302。
+	// 真正的全局闸门是服务层信号量，这里只是让单文件不要独占额度。
+	//
+	// 防"张冠李戴"红线：结果写入**预分配切片按批次索引**（results[idx]），
+	// 绝不 append —— 并发 append 顺序不定，会让发票与页码错位。
+	// 合并阶段回到主 goroutine 顺序遍历，保证 Page 归位与文档顺序一致。
+	results := make([]*service.InvoiceExtractionResult, len(batches))
+	errs := make([]error, len(batches))
+	sem := make(chan struct{}, batchConcurrency)
 		var wg sync.WaitGroup
 		for i, batch := range batches {
 			content := strings.TrimSpace(batch.Content)

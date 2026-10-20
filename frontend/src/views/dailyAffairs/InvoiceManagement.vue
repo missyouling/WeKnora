@@ -588,7 +588,10 @@ const overviewCards = computed(() => {
   const total = Number(st.total || 0)
   const parseFailed = Number(st.parse_failed || 0)
   const extractFailed = Number(st.extract_failed || 0)
-  const failed = parseFailed + extractFailed
+  // 文件级提取失败数：批量上传触发限流（429/1302）时，失败文件一张票都提不出来，
+  // 按「发票记录」计数恒为 0 —— 必须用文件级口径才能提示用户去「历史记录」处理。
+  const extractFailedFiles = Number(st.extract_failed_files || 0)
+  const failed = extractFailedFiles + parseFailed + extractFailed
   const fileCount = Number(st.file_count || 0)
   // 分类统计：后端按 category 精确聚合（category 为空归「未分类」）
   const catCount: Record<string, number> = {}
@@ -615,8 +618,15 @@ const overviewCards = computed(() => {
   // 一次性渲染，不再出现「先 4 张再追加其它票据」的二次跳变；点击筛选未分类记录
   const otherCount = Math.max(0, total - catSum)
   cards.push({ key: 'type-其它票据', label: '其它票据', icon: 'file-unknown', value: `${otherCount}`, unit: '张', sub: '', cls: 'is-type', action: 'type', typeValue: '其它票据' })
-  // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉
-  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: failed ? `${failed} 份异常` : '无异常文件', cls: failed > 0 ? 'is-warn' : '', action: 'history' })
+  // 历史记录卡：显示已上传文件数（含解析失败文件）；点击打开已上传文件抽屉。
+  // 副标题按失败类型细分：提取失败优先（用户可直接在历史记录里重提），
+  // 其次解析失败，全健康时才显示「无异常文件」。
+  const historySub = extractFailedFiles > 0
+    ? `${extractFailedFiles} 份提取失败`
+    : parseFailed > 0
+      ? `${parseFailed} 份解析失败`
+      : '无异常文件'
+  cards.push({ key: 'history', label: '历史记录', icon: 'history', value: `${fileCount}`, unit: '份', sub: historySub, cls: failed > 0 ? 'is-warn' : '', action: 'history' })
   return cards
 })
 const onOverviewCardClick = (card: any) => {
