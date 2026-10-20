@@ -89,12 +89,109 @@ func builtinScopeSchemas() []types.ScopeSchema {
 			Deterministic:  []string{"line", "md_table", "flat"},
 			RecordFactory:  func() any { return InvoiceExtractionItem{} },
 		},
-		documentScopeSchema("contract", "合同类型"),
-		documentScopeSchema("regulation", "制度名称"),
-		documentScopeSchema("notice", "通知标题"),
-		documentScopeSchema("award_punish", "通知名称"),
+		documentScopeSchemaWithFields("contract", "合同类型", contractStandardFieldDefs()),
+		documentScopeSchemaWithFields("regulation", "制度类型", regulationStandardFieldDefs()),
+		// notice 与 award_punish 曾经共用一份字段字典（前端 NOTICE_FIELD_LABELS 里
+		// 两套字段混在一张表），导致「公告」与「奖惩决定」互相污染：AI 建议会把
+		// 「当事人/处理决定」喂给公告、把「文号/发布单位」喂给奖惩。现各自声明
+		// 独立字段集，分类主轴也各自归位（公告类型 / 奖惩类型）。
+		documentScopeSchemaWithFields("notice", "公告类型", noticeStandardFieldDefs()),
+		documentScopeSchemaWithFields("award_punish", "奖惩类型", awardPunishStandardFieldDefs()),
 		documentScopeSchema("utility", "账单类型"),
 		documentScopeSchema("solar", "账单类型"),
+	}
+}
+
+// documentScopeSchemaWithFields 带标准字段的 document 类 scope。
+//
+// 与 documentScopeSchema 的差别只有两处：声明 StandardFields（喂模型字典 +
+// 补洞面）并打开 RegexPatchable（接入后置正则补洞与 AI 建议正则护栏），
+// 让合同/制度/公告/奖惩与发票享受同一套「必填校验 + 正则补洞」能力。
+func documentScopeSchemaWithFields(scope, categoryLabel string, fields []types.FieldDef) types.ScopeSchema {
+	s := documentScopeSchema(scope, categoryLabel)
+	s.StandardFields = fields
+	s.RegexPatchable = true
+	return s
+}
+
+// 各 document scope 的字段键必须与前端 *FieldLabels.ts 的契约键同源（camelCase
+// 经 canonicalFieldKey 归一后比对），否则 AI 字典与界面会各说各话。
+// 每个 scope 的分类主轴字段（contractType / regType / apType / awardType）、
+// extractStatus、tags 是系统内置三件套，不允许用户删除。
+func contractStandardFieldDefs() []types.FieldDef {
+	return []types.FieldDef{
+		{Key: "contractNo", Label: "合同编号", Type: types.FieldTypeText, Hint: "合同封面/页眉标注的合同编号"},
+		{Key: "contractName", Label: "合同名称", Type: types.FieldTypeText},
+		{Key: "contractType", Label: "合同类型", Type: types.FieldTypeText},
+		{Key: "partyAName", Label: "甲方", Type: types.FieldTypeText},
+		{Key: "partyBName", Label: "乙方", Type: types.FieldTypeText},
+		{Key: "signDate", Label: "签订日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
+		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
+		{Key: "expiryDate", Label: "到期日期", Type: types.FieldTypeDate},
+		{Key: "contractAmount", Label: "合同金额", Type: types.FieldTypeNumber},
+		{Key: "taxRate", Label: "税率", Type: types.FieldTypeNumber},
+		{Key: "fulfillStatus", Label: "履约状态", Type: types.FieldTypeText},
+		{Key: "handler", Label: "经办人", Type: types.FieldTypeText},
+		{Key: "department", Label: "部门", Type: types.FieldTypeText},
+		{Key: "signPlace", Label: "签订地点", Type: types.FieldTypeText},
+		{Key: "paymentMethod", Label: "付款方式", Type: types.FieldTypeText},
+		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
+		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
+		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
+	}
+}
+
+func regulationStandardFieldDefs() []types.FieldDef {
+	return []types.FieldDef{
+		{Key: "regNo", Label: "制度编号", Type: types.FieldTypeText},
+		{Key: "regName", Label: "制度名称", Type: types.FieldTypeText},
+		{Key: "regType", Label: "制度类型", Type: types.FieldTypeText},
+		{Key: "version", Label: "版本", Type: types.FieldTypeText},
+		{Key: "issueDate", Label: "编制日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
+		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
+		{Key: "dept", Label: "编制部门", Type: types.FieldTypeText},
+		{Key: "scope", Label: "适用范围", Type: types.FieldTypeText},
+		{Key: "confidentiality", Label: "密级", Type: types.FieldTypeText},
+		{Key: "summary", Label: "摘要", Type: types.FieldTypeText},
+		{Key: "compiledBy", Label: "编制", Type: types.FieldTypeText},
+		{Key: "reviewedBy", Label: "审核", Type: types.FieldTypeText},
+		{Key: "approvedBy", Label: "批准", Type: types.FieldTypeText},
+		{Key: "pageCount", Label: "页数", Type: types.FieldTypeNumber},
+		{Key: "modifyCount", Label: "修改次数", Type: types.FieldTypeNumber},
+		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
+		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
+		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
+	}
+}
+
+// noticeStandardFieldDefs 通知公告：文号/标题/文件类型/发布日期/发布人/发布单位。
+// 与 award_punish 的「当事人/岗位/处理决定/依据」**零交集**，互不可见。
+func noticeStandardFieldDefs() []types.FieldDef {
+	return []types.FieldDef{
+		{Key: "apNo", Label: "文号", Type: types.FieldTypeText},
+		{Key: "apTitle", Label: "标题", Type: types.FieldTypeText},
+		{Key: "apType", Label: "公告类型", Type: types.FieldTypeText},
+		{Key: "signDate", Label: "发布日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
+		{Key: "signer", Label: "发布人", Type: types.FieldTypeText},
+		{Key: "issueDept", Label: "发布单位", Type: types.FieldTypeText},
+		{Key: "summary", Label: "摘要", Type: types.FieldTypeText},
+		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
+		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
+		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
+	}
+}
+
+func awardPunishStandardFieldDefs() []types.FieldDef {
+	return []types.FieldDef{
+		{Key: "person", Label: "当事人", Type: types.FieldTypeText},
+		{Key: "dept", Label: "部门", Type: types.FieldTypeText},
+		{Key: "position", Label: "岗位", Type: types.FieldTypeText},
+		{Key: "measure", Label: "处理决定", Type: types.FieldTypeText},
+		{Key: "basis", Label: "依据", Type: types.FieldTypeText},
+		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
+		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
+		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
+		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
 	}
 }
 

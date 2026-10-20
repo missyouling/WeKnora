@@ -8,7 +8,7 @@
 import { registerScope, type FieldMeta } from './businessScope'
 import { CONTRACT_FIELD_LABELS } from '../views/dailyAffairs/contractFieldLabels'
 import { REGULATION_FIELD_LABELS } from '../views/dailyAffairs/regulationFieldLabels'
-import { NOTICE_FIELD_LABELS } from '../views/dailyAffairs/noticeFieldLabels'
+import { NOTICE_FIELD_LABELS, AWARD_PUNISH_FIELD_LABELS } from '../views/dailyAffairs/noticeFieldLabels'
 
 function fieldsOf(dict: Record<string, string>, extra: string[] = []): FieldMeta[] {
   const keys = [...new Set([...Object.keys(dict), ...extra])]
@@ -28,6 +28,7 @@ function registerDocument(
   uploadTypeLabel: string,
   dict: Record<string, string>,
   extraKeys: string[],
+  builtinFieldKeys: string[],
 ): void {
   registerScope({
     key,
@@ -42,11 +43,13 @@ function registerDocument(
     itemLabel: '条目明细',
     supportsSubFields: false,
     supportsRemarkParts: false,
-    // 与后端 ScopeSchema.RegexPatchable=false 对齐：document 类无标准字段
-    // 补洞面，required 级补洞走通用线（genericRegexPatch），不在此设限。
-    regexPatchable: false,
+    // 与后端 ScopeSchema.RegexPatchable=true 对齐（合同/制度/公告/奖惩已声明
+    // 标准字段集）：允许为标准字段生成/应用 RE2 兜底正则。
+    regexPatchable: true,
     listRows: 'documents',
     standardFields: fieldsOf(dict, extraKeys),
+    // 系统内置三件套（不可删除）：分类主轴 + 提取状态 + 标签
+    builtinFieldKeys,
     api: { extract: 'business' },
   })
 }
@@ -55,21 +58,25 @@ registerDocument(
   'contract', '合同类型', '合同', '合同', '合同类型',
   CONTRACT_FIELD_LABELS,
   ['sign_date', 'effective_date', 'expiry_date'],
+  ['contractType', 'extractStatus', 'tags'],
 )
 registerDocument(
-  'regulation', '制度名称', '制度', '制度', '制度类型',
+  'regulation', '制度类型', '制度', '制度', '制度类型',
   REGULATION_FIELD_LABELS,
   ['reg_no', 'issue_date'],
+  ['regType', 'extractStatus', 'tags'],
 )
+// 通知公告：只有公告口径字段（文号/标题/发布单位…）
 registerDocument(
-  'notice', '通知标题', '通知', '通知', '通知类型',
+  'notice', '公告类型', '公告', '公告', '公告类型',
   NOTICE_FIELD_LABELS,
-  ['notice_no', 'issue_date'],
+  ['ap_no', 'sign_date'],
+  ['apType', 'extractStatus', 'tags'],
 )
-// 奖惩：字段字典与 notice 同源（历史数据如此），extra 补奖惩专属键。
-// 上传弹窗沿用「公告」口径（奖惩模块对外即通知公告）。
+// 奖惩：独立字段表（当事人/岗位/处理决定/依据…），不再借道公告字典。
 registerDocument(
-  'award_punish', '通知名称', '通知', '公告', '公告类型',
-  NOTICE_FIELD_LABELS,
-  ['ap_no', 'issue_date', 'sign_date'],
+  'award_punish', '奖惩类型', '奖惩', '奖惩决定', '奖惩类型',
+  AWARD_PUNISH_FIELD_LABELS,
+  ['measure', 'basis', 'effective_date'],
+  ['measure', 'extractStatus', 'tags'],
 )
