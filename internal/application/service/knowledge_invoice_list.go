@@ -26,7 +26,18 @@ type invoiceMetadata struct {
 	AutoDeletedCount int                     `json:"auto_deleted_count"`
 	// 文件级归档分类：上传弹窗选择的票据类型（如"通行费发票"），列表平铺时
 	// 覆盖规则提取硬编码分类，作为「细分分类」筛选的权威来源。
-	FleetCertType string `json:"fleet_cert_type"`
+	// InvoiceCategory 是新权威键（上传即持久化），FleetCertType 是历史键，
+	// 取值走权威链（与 knowledge_invoice_category_lock.go 的 resolveInvoiceCertType
+	// 同口径）：InvoiceCategory 优先、FleetCertType 兜底。缺任何一个都会让
+	// 只写过其中一键的文件在列表里落到另一个名字下（2026-10-20 回归）。
+	FleetCertType   string `json:"fleet_cert_type"`
+	InvoiceCategory string `json:"invoice_category"`
+}
+
+// fileLevelInvoiceCategory 返回文件级权威分类（空串表示无）。
+// 优先级与上传/提取链路完全一致：invoice_category > fleet_cert_type。
+func (m invoiceMetadata) fileLevelInvoiceCategory() string {
+	return strings.TrimSpace(resolveInvoiceCertType("", m.InvoiceCategory, m.FleetCertType))
 }
 
 // ListInvoiceRecords 实现发票级聚合列表。步骤：
@@ -160,11 +171,12 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				if invoiceExtractionItemBlank(inv) {
 					continue
 				}
-				// 归档细分分类：文件级 fleet_cert_type（上传弹窗选择）优先，
-				// 覆盖规则提取硬编码（如"通行费"→"通行费发票"），供细分筛选。
-				cat := inv.Category
-				if meta.FleetCertType != "" {
-					cat = meta.FleetCertType
+				// 归档细分分类：文件级权威分类（invoice_category 优先、fleet_cert_type
+				// 历史兜底）优先，覆盖规则提取硬编码（如"通行费"→"通行费发票"），
+				// 供细分筛选；文件级缺失时才回退票内 category。
+				cat := meta.fileLevelInvoiceCategory()
+				if cat == "" {
+					cat = strings.TrimSpace(inv.Category)
 				}
 				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
@@ -806,6 +818,12 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 						Extra:     it.Extra,
 					})
 				}
+				// 与 ListInvoiceRecords 同一条权威链（invoice_category > fleet_cert_type
+				// > 票内 category），否则改名后概览卡按旧名聚合、与列表口径分叉。
+				cat := meta.fileLevelInvoiceCategory()
+				if cat == "" {
+					cat = strings.TrimSpace(inv.Category)
+				}
 				records = append(records, types.InvoiceRecord{
 					InvoiceNo:     inv.InvoiceNo,
 					InvoiceDate:   inv.InvoiceDate,
@@ -818,7 +836,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 					BuyerName:     inv.BuyerName,
 					Issuer:        inv.Issuer,
 					Remark:        inv.Remark,
-					Category:      inv.Category,
+					Category:      cat,
 					Items:         items,
 					VoidFlag:      inv.VoidFlag,
 					Page:          inv.Page,

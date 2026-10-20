@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1037,7 +1038,8 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	id := secutils.SanitizeForLog(c.Param("id"))
 	// 日常事务业务 scope 分类使用全局 tenant_id=0 配置，不按 tenant 隔离（与 List 口径一致）
 	var existing types.FleetCategory
-	if err := h.db.WithContext(ctx).Select("scope").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
+	// 需要原名字做改名判定与传播起点，一并查出来
+	if err := h.db.WithContext(ctx).Select("scope", "name").Where("id = ? AND deleted_at IS NULL", id).First(&existing).Error; err != nil {
 		c.Error(errors.NewNotFoundError("分类不存在"))
 		return
 	}
@@ -1085,9 +1087,41 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 		}
 		updates["subs"] = string(dataJSON)
 	}
-	if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
-		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
-		Updates(updates).Error; err != nil {
+	// 改名传播起点：仅当名字真的变了才触发。分类与数据之间是分类名字符串关联
+	// （custom_metadata 4 键 + knowledge_extract_configs.cert_type），只改
+	// fleet_categories.name 会让存量票据全部掉进「其它票据」桶而新分类显示 0 张
+	// （2026-10-20 回归）。传播放在与分类更新同一事务里：任一环节失败整体回滚，
+	// 绝不留下「分类改了但票没改」的半截状态。
+	oldName := strings.TrimSpace(existing.Name)
+	needPropagate := req.Name != "" && req.Name != oldName
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.WithContext(ctx).Model(&types.FleetCategory{}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if needPropagate {
+			if err := h.propagateCategoryRename(ctx, tx, existing.Scope, oldName, req.Name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	switch {
+	case stderrors.Is(err, gorm.ErrRecordNotFound):
+		c.Error(errors.NewNotFoundError("分类不存在"))
+		return
+	case stderrors.Is(err, ErrRenameCertTypeConflict):
+		// 目标知识库下已有同名提取配置：改名会产生两份配置、读取侧取哪份不可预期。
+		// 已整体回滚，分类名保持原值；提示用户先处理目标分类的规则配置。
+		c.Error(errors.NewConflictError(
+			fmt.Sprintf("该知识库下已存在「%s」的提取规则配置，请先在提取规则中处理该分类后再改名", req.Name)))
+		return
+	case err != nil:
 		logger.Errorf(ctx, "update fleet category failed: %v", err)
 		c.Error(errors.NewInternalServerError("update category failed: " + err.Error()))
 		return
