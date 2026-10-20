@@ -236,6 +236,10 @@
         <t-select v-model="editForm.contract_type" :options="contractTypeOptions" clearable filterable allow-create
           placeholder="选择类型" />
       </template>
+      <template #field-paymentMethod>
+        <t-select v-model="editForm.payment_method" :options="PAYMENT_METHODS.map(v => ({ value: v, label: v }))"
+          clearable filterable allow-create placeholder="选择付款方式" />
+      </template>
       <template #field-extractStatus>
         <t-tag v-if="statusOf(currentRow || {}).label !== '--'" size="small" :theme="statusOf(currentRow || {}).theme"
           variant="light-outline" class="row-status-tag">{{ statusOf(currentRow || {}).label }}</t-tag>
@@ -312,7 +316,6 @@ import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
-import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
 import BusinessFilterBar from './BusinessFilterBar.vue'
@@ -338,14 +341,12 @@ import {
   reparseKnowledge,
   getRecognitionConfig,
 } from '@/api/knowledge-base'
-import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import { CONTRACT_FIELD_LABELS, contractFieldLabel } from './contractFieldLabels'
 import { buildDetailFieldDefs } from './businessDetailForm'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
@@ -921,7 +922,6 @@ const filterFields = computed<FilterFieldSpec[]>(() => [
 const onVisibleColKeysChange = (keys: string[]) => { visibleColKeys.value = keys }
 
 const fulfillStatusOptions = computed(() => FULFILL_STATUSES.map(v => ({ value: v, label: v })))
-const paymentMethodOptions = computed(() => PAYMENT_METHODS.map(v => ({ value: v, label: v })))
 
 // 履约状态标签主题（派生三态：履行中 success / 即将到期 warning / 已超期 danger）
 const fulfillStatusTheme = (s: string): 'success' | 'warning' | 'default' | 'danger' => {
@@ -1422,9 +1422,6 @@ const onDupConfirm = async () => {
   await persistContractDetail(true)
 }
 
-// 源文件预览折叠面板（默认折叠，展开时才挂载 DocumentPreview）
-const previewExpanded = ref<string[]>([])
-
 const persistContractDetail = async (force: boolean) => {
   const now = currentRow.value
   if (!now) return
@@ -1538,12 +1535,6 @@ const toNumber = (v: any): number | undefined => {
 }
 
 // 数字输入辅助：只允许数字与小数点，按实际输入显示（不补零、不保留多余小数）
-const sanitizeNum = (v: string): string => {
-  let s = (v ?? '').replace(/[^\d.]/g, '')
-  const firstDot = s.indexOf('.')
-  if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
-  return s
-}
 const numToStr = (v: any): string =>
   v === null || v === undefined || v === '' ? '' : String(v)
 
