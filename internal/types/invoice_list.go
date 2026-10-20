@@ -75,14 +75,21 @@ type InvoiceListFilter struct {
 	// InvoiceType=="其它票据" 时生效：category 不属于该集合（含空）的记录归入
 	// 「其它票据」，与概览卡口径一致；为空时回退 invoice_type 排除桶（向后兼容）。
 	KnownCategories []string
-	TaxRate         *float64 // 税率筛选（小数，如 0.03）
-	Status          string   // extract_status
-	DateFrom        string   // YYYY-MM-DD（含）
-	DateTo          string   // YYYY-MM-DD（含）
-	SortBy          string   // 表头排序字段：invoice_no / invoice_date（空=默认创建时间倒序）
-	SortOrder       string   // asc / desc（默认 desc）
-	Page            int
-	PageSize        int
+	// EnabledCategories 当前启用中的分类名集合（scope=invoice，服务端权威源）。
+	// 分类归属判定用它做「第一命中」：候选
+	// [invoice_category, fleet_cert_type, invoices[].invoice_type, invoices[].category]
+	// 里第一个命中该集合的值，同时成为记录的 Category 与 InvoiceType ——
+	// 保证「表格发票类型列显示什么，它就100%属于哪个分类卡片桶」。
+	// 由服务端从 fleet_categories 实时加载，不再依赖前端传参猜分类（口径漂移源）。
+	EnabledCategories []string
+	TaxRate           *float64 // 税率筛选（小数，如 0.03）
+	Status            string   // extract_status
+	DateFrom          string   // YYYY-MM-DD（含）
+	DateTo            string   // YYYY-MM-DD（含）
+	SortBy            string   // 表头排序字段：invoice_no / invoice_date（空=默认创建时间倒序）
+	SortOrder         string   // asc / desc（默认 desc）
+	Page              int
+	PageSize          int
 }
 
 // InvoiceTaxRateCount 是税率下拉列表的一个选项：税率 + 出现次数。

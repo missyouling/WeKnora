@@ -157,13 +157,27 @@ func TestExtractInvoiceMineruFullDocumentEveryInvoiceComplete(t *testing.T) {
 
 // TestExtractInvoiceRuleCompletenessGate 锁定「半残不得静默短路」：
 // 规则产出的发票若缺核心字段，必须被识别为不完整，供上层决定回退 LLM。
+//
+// 2026-10-20 收严：发票号/开票日期也是必填（发票六要素），缺失同样判不完整 ——
+// 真机出现过「只有价税合计、缺票号/日期」的半残票被当成完整而静默跳过 LLM。
+// 因此下面 complete 样本必须带 InvoiceDate。
 func TestExtractInvoiceRuleCompletenessGate(t *testing.T) {
 	complete := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
-		InvoiceNo: "1", Amount: f64(1), Tax: f64(0.09), TotalAmount: f64(1.09),
+		InvoiceNo: "1", InvoiceDate: "2026-08-07",
+		Amount: f64(1), Tax: f64(0.09), TotalAmount: f64(1.09),
 		BuyerName: "甲", BuyerTaxNo: "91500000000000000A",
 		SellerName: "乙", SellerTaxNo: "91500000000000000B",
 	}}}
 	assert.False(t, InvoiceRuleResultIncomplete(complete), "字段齐全不应判为不完整")
+
+	// 缺开票日期 → 同样不完整（2026-10-20 新增判据）
+	noDate := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
+		InvoiceNo: "1",
+		Amount: f64(1), Tax: f64(0.09), TotalAmount: f64(1.09),
+		BuyerName: "甲", BuyerTaxNo: "91500000000000000A",
+		SellerName: "乙", SellerTaxNo: "91500000000000000B",
+	}}}
+	assert.True(t, InvoiceRuleResultIncomplete(noDate), "缺开票日期必须判为不完整")
 
 	partial := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
 		InvoiceNo: "1", TotalAmount: f64(1.09),

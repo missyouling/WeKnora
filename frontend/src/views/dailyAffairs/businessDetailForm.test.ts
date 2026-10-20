@@ -298,6 +298,47 @@ test('buildDetailFieldDefs：核心字段（发票号码/开票日期/发票类�
   assert.deepEqual(defs.slice(0, 3).map((d) => d.name), ['invoiceNo', 'invoiceDate', 'invoiceType'])
 })
 
+// 回归（2026-10-20）：通行费发票分类的 items 子列含「金额 amount」「税率 tax_rate」
+// 「车牌号 plate_no」，而 buildDetailFieldDefs 原先按「items 子列键集合」动态排除，
+// 把主表标准契约字段 amount 一并过滤 → 编辑抽屉缺失「金额」输入框，
+// 顶部质量告警还提示「金额：用户配置为必填，但未提取到该字段」。
+// 契约：标准契约字段拥有最高保留优先级，明细子项排除仅限纯明细专属键。
+test('buildDetailFieldDefs：items 子列含 amount/tax_rate/plate_no 时，主表标准契约字段必须保留', () => {
+  const fkRich: Record<string, string> = {
+    ...FK,
+    金额: 'amount', 不含税金额: 'amount', 税率: 'taxRate', 税额: 'tax', 价税合计: 'totalAmount',
+    车牌号: 'plate_no', 车辆类型: 'vehicle_type', 通行日期起: 'travel_from', 通行日期止: 'travel_to',
+  }
+  const fkRichFn = (n: string) => fkRich[n] || n
+  const subs = [
+    { name: 'invoiceNo' }, { name: 'invoiceDate' }, { name: 'invoiceType' },
+    { name: 'amount', label: '金额' },
+    { name: 'taxRate', label: '税率' },
+    { name: 'tax', label: '税额' },
+    { name: 'totalAmount', label: '价税合计' },
+    { name: 'plate_no', label: '车牌号' },
+    // 通行费分类的 items 明细子列（与 invoiceFieldKeyOf 的真实映射对齐）
+    { name: 'items', data_type: 'items', sub_fields: [
+      { name: '项目名称' }, { name: '车牌号' }, { name: '车辆类型' },
+      { name: '通行日期起' }, { name: '通行日期止' },
+      { name: '金额' }, { name: '税率/征收率' }, { name: '税额' },
+    ] },
+  ]
+  const defs = buildDetailFieldDefs(subs, { fieldKeyOf: fkRichFn, labelOf: lbl, isRemarkPart: isRp })
+
+  // 标准契约字段一个都不能少（金额回归重点）
+  for (const k of ['invoiceNo', 'invoiceDate', 'invoiceType', 'amount', 'taxRate', 'tax', 'totalAmount', 'plate_no']) {
+    assert.ok(defs.some((d) => d.name === k), `标准契约字段 ${k} 必须保留在主表单`)
+  }
+  assert.equal(defs.find((d) => d.name === 'amount')?.label, '金额', '金额标签应为「金额」')
+
+  // 明细容器仍不占位；纯明细专属键仍被排除
+  assert.equal(defs.some((d) => d.name === 'items' || d.dataType === 'items'), false, 'items 不得占位')
+  for (const k of ['spec', 'unit', 'qty', 'price', 'name', 'vehicle_type', 'travel_from', 'travel_to']) {
+    assert.equal(defs.some((d) => d.name === k), false, `明细专属键 ${k} 不应出现在主表单`)
+  }
+})
+
 test('isTaxKey：税额同义键判定', () => {
   assert.equal(isTaxKey('tax'), true)
   assert.equal(isTaxKey('taxAmount'), true)

@@ -115,9 +115,31 @@ export function collectRemarkParts(
 }
 
 /**
+ * 纯明细子项专属键：只可能出现在明细行、绝不可能是票面主表字段的列。
+ *
+ * 为什么不能再按「items 子列键集合」动态排除：明细子列与主表标准字段**同名共存
+ * 是正常设计**——通行费分类的明细子列就有「金额 amount」「税率 tax_rate」
+ * 「车牌号 plate_no」，而它们同时是票面主表的标准契约字段。按子列集合动态排除
+ * 会把主表「金额」一并过滤掉，导致编辑抽屉缺失金额输入框（2026-10-20 回归：
+ * 顶部质量告警提示「金额必填但未提取到」，表单里却根本没有这一项）。
+ *
+ * 因此排除名单收敛为**与标准契约字段无交集的纯明细键**；标准契约字段
+ * （STD_DATA_KEY_SET）拥有最高保留优先级，无论是否与子列同名都一律保留。
+ */
+export const DETAIL_SUB_ONLY_KEYS = new Set([
+  'spec', 'unit', 'quantity', 'qty', 'price', 'unit_price', 'item_name', 'name',
+])
+
+/** 是否纯明细子项专属键（明细行独有、不可作为票面主表字段） */
+export function isDetailSubOnlyKey(key: string): boolean {
+  const k = String(key || '').trim()
+  return DETAIL_SUB_ONLY_KEYS.has(k)
+}
+
+/**
  * 把分类 `subs` 清洗成详情抽屉的主表单字段定义。解决真机验收暴露的三类脏数据：
  *   1. 明细容器字段（items / dataType=items）混入主表单 → 渲染出「明细见下方表格」占位行；
- *   2. 明细子项键（spec/unit/qty/price/name…）被错位当成主表扩展字段；
+ *   2. 纯明细子项键（规格型号/单位/数量/单价/项目名称）被错位当成主表扩展字段；
  *   3. 税额同义键（tax / taxAmount / tax_amount）重复出现两个「税额」。
  *
  * 同时把三个核心字段（发票号码/开票日期/发票类型）强制置顶，保证永远完整可见。
@@ -132,16 +154,6 @@ export function buildDetailFieldDefs(
   },
 ): DetailFieldMeta[] {
   const fieldKeyOf = opts.fieldKeyOf
-  // 收集本分类 items 子列键（canonical），用于排除错位混入主表的明细子项
-  const itemKeys = new Set<string>()
-  for (const s of subs || []) {
-    const sk = fieldKeyOf(String(s?.name || ''))
-    if (sk === 'items' || s?.data_type === 'items') {
-      for (const sf of s.sub_fields || []) {
-        itemKeys.add(fieldKeyOf(String(sf?.name || sf?.key || '')))
-      }
-    }
-  }
 
   const out: DetailFieldMeta[] = []
   const seenTax = new Set<string>()
@@ -152,8 +164,9 @@ export function buildDetailFieldDefs(
     const key = fieldKeyOf(rawName)
     // 1) 明细容器字段：明细由表格区块承载，不在主表单生成占位行
     if (key === 'items' || x?.data_type === 'items') continue
-    // 2) 明细子项错位混入主表（规格型号/单位/数量/单价/项目名称…）：跳过
-    if (itemKeys.has(key)) continue
+    // 2) 纯明细子项键错位混入主表（规格型号/单位/数量/单价/项目名称…）：跳过。
+    //    标准契约字段即使在明细子列里同名出现也一律保留（见 DETAIL_SUB_ONLY_KEYS 注释）。
+    if (!STD_DATA_KEY_SET.has(key) && (DETAIL_SUB_ONLY_KEYS.has(key) || DETAIL_SUB_ONLY_KEYS.has(rawName))) continue
     // 3) 税额同义去重：tax / taxAmount / tax_amount 只保留一个「税额」
     if (TAX_KEYS.has(key) || TAX_KEYS.has(rawName)) {
       if (seenTax.has('tax')) continue

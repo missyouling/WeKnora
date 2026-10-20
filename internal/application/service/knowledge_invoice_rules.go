@@ -160,7 +160,7 @@ func ExtractInvoiceForSandbox(
 
 	src := BuildExtractSourceText(chunks)
 	NormalizeInvoiceExtractionResult(res)
-	OverlayDeterministicInvoiceFields(res, chunks)
+	OverlayDeterministicInvoiceFields(res, chunks, invoiceDocFileName(chunks))
 	// 与规则/LLM 收尾同源：日期归一 + 必填 + 配置级正则补洞。
 	// Finalize 会用重新校验的结果**覆盖** res.ExtractIssues，因此采样告警
 	// 必须在它之后追加，否则会被吞掉。

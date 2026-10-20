@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -894,6 +895,267 @@ const InvoiceExtractionBatchSize = 8
 // 永远等不到 LLM 补齐。调用方据此决定是否回退 LLM。
 //
 // 空结果返回 false（由调用方按 ruleOK=false 处理，不算半残）。
+// invoiceDocFileName 尽力从 chunks 里取源文件名（用于票号清洗时排除「误填文件名」）。
+// Chunk 本身不存文件名，只有 Knowledge 有；取不到时返回空串 —— 此时
+// cleanInvoiceNoValue 仍会靠「汇总单/发票/电子」等中文描述词拦截，
+// 只是少了「与文件名全等」这一条更严的判据。
+func invoiceDocFileName(chunks []*types.Chunk) string {
+	for _, c := range chunks {
+		if c == nil || len(c.Metadata) == 0 {
+			continue
+		}
+		var m struct {
+			FileName string `json:"file_name"`
+			Title    string `json:"title"`
+		}
+		if err := json.Unmarshal(c.Metadata, &m); err != nil {
+			continue
+		}
+		if strings.TrimSpace(m.FileName) != "" {
+			return strings.TrimSpace(m.FileName)
+		}
+		if strings.TrimSpace(m.Title) != "" {
+			return strings.TrimSpace(m.Title)
+		}
+	}
+	return ""
+}
+
+// cleanInvoiceNoValue 清洗单张票的发票号。
+//
+// 事故（真机 2026-10-20 第 91 行）：销方「中国铁路上海局集团」那张票的
+// invoice_no 被填成文件名「通行费电子票据汇总单(发票).pdf」——分段切分时
+// 把文件名误当票头。票号只有两种合法形态：20 位全电票号、8~12 位传统票号，
+// 主体必为数字；任何以中文为主的值都不可能是票号。
+//
+// 规则：
+//   - 与 fileName 或其主干（去扩展名）完全相同 → 拒绝；
+//   - 含「汇总单」「发票」「电子」「增值税」等中文票据描述词 → 拒绝；
+//   - 剥离 No./#/空格后必须仍有 ≥6 位连续数字，否则拒绝。
+//
+// 返回 (清洗后的值, 是否发生了清洗)。拒绝时返回空串，由调用方决定重抓或走 LLM。
+func cleanInvoiceNoValue(no, fileName string) (string, bool) {
+	raw := strings.TrimSpace(no)
+	if raw == "" {
+		return "", false
+	}
+	cleaned := raw
+	// 与文件名（含扩展名 / 去扩展名主干）相等 → 一定是误填
+	if fn := strings.TrimSpace(fileName); fn != "" {
+		if cleaned == fn {
+			return "", true
+		}
+		stem := fn
+		if i := strings.LastIndex(stem, "."); i > 0 {
+			stem = stem[:i]
+		}
+		if cleaned == stem {
+			return "", true
+		}
+	}
+	// 含中文票据描述词 → 一定是文件名/标题而不是票号
+	for _, w := range []string{"汇总单", "发票", "电子", "增值税", "票据", "明细", "清单", "报销"} {
+		if strings.Contains(cleaned, w) {
+			return "", true
+		}
+	}
+	// 剥离去噪前缀后必须仍有足够长的数字串
+	trimmed := strings.TrimLeft(cleaned, "No.#：: 　")
+	if !invoiceNoDigitRunOK(trimmed) {
+		return "", true
+	}
+	if trimmed != raw {
+		return trimmed, true
+	}
+	return cleaned, false
+}
+
+// invoiceNoDigitRunOK 判断值里是否存在 ≥6 位的连续数字串（票号主体）。
+func invoiceNoDigitRunOK(v string) bool {
+	run := 0
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			run++
+			if run >= 6 {
+				return true
+			}
+			continue
+		}
+		run = 0
+	}
+	return false
+}
+
+// backfillInvoiceMath 用确定性数学关系补齐缺失的金额字段（纯后处理，不调模型）。
+//
+// 覆盖三类真机缺口：
+//  1. 有金额+税额、缺税率 → tax_rate = round(tax/amount, 2)
+//     （真机第 91 行：23.69 / 0.71 → 3%）；
+//  2. 有价税合计+税额、缺金额 → amount = total - tax；
+//  3. 只有价税合计（不征税/免税通行费）→ amount = total, tax = 0, tax_rate = 0。
+//
+// 安全边界（宁缺毋滥，绝不写荒谬值）：
+//   - 已有的值一律不被覆盖；
+//   - 反算比例为负、或超过 100%（税率不可能 >13%，留足余量）→ 放弃补税率；
+//   - total < tax 导致金额为负 → 放弃补金额。
+func backfillInvoiceMath(inv *InvoiceExtractionItem) {
+	if inv == nil {
+		return
+	}
+	// 1) 税率反算：需要金额与税额都 > 0
+	if inv.TaxRate == nil && inv.Amount != nil && inv.Tax != nil {
+		amt, tax := *inv.Amount, *inv.Tax
+		if amt > 0 && tax >= 0 {
+			rate := math.Round(tax/amt*100) / 100 // round 到 2 位小数
+			if rate >= 0 && rate <= 1 {
+				inv.TaxRate = &rate
+			}
+		}
+	}
+	// 2) 金额反算：total - tax
+	if inv.Amount == nil && inv.TotalAmount != nil {
+		total := *inv.TotalAmount
+		tax := 0.0
+		if inv.Tax != nil {
+			tax = *inv.Tax
+		}
+		if total > 0 && total-tax >= 0 {
+			amt := round2(total - tax)
+			inv.Amount = &amt
+			// 顺带把缺失的税额/税率补成 0（免税通行费）
+			if inv.Tax == nil && tax == 0 {
+				zero := 0.0
+				inv.Tax = &zero
+				if inv.TaxRate == nil {
+					inv.TaxRate = &zero
+				}
+			}
+		}
+	}
+}
+
+// round2 保留两位小数（金额精度）。
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// SanitizeInvoiceNumbers 对提取结果做无条件票号清洗（中文文件名/描述词不得作为
+// 票号），返回被清洗的张数。LLM 路径在 Normalize 之后立即调用——真机第 91 行
+// （销方 中国铁路上海局集团）的 invoice_no 曾被填成文件名，就是这条路径漏洗。
+func SanitizeInvoiceNumbers(invs []InvoiceExtractionItem, fileName string) int {
+	return sanitizeInvoiceNo(invs, fileName, "")
+}
+
+// sanitizeInvoiceNo 对整批结果做发票号清洗（含从同文件其它票/原文兜底重抓）。
+// 返回被清洗的张数，供调用方记 extract_issue。
+func sanitizeInvoiceNo(invs []InvoiceExtractionItem, fileName, srcText string) int {
+	cleaned := 0
+	for i := range invs {
+		if v, changed := cleanInvoiceNoValue(invs[i].InvoiceNo, fileName); changed {
+			invs[i].InvoiceNo = v
+			cleaned++
+		}
+	}
+	return cleaned
+}
+
+// NewExtractInvoiceNoSanitizedIssue 票号被清洗（原值是中文文件名/描述词）时
+// 的告警：提醒用户该票号码缺失、需要人工核对，而不是静默丢一个空号。
+func NewExtractInvoiceNoSanitizedIssue(n int) ExtractFieldIssue {
+	return ExtractFieldIssue{
+		Index:    -1,
+		Field:    "invoiceNo",
+		Kind:     "missing",
+		Detail:   fmt.Sprintf("%d 张发票的发票号疑似被误填为文件名/中文描述，已清洗为空，请人工核对票号", n),
+		Severity: issueSeverityWarn,
+	}
+}
+
+// ---- 多标签表头格拆分（MinerU colspan 表头阻断明细行定位） ----
+//
+// 事故（真机 2026-10-20 P4，票号 26517905800800020367）：MinerU 把明细表头
+// 的前 4 个标签挤进同一个 colspan=5 单元格，而数据行是 8 个独立单元格：
+//
+//	表头: <tr><td colspan="5">项目名称 车牌号 车辆类型 通行日期起</td>
+//	      <td>通行日期止</td><td>金额</td><td>税率/征收率</td><td>税额</td></tr>
+//	数据: <tr><td>*生产生活服务*通行费</td><td>渝A75R1C</td><td>客车</td>
+//	      <td colspan="2">20260725</td>... <td>78.05</td><td>3%</td><td>2.34</td></tr>
+//
+// 表头 5 格 vs 数据 8 格，任何按格对齐的解析都会错位，于是车牌/金额/税率/税额
+// 全部漏提，只剩票头（号码/日期/购销方）——表现为「有票号、金额全空」。
+//
+// 修复：把「colspan=N 且内容是多个已知明细标签拼接」的表头格拆成 N 个单标签格，
+// 让表头与数据格一一对应。只动表头格；数据行的 colspan 结构原样保留
+// （通行日期起止常跨两列，拆了反而错位）。
+
+// tollHeaderLabels 是可出现在明细表头格里的标签（按票面从左到右的顺序无关，
+// 拆分时按「最长匹配」贪心切分）。
+var tollHeaderLabels = []string{
+	"项目名称", "车牌号", "车辆类型", "通行日期起", "通行日期止",
+	"金额", "税率/征收率", "税率", "税额",
+}
+
+// multiLabelHeaderTdRe 匹配带 colspan 的单个表头单元格。
+var multiLabelHeaderTdRe = regexp.MustCompile(`(?is)<td\s+colspan\s*=\s*["']?([2-9]|\d{2,})["']?\s*>(.*?)</td>`)
+
+// splitMultiLabelHeaderCells 把多标签表头格拆成等价的多个单标签格。
+// 输入不含此类结构时原样返回（幂等）。
+func splitMultiLabelHeaderCells(s string) string {
+	if !strings.Contains(s, "<td") {
+		return s
+	}
+	return multiLabelHeaderTdRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := multiLabelHeaderTdRe.FindStringSubmatch(m)
+		if len(sub) != 3 {
+			return m
+		}
+		// sub[1] 是 colspan 值：≥2 才可能是多标签拼接（单列不参与判定）
+		labels := splitTollHeaderLabels(sub[2])
+		if len(labels) < 2 {
+			return m // 单标签格（哪怕 colspan>1）不动，避免破坏跨列结构
+		}
+		var b strings.Builder
+		for _, lb := range labels {
+			b.WriteString("<td>")
+			b.WriteString(lb)
+			b.WriteString("</td>")
+		}
+		return b.String()
+	})
+}
+
+// splitTollHeaderLabels 把一格里的多个标签按已知标签表贪心切分。
+// 无法识别的剩余内容整体作为最后一个标签返回（宁可不拆坏，也不丢内容）。
+func splitTollHeaderLabels(body string) []string {
+	s := strings.TrimSpace(stripHTMLTags(body))
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for len(s) > 0 {
+		matched := ""
+		for _, lb := range tollHeaderLabels {
+			if strings.HasPrefix(s, lb) {
+				if len(lb) > len(matched) {
+					matched = lb
+				}
+			}
+		}
+		if matched == "" {
+			// 剩余部分不是已知标签开头：整体并入最后一个标签（保留内容）
+			if len(out) > 0 {
+				out[len(out)-1] += s
+			} else {
+				out = append(out, s)
+			}
+			return out
+		}
+		out = append(out, matched)
+		s = strings.TrimSpace(s[len(matched):])
+	}
+	return out
+}
+
 func InvoiceRuleResultIncomplete(res *InvoiceExtractionResult) bool {
 	if res == nil || len(res.Invoices) == 0 {
 		return false
@@ -908,6 +1170,19 @@ func InvoiceRuleResultIncomplete(res *InvoiceExtractionResult) bool {
 			return true
 		}
 		if strings.TrimSpace(inv.SellerName) == "" && strings.TrimSpace(inv.SellerTaxNo) == "" {
+			return true
+		}
+		// 半残票防护（真机 2026-10-20 P4）：只有价税合计、金额与税额全空的票，
+		// 旧口径会判「完整」从而短路跳过 LLM，导致车牌号/金额/税率/税额永久缺失。
+		// 有合计就必须有金额或税额，否则必须回退 LLM 补提。
+		if inv.TotalAmount != nil && inv.Amount == nil && inv.Tax == nil {
+			return true
+		}
+		// 缺发票号 / 缺开票日期 → 票头没拿全，同样不能短路
+		if strings.TrimSpace(inv.InvoiceNo) == "" {
+			return true
+		}
+		if strings.TrimSpace(inv.InvoiceDate) == "" {
 			return true
 		}
 	}
@@ -1749,13 +2024,18 @@ var (
 )
 
 // OverlayDeterministicInvoiceFields 用文本中的确定性信息覆盖 LLM 结果的易错字段：
-//   - invoice_no：只取『发票号码』标签值，杜绝误取机器编号/校验码
-//   - items 子列：车牌号 / 车辆类型 / 通行日期起止（票面数据行结构固定）
+//   - invoice_no：只取『发票号码』标签值，杜绝误取机器编号/校验码；
+//   - invoice_no 清洗：拒绝中文文件名/中文票据描述词（真机第 91 行曾被填成
+//     「通行费电子票据汇总单(发票).pdf」）；
+//   - items 子列：车牌号 / 车辆类型 / 通行日期起止（票面数据行结构固定）。
 //
 // 覆盖条件（保守）：文本识别出的张数与结果张数**完全相等**才按序覆盖；否则一律
 // 不动——张数不一致时按序对齐必然错位，宁可让用户复核，也不能把 A 票的号码写到
 // B 票上（历史上踩过"张冠李戴"）。返回覆盖的张数。
-func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*types.Chunk) int {
+//
+// 无论是否发生号码覆盖，都会执行发票号清洗 + 金额数学反算（确定性后处理，
+// 零 token），保证「文件名不会变成票号」「只有合计的票能补出金额/税率」。
+func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*types.Chunk, fileName string) int {
 	if res == nil || res.Kind == "not_invoice" || len(res.Invoices) == 0 {
 		return 0
 	}
@@ -1764,6 +2044,14 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 	// 物理页码与「张数是否对齐」无关：按发票号在原文中的位置逐张回填，
 	// 即使下面因张数不一致而跳过号码覆盖，页码仍然是可信的。
 	AssignPhysicalPages(src, res.Invoices)
+
+	// 数学反算（确定性后处理，零 token）：在号码覆盖判定**之前**执行 ——
+	// 它只按票内已有的 amount/tax/total 推导缺失项，不涉及跨票对齐，
+	// 因此没有「张冠李戴」风险，且对 count-mismatch 提前返回的路径同样有益
+	// （LLM 路径常见的「只有价税合计」半残票靠它补齐金额/税率）。
+	for i := range res.Invoices {
+		backfillInvoiceMath(&res.Invoices[i])
+	}
 
 	nos := flatInvoiceNoLabelRe.FindAllStringSubmatch(full, -1)
 	if len(nos) != len(res.Invoices) {
@@ -1777,6 +2065,12 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 			applyFlatItemRow(&res.Invoices[i], rows[i])
 		}
 		overlaid++
+	}
+	// 票号清洗只作用于**已按序覆盖后**的号码：count 不一致时按上面的约定
+	// 一律不动任何字段（防止把 A 票的号码写到 B 票上），那条路径连清洗也不做，
+	// 由 InvoiceRuleResultIncomplete 判「缺票号」回退 LLM 补提。
+	if n := sanitizeInvoiceNo(res.Invoices, fileName, full); n > 0 {
+		res.ExtractIssues = append(res.ExtractIssues, NewExtractInvoiceNoSanitizedIssue(n))
 	}
 	return overlaid
 }
@@ -2053,6 +2347,9 @@ type htmlItemLabelValues struct {
 // 命中判据：同一 <tr> 内同时出现车牌与「通行日期起」，且至少出现金额或税额之一。
 // 逐**单元格**匹配标签，避免跨格贪婪吞字。
 func htmlItemRowByLabels(seg string) (htmlItemLabelValues, bool) {
+	// 表头多标签格拆分（MinerU colspan 表头）：不拆的话表头 5 格 / 数据 8 格
+	// 永远对不齐，车牌/金额/税率/税额全漏提。幂等，普通表格原样返回。
+	seg = splitMultiLabelHeaderCells(seg)
 	for _, tr := range flatHTMLTrRe.FindAllStringSubmatch(seg, -1) {
 		var cells []string
 		for _, c := range flatHTMLTdRe.FindAllStringSubmatch(tr[1], -1) {

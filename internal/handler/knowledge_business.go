@@ -1156,20 +1156,20 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		logger.Infof(ctx, "Invoice extraction: rule miss, entering LLM batching (%d batches, concurrency=%d) knowledge=%s",
 			len(batches), batchConcurrency, knowledgeID)
 
-	// 受控并发：批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），
-	// 是"慢"的主因；并发 2 可把 4 批从 12 分钟压到 6~7 分钟。
-	//
-	// 并发度由全局 LLM 限额派生（service.InvoiceEffectiveBatchConcurrency）：
-	// 批量上传时多个文件会同时进来，若每个文件都按绝对上限 4 并发，叠加后必然
-	// 打爆供应商限流 —— 2026-10-20 实测 20 份文件批量上传即触发 429/1302。
-	// 真正的全局闸门是服务层信号量，这里只是让单文件不要独占额度。
-	//
-	// 防"张冠李戴"红线：结果写入**预分配切片按批次索引**（results[idx]），
-	// 绝不 append —— 并发 append 顺序不定，会让发票与页码错位。
-	// 合并阶段回到主 goroutine 顺序遍历，保证 Page 归位与文档顺序一致。
-	results := make([]*service.InvoiceExtractionResult, len(batches))
-	errs := make([]error, len(batches))
-	sem := make(chan struct{}, batchConcurrency)
+		// 受控并发：批次串行时总时长 = 批次数 × 单批耗时（实测 2~3 分钟/批），
+		// 是"慢"的主因；并发 2 可把 4 批从 12 分钟压到 6~7 分钟。
+		//
+		// 并发度由全局 LLM 限额派生（service.InvoiceEffectiveBatchConcurrency）：
+		// 批量上传时多个文件会同时进来，若每个文件都按绝对上限 4 并发，叠加后必然
+		// 打爆供应商限流 —— 2026-10-20 实测 20 份文件批量上传即触发 429/1302。
+		// 真正的全局闸门是服务层信号量，这里只是让单文件不要独占额度。
+		//
+		// 防"张冠李戴"红线：结果写入**预分配切片按批次索引**（results[idx]），
+		// 绝不 append —— 并发 append 顺序不定，会让发票与页码错位。
+		// 合并阶段回到主 goroutine 顺序遍历，保证 Page 归位与文档顺序一致。
+		results := make([]*service.InvoiceExtractionResult, len(batches))
+		errs := make([]error, len(batches))
+		sem := make(chan struct{}, batchConcurrency)
 		var wg sync.WaitGroup
 		for i, batch := range batches {
 			content := strings.TrimSpace(batch.Content)
@@ -1288,6 +1288,13 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	}
 	extracted := merged
 	service.NormalizeInvoiceExtractionResult(extracted)
+	// 票号清洗（LLM 路径，先于确定性覆盖层）：模型可能把文件名或中文票据描述词
+	// 当发票号返回（真机第 91 行：invoice_no = 「通行费电子票据汇总单(发票).pdf」）。
+	// 这里无条件清洗并落一条 warn issue，让用户在质量面板看到「票号需人工核对」。
+	if n := service.SanitizeInvoiceNumbers(extracted.Invoices, knowledge.FileName); n > 0 {
+		extracted.ExtractIssues = append(extracted.ExtractIssues, service.NewExtractInvoiceNoSanitizedIssue(n))
+		logger.Warnf(ctx, "Invoice extraction: sanitized %d Chinese-filename invoice_no knowledge=%s", n, knowledgeID)
+	}
 	// 超长采样告警：单批内容超过 rune 上限时会走「头60%+中20%+尾20%」采样，
 	// 中段票据被静默丢弃。必须让用户在质量面板看到，否则只会表现为"少了几张"。
 	if batchReport.Sampled {
@@ -1297,7 +1304,7 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 确定性覆盖层：用票面明确标签纠正 LLM 易错字段——发票号码（实测曾误取
 	// 机器编号 499098302394 而非『发票号码 64869484』）与明细子列（车牌/车型/
 	// 通行日期起止）。张数不一致时该函数不改动任何字段（防按序错位）。
-	if n := service.OverlayDeterministicInvoiceFields(extracted, chunks); n > 0 {
+	if n := service.OverlayDeterministicInvoiceFields(extracted, chunks, knowledge.FileName); n > 0 {
 		logger.Infof(ctx, "Invoice extraction: deterministic overlay applied (%d invoices) knowledge=%s", n, knowledgeID)
 	}
 	// 规则路径（Line / MarkdownTable / FlatLayout）此前**完全没有质量元数据**：

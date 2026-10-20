@@ -14,6 +14,24 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
+// invoiceCategoryHitSet 返回分类归属判定用的「已启用分类名集合」：复用
+// enabledInvoiceCategoryNames（单一权威源），并剔除「其它票据」。
+//
+// 「其它票据」是系统内置兜底分类（seed invoice-misc），但它的统计/筛选口径是
+// **排除式桶**而非真实分类，因此不能作为命中目标 —— 否则一份上传时选了
+// 「其它票据」、票面却是通行费的票会永远困在桶里，表格列还显示通行费发票，
+// 出现「列与桶分裂」（2026-10-20 回归）。
+func (h *BusinessExtractHandler) invoiceCategoryHitSet(ctx context.Context) []string {
+	all := h.enabledInvoiceCategoryNames(ctx)
+	out := make([]string, 0, len(all))
+	for _, n := range all {
+		if n != "其它票据" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // ListInvoiceRecords 发票级聚合列表
 func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -49,7 +67,9 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		c.Error(apperrors.NewBadRequestError("invalid sort_order: must be asc or desc"))
 		return
 	}
-	// known_categories：启用分类名集合（逗号分隔），供「其它票据」排除式筛选使用
+	// known_categories：启用分类名集合（逗号分隔），供「其它票据」排除式筛选使用。
+	// 服务端同时会用 invoiceCategoryHitSet 实时加载一份作为分类归属判定的
+	// 权威源；前端传参仅作为兼容兜底，不再承担口径责任。
 	var knownCategories []string
 	if kc := c.Query("known_categories"); kc != "" {
 		for _, name := range strings.Split(kc, ",") {
@@ -59,17 +79,18 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		}
 	}
 	filter := types.InvoiceListFilter{
-		Keyword:         c.Query("q"),
-		InvoiceType:     c.Query("invoice_type"),
-		KnownCategories: knownCategories,
-		TaxRate:         taxRate,
-		Status:          c.Query("status"),
-		DateFrom:        c.Query("date_from"),
-		DateTo:          c.Query("date_to"),
-		SortBy:          sortBy,
-		SortOrder:       sortOrder,
-		Page:            page,
-		PageSize:        pageSize,
+		Keyword:           c.Query("q"),
+		InvoiceType:       c.Query("invoice_type"),
+		KnownCategories:   knownCategories,
+		EnabledCategories: h.invoiceCategoryHitSet(ctx),
+		TaxRate:           taxRate,
+		Status:            c.Query("status"),
+		DateFrom:          c.Query("date_from"),
+		DateTo:            c.Query("date_to"),
+		SortBy:            sortBy,
+		SortOrder:         sortOrder,
+		Page:              page,
+		PageSize:          pageSize,
 	}
 
 	result, err := h.businessSvc.ListInvoiceRecords(effCtx, kbID, filter)
@@ -104,7 +125,7 @@ func (h *BusinessExtractHandler) InvoiceOverviewStats(c *gin.Context) {
 		return
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	stats, err := h.businessSvc.InvoiceOverviewStats(effCtx, kbID)
+	stats, err := h.businessSvc.InvoiceOverviewStats(effCtx, kbID, h.invoiceCategoryHitSet(ctx))
 	if err != nil {
 		logger.Error(ctx, "Failed to load invoice overview stats", err)
 		c.Error(apperrors.NewInternalServerError("load invoice overview stats failed"))

@@ -292,7 +292,7 @@ func TestBusinessInvoiceOverviewCountsExtractFailedFiles(t *testing.T) {
 	}}
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-	stats, err := svc.InvoiceOverviewStats(ctx, "kb1")
+	stats, err := svc.InvoiceOverviewStats(ctx, "kb1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, stats.ExtractFailedFiles, "文件级提取失败数应为 2")
 	assert.Equal(t, 1, stats.Total, "有效发票总数应为 1（失败文件不计数）")

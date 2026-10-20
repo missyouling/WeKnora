@@ -40,6 +40,57 @@ func (m invoiceMetadata) fileLevelInvoiceCategory() string {
 	return strings.TrimSpace(resolveInvoiceCertType("", m.InvoiceCategory, m.FleetCertType))
 }
 
+// invoiceOtherBucketCategory 是排除式统计桶名：系统内置兜底分类，不是一个
+// 可供命中的真实分类。分类归属判定时它**不作为命中目标**——否则一份上传时选了
+// 「其它票据」、而票面明明是通行费的票，会永远困在排除桶里，表格列却显示
+// 通行费发票，出现「列与桶分裂」。
+const invoiceOtherBucketCategory = "其它票据"
+
+// resolveInvoiceCategory 是发票分类归属的**唯一判定口径**（列表与概览共用）。
+//
+// 候选（按优先级）：meta.InvoiceCategory → meta.FleetCertType →
+// inv.InvoiceType → inv.Category，取第一个命中「已启用分类名」的值。
+//
+// 为什么必须第一命中而不是只看文件级：文件级分类是历史字符串，会因分类改名、
+// 停用、上传时选错而失效；票内类型是本次提取的结果。任一层失效都不能让记录
+// 掉进排除桶后还在表格列里显示另一个分类名。命中启用分类后，Category 与
+// InvoiceType 被赋成同一个值，从构造上消灭「列显示 A、桶在 B」的分裂。
+//
+// 没有任何候选命中时保持旧兜底：文件级权威链 → 票内 category（可能为空），
+// 这类记录按设计归入「其它票据」排除桶。
+func resolveInvoiceCategory(meta invoiceMetadata, inv InvoiceExtractionItem, enabled map[string]struct{}) (category, invoiceType string) {
+	invoiceType = strings.TrimSpace(inv.InvoiceType)
+	for _, cand := range []string{
+		strings.TrimSpace(meta.InvoiceCategory),
+		strings.TrimSpace(meta.FleetCertType),
+		invoiceType,
+		strings.TrimSpace(inv.Category),
+	} {
+		if cand == "" || cand == invoiceOtherBucketCategory {
+			continue
+		}
+		if _, ok := enabled[cand]; ok {
+			return cand, cand
+		}
+	}
+	// 无命中：文件级权威链优先，其次票内 category
+	if cat := meta.fileLevelInvoiceCategory(); cat != "" {
+		return cat, invoiceType
+	}
+	return strings.TrimSpace(inv.Category), invoiceType
+}
+
+// enabledCategorySet 把分类名列表转成集合（去空白、去空值）。
+func enabledCategorySet(names []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			out[n] = struct{}{}
+		}
+	}
+	return out
+}
+
 // ListInvoiceRecords 实现发票级聚合列表。步骤：
 //  1. 分页拉取知识库下全部 knowledge（含 tags）；
 //  2. 平铺每份文档的 invoices，附上源文件上下文；
@@ -50,6 +101,10 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	if tenantID == 0 {
 		return nil, fmt.Errorf("tenant id missing in context")
 	}
+	// 分类归属判定的权威分类集合（服务端加载的启用分类名）。
+	// 为空时退化为「无启用分类」：所有候选都不命中，记录保持旧兜底并落入
+	// 「其它票据」排除桶 —— 与分类列表接口不可用时的前端表现一致。
+	enabledCats := enabledCategorySet(filter.EnabledCategories)
 	if filter.Page < 1 {
 		filter.Page = 1
 	}
@@ -171,13 +226,10 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				if invoiceExtractionItemBlank(inv) {
 					continue
 				}
-				// 归档细分分类：文件级权威分类（invoice_category 优先、fleet_cert_type
-				// 历史兜底）优先，覆盖规则提取硬编码（如"通行费"→"通行费发票"），
-				// 供细分筛选；文件级缺失时才回退票内 category。
-				cat := meta.fileLevelInvoiceCategory()
-				if cat == "" {
-					cat = strings.TrimSpace(inv.Category)
-				}
+				// 归档细分分类：分类归属唯一口径（与 InvoiceOverviewStats 共用），
+				// 取第一个命中启用分类名的值，同时赋给 Category 与 InvoiceType ——
+				// 杜绝「表格列显示通行费发票、记录却落在其它票据桶」的分裂。
+				cat, invType := resolveInvoiceCategory(meta, inv, enabledCats)
 				items := make([]types.InvoiceExtractionItemItems, 0, len(inv.Items))
 				for _, it := range inv.Items {
 					items = append(items, types.InvoiceExtractionItemItems{
@@ -196,7 +248,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					InvoiceNo:      inv.InvoiceNo,
 					InvoiceCode:    inv.InvoiceCode,
 					InvoiceDate:    inv.InvoiceDate,
-					InvoiceType:    inv.InvoiceType,
+					InvoiceType:    invType,
 					TotalAmount:    inv.TotalAmount,
 					Amount:         inv.Amount,
 					Tax:            inv.Tax,
@@ -752,8 +804,13 @@ func approxEqualFloat(a, b float64) bool {
 // 遍历知识库下全部 knowledge → 平铺 invoices → 按发票号去重（保留最新）→ 聚合。
 // 所有金额字段为空值时按 0 处理，不报类型转换错误（在内存中聚合，避免 JSONB
 // 数组展开的 SQL 类型转换陷阱，同时兼容 Postgres 与 SQLite 双库）。
-func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID string) (*types.InvoiceOverviewStats, error) {
+//
+// enabledCategories 是服务端加载的启用分类名集合，分类归属判定必须与
+// ListInvoiceRecords 用同一个口径（resolveInvoiceCategory），否则概览卡与列表
+// 会给出两个不同的分类张数。
+func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID string, enabledCategories []string) (*types.InvoiceOverviewStats, error) {
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+	enabledCats := enabledCategorySet(enabledCategories)
 
 	records := make([]types.InvoiceRecord, 0, 256)
 	parseFailedFiles := 0
@@ -819,11 +876,9 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 					})
 				}
 				// 与 ListInvoiceRecords 同一条权威链（invoice_category > fleet_cert_type
-				// > 票内 category），否则改名后概览卡按旧名聚合、与列表口径分叉。
-				cat := meta.fileLevelInvoiceCategory()
-				if cat == "" {
-					cat = strings.TrimSpace(inv.Category)
-				}
+				// > 票内 category，取第一个命中启用分类名的值），否则改名后概览卡按旧名
+				// 聚合、与列表口径分叉。
+				cat, _ := resolveInvoiceCategory(meta, inv, enabledCats)
 				records = append(records, types.InvoiceRecord{
 					InvoiceNo:     inv.InvoiceNo,
 					InvoiceDate:   inv.InvoiceDate,

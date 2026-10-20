@@ -118,7 +118,7 @@ func TestBusinessInvoiceOverviewCategoryAfterRename(t *testing.T) {
 	}}
 	svc := &BusinessExtractService{repo: repo}
 
-	st, err := svc.InvoiceOverviewStats(listCtxV1(), "kb1")
+	st, err := svc.InvoiceOverviewStats(listCtxV1(), "kb1", nil)
 	require.NoError(t, err)
 	counts := map[string]float64{}
 	for _, c := range st.ByCategory {

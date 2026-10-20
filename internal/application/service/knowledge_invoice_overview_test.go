@@ -91,7 +91,7 @@ func TestInvoiceOverviewStats(t *testing.T) {
 	svc := &BusinessExtractService{repo: &invoiceOverviewFakeRepo{items: items}}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 
-	stats, err := svc.InvoiceOverviewStats(ctx, "kb1")
+	stats, err := svc.InvoiceOverviewStats(ctx, "kb1", nil)
 	if err != nil {
 		t.Fatalf("InvoiceOverviewStats error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestInvoiceOverviewStats(t *testing.T) {
 func TestInvoiceOverviewStatsEmpty(t *testing.T) {
 	svc := &BusinessExtractService{repo: &invoiceOverviewFakeRepo{items: nil}}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-	stats, err := svc.InvoiceOverviewStats(ctx, "kb1")
+	stats, err := svc.InvoiceOverviewStats(ctx, "kb1", nil)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}

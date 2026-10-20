@@ -118,6 +118,14 @@ func BuildExtractSourceText(chunks []*types.Chunk) ExtractSourceText {
 		if text == "" {
 			continue
 		}
+		// MinerU 会把明细表头多个标签挤进同一个 colspan 单元格，而数据行是
+		// 独立单元格——不拆分的话表头与数据格对不齐，明细字段（车牌/金额/
+		// 税率/税额）会被静默漏提。在拼装层统一拆好，规则与 LLM 都受益。
+		text = splitMultiLabelHeaderCells(text)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
 		if page := ChunkPage(c); page > 0 {
 			markers = append(markers, PageMarker{Offset: sb.Len(), Page: page})
 		}

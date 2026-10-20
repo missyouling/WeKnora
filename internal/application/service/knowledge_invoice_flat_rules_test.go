@@ -46,7 +46,7 @@ func TestOverlayDeterministicInvoiceFieldsUsesLabelNotMachineNo(t *testing.T) {
 	}
 	chunks := []*types.Chunk{{ChunkType: types.ChunkTypeText, Content: flatSampleTwoInvoices}}
 
-	overlaid := OverlayDeterministicInvoiceFields(res, chunks)
+	overlaid := OverlayDeterministicInvoiceFields(res, chunks, "")
 	if overlaid != 2 {
 		t.Fatalf("应覆盖 2 张，实际 %d", overlaid)
 	}
@@ -84,7 +84,7 @@ func TestOverlayDeterministicInvoiceFieldsSkipsOnCountMismatch(t *testing.T) {
 	}
 	chunks := []*types.Chunk{{ChunkType: types.ChunkTypeText, Content: flatSampleTwoInvoices}}
 
-	overlaid := OverlayDeterministicInvoiceFields(res, chunks)
+	overlaid := OverlayDeterministicInvoiceFields(res, chunks, "")
 	if overlaid != 0 {
 		t.Fatalf("数量不一致（文本 2 张 / 结果 1 张）应不覆盖，实际覆盖 %d 张", overlaid)
 	}
@@ -102,7 +102,7 @@ func TestOverlayDeterministicInvoiceFieldsNoLabelLeavesAsIs(t *testing.T) {
 	text := "机器编号: 499098302394\n校 验 码: 13353 86372\n金额 93.32"
 	chunks := []*types.Chunk{{ChunkType: types.ChunkTypeText, Content: text}}
 
-	if overlaid := OverlayDeterministicInvoiceFields(res, chunks); overlaid != 0 {
+	if overlaid := OverlayDeterministicInvoiceFields(res, chunks, ""); overlaid != 0 {
 		t.Fatalf("无『发票号码』标签时不应覆盖，实际覆盖 %d 张", overlaid)
 	}
 	if res.Invoices[0].InvoiceNo != "KEEP_ME" {
