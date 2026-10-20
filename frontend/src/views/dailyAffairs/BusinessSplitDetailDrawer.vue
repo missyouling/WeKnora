@@ -1,14 +1,18 @@
 <!--
-  BusinessSplitDetailDrawer —— 分屏详情抽屉中台组件（蓝图 P1-5）。
+  BusinessSplitDetailDrawer —— 详情抽屉中台组件（蓝图 P1-5，单栏重构）。
 
-  布局：左 = 源文件预览（可折叠，**折叠时不挂载** DocumentPreview，避免 PDF/图片
-  渲染器初始化），右 = 提取质量溯源 + 动态字段表单 + 明细子项 + 扩展插槽。
+  布局（单栏垂直流，标准抽屉宽度 ~654px）：
+    1. 顶部：提取质量溯源面板（ExtractQualityPanel，无告警/补洞时自动隐藏）；
+    2. 中部：双列网格动态字段表单（标准字段 + 扩展字段）；
+    3. 中下部：项目明细子项只读表格（仅 supportsSubFields 且存在明细时展示）；
+    4. **最底部**：源文件预览（可折叠，**折叠时（默认）不挂载** DocumentPreview，避免
+       PDF/图片渲染器初始化；展开时在底部原地展开并按物理页码 pageNo 定位）。
 
   契约：
-    - 表单状态由父级持有（`form`），组件只做绑定与展示——保存链路的口径（载荷组装、
-      级联、列表局部更新）仍在父级的可测纯函数里，不在组件里；
-    - 字段一律按 `FieldMeta[]` 渲染（dataType: text/date/number/array/items），
-      业务特有控件（类型下拉/状态标签/标签墙）通过 `#field-<name>` 具名插槽注入；
+    - 表单状态由父级持有（`form`），组件只做绑定与展示；
+    - 字段一律按 `DetailFieldMeta[]` 渲染（dataType: text/date/number/array/items），
+      items 类型字段不在此处渲染（由下方明细表格区块承载），杜绝「明细见下方表格」占位行；
+    - 业务特有控件（类型下拉/状态标签/标签墙）通过 `#field-<name>` 具名插槽注入；
     - 组件内严禁出现任何业务 scope 分支，预览页码、明细标题等全部走 props。
 
   Slots：title / field-<name>（按字段名覆盖单个控件）/ extra（表单尾部）/ footer-left
@@ -23,69 +27,66 @@
       </slot>
     </template>
 
+    <!-- 单栏垂直流：自顶部向下依次为 质量 / 表单 / 明细 / 源预览 -->
     <div class="bsd-body">
-      <!-- 左：源文件预览 -->
-      <div class="bsd-preview" :class="{ 'is-collapsed': !previewOpen }">
-        <button type="button" class="bsd-preview-toggle" :title="previewOpen ? '收起预览' : '展开预览'"
-          @click="previewOpen = !previewOpen">
-          <t-icon :name="previewOpen ? 'chevron-left' : 'chevron-right'" size="14px" />
-          <span v-if="!previewOpen" class="bsd-preview-rail">源文件预览</span>
+      <ExtractQualityPanel v-if="quality" :quality="quality" :label-of="labelOf" compact />
+
+      <section class="bsd-block">
+        <div class="bsd-block-title">{{ blockTitle }}</div>
+        <div class="bsd-fields">
+          <template v-for="f in formFields" :key="f.name">
+            <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
+              <slot :name="`field-${f.name}`" :field="f" :form="form">
+                <!-- 备注片段字段：无标准存储位，值存 remark 的「字段名：值」片段 -->
+                <t-textarea v-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
+                  :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
+                <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
+                  format="YYYY-MM-DD" clearable allow-input />
+                <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
+                  @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
+                <t-textarea v-else-if="f.dataType === 'array'" v-model="form.data[f.name]"
+                  :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                <t-input v-else v-model="form.data[f.name]" />
+              </slot>
+            </t-form-item>
+          </template>
+        </div>
+      </section>
+
+      <!-- 明细子项：只读表格（编辑走列表/浮层，避免抽屉里再叠一层可编辑表格） -->
+      <section v-if="supportsSubFields && itemRows.length" class="bsd-block">
+        <div class="bsd-block-title">{{ itemLabel }}</div>
+        <div class="bsd-items">
+          <table class="bsd-items-table">
+            <thead>
+              <tr>
+                <th v-for="sf in itemCols" :key="sf.key">{{ sf.label || sf.key }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(it, i) in itemRows" :key="i">
+                <td v-for="sf in itemCols" :key="sf.key" :class="itemCellClass(sf)">{{ formatItemCell(it, sf) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <slot name="extra" />
+
+      <!-- 最底部：源文件预览，默认折叠（不挂载重型资源），展开原地展开 -->
+      <section class="bsd-preview-block">
+        <button type="button" class="bsd-preview-toggle" :title="previewExpanded ? '收起源文件预览' : '展开源文件预览'"
+          @click="previewExpanded = !previewExpanded">
+          <t-icon :name="previewExpanded ? 'chevron-down' : 'chevron-right'" size="14px" />
+          <span>{{ previewExpanded ? '收起源文件预览' : '展开源文件预览' }}</span>
         </button>
-        <div v-if="previewOpen" class="bsd-preview-pane">
+        <div v-if="previewExpanded" class="bsd-preview-pane">
           <DocumentPreview v-if="row" :knowledge-id="row.knowledgeId" :page="pageNo"
             :file-type="row.fileType || ''" :file-name="row.fileName || ''" :active="true" />
         </div>
-      </div>
-
-      <!-- 右：质量溯源 + 字段表单 -->
-      <div class="bsd-main">
-        <ExtractQualityPanel v-if="quality" :quality="quality" :label-of="labelOf" compact />
-
-        <section class="bsd-block">
-          <div class="bsd-block-title">{{ blockTitle }}</div>
-          <div class="bsd-fields">
-            <template v-for="f in fields" :key="f.name">
-              <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
-                <slot :name="`field-${f.name}`" :field="f" :form="form">
-                  <!-- 备注片段字段：无标准存储位，值存 remark 的「字段名：值」片段 -->
-                  <t-textarea v-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
-                    :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
-                  <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
-                  <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
-                    format="YYYY-MM-DD" clearable allow-input />
-                  <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
-                    @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
-                  <t-textarea v-else-if="f.dataType === 'array'" v-model="form.data[f.name]"
-                    :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
-                  <span v-else-if="f.dataType === 'items'" class="bsd-muted">明细见下方表格</span>
-                  <t-input v-else v-model="form.data[f.name]" />
-                </slot>
-              </t-form-item>
-            </template>
-          </div>
-        </section>
-
-        <!-- 明细子项：只读表格（编辑走列表/浮层，避免抽屉里再叠一层可编辑表格） -->
-        <section v-if="supportsSubFields && itemRows.length" class="bsd-block">
-          <div class="bsd-block-title">{{ itemLabel }}</div>
-          <div class="bsd-items">
-            <table class="bsd-items-table">
-              <thead>
-                <tr>
-                  <th v-for="sf in itemCols" :key="sf.key">{{ sf.label || sf.key }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(it, i) in itemRows" :key="i">
-                  <td v-for="sf in itemCols" :key="sf.key" :class="itemCellClass(sf)">{{ formatItemCell(it, sf) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <slot name="extra" />
-      </div>
+      </section>
     </div>
 
     <div class="bsd-footer">
@@ -107,15 +108,7 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { formatItemCell, itemCellClass } from './businessFormat'
-import { sanitizeNum } from './businessDetailForm'
-
-export interface DetailFieldMeta {
-  name: string
-  label: string
-  dataType?: string
-  /** 备注片段字段名（有值表示数据存 remark 片段里） */
-  remarkPart?: string
-}
+import { sanitizeNum, type DetailFieldMeta } from './businessDetailForm'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -139,8 +132,6 @@ const props = withDefaults(defineProps<{
   saving?: boolean
   blockTitle?: string
   width?: string
-  /** 展开预览时的抽屉宽度（分屏需要一个可用的右栏，否则字段会被挤成省略号） */
-  expandedWidth?: string
   storageKey?: string
   showDelete?: boolean
   showReExtract?: boolean
@@ -158,7 +149,6 @@ const props = withDefaults(defineProps<{
   saving: false,
   blockTitle: '记录信息',
   width: '654px',
-  expandedWidth: '1180px',
   storageKey: 'weknora-business-detail-drawer-width',
   showDelete: false,
   showReExtract: false,
@@ -176,11 +166,11 @@ const innerVisible = computed({
   get: () => props.visible,
   set: (v: boolean) => emit('update:visible', v),
 })
-// 预览默认折叠：展开才挂载 DocumentPreview（重资源，不能随抽屉一起初始化）
-const previewOpen = ref(false)
-// 展开预览时抽屉加宽：654px 分屏会把右侧字段压到 ~300px，标签/输入全被截断
-const drawerWidth = computed(() => (previewOpen.value ? props.expandedWidth : props.width))
-watch(() => props.row?.knowledgeId, () => { previewOpen.value = false })
+// 单栏标准宽度；不再随预览展开加宽（预览置底，不影响表单列宽）
+const drawerWidth = computed(() => props.width)
+// 源预览默认折叠：展开才挂载 DocumentPreview（重资源，不能随抽屉一起初始化）
+const previewExpanded = ref(false)
+watch(() => props.row?.knowledgeId, () => { previewExpanded.value = false })
 
 // 表单由父级持有：这里用 computed 代理（读写都落在父级的同一个对象上），
 // 既保持"保存链路在父级"的单一职责，也避免组件直接改写 prop。
@@ -193,7 +183,11 @@ const itemCols = computed<any[]>(() => {
   for (const it of itemRows.value) for (const k of Object.keys(it || {})) if (k !== 'extra') keys.add(k)
   return [...keys].map((k) => ({ key: k, label: k }))
 })
-const isLongType = (f: DetailFieldMeta) => f.dataType === 'items' || f.dataType === 'array'
+// 主表单只渲染真实字段：items 类型（明细容器）交由下方明细表格承载，绝不生成占位行
+const formFields = computed<DetailFieldMeta[]>(
+  () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
+)
+const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
 const fieldClassOf = (f: DetailFieldMeta) => ({
   'bsd-field--full': isLongType(f) || f.name === 'fileName',
 })
@@ -205,44 +199,19 @@ function close() {
 
 <style scoped lang="less">
 .bsd-drawer :deep(.t-drawer__body) { padding: 0; }
+/* 单栏垂直流：自上而下排布；横向不溢出（消除外层横向滚动条），纵向按需滚动 */
 .bsd-body {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  gap: var(--td-comp-margin-s);
+  gap: var(--td-comp-margin-m);
   min-height: 0;
   height: 100%;
-}
-.bsd-preview {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 50%;
-  max-width: 56%;
-  min-width: 200px;
-  border-right: 1px solid var(--td-component-stroke);
-  padding-right: var(--td-comp-margin-s);
-}
-.bsd-preview.is-collapsed { flex: 0 0 34px; max-width: 34px; padding-right: 0; }
-.bsd-preview-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border: none;
-  background: transparent;
-  color: var(--td-text-color-secondary);
-  cursor: pointer;
-  padding: 2px 0;
-  font-size: 12px;
-}
-.bsd-preview-rail { writing-mode: vertical-rl; letter-spacing: 2px; }
-.bsd-preview-pane { flex: 1; min-height: 0; overflow: auto; }
-.bsd-main {
-  flex: 1 1 50%;
-  /* 右栏最小可用宽度：低于这个值两列表单会被压成省略号 */
-  min-width: 340px;
   overflow-y: auto;
-  padding-right: var(--td-comp-margin-s);
+  overflow-x: hidden;
+  padding: var(--td-comp-margin-m) var(--td-comp-margin-m) 0;
 }
-.bsd-block { margin-bottom: var(--td-comp-margin-l); }
+.bsd-block { margin-bottom: var(--td-comp-margin-s); }
 .bsd-block-title {
   font-size: 13px;
   font-weight: 600;
@@ -256,7 +225,8 @@ function close() {
   gap: 0 var(--td-comp-margin-m);
 }
 .bsd-fields :deep(.bsd-field--full) { grid-column: 1 / -1; }
-.bsd-items { overflow-x: auto; }
+/* 明细表格：只保留本容器自身的横向滚动条，且不超过父级宽度（杜绝双滚动条） */
+.bsd-items { overflow-x: auto; max-width: 100%; }
 .bsd-items-table {
   border-collapse: collapse;
   font-size: 12px;
@@ -277,12 +247,35 @@ function close() {
 .bsd-items-table td { color: var(--td-text-color-primary); }
 .bsd-items-table :deep(.item-cell--num) { text-align: right; }
 .bsd-muted { color: var(--td-text-color-placeholder); font-size: 12px; }
+/* 源文件预览：永远位于最底部；折叠态不挂载重型资源 */
+.bsd-preview-block {
+  margin-top: var(--td-comp-margin-s);
+  border-top: 1px solid var(--td-component-stroke);
+  padding-top: var(--td-comp-margin-s);
+}
+.bsd-preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  padding: 2px 0;
+  font-size: 12px;
+}
+.bsd-preview-pane {
+  margin-top: var(--td-comp-margin-s);
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+}
 .bsd-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--td-comp-margin-s);
-  padding-top: var(--td-comp-margin-m);
+  padding: var(--td-comp-margin-m);
   border-top: 1px solid var(--td-component-stroke);
 }
 </style>

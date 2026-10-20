@@ -30,6 +30,21 @@ test('税率小数转百分比（0.03 → 3%）', () => {
   assert.equal(formatRate(undefined), '')
 })
 
+test('税率格式化：0.09/"0.09"/9/"9%" 四种输入均输出 9%，绝不 900%', () => {
+  // 历史 bug：0.09 被乘两次 100 变成 900%，此处锁死
+  assert.equal(formatRate(0.09), '9%')
+  assert.equal(formatRate('0.09'), '9%')
+  assert.equal(formatRate(9), '9%')
+  assert.equal(formatRate('9%'), '9%')
+  assert.notEqual(formatRate(9), '900%')
+  assert.notEqual(formatRate('9%'), '900%')
+  // 仍兼容小数形态
+  assert.equal(formatRate(0.03), '3%')
+  // 空值/脏数据
+  assert.equal(formatRate(''), '')
+  assert.equal(formatRate('abc' as never), '')
+})
+
 test('明细取值：标准键取行属性，自定义子列回退 extra 桶', () => {
   const row = { name: '通行费', extra: { plate_no: '渝C87567' } }
   assert.equal(itemValOf(row, { key: 'name' }), '通行费')

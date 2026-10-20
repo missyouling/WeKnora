@@ -14,6 +14,8 @@ import {
   itemToPayload,
   pickDynamicFields,
   buildDetailPayload,
+  buildDetailFieldDefs,
+  isTaxKey,
   findInvoiceIndex,
   cascadeInvoiceType,
   hasInvoiceData,
@@ -241,4 +243,86 @@ test('isDetailFormDirty：能识别 data / remarkParts / items / 类型的改动
   assert.equal(isDetailFormDirty(null, a), false)
   assert.equal(isDetailFormDirty(a, undefined), false)
   assert.equal(isDetailFormDirty(EMPTY_DETAIL_FORM, EMPTY_DETAIL_FORM), false)
+})
+
+// ---- buildDetailFieldDefs：字段清洗（税额去重 / items 跳过 / 核心置顶） ----
+
+// 模拟发票字段映射（与 invoiceFieldLabels 同形，仅覆盖被测键）
+const FK: Record<string, string> = {
+  税额: 'tax', 项目明细: 'items', 规格型号: 'spec', 单位: 'unit', 数量: 'qty', 单价: 'price', 项目名称: 'name',
+}
+const LBL: Record<string, string> = { tax: '税额', tax_amount: '税额', taxAmount: '税额', items: '项目明细' }
+const fk = (n: string) => FK[n] || n
+const lbl = (n: string) => LBL[n] || n
+const isRp = () => false
+
+test('buildDetailFieldDefs：税额同义键（tax/taxAmount/tax_amount）只保留一个「税额」', () => {
+  const subs = [
+    { name: 'invoiceNo' },
+    { name: 'tax', label: '税额' },
+    { name: 'tax_amount', label: '税额' },
+    { name: 'taxAmount', label: '税额' },
+  ]
+  const defs = buildDetailFieldDefs(subs, { fieldKeyOf: fk, labelOf: lbl, isRemarkPart: isRp })
+  const taxDefs = defs.filter((d) => d.name === 'tax' || d.name === 'tax_amount' || d.name === 'taxAmount')
+  assert.equal(taxDefs.length, 1, '只保留一个税额')
+  assert.equal(taxDefs[0].label, '税额')
+})
+
+test('buildDetailFieldDefs：明细容器 items 不生成主表单占位行', () => {
+  const subs = [
+    { name: 'invoiceNo' },
+    { name: 'items', data_type: 'items', sub_fields: [{ name: 'spec' }, { name: 'unit' }] },
+  ]
+  const defs = buildDetailFieldDefs(subs, { fieldKeyOf: fk, labelOf: lbl, isRemarkPart: isRp })
+  assert.equal(defs.some((d) => d.name === 'items' || d.dataType === 'items'), false)
+})
+
+test('buildDetailFieldDefs：明细子项键（spec/unit/qty/price/name）错位混入主表被跳过', () => {
+  const subs = [
+    { name: 'invoiceNo' },
+    { name: 'items', data_type: 'items', sub_fields: [{ name: 'spec' }, { name: 'unit' }, { name: 'qty' }, { name: 'price' }, { name: 'name' }] },
+    { name: 'spec' }, { name: 'unit' }, { name: 'qty' }, { name: 'price' }, { name: 'name' },
+  ]
+  const defs = buildDetailFieldDefs(subs, { fieldKeyOf: fk, labelOf: lbl, isRemarkPart: isRp })
+  for (const k of ['spec', 'unit', 'qty', 'price', 'name']) {
+    assert.equal(defs.some((d) => d.name === k), false, `${k} 不应出现在主表单`)
+  }
+})
+
+test('buildDetailFieldDefs：核心字段（发票号码/开票日期/发票类型）强制置顶', () => {
+  const subs = [
+    { name: 'amount' }, { name: 'tax' }, { name: 'invoiceDate' }, { name: 'invoiceNo' }, { name: 'invoiceType' },
+  ]
+  const defs = buildDetailFieldDefs(subs, { fieldKeyOf: fk, labelOf: lbl, isRemarkPart: isRp })
+  assert.deepEqual(defs.slice(0, 3).map((d) => d.name), ['invoiceNo', 'invoiceDate', 'invoiceType'])
+})
+
+test('isTaxKey：税额同义键判定', () => {
+  assert.equal(isTaxKey('tax'), true)
+  assert.equal(isTaxKey('taxAmount'), true)
+  assert.equal(isTaxKey('tax_amount'), true)
+  assert.equal(isTaxKey('amount'), false)
+})
+
+test('fillDetailForm：税额同义键（tax_amount）不进动态桶，只保留 tax', () => {
+  const cats = [{ name: '普通发票', subs: [{ name: 'tax' }, { name: 'tax_amount' }] }]
+  const form = fillDetailForm(ctx({ row: { invoiceType: '普通发票', tax: 5, tax_amount: 6 }, cats }))
+  assert.equal(form.data.tax, '5')
+  assert.equal('tax_amount' in form.data, false, '税额同义键不重复进动态桶')
+})
+
+test('fillDetailForm / itemToPayload：税率百分比↔小数双向归一（9 与 0.09 等价）', () => {
+  // 明细税率 0.09（小数）→ 显示 "9"，保存回 0.09
+  const form = fillDetailForm(ctx({ row: { items: [{ name: 'x', tax_rate: 0.09 }] } }))
+  assert.equal(form.items[0].tax_rate, '9')
+  assert.equal(itemToPayload(form.items[0]).tax_rate, 0.09)
+  // 已是百分比点数 9 → 不再 ×100，保存回 0.09
+  const form2 = fillDetailForm(ctx({ row: { items: [{ name: 'x', tax_rate: 9 }] } }))
+  assert.equal(form2.items[0].tax_rate, '9')
+  assert.equal(itemToPayload(form2.items[0]).tax_rate, 0.09)
+  // 主表单税率同上
+  const form3 = fillDetailForm(ctx({ row: { taxRate: 0.09 } }))
+  assert.equal(form3.data.taxRate, '9')
+  assert.equal(buildDetailPayload({ data: form3.data, invoiceType: '', setRemarkPart: (r) => r }).tax_rate, 0.09)
 })

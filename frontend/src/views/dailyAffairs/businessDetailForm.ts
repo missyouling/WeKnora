@@ -17,6 +17,24 @@ export const STD_DATA_KEYS = [
 ]
 const STD_DATA_KEY_SET = new Set(STD_DATA_KEYS)
 
+/** 税额同义键：tax / taxAmount / tax_amount 一律视作同一个「税额」 */
+export const TAX_KEYS = new Set(['tax', 'taxAmount', 'tax_amount'])
+export function isTaxKey(k: string): boolean {
+  return TAX_KEYS.has(String(k || '').trim())
+}
+
+/** 详情抽屉表单字段定义（与 BusinessSplitDetailDrawer 的 props.fields 同形） */
+export interface DetailFieldMeta {
+  name: string
+  label: string
+  dataType?: string
+  /** 备注片段字段名（有值表示数据存 remark 片段里） */
+  remarkPart?: string
+}
+
+/** 详情表单三个核心字段：永远排在最顶部且完整可见 */
+export const CORE_INVOICE_FIELDS = ['invoiceNo', 'invoiceDate', 'invoiceType']
+
 export interface DetailFormShape {
   invoice_no: string
   invoice_type: string
@@ -96,6 +114,71 @@ export function collectRemarkParts(
   return out
 }
 
+/**
+ * 把分类 `subs` 清洗成详情抽屉的主表单字段定义。解决真机验收暴露的三类脏数据：
+ *   1. 明细容器字段（items / dataType=items）混入主表单 → 渲染出「明细见下方表格」占位行；
+ *   2. 明细子项键（spec/unit/qty/price/name…）被错位当成主表扩展字段；
+ *   3. 税额同义键（tax / taxAmount / tax_amount）重复出现两个「税额」。
+ *
+ * 同时把三个核心字段（发票号码/开票日期/发票类型）强制置顶，保证永远完整可见。
+ * 纯函数、可单测，与 businessFormat 的税率归一、抽屉的跳过渲染共同锁死布局。
+ */
+export function buildDetailFieldDefs(
+  subs: any[],
+  opts: {
+    fieldKeyOf: (n: string) => string
+    labelOf: (n: string) => string
+    isRemarkPart: (n: string) => boolean
+  },
+): DetailFieldMeta[] {
+  const fieldKeyOf = opts.fieldKeyOf
+  // 收集本分类 items 子列键（canonical），用于排除错位混入主表的明细子项
+  const itemKeys = new Set<string>()
+  for (const s of subs || []) {
+    const sk = fieldKeyOf(String(s?.name || ''))
+    if (sk === 'items' || s?.data_type === 'items') {
+      for (const sf of s.sub_fields || []) {
+        itemKeys.add(fieldKeyOf(String(sf?.name || sf?.key || '')))
+      }
+    }
+  }
+
+  const out: DetailFieldMeta[] = []
+  const seenTax = new Set<string>()
+  for (const x of subs || []) {
+    if (x?.enabled === false) continue
+    const rawName = String(x?.name || '')
+    if (!rawName) continue
+    const key = fieldKeyOf(rawName)
+    // 1) 明细容器字段：明细由表格区块承载，不在主表单生成占位行
+    if (key === 'items' || x?.data_type === 'items') continue
+    // 2) 明细子项错位混入主表（规格型号/单位/数量/单价/项目名称…）：跳过
+    if (itemKeys.has(key)) continue
+    // 3) 税额同义去重：tax / taxAmount / tax_amount 只保留一个「税额」
+    if (TAX_KEYS.has(key) || TAX_KEYS.has(rawName)) {
+      if (seenTax.has('tax')) continue
+      seenTax.add('tax')
+    }
+    out.push({
+      name: key,
+      label: String(x.label || '').trim() || opts.labelOf(rawName) || rawName,
+      dataType: x.data_type || 'text',
+      remarkPart: opts.isRemarkPart(rawName) ? rawName : '',
+    })
+  }
+
+  // 核心字段强制置顶（按 CORE_INVOICE_FIELDS 顺序），其余保持原序
+  const core: DetailFieldMeta[] = []
+  const rest: DetailFieldMeta[] = []
+  for (const f of out) {
+    const idx = CORE_INVOICE_FIELDS.indexOf(f.name)
+    if (idx >= 0 && !core.some((c) => c.name === f.name)) core.push(f)
+    else rest.push(f)
+  }
+  core.sort((a, b) => CORE_INVOICE_FIELDS.indexOf(a.name) - CORE_INVOICE_FIELDS.indexOf(b.name))
+  return [...core, ...rest]
+}
+
 function pickCategory(cats: any[], targetType: string): any {
   const enabled = (cats || []).filter((c: any) => c?.enabled !== false)
   return enabled.find((c: any) => c?.name === targetType) || enabled[0]
@@ -123,7 +206,7 @@ export function fillDetailForm(ctx: FillDetailContext): DetailFormShape {
     const rawName = String(s?.name || '')
     if (!rawName || ctx.isRemarkPart(rawName)) continue
     const key = ctx.fieldKeyOf(rawName)
-    if (ctx.dict[key] || STD_DATA_KEY_SET.has(key)) continue
+    if (ctx.dict[key] || STD_DATA_KEY_SET.has(key) || TAX_KEYS.has(key)) continue
     dynamic[key] = r.fields?.[key] ?? r.fields?.[rawName] ?? r[key] ?? itemExtra[key] ?? ''
   }
 
@@ -135,8 +218,10 @@ export function fillDetailForm(ctx: FillDetailContext): DetailFormShape {
       price: numToStr(it?.price),
       // 历史存量明细常缺 amount：数量为空时单价即金额
       amount: numToStr(it?.amount) || (it?.qty === null || it?.qty === undefined || it?.qty === '' ? numToStr(it?.price) : ''),
-      // 税率以百分比显示（0.03 → "3"），保存时再转回小数
-      tax_rate: it?.tax_rate === null || it?.tax_rate === undefined ? '' : String(Number(it.tax_rate) * 100),
+      // 税率百分比化显示（0.03 → "3"，已是百分比的 9 不再 ×100）；保存时再转回小数
+      tax_rate: it?.tax_rate === null || it?.tax_rate === undefined
+        ? ''
+        : (() => { const n = Number(it.tax_rate); return n >= 1 ? String(n) : String(n * 100) })(),
       // 税额缺失时回退发票级税额（历史单行明细）
       tax_amount: numToStr(it?.tax_amount) || numToStr(r.tax),
     }
@@ -170,7 +255,8 @@ export function fillDetailForm(ctx: FillDetailContext): DetailFormShape {
       invoiceDate: r.invoiceDate || '',
       invoiceType: r.invoiceType || '',
       amount: numToStr(r.amount),
-      taxRate: numToStr(r.taxRate),
+      // 税率百分比化显示（与主表单/明细表统一口径；>=1 视为已是百分比点数）
+      taxRate: (() => { const n = toNumber(r.taxRate); return n === undefined ? '' : (n >= 1 ? String(n) : String(n * 100)) })(),
       tax: numToStr(r.tax),
       totalAmount: numToStr(r.totalAmount),
       buyerName: r.buyerName || '',
@@ -218,7 +304,7 @@ export function itemToPayload(it: any): any {
     qty: toNumber(it?.qty),
     price: toNumber(it?.price),
     amount: toNumber(it?.amount),
-    tax_rate: taxRate === undefined ? undefined : taxRate / 100,
+    tax_rate: payloadTaxRate(taxRate),
     tax_amount: toNumber(it?.tax_amount),
   }
   const extraSrc: any = { ...(it?.extra || {}), ...it }
@@ -228,12 +314,18 @@ export function itemToPayload(it: any): any {
   return base
 }
 
+/** 税率载荷归一：表单百分比点数（9）转回小数（0.09）；已是小数的 0.09 原样保留 */
+function payloadTaxRate(v: number | undefined): number | undefined {
+  if (v === undefined) return undefined
+  return v >= 1 ? v / 100 : v
+}
+
 /** data 中非标准契约键的字段收集进 fields 扩展桶（后端 JSON 透传） */
 export function pickDynamicFields(data: Record<string, any>, stdKeys: Iterable<string> = STD_DATA_KEYS): Record<string, any> {
   const std = new Set(stdKeys)
   const out: Record<string, any> = {}
   for (const [k, v] of Object.entries(data || {})) {
-    if (std.has(k) || k === 'fields') continue
+    if (std.has(k) || TAX_KEYS.has(k) || k === 'fields') continue
     out[k] = v ?? ''
   }
   return out
@@ -252,7 +344,7 @@ export function buildDetailPayload(ctx: PayloadContext): any {
     total_amount: toNumber(d.totalAmount),
     amount: toNumber(d.amount),
     tax: toNumber(d.tax),
-    tax_rate: toNumber(d.taxRate),
+    tax_rate: payloadTaxRate(toNumber(d.taxRate)),
     seller_name: d.sellerName || '',
     seller_tax_no: d.sellerTaxNo || '',
     buyer_name: d.buyerName || '',

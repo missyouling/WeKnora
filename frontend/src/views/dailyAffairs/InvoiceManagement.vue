@@ -285,6 +285,13 @@
         </div>
         <span v-else class="row-muted">—</span>
       </template>
+      <!-- 税率：与主表单/明细表统一为百分比展示（输入 9 即 9%），加 % 单位提示避免割裂感 -->
+      <template #field-taxRate>
+        <t-input :value="editForm.data.taxRate" placeholder="如 9 表示 9%"
+          @input="(v: string) => (editForm.data.taxRate = sanitizeNum(v))">
+          <template #suffix>%</template>
+        </t-input>
+      </template>
     </BusinessSplitDetailDrawer>
 
     <!-- 单号重复二次确认：强制保存前询问（确认后带 force 重试，取消留在编辑态） -->
@@ -371,8 +378,8 @@ import {
 import { pdfPageOf } from './pdfPage'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import {
-  buildDetailPayload, cascadeInvoiceType, extractStatusOf, fillDetailForm, findInvoiceIndex,
-  hasInvoiceData, isDetailFormDirty, mergeRowAfterSave,
+  buildDetailPayload, buildDetailFieldDefs, cascadeInvoiceType, extractStatusOf, fillDetailForm, findInvoiceIndex,
+  hasInvoiceData, isDetailFormDirty, mergeRowAfterSave, sanitizeNum,
 } from './businessDetailForm'
 import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate } from './businessFormat'
@@ -648,8 +655,8 @@ const filterState = computed<FilterState>({
   },
 })
 const filterFields = computed<FilterFieldSpec[]>(() => [
+  // 发票类型筛选统一仅由顶部概览卡片（DashboardKpiGroup）承担，工具栏不再重复下拉
   { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
-  { key: 'invoiceType', type: 'select', placeholder: '发票类型', icon: 'file', options: invoiceTypeOptions.value },
   { key: 'taxRate', type: 'select', placeholder: '税率筛选', icon: 'percent', options: taxRateOptions.value },
   { key: 'dateRange', type: 'date-range', placeholder: '开票日期', icon: 'time' },
 ])
@@ -753,32 +760,30 @@ const editForm = ref<Record<string, any>>({ invoice_no: '', invoice_type: '', it
 const autoSaving = ref(false)
 
 // 详情抽屉动态字段：按当前发票类型匹配分类 subs（启用字段优先），无配置时回退内置列
-// 字段 name 一律归一到英文契约键（自定义中文字段名经 invoiceFieldKeyOf 映射），
-// 保证表单读写与保存写库都落在标准字段上；无标准存储位的字段（remark 片段）单独标记 remarkPart
+// 字段清洗走中台 buildDetailFieldDefs：税额同义去重（tax/taxAmount/tax_amount 只留一个）、
+// 剔除 items 容器字段与错位混入主表的明细子项（spec/unit/qty/price/name）、核心字段置顶。
+// 字段 name 一律归一到英文契约键（自定义中文字段名经 invoiceFieldKeyOf 映射）。
 const editFieldDefs = computed(() => {
   const t = editForm.value.invoice_type
   const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
   const hit = cats.find((c: any) => c.name === t) || cats[0]
   const subs = hit?.subs
   if (Array.isArray(subs) && subs.length) {
-    return subs
-      .filter((x: any) => x.enabled !== false)
-      .map((x: any) => {
-        const remarkPart = isRemarkPartField(String(x.name)) ? String(x.name) : ''
-        return {
-          name: remarkPart ? String(x.name) : invoiceFieldKeyOf(String(x.name)),
-          label: String(x.label || '').trim() || INVOICE_FIELD_LABELS[String(x.name)] || String(x.name),
-          dataType: x.data_type || 'text',
-          remarkPart,
-        }
-      })
+    return buildDetailFieldDefs(subs, {
+      fieldKeyOf: (n: string) => invoiceFieldKeyOf(n),
+      labelOf: (n: string) => INVOICE_FIELD_LABELS[n] || invoiceFieldLabel(n),
+      isRemarkPart: (n: string) => isRemarkPartField(n),
+    })
   }
-  return DEFAULT_INVOICE_COLUMNS.map((c) => ({
-    name: c.key,
-    label: c.label,
-    dataType: c.key === 'invoiceDate' ? 'date' : ['amount', 'tax', 'totalAmount', 'taxRate'].includes(c.key) ? 'number' : 'text',
-    remarkPart: '',
-  }))
+  // 无分类配置回退内置列：剔除 items（明细由表格区块承载，不生成占位行）
+  return DEFAULT_INVOICE_COLUMNS
+    .filter((c: any) => c.key !== 'items')
+    .map((c: any) => ({
+      name: c.key,
+      label: c.label,
+      dataType: c.key === 'invoiceDate' ? 'date' : ['amount', 'tax', 'totalAmount', 'taxRate'].includes(c.key) ? 'number' : 'text',
+      remarkPart: '',
+    }))
 })
 
 // 抽屉宽度（可拖动，localStorage 记忆）

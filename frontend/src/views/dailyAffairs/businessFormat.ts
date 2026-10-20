@@ -12,12 +12,28 @@ export function formatAmount(v?: number | string | null): string {
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-/** 税率：小数转百分比且不保留小数（0.03 → 3%） */
+/**
+ * 税率：归一为百分比字符串，且**绝不重复 ×100**。
+ *
+ * 历史 bug：明细表 0.09 被乘两次 100 变成 900%。
+ * 现在按"是否已为百分比"判别：
+ *   - 带 `%` 字符串（"9%"）→ 直接规范化；
+ *   - 数值 `>= 1`（如 9，已是百分比点数）→ 直接取整，不再 ×100；
+ *   - 数值 `< 1`（如 0.09，小数形态）→ ×100 转百分比。
+ * 四种常见输入 0.09 / "0.09" / 9 / "9%" 一律输出 "9%"。
+ */
 export function formatRate(v?: number | string | null): string {
   if (v === undefined || v === null || v === '') return ''
+  // 已是带 % 字符串：剥离后取整再拼回，避免 "9%"→"900%"
+  if (typeof v === 'string' && v.includes('%')) {
+    const n = Number(v.replace('%', ''))
+    if (!Number.isFinite(n)) return ''
+    return `${Math.round(n)}%`
+  }
   const n = Number(v)
   if (!Number.isFinite(n)) return ''
-  return `${Math.round(n * 100)}%`
+  // >=1 视作百分比点数（9）；<1 视作小数（0.09）
+  return `${Math.round(n >= 1 ? n : n * 100)}%`
 }
 
 /**

@@ -88,18 +88,19 @@ test('组件只按 spec 渲染，不认识任何业务 scope', () => {
   assert.match(barSrc, /slot name="batch-actions"/)
 })
 
-test('发票页已切换为 spec 声明（4 个筛选器不再手写控件）', () => {
+test('发票页已切换为 spec 声明（3 个筛选器不再手写控件）', () => {
   assert.match(pageSrc, /<BusinessFilterBar/)
   assert.match(pageSrc, /:fields="filterFields"/)
   assert.match(pageSrc, /v-model="filterState"/)
   // 不再内联日期区间/税率下拉
   assert.doesNotMatch(pageSrc, /t-date-range-picker/)
   assert.doesNotMatch(pageSrc, /<BusinessListToolbar/)
-  // 四个筛选器齐全：关键词/类型/税率/日期
+  // 三个筛选器齐全：关键词/税率/日期（发票类型筛选已移至顶部概览卡片）
   assert.match(pageSrc, /key: 'keyword', type: 'keyword'/)
-  assert.match(pageSrc, /key: 'invoiceType', type: 'select'/)
   assert.match(pageSrc, /key: 'taxRate', type: 'select'/)
   assert.match(pageSrc, /key: 'dateRange', type: 'date-range'/)
+  // 发票类型下拉已从工具栏移除（仅由顶部 KPI 卡片承担）
+  assert.doesNotMatch(pageSrc, /key: 'invoiceType', type: 'select'/)
   // 300ms 防抖与 AND 复合查询语义保留
   assert.match(pageSrc, /watch\(filterState, \(\) => \{\s*scheduleFilter\(\)/)
   assert.match(pageSrc, /}, 300\)/)
