@@ -1177,19 +1177,113 @@ func invoiceNoDigitRunOK(v string) bool {
 	return false
 }
 
+// ReconcileInvoicePartiesForPersist 是**落库前的最终一致性守门**，对整批发票执行：
+//  1. 金额三件套自洽（amount + tax == total）；
+//  2. 购销方未颠倒 / 未同名；
+//  3. 缺失金额在无免税证据时不被补 0。
+//
+// 之所以要在持久化前再跑一遍：提取管线在 overlay 之后还有明细校验、归一、
+// 分类优先等多道步骤，任一步重新推导金额都会把 overlay 的修正覆盖掉
+// （真机 26507000000067486566 实测：overlay 已改成 1117.17/145.23，
+// 落库前又被明细值改回 1269.91/165.09，导致 amount+tax≠total）。
+func ReconcileInvoicePartiesForPersist(invs []InvoiceExtractionItem) {
+	for i := range invs {
+		// 票级税率缺失时先从明细补：税率是票的**内在属性**，比折扣前的税额可靠。
+		// 不补的话会走「amount = total - tax」分支，把折扣前税额当真值
+		// （真机 26507000000067486566 实测得到 1097.31/165.09，而票面合计是 1117.17/145.23）。
+		if invs[i].TaxRate == nil {
+			if r := dominantItemTaxRate(invs[i].Items); r != nil {
+				invs[i].TaxRate = r
+			}
+		}
+		reconcileInvoiceAmounts(&invs[i])
+		normalizeInvoiceParties(&invs[i], "")
+	}
+}
+
+// reconcileInvoiceAmounts 保证「金额 + 税额 == 价税合计」三者自洽。
+//
+// 事故（真机 26507000000067486566）：票面明细行是折扣**前**的 1269.91 / 165.09，
+// 合计行是折扣**后**的 1117.17 / 145.23，价税合计 1262.40。模型取了明细行，
+// 于是 amount+tax=1435 ≠ total=1262.40 —— 三个数字互相矛盾，对账直接错。
+//
+// 判定与修正（确定性）：
+//   - 价税合计是票面最可靠的锚（「价税合计(小写)」唯一），保持不变；
+//   - 当 |amount + tax - total| > 0.02 视为不自洽；
+//   - 有税率时按税率从价税合计反推：amount = total / (1+rate)，tax = total - amount
+//     （1262.40 / 1.13 = 1117.17，tax = 145.23 —— 与票面合计行一致）；
+//   - 无税率但有税额时：amount = total - tax；
+//   - 三者原本自洽则不触动任何值（避免误改正确数据）。
+func reconcileInvoiceAmounts(inv *InvoiceExtractionItem) {
+	if inv == nil || inv.TotalAmount == nil || *inv.TotalAmount <= 0 {
+		return
+	}
+	total := *inv.TotalAmount
+	var amount, tax float64
+	hasAmount, hasTax := inv.Amount != nil, inv.Tax != nil
+	if hasAmount {
+		amount = *inv.Amount
+	}
+	if hasTax {
+		tax = *inv.Tax
+	}
+	if hasAmount && hasTax && math.Abs(amount+tax-total) <= 0.02 {
+		return // 已自洽
+	}
+	if inv.TaxRate != nil && *inv.TaxRate > 0 && *inv.TaxRate < 1 {
+		amt := round2(total / (1 + *inv.TaxRate))
+		amtTax := round2(total - amt)
+		inv.Amount, inv.Tax = &amt, &amtTax
+		return
+	}
+	if hasTax && total-tax >= 0 {
+		amt := round2(total - tax)
+		inv.Amount = &amt
+	}
+}
+
+// invoiceTaxExemptEvidence 判断票面是否有「不征税 / 免税 / 零税率」证据。
+//
+// 为什么必须判证据：把「缺税额」一律当免税补 0 会静默改写正常应税发票
+// （真机 26507000000067486566 的税额 145.23 曾被补成 0，属严重数据损坏）。
+// 只有在票面确实标注免税时，`amount = total, tax = 0` 才是安全推断。
+func invoiceTaxExemptEvidence(inv *InvoiceExtractionItem, srcText string) bool {
+	if inv == nil {
+		return false
+	}
+	if inv.TaxRate != nil && *inv.TaxRate == 0 {
+		return true
+	}
+	for _, it := range inv.Items {
+		if it.TaxRate != nil && *it.TaxRate == 0 {
+			return true
+		}
+		if strings.Contains(it.Name, "不征税") || strings.Contains(it.Name, "免税") {
+			return true
+		}
+	}
+	for _, w := range []string{"不征税", "免税", "零税率", "不征收"} {
+		if strings.Contains(srcText, w) {
+			return true
+		}
+	}
+	return false
+}
+
 // backfillInvoiceMath 用确定性数学关系补齐缺失的金额字段（纯后处理，不调模型）。
 //
 // 覆盖三类真机缺口：
 //  1. 有金额+税额、缺税率 → tax_rate = round(tax/amount, 2)
 //     （真机第 91 行：23.69 / 0.71 → 3%）；
 //  2. 有价税合计+税额、缺金额 → amount = total - tax；
-//  3. 只有价税合计（不征税/免税通行费）→ amount = total, tax = 0, tax_rate = 0。
+//  3. 只有价税合计且票面确为免税（taxExempt 为真）→ amount = total, tax = 0, rate = 0。
 //
 // 安全边界（宁缺毋滥，绝不写荒谬值）：
 //   - 已有的值一律不被覆盖；
 //   - 反算比例为负、或超过 100%（税率不可能 >13%，留足余量）→ 放弃补税率；
-//   - total < tax 导致金额为负 → 放弃补金额。
-func backfillInvoiceMath(inv *InvoiceExtractionItem) {
+//   - total < tax 导致金额为负 → 放弃补金额；
+//   - **缺税额且无免税证据时不猜 0**（宁可留空让质量面板标红，也不写错数）。
+func backfillInvoiceMath(inv *InvoiceExtractionItem, taxExempt bool) {
 	if inv == nil {
 		return
 	}
@@ -1203,23 +1297,23 @@ func backfillInvoiceMath(inv *InvoiceExtractionItem) {
 			}
 		}
 	}
-	// 2) 金额反算：total - tax
+	// 2) 金额反算
 	if inv.Amount == nil && inv.TotalAmount != nil {
 		total := *inv.TotalAmount
-		tax := 0.0
 		if inv.Tax != nil {
-			tax = *inv.Tax
-		}
-		if total > 0 && total-tax >= 0 {
-			amt := round2(total - tax)
+			// 有税额：amount = total - tax（确定性，唯一正确解）
+			if total > 0 && total-*inv.Tax >= 0 {
+				amt := round2(total - *inv.Tax)
+				inv.Amount = &amt
+			}
+		} else if taxExempt && total > 0 {
+			// 仅免税票：amount = total，tax/税率补 0
+			amt := round2(total)
 			inv.Amount = &amt
-			// 顺带把缺失的税额/税率补成 0（免税通行费）
-			if inv.Tax == nil && tax == 0 {
-				zero := 0.0
-				inv.Tax = &zero
-				if inv.TaxRate == nil {
-					inv.TaxRate = &zero
-				}
+			zero := 0.0
+			inv.Tax = &zero
+			if inv.TaxRate == nil {
+				inv.TaxRate = &zero
 			}
 		}
 	}
@@ -2243,7 +2337,10 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 	// 因此没有「张冠李戴」风险，且对 count-mismatch 提前返回的路径同样有益
 	// （LLM 路径常见的「只有价税合计」半残票靠它补齐金额/税率）。
 	for i := range res.Invoices {
-		backfillInvoiceMath(&res.Invoices[i])
+		backfillInvoiceMath(&res.Invoices[i], invoiceTaxExemptEvidence(&res.Invoices[i], full))
+		// 金额自洽守卫：明细行折扣前 vs 合计行折扣后会破坏 amount+tax==total，
+		// 以价税合计为锚按税率反推（真机 26507000000067486566）。
+		reconcileInvoiceAmounts(&res.Invoices[i])
 		// 购销方归一 + 原文兜底：LLM 与规则都可能把购销方写反/写成同名
 		// （PDF 竖排标签被打散时尤为常见），这里用确定性守卫纠正；
 		// 某一侧缺失时用票面原文补齐，已有正确值不被覆盖。

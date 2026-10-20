@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ============ 发票号清洗：严禁中文文件名/非票号中文字符写入 invoice_no ============
@@ -65,7 +66,7 @@ func TestBusinessInvoiceMathBackfillsTaxRateFromTaxAmount(t *testing.T) {
 		Tax:         f64ptr(0.71),
 		TotalAmount: f64ptr(24.40),
 	}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	assert.NotNil(t, inv.TaxRate, "税率必须按 round(tax/amount,2) 反算补齐")
 	assert.InDelta(t, 0.03, *inv.TaxRate, 1e-9, "23.69/0.71 → 3%")
 }
@@ -76,7 +77,7 @@ func TestBusinessInvoiceMathBackfillsAmountFromTotalMinusTax(t *testing.T) {
 		Tax:         f64ptr(6.78),
 		TotalAmount: f64ptr(106.78),
 	}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	assert.NotNil(t, inv.Amount, "金额必须按 total-tax 反算补齐")
 	assert.InDelta(t, 100.0, *inv.Amount, 1e-9)
 }
@@ -84,7 +85,7 @@ func TestBusinessInvoiceMathBackfillsAmountFromTotalMinusTax(t *testing.T) {
 // 不征税/免税通行费：只有价税合计 → amount=total, tax=0, rate=0%
 func TestBusinessInvoiceMathBackfillsTaxFreeToll(t *testing.T) {
 	inv := InvoiceExtractionItem{TotalAmount: f64ptr(635.80)}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, true)
 	assert.NotNil(t, inv.Amount)
 	assert.InDelta(t, 635.80, *inv.Amount, 1e-9, "免税通行费金额=价税合计")
 	assert.NotNil(t, inv.Tax)
@@ -101,7 +102,7 @@ func TestBusinessInvoiceMathKeepsExistingTaxRate(t *testing.T) {
 		TotalAmount: f64ptr(109),
 		TaxRate:     f64ptr(0.09),
 	}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	assert.InDelta(t, 0.09, *inv.TaxRate, 1e-9, "已有合理税率不得被反算覆盖")
 }
 
@@ -112,7 +113,7 @@ func TestBusinessInvoiceMathKeepsExistingAmount(t *testing.T) {
 		Tax:         f64ptr(2.34),
 		TotalAmount: f64ptr(90.84),
 	}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	assert.InDelta(t, 88.5, *inv.Amount, 1e-9, "已有金额不得被 total-tax 覆盖")
 }
 
@@ -178,7 +179,7 @@ func TestBusinessInvoiceRuleIncompleteCatchesMissingNoAndDate(t *testing.T) {
 func TestBusinessInvoiceMathNoNegativeAmount(t *testing.T) {
 	// total 小于 tax 的坏数据：反算会出现负数，必须放弃而不是写负金额
 	inv := InvoiceExtractionItem{Tax: f64ptr(50), TotalAmount: f64ptr(10)}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	if inv.Amount != nil {
 		assert.GreaterOrEqual(t, *inv.Amount, 0.0, "不得反算出负金额")
 	}
@@ -187,7 +188,7 @@ func TestBusinessInvoiceMathNoNegativeAmount(t *testing.T) {
 func TestBusinessInvoiceMathRateSanityCap(t *testing.T) {
 	// tax/amount = 1.7 → 不是合理税率，必须放弃而不是写 170%
 	inv := InvoiceExtractionItem{Amount: f64ptr(10), Tax: f64ptr(17), TotalAmount: f64ptr(27)}
-	backfillInvoiceMath(&inv)
+	backfillInvoiceMath(&inv, false)
 	assert.Nil(t, inv.TaxRate, "税率超过 100% 的荒谬比例必须放弃补齐")
 }
 
@@ -195,3 +196,74 @@ func f64ptr(v float64) *float64 { return &v }
 
 var _ = math.Abs
 var _ = strings.TrimSpace
+
+// 回归（2026-10-20 自查发现）：无免税证据时绝不能把缺失的税额补成 0。
+// 事故：26507000000067486566 是 13% 应税发票，重提后 LLM 只给了价税合计，
+// 旧逻辑按「免税」补齐，把税额 145.23 静默改写成 0 —— 属于严重数据损坏。
+func TestBusinessInvoiceMathDoesNotZeroTaxWithoutExemptEvidence(t *testing.T) {
+	inv := InvoiceExtractionItem{TotalAmount: f64ptr(1262.40)}
+	backfillInvoiceMath(&inv, false)
+	assert.Nil(t, inv.Amount, "无免税证据时不得把金额写成 total")
+	assert.Nil(t, inv.Tax, "无免税证据时不得把税额补成 0")
+}
+
+// 有免税证据时必须补齐（不征税通行费场景）。
+func TestBusinessInvoiceMathBackfillsWhenExemptEvidence(t *testing.T) {
+	inv := InvoiceExtractionItem{TotalAmount: f64ptr(635.80)}
+	backfillInvoiceMath(&inv, true)
+	assert.NotNil(t, inv.Amount)
+	assert.InDelta(t, 635.80, *inv.Amount, 1e-9)
+	assert.NotNil(t, inv.Tax)
+	assert.InDelta(t, 0.0, *inv.Tax, 1e-9)
+}
+
+// invoiceTaxExemptEvidence：票面出现「不征税」等字样才算有证据。
+func TestBusinessInvoiceTaxExemptEvidence(t *testing.T) {
+	assert.False(t, invoiceTaxExemptEvidence(&InvoiceExtractionItem{}, "价税合计 ¥1262.40 税率 13%"))
+	assert.True(t, invoiceTaxExemptEvidence(&InvoiceExtractionItem{}, "税率 不征税"))
+	assert.True(t, invoiceTaxExemptEvidence(&InvoiceExtractionItem{}, "免税"))
+	zero := 0.0
+	assert.True(t, invoiceTaxExemptEvidence(&InvoiceExtractionItem{TaxRate: &zero}, ""))
+}
+
+// 回归（真机 26507000000067486566）：明细行取的是折扣前金额，与价税合计矛盾。
+// 必须以价税合计为锚、按税率反推：1262.40 / 1.13 = 1117.17，税额 145.23。
+func TestBusinessInvoiceAmountsReconciledWithTotal(t *testing.T) {
+	rate := 0.13
+	inv := InvoiceExtractionItem{
+		Amount: f64ptr(1269.91), Tax: f64ptr(165.09), TotalAmount: f64ptr(1262.40), TaxRate: &rate,
+	}
+	reconcileInvoiceAmounts(&inv)
+	require.NotNil(t, inv.Amount)
+	require.NotNil(t, inv.Tax)
+	assert.InDelta(t, 1117.17, *inv.Amount, 0.01, "金额必须按 total/(1+rate) 反推")
+	assert.InDelta(t, 145.23, *inv.Tax, 0.01, "税额必须为 total-amount")
+	assert.InDelta(t, 1262.40, *inv.Amount+*inv.Tax, 0.02, "三者必须自洽")
+}
+
+// 已自洽的票不得被改动。
+func TestBusinessInvoiceAmountsKeepConsistentTriple(t *testing.T) {
+	rate := 0.13
+	inv := InvoiceExtractionItem{
+		Amount: f64ptr(100), Tax: f64ptr(13), TotalAmount: f64ptr(113), TaxRate: &rate,
+	}
+	reconcileInvoiceAmounts(&inv)
+	assert.InDelta(t, 100.0, *inv.Amount, 1e-9)
+	assert.InDelta(t, 13.0, *inv.Tax, 1e-9)
+}
+
+// 落库守门必须先从明细补税率，再用「税率反推」而非「total - 折扣前税额」。
+// 真机 26507000000067486566：明细带 13%、税额是折扣前 165.09，
+// 期望 1117.17 / 145.23，绝不能用 total-tax 得 1097.31。
+func TestBusinessInvoicePersistGatePrefersRateOverPreDiscountTax(t *testing.T) {
+	rate := 0.13
+	invs := []InvoiceExtractionItem{{
+		Amount: f64ptr(1269.91), Tax: f64ptr(165.09), TotalAmount: f64ptr(1262.40),
+		Items: []InvoiceExtractionLine{{TaxRate: &rate, Amount: f64ptr(1269.91)}},
+	}}
+	ReconcileInvoicePartiesForPersist(invs)
+	require.NotNil(t, invs[0].Amount)
+	assert.InDelta(t, 1117.17, *invs[0].Amount, 0.01)
+	assert.InDelta(t, 145.23, *invs[0].Tax, 0.01)
+	assert.InDelta(t, 1262.40, *invs[0].Amount+*invs[0].Tax, 0.02)
+}

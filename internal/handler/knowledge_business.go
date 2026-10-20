@@ -1425,6 +1425,12 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 		h.businessSvc.MarkInvoiceDuplicates(extractCtx, kbID, knowledgeID, &meta)
 	}
 
+	// 保存前最终一致性守门：金额三件套必须自洽（amount + tax == total）、
+	// 购销方必须未颠倒。放在这里而不是只在 overlay 里，是因为中间还会经过
+	// 明细校验/归一/分类优先等多道步骤，任一步都可能重新推导金额
+	// （真机 26507000000067486566：overlay 后又被明细值覆盖回 1269.91+165.09≠1262.40）。
+	service.ReconcileInvoicePartiesForPersist(meta.Invoices)
+
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return nil, errors.NewInternalServerError("failed to encode extraction result")
