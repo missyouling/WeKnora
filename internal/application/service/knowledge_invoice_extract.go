@@ -38,32 +38,35 @@ func withExtractCallTimeout(ctx context.Context) (context.Context, context.Cance
 // Numeric fields use pointers so an unrecognized value stays null on the
 // wire instead of being coerced to 0.
 type InvoiceExtractionItem struct {
-	InvoiceNo   string                  `json:"invoice_no"`
-	InvoiceCode string                  `json:"invoice_code"`
-	InvoiceDate string                  `json:"invoice_date"`
-	InvoiceType string                  `json:"invoice_type"`
-	TotalAmount *float64                `json:"total_amount"`
-	Amount      *float64                `json:"amount"`
-	Tax         *float64                `json:"tax"`
-	TaxRate     *float64                `json:"tax_rate"`
-	SellerName  string                  `json:"seller_name"`
-	SellerTaxNo string                  `json:"seller_tax_no"`
-	SellerAddr  string                  `json:"seller_address"`
-	SellerPhone string                  `json:"seller_phone"`
-	SellerBank  string                  `json:"seller_bank"`
-	SellerAcct  string                  `json:"seller_account"`
-	BuyerName   string                  `json:"buyer_name"`
-	BuyerTaxNo  string                  `json:"buyer_tax_no"`
-	BuyerAddr   string                  `json:"buyer_address"`
-	BuyerPhone  string                  `json:"buyer_phone"`
-	BuyerBank   string                  `json:"buyer_bank"`
-	BuyerAcct   string                  `json:"buyer_account"`
-	Issuer      string                  `json:"issuer"`
-	Remark      string                  `json:"remark"`
-	Category    string                  `json:"category"`
-	Items       []InvoiceExtractionLine `json:"items"`
-	VoidFlag    bool                    `json:"void_flag"`
-	Duplicate   bool                    `json:"duplicate"`
+	InvoiceNo   string   `json:"invoice_no"`
+	InvoiceCode string   `json:"invoice_code"`
+	InvoiceDate string   `json:"invoice_date"`
+	InvoiceType string   `json:"invoice_type"`
+	TotalAmount *float64 `json:"total_amount"`
+	Amount      *float64 `json:"amount"`
+	Tax         *float64 `json:"tax"`
+	TaxRate     *float64 `json:"tax_rate"`
+	SellerName  string   `json:"seller_name"`
+	SellerTaxNo string   `json:"seller_tax_no"`
+	SellerAddr  string   `json:"seller_address"`
+	SellerPhone string   `json:"seller_phone"`
+	SellerBank  string   `json:"seller_bank"`
+	SellerAcct  string   `json:"seller_account"`
+	BuyerName   string   `json:"buyer_name"`
+	BuyerTaxNo  string   `json:"buyer_tax_no"`
+	BuyerAddr   string   `json:"buyer_address"`
+	BuyerPhone  string   `json:"buyer_phone"`
+	BuyerBank   string   `json:"buyer_bank"`
+	BuyerAcct   string   `json:"buyer_account"`
+	Issuer      string   `json:"issuer"`
+	Remark      string   `json:"remark"`
+	Category    string   `json:"category"`
+	// Tags 票内标签（历史提取结果里可能带）：参与列表关键词搜索与展示，
+	// 与知识库文件级标签（knowledge_tags）合并后统一进 InvoiceRecord.Tags。
+	Tags      []string                `json:"tags,omitempty"`
+	Items     []InvoiceExtractionLine `json:"items"`
+	VoidFlag  bool                    `json:"void_flag"`
+	Duplicate bool                    `json:"duplicate"`
 	// Fields 自定义动态字段扩展桶：用户自定义分类里没有标准存储位的字段
 	// （如通行费发票的「车牌号」），提取时从模型返回 JSON 的未知 key 收集而来，
 	// 随记录持久化并经列表/详情透传给前端动态列渲染。
@@ -895,6 +898,194 @@ const InvoiceExtractionBatchSize = 8
 // 永远等不到 LLM 补齐。调用方据此决定是否回退 LLM。
 //
 // 空结果返回 false（由调用方按 ruleOK=false 处理，不算半残）。
+// ============ 购销方（购买方 / 销售方）归一与防颠倒守卫 ============
+//
+// 业务铁律：本系统收录的发票，购买方恒为本企业（重庆星达铜业有限公司）。
+// 因此「销售方是我司」必然是解析把购销方写反了——PDF 竖排标签被打散时
+// （如「购 销 买 名 称：A 售 名 称：B 方 方」）按出现顺序取值就会对调。
+//
+// 归一策略（确定性、零 token，两条提取链路共用）：
+//  1. 税号优先于名称：名称易被 OCR 串行，税号是唯一标识；
+//  2. seller 命中我司（名称含关键字或税号相等）且 buyer 不是我司 → 整体互换
+//     名称/税号/地址/电话/开户行/账号六组字段；
+//  3. buyer 税号是我司但名称不是 → 以税号为准纠正名称；
+//  4. 购销方同名或同税号 → 从原文重新定位另一个主体，定位不到则清空重复的销售方，
+//     绝不留「购销同名」的脏数据（同名会让列表/对账口径彻底失效）。
+const (
+	// ourCompanyName 是本公司（购买方）法定名称。
+	ourCompanyName = "重庆星达铜业有限公司"
+	// ourCompanyKeyword 用于「名称包含即认为是我司」的宽松匹配（全称可能带后缀）。
+	ourCompanyKeyword = "星达铜业"
+	// ourCompanyTaxNo 是本公司统一社会信用代码。
+	ourCompanyTaxNo = "91500227MA5U54AJ0A"
+)
+
+// isOurCompany 判断名称或税号是否指向本公司。
+func isOurCompany(name, taxNo string) bool {
+	if strings.TrimSpace(taxNo) == ourCompanyTaxNo {
+		return true
+	}
+	return strings.Contains(strings.ReplaceAll(name, " ", ""), ourCompanyKeyword)
+}
+
+// partyPair 是一侧的完整主体信息（名称/税号/地址/电话/开户行/账号）。
+type partyPair struct {
+	name, taxNo, addr, phone, bank, acct string
+}
+
+// reconcileInvoiceParties 用票面原文兜底补齐缺失的购销方，再跑一遍归一守卫。
+//
+// 为什么要「补」而不是「覆盖」：LLM 常常只漏一侧（如只有销售方），此时原文里
+// 两个名称都在，补齐缺失侧即可；已有且正确的值一律不动，避免把识别对的结果
+// 用粗粒度正则改坏（票面名称含空格/后缀时正则可能截断）。
+func reconcileInvoiceParties(inv *InvoiceExtractionItem, srcText string) {
+	if inv == nil {
+		return
+	}
+	missingBuyer := strings.TrimSpace(inv.BuyerName) == ""
+	missingSeller := strings.TrimSpace(inv.SellerName) == ""
+	if (missingBuyer || missingSeller) && strings.TrimSpace(srcText) != "" {
+		bName, bTax, sName, sTax := parsePartiesFromText(srcText)
+		// 原文只能提供「两个名称」的相对顺序，无法保证属于当前这张票；
+		// 仅当结果数量为 1 张时可安全用于补齐（多张票时禁用，防张冠李戴）。
+		if bName != "" && sName != "" {
+			if missingBuyer {
+				inv.BuyerName, inv.BuyerTaxNo = bName, bTax
+			}
+			if missingSeller {
+				inv.SellerName, inv.SellerTaxNo = sName, sTax
+			}
+		}
+	}
+	normalizeInvoiceParties(inv, srcText)
+}
+
+// normalizeInvoiceParties 归一单张票的购销方：纠正颠倒、纠正名称与税号不符、
+// 拒绝购销同名。srcText 用于同名时从原文重新定位另一主体（可为空）。
+func normalizeInvoiceParties(inv *InvoiceExtractionItem, srcText string) {
+	if inv == nil {
+		return
+	}
+	buyer := partyPair{inv.BuyerName, inv.BuyerTaxNo, inv.BuyerAddr, inv.BuyerPhone, inv.BuyerBank, inv.BuyerAcct}
+	seller := partyPair{inv.SellerName, inv.SellerTaxNo, inv.SellerAddr, inv.SellerPhone, inv.SellerBank, inv.SellerAcct}
+
+	// 1) 购销颠倒：销售方是我司而购买方不是 → 整体互换
+	if isOurCompany(seller.name, seller.taxNo) && !isOurCompany(buyer.name, buyer.taxNo) {
+		buyer, seller = seller, buyer
+	}
+
+	// 2) 购买方税号是我司但名称不对 → 以税号为准纠正名称
+	if strings.TrimSpace(buyer.taxNo) == ourCompanyTaxNo && !strings.Contains(buyer.name, ourCompanyKeyword) {
+		buyer.name = ourCompanyName
+	}
+
+	// 3) 购销同名/同税号：从原文重新定位另一个主体；定位不到则清空销售方重复值
+	if sameParty(buyer, seller) {
+		if alt := locateOtherParty(srcText, buyer.name); alt != nil {
+			if strings.Contains(buyer.name, ourCompanyKeyword) || buyer.taxNo == ourCompanyTaxNo {
+				seller = *alt
+			} else if strings.Contains(alt.name, ourCompanyKeyword) || alt.taxNo == ourCompanyTaxNo {
+				buyer = *alt
+			} else {
+				seller = *alt
+			}
+		} else {
+			seller = partyPair{}
+		}
+	}
+
+	inv.BuyerName, inv.BuyerTaxNo = buyer.name, buyer.taxNo
+	inv.BuyerAddr, inv.BuyerPhone = buyer.addr, buyer.phone
+	inv.BuyerBank, inv.BuyerAcct = buyer.bank, buyer.acct
+	inv.SellerName, inv.SellerTaxNo = seller.name, seller.taxNo
+	inv.SellerAddr, inv.SellerPhone = seller.addr, seller.phone
+	inv.SellerBank, inv.SellerAcct = seller.bank, seller.acct
+}
+
+// sameParty 判断购销两侧是否为同一主体（名称相同，或税号非空且相同）。
+func sameParty(a, b partyPair) bool {
+	if an, bn := strings.TrimSpace(a.name), strings.TrimSpace(b.name); an != "" && an == bn {
+		return true
+	}
+	if at, bt := strings.TrimSpace(a.taxNo), strings.TrimSpace(b.taxNo); at != "" && at == bt {
+		return true
+	}
+	return false
+}
+
+// locateOtherParty 在原文中定位一个不同于 exclude 的主体（名称 + 就近税号）。
+// 用于「购销同名」时找回被覆盖的那一侧。定位不到返回 nil（宁可清空也不猜）。
+func locateOtherParty(srcText, exclude string) *partyPair {
+	for _, p := range parseAllParties(srcText) {
+		if p.name == "" || p.name == exclude {
+			continue
+		}
+		return &p
+	}
+	return nil
+}
+
+// partyNameRe 匹配「名 称: xxx」「购买方：xxx」「销售方：xxx」等形态，
+// 名称终止于空白/竖线/逗号。
+var (
+	partyNameRe = regexp.MustCompile(`(?:名\s*称|购\s*买\s*方|销\s*售\s*方)\s*[：:]\s*([^\s|，,]{2,60})`)
+	partyTaxRe  = regexp.MustCompile(`(?:纳税人识别号|统一社会信用代码)\s*[/／]?\s*(?:纳税人识别号)?\s*[：:]\s*([0-9A-Z]{15,20})`)
+)
+
+// parseAllParties 从原文按出现顺序收集主体（名称 + 同序税号）。
+func parseAllParties(srcText string) []partyPair {
+	if strings.TrimSpace(srcText) == "" {
+		return nil
+	}
+	// 先剥离 Markdown 强调符：docreader/MinerU 会把标签渲染成
+	// 「名 称**:** A」「统一社会信用代码**/**纳税人识别号**:** X」，
+	// 星号夹在标签与冒号之间，不剥离则正则完全失配（实测返回空）。
+	clean := strings.ReplaceAll(srcText, "*", "")
+	clean = strings.ReplaceAll(clean, "　", " ")
+	names := partyNameRe.FindAllStringSubmatchIndex(clean, -1)
+	taxes := partyTaxRe.FindAllStringSubmatchIndex(clean, -1)
+	out := make([]partyPair, 0, len(names))
+	for i, nm := range names {
+		name := cleanPartyName(clean[nm[2]:nm[3]])
+		if name == "" {
+			continue
+		}
+		p := partyPair{name: name}
+		// 税号按「同序配对」：第 i 个名称对应第 i 个税号（票面固定两栏）
+		if i < len(taxes) {
+			p.taxNo = clean[taxes[i][2]:taxes[i][3]]
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// cleanPartyName 清洗名称：去掉 Markdown 强调符、冒号、残留的竖排标签字。
+func cleanPartyName(s string) string {
+	s = strings.ReplaceAll(s, "*", "")
+	s = strings.TrimSpace(strings.Trim(s, "：:，,。"))
+	s = strings.TrimSuffix(s, "方")
+	s = strings.TrimSuffix(s, "信")
+	s = strings.TrimSuffix(s, "息")
+	return strings.TrimSpace(s)
+}
+
+// parsePartiesFromText 从票面原文解析购买方/销售方（名称 + 税号）。
+//
+// 关键点：**购买方恒为第一个名称、销售方为第二个名称**。PDF 竖排标签被打散后
+// 文本形如「购 销 买 名 称：A 售 名 称：B 方 方」，其中「购买」在前、「销售」在后，
+// 名称顺序与语义顺序一致；按标签字面位置反查反而会被交错的「售」字误导。
+func parsePartiesFromText(srcText string) (buyerName, buyerTax, sellerName, sellerTax string) {
+	ps := parseAllParties(srcText)
+	if len(ps) > 0 {
+		buyerName, buyerTax = ps[0].name, ps[0].taxNo
+	}
+	if len(ps) > 1 {
+		sellerName, sellerTax = ps[1].name, ps[1].taxNo
+	}
+	return
+}
+
 // invoiceDocFileName 尽力从 chunks 里取源文件名（用于票号清洗时排除「误填文件名」）。
 // Chunk 本身不存文件名，只有 Knowledge 有；取不到时返回空串 —— 此时
 // cleanInvoiceNoValue 仍会靠「汇总单/发票/电子」等中文描述词拦截，
@@ -1334,6 +1525,8 @@ func NormalizeInvoiceExtractionResult(res *InvoiceExtractionResult) {
 		cleanInvoiceItemSpec(inv.Items)
 		// 列表税率列展示"金额最大项"的税率（Q2：多档税率在抽屉明细中逐项展示）。
 		inv.TaxRate = dominantItemTaxRate(inv.Items)
+		// 购销方归一：纠正颠倒 / 名称税号不符 / 购销同名（确定性守卫，无原文也生效）
+		normalizeInvoiceParties(&inv, "")
 		page++
 		inv.Page = page
 		// 物理页码：规则/LLM 已回填则保留；解析引擎没给位置信息时回退序号，
@@ -2051,6 +2244,10 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 	// （LLM 路径常见的「只有价税合计」半残票靠它补齐金额/税率）。
 	for i := range res.Invoices {
 		backfillInvoiceMath(&res.Invoices[i])
+		// 购销方归一 + 原文兜底：LLM 与规则都可能把购销方写反/写成同名
+		// （PDF 竖排标签被打散时尤为常见），这里用确定性守卫纠正；
+		// 某一侧缺失时用票面原文补齐，已有正确值不被覆盖。
+		reconcileInvoiceParties(&res.Invoices[i], full)
 	}
 
 	nos := flatInvoiceNoLabelRe.FindAllStringSubmatch(full, -1)

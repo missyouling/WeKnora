@@ -9,15 +9,24 @@
       <div class="dh-body">
         <!-- 上传历史列表（解析 / 提取状态，支持删除历史条目） -->
         <div class="dh-list-region">
+          <!-- 状态统计筛选小卡片：计数始终是「全量文件」口径，不受搜索/日期影响 -->
+          <div class="dh-status-cards">
+            <button v-for="c in statusCards" :key="c.key" type="button" class="dh-status-card"
+              :class="[`dh-status-card--${c.key}`, { 'is-active': statusFilter === c.key }]"
+              :data-status="c.key" :title="c.title" @click="onStatusCardClick(c.key)">
+              <span class="dh-status-card__label">{{ c.label }}</span>
+              <span class="dh-status-card__num">{{ c.count }}</span>
+            </button>
+          </div>
           <div class="dh-toolbar">
-            <t-input v-model="keyword" placeholder="搜索文件名" clearable class="dh-search"
-              @enter="reload(1)" @clear="reload(1)">
+            <!-- 即输即搜（300ms 防抖）+ 一键清空，不再单独放「搜索」按钮 -->
+            <t-input v-model="keywordInput" placeholder="搜索文件名" clearable class="dh-search"
+              @clear="onKeywordClear">
               <template #prefix-icon><t-icon name="search" /></template>
             </t-input>
-            <t-button theme="default" variant="outline" @click="reload(1)">
-              <template #icon><t-icon name="search" size="14px" /></template>
-              搜索
-            </t-button>
+            <t-date-range-picker v-model="dateRange" class="dh-date-range" clearable
+              value-type="YYYY-MM-DD" placeholder="上传开始日期 - 上传结束日期"
+              @change="onDateRangeChange" />
           </div>
           <div ref="listScrollRef" class="doc-list-scroll" @scroll="onListScroll">
             <div class="doc-list-view">
@@ -130,15 +139,37 @@ const emit = defineEmits<{
   (e: 'changed', payload?: { deletedIds?: string[] }): void
 }>()
 
-const rows = ref<any[]>([])
-const total = ref(0)
+// 全量快照：抽屉一次拉全（上限 SNAPSHOT_CAP），搜索/日期/状态三种过滤全部在本地做。
+// 为什么不做服务端分页：① 状态卡的计数必须是「全量口径」，分页数据算不准；
+// ② 即输即搜要求零网络等待；③ 历史记录是低频管理面板，单次拉全可接受。
+const SNAPSHOT_CAP = 2000
+const DEFAULT_PAGE_SIZE = 20
+const allRows = ref<any[]>([])
 const loading = ref(false)
+// keywordInput 是用户正在输入的值；keyword 是 300ms 防抖后真正参与过滤的值
+const keywordInput = ref('')
 const keyword = ref('')
-const page = ref(1)
-const pageSize = ref(20)
-const hasMore = ref(true)
+const dateRange = ref<string[]>([])
+const statusFilter = ref<'all' | 'running' | 'abnormal'>('all')
+const visibleCount = ref(DEFAULT_PAGE_SIZE)
 const listScrollRef = ref<HTMLElement>()
 const activeRow = ref<any>(null)
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
+
+const onKeywordClear = () => {
+  keywordInput.value = ''
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keyword.value = ''
+  resetPaging()
+}
+const onDateRangeChange = () => resetPaging()
+const onStatusCardClick = (key: 'all' | 'running' | 'abnormal') => {
+  statusFilter.value = key
+  resetPaging()
+}
+const resetPaging = () => {
+  visibleCount.value = DEFAULT_PAGE_SIZE
+}
 const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '84px' },
@@ -236,25 +267,74 @@ const normalize = (r: any) => ({
 
 const rowDocType = (r: any) => invDocType(r)
 
-const reload = async (p = 1) => {
+// 状态归类（唯一口径）：解析中/提取中 → running；解析失败/提取失败 → abnormal。
+const ROW_PARSE_RUNNING = new Set(['pending', 'processing', 'parsing', 'finalizing'])
+const ROW_EXTRACT_RUNNING = new Set(['pending', 'processing', 'parsing'])
+const isRowRunning = (r: any) =>
+  ROW_PARSE_RUNNING.has(String(r.parse_status || '')) ||
+  ROW_EXTRACT_RUNNING.has(String(extractStatus(r) || ''))
+const isRowAbnormal = (r: any) =>
+  String(r.parse_status || '') === 'failed' || String(extractStatus(r) || '') === 'failed'
+
+// 状态卡（计数基于全量快照，与搜索/日期条件无关——卡片表达的是「库里有多少」）
+const statusCards = computed(() => {
+  const all = allRows.value
+  return [
+    { key: 'all' as const, label: '全部文件', count: all.length, title: '全部已上传文件' },
+    { key: 'running' as const, label: '正在执行', count: all.filter(isRowRunning).length, title: '解析中 / 提取中的文件' },
+    { key: 'abnormal' as const, label: '异常文件', count: all.filter(isRowAbnormal).length, title: '解析失败 / 提取失败的文件' },
+  ]
+})
+
+// 关键词 + 上传时间 + 状态 三者 AND 组合过滤（全部本地，即输即生效）
+const filteredRows = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const [from, to] = dateRange.value || []
+  return allRows.value.filter((r: any) => {
+    if (statusFilter.value === 'running' && !isRowRunning(r)) return false
+    if (statusFilter.value === 'abnormal' && !isRowAbnormal(r)) return false
+    // 上传时间（created_at）区间：按自然日包含两端
+    if (from || to) {
+      const day = String(r.created_at || '').slice(0, 10)
+      if (!day) return false
+      if (from && day < String(from).slice(0, 10)) return false
+      if (to && day > String(to).slice(0, 10)) return false
+    }
+    if (kw) {
+      const hay = [r.title, r.file_name, r.doc_type].map((x: string) => String(x || '').toLowerCase())
+      if (!hay.some((x: string) => x.includes(kw))) return false
+    }
+    return true
+  })
+})
+const rows = computed(() => filteredRows.value.slice(0, visibleCount.value))
+const hasMore = computed(() => rows.value.length < filteredRows.value.length)
+
+// 拉全量快照（一次拉全，供计数与本地过滤）
+const reload = async () => {
   if (!props.kbId) return
   loading.value = true
   try {
-    const res: any = await listKnowledgeFiles(props.kbId, { page: p, page_size: pageSize.value, keyword: keyword.value || undefined })
-    let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-    // 已删除（隐藏）的历史条目不再显示
-    arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
+    const collected: any[] = []
+    let p = 1
+    // 逐页拉全，直到拿满 total 或触到上限（防超大知识库拖垮抽屉）
+    for (;;) {
+      const res: any = await listKnowledgeFiles(props.kbId, { page: p, page_size: 200 })
+      const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+      collected.push(...arr)
+      const totalCnt = Number(res?.total || 0)
+      if (arr.length === 0 || collected.length >= totalCnt || collected.length >= SNAPSHOT_CAP) break
+      p++
+    }
+    let arr = collected.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
     const dtSet = props.docTypes
     if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet.has(dt) : true })
-    // 按概览卡片传入的状态筛选
+    // 兼容父级传入的固定筛选（保留原有对接约定）
     const f = props.filter || 'all'
     if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
     else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
-    arr = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
-    rows.value = arr
-    total.value = res?.total || arr.length
-    page.value = res?.page || p
-    hasMore.value = rows.value.length < total.value
+    allRows.value = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
+    resetPaging()
     activeRow.value = null
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载上传历史失败')
@@ -263,31 +343,26 @@ const reload = async (p = 1) => {
   }
 }
 
-const loadMore = async () => {
-  if (!hasMore.value || loading.value || !listScrollRef.value) return
-  loading.value = true
-  try {
-    const next = page.value + 1
-    const res: any = await listKnowledgeFiles(props.kbId, { page: next, page_size: pageSize.value, keyword: keyword.value || undefined })
-    let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-    arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
-    const dtSet2 = props.docTypes
-    if (dtSet2 && dtSet2.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet2.has(dt) : true })
-    const more = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
-    rows.value.push(...more)
-    page.value = next
-    hasMore.value = rows.value.length < (res?.total || 0)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '加载更多失败')
-  } finally {
-    loading.value = false
-  }
+// 本地分页：滚动到底继续放出下一批（不重新请求）
+const loadMore = () => {
+  if (!hasMore.value || loading.value) return
+  visibleCount.value += DEFAULT_PAGE_SIZE
 }
 
 const onListScroll = (e: Event) => {
   const el = e.target as HTMLElement
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadMore()
 }
+
+// 关键词 300ms 防抖：输入停止后才应用过滤（渲染开销大时避免逐字卡顿）
+watch(keywordInput, (v) => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => {
+    keyword.value = v
+    resetPaging()
+  }, 300)
+})
+onBeforeUnmount(() => { if (keywordTimer) clearTimeout(keywordTimer) })
 
 // ---- 失败原因（展示前统一转译为中文短句，不透出英文栈/裸 JSON） ----
 const parseError = (row: any) => row.custom_metadata?.parse_error || row.custom_metadata?.error || ''
@@ -354,7 +429,7 @@ const reextractRow = async (row: any) => {
       await extractFleetDocument(props.kbId, row.id, payload)
     }
     MessagePlugin.success('已重新提取')
-    reload(1)
+    reload()
     emit('changed')
   } catch (e: any) {
     // 409：该文件已有提取任务在途（上传弹窗/列表轮询/另一通道刚提交过），
@@ -362,7 +437,7 @@ const reextractRow = async (row: any) => {
     // 否则会把一次正常的并发去重误报成红色「重新提取失败」。
     if (isExtractInProgress(e)) {
       MessagePlugin.info('该文件正在提取中，请稍候刷新查看结果')
-      reload(1)
+      reload()
       return
     }
     MessagePlugin.error(e?.message || '重新提取失败')
@@ -382,8 +457,8 @@ const onPopRemove = async () => {
 const removeOne = async (row: any) => {
   try {
     await delKnowledgeDetails(row.id)
-    rows.value = rows.value.filter((r) => r.id !== row.id)
-    total.value = Math.max(0, total.value - 1)
+    allRows.value = allRows.value.filter((r) => r.id !== row.id)
+    activeRow.value = null
     MessagePlugin.success("已删除")
     emit("changed", { deletedIds: [row.id] })
   } catch (e: any) {
@@ -490,7 +565,7 @@ const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer
 
 // 是否存在需要持续关注的任务（任一命中即保持轮询）
 const hasActiveTasks = () => {
-  return rows.value.some((r: any) => {
+  return allRows.value.some((r: any) => {
     const p = r.parse_status || ''
     const e = extractStatus(r)
     if (p === 'pending' || p === 'processing' || p === 'finalizing') return true
@@ -504,7 +579,7 @@ const hasActiveTasks = () => {
 const silentSync = async () => {
   if (!props.kbId) return
   try {
-    const res: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: pageSize.value, keyword: keyword.value || undefined })
+    const res: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: DEFAULT_PAGE_SIZE })
     let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
     arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
     const dtSet = props.docTypes
@@ -513,16 +588,16 @@ const silentSync = async () => {
     if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
     else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
     // 增删检测：当前首页 id 集合与 fresh 不一致说明发生了真实变化，回退整表刷新
-    const currentIds = rows.value.slice(0, pageSize.value).map((r: any) => r.id).sort()
+    const currentIds = allRows.value.slice(0, DEFAULT_PAGE_SIZE).map((r: any) => r.id).sort()
     const freshIds = arr.map((r: any) => r.id).sort()
     if (currentIds.length !== freshIds.length || currentIds.some((id, i) => id !== freshIds[i])) {
-      await reload(1)
+      await reload()
       return
     }
     // 仅增量 patch 已有行的状态字段（不替换数组、不重置选中/分页/滚动）
     const map = new Map<string, any>(arr.map((r: any) => [r.id, r] as [string, any]))
     let changed = false
-    for (const row of rows.value) {
+    for (const row of allRows.value) {
       const fr = map.get(row.id)
       if (!fr) continue
       if (fr.parse_status !== row.parse_status) { row.parse_status = fr.parse_status; changed = true }
@@ -541,7 +616,7 @@ const silentSync = async () => {
 watch(() => props.visible, (v) => {
   stopPolling()
   if (v) {
-    reload(1).then(() => {
+    reload().then(() => {
       if (!hasActiveTasks()) return
       lastChangeTs = Date.now()
       pollTimer = setInterval(async () => {
@@ -594,7 +669,50 @@ onBeforeUnmount(stopPolling)
   gap: 10px;
 }
 .dh-toolbar { display: flex; gap: 8px; align-items: center; }
-.dh-search { flex: 1; }
+.dh-search { flex: 1; min-width: 0; }
+/* 上传时间区间：与搜索框同高同圆角，宽度固定避免挤压搜索框 */
+.dh-date-range { flex: 0 0 300px; width: 300px; }
+.dh-date-range :deep(.t-input) { border-radius: var(--td-radius-default, 6px); }
+/* ---- 状态统计筛选小卡片 ---- */
+.dh-status-cards { display: flex; gap: 8px; }
+.dh-status-card {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-container);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  text-align: left;
+  min-width: 0;
+}
+.dh-status-card:hover { border-color: var(--td-brand-color-light-active, var(--td-brand-color)); }
+.dh-status-card.is-active {
+  border-color: var(--td-brand-color);
+  background: var(--td-brand-color-light);
+  box-shadow: 0 0 0 1px var(--td-brand-color) inset;
+}
+.dh-status-card__label {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dh-status-card.is-active .dh-status-card__label { color: var(--td-brand-color); }
+.dh-status-card__num {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-primary);
+}
+.dh-status-card.is-active .dh-status-card__num { color: var(--td-brand-color); }
+/* 异常卡用警示色区分：即使未选中也让人一眼看到有失败文件 */
+.dh-status-card--abnormal .dh-status-card__num { color: var(--td-error-color); }
 /* ---- 列表（复刻合同管理历史抽屉样式：grid 自绘 + 懒加载滚动） ---- */
 .doc-list-scroll {
   flex: 1 1 auto;

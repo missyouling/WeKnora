@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 // invoiceMetadata 与 handler.invoiceCustomMetadata 对齐，用于从 custom_metadata
@@ -276,7 +277,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,
 					FileType:       k.FileType,
-					Tags:           tags,
+					Tags:           mergeInvoiceTags(tags, inv.Tags),
 					ExtractStatus:  meta.ExtractStatus,
 					ExtractError:   meta.ExtractError,
 					KBID:           k.KnowledgeBaseID,
@@ -315,6 +316,13 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 	// 4. 过滤：关键字、类型、税率、状态、日期为 AND 组合（复合查询交集）。
 	// 关键词命中（全字段/标签搜索）只是其中一个过滤条件，不再豁免类型/税率/日期筛选。
 	kw := strings.ToLower(strings.TrimSpace(filter.Keyword))
+	// 标签预载（仅在有关键词时）：标签原本只在分页后回填「当前页」以省流量，
+	// 但关键词过滤发生在分页之前 —— 不预载就会出现「按标签名搜索恒为 0 条」
+	// （2026-10-20 回归：通行费 标签在库里 274 条关联，搜索却搜不到任何记录）。
+	// 这里在过滤前一次性把涉及文件的标签全部挂上，且只发一次查询。
+	if kw != "" {
+		preloadInvoiceRecordTags(ctx, s.repo, records)
+	}
 	dateFrom, dateTo := strings.TrimSpace(filter.DateFrom), strings.TrimSpace(filter.DateTo)
 	kept := records[:0]
 	var sumAmount, sumTax, sumTotal float64
@@ -599,6 +607,76 @@ func invoiceDateInRange(date, from, to string) bool {
 		return false
 	}
 	return true
+}
+
+// mergeInvoiceTags 合并文件级标签与票内标签（去重、忽略空值）。
+//
+// 必须复制：同一文件的每条记录都挂在同一个 fileTags 切片上，直接 append 会让
+// 后一张票的标签污染前一张（甚至写坏共享底层数组）。
+func mergeInvoiceTags(fileTags, invTags []string) []string {
+	if len(invTags) == 0 {
+		return fileTags
+	}
+	all := make([]string, 0, len(fileTags)+len(invTags))
+	all = append(all, fileTags...)
+	all = append(all, invTags...)
+	out := make([]string, 0, len(all))
+	seen := make(map[string]struct{}, len(all))
+	for _, t := range all {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// preloadInvoiceRecordTags 在关键词过滤之前，把记录所属文件的**完整标签列表**
+// （knowledge_tags 关联表 + 票内 tags）挂到每条记录上。
+//
+// 为什么必须在过滤前：标签回填原本安排在分页之后（只给当前页的 20 行取标签，
+// 省掉上百行数据），而关键词过滤跑在分页之前；两者顺序一颠倒，过滤时
+// r.Tags 恒为空，用户按标签名搜索就永远搜不到（跨页文件更是彻底不可见）。
+//
+// 代价可控：仅当关键词非空时触发，且对全部涉及文件只发**一次**查询。
+func preloadInvoiceRecordTags(ctx context.Context, repo interfaces.KnowledgeRepository, records []types.InvoiceRecord) {
+	if len(records) == 0 || repo == nil {
+		return
+	}
+	idSet := make(map[string]struct{}, len(records))
+	ids := make([]string, 0, len(records))
+	for i := range records {
+		id := records[i].KnowledgeID
+		if id == "" {
+			continue
+		}
+		if _, ok := idSet[id]; ok {
+			continue
+		}
+		idSet[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	tagMap, err := repo.GetKnowledgeTags(ctx, ids)
+	if err != nil {
+		return // 标签不可用不应阻断搜索：退化为原字段匹配
+	}
+	for i := range records {
+		var names []string
+		for _, t := range tagMap[records[i].KnowledgeID] {
+			if t != nil && t.Name != "" {
+				names = append(names, t.Name)
+			}
+		}
+		records[i].Tags = mergeInvoiceTags(records[i].Tags, names)
+	}
 }
 
 // invoiceRecordMatchKeyword 判断记录是否命中全字段搜索词（大小写不敏感）。
