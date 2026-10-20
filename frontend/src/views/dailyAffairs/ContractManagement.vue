@@ -26,37 +26,15 @@
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
       <DashboardKpiGroup :loading="!cardsReady" :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
-      <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-          @refresh="applyFilter" :selected-count="selectedRowKeys.length"
-          @clear-selection="clearSelection" hide-batch-bar>
-          <template #type-extra>
-            <div class="doc-filter-field">
-              <t-select v-model="filterFulfillStatus" :options="fulfillStatusOptions" placeholder="履约状态"
-                class="doc-type-select doc-filter-field__control" clearable>
-                <template #prefixIcon><t-icon name="check-circle" size="16px" /></template>
-              </t-select>
-            </div>
-            <div class="doc-filter-field doc-filter-field--wide">
-              <t-date-range-picker v-model="dateRange" placeholder="签订日期" class="doc-date-range doc-filter-field__control"
-                clearable allow-input @change="applyFilter">
-                <template #prefixIcon><t-icon name="time" size="16px" /></template>
-              </t-date-range-picker>
-            </div>
-          </template>
-          <template #columns>
-            <BusinessColumnFilter :columns="effectiveColumns" v-model:visible-keys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
-          </template>
-          <template #right-extra>
-            <t-button variant="outline" size="small" @click="settingsVisible = true">
-              <template #icon><t-icon name="setting" size="14px" /></template>
-              设置
-            </t-button>
-            <t-button theme="primary" size="small" @click="uploadVisible = true">
-              <template #icon><t-icon name="upload" size="14px" /></template>
-              上传合同
-            </t-button>
-          </template>
-        </BusinessListToolbar>
+      <!-- 筛选工具栏走中台 BusinessFilterBar（与发票同款）：筛选器改为 FilterFieldSpec
+           声明，分类切换只由顶部 KPI 卡片承担，工具栏不再出现分类下拉 -->
+          <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+            :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
+            settings-text="设置" :primary-action="{ text: '上传合同', icon: 'upload' }" hide-batch-bar
+            @columns-change="onVisibleColKeysChange" @reset-columns="resetColumns"
+            @select-all-columns="selectAllColumns" @filter-change="applyFilter"
+            @settings="settingsVisible = true" @primary="uploadVisible = true"
+            @clear-selection="clearSelection" />
 
       <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
@@ -245,176 +223,32 @@
 
 
     <!-- 合同详情抽屉（竖向区块，可拖宽，上下滚动） -->
-<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="700px" :storage-key="'weknora-contract-drawer-width'" hide-footer destroy-on-close class="contract-detail-drawer">
-      <div class="contract-detail-body">
-        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
-        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
-
-        <!-- 合同字段（手动保存模式：不再自动保存，底部「保存/取消」统一提交） -->
-        <section class="detail-block">
-          <div class="detail-block-content">
-            <div class="detail-fields">
-              <div class="field-group">
-                <div class="field-group-title">合同信息</div>
-                <div class="field-grid">
-                  <t-form-item label="合同编号" label-width="110px">
-                    <t-input v-model="editForm.contract_no" placeholder="无编号时自动生成" />
-                  </t-form-item>
-                  <t-form-item label="合同名称" label-width="110px">
-                    <t-input v-model="editForm.contract_name" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="合同类型" label-width="110px">
-                    <t-select v-model="editForm.contract_type" :options="contractTypeRaw" clearable filterable allow-create
-                      placeholder="选择类型" />
-                  </t-form-item>
-                  <t-form-item label="签订日期" label-width="110px">
-                    <t-date-picker v-model="editForm.sign_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="生效日期" label-width="110px">
-                    <t-date-picker v-model="editForm.effective_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="到期日期" label-width="110px">
-                    <t-date-picker v-model="editForm.expiry_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="签订地点" label-width="110px">
-                    <t-input v-model="editForm.sign_place" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">甲方</div>
-                <div class="field-grid">
-                  <t-form-item label="名称" label-width="110px">
-                    <t-input v-model="editForm.party_a_name" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="110px">
-                    <t-input v-model="editForm.party_a_tax_no" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="地址" label-width="110px">
-                    <t-input v-model="editForm.party_a_address" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="电话" label-width="110px">
-                    <t-input v-model="editForm.party_a_phone" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="开户行" label-width="110px">
-                    <t-input v-model="editForm.party_a_bank" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="账号" label-width="110px">
-                    <t-input v-model="editForm.party_a_account" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">乙方</div>
-                <div class="field-grid">
-                  <t-form-item label="名称" label-width="110px">
-                    <t-input v-model="editForm.party_b_name" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="统一社会信用代码" label-width="110px">
-                    <t-input v-model="editForm.party_b_tax_no" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="地址" label-width="110px">
-                    <t-input v-model="editForm.party_b_address" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="电话" label-width="110px">
-                    <t-input v-model="editForm.party_b_phone" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="开户行" label-width="110px">
-                    <t-input v-model="editForm.party_b_bank" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="账号" label-width="110px">
-                    <t-input v-model="editForm.party_b_account" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">金额信息</div>
-                <div class="field-grid">
-                  <t-form-item label="合同金额" label-width="110px">
-                    <t-input v-model="editForm.contract_amount" placeholder="" @input="(v: string) => (editForm.contract_amount = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="税率" label-width="110px">
-                    <t-input :value="editForm.tax_rate_display" placeholder="" suffix="%"
-                      @input="(v: string) => (editForm.tax_rate_display = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="付款方式" label-width="110px">
-                    <t-select v-model="editForm.payment_method" :options="paymentMethodOptions" clearable
-                      placeholder="一次性/分期/按进度" />
-                  </t-form-item>
-                  <t-form-item label="质保金" label-width="110px">
-                    <t-input v-model="editForm.quality_bond" placeholder="" @input="(v: string) => (editForm.quality_bond = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="违约金" label-width="110px">
-                    <t-input v-model="editForm.liquidated_damages" placeholder="" @input="(v: string) => (editForm.liquidated_damages = sanitizeNum(v))" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">项目内容</div>
-                <div class="field-grid">
-                  <t-form-item label="标的" label-width="110px">
-                    <t-input v-model="editForm.subject" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="数量" label-width="110px">
-                    <t-input v-model="editForm.quantity" placeholder="" @input="(v: string) => (editForm.quantity = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="单价" label-width="110px">
-                    <t-input v-model="editForm.unit_price" placeholder="" @input="(v: string) => (editForm.unit_price = sanitizeNum(v))" />
-                  </t-form-item>
-                  <t-form-item label="履行期限" label-width="110px">
-                    <t-input v-model="editForm.performance_period" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="经办人" label-width="110px">
-                    <t-input v-model="editForm.handler" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="部门" label-width="110px">
-                    <t-input v-model="editForm.department" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">备注</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="备注" label-width="110px">
-                    <t-textarea v-model="editForm.remark" :autosize="{ minRows: 2, maxRows: 5 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="detail-save-hint">
-                <t-icon name="check-circle" size="14px" />
-                <span>修改后点击底部「保存」提交{{ saving ? '（保存中...）' : '' }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 底部操作：手动保存/取消（黄金基准发票同款心智） -->
-        <div class="detail-footer-actions">
-          <t-button variant="outline" size="medium" @click="detailVisible = false">取消</t-button>
-          <t-button theme="primary" size="medium" :loading="saving" @click="saveContractDetail">保存</t-button>
+    <!-- 合同详情抽屉：中台 BusinessSplitDetailDrawer（与发票同款单栏结构：
+         质量面板 → 两栏动态字段 → 底部折叠源文件预览） -->
+    <BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="currentRow"
+      :page-no="detailPageNo" :form="editForm" :fields="editFieldDefs" :sub-fields="[]"
+      :supports-sub-fields="false" :block-title="editForm.contract_type || '合同信息'"
+      :quality="detailQuality" :label-of="qualityLabel" :dirty="detailDirty" :saving="saving"
+      :storage-key="'weknora-contract-drawer-width'" @save="saveContractDetail" @delete="onDetailDelete"
+      @re-extract="onDetailReExtract">
+      <!-- 业务特有控件：类型下拉（改类型会联动归档分类，必须走页面自己的 options） -->
+      <template #field-contractType>
+        <t-select v-model="editForm.contract_type" :options="contractTypeOptions" clearable filterable allow-create
+          placeholder="选择类型" />
+      </template>
+      <template #field-extractStatus>
+        <t-tag v-if="statusOf(currentRow || {}).label !== '--'" size="small" :theme="statusOf(currentRow || {}).theme"
+          variant="light-outline" class="row-status-tag">{{ statusOf(currentRow || {}).label }}</t-tag>
+        <span v-else class="row-muted">--</span>
+      </template>
+      <template #field-tags>
+        <div v-if="rowTags(currentRow || {}).length" class="detail-tags-readonly">
+          <t-tag v-for="t in rowTags(currentRow || {})" :key="t.id || t.name" size="small" variant="light-outline"
+            class="row-tag">{{ t.name }}</t-tag>
         </div>
-
-        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview，避免 PDF/图片渲染器初始化 -->
-        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
-          <t-collapse-panel value="preview" header="源文件预览">
-            <div class="detail-block-content">
-              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :page="currentRow.page" :file-type="currentRow?.fileType || ''"
-                :file-name="currentRow?.fileName || ''" :active="true" />
-            </div>
-          </t-collapse-panel>
-        </t-collapse>
-      </div>
-    </SettingDrawer>
+        <span v-else class="row-muted">—</span>
+      </template>
+    </BusinessSplitDetailDrawer>
 
     <!-- 合同编号重复二次确认：强制保存前询问（确认后带 force 重试，取消留在编辑态） -->
     <t-dialog v-model:visible="dupConfirmVisible" header="合同编号重复" width="420" @confirm="onDupConfirm">
@@ -481,7 +315,8 @@ import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.v
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
-import BusinessListToolbar from './BusinessListToolbar.vue'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
@@ -492,6 +327,7 @@ import {
   listKnowledgeFiles,
   getKnowledgeDetails,
   batchDeleteKnowledge,
+  delKnowledgeDetails,
   updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
@@ -507,9 +343,11 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
-import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import { pdfPageOf } from './pdfPage'
 import BusinessColumnFilter from './BusinessColumnFilter.vue'
-import { contractFieldLabel } from './contractFieldLabels'
+import { CONTRACT_FIELD_LABELS, contractFieldLabel } from './contractFieldLabels'
+import { buildDetailFieldDefs } from './businessDetailForm'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
 
@@ -1060,6 +898,28 @@ const fulfillFilteredRows = computed(() => {
 })
 const filteredRows = computed(() => [...pendingRows.value, ...fulfillFilteredRows.value])
 
+// 扁平筛选态：与上面三个 ref 双向桥接，中台组件只发不可变更新；
+// 页面原有筛选语义（AND 复合查询）保持不变。
+const filterState = computed<FilterState>({
+  get: () => ({
+    keyword: keyword.value,
+    fulfillStatus: filterFulfillStatus.value,
+    dateRange: dateRange.value,
+  }),
+  set: (v) => {
+    keyword.value = String(v?.keyword ?? '')
+    filterFulfillStatus.value = String(v?.fulfillStatus ?? '')
+    dateRange.value = Array.isArray(v?.dateRange) ? v.dateRange : []
+  },
+})
+// 合同类型筛选统一仅由顶部概览卡片承担，工具栏不再重复下拉
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'fulfillStatus', type: 'select', placeholder: '履约状态', icon: 'check-circle', options: fulfillStatusOptions.value },
+  { key: 'dateRange', type: 'date-range', placeholder: '签订日期', icon: 'time' },
+])
+const onVisibleColKeysChange = (keys: string[]) => { visibleColKeys.value = keys }
+
 const fulfillStatusOptions = computed(() => FULFILL_STATUSES.map(v => ({ value: v, label: v })))
 const paymentMethodOptions = computed(() => PAYMENT_METHODS.map(v => ({ value: v, label: v })))
 
@@ -1480,6 +1340,73 @@ const fillEditForm = () => {
     handler: r.handler || '',
     department: r.department || '',
     remark: r.remark || '',
+  }
+  detailBaseline.value = JSON.parse(JSON.stringify(editForm.value))
+}
+
+// 抽屉底部动作：删除（整份文件仅一份合同时级联删除源文件；多份时只移除该条）
+const detailPageNo = computed(() => pdfPageOf({ page: currentRow.value?.page, page_no: currentRow.value?.pageNo }))
+
+// 脏检查：与填入时基线比对（抽屉「保存」按钮靠它启用）
+const detailBaseline = ref<any>(null)
+const detailDirty = computed(() => {
+  if (!detailBaseline.value) return false
+  return JSON.stringify(detailBaseline.value) !== JSON.stringify(editForm.value)
+})
+
+// 详情抽屉动态字段：按当前合同类型匹配分类 subs，无配置时回退内置列。
+// 字段名归一到 snake_case——合同 editForm / 落库 contracts[] 都用 snake_case。
+const editFieldDefs = computed(() => {
+  const t = editForm.value.contract_type
+  const cats = (contractCats.value || []).filter((c: any) => c.enabled !== false)
+  const hit = cats.find((c: any) => c.name === t) || cats[0]
+  const subs = hit?.subs
+  if (Array.isArray(subs) && subs.length) {
+    return buildDetailFieldDefs(subs, {
+      fieldKeyOf: (n: string) => snakeOf(n),
+      labelOf: (n: string) => CONTRACT_FIELD_LABELS[n] || contractFieldLabel(n),
+      isRemarkPart: () => false,
+    })
+  }
+  return DEFAULT_CONTRACT_COLUMNS
+    .filter((c: any) => c.key !== 'items')
+    .map((c: any) => ({ name: snakeOf(c.key), label: c.title || c.label || c.key, dataType: c.dataType || 'text' }))
+})
+
+function snakeOf(k: string): string {
+  return String(k || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+}
+
+const onDetailDelete = async () => {
+  const r = currentRow.value
+  if (!r?.knowledgeId) return
+  try {
+    const res: any = await getKnowledgeDetails(r.knowledgeId)
+    const meta = (res?.data || res)?.custom_metadata || {}
+    const contracts: any[] = Array.isArray(meta.contracts) ? [...meta.contracts] : []
+    const rest = contracts.filter((c: any, i: number) => i !== (Number(r.page) - 1) && c?.contract_no !== r.contractNo)
+    if (rest.length === 0) {
+      // 该文件只剩这一份合同 → 级联删除底层源文件，杜绝孤儿文件拦截重传
+      await delKnowledgeDetails(r.knowledgeId)
+    } else {
+      await updateBusinessMetadata(kbId.value, r.knowledgeId, { ...meta, kind: 'contract', contracts: rest }, true)
+    }
+    MessagePlugin.success('已删除')
+    detailVisible.value = false
+    loadFiles(true)
+  } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+
+const onDetailReExtract = async () => {
+  const r = currentRow.value
+  if (!r?.knowledgeId) return
+  try {
+    await extractBusinessDocument(kbId.value, r.knowledgeId, 'contract', filterContractType.value || undefined)
+    MessagePlugin.success('已提交重新提取')
+    detailVisible.value = false
+    loadFiles(true)
+  } catch (e: any) {
+    if (!isExtractInProgress(e)) MessagePlugin.error(e?.message || '重新提取失败')
   }
 }
 

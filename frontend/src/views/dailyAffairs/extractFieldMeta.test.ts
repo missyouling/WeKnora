@@ -38,10 +38,18 @@ test('自定义扩展字段（含中文 key）同样可配正则', () => {
   }
 })
 
+test('合同/制度/公告/奖惩 已接入补洞（与后端 ScopeSchema.RegexPatchable 对齐）', () => {
+  assert.equal(isRegexPatchable('contract', 'contractNo'), true)
+  assert.equal(isRegexPatchable('regulation', 'regNo'), true)
+  assert.equal(isRegexPatchable('notice', 'apNo'), true)
+  assert.equal(isRegexPatchable('award_punish', 'measure'), true)
+  // 扩展字段（含中文）同样可配正则——与发票口径一致，写进扩展字段桶
+  assert.equal(isRegexPatchable('contract', '履约保证金'), true)
+})
+
 test('未接入字段级校验的 scope 与空字段名不误判', () => {
-  assert.equal(isRegexPatchable('contract', 'contractNo'), false)
   assert.equal(isRegexPatchable('vehicle', '车牌号'), false)
-  assert.equal(isRegexPatchable('award_punish', 'apNo'), false)
+  assert.equal(isRegexPatchable('utility', '户号'), false)
   assert.equal(isRegexPatchable('unknown_scope', 'invoiceNo'), false)
   assert.equal(isRegexPatchable('invoice', ''), false)
   assert.equal(isRegexPatchable('invoice', '   '), false)
@@ -51,7 +59,7 @@ test('regexDisabledReason 只在「未接入 / 未命名」时给原因', () => 
   assert.equal(regexDisabledReason('invoice', 'invoiceNo'), '')
   assert.equal(regexDisabledReason('invoice', '车牌号'), '')
   assert.equal(regexDisabledReason('invoice', 'totalAmount'), '')
-  assert.match(regexDisabledReason('contract', 'contractNo'), /暂未接入/)
+  assert.match(regexDisabledReason('vehicle', '车牌号'), /暂未接入/)
   assert.match(regexDisabledReason('unknown_scope', 'x'), /暂未接入/)
   assert.match(regexDisabledReason('invoice', ''), /命名/)
 })
