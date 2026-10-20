@@ -1295,7 +1295,10 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 整份调用在长文档上会因上下文挤占再次漏票，逐页片段小、信噪比高，命中率更高。
 	// 每轮最多 8 页（成本上限），最多两轮（覆盖 15 页级汇总单）；某轮无进展立即停，
 	// 不做无意义的重复烧 token。
-	for pass := 0; pass < 2 && anchorCount > len(merged.Invoices); pass++ {
+	// 只有主提取**正常返回**时才补提：主调用若已因限流/超时失败（extractErr != nil），
+	// 再逐页发模型调用只会把限流打得更死（真机实测：10 页文件补提 16 页直接把
+	// 供应商配额打爆，随后整份提取被判定 failed）。此时直接落失败态让用户稍后重试。
+	for pass := 0; pass < 2 && extractErr == nil && anchorCount > len(merged.Invoices); pass++ {
 		before := len(merged.Invoices)
 		sup := h.supplementMissingInvoices(extractCtx, chatModel, invoiceRuleCfg, chunks, merged.Invoices, knowledgeID)
 		merged = service.MergeInvoiceSupplement(merged, sup)
