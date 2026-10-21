@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"context"
@@ -435,4 +435,3 @@ func utilityBillRecordMatchKeyword(r types.UtilityBillRecord, kw string) bool {
 	}
 	return false
 }
-

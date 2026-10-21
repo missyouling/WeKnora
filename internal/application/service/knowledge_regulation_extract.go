@@ -18,9 +18,9 @@ const regulationExtractMaxContentRunes = 24000
 
 // RegulationExtractionResult is the strict-JSON shape the model must return.
 type RegulationExtractionResult struct {
-	Kind         string                        `json:"kind"` // "regulation" | "not_regulation"
+	Kind         string                           `json:"kind"` // "regulation" | "not_regulation"
 	Regulations  []types.RegulationExtractionItem `json:"regulations"`
-	ExtractError string                        `json:"extract_error"`
+	ExtractError string                           `json:"extract_error"`
 }
 
 // regulationExtractionSystemPrompt instructs the model to return strict JSON
@@ -38,10 +38,11 @@ const regulationExtractionSystemPrompt = `你是一个专业的公司制度文�
 8. dept 为编制部门（如"人力资源和行政管理中心"）；version 为版本号（如"1"）；issue_date 为编制日期（YYYY-MM-DD 格式）；page_count 为页数（如"3"或"共3页"）；modify_count 为修改次数（如"0"）；无法识别时返回空字符串。
 9. scope 为适用范围（如"本制度适用于集团公司及各部门及各子公司"，可用首句或概述）；effective_date 为生效日期（YYYY-MM-DD 格式，通常见附则"自发布之日起生效"）；confidentiality 为密级（如"内部""机密""公开"，文档未标注时返回空字符串）；remark 为备注（如修订说明、与旧制度的关系说明）；无法识别时返回空字符串。
 10. compiled_by 为编制人（制度末尾签署栏或页眉中的"编制：XXX"）；reviewed_by 为审核人（"审核：XXX"）；approved_by 为批准人（"批准：XXX"）；summary 为制度摘要（用 2-4 句话概括制度目的与主要内容）；文档中未出现时返回空字符串，不要编造。
-11. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
+11. attachments 为文末「附件」清单（多个用"、"分隔）；无法识别时返回空字符串。
+12. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 输出格式：
-{"kind":"regulation","regulations":[{"reg_no":"","reg_name":"","reg_type":"","dept":"","version":"","issue_date":"","page_count":"","modify_count":"","scope":"","effective_date":"","confidentiality":"","remark":"","compiled_by":"","reviewed_by":"","approved_by":"","summary":""}]}`
+{"kind":"regulation","regulations":[{"reg_no":"","reg_name":"","reg_type":"","dept":"","version":"","issue_date":"","page_count":"","modify_count":"","scope":"","effective_date":"","confidentiality":"","remark":"","compiled_by":"","reviewed_by":"","approved_by":"","summary":"","attachments":""}]}`
 
 // BuildRegulationExtractionContent assembles the document text sent to the model.
 func BuildRegulationExtractionContent(name, summary string, chunks []*types.Chunk) string {
@@ -191,6 +192,10 @@ func NormalizeRegulationExtractionResult(res *RegulationExtractionResult, autoSe
 	}
 	if len(res.Regulations) == 0 {
 		return
+	}
+	// 一文件一档案：多批次结果先合并为唯一一条（否则自动编号会生成 -001/-002 假记录）。
+	if merged, ok := MergeExtractionItems(res.Regulations); ok {
+		res.Regulations = []types.RegulationExtractionItem{merged}
 	}
 	now := time.Now()
 	kept := res.Regulations[:0]

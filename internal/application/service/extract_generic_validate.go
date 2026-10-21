@@ -415,9 +415,9 @@ func isZeroValue(v reflect.Value) bool {
 // 这类区间值截成半截。
 var standardDateFields = map[string]struct{}{
 	// 合同
-	"sign_date": {}, "effective_date": {}, "expiry_date": {},
+	"sign_date": {}, "effective_date": {}, "expire_date": {},
 	// 制度 / 通知公告
-	"issue_date": {},
+	"issue_date": {}, "valid_until": {},
 	// 电费 / 光伏账单
 	"bill_period_start": {}, "bill_period_end": {},
 	"print_date": {}, "due_date": {},

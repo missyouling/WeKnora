@@ -20,6 +20,7 @@ type RegulationExtractionItem struct {
 	ReviewedBy     string `json:"reviewed_by"`      // 审核（审核人）
 	ApprovedBy     string `json:"approved_by"`      // 批准（批准人）
 	Summary        string `json:"summary"`          // 摘要
+	Attachments    string `json:"attachments"`      // 附件清单
 	// Page is always 1 for regulations (one file = one regulation).
 	Page int `json:"page"`
 }
@@ -42,6 +43,7 @@ type RegulationRecord struct {
 	ReviewedBy     string   `json:"reviewed_by"`
 	ApprovedBy     string   `json:"approved_by"`
 	Summary        string   `json:"summary"`
+	Attachments    string   `json:"attachments"`
 	KnowledgeID    string   `json:"knowledge_id"`
 	KnowledgeTitle string   `json:"knowledge_title"`
 	FileName       string   `json:"file_name"`

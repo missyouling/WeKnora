@@ -173,7 +173,7 @@ func TestExtractInvoiceRuleCompletenessGate(t *testing.T) {
 	// 缺开票日期 → 同样不完整（2026-10-20 新增判据）
 	noDate := &InvoiceExtractionResult{Kind: "invoice", Invoices: []InvoiceExtractionItem{{
 		InvoiceNo: "1",
-		Amount: f64(1), Tax: f64(0.09), TotalAmount: f64(1.09),
+		Amount:    f64(1), Tax: f64(0.09), TotalAmount: f64(1.09),
 		BuyerName: "甲", BuyerTaxNo: "91500000000000000A",
 		SellerName: "乙", SellerTaxNo: "91500000000000000B",
 	}}}

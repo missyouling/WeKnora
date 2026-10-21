@@ -43,8 +43,10 @@ test('四个 document scope 的系统内置三件套（分类主轴 + 提取状�
   const triple: Record<string, string[]> = {
     contract: ['contractType', 'extractStatus', 'tags'],
     regulation: ['regType', 'extractStatus', 'tags'],
+    // notice 与 award_punish 统一目录后，分类主轴同为公告类型（apType），
+    // 与后端 TestDocumentScopesBuiltinTriple 同口径（measure 不再是奖惩主轴）
     notice: ['apType', 'extractStatus', 'tags'],
-    award_punish: ['measure', 'extractStatus', 'tags'],
+    award_punish: ['apType', 'extractStatus', 'tags'],
   }
   for (const [scope, keys] of Object.entries(triple)) {
     const d = getScope(scope)
@@ -73,19 +75,26 @@ test('labelOf 与旧 lookupLabel 口径一致（camel/snake/原名三种写法�
   assert.equal(labelOf('not-a-scope', 'x'), 'x')
 })
 
-test('notice 与 award_punish 字段零交集（消灭隐式混用）', () => {
+test('notice 与 award_punish 共用同一份字段目录（统一 scope，非零交集）', () => {
   const notice = getScope('notice')!
   const ap = getScope('award_punish')!
   assert.ok(notice.standardFields.length > 0 && ap.standardFields.length > 0)
-  const noticeKeys = new Set(notice.standardFields.map((f) => f.key.toLowerCase()))
-  // 公告专属键不得出现在奖惩里，反之亦然
-  for (const own of ['apNo', 'issueDept', 'signer']) {
-    assert.ok(noticeKeys.has(own.toLowerCase()), `notice 应含 ${own}`)
-    assert.equal(isStandardFieldOf('award_punish', own), false, `${own} 不得属于奖惩`)
+  // 字段数与顺序逐项一致（同一 dict 派生）
+  assert.equal(notice.standardFields.length, ap.standardFields.length, '两个 scope 字段数必须一致')
+  for (let i = 0; i < notice.standardFields.length; i++) {
+    assert.equal(notice.standardFields[i].key, ap.standardFields[i].key,
+      `字段顺序/键必须逐项一致（index=${i}）`)
   }
-  for (const own of ['person', 'position', 'basis']) {
+  const noticeKeys = new Set(notice.standardFields.map((f) => f.key.toLowerCase()))
+  // 公告口径键：两个 scope 都认
+  for (const own of ['ap_no', 'ap_title', 'ap_type', 'issue_dept']) {
+    assert.ok(noticeKeys.has(own), `notice 应含 ${own}`)
+    assert.ok(isStandardFieldOf('award_punish', own), `${own} 也属于奖惩（统一目录）`)
+  }
+  // 真实样文（通报类）扩展字段：两个 scope 都认
+  for (const own of ['person', 'measure', 'basis', 'urgency', 'valid_until']) {
     assert.ok(isStandardFieldOf('award_punish', own), `奖惩应含 ${own}`)
-    assert.equal(isStandardFieldOf('notice', own), false, `${own} 不得属于公告`)
+    assert.ok(isStandardFieldOf('notice', own), `${own} 也属于公告（统一目录）`)
   }
 })
 

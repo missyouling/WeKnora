@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -21,41 +22,92 @@ const contractExtractMaxContentRunes = 24000
 // Numeric fields use pointers so an unrecognized value stays null on the
 // wire instead of being coerced to 0.
 type ContractExtractionItem struct {
-	ContractNo        string   `json:"contract_no"`
-	ContractName      string   `json:"contract_name"`
-	ContractType      string   `json:"contract_type"`
-	SignDate          string   `json:"sign_date"`
-	EffectiveDate     string   `json:"effective_date"`
-	ExpiryDate        string   `json:"expiry_date"`
-	SignPlace         string   `json:"sign_place"`
-	PartyAName        string   `json:"party_a_name"`
-	PartyATaxNo       string   `json:"party_a_tax_no"`
-	PartyAAddress     string   `json:"party_a_address"`
-	PartyAPhone       string   `json:"party_a_phone"`
-	PartyABank        string   `json:"party_a_bank"`
-	PartyAAccount     string   `json:"party_a_account"`
-	PartyBName        string   `json:"party_b_name"`
-	PartyBTaxNo       string   `json:"party_b_tax_no"`
-	PartyBAddress     string   `json:"party_b_address"`
-	PartyBPhone       string   `json:"party_b_phone"`
-	PartyBBank        string   `json:"party_b_bank"`
-	PartyBAccount     string   `json:"party_b_account"`
-	ContractAmount    *float64 `json:"contract_amount"`
-	TaxRate           *float64 `json:"tax_rate"`
-	PaymentMethod     string   `json:"payment_method"`
-	QualityBond       *float64 `json:"quality_bond"`
-	LiquidatedDamages *float64 `json:"liquidated_damages"`
-	Subject           string   `json:"subject"`
-	Quantity          *float64 `json:"quantity"`
-	UnitPrice         *float64 `json:"unit_price"`
-	PerformancePeriod string   `json:"performance_period"`
-	Handler           string   `json:"handler"`
-	Department        string   `json:"department"`
-	Remark            string   `json:"remark"`
-	FulfillStatus     string   `json:"fulfill_status"`
+	// —— 标准字段（11）：顺序即字段定义的权威顺序 ——
+	ContractNo   string   `json:"contract_no"`
+	ContractName string   `json:"contract_name"`
+	ContractType string   `json:"contract_type"`
+	PartyA       string   `json:"party_a"`
+	PartyB       string   `json:"party_b"`
+	SignDate     string   `json:"sign_date"`
+	ExpireDate   string   `json:"expire_date"`
+	Amount       *float64 `json:"amount"`
+	// PerformanceStatus 由到期日期派生（履行中/即将到期/已超期/已终止），
+	// 模型可留空，列表组装时按 expire_date 计算，前端只读展示。
+	PerformanceStatus string `json:"performance_status"`
+	// —— 扩展字段（15）——
+	PartyAContact string `json:"party_a_contact"`
+	PartyATaxNo   string `json:"party_a_tax_no"`
+	PartyBContact string `json:"party_b_contact"`
+	PartyBTaxNo   string `json:"party_b_tax_no"`
+	PartyAAddress string `json:"party_a_address"`
+	PartyAPhone   string `json:"party_a_phone"`
+	PartyABank    string `json:"party_a_bank"`
+	PartyAAccount string `json:"party_a_account"`
+	PartyBAddress string `json:"party_b_address"`
+	PartyBPhone   string `json:"party_b_phone"`
+	PartyBBank    string `json:"party_b_bank"`
+	PartyBAccount string `json:"party_b_account"`
+	PaymentMethod string `json:"payment_method"`
+	SignLocation  string `json:"sign_location"`
+	// Summary 摘要：优先复用知识库已生成的摘要（knowledges.description），
+	// 模型只在原文有独立摘要段时覆盖。
+	Summary string `json:"summary"`
+	// —— 历史字段：保留读写以兼容存量数据与旧提示词，不再进入字段定义/列表 ——
+	EffectiveDate     string   `json:"effective_date,omitempty"`
+	TaxRate           *float64 `json:"tax_rate,omitempty"`
+	QualityBond       *float64 `json:"quality_bond,omitempty"`
+	LiquidatedDamages *float64 `json:"liquidated_damages,omitempty"`
+	Subject           string   `json:"subject,omitempty"`
+	Quantity          *float64 `json:"quantity,omitempty"`
+	UnitPrice         *float64 `json:"unit_price,omitempty"`
+	PerformancePeriod string   `json:"performance_period,omitempty"`
+	Handler           string   `json:"handler,omitempty"`
+	Department        string   `json:"department,omitempty"`
+	Remark            string   `json:"remark,omitempty"`
 	// Page is the 1-based page/ordinal of the contract inside its source file.
-	// It is assigned by the backend (in extraction-result order).
+	// 合同一文件一档案，恒为 1。
 	Page int `json:"page"`
+}
+
+// contractLegacyFieldAliases 存量字段名 → 新契约字段名。
+//
+// 2026-10-21 合同字段体系重置（party_a_name → party_a、contract_amount → amount…）
+// 前落库的 metadata 仍是旧键。读时统一映射，避免"老数据打开详情全空"，
+// 也避免为此写一次不可回滚的数据迁移。
+var contractLegacyFieldAliases = map[string]string{
+	"party_a_name":    "party_a",
+	"party_b_name":    "party_b",
+	"expiry_date":     "expire_date",
+	"contract_amount": "amount",
+	"sign_place":      "sign_location",
+	"fulfill_status":  "performance_status",
+}
+
+// UnmarshalJSON 兼容旧字段名（见 contractLegacyFieldAliases），新键优先。
+func (c *ContractExtractionItem) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for legacy, canonical := range contractLegacyFieldAliases {
+		if _, ok := raw[canonical]; ok {
+			continue
+		}
+		if v, ok := raw[legacy]; ok {
+			raw[canonical] = v
+		}
+	}
+	normalized, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	type alias ContractExtractionItem
+	var a alias
+	if err := json.Unmarshal(normalized, &a); err != nil {
+		return err
+	}
+	*c = ContractExtractionItem(a)
+	return nil
 }
 
 // ContractExtractionResult is the strict-JSON shape the model must return.
@@ -67,25 +119,26 @@ type ContractExtractionResult struct {
 
 // contractExtractionSystemPrompt instructs the model to return strict JSON
 // with every contract found in the document.
-const contractExtractionSystemPrompt = `你是一个专业的合同信息提取助手。你的任务是从文档文本中识别并提取所有合同的关键字段信息。
+const contractExtractionSystemPrompt = `你是一个专业的合同信息提取助手。你的任务是从文档文本中识别并提取合同的关键字段信息。
 
 规则：
 1. 只提取文本中真实存在的信息，不要编造任何字段。
-2. 一份文档可能包含多份合同（如汇总签署页、多份协议合订本），请将全部合同提取到 contracts 数组中。
+2. 【一文件一档案】一份上传文件在系统中严格对应一条合同记录。即使文档很长、被分段送入，也只输出 contracts 数组中的一个元素；把全文各段的信息合并到这一个对象里（前面段落的甲乙方/金额 + 后面段落的签订日期/盖章信息）。
 3. 同一份合同在文档中重复出现（复印件、重复贴页）时只提取一次，不要重复。
 4. 如果文档内容与合同无关（如发票、制度、清单、报表等），kind 设为 "not_contract"，contracts 返回空数组。
-5. 金额字段 contract_amount、quality_bond（质保金）、liquidated_damages（违约金）、quantity（数量）、unit_price（单价）使用数字类型，单位为元；无法识别时返回 null。
-6. tax_rate 使用小数（如 3% 记为 0.03，13% 记为 0.13）；无法识别时返回 null。
-7. 日期字段 sign_date（签订日期）、effective_date（生效日期）、expiry_date（到期日期）使用 YYYY-MM-DD 格式；无法识别时返回空字符串。
-8. 合同双方：party_a_name/party_b_name 为甲方/乙方名称，party_a_tax_no/party_b_tax_no 为统一社会信用代码，party_a_address/party_b_address 为地址，party_a_phone/party_b_phone 为电话，party_a_bank/party_b_bank 为开户行，party_a_account/party_b_account 为银行账号；无法识别时返回空字符串。甲方是合同中的"甲方"一方，乙方是"乙方"一方，若只有单方主体信息则填入对应方，另一方留空。
-9. contract_type 只从以下枚举中选择：采购合同、销售合同、服务合同、租赁合同、技术合同、运输合同、借款合同、保密协议、其它合同。根据合同名称或正文关键字判断：含「采购」→采购合同；含「销售」「售」→销售合同；含「租赁」「租」→租赁合同；含「服务」→服务合同；含「技术」→技术合同；含「运输」「货运」→运输合同；含「借款」「贷款」→借款合同；含「保密」「NDA」→保密协议；都不含时用「其它合同」。
-10. payment_method 为付款方式，只从以下枚举中选择：一次性、分期、按进度；无法识别时返回空字符串。
-11. subject 为标的/项目名称，performance_period 为履行期限，handler 为经办人，department 为部门，remark 为备注/特别约定；无法识别时返回空字符串。
-12. contract_no 为合同编号；若文档中确实没有合同编号，返回空字符串（不要编造）。
-13. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
+5. amount（合同金额）使用数字类型，单位为元；无法识别时返回 null。
+6. 合同双方：party_a / party_b 为甲方/乙方名称；party_a_contact / party_b_contact 为甲乙方经办人（联系人）；party_a_tax_no / party_b_tax_no 为统一社会信用代码；party_a_address / party_b_address 为地址；party_a_phone / party_b_phone 为电话；party_a_bank / party_b_bank 为开户行；party_a_account / party_b_account 为银行账号。无法识别时返回空字符串。甲方是合同中的"甲方"一方，乙方是"乙方"一方；若只有单方主体信息则填入对应方，另一方留空。
+7. 日期字段 sign_date（签订日期）、expire_date（到期日期 / 合同终止日期）使用 YYYY-MM-DD 格式；无法识别时返回空字符串。
+8. contract_type 只从以下枚举中选择：采购合同、销售合同、服务合同、租赁合同、技术合同、运输合同、借款合同、保密协议、其它合同。根据合同名称或正文关键字判断：含「采购」→采购合同；含「销售」「售」→销售合同；含「租赁」「租」→租赁合同；含「服务」→服务合同；含「技术」→技术合同；含「运输」「货运」→运输合同；含「借款」「贷款」→借款合同；含「保密」「NDA」→保密协议；都不含时用「其它合同」。
+9. payment_method 为付款方式，只从以下枚举中选择：一次性、分期、按进度；无法识别时返回空字符串。
+10. sign_location 为签订地点（合同尾部"签订地点/签署地"）；无法识别时返回空字符串。
+11. summary 为合同内容摘要：仅当原文自带"摘要/内容摘要"段落时填写，否则返回空字符串（系统会用知识库已生成的文档摘要回填，不要自行编造）。
+12. performance_status 由到期日期派生，模型不需要输出（保持空字符串）。
+13. contract_no 为合同编号；若文档中确实没有合同编号，返回空字符串（不要编造）。
+14. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 输出格式：
-{"kind":"contract","contracts":[{"contract_no":"","contract_name":"","contract_type":"","sign_date":"","effective_date":"","expiry_date":"","sign_place":"","party_a_name":"","party_a_tax_no":"","party_a_address":"","party_a_phone":"","party_a_bank":"","party_a_account":"","party_b_name":"","party_b_tax_no":"","party_b_address":"","party_b_phone":"","party_b_bank":"","party_b_account":"","contract_amount":0,"tax_rate":0,"payment_method":"","quality_bond":0,"liquidated_damages":0,"subject":"","quantity":0,"unit_price":0,"performance_period":"","handler":"","department":"","remark":"","fulfill_status":""}]}`
+{"kind":"contract","contracts":[{"contract_no":"","contract_name":"","contract_type":"","party_a":"","party_b":"","sign_date":"","expire_date":"","amount":0,"performance_status":"","party_a_contact":"","party_a_tax_no":"","party_b_contact":"","party_b_tax_no":"","party_a_address":"","party_a_phone":"","party_a_bank":"","party_a_account":"","party_b_address":"","party_b_phone":"","party_b_bank":"","party_b_account":"","payment_method":"","sign_location":"","summary":""}]}`
 
 // BuildContractExtractionContent assembles the document text sent to the model.
 func BuildContractExtractionContent(name, summary string, chunks []*types.Chunk) string {
@@ -273,6 +326,11 @@ func NormalizeContractExtractionResult(res *ContractExtractionResult, autoSeqSta
 	if len(res.Contracts) == 0 {
 		return
 	}
+	// 一文件一档案：多批次结果先按非空优先合并为唯一一条，再进入去重/编号。
+	// 否则两批各出一份 → 自动编号生成 -001/-002，列表条数多于上传文件数（真机事故）。
+	if merged, ok := MergeExtractionItems(res.Contracts); ok {
+		res.Contracts = []ContractExtractionItem{merged}
+	}
 	dedup := make(map[string]struct{}, len(res.Contracts))
 	kept := res.Contracts[:0]
 	now := time.Now()
@@ -369,9 +427,9 @@ var validFulfillStatuses = map[string]struct{}{
 // model reply as a successful extraction.
 func ContractsAllEmpty(cts []ContractExtractionItem) bool {
 	for _, ct := range cts {
-		amt := ct.ContractAmount != nil && *ct.ContractAmount != 0
+		amt := ct.Amount != nil && *ct.Amount != 0
 		if ct.ContractNo != "" || ct.ContractName != "" || ct.ContractType != "" ||
-			ct.PartyAName != "" || ct.PartyBName != "" || amt {
+			ct.PartyA != "" || ct.PartyB != "" || amt {
 			return false
 		}
 	}

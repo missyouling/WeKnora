@@ -20,7 +20,7 @@ func TestBuildInvoiceRuleSystemPromptDefault(t *testing.T) {
 
 func TestBuildInvoiceRuleSystemPromptFields(t *testing.T) {
 	cfg := &types.KbExtractConfig{
-		Scope:  types.FleetCategoryScopeInvoice,
+		Scope: types.FleetCategoryScopeInvoice,
 		Fields: []types.ExtractFieldConfig{
 			{Name: "sellerName", Desc: "销方名称", Rule: "取发票右上角销售方全称", Enabled: true},
 			{Name: "totalAmount", Desc: "价税合计", Enabled: true},

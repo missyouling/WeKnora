@@ -8,6 +8,7 @@ import {
   subsPayloadFromNames,
   subFieldKeyForLabel,
   findDuplicateSubField,
+  copyFieldUniqueName,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
@@ -253,4 +254,43 @@ test('新增子项先查同义/同列头再落库', () => {
   const fn = panel.slice(panel.indexOf('function addSubField'), panel.indexOf('function addSubField') + 800)
   assert.match(fn, /findDuplicateSubField\(subs, \{ key, label \}\)/)
   assert.match(fn, /已存在/)
+})
+
+// ---- 2026-10-21：复制字段中文命名 + 可编辑 + 自动聚焦 ----
+
+test('复制字段命名是「{中文名}_副本」递增，不再产出 tags_copy 英文键', () => {
+  assert.equal(copyFieldUniqueName('标签', []), '标签_副本')
+  assert.equal(copyFieldUniqueName('标签', ['标签_副本']), '标签_副本2')
+  assert.equal(copyFieldUniqueName('标签', ['标签_副本', '标签_副本2']), '标签_副本3')
+  // 空基名兜底为「字段」，绝不产出「_副本」这种裸前缀
+  assert.equal(copyFieldUniqueName('', []), '字段_副本')
+  // taken 同时收 name 与 label：表头撞名也算占用
+  assert.equal(copyFieldUniqueName('备注', ['备注_副本']), '备注_副本2')
+  // 复制「副本本身」时先剥尾部 _副本N，序号递增而不是层层嵌套
+  //（否则真机上出现 甲方税号_副本_副本）
+  assert.equal(copyFieldUniqueName('标签_副本', ['标签_副本']), '标签_副本2')
+  assert.equal(copyFieldUniqueName('标签_副本2', ['标签_副本', '标签_副本2']), '标签_副本3')
+})
+
+test('duplicateField 用 copyFieldUniqueName 且不再拼 _copy 英文后缀', () => {
+  const fn = panel.slice(panel.indexOf('function duplicateField'), panel.indexOf('function addField'))
+  assert.match(fn, /copyFieldUniqueName\(/, '复制字段命名必须走中文副本命名')
+  assert.doesNotMatch(fn, /_copy/, '禁止再生成 tags_copy 这类英文身份键')
+  assert.match(fn, /已复制字段/)
+})
+
+test('字段名可编辑（t-input 绑定显示名），不再有只读 static 展示', () => {
+  // 所有非 items 字段名都是输入框；显示值走 fieldEditOf（label 优先，契约键回退字典中文名）
+  assert.match(panel, /:model-value="fieldEditOf\(fd\)"/, '输入框显示值必须走 fieldEditOf')
+  assert.match(panel, /@update:model-value="[^"]*setFieldEdit/, '改名走 setFieldEdit（契约键只改表头）')
+  assert.doesNotMatch(panel, /fc-name-static/, '字段名只读 static 展示已废除')
+})
+
+test('复制后自动聚焦新字段名输入框', () => {
+  const fn = panel.slice(panel.indexOf('function duplicateField'), panel.indexOf('function addField'))
+  assert.match(fn, /copyFieldUniqueName\(/)
+  assert.match(fn, /nextTick/, '复制后需等待渲染再聚焦')
+  assert.match(fn, /focus\(\)/, '复制后必须 focus 新字段名输入框')
+  // 输入框注册 ref，供 duplicateField 聚焦
+  assert.match(panel, /setFieldInputRef\(/)
 })

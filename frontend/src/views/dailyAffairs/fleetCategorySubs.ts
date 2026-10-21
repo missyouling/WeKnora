@@ -290,6 +290,25 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
 }
 
 /**
+ * 复制字段的唯一命名：`{中文名}_副本`，被占用时递增 `_副本2`、`_副本3`…
+ *
+ * 之前复制字段用英文 `{name}_copy` 生成身份键，字段配置/列表里直接露出
+ * `tags_copy` 这类英文，与「新增字段用中文名」的口径不一致。
+ * 现在复制与新增同口径：中文名即字段名（taken 需同时收进 name 与 label，防表头撞名）。
+ */
+export function copyFieldUniqueName(baseLabel: string, taken: Iterable<string>): string {
+  const used = new Set<string>()
+  for (const t of taken) used.add(String(t ?? ''))
+  // 复制「副本」再复制时先剥掉尾部 `_副本`/`_副本N`，否则会长出
+  // `甲方税号_副本_副本` 这种层层嵌套的名字；剥掉后才轮到序号递增（甲方税号_副本2）。
+  const base = String(baseLabel ?? '').trim().replace(/_副本\d*$/, '').trim() || '字段'
+  let n = 1
+  let nm = `${base}_副本`
+  while (used.has(nm)) { n += 1; nm = `${base}_副本${n}` }
+  return nm
+}
+
+/**
  * 内置底稿（只有字段名，没有 enabled/width 等元信息）→ subs 形态。
  * 用于 FleetCertPanel「内置未入库分类」首次编辑时的兜底底稿，
  * 产出结构与 fromSubsPayload 消费的形态严格一致。

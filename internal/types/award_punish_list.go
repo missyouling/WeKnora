@@ -17,6 +17,12 @@ type AwardPunishExtractionItem struct {
 	Signer        string `json:"signer"`          // 发布人
 	SignDate      string `json:"sign_date"`       // 发布日期 YYYY-MM-DD
 	EffectiveDate string `json:"effective_date"`  // 生效日期 YYYY-MM-DD
+	Scope         string `json:"scope"`           // 受文对象 / 适用范围
+	Contact       string `json:"contact"`         // 联系人
+	ContactPhone  string `json:"contact_phone"`   // 联系电话
+	Urgency       string `json:"urgency"`         // 紧急程度 / 重要程度
+	ValidUntil    string `json:"valid_until"`     // 有效期限
+	Attachments   string `json:"attachments"`     // 附件名称
 	Remark        string `json:"remark"`          // 备注
 	Summary       string `json:"summary"`         // 摘要（正文概述）
 	// Page is always 1 for notices (one file = one notice).
@@ -38,6 +44,12 @@ type AwardPunishRecord struct {
 	Signer        string   `json:"signer"`
 	SignDate      string   `json:"sign_date"`
 	EffectiveDate string   `json:"effective_date"`
+	Scope         string   `json:"scope"`
+	Contact       string   `json:"contact"`
+	ContactPhone  string   `json:"contact_phone"`
+	Urgency       string   `json:"urgency"`
+	ValidUntil    string   `json:"valid_until"`
+	Attachments   string   `json:"attachments"`
 	Remark        string   `json:"remark"`
 	Summary       string   `json:"summary"`
 	Page          int      `json:"page"`

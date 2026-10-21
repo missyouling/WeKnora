@@ -30,7 +30,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="notice-main">
       <!-- 概览 KPI 卡 -->
-      <DashboardKpiGroup :loading="overviewLoading" :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="notice-kpi-group" />
+      <DashboardKpiGroup :loading="false" :cards="overviewCards" :active-type="filterApType" @card-click="onOverviewCardClick" class="notice-kpi-group" />
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
@@ -343,23 +343,31 @@ const NOTICE_TYPES = ['通知', '公告', '通报', '决定', '其它通知']
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
+// 字段定义（列显隐设置）——与后端 noticeCatalog()（notice/award_punish 共用同一目录）严格同序：
+// 标准 9（默认显示）+ 扩展 10（默认不显示），fileName 系统列置尾。
 const DEFAULT_NOTICE_COLUMNS: ColumnDef[] = [
+  // ---- 标准 9 ----
   { key: 'apNo', label: '文号', default: true, w: '1.4fr' },
   { key: 'apTitle', label: '标题', default: true, w: '1.8fr' },
   { key: 'apType', label: '文件类型', default: true, w: '1fr' },
-  { key: 'signDate', label: '发布日期', default: true, w: '1.1fr' },
-  { key: 'signer', label: '发布人', default: true, w: '1fr' },
   { key: 'issueDept', label: '发布单位', default: true, w: '1.3fr' },
-  { key: 'summary', label: '摘要', default: true, w: '2fr' },
-  { key: 'person', label: '当事人', default: false, w: '1fr' },
-  { key: 'dept', label: '部门', default: false, w: '1.2fr' },
-  { key: 'position', label: '岗位', default: false, w: '1fr' },
-  { key: 'measure', label: '处理决定', default: false, w: '1.8fr' },
-  { key: 'basis', label: '依据', default: false, w: '1.6fr' },
-  { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
-  { key: 'remark', label: '备注', default: false, w: '1.4fr' },
+  { key: 'signDate', label: '发布日期', default: true, w: '1.1fr' },
+  { key: 'effectiveDate', label: '生效日期', default: true, w: '1.1fr' },
+  { key: 'scope', label: '适用范围', default: true, w: '1.2fr' },
   { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
+  // ---- 扩展 10 ----
+  { key: 'signer', label: '发布人', default: false, w: '1fr' },
+  { key: 'contact', label: '联系人', default: false, w: '1fr' },
+  { key: 'contactPhone', label: '联系电话', default: false, w: '1.2fr' },
+  { key: 'urgency', label: '紧急程度', default: false, w: '0.9fr' },
+  { key: 'validUntil', label: '有效期至', default: false, w: '1.1fr' },
+  { key: 'attachments', label: '附件', default: false, w: '1.4fr' },
+  { key: 'person', label: '当事人', default: false, w: '1fr' },
+  { key: 'measure', label: '处理决定', default: false, w: '1.8fr' },
+  { key: 'basis', label: '处理依据', default: false, w: '1.6fr' },
+  { key: 'summary', label: '摘要', default: false, w: '2fr' },
+  // ---- 系统列（置尾）----
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
 const {
@@ -405,14 +413,20 @@ interface NoticeRow extends Record<string, any> {
   apTitle?: string
   apType?: string
   issueDept?: string
+  signer?: string
+  signDate?: string
+  effectiveDate?: string
+  scope?: string
+  contact?: string
+  contactPhone?: string
+  urgency?: string
+  validUntil?: string
+  attachments?: string
   person?: string
   dept?: string
   position?: string
   measure?: string
   basis?: string
-  signer?: string
-  signDate?: string
-  effectiveDate?: string
   remark?: string
   summary?: string
   page?: number
@@ -743,6 +757,12 @@ const mapNoticeRecord = (r: any): NoticeRow => ({
   signer: r.signer || '',
   signDate: r.sign_date || '',
   effectiveDate: r.effective_date || '',
+  scope: r.scope || '',
+  contact: r.contact || '',
+  contactPhone: r.contact_phone || '',
+  urgency: r.urgency || '',
+  validUntil: r.valid_until || '',
+  attachments: r.attachments || '',
   remark: r.remark || '',
   summary: r.summary || '',
   page: Number(r.page) || 0,
@@ -792,6 +812,12 @@ const parseCustomMetadata = (item: KnowledgeItem): NoticeRow[] => {
     signer: ct.signer || '',
     signDate: ct.sign_date || '',
     effectiveDate: ct.effective_date || '',
+    scope: ct.scope || '',
+    contact: ct.contact || '',
+    contactPhone: ct.contact_phone || '',
+    urgency: ct.urgency || '',
+    validUntil: ct.valid_until || '',
+    attachments: ct.attachments || '',
     remark: ct.remark || '',
     summary: ct.summary || '',
     page: Number(ct.page) || 0,
@@ -1107,6 +1133,12 @@ const fillEditForm = () => {
     signer: r.signer || '',
     sign_date: r.signDate || '',
     effective_date: r.effectiveDate || '',
+    scope: r.scope || '',
+    contact: r.contact || '',
+    contact_phone: r.contactPhone || '',
+    urgency: r.urgency || '',
+    valid_until: r.validUntil || '',
+    attachments: r.attachments || '',
     remark: r.remark || '',
     summary: r.summary || '',
   }
@@ -1142,6 +1174,12 @@ const saveEditForm = async (force = false) => {
       signer: editForm.value.signer || '',
       sign_date: editForm.value.sign_date || '',
       effective_date: editForm.value.effective_date || '',
+      scope: editForm.value.scope || '',
+      contact: editForm.value.contact || '',
+      contact_phone: editForm.value.contact_phone || '',
+      urgency: editForm.value.urgency || '',
+      valid_until: editForm.value.valid_until || '',
+      attachments: editForm.value.attachments || '',
       remark: editForm.value.remark || '',
       summary: editForm.value.summary || '',
     }
@@ -1187,6 +1225,13 @@ const saveEditForm = async (force = false) => {
           issueDept: updated.issue_dept,
           signer: updated.signer,
           signDate: updated.sign_date,
+          effectiveDate: updated.effective_date,
+          scope: updated.scope,
+          contact: updated.contact,
+          contactPhone: updated.contact_phone,
+          urgency: updated.urgency,
+          validUntil: updated.valid_until,
+          attachments: updated.attachments,
           dept: updated.dept,
           person: updated.person,
         } : r,

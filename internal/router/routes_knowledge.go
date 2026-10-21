@@ -88,6 +88,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		if business != nil {
 			// 启动幂等回填：发票分类提取规则底稿（存在且已配置则严格跳过，防覆盖）
 			business.SeedInvoiceExtractRuleBackfill(context.Background())
+			// 启动幂等回填：合同/制度/通知公告四模块字段目录（只补空值，不覆盖用户改动）
+			business.SeedBusinessExtractConfigBackfill(context.Background())
 			kb.POST("/:knowledgeId/extract-business", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractBusinessDocument)
 			kb.PUT("/:knowledgeId/invoice-metadata", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.UpdateInvoiceMetadata)
 			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractInvoice(c, "") })

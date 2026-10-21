@@ -428,6 +428,11 @@ func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, know
 		logger.Warnf(ctx, "Failed to compute auto contract seq for %s: %v", kbID, seqErr)
 	}
 	service.NormalizeContractExtractionResult(extracted, autoSeq)
+	// 摘要复用知识库已生成的文档摘要：模型没写摘要时用 knowledges.description 回填，
+	// 保证列表/抽屉里的「摘要」与知识库文档摘要 100% 同源。
+	for i := range extracted.Contracts {
+		extracted.Contracts[i].Summary = service.ReuseKnowledgeSummary(extracted.Contracts[i].Summary, knowledge.Description)
+	}
 	// 通用质量闭环（非发票业务口径）：标准日期字段归一化为 YYYY-MM-DD，
 	// 用户配置为必填（Enabled && Required）的字段先用该字段的 Regex 补洞，
 	// 补不到才记 error。发票专属规则（号码/代码二选一、金额交叉校验）不在此列。

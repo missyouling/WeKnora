@@ -18,9 +18,9 @@ const awardPunishExtractMaxContentRunes = 24000
 
 // AwardPunishExtractionResult is the strict-JSON shape the model must return.
 type AwardPunishExtractionResult struct {
-	Kind         string                          `json:"kind"` // "award_punish" | "not_award_punish"
+	Kind         string                            `json:"kind"` // "award_punish" | "not_award_punish"
 	Records      []types.AwardPunishExtractionItem `json:"records"`
-	ExtractError string                          `json:"extract_error"`
+	ExtractError string                            `json:"extract_error"`
 }
 
 // awardPunishExtractionSystemPrompt instructs the model to return strict JSON
@@ -41,10 +41,11 @@ const awardPunishExtractionSystemPromptTemplate = `你是一个专业的公司�
 10. basis 为依据（如"依据《AD-018奖惩制度》"，可含制度/法规名）；无法识别时返回空字符串。
 11. signer 为发布人（落款签发人，如"廖宏"）；sign_date 为发布日期（YYYY-MM-DD 格式）；effective_date 为生效日期（YYYY-MM-DD 格式，通常与发布日期相同或见"自发布之日起生效"）；无法识别时返回空字符串。
 12. remark 为备注（附加说明、细节）；summary 为摘要（用 2-4 句话概括文件目的、核心事项与结论）；无法识别时返回空字符串。
+12.1 scope 为受文对象（主送范围，如"公司各部门、全体员工"）；contact 为联系人姓名；contact_phone 为联系电话；urgency 为紧急程度/重要程度（特急/加急/平急/重要/一般）；valid_until 为有效期限（YYYY-MM-DD，长期有效留空）；attachments 为附件名称（多个用"、"分隔）；无法识别时返回空字符串。
 13. 只返回严格的 JSON，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 输出格式：
-{"kind":"award_punish","records":[{"ap_no":"","ap_title":"","ap_type":"","issue_dept":"","person":"","dept":"","position":"","measure":"","basis":"","signer":"","sign_date":"","effective_date":"","remark":"","summary":""}]}
+{"kind":"award_punish","records":[{"ap_no":"","ap_title":"","ap_type":"","issue_dept":"","sign_date":"","effective_date":"","scope":"","signer":"","contact":"","contact_phone":"","urgency":"","valid_until":"","attachments":"","person":"","dept":"","position":"","measure":"","basis":"","remark":"","summary":""}]}
 
 示例（一份通报处罚两人，合并为一条记录）：
 {"kind":"award_punish","records":[
@@ -205,11 +206,15 @@ func NormalizeAwardPunishExtractionResult(res *AwardPunishExtractionResult, auto
 	if len(res.Records) == 0 {
 		return
 	}
+	// 一文件一档案：多批次结果先合并为唯一一条（否则按 page 递增生成多条假记录）。
+	if merged, ok := MergeExtractionItems(res.Records); ok {
+		res.Records = []types.AwardPunishExtractionItem{merged}
+	}
 	now := time.Now()
 	kept := res.Records[:0]
-	for i, r := range res.Records {
+	for _, r := range res.Records {
 		r.ApType = NormalizeAwardPunishTypeFromName(r.ApType)
-		r.Page = i + 1
+		r.Page = 1 // 一文件一档案，恒为 1
 		// 自动编号：无文号时按上传日期自动编号 TZ-YYYYMMDD-NNN；
 		// 同一文件拆出的多条记录共用同一自动文号（序号相同）。
 		if strings.TrimSpace(r.ApNo) == "" {

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -1675,53 +1676,105 @@ func (h *FleetHandler) DeleteFleetETCCard(c *gin.Context) {
 
 var _ = time.Now
 
-// contractSeedSubs 合同内置分类（服务合同/租赁合同）完整字段集（35 项 = 31 业务字段 + 4 系统字段），
-// 与前端 DEFAULT_CONTRACT_COLUMNS、编辑抽屉表单、ExtractRulePanel 合同底稿三处同源。
-// 新增字段必须同步三处；系统字段：extractStatus/tags/fulfillStatus（派生）/fileName。
+// contractSeedSubs 合同内置分类（服务合同/租赁合同）字段全集。
+// 2026-10-21 字段体系重置：与后端 contractCatalog() 严格同序 —— **11 标准 + 15 扩展**，
+// 与前端 DEFAULT_CONTRACT_COLUMNS、编辑抽屉表单同源（单测锁定）。
+// 旧键（partyAName/expiryDate/contractAmount…）不再进入 seed；存量 subs 由
+// mergeContractSeedSubs 的旧键→契约键归一收敛（保留用户 enabled/is_default/width 调整）。
+// 历史字段（税率/质保金等）也不再入 seed：新提取结果本就是新契约键，
+// 老环境的旧键 subs 经归一后保留（contractCanonicalFieldKey 直通 snake 形态）。
 func contractSeedSubs() []types.FleetCategorySub {
 	return []types.FleetCategorySub{
-		// 合同信息
-		{Name: "contractNo", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "contractName", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "contractType", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "partyAName", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "partyBName", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
-		{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
-		{Name: "expiryDate", Enabled: true, IsDefault: true, DataType: "date"},
-		{Name: "signPlace", Enabled: true, IsDefault: false, DataType: "text"},
-		// 甲方
-		{Name: "partyATaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyAAddress", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyAPhone", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyABank", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyAAccount", Enabled: true, IsDefault: false, DataType: "text"},
-		// 乙方
-		{Name: "partyBTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyBAddress", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyBPhone", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyBBank", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "partyBAccount", Enabled: true, IsDefault: false, DataType: "text"},
-		// 金额
-		{Name: "contractAmount", Enabled: true, IsDefault: true, DataType: "number"},
-		{Name: "taxRate", Enabled: true, IsDefault: true, DataType: "number"},
-		{Name: "paymentMethod", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "qualityBond", Enabled: true, IsDefault: false, DataType: "number"},
-		{Name: "liquidatedDamages", Enabled: true, IsDefault: false, DataType: "number"},
-		// 项目内容
-		{Name: "subject", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "quantity", Enabled: true, IsDefault: false, DataType: "number"},
-		{Name: "unitPrice", Enabled: true, IsDefault: false, DataType: "number"},
-		{Name: "performancePeriod", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "handler", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "department", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
-		// 系统字段
-		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		// ---- 标准 11（默认显示）----
+		{Name: "contract_no", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "contract_name", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "contract_type", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "party_a", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "party_b", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "sign_date", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "expire_date", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "amount", Enabled: true, IsDefault: true, DataType: "number"},
+		{Name: "extract_status", Enabled: true, IsDefault: true, DataType: "text"},
+		{Name: "performance_status", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-		{Name: "fulfillStatus", Enabled: true, IsDefault: true, DataType: "text"},
+		// ---- 扩展 15（默认不显示）----
+		{Name: "party_a_contact", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_a_tax_no", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_contact", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_tax_no", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_a_address", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_a_phone", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_a_bank", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_a_account", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_address", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_phone", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_bank", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "party_b_account", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "payment_method", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "sign_location", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		// ---- 系统列（置尾）----
 		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 	}
+}
+
+// contractCanonicalFieldKey 把合同 subs 的字段键归一到契约键（snake_case）：
+// 旧键（partyAName/expiryDate/contractAmount/signPlace/fulfillStatus 及 snake 旧形态）
+// 经别名表映射；其余 camelCase 走 camel→snake。与前端 contractKeyOf / 后端
+// contractLegacyFieldAliases 保持同一口径（三处同源，单测锁定）。
+func contractCanonicalFieldKey(name string) string {
+	raw := strings.TrimSpace(name)
+	if raw == "" {
+		return raw
+	}
+	switch raw {
+	case "partyAName", "party_a_name":
+		return "party_a"
+	case "partyBName", "party_b_name":
+		return "party_b"
+	case "expiryDate", "expiry_date":
+		return "expire_date"
+	case "contractAmount", "contract_amount":
+		return "amount"
+	case "signPlace", "sign_place":
+		return "sign_location"
+	case "fulfillStatus", "fulfill_status":
+		return "performance_status"
+	}
+	return service.SnakeKey(raw)
+}
+
+// mergeContractSeedSubs 把存量 subs 收敛到契约键 seed 全集，并**按契约顺序重排**：
+//  1. 旧键名归一（partyAName → party_a），保留用户的 enabled/is_default/width/data_type/sub_fields；
+//  2. 顺序以 seed 为准（11 标准 → 15 扩展 → fileName），抽屉/列表/字段面板三处同序；
+//  3. seed 以外的历史字段（税率/质保金/违约金/合同标的/中文名旧键等）不再进入展示字段集：
+//     它们的值仍保留在 contracts[] JSON 里，需要时可在「字段设置」重新加回。
+//
+// 为什么必须重排：抽屉字段顺序 = subs 顺序（buildDetailFieldDefs 透传）。历史 subs 里
+// 「税率」夹在金额与提取状态之间、扩展字段散落在末尾，会让抽屉顺序与产品清单不一致。
+func mergeContractSeedSubs(existing []types.FleetCategorySub) []types.FleetCategorySub {
+	seed := contractSeedSubs()
+	byKey := make(map[string]types.FleetCategorySub, len(existing))
+	for _, s := range existing {
+		name := contractCanonicalFieldKey(s.Name)
+		if name == "" {
+			continue
+		}
+		if _, dup := byKey[name]; dup {
+			continue
+		}
+		s.Name = name
+		byKey[name] = s
+	}
+	out := make([]types.FleetCategorySub, 0, len(seed))
+	for _, f := range seed {
+		if s, ok := byKey[f.Name]; ok {
+			out = append(out, s)
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // regulationSeedSubs 为制度内置分类（人事/财务/生产/行政/安全/其它制度）的字段全集。
@@ -1755,31 +1808,90 @@ func regulationSeedSubs() []types.FleetCategorySub {
 }
 
 // noticeSeedSubs 为通知公告内置分类（通知/公告/通报/决定/其它通知）的字段全集。
-// subs.name 为前端 NoticeRow 的 camelCase key，与 types.AwardPunishExtractionItem
-// JSON 字段同源；is_default 与前端 DEFAULT_NOTICE_COLUMNS 的 default 一致。
+// subs.name 为前端 NoticeRow 的 camelCase key（snakeOf 后与后端 contractCatalog 同目录的
+// 契约键一致）；is_default 与前端 DEFAULT_NOTICE_COLUMNS 的 default 一致。
+// 2026-10-21 与后端 noticeCatalog()（notice 与 award_punish 共用同一目录）对齐：
+// 标准 9 + 扩展 10；dept/position 退出 seed（不在目录内，老环境 subs 仍保留可显示）。
 func noticeSeedSubs() []types.FleetCategorySub {
 	return []types.FleetCategorySub{
-		// 文件信息（默认显示）
+		// ---- 标准 9（默认显示）----
 		{Name: "apNo", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "apTitle", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "apType", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
-		{Name: "signer", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "issueDept", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "summary", Enabled: true, IsDefault: true, DataType: "text"},
-		// 当事人/处理细节（默认不显示）
-		{Name: "person", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "dept", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "position", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "measure", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "basis", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "effectiveDate", Enabled: true, IsDefault: false, DataType: "date"},
-		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
-		// 系统字段
+		{Name: "signDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "effectiveDate", Enabled: true, IsDefault: true, DataType: "date"},
+		{Name: "scope", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
+		// ---- 扩展 10（默认不显示）----
+		{Name: "signer", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "contact", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "contactPhone", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "urgency", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "validUntil", Enabled: true, IsDefault: false, DataType: "date"},
+		{Name: "attachments", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "person", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "measure", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "basis", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		// ---- 系统字段 ----
 		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
 	}
+}
+
+// noticeSeedKeyAlias 把 snake 契约键归一到前端 subs 使用的 camelCase 形态
+// （列表列定义 DEFAULT_NOTICE_COLUMNS 按 camelCase 键匹配，subs 必须保持 camel）。
+func noticeSeedKeyAlias(name string) string {
+	switch strings.TrimSpace(name) {
+	case "ap_no":
+		return "apNo"
+	case "ap_title":
+		return "apTitle"
+	case "ap_type":
+		return "apType"
+	case "issue_dept":
+		return "issueDept"
+	case "sign_date":
+		return "signDate"
+	case "effective_date":
+		return "effectiveDate"
+	case "contact_phone":
+		return "contactPhone"
+	case "valid_until":
+		return "validUntil"
+	case "extract_status":
+		return "extractStatus"
+	}
+	return strings.TrimSpace(name)
+}
+
+// mergeNoticeSeedSubs 把存量公告 subs 收敛到统一目录（notice/award_punish 共用一份），
+// 并按目录顺序重排；目录外的历史字段（dept/position/remark）不再进入展示集，
+// 值仍留在 custom_metadata 里。保留用户对既有字段的 enabled/is_default/width 调整。
+func mergeNoticeSeedSubs(existing []types.FleetCategorySub) []types.FleetCategorySub {
+	seed := noticeSeedSubs()
+	byKey := make(map[string]types.FleetCategorySub, len(existing))
+	for _, s := range existing {
+		k := noticeSeedKeyAlias(s.Name)
+		if k == "" {
+			continue
+		}
+		if _, dup := byKey[k]; dup {
+			continue
+		}
+		s.Name = k
+		byKey[k] = s
+	}
+	out := make([]types.FleetCategorySub, 0, len(seed))
+	for _, f := range seed {
+		if s, ok := byKey[f.Name]; ok {
+			out = append(out, s)
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
@@ -2255,18 +2367,9 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 			}
 		}
 
-		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
-		subs := target.Subs
-		have := make(map[string]bool, len(subs))
-		for _, s := range subs {
-			have[s.Name] = true
-		}
-		for _, f := range fullSubs {
-			if !have[f.Name] {
-				subs = append(subs, f)
-				have[f.Name] = true
-			}
-		}
+		// 合并字段全集：旧键就地归一到契约键（保留用户对既有字段的 enabled/is_default/width 调整），
+		// 归一后去重，再 append seed 中缺失的契约键（不覆盖用户已删字段——仅补缺）
+		subs := mergeContractSeedSubs(target.Subs)
 		raw, merr := json.Marshal(subs)
 		if merr != nil {
 			logger.Warnf(ctx, "reconcile contract category %q marshal failed: %v", w.Name, merr)
@@ -2504,18 +2607,9 @@ func (h *FleetHandler) reconcileNoticeCategories(ctx context.Context) {
 			}
 		}
 
-		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
-		subs := target.Subs
-		have := make(map[string]bool, len(subs))
-		for _, s := range subs {
-			have[s.Name] = true
-		}
-		for _, f := range fullSubs {
-			if !have[f.Name] {
-				subs = append(subs, f)
-				have[f.Name] = true
-			}
-		}
+		// 合并字段全集：收敛到统一目录并按其顺序重排（notice/award_punish 同一份字段目录），
+		// 保留用户对既有字段的 enabled/is_default/width 调整。
+		subs := mergeNoticeSeedSubs(target.Subs)
 		raw, merr := json.Marshal(subs)
 		if merr != nil {
 			logger.Warnf(ctx, "reconcile notice category %q marshal failed: %v", w.Name, merr)

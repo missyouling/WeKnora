@@ -52,9 +52,9 @@ func TestInvoiceOverviewStats(t *testing.T) {
 
 	items := []*types.Knowledge{
 		{
-			ID:             "k1",
+			ID:              "k1",
 			KnowledgeBaseID: "kb1",
-			ParseStatus:    "completed",
+			ParseStatus:     "completed",
 			CustomMetadata: mustJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
@@ -65,16 +65,16 @@ func TestInvoiceOverviewStats(t *testing.T) {
 			CreatedAt: now.Add(-time.Hour),
 		},
 		{
-			ID:             "k2",
+			ID:              "k2",
 			KnowledgeBaseID: "kb1",
-			ParseStatus:    "failed", // 文件级解析失败
-			CustomMetadata: []byte(`{"kind":"invoice"}`),
-			CreatedAt:      now.Add(-2 * time.Hour),
+			ParseStatus:     "failed", // 文件级解析失败
+			CustomMetadata:  []byte(`{"kind":"invoice"}`),
+			CreatedAt:       now.Add(-2 * time.Hour),
 		},
 		{
-			ID:             "k3",
+			ID:              "k3",
 			KnowledgeBaseID: "kb1",
-			ParseStatus:    "completed",
+			ParseStatus:     "completed",
 			CustomMetadata: mustJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{

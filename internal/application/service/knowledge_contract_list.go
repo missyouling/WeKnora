@@ -1,4 +1,4 @@
-﻿// 合同级聚合列表：把知识库下所有已提取合同平铺为"一行一份合同"的记录，
+// 合同级聚合列表：把知识库下所有已提取合同平铺为"一行一份合同"的记录，
 // 在服务端完成全字段搜索、类型/履约状态/签订日期筛选、排序、分页与金额聚合，
 // 供合同管理页直接渲染。重复判断复用知识库文件上传层（file_hash / 文件名+大小），
 // 列表层不再按合同编号去重。
@@ -117,50 +117,7 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 				if contractExtractionItemBlank(ct) {
 					continue
 				}
-				records = append(records, types.ContractRecord{
-					ContractNo:       ct.ContractNo,
-					ContractName:     ct.ContractName,
-					ContractType:     ct.ContractType,
-					SignDate:         ct.SignDate,
-					EffectiveDate:    ct.EffectiveDate,
-					ExpiryDate:       ct.ExpiryDate,
-					SignPlace:        ct.SignPlace,
-					PartyAName:       ct.PartyAName,
-					PartyATaxNo:      ct.PartyATaxNo,
-					PartyAAddress:    ct.PartyAAddress,
-					PartyAPhone:      ct.PartyAPhone,
-					PartyABank:       ct.PartyABank,
-					PartyAAccount:    ct.PartyAAccount,
-					PartyBName:       ct.PartyBName,
-					PartyBTaxNo:      ct.PartyBTaxNo,
-					PartyBAddress:    ct.PartyBAddress,
-					PartyBPhone:      ct.PartyBPhone,
-					PartyBBank:       ct.PartyBBank,
-					PartyBAccount:    ct.PartyBAccount,
-					ContractAmount:   ct.ContractAmount,
-					TaxRate:          ct.TaxRate,
-					PaymentMethod:    ct.PaymentMethod,
-					QualityBond:      ct.QualityBond,
-					LiquidatedDamages: ct.LiquidatedDamages,
-					Subject:          ct.Subject,
-					Quantity:         ct.Quantity,
-					UnitPrice:        ct.UnitPrice,
-					PerformancePeriod: ct.PerformancePeriod,
-					Handler:          ct.Handler,
-					Department:       ct.Department,
-					Remark:           ct.Remark,
-					FulfillStatus:    ct.FulfillStatus,
-					Page:             ct.Page,
-					KnowledgeID:      k.ID,
-					KnowledgeTitle:   k.Title,
-					FileName:         k.FileName,
-					FileType:         k.FileType,
-					Tags:             tags,
-					ExtractStatus:    meta.ExtractStatus,
-					ExtractError:     meta.ExtractError,
-					KBID:             k.KnowledgeBaseID,
-					CreatedAt:        k.CreatedAt,
-				})
+				records = append(records, contractRecordFromItem(ct, k, tags, meta))
 			}
 		}
 		if len(knowledges) < batch {
@@ -186,7 +143,7 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 				continue
 			}
 		}
-		if filter.FulfillStatus != "" && r.FulfillStatus != filter.FulfillStatus {
+		if filter.FulfillStatus != "" && r.PerformanceStatus != filter.FulfillStatus {
 			continue
 		}
 		if filter.Status != "" && r.ExtractStatus != filter.Status {
@@ -199,9 +156,9 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 			continue
 		}
 		kept = append(kept, r)
-		if r.ContractAmount != nil {
-			sumAmount += *r.ContractAmount
-			sumTotal += *r.ContractAmount
+		if r.Amount != nil {
+			sumAmount += *r.Amount
+			sumTotal += *r.Amount
 		}
 	}
 	records = kept
@@ -248,11 +205,11 @@ func contractItemsAllBlank(cts []ContractExtractionItem) bool {
 
 func contractExtractionItemBlank(ct ContractExtractionItem) bool {
 	if strings.TrimSpace(ct.ContractNo) != "" || strings.TrimSpace(ct.ContractName) != "" ||
-		strings.TrimSpace(ct.ContractType) != "" || strings.TrimSpace(ct.PartyAName) != "" ||
-		strings.TrimSpace(ct.PartyBName) != "" {
+		strings.TrimSpace(ct.ContractType) != "" || strings.TrimSpace(ct.PartyA) != "" ||
+		strings.TrimSpace(ct.PartyB) != "" {
 		return false
 	}
-	if ct.ContractAmount != nil && *ct.ContractAmount != 0 {
+	if ct.Amount != nil && *ct.Amount != 0 {
 		return false
 	}
 	return true
@@ -284,11 +241,11 @@ func contractDateInRange(date, from, to string) bool {
 func contractRecordMatchKeyword(r types.ContractRecord, kw string) bool {
 	fields := []string{
 		r.ContractNo, r.ContractName, r.ContractType,
-		r.SignDate, r.EffectiveDate, r.ExpiryDate, r.SignPlace,
-		r.PartyAName, r.PartyATaxNo, r.PartyAAddress, r.PartyAPhone, r.PartyABank, r.PartyAAccount,
-		r.PartyBName, r.PartyBTaxNo, r.PartyBAddress, r.PartyBPhone, r.PartyBBank, r.PartyBAccount,
+		r.SignDate, r.EffectiveDate, r.ExpireDate, r.SignLocation,
+		r.PartyA, r.PartyATaxNo, r.PartyAAddress, r.PartyAPhone, r.PartyABank, r.PartyAAccount,
+		r.PartyB, r.PartyBTaxNo, r.PartyBAddress, r.PartyBPhone, r.PartyBBank, r.PartyBAccount,
 		r.PaymentMethod, r.Subject, r.PerformancePeriod, r.Handler, r.Department, r.Remark,
-		r.FulfillStatus, r.FileName, r.KnowledgeTitle, r.ExtractStatus, r.ExtractError,
+		r.PerformanceStatus, r.FileName, r.KnowledgeTitle, r.ExtractStatus, r.ExtractError,
 	}
 	for _, f := range fields {
 		if strings.Contains(strings.ToLower(f), kw) {
@@ -300,7 +257,7 @@ func contractRecordMatchKeyword(r types.ContractRecord, kw string) bool {
 			return true
 		}
 	}
-	for _, v := range []*float64{r.ContractAmount, r.QualityBond, r.LiquidatedDamages, r.Quantity, r.UnitPrice} {
+	for _, v := range []*float64{r.Amount, r.QualityBond, r.LiquidatedDamages, r.Quantity, r.UnitPrice} {
 		if v != nil && strings.Contains(fmt.Sprintf("%.2f", *v), kw) {
 			return true
 		}
@@ -378,15 +335,15 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 			if contractItemsAllBlank(meta.Contracts) &&
 				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
 				records = append(records, types.ContractRecord{
-					KnowledgeID:   k.ID,
+					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
-					FileName:      k.FileName,
-					FileType:      k.FileType,
-					Tags:          tags,
-					ExtractStatus: "manual",
-					ExtractError:  meta.ExtractError,
-					KBID:          k.KnowledgeBaseID,
-					CreatedAt:     k.CreatedAt,
+					FileName:       k.FileName,
+					FileType:       k.FileType,
+					Tags:           tags,
+					ExtractStatus:  "manual",
+					ExtractError:   meta.ExtractError,
+					KBID:           k.KnowledgeBaseID,
+					CreatedAt:      k.CreatedAt,
 				})
 				continue
 			}
@@ -397,50 +354,7 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 				if contractExtractionItemBlank(ct) {
 					continue
 				}
-				records = append(records, types.ContractRecord{
-					ContractNo:       ct.ContractNo,
-					ContractName:     ct.ContractName,
-					ContractType:     ct.ContractType,
-					SignDate:         ct.SignDate,
-					EffectiveDate:    ct.EffectiveDate,
-					ExpiryDate:       ct.ExpiryDate,
-					SignPlace:        ct.SignPlace,
-					PartyAName:       ct.PartyAName,
-					PartyATaxNo:      ct.PartyATaxNo,
-					PartyAAddress:    ct.PartyAAddress,
-					PartyAPhone:      ct.PartyAPhone,
-					PartyABank:       ct.PartyABank,
-					PartyAAccount:    ct.PartyAAccount,
-					PartyBName:       ct.PartyBName,
-					PartyBTaxNo:      ct.PartyBTaxNo,
-					PartyBAddress:    ct.PartyBAddress,
-					PartyBPhone:      ct.PartyBPhone,
-					PartyBBank:       ct.PartyBBank,
-					PartyBAccount:    ct.PartyBAccount,
-					ContractAmount:   ct.ContractAmount,
-					TaxRate:          ct.TaxRate,
-					PaymentMethod:    ct.PaymentMethod,
-					QualityBond:      ct.QualityBond,
-					LiquidatedDamages: ct.LiquidatedDamages,
-					Subject:          ct.Subject,
-					Quantity:         ct.Quantity,
-					UnitPrice:        ct.UnitPrice,
-					PerformancePeriod: ct.PerformancePeriod,
-					Handler:          ct.Handler,
-					Department:       ct.Department,
-					Remark:           ct.Remark,
-					FulfillStatus:    ct.FulfillStatus,
-					Page:             ct.Page,
-					KnowledgeID:      k.ID,
-					KnowledgeTitle:   k.Title,
-					FileName:         k.FileName,
-					FileType:         k.FileType,
-					Tags:             tags,
-					ExtractStatus:    meta.ExtractStatus,
-					ExtractError:     meta.ExtractError,
-					KBID:             k.KnowledgeBaseID,
-					CreatedAt:        k.CreatedAt,
-				})
+				records = append(records, contractRecordFromItem(ct, k, tags, meta))
 			}
 		}
 		if len(knowledges) < batch {
@@ -471,19 +385,19 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 		if r.ExtractStatus == "failed" {
 			stats.ExtractFailed++
 		}
-		if r.ContractAmount != nil {
-			stats.SumTotal += *r.ContractAmount
+		if r.Amount != nil {
+			stats.SumTotal += *r.Amount
 		}
 		// 本月新增：签订日期命中当前年月
 		date := strings.TrimSpace(r.SignDate)
 		if date != "" && (strings.HasPrefix(date, monthPrefix) || strings.HasPrefix(strings.ReplaceAll(date, "-", ""), monthPrefixCompact)) {
 			stats.CurrentMonth.Count++
-			if r.ContractAmount != nil {
-				stats.CurrentMonth.SumTotal += *r.ContractAmount
+			if r.Amount != nil {
+				stats.CurrentMonth.SumTotal += *r.Amount
 			}
 		}
 		// 即将到期：到期日期非空且解析有效，落在 [today, today+30d]
-		if expiry := strings.TrimSpace(r.ExpiryDate); expiry != "" {
+		if expiry := strings.TrimSpace(r.ExpireDate); expiry != "" {
 			if d, err := time.Parse("2006-01-02", expiry); err == nil {
 				if !d.Before(today) && !d.After(expiryCutoff) {
 					stats.Expiring++
@@ -505,8 +419,8 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 			typeByMap[typ] = t
 		}
 		t.Count++
-		if r.ContractAmount != nil {
-			t.SumTotal += *r.ContractAmount
+		if r.Amount != nil {
+			t.SumTotal += *r.Amount
 		}
 	}
 	for _, t := range typeByMap {
@@ -527,8 +441,8 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 			catByMap[cat] = c
 		}
 		c.Count++
-		if r.ContractAmount != nil {
-			c.SumTotal += *r.ContractAmount
+		if r.Amount != nil {
+			c.SumTotal += *r.Amount
 		}
 	}
 	for _, t := range catByMap {
@@ -560,7 +474,8 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 
 // ListContractTypes 返回该知识库下所有合同出现过的去重合同类型（含数量），
 // 用于前端合同类型筛选下拉自动加载。
-func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
+func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID string) ([]types.ContractTypeCount, error) {
+	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 	page := 1
 	batch := 100
 	seen := map[string]int{}
@@ -602,3 +517,96 @@ func (s *BusinessExtractService) ListContractTypes(ctx context.Context, kbID str
 	return types_, nil
 }
 
+// contractRecordFromItem 把一条合同提取结果投影成列表记录（单一实现，列表与概览共用）。
+//
+// 摘要复用：summary 为空时直接取知识库已生成的文档摘要（knowledges.description），
+// 与知识库文档摘要 100% 同源，不再让模型另写一份。
+func contractRecordFromItem(
+	ct ContractExtractionItem,
+	k *types.Knowledge,
+	tags []string,
+	meta contractMetadata,
+) types.ContractRecord {
+	summary := strings.TrimSpace(ct.Summary)
+	if k != nil {
+		summary = ReuseKnowledgeSummary(summary, k.Description)
+	}
+	perf := strings.TrimSpace(ct.PerformanceStatus)
+	if perf == "" {
+		perf = DeriveContractPerformanceStatus(ct.ExpireDate, time.Now())
+	}
+	rec := types.ContractRecord{
+		ContractNo:        ct.ContractNo,
+		ContractName:      ct.ContractName,
+		ContractType:      ct.ContractType,
+		PartyA:            ct.PartyA,
+		PartyB:            ct.PartyB,
+		SignDate:          ct.SignDate,
+		ExpireDate:        ct.ExpireDate,
+		Amount:            ct.Amount,
+		PerformanceStatus: perf,
+		PartyAContact:     ct.PartyAContact,
+		PartyATaxNo:       ct.PartyATaxNo,
+		PartyBContact:     ct.PartyBContact,
+		PartyBTaxNo:       ct.PartyBTaxNo,
+		PartyAAddress:     ct.PartyAAddress,
+		PartyAPhone:       ct.PartyAPhone,
+		PartyABank:        ct.PartyABank,
+		PartyAAccount:     ct.PartyAAccount,
+		PartyBAddress:     ct.PartyBAddress,
+		PartyBPhone:       ct.PartyBPhone,
+		PartyBBank:        ct.PartyBBank,
+		PartyBAccount:     ct.PartyBAccount,
+		PaymentMethod:     ct.PaymentMethod,
+		SignLocation:      ct.SignLocation,
+		Summary:           summary,
+		EffectiveDate:     ct.EffectiveDate,
+		TaxRate:           ct.TaxRate,
+		QualityBond:       ct.QualityBond,
+		LiquidatedDamages: ct.LiquidatedDamages,
+		Subject:           ct.Subject,
+		Quantity:          ct.Quantity,
+		UnitPrice:         ct.UnitPrice,
+		PerformancePeriod: ct.PerformancePeriod,
+		Handler:           ct.Handler,
+		Department:        ct.Department,
+		Remark:            ct.Remark,
+		Page:              ct.Page,
+		ExtractStatus:     meta.ExtractStatus,
+		ExtractError:      meta.ExtractError,
+	}
+	if k != nil {
+		rec.KnowledgeID = k.ID
+		rec.KnowledgeTitle = k.Title
+		rec.FileName = k.FileName
+		rec.FileType = k.FileType
+		rec.KBID = k.KnowledgeBaseID
+		rec.CreatedAt = k.CreatedAt
+	}
+	rec.Tags = tags
+	return rec
+}
+
+// DeriveContractPerformanceStatus 按到期日期派生履约状态（只读展示）：
+// 已超期 / 即将到期（30 天内）/ 履行中；无到期日期时返回空串（前端显示 --）。
+func DeriveContractPerformanceStatus(expireDate string, now time.Time) string {
+	raw := strings.TrimSpace(expireDate)
+	if raw == "" {
+		return ""
+	}
+	d, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		d, err = time.Parse("20060102", strings.ReplaceAll(raw, "-", ""))
+		if err != nil {
+			return ""
+		}
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if d.Before(today) {
+		return "已超期"
+	}
+	if !d.After(today.AddDate(0, 0, 30)) {
+		return "即将到期"
+	}
+	return "履行中"
+}

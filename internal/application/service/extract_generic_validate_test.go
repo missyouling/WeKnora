@@ -22,7 +22,7 @@ func TestExtractGenericNormalizesStandardDateFields(t *testing.T) {
 		ContractNo:    "HT-2026-001",
 		SignDate:      "2026年7月2日",
 		EffectiveDate: "2026/7/3",
-		ExpiryDate:    "20270702",
+		ExpireDate:    "20270702",
 	}}
 	records := NewGenericRecords(contracts)
 	issues, patches := ValidateGenericExtraction(records, "", nil)
@@ -33,7 +33,7 @@ func TestExtractGenericNormalizesStandardDateFields(t *testing.T) {
 	if got := contracts[0].EffectiveDate; got != "2026-07-03" {
 		t.Errorf("effective_date 应归一为 2026-07-03，实际 %q", got)
 	}
-	if got := contracts[0].ExpiryDate; got != "2027-07-02" {
+	if got := contracts[0].ExpireDate; got != "2027-07-02" {
 		t.Errorf("expiry_date 应归一为 2027-07-02，实际 %q", got)
 	}
 	if len(issues) != 0 {

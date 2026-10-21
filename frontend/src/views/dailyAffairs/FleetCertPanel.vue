@@ -121,10 +121,13 @@
                       <span class="fc-name-text">{{ fieldLabelOf(fd) }}</span>
                       <span class="fc-sub-count">{{ subFieldsOf(fd).length }}</span>
                     </button>
-                    <!-- 有字段字典的 scope（发票/合同/制度/通知）字段名只读展示中文名；
-                         档案与账单类无字典，字段名由用户自由输入 -->
-                    <span v-else-if="hasFieldDict(group.scope)" class="fc-name fc-name-static" :title="fd.name">{{ fd.label || labelOf(group.scope, fd.name) }}</span>
-                    <t-input v-else v-model="fd.name" size="small" placeholder="字段名" class="fc-name" @enter="addField" />
+                    <!-- 字段名可编辑（2026-10-21）：复制/新增字段中文命名后可直接改名。
+                         改名只写 label（表头文案），name 是数据身份（契约键/后端 key）不动——
+                         ① 历史数据与提取映射按 name 对齐，改 name 会错位；
+                         ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。 -->
+                    <t-input v-else :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
+                      :ref="(el: any) => setFieldInputRef(fd.name, el)"
+                      @update:model-value="(v: string) => setFieldEdit(fd, v)" />
                     <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
                       <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
@@ -242,11 +245,12 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { CopyIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { useExtractCatalog } from './useExtractCatalog'
 import { createFleetCategory, updateFleetCategory, deleteFleetCategory, sortFleetCategories, listFleetRecords, listFleetCertGroups, createFleetCertGroup, deleteFleetCertGroup, listFleetGroupAliases, upsertFleetGroupAlias, getExtractConfig, saveExtractConfig } from '@/api/fleet'
-import { getScope, labelOf, hasFieldDict, isBuiltinFieldOf } from '../../registry'
+import { getScope, labelOf, isBuiltinFieldOf } from '../../registry'
 import {
   fromSubsPayload,
   toSubsPayload,
   subsPayloadFromNames,
+  copyFieldUniqueName,
   subFieldEnabled,
   subFieldKeyForLabel,
   findDuplicateSubField,
@@ -703,6 +707,22 @@ function toggleEdit(item: any) {
 const fieldDelPop = ref<any>(null)
 // 字段名展示：自定义 label → registry 字典中文名 → 无字典 scope 回退 desc/原名
 const fieldLabelOf = (fd: any) => (fd?.label || labelOf(group.value.scope, fd.name) || fd.desc || fd.name)
+// 字段名输入框的显示值：与 fieldLabelOf 同源（label 优先，契约键回退字典中文名）
+const fieldEditOf = (fd: any) => String(fd?.label || labelOf(group.value.scope, fd?.name || '') || fd?.name || '')
+/**
+ * 字段改名：只写 label（表头文案），不动 name。
+ * name 是数据身份（契约键 / 后端分配 key），历史数据与提取映射都按 name 对齐；
+ * 且字段行 v-for 以 name 为 key，改 name 会触发整行重挂、输入框丢焦点。
+ */
+function setFieldEdit(fd: any, v: string) {
+  fd.label = String(v ?? '')
+}
+// 字段名输入框 ref 注册表：复制字段后按 name 找到新行输入框并聚焦
+const fieldInputRefs = new Map<string, any>()
+function setFieldInputRef(name: string, el: any) {
+  if (el) fieldInputRefs.set(name, el)
+  else fieldInputRefs.delete(name)
+}
 const fieldMenuOptions = (_fd: any) => [
   { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
@@ -716,12 +736,12 @@ const onFieldPopRemove = async () => {
   fieldDelPop.value = null
   if (fd) await removeField(fd)
 }
-// 复制字段：字段配置全量复制为新字段（含明细子列），提取映射由分类保存时统一落库
-function duplicateField(fd: any) {
-  const exists = (n: string) => fieldsEditable.value.some((f: any) => f.name === n)
-  let n = 1
-  let nm = `${fd.name}_copy`
-  while (exists(nm)) { n += 1; nm = `${fd.name}_copy${n}` }
+// 复制字段：字段配置全量复制为新字段（含明细子列），提取映射由分类保存时统一落库。
+// 命名走「{中文名}_副本」递增（copyFieldUniqueName），不再拼 tags_copy 英文后缀；
+// 复制后自动聚焦新字段名输入框，方便立即改名。
+async function duplicateField(fd: any) {
+  const taken = fieldsEditable.value.flatMap((f: any) => [f.name, f.label || ''])
+  const nm = copyFieldUniqueName(fieldLabelOf(fd), taken)
   fieldsEditable.value.push({
     name: nm,
     enabled: !!fd.enabled,
@@ -732,6 +752,11 @@ function duplicateField(fd: any) {
     subFields: Array.isArray(fd.subFields) ? fd.subFields.map((s: EditableSubField) => ({ ...s })) : undefined,
   })
   MessagePlugin.success('已复制字段')
+  // 新行刚挂载，等一拍再聚焦（TInput 暴露 focus()）
+  await nextTick()
+  const el: any = fieldInputRefs.get(nm)
+  if (el && typeof el.focus === 'function') el.focus()
+  else (document?.querySelector?.(`.field-config-row .fc-name input`) as HTMLInputElement | null)?.focus?.()
 }
 function addField() {
   const name = newFieldName.value.trim()
@@ -1313,20 +1338,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
     .fc-name {
       min-width: 0;
-    }
-    .fc-name-static {
-      display: inline-flex;
-      align-items: center;
-      min-width: 0;
-      padding: 4px 8px;
-      height: 32px;
-      box-sizing: border-box;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      color: var(--td-text-color-primary);
-      border-radius: var(--td-radius-default);
-      background: var(--td-bg-color-container);
     }
     .fc-type {
       width: 100%;

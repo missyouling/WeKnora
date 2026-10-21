@@ -68,9 +68,9 @@ func TestInvoiceListTaxRateItemsMatch(t *testing.T) {
 	rate3 := f64(0.03)
 
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
-		mk("INV-A", rate9, nil, nil),     // 发票级 9%：应命中
+		mk("INV-A", rate9, nil, nil),      // 发票级 9%：应命中
 		mk("INV-B", rate13, rate9, rate6), // 发票级 13%，明细含 9% 与 6%：应命中（items 档位路径）
-		mk("INV-C", rate3, nil, nil),     // 发票级 3%：不应命中
+		mk("INV-C", rate3, nil, nil),      // 发票级 3%：不应命中
 	}}
 	svc := &BusinessExtractService{repo: repo}
 

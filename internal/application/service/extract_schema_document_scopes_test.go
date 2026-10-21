@@ -40,46 +40,44 @@ func TestDocumentScopeCategoryLabels(t *testing.T) {
 
 // notice 与 award_punish 不得再有字段交集（旧 NOTICE_FIELD_LABELS 把两套字段
 // 混在一张表，AI 建议会把「处理决定」喂给公告）。
-func TestNoticeAndAwardPunishFieldsDisjoint(t *testing.T) {
+// notice 与 award_punish 是同一个业务（通知公告）的两个入口：字段集必须**完全一致**
+// 且来自同一份字段目录。历史上的"零交集"设计让设置页写 notice、提取器读
+// award_punish，配置与字段各说各话——这正是本次要消灭的双轨分裂。
+func TestNoticeAndAwardPunishShareOneCatalog(t *testing.T) {
 	notice, ok1 := GetScopeSchema("notice")
 	award, ok2 := GetScopeSchema("award_punish")
 	require.True(t, ok1 && ok2)
 
-	// 三件套（提取状态/标签/备注）是各 scope 共有基元，允许重复；
-	// 除此之外两套业务字段必须零交集。
-	shared := map[string]struct{}{"remark": {}, "extractstatus": {}, "tags": {}}
-	nk := make(map[string]struct{}, len(notice.StandardFields))
-	for _, f := range notice.StandardFields {
-		nk[canonicalFieldKeyForTest(f.Key)] = struct{}{}
+	assert.Equal(t, len(notice.StandardFields), len(award.StandardFields), "两个入口字段数必须一致")
+	for i := range notice.StandardFields {
+		assert.Equal(t,
+			canonicalFieldKeyForTest(notice.StandardFields[i].Key),
+			canonicalFieldKeyForTest(award.StandardFields[i].Key),
+			"字段顺序与键必须逐项一致（同一目录派生）")
 	}
-	overlap := 0
+	keys := make(map[string]struct{}, len(award.StandardFields))
 	for _, f := range award.StandardFields {
-		k := canonicalFieldKeyForTest(f.Key)
-		if _, isShared := shared[k]; isShared {
-			continue
-		}
-		if _, dup := nk[k]; dup {
-			overlap++
-			assert.False(t, dup, "业务字段 %s 不得同时属于 notice 与 award_punish", f.Key)
-		}
+		keys[canonicalFieldKeyForTest(f.Key)] = struct{}{}
 	}
-	assert.Equal(t, 0, overlap, "两套业务字段必须零交集")
-	// 双方各自的主业务字段必须存在
-	assert.Contains(t, nk, "apno")
-	assert.Contains(t, nk, "issuedept")
-	awardKeys := make(map[string]struct{}, len(award.StandardFields))
-	for _, f := range award.StandardFields {
-		awardKeys[canonicalFieldKeyForTest(f.Key)] = struct{}{}
+	for _, want := range []string{"apno", "aptitle", "aptype", "issuedept", "signdate", "effectivedate", "scope"} {
+		assert.Contains(t, keys, want, "通知公告标准字段 %s 缺失", want)
 	}
-	assert.Contains(t, awardKeys, "measure")
-	assert.Contains(t, awardKeys, "basis")
+	// 真实样文（通报类）需要的业务字段必须能装进扩展字段，不能因为统一而丢失
+	cat, ok := BusinessFieldCatalogOf("award_punish")
+	require.True(t, ok)
+	extKeys := map[string]struct{}{}
+	for _, f := range cat.Extended {
+		extKeys[f.Key] = struct{}{}
+	}
+	for _, want := range []string{"signer", "contact", "contact_phone", "urgency", "valid_until", "attachments", "person", "measure", "basis", "summary"} {
+		assert.Contains(t, extKeys, want, "通知公告扩展字段 %s 缺失", want)
+	}
 }
 
-// 系统内置三件套：分类主轴字段 + 提取状态 + 标签，三者缺一不可。
 func TestDocumentScopesBuiltinTriple(t *testing.T) {
 	mainAxis := map[string]string{
 		"contract": "contractType", "regulation": "regType",
-		"notice": "apType", "award_punish": "measure",
+		"notice": "apType", "award_punish": "apType",
 	}
 	for scope, axis := range mainAxis {
 		s, _ := GetScopeSchema(scope)

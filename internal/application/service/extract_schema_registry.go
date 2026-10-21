@@ -114,86 +114,42 @@ func documentScopeSchemaWithFields(scope, categoryLabel string, fields []types.F
 	return s
 }
 
-// 各 document scope 的字段键必须与前端 *FieldLabels.ts 的契约键同源（camelCase
-// 经 canonicalFieldKey 归一后比对），否则 AI 字典与界面会各说各话。
-// 每个 scope 的分类主轴字段（contractType / regType / apType / awardType）、
-// extractStatus、tags 是系统内置三件套，不允许用户删除。
-func contractStandardFieldDefs() []types.FieldDef {
-	return []types.FieldDef{
-		{Key: "contractNo", Label: "合同编号", Type: types.FieldTypeText, Hint: "合同封面/页眉标注的合同编号"},
-		{Key: "contractName", Label: "合同名称", Type: types.FieldTypeText},
-		{Key: "contractType", Label: "合同类型", Type: types.FieldTypeText},
-		{Key: "partyAName", Label: "甲方", Type: types.FieldTypeText},
-		{Key: "partyBName", Label: "乙方", Type: types.FieldTypeText},
-		{Key: "signDate", Label: "签订日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
-		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
-		{Key: "expiryDate", Label: "到期日期", Type: types.FieldTypeDate},
-		{Key: "contractAmount", Label: "合同金额", Type: types.FieldTypeNumber},
-		{Key: "taxRate", Label: "税率", Type: types.FieldTypeNumber},
-		{Key: "fulfillStatus", Label: "履约状态", Type: types.FieldTypeText},
-		{Key: "handler", Label: "经办人", Type: types.FieldTypeText},
-		{Key: "department", Label: "部门", Type: types.FieldTypeText},
-		{Key: "signPlace", Label: "签订地点", Type: types.FieldTypeText},
-		{Key: "paymentMethod", Label: "付款方式", Type: types.FieldTypeText},
-		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
-		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
-		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
+// 标准字段定义不再手写：统一由 business_field_catalog.go 的字段目录派生。
+//
+// 目录是「字段顺序 + 中文名 + 描述 + 规则 + 正则」的唯一权威源，同时喂给
+// ScopeSchema（AI 字典 / 正则补洞面）、提取规则设置页（默认底稿）与正式提取
+// （Prompt 字段口径）。手写多份会在三处之间漂移——历史上就是这样导致
+// subs 用 camelCase、落库用 snake_case、正则补洞按名字匹配不到而静默失效。
+func catalogFieldDefs(scope string) []types.FieldDef {
+	cat, ok := BusinessFieldCatalogOf(scope)
+	if !ok {
+		return nil
 	}
+	out := make([]types.FieldDef, 0, len(cat.Standard))
+	for _, f := range cat.Standard {
+		ft := types.FieldTypeText
+		switch f.Type {
+		case "number":
+			ft = types.FieldTypeNumber
+		case "date":
+			ft = types.FieldTypeDate
+		case "array":
+			ft = types.FieldTypeArray
+		}
+		out = append(out, types.FieldDef{Key: f.Key, Label: f.Label, Type: ft, Hint: f.Desc, Regex: f.Regex})
+	}
+	return out
 }
 
-func regulationStandardFieldDefs() []types.FieldDef {
-	return []types.FieldDef{
-		{Key: "regNo", Label: "制度编号", Type: types.FieldTypeText},
-		{Key: "regName", Label: "制度名称", Type: types.FieldTypeText},
-		{Key: "regType", Label: "制度类型", Type: types.FieldTypeText},
-		{Key: "version", Label: "版本", Type: types.FieldTypeText},
-		{Key: "issueDate", Label: "编制日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
-		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
-		{Key: "dept", Label: "编制部门", Type: types.FieldTypeText},
-		{Key: "scope", Label: "适用范围", Type: types.FieldTypeText},
-		{Key: "confidentiality", Label: "密级", Type: types.FieldTypeText},
-		{Key: "summary", Label: "摘要", Type: types.FieldTypeText},
-		{Key: "compiledBy", Label: "编制", Type: types.FieldTypeText},
-		{Key: "reviewedBy", Label: "审核", Type: types.FieldTypeText},
-		{Key: "approvedBy", Label: "批准", Type: types.FieldTypeText},
-		{Key: "pageCount", Label: "页数", Type: types.FieldTypeNumber},
-		{Key: "modifyCount", Label: "修改次数", Type: types.FieldTypeNumber},
-		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
-		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
-		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
-	}
-}
+func contractStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("contract") }
 
-// noticeStandardFieldDefs 通知公告：文号/标题/文件类型/发布日期/发布人/发布单位。
-// 与 award_punish 的「当事人/岗位/处理决定/依据」**零交集**，互不可见。
-func noticeStandardFieldDefs() []types.FieldDef {
-	return []types.FieldDef{
-		{Key: "apNo", Label: "文号", Type: types.FieldTypeText},
-		{Key: "apTitle", Label: "标题", Type: types.FieldTypeText},
-		{Key: "apType", Label: "公告类型", Type: types.FieldTypeText},
-		{Key: "signDate", Label: "发布日期", Type: types.FieldTypeDate, Hint: "YYYY-MM-DD"},
-		{Key: "signer", Label: "发布人", Type: types.FieldTypeText},
-		{Key: "issueDept", Label: "发布单位", Type: types.FieldTypeText},
-		{Key: "summary", Label: "摘要", Type: types.FieldTypeText},
-		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
-		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
-		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
-	}
-}
+func regulationStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("regulation") }
 
-func awardPunishStandardFieldDefs() []types.FieldDef {
-	return []types.FieldDef{
-		{Key: "person", Label: "当事人", Type: types.FieldTypeText},
-		{Key: "dept", Label: "部门", Type: types.FieldTypeText},
-		{Key: "position", Label: "岗位", Type: types.FieldTypeText},
-		{Key: "measure", Label: "处理决定", Type: types.FieldTypeText},
-		{Key: "basis", Label: "依据", Type: types.FieldTypeText},
-		{Key: "effectiveDate", Label: "生效日期", Type: types.FieldTypeDate},
-		{Key: "remark", Label: "备注", Type: types.FieldTypeText},
-		{Key: "extractStatus", Label: "提取状态", Type: types.FieldTypeText},
-		{Key: "tags", Label: "标签", Type: types.FieldTypeArray},
-	}
-}
+// notice 与 award_punish 是同一个业务（通知公告）的两个入口：字段集完全一致，
+// 不再各自维护一份字典（此前的"零交集"设计让设置页配的字段和提取器读的配置对不上）。
+func noticeStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("award_punish") }
+
+func awardPunishStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("award_punish") }
 
 // documentScopeSchema document 类 scope 的公共骨架：无标准字段、无明细层级，
 // 仍保留扩展桶约定（合同/制度等提取结果的自定义字段语义桶）。

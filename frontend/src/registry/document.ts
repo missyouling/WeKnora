@@ -66,17 +66,18 @@ registerDocument(
   ['reg_no', 'issue_date'],
   ['regType', 'extractStatus', 'tags'],
 )
-// 通知公告：只有公告口径字段（文号/标题/发布单位…）
+// 通知公告 与 奖惩：统一 scope、同一份字段目录（2026-10-21，与后端 noticeCatalog() 同源：
+// BusinessFieldCatalogOf("notice") 归一到 award_punish 一份目录）。
+// 内置三件套（分类主轴 apType + 提取状态 + 标签）也统一，不再让 measure 当奖惩主轴。
 registerDocument(
   'notice', '公告类型', '公告', '公告', '公告类型',
   NOTICE_FIELD_LABELS,
   ['ap_no', 'sign_date'],
   ['apType', 'extractStatus', 'tags'],
 )
-// 奖惩：独立字段表（当事人/岗位/处理决定/依据…），不再借道公告字典。
 registerDocument(
   'award_punish', '奖惩类型', '奖惩', '奖惩决定', '奖惩类型',
   AWARD_PUNISH_FIELD_LABELS,
-  ['measure', 'basis', 'effective_date'],
-  ['measure', 'extractStatus', 'tags'],
+  ['ap_no', 'sign_date'],
+  ['apType', 'extractStatus', 'tags'],
 )

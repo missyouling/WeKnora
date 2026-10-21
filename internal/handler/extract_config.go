@@ -192,6 +192,16 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 		return
 	}
 	ec := h.getExtractConfig(ctx, kbID, scope, certType)
+	// 合同/制度/通知公告：未保存过配置时现场合成默认底稿并落库（幂等），
+	// 已保存过则补齐 desc/rule/regex/prompt_template 的空值（不覆盖用户改过的文案）。
+	// 这样用户第一次打开「设置 -> 提取规则」就能看到完整规则，而不是一片「未配置」。
+	if isBusinessDocumentScope(scope) {
+		if _, _, tenantID, _, aerr := h.validateKnowledgeBaseAccessWithKBID(c, kbID); aerr == nil {
+			if ensured := h.ensureBusinessExtractConfigDefaults(ctx, kbID, tenantID, scope, certType); ensured != nil {
+				ec = ensured
+			}
+		}
+	}
 	if ec == nil {
 		// 发票分类没有配置时，按「分类对应的发票类型」现场合成一份底稿返回
 		// （不落库）：新建的分类无需重启服务就能看到对应规则与正则。
@@ -986,6 +996,151 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 	}
 }
 
+// isBusinessDocumentScope 判断是否为「一文件一档案」的三个文档业务 scope。
+func isBusinessDocumentScope(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case "contract", "regulation", "award_punish", "notice":
+		return true
+	}
+	return false
+}
+
+// ensureBusinessExtractConfigDefaults 幂等落库默认提取规则底稿。
+//
+//   - 无配置：按字段目录创建（fields 全量 + prompt_template 默认高级模板）；
+//   - 有配置：只补 desc/rule/regex/type/prompt_template 的空值，绝不覆盖用户改动；
+//   - tenantID 传 0 时按知识库归属补查（解析链路在 worker 上下文里拿不到 gin 侧数据）。
+func (h *BusinessExtractHandler) ensureBusinessExtractConfigDefaults(
+	ctx context.Context, kbID string, tenantID uint64, scope, certType string,
+) *types.KbExtractConfig {
+	scope = strings.TrimSpace(scope)
+	if scope == "notice" {
+		scope = "award_punish"
+	}
+	certType = strings.TrimSpace(certType)
+	fields := service.DefaultExtractFields(scope, certType)
+	tpl := service.DefaultBusinessPromptTemplate(scope)
+	if len(fields) == 0 {
+		return h.getExtractConfig(ctx, kbID, scope, certType)
+	}
+	now := time.Now().UTC()
+	existing := h.getExtractConfig(ctx, kbID, scope, certType)
+	if existing != nil {
+		if service.BackfillExtractConfigDefaults(existing) {
+			existing.UpdatedAt = now
+			if err := h.db.WithContext(ctx).Save(existing).Error; err != nil {
+				logger.Warnf(ctx, "backfill extract config defaults failed: %v", err)
+			}
+		}
+		return existing
+	}
+	// 已存在「整体规则」时不再新建分类级配置，避免两套规则并存
+	if certType != "" {
+		if all := h.getExtractConfig(ctx, kbID, scope, ""); all != nil {
+			return all
+		}
+	}
+	cfg := &types.KbExtractConfig{
+		ID:              uuid.NewString(),
+		TenantID:        int64(tenantID),
+		KnowledgeBaseID: kbID,
+		Scope:           scope,
+		CertType:        certType,
+		Fields:          fields,
+		PromptTemplate:  tpl,
+		Version:         1,
+		Enabled:         true,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := h.db.WithContext(ctx).Create(cfg).Error; err != nil {
+		logger.Warnf(ctx, "create default extract config failed: %v", err)
+		return nil
+	}
+	return cfg
+}
+
+// SeedBusinessExtractConfigBackfill 幂等回填合同/制度/通知公告的提取规则底稿（启动时调用一次）。
+//
+// 与 GET 接口的懒回填共用 BackfillExtractConfigDefaults，保证两条入口口径一致：
+//   - 存量行：只补 desc/rule/regex/type/prompt_template 的空值，绝不覆盖用户改过的文案；
+//     目录里有、配置里没有的字段不硬塞（用户可能主动关掉了某个字段，复活会打乱其配置）。
+//   - 缺失配置的 知识库×scope：按字段目录创建一份整体规则底稿（cert_type 空），
+//     这样用户第一次打开「设置 → 提取规则」看到的是完整规则而不是一片「未配置」。
+//
+// 幂等：已填满的行 BackfillExtractConfigDefaults 返回 false，不会产生写库；重复启动无副作用。
+func (h *BusinessExtractHandler) SeedBusinessExtractConfigBackfill(ctx context.Context) {
+	if h == nil || h.db == nil {
+		return
+	}
+	// 四个 document scope 中 notice 与 award_punish 共用一份目录，但历史数据可能两种 scope
+	// 都写过，这里一并纳入补齐范围（只补空值，不改 scope 列，避免动到既有路由语义）。
+	legacyScopes := []string{"contract", "regulation", "award_punish", "notice"}
+	var rows []types.KbExtractConfig
+	if err := h.db.WithContext(ctx).
+		Where("scope IN ? AND deleted_at IS NULL", legacyScopes).
+		Find(&rows).Error; err != nil {
+		logger.Warnf(ctx, "seed business extract configs: list configs failed: %v", err)
+		return
+	}
+	patched := 0
+	for i := range rows {
+		if !service.BackfillExtractConfigDefaults(&rows[i]) {
+			continue
+		}
+		rows[i].UpdatedAt = time.Now().UTC()
+		if err := h.db.WithContext(ctx).Save(&rows[i]).Error; err != nil {
+			logger.Warnf(ctx, "seed business extract configs: patch %s failed: %v", rows[i].ID, err)
+			continue
+		}
+		patched++
+	}
+	// 已有任意配置（含分类级）的 知识库×scope 不再新建整体规则，避免两套规则并存。
+	have := make(map[string]struct{}, len(rows))
+	for _, r := range rows {
+		have[r.KnowledgeBaseID+"|"+r.Scope] = struct{}{}
+	}
+	var kbs []types.KnowledgeBase
+	if err := h.db.WithContext(ctx).Select("id", "tenant_id").Find(&kbs).Error; err != nil {
+		logger.Warnf(ctx, "seed business extract configs: list knowledge bases failed: %v", err)
+		return
+	}
+	created := 0
+	now := time.Now().UTC()
+	for _, kb := range kbs {
+		for _, scope := range []string{"contract", "regulation", "award_punish"} {
+			if _, ok := have[kb.ID+"|"+scope]; ok {
+				continue
+			}
+			fields := service.DefaultExtractFields(scope, "")
+			if len(fields) == 0 {
+				continue
+			}
+			cfg := &types.KbExtractConfig{
+				ID:              uuid.NewString(),
+				TenantID:        int64(kb.TenantID),
+				KnowledgeBaseID: kb.ID,
+				Scope:           scope,
+				CertType:        "",
+				Fields:          fields,
+				PromptTemplate:  service.DefaultBusinessPromptTemplate(scope),
+				Version:         1,
+				Enabled:         true,
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			}
+			if err := h.db.WithContext(ctx).Create(cfg).Error; err != nil {
+				logger.Warnf(ctx, "seed business extract configs: create %s/%s failed: %v", kb.ID, scope, err)
+				continue
+			}
+			created++
+		}
+	}
+	if patched > 0 || created > 0 {
+		logger.Infof(ctx, "seed business extract configs: patched=%d created=%d", patched, created)
+	}
+}
+
 // resolveContractRuleCfg 合同提取规则解析：按 scope=contract 读取用户配置的提取规则。
 // 规则为空时返回 nil，调用方回退默认提取逻辑。
 func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbID, certType string) *types.KbExtractConfig {
@@ -994,10 +1149,15 @@ func (h *BusinessExtractHandler) resolveContractRuleCfg(ctx context.Context, kbI
 	// 未配置分类规则时回退合同整体规则（与发票 resolveInvoiceRuleCfg 回退链一致）。
 	if ct := strings.TrimSpace(certType); ct != "" {
 		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
-			return cfg
+			return service.WithSnakeFieldKeys(cfg)
 		}
 	}
-	return h.getExtractConfig(ctx, kbID, scope, "")
+	if cfg := h.getExtractConfig(ctx, kbID, scope, ""); cfg != nil {
+		return service.WithSnakeFieldKeys(cfg)
+	}
+	// 用户从未保存过规则：落一份默认底稿（含 desc/rule/regex/高级模板），
+	// 保证提取用的字段口径与设置页看到的一致。
+	return service.WithSnakeFieldKeys(h.ensureBusinessExtractConfigDefaults(ctx, kbID, 0, scope, certType))
 }
 
 // resolveRegulationRuleCfg 制度提取规则解析：按 scope=regulation 读取用户配置的提取规则。
@@ -1008,10 +1168,15 @@ func (h *BusinessExtractHandler) resolveRegulationRuleCfg(ctx context.Context, k
 	// 未配置分类规则时回退制度整体规则（与发票/合同 resolveRuleCfg 回退链一致）。
 	if ct := strings.TrimSpace(certType); ct != "" {
 		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
-			return cfg
+			return service.WithSnakeFieldKeys(cfg)
 		}
 	}
-	return h.getExtractConfig(ctx, kbID, scope, "")
+	if cfg := h.getExtractConfig(ctx, kbID, scope, ""); cfg != nil {
+		return service.WithSnakeFieldKeys(cfg)
+	}
+	// 用户从未保存过规则：落一份默认底稿（含 desc/rule/regex/高级模板），
+	// 保证提取用的字段口径与设置页看到的一致。
+	return service.WithSnakeFieldKeys(h.ensureBusinessExtractConfigDefaults(ctx, kbID, 0, scope, certType))
 }
 
 // resolveNoticeRuleCfg 通知公告提取规则解析：按 scope=award_punish 读取用户配置的提取规则。
@@ -1022,8 +1187,13 @@ func (h *BusinessExtractHandler) resolveNoticeRuleCfg(ctx context.Context, kbID,
 	// 未配置分类规则时回退通知公告整体规则（与发票/合同/制度 resolveRuleCfg 回退链一致）。
 	if ct := strings.TrimSpace(certType); ct != "" {
 		if cfg := h.getExtractConfig(ctx, kbID, scope, ct); cfg != nil {
-			return cfg
+			return service.WithSnakeFieldKeys(cfg)
 		}
 	}
-	return h.getExtractConfig(ctx, kbID, scope, "")
+	if cfg := h.getExtractConfig(ctx, kbID, scope, ""); cfg != nil {
+		return service.WithSnakeFieldKeys(cfg)
+	}
+	// 用户从未保存过规则：落一份默认底稿（含 desc/rule/regex/高级模板），
+	// 保证提取用的字段口径与设置页看到的一致。
+	return service.WithSnakeFieldKeys(h.ensureBusinessExtractConfigDefaults(ctx, kbID, 0, scope, certType))
 }

@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"context"
@@ -285,4 +285,3 @@ func (s *knowledgeService) knowledgeTextForRules(ctx context.Context, k *types.K
 	}
 	return b.String()
 }
-

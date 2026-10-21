@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"context"
@@ -113,21 +113,28 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 					continue
 				}
 				records = append(records, types.AwardPunishRecord{
-					RowKey:         fmt.Sprintf("%s-%d", k.ID, idx),
-					ApNo:           r.ApNo,
-					ApTitle:        r.ApTitle,
-					ApType:         r.ApType,
-					Person:         r.Person,
-					Dept:           r.Dept,
-					IssueDept:      r.IssueDept,
-					Position:       r.Position,
-					Measure:        r.Measure,
-					Basis:          r.Basis,
-					Signer:         r.Signer,
-					SignDate:       r.SignDate,
-					EffectiveDate:  r.EffectiveDate,
-					Remark:         r.Remark,
-					Summary:        r.Summary,
+					RowKey:        fmt.Sprintf("%s-%d", k.ID, idx),
+					ApNo:          r.ApNo,
+					ApTitle:       r.ApTitle,
+					ApType:        r.ApType,
+					Person:        r.Person,
+					Dept:          r.Dept,
+					IssueDept:     r.IssueDept,
+					Position:      r.Position,
+					Measure:       r.Measure,
+					Basis:         r.Basis,
+					Signer:        r.Signer,
+					SignDate:      r.SignDate,
+					EffectiveDate: r.EffectiveDate,
+					Scope:         r.Scope,
+					Contact:       r.Contact,
+					ContactPhone:  r.ContactPhone,
+					Urgency:       r.Urgency,
+					ValidUntil:    r.ValidUntil,
+					Attachments:   r.Attachments,
+					Remark:        r.Remark,
+					// 摘要复用知识库已生成的文档摘要（与文档详情同源）
+					Summary:        ReuseKnowledgeSummary(r.Summary, k.Description),
 					Page:           r.Page,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
@@ -327,7 +334,6 @@ func (s *BusinessExtractService) ListAwardPunishTypes(ctx context.Context, kbID 
 	return ordered, nil
 }
 
-
 // AwardPunishOverviewStats 计算奖惩台账概览统计。口径与 ListAwardPunishRecords 平铺完全一致：
 // 遍历知识库下全部 knowledge → 平铺奖惩记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，
 // 因此不受列表类型/日期/搜索筛选影响（发票基准 InvoiceOverviewStats 同款形态）。
@@ -395,7 +401,7 @@ func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, k
 		page++
 	}
 
-		stats := &types.AwardPunishOverviewStats{
+	stats := &types.AwardPunishOverviewStats{
 		ByApType:   []types.AwardPunishTypeStat{},
 		ByCategory: []types.NoticeCategoryStat{},
 	}

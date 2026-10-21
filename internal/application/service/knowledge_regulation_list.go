@@ -1,4 +1,4 @@
-﻿// 制度级聚合列表：把知识库下所有已提取制度平铺为"一行一份制度"的记录，
+// 制度级聚合列表：把知识库下所有已提取制度平铺为"一行一份制度"的记录，
 // 在服务端完成全字段搜索、类型筛选、排序与分页，供制度管理页直接渲染。
 // 重复判断复用知识库文件上传层（file_hash / 文件名+大小），列表层不再按制度编号去重。
 package service
@@ -17,11 +17,11 @@ import (
 // regulationMetadata 与 handler.regulationCustomMetadata 对齐，用于从 custom_metadata
 // 反序列化制度提取结果。
 type regulationMetadata struct {
-	Kind             string                            `json:"kind"`
-	Regulations      []types.RegulationExtractionItem  `json:"regulations"`
-	ExtractStatus    string                            `json:"extract_status"`
-	ExtractError     string                            `json:"extract_error"`
-	AutoDeletedCount int                               `json:"auto_deleted_count"`
+	Kind             string                           `json:"kind"`
+	Regulations      []types.RegulationExtractionItem `json:"regulations"`
+	ExtractStatus    string                           `json:"extract_status"`
+	ExtractError     string                           `json:"extract_error"`
+	AutoDeletedCount int                              `json:"auto_deleted_count"`
 }
 
 // ListRegulationRecords 实现制度级聚合列表。
@@ -112,22 +112,24 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 					continue
 				}
 				records = append(records, types.RegulationRecord{
-					RegNo:          r.RegNo,
-					RegName:        r.RegName,
-					RegType:        r.RegType,
-					Dept:           r.Dept,
-					Version:        r.Version,
-					IssueDate:      r.IssueDate,
-					PageCount:      r.PageCount,
-					ModifyCount:    r.ModifyCount,
-					Scope:          r.Scope,
-					EffectiveDate:  r.EffectiveDate,
+					RegNo:           r.RegNo,
+					RegName:         r.RegName,
+					RegType:         r.RegType,
+					Dept:            r.Dept,
+					Version:         r.Version,
+					IssueDate:       r.IssueDate,
+					PageCount:       r.PageCount,
+					ModifyCount:     r.ModifyCount,
+					Scope:           r.Scope,
+					EffectiveDate:   r.EffectiveDate,
 					Confidentiality: r.Confidentiality,
-					Remark:         r.Remark,
-					CompiledBy:     r.CompiledBy,
-					ReviewedBy:     r.ReviewedBy,
-					ApprovedBy:     r.ApprovedBy,
-					Summary:        r.Summary,
+					Remark:          r.Remark,
+					CompiledBy:      r.CompiledBy,
+					ReviewedBy:      r.ReviewedBy,
+					ApprovedBy:      r.ApprovedBy,
+					Attachments:     r.Attachments,
+					// 摘要复用知识库已生成的文档摘要（与文档详情同源）
+					Summary:        ReuseKnowledgeSummary(r.Summary, k.Description),
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,
@@ -319,7 +321,6 @@ func (s *BusinessExtractService) ListRegulationTypes(ctx context.Context, kbID s
 	})
 	return types_, nil
 }
-
 
 // RegulationOverviewStats 计算制度台账概览统计。口径与 ListRegulationRecords 平铺完全一致：
 // 遍历知识库下全部 knowledge → 平铺制度记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，

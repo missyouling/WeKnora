@@ -24,7 +24,7 @@
     <!-- KB 存在：主界面 -->
     <div v-else class="contract-main">
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
-      <DashboardKpiGroup :loading="!cardsReady" :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
+      <DashboardKpiGroup :loading="false" :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
       <!-- 筛选工具栏走中台 BusinessFilterBar（与发票同款）：筛选器改为 FilterFieldSpec
            声明，分类切换只由顶部 KPI 卡片承担，工具栏不再出现分类下拉 -->
@@ -60,34 +60,34 @@
         @row-click="({ row }: any) => openDetail(row)"
         @select-change="(val: string[]) => onSelectChange(val)"
       >
-        <template #contractNo="{ row }: any">
-          <span class="row-contract-no" :title="row.contractNo || row.fileName">{{ row.contractNo }}</span>
+        <template #contract_no="{ row }: any">
+          <span class="row-contract-no" :title="row.contract_no || row.fileName">{{ row.contract_no }}</span>
         </template>
-        <template #contractName="{ row }: any">
-          <span class="row-text" :title="row.contractName || row.fileName">{{ row.contractName || row.fileName }}</span>
+        <template #contract_name="{ row }: any">
+          <span class="row-text" :title="row.contract_name || row.fileName">{{ row.contract_name || row.fileName }}</span>
         </template>
-        <template #contractType="{ row }: any">
-          <span class="row-text" :title="row.contractType">{{ row.contractType }}</span>
+        <template #contract_type="{ row }: any">
+          <span class="row-text" :title="row.contract_type">{{ row.contract_type }}</span>
         </template>
-        <template #partyAName="{ row }: any">
-          <span class="row-text" :title="row.partyAName">{{ row.partyAName }}</span>
+        <template #party_a="{ row }: any">
+          <span class="row-text" :title="row.party_a">{{ row.party_a }}</span>
         </template>
-        <template #partyBName="{ row }: any">
-          <span class="row-text" :title="row.partyBName">{{ row.partyBName }}</span>
+        <template #party_b="{ row }: any">
+          <span class="row-text" :title="row.party_b">{{ row.party_b }}</span>
         </template>
-        <template #signDate="{ row }: any">
-          <span class="row-mono">{{ row.signDate }}</span>
+        <template #sign_date="{ row }: any">
+          <span class="row-mono">{{ row.sign_date }}</span>
         </template>
-        <template #expiryDate="{ row }: any">
-          <span class="row-mono">{{ row.expiryDate }}</span>
+        <template #expire_date="{ row }: any">
+          <span class="row-mono">{{ row.expire_date }}</span>
         </template>
-        <template #contractAmount="{ row }: any">
-          <span class="row-mono row-amount">{{ formatAmount(row.contractAmount) }}</span>
+        <template #amount="{ row }: any">
+          <span class="row-mono row-amount">{{ formatAmount(row.amount) }}</span>
         </template>
-        <template #taxRate="{ row }: any">
-          <span class="row-mono row-rate">{{ formatRate(row.taxRate) }}</span>
+        <template #tax_rate="{ row }: any">
+          <span class="row-mono row-rate">{{ formatRate(row.tax_rate) }}</span>
         </template>
-        <template #extractStatus="{ row }: any">
+        <template #extract_status="{ row }: any">
           <t-tag v-if="statusOf(row).label !== '--'" size="small" :theme="statusOf(row).theme"
             variant="light-outline" class="row-status-tag">
             <template v-if="statusOf(row).icon" #icon>
@@ -110,23 +110,23 @@
             <span class="row-tag-add">+ 标签</span>
           </span>
         </template>
-        <template #fulfillStatus="{ row }: any">
-          <t-tag v-if="row.fulfillStatus" size="small" :theme="fulfillStatusTheme(row.fulfillStatus)" variant="light-outline">
-            {{ row.fulfillStatus }}
+        <template #performance_status="{ row }: any">
+          <t-tag v-if="row.performance_status" size="small" :theme="fulfillStatusTheme(row.performance_status)" variant="light-outline">
+            {{ row.performance_status }}
           </t-tag>
           <span v-else class="row-muted">--</span>
         </template>
-        <template #partyATaxNo="{ row }: any">
-          <span class="row-mono" :title="row.partyATaxNo">{{ row.partyATaxNo }}</span>
+        <template #party_a_tax_no="{ row }: any">
+          <span class="row-mono" :title="row.party_a_tax_no">{{ row.party_a_tax_no }}</span>
         </template>
-        <template #partyBTaxNo="{ row }: any">
-          <span class="row-mono" :title="row.partyBTaxNo">{{ row.partyBTaxNo }}</span>
+        <template #party_b_tax_no="{ row }: any">
+          <span class="row-mono" :title="row.party_b_tax_no">{{ row.party_b_tax_no }}</span>
         </template>
-        <template #effectiveDate="{ row }: any">
-          <span class="row-mono">{{ row.effectiveDate }}</span>
+        <template #effective_date="{ row }: any">
+          <span class="row-mono">{{ row.effective_date }}</span>
         </template>
-        <template #paymentMethod="{ row }: any">
-          <span class="row-text">{{ row.paymentMethod }}</span>
+        <template #payment_method="{ row }: any">
+          <span class="row-text">{{ row.payment_method }}</span>
         </template>
         <template #handler="{ row }: any">
           <span class="row-text">{{ row.handler }}</span>
@@ -245,6 +245,12 @@
           variant="light-outline" class="row-status-tag">{{ statusOf(currentRow || {}).label }}</t-tag>
         <span v-else class="row-muted">--</span>
       </template>
+      <!-- 履约状态为系统按到期日期派生的只读字段（履行中/即将到期/已超期）：渲染只读标签，不提供编辑控件 -->
+      <template #field-performance_status>
+        <t-tag v-if="editForm.performance_status" size="small" :theme="fulfillStatusTheme(editForm.performance_status)"
+          variant="light-outline">{{ editForm.performance_status }}</t-tag>
+        <span v-else class="row-muted">--</span>
+      </template>
       <template #field-tags>
         <div v-if="rowTags(currentRow || {}).length" class="detail-tags-readonly">
           <t-tag v-for="t in rowTags(currentRow || {})" :key="t.id || t.name" size="small" variant="light-outline"
@@ -348,7 +354,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
-import { CONTRACT_FIELD_LABELS, contractFieldLabel } from './contractFieldLabels'
+import { CONTRACT_FIELD_ORDER, contractFieldLabel, contractKeyOf } from './contractFieldLabels'
 import { buildDetailFieldDefs } from './businessDetailForm'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
@@ -361,9 +367,9 @@ const PAGE_SIZE = 20
 const FULFILL_STATUSES = ['履行中', '即将到期', '已超期']
 const EXPIRY_WARN_DAYS = 30
 // 按到期日期派生履约状态（黄金基准：状态列自动计算，不依赖模型提取值）
-const calcFulfillStatus = (expiryDate?: string): string => {
-  if (!expiryDate) return ''
-  const d = new Date(expiryDate)
+const calcFulfillStatus = (expire_date?: string): string => {
+  if (!expire_date) return ''
+  const d = new Date(expire_date)
   if (Number.isNaN(d.getTime())) return ''
   const now = new Date()
   now.setHours(0, 0, 0, 0)
@@ -378,44 +384,47 @@ const PAYMENT_METHODS = ['一次性', '分期', '按进度']
 // 字段定义（列显隐设置）
 import { useBusinessList, type ColumnDef } from '@/composables/useBusinessList'
 import { useDocStatus } from '@/composables/useDocStatus'
+// 列定义 = 新契约键严格顺序（11 标准默认显示 + 15 扩展默认不显示），fileName 为系统列置尾；
+// 历史字段列（重置前的税率/质保金等）保留在系统列之后，供存量数据在字段筛选器中按需开启，
+// 不进入新字段主轴（与后端 contractCatalog() 顺序同源，contractFieldLabels.test.ts 锁定）。
 const DEFAULT_CONTRACT_COLUMNS: ColumnDef[] = [
-  { key: 'contractNo', label: '合同编号', default: true, w: '1.4fr' },
-  { key: 'contractName', label: '合同名称', default: true, w: '1.6fr' },
-  { key: 'contractType', label: '合同类型', default: true, w: '1fr' },
-  { key: 'partyAName', label: '甲方', default: true, w: '1.4fr' },
-  { key: 'partyBName', label: '乙方', default: true, w: '1.4fr' },
-  { key: 'signDate', label: '签订日期', default: true, w: '1.1fr' },
-  { key: 'expiryDate', label: '到期日期', default: true, w: '1.1fr' },
-  { key: 'contractAmount', label: '合同金额', default: true, w: '1.2fr' },
-  { key: 'taxRate', label: '税率', default: true, w: '0.7fr' },
-  { key: 'extractStatus', label: '状态', default: true, w: '1fr' },
+  // ---- 标准 11（默认显示）----
+  { key: 'contract_no', label: '合同编号', default: true, w: '1.4fr' },
+  { key: 'contract_name', label: '合同名称', default: true, w: '1.6fr' },
+  { key: 'contract_type', label: '合同类型', default: true, w: '1fr' },
+  { key: 'party_a', label: '甲方', default: true, w: '1.4fr' },
+  { key: 'party_b', label: '乙方', default: true, w: '1.4fr' },
+  { key: 'sign_date', label: '签订日期', default: true, w: '1.1fr' },
+  { key: 'expire_date', label: '到期日期', default: true, w: '1.1fr' },
+  { key: 'amount', label: '合同金额', default: true, w: '1.2fr' },
+  { key: 'extract_status', label: '状态', default: true, w: '1fr' },
+  { key: 'performance_status', label: '履约状态', default: true, w: '1fr' },
   { key: 'tags', label: '标签', default: true, w: '1.2fr' },
-  { key: 'fulfillStatus', label: '履约状态', default: true, w: '1fr' },
-  { key: 'partyATaxNo', label: '甲方税号', default: false, w: '1.3fr' },
-  { key: 'partyBTaxNo', label: '乙方税号', default: false, w: '1.3fr' },
-  { key: 'effectiveDate', label: '生效日期', default: false, w: '1.1fr' },
-  { key: 'paymentMethod', label: '付款方式', default: false, w: '1fr' },
-  { key: 'handler', label: '经办人', default: false, w: '0.9fr' },
-  { key: 'department', label: '部门', default: false, w: '0.9fr' },
-  // 详情字段（默认不占列表宽度，与编辑抽屉表单同源，可在字段筛选器中开启）
-  { key: 'signPlace', label: '签订地点', default: false, w: '1.2fr' },
-  { key: 'partyAAddress', label: '甲方地址', default: false, w: '1.6fr' },
-  { key: 'partyAPhone', label: '甲方电话', default: false, w: '1fr' },
-  { key: 'partyABank', label: '甲方开户行', default: false, w: '1.4fr' },
-  { key: 'partyAAccount', label: '甲方账号', default: false, w: '1.3fr' },
-  { key: 'partyBAddress', label: '乙方地址', default: false, w: '1.6fr' },
-  { key: 'partyBPhone', label: '乙方电话', default: false, w: '1fr' },
-  { key: 'partyBBank', label: '乙方开户行', default: false, w: '1.4fr' },
-  { key: 'partyBAccount', label: '乙方账号', default: false, w: '1.3fr' },
-  { key: 'qualityBond', label: '质保金', default: false, w: '1fr' },
-  { key: 'liquidatedDamages', label: '违约金', default: false, w: '1fr' },
-  { key: 'subject', label: '合同标的', default: false, w: '1.6fr' },
-  { key: 'quantity', label: '数量', default: false, w: '0.7fr' },
-  { key: 'unitPrice', label: '单价', default: false, w: '1fr' },
-  { key: 'performancePeriod', label: '履行期限', default: false, w: '1.2fr' },
-  { key: 'remark', label: '备注', default: false, w: '1.6fr' },
+  // ---- 扩展 15（默认不显示，可在字段筛选器开启）----
+  { key: 'party_a_contact', label: '甲方经办人', default: false, w: '1fr' },
+  { key: 'party_a_tax_no', label: '甲方税号', default: false, w: '1.3fr' },
+  { key: 'party_b_contact', label: '乙方经办人', default: false, w: '1fr' },
+  { key: 'party_b_tax_no', label: '乙方税号', default: false, w: '1.3fr' },
+  { key: 'party_a_address', label: '甲方地址', default: false, w: '1.6fr' },
+  { key: 'party_a_phone', label: '甲方电话', default: false, w: '1fr' },
+  { key: 'party_a_bank', label: '甲方开户行', default: false, w: '1.4fr' },
+  { key: 'party_a_account', label: '甲方账号', default: false, w: '1.3fr' },
+  { key: 'party_b_address', label: '乙方地址', default: false, w: '1.6fr' },
+  { key: 'party_b_phone', label: '乙方电话', default: false, w: '1fr' },
+  { key: 'party_b_bank', label: '乙方开户行', default: false, w: '1.4fr' },
+  { key: 'party_b_account', label: '乙方账号', default: false, w: '1.3fr' },
+  { key: 'payment_method', label: '付款方式', default: false, w: '1fr' },
+  { key: 'sign_location', label: '签订地点', default: false, w: '1.2fr' },
+  { key: 'summary', label: '摘要', default: false, w: '1.6fr' },
+  // ---- 系统列（置尾）----
+  // 历史字段（税率/质保金等）不进入默认列：老环境的分类 subs 自带旧键（reconcile append-only
+  // 保留），customColumns 走 subs 仍可显示；新环境的提取结果本就是新契约键。
   { key: 'fileName', label: '文件名', default: false, w: '1.4fr' },
 ]
+// 目录顺序卫兵：与 contractFieldLabels 的 CONTRACT_FIELD_ORDER 严格一致（单测锁定）
+if (DEFAULT_CONTRACT_COLUMNS.slice(0, CONTRACT_FIELD_ORDER.length).map((c) => c.key).join(',') !== CONTRACT_FIELD_ORDER.join(',')) {
+  console.warn('[contract] DEFAULT_CONTRACT_COLUMNS 前 26 列与 CONTRACT_FIELD_ORDER 不一致')
+}
 const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
@@ -454,38 +463,38 @@ interface ContractRow extends Record<string, any> {
   summaryStatus?: string
   extractStatus: string
   kind: 'contract' | 'not_contract' | 'unknown' | 'pending'
-  contractNo?: string
-  contractName?: string
-  contractType?: string
-  signDate?: string
-  effectiveDate?: string
-  expiryDate?: string
-  signPlace?: string
-  partyAName?: string
-  partyATaxNo?: string
-  partyAAddress?: string
-  partyAPhone?: string
-  partyABank?: string
-  partyAAccount?: string
-  partyBName?: string
-  partyBTaxNo?: string
-  partyBAddress?: string
-  partyBPhone?: string
-  partyBBank?: string
-  partyBAccount?: string
-  contractAmount?: number
-  taxRate?: number
-  paymentMethod?: string
-  qualityBond?: number
-  liquidatedDamages?: number
+  contract_no?: string
+  contract_name?: string
+  contract_type?: string
+  sign_date?: string
+  effective_date?: string
+  expire_date?: string
+  sign_location?: string
+  party_a?: string
+  party_a_tax_no?: string
+  party_a_address?: string
+  party_a_phone?: string
+  party_a_bank?: string
+  party_a_account?: string
+  party_b?: string
+  party_b_tax_no?: string
+  party_b_address?: string
+  party_b_phone?: string
+  party_b_bank?: string
+  party_b_account?: string
+  amount?: number
+  tax_rate?: number
+  payment_method?: string
+  quality_bond?: number
+  liquidated_damages?: number
   subject?: string
   quantity?: number
-  unitPrice?: number
-  performancePeriod?: string
+  unit_price?: number
+  performance_period?: string
   handler?: string
   department?: string
   remark?: string
-  fulfillStatus?: string
+  performance_status?: string
   page?: number
   multiIndex?: string
   tags?: any[]
@@ -765,38 +774,41 @@ const mapContractRecord = (r: any): ContractRow => ({
   kind: 'contract',
   tags: Array.isArray(r.tags) ? r.tags.map((t: any) => (typeof t === 'string' ? { id: t, name: t } : t)) : [],
   description: '',
-  contractNo: r.contract_no || '',
-  contractName: r.contract_name || '',
-  contractType: r.contract_type || '',
-  signDate: r.sign_date || '',
-  effectiveDate: r.effective_date || '',
-  expiryDate: r.expiry_date || '',
-  signPlace: r.sign_place || '',
-  partyAName: r.party_a_name || '',
-  partyATaxNo: r.party_a_tax_no || '',
-  partyAAddress: r.party_a_address || '',
-  partyAPhone: r.party_a_phone || '',
-  partyABank: r.party_a_bank || '',
-  partyAAccount: r.party_a_account || '',
-  partyBName: r.party_b_name || '',
-  partyBTaxNo: r.party_b_tax_no || '',
-  partyBAddress: r.party_b_address || '',
-  partyBPhone: r.party_b_phone || '',
-  partyBBank: r.party_b_bank || '',
-  partyBAccount: r.party_b_account || '',
-  contractAmount: numOrUndef(r.contract_amount),
-  taxRate: numOrUndef(r.tax_rate),
-  paymentMethod: r.payment_method || '',
-  qualityBond: numOrUndef(r.quality_bond),
-  liquidatedDamages: numOrUndef(r.liquidated_damages),
+  contract_no: r.contract_no || '',
+  contract_name: r.contract_name || '',
+  contract_type: r.contract_type || '',
+  sign_date: r.sign_date || '',
+  effective_date: r.effective_date || '',
+  // 新契约键优先；旧键（expiry_date / sign_place / party_a_name / contract_amount）回退，
+  // 兼容 2026-10-21 字段体系重置前落库的数据（后端 UnmarshalJSON 已做同口径兼容，前端双保险）
+  expire_date: r.expire_date || r.expiry_date || '',
+  sign_location: r.sign_location || r.sign_place || '',
+  party_a: r.party_a || r.party_a_name || '',
+  party_a_tax_no: r.party_a_tax_no || '',
+  party_a_address: r.party_a_address || '',
+  party_a_phone: r.party_a_phone || '',
+  party_a_bank: r.party_a_bank || '',
+  party_a_account: r.party_a_account || '',
+  party_b: r.party_b || r.party_b_name || '',
+  party_b_tax_no: r.party_b_tax_no || '',
+  party_b_address: r.party_b_address || '',
+  party_b_phone: r.party_b_phone || '',
+  party_b_bank: r.party_b_bank || '',
+  party_b_account: r.party_b_account || '',
+  amount: numOrUndef(r.amount ?? r.contract_amount),
+  tax_rate: numOrUndef(r.tax_rate),
+  payment_method: r.payment_method || '',
+  quality_bond: numOrUndef(r.quality_bond),
+  liquidated_damages: numOrUndef(r.liquidated_damages),
   subject: r.subject || '',
   quantity: numOrUndef(r.quantity),
-  unitPrice: numOrUndef(r.unit_price),
-  performancePeriod: r.performance_period || '',
+  unit_price: numOrUndef(r.unit_price),
+  performance_period: r.performance_period || '',
   handler: r.handler || '',
   department: r.department || '',
   remark: r.remark || '',
-  fulfillStatus: calcFulfillStatus(r.expiry_date),
+  // 履约状态：后端派生字段优先（performance_status），旧数据/本地兜底按到期日期现算
+  performance_status: r.performance_status || calcFulfillStatus(r.expire_date || r.expiry_date),
   page: Number(r.page) || 0,
 })
 
@@ -832,38 +844,39 @@ const parseCustomMetadata = (item: KnowledgeItem): ContractRow[] => {
     extractError,
     kind,
     ...base,
-    contractNo: ct.contract_no || '',
-    contractName: ct.contract_name || '',
-    contractType: ct.contract_type || '',
-    signDate: ct.sign_date || '',
-    effectiveDate: ct.effective_date || '',
-    expiryDate: ct.expiry_date || '',
-    signPlace: ct.sign_place || '',
-    partyAName: ct.party_a_name || '',
-    partyATaxNo: ct.party_a_tax_no || '',
-    partyAAddress: ct.party_a_address || '',
-    partyAPhone: ct.party_a_phone || '',
-    partyABank: ct.party_a_bank || '',
-    partyAAccount: ct.party_a_account || '',
-    partyBName: ct.party_b_name || '',
-    partyBTaxNo: ct.party_b_tax_no || '',
-    partyBAddress: ct.party_b_address || '',
-    partyBPhone: ct.party_b_phone || '',
-    partyBBank: ct.party_b_bank || '',
-    partyBAccount: ct.party_b_account || '',
-    contractAmount: numOrUndef(ct.contract_amount),
-    taxRate: numOrUndef(ct.tax_rate),
-    paymentMethod: ct.payment_method || '',
-    qualityBond: numOrUndef(ct.quality_bond),
-    liquidatedDamages: numOrUndef(ct.liquidated_damages),
+    contract_no: ct.contract_no || '',
+    contract_name: ct.contract_name || '',
+    contract_type: ct.contract_type || '',
+    sign_date: ct.sign_date || '',
+    effective_date: ct.effective_date || '',
+    // 同 mapContractRecord：新契约键优先，旧键回退（兼容重置前落库数据）
+    expire_date: ct.expire_date || ct.expiry_date || '',
+    sign_location: ct.sign_location || ct.sign_place || '',
+    party_a: ct.party_a || ct.party_a_name || '',
+    party_a_tax_no: ct.party_a_tax_no || '',
+    party_a_address: ct.party_a_address || '',
+    party_a_phone: ct.party_a_phone || '',
+    party_a_bank: ct.party_a_bank || '',
+    party_a_account: ct.party_a_account || '',
+    party_b: ct.party_b || ct.party_b_name || '',
+    party_b_tax_no: ct.party_b_tax_no || '',
+    party_b_address: ct.party_b_address || '',
+    party_b_phone: ct.party_b_phone || '',
+    party_b_bank: ct.party_b_bank || '',
+    party_b_account: ct.party_b_account || '',
+    amount: numOrUndef(ct.amount ?? ct.contract_amount),
+    tax_rate: numOrUndef(ct.tax_rate),
+    payment_method: ct.payment_method || '',
+    quality_bond: numOrUndef(ct.quality_bond),
+    liquidated_damages: numOrUndef(ct.liquidated_damages),
     subject: ct.subject || '',
     quantity: numOrUndef(ct.quantity),
-    unitPrice: numOrUndef(ct.unit_price),
-    performancePeriod: ct.performance_period || '',
+    unit_price: numOrUndef(ct.unit_price),
+    performance_period: ct.performance_period || '',
     handler: ct.handler || '',
     department: ct.department || '',
     remark: ct.remark || '',
-    fulfillStatus: calcFulfillStatus(ct.expiry_date),
+    performance_status: ct.performance_status || calcFulfillStatus(ct.expire_date || ct.expiry_date),
     page: Number(ct.page) || 0,
   }))
 }
@@ -893,10 +906,11 @@ const pendingRows = computed<ContractRow[]>(() => pendingFiles.value.map((k) => 
     tags: Array.isArray(k.tags) ? k.tags : [],
   } as ContractRow
 }))
-// 履约状态为前端派生字段：筛选在已加载数据上按派生状态匹配（后端不传 fulfill_status）
+// 履约状态筛选：行上带后端派生 performance_status（旧数据回退按到期日期现算）
 const fulfillFilteredRows = computed(() => {
   if (!filterFulfillStatus.value) return contractRows.value
-  return contractRows.value.filter(r => calcFulfillStatus(r.expiryDate) === filterFulfillStatus.value)
+  return contractRows.value.filter(r =>
+    (r.performance_status || calcFulfillStatus(r.expire_date)) === filterFulfillStatus.value)
 })
 const filteredRows = computed(() => [...pendingRows.value, ...fulfillFilteredRows.value])
 
@@ -948,7 +962,7 @@ const selectedSummary = computed(() => {
   if (!rows.length) return null
   let sumTotal = 0
   for (const r of rows) {
-    sumTotal += Number(r.contractAmount) || 0
+    sumTotal += Number(r.amount) || 0
   }
   return { total: rows.length, sumAmount: sumTotal, sumTotal }
 })
@@ -958,7 +972,7 @@ const displaySummary = computed(() => {
   if (filterFulfillStatus.value) {
     const rows = fulfillFilteredRows.value
     let sum = 0
-    for (const r of rows) sum += Number(r.contractAmount) || 0
+    for (const r of rows) sum += Number(r.amount) || 0
     return { total: rows.length, sumAmount: sum, sumTotal: sum }
   }
   return contractSummary.value
@@ -1106,7 +1120,6 @@ const contractOverview = ref<any>(null)
 // 避免数值分批跳变（任一请求失败也置 true，用空数据渲染，不永久转圈）
 const contractOverviewLoaded = ref(false)
 const uploadStatsLoaded = ref(false)
-const cardsReady = computed(() => contractOverviewLoaded.value && uploadStatsLoaded.value)
 const loadContractOverview = async () => {
   if (!kbId.value) return
   try {
@@ -1279,8 +1292,8 @@ const openDetail = async (row: ContractRow) => {
       if (detail.custom_metadata) {
         const parsed = parseCustomMetadata(detail)
         // 合同一份文件一份：优先按合同编号匹配详情（合同不按页匹配）
-        const match = parsed.find(p => p.contractNo && p.contractNo === row.contractNo)
-          || parsed.find(p => p.contractName === row.contractName) || parsed[0]
+        const match = parsed.find(p => p.contract_no && p.contract_no === row.contract_no)
+          || parsed.find(p => p.contract_name === row.contract_name) || parsed[0]
         if (match) currentRow.value = { ...row, ...match }
       }
     }
@@ -1289,7 +1302,7 @@ const openDetail = async (row: ContractRow) => {
 }
 
 const detailTitle = computed(() =>
-  currentRow.value?.contractNo ? `合同详情 · ${currentRow.value.contractNo}` : '合同详情'
+  currentRow.value?.contract_no ? `合同详情 · ${currentRow.value.contract_no}` : '合同详情'
 )
 
 // 提取质量与溯源：详情接口的 custom_metadata（多份合同时按当前合同定位 index）。
@@ -1299,7 +1312,7 @@ const detailQuality = computed(() => {
   const list: any[] = Array.isArray(meta?.contracts) ? meta.contracts : []
   let idx = -1
   if (list.length > 1) {
-    idx = list.findIndex((c) => !!currentRow.value?.contractNo && c?.contract_no === currentRow.value?.contractNo)
+    idx = list.findIndex((c) => !!currentRow.value?.contract_no && c?.contract_no === currentRow.value?.contract_no)
   }
   return parseExtractQuality(meta, idx >= 0 ? idx : undefined)
 })
@@ -1310,37 +1323,43 @@ const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
   editForm.value = {
-    contract_no: r.contractNo || '',
-    contract_name: r.contractName || '',
-    contract_type: r.contractType || '',
-    sign_date: r.signDate || '',
-    effective_date: r.effectiveDate || '',
-    expiry_date: r.expiryDate || '',
-    sign_place: r.signPlace || '',
-    party_a_name: r.partyAName || '',
-    party_a_tax_no: r.partyATaxNo || '',
-    party_a_address: r.partyAAddress || '',
-    party_a_phone: r.partyAPhone || '',
-    party_a_bank: r.partyABank || '',
-    party_a_account: r.partyAAccount || '',
-    party_b_name: r.partyBName || '',
-    party_b_tax_no: r.partyBTaxNo || '',
-    party_b_address: r.partyBAddress || '',
-    party_b_phone: r.partyBPhone || '',
-    party_b_bank: r.partyBBank || '',
-    party_b_account: r.partyBAccount || '',
-    contract_amount: numToStr(r.contractAmount),
-    tax_rate_display: r.taxRate === null || r.taxRate === undefined ? '' : String(Number(r.taxRate) * 100),
-    payment_method: r.paymentMethod || '',
-    quality_bond: numToStr(r.qualityBond),
-    liquidated_damages: numToStr(r.liquidatedDamages),
+    contract_no: r.contract_no || '',
+    contract_name: r.contract_name || '',
+    contract_type: r.contract_type || '',
+    sign_date: r.sign_date || '',
+    effective_date: r.effective_date || '',
+    // editForm 键 = 新契约键（与 editFieldDefs / 落库 contracts[] 同形）
+    expire_date: r.expire_date || '',
+    sign_location: r.sign_location || '',
+    party_a: r.party_a || '',
+    party_a_contact: r.party_a_contact || '',
+    party_a_tax_no: r.party_a_tax_no || '',
+    party_a_address: r.party_a_address || '',
+    party_a_phone: r.party_a_phone || '',
+    party_a_bank: r.party_a_bank || '',
+    party_a_account: r.party_a_account || '',
+    party_b: r.party_b || '',
+    party_b_contact: r.party_b_contact || '',
+    party_b_tax_no: r.party_b_tax_no || '',
+    party_b_address: r.party_b_address || '',
+    party_b_phone: r.party_b_phone || '',
+    party_b_bank: r.party_b_bank || '',
+    party_b_account: r.party_b_account || '',
+    amount: numToStr(r.amount),
+    tax_rate_display: r.tax_rate === null || r.tax_rate === undefined ? '' : String(Number(r.tax_rate) * 100),
+    payment_method: r.payment_method || '',
+    quality_bond: numToStr(r.quality_bond),
+    liquidated_damages: numToStr(r.liquidated_damages),
     subject: r.subject || '',
     quantity: numToStr(r.quantity),
-    unit_price: numToStr(r.unitPrice),
-    performance_period: r.performancePeriod || '',
+    unit_price: numToStr(r.unit_price),
+    performance_period: r.performance_period || '',
     handler: r.handler || '',
     department: r.department || '',
     remark: r.remark || '',
+    summary: r.summary || r.description || '',
+    // 履约状态为派生只读字段：仅填充供抽屉展示，不参与持久化（updated 不含此键）
+    performance_status: r.performance_status || calcFulfillStatus(r.expire_date),
   }
   detailBaseline.value = JSON.parse(JSON.stringify(editForm.value))
 }
@@ -1368,7 +1387,7 @@ const detailDirty = computed(() => {
 })
 
 // 详情抽屉动态字段：按当前合同类型匹配分类 subs，无配置时回退内置列。
-// 字段名归一到 snake_case——合同 editForm / 落库 contracts[] 都用 snake_case。
+// 字段名归一到契约键（11 标准 + 15 扩展）——合同 editForm / 落库 contracts[] 都用契约键。
 const editFieldDefs = computed(() => {
   const t = editForm.value.contract_type
   const cats = (contractCats.value || []).filter((c: any) => c.enabled !== false)
@@ -1376,19 +1395,17 @@ const editFieldDefs = computed(() => {
   const subs = hit?.subs
   if (Array.isArray(subs) && subs.length) {
     return buildDetailFieldDefs(subs, {
-      fieldKeyOf: (n: string) => snakeOf(n),
-      labelOf: (n: string) => CONTRACT_FIELD_LABELS[n] || contractFieldLabel(n),
+      // subs.name 可能是新契约键或重置前的旧键（partyAName/expiryDate…）：
+      // contractKeyOf 统一归一到契约键，抽屉顺序 100% 跟随 subs（不重排）
+      fieldKeyOf: (n: string) => contractKeyOf(n),
+      labelOf: (n: string) => contractFieldLabel(n),
       isRemarkPart: () => false,
     })
   }
   return DEFAULT_CONTRACT_COLUMNS
     .filter((c: any) => c.key !== 'items')
-    .map((c: any) => ({ name: snakeOf(c.key), label: c.title || c.label || c.key, dataType: c.dataType || 'text' }))
+    .map((c: any) => ({ name: c.key, label: c.label || contractFieldLabel(c.key), dataType: c.dataType || 'text' }))
 })
-
-function snakeOf(k: string): string {
-  return String(k || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
-}
 
 const onDetailDelete = async () => {
   const r = currentRow.value
@@ -1397,7 +1414,7 @@ const onDetailDelete = async () => {
     const res: any = await getKnowledgeDetails(r.knowledgeId)
     const meta = (res?.data || res)?.custom_metadata || {}
     const contracts: any[] = Array.isArray(meta.contracts) ? [...meta.contracts] : []
-    const rest = contracts.filter((c: any, i: number) => i !== (Number(r.page) - 1) && c?.contract_no !== r.contractNo)
+    const rest = contracts.filter((c: any, i: number) => i !== (Number(r.page) - 1) && c?.contract_no !== r.contract_no)
     if (rest.length === 0) {
       // 该文件只剩这一份合同 → 级联删除底层源文件，杜绝孤儿文件拦截重传
       await delKnowledgeDetails(r.knowledgeId)
@@ -1451,21 +1468,24 @@ const persistContractDetail = async (force: boolean) => {
       contract_type: editForm.value.contract_type || '',
       sign_date: editForm.value.sign_date || '',
       effective_date: editForm.value.effective_date || '',
-      expiry_date: editForm.value.expiry_date || '',
-      sign_place: editForm.value.sign_place || '',
-      party_a_name: editForm.value.party_a_name || '',
+      // 落库键 = 新契约键（11 标准 + 15 扩展；后端旧键 alias 读兼容，不写旧键）
+      expire_date: editForm.value.expire_date || '',
+      sign_location: editForm.value.sign_location || '',
+      party_a: editForm.value.party_a || '',
+      party_a_contact: editForm.value.party_a_contact || '',
       party_a_tax_no: editForm.value.party_a_tax_no || '',
       party_a_address: editForm.value.party_a_address || '',
       party_a_phone: editForm.value.party_a_phone || '',
       party_a_bank: editForm.value.party_a_bank || '',
       party_a_account: editForm.value.party_a_account || '',
-      party_b_name: editForm.value.party_b_name || '',
+      party_b: editForm.value.party_b || '',
+      party_b_contact: editForm.value.party_b_contact || '',
       party_b_tax_no: editForm.value.party_b_tax_no || '',
       party_b_address: editForm.value.party_b_address || '',
       party_b_phone: editForm.value.party_b_phone || '',
       party_b_bank: editForm.value.party_b_bank || '',
       party_b_account: editForm.value.party_b_account || '',
-      contract_amount: toNumber(editForm.value.contract_amount),
+      amount: toNumber(editForm.value.amount),
       // 税率由百分比字符串转回小数（"3" → 0.03）
       tax_rate: taxRateVal === undefined ? undefined : taxRateVal / 100,
       payment_method: editForm.value.payment_method || '',
@@ -1478,20 +1498,21 @@ const persistContractDetail = async (force: boolean) => {
       handler: editForm.value.handler || '',
       department: editForm.value.department || '',
       remark: editForm.value.remark || '',
+      summary: editForm.value.summary || '',
     }
     const nowPage = now.page && now.page >= 1 ? now.page : 0
     let targetIdx = -1
     if (nowPage >= 1) {
       targetIdx = contracts.findIndex((ct: any, i: number) =>
-        i === nowPage - 1 || Number(ct.page) === nowPage || ct.contract_no === now.contractNo)
+        i === nowPage - 1 || Number(ct.page) === nowPage || ct.contract_no === now.contract_no)
     }
-    if (targetIdx < 0) targetIdx = contracts.findIndex((ct: any) => ct.contract_no === now.contractNo)
+    if (targetIdx < 0) targetIdx = contracts.findIndex((ct: any) => ct.contract_no === now.contract_no)
     if (targetIdx >= 0) contracts[targetIdx] = { ...contracts[targetIdx], ...updated, page: nowPage || contracts[targetIdx]?.page }
     else contracts.push({ ...updated, page: nowPage || 0 })
     // 无任何有效字段 → 保持"待补录"状态，记录不因空数据而从列表消失
     const hasContractData = contracts.some((c: any) =>
       (c.contract_no || '').trim() || (c.contract_name || '').trim() || (c.contract_type || '').trim() ||
-      (c.party_a_name || '').trim() || (c.party_b_name || '').trim() || Number(c.contract_amount) > 0)
+      (c.party_a || '').trim() || (c.party_b || '').trim() || Number(c.amount) > 0)
     const nextStatus = hasContractData ? 'success' : 'manual'
     const nextError = hasContractData ? '' : '人工入库待编辑，请补充字段'
     const newMeta = { ...meta, kind: 'contract', contracts, extract_status: nextStatus, extract_error: nextError }
@@ -1505,18 +1526,20 @@ const persistContractDetail = async (force: boolean) => {
         ...contractRows.value[listIdx],
         extractStatus: nextStatus,
         extractError: nextError,
-        contractNo: updated.contract_no,
-        contractName: updated.contract_name,
-        contractType: updated.contract_type,
-        signDate: updated.sign_date,
-        effectiveDate: updated.effective_date,
-        expiryDate: updated.expiry_date,
-        partyAName: updated.party_a_name,
-        partyBName: updated.party_b_name,
-        contractAmount: updated.contract_amount,
-        taxRate: updated.tax_rate,
-        paymentMethod: updated.payment_method,
-        fulfillStatus: calcFulfillStatus(updated.expiry_date),
+        contract_no: updated.contract_no,
+        contract_name: updated.contract_name,
+        contract_type: updated.contract_type,
+        sign_date: updated.sign_date,
+        effective_date: updated.effective_date,
+        expire_date: updated.expire_date,
+        sign_location: updated.sign_location,
+        party_a: updated.party_a,
+        party_b: updated.party_b,
+        amount: updated.amount,
+        tax_rate: updated.tax_rate,
+        payment_method: updated.payment_method,
+        summary: updated.summary,
+        performance_status: calcFulfillStatus(updated.expire_date),
         handler: updated.handler,
         department: updated.department,
         remark: updated.remark,
@@ -1734,7 +1757,7 @@ const handleBatchPrint = async () => {
     let mergedPages = 0
     for (const r of rows) {
       const blob: any = await previewKnowledgeFile(r.knowledgeId)
-      if (!blob) { notes.push(`${r.contractNo || r.fileName}（获取源文件失败）`); continue }
+      if (!blob) { notes.push(`${r.contract_no || r.fileName}（获取源文件失败）`); continue }
       try {
         const src = await blob.arrayBuffer()
         // 图片格式合同：转为 PDF 页合并（支持跨文件/同文件任意组合）
@@ -1753,9 +1776,9 @@ const handleBatchPrint = async () => {
         const pages = await out.copyPages(pdf, pdf.getPageIndices())
         pages.forEach(p => out.addPage(p))
         mergedPages += pages.length
-        if (pageCount > 1) notes.push(`${r.contractNo || r.fileName}（共 ${pageCount} 页）`)
+        if (pageCount > 1) notes.push(`${r.contract_no || r.fileName}（共 ${pageCount} 页）`)
       } catch {
-        notes.push(`${r.contractNo || r.fileName}（页抽取失败，已并入整文件）`)
+        notes.push(`${r.contract_no || r.fileName}（页抽取失败，已并入整文件）`)
         try {
           const src = await blob.arrayBuffer()
           const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
@@ -1797,22 +1820,22 @@ const doPrint = () => {
 // 复用打印弹窗预览，支持打印与下载
 const catalogValueOf = (row: ContractRow, key: string): string => {
   switch (key) {
-    case 'contractNo': return row.contractNo || ''
-    case 'contractName': return row.contractName || ''
-    case 'contractType': return row.contractType || ''
-    case 'partyAName': return row.partyAName || ''
-    case 'partyBName': return row.partyBName || ''
-    case 'signDate': return row.signDate || ''
-    case 'expiryDate': return row.expiryDate || ''
-    case 'contractAmount': return formatAmount(row.contractAmount)
-    case 'taxRate': return formatRate(row.taxRate)
-    case 'extractStatus': { const s = statusOf(row).label; return s === '--' ? '' : s }
+    case 'contract_no': return row.contract_no || ''
+    case 'contract_name': return row.contract_name || ''
+    case 'contract_type': return row.contract_type || ''
+    case 'party_a': return row.party_a || ''
+    case 'party_b': return row.party_b || ''
+    case 'sign_date': return row.sign_date || ''
+    case 'expire_date': return row.expire_date || ''
+    case 'amount': return formatAmount(row.amount)
+    case 'tax_rate': return formatRate(row.tax_rate)
+    case 'extract_status': { const s = statusOf(row).label; return s === '--' ? '' : s }
     case 'tags': return rowTags(row).map((t: any) => t.name).join('、')
-    case 'fulfillStatus': return row.fulfillStatus || ''
-    case 'partyATaxNo': return row.partyATaxNo || ''
-    case 'partyBTaxNo': return row.partyBTaxNo || ''
-    case 'effectiveDate': return row.effectiveDate || ''
-    case 'paymentMethod': return row.paymentMethod || ''
+    case 'performance_status': return row.performance_status || ''
+    case 'party_a_tax_no': return row.party_a_tax_no || ''
+    case 'party_b_tax_no': return row.party_b_tax_no || ''
+    case 'effective_date': return row.effective_date || ''
+    case 'payment_method': return row.payment_method || ''
     case 'handler': return row.handler || ''
     case 'department': return row.department || ''
     case 'fileName': return row.fileName || ''
@@ -2119,7 +2142,7 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.cell-contractNo, .cell-contractName, .cell-partyAName, .cell-partyBName, .cell-remark, .cell-fileName {
+.cell-contract_no, .cell-contract_name, .cell-party_a, .cell-party_b, .cell-remark, .cell-fileName {
   justify-content: flex-start;
   text-align: left;
 }
