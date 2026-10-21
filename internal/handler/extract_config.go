@@ -218,7 +218,133 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 		}})
 		return
 	}
+	// 六同步（2026-10-21）：返回前按**最新 subs** 对齐字段集合 / 顺序 / 类型。
+	// 用户在「字段定义」里删除、改名、改类型后，只要切到「提取规则」Tab 就该看到
+	// 同步结果——不必保存一次规则、也不必等重启。对齐只改内存副本（不落库），
+	// 用户点保存时才真正持久化，避免读接口产生写副作用。
+	if isBusinessDocumentScope(scope) && certType != "" {
+		ec = h.alignExtractConfigWithCategory(ctx, ec, scope, certType)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": ec})
+}
+
+// alignExtractConfigWithCategory 把一份提取规则配置按**最新分类 subs** 对齐（只改内存副本）。
+//
+// 六同步（同步点②）：用户在「字段定义」里删 / 改 / 增 / 排序字段后，提取规则面板必须
+// 立刻与字段定义一致。此前的实现让两处各自为政：
+//   · 字段定义删掉的字段 → 提取规则里仍在（保存时被后端静默忽略，但界面上还看得见）；
+//   · 字段改名（摘要→摘要2）→ 提取规则精确 `cfgMap.get("summary")` 命中旧键，
+//     界面上新名字 miss、旧名字无配置，用户配的 desc/rule/regex 看起来"丢了"；
+//   · 字段改类型（text→array）→ 规则面板还显示「字符串」。
+//
+// 对齐规则（与前端 sixWaySync.buildRuleFieldsFromSubs 同一口径）：
+//   · 集合 / 顺序 / 启用 → subs；
+//   · 类型 → subs.data_type（extract_config 里的旧 type 只做缺省）；
+//   · desc / rule / regex / required → 保留用户在规则面板配的文案（按 name 命中，
+//     改名时回退按 subs.label 匹配旧行，迁移其口径）。
+//
+// 不落库：GET 接口不得产生写副作用（用户可能只是打开看一眼）。
+func (h *BusinessExtractHandler) alignExtractConfigWithCategory(
+	ctx context.Context, cfg *types.KbExtractConfig, scope, certType string,
+) *types.KbExtractConfig {
+	if cfg == nil {
+		return nil
+	}
+	var cat types.FleetCategory
+	q := h.db.WithContext(ctx).
+		Where("scope = ? AND name = ? AND deleted_at IS NULL", scope, certType)
+	// 会话 tenant 口径与 ListFleetCategories 一致：业务四 scope 用全局行（tenant_id=0）
+	if isBusinessCategoryScope(scope) {
+		q = q.Where("tenant_id = 0")
+	}
+	if err := q.Order("sort_order ASC, created_at ASC").First(&cat).Error; err != nil {
+		return cfg
+	}
+	if len(cat.Subs) == 0 {
+		return cfg
+	}
+
+	// 旧配置索引：按 name 精确 + 按 name 归一（snake）双索引，
+	// 让 camelCase / snake_case 两种存量写法都能命中同一行。
+	byName := make(map[string]types.ExtractFieldConfig, len(cfg.Fields))
+	byLabel := make(map[string]types.ExtractFieldConfig, len(cfg.Fields))
+	for _, f := range cfg.Fields {
+		n := strings.TrimSpace(f.Name)
+		if n == "" {
+			continue
+		}
+		byName[n] = f
+		byName[service.SnakeKey(n)] = f
+		if lb := strings.TrimSpace(f.Label); lb != "" {
+			byLabel[lb] = f
+		}
+	}
+
+	aligned := make([]types.ExtractFieldConfig, 0, len(cat.Subs))
+	seen := make(map[string]bool, len(cat.Subs))
+	for _, s := range cat.Subs {
+		name := strings.TrimSpace(s.Name)
+		if name == "" || isBusinessListSystemKey(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		// 未启用的字段不进提取规则（与前端「字段定义」的启停开关同步）
+		if !s.Enabled {
+			continue
+		}
+		old, ok := byName[name]
+		if !ok {
+			old, ok = byName[service.SnakeKey(name)]
+		}
+		// 改名场景：subs.label 是用户新起的名字，旧配置行仍挂着旧 label，
+		// 用 label 反查可以把 desc/rule/regex 迁移过来（否则看起来"配置丢了"）。
+		if !ok {
+			if lb := strings.TrimSpace(s.Label); lb != "" {
+				old, ok = byLabel[lb]
+			}
+		}
+		field := types.ExtractFieldConfig{
+			Name:    name,
+			Enabled: true,
+		}
+		if ok {
+			field.Desc = old.Desc
+			field.Rule = old.Rule
+			field.Regex = old.Regex
+			field.Required = old.Required
+			field.SubFields = old.SubFields
+		}
+		// 类型以 subs 为权威：subs.data_type 才是「字段定义」里用户选的那个值
+		field.Type = extractTypeOfSubDataType(s.DataType)
+		// 界面显示名：分类 label（用户改名）优先
+		if lb := strings.TrimSpace(s.Label); lb != "" {
+			field.Label = lb
+		}
+		aligned = append(aligned, field)
+	}
+	// 分类里一个启用字段都没有时保持原样，避免把用户配置整体清空
+	if len(aligned) == 0 {
+		return cfg
+	}
+	out := *cfg
+	out.Fields = aligned
+	return &out
+}
+
+// extractTypeOfSubDataType 把分类 subs 的 data_type 归一为提取配置的 type 方言。
+func extractTypeOfSubDataType(dataType string) string {
+	switch strings.TrimSpace(dataType) {
+	case "number":
+		return "number"
+	case "date":
+		return "date"
+	case "array":
+		return "array"
+	case "items":
+		return "items"
+	default:
+		return "string"
+	}
 }
 
 // SaveExtractConfig godoc
@@ -1060,6 +1186,52 @@ func (h *BusinessExtractHandler) ensureBusinessExtractConfigDefaults(
 	return cfg
 }
 
+// stripListSystemFieldsFromConfigs 从存量提取配置里移除列表系统列（fileName）字段。
+//
+// 旧 seed 把 fileName 写进了字段目录，`DefaultExtractFields` 又按目录生成了
+// 提取规则，于是「文件名称」一路出现在提取规则表里——模型根本不该提取文件名
+// （它来自上传元数据，让 LLM 提取只会得到臆造值）。用户在字段定义里也找不到它。
+//
+// 幂等：没有该字段的行返回 false，不产生写库；重复启动无副作用。
+// 只删系统列字段，绝不动其它字段的 desc/rule/regex。
+func (h *BusinessExtractHandler) stripListSystemFieldsFromConfigs(ctx context.Context) {
+	if h == nil || h.db == nil {
+		return
+	}
+	var rows []types.KbExtractConfig
+	if err := h.db.WithContext(ctx).
+		Where("scope IN ? AND deleted_at IS NULL", []string{"contract", "regulation", "award_punish", "notice"}).
+		Find(&rows).Error; err != nil {
+		logger.Warnf(ctx, "strip list system fields: list configs failed: %v", err)
+		return
+	}
+	patched := 0
+	for i := range rows {
+		kept := make([]types.ExtractFieldConfig, 0, len(rows[i].Fields))
+		changed := false
+		for _, f := range rows[i].Fields {
+			if isBusinessListSystemKey(f.Name) {
+				changed = true
+				continue
+			}
+			kept = append(kept, f)
+		}
+		if !changed {
+			continue
+		}
+		rows[i].Fields = kept
+		rows[i].UpdatedAt = time.Now().UTC()
+		if err := h.db.WithContext(ctx).Save(&rows[i]).Error; err != nil {
+			logger.Warnf(ctx, "strip list system fields: patch %s failed: %v", rows[i].ID, err)
+			continue
+		}
+		patched++
+	}
+	if patched > 0 {
+		logger.Infof(ctx, "strip list system fields: patched=%d config(s)", patched)
+	}
+}
+
 // SeedBusinessExtractConfigBackfill 幂等回填合同/制度/通知公告的提取规则底稿（启动时调用一次）。
 //
 // 与 GET 接口的懒回填共用 BackfillExtractConfigDefaults，保证两条入口口径一致：
@@ -1139,6 +1311,12 @@ func (h *BusinessExtractHandler) SeedBusinessExtractConfigBackfill(ctx context.C
 	if patched > 0 || created > 0 {
 		logger.Infof(ctx, "seed business extract configs: patched=%d created=%d", patched, created)
 	}
+}
+
+// StripListSystemFieldsFromConfigs 启动幂等清理入口：移除存量提取配置里的列表系统列字段。
+// 见 stripListSystemFieldsFromConfigs 的说明；导出仅为路由层调用。
+func (h *BusinessExtractHandler) StripListSystemFieldsFromConfigs(ctx context.Context) {
+	h.stripListSystemFieldsFromConfigs(ctx)
 }
 
 // resolveContractRuleCfg 合同提取规则解析：按 scope=contract 读取用户配置的提取规则。

@@ -330,6 +330,7 @@ import type { FilterFieldSpec, FilterState } from './businessFilter'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
 import { buildDetailFieldDefs } from './businessDetailForm'
+import { appendListSystemColumns, buildColumnsFromSubs } from './sixWaySync'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
@@ -1069,16 +1070,13 @@ const editFieldDefs = computed(() => {
   const cats = (noticeCats.value || []).filter((c: any) => c.enabled !== false)
   const hit = cats.find((c: any) => c.name === t) || cats[0]
   const subs = hit?.subs
-  if (Array.isArray(subs) && subs.length) {
-    return buildDetailFieldDefs(subs, {
-      fieldKeyOf: (n: string) => snakeOf(n),
-      labelOf: (n: string) => awardOrNoticeLabel(n),
-      isRemarkPart: () => false,
-    })
-  }
-  return DEFAULT_NOTICE_COLUMNS
-    .filter((c: any) => c.key !== 'items')
-    .map((c: any) => ({ name: snakeOf(c.key), label: c.title || c.label || c.key, dataType: c.dataType || 'text' }))
+  // 唯一数据源 = subs（六同步铁律）。无 subs 就是空抽屉，绝不回退静态列：
+  // 回退会把用户在「字段定义」里删掉的字段复活，并追加 fileName 幽灵字段。
+  return buildDetailFieldDefs(Array.isArray(subs) ? subs : [], {
+    fieldKeyOf: (n: string) => snakeOf(n),
+    labelOf: (n: string) => awardOrNoticeLabel(n),
+    isRemarkPart: () => false,
+  })
 })
 
 function snakeOf(k: string): string {
@@ -1578,12 +1576,15 @@ const reloadColumns = async (force = false) => {
     const curCat = cats.find((c: any) => c.name === filterApType.value && c.enabled !== false)
     const baseCat = curCat || cats[0]
     if (baseCat?.subs?.length) {
-      customColumns.value = baseCat.subs
-        .filter((s: any) => s.enabled !== false)
-        .map((s: any) => {
-          const builtin = DEFAULT_NOTICE_COLUMNS.find((b: any) => b.key === s.name)
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-        })
+      // 六同步：label 以 subs.label（用户改名）为权威，静态列只提供宽度缺省。
+      customColumns.value = appendListSystemColumns(
+        buildColumnsFromSubs(baseCat.subs, {
+          labelOf: (n: string) => awardOrNoticeLabel(n),
+          defaultColumns: DEFAULT_NOTICE_COLUMNS as any,
+        }),
+        DEFAULT_NOTICE_COLUMNS as any,
+        (n: string) => awardOrNoticeLabel(n),
+      ) as any
       if (!lastColType.value) {
         const defaults = customColumns.value.filter((c: any) => c.default).map((c: any) => c.key)
         if (defaults.some((k: string) => !visibleColKeys.value.includes(k))) resetColumns()

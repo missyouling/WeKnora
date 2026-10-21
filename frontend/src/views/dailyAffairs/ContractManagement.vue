@@ -356,6 +356,7 @@ import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
 import { CONTRACT_FIELD_ORDER, contractFieldLabel, contractKeyOf } from './contractFieldLabels'
 import { buildDetailFieldDefs } from './businessDetailForm'
+import { appendListSystemColumns, buildColumnsFromSubs } from './sixWaySync'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
 
@@ -1386,25 +1387,23 @@ const detailDirty = computed(() => {
   return JSON.stringify(detailBaseline.value) !== JSON.stringify(editForm.value)
 })
 
-// 详情抽屉动态字段：按当前合同类型匹配分类 subs，无配置时回退内置列。
-// 字段名归一到契约键（11 标准 + 15 扩展）——合同 editForm / 落库 contracts[] 都用契约键。
+// 详情抽屉动态字段：**唯一数据源 = 当前分类的 subs**（六同步铁律）。
+// 字段集合/名称/顺序/dataType 全部由 subs 派生：用户在「字段定义」里删除字段、
+// 改名（摘要→摘要2）、改类型（text→array）后，抽屉立即跟随。
+// 绝不回退静态 DEFAULT_CONTRACT_COLUMNS——那会把已删除的字段复活，并带进
+// `fileName` 这类没在字段定义里出现过的系统列（2026-10-21 真机幽灵字段来源）。
 const editFieldDefs = computed(() => {
   const t = editForm.value.contract_type
   const cats = (contractCats.value || []).filter((c: any) => c.enabled !== false)
   const hit = cats.find((c: any) => c.name === t) || cats[0]
   const subs = hit?.subs
-  if (Array.isArray(subs) && subs.length) {
-    return buildDetailFieldDefs(subs, {
-      // subs.name 可能是新契约键或重置前的旧键（partyAName/expiryDate…）：
-      // contractKeyOf 统一归一到契约键，抽屉顺序 100% 跟随 subs（不重排）
-      fieldKeyOf: (n: string) => contractKeyOf(n),
-      labelOf: (n: string) => contractFieldLabel(n),
-      isRemarkPart: () => false,
-    })
-  }
-  return DEFAULT_CONTRACT_COLUMNS
-    .filter((c: any) => c.key !== 'items')
-    .map((c: any) => ({ name: c.key, label: c.label || contractFieldLabel(c.key), dataType: c.dataType || 'text' }))
+  return buildDetailFieldDefs(Array.isArray(subs) ? subs : [], {
+    // subs.name 可能是新契约键或重置前的旧键（partyAName/expiryDate…）：
+    // contractKeyOf 统一归一到契约键，抽屉顺序 100% 跟随 subs（不重排）
+    fieldKeyOf: (n: string) => contractKeyOf(n),
+    labelOf: (n: string) => contractFieldLabel(n),
+    isRemarkPart: () => false,
+  })
 })
 
 const onDetailDelete = async () => {
@@ -1928,12 +1927,17 @@ const reloadColumns = async (force = false) => {
     const curCat = cats.find((c: any) => c.name === filterContractType.value && c.enabled !== false)
     const baseCat = curCat || cats[0]
     if (baseCat?.subs?.length) {
-      customColumns.value = baseCat.subs
-        .filter((s: any) => s.enabled !== false)
-        .map((s: any) => {
-          const builtin = DEFAULT_CONTRACT_COLUMNS.find((b: any) => b.key === s.name)
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-        })
+      // 六同步：主列表表头 / 字段筛选器 / 打印目录三处共用同一份列定义。
+      // label 以 subs.label（用户改名）为权威，静态 DEFAULT_CONTRACT_COLUMNS 只提供
+      // 宽度缺省——否则把「摘要」改成「摘要2」后表头仍显示「摘要」。
+      customColumns.value = appendListSystemColumns(
+        buildColumnsFromSubs(baseCat.subs, {
+          labelOf: (n: string) => contractFieldLabel(n),
+          defaultColumns: DEFAULT_CONTRACT_COLUMNS as any,
+        }),
+        DEFAULT_CONTRACT_COLUMNS as any,
+        (n: string) => contractFieldLabel(n),
+      ) as any
       // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。
       // 首轮加载（lastColType 为空）时保留用户既有 localStorage 存档，但若存档缺当前分类
       // 的默认列则补齐当前分类默认列（发票基准同款门控）

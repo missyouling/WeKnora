@@ -335,6 +335,7 @@ import { useBusinessListSync } from './useBusinessListSync'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
 import { buildDetailFieldDefs } from './businessDetailForm'
+import { appendListSystemColumns, buildColumnsFromSubs } from './sixWaySync'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
@@ -1072,16 +1073,13 @@ const editFieldDefs = computed(() => {
   const cats = (regCats.value || []).filter((c: any) => c.enabled !== false)
   const hit = cats.find((c: any) => c.name === t) || cats[0]
   const subs = hit?.subs
-  if (Array.isArray(subs) && subs.length) {
-    return buildDetailFieldDefs(subs, {
-      fieldKeyOf: (n: string) => snakeOf(n),
-      labelOf: (n: string) => extractFieldLabel('regulation', n),
-      isRemarkPart: () => false,
-    })
-  }
-  return DEFAULT_REGULATION_COLUMNS
-    .filter((c: any) => c.key !== 'items')
-    .map((c: any) => ({ name: snakeOf(c.key), label: c.title || c.label || c.key, dataType: c.dataType || 'text' }))
+  // 唯一数据源 = subs（六同步铁律）。无 subs 就是空抽屉，绝不回退静态列：
+  // 回退会把用户在「字段定义」里删掉的字段复活，并追加 fileName 幽灵字段。
+  return buildDetailFieldDefs(Array.isArray(subs) ? subs : [], {
+    fieldKeyOf: (n: string) => snakeOf(n),
+    labelOf: (n: string) => extractFieldLabel('regulation', n),
+    isRemarkPart: () => false,
+  })
 })
 
 function snakeOf(k: string): string {
@@ -1615,12 +1613,15 @@ const reloadColumns = async (force = false) => {
     const curCat = cats.find((c: any) => c.name === filterRegType.value && c.enabled !== false)
     const baseCat = curCat || cats[0]
     if (baseCat?.subs?.length) {
-      customColumns.value = baseCat.subs
-        .filter((s: any) => s.enabled !== false)
-        .map((s: any) => {
-          const builtin = DEFAULT_REGULATION_COLUMNS.find((b: any) => b.key === s.name)
-          return { key: s.name, label: builtin?.label || s.name, default: s.is_default === true, w: builtin?.w || '1fr', width: Number(s.width) || 0 }
-        })
+      // 六同步：label 以 subs.label（用户改名）为权威，静态列只提供宽度缺省。
+      customColumns.value = appendListSystemColumns(
+        buildColumnsFromSubs(baseCat.subs, {
+          labelOf: (n: string) => extractFieldLabel('regulation', n),
+          defaultColumns: DEFAULT_REGULATION_COLUMNS as any,
+        }),
+        DEFAULT_REGULATION_COLUMNS as any,
+        (n: string) => extractFieldLabel('regulation', n),
+      ) as any
       // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。
       // 首轮加载（lastColType 为空）时保留用户既有 localStorage 存档，但若存档缺当前分类
       // 的默认列则补齐当前分类默认列（发票基准同款门控）

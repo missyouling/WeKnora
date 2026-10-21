@@ -8,6 +8,7 @@
 // 全部改成纯函数 + 依赖注入（业务字典/工具函数由调用方传入），可单测、可复用。
 
 import { ITEM_STD_KEYS } from './businessFormat'
+import { buildDrawerFieldsFromSubs } from './sixWaySync'
 
 /** 发票级标准契约键（camelCase 表单空间）：其余键视为动态扩展字段 */
 export const STD_DATA_KEYS = [
@@ -78,6 +79,35 @@ export function tagsFromText(text: any): string[] {
   return String(text || '').split('\n').map((x: string) => x.trim()).filter(Boolean)
 }
 
+/**
+ * 任意存量值 → 数组控件的 string[]。
+ *
+ * 为什么需要：用户在「字段定义」把某字段的类型从 text 改成 array 后，历史记录里
+ * 该字段的值仍是字符串（`"甲\n乙"` 或 `"甲；乙"`）。数组控件（t-tag-input）只认
+ * `string[]`，直接把字符串塞进去会渲染成一个巨型标签。这里按换行 / 分号 / 顿号
+ * 拆分，让改类型后的存量数据仍可正常编辑与回显。
+ *
+ * 不做任何写库副作用：仅用于编辑态初始化。
+ */
+export function normalizeArrayValue(v: any): string[] {
+  if (Array.isArray(v)) {
+    return v.map((x) => (x === null || x === undefined ? '' : String(x))).filter((x) => x !== '')
+  }
+  if (v === null || v === undefined) return []
+  const text = String(v)
+  if (!text.trim()) return []
+  return text
+    // 换行 / 分号（中英文）/ 顿号 都视为分隔符
+    .split(/[\n;；、]/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+}
+
+/** 数组 → 编辑态文本（每行一条），用于 textarea 兜底与打印导出。 */
+export function arrayToText(v: any): string {
+  return normalizeArrayValue(v).join('\n')
+}
+
 // ---- 行 → 表单 ----
 
 export interface FillDetailContext {
@@ -144,6 +174,10 @@ export function isDetailSubOnlyKey(key: string): boolean {
  *
  * 同时把三个核心字段（发票号码/开票日期/发票类型）强制置顶，保证永远完整可见。
  * 纯函数、可单测，与 businessFormat 的税率归一、抽屉的跳过渲染共同锁死布局。
+ *
+ * 六同步（2026-10-21）：字段集合/名称/顺序/类型一律由 `sixWaySync.buildDrawerFieldsFromSubs`
+ * 派生，本函数只在其后做**票面主表专门**的清洗（明细子项、税额去重、核心置顶）。
+ * 严禁在此追加 subs 之外的字段（历史 bug：抽屉末尾硬编码 fileName）。
  */
 export function buildDetailFieldDefs(
   subs: any[],
@@ -153,17 +187,22 @@ export function buildDetailFieldDefs(
     isRemarkPart: (n: string) => boolean
   },
 ): DetailFieldMeta[] {
-  const fieldKeyOf = opts.fieldKeyOf
+  // 唯一数据源 = subs（启用项按序）。字段名/中文名/类型全部由 subs 派生：
+  // 用户在「字段定义」里改名（摘要→摘要2）、改类型（text→array）、删除后即时生效。
+  const derived = buildDrawerFieldsFromSubs(subs as any, {
+    fieldKeyOf: opts.fieldKeyOf,
+    labelOf: opts.labelOf,
+    isRemarkPart: opts.isRemarkPart,
+  })
 
   const out: DetailFieldMeta[] = []
   const seenTax = new Set<string>()
-  for (const x of subs || []) {
-    if (x?.enabled === false) continue
-    const rawName = String(x?.name || '')
-    if (!rawName) continue
-    const key = fieldKeyOf(rawName)
+  for (const x of derived) {
+    const key = x.name
+    const rawName = String(x.rawName || '')
+    if (!key) continue
     // 1) 明细容器字段：明细由表格区块承载，不在主表单生成占位行
-    if (key === 'items' || x?.data_type === 'items') continue
+    if (key === 'items' || x.dataType === 'items') continue
     // 2) 纯明细子项键错位混入主表（规格型号/单位/数量/单价/项目名称…）：跳过。
     //    标准契约字段即使在明细子列里同名出现也一律保留（见 DETAIL_SUB_ONLY_KEYS 注释）。
     if (!STD_DATA_KEY_SET.has(key) && (DETAIL_SUB_ONLY_KEYS.has(key) || DETAIL_SUB_ONLY_KEYS.has(rawName))) continue
@@ -174,9 +213,9 @@ export function buildDetailFieldDefs(
     }
     out.push({
       name: key,
-      label: String(x.label || '').trim() || opts.labelOf(rawName) || rawName,
-      dataType: x.data_type || 'text',
-      remarkPart: opts.isRemarkPart(rawName) ? rawName : '',
+      label: x.label,
+      dataType: x.dataType,
+      remarkPart: x.remarkPart || '',
     })
   }
 

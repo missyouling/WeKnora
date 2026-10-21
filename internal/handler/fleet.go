@@ -1078,6 +1078,9 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 		updates["name"] = req.Name
 	}
 	if req.Subs != nil {
+		// 列表系统列（fileName）不进 subs：它是文件属性，由列表侧显式渲染。
+		// 前端旧版本/旧缓存可能仍把它提交上来，这里统一剥离，保证 subs 只含提取字段。
+		req.Subs = stripListSystemSubs(req.Subs)
 		// 明细子列去重：用户/AI 可能保存出同义子项（tax 与 tax_amount 都是「税额」），
 		// 落库前统一收敛，避免明细浮层出现两列同名。
 		if normalized, _ := normalizeInvoiceCategorySubs(existing.Scope, req.Subs); normalized != nil {
@@ -1779,9 +1782,44 @@ func contractSeedSubs() []types.FleetCategorySub {
 		{Name: "payment_method", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "sign_location", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
-		// ---- 系统列（置尾）----
-		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		// 注意：seed 里**不放** fileName。它是文件属性（列表系统列），不是提取字段；
+		// seed 进去会让它渗进字段定义面板、编辑抽屉与提取规则表，成为用户看不到来历的
+		// 幽灵字段（2026-10-21 真机验收）。列表侧的「文件名」列由前端
+		// appendListSystemColumns 显式追加，不依赖 subs。
 	}
+}
+
+// businessListSystemKeys 列表系统列：由文件属性提供、**不是提取字段**的键。
+//
+// fileName 曾被 seed 进 fleet_categories.subs，于是一路渗进「字段定义」面板、
+// 编辑抽屉（末尾冒出「文件名称」输入框）与提取规则表——用户在字段定义里找不到
+// 它的来历，看到的就是一个幽灵字段（2026-10-21 真机验收）。它也不该被模型提取：
+// 文件名来自上传元数据，LLM 提取它只会得到臆造值。
+//
+// 现在的口径：
+//   · subs / 提取规则 / 编辑抽屉 → 一律不含系统列（mergeXxxSeedSubs 会剥离存量）；
+//   · 列表 → 由前端 appendListSystemColumns 显式追加「文件名」列。
+var businessListSystemKeys = map[string]bool{"fileName": true}
+
+// isBusinessListSystemKey 该 subs 键是否列表系统列（不参与提取与字段定义）。
+func isBusinessListSystemKey(name string) bool {
+	return businessListSystemKeys[strings.TrimSpace(name)]
+}
+
+// stripListSystemSubs 从 subs 中剥离列表系统列（幂等：没有则原样返回）。
+// 用于 mergeXxxSeedSubs 的收口，让存量库里 seed 出来的 fileName 在下次启动时被清掉。
+func stripListSystemSubs(subs []types.FleetCategorySub) []types.FleetCategorySub {
+	if len(subs) == 0 {
+		return subs
+	}
+	out := make([]types.FleetCategorySub, 0, len(subs))
+	for _, s := range subs {
+		if isBusinessListSystemKey(s.Name) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // contractCanonicalFieldKey 把合同 subs 的字段键归一到契约键（snake_case）：
@@ -1840,7 +1878,9 @@ func mergeContractSeedSubs(existing []types.FleetCategorySub) []types.FleetCateg
 		}
 		out = append(out, f)
 	}
-	return out
+	// 剥离列表系统列（fileName）：存量库里的 fileName 是旧 seed 写入的，
+	// 必须在这里收口——否则每次启动都会把用户删掉的「文件名称」字段补回抽屉。
+	return stripListSystemSubs(out)
 }
 
 // regulationSeedSubs 为制度内置分类（人事/财务/生产/行政/安全/其它制度）的字段全集。
@@ -1869,7 +1909,7 @@ func regulationSeedSubs() []types.FleetCategorySub {
 		// 系统字段
 		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
-		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		// 同上：fileName 是列表系统列，不进提取字段目录。
 	}
 }
 
@@ -1901,8 +1941,7 @@ func noticeSeedSubs() []types.FleetCategorySub {
 		{Name: "measure", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "basis", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
-		// ---- 系统字段 ----
-		{Name: "fileName", Enabled: true, IsDefault: false, DataType: "text"},
+		// 同上：fileName 是列表系统列，不进提取字段目录。
 	}
 }
 
@@ -1957,7 +1996,8 @@ func mergeNoticeSeedSubs(existing []types.FleetCategorySub) []types.FleetCategor
 		}
 		out = append(out, f)
 	}
-	return out
+	// 剥离列表系统列（fileName）：与 mergeContractSeedSubs 同一收口口径。
+	return stripListSystemSubs(out)
 }
 
 // seedBusinessCategories 为 P2-D 新业务模块（合同/发票/制度/奖惩）seed 默认列配置。
@@ -2551,8 +2591,9 @@ func (h *FleetHandler) reconcileRegulationCategories(ctx context.Context) {
 			}
 		}
 
-		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整
-		subs := target.Subs
+		// 合并字段全集：仅 append 缺失 name，保留用户对既有字段的 enabled/is_default/width 调整。
+		// stripListSystemSubs 顺带把存量里 seed 出来的 fileName 剥掉（列表系统列不是提取字段）。
+		subs := stripListSystemSubs(target.Subs)
 		have := make(map[string]bool, len(subs))
 		for _, s := range subs {
 			have[s.Name] = true

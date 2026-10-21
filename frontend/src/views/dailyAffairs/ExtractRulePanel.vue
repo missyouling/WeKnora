@@ -717,10 +717,27 @@ function categoryLabelOf(n: string): string {
   const hit = subs.find((x: any) => String(x?.name || '').trim().toLowerCase() === want)
   return String(hit?.label || '').trim()
 }
-// 字段中文名：分类自定义 label 优先（用户在「字段定义」改过名，规则表必须同步），
-// 其次走契约字典（camelCase / snake_case 都认）；其它 scope 的字段名本身就是中文。
+// 字段中文名：**已加载行上的 label 优先**（由 subs.label 派生，含用户改名「摘要2」），
+// 其次分类自定义 label，再次契约字典（camelCase / snake_case 都认）。
+// 之所以先查 fields.value：改名后静态字典仍会把「摘要2」查回「摘要」，
+// 只有行上的 label 才是用户在「字段定义」里保存的那个值。
 function fieldLabel(n: string): string {
+  const row = fields.value.find((f) => f.name === n)
+  const rowLabel = String(row?.label || '').trim()
+  if (rowLabel) return rowLabel
   return categoryLabelOf(n) || extractFieldLabel(props.scope, n)
+}
+
+/** subs 的 data_type → 提取配置的 type 方言（text↔string 归一）。 */
+function subsTypeToExtractType(dataType: string): string {
+  switch (String(dataType || '').trim()) {
+    case 'number': return 'number'
+    case 'date': return 'date'
+    case 'array': return 'array'
+    case 'items': return 'items'
+    case 'text': return 'string'
+    default: return ''
+  }
 }
 
 // 字段级规则（必填/正则）是否可用。该模块已接入通用校验 + 字段确实是标准契约键。
@@ -813,26 +830,35 @@ function mergeSubFieldRules(base: ExtractSubFieldConfig[], saved?: ExtractSubFie
 
 // 字段名权威 = 证照配置（fleet_categories.subs，启用字段优先），未入库类型回退内置底稿。
 // 与证照配置面板共用同一来源规则，保证两处字段永远一致。
-function authorityFields(): { name: string; enabled: boolean; dataType: string; subFields: ExtractSubFieldConfig[] }[] {
+//
+// 六同步（2026-10-21）：**subs 的 label 与 data_type 都是权威**。
+//   · label：用户在「字段定义」把「摘要」改成「摘要2」，规则面板必须显示摘要2；
+//   · data_type：用户在字段定义把类型改成 array，规则面板的类型必须跟着变——
+//     此前这里让 extract_config.type 优先，改类型后规则面板仍显示「字符串」。
+function authorityFields(): { name: string; label: string; enabled: boolean; dataType: string; subFields: ExtractSubFieldConfig[] }[] {
   const scope = currentScope.value
   // 非车队 scope：按选中类型取 subs，未选中/无匹配回退第一个分类
   const c = currentCategory()
   if (c && Array.isArray(c.subs) && c.subs.length) {
     const seen = new Set<string>()
     return c.subs
+      .filter((s: any) => {
+        const n = String(s?.name || '').trim()
+        return n && !seen.has(n) && (seen.add(n), true)
+      })
       .map((s: any) => ({
         name: String(s.name || '').trim(),
+        label: String(s.label || '').trim(),
         enabled: s.enabled !== false,
         dataType: s.data_type || 'text',
         subFields: subFieldsFromSubs(s.sub_fields),
       }))
-      .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
   if (isFleetScope.value) {
     const defaults = (DEFAULT_FIELDS[scope] || {})[certTypeName.value] || []
     const seen = new Set<string>()
     return defaults
-      .map((n) => ({ name: n, enabled: true, dataType: 'text', subFields: [] as ExtractSubFieldConfig[] }))
+      .map((n) => ({ name: n, label: '', enabled: true, dataType: 'text', subFields: [] as ExtractSubFieldConfig[] }))
       .filter((s: any) => s.name && !seen.has(s.name) && seen.add(s.name))
   }
   return []
@@ -904,8 +930,13 @@ async function loadConfig() {
         || {}
       return {
         name: a.name,
+        // 字段中文名 = 分类 label（用户改名后的）→ 契约字典 → 原名。
+        // 规则面板表头直接用它，不再二次查字典（那会把「摘要2」盖回「摘要」）。
+        label: a.label || categoryLabelOf(a.name) || extractFieldLabel(currentScope.value, a.name),
         desc: c?.desc || d.desc || '',
-        type: c?.type || ({ text: 'string', number: 'number', date: 'date', array: 'array' } as Record<string,string>)[a.dataType] || 'string',
+        // 类型以 subs.data_type 为权威（六同步）：用户在「字段定义」把 text 改成 array，
+        // 规则面板必须随即显示「数组」。extract_config.type 只在 subs 没有该字段时兜底。
+        type: subsTypeToExtractType(a.dataType) || c?.type || 'string',
         rule: c?.rule || d.rule || '',
         enabled: c && c.enabled !== undefined ? !!c.enabled : a.enabled,
         // 必填/正则兜底：配置里有就沿用（历史配置没有这两个键 → 关闭/空），

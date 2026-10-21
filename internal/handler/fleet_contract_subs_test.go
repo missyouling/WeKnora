@@ -13,7 +13,12 @@ import (
 //
 // 历史 subs 里「税率」夹在金额与提取状态之间、扩展字段散在末尾、还混着中文名旧键
 // （甲方经办人/摘要），抽屉就会渲染成「金额 → 税率 → 提取状态 → … → 甲方经办人」。
-// 以下测试锁定：归一后严格按 11 标准 → 15 扩展 → fileName 排列，且保留用户开关。
+// 以下测试锁定：归一后严格按 11 标准 → 15 扩展 排列，且保留用户开关。
+//
+// 2026-10-21 二次调整：`fileName` 是**列表系统列**（文件属性，不是提取字段），
+// 已从 seed 与 subs 中剥离——它会渗进编辑抽屉（末尾冒出「文件名称」输入框）与
+// 提取规则表，成为用户在字段定义里找不到来历的幽灵字段。列表侧由前端
+// `appendListSystemColumns` 显式追加「文件名」列，不依赖 subs。
 func TestMergeContractSeedSubsOrder(t *testing.T) {
 	legacy := []types.FleetCategorySub{
 		{Name: "contract_no", Enabled: true, IsDefault: true, DataType: "text", Width: 160},
@@ -40,8 +45,8 @@ func TestMergeContractSeedSubsOrder(t *testing.T) {
 		"party_a_contact", "party_a_tax_no", "party_b_contact", "party_b_tax_no",
 		"party_a_address", "party_a_phone", "party_a_bank", "party_a_account",
 		"party_b_address", "party_b_phone", "party_b_bank", "party_b_account",
-		"payment_method", "sign_location", "summary", "fileName",
-	}, names, "subs 必须收敛到契约清单顺序")
+		"payment_method", "sign_location", "summary",
+	}, names, "subs 必须收敛到契约清单顺序，且不含 fileName 系统列")
 
 	// 用户配置不被覆盖；旧键值被搬到新键上
 	require.Equal(t, 160, out[0].Width, "用户设置的列宽必须保留")
@@ -54,15 +59,15 @@ func TestMergeContractSeedSubsOrder(t *testing.T) {
 	require.NotNil(t, partyB)
 	assert.False(t, partyB.Enabled, "用户关掉的乙方字段不得被打开")
 
-	// 历史多余字段（税率/中文旧键/重复 file_name）不进展示字段集
+	// 历史多余字段（税率/中文旧键/系统列）不进展示字段集
 	for _, s := range out {
-		assert.NotContains(t, []string{"tax_rate", "甲方经办人", "file_name"}, s.Name,
+		assert.NotContains(t, []string{"tax_rate", "甲方经办人", "file_name", "fileName"}, s.Name,
 			"历史字段 %s 不应进入契约 subs", s.Name)
 	}
 }
 
 // 通知公告与奖惩共用同一份字段目录：subs 顺序必须等于统一目录顺序，
-// 目录外历史键（dept/position/remark）不再进入展示集。
+// 目录外历史键（dept/position/remark）与系统列 fileName 不再进入展示集。
 func TestMergeNoticeSeedSubsOrder(t *testing.T) {
 	legacy := []types.FleetCategorySub{
 		{Name: "apNo"}, {Name: "apTitle"}, {Name: "apType"},
@@ -82,9 +87,8 @@ func TestMergeNoticeSeedSubsOrder(t *testing.T) {
 	assert.Equal(t, []string{
 		"apNo", "apTitle", "apType", "issueDept", "signDate", "effectiveDate", "scope", "extractStatus", "tags",
 		"signer", "contact", "contactPhone", "urgency", "validUntil", "attachments", "person", "measure", "basis", "summary",
-		"fileName",
-	}, names, "公告 subs 必须收敛到统一目录顺序")
+	}, names, "公告 subs 必须收敛到统一目录顺序，且不含 fileName 系统列")
 	for _, s := range out {
-		assert.NotContains(t, []string{"dept", "position", "remark"}, s.Name, "历史键 %s 不应进入目录", s.Name)
+		assert.NotContains(t, []string{"dept", "position", "remark", "fileName"}, s.Name, "历史键 %s 不应进入目录", s.Name)
 	}
 }

@@ -90,6 +90,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			business.SeedInvoiceExtractRuleBackfill(context.Background())
 			// 启动幂等回填：合同/制度/通知公告四模块字段目录（只补空值，不覆盖用户改动）
 			business.SeedBusinessExtractConfigBackfill(context.Background())
+			// 启动幂等清理：把列表系统列（fileName）从存量提取规则里移除——它不是提取字段，
+			// 是旧 seed 遗留的幽灵字段（会出现在「提取规则」表里让用户困惑）。
+			business.StripListSystemFieldsFromConfigs(context.Background())
 			// 启动幂等修复：存量发票物理页码（P5、P5 那类跨块错标），只重算页码不重跑模型。
 			// 放到后台跑：它要扫全表 metadata、再为可疑文件逐个加载 chunks，真机实测
 			// 会让进程启动多等约 30 秒，健康检查在这段时间返回 000（滚动发布期间表现为

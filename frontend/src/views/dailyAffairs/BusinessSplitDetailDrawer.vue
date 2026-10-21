@@ -48,8 +48,12 @@
                   format="YYYY-MM-DD" clearable allow-input />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
                   @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
-                <t-textarea v-else-if="f.dataType === 'array'" v-model="form.data[f.name]"
-                  :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                <!-- 数组类型（字段定义里把类型改成「数组」）：回车追加多值标签。
+                     存量值可能是字符串（改类型前保存的「甲\n乙」），由 normalizeArrayValue
+                     按换行/分号/顿号拆成 string[]，避免整段文本被当成单个标签。 -->
+                <t-tag-input v-else-if="f.dataType === 'array'" :value="arrayValueOf(f.name)"
+                  @change="(v: any) => (form.data[f.name] = normalizeArrayValue(v))"
+                  placeholder="输入后回车添加" clearable />
                 <t-input v-else v-model="form.data[f.name]" />
               </slot>
             </t-form-item>
@@ -111,7 +115,7 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { formatItemCell, itemCellClass } from './businessFormat'
-import { sanitizeNum, type DetailFieldMeta } from './businessDetailForm'
+import { normalizeArrayValue, sanitizeNum, type DetailFieldMeta } from './businessDetailForm'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -191,6 +195,12 @@ const formFields = computed<DetailFieldMeta[]>(
   () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
 )
 const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
+/**
+ * 数组控件的值：存量字符串按换行/分号/顿号拆成 string[]。
+ * 不做 computed 缓存——它随 form.data 的编辑实时变化，直接函数调用最省心
+ * （t-tag-input 的 :value 每次重渲染都会取最新值）。
+ */
+const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
 const fieldClassOf = (f: DetailFieldMeta) => ({
   'bsd-field--full': isLongType(f) || f.name === 'fileName',
 })
