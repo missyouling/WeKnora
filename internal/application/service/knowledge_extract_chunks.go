@@ -114,6 +114,7 @@ func BuildExtractSourceText(chunks []*types.Chunk) ExtractSourceText {
 	usable := ChunksForExtraction(chunks)
 	var sb strings.Builder
 	markers := make([]PageMarker, 0, len(usable))
+	lastPage := 0
 	for _, c := range usable {
 		text := strings.TrimSpace(docparser.NormalizeHTMLTables(c.Content))
 		if text == "" {
@@ -127,8 +128,23 @@ func BuildExtractSourceText(chunks []*types.Chunk) ExtractSourceText {
 		if text == "" {
 			continue
 		}
-		if page := ChunkPage(c); page > 0 {
-			markers = append(markers, PageMarker{Offset: sb.Len(), Page: page})
+		base := sb.Len()
+		var chunkMarkers []PageMarker
+		switch {
+		case ChunkPage(c) > 0:
+			// 一个 chunk 可能跨页（真机 6 页票：chunk 15 = 第 5 页票尾 + 第 6 页票头），
+			// 只在 chunk 起点打一个标记会把后半段整段算到前一页。
+			chunkMarkers = chunkPageMarkers(base, text, c.SourceLocators)
+		case lastPage > 0:
+			// 末尾 chunk 缺 SourceLocators：它若自带新票页眉，就是一页新票，
+			// 按相邻页序递增，绝不让它卡死在上一页。
+			if loc := invoicePageHeaderRe.FindStringIndex(text); loc != nil {
+				chunkMarkers = []PageMarker{{Offset: base + loc[0], Page: lastPage + 1}}
+			}
+		}
+		markers = append(markers, chunkMarkers...)
+		if n := len(chunkMarkers); n > 0 {
+			lastPage = chunkMarkers[n-1].Page
 		}
 		sb.WriteString(text)
 		sb.WriteString("\n")
@@ -142,9 +158,10 @@ func BuildExtractSourceText(chunks []*types.Chunk) ExtractSourceText {
 	return ExtractSourceText{Content: sb.String(), Markers: markers}
 }
 
-// invoicePageHeaderRe 匹配一页票据的页眉（如「## 电子发票（普通发票） 国家税务总局」）。
+// invoicePageHeaderRe 匹配一页票据的页眉（如「## 电子发票（普通发票） 国家税务总局」、
+// 「## 重庆增值税电子普通发票」）。
 // 只认行首/带 # 前缀的形式，避免命中正文里偶然提到的「电子发票」。
-var invoicePageHeaderRe = regexp.MustCompile(`(?m)^[ \t]*#{0,3}[ \t]*电子发票[（(]`)
+var invoicePageHeaderRe = regexp.MustCompile(`(?m)^[ \t]*(?:#{1,6}[ \t]*)?[^ \t\n]{0,6}(?:电子发票[（(]|增值税电子(?:普通|专用)发票|电子(?:普通|专用)发票)`)
 
 // summaryPageHintRe 匹配「汇总单」字样，用于识别首页是汇总表而非票据页。
 var summaryPageHintRe = regexp.MustCompile(`汇总单|汇总清单|票据汇总`)
@@ -174,6 +191,55 @@ func inferPageMarkersFromInvoiceHeaders(content string) []PageMarker {
 		markers = append(markers, PageMarker{Offset: loc[0], Page: base + i})
 	}
 	return markers
+}
+
+// chunkPageMarkers 计算一个 chunk 内部的页码锚点（chunk 起点 + 跨页边界）。
+//
+// 关键点：`source_locators` 是按阅读顺序排列的**块级**定位器，一个 chunk 里可能
+// 同时含第 5 页的票尾和第 6 页的票头（真机 6 页票 chunk 15 的 locators 是
+// [5,6,6,6,6,6,6]）。旧实现只取第一个非零页（ChunkPage）在 chunk 起点打一个
+// 标记，后半段就被整体算成前一页 —— 第 6 张票的发票号码落在该段内，反查物理
+// 页码时命中 [Page 5]，落库成 P5，页面上于是出现两个 P5、丢掉 P6。
+//
+// locator 的 Quote 是该块在原文中的精确文本（mineru 回填），用它把页码边界
+// 定位到 chunk 内的真实偏移；Quote 缺失或在归一化文本中找不到时退化为
+// 「只在 chunk 起点标记」，即保持旧行为而不是猜错位置。
+func chunkPageMarkers(base int, text string, locs types.SourceLocators) []PageMarker {
+	if len(locs) == 0 {
+		return nil
+	}
+	cur := 0
+	for _, l := range locs {
+		if l.Page > 0 {
+			cur = l.Page
+			break
+		}
+	}
+	if cur <= 0 {
+		return nil
+	}
+	out := []PageMarker{{Offset: base, Page: cur}}
+	cursor := 0
+	for _, l := range locs {
+		// 只承认「向后翻页」的 locator：页码回退说明定位器乱序或复用，
+		// 据此打标记会把后文错标回前页。
+		if l.Page <= cur {
+			continue
+		}
+		quote := strings.TrimSpace(l.Quote)
+		if quote == "" {
+			continue
+		}
+		rel := strings.Index(text[cursor:], quote)
+		if rel < 0 {
+			continue
+		}
+		off := cursor + rel
+		out = append(out, PageMarker{Offset: base + off, Page: l.Page})
+		cursor = off + len(quote)
+		cur = l.Page
+	}
+	return out
 }
 
 // invoiceNo20Re 匹配 20 位电子发票号码。
@@ -369,15 +435,13 @@ func AssignPhysicalPages(src ExtractSourceText, invs []InvoiceExtractionItem) in
 		if no == "" {
 			continue
 		}
-		rel := strings.Index(src.Content[cursor:], no)
+		rel := indexInvoiceNumber(src.Content, cursor, no)
 		if rel < 0 {
 			// 允许回退到全文再找一次（发票号可能在更早的 chunk 里被提及）
-			rel = strings.Index(src.Content, no)
+			rel = indexInvoiceNumber(src.Content, 0, no)
 			if rel < 0 {
 				continue
 			}
-		} else {
-			rel += cursor
 		}
 		page := src.PageAt(rel)
 		if page <= 0 {
@@ -387,7 +451,81 @@ func AssignPhysicalPages(src ExtractSourceText, invs []InvoiceExtractionItem) in
 		cursor = rel + len(no)
 		assigned++
 	}
+	// 兜底：跨块合并导致尾票与前一票同页（P5、P5）时，用「票号确实出现在
+	// 下一物理页区间」这一证据把它推到下一页，不靠单纯数张数猜测。
+	FixDuplicateTailPage(src, invs)
 	return assigned
+}
+
+// indexInvoiceNumber 从 from 起查找发票号，优先独立数字串。
+//
+// 为什么要求独立：8 位票号（旧版票）会作为子串出现在 20 位电子票号或 21 位
+// 校验码里，直接 strings.Index 会抢先命中错误位置、把 A 票的页码算到 B 票头上。
+// 整篇都找不到独立出现时返回 -1（宁可让该票走序号兜底，也不拿嵌在更长数字串
+// 里的子串当锚点——那正是「两个 P5」这类错标的来源）。
+func indexInvoiceNumber(s string, from int, no string) int {
+	if no == "" || from < 0 || from > len(s) {
+		return -1
+	}
+	for i := from; i+len(no) <= len(s); {
+		rel := strings.Index(s[i:], no)
+		if rel < 0 {
+			return -1
+		}
+		abs := i + rel
+		if standaloneDigits(s, abs, abs+len(no)) {
+			return abs
+		}
+		i = abs + 1
+	}
+	return -1
+}
+
+// FixDuplicateTailPage 修正「尾票与前一票同页」的错标。
+//
+// 触发条件（缺一不可，避免误伤真实的「一页两票」）：
+//  1. 至少两张票，且前 N-1 张页码严格按 +1 单调递增（说明是「每页 1 张票」版式）；
+//  2. 最后一张与倒数第二张页码相同；
+//  3. 原文里确实存在第 page+1 页的锚点；
+//  4. 最后一张票的发票号码出现在该锚点之后 —— 它是下一物理页上的票，
+//     只是所在 chunk 从上一页起头，被 chunks 起点标记带偏了。
+//
+// 真实的「一页两票」不满足 3/4：两张票的票号都在同一页区间内，且后面通常
+// 还有内容页锚点但没有该票号，因此不会被改动。
+func FixDuplicateTailPage(src ExtractSourceText, invs []InvoiceExtractionItem) int {
+	n := len(invs)
+	if n < 2 || len(src.Markers) == 0 || src.Content == "" {
+		return 0
+	}
+	last := &invs[n-1]
+	if last.PageNo <= 0 || invs[n-2].PageNo != last.PageNo {
+		return 0
+	}
+	for i := 1; i <= n-2; i++ {
+		if invs[i].PageNo != invs[i-1].PageNo+1 {
+			return 0
+		}
+	}
+	next := last.PageNo + 1
+	nextStart := -1
+	for _, m := range src.Markers {
+		if m.Page == next {
+			nextStart = m.Offset
+			break
+		}
+	}
+	if nextStart < 0 {
+		return 0
+	}
+	no := strings.TrimSpace(last.InvoiceNo)
+	if no == "" {
+		return 0
+	}
+	if idx := indexInvoiceNumber(src.Content, nextStart, no); idx < 0 {
+		return 0
+	}
+	last.PageNo = next
+	return 1
 }
 
 // extractPageMarker 生成写进批次文本的页码锚点。

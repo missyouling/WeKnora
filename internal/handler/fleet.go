@@ -1182,19 +1182,85 @@ func (h *FleetHandler) DeleteFleetCategory(c *gin.Context) {
 		c.Error(errors.NewConflictError(fmt.Sprintf("该分类下已有 %d 条记录引用，禁止删除", refCount)))
 		return
 	}
-	res := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
-		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
-		Update("deleted_at", timeNowUTC())
-	if res.Error != nil {
-		logger.Errorf(ctx, "delete fleet category failed: %v", res.Error)
+	// 分类软删与该分类名下的提取配置清理必须在同一事务：任一失败都回滚，
+	// 否则会留下「分类没了、配置还在」的孤儿，或「分类删了、配置没删」的脏态。
+	var cleanedCfg int64
+	now := timeNowUTC()
+	txErr := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&types.FleetCategory{}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			Update("deleted_at", now)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errFleetCategoryGone
+		}
+		// 级联清理该分类名对应的提取配置（knowledge_extract_configs 按
+		// scope + cert_type=分类名 建键）。不清理的话，每删一次分类就留一条
+		// 孤儿配置：同名分类日后重建时会直接读到上一轮的旧规则/旧字段，
+		// 用户以为「新建的分类」其实继承了已删分类的配置。
+		// 用软删而非物理删：与分类本身一致，误删可回滚；整体规则
+		//（cert_type 为空）与其它分类的配置不受影响。
+		n, cerr := softDeleteExtractConfigsOfCategoryTx(
+			ctx, tx, existing.Scope, existing.Name, tenantID, isBusinessCategoryScope(existing.Scope), now)
+		if cerr != nil {
+			return cerr
+		}
+		cleanedCfg = n
+		return nil
+	})
+	if txErr != nil {
+		if stderrors.Is(txErr, errFleetCategoryGone) {
+			c.Error(errors.NewNotFoundError("分类不存在"))
+			return
+		}
+		logger.Errorf(ctx, "delete fleet category failed: %v", txErr)
 		c.Error(errors.NewInternalServerError("delete category failed"))
 		return
 	}
-	if res.RowsAffected == 0 {
-		c.Error(errors.NewNotFoundError("分类不存在"))
-		return
+	if cleanedCfg > 0 {
+		logger.Infof(ctx, "cascade deleted %d extract config(s) for removed category %q (scope=%s)", cleanedCfg, existing.Name, existing.Scope)
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已删除"})
+}
+
+// errFleetCategoryGone 表示删除时目标分类已不存在（并发删除 / 租户不匹配）。
+var errFleetCategoryGone = stderrors.New("fleet category not found")
+
+// extractConfigScopeForCategory 把分类 scope 映射到提取配置的 scope。
+// notice 与 award_punish 共用同一份字段目录与配置键（保存时 notice 会被归一成
+// award_punish），历史分类行若仍写 notice，清理时也要落到 award_punish 上。
+func extractConfigScopeForCategory(scope string) string {
+	if scope == "notice" {
+		return "award_punish"
+	}
+	return scope
+}
+
+// softDeleteExtractConfigsOfCategoryTx 在同一事务内软删
+// (scope, cert_type=分类名) 的提取配置，返回清理行数。
+// cert_type 为空的行是 KB 级整体规则，不属于任何分类，必须保留。
+//
+// 租户口径与分类本身一致：日常事务四个业务 scope 的分类是全局行
+// （tenant_id=0，各 KB 共用一套分类），配置也按 (scope, cert_type) 全局清理；
+// 车队档案 scope 的分类按租户隔离，清理必须带 tenant_id，否则同名分类在别的
+// 租户下会被连带删除。
+func softDeleteExtractConfigsOfCategoryTx(
+	ctx context.Context, tx *gorm.DB, scope, name string, tenantID uint64, global bool, now time.Time,
+) (int64, error) {
+	cfgScope := extractConfigScopeForCategory(scope)
+	name = strings.TrimSpace(name)
+	if cfgScope == "" || name == "" {
+		return 0, nil
+	}
+	q := tx.WithContext(ctx).Model(&types.KbExtractConfig{}).
+		Where("scope = ? AND cert_type = ? AND deleted_at IS NULL", cfgScope, name)
+	if !global {
+		q = q.Where("tenant_id = ?", int64(tenantID))
+	}
+	res := q.Update("deleted_at", now)
+	return res.RowsAffected, res.Error
 }
 
 // countFleetCategoryRefs 统计分类名下被数据记录引用的数量：
@@ -2143,10 +2209,12 @@ func builtinItemSubField(key, label, dataType string, width int) types.FleetItem
 // markBuiltinFields 把 subs 的 builtin 标记**对齐**到系统字段清单（双向同步）。
 //
 // 为什么是双向而不是"只加"：builtin 的口径变过两次——
-//   第一版没有这个键 → 存量分类全是 false，前端得靠字典兜底；
-//   第二版全量置 true（17 个字段都不可删）→ 用户反馈"只有一个字段删不掉"；
-//   现在口径收敛到 3 个系统字段。只加不减会让第二版写下的错误标记永久留在库里，
-//   所以这里按清单重算：命中清单 → true，未命中 → false。
+//
+//	第一版没有这个键 → 存量分类全是 false，前端得靠字典兜底；
+//	第二版全量置 true（17 个字段都不可删）→ 用户反馈"只有一个字段删不掉"；
+//	现在口径收敛到 3 个系统字段。只加不减会让第二版写下的错误标记永久留在库里，
+//	所以这里按清单重算：命中清单 → true，未命中 → false。
+//
 // 只改 builtin 一个布尔位，不碰 label/enabled/width/顺序。
 func markBuiltinFields(subs, tpl []types.FleetCategorySub) bool {
 	builtinNames := make(map[string]bool, len(tpl))
