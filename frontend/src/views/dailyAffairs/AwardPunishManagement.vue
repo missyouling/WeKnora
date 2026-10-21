@@ -34,31 +34,14 @@
       <!-- 筛选工具栏（复用原项目文档列表样式） -->
       <div class="doc-filter-bar">
         <div class="doc-filter-bar__leading">
-          <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索全部字段"
-            @refresh="applyFilter" :selected-count="selectedRowKeys.length"
-            @clear-selection="clearSelection" hide-batch-bar>
-            <template #type-extra>
-              <div class="doc-filter-field doc-filter-field--wide">
-                <t-date-range-picker v-model="dateRange" placeholder="发布日期" class="doc-date-range doc-filter-field__control"
-                  clearable allow-input @change="applyFilter">
-                  <template #prefixIcon><t-icon name="time" size="16px" /></template>
-                </t-date-range-picker>
-              </div>
-            </template>
-            <template #columns>
-              <BusinessColumnFilter :columns="effectiveColumns" v-model:visible-keys="visibleColKeys" @reset="resetColumns" @select-all="selectAllColumns" />
-            </template>
-            <template #right-extra>
-              <t-button variant="outline" size="small" @click="settingsVisible = true">
-                <template #icon><t-icon name="setting" size="14px" /></template>
-                设置
-              </t-button>
-              <t-button theme="primary" size="small" @click="uploadVisible = true">
-                <template #icon><t-icon name="upload" size="14px" /></template>
-                上传公告
-              </t-button>
-            </template>
-          </BusinessListToolbar>
+          <!-- 筛选工具栏走中台 BusinessFilterBar（与发票/合同/制度同款）：分类切换只由顶部 KPI 卡片承担 -->
+          <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+            :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
+            settings-text="设置" :primary-action="{ text: '上传公告', icon: 'upload' }" hide-batch-bar
+            @columns-change="onVisibleColKeysChange" @reset-columns="resetColumns"
+            @select-all-columns="selectAllColumns" @filter-change="applyFilter"
+            @settings="settingsVisible = true" @primary="uploadVisible = true"
+            @clear-selection="clearSelection" />
         </div>
       </div>
 
@@ -234,150 +217,29 @@
 
 
     <!-- 通知公告详情抽屉（竖向区块，可拖宽，上下滚动） -->
-<SettingDrawer v-model:visible="detailVisible" :title="detailTitle" width="654px" :storage-key="'weknora-notice-drawer-width'" hide-footer destroy-on-close class="notice-detail-drawer">
-      <div class="notice-detail-body">
-        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
-        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
-
-        <!-- 摘要 -->
-        <section class="detail-block">
-          <div class="detail-block-title">摘要</div>
-          <div class="detail-block-content">
-            <template v-if="currentDetail?.description">
-              <div v-if="summaryState" class="summary-status">
-                <t-tag :theme="summaryState.theme" variant="light" size="small">
-                  <template v-if="summaryState.icon" #icon>
-                    <t-icon :name="summaryState.icon" :class="{ 'icon-spin': summaryState.spin }" />
-                  </template>
-                  {{ summaryState.label }}
-                </t-tag>
-              </div>
-              <!-- 摘要：复用知识库文档抽屉样式（线框 + 展开/折叠 + 每条字段一行） -->
-              <div class="summary_wrapper" :class="{ 'summary_clickable': summaryOverflow || summaryExpanded }"
-                @click="(summaryOverflow || summaryExpanded) && (summaryExpanded = !summaryExpanded)">
-                <div ref="summaryRef" class="summary_content" :class="[{ 'summary_collapsed': !summaryExpanded }]">{{
-                  summaryLines
-                }}</div>
-                <div v-if="(summaryOverflow && !summaryExpanded) || summaryExpanded" class="summary_fade"
-                  :class="{ 'summary_fade_expanded': summaryExpanded }">
-                  <t-icon :name="summaryExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="summary_fade_icon" />
-                </div>
-              </div>
-            </template>
-            <t-empty v-else description="暂无摘要" />
-          </div>
-        </section>
-
-        <!-- 公告字段 -->
-        <section class="detail-block">
-          <div class="detail-block-content">
-            <div class="detail-fields">
-              <div class="field-group">
-                <div class="field-group-title">公告信息</div>
-                <div class="field-grid">
-                  <t-form-item label="文号" label-width="110px">
-                    <t-input v-model="editForm.ap_no" placeholder="无文号时自动生成" />
-                  </t-form-item>
-                  <t-form-item label="标题" label-width="110px">
-                    <t-input v-model="editForm.ap_title" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="文件类型" label-width="110px">
-                    <t-select v-model="editForm.ap_type" :options="noticeTypeOptions" clearable filterable
-                      placeholder="选择类型" />
-                  </t-form-item>
-                  <t-form-item label="发布单位" label-width="110px">
-                    <t-input v-model="editForm.issue_dept" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="发布人" label-width="110px">
-                    <t-input v-model="editForm.signer" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="发布日期" label-width="110px">
-                    <t-date-picker v-model="editForm.sign_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                  <t-form-item label="部门" label-width="110px">
-                    <t-input v-model="editForm.dept" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="当事人" label-width="110px">
-                    <t-input v-model="editForm.person" placeholder="" />
-                  </t-form-item>
-                  <t-form-item label="岗位" label-width="110px">
-                    <t-input v-model="editForm.position" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">处理内容</div>
-                <div class="field-grid">
-                  <t-form-item label="生效日期" label-width="110px">
-                    <t-date-picker v-model="editForm.effective_date" value-type="YYYY-MM-DD" format="YYYY-MM-DD" clearable
-                      allow-input />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">处理决定</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="处理决定" label-width="110px">
-                    <t-textarea v-model="editForm.measure" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">依据</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="依据" label-width="110px">
-                    <t-textarea v-model="editForm.basis" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">摘要</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="摘要" label-width="110px">
-                    <t-textarea v-model="editForm.summary" :autosize="{ minRows: 2, maxRows: 6 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="field-group">
-                <div class="field-group-title">备注</div>
-                <div class="field-grid field-grid--full">
-                  <t-form-item label="备注" label-width="110px">
-                    <t-textarea v-model="editForm.remark" :autosize="{ minRows: 2, maxRows: 5 }" placeholder="" />
-                  </t-form-item>
-                </div>
-              </div>
-
-              <div class="detail-save-hint">
-                <t-icon name="check-circle" size="14px" />
-                <span>字段修改后点击底部保存{{ autoSaving ? '（保存中...）' : '' }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 源文件预览：默认折叠；折叠时不挂载 DocumentPreview -->
-        <t-collapse v-model="previewExpanded" class="detail-preview-collapse">
-          <t-collapse-panel value="preview" header="源文件预览">
-            <div class="detail-block-content">
-              <DocumentPreview v-if="currentRow && previewExpanded.length" :knowledge-id="currentRow.knowledgeId"
-                :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-            </div>
-          </t-collapse-panel>
-        </t-collapse>
-
-        <!-- 手动保存：四模块统一为手动保存（2026-10-12 决策），替代原来的 1200ms 自动保存 -->
-        <div class="notice-detail-footer">
-          <t-button variant="outline" size="small" @click="detailVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="autoSaving" @click="saveEditForm()">保存</t-button>
+<BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="currentRow"
+      :page-no="detailPageNo" :form="editFormWrapper" :fields="editFieldDefs" :sub-fields="[]"
+      :supports-sub-fields="false" :block-title="editForm.ap_type || '公告信息'"
+      :quality="detailQuality" :label-of="qualityLabel" :dirty="detailDirty" :saving="autoSaving"
+      :storage-key="'weknora-notice-drawer-width'" @save="saveEditForm" @delete="onDetailDelete"
+      @re-extract="onDetailReExtract">
+      <template #field-ap_type>
+        <t-select v-model="editForm.ap_type" :options="apTypeOptions" clearable filterable allow-create
+          placeholder="选择公告类型" />
+      </template>
+      <template #field-extract_status>
+        <t-tag v-if="statusOf(currentRow || {}).label !== '--'" size="small" :theme="statusOf(currentRow || {}).theme"
+          variant="light-outline" class="row-status-tag">{{ statusOf(currentRow || {}).label }}</t-tag>
+        <span v-else class="row-muted">--</span>
+      </template>
+      <template #field-tags>
+        <div v-if="rowTags(currentRow || {}).length" class="detail-tags-readonly">
+          <t-tag v-for="t in rowTags(currentRow || {})" :key="t.id || t.name" size="small" variant="light-outline"
+            class="row-tag">{{ t.name }}</t-tag>
         </div>
-      </div>
-    </SettingDrawer>
+        <span v-else class="row-muted">—</span>
+      </template>
+    </BusinessSplitDetailDrawer>
 
     <!-- 文号重复二次确认 -->
     <t-dialog v-model:visible="dupConfirmVisible" header="文号重复" width="420" @confirm="onDupConfirm">
@@ -440,6 +302,7 @@ import {
   listKnowledgeFiles,
   getKnowledgeDetails,
   batchDeleteKnowledge,
+  delKnowledgeDetails,
   updateBusinessMetadata,
   listKnowledgeTags,
   updateKnowledgeTagBatch,
@@ -451,21 +314,21 @@ import {
   getRecognitionConfig,
   listAwardPunishOverview,
 } from '@/api/knowledge-base'
-import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
-import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessKbWizard from './BusinessKbWizard.vue'
-import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
-import BusinessListToolbar from './BusinessListToolbar.vue'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import { pdfPageOf } from './pdfPage'
+import { buildDetailFieldDefs } from './businessDetailForm'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
@@ -624,6 +487,9 @@ const keyword = ref('')
 const filterApType = ref('')
 const noticeTypeOptions = ref<Array<{ value: string; label: string }>>([])
 const noticeCats = ref<any[]>([])
+const apTypeOptions = computed(() => (noticeCats.value || [])
+  .filter((c: any) => c.enabled !== false)
+  .map((c: any) => ({ value: c.name, label: c.name })))
 const uploadTypeOptions = computed(() => {
   const cats = noticeCats.value.filter((c: any) => c.enabled !== false)
   if (!cats.length) return [{ label: '通知', value: 'award_punish__通知' }]
@@ -656,7 +522,6 @@ const tagTargetName = computed(() => tagTarget.value?.fileName || '')
 
 // ---- 详情抽屉 ----
 const detailVisible = ref(false)
-const previewExpanded = ref<string[]>([])
 const currentRow = ref<NoticeRow | null>(null)
 const currentDetail = ref<KnowledgeItem | null>(null)
 const editForm = ref<Record<string, any>>({})
@@ -666,11 +531,6 @@ const autoSaving = ref(false)
 const summaryExpanded = ref(false)
 const summaryRef = ref<HTMLElement>()
 const summaryOverflow = ref(false)
-const summaryLines = computed(() => {
-  const d = currentDetail.value?.description || ''
-  if (!d) return ''
-  return d.replace(/-(?=[^\s-])/g, '\n-').trim()
-})
 const checkSummaryOverflow = () => {
   const el = summaryRef.value
   if (!el) { summaryOverflow.value = false; return }
@@ -1082,7 +942,7 @@ const displayProgress = computed(() =>
   uploadProgress.value.length ? uploadProgress.value : liveProgress.value,
 )
 
-const { statusOf, summaryState, rowTags } = useDocStatus({
+const { statusOf, rowTags } = useDocStatus({
   extractInFlight, extractFailed, currentDetail,
   scope: 'award_punish', notLabel: '非通知公告',
 })
@@ -1109,6 +969,21 @@ const openDetail = async (row: NoticeRow) => {
   } catch { /* 详情刷新失败不影响查看 */ }
   fillEditForm()
 }
+
+// 扁平筛选态：与 keyword / dateRange 双向桥接（中台组件只发不可变更新）
+const filterState = computed<FilterState>({
+  get: () => ({ keyword: keyword.value, dateRange: dateRange.value }),
+  set: (v) => {
+    keyword.value = String(v?.keyword ?? '')
+    dateRange.value = Array.isArray(v?.dateRange) ? v.dateRange : []
+  },
+})
+// 公告类型筛选统一仅由顶部 KPI 卡片承担，工具栏不再重复下拉
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'dateRange', type: 'date-range', placeholder: '发布日期', icon: 'time' },
+])
+const onVisibleColKeysChange = (keys: string[]) => { visibleColKeys.value = keys }
 
 const detailTitle = computed(() =>
   currentRow.value?.apNo ? `公告详情 · ${currentRow.value.apNo}` : '公告详情'
@@ -1138,6 +1013,83 @@ const onUploadHistoryChanged = async (payload?: { deletedIds?: string[] }) => {
 }
 
 // ---- 字段编辑 + 手动保存 ----
+// 中台抽屉表单契约 `{ data, remarkParts, items }`：奖惩 editForm 是扁平结构，
+// 用零成本包装把 data 指向同一对象（抽屉 v-model 写入直接落到 editForm）。
+const editFormWrapper = computed(() => ({
+  data: editForm.value,
+  remarkParts: {} as Record<string, string>,
+  items: [] as any[],
+}))
+const detailPageNo = computed(() => pdfPageOf({ page: currentRow.value?.page, page_no: currentRow.value?.pageNo }))
+
+const detailBaseline = ref<any>(null)
+const detailDirty = computed(() => {
+  if (!detailBaseline.value) return false
+  return JSON.stringify(detailBaseline.value) !== JSON.stringify(editForm.value)
+})
+
+// 承载页历史数据同时含「公告口径」（文号/标题/发布单位）与「奖惩口径」
+// （当事人/岗位/处理决定/依据）字段：标签先按 award 解析，未命中再回落 notice，
+// 保证两套字段都有中文名（后端两套字典仍保持零交集）。
+const awardOrNoticeLabel = (n: string): string => {
+  const award = extractFieldLabel('award_punish', n)
+  if (award && award !== n) return award
+  return extractFieldLabel('notice', n)
+}
+
+const editFieldDefs = computed(() => {
+  const t = editForm.value.ap_type
+  const cats = (noticeCats.value || []).filter((c: any) => c.enabled !== false)
+  const hit = cats.find((c: any) => c.name === t) || cats[0]
+  const subs = hit?.subs
+  if (Array.isArray(subs) && subs.length) {
+    return buildDetailFieldDefs(subs, {
+      fieldKeyOf: (n: string) => snakeOf(n),
+      labelOf: (n: string) => awardOrNoticeLabel(n),
+      isRemarkPart: () => false,
+    })
+  }
+  return DEFAULT_NOTICE_COLUMNS
+    .filter((c: any) => c.key !== 'items')
+    .map((c: any) => ({ name: snakeOf(c.key), label: c.title || c.label || c.key, dataType: c.dataType || 'text' }))
+})
+
+function snakeOf(k: string): string {
+  return String(k || '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+}
+
+const onDetailDelete = async () => {
+  const r = currentRow.value
+  if (!r?.knowledgeId) return
+  try {
+    const res: any = await getKnowledgeDetails(r.knowledgeId)
+    const meta = (res?.data || res)?.custom_metadata || {}
+    const list: any[] = Array.isArray(meta.award_punishes) ? [...meta.award_punishes] : []
+    const rest = list.filter((x: any, i: number) => i !== (Number(r.page) - 1) && x?.ap_no !== r.apNo)
+    if (rest.length === 0) {
+      await delKnowledgeDetails(r.knowledgeId)
+    } else {
+      await updateBusinessMetadata(kbId.value, r.knowledgeId, { ...meta, kind: 'award_punish', award_punishes: rest }, true)
+    }
+    MessagePlugin.success('已删除')
+    detailVisible.value = false
+    loadFiles(true)
+  } catch (e: any) { MessagePlugin.error(e?.message || '删除失败') }
+}
+
+const onDetailReExtract = async () => {
+  const r = currentRow.value
+  if (!r?.knowledgeId) return
+  try {
+    await extractBusinessDocument(kbId.value, r.knowledgeId, 'award_punish', filterApType.value || undefined)
+    MessagePlugin.success('已提交重新提取')
+    detailVisible.value = false
+    loadFiles(true)
+  } catch (e: any) {
+    if (!isExtractInProgress(e)) MessagePlugin.error(e?.message || '重新提取失败')
+  }
+}
+
 const fillEditForm = () => {
   const r = currentRow.value
   if (!r) return
