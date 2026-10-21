@@ -226,21 +226,21 @@
     <!-- 合同详情抽屉：中台 BusinessSplitDetailDrawer（与发票同款单栏结构：
          质量面板 → 两栏动态字段 → 底部折叠源文件预览） -->
     <BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="currentRow"
-      :page-no="detailPageNo" :form="editForm" :fields="editFieldDefs" :sub-fields="[]"
+      :page-no="detailPageNo" :form="editFormWrapper" :fields="editFieldDefs" :sub-fields="[]"
       :supports-sub-fields="false" :block-title="editForm.contract_type || '合同信息'"
       :quality="detailQuality" :label-of="qualityLabel" :dirty="detailDirty" :saving="saving"
       :storage-key="'weknora-contract-drawer-width'" @save="saveContractDetail" @delete="onDetailDelete"
       @re-extract="onDetailReExtract">
       <!-- 业务特有控件：类型下拉（改类型会联动归档分类，必须走页面自己的 options） -->
-      <template #field-contractType>
+      <template #field-contract_type>
         <t-select v-model="editForm.contract_type" :options="contractTypeOptions" clearable filterable allow-create
           placeholder="选择类型" />
       </template>
-      <template #field-paymentMethod>
+      <template #field-payment_method>
         <t-select v-model="editForm.payment_method" :options="PAYMENT_METHODS.map(v => ({ value: v, label: v }))"
           clearable filterable allow-create placeholder="选择付款方式" />
       </template>
-      <template #field-extractStatus>
+      <template #field-extract_status>
         <t-tag v-if="statusOf(currentRow || {}).label !== '--'" size="small" :theme="statusOf(currentRow || {}).theme"
           variant="light-outline" class="row-status-tag">{{ statusOf(currentRow || {}).label }}</t-tag>
         <span v-else class="row-muted">--</span>
@@ -1346,6 +1346,18 @@ const fillEditForm = () => {
 
 // 抽屉底部动作：删除（整份文件仅一份合同时级联删除源文件；多份时只移除该条）
 const detailPageNo = computed(() => pdfPageOf({ page: currentRow.value?.page, page_no: currentRow.value?.pageNo }))
+
+// 中台 BusinessSplitDetailDrawer 的表单契约是 `{ data, remarkParts, items }`
+// （抽屉内部一律读写 `form.data[字段名]`）。合同的 editForm 是**扁平**结构
+// （contract_no / sign_date…，与落库 contracts[] 同形），直接传进去会让
+// `form.data` 为 undefined → 真机报一堆 Cannot read properties of undefined。
+// 这里做零成本包装：data 指向同一个 editForm 对象，抽屉的 v-model 写入
+// 直接落在 editForm 上，保存链路一行都不用改。
+const editFormWrapper = computed(() => ({
+  data: editForm.value,
+  remarkParts: {} as Record<string, string>,
+  items: [] as any[],
+}))
 
 // 脏检查：与填入时基线比对（抽屉「保存」按钮靠它启用）
 const detailBaseline = ref<any>(null)
