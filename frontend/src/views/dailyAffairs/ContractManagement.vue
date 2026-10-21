@@ -319,6 +319,7 @@ import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.v
 import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import { useBusinessListSync } from './useBusinessListSync'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -1018,7 +1019,7 @@ watch(keyword, (v) => {
   keywordTimer = setTimeout(() => loadFiles(true), 300)
 })
 
-// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：全部合同 → 各合同类型卡 → 即将到期 → 历史记录） ----
+// ---- KPI 概览卡（黄金基准 DashboardKpiGroup：已收录合同 → 各合同类型卡 → 即将到期 → 历史记录） ----
 // 数据源为后端全量概览 contractOverview（不受工具栏类型/日期/搜索筛选影响），
 // 仅「历史记录」卡沿用独立的上传文件计数（uploadStats，同属全量口径）。
 const overviewCards = computed<KpiCard[]>(() => {
@@ -1030,8 +1031,8 @@ const overviewCards = computed<KpiCard[]>(() => {
   const catCount: Record<string, number> = {}
   for (const c of (st.by_category || [])) catCount[String(c.category)] = Number(c.count) || 0
   const cards: KpiCard[] = [
-    // 全部合同：全量总份数（含未分类/其它合同与待补录占位行），点击清空筛选进入全部态（对齐发票）
-    { key: 'total', label: '全部合同', icon: 'file-copy', value: String(total), unit: '份', sub: `本月新增 ${Number(m.count || 0)} 份`, theme: 'brand', action: 'all' },
+    // 已收录合同：全量总份数（含未分类/其它合同与待补录占位行），点击清空筛选进入全部态（对齐发票）
+    { key: 'total', label: '已收录合同', icon: 'file-copy', value: String(total), unit: '份', sub: `本月新增 ${Number(m.count || 0)} 份`, theme: 'brand', action: 'all' },
   ]
   // 类型分布卡：以合同分类列表（categories[scope=contract]）为权威源动态生成，顺序 = 分类数组顺序；
   // enabled=false 的分类不出卡片（六同步：同时不出筛选下拉/上传选项）
@@ -1059,7 +1060,7 @@ const overviewCards = computed<KpiCard[]>(() => {
 })
 // 卡片点击联动（发票基准同款 action 分流：类型卡切筛选；即将到期卡切履约筛选；历史记录卡开抽屉）
 const onOverviewCardClick = (card: KpiCard) => {
-  // 「全部合同」卡：清空类型筛选显示全部记录（对齐发票「已收录发票」卡）
+  // 「已收录合同」卡：清空类型筛选显示全部记录（对齐发票「已收录发票」卡）
   if (card.action === 'all') {
     filterContractType.value = ''
   } else if (card.action === 'type' && card.typeValue) {
@@ -1851,35 +1852,20 @@ const delPopVisible = ref(false)
 const closeDelPop = () => { delPopVisible.value = false }
 // 选中记录涉及的多页文件数量（同一上传文件含多份合同）
 // delMultiCount 已删除：合同不需要按页操作
-// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页合同
-const optimisticRemoveContractRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
-  contractRows.value = contractRows.value.filter((r) => {
-    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
-    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
-    return true
-  })
-}
-// 删除走 asynq 异步入队：200 仅代表入队，worker 启动后才置 parse_status=deleting
-// （列表据此排除）。立即刷新会读到旧数据，故先乐观移除，再分两次延迟权威对账。
-let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
-const schedulePostDeleteRefresh = () => {
-  deleteRefreshTimers.forEach(clearTimeout)
-  deleteRefreshTimers = []
-  loadContractOverview()
-  loadUploadStats()
-  const reload = () => { loadFiles(true); loadContractOverview(); loadUploadStats() }
-  deleteRefreshTimers.push(setTimeout(reload, 800))
-  deleteRefreshTimers.push(setTimeout(reload, 2600))
-}
-
-// 删除整份上传文件（含其全部合同记录，从知识库完全删除）
-const doFileDelete = async (rows: ContractRow[]) => {
-  const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
-  if (ids.size) {
-    await batchDeleteKnowledge(kbId.value, Array.from(ids))
-    optimisticRemoveContractRows(ids as Set<string>, new Set())
-  }
-}
+// 删除编排统一走中台 useBusinessListSync（与发票同款）：乐观移除 + 延迟对账 +
+// 同文件多行「先大页码后小页码」级联顺序。本页只注入自己的刷新与删除接口，
+// 不再各自维护定时器数组（此前三页各写一份，行为易漂移）。
+// 合同不支持按页删除：删除粒度恒为「整份上传文件」。
+const listSync = useBusinessListSync(contractRows, {
+  reload: (silent: boolean | undefined) => loadFiles(!!silent),
+  reloadStats: () => { loadContractOverview(); loadUploadStats() },
+  deleteFiles: (ids) => batchDeleteKnowledge(kbId.value, ids),
+  onError: (e) => MessagePlugin.error(e?.message || '删除失败'),
+})
+const optimisticRemoveContractRows = (fileIds: Set<string>, pageKeys: Set<string>) =>
+  listSync.removeRows(fileIds, pageKeys)
+const schedulePostDeleteRefresh = () => listSync.schedulePostDeleteRefresh()
+const doFileDelete = (rows: any[]) => listSync.deleteFiles(rows)
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   clearSelectionSafe()
@@ -1948,7 +1934,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   stopPolling()
-  deleteRefreshTimers.forEach(clearTimeout)
+  listSync.destroy()
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
@@ -2155,7 +2141,22 @@ onBeforeUnmount(() => {
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
 .row-rate { font-size: 12px; color: var(--td-text-color-primary); }
 .row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row-status-tag :deep(.t-icon) { margin-right: 2px; }
+/* 提取成功 / 提取失败 / 待提取 三种状态标签必须完全同尺寸（与发票页同一份规则）：
+   t-tag 的 small 尺寸在带内联图标（close-circle / loading）时会按内容收缩，
+   导致「提取失败」比「提取成功」更小。这里用固定盒模型锁死。 */
+.row-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  :deep(.t-icon) { margin-right: 0; font-size: 12px; }
+}
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
 
 .row-tag-chips {

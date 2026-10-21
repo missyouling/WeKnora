@@ -331,6 +331,7 @@ import BusinessKbWizard from './BusinessKbWizard.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import { useBusinessListSync } from './useBusinessListSync'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import { pdfPageOf } from './pdfPage'
 import { buildDetailFieldDefs } from './businessDetailForm'
@@ -1555,33 +1556,19 @@ watch(filterRegType, () => {
 // ---- 删除链路 ----
 const delPopVisible = ref(false)
 const closeDelPop = () => { delPopVisible.value = false }
-// 乐观移除本地行：fileIds 整文件移除；pageKeys（`knowledgeId::page`）仅移除单页制度（制度一般用不到）
-const optimisticRemoveRegulationRows = (fileIds: Set<string>, pageKeys: Set<string>) => {
-  regulationRows.value = regulationRows.value.filter((r) => {
-    if (r.knowledgeId && fileIds.has(r.knowledgeId)) return false
-    if (r.page && r.page >= 1 && pageKeys.has(`${r.knowledgeId}::${r.page}`)) return false
-    return true
-  })
-}
-// 删除走 asynq 异步入队：200 仅代表入队，worker 启动后才置 parse_status=deleting
-// （列表据此排除）。立即刷新会读到旧数据，故先乐观移除，再分两次延迟权威对账。
-let deleteRefreshTimers: ReturnType<typeof setTimeout>[] = []
-const schedulePostDeleteRefresh = () => {
-  deleteRefreshTimers.forEach(clearTimeout)
-  deleteRefreshTimers = []
-  loadRegulationOverview()
-  const reload = () => { loadFiles(true); loadRegulationOverview() }
-  deleteRefreshTimers.push(setTimeout(reload, 800))
-  deleteRefreshTimers.push(setTimeout(reload, 2600))
-}
-// 删除整份上传文件（含其全部制度记录，从知识库完全删除）
-const doFileDelete = async (rows: RegulationRow[]) => {
-  const ids = new Set(rows.map(r => r.knowledgeId).filter(Boolean))
-  if (ids.size) {
-    await batchDeleteKnowledge(kbId.value, Array.from(ids))
-    optimisticRemoveRegulationRows(ids as Set<string>, new Set())
-  }
-}
+// 删除编排统一走中台 useBusinessListSync（与发票同款）：乐观移除 + 延迟对账 +
+// 同文件多行「先大页码后小页码」级联顺序。本页只注入自己的刷新与删除接口，
+// 不再各自维护定时器数组（此前三页各写一份，行为易漂移）。
+const listSync = useBusinessListSync(regulationRows, {
+  reload: (silent: boolean | undefined) => loadFiles(!!silent),
+  reloadStats: () => { loadRegulationOverview() },
+  deleteFiles: (ids) => batchDeleteKnowledge(kbId.value, ids),
+  onError: (e) => MessagePlugin.error(e?.message || '删除失败'),
+})
+const optimisticRemoveRegulationRows = (fileIds: Set<string>, pageKeys: Set<string>) =>
+  listSync.removeRows(fileIds, pageKeys)
+const schedulePostDeleteRefresh = () => listSync.schedulePostDeleteRefresh()
+const doFileDelete = (rows: any[]) => listSync.deleteFiles(rows)
 const finishDelete = async () => {
   MessagePlugin.success('删除成功')
   clearSelectionSafe()
@@ -1661,7 +1648,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling()
   stopProgressTimer()
-  deleteRefreshTimers.forEach(clearTimeout)
+  listSync.destroy()
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
@@ -1843,7 +1830,22 @@ onBeforeUnmount(() => {
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
 .row-rate { font-size: 12px; color: var(--td-text-color-primary); }
 .row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row-status-tag :deep(.t-icon) { margin-right: 2px; }
+/* 提取成功 / 提取失败 / 待提取 三种状态标签必须完全同尺寸（与发票页同一份规则）：
+   t-tag 的 small 尺寸在带内联图标（close-circle / loading）时会按内容收缩，
+   导致「提取失败」比「提取成功」更小。这里用固定盒模型锁死。 */
+.row-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  :deep(.t-icon) { margin-right: 0; font-size: 12px; }
+}
 .icon-spin { animation: doc-list-spin 0.9s linear infinite; }
 
 .row-tag-chips {
