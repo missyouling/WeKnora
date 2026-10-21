@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/common"
+	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -20,38 +21,38 @@ const contractExtractMaxContentRunes = 24000
 // Numeric fields use pointers so an unrecognized value stays null on the
 // wire instead of being coerced to 0.
 type ContractExtractionItem struct {
-	ContractNo       string   `json:"contract_no"`
-	ContractName     string   `json:"contract_name"`
-	ContractType     string   `json:"contract_type"`
-	SignDate         string   `json:"sign_date"`
-	EffectiveDate    string   `json:"effective_date"`
-	ExpiryDate       string   `json:"expiry_date"`
-	SignPlace        string   `json:"sign_place"`
-	PartyAName       string   `json:"party_a_name"`
-	PartyATaxNo      string   `json:"party_a_tax_no"`
-	PartyAAddress    string   `json:"party_a_address"`
-	PartyAPhone      string   `json:"party_a_phone"`
-	PartyABank       string   `json:"party_a_bank"`
-	PartyAAccount    string   `json:"party_a_account"`
-	PartyBName       string   `json:"party_b_name"`
-	PartyBTaxNo      string   `json:"party_b_tax_no"`
-	PartyBAddress    string   `json:"party_b_address"`
-	PartyBPhone      string   `json:"party_b_phone"`
-	PartyBBank       string   `json:"party_b_bank"`
-	PartyBAccount    string   `json:"party_b_account"`
-	ContractAmount   *float64 `json:"contract_amount"`
-	TaxRate          *float64 `json:"tax_rate"`
-	PaymentMethod    string   `json:"payment_method"`
-	QualityBond      *float64 `json:"quality_bond"`
+	ContractNo        string   `json:"contract_no"`
+	ContractName      string   `json:"contract_name"`
+	ContractType      string   `json:"contract_type"`
+	SignDate          string   `json:"sign_date"`
+	EffectiveDate     string   `json:"effective_date"`
+	ExpiryDate        string   `json:"expiry_date"`
+	SignPlace         string   `json:"sign_place"`
+	PartyAName        string   `json:"party_a_name"`
+	PartyATaxNo       string   `json:"party_a_tax_no"`
+	PartyAAddress     string   `json:"party_a_address"`
+	PartyAPhone       string   `json:"party_a_phone"`
+	PartyABank        string   `json:"party_a_bank"`
+	PartyAAccount     string   `json:"party_a_account"`
+	PartyBName        string   `json:"party_b_name"`
+	PartyBTaxNo       string   `json:"party_b_tax_no"`
+	PartyBAddress     string   `json:"party_b_address"`
+	PartyBPhone       string   `json:"party_b_phone"`
+	PartyBBank        string   `json:"party_b_bank"`
+	PartyBAccount     string   `json:"party_b_account"`
+	ContractAmount    *float64 `json:"contract_amount"`
+	TaxRate           *float64 `json:"tax_rate"`
+	PaymentMethod     string   `json:"payment_method"`
+	QualityBond       *float64 `json:"quality_bond"`
 	LiquidatedDamages *float64 `json:"liquidated_damages"`
-	Subject          string   `json:"subject"`
-	Quantity         *float64 `json:"quantity"`
-	UnitPrice        *float64 `json:"unit_price"`
-	PerformancePeriod string  `json:"performance_period"`
-	Handler          string   `json:"handler"`
-	Department       string   `json:"department"`
-	Remark           string   `json:"remark"`
-	FulfillStatus    string   `json:"fulfill_status"`
+	Subject           string   `json:"subject"`
+	Quantity          *float64 `json:"quantity"`
+	UnitPrice         *float64 `json:"unit_price"`
+	PerformancePeriod string   `json:"performance_period"`
+	Handler           string   `json:"handler"`
+	Department        string   `json:"department"`
+	Remark            string   `json:"remark"`
+	FulfillStatus     string   `json:"fulfill_status"`
 	// Page is the 1-based page/ordinal of the contract inside its source file.
 	// It is assigned by the backend (in extraction-result order).
 	Page int `json:"page"`
@@ -213,20 +214,11 @@ func BuildContractExtractionBatches(name, summary string, chunks []*types.Chunk,
 	if batchSize <= 0 {
 		batchSize = ContractExtractionBatchSize
 	}
-	usable := make([]*types.Chunk, 0, len(chunks))
-	for _, chunk := range chunks {
-		if chunk == nil {
-			continue
-		}
-		if chunk.ChunkType != types.ChunkTypeText &&
-			chunk.ChunkType != types.ChunkTypeImageOCR &&
-			chunk.ChunkType != types.ChunkTypeImageCaption {
-			continue
-		}
-		if strings.TrimSpace(chunk.Content) != "" {
-			usable = append(usable, chunk)
-		}
-	}
+	// 取数/归一收敛到唯一实现：ChunksForExtraction 负责类型过滤与相邻重复去重，
+	// NormalizeHTMLTables 把裸 HTML 表格归一成模型可读的行文本（合同/制度扫描件
+	// 常带 <table>，不归一会让模型把整张表读成噪声）；有物理页码时插入 [Page N]
+	// 锚点，便于后续按页归位。
+	usable := ChunksForExtraction(chunks)
 	header := make([]string, 0, 2)
 	if name = strings.TrimSpace(name); name != "" {
 		header = append(header, "Document name: "+name)
@@ -247,7 +239,14 @@ func BuildContractExtractionBatches(name, summary string, chunks []*types.Chunk,
 			parts = append(parts, headStr)
 		}
 		for _, c := range usable[i:end] {
-			parts = append(parts, strings.TrimSpace(c.Content))
+			text := strings.TrimSpace(docparser.NormalizeHTMLTables(c.Content))
+			if text == "" {
+				continue
+			}
+			if page := ChunkPage(c); page > 0 {
+				text = extractPageMarker(page) + "\n" + text
+			}
+			parts = append(parts, text)
 		}
 		batches = append(batches, sampleLongContent(strings.Join(parts, "\n\n"), contractExtractMaxContentRunes))
 	}
