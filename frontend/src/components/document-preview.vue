@@ -49,6 +49,7 @@ import {
   scrollRectIntoContainer,
 } from '@/utils/sourceLocatorDom';
 import { renderEpubPreview } from '@/utils/epubPreview';
+import { pageJumpZoom, withPageFragment } from '@/utils/pdfPageJump';
 
 
 const VueOfficePptx = defineAsyncComponent(() => import('@vue-office/pptx'));
@@ -69,9 +70,9 @@ const props = defineProps<{
   fillHeight?: boolean;
   /**
    * 多页文档（如同一 PDF 拆出的多张发票）中的目标页码（1-based）。
-   * 直连预览时与基础 URL 合并为 `url#page=N` 后一次性赋值给 iframe，
-   * 避免 URL 与页码分步赋值引发的二次重载；同文件页码切换走浏览器
-   * fragment 导航，不重新下载文件。
+   * 直连预览时合并为 `url#page=N&zoom=Z` 赋给 PDF iframe；zoom 由窗格尺寸换算，
+   * 否则浏览器内置阅读器在 fit-page 下会把末页页码夹紧到上一页。
+   * 同文件页码切换走浏览器 fragment 导航，不重新下载文件。
    */
   page?: number;
   /**
@@ -119,6 +120,12 @@ const previewType = ref<FilePreviewKind>('unsupported');
 const blobUrl = ref('');
 /** 直连预览 URL（COS 预签名 / local /r/ 授权），浏览器原生支持 Range 渐进加载。 */
 const directUrl = ref('');
+/**
+ * PDF iframe 的实际 src（含 `#page=N&zoom=Z`）。
+ * 与 directUrl 分离的原因：iframe 必须在容器完成布局后才拿到 src，
+ * 否则内置阅读器会用未定型的视口尺寸应用页码，末页被夹紧到错误页。
+ */
+const pdfSrc = ref('');
 const textContent = ref('');
 const highlightedCode = ref('');
 const markdownHtml = ref('');
@@ -190,6 +197,8 @@ function onPreviewFrameLoad() {
   // 整个回调包 try/catch：iframe 的 load 是无主语原生事件，任何抛出都会升级成
   // Vue errorHandler 的 "native event handler" 未处理异常（曾导致抽屉点击崩溃）。
   try {
+    // 空 src（等待布局定型）也会触发 load，此时 PDF 尚未开始加载，不能撤遮罩。
+    if (previewType.value === 'pdf' && !pdfSrc.value) return;
     if (iframePending.value) {
       iframePending.value = false;
     }
@@ -328,10 +337,23 @@ function getPreviewSourceKey(): string {
   return '';
 }
 
-/** 将多页文档的目标页码合并进预览 URL（一次成型，避免分步赋值触发 iframe 二次加载）。 */
-function withPageHash(url: string): string {
-  if (!url || !props.page || props.page <= 0) return url;
-  return `${url}#page=${props.page}`;
+/** 将多页文档的目标页码（与可选缩放）合并进预览 URL。 */
+function withPageHash(url: string, zoom = 0): string {
+  return withPageFragment(url, props.page || 0, zoom);
+}
+
+/**
+ * PDF iframe 的两段式 src 赋值：容器与空 src 的 iframe 先挂载并完成布局，
+ * 下一帧量到窗格真实尺寸后再写入 `#page=N&zoom=Z`。
+ * 页码定位依赖真实尺寸（见 utils/pdfPageJump）：src 与容器在同一帧创建时，
+ * 内置阅读器会按未定型的视口应用页码，末页被滚动夹紧到错误页（6 页票据停在 3/6）。
+ */
+async function applyPdfFrameSrc(baseUrl: string, sourceKey: string) {
+  await nextTick();
+  // 防串车：等待布局期间用户可能已切到其它文件。
+  if (getPreviewSourceKey() !== sourceKey) return;
+  const box = previewContent.value?.getBoundingClientRect();
+  pdfSrc.value = withPageHash(baseUrl, pageJumpZoom(box?.width || 0, box?.height || 0));
 }
 
 // Skill-generated HTML is often a self-contained chart that needs its own
@@ -466,17 +488,18 @@ async function doLoadPreview(sourceKey: string) {
       (preliminaryKind === 'pdf' || preliminaryKind === 'image' || preliminaryKind === 'audio' || preliminaryKind === 'video') &&
       !(props.sourceMode && preliminaryKind === 'pdf')
     ) {
-      // URL 与页码合并后单次赋值：Vue 同一次刷新只见最终 src。
-      const finalUrl = withPageHash(direct);
+      // 直连分支分两步：非 PDF 仍一次性赋值（URL 与页码合并，Vue 同一帧只见最终 src）；
+      // PDF 先落基础 URL 让容器/iframe 完成布局，再由 applyPdfFrameSrc 补页码与缩放。
       cleanup();
       previewType.value = preliminaryKind;
       previewExt = ft;
-      directUrl.value = finalUrl;
+      directUrl.value = preliminaryKind === 'pdf' ? direct : withPageHash(direct);
       loadedForId = sourceKey;
       const sameFilePageJump = preliminaryKind === 'pdf' && wasDirectPdf && prevKnowledgeId === props.knowledgeId;
       iframePending.value = preliminaryKind === 'pdf' && !sameFilePageJump;
       loading.value = false;
-      await nextTick();
+      if (preliminaryKind === 'pdf') await applyPdfFrameSrc(direct, sourceKey);
+      else await nextTick();
       scheduleLocate();
       return;
     }
@@ -512,8 +535,11 @@ async function doLoadPreview(sourceKey: string) {
         if (props.sourceMode) {
           pdfData.value = await blob.arrayBuffer();
         } else {
+          // blobUrl 只做容器门禁（不带 hash），页码与缩放在布局完成后写入 pdfSrc。
           const baseUrl = URL.createObjectURL(blob);
-          blobUrl.value = withPageHash(baseUrl);
+          blobUrl.value = baseUrl;
+          if (getPreviewSourceKey() !== sourceKey) return;
+          await applyPdfFrameSrc(baseUrl, sourceKey);
         }
         break;
       }
@@ -577,9 +603,10 @@ async function doLoadPreview(sourceKey: string) {
 
 function cleanup() {
   directUrl.value = '';
+  pdfSrc.value = '';
   iframePending.value = false;
   if (blobUrl.value) {
-    // blobUrl 可能带 #page=N 后缀（多页定位），revoke 时按基础 URL 清理。
+    // blobUrl 现在是基础 URL（页码/缩放写在 pdfSrc），仍按基础 URL 回收以兼容历史形态。
     try {
       URL.revokeObjectURL(blobUrl.value.split('#')[0]);
     } catch {
@@ -965,7 +992,7 @@ onUnmounted(() => {
       <PdfSourceViewer :data="pdfData" :file-name="fileName" :locate="locate" @located="(r) => emit('located', r)" />
     </div>
     <div v-else-if="previewType === 'pdf' && (blobUrl || directUrl)" class="preview-pdf">
-      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="blobUrl || directUrl" class="pdf-iframe" @load="onPreviewFrameLoad" />
+      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="pdfSrc || undefined" class="pdf-iframe" @load="onPreviewFrameLoad" />
     </div>
 
     <!-- HTML: artifacts render in a unique-origin iframe; other sources stay as source. -->
