@@ -41,6 +41,10 @@ type GenericExtractRecord struct {
 	// mapFields 非 nil 时代表"扁平 map"视图（提取测试沙箱）：读写直接落到 map 上。
 	// 与 fields 互斥，mapFields 优先。
 	mapFields map[string]any
+	// bucketGo 动态桶的 Go 字段名（如 "Fields"）。结构体上存在该 map[string]any
+	// 字段时自动识别，用户自定义字段（如「保证金」）经它读写 —— 否则这些字段
+	// 既不在强类型字段里、也没有落脚点，补洞会被静默跳过。
+	bucketGo string
 }
 
 // ItemLineRecord 一行明细的统一读写视图（层次同 GenericExtractRecord，浅一层）。
@@ -145,6 +149,7 @@ func newGenericRecord(index int, ptr any) GenericExtractRecord {
 		return rec
 	}
 	t := elem.Type()
+	mapAnyType := reflect.TypeOf(map[string]any{})
 	for i := 0; i < t.NumField(); i++ {
 		name := jsonFieldName(t.Field(i))
 		if name == "" {
@@ -152,8 +157,32 @@ func newGenericRecord(index int, ptr any) GenericExtractRecord {
 		}
 		rec.fields[name] = elem.Field(i)
 		rec.goNames[name] = t.Field(i).Name
+		// 动态桶识别：Go 字段名固定为 Fields 且类型为 map[string]any
+		// （Schema.DynamicBucket = "Fields"，见 extract_schema_registry.go）。
+		if t.Field(i).Name == "Fields" && t.Field(i).Type == mapAnyType {
+			rec.bucketGo = t.Field(i).Name
+		}
 	}
 	return rec
+}
+
+// structJSONKeys 取任意结构体的 json 键集合（去空白、去空值）。
+// 提取项用它在 UnmarshalJSON 里区分「标准字段」与「用户自定义字段」——
+// 不在集合里的顶层键属于自定义字段，必须收进 Fields 动态桶，
+// 否则 json.Unmarshal 进强类型时会被静默丢弃（真机事故：配了「保证金」
+// 提取规则却永远提不到值）。
+func structJSONKeys(v any) map[string]bool {
+	t := reflect.TypeOf(v)
+	if t == nil || t.Kind() != reflect.Struct {
+		return map[string]bool{}
+	}
+	out := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		if name := jsonFieldName(t.Field(i)); name != "" {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 // jsonFieldName 取结构体字段的 json 名（去掉 ,omitempty 等选项）；无可用 tag 时返回空。
@@ -168,12 +197,90 @@ func jsonFieldName(f reflect.StructField) string {
 	return strings.TrimSpace(tag)
 }
 
+// ---- 动态桶（Fields）读写：用户自定义字段的唯一落脚点 ----
+//
+// 强类型结构体装不下用户在「字段定义」里新增的字段（如「保证金」），
+// json.Unmarshal 会把它们静默丢弃。有了 Fields 桶之后，读写视图必须
+// 在标准字段miss时回落到桶里，否则：
+//   · hasField 返回 false → 必填校验直接跳过该字段；
+//   · setString 找不到字段 → 正则补洞写不进去；
+//   · stringValue/isEmpty 读不到 → 判定"已提取到"失灵。
+
+// bucketHas 动态桶里是否已有这个键（大小写/驼峰归一后比较）。
+func (r GenericExtractRecord) bucketHas(field string) bool {
+	if r.bucketGo == "" {
+		return false
+	}
+	b, ok := r.dynamicBucket(r.bucketGo, false)
+	if !ok || b == nil {
+		return false
+	}
+	_, direct := b[field]
+	if direct {
+		return true
+	}
+	want := canonicalFieldKey(field)
+	for k := range b {
+		if canonicalFieldKey(k) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketGet 读动态桶里的文本值（非字符串按 %v 转文本，与 map 视图口径一致）。
+func (r GenericExtractRecord) bucketGet(field string) (string, bool) {
+	if r.bucketGo == "" {
+		return "", false
+	}
+	b, ok := r.dynamicBucket(r.bucketGo, false)
+	if !ok || b == nil {
+		return "", false
+	}
+	if v, exists := b[field]; exists {
+		return toStringValue(v), true
+	}
+	want := canonicalFieldKey(field)
+	for k, v := range b {
+		if canonicalFieldKey(k) == want {
+			return toStringValue(v), true
+		}
+	}
+	return "", false
+}
+
+// bucketSet 写动态桶（惰性建桶；标准字段命中时绝不走这里）。
+func (r GenericExtractRecord) bucketSet(field, value string) bool {
+	if r.bucketGo == "" {
+		return false
+	}
+	b, ok := r.dynamicBucket(r.bucketGo, true)
+	if !ok || b == nil {
+		return false
+	}
+	// 归一后已存在同义键 → 写回原键，避免「保证金」与「qualityBond」各存一份
+	want := canonicalFieldKey(field)
+	for k := range b {
+		if canonicalFieldKey(k) == want {
+			b[k] = value
+			return true
+		}
+	}
+	b[field] = value
+	return true
+}
+
 // hasField 报告该记录是否真的持有这个 json 字段。
 // 没有的字段（用户配置的自定义 key、明细子列等）一律跳过——强类型结果装不下它，
 // 强行判"缺失"只会误报。
 func (r GenericExtractRecord) hasField(field string) bool {
-	_, ok := r.resolveField(field)
-	return ok
+	if _, ok := r.resolveField(field); ok {
+		return true
+	}
+	// 有动态桶（Fields）的记录装得下任意自定义字段：用户配的「保证金」不在
+	// 强类型结构体上，但桶就是它的落脚点。此前这里返回 false，导致必填校验
+	// 与正则补洞把自定义字段整体跳过 —— 真机事故「配了规则却永远提不到」。
+	return r.bucketGo != ""
 }
 
 // isEmpty 报告字段是否为空。第二个返回值为 false 表示字段不存在。
@@ -188,6 +295,10 @@ func (r GenericExtractRecord) isEmpty(field string) (bool, bool) {
 	}
 	key, ok := r.resolveField(field)
 	if !ok {
+		// 标准字段miss时回落动态桶：自定义字段的空值判定同样参与必填校验
+		if v, has := r.bucketGet(field); has {
+			return strings.TrimSpace(v) == "" || v == "0", true
+		}
 		return false, false
 	}
 	return isZeroValue(r.fields[key]), true
@@ -229,6 +340,10 @@ func (r GenericExtractRecord) stringValue(field string) (string, bool) {
 	}
 	key, ok := r.resolveField(field)
 	if !ok {
+		// 自定义字段：从 Fields 动态桶读文本
+		if v, has := r.bucketGet(field); has {
+			return v, true
+		}
 		return "", false
 	}
 	v := r.fields[key]
@@ -258,7 +373,8 @@ func (r GenericExtractRecord) setString(field, value string) bool {
 	}
 	key, ok := r.resolveField(field)
 	if !ok {
-		return false
+		// 标准字段miss时回落动态桶：正则补洞的值写进 Fields
+		return r.bucketSet(field, value)
 	}
 	v := r.fields[key]
 	if v.Kind() != reflect.String || !v.CanSet() {

@@ -25,6 +25,51 @@ type contractMetadata struct {
 	ExtractStatus    string                   `json:"extract_status"`
 	ExtractError     string                   `json:"extract_error"`
 	AutoDeletedCount int                      `json:"auto_deleted_count"`
+	// FleetCertType 文件级归档分类（上传时打标 / 改名传播后的权威值）。
+	// 分类归属候选链的第一环，见 resolveBusinessCategory。
+	FleetCertType string `json:"fleet_cert_type"`
+}
+
+// resolveBusinessCategory 业务三模块（合同/制度/通知公告）的分类归属唯一口径，
+// 与发票 resolveInvoiceCategory 对齐。
+//
+// 候选链：文件级 fleet_cert_type（上传时打标 / 改名传播后的权威值）→
+// 数组元素内的类型字段 → 元素内的 category。第一个命中启用分类集合的值
+// **同时**成为记录的 Category 与 <Scope>Type，从构造上消灭
+// 「表格列显示旧名、概览桶在新名」的分裂。
+//
+// 为什么文件级优先：文件级分类是用户在上传弹窗里显式选的、也是改名传播的
+// 落点；数组元素类型是模型猜的，会被分类改名、停用、上传时选错污染。
+// 任一层失效都不能让记录掉进排除桶后还在表格列里显示另一个分类名。
+//
+// 没有任何候选命中时保持旧兜底（数组元素类型），这类记录按设计归入
+// 「其它合同 / 其它制度 / 其它通知」排除桶。
+func resolveBusinessCategory(fleetCertType, itemType, itemCategory string, enabled map[string]struct{}) (category, typeValue string) {
+	typeValue = strings.TrimSpace(itemType)
+	for _, cand := range []string{
+		strings.TrimSpace(fleetCertType),
+		typeValue,
+		strings.TrimSpace(itemCategory),
+	} {
+		if cand == "" {
+			continue
+		}
+		if _, ok := enabled[cand]; ok {
+			return cand, cand
+		}
+	}
+	return typeValue, typeValue
+}
+
+// enabledCategorySetFromFilter 把过滤器里的启用分类名列表转成集合。
+func enabledCategorySetFromFilter(names []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			out[n] = struct{}{}
+		}
+	}
+	return out
 }
 
 // ListContractRecords 实现合同级聚合列表。
@@ -43,6 +88,8 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 	records := make([]types.ContractRecord, 0, 256)
 	page := 1
 	const batch = 1000
+	// 分类归属权威集合：启用分类名（服务端从 fleet_categories 实时加载）。
+	enabledCats := enabledCategorySetFromFilter(filter.EnabledCategories)
 	for {
 		p := &types.Pagination{Page: page, PageSize: batch}
 		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
@@ -74,6 +121,13 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 			if k == nil || len(k.CustomMetadata) == 0 {
 				continue
 			}
+			// 解析/提取中的文件由列表顶部状态条（BusinessParseStatusBar）与
+			// 「历史记录 → 正在执行」抽屉展示，**严禁在主列表生成占位行**——
+			// 否则上传 2 份合同，表格里就多出 2 行「[↻ 解析中]」空壳，
+			// 把真实合同挤出首屏（2026-10-22 真机事故）。
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
+				continue
+			}
 			var meta contractMetadata
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
 				continue
@@ -90,12 +144,11 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 					tags = append(tags, t.Name)
 				}
 			}
-			// 人工入库占位行：恢复（重新入库）后 extract_status=manual，字段待用户
-			// 编辑补录 —— 列表必须立即显示该记录（用户可点开编辑）。
-			// 同时兜底：提取/保存后仍无任何有效字段（success + 全空）的记录同样
-			// 显示为待补录占位，避免"打开弹窗未编辑→自动保存空字段"后记录从列表消失。
-			if contractItemsAllBlank(meta.Contracts) &&
-				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+			// 占位行只保留**人工恢复**这一种：用户从删除历史点过「重新入库」，
+			// 记录必须立即可见可编辑。
+			// 提取成功但全空的「空壳」不再占位（无编号/无名称/无双方/无金额），
+			// 它的归宿是顶部状态条与历史记录抽屉，不是主列表。
+			if contractItemsAllBlank(meta.Contracts) && legacyManual {
 				records = append(records, types.ContractRecord{
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
@@ -117,7 +170,10 @@ func (s *BusinessExtractService) ListContractRecords(ctx context.Context, kbID s
 				if contractExtractionItemBlank(ct) {
 					continue
 				}
-				records = append(records, contractRecordFromItem(ct, k, tags, meta))
+				rec := contractRecordFromItem(ct, k, tags, meta)
+				// 分类归属唯一口径：候选链第一命中同时写 ContractType
+				rec.ContractType, _ = resolveBusinessCategory(meta.FleetCertType, ct.ContractType, "", enabledCats)
+				records = append(records, rec)
 			}
 		}
 		if len(knowledges) < batch {
@@ -284,7 +340,10 @@ func contractRecordMatchKeyword(r types.ContractRecord, kw string) bool {
 // ContractOverviewStats 计算合同台账概览统计。口径与 ListContractRecords 平铺完全一致：
 // 遍历知识库下全部 knowledge → 平铺合同记录（含待补录占位行）→ 全量聚合，不接收任何筛选参数，
 // 因此不受列表类型/日期/搜索筛选影响（发票基准 InvoiceOverviewStats 同款形态）。
-func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID string) (*types.ContractOverviewStats, error) {
+// ContractOverviewStats 合同台账概览统计。enabledCategories 由调用方（handler）
+// 从 fleet_categories 实时加载后传入，用于分类归属「第一命中」判定；
+// 不传时退化为数组元素类型原值（向后兼容旧调用方）。
+func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID string, enabledCategories ...string) (*types.ContractOverviewStats, error) {
 	tenantID, _ := ctx.Value(types.TenantIDContextKey).(uint64)
 
 	records := make([]types.ContractRecord, 0, 256)
@@ -292,6 +351,8 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 	fileCount := 0
 	page := 1
 	const batch = 1000
+	// 分类归属权威集合：与 ListContractRecords 同口径（调用方实时加载启用分类）
+	enabledCats := enabledCategorySetFromFilter(enabledCategories)
 	for {
 		p := &types.Pagination{Page: page, PageSize: batch}
 		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
@@ -309,6 +370,10 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 			if k.ParseStatus == "failed" {
 				parseFailedFiles++
 				fileCount++
+			}
+			// 解析中的文件不产出合同记录（与列表口径一致）
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
+				continue
 			}
 			if len(k.CustomMetadata) == 0 {
 				continue
@@ -331,9 +396,9 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 					tags = append(tags, t.Name)
 				}
 			}
-			// 待补录占位行：与列表口径一致计入总份数（无类型/日期/金额，仅影响 total/file_count）
-			if contractItemsAllBlank(meta.Contracts) &&
-				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+			// 待补录占位行：只保留人工恢复行（与列表口径一致）。
+			// 提取成功但全空的空壳不计入总份数——它不该出现在任何业务口径里。
+			if contractItemsAllBlank(meta.Contracts) && legacyManual {
 				records = append(records, types.ContractRecord{
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
@@ -354,7 +419,9 @@ func (s *BusinessExtractService) ContractOverviewStats(ctx context.Context, kbID
 				if contractExtractionItemBlank(ct) {
 					continue
 				}
-				records = append(records, contractRecordFromItem(ct, k, tags, meta))
+				rec := contractRecordFromItem(ct, k, tags, meta)
+				rec.ContractType, _ = resolveBusinessCategory(meta.FleetCertType, ct.ContractType, "", enabledCats)
+				records = append(records, rec)
 			}
 		}
 		if len(knowledges) < batch {
@@ -572,6 +639,7 @@ func contractRecordFromItem(
 		Department:        ct.Department,
 		Remark:            ct.Remark,
 		Page:              ct.Page,
+		Fields:            ct.Fields,
 		ExtractStatus:     meta.ExtractStatus,
 		ExtractError:      meta.ExtractError,
 	}

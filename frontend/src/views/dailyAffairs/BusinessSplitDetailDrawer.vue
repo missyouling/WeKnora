@@ -48,6 +48,12 @@
                   format="YYYY-MM-DD" clearable allow-input />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
                   @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
+                <!-- 摘要 / 多行长文本：统一多行文本域，不截断、不拆胶囊。
+                     必须放在 array 分支**之前** —— 验收期曾把 summary 的
+                     data_type 误改成 array，落到 tag-input 后被顿号拆成 4 个
+                     带 × 的灰色标签，与知识库详情里的段落摘要完全两样。 -->
+                <t-textarea v-else-if="isLongTextField(f)" v-model="form.data[f.name]"
+                  :autosize="{ minRows: 2, maxRows: 5 }" />
                 <!-- 数组类型（字段定义里把类型改成「数组」）：回车追加多值标签。
                      存量值可能是字符串（改类型前保存的「甲\n乙」），由 normalizeArrayValue
                      按换行/分号/顿号拆成 string[]，避免整段文本被当成单个标签。 -->
@@ -195,6 +201,15 @@ const formFields = computed<DetailFieldMeta[]>(
   () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
 )
 const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
+// 摘要 / 多行长文本字段：与知识库文档摘要 100% 同源同形（段落文本域）。
+// 按字段名与中文名双路判定，不受 data_type 残留值影响。
+const LONG_TEXT_FIELD_KEYS = new Set(['summary', 'abstract', 'description'])
+const LONG_TEXT_FIELD_LABELS = new Set(['摘要', '内容摘要', '概述', '说明'])
+const isLongTextField = (f: DetailFieldMeta): boolean => {
+  const name = String(f?.name || '').trim()
+  const label = String(f?.label || '').trim()
+  return LONG_TEXT_FIELD_KEYS.has(name) || LONG_TEXT_FIELD_LABELS.has(label)
+}
 /**
  * 数组控件的值：存量字符串按换行/分号/顿号拆成 string[]。
  * 不做 computed 缓存——它随 form.data 的编辑实时变化，直接函数调用最省心
@@ -202,7 +217,7 @@ const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
  */
 const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
 const fieldClassOf = (f: DetailFieldMeta) => ({
-  'bsd-field--full': isLongType(f) || f.name === 'fileName',
+  'bsd-field--full': isLongType(f) || isLongTextField(f) || f.name === 'fileName',
 })
 function close() {
   emit('cancel')

@@ -114,15 +114,41 @@ func TestExtractGenericRequiredMissingProducesErrorIssue(t *testing.T) {
 	}
 }
 
+// 行为变更（2026-10-22）：用户自定义字段不再被整体跳过。
+//
+// 旧行为「强类型结果里没有这个 json 字段 → 跳过避免误报」正是真机事故的根因：
+// 用户在「字段定义」里加了「保证金」并配了规则，模型没提到时系统既不报错、
+// 也不正则补洞，列表与抽屉里那个字段永远为空，用户完全看不出问题在哪。
+//
+// 新契约：记录带 Fields 动态桶（合同/制度/公告/发票提取项都有）时，自定义字段
+// 是**合法落脚点** —— 必填缺失要报出来，配了正则要能补进去。
 func TestExtractGenericSkipsRequiredForUnknownField(t *testing.T) {
-	// 强类型结果装不下用户自造的 key（如中文名"车牌号"），绝不能因此误报缺失。
 	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
 		{Name: "车牌号", Enabled: true, Required: true},
 	}}
 	contracts := []ContractExtractionItem{{ContractNo: "HT-1"}}
 	issues, _ := ValidateGenericExtraction(NewGenericRecords(contracts), "渝A12345", cfg)
-	if len(issues) != 0 {
-		t.Errorf("结构体不存在的字段不应报缺失: %+v", issues)
+	if len(issues) != 1 {
+		t.Fatalf("自定义必填字段缺失应报 1 条 error，实际 %d: %+v", len(issues), issues)
+	}
+	if issues[0].Field != "车牌号" || issues[0].Kind != "missing" {
+		t.Errorf("必填缺失问题异常: %+v", issues[0])
+	}
+}
+
+// TestExtractGenericCustomFieldRegexPatchLandsInBucket 锁定补洞落点：
+// 用户给自定义字段配了正则时，值必须写进 Fields 动态桶（真机事故的直接修复）。
+func TestExtractGenericCustomFieldRegexPatchLandsInBucket(t *testing.T) {
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
+		{Name: "车牌号", Enabled: true, Required: true, Regex: `车牌号[:：]?\s*(\S+)`},
+	}}
+	contracts := []ContractExtractionItem{{ContractNo: "HT-1"}}
+	_, patches := ValidateGenericExtraction(NewGenericRecords(contracts), "车牌号：渝A12345", cfg)
+	if len(patches) != 1 {
+		t.Fatalf("应补 1 处洞，实际 %d: %+v", len(patches), patches)
+	}
+	if contracts[0].Fields["车牌号"] != "渝A12345" {
+		t.Errorf("补洞值必须落进 Fields 动态桶，实际 %+v", contracts[0].Fields)
 	}
 }
 

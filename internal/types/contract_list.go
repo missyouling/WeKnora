@@ -34,27 +34,30 @@ type ContractRecord struct {
 	// Summary 摘要：优先复用知识库已生成的 summary（knowledges.description）。
 	Summary string `json:"summary"`
 	// —— 历史字段：保留输出以兼容老前端/导出，不再出现在字段定义中 ——
-	EffectiveDate     string    `json:"effective_date,omitempty"`
-	TaxRate           *float64  `json:"tax_rate,omitempty"`
-	QualityBond       *float64  `json:"quality_bond,omitempty"`
-	LiquidatedDamages *float64  `json:"liquidated_damages,omitempty"`
-	Subject           string    `json:"subject,omitempty"`
-	Quantity          *float64  `json:"quantity,omitempty"`
-	UnitPrice         *float64  `json:"unit_price,omitempty"`
-	PerformancePeriod string    `json:"performance_period,omitempty"`
-	Handler           string    `json:"handler,omitempty"`
-	Department        string    `json:"department,omitempty"`
-	Remark            string    `json:"remark,omitempty"`
-	Page              int       `json:"page"`
-	KnowledgeID       string    `json:"knowledge_id"`
-	KnowledgeTitle    string    `json:"knowledge_title"`
-	FileName          string    `json:"file_name"`
-	FileType          string    `json:"file_type"`
-	Tags              []string  `json:"tags"`
-	ExtractStatus     string    `json:"extract_status"`
-	ExtractError      string    `json:"extract_error"`
-	KBID              string    `json:"knowledge_base_id"`
-	CreatedAt         time.Time `json:"created_at"`
+	EffectiveDate     string   `json:"effective_date,omitempty"`
+	TaxRate           *float64 `json:"tax_rate,omitempty"`
+	QualityBond       *float64 `json:"quality_bond,omitempty"`
+	LiquidatedDamages *float64 `json:"liquidated_damages,omitempty"`
+	Subject           string   `json:"subject,omitempty"`
+	Quantity          *float64 `json:"quantity,omitempty"`
+	UnitPrice         *float64 `json:"unit_price,omitempty"`
+	PerformancePeriod string   `json:"performance_period,omitempty"`
+	Handler           string   `json:"handler,omitempty"`
+	Department        string   `json:"department,omitempty"`
+	Remark            string   `json:"remark,omitempty"`
+	Page              int      `json:"page"`
+	// Fields 自定义动态字段扩展桶（用户在「字段定义」里新增的字段，如「保证金」）。
+	// 由提取项的 Fields 透传，前端动态列与详情抽屉按字段名从这里取值。
+	Fields         map[string]any `json:"fields,omitempty"`
+	KnowledgeID    string         `json:"knowledge_id"`
+	KnowledgeTitle string         `json:"knowledge_title"`
+	FileName       string         `json:"file_name"`
+	FileType       string         `json:"file_type"`
+	Tags           []string       `json:"tags"`
+	ExtractStatus  string         `json:"extract_status"`
+	ExtractError   string         `json:"extract_error"`
+	KBID           string         `json:"knowledge_base_id"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 // ContractListFilter 是合同级聚合列表查询参数。
@@ -65,8 +68,14 @@ type ContractListFilter struct {
 	Status        string // extract_status
 	DateFrom      string // 签订日期起 YYYY-MM-DD（含）
 	DateTo        string // 签订日期止 YYYY-MM-DD（含）
-	Page          int
-	PageSize      int
+	// EnabledCategories 当前启用中的合同分类名集合（scope=contract，服务端权威源）。
+	// 分类归属判定用它做「第一命中」：候选 [fleet_cert_type, contract_type]
+	// 里第一个命中该集合的值成为记录的 ContractType —— 保证「表格合同类型列
+	// 显示什么，它就 100% 属于哪个分类卡片桶」。由服务端从 fleet_categories
+	// 实时加载，不再依赖前端传参猜分类（口径漂移源）。
+	EnabledCategories []string
+	Page              int
+	PageSize          int
 }
 
 // ContractTypeCount 是合同类型下拉列表的一个选项：类型 + 出现次数。

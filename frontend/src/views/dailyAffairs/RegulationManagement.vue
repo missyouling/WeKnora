@@ -828,25 +828,9 @@ const parseCustomMetadata = (item: KnowledgeItem): RegulationRow[] => {
 
 
 // 过滤/搜索/去重已由后端制度级接口完成，前端直接使用返回的分页数据；
-// 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
-const pendingRows = computed<RegulationRow[]>(() => pendingFiles.value.map((k) => {
-  const ps = k.parse_status || ''
-  const es = k.custom_metadata?.extract_status || ''
-  let extractStatus = ''
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') extractStatus = 'parsing'
-  else if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) extractStatus = 'pending'
-  return {
-    rowKey: `pending-${k.id}`,
-    knowledgeId: k.id,
-    fileName: k.file_name || k.title || k.id,
-    parseStatus: ps,
-    extractStatus,
-    extractError: k.custom_metadata?.extract_error || '',
-    kind: 'pending',
-    tags: Array.isArray(k.tags) ? k.tags : [],
-  } as RegulationRow
-}))
-const filteredRows = computed(() => [...pendingRows.value, ...regulationRows.value])
+// 在途文件只由顶部状态条与「历史记录 → 正在执行」展示，严禁在主列表占位
+// （2026-10-22 真机事故：上传/重提时表格多出 `[↻ 解析中]` 空壳行）。
+const filteredRows = computed(() => regulationRows.value)
 
 
 // ---- 多选 ----

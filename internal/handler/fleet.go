@@ -1797,8 +1797,9 @@ func contractSeedSubs() []types.FleetCategorySub {
 // 文件名来自上传元数据，LLM 提取它只会得到臆造值。
 //
 // 现在的口径：
-//   · subs / 提取规则 / 编辑抽屉 → 一律不含系统列（mergeXxxSeedSubs 会剥离存量）；
-//   · 列表 → 由前端 appendListSystemColumns 显式追加「文件名」列。
+//
+//	· subs / 提取规则 / 编辑抽屉 → 一律不含系统列（mergeXxxSeedSubs 会剥离存量）；
+//	· 列表 → 由前端 appendListSystemColumns 显式追加「文件名」列。
 var businessListSystemKeys = map[string]bool{"fileName": true}
 
 // isBusinessListSystemKey 该 subs 键是否列表系统列（不参与提取与字段定义）。
@@ -2419,17 +2420,42 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 	fullSubs := contractSeedSubs()
 
 	for _, w := range wanted {
-		// 查同名全部行（含软删；DeletedAt 为普通 *time.Time，无 GORM 自动软删作用域）
+		// 按 builtin_key 定位存量行（含软删；DeletedAt 为普通 *time.Time，无 GORM 自动软删作用域）。
+		//
+		// wanted 只声明锚点与排序，**不声明名字**：用户把内置「服务合同」改名为
+		// 「商务合同」后，按 name 查旧名必然查空 → 走创建分支 → 用固定 ID
+		// `seed-contract-contract-service` 又建一个「服务合同」。于是每次重启都在
+		// 「商务合同」旁边复活一个 0 份旧名分类，KPI 卡片/字段筛选器/提取规则全被污染
+		// （2026-10-22 真机事故：「商务合同 0 份」就是这么来的）。
+		//
+		// 正确口径：builtin_key 是锚点，名字以库为准。只有 key 与历史遗留 ID 都查不到
+		// （真正全新环境）时，才用 wanted 里的初始名创建。
+		//
+		// OR 条件必须用链式 Where：字符串条件里写 `(a = ? OR b = ?)` 在部分驱动
+		// （sqlite）下占位符绑定错位，会查不到行进而误走创建分支。
 		var rows []types.FleetCategory
 		if err := h.db.WithContext(ctx).
-			Where("tenant_id = 0 AND scope = ? AND name = ?", "contract", w.Name).
+			Where("tenant_id = 0 AND scope = ?", "contract").
+			Where("builtin_key = ? OR id = ?", w.Key, "seed-contract").
 			Find(&rows).Error; err != nil {
-			logger.Warnf(ctx, "reconcile contract category %q query failed: %v", w.Name, err)
+			logger.Warnf(ctx, "reconcile contract category %q query failed: %v", w.Key, err)
 			continue
+		}
+		// 只保留与本次锚点相关的行：id=seed-contract 的兜底行只在没有 key 匹配行时才算
+		if len(rows) > 1 {
+			filtered := make([]types.FleetCategory, 0, len(rows))
+			for _, r := range rows {
+				if r.BuiltinKey == w.Key {
+					filtered = append(filtered, r)
+				}
+			}
+			if len(filtered) > 0 {
+				rows = filtered
+			}
 		}
 
 		if len(rows) == 0 {
-			// 全新环境：直接创建内置分类
+			// 全新环境：直接创建内置分类（wanted 里的初始名只在这里用）
 			cat := types.FleetCategory{
 				ID:         "seed-contract-" + w.Key,
 				TenantID:   0,
@@ -2452,6 +2478,8 @@ func (h *FleetHandler) reconcileContractCategories(ctx context.Context) {
 		}
 
 		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先
+		// rows 已按 builtin_key 筛过；名字以库为准——用户改名后 name 已是新名，
+		// 绝不能用 wanted 里的旧名覆盖（w.Name 只在「全新环境创建」时用作初始名）。
 		targetIdx := 0
 		for i := range rows {
 			cur, best := &rows[i], &rows[targetIdx]
@@ -2567,7 +2595,9 @@ func (h *FleetHandler) reconcileRegulationCategories(ctx context.Context) {
 			continue
 		}
 
-		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先
+		// 挑选目标行：未删除优先，其次 builtin_key 匹配优先。
+		// rows 已按 builtin_key 筛过；**名字以库为准**——用户改名后 name 已是新名，
+		// 绝不能用 wanted 里的旧名覆盖（w.Name 只在「全新环境创建」时用作初始名）。
 		targetIdx := 0
 		for i := range rows {
 			cur, best := &rows[i], &rows[targetIdx]

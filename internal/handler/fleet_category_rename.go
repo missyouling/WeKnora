@@ -127,9 +127,143 @@ func renameInvoiceCategoryInMeta(raw types.JSON, oldName, newName string) (types
 	return types.JSON(out), true
 }
 
+// businessCategoryMetaKeys 业务三模块的**顶层**分类键。
+//
+// 2026-10-22 真机取证：真实库里合同/制度的顶层权威键只有 fleet_cert_type，
+// 根本没有 "category" 这个键（invoice_category 是发票残留）。此前
+// propagateCategoryRename 只替换 category，等于一行都没传播 —— 把「服务合同」
+// 改名为「商务合同」后，旧名记录既不属于新分类也没被任何启用分类命中，
+// 全部掉进前端排除式桶「其它合同」。
+//
+// 这里把 fleet_cert_type 放最前（真实权威键），其余为历史/兼容键：
+// 只改**已存在**的键，绝不凭空造键（见 TestBusinessRenameDoesNotInventKeys）。
+var businessCategoryMetaKeys = []string{"fleet_cert_type", "category", "contract_category", "regulation_category", "notice_category"}
+
+// businessCategoryArraySpec 描述一个 scope 的嵌套数组分类冗余：
+// 数组键 + 数组元素内可能承载分类名的字段键。
+type businessCategoryArraySpec struct {
+	arrayKey string
+	itemKeys []string
+}
+
+// businessCategoryArraySpecs 各业务 scope 的数组分类键（真机取证）：
+//   - contract     → contracts[].contract_type（真实键），category 为兼容键
+//   - regulation   → regulations[].regulation_type
+//   - award_punish → records[].ap_type（真实键，列表分组就按它）
+//   - notice       → 与 award_punish 同一业务（通知公告），数组键两种都覆盖
+var businessCategoryArraySpecs = map[string][]businessCategoryArraySpec{
+	"contract": {
+		{arrayKey: "contracts", itemKeys: []string{"contract_type", "category"}},
+	},
+	"regulation": {
+		{arrayKey: "regulations", itemKeys: []string{"regulation_type", "category"}},
+	},
+	"award_punish": {
+		{arrayKey: "records", itemKeys: []string{"ap_type", "notice_type", "type", "category"}},
+		{arrayKey: "award_punish", itemKeys: []string{"ap_type", "notice_type", "type", "category"}},
+		{arrayKey: "notices", itemKeys: []string{"notice_type", "type", "category"}},
+	},
+	"notice": {
+		{arrayKey: "records", itemKeys: []string{"ap_type", "notice_type", "type", "category"}},
+		{arrayKey: "notices", itemKeys: []string{"notice_type", "type", "category"}},
+	},
+}
+
+// renameBusinessCategoryInMeta 把 raw 中的业务分类名从 oldName 精确改写为 newName。
+//
+// 覆盖三处（与 countFleetCategoryRefs / 列表读数链同口径）：
+//  1. 顶层分类键（fleet_cert_type / category / <scope>_category）；
+//  2. 嵌套数组元素内的分类键（contracts[].contract_type …）；
+//  3. 由调用方另行处理 knowledge_extract_configs.cert_type。
+//
+// 语义：只整值相等才替换（TrimSpace 后比较），绝不做子串替换；只改已有键，
+// 不造键；raw 为空/非法 JSON 时原样返回、isChanged=false。
+func renameBusinessCategoryInMeta(raw types.JSON, scope, oldName, newName string) (types.JSON, bool) {
+	if len(raw) == 0 {
+		return raw, false
+	}
+	if oldName = strings.TrimSpace(oldName); oldName == "" {
+		return raw, false
+	}
+	if newName = strings.TrimSpace(newName); newName == "" || newName == oldName {
+		return raw, false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw, false
+	}
+	nv, err := json.Marshal(newName)
+	if err != nil {
+		return raw, false
+	}
+	changed := false
+	// 1) 顶层分类键
+	for _, k := range businessCategoryMetaKeys {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			continue
+		}
+		if strings.TrimSpace(s) != oldName {
+			continue
+		}
+		m[k] = nv
+		changed = true
+	}
+	// 2) 嵌套数组元素内的分类键
+	for _, spec := range businessCategoryArraySpecs[scope] {
+		rawArr, ok := m[spec.arrayKey]
+		if !ok {
+			continue
+		}
+		var items []map[string]json.RawMessage
+		if err := json.Unmarshal(rawArr, &items); err != nil {
+			continue
+		}
+		arrChanged := false
+		for _, it := range items {
+			for _, k := range spec.itemKeys {
+				v, exists := it[k]
+				if !exists {
+					continue
+				}
+				var s string
+				if err := json.Unmarshal(v, &s); err != nil {
+					continue
+				}
+				if strings.TrimSpace(s) != oldName {
+					continue
+				}
+				it[k] = nv
+				arrChanged = true
+			}
+		}
+		if !arrChanged {
+			continue
+		}
+		arrNew, merr := json.Marshal(items)
+		if merr != nil {
+			continue
+		}
+		m[spec.arrayKey] = arrNew
+		changed = true
+	}
+	if !changed {
+		return raw, false
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw, false
+	}
+	return types.JSON(out), true
+}
+
 // propagateCategoryRename 把分类改名传播到该 scope 下所有存量数据。
 // 与 countFleetCategoryRefs 同口径：invoice 走 knowledges.custom_metadata，
-// contract/regulation/award_punish 走 custom_metadata.category，
+// contract/regulation/award_punish 走 custom_metadata 顶层分类键 + 嵌套数组，
 // 车队 scope 走 fleet_records.doc_type。
 func (h *FleetHandler) propagateCategoryRename(ctx context.Context, tx *gorm.DB, scope, oldName, newName string) error {
 	if strings.TrimSpace(oldName) == "" || strings.TrimSpace(newName) == "" {
@@ -155,39 +289,30 @@ func (h *FleetHandler) propagateCategoryRename(ctx context.Context, tx *gorm.DB,
 				return fmt.Errorf("rename knowledge %s metadata: %w", rows[i].ID, err)
 			}
 		}
-	case "contract", "regulation", "award_punish":
+	case "contract", "regulation", "award_punish", "notice":
+		// 业务三模块：顶层 fleet_cert_type + 嵌套数组分类键整体改写。
+		// 注意 LIKE 粗筛只能缩小候选集，真正的替换在 Go 侧逐键整值判定——
+		// 顶层键命中但数组没命中（或反之）都很常见，不能靠 SQL 精确更新。
 		var rows []types.Knowledge
 		if err := tx.WithContext(ctx).
 			Where("deleted_at IS NULL AND CAST(custom_metadata AS TEXT) LIKE ?", "%"+oldName+"%").
 			Find(&rows).Error; err != nil {
 			return err
 		}
+		// notice 与 award_punish 是同一业务的两个入口，数组键集合取并集
+		lookupScope := scope
+		if scope == "notice" {
+			lookupScope = "award_punish"
+		}
 		for i := range rows {
-			var m map[string]json.RawMessage
-			if err := json.Unmarshal(rows[i].CustomMetadata, &m); err != nil || m == nil {
-				continue
-			}
-			v, ok := m["category"]
+			updated, ok := renameBusinessCategoryInMeta(rows[i].CustomMetadata, lookupScope, oldName, newName)
 			if !ok {
-				continue
-			}
-			var s string
-			if err := json.Unmarshal(v, &s); err != nil || strings.TrimSpace(s) != oldName {
-				continue
-			}
-			nv, err := json.Marshal(newName)
-			if err != nil {
-				continue
-			}
-			m["category"] = nv
-			out, err := json.Marshal(m)
-			if err != nil {
 				continue
 			}
 			if err := tx.WithContext(ctx).Model(&types.Knowledge{}).
 				Where("id = ?", rows[i].ID).
-				Update("custom_metadata", types.JSON(out)).Error; err != nil {
-				return fmt.Errorf("rename knowledge %s category: %w", rows[i].ID, err)
+				Update("custom_metadata", updated).Error; err != nil {
+				return fmt.Errorf("rename knowledge %s business category: %w", rows[i].ID, err)
 			}
 		}
 	default:

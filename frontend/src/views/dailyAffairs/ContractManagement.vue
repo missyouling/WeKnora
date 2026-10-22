@@ -897,31 +897,16 @@ const numOrUndef = (v: any): number | undefined => {
 }
 
 // 过滤/搜索/去重已由后端合同级接口完成，前端直接使用返回的分页数据；
-// 顶部合并"进行中文件"状态行（解析中/提取中/待提取），提取完成即消失
-const pendingRows = computed<ContractRow[]>(() => pendingFiles.value.map((k) => {
-  const ps = k.parse_status || ''
-  const es = k.custom_metadata?.extract_status || ''
-  let extractStatus = ''
-  if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') extractStatus = 'parsing'
-  else if (ps === 'completed' && (!es || es === 'pending' || es === 'processing')) extractStatus = 'pending'
-  return {
-    rowKey: `pending-${k.id}`,
-    knowledgeId: k.id,
-    fileName: k.file_name || k.title || k.id,
-    parseStatus: ps,
-    extractStatus,
-    extractError: k.custom_metadata?.extract_error || '',
-    kind: 'pending',
-    tags: Array.isArray(k.tags) ? k.tags : [],
-  } as ContractRow
-}))
 // 履约状态筛选：行上带后端派生 performance_status（旧数据回退按到期日期现算）
 const fulfillFilteredRows = computed(() => {
   if (!filterFulfillStatus.value) return contractRows.value
   return contractRows.value.filter(r =>
     (r.performance_status || calcFulfillStatus(r.expire_date)) === filterFulfillStatus.value)
 })
-const filteredRows = computed(() => [...pendingRows.value, ...fulfillFilteredRows.value])
+// 在途文件（解析中/提取中/待提取）**只**由页面顶部 BusinessParseStatusBar 与
+// 「历史记录 → 正在执行」抽屉展示，严禁在主列表生成占位行（2026-10-22 真机事故：
+// 上传/重提时表格里多出 `[↻ 解析中]` 空壳行，把真实合同挤出首屏）。
+const filteredRows = computed(() => fulfillFilteredRows.value)
 
 // 扁平筛选态：与上面三个 ref 双向桥接，中台组件只发不可变更新；
 // 页面原有筛选语义（AND 复合查询）保持不变。

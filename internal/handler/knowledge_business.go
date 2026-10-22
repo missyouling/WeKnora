@@ -358,6 +358,10 @@ func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, know
 	merged := &service.ContractExtractionResult{Kind: "contract"}
 	var extractErr error
 	sawContract := false
+	// 重提编号锁定（2026-10-22 真机事故）：重新提取必须沿用该文件已有的
+	// contract_no，严禁再走自增序号生成新的 HT-YYYYMMDD-NNN。
+	// 原文有真实编号时模型会直接给出（优先），原文没有编号时用这里的旧值兜底。
+	prevContractNo := existingContractNo(knowledge.CustomMetadata)
 	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
 	//「正在提取」（避免点重新提取后状态列短暂停留在旧值/failed）。合并保留既有字段
 	//（fleet_cert_type、旧 contracts 等），提取成功/失败路径会用终态整体覆盖。
@@ -422,6 +426,13 @@ func (h *BusinessExtractHandler) runContractCore(ctx context.Context, kbID, know
 		return nil, errors.NewInternalServerError("contract extraction failed: " + extractErr.Error())
 	}
 	extracted := merged
+	// 重提编号锁定必须先于 Normalize：Normalize 会把空编号补成自增序号，
+	// 锁定之后它看到的就是旧编号（非空 → 原样保留）。
+	service.LockReextractContractNo(extracted, prevContractNo)
+	// 甲乙方锚点核对：补充协议常写「出租方/承租方」而无甲乙方标签，模型会按
+	// 主合同角色猜反（真机：主合同 甲方=星达 乙方=持恒，三份补充协议全反）。
+	// 这里按原文/摘要里明确写出的角色标签纠正，认不到就保留模型值。
+	service.ReconcileContractParties(strings.Join(batches, "\n\n"), knowledge.Description, extracted.Contracts)
 	// 自动编号去重：无合同编号的合同按当天已有最大序号 +1 顺序递增（跨文件唯一）
 	autoSeq, seqErr := h.businessSvc.MaxAutoContractSeq(extractCtx, kbID)
 	if seqErr != nil {
@@ -1988,6 +1999,8 @@ func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, kn
 		}, nil
 	}
 	merged := &service.RegulationExtractionResult{Kind: "regulation"}
+	// 重提编号锁定：沿用该文件已有的制度编号，严禁再造新的 ZD-YYYYMMDD-NNN
+	prevRegNo := existingRegulationNo(knowledge.CustomMetadata)
 	var extractErr error
 	sawRegulation := false
 	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
@@ -2059,6 +2072,7 @@ func (h *BusinessExtractHandler) runRegulationCore(ctx context.Context, kbID, kn
 	if seqErr != nil {
 		logger.Warnf(ctx, "Failed to compute auto regulation seq for %s: %v", kbID, seqErr)
 	}
+	service.LockReextractRegulationNo(extracted, prevRegNo)
 	service.NormalizeRegulationExtractionResult(extracted, autoSeq)
 	// 通用质量闭环（非发票业务口径）：日期归一化 + 配置级必填补洞/告警。
 	regulationIssues, regulationPatches := service.ValidateGenericExtraction(
@@ -2343,6 +2357,8 @@ func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, k
 		}, nil
 	}
 	merged := &service.AwardPunishExtractionResult{Kind: "award_punish"}
+	// 重提编号锁定：沿用该文件已有的文号，严禁再造新的 TZ-YYYYMMDD-NNN
+	prevApNo := existingNoticeNo(knowledge.CustomMetadata)
 	var extractErr error
 	sawRecord := false
 	// 提取进行中标记：先落 processing 中间态，让前端轮询/状态条与表格状态列实时显示
@@ -2415,6 +2431,7 @@ func (h *BusinessExtractHandler) runAwardPunishCore(ctx context.Context, kbID, k
 	if seqErr != nil {
 		logger.Warnf(ctx, "Failed to compute auto notice seq for %s: %v", kbID, seqErr)
 	}
+	service.LockReextractNoticeNo(extracted, prevApNo)
 	service.NormalizeAwardPunishExtractionResult(extracted, autoSeq)
 	// 通用质量闭环（非发票业务口径）：日期归一化（签发/生效日）+ 配置级必填补洞/告警。
 	noticeIssues, noticePatches := service.ValidateGenericExtraction(
@@ -3109,4 +3126,51 @@ func (h *BusinessExtractHandler) supplementMissingInvoices(
 		logger.Infof(ctx, "Invoice supplement: LLM page=%d got=%d knowledge=%s", tg.Page, len(res.Invoices), knowledgeID)
 	}
 	return out
+}
+
+// existingBusinessRecordNo 从存量 custom_metadata 里取出该文件已有的业务编号。
+//
+// 重提编号锁定的数据源：合同取 contracts[0].contract_no，制度取
+// regulations[0].reg_no，通知公告取 records[0].ap_no。一文件一档案，
+// 因此只取首个元素；取不到返回空串（真正的首次提取）。
+func existingBusinessRecordNo(raw types.JSON, arrayKey, noKey string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return ""
+	}
+	arr, ok := top[arrayKey]
+	if !ok {
+		return ""
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(arr, &items); err != nil || len(items) == 0 {
+		return ""
+	}
+	v, exists := items[0][noKey]
+	if !exists {
+		return ""
+	}
+	var no string
+	if err := json.Unmarshal(v, &no); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(no)
+}
+
+// existingContractNo 合同存量编号（contracts[0].contract_no）。
+func existingContractNo(raw types.JSON) string {
+	return existingBusinessRecordNo(raw, "contracts", "contract_no")
+}
+
+// existingRegulationNo 制度存量编号（regulations[0].reg_no）。
+func existingRegulationNo(raw types.JSON) string {
+	return existingBusinessRecordNo(raw, "regulations", "reg_no")
+}
+
+// existingNoticeNo 通知公告存量编号（records[0].ap_no）。
+func existingNoticeNo(raw types.JSON) string {
+	return existingBusinessRecordNo(raw, "records", "ap_no")
 }

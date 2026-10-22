@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -67,6 +68,15 @@ type ContractExtractionItem struct {
 	// Page is the 1-based page/ordinal of the contract inside its source file.
 	// 合同一文件一档案，恒为 1。
 	Page int `json:"page"`
+	// Fields 自定义动态字段扩展桶（与发票 InvoiceExtractionItem.Fields 同语义）。
+	//
+	// 用户在「设置 → 字段定义 & 提取规则」里新增的字段（如「保证金」）不在 Go
+	// 结构体的固定字段上，json.Unmarshal 进强类型时会**被静默丢弃**——这是
+	// 2026-10-22 真机事故「配了保证金规则却永远提不到」的核心根因。
+	// UnmarshalJSON 把顶层未知键与显式 fields 子对象统一收进这里，
+	// 随记录持久化，并经 ValidateGenericExtraction 的正则补洞写入
+	// （Schema.DynamicBucket = "Fields"），最终由列表接口透传前端动态列。
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // contractLegacyFieldAliases 存量字段名 → 新契约字段名。
@@ -83,7 +93,9 @@ var contractLegacyFieldAliases = map[string]string{
 	"fulfill_status":  "performance_status",
 }
 
-// UnmarshalJSON 兼容旧字段名（见 contractLegacyFieldAliases），新键优先。
+// UnmarshalJSON 兼容旧字段名（见 contractLegacyFieldAliases），新键优先；
+// 同时把顶层未知键（用户自定义字段，如「保证金」）与显式 fields 子对象
+// 统一收集进 Fields 动态桶，避免强类型反序列化静默丢弃。
 func (c *ContractExtractionItem) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -107,7 +119,65 @@ func (c *ContractExtractionItem) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*c = ContractExtractionItem(a)
+	// 自定义字段收集必须放在强类型落值**之后**：a.Fields 只是显式 fields 子对象，
+	// 顶层未知键（模型按提示词把「保证金」放在对象顶层）要靠 collectCustomFields
+	// 补齐，两者合并后才能完整覆盖两个来源。
+	c.Fields = collectCustomFields(raw, contractStandardJSONKeys(), a.Fields)
 	return nil
+}
+
+// contractStandardJSONKeys 合同提取项的标准 json 键集合（= 强类型结构体的字段）。
+// 不在这集合里的顶层键都属于用户自定义字段，进 Fields 动态桶。
+func contractStandardJSONKeys() map[string]bool {
+	return structJSONKeys(ContractExtractionItem{})
+}
+
+// collectCustomFields 从模型返回的原始 JSON 里收集自定义字段。
+//
+// 两个来源合一：
+//  1. 顶层未知键（模型按提示词直接把「保证金」放在对象顶层）；
+//  2. 显式 fields 子对象（存量数据/部分模型习惯把自定义字段收在 fields 里）。
+//
+// base 非 nil 时作为初始值（反序列化可能已填入部分键），来源键不覆盖已有值。
+func collectCustomFields(raw map[string]json.RawMessage, std map[string]bool, base map[string]any) map[string]any {
+	out := base
+	if out == nil {
+		out = map[string]any{}
+	}
+	// 顶层未知键
+	for k, v := range raw {
+		if std[k] {
+			continue
+		}
+		if _, exists := out[k]; exists {
+			continue
+		}
+		var val any
+		if err := json.Unmarshal(v, &val); err != nil {
+			continue
+		}
+		out[k] = val
+	}
+	// 显式 fields 子对象（标准键，已在上面跳过，这里单独展开）
+	if fv, ok := raw["fields"]; ok {
+		var sub map[string]json.RawMessage
+		if err := json.Unmarshal(fv, &sub); err == nil {
+			for k, v := range sub {
+				if _, exists := out[k]; exists {
+					continue
+				}
+				var val any
+				if err := json.Unmarshal(v, &val); err != nil {
+					continue
+				}
+				out[k] = val
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ContractExtractionResult is the strict-JSON shape the model must return.
@@ -309,6 +379,38 @@ func BuildContractExtractionBatches(name, summary string, chunks []*types.Chunk,
 	return batches
 }
 
+// autoContractNoRe 系统自动编号形态 HT-YYYYMMDD-NNN。
+// 用于识别「模型回读了上次的自增编号」与「用户/原文真实编号」。
+var autoContractNoRe = regexp.MustCompile(`^HT-\d{8}-\d{3}$`)
+
+// LockReextractContractNo 重提编号锁定铁律（2026-10-22 真机事故）。
+//
+// 事故：勾选合同点「重新提取」，编号 HT-20261022-001~014 全部变成
+// HT-20261022-016~023 —— 重提时旧编号没被沿用，自增序号又往前跑了 15 位。
+//
+// 规则（按优先级）：
+//  1. 本次从原文提取到**真实**编号（非 HT-YYYYMMDD-NNN 形态）→ 采用它；
+//  2. 原文没有编号、旧记录已有编号（首次生成或用户手填）→ 沿用旧编号；
+//  3. 旧记录也没有编号 → 留空，交给 Normalize 的首次生成逻辑。
+//
+// oldNo 为空时不做任何事（真正的首次提取）。
+func LockReextractContractNo(res *ContractExtractionResult, oldNo string) {
+	if res == nil || len(res.Contracts) == 0 {
+		return
+	}
+	oldNo = strings.TrimSpace(oldNo)
+	if oldNo == "" {
+		return
+	}
+	for i := range res.Contracts {
+		cur := strings.TrimSpace(res.Contracts[i].ContractNo)
+		// 空编号（原文没提号）或自增形态（模型回读了上次的自动编号）→ 用旧编号覆盖
+		if cur == "" || autoContractNoRe.MatchString(cur) {
+			res.Contracts[i].ContractNo = oldNo
+		}
+	}
+}
+
 // NormalizeContractExtractionResult cleans up a model reply: it guarantees a
 // known kind, drops empty items, normalizes contract type and auto-numbers
 // contracts without an explicit number, and assigns the 1-based page ordinal.
@@ -316,6 +418,9 @@ func BuildContractExtractionBatches(name, summary string, chunks []*types.Chunk,
 // autoSeqStart is the highest auto-number already used in the knowledge base
 // for the current date (HT-YYYYMMDD-NNN), so generated numbers stay unique
 // across files; pass 0 to start from 001 (file-local numbering).
+//
+// preserveContractNo 非空时，无编号的合同沿用该编号而非新造自增序号
+// （重提铁律，见 LockReextractContractNo）。
 func NormalizeContractExtractionResult(res *ContractExtractionResult, autoSeqStart int) {
 	if res == nil {
 		return

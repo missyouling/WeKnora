@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -223,6 +224,28 @@ func NormalizeAwardPunishExtractionResult(res *AwardPunishExtractionResult, auto
 		kept = append(kept, r)
 	}
 	res.Records = kept
+}
+
+// autoNoticeNoRe 通知公告系统自动编号形态 TZ-YYYYMMDD-NNN。
+var autoNoticeNoRe = regexp.MustCompile(`^TZ-\d{8}-\d{3}$`)
+
+// LockReextractNoticeNo 通知公告重提编号锁定（与合同同规则）：
+// 原文有真实文号 → 采用它；原文没有但旧记录已有 → 沿用旧编号；
+// 旧记录也没有 → 留空交给首次生成逻辑。严禁重提时再造新的 TZ-YYYYMMDD-NNN。
+func LockReextractNoticeNo(res *AwardPunishExtractionResult, oldNo string) {
+	if res == nil || len(res.Records) == 0 {
+		return
+	}
+	oldNo = strings.TrimSpace(oldNo)
+	if oldNo == "" {
+		return
+	}
+	for i := range res.Records {
+		cur := strings.TrimSpace(res.Records[i].ApNo)
+		if cur == "" || autoNoticeNoRe.MatchString(cur) {
+			res.Records[i].ApNo = oldNo
+		}
+	}
 }
 
 // MaxAutoAwardPunishSeq returns the highest trailing sequence number among

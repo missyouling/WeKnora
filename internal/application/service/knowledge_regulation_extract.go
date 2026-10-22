@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -210,6 +211,28 @@ func NormalizeRegulationExtractionResult(res *RegulationExtractionResult, autoSe
 		kept = append(kept, r)
 	}
 	res.Regulations = kept
+}
+
+// autoRegulationNoRe 制度系统自动编号形态 ZD-YYYYMMDD-NNN。
+var autoRegulationNoRe = regexp.MustCompile(`^ZD-\d{8}-\d{3}$`)
+
+// LockReextractRegulationNo 制度重提编号锁定（与合同 LockReextractContractNo 同规则）：
+// 原文有真实编号 → 采用它；原文没有编号但旧记录已有编号 → 沿用旧编号；
+// 旧记录也没有 → 留空交给首次生成逻辑。严禁重提时再造新的 ZD-YYYYMMDD-NNN。
+func LockReextractRegulationNo(res *RegulationExtractionResult, oldNo string) {
+	if res == nil || len(res.Regulations) == 0 {
+		return
+	}
+	oldNo = strings.TrimSpace(oldNo)
+	if oldNo == "" {
+		return
+	}
+	for i := range res.Regulations {
+		cur := strings.TrimSpace(res.Regulations[i].RegNo)
+		if cur == "" || autoRegulationNoRe.MatchString(cur) {
+			res.Regulations[i].RegNo = oldNo
+		}
+	}
 }
 
 // MaxAutoRegulationSeq returns the highest trailing sequence number among

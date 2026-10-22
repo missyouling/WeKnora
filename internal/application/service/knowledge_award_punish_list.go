@@ -19,6 +19,9 @@ type awardPunishMetadata struct {
 	ExtractStatus    string                            `json:"extract_status"`
 	ExtractError     string                            `json:"extract_error"`
 	AutoDeletedCount int                               `json:"auto_deleted_count"`
+	// FleetCertType 文件级归档分类（上传时打标 / 改名传播后的权威值），
+	// 分类归属候选链的第一环，见 resolveBusinessCategory。
+	FleetCertType string `json:"fleet_cert_type"`
 }
 
 // ListAwardPunishRecords returns the paginated award/punish list of one KB.
@@ -40,6 +43,8 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 	records := make([]types.AwardPunishRecord, 0, 256)
 	page := 1
 	const batch = 1000
+	// 分类归属权威集合：启用分类名（服务端从 fleet_categories 实时加载）
+	enabledCats := enabledCategorySetFromFilter(filter.EnabledCategories)
 	for {
 		p := &types.Pagination{Page: page, PageSize: batch}
 		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
@@ -71,6 +76,10 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 			if k == nil || len(k.CustomMetadata) == 0 {
 				continue
 			}
+			// 解析中的文件由顶部状态条与「历史记录 → 正在执行」展示，不进主列表
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
+				continue
+			}
 			var meta awardPunishMetadata
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
 				continue
@@ -88,8 +97,9 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 			}
 			// 人工入库/空提取占位行：恢复后 extract_status=manual 或提取后仍无有效字段
 			// 的记录必须显示在列表（用户可点开编辑补录），避免刷新后消失。
-			if awardPunishItemsAllBlank(meta.Records) &&
-				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+			// 占位行只保留**人工恢复**这一种（用户点过「重新入库」）。
+			// 提取成功但全空的空壳不进主列表（2026-10-22 真机事故）。
+			if awardPunishItemsAllBlank(meta.Records) && legacyManual {
 				records = append(records, types.AwardPunishRecord{
 					RowKey:         k.ID + "-manual",
 					KnowledgeID:    k.ID,
@@ -112,11 +122,13 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 				if awardPunishItemBlank(r) {
 					continue
 				}
+				// 分类归属唯一口径：候选链第一命中同时写 ApType
+				resolvedType, _ := resolveBusinessCategory(meta.FleetCertType, r.ApType, "", enabledCats)
 				records = append(records, types.AwardPunishRecord{
 					RowKey:        fmt.Sprintf("%s-%d", k.ID, idx),
 					ApNo:          r.ApNo,
 					ApTitle:       r.ApTitle,
-					ApType:        r.ApType,
+					ApType:        resolvedType,
 					Person:        r.Person,
 					Dept:          r.Dept,
 					IssueDept:     r.IssueDept,
@@ -136,6 +148,7 @@ func (s *BusinessExtractService) ListAwardPunishRecords(ctx context.Context, kbI
 					// 摘要复用知识库已生成的文档摘要（与文档详情同源）
 					Summary:        ReuseKnowledgeSummary(r.Summary, k.Description),
 					Page:           r.Page,
+					Fields:         r.Fields,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,
@@ -302,6 +315,10 @@ func (s *BusinessExtractService) ListAwardPunishTypes(ctx context.Context, kbID 
 			if k == nil || len(k.CustomMetadata) == 0 {
 				continue
 			}
+			// 解析中的文件由顶部状态条与「历史记录 → 正在执行」展示，不进主列表
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
+				continue
+			}
 			var meta awardPunishMetadata
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil || meta.Kind != "award_punish" {
 				continue
@@ -380,8 +397,9 @@ func (s *BusinessExtractService) AwardPunishOverviewStats(ctx context.Context, k
 			if k.ParseStatus != "failed" {
 				fileCount++
 			}
-			if awardPunishItemsAllBlank(meta.Records) &&
-				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+			// 占位行只保留**人工恢复**这一种（用户点过「重新入库」）。
+			// 提取成功但全空的空壳不进主列表（2026-10-22 真机事故）。
+			if awardPunishItemsAllBlank(meta.Records) && legacyManual {
 				records = append(records, flatRec{})
 				continue
 			}

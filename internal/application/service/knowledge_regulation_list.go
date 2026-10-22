@@ -22,6 +22,9 @@ type regulationMetadata struct {
 	ExtractStatus    string                           `json:"extract_status"`
 	ExtractError     string                           `json:"extract_error"`
 	AutoDeletedCount int                              `json:"auto_deleted_count"`
+	// FleetCertType 文件级归档分类（上传时打标 / 改名传播后的权威值），
+	// 分类归属候选链的第一环，见 resolveBusinessCategory。
+	FleetCertType string `json:"fleet_cert_type"`
 }
 
 // ListRegulationRecords 实现制度级聚合列表。
@@ -40,6 +43,8 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 	records := make([]types.RegulationRecord, 0, 256)
 	page := 1
 	const batch = 1000
+	// 分类归属权威集合：启用分类名（服务端从 fleet_categories 实时加载）
+	enabledCats := enabledCategorySetFromFilter(filter.EnabledCategories)
 	for {
 		p := &types.Pagination{Page: page, PageSize: batch}
 		knowledges, _, err := s.repo.ListPagedKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID, p, types.KnowledgeListFilter{})
@@ -71,6 +76,10 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 			if k == nil || len(k.CustomMetadata) == 0 {
 				continue
 			}
+			// 解析中的文件由顶部状态条与「历史记录 → 正在执行」展示，不进主列表
+			if k.ParseStatus == "pending" || k.ParseStatus == "processing" || k.ParseStatus == "finalizing" {
+				continue
+			}
 			var meta regulationMetadata
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
 				continue
@@ -86,10 +95,10 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 					tags = append(tags, t.Name)
 				}
 			}
-			// 人工入库/空提取占位行：恢复后 extract_status=manual 或提取后仍无有效字段
-			// 的记录必须显示在列表（用户可点开编辑补录），避免刷新后消失。
-			if regulationItemsAllBlank(meta.Regulations) &&
-				(meta.ExtractStatus == "manual" || meta.ExtractStatus == "success" || legacyManual) {
+			// 解析中的文件由顶部状态条与「历史记录 → 正在执行」展示，
+			// 严禁在主列表生成占位行（2026-10-22 真机事故）。
+			// 占位行只保留**人工恢复**这一种（用户点过「重新入库」）。
+			if regulationItemsAllBlank(meta.Regulations) && legacyManual {
 				records = append(records, types.RegulationRecord{
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
@@ -111,10 +120,12 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 				if regulationExtractionItemBlank(r) {
 					continue
 				}
+				// 分类归属唯一口径：候选链第一命中同时写 RegType
+				resolvedType, _ := resolveBusinessCategory(meta.FleetCertType, r.RegType, "", enabledCats)
 				records = append(records, types.RegulationRecord{
 					RegNo:           r.RegNo,
 					RegName:         r.RegName,
-					RegType:         r.RegType,
+					RegType:         resolvedType,
 					Dept:            r.Dept,
 					Version:         r.Version,
 					IssueDate:       r.IssueDate,
@@ -130,6 +141,7 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 					Attachments:     r.Attachments,
 					// 摘要复用知识库已生成的文档摘要（与文档详情同源）
 					Summary:        ReuseKnowledgeSummary(r.Summary, k.Description),
+					Fields:         r.Fields,
 					KnowledgeID:    k.ID,
 					KnowledgeTitle: k.Title,
 					FileName:       k.FileName,

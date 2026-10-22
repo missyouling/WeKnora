@@ -185,6 +185,9 @@ func (h *BusinessExtractHandler) ListContractRecords(c *gin.Context) {
 		DateTo:        c.Query("date_to"),
 		Page:          page,
 		PageSize:      pageSize,
+		// 分类归属权威源：服务端实时加载启用分类，不再依赖前端传参猜分类
+		// （此前 known_categories 由前端传，漏传时「其它合同」排除桶与分类卡全错）。
+		EnabledCategories: h.enabledContractCategoryNames(ctx),
 	}
 
 	result, err := h.businessSvc.ListContractRecords(effCtx, kbID, filter)
@@ -219,7 +222,7 @@ func (h *BusinessExtractHandler) ContractOverviewStats(c *gin.Context) {
 		return
 	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
-	stats, err := h.businessSvc.ContractOverviewStats(effCtx, kbID)
+	stats, err := h.businessSvc.ContractOverviewStats(effCtx, kbID, h.enabledContractCategoryNames(ctx)...)
 	if err != nil {
 		logger.Error(ctx, "Failed to load contract overview stats", err)
 		c.Error(apperrors.NewInternalServerError("load contract overview stats failed"))
@@ -270,24 +273,28 @@ func (h *BusinessExtractHandler) ListRegulationRecords(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, pageSize := parseSandboxPagination(c)
-	// known_categories：启用分类名集合（逗号分隔），供「其它制度」排除式筛选使用
-	var knownCategories []string
-	if kc := c.Query("known_categories"); kc != "" {
-		for _, name := range strings.Split(kc, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				knownCategories = append(knownCategories, name)
+	// 分类归属权威源：服务端实时加载启用分类（前端传的 known_categories 仅作兜底）。
+	// 此前完全依赖前端传参，漏传时「其它制度」排除桶与分类卡计数全错。
+	knownCategories := h.enabledRegulationCategoryNames(ctx)
+	if len(knownCategories) == 0 {
+		if kc := c.Query("known_categories"); kc != "" {
+			for _, name := range strings.Split(kc, ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					knownCategories = append(knownCategories, name)
+				}
 			}
 		}
 	}
 	filter := types.RegulationListFilter{
-		Keyword:         c.Query("q"),
-		RegType:         c.Query("reg_type"),
-		KnownCategories: knownCategories,
-		Status:          c.Query("status"),
-		DateFrom:        c.Query("date_from"),
-		DateTo:          c.Query("date_to"),
-		Page:            page,
-		PageSize:        pageSize,
+		Keyword:           c.Query("q"),
+		RegType:           c.Query("reg_type"),
+		KnownCategories:   knownCategories,
+		EnabledCategories: knownCategories,
+		Status:            c.Query("status"),
+		DateFrom:          c.Query("date_from"),
+		DateTo:            c.Query("date_to"),
+		Page:              page,
+		PageSize:          pageSize,
 	}
 
 	result, err := h.businessSvc.ListRegulationRecords(effCtx, kbID, filter)
@@ -347,24 +354,27 @@ func (h *BusinessExtractHandler) ListAwardPunishRecords(c *gin.Context) {
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 
 	page, pageSize := parseSandboxPagination(c)
-	// known_categories：启用分类名集合（逗号分隔），供「其它通知」排除式筛选使用
-	var knownCategories []string
-	if kc := c.Query("known_categories"); kc != "" {
-		for _, name := range strings.Split(kc, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				knownCategories = append(knownCategories, name)
+	// 分类归属权威源：服务端实时加载启用分类（前端传的 known_categories 仅作兜底）。
+	knownCategories := h.enabledNoticeCategoryNames(ctx)
+	if len(knownCategories) == 0 {
+		if kc := c.Query("known_categories"); kc != "" {
+			for _, name := range strings.Split(kc, ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					knownCategories = append(knownCategories, name)
+				}
 			}
 		}
 	}
 	filter := types.AwardPunishListFilter{
-		Keyword:         c.Query("q"),
-		ApType:          c.Query("ap_type"),
-		KnownCategories: knownCategories,
-		Status:          c.Query("status"),
-		DateFrom:        c.Query("date_from"),
-		DateTo:          c.Query("date_to"),
-		Page:            page,
-		PageSize:        pageSize,
+		Keyword:           c.Query("q"),
+		ApType:            c.Query("ap_type"),
+		KnownCategories:   knownCategories,
+		EnabledCategories: knownCategories,
+		Status:            c.Query("status"),
+		DateFrom:          c.Query("date_from"),
+		DateTo:            c.Query("date_to"),
+		Page:              page,
+		PageSize:          pageSize,
 	}
 
 	result, err := h.businessSvc.ListAwardPunishRecords(effCtx, kbID, filter)
