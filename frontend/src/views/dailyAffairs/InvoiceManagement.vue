@@ -1,5 +1,5 @@
 <template>
-  <div class="invoice-management-container">
+  <div class="invoice-management-container biz-page">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
       <div class="header-title">
@@ -22,14 +22,14 @@
     </div>
 
     <!-- KB 存在：主界面 -->
-    <div v-else class="invoice-main">
+    <div v-else class="invoice-main biz-main">
       <!-- 概览紧凑卡（中台 DashboardKpiGroup 组件，type-card 范式） -->
       <div class="overview-group">
         <DashboardKpiGroup :loading="!cardsReady" :cards="overviewCards" :active-type="filterInvoiceType" @card-click="onOverviewCardClick" />
       </div>
 
       <!-- 发票列表 -->
-      <div class="invoice-list-view">
+      <div class="invoice-list-view biz-list-view">
       <!-- 筛选工具栏（对齐车队标准中台组件） -->
           <!-- 筛选工具栏走中台 BusinessFilterBar：4 个筛选器改为 FilterFieldSpec 声明 -->
           <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
@@ -341,6 +341,11 @@
     </teleport>
   </div>
 </template>
+
+<!-- 四模块共享列表样式（全局引入，靠 .biz-page 前缀隔离，不影响车队/能耗/账单等页面） -->
+<style>
+@import './styles/business-list-shared.css';
+</style>
 
 <script setup lang="ts">
 import {
@@ -2259,144 +2264,9 @@ watch(printVisible, (v) => {
 /* ---- 列表 ---- */
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
-.doc-list-scroll {
-  /* P4：列表容器只撑可视区高度，滚动必须由 t-table 内部承担（max-height 100% + 表头 sticky）；
-     容器自身不滚动，否则表头会被滚走、底部摘要 sticky 定位错乱（回归修复：overflow 由 auto 恢复为 hidden） */
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-large);
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-/* ---- 底部汇总 ---- */
-.doc-summary-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  font-size: 13px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
-  color: var(--td-text-color-secondary);
-  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
-  .doc-summary-item {
-    display: inline-flex; align-items: baseline; gap: 6px;
-    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
-  }
-}
-
-/* 底部悬浮工具条：fixed 脱离文档流（悬浮于视口底部），
-   出现/消失不占据物理空间 → 页面不会上下跳动、底部无冗余留白 */
-.doc-batch-bar {
-  position: fixed;
-  bottom: var(--wk-batch-bar-bottom);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--wk-batch-bar-z);
-  width: max-content;
-  max-width: calc(100vw - 48px);
-  box-sizing: border-box;
-}
-.batch-bar-inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 24px;
-  padding: 8px 16px;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium);
-  box-shadow: var(--td-shadow-2);
-}
-.batch-bar-left {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-.batch-bar-count {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  white-space: nowrap;
-}
-.batch-bar-clear {
-  flex-shrink: 0;
-  padding: 0 6px !important;
-  height: 28px !important;
-  font-size: 12px;
-  color: var(--td-text-color-secondary) !important;
-  &:hover { color: var(--td-text-color-primary) !important; }
-}
-.batch-bar-actions {
-  flex: 0 0 auto;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.batch-bar-actions > * { flex-shrink: 0; }
-
-/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
-.doc-list-view :deep(.t-table__cell),
-.doc-list-view :deep(.t-table__th) {
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-/* 排序图标紧凑对齐：TDesign bordered 表格默认对排序列标题两端对齐(space-between)，
-   导致图标被推到单元格最右侧。强制左对齐并让图标紧跟文本（非排序列表头不受影响） */
-.doc-list-view :deep(.t-table th .t-table__cell--title) {
-  justify-content: flex-start !important;
-}
-.doc-list-view :deep(.t-table th .t-table__cell--title .t-table__filter-icon-wrap) {
-  margin-left: 4px;
-}
-
-.doc-list-view {
-  position: relative;
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* 表格高度受限于容器，滚动由 .t-table__content 内部承担（max-height 100% + sticky 表头） */
-.doc-list-view :deep(.t-table) {
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-  max-height: 100%;
-}
+/* 底部悬浮工具条 / 列内边距：统一走四模块共享样式文件（.biz-page 前缀） */
 
 /* scrollbar-gutter:stable 保证滚动条占位宽度恒定，列与滚动条不错位 */
-.doc-list-view :deep(.t-table__content) {
-  scrollbar-gutter: stable;
-}
-
-/* 表头 th 背景与内容区统一为 container 令牌（非 bordered 表格默认白底），
-   与下方表头右侧遮罩同令牌 → 主题切换同步变色，永不产生色差 */
-.doc-list-view :deep(.t-table__header--fixed > tr > th) {
-  background-color: var(--td-bg-color-container);
-}
-
 /* 表头右侧滚动条轨道遮罩：滚动条属于滚动容器 UI 层，绘制层级高于 sticky 表头，
    无法靠表头背景覆盖。在滚动容器父层(.doc-list-view)挂绝对定位色块，
    宽度=真实滚动条宽度(--invoice-sbw，JS 实测)、高度=表头实测高度(--invoice-thh)，
@@ -2476,9 +2346,6 @@ watch(printVisible, (v) => {
   text-align: left;
 }
 
-.doc-list-check :deep(.t-checkbox__label) { display: none !important; width: 0 !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; }
-.doc-list-check :deep(.t-checkbox__input-wrapper) { margin: 0; }
-
 .row-invoice-no {
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-size: 13px; font-weight: 600; color: var(--td-text-color-primary);
@@ -2499,23 +2366,7 @@ watch(printVisible, (v) => {
 .row-mono { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--td-text-color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .row-amount { font-size: 13px; color: var(--td-text-color-primary); font-weight: 500; }
 .row-muted { color: var(--td-text-color-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 提取成功 / 提取失败 / 待提取 三种状态标签必须完全同尺寸：
-   t-tag 的 small 尺寸在内联图标（close-circle / loading）存在时会按内容收缩，
-   导致「提取失败」看起来比「提取成功」更小。这里用固定盒模型锁死。 */
-.row-status-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  line-height: 20px;
-  padding: 0 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  box-sizing: border-box;
-  white-space: nowrap;
-  :deep(.t-icon) { margin-right: 0; font-size: 12px; }
-}
-.icon-spin { animation: doc-list-spin 0.9s linear infinite; }
+/* 状态标签（.row-status-tag）与 .icon-spin 统一走四模块共享样式文件 */
 
 .row-tag-chips {
   display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; cursor: pointer;

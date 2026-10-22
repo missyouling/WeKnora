@@ -1,0 +1,400 @@
+/* 日常事务四模块（发票 / 合同 / 制度 / 通知公告）共享列表样式。
+ *
+ * 为什么必须收口：
+ *   四个页面的列表骨架本来是各自拷贝的，长期漂移后同一处样式在不同页面
+ *   出现四份不同值（容器 border-radius 9px 与 var(--td-radius-large)、
+ *   overflow hidden 与 overflow-y auto、底栏 sticky 与 static、
+ *   padding 10px 16px 与 0 2px…），视觉上四个模块像四套产品。
+ *   现在以 InvoiceManagement.vue 为唯一权威基准，把骨架 / 工具栏 / 列表容器 /
+ *   表头 / 行 / 状态标签 / 标签胶囊 / 底栏 / 批量浮条统一到本文件，
+ *   四个页面 `@import` 同一份，计算样式必然 100% 相等。
+ *
+ * 泄漏防护：
+ *   .doc-list-scroll 等类名在车队 / 能耗 / 账单 / 知识库页面也在用，
+ *   因此所有规则一律挂在 `.biz-page`（四模块页面根元素专属类）下，
+ *   且本文件由各页在 `<style scoped>` 内 import（Vue 会再加一层 data-v 作用域），
+ *   双重隔离，绝不影响其它页面。
+ */
+
+/* ---- 页面骨架 ---- */
+.biz-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 24px 32px;
+  overflow: hidden;
+}
+
+.biz-page .header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.biz-page .header .header-title h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  margin: 0 0 6px 0;
+}
+.biz-page .header .header-title .header-subtitle {
+  font-size: 14px;
+  color: var(--td-text-color-secondary);
+  margin: 0;
+}
+
+.biz-page .loading-area,
+.biz-page .empty-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 300px;
+}
+
+/* 主区（KPI 卡 + 工具栏 + 列表） */
+.biz-page .biz-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.biz-page .overview-group {
+  margin-bottom: var(--td-comp-margin-m);
+}
+
+/* 列表视图容器（发票基准 .invoice-list-view） */
+.biz-page .biz-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- 工具栏：单行两端对齐，禁止折行 ---- */
+/* BusinessListToolbar 自带 flex-wrap: wrap，四模块必须强制单行，
+   否则窄一点的窗口就会把右组按钮挤到第二行，右组再也贴不齐容器右边缘。 */
+.biz-page .doc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  flex-wrap: nowrap;
+  gap: 12px;
+  margin-bottom: var(--td-comp-margin-l);
+}
+.biz-page .doc-toolbar__leading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.biz-page .doc-toolbar__trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+/* 左组控件统一 32px 高，保证与右组按钮同一水平中心线 */
+.biz-page .doc-toolbar__leading > * {
+  height: 32px;
+  flex-shrink: 0;
+}
+
+/* ---- 字段筛选弹层 ---- */
+.biz-page .field-popup-content {
+  width: 240px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.biz-page .field-popup-content .field-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.biz-page .field-popup-content .field-popup-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+.biz-page .field-popup-content .field-popup-actions {
+  display: flex;
+  gap: 0;
+}
+.biz-page .field-popup-content .field-popup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.biz-page .field-popup-content .field-popup-item {
+  display: flex;
+  align-items: center;
+}
+
+/* ---- 列表容器（表格外框） ---- */
+.biz-page .doc-list-scroll {
+  /* 滚动必须由 t-table 内部承担（max-height 100% + 表头 sticky）；
+     容器自身不滚动，否则表头会被滚走、底部摘要 sticky 定位错乱 */
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  background: var(--td-bg-color-container);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* ---- 列表视图 / 表格 ---- */
+.biz-page .doc-list-view {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表格高度受限于容器，滚动由 .t-table__content 内部承担 */
+.biz-page .doc-list-view .t-table {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+}
+
+/* scrollbar-gutter:stable 保证滚动条占位宽度恒定，列与滚动条不错位 */
+.biz-page .doc-list-view .t-table__content {
+  scrollbar-gutter: stable;
+}
+
+/* 表头 th 背景与内容区统一为 container 令牌（非 bordered 表格默认白底），
+   与下方表头右侧遮罩同令牌 → 主题切换同步变色，永不产生色差 */
+.biz-page .doc-list-view .t-table__header--fixed > tr > th {
+  background-color: var(--td-bg-color-container);
+}
+
+/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
+.biz-page .doc-list-view .t-table__cell,
+.biz-page .doc-list-view .t-table__th {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* 排序图标紧凑对齐：TDesign bordered 表格默认对排序列标题两端对齐(space-between)，
+   导致图标被推到单元格最右侧。强制左对齐并让图标紧跟文本 */
+.biz-page .doc-list-view .t-table th .t-table__cell--title {
+  justify-content: flex-start !important;
+}
+.biz-page .doc-list-view .t-table th .t-table__cell--title .t-table__filter-icon-wrap {
+  margin-left: 4px;
+}
+
+/* ---- 底部汇总 ---- */
+.biz-page .doc-summary-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  font-size: 13px;
+  background: var(--td-bg-color-container);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+  color: var(--td-text-color-secondary);
+}
+.biz-page .doc-summary-bar .doc-summary-count {
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+}
+.biz-page .doc-summary-bar .doc-summary-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.biz-page .doc-summary-bar .doc-summary-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-primary);
+  font-weight: 600;
+}
+
+/* ---- 底部悬浮批量条：fixed 脱离文档流，出现/消失不占物理空间 ---- */
+.biz-page .doc-batch-bar {
+  position: fixed;
+  bottom: var(--wk-batch-bar-bottom);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--wk-batch-bar-z);
+  width: max-content;
+  max-width: calc(100vw - 48px);
+  box-sizing: border-box;
+}
+.biz-page .batch-bar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 8px 16px;
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--td-radius-medium);
+  box-shadow: var(--td-shadow-2);
+}
+.biz-page .batch-bar-left {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.biz-page .batch-bar-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+}
+.biz-page .batch-bar-clear {
+  flex-shrink: 0;
+  padding: 0 6px !important;
+  height: 28px !important;
+  font-size: 12px;
+  color: var(--td-text-color-secondary) !important;
+}
+.biz-page .batch-bar-clear:hover {
+  color: var(--td-text-color-primary) !important;
+}
+.biz-page .batch-bar-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.biz-page .batch-bar-actions > * {
+  flex-shrink: 0;
+}
+
+/* ---- 行内元素 ---- */
+@keyframes biz-list-spin {
+  to { transform: rotate(360deg); }
+}
+
+.biz-page .row-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.biz-page .row-mono {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.biz-page .row-muted {
+  color: var(--td-text-color-disabled);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 提取成功 / 提取失败 / 待提取 三种状态标签必须完全同尺寸：
+   t-tag 的 small 尺寸在内联图标存在时会按内容收缩，导致「提取失败」看起来
+   比「提取成功」更小。这里用固定盒模型锁死（22px 高 / 12px 字号）。 */
+.biz-page .row-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+.biz-page .row-status-tag .t-icon {
+  margin-right: 0;
+  font-size: 12px;
+}
+.biz-page .icon-spin {
+  animation: biz-list-spin 0.9s linear infinite;
+}
+
+/* 标签胶囊：已有标签展示首个 + 溢出计数，无标签时给出「+ 标签」快捷入口 */
+.biz-page .row-tag-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  cursor: pointer;
+  min-width: 0;
+}
+.biz-page .row-tag-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--td-component-stroke);
+  color: var(--td-text-color-secondary);
+  font-size: 10px;
+}
+.biz-page .row-tag-add {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 999px;
+  padding: 0 6px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.biz-page .row-tag-add:hover {
+  border-color: var(--td-brand-color);
+  color: var(--td-brand-color);
+  border-style: solid;
+}
+
+/* 复选框列：隐藏标签文案，只留方框（TDesign 会渲染空 label 占位） */
+.biz-page .doc-list-check .t-checkbox__label {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.biz-page .doc-list-check .t-checkbox__input-wrapper {
+  margin: 0;
+}

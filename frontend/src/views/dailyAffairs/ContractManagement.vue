@@ -1,5 +1,5 @@
 <template>
-  <div class="contract-management-container">
+  <div class="contract-management-container biz-page">
     <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
     <div class="header">
       <div class="header-title">
@@ -22,9 +22,11 @@
     </div>
 
     <!-- KB 存在：主界面 -->
-    <div v-else class="contract-main">
+    <div v-else class="contract-main biz-main">
       <!-- KPI 概览卡（黄金基准 DashboardKpiGroup：轻量聚合自列表数据，不依赖后端统计接口） -->
       <DashboardKpiGroup :loading="false" :cards="overviewCards" :active-type="filterContractType" @card-click="onOverviewCardClick" />
+      <!-- 列表视图容器（发票基准 .invoice-list-view 同款：工具栏 + 状态条 + 列表 + 底栏一体） -->
+      <div class="biz-list-view">
       <!-- 筛选工具栏（复用中台组件，直接位于列表容器，对齐发票基准：右组按钮由组件内部 margin-left:auto 贴右） -->
       <!-- 筛选工具栏走中台 BusinessFilterBar（与发票同款）：筛选器改为 FilterFieldSpec
            声明，分类切换只由顶部 KPI 卡片承担，工具栏不再出现分类下拉 -->
@@ -52,7 +54,7 @@
         :loading="listLoading"
         max-height="100%"
         sticky-header
-        :scroll="{ type: 'virtual', rowHeight: 39, bufferSize: 20 }"
+        :scroll="{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 }"
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -146,6 +148,7 @@
           合同金额合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
         </span>
       </div>
+    </div>
     </div>
 
     <!-- 自有批量浮条（发票基准同款：hide-batch-bar 后自有 fixed 条） -->
@@ -307,6 +310,11 @@
     </teleport>
   </div>
 </template>
+
+<!-- 四模块共享列表样式（全局引入，靠 .biz-page 前缀隔离，不影响车队/能耗/账单等页面） -->
+<style>
+@import './styles/business-list-shared.css';
+</style>
 
 <script setup lang="ts">
 import {
@@ -2028,70 +2036,7 @@ onBeforeUnmount(() => {
 /* ---- 列表 ---- */
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
 
-.doc-list-scroll {
-  /* 发票基准同款：滚动必须由 t-table 内部承担（max-height 100% + sticky-header 表头固定），
-     容器自身不滚动，否则表头会被滚走、底部摘要 sticky 定位错乱 */
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-/* ---- 底部汇总（发票基准 .doc-summary-bar 逐字同款：sticky 于列表容器底部，紧贴表格，极小垂直空间） ---- */
-.doc-summary-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  background: var(--td-bg-color-container);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
-  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
-  .doc-summary-item {
-    display: inline-flex; align-items: baseline; gap: 6px;
-    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
-  }
-}
-
-.doc-list-view {
-  position: relative;
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* 表格高度受限于容器，滚动由 .t-table__content 内部承担（max-height 100% + sticky 表头），发票基准同款 */
-.doc-list-view :deep(.t-table) {
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-  max-height: 100%;
-}
-
 /* scrollbar-gutter:stable 保证滚动条占位宽度恒定，列与滚动条不错位 */
-.doc-list-view :deep(.t-table__content) {
-  scrollbar-gutter: stable;
-}
-
-/* 表头 th 背景与内容区统一为 container 令牌，与下方表头右侧遮罩同令牌 → 主题切换同步变色，不产生色差 */
-.doc-list-view :deep(.t-table__header--fixed > tr > th) {
-  background-color: var(--td-bg-color-container);
-}
-
 .doc-list-header, .doc-list-row {
   display: grid;
   align-items: center;
@@ -2368,66 +2313,5 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--td-component-stroke);
 }
 
-/* 自有批量浮条（发票基准同款） */
-.doc-batch-bar {
-  position: fixed;
-  bottom: var(--wk-batch-bar-bottom);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--wk-batch-bar-z);
-  width: max-content;
-  max-width: calc(100vw - 48px);
-  box-sizing: border-box;
-}
-.batch-bar-inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 24px;
-  padding: 8px 16px;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium);
-  box-shadow: var(--td-shadow-2);
-}
-.batch-bar-left {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-.batch-bar-count {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  white-space: nowrap;
-}
-.batch-bar-clear {
-  flex-shrink: 0;
-  padding: 0 6px !important;
-  height: 28px !important;
-  font-size: 12px;
-  color: var(--td-text-color-secondary) !important;
-  &:hover { color: var(--td-text-color-primary) !important; }
-}
-.batch-bar-actions {
-  flex: 0 0 auto;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.batch-bar-actions > * { flex-shrink: 0; }
-
-/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
-.doc-list-view :deep(.t-table__cell),
-.doc-list-view :deep(.t-table__th) {
-  padding-left: 8px;
-  padding-right: 8px;
-}
+/* 列内边距收紧、批量浮条、底栏、列表容器：统一走四模块共享样式文件（见文件顶部全局 style 块） */
 </style>

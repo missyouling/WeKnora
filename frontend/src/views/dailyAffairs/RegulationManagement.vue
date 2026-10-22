@@ -1,16 +1,11 @@
 <template>
-  <div class="regulation-management-container">
-    <!-- 顶部：标题 + 上传按钮（唯一上传入口） -->
+  <div class="regulation-management-container biz-page">
+    <!-- 顶部：标题（唯一性铁律：上传按钮只在工具栏右侧出现一次，
+         标题栏不再放上传/设置/搜索，否则页面会出现 2 个「上传」按钮） -->
     <div class="header">
       <div class="header-title">
         <h2>制度管理</h2>
         <p class="header-subtitle">制度档案自动归档</p>
-      </div>
-      <div class="header-actions">
-        <t-button v-if="kbId" theme="primary" @click="uploadVisible = true">
-          <template #icon><t-icon name="upload" /></template>
-          上传制度
-        </t-button>
       </div>
     </div>
 
@@ -28,12 +23,14 @@
     </div>
 
     <!-- KB 存在：主界面 -->
-    <div v-else class="regulation-main">
+    <div v-else class="regulation-main biz-main">
       <!-- 概览 KPI 卡 -->
       <DashboardKpiGroup :loading="false" :cards="overviewCards" :active-type="filterRegType" @card-click="onOverviewCardClick" class="regulation-kpi-group" />
-      <!-- 筛选工具栏（复用原项目文档列表样式） -->
-      <div class="doc-filter-bar">
-        <div class="doc-filter-bar__leading">
+      <!-- 列表视图容器（发票基准 .invoice-list-view 同款：工具栏 + 状态条 + 列表 + 底栏一体） -->
+      <div class="biz-list-view">
+      <!-- 筛选工具栏（发票基准同款：BusinessFilterBar 直接挂在列表容器内，
+           不再套 .doc-filter-bar 外层——那层会让右组按钮贴不到容器最右端，
+           且左组筛选器被挤压折行） -->
           <!-- 筛选工具栏走中台 BusinessFilterBar（与发票/合同同款）：分类切换只由顶部 KPI 卡片承担 -->
           <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
             :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
@@ -42,8 +39,6 @@
             @select-all-columns="selectAllColumns" @filter-change="applyFilter"
             @settings="settingsVisible = true" @primary="uploadVisible = true"
             @clear-selection="clearSelection" />
-        </div>
-      </div>
 
       <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
@@ -59,9 +54,11 @@
         :hover="true"
         :loading="listLoading"
         max-height="100%"
+        sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
+        :scroll="{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 }"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
         @row-click="({ row }: any) => openDetail(row)"
         @select-change="(val: string[]) => (selectedRowKeys = val)"
@@ -142,13 +139,13 @@
         </template>
       </t-table>
     </div>
-        </div>
 
-      <!-- 底部汇总（选中记录时显示选中制度汇总，未选中显示全部；选中时避让底部工具栏） -->
-      <div class="doc-summary-bar" :class="{ 'is-batch-visible': selectedRowKeys.length }">
+      <!-- 底部汇总（发票基准同款：位于列表边框容器**内部**底部，sticky 紧贴表格下沿） -->
+      <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
       </div>
-
+    </div>
+    </div>
     </div>
 
     <!-- 自有批量浮条（发票基准同款） -->
@@ -294,6 +291,11 @@
     </teleport>
   </div>
 </template>
+
+<!-- 四模块共享列表样式（全局引入，靠 .biz-page 前缀隔离，不影响车队/能耗/账单等页面） -->
+<style>
+@import './styles/business-list-shared.css';
+</style>
 
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
@@ -1664,7 +1666,7 @@ onBeforeUnmount(() => {
   height: 100%;
   box-sizing: border-box;
   padding: 24px 32px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .header {
@@ -1687,18 +1689,8 @@ onBeforeUnmount(() => {
 .regulation-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
 /* ---- 筛选工具栏 ---- */
-.doc-filter-bar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  &__leading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1; }
-  .doc-filter-field {
-    display: flex; align-items: center;
-    &--search { min-width: 220px; }
-    &--wide { min-width: 260px; }
-    .doc-search { width: 220px; }
-    .doc-type-select { width: 130px; }
-    .doc-date-range { width: 260px; }
-  }
-}
+/* 工具栏布局与筛选控件样式统一走四模块共享样式（.biz-page .doc-toolbar）
+   与 BusinessFilterBar / BusinessListToolbar 组件内样式，本页不再自定义 */
 
 /* ---- 字段筛选弹层 ---- */
 :global(.regulation-field-popup) {
@@ -1721,47 +1713,6 @@ onBeforeUnmount(() => {
 
 /* ---- 列表 ---- */
 @keyframes doc-list-spin { to { transform: rotate(360deg); } }
-
-.doc-list-scroll {
-  flex: 0 1 auto; /* 高度随内容自适应：1 条就包 1 条，多条向下扩展 */
-  max-height: 100%;
-  min-width: 0;
-  overflow-y: auto;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-/* ---- 底部汇总 ---- */
-.doc-summary-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 2px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
-  .doc-summary-item {
-    display: inline-flex; align-items: baseline; gap: 6px;
-    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
-  }
-  &.is-batch-visible { margin-bottom: 72px; } /* 选中时给底部浮动工具栏让位 */
-}
-
-.doc-list-view {
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-
-.doc-list-header, .doc-list-row {
-  display: grid;
-  align-items: center;
-  padding: 0 16px;
-  min-width: 100%;
-  box-sizing: border-box;
-}
 
 .doc-list-header {
   position: sticky;
@@ -1869,16 +1820,6 @@ onBeforeUnmount(() => {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 50;
   width: 100%; max-width: 700px; padding: 0 4px; box-sizing: border-box;
 }
-.batch-bar-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 12px; background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke); border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-}
-.batch-bar-left { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
-.batch-bar-count { font-size: 13px; font-weight: 500; color: var(--td-text-color-secondary); white-space: nowrap; }
-.batch-bar-clear { flex-shrink: 0; padding: 0 6px !important; height: 28px !important; font-size: 12px; color: var(--td-text-color-secondary) !important; &:hover { color: var(--td-brand-color) !important; } }
-.batch-bar-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.batch-bar-fade-enter-active, .batch-bar-fade-leave-active { transition: transform 0.2s ease, opacity 0.2s ease; }
 .batch-bar-fade-enter-from, .batch-bar-fade-leave-to { opacity: 0; transform: translate(-50%, 6px); }
 
 /* ---- 详情抽屉：竖向区块 + 可拖宽（复用知识库文档抽屉上下滚动样式） ---- */
@@ -2039,51 +1980,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--td-component-stroke);
 }
 
-/* 自有批量浮条（发票基准同款） */
-.doc-batch-bar {
-  position: fixed;
-  bottom: var(--wk-batch-bar-bottom);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--wk-batch-bar-z);
-  width: max-content;
-  max-width: calc(100vw - 48px);
-  box-sizing: border-box;
-}
-.batch-bar-inner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 24px;
-  padding: 8px 16px;
-  background: var(--td-bg-color-container);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: var(--td-radius-medium);
-  box-shadow: var(--td-shadow-2);
-}
-.batch-bar-left {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-.batch-bar-count {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--td-text-color-secondary);
-  white-space: nowrap;
-}
-.batch-bar-clear {
-  flex-shrink: 0;
-  padding: 0 6px !important;
-  height: 28px !important;
-  font-size: 12px;
-  color: var(--td-text-color-secondary) !important;
-  &:hover { color: var(--td-text-color-primary) !important; }
-}
+/* 批量浮条样式统一走四模块共享样式文件 */
 .batch-bar-actions {
   flex: 0 0 auto;
   min-width: 0;
@@ -2092,13 +1989,5 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-}
-.batch-bar-actions > * { flex-shrink: 0; }
-
-/* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
-.doc-list-view :deep(.t-table__cell),
-.doc-list-view :deep(.t-table__th) {
-  padding-left: 8px;
-  padding-right: 8px;
 }
 </style>
