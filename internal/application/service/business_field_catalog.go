@@ -55,9 +55,14 @@ const (
 	reTextStop  = `[^\n，,；;]{2,40}`
 )
 
-// BusinessFieldCatalogs 三个 document 业务的字段目录。
+// BusinessFieldCatalogs 四个 document 业务 + 能耗台账的字段目录。
+//
+// energy 单列：它是「账期台账」口径（主时间轴是月），与合同/制度/通知的
+// 「文档档案」口径（主时间轴是日）形态不同，目录派生规则不共享。
 func BusinessFieldCatalogs() []BusinessFieldCatalog {
-	return []BusinessFieldCatalog{contractCatalog(), regulationCatalog(), noticeCatalog()}
+	return []BusinessFieldCatalog{
+		contractCatalog(), regulationCatalog(), noticeCatalog(), energyCatalog(),
+	}
 }
 
 // BusinessFieldCatalogOf 按 scope 取目录；notice 是 award_punish 的对外别名，

@@ -35,7 +35,7 @@ import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 const props = withDefaults(defineProps<{
   visible: boolean
   kbId?: string
-  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish'
+  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy'
   kbName?: string
   title?: string
   storageKey?: string

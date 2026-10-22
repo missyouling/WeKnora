@@ -997,6 +997,42 @@ export function listRegulationOverview(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/regulations/overview-stats`);
 }
 
+/**
+ * 能耗台账级聚合列表（energy scope）。
+ *
+ * 与合同列表的差异：主时间轴是**账期（月）**，因此筛选参数是月粒度的
+ * billing_period / period_from / period_to（YYYY-MM），而不是日粒度日期区间；
+ * 抄表日期另给 read_date_from / read_date_to。
+ */
+export function listEnergyRecords(kbId: string, params: {
+  q?: string;
+  utility_type?: string;
+  billing_period?: string;
+  period_from?: string;
+  period_to?: string;
+  read_date_from?: string;
+  read_date_to?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+} = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') q.append(k, String(v));
+  });
+  return get(`/api/v1/knowledge-bases/${kbId}/energy-records?${q.toString()}`);
+}
+
+/** 能耗台账概览统计（全量只读聚合，不随列表筛选变化）。 */
+export function listEnergyOverview(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/energy-records/overview-stats`);
+}
+
+/** 能耗类型去重列表（供筛选下拉）。 */
+export function listEnergyTypes(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/energy-types`);
+}
+
 export function listAwardPunishOverview(kbId: string) {
   return get(`/api/v1/knowledge-bases/${kbId}/award-punish-records/overview-stats`);
 }

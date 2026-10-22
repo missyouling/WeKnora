@@ -855,7 +855,8 @@ func (h *FleetHandler) GetFleetSummary(c *gin.Context) {
 
 // isBusinessCategoryScope 判断是否为日常事务业务 scope（分类配置全局 tenant_id=0，不按 tenant 隔离）
 func isBusinessCategoryScope(scope string) bool {
-	return scope == "contract" || scope == "invoice" || scope == "regulation" || scope == "award_punish"
+	return scope == "contract" || scope == "invoice" || scope == "regulation" ||
+		scope == "award_punish" || scope == "energy"
 }
 
 // invoice 系统字段：列表/编辑抽屉/六同步依赖的列（提取状态、标签、票据类型）。
@@ -925,6 +926,7 @@ var fleetCategoryScopes = map[string]bool{
 	"invoice":      true,
 	"regulation":   true,
 	"award_punish": true,
+	"energy":       true,
 }
 
 // ListFleetCategories godoc
@@ -2124,6 +2126,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 	// 通知公告内置分类（通知/公告/通报/决定/其它通知）走同样的名称协调逻辑，
 	// 退役笼统「奖惩」分类（subs 为 title/eventDate 等错误键），按类型建分类。
 	h.reconcileNoticeCategories(ctx)
+
+	// 能耗内置分类（工业用电/生活用水/燃气费/供热费）：账期台账口径，
+	// builtin_key 锚定（用户改名后不复活旧名），subs 按 seed 重排并补齐缺字段。
+	h.reconcileEnergyCategories(ctx)
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

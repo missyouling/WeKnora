@@ -21,8 +21,8 @@ interface Options {
   extractFailed: Ref<Map<string, number>>
   /** 当前详情抽屉行（用于 summaryState） */
   currentDetail: Ref<{ summary_status?: string } | null>
-  /** 业务尾缀，如 contract / invoice / regulation / award_punish */
-  scope: 'contract' | 'invoice' | 'regulation' | 'award_punish'
+  /** 业务尾缀，如 contract / invoice / regulation / award_punish / energy */
+  scope: 'contract' | 'invoice' | 'regulation' | 'award_punish' | 'energy'
   /** "非XX" 文案，如 "非合同" / "非发票" */
   notLabel: string
   /**

@@ -8,6 +8,7 @@ import './invoice'
 import './document'
 import './fleet'
 import './utility'
+import './energy'
 
 export {
   getScope,

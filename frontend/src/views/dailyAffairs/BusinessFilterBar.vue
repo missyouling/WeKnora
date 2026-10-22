@@ -38,6 +38,16 @@
           <template #prefixIcon><t-icon :name="f.icon || DEFAULT_FILTER_ICONS['date-range']" size="16px" /></template>
         </t-date-range-picker>
 
+        <!-- 账期（按月）：能耗台账的主时间轴是「账期」而非日期，
+             月粒度选择器（YYYY-MM），不能套用 date-range 的日粒度区间。 -->
+        <div v-else-if="f.type === 'month'" class="bfs-field">
+          <t-date-picker :value="state[f.key]" mode="month" format="YYYY-MM" value-type="YYYY-MM"
+            :placeholder="f.placeholder || '账期'" :clearable="f.clearable !== false" allow-input
+            class="bfs-month" @change="(v: any) => patch(f, v)">
+            <template #prefixIcon><t-icon :name="f.icon || DEFAULT_FILTER_ICONS.month" size="16px" /></template>
+          </t-date-picker>
+        </div>
+
         <!-- 数值区间：最小/最大两个输入 -->
         <div v-else-if="f.type === 'number-range'" class="bfs-field bfs-range">
           <t-input :value="rangePair(state[f.key])[0]" :placeholder="f.placeholders?.[0] || '最小'"
@@ -154,6 +164,8 @@ function patchRange(spec: FilterFieldSpec, v: any, idx: 0 | 1) {
 .bfs-field { display: flex; align-items: center; gap: 4px; }
 .bfs-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .bfs-date-range { width: 240px; flex-shrink: 0; }
+/* 账期选择器：与 date-range 同宽，避免两页工具栏像素不对齐 */
+.bfs-month { width: 240px; flex-shrink: 0; }
 .bfs-num { width: 96px; flex-shrink: 0; }
 .bfs-range-sep { color: var(--td-text-color-placeholder); }
 </style>

@@ -20,8 +20,11 @@ export type ScopeKey =
   | 'maintain'
   | 'utility'
   | 'solar'
+  | 'energy'
 
-export type FieldDataType = 'text' | 'number' | 'date' | 'array'
+// 字段值类型。textarea（多行文本）与后端 types.FieldTypeTextarea 同源：
+// 存储仍是 string，只影响渲染控件与列表折行。
+export type FieldDataType = 'text' | 'textarea' | 'number' | 'date' | 'array'
 
 export interface FieldMeta {
   /** 契约键（snake_case 或 camelCase，与后端 json tag 同源） */

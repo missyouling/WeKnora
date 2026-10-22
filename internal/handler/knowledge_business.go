@@ -2940,6 +2940,9 @@ func (h *BusinessExtractHandler) ExtractBusinessDocument(c *gin.Context) {
 		h.ExtractRegulation(c, body.CertType)
 	case "award_punish":
 		h.ExtractAwardPunish(c, body.CertType)
+	case "energy":
+		// 能耗台账（账期级口径 + 读数反算后处理）
+		h.ExtractEnergy(c, body.CertType)
 	default:
 		c.Error(errors.NewBadRequestError("unknown business scope: " + body.Scope))
 	}
@@ -3001,6 +3004,9 @@ func (h *BusinessExtractHandler) ProcessBusinessExtract(ctx context.Context, t *
 		resp, runErr = h.runRegulationCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
 	case "award_punish":
 		resp, runErr = h.runAwardPunishCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
+	case "energy":
+		// 能耗台账：账期级口径 + 读数反算后处理
+		resp, runErr = h.runEnergyCore(ctx, p.KnowledgeBaseID, p.KnowledgeID, p.CertType, p.TenantID)
 	default:
 		runErr = errors.NewInternalServerError("unknown business scope: " + p.Scope)
 	}

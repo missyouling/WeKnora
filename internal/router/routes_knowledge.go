@@ -114,6 +114,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			kb.POST("/:knowledgeId/extract-regulation", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractRegulation(c, "") })
 			kb.POST("/:knowledgeId/extract-award-punish", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractAwardPunish(c, "") })
 			kb.POST("/:knowledgeId/extract-utility-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractUtilityBill)
+			// 能耗台账提取（energy scope）：走中台 document 管线 + 读数反算后处理。
+			// 与 extract-utility-bill 的区别：后者是国网电费账单明细级专用管线，
+			// 前者是账期台账级口径（中台字段字典 + 六同步 + 用量守卫）。
+			kb.POST("/:knowledgeId/extract-energy", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractEnergy(c, "") })
 			kb.POST("/:knowledgeId/extract-solar-bill", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractSolarBill)
 			kb.POST("/:knowledgeId/extract-fleet-document", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractFleetDocument)
 			kbRead.GET("/deleted-knowledge", g.Viewer(), g.KBAccessRead("id"), business.ListDeletedKnowledge)
@@ -154,6 +158,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 				kbDirectRead.GET("/award-punish-types", g.Viewer(), g.KBAccessRead("id"), business.ListAwardPunishTypes)
 				kbDirectRead.GET("/utility-bill-records", g.Viewer(), g.KBAccessRead("id"), business.ListUtilityBillRecords)
 				kbDirectRead.GET("/solar-bill-records", g.Viewer(), g.KBAccessRead("id"), business.ListSolarBillRecords)
+				// 能耗台账（energy scope）：账期级记录，筛选主轴是月粒度账期
+				kbDirectRead.GET("/energy-records", g.Viewer(), g.KBAccessRead("id"), business.ListEnergyRecords)
+				kbDirectRead.GET("/energy-records/overview-stats", g.Viewer(), g.KBAccessRead("id"), business.EnergyOverviewStats)
+				kbDirectRead.GET("/energy-types", g.Viewer(), g.KBAccessRead("id"), business.ListEnergyTypes)
 				kbDirectRead.GET("/recognition-config", g.Viewer(), g.KBAccessRead("id"), business.GetRecognitionConfig)
 				kbDirect.PUT("/recognition-config", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.SaveRecognitionConfig)
 				kbDirect.POST("/recognition/reassess", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ReassessRecognition)

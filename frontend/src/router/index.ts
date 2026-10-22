@@ -255,6 +255,15 @@ const router = createRouter({
           meta: { requiresInit: true, requiresAuth: true }
         },
         {
+          // 能耗台账（energy scope）：账期级中台页面。
+          // 与 utilities 的分工：utilities 承载手工抄表 / 光伏 / 费用清单（独立业务线），
+          // energy 承载电费/水费/燃气费账期台账（中台六同步 + 读数反算）。
+          path: "daily-affairs/energy",
+          name: "energyManagement",
+          component: () => import("../views/dailyAffairs/EnergyManagement.vue"),
+          meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
           path: "daily-affairs/fleet",
           name: "fleetManagement",
           component: () => import("../views/dailyAffairs/FleetManagement.vue"),

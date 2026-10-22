@@ -6,9 +6,9 @@ import { getScope, labelOf, isStandardFieldOf, scopeKeys } from './businessScope
 // BusinessScopeRegistry（蓝图 P1-1）的行为级断言。
 // 红线：消灭硬编码的同时，发票的判定口径必须与旧实现逐项一致。
 
-test('十个业务 scope 全部注册', () => {
+test('全部业务 scope 都已注册', () => {
   const keys = scopeKeys()
-  for (const k of ['invoice', 'contract', 'regulation', 'notice', 'award_punish', 'vehicle', 'driver', 'maintain', 'utility', 'solar']) {
+  for (const k of ['invoice', 'contract', 'regulation', 'notice', 'award_punish', 'vehicle', 'driver', 'maintain', 'utility', 'solar', 'energy']) {
     assert.ok(keys.includes(k as never), `${k} 未注册`)
   }
 })

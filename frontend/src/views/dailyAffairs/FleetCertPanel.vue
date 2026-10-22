@@ -262,7 +262,7 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 

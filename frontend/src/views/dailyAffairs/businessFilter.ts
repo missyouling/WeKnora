@@ -4,7 +4,7 @@
 // 放进 .vue 里既没法单测，又会诱使消费方在模板里写业务分支。
 // 页面只负责声明 `FilterFieldSpec[]`，控件长什么样由中台决定。
 
-export type FilterFieldType = 'keyword' | 'select' | 'date-range' | 'number-range'
+export type FilterFieldType = 'keyword' | 'select' | 'date-range' | 'number-range' | 'month'
 
 export interface FilterFieldSpec {
   /** 与 FilterState 的键一一对应 */
@@ -29,6 +29,7 @@ export const EMPTY_FILTER_VALUE: Record<FilterFieldType, any> = {
   select: '',
   'date-range': [],
   'number-range': [],
+  month: '',
 }
 
 export const DEFAULT_FILTER_ICONS: Record<FilterFieldType, string> = {
@@ -36,6 +37,7 @@ export const DEFAULT_FILTER_ICONS: Record<FilterFieldType, string> = {
   select: 'file',
   'date-range': 'time',
   'number-range': 'calculator',
+  month: 'calendar',
 }
 
 /**

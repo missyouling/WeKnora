@@ -97,6 +97,11 @@ func builtinScopeSchemas() []types.ScopeSchema {
 		// 独立字段集，分类主轴也各自归位（公告类型 / 奖惩类型）。
 		documentScopeSchemaWithFields("notice", "公告类型", noticeStandardFieldDefs()),
 		documentScopeSchemaWithFields("award_punish", "奖惩类型", awardPunishStandardFieldDefs()),
+		// energy 能耗台账：账期级记录（一条 = 一个账期的一张汇总单），
+		// 标准字段含读数连续性主线（上期/本期读数 + 倍率 + 实际用量）。
+		// 与 utility/solar 的区别：后两者是账单明细级口径（30~50 行费用明细），
+		// 走专用提取管线；energy 走中台 document 管线 + 字段字典 + 六同步。
+		documentScopeSchemaWithFields("energy", "能耗类型", energyStandardFieldDefs()),
 		documentScopeSchema("utility", "账单类型"),
 		documentScopeSchema("solar", "账单类型"),
 	}
@@ -153,6 +158,9 @@ func regulationStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("r
 func noticeStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("award_punish") }
 
 func awardPunishStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("award_punish") }
+
+// energyStandardFieldDefs 能耗台账的标准字段声明。
+func energyStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("energy") }
 
 // documentScopeSchema document 类 scope 的公共骨架：无标准字段、无明细层级，
 // 仍保留扩展桶约定（合同/制度等提取结果的自定义字段语义桶）。
