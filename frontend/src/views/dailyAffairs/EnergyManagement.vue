@@ -373,24 +373,25 @@ const filterUtilityType = ref('')
 const filterBillingPeriod = ref('')
 
 const tableColumns = computed(() => {
-  const base = visibleColDefs.value.map((c: any) => ({
-    key: c.key,
-    title: c.label,
-    width: colWidthOf(c.w, c.label, [], c.dataType),
-    ellipsis: ellipsisOf(c),
-    className: cellClassOf(c),
-    // dataType 必须下传：tableScrollOf 据此判断是否关闭固定行高
-    dataType: c.dataType,
-  }))
-  base.push({
-    key: 'fileName',
-    title: '文件名',
-    width: 220,
-    ellipsis: true,
-    className: '',
-    dataType: 'text',
-  })
-  return base
+  // TDesign 的列标识字段是 **colKey**（不是 key）：用 key 会导致列头渲染但
+  // 单元格内容全空（真机踩过：tbody 有 12 个 td 但文本为空、行高 17px）。
+  const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 }]
+  const rows = filteredRows.value
+  for (const c of visibleColDefs.value) {
+    cols.push({
+      colKey: c.key,
+      title: c.label,
+      // 列宽：字段配置 width>0 固定（clamp 60~400）；未配置按内容自适应
+      width: colWidthOf(c.width, c.label, rows.map((r: any) => r?.[c.key]), (c as any).dataType),
+      // 多行文本列关闭 ellipsis：TDesign 的 ellipsis 会包一层 nowrap + overflow hidden，
+      // 换行样式会被直接吃掉，长文本仍旧截断
+      ellipsis: ellipsisOf(c as any),
+      className: cellClassOf(c as any),
+      // dataType 必须下传：tableScrollOf 据此判断是否关闭固定行高
+      dataType: (c as any).dataType,
+    })
+  }
+  return cols
 })
 
 const tableScroll = computed(() => tableScrollOf(tableColumns.value as any))
@@ -536,6 +537,8 @@ const loadRecords = async () => {
       knowledgeId: r.knowledge_id || r.knowledgeId || '',
       fileName: r.file_name || r.fileName || '',
       extractStatus: r.extract_status || r.extractStatus || '',
+      // 文件级解析状态：状态列徽标的判定输入（缺了会恒显示「待解析」）
+      parseStatus: r.parse_status || r.parseStatus || '',
     }))
     totalRecords.value = Number(total) || 0
   } catch (e: any) {
@@ -642,7 +645,17 @@ const currentRow = ref<EnergyRow | null>(null)
 const detailPageNo = ref(0)
 const saving = ref(false)
 const editForm = ref<any>({})
-const editFormWrapper = computed(() => editForm.value)
+// 中台抽屉的 form 契约是 `{ data, remarkParts, items }`：
+// 直接把扁平 editForm 传进去会让抽屉读 `form.data.xxx` 报
+// "Cannot read properties of undefined"（真机踩过）。这里做零成本包装：
+// data 指向同一个 editForm 对象，抽屉的 v-model 写入直接落在 editForm 上，
+// 保存链路一行都不用改。
+const editFormWrapper = computed(() => ({
+  data: editForm.value,
+  remarkParts: {} as Record<string, string>,
+  // 表位明细：多计量点读数并入 items（一文件一档案，不裂变成多条记录）
+  items: Array.isArray(editForm.value?.items) ? editForm.value.items : [],
+}))
 const detailDirty = ref(false)
 
 const energyIssues = computed<any[]>(() => (currentRow.value?.issues || []) as any[])
@@ -742,6 +755,8 @@ const openDetail = async (row: EnergyRow) => {
     usage_category: (row as any).usage_category || '',
     voltage_level: (row as any).voltage_level || '',
     remark: (row as any).remark || '',
+    // 表位明细：一文件一档案，多表位读数并入 items
+    items: Array.isArray((row as any).items) ? [...(row as any).items] : [],
   }
   detailDirty.value = false
   detailVisible.value = true

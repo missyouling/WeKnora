@@ -80,7 +80,7 @@ test('六同步：设置保存后强制重建列', () => {
 })
 
 test('列表列必须下传 dataType（虚拟滚动动态行高的前提）', () => {
-  assert.match(energySrc, /dataType: c\.dataType/, '列对象必须下传 dataType')
+  assert.match(energySrc, /dataType: \(c as any\)\.dataType/, '列对象必须下传 dataType')
   assert.match(energySrc, /:scroll="tableScroll"/, '必须接 tableScroll')
 })
 
@@ -95,4 +95,24 @@ test('后端能耗接口与前端 API 对齐', () => {
 
 test('用量环比暴增阈值为 30%', () => {
   assert.match(energySrc, /USAGE_SURGE_THRESHOLD = 0\.3/, '阈值必须是 30%')
+})
+
+test('列表列必须用 colKey（TDesign 的列标识字段）', () => {
+  // 用 key 会导致「表头渲染但单元格内容全空」：真机踩过，tbody 有 12 个 td
+  // 但文本全空、行高 17px，列表看着像没数据。
+  assert.match(energySrc, /colKey: c\.key/, '列必须用 colKey')
+  assert.doesNotMatch(energySrc, /\n\s*key: c\.key,/, '不得用 key 作为列标识')
+  assert.match(energySrc, /colKey: 'row-select'/, '必须有多选列')
+})
+
+test('抽屉 form 必须是中台契约结构 {data, remarkParts, items}', () => {
+  // 直接传扁平 editForm 会让抽屉读 form.data.xxx 报
+  // "Cannot read properties of undefined"（真机踩过，一屏 Vue 错误）。
+  assert.match(energySrc, /data: editForm\.value/, '必须包一层 data')
+  assert.match(energySrc, /remarkParts: \{\}/, '必须给 remarkParts')
+  assert.match(energySrc, /items: Array\.isArray/, '必须给 items（表位明细）')
+})
+
+test('列宽计算必须传当前行数据（自适应宽度）', () => {
+  assert.match(energySrc, /rows\.map\(\(r: any\) => r\?\.\[c\.key\]\)/, '列宽必须按当前行取值')
 })

@@ -53,6 +53,10 @@ type EnergyRecord struct {
 	ExtractError   string         `json:"extract_error"`
 	KBID           string         `json:"knowledge_base_id"`
 	CreatedAt      time.Time      `json:"created_at"`
+	// ParseStatus 文件级解析状态：状态列徽标的判定输入。
+	// 缺了它前端 useDocStatus 会把「extract_status=success 的已归档记录」
+	// 判成「待解析」（真机踩过：状态列恒显示「待解析」）。
+	ParseStatus string `json:"parse_status"`
 }
 
 // EnergyMeterItem 是能耗台账的表位明细行（多计量点的读数）。

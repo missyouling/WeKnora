@@ -228,6 +228,9 @@ func energyRecordSystemFields(rec *types.EnergyRecord, k *types.Knowledge, tags 
 	rec.ExtractError = meta.ExtractError
 	rec.KBID = k.KnowledgeBaseID
 	rec.CreatedAt = k.CreatedAt
+	// 文件级解析状态必须带回去：状态列徽标的判定依赖它，
+	// 缺了会让已提取成功的记录被判成「待解析」。
+	rec.ParseStatus = k.ParseStatus
 }
 
 // energyRecordBlank 判断能耗记录是否为空提取（所有关键字段都空）。
