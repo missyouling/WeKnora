@@ -134,8 +134,11 @@ interface SuggestRow {
   picked: boolean
 }
 
+// 与字段定义面板（FleetCertPanel.dataTypeOptions）同一套口径：
+// 文本细分为单行文本(text) / 多行文本(textarea)。
 const typeOptions = [
-  { label: '文本', value: 'text' },
+  { label: '单行文本', value: 'text' },
+  { label: '多行文本', value: 'textarea' },
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
   { label: '数组', value: 'array' },

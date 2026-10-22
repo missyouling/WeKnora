@@ -60,7 +60,7 @@
         :selected-row-keys="selectedRowKeys"
         :sort="sortState"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
-        :scroll="{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 }"
+        :scroll="tableScroll"
         @scroll="onListScroll"
         @row-click="({ row, e }: any) => onRowClick(row, e)"
         @select-change="onTableSelectChange"
@@ -362,7 +362,7 @@ import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
-import { colWidthOf } from './columnWidth'
+import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -715,10 +715,20 @@ const tableColumns = computed(() => {
       if (c.key === 'taxRate') return rateTextOf(r)
       if (c.key === 'extractStatus') { const s = statusOf(r).label; return s === '--' ? '' : s }
       return invoiceColValue(r, c.key)
-    }))
+    }), (c as any).dataType)
+    // 多行文本列（data_type=textarea，如备注/说明）关闭 ellipsis 并换行完整展示；
+    // 其余列保持单行截断 + 悬浮全文，避免长文本把行高撑乱。
+    // dataType 随列下传：tableScrollOf 据此判断是否要关掉固定行高（多行文本必须逐行测高）。
+    const colBase = {
+      colKey: c.key,
+      title: c.label,
+      ellipsis: ellipsisOf(c as any),
+      className: cellClassOf(c as any),
+      dataType: (c as any).dataType,
+    }
     const base: any = i === vis.length - 1
-      ? { colKey: c.key, title: c.label, ellipsis: true, minWidth: w }
-      : { colKey: c.key, title: c.label, ellipsis: true, width: w }
+      ? { ...colBase, minWidth: w }
+      : { ...colBase, width: w }
     // 无标准存储位字段（收款方式/收款事由/审核…）：数据存于 remark「字段名：值」片段，按片段渲染
     // TDesign cell 签名为 (h, { row })，第一参是 createElement，row 在第二参 props 中
     if (rp) {
@@ -740,6 +750,10 @@ const tableColumns = computed(() => {
   })
   return cols
 })
+
+// 虚拟滚动配置跟随列定义：出现多行文本列（data_type=textarea）必须关掉固定行高，
+// 否则 TDesign 仍按 48px 推算滚动位置，折行后的行会错位、长文本被裁在窗口外。
+const tableScroll = computed(() => tableScrollOf(tableColumns.value))
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
@@ -1245,6 +1259,9 @@ const reloadColumns = async (force = false) => {
             w: builtin?.w || '1fr',
             width,
             remarkPart,
+            // 类型以 subs.data_type 为权威（六同步）：列表据此决定是否折行完整展示，
+            // 抽屉/提取规则读的是同一个字段，三处不会漂移
+            dataType: String(s.data_type ?? s.dataType ?? '').trim() || 'text',
           }
         })
       // 六同步：切换分类或设置保存后，按当前分类默认表头重建字段筛选器勾选。

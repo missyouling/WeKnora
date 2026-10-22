@@ -135,6 +135,9 @@ func catalogFieldDefs(scope string) []types.FieldDef {
 			ft = types.FieldTypeDate
 		case "array":
 			ft = types.FieldTypeArray
+		case "textarea":
+			// 多行文本：与 text 同存储（string），只影响渲染控件与列表折行
+			ft = types.FieldTypeTextarea
 		}
 		out = append(out, types.FieldDef{Key: f.Key, Label: f.Label, Type: ft, Hint: f.Desc, Regex: f.Regex})
 	}
@@ -196,7 +199,9 @@ func invoiceStandardFieldDefs() []types.FieldDef {
 		{"seller_bank", "销售方开户行", types.FieldTypeText},
 		{"seller_account", "销售方账号", types.FieldTypeText},
 		{"issuer", "开票人", types.FieldTypeText},
-		{"remark", "备注", types.FieldTypeText},
+		// 备注是票面长文本（业务流水号/开户行地址等常整段堆在此栏）：
+		// 标为 textarea，列表折行、抽屉多行编辑、目录 PDF 保留换行，三处一致。
+		{"remark", "备注", types.FieldTypeTextarea},
 		{"total_amount", "价税合计", types.FieldTypeNumber},
 		{"amount", "不含税金额", types.FieldTypeNumber},
 		{"tax", "税额", types.FieldTypeNumber},

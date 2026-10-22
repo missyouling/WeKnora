@@ -100,6 +100,11 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			go business.RepairInvoicePhysicalPages(context.Background())
 			// 启动幂等清理：分类已删除、配置仍残留的孤儿提取配置（软删归档）
 			business.CleanupOrphanExtractConfigs(context.Background())
+			// 启动幂等迁移：把存量已知长文本字段（备注/摘要/说明…）从 text 升级为
+			// textarea（多行文本）。此前只有 text 一种类型，抽屉渲染成单行输入框，
+			// 长内容被截断（真机截图「业务流水号:2026102215...」）。
+			// 同步执行：只做 jsonb 局部更新，毫秒级，无需放后台。
+			business.MigrateLongTextFieldsToTextarea(context.Background())
 			kb.POST("/:knowledgeId/extract-business", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.ExtractBusinessDocument)
 			kb.PUT("/:knowledgeId/invoice-metadata", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.UpdateInvoiceMetadata)
 			kb.POST("/:knowledgeId/extract-invoice", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), func(c *gin.Context) { business.ExtractInvoice(c, "") })

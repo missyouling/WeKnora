@@ -54,7 +54,7 @@
         :loading="listLoading"
         max-height="100%"
         sticky-header
-        :scroll="{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 }"
+        :scroll="tableScroll"
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -339,7 +339,7 @@ import FleetUploadDialog from './FleetUploadDialog.vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
-import { colWidthOf } from './columnWidth'
+import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -550,12 +550,27 @@ const tableColumns = computed(() => {
   const cols: any[] = [{ colKey: 'row-select', type: 'multiple', width: 46 }, { colKey: 'serial-number', title: '', width: 44 }]
   const rows = filteredRows.value.filter(r => r.kind !== 'pending')
   for (const c of visibleColDefs.value) {
-    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150）
-    const w = colWidthOf(c.width, c.label, rows.map(r => colValue(r, c.key)))
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: w })
+    // 列宽：字段配置 width>0 固定（clamp 60~400）；0/未配置按内容自适应（封顶 150），
+    // 多行文本列走固定中等宽度（长内容按最长单行估算会失真，见 columnWidth.ts）
+    const w = colWidthOf(c.width, c.label, rows.map(r => colValue(r, c.key)), (c as any).dataType)
+    // 多行文本列关闭 ellipsis：TDesign 的 ellipsis 会包一层 nowrap + overflow hidden，
+    // 换行样式会被直接吃掉，长文本仍旧截断
+    cols.push({
+      colKey: c.key,
+      title: c.label,
+      ellipsis: ellipsisOf(c as any),
+      className: cellClassOf(c as any),
+      width: w,
+      // 类型随列下传：tableScrollOf 据此判断是否需要关掉固定行高（多行文本必须逐行测高）
+      dataType: (c as any).dataType,
+    })
   }
   return cols
 })
+
+// 虚拟滚动配置跟随列定义：出现多行文本列（data_type=textarea）必须关掉固定行高，
+// 否则 TDesign 仍按 48px 推算滚动位置，折行后的行会错位、长文本被裁在窗口外。
+const tableScroll = computed(() => tableScrollOf(tableColumns.value))
 
 
 // ---- 标签 ----

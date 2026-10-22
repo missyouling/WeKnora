@@ -207,8 +207,10 @@ export function mergeAiFieldSuggestions(
       ...(label && label !== identity ? { label } : {}),
       enabled: true,
       isDefault: false,
-      dataType: c.data_type === 'number' || c.data_type === 'date' || c.data_type === 'array'
-        ? c.data_type
+      // textarea 必须原样透传：它是「多行文本」这一独立类型（不是 text 的别名），
+      // 落成 text 会让抽屉退回单行输入框、长文本重新被截断
+      dataType: ['number', 'date', 'array', 'textarea'].includes(String(c.data_type))
+        ? String(c.data_type)
         : 'text',
       width: 0,
     })

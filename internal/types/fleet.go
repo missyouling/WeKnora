@@ -151,7 +151,7 @@ type FleetCategorySub struct {
 	Label     string `json:"label,omitempty"` // 自定义中文表头；空=前端按内置字典显示（Name 仍是契约身份）
 	Enabled   bool   `json:"enabled"`
 	IsDefault bool   `json:"is_default"` // 字段筛选器「重置」时默认勾选
-	DataType  string `json:"data_type"`  // text | number | date | array | items（影响提取骨架与编辑控件）
+	DataType  string `json:"data_type"`  // text | textarea | number | date | array | items（影响提取骨架与编辑控件）
 	Width     int    `json:"width"`      // 列表列宽（px）：0=按内容自适应；>0=固定宽度，前端按 min/max 兜底
 	// Builtin 系统内置字段：提取/列表/筛选器/六同步按名取用，允许改文案与宽度但禁止删除。
 	// 新建发票分类时由 invoiceDefaultStandardSubs 全量置 true；存量分类由 ensureInvoiceSystemFields

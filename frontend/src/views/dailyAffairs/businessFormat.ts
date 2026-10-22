@@ -60,11 +60,18 @@ export function formatItemCell(it: any, sf: any): string {
   return String(v)
 }
 
-/** 明细单元格 class：按 dataType 映射（名称宽、数值右对齐、日期中、文本自适应） */
+/**
+ * 明细单元格 class：按 dataType 映射（名称宽、数值右对齐、日期中、文本自适应）。
+ *
+ * 多行文本单独给一个类：明细表默认 `white-space: nowrap`，长说明会被裁在
+ * `max-width` 之外且没有省略号提示（看起来像"数据丢了"）。折行类把它改成
+ * pre-wrap + break-word，让多行文本在明细表里也完整显示。
+ */
 export function itemCellClass(sf: any): string {
   if (sf?.key === 'name') return 'item-cell--name'
   if (sf?.dataType === 'number') return 'item-cell--num'
   if (sf?.dataType === 'date') return 'item-cell--date'
+  if (sf?.dataType === 'textarea') return 'item-cell--multiline'
   return 'item-cell--text'
 }
 

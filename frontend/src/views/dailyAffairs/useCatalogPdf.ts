@@ -52,25 +52,54 @@ const COLOR_TITLE = rgb(0.1, 0.35, 0.2)
 
 function pad2(n: number) { return n < 10 ? `0${n}` : String(n) }
 
-// 按字符宽度换行，返回多行文本（完整显示，不截断）
-function wrapText(font: PDFFont, text: string, maxWidth: number, size: number): string[] {
+// 按显式换行符切段（\r\n / \r / \n 统一），供列宽估算与折行共用同一口径。
+export function splitExplicitLines(text: string): string[] {
+  return String(text || '').replace(/\r\n?/g, '\n').split('\n')
+}
+
+// 按宽度换行，返回多行文本（完整显示，不截断）。`measure` 是单串宽度度量
+// （真实场景为 font.widthOfTextAtSize），抽出纯函数以便行为级单测。
+//
+// 必须先按显式换行符切段：多行文本字段（remark/summary/说明…）的值里带 `\n`，
+// pdf-lib 的 drawText **不解释** `\n`（会被当成缺失字形丢弃或画出豆腐块），
+// 直接逐字折行会把「第一行第二行」黏成一行，用户录入的段落结构丢失。
+// 制表符同理先展开成空格，避免宽度计算与实际渲染不一致。
+export function wrapParagraphs(
+  measure: (s: string) => number,
+  text: string,
+  maxWidth: number,
+): string[] {
   if (!text) return ['']
   const lines: string[] = []
-  let cur = ''
-  let curW = 0
-  for (const ch of text) {
-    const w = font.widthOfTextAtSize(ch, size)
-    if (cur && curW + w > maxWidth) {
-      lines.push(cur)
-      cur = ch
-      curW = w
-    } else {
-      cur += ch
-      curW += w
+  for (const para of splitExplicitLines(text).map((p) => p.replace(/\t/g, '    '))) {
+    if (para === '') {
+      // 空行保留为真正的空行（段落间距），否则多段文本会被压成一整块
+      lines.push('')
+      continue
     }
+    let cur = ''
+    let curW = 0
+    for (const ch of para) {
+      const w = measure(ch)
+      if (cur && curW + w > maxWidth) {
+        lines.push(cur)
+        cur = ch
+        curW = w
+      } else {
+        cur += ch
+        curW += w
+      }
+    }
+    if (cur) lines.push(cur)
   }
-  if (cur) lines.push(cur)
+  // 尾部空行没有渲染意义（会被行高算成额外留白），裁掉；全空时保留一个空行占位
+  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
   return lines.length ? lines : ['']
+}
+
+// 字体度量版折行（调用方只需关心 fontSize）
+function wrapText(font: PDFFont, text: string, maxWidth: number, size: number): string[] {
+  return wrapParagraphs((s) => font.widthOfTextAtSize(s, size), text, maxWidth)
 }
 
 export async function generateCatalogPdf(opts: {
@@ -89,11 +118,15 @@ export async function generateCatalogPdf(opts: {
   const avail = PAGE_W - MARGIN * 2
 
   // 列宽：按 表头/内容 最大宽度估算（内容权重），clamp 到 [MIN_COL_W, MAX_COL_W]
+  // 多行文本取「最长单行」而非整段宽度：否则一段带换行的备注会把列撑到 MAX_COL_W，
+  // 其余列被压到 MIN_COL_W，整张目录表比例失衡。
   const colMax = columns.map((c) => {
     let max = font.widthOfTextAtSize(c.label, HEADER_SIZE)
     for (const r of rows) {
-      const w = font.widthOfTextAtSize(c.value(r) || '', CELL_SIZE)
-      if (w > max) max = w
+      for (const line of splitExplicitLines(c.value(r) || '')) {
+        const w = font.widthOfTextAtSize(line, CELL_SIZE)
+        if (w > max) max = w
+      }
     }
     return Math.min(MAX_COL_W, Math.max(MIN_COL_W, max + CELL_PAD * 2))
   })

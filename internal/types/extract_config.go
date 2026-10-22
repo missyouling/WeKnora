@@ -7,7 +7,7 @@ type ExtractFieldConfig struct {
 	Name     string `json:"name"`               // 输出 JSON 的字段 key，如“经营地址”
 	Label    string `json:"label"`              // 界面显示名（可为空，缺省与 name 相同）
 	Desc     string `json:"desc"`               // 字段描述，如“公司实际经营地址”
-	Type     string `json:"type"`               // string | array | date | number | items
+	Type     string `json:"type"`               // string | textarea | array | date | number | items
 	Rule     string `json:"rule"`               // 提取规则/特殊说明（自然语言，进 Prompt）
 	Regex    string `json:"regex,omitempty"`    // 后置兜底正则（Go RE2）；LLM 未提取到该字段时用它在原文补洞
 	Required bool   `json:"required,omitempty"` // 是否必填（供校验器判定 error 级问题）

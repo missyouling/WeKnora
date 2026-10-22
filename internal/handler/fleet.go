@@ -904,7 +904,7 @@ func invoiceDefaultStandardSubs() []types.FleetCategorySub {
 		{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 		{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
@@ -1781,7 +1781,7 @@ func contractSeedSubs() []types.FleetCategorySub {
 		{Name: "party_b_account", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "payment_method", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "sign_location", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "textarea"},
 		// 注意：seed 里**不放** fileName。它是文件属性（列表系统列），不是提取字段；
 		// seed 进去会让它渗进字段定义面板、编辑抽屉与提取规则表，成为用户看不到来历的
 		// 幽灵字段（2026-10-21 真机验收）。列表侧的「文件名」列由前端
@@ -1904,9 +1904,9 @@ func regulationSeedSubs() []types.FleetCategorySub {
 		{Name: "compiledBy", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "reviewedBy", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "approvedBy", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "textarea"},
 		{Name: "confidentiality", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 		// 系统字段
 		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
@@ -1941,7 +1941,7 @@ func noticeSeedSubs() []types.FleetCategorySub {
 		{Name: "person", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "measure", Enabled: true, IsDefault: false, DataType: "text"},
 		{Name: "basis", Enabled: true, IsDefault: false, DataType: "text"},
-		{Name: "summary", Enabled: true, IsDefault: false, DataType: "text"},
+		{Name: "summary", Enabled: true, IsDefault: false, DataType: "textarea"},
 		// 同上：fileName 是列表系统列，不进提取字段目录。
 	}
 }
@@ -2023,7 +2023,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
@@ -2042,7 +2042,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "buyerName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "remark", Enabled: true, IsDefault: false, DataType: "text"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: false, DataType: "text"},
@@ -2068,7 +2068,7 @@ func (h *FleetHandler) seedBusinessCategories() {
 			{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "sellerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-			{Name: "remark", Enabled: true, IsDefault: false, DataType: "array"},
+			{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 			{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 			{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 			{Name: "items", Enabled: true, IsDefault: false, DataType: "items", SubFields: invoiceItemSubFieldsStandard()},
@@ -2174,7 +2174,7 @@ func (h *FleetHandler) seedInvoiceMiscSubsBackfill(ctx context.Context) {
 		{Name: "sellerName", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "sellerTaxNo", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "issuer", Enabled: true, IsDefault: true, DataType: "text"},
-		{Name: "remark", Enabled: true, IsDefault: false, DataType: "array"},
+		{Name: "remark", Enabled: true, IsDefault: false, DataType: "textarea"},
 		{Name: "extractStatus", Enabled: true, IsDefault: true, DataType: "text"},
 		{Name: "tags", Enabled: true, IsDefault: true, DataType: "array"},
 		{Name: "items", Enabled: true, IsDefault: false, DataType: "items"},

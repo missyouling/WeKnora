@@ -67,6 +67,8 @@ test('单元格 class 按 key/dataType 映射', () => {
   assert.equal(itemCellClass({ key: 'amount', dataType: 'number' }), 'item-cell--num')
   assert.equal(itemCellClass({ key: 'travel_from', dataType: 'date' }), 'item-cell--date')
   assert.equal(itemCellClass({ key: 'spec', dataType: 'text' }), 'item-cell--text')
+  // 多行文本子列单独给折行类：明细表默认 nowrap + ellipsis，长说明会被裁掉
+  assert.equal(itemCellClass({ key: 'note', dataType: 'textarea' }), 'item-cell--multiline')
 })
 
 test('浮层宽度 = 启用列宽之和 + 20，夹在 [280, 820]', () => {

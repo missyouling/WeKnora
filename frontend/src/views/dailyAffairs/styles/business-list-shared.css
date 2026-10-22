@@ -304,6 +304,26 @@
   to { transform: rotate(360deg); }
 }
 
+/* 多行文本单元格（data_type === 'textarea'）。
+ *
+ * 为什么必须覆盖到 td 与内部 span 两层：
+ *   · TDesign 给 td 的默认 `overflow-wrap: break-word` 只在有换行上下文时生效，
+ *     而列表单元格内容一律包在 `.row-text`（nowrap + ellipsis）里，长文本仍会被截断；
+ *   · 只有同时把 td 与后代置为 pre-wrap，用户录入的换行（Excel 粘贴/多段落）
+ *     才会真实呈现，且长串中文按字符折行而不是撑爆列宽。
+ * 不设 max-height：需求是「列表页完整显示，不出现截断」，行高随内容增长，
+ * 虚拟滚动侧由 scroll.isFixedRowHeight=false 保证逐行测量（见各页 scrollConfig）。
+ */
+.biz-page .doc-list-view td.biz-cell--multiline,
+.biz-page .doc-list-view td.biz-cell--multiline .row-text,
+.biz-page .doc-list-view td.biz-cell--multiline .row-mono {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 20px;
+}
+
 .biz-page .row-text {
   min-width: 0;
   white-space: nowrap;

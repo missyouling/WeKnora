@@ -48,10 +48,16 @@
                   format="YYYY-MM-DD" clearable allow-input />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
                   @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
-                <!-- 摘要 / 多行长文本：统一多行文本域，不截断、不拆胶囊。
-                     必须放在 array 分支**之前** —— 验收期曾把 summary 的
-                     data_type 误改成 array，落到 tag-input 后被顿号拆成 4 个
-                     带 × 的灰色标签，与知识库详情里的段落摘要完全两样。 -->
+                <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
+                     支持换行与自动折行，长内容完整录入与展示不截断。
+                     用户显式选择的类型优先于下方的字段名兜底。 -->
+                <t-textarea v-else-if="f.dataType === 'textarea'" v-model="form.data[f.name]"
+                  :autosize="{ minRows: 2, maxRows: 6 }" />
+                <!-- 摘要 / 多行长文本兜底：字段名命中白名单但 data_type 仍是 text
+                     （存量数据未迁移 / 用户改回单行前的过渡态）时也用文本域，
+                     避免长摘要被单行输入框截断。必须放在 array 分支**之前** ——
+                     验收期曾把 summary 的 data_type 误改成 array，落到 tag-input
+                     后被顿号拆成 4 个带 × 的灰色标签，与知识库详情里的段落摘要完全两样。 -->
                 <t-textarea v-else-if="isLongTextField(f)" v-model="form.data[f.name]"
                   :autosize="{ minRows: 2, maxRows: 5 }" />
                 <!-- 数组类型（字段定义里把类型改成「数组」）：回车追加多值标签。
@@ -217,7 +223,8 @@ const isLongTextField = (f: DetailFieldMeta): boolean => {
  */
 const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
 const fieldClassOf = (f: DetailFieldMeta) => ({
-  'bsd-field--full': isLongType(f) || isLongTextField(f) || f.name === 'fileName',
+  // 多行文本 / 数组 / 长文本字段占满整行（单行字段才两列并排）
+  'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || isLongTextField(f) || f.name === 'fileName',
 })
 function close() {
   emit('cancel')
@@ -305,6 +312,15 @@ function close() {
 .bsd-items-table th { font-weight: 500; color: var(--td-text-color-secondary); }
 .bsd-items-table td { color: var(--td-text-color-primary); }
 .bsd-items-table :deep(.item-cell--num) { text-align: right; }
+/* 明细里的多行文本子列（如「说明」）：默认 nowrap + ellipsis 会把长内容裁掉，
+   看起来像数据丢了。改成折行完整显示，与列表/打印同一呈现口径。 */
+.bsd-items-table :deep(.item-cell--multiline) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 240px;
+}
 .bsd-muted { color: var(--td-text-color-placeholder); font-size: 12px; }
 /* 源文件预览：永远位于最底部；折叠态不挂载重型资源。
    分割线对齐：.bsd-body 有左右内边距，若直接画 border-top，这条线会比抽屉底部

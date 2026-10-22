@@ -273,6 +273,9 @@ export function fieldTypeOfSub(dataType: string): string {
     case 'date': return 'date'
     case 'array': return 'array'
     case 'items': return 'items'
+    // textarea 原样保留（与后端 extractTypeOfSubDataType / invoiceRuleTypeFor 同口径）：
+    // 归一成 string 会让「字段定义」显示多行文本、「提取规则」显示单行文本，六同步断裂。
+    case 'textarea': return 'textarea'
     default: return 'string'
   }
 }

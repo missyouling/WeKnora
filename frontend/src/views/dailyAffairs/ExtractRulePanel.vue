@@ -580,7 +580,8 @@ const ruleExamples = [
 ]
 
 const typeOptions = [
-  { label: '字符串', value: 'string' },
+  { label: '单行文本', value: 'string' },
+  { label: '多行文本', value: 'textarea' },
   { label: '数组', value: 'array' },
   { label: '日期', value: 'date' },
   { label: '数字', value: 'number' },
@@ -735,6 +736,9 @@ function subsTypeToExtractType(dataType: string): string {
     case 'date': return 'date'
     case 'array': return 'array'
     case 'items': return 'items'
+    // textarea 原样保留：与后端 extractTypeOfSubDataType / invoiceRuleTypeFor 同口径。
+    // 归一成 string 会让「字段定义」显示多行文本、规则面板显示单行文本，六同步断裂。
+    case 'textarea': return 'textarea'
     case 'text': return 'string'
     default: return ''
   }
@@ -774,7 +778,7 @@ function applyRegexPreset(f: ExtractFieldConfig, p: RegexPreset) {
 }
 
 function typeLabel(t: string) {
-  return typeOptions.find((o) => o.value === t)?.label || '字符串'
+  return typeOptions.find((o) => o.value === t)?.label || '单行文本'
 }
 
 function applyExample(f: ExtractFieldConfig, text: string) {

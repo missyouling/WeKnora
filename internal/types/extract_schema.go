@@ -15,17 +15,23 @@ package types
 type FieldType string
 
 const (
-	FieldTypeText   FieldType = "text"
-	FieldTypeNumber FieldType = "number"
-	FieldTypeDate   FieldType = "date"
-	FieldTypeArray  FieldType = "array"
+	// FieldTypeText 单行文本：详情抽屉渲染 <t-input>，禁换行，适合短内容。
+	FieldTypeText FieldType = "text"
+	// FieldTypeTextarea 多行文本：详情抽屉渲染 <t-textarea>，支持换行与自动折行，
+	// 列表/打印完整展示不截断。与 text 存储格式一致（都是 string），只影响渲染与骨架。
+	// 2026-10-22 从 text 细分出来：备注/摘要等长文本字段此前只有 text 一种类型，
+	// 抽屉渲染成单行输入框导致长内容截断（真机截图「业务流水号:2026102215...」）。
+	FieldTypeTextarea FieldType = "textarea"
+	FieldTypeNumber   FieldType = "number"
+	FieldTypeDate     FieldType = "date"
+	FieldTypeArray    FieldType = "array"
 )
 
 // FieldDef 一个标准契约字段的声明。
 type FieldDef struct {
 	Key     string    `json:"key"`            // 契约键（= 结构体 json tag / 前端配置名经 canonical 归一后命中）
 	Label   string    `json:"label"`          // 中文显示名（喂 AI 字典与界面）
-	Type    FieldType `json:"type"`           // text | number | date | array
+	Type    FieldType `json:"type"`           // text | textarea | number | date | array
 	Hint    string    `json:"hint,omitempty"` // 喂 LLM 的语义提示
 	Aliases []string  `json:"aliases,omitempty"`
 	// Regex 内置兜底正则（后置补洞的 builtin 来源；用户配置优先于它）。

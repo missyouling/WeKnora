@@ -332,6 +332,11 @@ func (h *BusinessExtractHandler) alignExtractConfigWithCategory(
 }
 
 // extractTypeOfSubDataType 把分类 subs 的 data_type 归一为提取配置的 type 方言。
+//
+// `textarea` 与 `string` 在这里是**同一个语义**（都是 string 类型的提取结果，
+// 送模型的 JSON Schema 也都是 "type": "string"）。但必须原样保留 `textarea`：
+// 前端「提取规则」的类型下拉据此显示「多行文本」，与「字段定义」保持一致；
+// 归一成 string 会让同一字段在两张表里显示不同类型，六同步断裂。
 func extractTypeOfSubDataType(dataType string) string {
 	switch strings.TrimSpace(dataType) {
 	case "number":
@@ -342,6 +347,8 @@ func extractTypeOfSubDataType(dataType string) string {
 		return "array"
 	case "items":
 		return "items"
+	case "textarea":
+		return "textarea"
 	default:
 		return "string"
 	}
@@ -957,12 +964,17 @@ func mergeInvoiceRuleFields(cur, draft []types.ExtractFieldConfig, catName strin
 }
 
 // invoiceRuleTypeFor 将 FleetCategorySub.DataType 映射为 ExtractFieldConfig.Type。
+//
+// textarea 必须保留（同 extractTypeOfSubDataType 的注释）：发票的备注/说明也是
+// 多行文本字段，规则面板要显示「多行文本」，不能让它在发票模块里退回「字符串」。
 func invoiceRuleTypeFor(dt string) string {
 	switch strings.TrimSpace(dt) {
 	case "number":
 		return "number"
 	case "array", "items":
 		return "array"
+	case "textarea":
+		return "textarea"
 	case "date":
 		return "string"
 	default:

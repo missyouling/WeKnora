@@ -110,6 +110,14 @@ const colStyle = (sf: any) => (Number(sf?.width) > 0 ? { width: Number(sf.width)
 }
 :global(.biz-sub-popover .biz-sub-table td) { color: var(--td-text-color-primary); }
 :global(.biz-sub-popover .biz-sub-table .item-cell--num) { text-align: right; }
+/* 明细浮层里的多行文本子列：折行完整显示（与详情抽屉同一口径） */
+:global(.biz-sub-popover .biz-sub-table .item-cell--multiline) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 240px;
+}
 :global(.biz-sub-popover .biz-sub-empty) {
   color: var(--td-text-color-secondary);
   font-size: 12px;

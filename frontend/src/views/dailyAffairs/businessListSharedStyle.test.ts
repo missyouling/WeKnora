@@ -107,12 +107,24 @@ test('四个页面列表表格参数一致（sticky-header + 虚拟滚动 48px�
     const src = read(f)
     assert.match(src, /class="doc-table"/, `${f} 表格必须使用 .doc-table`)
     assert.match(src, /sticky-header/, `${f} 表头必须 sticky`)
+    // 2026-10-22：scroll 配置收口到 tableScrollOf()（多行文本列出现时必须关掉固定行高，
+    // 否则 TDesign 仍按 48px 推算滚动位置，折行后的行会错位）。断言配置走同一工具、
+    // 且行高基准仍是 48px。
     assert.match(
       src,
-      /:scroll="\{ type: 'virtual', rowHeight: 48, isFixedRowHeight: true, bufferSize: 20 \}"/,
-      `${f} 虚拟滚动行高必须与基准页一致（48px）`,
+      /:scroll="tableScroll"/,
+      `${f} 虚拟滚动配置必须走 tableScrollOf()（统一 48px 行高 + 多行文本自适应）`,
     )
+    assert.match(src, /const tableScroll = computed\(\(\) => tableScrollOf\(tableColumns\.value\)\)/, `${f} tableScroll 必须由列定义派生`)
   }
+  // 工具函数默认值锁定
+  const util = read('columnWidth.ts')
+  assert.match(util, /rowHeight: opts\?\.rowHeight \?\? 48/, '虚拟滚动默认行高必须与基准页一致（48px）')
+  assert.match(
+    util,
+    /isFixedRowHeight: !cols\.some\(\(c\) => isTextareaColumn\(c\)\)/,
+    '出现多行文本列时必须关掉固定行高，让 TDesign 逐行测量真实高度',
+  )
 })
 
 test('底栏位于列表边框容器内部（与基准页同层级）', () => {

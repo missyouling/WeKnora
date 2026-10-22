@@ -633,7 +633,8 @@ function subFieldsOf(fd: EditableField): EditableSubField[] {
 }
 // 子项可选类型不含「明细」——明细行里再套明细是无效结构
 const subDataTypeOptions = [
-  { label: '文本', value: 'text' },
+  { label: '单行文本', value: 'text' },
+  { label: '多行文本', value: 'textarea' },
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
 ]
@@ -678,8 +679,14 @@ function removeSubField(fd: EditableField, sf: EditableSubField) {
   if (next.length === fd.subFields.length) return
   fd.subFields = next
 }
+// 类型选项：文本细分为「单行文本 / 多行文本」（2026-10-22）。
+// 单行文本 = 常规输入框，禁换行，适合短内容（编号/名称/金额…）；
+// 多行文本 = 多行编辑区域，支持换行与自动折行，适合备注/摘要/说明等长内容，
+// 详情抽屉、列表与打印导出均完整展示不截断。
+// 两者存储格式一致（都是 string），只影响渲染控件与列表折行策略。
 const dataTypeOptions = [
-  { label: '文本', value: 'text' },
+  { label: '单行文本', value: 'text' },
+  { label: '多行文本', value: 'textarea' },
   { label: '数字', value: 'number' },
   { label: '日期', value: 'date' },
   { label: '数组', value: 'array' },
