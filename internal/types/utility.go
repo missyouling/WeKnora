@@ -115,6 +115,10 @@ type UtilityBillExtractionItem struct {
 	// 概况
 	BillPeriodStart  string  `json:"bill_period_start"`  // 账单周期起 2026-08-01
 	BillPeriodEnd    string  `json:"bill_period_end"`    // 账单周期止 2026-08-31
+	// BillPeriod 账单月份（派生，YYYY-MM）。
+	// 由 NormalizeBillingPeriod(bill_period_start/end) 在提取归一阶段写入，
+	// 列表「账单周期」列只读它 —— 起止日范围会把列宽撑爆并截断成 "2026-09-0..."。
+	BillPeriod       string  `json:"bill_period"`        // 账单月份 2026-08
 	AccountNo        string  `json:"account_no"`         // 户号
 	AccountName      string  `json:"account_name"`       // 户名
 	MeterNo          string  `json:"meter_no"`           // 电能表编号（主计量表）
@@ -260,6 +264,8 @@ type SolarBillExtractionItem struct {
 	// 基础信息
 	BillPeriodStart string `json:"bill_period_start"` // 账单周期起 2026-08-01
 	BillPeriodEnd   string `json:"bill_period_end"`   // 账单周期止 2026-08-31
+	// BillPeriod 账单月份（派生，YYYY-MM），与电费账单同口径。
+	BillPeriod      string `json:"bill_period"`       // 账单月份 2026-08
 	AccountNo       string `json:"account_no"`        // 发电户号
 	AccountName     string `json:"account_name"`      // 户名
 	SupplyUnit      string `json:"supply_unit"`       // 服务单位

@@ -300,6 +300,9 @@ func NormalizeUtilityBillExtractionResult(extracted *UtilityBillExtractionResult
 	}
 	for i := range extracted.Records {
 		r := &extracted.Records[i]
+		// 账单月份派生（YYYY-MM）：列表「账单周期」列只读 bill_period。
+		// 起止日范围保留在 start/end 供上期对比与详情展示，但不直接上主列表。
+		r.BillPeriod = billingPeriodOfRecord("", r.BillPeriodStart, r.BillPeriodEnd)
 		if r.GrandTotal == 0 && r.TotalAmount != 0 {
 			r.GrandTotal = r.TotalAmount
 		}

@@ -178,6 +178,8 @@ func NormalizeSolarBillExtractionResult(extracted *SolarBillExtractionResult) {
 	}
 	for i := range extracted.Records {
 		r := &extracted.Records[i]
+		// 账单月份派生（YYYY-MM），与电费账单同口径
+		r.BillPeriod = billingPeriodOfRecord("", r.BillPeriodStart, r.BillPeriodEnd)
 		// 结算金额兜底：无值时按上网关口电费合计
 		if r.SettlementAmount == 0 {
 			for _, g := range r.Gateways {

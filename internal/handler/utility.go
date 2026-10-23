@@ -1292,34 +1292,35 @@ func electricityDefaultGroupFields(group string) []utilityFieldDef {
 	g := group
 	switch group {
 	case "overview":
+		// 账单概况：严格 20 个业务字段（产品定稿，顺序即列表列顺序）。
+		//
+		// 曾经的 27 个字段里塞了 bill_period_start/end、print_date、尖峰/峰/平/谷电量
+		// 等明细维度，导致：
+		//   ① 「账单周期」重复两列（bill_period_start 与派生的 bill_period 都叫账单周期）；
+		//   ② 主列表被 30+ 列撑爆，核心信息反而要横向滚动才看得到。
+		// 现在只保留"一眼看清这张账单"的 20 项；起止日/分时电量仍在提取结果里，
+		// 只是不进主列表与字段配置面（详情抽屉另行展示）。
 		return []utilityFieldDef{
-			{"bill_period_start", "账单周期起", "date", true, g},
-			{"bill_period_end", "账单周期止", "date", false, g},
+			{"bill_period", "账单周期", "text", true, g},
 			{"account_no", "户号", "text", true, g},
 			{"account_name", "户名", "text", true, g},
 			{"usage_category", "用电类别", "text", true, g},
-			{"voltage_level", "电压等级", "text", false, g},
-			{"market_attr", "市场化属性", "text", false, g},
-			{"supply_unit", "供电服务单位", "text", false, g},
-			{"address", "用电地址", "text", false, g},
-			{"meter_no", "电能表编号", "text", false, g},
+			{"voltage_level", "电压等级", "text", true, g},
+			{"market_attr", "市场化属性", "text", true, g},
+			{"supply_unit", "供电服务单位", "text", true, g},
+			{"address", "用电地址", "text", true, g},
+			{"meter_no", "电能表编号", "text", true, g},
 			{"total_kwh", "本期电量", "number", true, g},
 			{"total_amount", "本期电费", "amount", true, g},
-			{"prev_kwh", "上期电量", "number", false, g},
-			{"mom_change", "环比", "text", false, g},
+			{"prev_kwh", "上期电量", "number", true, g},
+			{"mom_change", "环比", "text", true, g},
 			{"avg_price", "平均电价", "number", true, g},
-			{"power_factor", "功率因数", "number", true, g},
-			{"due_date", "交费截止", "date", false, g},
-			{"industrial_amount", "工商业电费", "amount", false, g},
-			{"residential_amount", "居民电费", "amount", false, g},
-			{"pf_adjust_amount", "功率因数调整电费", "amount", false, g},
-			{"grand_total", "合计", "amount", false, g},
-			{"deep_peak_kwh", "尖峰电量", "number", false, g},
-			{"peak_kwh", "峰电量", "number", false, g},
-			{"flat_kwh", "平电量", "number", false, g},
-			{"valley_kwh", "谷电量", "number", false, g},
-			{"reactive_kwh", "正向无功电量", "number", false, g},
-			{"print_date", "账单打印日期", "date", false, g},
+			{"power_factor", "功率因素", "number", true, g},
+			{"due_date", "交费截止", "date", true, g},
+			{"industrial_amount", "工商业电费", "amount", true, g},
+			{"residential_amount", "居民电费", "amount", true, g},
+			{"pf_adjust_amount", "力调电费", "amount", true, g},
+			{"grand_total", "合计", "amount", true, g},
 		}
 	case "market", "line", "trans", "sys", "gov-industrial", "catalog", "gov-residential":
 		return []utilityFieldDef{

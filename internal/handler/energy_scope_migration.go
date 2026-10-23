@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -140,9 +142,8 @@ func (h *UtilityHandler) MigrateUtilityFieldConfigsToEnergyScope(
 		}
 		exist.Subs = payload
 		if exists {
-			if err := h.db.WithContext(ctx).Model(&types.FleetCategory{}).
-				Where("id = ?", exist.ID).
-				Updates(map[string]any{"subs": payload, "updated_at": timeNowUTC()}).Error; err != nil {
+			exist.UpdatedAt = timeNowUTC()
+			if err := h.db.WithContext(ctx).Save(&exist).Error; err != nil {
 				return written, fields, err
 			}
 		} else {
@@ -285,15 +286,318 @@ func (h *UtilityHandler) MigrateEnergyScope(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("migrate energy scope failed: " + err.Error()))
 		return
 	}
-	// 提取规则底稿不在这里补：由设置抽屉首次打开时经
-	// ensureBusinessExtractConfigDefaults 幂等落库（scope=energy 已在白名单里）。
-	// 这样迁移接口保持"只碰分类与字段"的单一职责，出问题好定位。
+	// 「账单概况」重置为 20 个业务字段（幂等），并同步提取规则字段集
+	overviewFields, _ := h.MigrateEnergyOverviewFields(ctx)
+	ruleFields, _ := h.resetEnergyExtractConfigFields(ctx)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
 			"categories_written": written,
 			"fields_written":     fields,
+			"overview_fields":    overviewFields,
+			"rule_fields":        ruleFields,
 			"forced":             force,
 		},
 	})
+}
+
+// energyLegacyOverviewKeys 上一版误并入「账单概况」的字段（需在重置时清除）。
+//
+// 来源两处：旧 overview 27 项（起止日/打印日/分时电量/容需量）与目录里的
+// 7 个费用汇总列（market_amount 等）。它们都不是"一眼看清这张账单"的必需项，
+// 留在主列表只会把列数推到 34 并制造重复的「账单周期」。
+var energyLegacyOverviewKeys = map[string]bool{
+	"bill_period_start": true, "bill_period_end": true, "print_date": true,
+	"capacity": true, "capacity_price": true, "capacity_fee": true,
+	"demand": true, "pf_standard": true, "adjust_ratio": true,
+	"deep_peak_kwh": true, "peak_kwh": true, "flat_kwh": true,
+	"valley_kwh": true, "reactive_kwh": true,
+	"market_amount": true, "line_amount": true, "trans_amount": true,
+	"sys_amount": true, "catalog_amount": true, "govI_amount": true, "govR_amount": true,
+}
+
+// MigrateEnergyOverviewFields 把「市电账单 -> 账单概况」重置为严格 20 个业务字段。
+//
+// 幂等：当前 overview 的键序列与目标一致时直接返回 0，不写库。
+// 其它分组（12 个费用分项 + 细项）一律不动。
+func (h *UtilityHandler) MigrateEnergyOverviewFields(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL",
+			EnergyScope, EnergyBillTypeUtility).
+		Order("sort_order ASC").First(&cat).Error; err != nil {
+		return 0, nil
+	}
+	want := electricityDefaultGroupFields("overview")
+	// 目标 overview 序列
+	target := make([]types.FleetCategorySub, 0, len(want))
+	for _, d := range want {
+		target = append(target, types.FleetCategorySub{
+			Name:       d.key,
+			Label:      d.label,
+			Enabled:    true,
+			IsDefault:  d.def,
+			DataType:   normalizeUtilityDataType(d.typ),
+			Group:      "overview",
+			GroupLabel: migratedGroupLabels["overview"],
+		})
+	}
+	// 现有 overview 是否已达标（键序列 + 默认可见位都一致才跳过）
+	//
+	// 为什么要比 is_default：20 个概况字段是主列表口径，全部默认可见；
+	// 早期版本只把 8 个标成默认，导致升级后列表只显示 8 列。只比键序列会漏掉这次修正。
+	var current []string
+	same := true
+	idx := 0
+	for _, s := range cat.Subs {
+		if strings.TrimSpace(s.Group) != "overview" {
+			continue
+		}
+		current = append(current, strings.TrimSpace(s.Name))
+		if idx < len(target) {
+			if strings.TrimSpace(s.Name) != target[idx].Name || s.IsDefault != target[idx].IsDefault {
+				same = false
+			}
+		}
+		idx++
+	}
+	if len(current) == len(target) && same {
+		return 0, nil
+	}
+	// 重建：非 overview 分组原样保留，overview 用目标序列前置（保证列顺序）
+	next := make([]types.FleetCategorySub, 0, len(cat.Subs)+len(target))
+	next = append(next, target...)
+	for _, s := range cat.Subs {
+		if strings.TrimSpace(s.Group) == "overview" {
+			continue
+		}
+		next = append(next, s)
+	}
+	// 必须用结构体 Save：`Updates(map[string]any{"subs": slice})` 会被 pgx 当成
+	// record 表达式直接报 `column "subs" is of type jsonb but expression is of type record`。
+	// （与 memory 里记的 jsonb 写入陷阱同源，禁 gorm.Expr / map 传切片。）
+	cat.Subs = next
+	cat.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&cat).Error; err != nil {
+		return 0, err
+	}
+	logger.Infof(ctx, "energy overview reset: %d -> %d fields (category=%s)", len(current), len(target), cat.Name)
+	return len(target), nil
+}
+
+// resetEnergyExtractConfigFields 把「市电账单」的提取规则字段重置为目录默认 20 项，
+// 保留用户自建的非标准字段（不在 energyLegacyOverviewKeys 里的）。
+//
+// 为什么必须一起重置：提取规则页的字段集合来自 subs 对齐，但 align 会把
+// "配置里有、subs 里没有"的字段追加回来——旧的 bill_period_start/end 等
+// 会因此复活，规则页又变成 34 行。
+func (h *UtilityHandler) resetEnergyExtractConfigFields(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cfg types.KbExtractConfig
+	if err := h.db.WithContext(ctx).
+		Where("scope = ? AND cert_type = ? AND deleted_at IS NULL", EnergyScope, EnergyBillTypeUtility).
+		Order("updated_at DESC").First(&cfg).Error; err != nil {
+		return 0, nil
+	}
+	defaults := service.DefaultExtractFields(EnergyScope, EnergyBillTypeUtility)
+	byName := make(map[string]types.ExtractFieldConfig, len(defaults))
+	for _, d := range defaults {
+		byName[d.Name] = d
+	}
+	next := make([]types.ExtractFieldConfig, 0, len(defaults)+4)
+	for _, d := range defaults {
+		// 已有配置里的 desc/rule/regex 若用户改过则沿用
+		if old, ok := findFieldByName(cfg.Fields, d.Name); ok {
+			if strings.TrimSpace(old.Desc) != "" {
+				d.Desc = old.Desc
+			}
+			if strings.TrimSpace(old.Rule) != "" {
+				d.Rule = old.Rule
+			}
+			if strings.TrimSpace(old.Regex) != "" {
+				d.Regex = old.Regex
+			}
+			d.Enabled = old.Enabled
+		}
+		next = append(next, d)
+	}
+	// 保留用户自建字段（既不在新目录、也不在历史遗留清单里）
+	keptCustom := 0
+	for _, f := range cfg.Fields {
+		name := strings.TrimSpace(f.Name)
+		if name == "" || byName[name].Name != "" || energyLegacyOverviewKeys[name] {
+			continue
+		}
+		next = append(next, f)
+		keptCustom++
+	}
+	if len(cfg.Fields) == len(next) && keptCustom == 0 {
+		// 长度相同不代表内容相同，仍然写回（低成本、幂等）
+	}
+	// 同 subs：`Updates(map{"fields": slice})` 会被当成 record 表达式，必须走结构体 Save
+	cfg.Fields = next
+	cfg.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&cfg).Error; err != nil {
+		return 0, err
+	}
+	return len(next), nil
+}
+
+func findFieldByName(fields []types.ExtractFieldConfig, name string) (types.ExtractFieldConfig, bool) {
+	for _, f := range fields {
+		if strings.TrimSpace(f.Name) == name {
+			return f, true
+		}
+	}
+	return types.ExtractFieldConfig{}, false
+}
+
+// energyFeeGroups 拥有「费用组成 / 分时时段」细项的费用分项分组。
+var energyFeeGroups = []string{
+	"market", "line", "trans", "sys",
+	"gov-industrial", "catalog", "gov-residential",
+}
+
+// energyPeriodItems 分时时段细项的默认集合（账单原文的四种时段）。
+//
+// 注意：这里用「尖 / 峰 / 平 / 谷」而不是账单表头的「尖峰」——
+// 费用行 period 列的原文既有「尖峰」也有「尖」，两者按前缀匹配同一时段，
+// 配置面用短名，分词与分组统计更稳定。
+var energyPeriodItems = []string{"尖", "峰", "平", "谷"}
+
+// ensureEnergyPeriodSubItems 为每个费用分组补齐 `<group>-periods` 细项。
+//
+// 为什么需要它：`-rows`（费用组成细项）在旧配置里已经存在，但「分时时段」
+// 从未有独立的细项组——它此前是写死在渲染里的常量。产品要求时段也要可配
+// （不同省份分时政策不同），因此沉淀成 subs：group = `<费用分组>-periods`。
+//
+// 幂等：分组已有条目时跳过，不覆盖用户改名/停用。
+func (h *UtilityHandler) ensureEnergyPeriodSubItems(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL",
+			EnergyScope, EnergyBillTypeUtility).
+		Order("sort_order ASC").First(&cat).Error; err != nil {
+		return 0, nil
+	}
+	has := map[string]bool{}
+	for _, s := range cat.Subs {
+		has[strings.TrimSpace(s.Group)] = true
+	}
+	added := 0
+	next := make([]types.FleetCategorySub, 0, len(cat.Subs)+len(energyFeeGroups)*len(energyPeriodItems))
+	next = append(next, cat.Subs...)
+	for _, g := range energyFeeGroups {
+		pg := g + "-periods"
+		if has[pg] {
+			continue
+		}
+		for _, p := range energyPeriodItems {
+			next = append(next, types.FleetCategorySub{
+				Name:       p,
+				Label:      p,
+				Enabled:    true,
+				IsDefault:  true,
+				DataType:   "text",
+				Group:      pg,
+				GroupLabel: migratedGroupLabels[g] + " · 时段",
+			})
+			added++
+		}
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	cat.Subs = next
+	cat.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&cat).Error; err != nil {
+		return 0, err
+	}
+	logger.Infof(ctx, "energy period sub-items added: %d", added)
+	return added, nil
+}
+
+// BackfillBillingPeriod 把存量账单的账单周期刷正为 YYYY-MM。
+//
+// 背景：改造前 bill_period 是前端拼的 `${start} ~ ${end}`，落库时根本没有该字段；
+// 列表于是显示成 "2026-09-0..."。现在 bill_period 是后端派生字段，但老数据没有，
+// 必须回填一次，否则用户升级后看到的还是老样子。
+//
+// 幂等：只在该记录 bill_period 与目标值不同时写库；重复执行无副作用。
+func (h *UtilityHandler) BackfillBillingPeriod(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	type row struct {
+		ID             string
+		CustomMetadata types.JSON
+	}
+	var rows []row
+	if err := h.db.WithContext(ctx).Raw(`
+		SELECT id, custom_metadata FROM knowledges
+		WHERE deleted_at IS NULL
+		  AND custom_metadata->>'kind' IN ('utility_bill','solar_bill','energy')`).Scan(&rows).Error; err != nil {
+		return 0, err
+	}
+	patched := 0
+	for _, r := range rows {
+		var meta map[string]any
+		if err := json.Unmarshal([]byte(r.CustomMetadata), &meta); err != nil {
+			continue
+		}
+		records, _ := meta["records"].([]any)
+		if len(records) == 0 {
+			continue
+		}
+		changed := false
+		for _, rec := range records {
+			m, ok := rec.(map[string]any)
+			if !ok {
+				continue
+			}
+			start, _ := m["bill_period_start"].(string)
+			end, _ := m["bill_period_end"].(string)
+			raw, _ := m["bill_period"].(string)
+			want := service.NormalizeBillingPeriod(raw)
+			if want == "" {
+				want = service.NormalizeBillingPeriod(start)
+			}
+			if want == "" {
+				want = service.NormalizeBillingPeriod(end)
+			}
+			if want == "" {
+				continue
+			}
+			if raw != want {
+				m["bill_period"] = want
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		buf, err := json.Marshal(meta)
+		if err != nil {
+			continue
+		}
+		if err := h.db.WithContext(ctx).Exec(
+			`UPDATE knowledges SET custom_metadata = ?::jsonb, updated_at = now() WHERE id = ?`,
+			string(buf), r.ID).Error; err != nil {
+			logger.Warnf(ctx, "backfill billing period failed for %s: %v", r.ID, err)
+			continue
+		}
+		patched++
+	}
+	if patched > 0 {
+		logger.Infof(ctx, "billing period backfilled: %d records", patched)
+	}
+	return patched, nil
 }

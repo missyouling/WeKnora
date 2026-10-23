@@ -1,5 +1,5 @@
 <template>
-  <div class="utilities-management-container">
+  <div class="utilities-management-container biz-page">
     <!-- 顶部 -->
     <div class="header">
       <div class="header-title">
@@ -50,91 +50,58 @@
         <!-- 内容区 -->
         <div class="utilities-content">
           <template v-if="activeTab === 'electricity'">
-          <div v-if="kbId" class="electricity-panel">
+          <div v-if="kbId" class="electricity-panel biz-main">
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
-            <!-- 筛选工具栏 -->
-            <BusinessListToolbar v-model:keyword="keyword" search-placeholder="搜索文件名 / 源文件"
-              @refresh="applyFilter" :selected-count="selectedRowKeys.length" @clear-selection="clearSelection"
-              :show-print="false">
-              <template #type-extra>
-                <div class="doc-filter-field">
-                  <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
-                    placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
-                    @change="applyFilter">
-                    <template #prefixIcon><t-icon name="time" size="16px" /></template>
-                  </t-date-picker>
-                </div>
-              </template>
-              <template #columns>
-                <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-                  overlay-inner-class="contract-field-popup">
-                  <t-button variant="outline" size="small">
-                    <template #icon><t-icon name="view-list" size="14px" /></template>
-                    字段
+            <div class="biz-list-view">
+            <!-- 顶部概览卡（中台 DashboardKpiGroup）：末卡「历史记录」点开上传历史抽屉 -->
+            <div class="overview-group">
+              <DashboardKpiGroup :loading="false" :cards="overviewCards" @card-click="onKpiCardClick" />
+            </div>
+
+            <!-- 筛选工具栏走中台 BusinessFilterBar：
+                 左侧 = 搜索全部字段 + 账单月份 + 刷新；
+                 右侧严格 [字段] → [设置] → [上传账单(绿底主按钮)]，与发票/合同/制度/通知一致。
+                 旧版的「历史」图标按钮已删除：历史入口统一由顶部 KPI 的「历史记录」卡承担。 -->
+            <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+              :columns="columnDefs" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
+              settings-text="设置" :primary-action="{ text: '上传账单', icon: 'upload' }"
+              @columns-change="onColumnsChange" @reset-columns="resetColumns"
+              @select-all-columns="selectAllColumns" @filter-change="applyFilter"
+              @settings="settingsVisible = true" @primary="triggerUpload"
+              @clear-selection="clearSelection">
+  <template #batch-actions>
+                  <t-popconfirm theme="warning"
+                    :content="`确定重新解析并提取「${selectedSingle?.fileName || ''}」吗？将覆盖已有提取结果。`"
+                    :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                    @confirm="handleReExtract">
+                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                      <template #icon><t-icon name="refresh" size="14px" /></template>
+                      重新提取
+                    </t-button>
+                  </t-popconfirm>
+                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
+                    <template #icon><t-icon name="edit" size="14px" /></template>
+                    编辑数据
                   </t-button>
-                  <template #content>
-                    <div class="field-popup-content">
-                      <div class="field-popup-head">
-                        <span class="field-popup-title">显示字段</span>
-                        <div class="field-popup-actions">
-                          <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                          <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                        </div>
-                      </div>
-                      <t-checkbox-group v-model="visibleColKeys" class="field-popup-list">
-                        <t-checkbox v-for="col in columnDefs" :key="col.key" :value="col.key" class="field-popup-item">
-                          {{ col.label }}
-                        </t-checkbox>
-                      </t-checkbox-group>
-                    </div>
-                  </template>
-                </t-popup>
-              </template>
-              <template #right-extra>
-                <t-button variant="outline" size="small" @click="triggerUpload">
-                  <template #icon><t-icon name="upload" size="14px" /></template>
-                  上传账单
-                </t-button>
-                <t-button variant="outline" size="small" @click="settingsVisible = true">
-                  <template #icon><t-icon name="setting" size="14px" /></template>
-                  设置
-                </t-button>
-                <t-tooltip content="删除历史" placement="bottom">
-                  <t-button variant="outline" size="small" @click="historyVisible = true">
-                    <template #icon><t-icon name="history" size="14px" /></template>
+                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
+                    <template #icon><t-icon name="print" size="14px" /></template>
+                    打印
                   </t-button>
-                </t-tooltip>
-              </template>
-              <template #batch-actions>
-                <t-popconfirm theme="warning"
-                  :content="`确定重新解析并提取「${selectedSingle?.fileName || ''}」吗？将覆盖已有提取结果。`"
-                  :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                  @confirm="handleReExtract">
-                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                    <template #icon><t-icon name="refresh" size="14px" /></template>
-                    重新提取
-                  </t-button>
-                </t-popconfirm>
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
-                  <template #icon><t-icon name="edit" size="14px" /></template>
-                  编辑数据
-                </t-button>
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
-                  <template #icon><t-icon name="print" size="14px" /></template>
-                  打印
-                </t-button>
-                <t-popconfirm theme="warning"
-                  :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
-                  :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                  @confirm="handleBatchDelete">
-                  <t-button theme="danger" variant="outline" size="small" @click.stop>
-                    <template #icon><t-icon name="delete" size="14px" /></template>
-                    删除记录
-                  </t-button>
-                </t-popconfirm>
-              </template>
-            </BusinessListToolbar>
+                  <t-popconfirm theme="warning"
+                    :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
+                    :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+                    @confirm="handleBatchDelete">
+                    <t-button theme="danger" variant="outline" size="small" @click.stop>
+                      <template #icon><t-icon name="delete" size="14px" /></template>
+                      删除记录
+                    </t-button>
+                  </t-popconfirm>
+                </template>
+            </BusinessFilterBar>
+
+            <!-- 进行中文件状态横幅（解析/提取实时进度，终态自动收起） -->
+            <BusinessParseStatusBar :progress="[]" :pending-files="pendingFiles" />
 
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -187,6 +154,7 @@
               <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
             </div>
 
+            </div>
             </template>
 
             <!-- ================= 详情视图（分层菜单 + 内容区） ================= -->
@@ -719,7 +687,11 @@
       @saved="onSettingsChanged" />
 
     <!-- 删除历史 -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="能耗" />
+    <!-- 上传历史抽屉：复用中台 FleetUploadHistoryDrawer（三态统计卡 / 即输即搜 / 分类+日期筛选 /
+         中文错误提示 / 双击文件名全屏预览），与发票、合同、制度、通知完全同款。
+         旧的自写「删除历史」抽屉已下线。 -->
+    <FleetUploadHistoryDrawer v-model:visible="uploadHistoryVisible" :kb-id="kbId || ''" scope="energy"
+      @changed="onHistoryChanged" />
 
     <!-- 打印预览弹窗 -->
     <teleport to="body">
@@ -760,6 +732,7 @@ import {
   onBeforeUnmount,
 } from 'vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
+import { listKnowledgeFiles } from '@/api/knowledge-base'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
@@ -784,40 +757,49 @@ import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import { listFleetCategories } from '@/api/fleet'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
+import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
+import { normalizeBillingPeriod } from './billingPeriod'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
-import BusinessListToolbar from './BusinessListToolbar.vue'
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
 const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v5'
-const COLUMN_STORAGE_VERSION = 4
+const COLUMN_STORAGE_VERSION = 5
 
 // group 用于费用分项归类：'industrial'/'residential' 是旧口径，
 // 其余值来自 subs.group（overview/market/line/...），故放宽为 string。
 interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: string }
 const FALLBACK_COLUMNS: ColDef[] = [
-  // 默认字段
-  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.1fr' },
-  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '1.15fr' },
-  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '1.25fr' },
-  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '1.2fr' },
-  { key: 'capacity_fee', label: '基本电费', fieldType: 'amount', default: true, w: '1.15fr' },
-  { key: 'market_amount', label: '购电电费', fieldType: 'amount', default: true, w: '1.2fr' },
-  { key: 'line_amount', label: '线损费用', fieldType: 'amount', default: true, w: '1.15fr' },
-  { key: 'trans_amount', label: '输配电费', fieldType: 'amount', default: true, w: '1.15fr' },
-  { key: 'sys_amount', label: '系统运行费', fieldType: 'amount', default: true, w: '1.2fr' },
-  { key: 'govI_amount', label: '附加费', fieldType: 'amount', default: true, w: '1fr' },
-  { key: 'catalog_amount', label: '目录电费（居民）', fieldType: 'amount', default: true, w: '1.3fr' },
-  { key: 'govR_amount', label: '附加费（居民）', fieldType: 'amount', default: true, w: '1.15fr' },
-  // 详细字段
-  { key: 'account_no', label: '户号', fieldType: 'text', default: false, w: '1.1fr' },
-  { key: 'account_name', label: '户名', fieldType: 'text', default: false, w: '1.4fr' },
-  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: false, w: '1.2fr' },
-  { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: false, w: '1.1fr' },
-  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: false, w: '1.1fr' },
-  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: false, w: '1fr' },
+  // 账单概况：严格 20 个业务字段（与后端 electricityDefaultGroupFields("overview") 逐项一致）。
+  //
+  // 上一版这里塞了 7 个费用汇总列（购电电费/线损费用/…）与 capacity_fee，
+  // 但它们不在 subs 的 overview 分组里，于是列表列与「字段定义」两套口径打架，
+  // 「账单周期」也因为 bill_period_start 混入而出现两列。现在统一按 20 项。
+  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '110px' },
+  { key: 'account_no', label: '户号', fieldType: 'text', default: true, w: '150px' },
+  { key: 'account_name', label: '户名', fieldType: 'text', default: true, w: '170px' },
+  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: true, w: '120px' },
+  { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: true, w: '110px' },
+  { key: 'market_attr', label: '市场化属性', fieldType: 'text', default: true, w: '130px' },
+  { key: 'supply_unit', label: '供电服务单位', fieldType: 'text', default: true, w: '150px' },
+  { key: 'address', label: '用电地址', fieldType: 'text', default: true, w: '220px' },
+  { key: 'meter_no', label: '电能表编号', fieldType: 'text', default: true, w: '160px' },
+  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '110px' },
+  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '120px' },
+  { key: 'prev_kwh', label: '上期电量', fieldType: 'number', default: true, w: '110px' },
+  { key: 'mom_change', label: '环比', fieldType: 'text', default: true, w: '90px' },
+  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: true, w: '110px' },
+  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: true, w: '100px' },
+  { key: 'due_date', label: '交费截止', fieldType: 'text', default: true, w: '110px' },
+  { key: 'industrial_amount', label: '工商业电费', fieldType: 'amount', default: true, w: '120px' },
+  { key: 'residential_amount', label: '居民电费', fieldType: 'amount', default: true, w: '110px' },
+  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '110px' },
+  { key: 'grand_total', label: '合计', fieldType: 'amount', default: true, w: '120px' },
 ]
 
 const activeTab = ref<'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing'>('electricity')
@@ -825,23 +807,44 @@ const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
 const settingsVisible = ref(false)
-const historyVisible = ref(false)
 const fileInputRef = ref<HTMLInputElement>()
 
 // 字段配置（来自后端 /utilities/field-configs?category=electricity，动态加载）
 const columnDefs = ref<ColDef[]>(FALLBACK_COLUMNS)
 const visibleColKeys = ref<string[]>(loadStoredColumns())
-const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
-  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  // 列结构与发票/合同/制度/通知逐项一致：
+  //   [复选框] → [序号] → 业务列… → 状态 → 标签
+  // 序号列此前缺失，用户没法快速和「第 N 条」对话（反馈问题/对数时很费劲）。
+  const cols: any[] = [
+    { colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
+  ]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, cell: cellOf(c) })
+    // 账单周期 / 时间类列关闭 ellipsis 兜底宽度，避免 "2026-09-0..." 截断；
+    // 其余长文本列保留 ellipsis + 悬浮全文。
+    const narrow = c.key === 'bill_period'
+    cols.push({
+      colKey: c.key,
+      title: c.label,
+      ellipsis: !narrow,
+      width: colWidthPx(c),
+      fieldType: c.fieldType,
+      cell: cellOf(c),
+    })
   }
-  cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
+  cols.push({ colKey: 'extractStatus', title: '状态', width: 110 })
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
   return cols
 })
+/** 列宽：配置里的 px 优先；fr 字串回落到固定像素，防止列被挤压到截断。 */
+function colWidthPx(c: ColDef): number | undefined {
+  const w = String(c.w || '')
+  const px = Number(w.replace('px', ''))
+  if (w.endsWith('px') && Number.isFinite(px) && px > 0) return px
+  return undefined
+}
 /**
  * 列单元格渲染：金额列统一走 fmtAmount。
  * TDesign 默认单元格会把原始数值直接上屏，浮点累加残留（如 53441.77999999996）
@@ -1012,6 +1015,79 @@ const page = ref(1)
 const hasMore = ref(true)
 const monthFilter = ref('')
 const keyword = ref('')
+
+// ---- 中台筛选工具栏（BusinessFilterBar）----
+//
+// 声明式筛选：keyword 渲染在搜索位，month 渲染成月粒度选择器。
+// 旧版是手写 t-date-picker + BusinessListToolbar 插槽，按钮顺序与样式都自己维护，
+// 结果和发票/合同越走越偏（上传按钮白底、位置在设置左边、右侧还多一个历史图标）。
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword' },
+  { key: 'month', type: 'month', placeholder: '账单月份' },
+])
+// 扁平筛选态与既有 ref 双向桥接；组件只发不可变更新
+const filterState = computed<FilterState>({
+  get: () => ({ keyword: keyword.value, month: monthFilter.value }),
+  set: (v) => {
+    keyword.value = String(v?.keyword ?? '')
+    monthFilter.value = String(v?.month ?? '')
+  },
+})
+
+// ---- 顶部概览卡（DashboardKpiGroup）----
+// 历史记录卡的文件数是「已上传文件」口径（含解析/提取失败件），与发票一致，
+// 因此单独拉一次文件列表统计；列表接口是记录口径，数不出上传文件数。
+const uploadHistoryVisible = ref(false)
+const overviewFileStats = ref<{ total: number; failed: number }>({ total: 0, failed: 0 })
+const overviewCards = computed(() => {
+  const recorded = Number(summary.value?.total || 0)
+  const st = overviewFileStats.value
+  const month = new Date().toISOString().slice(0, 7)
+  const newThisMonth = rows.value.filter((r: any) => String(r.bill_period || '').slice(0, 7) === month).length
+  return [
+    {
+      key: 'total', label: '已收录账单', icon: 'file', value: `${recorded}`, unit: '份',
+      sub: `本月新增 ${newThisMonth} 份`, cls: '', action: 'all',
+    },
+    {
+      key: 'type-electricity', label: '市电账单', icon: 'chart-bubble', value: `${recorded}`, unit: '份',
+      sub: '', cls: 'is-type', action: 'type',
+    },
+    {
+      key: 'history', label: '历史记录', icon: 'history', value: `${st.total}`, unit: '份',
+      sub: st.failed > 0 ? `${st.failed} 份异常文件` : '无异常文件',
+      cls: st.failed > 0 ? 'is-warn' : '', action: 'history',
+    },
+  ]
+})
+const onKpiCardClick = (card: any) => {
+  if (card?.action === 'history') uploadHistoryVisible.value = true
+  // 「已收录账单 / 市电账单」卡只做展示：本页当前 tab 已经是市电口径，无需再筛
+}
+async function loadOverviewFileStats() {
+  if (!kbId.value) return
+  try {
+    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 200 })
+    const list = res?.data || res?.list || []
+    const arr = Array.isArray(list) ? list : []
+    let failed = 0
+    for (const f of arr) {
+      const ps = String(f?.parse_status || '')
+      const es = String(f?.custom_metadata?.extract_status || '')
+      if (ps === 'failed' || es === 'failed') failed++
+    }
+    overviewFileStats.value = { total: Number(res?.total || arr.length || 0), failed }
+  } catch { /* KPI 降级：保持 0，不影响列表 */ }
+}
+const onHistoryChanged = () => {
+  void loadFiles(true)
+  void loadOverviewFileStats()
+}
+
+// 列显隐：BusinessFilterBar 的列筛选器回写
+function onColumnsChange(keys: string[]) {
+  visibleColKeys.value = Array.isArray(keys) ? keys : []
+}
 const selectedRowKeys = ref<string[]>([])
 const listScrollRef = ref<HTMLElement>()
 
@@ -1076,7 +1152,14 @@ const mapRow = (r: any): Row => {
     item: it,
     ...it,
     ...feeAgg,
-    bill_period: `${it.bill_period_start || ''} ~ ${it.bill_period_end || ''}`,
+    // 账单周期统一成 YYYY-MM：
+    //   优先用后端派生的 bill_period（已是 YYYY-MM），
+    //   老数据没有该字段时用起止日现场归一，最后才退回 start 原文。
+    // 绝不能拼接 `${start} ~ ${end}` —— 那正是列表出现 "2026-09-0..." 截断的原因。
+    bill_period: normalizeBillingPeriod(it.bill_period)
+      || normalizeBillingPeriod(it.bill_period_start)
+      || normalizeBillingPeriod(it.bill_period_end)
+      || '',
     tags: r.tags || [],
     page: r.page,
   }
@@ -1094,12 +1177,43 @@ const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
   tags: [],
   page: 0,
 })))
+// 行级全字段检索文本：把这条账单里所有可读内容拼成一个大字符串，再做包含匹配。
+//
+// 为什么不用逐列判断：字段是可配置的（用户在「字段定义」里加字段后列表就多一列），
+// 逐列写死会漏；而"搜索全部字段"的语义就是"我看到的值都能搜到"。
+// 覆盖：20 个概况字段 + 费用明细（含类别/名称/时段/电量/标准/电费）+
+// 电量明细 + 标签 + 源文件名 + 提取错误文案。
+function rowSearchText(r: any): string {
+  const parts: string[] = [String(r.fileName || ''), String(r.title || ''), String(r.extractStatus || ''), String(r.extractError || '')]
+  const it = r.item || {}
+  for (const [k, v] of Object.entries(it)) {
+    if (v === null || v === undefined) continue
+    if (k === 'fee_items' || k === 'meter_readings' || k === 'residential_readings' || k === 'gateways') continue
+    if (typeof v === 'object') continue
+    parts.push(String(v))
+  }
+  for (const fd of (it.fee_items || [])) {
+    parts.push(String(fd.category || ''), String(fd.name || ''), String(fd.period || ''), String(fd.fee ?? ''), String(fd.qty ?? ''), String(fd.rate ?? ''))
+  }
+  for (const mr of (it.meter_readings || [])) {
+    parts.push(String(mr.meter_type || ''), String(mr.bill_kwh ?? ''), String(mr.reading_kwh ?? ''))
+  }
+  for (const t of (r.tags || [])) parts.push(String(t))
+  // 归一后的账单周期也要能搜（用户多半按 2026-08 找）
+  parts.push(String(r.bill_period || ''))
+  return parts.join(' ').toLowerCase()
+}
+
 const displayRows = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   const all = [...pendingRows.value, ...rows.value]
   if (!kw) return all
-  return all.filter(r =>
-    (r.fileName || '').toLowerCase().includes(kw) || ((r as any).title || '').toLowerCase().includes(kw))
+  // 多关键词（空格分隔）取 AND：输入「星达 2026-08」能精确收敛
+  const tokens = kw.split(/\s+/).filter(Boolean)
+  return all.filter((r) => {
+    const hay = rowSearchText(r)
+    return tokens.every((t) => hay.includes(t))
+  })
 })
 
 const loadFiles = async (reset = false) => {
@@ -1205,6 +1319,7 @@ const loadKb = async () => {
     if (kbId.value) {
       loadDrawerWidth()
       await loadFieldConfigs()
+      void loadOverviewFileStats()
       await loadTags()
       await loadFiles(true)
       startPolling()
@@ -1220,6 +1335,7 @@ const onKbCreated = async (kb: any) => {
   if (kbId.value) {
     loadDrawerWidth()
     await loadFieldConfigs()
+    void loadOverviewFileStats()
     await loadTags()
     await loadFiles(true)
     startPolling()
@@ -2330,6 +2446,7 @@ onBeforeUnmount(() => { stopPolling() })
 </script>
 
 <style lang="less" scoped>
+@import './styles/business-list-shared.css';
 .utilities-management-container {
   display: flex;
   flex-direction: column;

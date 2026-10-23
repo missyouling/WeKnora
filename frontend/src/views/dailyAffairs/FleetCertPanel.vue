@@ -133,10 +133,21 @@
                     <!-- 字段名可编辑（2026-10-21）：复制/新增字段中文命名后可直接改名。
                          改名只写 label（表头文案），name 是数据身份（契约键/后端 key）不动——
                          ① 历史数据与提取映射按 name 对齐，改 name 会错位；
-                         ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。 -->
-                    <t-input v-else :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
-                      :ref="(el: any) => setFieldInputRef(fd.name, el)"
-                      @update:model-value="(v: string) => setFieldEdit(fd, v)" />
+                         ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。
+                         费用分组里「费用组成 / 分时时段」右侧另有细项展开按钮：
+                         它们的下级不是子字段而是"行项集合"，单独渲染在下方。 -->
+                    <div v-else class="fc-name-wrap">
+                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
+                        :ref="(el: any) => setFieldInputRef(fd.name, el)"
+                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
+                      <button v-if="childGroupOf(fd)" type="button" class="fc-child-toggle"
+                        :class="{ open: openChildGroup === childGroupOf(fd) }"
+                        :title="`${fieldLabelOf(fd)} · 点击${openChildGroup === childGroupOf(fd) ? '收起' : '展开'}细项配置`"
+                        @click="toggleChildGroup(fd)">
+                        <t-icon :name="openChildGroup === childGroupOf(fd) ? 'chevron-up' : 'chevron-down'" size="14px" />
+                        <span>{{ childItemsOf(childGroupOf(fd)).length }}</span>
+                      </button>
+                    </div>
                     <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
                       <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
@@ -203,6 +214,52 @@
                       <t-input v-model="newSubFieldLabel" size="small" class="fc-add-input"
                         placeholder="新增子项名称（如 规格型号）" @enter="addSubField(fd)" />
                       <t-button variant="outline" size="small" @click="addSubField(fd)">添加</t-button>
+                    </div>
+                  </div>
+
+                  <!-- 细项展开区（费用组成 / 分时时段）：
+                       费用组成的细项 = `<分组>-rows`（如 market-rows：零售交易电费(尖峰)、偏差电费(平)…）；
+                       分时时段的细项 = `<分组>-periods`（尖 / 峰 / 平 / 谷）。
+                       这些是「表格行」而不是「字段」，所以不做成独立字段行，而是挂在
+                       父字段下展开 —— 否则字段定义表会被 22 条行项淹没。
+                       编辑只改 label（显示名），name 是账单 row 的匹配键，改了就对不上
+                       fee_items 的 name/period。 -->
+                  <div v-if="childGroupOf(fd) && openChildGroup === childGroupOf(fd)" class="sub-inline">
+                    <div v-if="!childItemsOf(childGroupOf(fd)).length" class="fc-child-empty">
+                      暂无细项，可在下方添加（如「零售交易电费(平)」或「尖」）。
+                    </div>
+                    <!-- 细项行用紧凑 4 列（序号 / 名称 / 启用 / 菜单）：
+                         设置抽屉内容区约 450px，塞不下主字段那套 7 列网格，
+                         硬塞的结果是操作列被裁掉（真机截图右侧只剩几个点）。
+                         细项不需要「数据类型/宽度/默认表头」——它们只是行标题。 -->
+                    <div v-for="(ch, ci) in childItemsOf(childGroupOf(fd))" :key="ch.name"
+                      class="field-config-row child-row">
+                      <span class="fc-drag sub-drag" :title="`细项键：${ch.name}`">{{ ci + 1 }}</span>
+                      <t-input :model-value="ch.label || ch.name" size="small" class="fc-name"
+                        placeholder="细项名称" :title="`细项键：${ch.name}`"
+                        @update:model-value="(v: string) => renameChild(ch, v)" />
+                      <t-tooltip content="默认显示：子表默认展示该行" placement="top">
+                        <t-switch :model-value="!!ch.isDefault" size="small"
+                          @change="(v: any) => (ch.isDefault = !!v)" />
+                      </t-tooltip>
+                      <t-tooltip content="启用 / 停用该细项" placement="top">
+                        <t-switch :model-value="!!ch.enabled" size="small"
+                          @change="(v: any) => (ch.enabled = !!v)" />
+                      </t-tooltip>
+                      <span class="fc-child-ops">
+                        <t-dropdown :options="childMenuOptions(ch, ci, childItemsOf(childGroupOf(fd)).length)"
+                          placement="bottom-right" min-column-width="110px"
+                          @click="(ctx: any) => onChildMenu(ch, ctx.value)">
+                          <t-button variant="text" size="small" shape="square" title="细项操作">
+                            <template #icon><t-icon name="more" size="15px" /></template>
+                          </t-button>
+                        </t-dropdown>
+                      </span>
+                    </div>
+                    <div class="field-config-add sub-inline-add">
+                      <t-input v-model="newChildLabel" size="small" class="fc-add-input"
+                        :placeholder="childPlaceholderOf(fd)" @enter="addChild(fd)" />
+                      <t-button variant="outline" size="small" @click="addChild(fd)">添加细项</t-button>
                     </div>
                   </div>
                 </template>
@@ -669,7 +726,8 @@ const activeSubGroup = ref('')
 const subGroupTabs = computed(() =>
   // `-rows` 是子表行标题（非提取字段），不进字段定义的分组胶囊条
   listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
-    .filter((g) => !g.key.endsWith('-rows')),
+    // -rows / -periods 是细项集合，挂在「费用组成 / 分时时段」下展开，不单独出胶囊
+    .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods')),
 )
 /** 当前分组下可见的字段（模板里 v-for 的源）。 */
 const fieldsVisible = computed(() => {
@@ -680,9 +738,126 @@ function subGroupLabelOf(key: string): string {
   const hit = fieldsEditable.value.find((f: any) => String(f.group ?? '').trim() === key)
   return String((hit as any)?.groupLabel ?? '').trim() || key
 }
+/**
+ * 载入分类后自动选中第一个分组。
+ *
+ * 为什么必须有：activeSubGroup 为空时 fieldsVisible 不过滤，市电账单会把
+ * 176 条 subs（20 概况 + 5×7 分项 + 22 行细项 + 28 时段…）一次性平铺出来，
+ * 用户看到一屏滚动条却找不到重点；而胶囊条又没有"全部"项，等于停在非法态。
+ */
+function resetSubGroupSelection() {
+  const groups = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
+    .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
+  activeSubGroup.value = groups[0]?.key || ''
+  openChildGroup.value = ''
+  openSubFieldName.value = ''
+}
+
 function switchSubGroup(key: string) {
   activeSubGroup.value = key
   openSubFieldName.value = ''
+  openChildGroup.value = ''
+}
+
+// ---- 细项配置（费用组成 / 分时时段）----
+//
+// 数据结构：细项仍是 subs 条目，只是 group 指向 `<分组>-rows` / `<分组>-periods`。
+// 这样不需要新表、也不需要新接口——保存分类时随 subs 一起持久化。
+//
+// 为什么不把细项做成独立字段行：市电账单的 market-rows 有 22 条，
+// 平铺在字段定义表里会把 5 个列字段彻底淹没，用户根本找不到「计费电量」。
+const openChildGroup = ref('')
+const newChildLabel = ref('')
+
+/** 该字段是否有下级细项；有则返回细项所属 group 键。 */
+function childGroupOf(fd: any): string {
+  if (!activeSubGroup.value) return ''
+  const n = String(fd?.name || '').trim()
+  // 费用组成 = 该分组的行项集合；分时时段 = 该分组的时段集合
+  if (n === 'name') return `${activeSubGroup.value}-rows`
+  if (n === 'period') return `${activeSubGroup.value}-periods`
+  return ''
+}
+
+function childItemsOf(groupKey: string): EditableField[] {
+  if (!groupKey) return []
+  return fieldsEditable.value.filter((f: any) => String(f.group ?? '').trim() === groupKey)
+}
+
+function toggleChildGroup(fd: any) {
+  const g = childGroupOf(fd)
+  openChildGroup.value = openChildGroup.value === g ? '' : g
+  openSubFieldName.value = ''
+  newChildLabel.value = ''
+}
+
+function childPlaceholderOf(fd: any): string {
+  return String(fd?.name || '') === 'period'
+    ? '新增时段（如 尖 / 峰 / 平 / 谷）'
+    : '新增细项（如 零售交易电费(平)）'
+}
+
+function addChild(fd: any) {
+  const g = childGroupOf(fd)
+  if (!g) return
+  const label = newChildLabel.value.trim()
+  if (!label) { MessagePlugin.warning('请输入细项名称'); return }
+  const siblings = childItemsOf(g)
+  if (siblings.some((c: any) => String(c.name).trim() === label || String(c.label || '').trim() === label)) {
+    MessagePlugin.warning('细项已存在')
+    return
+  }
+  // name 是账单行匹配键，可直接用中文（与既有 market-rows 条目一致）；
+  // label 与 name 相同，后续改名只改 label。
+  fieldsEditable.value.push({
+    name: label,
+    label,
+    enabled: true,
+    isDefault: true,
+    dataType: 'text',
+    width: 0,
+    group: g,
+    groupLabel: `${subGroupLabelOf(activeSubGroup.value)} · 细项`,
+  } as any)
+  newChildLabel.value = ''
+}
+
+/** 细项改名只动 label：name 是 fee_items 的 name/period 匹配键，改了行就取不到数。 */
+function renameChild(ch: any, v: string) {
+  ch.label = v
+}
+
+function removeChild(ch: any) {
+  fieldsEditable.value = fieldsEditable.value.filter((f: any) => f !== ch)
+}
+
+/** 细项行操作菜单：上移/下移在端点置灰，删除单独确认。 */
+function childMenuOptions(ch: any, index: number, total: number) {
+  return [
+    { content: '上移', value: 'up', disabled: index === 0 },
+    { content: '下移', value: 'down', disabled: index >= total - 1 },
+    { content: '删除细项', value: 'del' },
+  ]
+}
+function onChildMenu(ch: any, value: string) {
+  if (value === 'up') moveChild(ch, -1)
+  else if (value === 'down') moveChild(ch, 1)
+  else if (value === 'del') removeChild(ch)
+}
+
+function moveChild(ch: any, delta: number) {
+  const g = String(ch?.group ?? '').trim()
+  const list = [...fieldsEditable.value]
+  const groupIdx: number[] = []
+  list.forEach((f: any, i) => { if (String(f.group ?? '').trim() === g) groupIdx.push(i) })
+  const pos = groupIdx.findIndex((i) => list[i] === ch)
+  const target = pos + delta
+  if (pos < 0 || target < 0 || target >= groupIdx.length) return
+  const from = groupIdx[pos]
+  const to = groupIdx[target]
+  const [moved] = list.splice(from, 1)
+  list.splice(to, 0, moved)
+  fieldsEditable.value = list
 }
 
 // ---- 明细子项：点「项目明细」字段行在其正下方内联展开 ----
@@ -773,6 +948,7 @@ function toggleEdit(item: any) {
   fieldsEditable.value = fromSubsPayload(raw)
   editingId.value = item.id
   editingCertName.value = item.name
+  resetSubGroupSelection()
   loadUsedFields(group.value.scope, item.name)
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
@@ -946,6 +1122,7 @@ function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: an
     payload.custom.map((c: any) => String(c.key || '').trim() || String(c.name || '').trim()),
   )
   fieldsEditable.value = merged.fields
+  resetSubGroupSelection()
   pendingAiSample.value = payload.sampleText || ''
   aiPanelOpen.value = false
   // 明细父字段由 mergeAiFieldSuggestions 静默补建，不再弹提示打断流程
@@ -1408,6 +1585,76 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
   }
 
+  /* 字段名 + 细项展开按钮（费用组成 / 分时时段） */
+  .fc-name-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+
+    .fc-name { flex: 1 1 auto; min-width: 0; }
+  }
+
+  .fc-child-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    padding: 0 6px;
+    height: 24px;
+    font-size: 12px;
+    line-height: 22px;
+    color: var(--td-brand-color);
+    background: var(--td-brand-color-light);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+
+    &:hover { border-color: var(--td-brand-color); }
+    &.open { background: var(--td-brand-color); color: #fff; }
+  }
+
+  .fc-child-type {
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+  }
+
+  .fc-child-move {
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+    min-width: 24px;
+    color: var(--td-text-color-secondary);
+
+    &:not(.t-is-disabled):hover { color: var(--td-brand-color); }
+  }
+
+  /* 细项行：紧凑 4 列，宽度自适应抽屉，不再横向溢出 */
+  .field-config-row.child-row,
+  .field-config-row.child-row.has-width {
+    grid-template-columns: 24px minmax(0, 1fr) 48px 52px 36px;
+    min-width: 0;
+  }
+
+  .fc-child-ops {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    justify-content: flex-end;
+  }
+
+  .fc-child-empty {
+    padding: 8px 12px 8px 28px;
+    font-size: 12px;
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-secondarycontainer);
+    border-radius: 4px;
+  }
+
   .field-config-list {
     min-width: 510px;
     overflow-x: auto;
@@ -1418,17 +1665,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 24px 110px 90px 64px 64px 40px;
+    grid-template-columns: 24px 160px 90px 64px 64px 92px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
-    min-width: 510px;
+    min-width: 612px;
     box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 24px 110px 90px 70px 64px 64px 40px;
+      grid-template-columns: 24px 160px 90px 70px 64px 64px 92px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -1438,15 +1685,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 24px 110px 90px 64px 64px 40px;
+    grid-template-columns: 24px 160px 90px 64px 64px 92px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
-    min-width: 510px;
+    /* 字段名列 160px：既要放字段名输入，又要放「细项 N」展开按钮，
+       110px 时输入框会被挤成「费...」（真机截图为证）。 */
+    min-width: 612px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 24px 110px 90px 70px 64px 64px 40px;
+      grid-template-columns: 24px 160px 90px 70px 64px 64px 92px;
     }
     .fc-width {
       width: 100%;

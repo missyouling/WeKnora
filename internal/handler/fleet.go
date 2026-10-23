@@ -2137,6 +2137,22 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, _, err := NewUtilityHandler(h.db).MigrateUtilityFieldConfigsToEnergyScope(ctx, 0, false); err != nil {
 		logger.Warnf(ctx, "seed energy bill categories failed: %v", err)
 	}
+	// 账单概况收敛为 20 个业务字段（幂等）；老库上一版被并成 34 个，必须每次启动校正。
+	uh := NewUtilityHandler(h.db)
+	if _, err := uh.MigrateEnergyOverviewFields(ctx); err != nil {
+		logger.Warnf(ctx, "reset energy overview fields failed: %v", err)
+	}
+	if _, err := uh.resetEnergyExtractConfigFields(ctx); err != nil {
+		logger.Warnf(ctx, "reset energy extract config fields failed: %v", err)
+	}
+	// 「分时时段」细项（尖/峰/平/谷）沉淀为 subs，供字段定义页展开配置
+	if _, err := uh.ensureEnergyPeriodSubItems(ctx); err != nil {
+		logger.Warnf(ctx, "seed energy period sub-items failed: %v", err)
+	}
+	// 存量账单的账单周期刷正为 YYYY-MM（幂等；老数据没有 bill_period 字段）
+	if _, err := uh.BackfillBillingPeriod(ctx); err != nil {
+		logger.Warnf(ctx, "backfill billing period failed: %v", err)
+	}
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
