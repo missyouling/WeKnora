@@ -831,12 +831,25 @@ const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKey
 const tableColumns = computed(() => {
   const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType })
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, cell: cellOf(c) })
   }
   cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
   return cols
 })
+/**
+ * 列单元格渲染：金额列统一走 fmtAmount。
+ * TDesign 默认单元格会把原始数值直接上屏，浮点累加残留（如 53441.77999999996）
+ * 就会原样暴露；这里做渲染期收敛，与聚合期按分累加形成双保险。
+ */
+function cellOf(c: ColDef) {
+  if (c.fieldType !== 'amount') return undefined
+  return (_h: any, { row }: any) => {
+    const v = row?.[c.key]
+    if (v === undefined || v === null || v === '') return ''
+    return fmtAmount(v)
+  }
+}
 function onTableSelectChange(val: any) { selectedRowKeys.value = Array.isArray(val) ? val : [] }
 
 function loadStoredColumns(): string[] {
@@ -990,20 +1003,29 @@ const handleRowClick = (row: Row) => {
 
 const mapRow = (r: any): Row => {
   const it = r.item || {}
-  const feeAgg: Record<string, number> = {}
+  // 费用分类聚合：按「分」做整数累加，最后再折回元。
+  // 直接用浮点累加会让 0.1+0.2 这类误差累积到小数点后十位，
+  // 而列表列由 TDesign 默认单元格渲染（不经 fmtRate6），脏值会原样上屏
+  // ——真机踩过：「输配电费」列显示 53441.77999999996。
+  const feeCents: Record<string, number> = {}
+  const addCents = (key: string, fee: number) => {
+    feeCents[key] = (feeCents[key] || 0) + Math.round(fee * 100)
+  }
   for (const fd of (it.fee_items || [])) {
     const cat: string = fd.category || ''
     const fee = Number(fd.fee) || 0
-    if (cat.startsWith('(1)')) feeAgg.market_amount = (feeAgg.market_amount || 0) + fee
-    else if (cat.startsWith('(2)')) feeAgg.line_amount = (feeAgg.line_amount || 0) + fee
-    else if (cat.startsWith('(3)')) feeAgg.trans_amount = (feeAgg.trans_amount || 0) + fee
-    else if (cat.startsWith('(4)')) feeAgg.sys_amount = (feeAgg.sys_amount || 0) + fee
-    else if (cat.startsWith('(5)')) feeAgg.catalog_amount = (feeAgg.catalog_amount || 0) + fee
+    if (cat.startsWith('(1)')) addCents('market_amount', fee)
+    else if (cat.startsWith('(2)')) addCents('line_amount', fee)
+    else if (cat.startsWith('(3)')) addCents('trans_amount', fee)
+    else if (cat.startsWith('(4)')) addCents('sys_amount', fee)
+    else if (cat.startsWith('(5)')) addCents('catalog_amount', fee)
     else if (cat.startsWith('(6)')) {
-      if (cat.includes('工商')) feeAgg.govI_amount = (feeAgg.govI_amount || 0) + fee
-      else if (cat.includes('居民')) feeAgg.govR_amount = (feeAgg.govR_amount || 0) + fee
+      if (cat.includes('工商')) addCents('govI_amount', fee)
+      else if (cat.includes('居民')) addCents('govR_amount', fee)
     }
   }
+  const feeAgg: Record<string, number> = {}
+  for (const k of Object.keys(feeCents)) feeAgg[k] = feeCents[k] / 100
   return {
     rowKey: r.row_key || `${r.knowledge_id}-${r.page || 0}`,
     knowledgeId: r.knowledge_id || '',
@@ -2186,6 +2208,12 @@ const fmtKwh = (v: any) => {
 const fmtMoney = (v: any) => {
   const n = Number(v) || 0
   return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+/** 金额列：先按分四舍五入收敛，再千分位；抹掉浮点累加残留（如 53441.77999999996） */
+const fmtAmount = (v: any) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return (Math.round(n * 100) / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 /** 明细电费/单价：最多 6 位小数，去尾 0 */
 const fmtRate6 = (v: any) => {
