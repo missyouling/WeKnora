@@ -483,6 +483,9 @@ func RegisterUtilityRoutes(r *gin.RouterGroup, handler *handler.UtilityHandler, 
 	{
 		ut.GET("/field-configs", g.Viewer(), handler.ListUtilityFieldConfigs)
 		ut.POST("/field-configs", g.Contributor(), handler.SaveUtilityFieldConfigs)
+		// 能耗设置中台化迁移（P2）：把 utility_field_configs 合并默认分组后
+		// 迁入 fleet_categories(scope=energy)。幂等，?force=1 可显式重建。
+		ut.POST("/migrate-energy-scope", g.Contributor(), handler.MigrateEnergyScope)
 		ut.GET("/kinds", g.Viewer(), handler.ListUtilityKinds)
 		ut.POST("/kinds", g.Contributor(), handler.CreateUtilityKind)
 		ut.PUT("/kinds/:id", g.Contributor(), handler.UpdateUtilityKind)

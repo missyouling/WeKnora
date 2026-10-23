@@ -47,6 +47,16 @@ export interface EditableField {
   builtin?: boolean
   /** 仅 dataType === 'items' 时有值；随 subs 一并持久化，是明细子列的权威源。 */
   subFields?: EditableSubField[]
+  /**
+   * 业务分组（仅能耗类 scope 使用；空 = 主分组/未分组）。
+   *
+   * 市电账单一个分类下挂 12 个费用分项（账单概况/市场化购电费/…），共 79+ 字段。
+   * 带上它才能让「字段定义」按分组切换、「提取规则」按分组过滤，
+   * 主列表也不至于被子表字段淹没。
+   */
+  group?: string
+  /** 分组中文名（展示用；空则按 group 键的字典值显示）。 */
+  groupLabel?: string
 }
 
 /** 后端 subs 条目（读入形态；字段均为 snake_case）。 */
@@ -69,6 +79,10 @@ export interface SubPayload {
     rule?: string
     regex?: string
   }>
+  /** 业务分组键（仅能耗类 scope；空/缺省 = 无分组，与改造前数据结构一致）。 */
+  group?: string
+  /** 分组中文名。 */
+  group_label?: string
 }
 
 const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
@@ -218,8 +232,17 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
     if (s === null || s === undefined) continue
     const r = typeof s === 'object' ? (s as Record<string, unknown>) : { name: String(s) }
     const name = String(r.name ?? '').trim()
-    if (!name || seen.has(name)) continue
-    seen.add(name)
+    if (!name) continue
+    // 去重身份 = 分组 + 字段名。
+    //
+    // 不能只用 name：市电账单的 12 个费用分项里，market/line/trans/sys/gov-industrial/
+    // catalog/gov-residential 这 7 组共用同一批列名（name/period/qty/rate/fee，
+    // 它们本就是子表的列），只按 name 去重会把 7 个分组压成 1 个，
+    // 表现为「分组胶囊条只剩 5 个」。带分组维度后各组独立。
+    const gkey = String((r as Record<string, unknown>).group ?? '').trim()
+    const dedupeKey = gkey ? `${gkey}::${name}` : name
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
     const dataType = String(r.data_type ?? r.dataType ?? 'text').trim() || 'text'
     const width = Number(r.width)
     const subFields = normalizeSubFields(r.sub_fields)
@@ -234,6 +257,13 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
     // label 与 name 分离：name 是契约身份（改名会让历史数据错位），label 只是表头文案。
     if (label && label !== name) field.label = label
     if (r.builtin === true) field.builtin = true
+    // 业务分组：只在有值时才写（空值不下发，保持旧数据结构形态）
+    const group = String(r.group ?? '').trim()
+    if (group) {
+      field.group = group
+      const gl = String(r.group_label ?? r.groupLabel ?? '').trim()
+      if (gl) field.groupLabel = gl
+    }
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
     if (dataType === 'items' && subFields.length) field.subFields = subFields
     out.push(field)
@@ -265,6 +295,13 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
     const label = String(f.label ?? '').trim()
     if (label && label !== name) payload.label = label
     if (f.builtin) payload.builtin = true
+    // 业务分组：仅在有值时下发，无 group 的旧分类序列化结果与改造前一致
+    const group = String(f.group ?? '').trim()
+    if (group) {
+      payload.group = group
+      const gl = String(f.groupLabel ?? '').trim()
+      if (gl) payload.group_label = gl
+    }
     const subs = normalizeSubFields(f.subFields)
     // omitempty 语义：非 items 或无子列时不下发 sub_fields，保持与后端 seed 一致。
     if (dataType === 'items' && subs.length) {

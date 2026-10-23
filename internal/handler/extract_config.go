@@ -144,7 +144,11 @@ func validateExtractScope(scope string) bool {
 		scope == types.FleetCategoryScopeInvoice ||
 		scope == "contract" ||
 		scope == "regulation" ||
-		scope == "award_punish"
+		scope == "award_punish" ||
+		// energy：能耗设置抽屉的 scope（市电账单/光伏账单/能耗单三类共用）。
+		// 漏了它会让「提取规则」页能读不能存——点保存报「scope 必须是 …」，
+		// 用户配的规则全部丢失（真机踩过）。
+		scope == EnergyScope
 }
 
 func normalizeExtractFields(fields []types.ExtractFieldConfig) []types.ExtractFieldConfig {
@@ -249,6 +253,12 @@ func (h *BusinessExtractHandler) alignExtractConfigWithCategory(
 ) *types.KbExtractConfig {
 	if cfg == nil {
 		return nil
+	}
+	// energy 走专用对齐：它一个分类下挂 21 个分组（163 个字段），
+	// 其中只有「账单概况」是真正的提取字段，其余是子表列/行标题。
+	// 通用对齐会把 163 行全塞进规则表，还会让多个同名 name/period/qty 抢配置。
+	if strings.EqualFold(strings.TrimSpace(scope), EnergyScope) {
+		return h.alignEnergyConfigWithSubs(ctx, cfg, certType)
 	}
 	var cat types.FleetCategory
 	q := h.db.WithContext(ctx).
@@ -1134,10 +1144,14 @@ func (h *BusinessExtractHandler) SeedInvoiceExtractRuleBackfill(ctx context.Cont
 	}
 }
 
-// isBusinessDocumentScope 判断是否为「一文件一档案」的三个文档业务 scope。
+// isBusinessDocumentScope 判断是否为「一文件一档案」的文档业务 scope。
+//
+// energy 纳入的理由：能耗单（账期台账）本身就是一文件一档案，走中台 document
+// 管线；纳入后它同样享受「首次打开设置 → 现场合成默认底稿并落库」，
+// 不用先手填规则才能提取。
 func isBusinessDocumentScope(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case "contract", "regulation", "award_punish", "notice":
+	case "contract", "regulation", "award_punish", "notice", EnergyScope:
 		return true
 	}
 	return false
@@ -1157,7 +1171,7 @@ func (h *BusinessExtractHandler) ensureBusinessExtractConfigDefaults(
 	}
 	certType = strings.TrimSpace(certType)
 	fields := service.DefaultExtractFields(scope, certType)
-	tpl := service.DefaultBusinessPromptTemplate(scope)
+	tpl := service.DefaultBusinessPromptTemplate(scope, certType)
 	if len(fields) == 0 {
 		return h.getExtractConfig(ctx, kbID, scope, certType)
 	}
@@ -1172,8 +1186,12 @@ func (h *BusinessExtractHandler) ensureBusinessExtractConfigDefaults(
 		}
 		return existing
 	}
-	// 已存在「整体规则」时不再新建分类级配置，避免两套规则并存
-	if certType != "" {
+	// 已存在「整体规则」时不再新建分类级配置，避免两套规则并存。
+	//
+	// energy 豁免：它一个 scope 下承载三类字段完全不同的账单
+	// （市电 40+ / 光伏 19 / 台账 11），共用一条整体规则会让三类都拿到
+	// 同一份字段集——市电的峰平谷/容需量字段在光伏单上永远提取不到。
+	if certType != "" && !strings.EqualFold(scope, EnergyScope) {
 		if all := h.getExtractConfig(ctx, kbID, scope, ""); all != nil {
 			return all
 		}

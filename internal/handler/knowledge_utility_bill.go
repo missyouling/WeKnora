@@ -131,11 +131,15 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 	merged := &service.UtilityBillExtractionResult{Kind: "utility_bill"}
 	var extractErr error
 	sawBill := false
+	// 提取配置：用户在「设置 · 能耗 → 提取规则」里配的字段规则与高级 Prompt。
+	// 解析不到时返回 nil，提取链路自动回退内置常量 Prompt（行为与改造前一致）。
+	// scope/cert_type 的唯一映射见 energy_extract_config.go。
+	extractCfg := h.resolveEnergyBillExtractConfig(effCtx, kbID, EnergyBillTypeUtility)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractUtilityBillsFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractUtilityBillsFromContentWithConfig(effCtx, chatModel, batch, extractCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
@@ -186,10 +190,14 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 		}
 	}
 
-	// 通用质量闭环（非发票业务口径）：账单周期/打印日/交费截止日等标准日期字段归一化。
-	// 电费账单无字段级规则配置（无 scope），故 cfg 传 nil——只做日期归一化。
+	// 通用质量闭环（非发票业务口径）：账单周期/打印日/交费截止日等标准日期字段归一化，
+	// 并激活字段级 RE2 正则补洞与必填校验。
+	//
+	// 改造前这里传的是 nil——注释写着「电费账单无字段级规则配置（无 scope）」，
+	// 于是用户在「字段定义」里配的正则一个都不生效，模型漏提的字段永远补不回来。
+	// 现在传真实 cfg（解析不到时自然回退为 nil，存量行为不变）。
 	utilityIssues, utilityPatches := service.ValidateGenericExtraction(
-		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), nil)
+		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), extractCfg)
 	if len(utilityIssues) > 0 || len(utilityPatches) > 0 {
 		logger.Infof(ctx, "Utility bill extraction quality: issues=%d patched=%v knowledge=%s",
 			len(utilityIssues), service.PatchedFieldNames(utilityPatches), knowledgeID)
@@ -206,27 +214,9 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 	}
 
 	if extracted.Kind == "not_utility_bill" {
-		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为电费账单，置 manual 待补录
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
-			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
-				meta.Kind = "utility_bill"
-				meta.Records = []types.UtilityBillExtractionItem{}
-				meta.ExtractStatus = "manual"
-				meta.ExtractError = "识别规则命中，已认定为电费账单，请编辑补录字段"
-				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
-						logger.Warnf(ctx, "Failed to persist rule-rescued utility bill meta: %v", serr)
-					}
-				}
-				logger.Infof(ctx, "Utility bill rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
-					"success": true,
-					"message": "识别规则命中，已认定为电费账单，请在列表中编辑补录字段",
-					"data":    map[string]interface{}{"kind": "utility_bill", "extract_status": "manual", "removed": false},
-				})
-				return
-			}
-		}
+		// 包含判定（MatchIncludeRules 兜底）已按产品决策下线：
+		// 模型判定非电费账单时不再用关键词规则捞回，直接按非账单流程处理。
+		// recognition_config 里的存量规则保留在库里（不删数据），但代码不再消费。
 		meta.ExtractStatus = "not_utility_bill"
 		if meta.ExtractError == "" {
 			meta.ExtractError = "document does not look like a utility bill"
@@ -340,6 +330,19 @@ func mergeUtilityBillRecords(target, src *types.UtilityBillExtractionItem) {
 	setNum(&target.AdjustRatio, src.AdjustRatio)
 	// 费用明细按序拼接
 	target.FeeItems = append(target.FeeItems, src.FeeItems...)
+	// 多批次合并时动态字段也要并集保留：否则分页账单从第 2 批起，
+	// 用户在「字段定义」里配的扩展字段会全部丢失（每批只有各自的部分）。
+	if len(src.Fields) > 0 {
+		if target.Fields == nil {
+			target.Fields = make(map[string]any, len(src.Fields))
+		}
+		for k, v := range src.Fields {
+			if _, exists := target.Fields[k]; exists {
+				continue
+			}
+			target.Fields[k] = v
+		}
+	}
 }
 
 // ListUtilityBillRecords lives on KnowledgeBaseHandler in knowledgebase.go

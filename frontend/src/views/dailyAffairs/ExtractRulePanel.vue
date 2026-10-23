@@ -630,6 +630,10 @@ const certTypeOptions = computed(() => {
     const seen = new Set<string>()
     const children: { label: string; value: string }[] = []
     arr.forEach((c: any) => {
+      // energy scope 的「能耗类型」seed（工业用电/生活用水/燃气费/供热费）不是账单分类，
+      // 它们的字段是通用台账口径、与账单提取规则无关；不过滤会让规则 Tab 默认选中
+      // 「工业用电」，用户看到 20 个跟市电账单无关的字段（真机踩过）。
+      if (props.scope === 'energy' && String(c?.builtin_key || '').startsWith('energy-')) return
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name)
         children.push({ label: c.name, value: typeComposite(props.scope, c.name) })
@@ -682,6 +686,7 @@ const saving = ref(false)
 const testVisible = ref(false)
 const loadingCfg = ref(false)
 const editingName = ref('')
+
 
 // 高级模板防呆：非空但未引用字段 schema 插槽时给出警告（字段规则以后端拼装的 schema 为准）
 const templateWarning = computed(() => {
@@ -848,7 +853,19 @@ function authorityFields(): { name: string; label: string; enabled: boolean; dat
     return c.subs
       .filter((s: any) => {
         const n = String(s?.name || '').trim()
-        return n && !seen.has(n) && (seen.add(n), true)
+        if (!n) return false
+        // 只有主表字段参与提取规则。
+        //
+        // 市电账单的另外 20 个分组是**表格结构**：11 个费用分项定义子表的列
+        // （name/period/qty/rate/fee），9 个 -rows 分组定义行标题。
+        // 它们的业务数据来自 fee_items / meter_readings 这类数组字段，
+        // 由模型整表提取后前端逐行渲染，不存在「单独提取某个列」这回事。
+        // 把它们塞进规则面会得到 6 个同名 name 字段抢一条配置，且永远配不出值。
+        const g = String(s?.group ?? '').trim()
+        if (g && g !== 'overview') return false
+        if (n && seen.has(n)) return false
+        seen.add(n)
+        return true
       })
       .map((s: any) => ({
         name: String(s.name || '').trim(),

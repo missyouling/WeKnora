@@ -31,6 +31,18 @@ export interface SubEntry {
   dataType?: string
   width?: number
   builtin?: boolean
+  /**
+   * 字段所属业务分组（仅能耗类 scope 使用；空 = 主分组/未分组）。
+   *
+   * 市电账单一个分类下挂 12 个费用分项（账单概况/市场化购电费/上网环节线损费/…），
+   * 共 79+ 字段。若不分分组，主列表表头会被子表字段淹没、字段定义表会变成 80 行。
+   *
+   * 兼容铁律：**空值即旧行为**。发票/合同/制度/公告不写这个键，
+   * 六同步派生结果与改造前逐字节一致。
+   */
+  group?: string
+  /** 分组中文名（仅展示用；空则按 group 键的字典值显示）。 */
+  group_label?: string
 }
 
 /** 列表列定义（与 `useBusinessList.ColumnDef` 兼容并多带 dataType）。 */
@@ -61,6 +73,29 @@ export interface DeriveOptions {
   fieldKeyOf?: (name: string) => string
   /** 静态列定义（只提供宽度等缺省值，绝不用其 label 覆盖 subs.label）。 */
   defaultColumns?: Array<{ key: string; label?: string; dataType?: string; w?: string; width?: number }>
+  /**
+   * 按 `subs.group` 过滤（细分表消费方专用）。
+   *
+   * 缺省（undefined）= **不过滤**，即改造前的行为——发票/合同等无 group 的
+   * scope 全部字段照常产出，零行为变化。
+   *
+   * 传入具体键：只产出该分组的字段（12 个费用分项子表各取各的）。
+   * 传入数组：产出命中任一键的字段（主列表 `['', 'overview']` 取概况+未分组）。
+   */
+  groupFilter?: string | readonly string[]
+}
+
+/** subs 条目的业务分组键归一（空串代表主分组/未分组）。 */
+export function groupOfSub(s: SubEntry): string {
+  return String(s.group ?? '').trim()
+}
+
+/** 该 subs 条目是否命中分组过滤条件。 */
+function matchGroup(s: SubEntry, filter: DeriveOptions['groupFilter']): boolean {
+  if (filter === undefined) return true
+  const g = groupOfSub(s)
+  if (typeof filter === 'string') return g === filter
+  return filter.includes(g)
 }
 
 /**
@@ -156,6 +191,8 @@ export function buildColumnsFromSubs(subs: readonly SubEntry[] | undefined, opts
     const raw = String(s.name || '').trim()
     if (!raw) continue
     if (!isEnabled(s)) continue
+    // 分组过滤：缺省不过滤（发票/合同等无 group 的 scope 行为不变）
+    if (!matchGroup(s, opts.groupFilter)) continue
     const key = keyOf(raw)
     if (!key || seen.has(key)) continue
     // 系统列不走 subs 派生（见 LIST_SYSTEM_KEYS）；即便存量 subs 里还留着也不产出
@@ -195,6 +232,8 @@ export function buildDrawerFieldsFromSubs(
     const raw = String(s.name || '').trim()
     if (!raw) continue
     if (!isEnabled(s)) continue
+    // 分组过滤：缺省不过滤（发票/合同等无 group 的 scope 行为不变）
+    if (!matchGroup(s, opts.groupFilter)) continue
     const key = keyOf(raw)
     if (!key || seen.has(key)) continue
     seen.add(key)
@@ -278,4 +317,59 @@ export function fieldTypeOfSub(dataType: string): string {
     case 'textarea': return 'textarea'
     default: return 'string'
   }
+}
+
+/** 一个业务分组（供「字段定义 / 提取规则」的分组胶囊条渲染）。 */
+export interface SubGroup {
+  /** 分组键；空串代表主分组/未分组。 */
+  key: string
+  /** 展示名：`group_label` 优先，其次字典，最后回退键名。 */
+  label: string
+  /** 该分组下的字段数（含禁用字段，便于用户看到全貌）。 */
+  count: number
+}
+
+/**
+ * 枚举 subs 里的业务分组（保持首次出现顺序）。
+ *
+ * 返回空数组 = 该分类没有分组维度（发票/合同/制度/公告等），
+ * 调用方据此**不渲染**分组胶囊条，视觉与改造前完全一致。
+ */
+export function listSubGroups(
+  subs: readonly SubEntry[] | undefined,
+  labelOf?: (key: string) => string,
+): SubGroup[] {
+  const list = Array.isArray(subs) ? subs : []
+  const out: SubGroup[] = []
+  const index = new Map<string, number>()
+  // 已显式声明过 group_label 的键：只有它们才值得保留，避免回退出的键名被误当成显式值
+  const explicit = new Set<string>()
+  const labelFor = (key: string) => (labelOf?.(key) || '').trim() || key
+  for (const s of list) {
+    if (!s || typeof s !== 'object') continue
+    if (!String(s.name || '').trim()) continue
+    const key = groupOfSub(s)
+    const own = String(s.group_label ?? '').trim()
+    const at = index.get(key)
+    if (at !== undefined) {
+      out[at].count += 1
+      // 首个条目没写 group_label、后续条目写了 → 用后续的补上（真实场景：迁移顺序不定）
+      if (own && !explicit.has(key)) {
+        explicit.add(key)
+        out[at].label = own
+      }
+      continue
+    }
+    index.set(key, out.length)
+    if (own) explicit.add(key)
+    out.push({ key, label: own || labelFor(key), count: 1 })
+  }
+  return out
+}
+
+/** 该 subs 是否带分组维度（决定是否渲染分组胶囊条）。 */
+export function hasSubGroups(subs: readonly SubEntry[] | undefined): boolean {
+  const groups = listSubGroups(subs)
+  // 只有一个「空分组」= 没有分组维度
+  return groups.length > 1 || (groups.length === 1 && groups[0].key !== '')
 }

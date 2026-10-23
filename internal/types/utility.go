@@ -117,6 +117,7 @@ type UtilityBillExtractionItem struct {
 	BillPeriodEnd    string  `json:"bill_period_end"`    // 账单周期止 2026-08-31
 	AccountNo        string  `json:"account_no"`         // 户号
 	AccountName      string  `json:"account_name"`       // 户名
+	MeterNo          string  `json:"meter_no"`           // 电能表编号（主计量表）
 	Address          string  `json:"address"`            // 用电地址
 	UsageCategory    string  `json:"usage_category"`     // 用电类别 大工业用电
 	VoltageLevel     string  `json:"voltage_level"`      // 电压等级 交流10kV
@@ -156,6 +157,13 @@ type UtilityBillExtractionItem struct {
 	// 费用明细（可编辑，总账联动）
 	FeeItems []UtilityBillFeeItem `json:"fee_items"`
 	Remark   string               `json:"remark"`
+	// Fields 动态字段桶：用户在「字段定义」里新增的扩展字段（不在这套固定结构体里）
+	// 统一收集到这里，随 records[] 一起落库并在列表/详情透出。
+	//
+	// 为什么必须有：固定结构体只有 32 个字段，用户在设置抽屉里新增字段后，
+	// 模型即便按 Prompt 提取出来，json.Unmarshal 也会把它丢掉——界面上永远空值。
+	// 有了这个桶，"配了就能提" 才成立。
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // UtilityBillFeeItem 费用明细行。
@@ -271,6 +279,9 @@ type SolarBillExtractionItem struct {
 	// 关口明细（1 个上网关口 + N 个发电关口）
 	Gateways []SolarGateway `json:"gateways"`
 	Remark   string         `json:"remark"`
+	// Fields 动态字段桶：用户在「字段定义」里新增的扩展字段统一收集到这里。
+	// 与 UtilityBillExtractionItem.Fields 同口径（固定结构体之外的字段必须有序可落）。
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // SolarGateway 光伏账单关口明细（上网关口 / 发电关口）。

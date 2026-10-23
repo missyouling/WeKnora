@@ -711,9 +711,12 @@
     <!-- 初始化向导 -->
     <UtilitiesKbWizard v-model:visible="wizardVisible" @created="onKbCreated" />
 
-    <!-- 设置 -->
-    <UtilitySettingsDrawer :visible="settingsVisible" :kb-id="kbId || ''" category="electricity"
-      @update:visible="settingsVisible = $event" @changed="onSettingsChanged" />
+    <!-- 设置：中台标准双 Tab（字段定义 + 提取规则），与发票设置 100% 对齐。
+         旧的 12 宫格卡片抽屉（UtilitySettingsDrawer）已下线——分组改由
+         「字段定义」里的分组胶囊条承载，配置统一存 fleet_categories(scope=energy)。 -->
+    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
+      :kb-name="'日常事务-电费'" title="设置 · 能耗" storage-key="weknora-energy-settings-drawer-width"
+      @saved="onSettingsChanged" />
 
     <!-- 删除历史 -->
     <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="能耗" />
@@ -769,7 +772,6 @@ import {
   updateKnowledgeTagBatch,
   extractUtilityBill,
   listUtilityBillRecords,
-  listUtilityFieldConfigs,
   previewKnowledgeFile,
   reparseKnowledge,
 } from '@/api/knowledge-base'
@@ -780,7 +782,8 @@ import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import UtilityMeterTab from './UtilityMeterTab.vue'
 import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
-import UtilitySettingsDrawer from './UtilitySettingsDrawer.vue'
+import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import { listFleetCategories } from '@/api/fleet'
 import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
@@ -791,7 +794,9 @@ const PAGE_SIZE = 30
 const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v5'
 const COLUMN_STORAGE_VERSION = 4
 
-interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: 'industrial' | 'residential' }
+// group 用于费用分项归类：'industrial'/'residential' 是旧口径，
+// 其余值来自 subs.group（overview/market/line/...），故放宽为 string。
+interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: string }
 const FALLBACK_COLUMNS: ColDef[] = [
   // 默认字段
   { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.1fr' },
@@ -903,48 +908,82 @@ const displayMultiplier = (r: any) => {
 }
 
 const loadFieldConfigs = async () => {
+  // 字段配置的唯一权威源：fleet_categories(scope=energy, name=市电账单) 的 subs。
+  //
+  // 改造前读 utility_field_configs —— 那份表只有 7 个分组 56 条，
+  // 其余分组靠后端内存兜底，且**提取器完全读不到**（配了也提不出来）。
+  // 现在统一到中台 subs 后，字段定义 / 提取规则 / 列表列 / 详情抽屉同源。
   try {
-    const res: any = await listUtilityFieldConfigs('electricity')
-    const list = res?.data || res
-    if (Array.isArray(list) && list.length) {
-      allFieldConfigs.value = list
-      // 仅保留内置默认集字段与用户自定义字段，过滤历史废弃字段
-      const validKeys = new Set(FALLBACK_COLUMNS.map(f => f.key))
-      // 后端按 group 存储（overview / overview-rows 等多份同 key 配置），列表字段按 field_key 去重，避免重复显示
-      const seenKeys = new Set<string>()
-      const fromServer = list
-        .filter((c: any) => {
-          if (!(validKeys.has(c.field_key) || !!c.is_custom)) return false
-          if (seenKeys.has(c.field_key)) return false
-          seenKeys.add(c.field_key)
-          return true
-        })
-        .map((c: any) => {
-        const fb = FALLBACK_COLUMNS.find(f => f.key === c.field_key)
+    const res: any = await listFleetCategories({ scope: 'energy' })
+    const cats = res?.data || res || []
+    const cat = (Array.isArray(cats) ? cats : []).find((c: any) => c.name === '市电账单')
+    const subs: any[] = Array.isArray(cat?.subs) ? cat.subs : []
+    if (!subs.length) return
+
+    // 供费用分项子表（feeGroupCols）与详情分表复用：保持旧结构形态，
+    // 下游消费点（2 处 filter(c => c.group === group)）无需改动。
+    allFieldConfigs.value = subs
+      .filter((s: any) => String(s?.name || '').trim())
+      .map((s: any) => ({
+        field_key: String(s.name).trim(),
+        label: String(s.label || '').trim() || String(s.name).trim(),
+        field_type: s.data_type || 'text',
+        default_visible: s.is_default === true,
+        group: String(s.group || ''),
+        deleted_at: null,
+      }))
+
+    const byName = new Map<string, any>()
+    for (const s of subs) {
+      const n = String(s?.name || '').trim()
+      if (n && !byName.has(n)) byName.set(n, s)
+    }
+    const isEnabled = (s: any) => s.enabled !== false
+    const labelOfSub = (s: any) => String(s.label || '').trim() || String(s.name).trim()
+
+    // 主列表口径 = 内置默认集的**顺序与集合**（保证 16 份存量账单列表视觉零退化），
+    // 但名称/类型/默认显隐取自 subs（用户改名、改类型、关显隐即刻生效）。
+    // 同时按 group 过滤：只有「账单概况」与未分组的字段进主列表，
+    // 避免 163 个费用分项字段把表头淹没。
+    const primary = FALLBACK_COLUMNS
+      .map((fb) => {
+        const s = byName.get(fb.key)
+        if (!s) return { ...fb } // subs 里没有 → 保留默认列（后端可能还没迁移完）
+        if (!isEnabled(s)) return null // 用户禁用 → 该列消失
+        const g = String(s.group || '')
+        if (g && g !== 'overview') return null // 子表字段不进主列表
         return {
-          key: c.field_key,
-          // 内置字段以新默认集的标签/默认显隐为准；自定义字段沿用后端配置
-          label: fb ? fb.label : c.label,
-          fieldType: c.field_type || 'text',
-          default: fb ? fb.default : !!c.default_visible,
-          w: colWidth(c.field_key),
-          group: fb?.group,
+          key: fb.key,
+          label: labelOfSub(s),
+          fieldType: s.data_type || fb.fieldType,
+          default: s.is_default === true,
+          w: colWidth(fb.key),
+          group: g || undefined,
         }
       })
-      // 后端配置缺内置字段时合并补全，保证新增默认字段可用
-      const keys = new Set(fromServer.map((c: any) => c.key))
-      const merged = [...fromServer, ...FALLBACK_COLUMNS.filter(f => !keys.has(f.key))]
-      // 严格按内置默认集排序（用户要求的列顺序），自定义字段排在最后
-      const orderMap = new Map(FALLBACK_COLUMNS.map((f, i) => [f.key, i]))
-      merged.sort((a: any, b: any) => {
-        const ia = orderMap.has(a.key) ? orderMap.get(a.key)! : FALLBACK_COLUMNS.length
-        const ib = orderMap.has(b.key) ? orderMap.get(b.key)! : FALLBACK_COLUMNS.length
-        return ia - ib
+      .filter(Boolean) as ColDef[]
+
+    // 用户自定义字段（subs 里有、内置默认集里没有）：追加在末尾，
+    // 仅收主分组口径（overview / 未分组），子表格字段只在各自子表出现。
+    const known = new Set(FALLBACK_COLUMNS.map((f) => f.key))
+    for (const s of subs) {
+      const n = String(s?.name || '').trim()
+      if (!n || known.has(n) || !isEnabled(s)) continue
+      const g = String(s.group || '')
+      if (g && g !== 'overview') continue
+      primary.push({
+        key: n,
+        label: labelOfSub(s),
+        fieldType: s.data_type || 'text',
+        default: s.is_default === true,
+        w: '1fr',
+        group: g || undefined,
       })
-      columnDefs.value = merged
-      // 默认列变更后重算可见列（保留用户已存储的偏好，仅当存储为空时使用新默认）
-      visibleColKeys.value = loadStoredColumns()
     }
+
+    columnDefs.value = primary
+    // 默认列变更后重算可见列（保留用户已存储的偏好；存档缺默认列时自动重置）
+    visibleColKeys.value = loadStoredColumns()
   } catch { /* 字段配置加载失败用内置默认 */ }
 }
 function colWidth(key: string): string {

@@ -159,6 +159,17 @@ type FleetCategorySub struct {
 	Builtin bool `json:"builtin,omitempty"`
 	// SubFields 明细子列定义（仅 data_type=items 时使用）；随 subs JSONB 一并持久化。
 	SubFields []FleetItemSubField `json:"sub_fields,omitempty"`
+	// Group 字段所属业务分组（仅能耗类 scope 使用；空 = 主分组/未分组）。
+	//
+	// 为什么需要它：市电账单一个分类下挂着 12 个费用分项（账单概况 / 市场化购电费 /
+	// 上网环节线损费 / 输配电量电费 / …），共 79+ 个字段。中台 subs 原先是扁平数组，
+	// 12 个分项的字段会挤成一张 80 行的表，主列表表头也会被子表字段淹没。
+	//
+	// 兼容铁律：**空值即旧行为**。发票/合同/制度/通知公告四个 scope 不写这个键，
+	// 六同步派生（buildColumnsFromSubs / buildDrawerFieldsFromSubs）与改造前逐字节一致。
+	Group string `json:"group,omitempty"`
+	// GroupLabel 分组中文名（仅用于展示；空则按 group 键的字典值显示）。
+	GroupLabel string `json:"group_label,omitempty"`
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

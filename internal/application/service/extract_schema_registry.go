@@ -102,8 +102,11 @@ func builtinScopeSchemas() []types.ScopeSchema {
 		// 与 utility/solar 的区别：后两者是账单明细级口径（30~50 行费用明细），
 		// 走专用提取管线；energy 走中台 document 管线 + 字段字典 + 六同步。
 		documentScopeSchemaWithFields("energy", "能耗类型", energyStandardFieldDefs()),
-		documentScopeSchema("utility", "账单类型"),
-		documentScopeSchema("solar", "账单类型"),
+		// utility/solar 账单明细级：此前是空 schema（无 StandardFields、
+		// RegexPatchable=false），于是字段级正则补洞对电费/光伏账单完全不生效——
+		// 用户配的正则形同摆设。现在声明完整字段集并打开补洞面。
+		documentScopeSchemaWithFields("utility", "账单类型", utilityStandardFieldDefs()),
+		documentScopeSchemaWithFields("solar", "账单类型", solarStandardFieldDefs()),
 	}
 }
 
@@ -161,6 +164,12 @@ func awardPunishStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("
 
 // energyStandardFieldDefs 能耗台账的标准字段声明。
 func energyStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("energy") }
+
+// utilityStandardFieldDefs 市电账单标准字段（= 正则补洞面）。
+func utilityStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("utility") }
+
+// solarStandardFieldDefs 光伏账单标准字段（= 正则补洞面）。
+func solarStandardFieldDefs() []types.FieldDef { return catalogFieldDefs("solar") }
 
 // documentScopeSchema document 类 scope 的公共骨架：无标准字段、无明细层级，
 // 仍保留扩展桶约定（合同/制度等提取结果的自定义字段语义桶）。

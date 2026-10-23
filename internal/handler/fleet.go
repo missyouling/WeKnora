@@ -2131,6 +2131,13 @@ func (h *FleetHandler) seedBusinessCategories() {
 	// builtin_key 锚定（用户改名后不复活旧名），subs 按 seed 重排并补齐缺字段。
 	h.reconcileEnergyCategories(ctx)
 
+	// 能耗「账单类型」三分类（市电账单 / 光伏账单 / 能耗单）：字段定义与提取规则
+	// 挂在这三个上，与上面的「能耗类型」是两条不同的轴。
+	// 复用迁移逻辑：它会合并内存默认分组 + 旧表自定义字段，幂等且只补不改。
+	if _, _, err := NewUtilityHandler(h.db).MigrateUtilityFieldConfigsToEnergyScope(ctx, 0, false); err != nil {
+		logger.Warnf(ctx, "seed energy bill categories failed: %v", err)
+	}
+
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",
 		types.FleetCategoryScopeInvoice, []string{"invoice-common", "invoice-vat"}).Find(&invSeeds).Error; err == nil {

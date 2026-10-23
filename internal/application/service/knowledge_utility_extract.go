@@ -52,7 +52,7 @@ const utilityBillExtractionSystemPrompt = `你是一个专业的电费账单信�
 {"kind":"utility_bill","records":[{"bill_period_start":"2026-08-01","bill_period_end":"2026-08-31","account_no":"5001654065328","account_name":"重庆星达铜业有限公司","address":"重庆市璧山区青杠街道","usage_category":"大工业用电","voltage_level":"交流10kV","supply_unit":"璧城供电服务中心","market_attr":"市场化零售客户","print_date":"2026-09-04","total_kwh":555617,"total_amount":393459.72,"prev_kwh":0,"mom_change":"-15.18%","avg_price":0.70815,"power_factor":0.97,"due_date":"2026-09-09","industrial_amount":391579.91,"residential_amount":4414.9,"pf_adjust_amount":-2535.09,"grand_total":393459.72,"deep_peak_kwh":14177,"peak_kwh":92683,"flat_kwh":160816,"valley_kwh":279611,"reactive_kwh":140820,"capacity":2000,"capacity_price":22,"capacity_fee":44000,"demand":0,"pf_standard":0.9,"adjust_ratio":-0.0075,"meter_readings":[{"meter_type":"正向有功（总）","prev":2863740,"curr":3419357,"multiplier":1,"reading_kwh":555617,"trans_loss":0,"line_loss":0,"adjust":0,"bill_kwh":555617},{"meter_type":"正向有功（尖峰）","prev":2863740,"curr":2877917,"multiplier":1,"reading_kwh":14177,"trans_loss":0,"line_loss":0,"adjust":0,"bill_kwh":14177}],"fee_items":[{"category":"(1)市场化购电费","name":"零售交易电费","period":"尖峰","qty":14177,"rate":0.436,"fee":6181.17,"fee_amount":6181.17},{"category":"(1)市场化购电费","name":"零售交易电费","period":"峰","qty":92683,"rate":0.436,"fee":40409.79},{"category":"(1)市场化购电费","name":"零售交易电费","period":"平","qty":160816,"rate":0.436,"fee":70115.78},{"category":"(1)市场化购电费","name":"零售交易电费","period":"谷","qty":279611,"rate":0.436,"fee":121910.4},{"category":"(1)市场化购电费","name":"零售交易发电侧收益返还电费","period":"平","qty":0,"rate":0,"fee":-4940.37},{"category":"(1)市场化购电费","name":"中长期超额申报费用返还（用户）","period":"平","qty":0,"rate":0,"fee":-524.7},{"category":"(1)市场化购电费","name":"中长期偏差回收返还（用户）","period":"平","qty":0,"rate":0,"fee":-39397.7},{"category":"(1)市场化购电费","name":"零售损益分摊电费","period":"平","qty":547287,"rate":0.035786,"fee":19585.21},{"category":"(2)上网环节线损费用","name":"上网环节线损费用","period":"平","qty":547287,"rate":0.017274,"fee":9453.84},{"category":"(3)输配电量电费","name":"零售输配电费","period":"尖峰","qty":14177,"rate":0.29088,"fee":4123.81},{"category":"(3)输配电量电费","name":"零售输配电费","period":"峰","qty":92683,"rate":0.2424,"fee":22466.36},{"category":"(3)输配电量电费","name":"零售输配电费","period":"平","qty":160816,"rate":0.1515,"fee":24363.62},{"category":"(3)输配电量电费","name":"零售输配电费","period":"谷","qty":279611,"rate":0.05757,"fee":16097.21},{"category":"(4)系统运行费","name":"燃气机组容量电费","period":"平","qty":547287,"rate":0.015522,"fee":8494.99},{"category":"(4)系统运行费","name":"新能源机制差价分摊电费","period":"平","qty":547287,"rate":0.006505,"fee":3560.1},{"category":"(4)系统运行费","name":"电价交叉补贴新增损益","period":"平","qty":547287,"rate":0.005454,"fee":2984.9},{"category":"(4)系统运行费","name":"上网环节线损代理采购损益","period":"平","qty":547287,"rate":-0.001436,"fee":-785.9},{"category":"(4)系统运行费","name":"其他系统运行费用","period":"平","qty":547287,"rate":0.00375,"fee":2052.33},{"category":"(4)系统运行费","name":"抽水蓄能容量电费","period":"平","qty":547287,"rate":0.0067,"fee":3666.82},{"category":"(4)系统运行费","name":"辅助服务费用","period":"平","qty":547287,"rate":0,"fee":0},{"category":"(4)系统运行费","name":"煤电容量电费","period":"平","qty":547287,"rate":0.021305,"fee":11659.95},{"category":"(5)目录电费","name":"基础电费","period":"平","qty":8330,"rate":0.500306,"fee":4167.55},{"category":"(6)政府性基金及附加-居民","name":"农网还贷","period":"平","qty":8330,"rate":0.02,"fee":166.6},{"category":"(6)政府性基金及附加-居民","name":"可再生能源附加","period":"平","qty":8330,"rate":0.001,"fee":8.33},{"category":"(6)政府性基金及附加-居民","name":"国家重大水利工程建设基金","period":"平","qty":8330,"rate":0.001969,"fee":16.4},{"category":"(6)政府性基金及附加-居民","name":"库区移民基金","period":"平","qty":8330,"rate":0.006225,"fee":51.85},{"category":"(6)政府性基金及附加-居民","name":"小型水库移民后期扶持资金（地方）","period":"平","qty":8330,"rate":0.0005,"fee":4.17},{"category":"功率因数调整电费","name":"功率因数调整电费","period":"","qty":555617,"rate":0,"fee":-2535.09}],"remark":""}]}`
 
 // utilityBillExtractionOutputSchema 是传给模型强制 json_object 模式的输出骨架。
-const utilityBillExtractionOutputSchema = `{"type":"object","properties":{"kind":{"type":"string"},"records":{"type":"array","items":{"type":"object","properties":{"bill_period_start":{"type":"string"},"bill_period_end":{"type":"string"},"account_no":{"type":"string"},"account_name":{"type":"string"},"address":{"type":"string"},"usage_category":{"type":"string"},"voltage_level":{"type":"string"},"supply_unit":{"type":"string"},"market_attr":{"type":"string"},"print_date":{"type":"string"},"total_kwh":{"type":"number"},"total_amount":{"type":"number"},"prev_kwh":{"type":"number"},"mom_change":{"type":"string"},"avg_price":{"type":"number"},"power_factor":{"type":"number"},"due_date":{"type":"string"},"industrial_amount":{"type":"number"},"residential_amount":{"type":"number"},"pf_adjust_amount":{"type":"number"},"grand_total":{"type":"number"},"deep_peak_kwh":{"type":"number"},"peak_kwh":{"type":"number"},"flat_kwh":{"type":"number"},"valley_kwh":{"type":"number"},"reactive_kwh":{"type":"number"},"meter_readings":{"type":"array","items":{"type":"object","properties":{"meter_type":{"type":"string"},"prev":{"type":"number"},"curr":{"type":"number"},"multiplier":{"type":"number"},"reading_kwh":{"type":"number"},"trans_loss":{"type":"number"},"line_loss":{"type":"number"},"adjust":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["meter_type","prev","curr","multiplier","reading_kwh","trans_loss","line_loss","adjust","bill_kwh"]}},"residential_readings":{"type":"array","items":{"type":"object","properties":{"project":{"type":"string"},"kwh":{"type":"number"},"ratio":{"type":"number"},"adjust":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["project","kwh","ratio","adjust","bill_kwh"]}},"capacity_detail":{"type":"object","properties":{"demand":{"type":"number"},"demand_price":{"type":"number"},"demand_fee":{"type":"number"},"kwh_per_kva":{"type":"number"},"discount_demand_fee":{"type":"number"},"capacity":{"type":"number"},"capacity_price":{"type":"number"},"capacity_fee":{"type":"number"}},"required":["demand","demand_price","demand_fee","kwh_per_kva","discount_demand_fee","capacity","capacity_price","capacity_fee"]},"pf_detail":{"type":"object","properties":{"project":{"type":"string"},"power_factor":{"type":"number"},"pf_standard":{"type":"number"},"adjust_ratio":{"type":"number"},"pf_active_kwh":{"type":"number"},"pf_reactive_kwh":{"type":"number"},"pf_fee_base":{"type":"number"},"adjust_fee":{"type":"number"}},"required":["project","power_factor","pf_standard","adjust_ratio","pf_active_kwh","pf_reactive_kwh","pf_fee_base","adjust_fee"]},"capacity":{"type":"number"},"capacity_price":{"type":"number"},"capacity_fee":{"type":"number"},"demand":{"type":"number"},"pf_standard":{"type":"number"},"adjust_ratio":{"type":"number"},"fee_items":{"type":"array","items":{"type":"object","properties":{"category":{"type":"string"},"name":{"type":"string"},"period":{"type":"string"},"qty":{"type":"number"},"rate":{"type":"number"},"fee":{"type":"number"},"fee_amount":{"type":"number"}},"required":["category","name","period","qty","rate","fee","fee_amount"]}},"remark":{"type":"string"}},"required":["bill_period_start","bill_period_end","account_no","account_name","address","usage_category","voltage_level","supply_unit","market_attr","print_date","total_kwh","total_amount","prev_kwh","mom_change","avg_price","power_factor","due_date","industrial_amount","residential_amount","pf_adjust_amount","grand_total","deep_peak_kwh","peak_kwh","flat_kwh","valley_kwh","reactive_kwh","meter_readings","residential_readings","capacity_detail","pf_detail","capacity","capacity_price","capacity_fee","demand","pf_standard","adjust_ratio","fee_items","remark"]}},"required":["kind","records"]}}`
+const utilityBillExtractionOutputSchema = `{"type":"object","properties":{"kind":{"type":"string"},"records":{"type":"array","items":{"type":"object","properties":{"bill_period_start":{"type":"string"},"bill_period_end":{"type":"string"},"account_no":{"type":"string"},"account_name":{"type":"string"},"address":{"type":"string"},"usage_category":{"type":"string"},"voltage_level":{"type":"string"},"supply_unit":{"type":"string"},"market_attr":{"type":"string"},"print_date":{"type":"string"},"total_kwh":{"type":"number"},"total_amount":{"type":"number"},"prev_kwh":{"type":"number"},"mom_change":{"type":"string"},"avg_price":{"type":"number"},"power_factor":{"type":"number"},"due_date":{"type":"string"},"industrial_amount":{"type":"number"},"residential_amount":{"type":"number"},"pf_adjust_amount":{"type":"number"},"grand_total":{"type":"number"},"deep_peak_kwh":{"type":"number"},"peak_kwh":{"type":"number"},"flat_kwh":{"type":"number"},"valley_kwh":{"type":"number"},"reactive_kwh":{"type":"number"},"meter_readings":{"type":"array","items":{"type":"object","properties":{"meter_type":{"type":"string"},"prev":{"type":"number"},"curr":{"type":"number"},"multiplier":{"type":"number"},"reading_kwh":{"type":"number"},"trans_loss":{"type":"number"},"line_loss":{"type":"number"},"adjust":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["meter_type","prev","curr","multiplier","reading_kwh","trans_loss","line_loss","adjust","bill_kwh"]}},"residential_readings":{"type":"array","items":{"type":"object","properties":{"project":{"type":"string"},"kwh":{"type":"number"},"ratio":{"type":"number"},"adjust":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["project","kwh","ratio","adjust","bill_kwh"]}},"capacity_detail":{"type":"object","properties":{"demand":{"type":"number"},"demand_price":{"type":"number"},"demand_fee":{"type":"number"},"kwh_per_kva":{"type":"number"},"discount_demand_fee":{"type":"number"},"capacity":{"type":"number"},"capacity_price":{"type":"number"},"capacity_fee":{"type":"number"}},"required":["demand","demand_price","demand_fee","kwh_per_kva","discount_demand_fee","capacity","capacity_price","capacity_fee"]},"pf_detail":{"type":"object","properties":{"project":{"type":"string"},"power_factor":{"type":"number"},"pf_standard":{"type":"number"},"adjust_ratio":{"type":"number"},"pf_active_kwh":{"type":"number"},"pf_reactive_kwh":{"type":"number"},"pf_fee_base":{"type":"number"},"adjust_fee":{"type":"number"}},"required":["project","power_factor","pf_standard","adjust_ratio","pf_active_kwh","pf_reactive_kwh","pf_fee_base","adjust_fee"]},"capacity":{"type":"number"},"capacity_price":{"type":"number"},"capacity_fee":{"type":"number"},"demand":{"type":"number"},"pf_standard":{"type":"number"},"adjust_ratio":{"type":"number"},"fee_items":{"type":"array","items":{"type":"object","properties":{"category":{"type":"string"},"name":{"type":"string"},"period":{"type":"string"},"qty":{"type":"number"},"rate":{"type":"number"},"fee":{"type":"number"},"fee_amount":{"type":"number"}},"required":["category","name","period","qty","rate","fee","fee_amount"]}},"remark":{"type":"string"},"fields":{"type":"object"}},"required":["bill_period_start","bill_period_end","account_no","account_name","address","usage_category","voltage_level","supply_unit","market_attr","print_date","total_kwh","total_amount","prev_kwh","mom_change","avg_price","power_factor","due_date","industrial_amount","residential_amount","pf_adjust_amount","grand_total","deep_peak_kwh","peak_kwh","flat_kwh","valley_kwh","reactive_kwh","meter_readings","residential_readings","capacity_detail","pf_detail","capacity","capacity_price","capacity_fee","demand","pf_standard","adjust_ratio","fee_items","remark"]}},"required":["kind","records"]}}`
 
 // BuildUtilityBillExtractionBatches assembles the document text into
 // independent batches so long bills extract reliably.
@@ -188,18 +188,41 @@ func chatStreamCollect(ctx context.Context, model chat.Chat, messages []chat.Mes
 // 注意：智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空 content，
 // 因此 MaxTokens 恒为 0（不发送该字段），由供应商使用默认上限。
 func ExtractUtilityBillsFromContent(ctx context.Context, model chat.Chat, content string) (*UtilityBillExtractionResult, error) {
+	return ExtractUtilityBillsFromContentWithConfig(ctx, model, content, nil)
+}
+
+// ExtractUtilityBillsFromContentWithConfig 带配置入参的电费账单提取。
+//
+// 保留上面的无 cfg 版本作为兼容包装器：所有既有调用方（含单测）零改动，
+// cfg == nil 时行为与改造前逐字节一致（仍走内置常量 Prompt + 不做配置校验）。
+//
+// cfg 非空时启用两条新能力：
+//  1. Prompt 融合：高级模式自定义了 prompt_template 就用它；否则以内置
+//     16,172 字国网专用 Prompt 为底座，把用户在「提取规则」里配置的字段
+//     rule / desc 追加成补充指令——既保住原有 32 字段多表解析精度，
+//     又让新增字段有指令可依。
+//  2. 动态字段：模型按提示词额外输出的自定义字段收集进 records[].fields。
+func ExtractUtilityBillsFromContentWithConfig(
+	ctx context.Context,
+	model chat.Chat,
+	content string,
+	cfg *types.KbExtractConfig,
+) (*UtilityBillExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &UtilityBillExtractionResult{Kind: "not_utility_bill"}, nil
 	}
 	userPrompt := "<document>\n" + content + "\n</document>"
 	thinking := false
 	llmCtx := types.WithLLMCallMetadata(ctx, "utility_bill_extract", "")
+	systemPrompt := BuildUtilityBillSystemPrompt(cfg)
 	messages := []chat.Message{
-		{Role: "system", Content: utilityBillExtractionSystemPrompt},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
-	attempts := DefaultExtractAttempts(json.RawMessage(utilityBillExtractionOutputSchema))
+	// 输出 schema 注入用户配置的自定义字段：模型会严格照抄内置示例的键集合，
+	// 只靠 Prompt 追加指令不会产出新字段（真机验证过），必须写进结构约束。
+	attempts := DefaultExtractAttempts(json.RawMessage(BuildUtilityBillOutputSchema(cfg)))
 
 	var parsed UtilityBillExtractionResult
 	raw, err := RunExtractWithRetry(llmCtx, model, messages, baseOpts, attempts,
@@ -217,7 +240,34 @@ func ExtractUtilityBillsFromContent(ctx context.Context, model chat.Chat, conten
 	if !tryParseUtilityBillJSON(raw, &parsed) {
 		return nil, fmt.Errorf("parse utility bill extraction response: unparseable response (len=%d)", len(raw))
 	}
+	// 动态字段收集：把不在固定结构体里的用户自定义字段收进 records[].fields。
+	// cfg 为空时也执行——存量数据里可能已经有自定义字段（换模型/换 Prompt 前的产物），
+	// 丢弃它们会让历史记录在界面上突然变空。
+	attachUtilityBillCustomFields(&parsed, raw)
 	return &parsed, nil
+}
+
+// attachUtilityBillCustomFields 从模型原始输出里回收自定义字段。
+//
+// 必须重新解析一次原始 JSON（主解析走的是强类型结构体，未知键已被丢弃），
+// 所以这里取 records 数组的每个元素的原始键值对，逐条收集。
+func attachUtilityBillCustomFields(res *UtilityBillExtractionResult, raw string) {
+	if res == nil || len(res.Records) == 0 {
+		return
+	}
+	cleaned := strings.NewReplacer("```json", "", "```", "", "`", "'").Replace(raw)
+	var outer struct {
+		Records []map[string]json.RawMessage `json:"records"`
+	}
+	if err := common.ParseLLMJsonResponse(cleaned, &outer); err != nil {
+		return
+	}
+	for i := range res.Records {
+		if i >= len(outer.Records) {
+			break
+		}
+		CollectUtilityBillCustomFields(&res.Records[i], outer.Records[i])
+	}
 }
 
 func utilityTruncateForLog(s string, n int) string {

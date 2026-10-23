@@ -96,6 +96,15 @@
                 <span class="field-config-title">字段配置</span>
                 <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
+              <!-- 业务分组切换（仅带 group 的分类显示，如市电账单的 12 个费用分项）。
+                   没有 group 的分类（发票/合同/制度/公告）不渲染，视觉与改造前一致。 -->
+              <div v-if="subGroupTabs.length > 1" class="fc-group-tabs">
+                <span v-for="g in subGroupTabs" :key="g.key" class="fc-group-tab"
+                  :class="{ active: activeSubGroup === g.key }" @click="switchSubGroup(g.key)">
+                  {{ g.label }}
+                  <span class="fc-group-tab__count">{{ g.count }}</span>
+                </span>
+              </div>
               <div class="field-config-list">
                 <div class="field-colhead" :class="{ 'has-width': showWidthCol }">
                   <span class="fc-h-drag"></span>
@@ -108,11 +117,11 @@
                 </div>
                 <!-- 明细子项不再是独立的底部区块：点「项目明细」字段行就在它正下方展开，
                      子项行与主字段行共用同一套网格/行高/圆角/间距（.field-config-row）。 -->
-                <template v-for="(fd, i) in fieldsEditable" :key="fd.name">
+                <template v-for="fd in fieldsVisible" :key="fd.name">
                   <div class="field-config-row"
-                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragIndex === i }]"
-                    draggable="true" @dragstart="onFieldDragStart(i)" @dragover.prevent
-                    @drop.prevent="onFieldDrop(i)" @dragend="fieldDragIndex = -1">
+                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === fd.name }]"
+                    draggable="true" @dragstart="onFieldDragStart(fd)" @dragover.prevent
+                    @drop.prevent="onFieldDrop(fd)" @dragend="onFieldDragEnd">
                     <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
                     <!-- items 字段：字段名即展开开关，点击在下方展开子项 -->
                     <button v-if="fd.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
@@ -257,6 +266,7 @@ import {
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
+import { listSubGroups } from './sixWaySync'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
@@ -267,6 +277,9 @@ const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintai
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
 // 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件；发票/合同等业务 scope=单分类
+//
+// energy 必须显式声明：缺了会命中下面的 `GROUPS[props.scope] || GROUPS.vehicle` 兜底，
+// 于是能耗设置抽屉里显示「公司证照」——真机踩过的坑。
 const GROUPS: Record<string, { key: string; label: string; scope: string; groupId: string }[]> = {
   vehicle: [
     { key: 'company', label: '公司证照', scope: 'vehicle', groupId: '' },
@@ -277,6 +290,9 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   contract: [{ key: 'contract', label: '合同', scope: 'contract', groupId: '' }],
   regulation: [{ key: 'regulation', label: '制度', scope: 'regulation', groupId: '' }],
   award_punish: [{ key: 'award_punish', label: '通知', scope: 'award_punish', groupId: '' }],
+  // 能耗：市电账单 / 光伏账单 / 能耗单 三个分类同属 energy scope（见后端
+  // handler/energy_extract_config.go 的 EnergyScope 常量与 EnergyBillType* 定义）
+  energy: [{ key: 'energy', label: '能耗账单', scope: 'energy', groupId: '' }],
 }
 
 // 分类名称列文案：统一走 BusinessScopeRegistry（新增业务只改 registry/<scope>.ts）
@@ -436,11 +452,26 @@ async function confirmRename(g: any) {
   renamingKey.value = ''
 }
 
+// energy scope 下并存两类分类，是两条不同的轴：
+//
+//	① 能耗**类型**（工业用电/生活用水/燃气费/供热费，builtin_key=energy-*）
+//	   —— 供「能耗台账」上传弹窗的类型下拉用，值最终写进 utility_type 字段；
+//	② 账单**类型**（市电账单/光伏账单/能耗单，builtin_key 为空）
+//	   —— 字段定义与提取规则挂在这三个上，是设置抽屉要管的对象。
+//
+// 设置抽屉只展示 ②：类型已经是一个可配置字段（energyCatalog 的 utility_type 带
+// desc/rule/regex），再做成分类会让用户在两个地方改同一件事。
+const ENERGY_TYPE_SEED_KEYS = new Set([
+  'energy-electricity', 'energy-water', 'energy-gas', 'energy-heat',
+])
+
 function buildItems(g0: any): any[] {
   const scope: string = g0.scope
   const gid: string = g0.groupId || ''
   // 仅取归属当前分组的分类（内置分组 group_id 为空；自定义分组按 group_id 过滤）
-  const list = (categories.value[scope] || []).filter((c: any) => (c.group_id || '') === gid)
+  const list = (categories.value[scope] || [])
+    .filter((c: any) => (c.group_id || '') === gid)
+    .filter((c: any) => !(scope === 'energy' && ENERGY_TYPE_SEED_KEYS.has(String(c.builtin_key || ''))))
   const merged: any[] = []
   const seen = new Set<string>()
   // 1) 已入库分类：严格按 categories 后端顺序（sort_order，用户拖动后持久化）
@@ -502,15 +533,25 @@ async function onDrop(i: number) {
 }
 
 // ---- 字段级拖拽排序（仅调整编辑态 fieldsEditable 顺序，保存时随 subs 持久化）----
-const fieldDragIndex = ref(-1)
-function onFieldDragStart(i: number) { fieldDragIndex.value = i }
-function onFieldDrop(i: number) {
-  const from = fieldDragIndex.value
-  fieldDragIndex.value = -1
-  if (from < 0 || from === i) return
+// 字段拖拽排序：按**字段身份**定位，不按下标。
+//
+// 为什么不能用下标：分组过滤后模板里的 i 是「当前分组内的序号」，
+// 而真实顺序在扁平化的 fieldsEditable 里。用下标会把字段挪到别的分组去，
+// 表现为「拖一下顺序，字段跑到隔壁分组了」。按 name 定位可避免。
+const fieldDragName = ref('')
+function onFieldDragStart(fd: any) { fieldDragName.value = String(fd?.name || '') }
+function onFieldDragEnd() { fieldDragName.value = '' }
+function onFieldDrop(target: any) {
+  const fromName = fieldDragName.value
+  fieldDragName.value = ''
+  const toName = String(target?.name || '')
+  if (!fromName || !toName || fromName === toName) return
   const list = [...fieldsEditable.value]
+  const from = list.findIndex((f: any) => f.name === fromName)
+  const to = list.findIndex((f: any) => f.name === toName)
+  if (from < 0 || to < 0) return
   const [moved] = list.splice(from, 1)
-  list.splice(i, 0, moved)
+  list.splice(to, 0, moved)
   fieldsEditable.value = list
 }
 
@@ -619,6 +660,30 @@ const editForm = reactive({ name: '' })
 const fieldsEditable = ref<EditableField[]>([])
 const newFieldName = ref('')
 const newSubFieldLabel = ref('')
+
+// ---- 业务分组切换（能耗类 scope：市电账单下 12 个费用分项，共 163 个字段）----
+//
+// `activeSubGroup === ''` 表示「全部」。无 group 的分类（发票/合同/制度/公告）
+// 枚举结果为空 → 胶囊条不渲染 → 行为与改造前完全一致。
+const activeSubGroup = ref('')
+const subGroupTabs = computed(() =>
+  // `-rows` 是子表行标题（非提取字段），不进字段定义的分组胶囊条
+  listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
+    .filter((g) => !g.key.endsWith('-rows')),
+)
+/** 当前分组下可见的字段（模板里 v-for 的源）。 */
+const fieldsVisible = computed(() => {
+  if (!activeSubGroup.value) return fieldsEditable.value
+  return fieldsEditable.value.filter((f: any) => String(f.group ?? '').trim() === activeSubGroup.value)
+})
+function subGroupLabelOf(key: string): string {
+  const hit = fieldsEditable.value.find((f: any) => String(f.group ?? '').trim() === key)
+  return String((hit as any)?.groupLabel ?? '').trim() || key
+}
+function switchSubGroup(key: string) {
+  activeSubGroup.value = key
+  openSubFieldName.value = ''
+}
 
 // ---- 明细子项：点「项目明细」字段行在其正下方内联展开 ----
 const openSubFieldName = ref('')
@@ -755,6 +820,10 @@ async function duplicateField(fd: any) {
     isDefault: !!fd.isDefault,
     dataType: fd.dataType || 'text',
     width: Number(fd.width) || 0,
+    // 复制出的字段必须留在同一分组：否则在市电账单里复制「峰电量」会掉进主表，
+    // 用户切回该分组就找不到它了。
+    group: (fd as any).group,
+    groupLabel: (fd as any).groupLabel,
     // 子列一并复制，否则复制出的 items 字段会是个空壳
     subFields: Array.isArray(fd.subFields) ? fd.subFields.map((s: EditableSubField) => ({ ...s })) : undefined,
   })
@@ -769,7 +838,17 @@ function addField() {
   const name = newFieldName.value.trim()
   if (!name) { MessagePlugin.warning('请输入字段名'); return }
   if (fieldsEditable.value.some((f) => f.name === name)) { MessagePlugin.warning('字段已存在'); return }
-  fieldsEditable.value.push({ name, enabled: true, isDefault: false, dataType: 'text', width: 0 })
+  // 新增字段继承当前选中的分组：在「峰电量」分组里点新增，新字段就该属于峰电量，
+  // 否则它会掉进主表、且切到任何分组都看不到。
+  const g = activeSubGroup.value
+  fieldsEditable.value.push({
+    name,
+    enabled: true,
+    isDefault: false,
+    dataType: 'text',
+    width: 0,
+    ...(g ? { group: g, groupLabel: subGroupLabelOf(g) } : {}),
+  } as any)
   newFieldName.value = ''
 }
 function removeField(fd: any) {
@@ -1281,6 +1360,51 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     .field-config-tip {
       font-size: 12px;
       color: var(--td-text-color-placeholder);
+    }
+  }
+
+  /* 业务分组胶囊条（仅带 group 的分类渲染，如市电账单的 21 个费用分项） */
+  .fc-group-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0 10px;
+    padding: 8px 10px;
+    background: var(--td-bg-color-secondarycontainer);
+    border-radius: 6px;
+  }
+
+  .fc-group-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border: 1px solid transparent;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--td-brand-color);
+      border-color: var(--td-brand-color-light);
+    }
+
+    &.active {
+      color: #fff;
+      background: var(--td-brand-color);
+      border-color: var(--td-brand-color);
+      font-weight: 500;
+    }
+
+    .fc-group-tab__count {
+      font-size: 11px;
+      opacity: 0.75;
     }
   }
 

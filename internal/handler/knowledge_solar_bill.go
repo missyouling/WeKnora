@@ -131,11 +131,13 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	merged := &service.SolarBillExtractionResult{Kind: "solar_bill"}
 	var extractErr error
 	sawBill := false
+	// 提取配置：与市电同构，解析不到返回 nil → 回退内置常量 Prompt。
+	extractCfg := h.resolveEnergyBillExtractConfig(effCtx, kbID, EnergyBillTypeSolar)
 	for i, batch := range batches {
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractSolarBillsFromContent(effCtx, chatModel, batch)
+		batchRes, berr := service.ExtractSolarBillsFromContentWithConfig(effCtx, chatModel, batch, extractCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
@@ -179,7 +181,7 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	// 通用质量闭环（非发票业务口径）：账单周期起止等标准日期字段归一化。
 	// 光伏/电费账单没有字段级规则配置（无 scope），故 cfg 传 nil——只做日期归一化。
 	solarIssues, solarPatches := service.ValidateGenericExtraction(
-		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), nil)
+		service.NewGenericRecords(extracted.Records), strings.Join(batches, "\n"), extractCfg)
 	if len(solarIssues) > 0 || len(solarPatches) > 0 {
 		logger.Infof(ctx, "Solar bill extraction quality: issues=%d patched=%v knowledge=%s",
 			len(solarIssues), service.PatchedFieldNames(solarPatches), knowledgeID)
@@ -196,27 +198,9 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	}
 
 	if extracted.Kind == "not_solar_bill" {
-		// 自定义识别规则捞回：模型判非但包含规则命中 → 认定为光伏账单，置 manual 待补录
-		if recCfg, rerr := h.kgService.GetRecognitionConfig(effCtx, kbID); rerr == nil {
-			if service.MatchIncludeRules(strings.Join(batches, "\n"), recCfg) {
-				meta.Kind = "solar_bill"
-				meta.Records = []types.SolarBillExtractionItem{}
-				meta.ExtractStatus = "manual"
-				meta.ExtractError = "识别规则命中，已认定为光伏账单，请编辑补录字段"
-				if raw, merr := json.Marshal(meta); merr == nil {
-					if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(raw)); serr != nil {
-						logger.Warnf(ctx, "Failed to persist rule-rescued solar bill meta: %v", serr)
-					}
-				}
-				logger.Infof(ctx, "Solar bill rule-rescued by include rule, knowledge %s kept as manual", knowledgeID)
-				c.JSON(http.StatusOK, gin.H{
-					"success": true,
-					"message": "识别规则命中，已认定为光伏账单，请在列表中编辑补录字段",
-					"data":    map[string]interface{}{"kind": "solar_bill", "extract_status": "manual", "removed": false},
-				})
-				return
-			}
-		}
+		// 包含判定（MatchIncludeRules 兜底）已按产品决策下线：
+		// 模型判定非光伏账单时不再用关键词规则捞回，直接按非账单流程处理。
+		// recognition_config 里的存量规则保留在库里（不删数据），但代码不再消费。
 		meta.ExtractStatus = "not_solar_bill"
 		if meta.ExtractError == "" {
 			meta.ExtractError = "document does not look like a solar bill"

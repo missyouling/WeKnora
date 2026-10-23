@@ -55,13 +55,20 @@ const (
 	reTextStop  = `[^\n，,；;]{2,40}`
 )
 
-// BusinessFieldCatalogs 四个 document 业务 + 能耗台账的字段目录。
+// BusinessFieldCatalogs document 业务 + 能耗台账 + 账单明细的字段目录。
 //
-// energy 单列：它是「账期台账」口径（主时间轴是月），与合同/制度/通知的
-// 「文档档案」口径（主时间轴是日）形态不同，目录派生规则不共享。
+// 分三类口径，不可混：
+//   - contract/regulation/notice：文档档案级（主时间轴是日）；
+//   - energy：账期台账级（主时间轴是月，一条 = 一个账期的汇总单）；
+//   - utility/solar：**账单明细级**（一条账单 30~50 行费用明细 + 峰平谷分时）。
+//
+// utility/solar 此前没有目录（schema 为空、正则补洞关闭），
+// 导致用户在设置里配的字段规则无处落地；现在建目录后三者同享
+// 「字段字典 + 正则补洞 + 默认规则底稿」能力，但提取管线仍各自独立。
 func BusinessFieldCatalogs() []BusinessFieldCatalog {
 	return []BusinessFieldCatalog{
 		contractCatalog(), regulationCatalog(), noticeCatalog(), energyCatalog(),
+		utilityCatalog(), solarCatalog(),
 	}
 }
 
@@ -448,12 +455,26 @@ func WithSnakeFieldKeys(cfg *types.KbExtractConfig) *types.KbExtractConfig {
 }
 
 // DefaultExtractFields 由目录合成某个 scope 的默认提取字段配置。
-// certType 仅用于 classif 场景（分类主轴默认值），当前不参与内容。
-func DefaultExtractFields(scope, _ string) []types.ExtractFieldConfig {
+//
+// certType 仅在**多口径 scope** 下参与内容决策：
+// energy scope 同时承载「市电账单 / 光伏账单 / 能耗单」三类，
+// 它们字段完全不同（电厂 40+ 字段 vs 光伏 19 字段 vs 台账 11 字段），
+// 统一套 energy 目录会让市电和光伏都拿到台账的 11 个字段——配了也提不出东西。
+//
+// 其它 scope（合同/制度/公告/发票）保持原行为：certType 不参与内容。
+func DefaultExtractFields(scope, certType string) []types.ExtractFieldConfig {
+	if cat, ok := catalogForScopeAndCertType(scope, certType); ok {
+		return fieldsFromCatalog(cat)
+	}
 	cat, ok := BusinessFieldCatalogOf(scope)
 	if !ok {
 		return nil
 	}
+	return fieldsFromCatalog(cat)
+}
+
+// fieldsFromCatalog 把目录展开成默认提取字段配置。
+func fieldsFromCatalog(cat BusinessFieldCatalog) []types.ExtractFieldConfig {
 	fields := make([]types.ExtractFieldConfig, 0, len(cat.Standard)+len(cat.Extended))
 	for _, f := range cat.AllFields() {
 		fields = append(fields, types.ExtractFieldConfig{
@@ -469,8 +490,57 @@ func DefaultExtractFields(scope, _ string) []types.ExtractFieldConfig {
 	return fields
 }
 
+// energyCertTypeCatalogs 能耗 scope 下「分类 → 字段目录」的映射。
+//
+// 三类账单的字段完全不同，必须各用各的目录：
+//
+//	市电账单 → utilityCatalog（40+ 字段：费用明细/峰平谷/容需量/力调）
+//	光伏账单 → solarCatalog（19 字段：发电量/上网电量/关口明细）
+//	能耗单   → energyCatalog（11 字段：读数/倍率/用量）
+//
+// 键是 fleet_categories.name（= cert_type），必须与前端分类名逐字一致。
+var energyCertTypeCatalogs = map[string]string{
+	"市电账单": "utility",
+	"光伏账单": "solar",
+	"能耗单":  "energy",
+}
+
+// catalogForScopeAndCertType 多口径 scope 的目录解析。
+//
+// 返回 (目录, true) 表示命中特殊分流；否则调用方走常规 BusinessFieldCatalogOf。
+func catalogForScopeAndCertType(scope, certType string) (BusinessFieldCatalog, bool) {
+	if !strings.EqualFold(strings.TrimSpace(scope), "energy") {
+		return BusinessFieldCatalog{}, false
+	}
+	target, ok := energyCertTypeCatalogs[strings.TrimSpace(certType)]
+	if !ok {
+		return BusinessFieldCatalog{}, false
+	}
+	return BusinessFieldCatalogOf(target)
+}
+
 // DefaultBusinessPromptTemplate 返回某个 scope 的高级模式 System Prompt 模板。
-func DefaultBusinessPromptTemplate(scope string) string {
+//
+// energy scope 按 certType 分流，且**回填生产级 Prompt**：
+//   - 市电账单 → 1.6 万字国网电费 Prompt（原本硬编码在 knowledge_utility_extract.go）
+//   - 光伏账单 → 7 千字光伏 Prompt
+//   - 能耗单   → energy 目录自带的通用台账模板
+//
+// 这样用户在「提取规则 → 高级模式」里能直接看到并微调这份真实在跑的提示词，
+// 而不是一块空白——空白会让人误以为"高级模式坏了"。
+func DefaultBusinessPromptTemplate(scope string, certType ...string) string {
+	ct := ""
+	if len(certType) > 0 {
+		ct = certType[0]
+	}
+	if strings.EqualFold(strings.TrimSpace(scope), "energy") {
+		switch strings.TrimSpace(ct) {
+		case "市电账单":
+			return UtilityBillDefaultPromptTemplate()
+		case "光伏账单":
+			return SolarBillDefaultPromptTemplate()
+		}
+	}
 	cat, ok := BusinessFieldCatalogOf(scope)
 	if !ok {
 		return ""

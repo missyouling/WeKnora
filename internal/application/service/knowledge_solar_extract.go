@@ -48,7 +48,7 @@ const solarBillExtractionSystemPrompt = `你是一个专业的光伏发电账单
 {"kind":"solar_bill","records":[{"bill_period_start":"2026-08-01","bill_period_end":"2026-08-31","account_no":"5000303216586","account_name":"重庆星达铜业有限公司","supply_unit":"璧城供电服务中心","address":"重庆市璧山区青杠街道莲花社区居民委员会106号","taxpayer_type":"一般纳税人","consumption_mode":"自发自用余电上网","voltage_level":"交流380V","generation_mode":"光伏发电","generation_kwh":194489,"grid_kwh":27480,"settlement_amount":8409.37,"mom_change":"+99.13%","cumulative_kwh":97440,"tax_rate":"13%","tax_amount":967.45,"gateways":[{"gateway_type":"上网关口","meter_no":"5030001221300052554525","project_name":"1.4MW屋顶分布式光伏发电项目","readings":[{"meter_type":"反向有功（总）","prev":23.35,"curr":32.51,"multiplier":3000,"reading_kwh":27480,"bill_kwh":27480}],"fees":[{"category":"分布式上网电费","qty":27480,"rate":0.306018,"fee":8409.37}]},{"gateway_type":"发电关口","meter_no":"5030001221300051525236","project_name":"","readings":[{"meter_type":"反向有功（总）","prev":2094.96,"curr":2501.55,"multiplier":100,"reading_kwh":40659,"bill_kwh":0}],"fees":[{"category":"分布式电源发电补助","qty":40659,"rate":0,"fee":0}]}],"remark":"1.本期账单电费含税金额:8409.37,税率为:13%,税额为:967.45。"}]}`
 
 // solarBillExtractionOutputSchema 是传给模型强制 json_object 模式的输出骨架。
-const solarBillExtractionOutputSchema = `{"type":"object","properties":{"kind":{"type":"string"},"records":{"type":"array","items":{"type":"object","properties":{"bill_period_start":{"type":"string"},"bill_period_end":{"type":"string"},"account_no":{"type":"string"},"account_name":{"type":"string"},"supply_unit":{"type":"string"},"address":{"type":"string"},"taxpayer_type":{"type":"string"},"consumption_mode":{"type":"string"},"voltage_level":{"type":"string"},"generation_mode":{"type":"string"},"generation_kwh":{"type":"number"},"grid_kwh":{"type":"number"},"settlement_amount":{"type":"number"},"mom_change":{"type":"string"},"cumulative_kwh":{"type":"number"},"tax_rate":{"type":"string"},"tax_amount":{"type":"number"},"gateways":{"type":"array","items":{"type":"object","properties":{"gateway_type":{"type":"string"},"meter_no":{"type":"string"},"project_name":{"type":"string"},"readings":{"type":"array","items":{"type":"object","properties":{"meter_type":{"type":"string"},"prev":{"type":"number"},"curr":{"type":"number"},"multiplier":{"type":"number"},"reading_kwh":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["meter_type","prev","curr","multiplier","reading_kwh","bill_kwh"]}},"fees":{"type":"array","items":{"type":"object","properties":{"category":{"type":"string"},"qty":{"type":"number"},"rate":{"type":"number"},"fee":{"type":"number"}},"required":["category","qty","rate","fee"]}}},"required":["gateway_type","meter_no","project_name","readings","fees"]}},"remark":{"type":"string"}},"required":["bill_period_start","bill_period_end","account_no","account_name","supply_unit","address","taxpayer_type","consumption_mode","voltage_level","generation_mode","generation_kwh","grid_kwh","settlement_amount","mom_change","cumulative_kwh","tax_rate","tax_amount","gateways","remark"]}},"required":["kind","records"]}}`
+const solarBillExtractionOutputSchema = `{"type":"object","properties":{"kind":{"type":"string"},"records":{"type":"array","items":{"type":"object","properties":{"bill_period_start":{"type":"string"},"bill_period_end":{"type":"string"},"account_no":{"type":"string"},"account_name":{"type":"string"},"supply_unit":{"type":"string"},"address":{"type":"string"},"taxpayer_type":{"type":"string"},"consumption_mode":{"type":"string"},"voltage_level":{"type":"string"},"generation_mode":{"type":"string"},"generation_kwh":{"type":"number"},"grid_kwh":{"type":"number"},"settlement_amount":{"type":"number"},"mom_change":{"type":"string"},"cumulative_kwh":{"type":"number"},"tax_rate":{"type":"string"},"tax_amount":{"type":"number"},"gateways":{"type":"array","items":{"type":"object","properties":{"gateway_type":{"type":"string"},"meter_no":{"type":"string"},"project_name":{"type":"string"},"readings":{"type":"array","items":{"type":"object","properties":{"meter_type":{"type":"string"},"prev":{"type":"number"},"curr":{"type":"number"},"multiplier":{"type":"number"},"reading_kwh":{"type":"number"},"bill_kwh":{"type":"number"}},"required":["meter_type","prev","curr","multiplier","reading_kwh","bill_kwh"]}},"fees":{"type":"array","items":{"type":"object","properties":{"category":{"type":"string"},"qty":{"type":"number"},"rate":{"type":"number"},"fee":{"type":"number"}},"required":["category","qty","rate","fee"]}}},"required":["gateway_type","meter_no","project_name","readings","fees"]}},"remark":{"type":"string"},"fields":{"type":"object"}},"required":["bill_period_start","bill_period_end","account_no","account_name","supply_unit","address","taxpayer_type","consumption_mode","voltage_level","generation_mode","generation_kwh","grid_kwh","settlement_amount","mom_change","cumulative_kwh","tax_rate","tax_amount","gateways","remark"]}},"required":["kind","records"]}}`
 
 // BuildSolarBillExtractionBatches assembles the document text into batches.
 func BuildSolarBillExtractionBatches(name, summary string, chunks []*types.Chunk, batchSize int) []string {
@@ -121,6 +121,19 @@ func tryParseSolarBillJSON(raw string, parsed *SolarBillExtractionResult) bool {
 //
 // 不传 max_tokens（智谱 glm-5.3-flash 显式传 max_tokens 时对超长输出返回空）。
 func ExtractSolarBillsFromContent(ctx context.Context, model chat.Chat, content string) (*SolarBillExtractionResult, error) {
+	return ExtractSolarBillsFromContentWithConfig(ctx, model, content, nil)
+}
+
+// ExtractSolarBillsFromContentWithConfig 带配置入参的光伏账单提取。
+//
+// 与电费账单同口径：保留无 cfg 版本作为兼容包装器，既有调用方零改动；
+// cfg 非空时启用配置驱动 Prompt（详见 BuildSolarBillSystemPrompt）。
+func ExtractSolarBillsFromContentWithConfig(
+	ctx context.Context,
+	model chat.Chat,
+	content string,
+	cfg *types.KbExtractConfig,
+) (*SolarBillExtractionResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return &SolarBillExtractionResult{Kind: "not_solar_bill"}, nil
 	}
@@ -128,11 +141,11 @@ func ExtractSolarBillsFromContent(ctx context.Context, model chat.Chat, content 
 	thinking := false
 	llmCtx := types.WithLLMCallMetadata(ctx, "solar_bill_extract", "")
 	messages := []chat.Message{
-		{Role: "system", Content: solarBillExtractionSystemPrompt},
+		{Role: "system", Content: BuildSolarBillSystemPrompt(cfg)},
 		{Role: "user", Content: userPrompt},
 	}
 	baseOpts := &chat.ChatOptions{Temperature: 0.1, MaxTokens: 0, Thinking: &thinking}
-	attempts := DefaultExtractAttempts(json.RawMessage(solarBillExtractionOutputSchema))
+	attempts := DefaultExtractAttempts(json.RawMessage(BuildSolarBillOutputSchema(cfg)))
 
 	var parsed SolarBillExtractionResult
 	raw, err := RunExtractWithRetry(llmCtx, model, messages, baseOpts, attempts,
