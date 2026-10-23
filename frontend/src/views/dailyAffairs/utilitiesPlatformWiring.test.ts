@@ -147,3 +147,28 @@ test('卡片计数在 kbId 就绪后再拉（否则全部为 0）', () => {
   assert.match(src, /loadKb\(\)\.then\(\(\)\s*=>\s*loadTabCounts\(\)\)/, '计数必须等 kbId 解析完成')
   assert.doesNotMatch(src, /loadKb\(\); void loadTabCounts\(\)/, '不得与 loadKb 并行跑计数')
 })
+
+// ---- 账单详情页：标题栏精简 + 右侧无底层大框 ----
+
+test('详情页标题栏不得再挂「提取成功」状态标签', () => {
+  const head = /<div class="bill-detail-head">([\s\S]*?)<\/div>\s*\n\s*<div class="bill-detail-body">/.exec(src)
+  assert.ok(head, '缺少 bill-detail-head 区块')
+  assert.doesNotMatch(head![1], /<t-tag/, '标题栏不得再有 t-tag（提取成功徽标）')
+  assert.doesNotMatch(head![1], /row-status-tag/, '标题栏不得再挂状态标签类名')
+  // 返回按钮与文件名必须保留
+  assert.match(head![1], /账单列表/, '返回按钮必须保留')
+  assert.match(head![1], /bill-detail-title/, '文件名标题必须保留')
+})
+
+test('右侧内容区不得有底层大框（border / 背景 / 内边距）', () => {
+  // .bill-content 曾经有 border + #fff 背景 + 16px 内边距 → 4 张指标卡被套在大白框里，
+  // 既「框套框」又多吃掉 34px 纵向空间，顶部还与左侧菜单不齐平。
+  const css = /\.bill-content\s*\{([\s\S]*?)\n\}/.exec(src)
+  assert.ok(css, '缺少 .bill-content 样式')
+  const body = css![1]
+  assert.doesNotMatch(body, /^\s*border:/m, '.bill-content 不得有边框')
+  assert.doesNotMatch(body, /^\s*background:/m, '.bill-content 不得有背景色')
+  assert.doesNotMatch(body, /^\s*padding:/m, '.bill-content 不得有内边距')
+  // 仍要保留卡片间距与独立滚动兜底
+  assert.match(body, /margin-top:\s*12px/, '卡片间距应为 12px')
+})

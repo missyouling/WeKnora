@@ -148,13 +148,8 @@
                   账单列表
                 </t-button>
                 <span class="bill-detail-title">{{ currentRow?.fileName || '账单详情' }}</span>
-                <t-tag v-if="currentStatus.label !== '--'" size="small" :theme="currentStatus.theme"
-                  variant="light-outline" class="row-status-tag">
-                  <template v-if="currentStatus.icon" #icon>
-                    <t-icon :name="currentStatus.icon" :class="{ 'icon-spin': currentStatus.spin }" />
-                  </template>
-                  {{ currentStatus.label }}
-                </t-tag>
+                <!-- 状态标签已移除：详情页是「看这一张账单」的专注视图，
+                     提取状态在列表的「状态」列已经明确，标题栏再挂一枚徽标只是噪声。 -->
               </div>
               <div class="bill-detail-body">
                 <!-- 左侧分层菜单 -->
@@ -1509,8 +1504,8 @@ let feeItemsSnapshot = ''
 
 const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
 
-const currentStatus = computed<{ label: string; theme: string; icon?: string; spin?: boolean }>(() =>
-  currentRow.value ? statusOf(currentRow.value) : { label: '--', theme: 'default' })
+// 详情页标题栏不再挂状态徽标（列表的「状态」列已表达同一信息），
+// 因此这里不再维护 currentStatus 计算属性。
 
 const fieldValue = (cfg: ColDef) => editForm.value?.[cfg.key] ?? ''
 const setFieldValue = (cfg: ColDef, v: any) => {
@@ -2012,7 +2007,8 @@ const renderEnergyChart = async () => {
     animation: true,
     animationDuration: 600,
     animationEasing: 'cubicOut',
-    grid: { left: 8, right: 8, top: 42, bottom: 4, containLabel: true },
+    // 图表高度收到 160px 后，顶部留白也要跟着收（42 → 30），否则绘图区被压扁
+    grid: { left: 8, right: 8, top: 30, bottom: 2, containLabel: true },
     tooltip: {
       trigger: 'axis',
       formatter: (ps: any) => {
@@ -2041,7 +2037,12 @@ const renderEnergyChart = async () => {
       {
         name: '上期占比', type: 'bar', data: rows.map(r => (prevExists ? r.prevPct : null)), barWidth: 22,
         itemStyle: { color: '#9ab6e8', borderRadius: [3, 3, 0, 0] },
-        label: { show: prevExists, position: 'insideTop', distance: 2, color: '#fff', fontSize: 10, formatter: pctLabel },
+        // 标签放柱体正中（inside），不要 insideTop：柱体矮时顶端标签会压在上边缘、
+        // 与柱色糊成一片。浅蓝柱上的白字对比度只有 2.2:1，改深蓝（≈6:1）才读得清。
+        label: {
+          show: prevExists, position: 'inside', color: '#12395f', fontSize: 10,
+          fontWeight: 600, formatter: pctLabel,
+        },
       },
     ],
   })
@@ -3158,7 +3159,7 @@ onBeforeUnmount(() => { stopPolling() })
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 2px 0 10px;
+  padding: 0 0 8px;
 
   .bill-detail-title {
     font-size: 15px;
@@ -3183,7 +3184,7 @@ onBeforeUnmount(() => { stopPolling() })
   flex-shrink: 0;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
-  padding: 8px 6px;
+  padding: 6px;
   overflow-y: auto;
   background: var(--td-bg-color-container);
 
@@ -3223,17 +3224,19 @@ onBeforeUnmount(() => { stopPolling() })
 .bill-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  /* 详情页的右侧不是「一张大卡片」，而是若干张并列的卡片：
+     这里只负责布局，绝不画边框/背景/内边距。
+     之前这里是有 border + #fff 背景 + 16px 内边距的，于是顶部 4 张指标卡
+     与下方两张卡片被套在一个大白框里（截图里的红箭头），既是「框套框」，
+     又平白吃掉 34px 纵向空间、并把顶部卡片压低到与左侧菜单不齐平。 */
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  background: var(--td-bg-color-container);
-  padding: 16px 16px 0;
 
-  /* 卡片间间距统一用 margin-top，最后一张卡贴底，与左侧菜单底边线对齐 */
+  /* 卡片之间的唯一间距来源 */
   > * + * {
-    margin-top: 16px;
+    margin-top: 12px;
   }
 }
 
@@ -3241,7 +3244,7 @@ onBeforeUnmount(() => { stopPolling() })
   margin-bottom: 0;
   border: 1px solid var(--td-component-stroke);
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--td-bg-color-container);
   transition: box-shadow .2s, border-color .2s;
 
@@ -3254,7 +3257,7 @@ onBeforeUnmount(() => { stopPolling() })
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 
     .bill-card-title {
       font-size: 15px;
@@ -3274,14 +3277,16 @@ onBeforeUnmount(() => { stopPolling() })
 .overview-metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 8px;
+  /* 间距统一交给 .bill-content 的 margin-top，这里不再叠加 margin-bottom */
+  gap: 10px;
+  margin-bottom: 0;
 
   .metric-card {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 8px 12px;
+    gap: 1px;
+    /* 10px 上下：4 张卡总高从 81px 收到 ~74px，同时保持数值可读 */
+    padding: 9px 14px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
     background: var(--td-bg-color-container);
@@ -3342,8 +3347,11 @@ onBeforeUnmount(() => { stopPolling() })
   > .bill-card:nth-child(2) {
     /* 组件间保持自然间距，不强行撑开 */
     .ea-chart {
-      height: 210px;
-      margin-bottom: 14px;
+      /* 两栏是 stretch 等高：这一栏更高的部分会顶高整行。
+         图表是最高的一块，210px 时整行被顶到 514px（一屏放不下），
+         收到 160px 后整行约 455px，与左栏的表格高度基本持平。 */
+      height: 160px;
+      margin-bottom: 8px;
     }
   }
 }
@@ -3352,8 +3360,8 @@ onBeforeUnmount(() => { stopPolling() })
 .ea-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 8px;
 
     .ea-item {
       display: flex;
@@ -3399,10 +3407,10 @@ onBeforeUnmount(() => { stopPolling() })
   }
 
   .ea-chart {
-    padding: 6px 10px;
+    padding: 4px 8px;
     border: 1px solid var(--td-component-stroke);
     border-radius: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 
     .ea-echart {
       width: 100%;
@@ -3419,7 +3427,7 @@ onBeforeUnmount(() => { stopPolling() })
     .ea-compare-row {
       display: grid;
       grid-template-columns: 0.7fr 1.15fr 1fr 1.15fr 1fr 1fr;
-      padding: 5px 12px;
+      padding: 4px 12px;
       font-size: 12px;
       white-space: nowrap;
       border-bottom: 1px solid var(--td-component-stroke);
@@ -3451,7 +3459,8 @@ onBeforeUnmount(() => { stopPolling() })
     display: grid;
     grid-template-columns: 1fr 90px 80px 80px 60px;
     gap: 8px;
-    padding: 5px 12px;
+    /* 13 行 × 2px ≈ 26px：单行 28 → 26px，整表从 375 收到 ~350 */
+    padding: 4px 12px;
     border-bottom: 1px solid var(--td-component-stroke);
     font-size: 12px;
     align-items: center;
