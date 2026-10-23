@@ -203,3 +203,66 @@ func TestNormalizeUtilityDataType(t *testing.T) {
 		}
 	}
 }
+
+// ---- 顶部 6 张卡片 ↔ 设置分类 1:1 ----
+
+// TestEnergyViewCategoriesMatchCards 锁定「卡片分类」清单与顺序。
+//
+// 顺序即顶部卡片顺序：市电账单 / 光伏账单 / 电费核算 / 水费核算 / 气费核算 / 费用清单。
+// 前两个由旧表迁移与目录负责，后四个由 EnsureEnergyViewCategories 补齐；
+// 这里锁后四个的名字与字段集，防止改名或漏配（漏配的后果是点那张卡片的「设置」
+// 打开后分类列表里找不到自己，用户改不了列）。
+func TestEnergyViewCategoriesMatchCards(t *testing.T) {
+	want := []string{"电费核算", "水费核算", "气费核算", "费用清单"}
+	if len(energyViewCategorySpecs) != len(want) {
+		t.Fatalf("卡片分类数量应为 %d，实际 %d", len(want), len(energyViewCategorySpecs))
+	}
+	for i, name := range want {
+		if energyViewCategorySpecs[i].Name != name {
+			t.Fatalf("第 %d 个分类应为 %q，实际 %q", i+1, name, energyViewCategorySpecs[i].Name)
+		}
+		if len(energyViewCategorySpecs[i].Fields) == 0 {
+			t.Fatalf("分类 %q 没有默认字段——设置里会是一片空白", name)
+		}
+	}
+}
+
+// TestWaterCategoryHasWaterOnlyFees 水费核算必须带三项水费附加费。
+//
+// 电费/气费没有垃圾处置费、二次供水费、污水处理费；水费少了这三列，
+// 用户在设置里就配不出水费的实际账单口径。
+func TestWaterCategoryHasWaterOnlyFees(t *testing.T) {
+	keys := map[string]bool{}
+	for _, f := range energyWaterFields {
+		keys[f.Key] = true
+	}
+	for _, k := range []string{"garbage_fee", "secondary_water_fee", "sewage_fee"} {
+		if !keys[k] {
+			t.Fatalf("水费核算缺少字段 %q", k)
+		}
+	}
+	// 电费核算不该带这三列（否则会多出永远为空的列）
+	for _, f := range energyMeterFields {
+		switch f.Key {
+		case "garbage_fee", "secondary_water_fee", "sewage_fee":
+			t.Fatalf("电费核算不应包含水费专属字段 %q", f.Key)
+		}
+	}
+}
+
+// TestMeterFieldsHaveUniqueKeys 字段 key 必须唯一（重复会让 subs 里出现两条同名，
+// 前端按 name 去重时会把后一条吞掉，表现为「某个列在设置里消失」）。
+func TestMeterFieldsHaveUniqueKeys(t *testing.T) {
+	for _, group := range [][]energyViewField{energyMeterFields, energyWaterFields, energyBillingFields} {
+		seen := map[string]bool{}
+		for _, f := range group {
+			if f.Key == "" || f.Label == "" {
+				t.Fatalf("字段 key/label 不能为空：%+v", f)
+			}
+			if seen[f.Key] {
+				t.Fatalf("字段 key 重复：%q", f.Key)
+			}
+			seen[f.Key] = true
+		}
+	}
+}

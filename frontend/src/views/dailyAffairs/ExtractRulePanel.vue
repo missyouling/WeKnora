@@ -634,6 +634,9 @@ const certTypeOptions = computed(() => {
       // 它们的字段是通用台账口径、与账单提取规则无关；不过滤会让规则 Tab 默认选中
       // 「工业用电」，用户看到 20 个跟市电账单无关的字段（真机踩过）。
       if (props.scope === 'energy' && String(c?.builtin_key || '').startsWith('energy-')) return
+      // 「能耗单」走 document 台账管线，页面上没有对应卡片：规则 Tab 与
+      // 「字段定义」保持同一份分类清单（设置分类 = 顶部 6 张卡片）。
+      if (props.scope === 'energy' && String(c?.name || '').trim() === '能耗单') return
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name)
         children.push({ label: c.name, value: typeComposite(props.scope, c.name) })

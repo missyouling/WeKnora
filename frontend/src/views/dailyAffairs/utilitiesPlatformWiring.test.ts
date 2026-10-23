@@ -78,3 +78,72 @@ test('账单概况 20 字段 + 序号列 + 共享表格样式', () => {
     assert.ok(src.includes(cls), `根/主区/列表容器必须带 .${cls}`)
   }
 })
+
+// ---- 本轮：取消侧边栏 + 7 张卡片 + 汇总栏入框 ----
+
+test('取消左侧边栏：页面为单栏全宽布局', () => {
+  assert.doesNotMatch(src, /class="utilities-sidebar"/, '左侧竖向侧边栏必须彻底删除')
+  assert.doesNotMatch(src, /class="utilities-layout"/, '侧边栏+内容的双列布局容器必须删除')
+  assert.doesNotMatch(src, /utilities-side-item/, '侧边栏菜单项必须删除')
+  // 根容器必须是四模块同款骨架，主区与列表容器逐项对齐发票管理
+  assert.match(src, /class="utilities-management-container biz-page"/, '根容器必须挂 .biz-page')
+  assert.match(src, /class="electricity-panel biz-main"/, '主区必须挂 .biz-main')
+  assert.match(src, /class="biz-list-view"/, '列表视图容器必须挂 .biz-list-view')
+})
+
+test('顶部 KPI 卡片为 6 业务卡 + 1 历史记录卡，无「已收录账单」', () => {
+  // 6 个侧边栏菜单 1:1 转为卡片，末卡历史记录
+  const labels = [...src.matchAll(/label: '([^']+)'/g)].map(m => m[1])
+  for (const name of ['市电账单', '光伏账单', '电费核算', '水费核算', '气费核算', '费用清单', '历史记录']) {
+    assert.ok(labels.includes(name), `KPI 卡片缺少「${name}」`)
+  }
+  assert.ok(!labels.includes('已收录账单'), '「已收录账单」卡片必须删除')
+  // 6 个业务卡用 action=type + typeValue 驱动高亮；历史记录卡不参与高亮
+  assert.match(src, /action: 'type'/, '业务卡片必须是 action=type 才能随当前 tab 高亮')
+  assert.match(src, /typeValue:/, '业务卡片必须带 typeValue 才能与 activeTab 比对')
+  assert.match(src, /:active-type="activeTab"/, 'KPI 组必须接收当前 tab 作为高亮锚点')
+})
+
+test('点击前 6 张卡片切换列表视图', () => {
+  assert.match(src, /onKpiCardClick\s*=\s*\(|function onKpiCardClick/, '必须有卡片点击处理')
+  assert.match(src, /switchTab\(/, '点击业务卡片必须调用 switchTab 切换 tab')
+  assert.match(src, /uploadHistoryVisible\.value = true/, '点击历史记录卡片必须打开上传历史抽屉')
+})
+
+test('底部汇总栏位于列表白色卡片容器内部', () => {
+  // .doc-list-footer-summary 必须出现在 .doc-list-scroll 开标签之后、其闭标签之前
+  const open = src.indexOf('<div class="doc-list-scroll"')
+  assert.ok(open > 0, '缺少 .doc-list-scroll 滚动容器')
+  const summaryIdx = src.indexOf('doc-list-footer-summary')
+  assert.ok(summaryIdx > open, '汇总栏必须在 .doc-list-scroll 之后出现（即位于其内部）')
+  // 汇总栏之后、模板结尾前必须还有一个 </div> 收口 scroll 容器
+  const after = src.slice(summaryIdx)
+  assert.match(after, /<\/div>\s*<\/div>/, '汇总栏之后必须收口 .doc-list-scroll')
+  // 复用中台 doc-summary-bar 的粘性底栏样式类
+  assert.match(src, /class="[^"]*doc-summary-bar/, '汇总栏应复用中台 doc-summary-bar 样式')
+})
+
+test('表头吸顶不穿透：sticky-header + 表头滚动条遮罩', () => {
+  assert.match(src, /sticky-header/, 't-table 必须开启 sticky-header，否则表头被滚走')
+  assert.match(src, /--invoice-sbw|headerFix/, '必须实测滚动条宽度用于表头右侧遮罩')
+  assert.match(src, /doc-list-view::after|::after/, '必须有表头右侧滚动条轨道遮罩，避免滚动条压在表头上')
+})
+
+// ---- 本轮：KPI 卡片栏必须在各 tab 模板之外 ----
+
+test('KPI 卡片栏位于各 tab 模板之外（切卡片不会丢导航）', () => {
+  // 曾经把 DashboardKpiGroup 放在 electricity tab 内：切到光伏/核算/清单时整栏消失，
+  // 用户失去顶部导航，只能刷新页面回来（真机踩过）。
+  const kpi = src.indexOf('<DashboardKpiGroup')
+  const tabOpen = src.indexOf('<template v-if="activeTab === \'electricity\'">')
+  assert.ok(kpi > 0, '缺少 DashboardKpiGroup')
+  assert.ok(tabOpen > 0, '缺少 electricity tab 模板')
+  assert.ok(kpi < tabOpen, 'KPI 卡片栏必须在 electricity tab 模板之前（即所有 tab 共享）')
+})
+
+test('卡片计数在 kbId 就绪后再拉（否则全部为 0）', () => {
+  // 账单/光伏接口以 kbId 为参数，kbId 由 loadKb() 异步解析；
+  // 先跑 loadTabCounts 会让 6 张卡片全显示 0（真机踩过）。
+  assert.match(src, /loadKb\(\)\.then\(\(\)\s*=>\s*loadTabCounts\(\)\)/, '计数必须等 kbId 解析完成')
+  assert.doesNotMatch(src, /loadKb\(\); void loadTabCounts\(\)/, '不得与 loadKb 并行跑计数')
+})

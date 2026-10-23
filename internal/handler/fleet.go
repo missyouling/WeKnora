@@ -2153,6 +2153,12 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.BackfillBillingPeriod(ctx); err != nil {
 		logger.Warnf(ctx, "backfill billing period failed: %v", err)
 	}
+	// 顶部 6 张卡片 ↔ 设置分类 1:1：补齐电费/水费/气费核算与费用清单四类的默认列
+	if _, err := uh.EnsureEnergyViewCategories(ctx); err != nil {
+		logger.Warnf(ctx, "seed energy view categories failed: %v", err)
+	}
+	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
+	uh.hideEnergyLedgerCategory(ctx)
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

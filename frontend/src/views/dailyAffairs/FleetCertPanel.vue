@@ -136,17 +136,20 @@
                          ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。
                          费用分组里「费用组成 / 分时时段」右侧另有细项展开按钮：
                          它们的下级不是子字段而是"行项集合"，单独渲染在下方。 -->
-                    <div v-else class="fc-name-wrap">
+                    <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(fd) }"
+                      @click.stop="toggleChildGroup(fd)">
                       <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
                         :ref="(el: any) => setFieldInputRef(fd.name, el)"
+                        @click.stop
                         @update:model-value="(v: string) => setFieldEdit(fd, v)" />
-                      <button v-if="childGroupOf(fd)" type="button" class="fc-child-toggle"
+                      <!-- 细项展开徽标：绝对定位在输入框右内边距上，不占列宽、不挤字段名。
+                           旧版在这里塞了实心绿底按钮，把 160px 的字段名压到约 80px。 -->
+                      <span v-if="childGroupOf(fd)" class="fc-child-badge"
                         :class="{ open: openChildGroup === childGroupOf(fd) }"
-                        :title="`${fieldLabelOf(fd)} · 点击${openChildGroup === childGroupOf(fd) ? '收起' : '展开'}细项配置`"
-                        @click="toggleChildGroup(fd)">
-                        <t-icon :name="openChildGroup === childGroupOf(fd) ? 'chevron-up' : 'chevron-down'" size="14px" />
-                        <span>{{ childItemsOf(childGroupOf(fd)).length }}</span>
-                      </button>
+                        :title="`${fieldLabelOf(fd)} · 点击${openChildGroup === childGroupOf(fd) ? '收起' : '展开'}细项配置`">
+                        <span class="fc-child-badge-num">{{ childItemsOf(childGroupOf(fd)).length }}</span>
+                        <t-icon name="chevron-right" size="12px" class="fc-child-caret" />
+                      </span>
                     </div>
                     <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
@@ -224,39 +227,57 @@
                        父字段下展开 —— 否则字段定义表会被 22 条行项淹没。
                        编辑只改 label（显示名），name 是账单 row 的匹配键，改了就对不上
                        fee_items 的 name/period。 -->
-                  <div v-if="childGroupOf(fd) && openChildGroup === childGroupOf(fd)" class="sub-inline">
+                  <div v-if="childGroupOf(fd) && openChildGroup === childGroupOf(fd)" class="child-drawer">
+                    <!-- 抽屉小标题：说明这批细项属于哪个字段，并给一个明确的收起口 -->
+                    <div class="child-drawer-head">
+                      <span class="child-drawer-title">
+                        {{ fieldLabelOf(fd) }} · 细项列表
+                        <span class="child-drawer-count">{{ childItemsOf(childGroupOf(fd)).length }} 项</span>
+                      </span>
+                      <span class="child-drawer-tip">拖拽左侧手柄可调整顺序</span>
+                      <t-button variant="text" size="small" class="child-drawer-fold"
+                        @click="toggleChildGroup(fd)">收起</t-button>
+                    </div>
+                    <!-- 小表头：与下面每行的 5 列网格严格对齐 -->
+                    <div class="child-row-head">
+                      <span />
+                      <span>#</span>
+                      <span>细项名称</span>
+                      <span>启用</span>
+                      <span>操作</span>
+                    </div>
                     <div v-if="!childItemsOf(childGroupOf(fd)).length" class="fc-child-empty">
                       暂无细项，可在下方添加（如「零售交易电费(平)」或「尖」）。
                     </div>
-                    <!-- 细项行用紧凑 4 列（序号 / 名称 / 启用 / 菜单）：
-                         设置抽屉内容区约 450px，塞不下主字段那套 7 列网格，
-                         硬塞的结果是操作列被裁掉（真机截图右侧只剩几个点）。
-                         细项不需要「数据类型/宽度/默认表头」——它们只是行标题。 -->
+                    <!-- 细项行：单行 5 列（拖拽手柄 / 序号 / 名称 / 启用 / 删除）。
+                         细项是子表的「行标题」而不是表头列，所以：
+                         · 不设列可见性开关（对它没有意义，旧版多这一个开关）；
+                         · 排序用拖拽而不是 ↑↓ 小箭头（箭头会折到第二行，行高被撑成两倍）；
+                         · name 是 fee_items 的行匹配键，改名只写 label。 -->
                     <div v-for="(ch, ci) in childItemsOf(childGroupOf(fd))" :key="ch.name"
-                      class="field-config-row child-row">
-                      <span class="fc-drag sub-drag" :title="`细项键：${ch.name}`">{{ ci + 1 }}</span>
+                      class="field-config-row child-row"
+                      :class="{ 'fc-dragging': childDragName === ch.name }"
+                      draggable="true" @dragstart="onChildDragStart(ch)" @dragover.prevent
+                      @drop.prevent="onChildDrop(ch)" @dragend="childDragName = ''">
+                      <span class="fc-drag child-drag" :title="`拖动排序（细项键：${ch.name}）`">
+                        <t-icon name="move" size="14px" />
+                      </span>
+                      <span class="child-seq">{{ ci + 1 }}</span>
                       <t-input :model-value="ch.label || ch.name" size="small" class="fc-name"
                         placeholder="细项名称" :title="`细项键：${ch.name}`"
                         @update:model-value="(v: string) => renameChild(ch, v)" />
-                      <t-tooltip content="默认显示：子表默认展示该行" placement="top">
-                        <t-switch :model-value="!!ch.isDefault" size="small"
-                          @change="(v: any) => (ch.isDefault = !!v)" />
-                      </t-tooltip>
                       <t-tooltip content="启用 / 停用该细项" placement="top">
                         <t-switch :model-value="!!ch.enabled" size="small"
                           @change="(v: any) => (ch.enabled = !!v)" />
                       </t-tooltip>
-                      <span class="fc-child-ops">
-                        <t-dropdown :options="childMenuOptions(ch, ci, childItemsOf(childGroupOf(fd)).length)"
-                          placement="bottom-right" min-column-width="110px"
-                          @click="(ctx: any) => onChildMenu(ch, ctx.value)">
-                          <t-button variant="text" size="small" shape="square" title="细项操作">
-                            <template #icon><t-icon name="more" size="15px" /></template>
-                          </t-button>
-                        </t-dropdown>
-                      </span>
+                      <t-tooltip content="删除细项" placement="top">
+                        <t-button variant="text" size="small" shape="square" theme="danger"
+                          class="child-del" @click="removeChild(ch)">
+                          <template #icon><t-icon name="delete" size="15px" /></template>
+                        </t-button>
+                      </t-tooltip>
                     </div>
-                    <div class="field-config-add sub-inline-add">
+                    <div class="field-config-add child-add">
                       <t-input v-model="newChildLabel" size="small" class="fc-add-input"
                         :placeholder="childPlaceholderOf(fd)" @enter="addChild(fd)" />
                       <t-button variant="outline" size="small" @click="addChild(fd)">添加细项</t-button>
@@ -329,7 +350,7 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | ''; kbId?: string }>(), { scope: 'vehicle', kbId: '' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
@@ -522,6 +543,10 @@ const ENERGY_TYPE_SEED_KEYS = new Set([
   'energy-electricity', 'energy-water', 'energy-gas', 'energy-heat',
 ])
 
+// 「能耗单」是能耗台账（document 管线）的分类：页面上没有对应卡片，
+// 设置抽屉只展示与顶部 6 张卡片 1:1 的分类，所以它在这里隐藏（数据保留）。
+const ENERGY_HIDDEN_CATEGORY_NAMES = new Set(['能耗单'])
+
 function buildItems(g0: any): any[] {
   const scope: string = g0.scope
   const gid: string = g0.groupId || ''
@@ -529,6 +554,8 @@ function buildItems(g0: any): any[] {
   const list = (categories.value[scope] || [])
     .filter((c: any) => (c.group_id || '') === gid)
     .filter((c: any) => !(scope === 'energy' && ENERGY_TYPE_SEED_KEYS.has(String(c.builtin_key || ''))))
+    // 设置分类必须与顶部 6 张业务卡片 1:1：能耗单没有卡片，不进列表
+    .filter((c: any) => !(scope === 'energy' && ENERGY_HIDDEN_CATEGORY_NAMES.has(String(c.name || '').trim())))
   const merged: any[] = []
   const seen = new Set<string>()
   // 1) 已入库分类：严格按 categories 后端顺序（sort_order，用户拖动后持久化）
@@ -634,9 +661,25 @@ async function load() {
       categories.value[s] = list
       usedFields.value = new Set()
     })
+    autoOpenInitialCategory()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
   }
+}
+
+/**
+ * 自动展开「当前卡片对应的分类」。
+ *
+ * 用户在主页面处于某张卡片（如「光伏账单」）时点设置，意图就是改这张卡片的字段；
+ * 打开后还要在 6 个分类里再找一次属于多余步骤。抽屉是 destroy-on-close，
+ * 每次打开都会走一遍 load，因此不需要额外监听。
+ */
+function autoOpenInitialCategory() {
+  const want = String(props.initialCategory || '').trim()
+  if (!want || editingId.value) return
+  const target = (categories.value[props.scope] || [])
+    .find((c: any) => String(c.name || '').trim() === want)
+  if (target) toggleEdit(target)
 }
 
 // ---- 字段引用判断：删除字段前检查是否已被证照记录引用 ----
@@ -831,32 +874,37 @@ function removeChild(ch: any) {
   fieldsEditable.value = fieldsEditable.value.filter((f: any) => f !== ch)
 }
 
-/** 细项行操作菜单：上移/下移在端点置灰，删除单独确认。 */
-function childMenuOptions(ch: any, index: number, total: number) {
-  return [
-    { content: '上移', value: 'up', disabled: index === 0 },
-    { content: '下移', value: 'down', disabled: index >= total - 1 },
-    { content: '删除细项', value: 'del' },
-  ]
-}
-function onChildMenu(ch: any, value: string) {
-  if (value === 'up') moveChild(ch, -1)
-  else if (value === 'down') moveChild(ch, 1)
-  else if (value === 'del') removeChild(ch)
+/** 正在拖动的细项 name（拖拽排序的临时状态；用 name 而不是下标，见 onChildDrop）。 */
+const childDragName = ref('')
+
+function onChildDragStart(ch: any) {
+  childDragName.value = String(ch?.name || '').trim()
 }
 
-function moveChild(ch: any, delta: number) {
-  const g = String(ch?.group ?? '').trim()
+/**
+ * 细项拖放：按 name 定位两端再移动。
+ *
+ * 为什么不能用下标：细项行是「按 group 过滤后」渲染的，模板里的 ci 是组内序号，
+ * 而 fieldsEditable 里还夹着其它分组的字段。用 ci 直接 splice 会把细项搬到
+ * 别的分组里去（字段定义页表现为「拖一下细项就消失了」）。
+ */
+function onChildDrop(ch: any) {
+  const target = String(ch?.name || '').trim()
+  const from = childDragName.value
+  childDragName.value = ''
+  if (!from || !target || from === target) return
+  const groupKey = String(ch?.group ?? '').trim()
   const list = [...fieldsEditable.value]
-  const groupIdx: number[] = []
-  list.forEach((f: any, i) => { if (String(f.group ?? '').trim() === g) groupIdx.push(i) })
-  const pos = groupIdx.findIndex((i) => list[i] === ch)
-  const target = pos + delta
-  if (pos < 0 || target < 0 || target >= groupIdx.length) return
-  const from = groupIdx[pos]
-  const to = groupIdx[target]
-  const [moved] = list.splice(from, 1)
-  list.splice(to, 0, moved)
+  const indices: number[] = []
+  list.forEach((f: any, i) => { if (String(f.group ?? '').trim() === groupKey) indices.push(i) })
+  const fromPos = indices.findIndex((i) => String(list[i]?.name || '').trim() === from)
+  const toPos = indices.findIndex((i) => String(list[i]?.name || '').trim() === target)
+  if (fromPos < 0 || toPos < 0) return
+  const [moved] = list.splice(indices[fromPos], 1)
+  // splice 后目标下标可能后移一位：取出后重新按 name 找一次终点位置
+  const anchor = list.findIndex((f: any) => String(f?.name || '').trim() === target)
+  if (!moved || anchor < 0) return
+  list.splice(toPos > fromPos ? anchor + 1 : anchor, 0, moved)
   fieldsEditable.value = list
 }
 
@@ -1585,35 +1633,57 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     }
   }
 
-  /* 字段名 + 细项展开按钮（费用组成 / 分时时段） */
+  /* 字段名 + 细项展开徽标（费用组成 / 分时时段） */
   .fc-name-wrap {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 4px;
     min-width: 0;
 
     .fc-name { flex: 1 1 auto; min-width: 0; }
+
+    /* 有细项的字段：整块可点，右侧留出徽标位（靠内边距让位，不压缩输入框宽度） */
+    &.has-child {
+      cursor: pointer;
+
+      .fc-name :deep(.t-input) { padding-right: 46px; }
+      .fc-name :deep(input) { cursor: pointer; }
+    }
   }
 
-  .fc-child-toggle {
+  /* 细项数量徽标：绝对定位在输入框右内边距上 —— 不占列宽，字段名输入框
+     与普通行等宽（旧版实心按钮会把 160px 的输入框压到 ~80px）。 */
+  .fc-child-badge {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    flex: 0 0 auto;
-    padding: 0 6px;
-    height: 24px;
-    font-size: 12px;
-    line-height: 22px;
+    gap: 1px;
+    height: 20px;
+    padding: 0 4px 0 6px;
+    border-radius: 10px;
+    font-size: 11px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
     color: var(--td-brand-color);
     background: var(--td-brand-color-light);
-    border: 1px solid transparent;
-    border-radius: 4px;
     cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
 
-    &:hover { border-color: var(--td-brand-color); }
-    &.open { background: var(--td-brand-color); color: #fff; }
+    &:hover { background: var(--td-brand-color); color: #fff; }
+
+    .fc-child-caret {
+      transition: transform 0.18s ease;
+    }
+
+    &.open {
+      background: var(--td-brand-color);
+      color: #fff;
+
+      .fc-child-caret { transform: rotate(90deg); }
+    }
   }
 
   .fc-child-type {
@@ -1623,35 +1693,115 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     color: var(--td-text-color-placeholder);
   }
 
-  .fc-child-move {
-    font-size: 14px;
-    line-height: 1;
-    padding: 0 2px;
-    min-width: 24px;
-    color: var(--td-text-color-secondary);
+  /* ---- 细项抽屉：内嵌在父字段行正下方 ---- */
+  .child-drawer {
+    margin: 2px 0 6px 24px;
+    padding: 6px 10px 8px;
+    border-left: 2px solid var(--td-brand-color);
+    border-radius: 6px;
+    background: #f8fafc;
+    max-height: 280px;
+    overflow-y: auto;
 
-    &:not(.t-is-disabled):hover { color: var(--td-brand-color); }
+    /* 抽屉滚动时底部新增栏贴住下沿，不用滚到底才能加 */
+    .child-add {
+      position: sticky;
+      bottom: -8px;
+      margin-top: 4px;
+      padding: 6px 0 2px;
+      background: #f8fafc;
+    }
   }
 
-  /* 细项行：紧凑 4 列，宽度自适应抽屉，不再横向溢出 */
+  .child-drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 4px;
+
+    .child-drawer-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--td-text-color-primary);
+      white-space: nowrap;
+    }
+
+    .child-drawer-count {
+      margin-left: 4px;
+      padding: 0 6px;
+      border-radius: 9px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: var(--td-brand-color);
+      background: var(--td-brand-color-light);
+    }
+
+    .child-drawer-tip {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 11px;
+      color: var(--td-text-color-placeholder);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .child-drawer-fold { flex: 0 0 auto; }
+  }
+
+  /* 细项小表头：列宽与 .child-row 完全一致 */
+  .child-row-head,
   .field-config-row.child-row,
   .field-config-row.child-row.has-width {
-    grid-template-columns: 24px minmax(0, 1fr) 48px 52px 36px;
+    display: grid;
+    grid-template-columns: 24px 28px minmax(0, 1fr) 56px 28px;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
   }
 
-  .fc-child-ops {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    justify-content: flex-end;
+  .child-row-head {
+    padding: 0 4px 2px;
+    font-size: 11px;
+    color: var(--td-text-color-placeholder);
+
+    > span:nth-child(2) { text-align: center; }
+    > span:nth-child(4),
+    > span:nth-child(5) { text-align: center; }
+  }
+
+  .field-config-row.child-row {
+    padding: 0 4px;
+    margin-bottom: 2px;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 4px;
+    min-height: 34px;
+
+    &:hover { border-color: var(--td-brand-color-light-active); }
+    &.fc-dragging { opacity: 0.5; }
+
+    .child-drag { cursor: grab; }
+    .child-drag:active { cursor: grabbing; }
+
+    .child-seq {
+      text-align: center;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: var(--td-text-color-placeholder);
+    }
+
+    .child-del { color: var(--td-text-color-placeholder); }
+    .child-del:hover { color: var(--td-error-color); }
   }
 
   .fc-child-empty {
-    padding: 8px 12px 8px 28px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
     font-size: 12px;
     color: var(--td-text-color-placeholder);
-    background: var(--td-bg-color-secondarycontainer);
+    background: var(--td-bg-color-container);
+    border: 1px dashed var(--td-component-stroke);
     border-radius: 4px;
   }
 

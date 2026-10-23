@@ -36,7 +36,7 @@ func TestBuildUtilityBillSystemPromptAppendsConfiguredFieldRules(t *testing.T) {
 				Desc: "用电户号", Rule: "提取户号栏位，只取数字"},
 			{Name: "保证金", Label: "保证金", Type: "string", Enabled: true,
 				Rule: "提取账单上的保证金金额"},
-			{Name: "ignored", Enabled: true},                          // 无 rule 无 desc → 不注入
+			{Name: "ignored", Enabled: true},                       // 无 rule 无 desc → 不注入
 			{Name: "disabled_field", Enabled: false, Rule: "不该出现"}, // 禁用 → 不注入
 		},
 	}

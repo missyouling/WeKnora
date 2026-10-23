@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // 能耗设置中台化迁移（P2）。
@@ -41,26 +41,26 @@ import (
 // `electricityDefaultGroupFields` 的 group 值逐字一致——三处漂移会让
 // 迁移出来的 subs 在界面上分组错位。
 var migratedGroupLabels = map[string]string{
-	"overview":          "账单概况",
-	"market":            "市场化购电费",
-	"line":              "上网环节线损费",
-	"trans":             "输配电量电费",
-	"sys":               "系统运行费",
-	"gov-industrial":    "政府基金及附加（工商业）",
-	"catalog":           "目录电费（居民）",
-	"gov-residential":   "政府基金及附加（居民）",
-	"capacity":          "输配容（需）量",
-	"pf":                "功率因素调整",
-	"meter":             "电量明细（工商业）",
-	"resident-meter":    "电量明细（居民）",
-	"meter-rows":        "电量明细（工商业）· 行",
-	"resident-meter-rows": "电量明细（居民）· 行",
-	"catalog-rows":      "目录电费（居民）· 行",
-	"overview-rows":     "账单概况 · 行",
-	"market-rows":       "市场化购电费 · 行",
-	"trans-rows":        "输配电量电费 · 行",
-	"sys-rows":          "系统运行费 · 行",
-	"gov-industrial-rows": "政府基金及附加（工商业）· 行",
+	"overview":             "账单概况",
+	"market":               "市场化购电费",
+	"line":                 "上网环节线损费",
+	"trans":                "输配电量电费",
+	"sys":                  "系统运行费",
+	"gov-industrial":       "政府基金及附加（工商业）",
+	"catalog":              "目录电费（居民）",
+	"gov-residential":      "政府基金及附加（居民）",
+	"capacity":             "输配容（需）量",
+	"pf":                   "功率因素调整",
+	"meter":                "电量明细（工商业）",
+	"resident-meter":       "电量明细（居民）",
+	"meter-rows":           "电量明细（工商业）· 行",
+	"resident-meter-rows":  "电量明细（居民）· 行",
+	"catalog-rows":         "目录电费（居民）· 行",
+	"overview-rows":        "账单概况 · 行",
+	"market-rows":          "市场化购电费 · 行",
+	"trans-rows":           "输配电量电费 · 行",
+	"sys-rows":             "系统运行费 · 行",
+	"gov-industrial-rows":  "政府基金及附加（工商业）· 行",
 	"gov-residential-rows": "政府基金及附加（居民）· 行",
 }
 
@@ -99,7 +99,7 @@ func (h *UtilityHandler) MigrateUtilityFieldConfigsToEnergyScope(
 	if h.db == nil {
 		return 0, 0, nil
 	}
-	const tenantID uint64 = 0 // 业务配置一律落全局
+	const tenantID uint64 = 0             // 业务配置一律落全局
 	subs := h.buildEnergySubs(ctx, 10000) // 旧表数据按实际租户读取
 	if len(subs) == 0 {
 		return 0, 0, nil
@@ -224,12 +224,12 @@ func (h *UtilityHandler) buildEnergySubs(ctx context.Context, tenantID uint64) [
 	for _, g := range energyMigratedGroups {
 		for _, r := range customByGroup[g] {
 			out = append(out, types.FleetCategorySub{
-				Name:      strings.TrimSpace(r.FieldKey),
-				Label:     strings.TrimSpace(r.Label),
-				Enabled:   true,
-				IsDefault: r.DefaultVisible,
-				DataType:  normalizeUtilityDataType(r.FieldType),
-				Group:     g,
+				Name:       strings.TrimSpace(r.FieldKey),
+				Label:      strings.TrimSpace(r.Label),
+				Enabled:    true,
+				IsDefault:  r.DefaultVisible,
+				DataType:   normalizeUtilityDataType(r.FieldType),
+				Group:      g,
 				GroupLabel: migratedGroupLabels[g],
 			})
 		}
@@ -239,12 +239,12 @@ func (h *UtilityHandler) buildEnergySubs(ctx context.Context, tenantID uint64) [
 	for g, rows := range customByGroup {
 		for _, r := range rows {
 			out = append(out, types.FleetCategorySub{
-				Name:      strings.TrimSpace(r.FieldKey),
-				Label:     strings.TrimSpace(r.Label),
-				Enabled:   true,
-				IsDefault: r.DefaultVisible,
-				DataType:  normalizeUtilityDataType(r.FieldType),
-				Group:     g,
+				Name:       strings.TrimSpace(r.FieldKey),
+				Label:      strings.TrimSpace(r.Label),
+				Enabled:    true,
+				IsDefault:  r.DefaultVisible,
+				DataType:   normalizeUtilityDataType(r.FieldType),
+				Group:      g,
 				GroupLabel: migratedGroupLabels[g],
 			})
 		}
@@ -600,4 +600,208 @@ func (h *UtilityHandler) BackfillBillingPeriod(ctx context.Context) (int, error)
 		logger.Infof(ctx, "billing period backfilled: %d records", patched)
 	}
 	return patched, nil
+}
+
+// ---- 顶部 6 张业务卡片 ↔ 设置分类 1:1 ----
+
+// energyViewField 一个「核算列/清单列」字段（只用于设置里的改名/排序/显隐）。
+type energyViewField struct {
+	Key     string
+	Label   string
+	Default bool
+}
+
+// energyMeterFields 电费/气费核算的列（与 UtilityMeterTab 的 COLUMN_DEFS 同键）。
+var energyMeterFields = []energyViewField{
+	{"month", "月份", true},
+	{"meter", "表计", true},
+	{"start_reading", "起度", true},
+	{"end_reading", "止度", true},
+	{"rate", "倍率", true},
+	{"usage", "用量", true},
+	{"unit_price", "单价", true},
+	{"subsidy", "补差", false},
+	{"amount", "金额", true},
+	{"remark", "备注", false},
+	{"reading_date", "抄表日期", true},
+	{"reader", "抄表人", true},
+	{"use_unit", "使用单位", true},
+	{"meter_mode", "抄表方式", true},
+	{"meter_no", "表号", false},
+	{"default_unit_price", "默认单价", false},
+	{"install_date", "安装日期", false},
+}
+
+// energyWaterFields 水费核算 = 电费列 + 三项水费附加费。
+var energyWaterFields = func() []energyViewField {
+	out := make([]energyViewField, 0, len(energyMeterFields)+3)
+	out = append(out, energyMeterFields[:8]...)
+	out = append(out,
+		energyViewField{"garbage_fee", "垃圾处置费", false},
+		energyViewField{"secondary_water_fee", "二次供水费", false},
+		energyViewField{"sewage_fee", "污水处理费", false},
+	)
+	out = append(out, energyMeterFields[8:]...)
+	return out
+}()
+
+// energyBillingFields 费用清单的列。
+//
+// 费用清单有「业主视角 / 租户视角」两套列，这里取并集：前端按 key 求交集，
+// 不在当前视角列集里的 key 直接跳过，因此并集不会让任一视角多出列。
+var energyBillingFields = []energyViewField{
+	{"month", "账单周期", true},
+	{"unit", "使用单位", true},
+	{"total_kwh", "总电量", false},
+	{"total_fee", "总电费", false},
+	{"solar_gen", "光伏发电量", true},
+	{"solar_grid", "上网电量", true},
+	{"solar_amount", "结算金额", true},
+	{"ratio", "分摊比例", true},
+	{"ind_kwh", "用电量（工业）", true},
+	{"ind_price", "均价（工业）", true},
+	{"ind_fee", "电费（工业）", true},
+	{"res_kwh", "电量（定比）", false},
+	{"res_fee", "电费（定比）", false},
+	{"dorm_kwh", "电量（宿舍/居民）", true},
+	{"dorm_fee", "电费（宿舍/居民）", true},
+	{"water_ind_usage", "用水量（工业）", true},
+	{"water_ind_fee", "水费（工业）", true},
+	{"water_dorm_usage", "用水量（宿舍/居民）", true},
+	{"water_dorm_fee", "水费（宿舍/居民）", true},
+	{"water_fire_usage", "用水量（消防）", true},
+	{"water_fire_fee", "水费（消防）", true},
+	{"gas_usage", "用气量", true},
+	{"gas_fee", "气费", true},
+	{"remark", "备注", false},
+}
+
+// energyViewCategorySpec 一个「顶部卡片分类」的默认字段集。
+type energyViewCategorySpec struct {
+	Name   string
+	Fields []energyViewField
+}
+
+// 顺序即顶部卡片顺序：市电账单 / 光伏账单 / 电费核算 / 水费核算 / 气费核算 / 费用清单。
+// 前两个由旧表迁移与目录负责，这里只补后四个的默认列。
+var energyViewCategorySpecs = []energyViewCategorySpec{
+	{"电费核算", energyMeterFields},
+	{"水费核算", energyWaterFields},
+	{"气费核算", energyMeterFields},
+	{"费用清单", energyBillingFields},
+}
+
+// EnsureEnergyViewCategories 幂等补齐顶部 6 张卡片对应的分类。
+//
+// 为什么需要：设置抽屉的分类必须与顶部卡片 1:1——用户在「电费核算」卡片下点设置，
+// 要能改的就是那张表的列。而电费/水费/气费核算与费用清单在库里原本没有分类，
+// 打开设置会看到空列表。
+//
+// 与提取规则的关系：这四类的列表列是**计算列**（起止度、倍率、分摊比例…），
+// 不存在「从文件提取某个列」，所以 subs 用 group=cols 标记，建表口径的
+// alignExtractConfigWithSubs 只认 overview 与空分组，天然不会把它们塞进规则面。
+//
+// 幂等：分类已存在且 subs 非空时跳过，不覆盖用户在设置里的改动。
+func (h *UtilityHandler) EnsureEnergyViewCategories(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	written := 0
+	for i, spec := range energyViewCategorySpecs {
+		var exist types.FleetCategory
+		err := h.db.WithContext(ctx).
+			Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL",
+				EnergyScope, spec.Name).
+			First(&exist).Error
+		if err == nil && len(exist.Subs) > 0 {
+			continue
+		}
+		subs := make([]types.FleetCategorySub, 0, len(spec.Fields))
+		for _, f := range spec.Fields {
+			subs = append(subs, types.FleetCategorySub{
+				Name:       f.Key,
+				Label:      f.Label,
+				Enabled:    true,
+				IsDefault:  f.Default,
+				DataType:   "text",
+				Group:      "cols",
+				GroupLabel: spec.Name,
+			})
+		}
+		if err != nil {
+			exist = types.FleetCategory{
+				ID:        uuid.NewString(),
+				TenantID:  0,
+				Scope:     EnergyScope,
+				Name:      spec.Name,
+				SortOrder: 2 + i,
+				Enabled:   true,
+				Subs:      subs,
+			}
+			if cerr := h.db.WithContext(ctx).Create(&exist).Error; cerr != nil {
+				return written, cerr
+			}
+		} else {
+			exist.Subs = subs
+			exist.SortOrder = 2 + i
+			exist.UpdatedAt = timeNowUTC()
+			if serr := h.db.WithContext(ctx).Save(&exist).Error; serr != nil {
+				return written, serr
+			}
+		}
+		written++
+	}
+	if written > 0 {
+		logger.Infof(ctx, "energy view categories seeded: %d", written)
+	}
+	// 光伏账单的 subs 由目录派生，历史写入时没带 is_default（20 条全 false）：
+	// 「默认表头」一个都没勾，列表列与字段筛选器会默认全不选。补齐一次。
+	h.ensureCategoryDefaults(ctx, EnergyBillTypeSolar)
+	return written, nil
+}
+
+// ensureCategoryDefaults 给「一条默认都没有」的分类把启用字段标成默认可见。
+//
+// 只处理全 false 的情况：用户主动取消全部默认（有明确意图）时也满足「全 false」，
+// 但这种状态在界面上等于「列表一列都不显示」，属于不可用态，重置是更合理的选择。
+func (h *UtilityHandler) ensureCategoryDefaults(ctx context.Context, name string) {
+	if h.db == nil {
+		return
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, name).
+		First(&cat).Error; err != nil {
+		return
+	}
+	if len(cat.Subs) == 0 {
+		return
+	}
+	for _, s := range cat.Subs {
+		if s.IsDefault {
+			return
+		}
+	}
+	for i := range cat.Subs {
+		if cat.Subs[i].Enabled {
+			cat.Subs[i].IsDefault = true
+		}
+	}
+	cat.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&cat).Error; err != nil {
+		logger.Warnf(ctx, "ensure defaults for %s failed: %v", name, err)
+	}
+}
+
+// hideEnergyLedgerCategory 把「能耗单」排到末尾。
+//
+// 它是能耗台账（document 管线）的分类，页面上没有对应卡片，设置里也不展示；
+// 但数据行要保留——台账提取仍在用。排末尾是为了让 6 个卡片分类的顺序稳定。
+func (h *UtilityHandler) hideEnergyLedgerCategory(ctx context.Context) {
+	if h.db == nil {
+		return
+	}
+	h.db.WithContext(ctx).Model(&types.FleetCategory{}).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, EnergyBillTypeLedger).
+		Update("sort_order", 90)
 }

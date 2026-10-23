@@ -10,7 +10,7 @@
   >
     <t-tabs v-model="activeTab" class="standard-settings-tabs" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
-        <FleetCertPanel :scope="scope" :kb-id="kbId || ''" @ai-guide="onAiGuide" />
+        <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory" @ai-guide="onAiGuide" />
       </t-tab-panel>
       <t-tab-panel value="rules" label="提取规则">
         <ExtractRulePanel ref="extractRef" :scope="scope" :kb-name="kbName" :kb-id="kbId || ''" />
@@ -36,11 +36,14 @@ const props = withDefaults(defineProps<{
   visible: boolean
   kbId?: string
   scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy'
+  /** 打开时自动展开的分类名（能耗：当前卡片对应的分类）。 */
+  initialCategory?: string
   kbName?: string
   title?: string
   storageKey?: string
 }>(), {
   scope: 'invoice',
+  initialCategory: '',
   kbName: '日常事务-发票',
   title: '发票设置',
   storageKey: 'weknora-invoice-settings-drawer-width',

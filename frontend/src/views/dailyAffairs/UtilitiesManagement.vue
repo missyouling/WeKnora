@@ -25,40 +25,21 @@
 
     <!-- 主界面 -->
     <div v-else class="utilities-main">
-      <div class="utilities-layout">
-        <!-- 侧边栏菜单 -->
-        <div class="utilities-sidebar">
-          <div class="utilities-side-item" :class="{ active: activeTab === 'electricity' }" @click="switchTab('electricity')">
-            <t-icon name="chart-bubble" size="16px" /><span>市电账单</span>
-          </div>
-          <div class="utilities-side-item" :class="{ active: activeTab === 'solar' }" @click="switchTab('solar')">
-            <t-icon name="chart-radar" size="16px" /><span>光伏账单</span>
-          </div>
-          <div class="utilities-side-item" :class="{ active: activeTab === 'electric-meter' }" @click="switchTab('electric-meter')">
-            <t-icon name="thunder" size="16px" /><span>电费核算</span>
-          </div>
-          <div class="utilities-side-item" :class="{ active: activeTab === 'water' }" @click="switchTab('water')">
-            <t-icon name="dashboard" size="16px" /><span>水费核算</span>
-          </div>
-          <div class="utilities-side-item" :class="{ active: activeTab === 'gas' }" @click="switchTab('gas')">
-            <t-icon name="windy" size="16px" /><span>气费核算</span>
-          </div>
-          <div class="utilities-side-item" :class="{ active: activeTab === 'billing' }" @click="switchTab('billing')">
-            <t-icon name="bill" size="16px" /><span>费用清单</span>
-          </div>
+      <!-- 单栏全宽布局（与发票管理一致）：侧边栏已取消，6 个菜单 1:1 转为顶部 KPI 卡片 -->
+      <div class="utilities-content">
+        <!-- 顶部 KPI 卡片栏：6 个业务卡 + 1 历史记录卡。
+             必须放在各 tab 模板**之外**——放进 electricity tab 内的话，
+             切到光伏/核算/清单卡片时整栏会消失，用户失去导航（真机踩过）。
+             各 tab 自己的工具栏仍在各自模板里（不同 tab 的筛选条件不同）。 -->
+        <div class="overview-group">
+          <DashboardKpiGroup :loading="false" :cards="overviewCards" :active-type="activeTab"
+            @card-click="onKpiCardClick" />
         </div>
-        <!-- 内容区 -->
-        <div class="utilities-content">
           <template v-if="activeTab === 'electricity'">
           <div v-if="kbId" class="electricity-panel biz-main">
             <!-- ================= 列表视图 ================= -->
             <template v-if="!detailMode">
             <div class="biz-list-view">
-            <!-- 顶部概览卡（中台 DashboardKpiGroup）：末卡「历史记录」点开上传历史抽屉 -->
-            <div class="overview-group">
-              <DashboardKpiGroup :loading="false" :cards="overviewCards" @card-click="onKpiCardClick" />
-            </div>
-
             <!-- 筛选工具栏走中台 BusinessFilterBar：
                  左侧 = 搜索全部字段 + 账单月份 + 刷新；
                  右侧严格 [字段] → [设置] → [上传账单(绿底主按钮)]，与发票/合同/制度/通知一致。
@@ -105,7 +86,7 @@
 
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-              <div class="doc-list-view">
+              <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
                 <t-table
           :data="displayRows"
           :columns="tableColumns"
@@ -114,6 +95,7 @@
           :hover="true"
           :loading="listLoading"
           max-height="100%"
+          sticky-header
           class="doc-table"
           :selected-row-keys="selectedRowKeys"
           select-on-change
@@ -145,15 +127,15 @@
           </template>
         </t-table>
     </div>
-    </div>
-            <!-- 底部汇总（列表容器外固定显示，不随内容滚动；选中时按选中统计并避让浮动工具栏） -->
-            <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
-              <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
-              <span>电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
-              <span>电费 {{ fmtMoney(summaryAmount) }} 元</span>
-              <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
+            <!-- 底部汇总：与发票管理一致，位于列表白色卡片容器（.doc-list-scroll）内部最底端，
+         不随表格内容滚动；sticky bottom 让它贴在滚动容器下沿。选中时按选中统计。 -->
+            <div v-if="summary.total" class="doc-summary-bar doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
+              <span class="doc-summary-count">共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
+              <span class="doc-summary-item">电量 <span class="doc-summary-val">{{ fmtKwh(summaryUsage) }}</span> 千瓦时</span>
+              <span class="doc-summary-item">电费 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
+              <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
             </div>
-
+            </div>
             </div>
             </template>
 
@@ -496,7 +478,6 @@
           </template>
         </div>
       </div>
-    </div>
 
     <!-- 详情抽屉 -->
     <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" :size="`${drawerWidth}px`" :footer="false"
@@ -682,9 +663,10 @@
     <!-- 设置：中台标准双 Tab（字段定义 + 提取规则），与发票设置 100% 对齐。
          旧的 12 宫格卡片抽屉（UtilitySettingsDrawer）已下线——分组改由
          「字段定义」里的分组胶囊条承载，配置统一存 fleet_categories(scope=energy)。 -->
+    <!-- 设置抽屉：分类与顶部 6 张卡片 1:1，打开即定位到当前卡片对应的分类 -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
-      :kb-name="'日常事务-电费'" title="设置 · 能耗" storage-key="weknora-energy-settings-drawer-width"
-      @saved="onSettingsChanged" />
+      :initial-category="settingsCategory" :kb-name="'日常事务-电费'" title="设置 · 能耗"
+      storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged" />
 
     <!-- 删除历史 -->
     <!-- 上传历史抽屉：复用中台 FleetUploadHistoryDrawer（三态统计卡 / 即输即搜 / 分类+日期筛选 /
@@ -725,6 +707,7 @@
 <script setup lang="ts">
 import {
   ref,
+  reactive,
   computed,
   watch,
   nextTick,
@@ -745,6 +728,9 @@ import {
   updateKnowledgeTagBatch,
   extractUtilityBill,
   listUtilityBillRecords,
+  listSolarBillRecords,
+  listUtilityMeterRecords,
+  listBillingTenants,
   previewKnowledgeFile,
   reparseKnowledge,
 } from '@/api/knowledge-base'
@@ -762,6 +748,7 @@ import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { normalizeBillingPeriod } from './billingPeriod'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
+import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
@@ -802,7 +789,25 @@ const FALLBACK_COLUMNS: ColDef[] = [
   { key: 'grand_total', label: '合计', fieldType: 'amount', default: true, w: '120px' },
 ]
 
-const activeTab = ref<'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing'>('electricity')
+/** 能耗页 6 个业务视图（原侧边栏菜单项，现为顶部 KPI 卡片）。 */
+type EnergyTab = 'electricity' | 'solar' | 'electric-meter' | 'water' | 'gas' | 'billing'
+
+const activeTab = ref<EnergyTab>('electricity')
+
+// 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）：
+// 滚动条属于滚动容器 UI 层，绘制层级高于 sticky 表头，靠表头背景盖不住，
+// 必须在 .doc-list-view 上挂一块与表头同色的绝对定位色块。
+const headerFix = reactive({ sbw: 17, thh: 39 })
+const measureTableHeaderFix = () => {
+  const th = document.querySelector('.doc-list-view thead th')
+  if (th) headerFix.thh = Math.max(30, Math.round(th.getBoundingClientRect().height))
+  const d = document.createElement('div')
+  d.style.cssText = 'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;left:-9999px'
+  document.body.appendChild(d)
+  const w = d.offsetWidth - d.clientWidth
+  document.body.removeChild(d)
+  if (w > 0) headerFix.sbw = w
+}
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
@@ -1039,30 +1044,106 @@ const filterState = computed<FilterState>({
 // 因此单独拉一次文件列表统计；列表接口是记录口径，数不出上传文件数。
 const uploadHistoryVisible = ref(false)
 const overviewFileStats = ref<{ total: number; failed: number }>({ total: 0, failed: 0 })
-const overviewCards = computed(() => {
-  const recorded = Number(summary.value?.total || 0)
-  const st = overviewFileStats.value
-  const month = new Date().toISOString().slice(0, 7)
-  const newThisMonth = rows.value.filter((r: any) => String(r.bill_period || '').slice(0, 7) === month).length
-  return [
-    {
-      key: 'total', label: '已收录账单', icon: 'file', value: `${recorded}`, unit: '份',
-      sub: `本月新增 ${newThisMonth} 份`, cls: '', action: 'all',
-    },
-    {
-      key: 'type-electricity', label: '市电账单', icon: 'chart-bubble', value: `${recorded}`, unit: '份',
-      sub: '', cls: 'is-type', action: 'type',
-    },
-    {
-      key: 'history', label: '历史记录', icon: 'history', value: `${st.total}`, unit: '份',
-      sub: st.failed > 0 ? `${st.failed} 份异常文件` : '无异常文件',
-      cls: st.failed > 0 ? 'is-warn' : '', action: 'history',
-    },
-  ]
+// ---- 顶部概览卡（DashboardKpiGroup）：6 个业务卡 + 1 历史记录卡 ----
+//
+// 侧边栏取消后，原来那 6 个菜单项 1:1 转为顶部卡片：
+// 点击前 6 张任意一张 → switchTab 切换下方主区域；第 7 张「历史记录」只开抽屉。
+// 高亮由 KpiCard 的 action=type + typeValue 与 :active-type="activeTab" 比对得出，
+// 因此不需要自己维护选中态，切到哪个 tab 哪张卡就亮。
+const ENERGY_TABS: { key: EnergyTab; label: string; icon: string; unit: string }[] = [
+  { key: 'electricity', label: '市电账单', icon: 'chart-bubble', unit: '份' },
+  { key: 'solar', label: '光伏账单', icon: 'chart-radar', unit: '份' },
+  { key: 'electric-meter', label: '电费核算', icon: 'thunder', unit: '条' },
+  { key: 'water', label: '水费核算', icon: 'dashboard', unit: '条' },
+  { key: 'gas', label: '气费核算', icon: 'windy', unit: '条' },
+  { key: 'billing', label: '费用清单', icon: 'bill', unit: '条' },
+]
+// 各 tab 的记录数（独立于列表接口，避免为了显示数字把整页数据拉回来）
+const tabCounts = reactive<Record<string, number>>({
+  electricity: 0, solar: 0, 'electric-meter': 0, water: 0, gas: 0, billing: 0,
 })
+// KpiCard.action 在前 6 张是 'type'（随 activeTab 高亮），末卡是 'history'（只开抽屉），
+// 因此这里显式声明成字面量联合，避免 TS 把整组窄化成单一字面量后拒绝 history。
+type EnergyKpiCard = KpiCard & { typeValue?: EnergyTab }
+const overviewCards = computed<EnergyKpiCard[]>(() => {
+  const st = overviewFileStats.value
+  const cards: EnergyKpiCard[] = ENERGY_TABS.map((t) => ({
+    key: `tab-${t.key}`,
+    label: t.label,
+    icon: t.icon,
+    value: `${Number(tabCounts[t.key] || 0)}`,
+    unit: t.unit,
+    sub: '',
+    cls: '',
+    action: 'type',
+    typeValue: t.key,
+  }))
+  cards.push({
+    key: 'history', label: '历史记录', icon: 'history',
+    value: `${st.total}`, unit: '份',
+    sub: st.failed > 0 ? `${st.failed} 份异常文件` : '无异常文件',
+    cls: st.failed > 0 ? 'is-warn' : '',
+    action: 'history',
+  })
+  return cards
+})
+/** 顶部 6 张卡片 ↔ 设置分类名的 1:1 映射（顺序即卡片顺序）。 */
+const ENERGY_TAB_CATEGORY: Record<EnergyTab, string> = {
+  electricity: '市电账单',
+  solar: '光伏账单',
+  'electric-meter': '电费核算',
+  water: '水费核算',
+  gas: '气费核算',
+  billing: '费用清单',
+}
+const settingsCategory = computed(() => ENERGY_TAB_CATEGORY[activeTab.value] || '市电账单')
+
 const onKpiCardClick = (card: any) => {
-  if (card?.action === 'history') uploadHistoryVisible.value = true
-  // 「已收录账单 / 市电账单」卡只做展示：本页当前 tab 已经是市电口径，无需再筛
+  if (card?.action === 'history') {
+    uploadHistoryVisible.value = true
+    return
+  }
+  if (card?.typeValue) switchTab(card.typeValue)
+}
+// 拉取 6 个 tab 的记录数。任一失败都不影响其它卡片与列表（各自 catch）。
+//
+// 三个接口的返回形态各不相同，实测后分别取值：
+//   utility-bill-records / solar-bill-records → { data: [...] }（无 total 字段，
+//       只有 data 数组，所以用长度而不是 total）；
+//   utilities/meter-records                  → { data: { meters, records } }；
+//   billing/tenants                          → { data: [...] }。
+async function loadTabCounts() {
+  const jobs: [EnergyTab, () => Promise<number>][] = [
+    ['electricity', async () => {
+      if (!kbId.value) return 0
+      const res: any = await listUtilityBillRecords(kbId.value, { page_size: 500 })
+      return Number((res?.data || []).length || 0)
+    }],
+    ['solar', async () => {
+      if (!kbId.value) return 0
+      const res: any = await listSolarBillRecords(kbId.value, { page_size: 500 })
+      return Number((res?.data || []).length || 0)
+    }],
+    ['electric-meter', async () => countMeterRecords('electricity')],
+    ['water', async () => countMeterRecords('water')],
+    ['gas', async () => countMeterRecords('gas')],
+    ['billing', async () => {
+      const res: any = await listBillingTenants()
+      return Number((res?.data || []).length || 0)
+    }],
+  ]
+  await Promise.all(jobs.map(async ([tab, fn]) => {
+    try {
+      tabCounts[tab] = await fn()
+    } catch {
+      tabCounts[tab] = 0
+    }
+  }))
+}
+
+async function countMeterRecords(category: string): Promise<number> {
+  const res: any = await listUtilityMeterRecords({ category })
+  return Number((res?.data?.records || []).length || 0)
 }
 async function loadOverviewFileStats() {
   if (!kbId.value) return
@@ -1082,6 +1163,7 @@ async function loadOverviewFileStats() {
 const onHistoryChanged = () => {
   void loadFiles(true)
   void loadOverviewFileStats()
+  void loadTabCounts()
 }
 
 // 列显隐：BusinessFilterBar 的列筛选器回写
@@ -2430,7 +2512,7 @@ const commitBillFeeOverride = async (r: any) => {
 const hasBillFeeOverride = (key: string) => feeOverrides.value[key] !== undefined
 // ---- Tab 切换 ----
 const onTabChange = () => { /* 子组件自行加载 */ }
-const switchTab = (tab: 'electricity' | 'water' | 'gas' | 'solar' | 'electric-meter' | 'billing') => {
+const switchTab = (tab: EnergyTab) => {
   if (activeTab.value === tab) return
   activeTab.value = tab
   onTabChange()
@@ -2441,7 +2523,12 @@ const onSettingsChanged = async () => {
   loadFiles(true)
 }
 
-onMounted(() => { loadKb() })
+onMounted(() => {
+  nextTick(measureTableHeaderFix)
+  // kbId 由 loadKb() 异步解析：先跑 loadTabCounts 会全部返回 0
+  // （那时 kbId 还是空串，账单/光伏接口直接短路）。等它就绪再计数。
+  void loadKb().then(() => loadTabCounts())
+})
 onBeforeUnmount(() => { stopPolling() })
 </script>
 
@@ -2637,45 +2724,6 @@ onBeforeUnmount(() => { stopPolling() })
   flex-direction: column;
 }
 
-.utilities-layout {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 12px;
-}
-
-.utilities-sidebar {
-  width: 112px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-}
-
-.utilities-side-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  color: var(--td-text-color-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.utilities-side-item:hover {
-  background: var(--td-bg-color-container-hover);
-  color: var(--td-text-color-primary);
-}
-
-.utilities-side-item.active {
-  background: var(--td-brand-color-light);
-  color: var(--td-brand-color);
-  font-weight: 500;
-}
-
 .utilities-content {
   flex: 1;
   min-width: 0;
@@ -2693,35 +2741,53 @@ onBeforeUnmount(() => { stopPolling() })
   box-sizing: border-box;
 }
 
-/* 底部汇总行（表格底部左侧，固定于滚动容器外；与合同管理 doc-summary-bar 一致） */
-.doc-list-footer-summary {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  padding: 6px 2px 0;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  flex-shrink: 0;
+/* 顶部 KPI 卡片栏：能耗页是 7 张（6 业务 + 历史记录），发票/合同只有 3~4 张。
+   中台卡片默认 flex:0 0 auto + min-width:200 + 左右 20px 内边距，7 张在 1920 下
+   横向溢出（真机截图第 7 张「历史记录」被裁到只剩图标）。这里只在能耗页
+   把卡片改成等分（flex:1 1 0）+ 收紧内边距，7 张稳定落在同一行。 */
+.overview-group :deep(.dash-kpi-group) {
+  gap: 10px;
+}
 
-  &.with-toolbar {
-    margin-bottom: 56px;
-  }
+.overview-group :deep(.dash-kpi-card) {
+  flex: 1 1 0;
+  min-width: 150px;
+  padding: 16px 12px;
+  gap: 10px;
+}
+
+/* 底部汇总：与发票管理 100% 一致 —— 位于列表白色卡片容器（.doc-list-scroll）
+   内部最底端，sticky bottom 贴住容器下沿，不随表格内容滚动。
+   视觉规则（背景/分割线/内边距/字号）全部来自四模块共享样式的 .doc-summary-bar，
+   这里只保留能耗特有的「选中条数」着色。 */
+.doc-list-footer-summary {
+  flex-shrink: 0;
 
   .summary-selected {
     color: var(--td-brand-color);
+    font-weight: 600;
   }
 }
 
-.doc-list-scroll {
-  /* 高度随内容自适应：1 条包 1 条，多条向下扩展；超出容器后内部滚动，容器底边不撑大页面（与合同管理一致） */
-  flex: 0 1 auto;
-  max-height: 100%;
-  min-width: 0;
-  overflow-y: auto;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
+/* 列表滚动容器：边框/圆角/背景/阴影一律走四模块共享样式（.biz-page .doc-list-scroll），
+   不再自定义 —— 此前这里写了 overflow-y:auto + border-radius:9px，与发票的
+   overflow:hidden + var(--td-radius-large) 漂移，底栏也就被挤到了容器外面。 */
+
+/* 表头右侧滚动条轨道遮罩：滚动条绘制层级高于 sticky 表头，表头背景盖不住，
+   在滚动容器父层挂一块与表头同色的绝对定位色块（宽度=实测滚动条宽、高度=实测表头高），
+   垂直滚动条便只在表体区域可见。与发票管理同一套机制、同一组 CSS 变量。 */
+.doc-list-view::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  width: var(--invoice-sbw, 17px);
+  height: var(--invoice-thh, 39px);
+  box-sizing: border-box;
+  pointer-events: none;
   background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid var(--td-component-stroke);
 }
 
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
