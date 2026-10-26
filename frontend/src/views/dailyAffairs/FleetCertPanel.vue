@@ -63,8 +63,10 @@
               </t-popconfirm>
             </span>
           </div>
+        </template>
+
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
-          <div v-if="editingId === item.id" class="meter-form meter-form--inline">
+          <div v-if="editingId && editingItem" class="meter-form meter-form--inline">
             <div class="meter-form-title">编辑{{ group.label }}</div>
             <div class="form-grid">
               <div class="form-item">
@@ -297,7 +299,6 @@
               <t-button theme="primary" size="small" :loading="saving" @click="commitEdit">保存</t-button>
             </div>
           </div>
-        </template>
 
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
         <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
@@ -578,6 +579,14 @@ function buildItems(g0: any): any[] {
   return merged
 }
 const groupItems = computed(() => buildItems(group.value))
+/**
+ * 当前正在编辑的分类。
+ *
+ * 编辑区块（含字段配置）**不能**夹在分类行之间渲染：市电账单有 176 个字段，
+ * 展开后会把后面 5 个分类顶到 1400px 之外，用户看到的分类表就只有 1 行
+ * （真机截图踩过）。统一按「分类表 → 编辑分类 → 字段配置」三段式排列。
+ */
+const editingItem = computed(() => groupItems.value.find((it: any) => it.id === editingId.value) || null)
 function groupCount(key: string) {
   const g = groupList.value.find((x: any) => x.key === key)
   return g ? buildItems(g).length : 0

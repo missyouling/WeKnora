@@ -8,13 +8,18 @@
     hide-footer
     class="standard-settings-drawer"
   >
-    <t-tabs v-model="activeTab" class="standard-settings-tabs" @change="onTabChange">
+    <t-tabs v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" label="字段定义">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
         <ExtractRulePanel ref="extractRef" :scope="scope" :kb-name="kbName" :kb-id="kbId || ''" />
+      </t-tab-panel>
+      <!-- 业务专属设置 Tab：能耗的「光伏设置 / 表计设置 / 清单设置」由页面按当前卡片注入。
+           工具栏只留一个「设置」按钮，专属面板在这里与字段定义同抽屉共存。 -->
+      <t-tab-panel v-if="extraTabLabel" :value="extraTabValue" :label="extraTabLabel">
+        <slot name="extra-tab" />
       </t-tab-panel>
     </t-tabs>
   </SettingDrawer>
@@ -50,6 +55,10 @@ const props = withDefaults(defineProps<{
   kbName?: string
   title?: string
   storageKey?: string
+  /** 业务专属设置 Tab 的标题（空 = 不渲染该 Tab，如能耗的「光伏设置 / 表计设置 / 清单设置」）。 */
+  extraTabLabel?: string
+  /** 业务专属设置 Tab 的 value，默认 extra。 */
+  extraTabValue?: string
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -57,6 +66,8 @@ const props = withDefaults(defineProps<{
   kbName: '日常事务-发票',
   title: '发票设置',
   storageKey: 'weknora-invoice-settings-drawer-width',
+  extraTabLabel: '',
+  extraTabValue: 'extra',
 })
 
 const emit = defineEmits<{
@@ -88,6 +99,13 @@ const showRulesTab = computed(() => {
 })
 // 白名单之外的分类被选中时，正停在规则页会看到一片空白 → 自动切回字段定义
 watch(showRulesTab, (ok) => { if (!ok && activeTab.value === 'rules') activeTab.value = 'fields' })
+// 专属设置 Tab 随当前卡片存在/消失：停在专属页时切卡，抽屉要回到字段定义，
+// 否则会停在一个已经不存在的面板上（TDesign 会把内容区渲染成空白）。
+watch(() => props.extraTabLabel, (label) => {
+  if (!label && activeTab.value === props.extraTabValue) activeTab.value = 'fields'
+})
+// 每次打开从「字段定义」开始：上一次停在表计设置，关掉再开别的分类会看不到字段表。
+watch(() => props.visible, (v) => { if (v) activeTab.value = 'fields' })
 
 function onTabChange(val: string | number) {
   if (val !== 'rules') return

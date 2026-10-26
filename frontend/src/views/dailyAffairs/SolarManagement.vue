@@ -40,42 +40,18 @@
             </t-button>
           </div>
           <div class="doc-filter-bar__trailing">
-            <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-              overlay-inner-class="contract-field-popup">
-              <t-button variant="outline" size="small">
-                <template #icon><t-icon name="view-list" size="14px" /></template>
-                字段
-              </t-button>
-              <template #content>
-                <div class="field-popup-content">
-                  <div class="field-popup-head">
-                    <span class="field-popup-title">显示字段</span>
-                    <div class="field-popup-actions">
-                      <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                      <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                    </div>
-                  </div>
-                  <t-checkbox-group v-model="visibleColKeys" class="field-popup-list">
-                    <t-checkbox v-for="col in columnDefs" :key="col.key" :value="col.key" class="field-popup-item">
-                      {{ col.label }}
-                    </t-checkbox>
-                  </t-checkbox-group>
-                </div>
-              </template>
-            </t-popup>
-            <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）；
-                 光伏基本户信息属于另一件事，单独叫「光伏设置」。 -->
+            <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、市电账单
+                 及核算/清单完全同款（弹窗宽度、全选/重置头、勾选行高一致）。 -->
+            <BusinessColumnFilter :columns="columnDefs" :visible-keys="visibleColKeys"
+              @update:visible-keys="(v: string[]) => (visibleColKeys = v)"
+              @reset="resetColumns" @select-all="selectAllColumns" />
             <t-button variant="outline" size="small" @click="openFieldSettings">
               <template #icon><t-icon name="setting" size="14px" /></template>
               设置
             </t-button>
-            <t-button variant="outline" size="small" @click="settingsVisible = true">
-              <template #icon><t-icon name="secured" size="14px" /></template>
-              光伏设置
-            </t-button>
             <t-button theme="primary" size="small" @click="triggerUpload">
               <template #icon><t-icon name="upload" /></template>
-              上传光伏账单
+              上传账单
             </t-button>
           </div>
         </div>
@@ -474,9 +450,8 @@
     <!-- 初始化向导 -->
     <UtilitiesKbWizard v-model:visible="wizardVisible" @created="onKbCreated" />
 
-    <!-- 设置 -->
-    <SolarSettingsDrawer :visible="settingsVisible" :kb-id="kbId || ''"
-      @update:visible="settingsVisible = $event" @changed="onSettingsChanged" />
+    <!-- 「光伏设置」不再单独开抽屉：已内嵌为统一设置抽屉（StandardSettingDrawer）的
+         「光伏设置」Tab，由 UtilitiesManagement 注入 SolarSettingsPanel。 -->
 
 
     <!-- 打印预览弹窗 -->
@@ -536,15 +511,19 @@ import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
-import SolarSettingsDrawer from './SolarSettingsDrawer.vue'
+import BusinessColumnFilter from './BusinessColumnFilter.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 import { useTableHeaderFix } from './useTableHeaderFix'
-import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
+import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
+
+// 「设置」升级为向父级请求统一设置抽屉：抽屉只挂在 UtilitiesManagement 根部一份，
+// 切换卡片时不会被 v-if 卸载（子组件自己开抽屉时，切卡后事件无人接住）。
+const emit = defineEmits<{ (e: 'open-settings'): void }>()
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
@@ -578,7 +557,6 @@ const FALLBACK_COLUMNS: ColDef[] = [
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
-const settingsVisible = ref(false)
 const fileInputRef = ref<HTMLInputElement>()
 
 // 字段配置
@@ -605,7 +583,7 @@ const columnDefs = computed<ColDef[]>(() =>
   ),
 )
 /** 打开中台设置抽屉（字段定义 / 提取规则），定位到光伏账单分类。 */
-function openFieldSettings() { requestEnergySettings(CATEGORY_NAME) }
+function openFieldSettings() { emit('open-settings') }
 
 /** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
 async function loadCategorySubs() {
@@ -619,7 +597,6 @@ async function loadCategorySubs() {
   }
 }
 const visibleColKeys = ref<string[]>(loadStoredColumns())
-const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   // 与发票管理一致：[复选框] → [序号] → 业务列
@@ -1353,11 +1330,6 @@ const handleBatchPrint = async () => {
   }
 }
 
-// ---- 设置 ----
-const onSettingsChanged = () => {
-  loadFiles(true)
-}
-
 // ---- 格式化 ----
 const fmtKwh = (v: any) => {
   if (v === undefined || v === null || v === '') return ''
@@ -1475,12 +1447,6 @@ onBeforeUnmount(() => {
 .doc-filter-field--search { flex: 1; min-width: 200px; max-width: 320px; }
 .doc-filter-field__control { width: 100%; }
 .doc-date-range { width: 160px; }
-.field-popup-content { min-width: 200px; padding: 8px; }
-.field-popup-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.field-popup-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
-.field-popup-actions { display: flex; gap: 4px; }
-.field-popup-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
-.field-popup-item { margin: 0; }
 
 /* 列表 */
 .doc-list-scroll {

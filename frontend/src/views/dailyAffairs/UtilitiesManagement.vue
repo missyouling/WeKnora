@@ -457,19 +457,19 @@
           </div>
           </template>
           <template v-else-if="activeTab === 'water'">
-            <UtilityMeterTab category="water" />
+            <UtilityMeterTab ref="meterTabRef" category="water" @open-settings="openChildSettings('水费核算')" />
           </template>
           <template v-else-if="activeTab === 'gas'">
-            <UtilityMeterTab category="gas" />
+            <UtilityMeterTab ref="meterTabRef" category="gas" @open-settings="openChildSettings('气费核算')" />
           </template>
           <template v-else-if="activeTab === 'electric-meter'">
-            <UtilityMeterTab category="electricity" />
+            <UtilityMeterTab ref="meterTabRef" category="electricity" @open-settings="openChildSettings('电费核算')" />
           </template>
           <template v-else-if="activeTab === 'solar'">
-            <SolarManagement />
+            <SolarManagement @open-settings="openChildSettings('光伏账单')" />
           </template>
           <template v-else-if="activeTab === 'billing'">
-            <TenantBilling />
+            <TenantBilling ref="tenantTabRef" @open-settings="openChildSettings('费用清单')" />
           </template>
         </div>
       </div>
@@ -662,7 +662,16 @@
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
       :initial-category="settingsCategory" :rule-categories="ENERGY_RULE_CATEGORIES"
       :kb-name="'日常事务-电费'" title="设置 · 能耗"
-      storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged" />
+      :extra-tab-label="extraTabLabel" :extra-tab-value="extraTabValue"
+      storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged">
+      <!-- 专属设置（原工具栏「光伏设置 / 表计配置 / 租户设置」按钮的归宿）：
+           工具栏严格 3 个按钮，专属面板作为统一设置抽屉的 Tab 内嵌。 -->
+      <template #extra-tab>
+        <SolarSettingsPanel v-if="activeTab === 'solar'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
+        <MeterSettingsPanel v-else-if="meterCategory" :category="meterCategory" @changed="onSettingsChanged" />
+        <TenantSettingsPanel v-else-if="activeTab === 'billing'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
+      </template>
+    </StandardSettingDrawer>
 
     <!-- 删除历史 -->
     <!-- 上传历史抽屉：复用中台 FleetUploadHistoryDrawer（三态统计卡 / 即输即搜 / 分类+日期筛选 /
@@ -740,6 +749,9 @@ import UtilityMeterTab from './UtilityMeterTab.vue'
 import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import SolarSettingsPanel from './SolarSettingsPanel.vue'
+import MeterSettingsPanel from './MeterSettingsPanel.vue'
+import TenantSettingsPanel from './TenantSettingsPanel.vue'
 import { listFleetCategories } from '@/api/fleet'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
@@ -1109,6 +1121,49 @@ watch(settingsVisible, (v) => { if (!v) settingsCategoryOverride.value = '' })
  * 录入 + 公式算出来的计算表，没有可提取的字段，规则页对它们没有意义。
  */
 const ENERGY_RULE_CATEGORIES = ['市电账单', '光伏账单']
+
+/**
+ * 专属设置 Tab 的标题：与工具栏「设置」按钮的抽屉内页签一一对应。
+ *
+ * 市电账单没有专属面板（字段定义 + 提取规则已经覆盖它的全部配置），
+ * 光伏账单 = 光伏设置、三张核算表 = 表计设置、费用清单 = 清单设置。
+ * 这几个面板原本是工具栏上独立的第 4 个按钮，现在作为抽屉 Tab 内嵌。
+ */
+const ENERGY_EXTRA_TAB_LABEL: Record<EnergyTab, string> = {
+  electricity: '',
+  solar: '光伏设置',
+  'electric-meter': '表计设置',
+  water: '表计设置',
+  gas: '表计设置',
+  billing: '清单设置',
+}
+const extraTabLabel = computed(() => ENERGY_EXTRA_TAB_LABEL[activeTab.value] || '')
+const extraTabValue = computed(() => {
+  if (activeTab.value === 'solar') return 'solar'
+  if (activeTab.value === 'billing') return 'billing'
+  return 'meter'
+})
+/** 三张核算表的介质（表计设置面板据此切换电表/水表/气表）。 */
+const meterCategory = computed(() => {
+  if (activeTab.value === 'electric-meter') return 'electricity'
+  if (activeTab.value === 'water') return 'water'
+  if (activeTab.value === 'gas') return 'gas'
+  return ''
+})
+
+/**
+ * 子视图工具栏「设置」→ 打开统一设置抽屉并定位到该分类。
+ *
+ * 用 emit 而不是 window 事件：子视图都在 v-if 分支里，事件监听挂在页面根部，
+ * 直接 emit 链路最短、也不会因为广播名不一致而静默失联。
+ */
+const meterTabRef = ref<any>(null)
+const tenantTabRef = ref<any>(null)
+
+function openChildSettings(category: string) {
+  settingsCategoryOverride.value = String(category || '')
+  settingsVisible.value = true
+}
 
 const onKpiCardClick = (card: any) => {
   if (card?.action === 'history') {
@@ -2546,6 +2601,9 @@ const switchTab = (tab: EnergyTab) => {
 const onSettingsChanged = async () => {
   await loadFieldConfigs()
   loadFiles(true)
+  // 专属设置 Tab 里改了表计 / 租户：背后的列表与记录表单要跟着刷新
+  await meterTabRef.value?.reloadMeters?.()
+  await tenantTabRef.value?.reloadTenants?.()
 }
 
 onMounted(() => {

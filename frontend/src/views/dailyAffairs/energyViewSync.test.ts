@@ -191,19 +191,44 @@ test('历史记录抽屉把 kind/bill_kind 映射成账单分类', () => {
 
 // ---- ⑨ 设置入口：每个卡片都能打开「字段定义 / 提取规则」 ----
 
-test('光伏 / 核算 / 费用清单 工具栏都有「设置」入口，指向中台设置抽屉', () => {
-  // 真机踩过：这三张表的工具栏「设置」原来打开的是各自的模块配置
-  //（光伏基本户信息 / 表计档案 / 租户档案），所以用户点「设置」永远看不到
-  //「字段定义」，以为这几类没有字段可配。
+test('光伏 / 核算 / 费用清单 工具栏都有「设置」入口，指向统一设置抽屉', () => {
+  // 真机踩过两次：
+  //   ① 这三张表的「设置」原来打开各自的模块配置（光伏基本户 / 表计档案 / 租户档案），
+  //      用户点「设置」永远看不到「字段定义」；
+  //   ② 改成广播事件又踩了第二个坑——抽屉挂在页面 v-if 分支里，切卡即卸载，
+  //      点「设置」毫无反应。现在收敛为「子视图 emit → 页面根部常驻抽屉」。
   for (const [name, src] of [['UtilityMeterTab', meter], ['SolarManagement', solar], ['TenantBilling', tenant]] as const) {
     assert.match(src, /function openFieldSettings\(\)/, `${name} 缺少打开字段设置的入口`)
-    assert.match(src, /requestEnergySettings\(/, `${name} 未广播打开设置事件`)
+    assert.match(src, /emit\('open-settings'\)/, `${name} 应向父级请求统一设置抽屉`)
   }
-  // 模块配置按钮必须改名，避免和「设置」混淆
-  assert.match(meter, /表计配置/, '核算表的表计档案入口应改名')
-  assert.match(solar, /光伏设置/, '光伏基本户信息入口应改名')
-  assert.match(tenant, /租户设置/, '租户档案入口应改名')
-  // 页面接住事件并定位分类
-  assert.match(utilities, /ENERGY_OPEN_SETTINGS_EVENT/, '页面必须监听打开设置事件')
+  // 工具栏严格 3 个按钮：模块配置不再是独立按钮（只允许出现在抽屉 Tab 里）
+  assert.doesNotMatch(meter, />\s*表计配置\s*</, '核算表工具栏不应再有独立的表计配置按钮')
+  assert.doesNotMatch(solar, />\s*光伏设置\s*</, '光伏工具栏不应再有独立的光伏设置按钮')
+  assert.doesNotMatch(tenant, />\s*租户设置\s*</, '费用清单工具栏不应再有独立的租户设置按钮')
+  // 页面根部接住 emit，并定位到当前卡片的分类
+  assert.match(utilities, /@open-settings="openChildSettings\('/, '页面必须接住子视图的设置请求')
   assert.match(utilities, /settingsCategoryOverride/, '需要按请求的分类定位抽屉')
+  // 专属设置以抽屉 Tab 的形式内嵌，而不是另开弹窗
+  assert.match(utilities, /:extra-tab-label="extraTabLabel"/, '页面必须把专属设置 Tab 交给抽屉')
+  assert.match(settingDrawer, /name="extra-tab"/, '设置抽屉必须支持业务专属 Tab 插槽')
+  assert.match(settingDrawer, /:lazy-load="false"/, '专属 Tab 必须随抽屉一起渲染，否则切 Tab 才挂载会空白')
+})
+
+test('分类编辑区块必须渲染在分类表之后（不能在行间展开把后续分类顶出视口）', () => {
+  // 市电账单 176 个字段，编辑区块夹在行间时会把后面 5 个分类顶到 1400px 之外，
+  // 用户看到的就是「分类表只有市电账单 1 行」。
+  assert.doesNotMatch(panel, /v-if="editingId === item\.id"/, '编辑区块不得夹在分类行之间')
+  assert.match(panel, /v-if="editingId && editingItem"/, '编辑区块应作为分类表之后的一段单独渲染')
+  assert.match(panel, /const editingItem = computed/, '需要按 editingId 反查当前分类')
+})
+
+test('工具栏严格 3 个按钮：字段 → 设置 → 主操作', () => {
+  // 光伏主按钮改名
+  assert.match(solar, />\s*上传账单\s*</, '光伏主按钮必须叫「上传账单」')
+  assert.doesNotMatch(solar, /上传光伏账单/, '光伏主按钮不得再叫「上传光伏账单」')
+  // 三张表 / 费用清单的列显隐统一走中台组件
+  for (const [name, src] of [['UtilityMeterTab', meter], ['SolarManagement', solar], ['TenantBilling', tenant]] as const) {
+    assert.match(src, /<BusinessColumnFilter/, `${name} 的「字段」必须复用 BusinessColumnFilter`)
+    assert.match(src, /emit\('open-settings'\)/, `${name} 的设置入口必须走父级统一抽屉`)
+  }
 })

@@ -27,41 +27,18 @@
         </div>
       </template>
       <template #columns>
-        <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-          overlay-inner-class="meter-field-popup">
-          <t-button variant="outline" size="small">
-            <template #icon><t-icon name="view-list" size="14px" /></template>
-            字段
-          </t-button>
-          <template #content>
-            <div class="field-popup-content">
-              <div class="field-popup-head">
-                <span class="field-popup-title">显示字段</span>
-                <div class="field-popup-actions">
-                  <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                  <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                </div>
-              </div>
-              <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in activeColDefs" :key="col.key" :value="col.key" class="field-popup-item">
-                  {{ col.label }}
-                </t-checkbox>
-              </t-checkbox-group>
-            </div>
-          </template>
-        </t-popup>
+        <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、
+             市电/光伏账单、费用清单完全同款。 -->
+        <BusinessColumnFilter :columns="activeColDefs" :visible-keys="visibleKeys"
+          @update:visible-keys="(v: string[]) => { visibleKeys = v; persistColumns() }"
+          @reset="resetColumns" @select-all="selectAllColumns" />
       </template>
       <template #right-extra>
-        <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）。
-             表计档案是另一件事，单独叫「表计配置」，避免用户点了「设置」却
-             看到一屏表计、找不到自己那几列（真机踩过）。 -->
+        <!-- 工具栏严格 3 个按钮：字段 → 设置 → 新增记录。
+             原「表计配置」已融合进统一设置抽屉的「表计设置」Tab。 -->
         <t-button variant="outline" size="small" @click="openFieldSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
-        </t-button>
-        <t-button variant="outline" size="small" @click="openSettings">
-          <template #icon><t-icon name="gauge" size="14px" /></template>
-          表计配置
         </t-button>
       </template>
     </BusinessListToolbar>
@@ -373,250 +350,6 @@
       </t-drawer>
     </teleport>
 
-    <!-- 设置抽屉 -->
-    <teleport to="body">
-      <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="settingsVisible" :visible="true" :header="meterLabel + '配置'" :size="settingsWidth" :footer="false"
-        :close-on-overlay-click="true" destroy-on-close class="meter-settings-drawer"
-        @close="settingsVisible = false" @update:visible="(v: boolean) => (settingsVisible = v)">
-        <div class="meter-settings-body">
-          <div class="settings-head">
-            <t-button theme="primary" size="small" @click="openMeterForm(null)">
-              <template #icon><t-icon name="add" /></template>
-              新增{{ meterLabel }}
-            </t-button>
-            <t-button variant="outline" size="small" @click="kindManageVisible = true">
-              <template #icon><t-icon name="setting" /></template>
-              用途管理
-            </t-button>
-          </div>
-
-          <div v-if="meters.length" class="meter-search">
-            <t-input v-model="meterSearch" placeholder="搜索别名 / 表号" clearable>
-              <template #prefix-icon><t-icon name="search" size="14px" /></template>
-            </t-input>
-          </div>
-
-          <div v-if="!meters.length && !meterFormVisible" class="meter-empty">
-            <t-icon name="setting" size="40px" class="meter-empty-icon" />
-            <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
-          </div>
-
-          <div class="meter-table-wrap">
-            <!-- 新增表计：表单展开在顶部 -->
-            <div v-if="meterFormVisible && !meterForm.id" class="meter-form">
-              <div class="meter-form-title">新增{{ meterLabel }}</div>
-              <div class="form-grid">
-                <div class="form-item">
-                  <label>别名 <span class="required">*</span></label>
-                  <t-input ref="meterAliasInput" v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
-                </div>
-                <div class="form-item">
-                  <label>表号</label>
-                  <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
-                </div>
-                <div class="form-item">
-                  <label>类型</label>
-                  <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
-                </div>
-                <div class="form-item">
-                  <label>用途</label>
-                  <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                </div>
-                <div class="form-item">
-                  <label>归属单位</label>
-                  <t-input v-model="meterForm.owner_unit" placeholder="选填"  />
-                </div>
-                <div class="form-item">
-                  <label>倍率</label>
-                  <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                </div>
-                <div class="form-item">
-                  <label>默认单价</label>
-                  <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
-                </div>
-                <div class="form-item">
-                  <label>使用单位</label>
-                  <t-input v-model="meterForm.use_unit" placeholder="选填"  />
-                </div>
-                <div class="form-item">
-                  <label>管理人员</label>
-                  <t-input v-model="meterForm.manager" placeholder="选填" />
-                </div>
-                <div class="form-item">
-                  <label>联系方式</label>
-                  <t-input v-model="meterForm.contact" placeholder="选填" />
-                </div>
-                <div class="form-item">
-                  <label>抄表方式</label>
-                  <t-radio-group v-model="meterForm.meter_mode">
-                    <t-radio-button value="auto">自动抄表</t-radio-button>
-                    <t-radio-button value="manual">手动抄表</t-radio-button>
-                  </t-radio-group>
-                </div>
-                <div class="form-item">
-                  <label>安装日期</label>
-                  <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                </div>
-                <div class="form-item">
-                  <label>启用</label>
-                  <t-switch v-model="meterForm.enabled" />
-                </div>
-              </div>
-              <div class="form-item form-item--full">
-                <label>备注</label>
-                <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-              </div>
-              <div class="meter-form-actions">
-                <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-                <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
-              </div>
-            </div>
-
-            <!-- 分组标签:宿舍 / 工商业 / 自定义用途(仅导航;表格在下方单一渲染,保证拖拽稳定) -->
-            <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
-              <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length" />
-            </t-tabs>
-
-            <div v-if="activeGroupItems.length" :ref="setMeterSortableRef" class="meter-table">
-              <div class="meter-table-head">
-                <span class="meter-drag-th"><t-icon name="move" size="14px" /></span><span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
-              </div>
-              <template v-for="m in activeGroupItems" :key="m.id">
-                <div class="meter-table-row" :data-id="m.id" :class="{ editing: meterFormVisible && meterForm.id === m.id }" @click="toggleMeterEdit(m)">
-                  <span class="meter-drag-handle" title="拖动排序" @click.stop><t-icon name="move" size="14px" /></span>
-                  <span class="mtr-alias">{{ m.alias }}</span>
-                  <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
-                  <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
-                  <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
-                  <span class="mtr-mono">{{ fmtUnitPrice(m.default_unit_price) }} 元/{{ unitLabel }}</span>
-                  <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
-                  <span class="mtr-switch" @click.stop>
-                    <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
-                  </span>
-                  <span class="meter-row-actions" @click.stop>
-                    <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
-                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                      @confirm="deleteMeter(m)">
-                      <t-button variant="text" size="small" @click.stop>
-                        <template #icon><t-icon name="delete" size="15px" /></template>
-                      </t-button>
-                    </t-popconfirm>
-                  </span>
-                </div>
-                <!-- 编辑表计：点击行展开，再点折叠 -->
-                <div v-if="meterFormVisible && meterForm.id === m.id" class="meter-form meter-form--inline">
-                  <div class="meter-form-title">编辑{{ meterLabel }}</div>
-                  <div class="form-grid">
-                    <div class="form-item">
-                      <label>别名 <span class="required">*</span></label>
-                      <t-input v-model="meterForm.alias" :placeholder="'如：1号楼' + meterLabel" />
-                    </div>
-                    <div class="form-item">
-                      <label>表号</label>
-                      <t-input v-model="meterForm.meter_no" placeholder="自动编号，可手改" />
-                    </div>
-                    <div class="form-item">
-                      <label>类型</label>
-                      <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" :placeholder="'选择类型'" />
-                    </div>
-                    <div class="form-item">
-                      <label>用途</label>
-                      <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
-                    </div>
-                    <div class="form-item">
-                      <label>归属单位</label>
-                      <t-input v-model="meterForm.owner_unit" placeholder="选填"  />
-                    </div>
-                    <div class="form-item">
-                      <label>倍率</label>
-                      <t-input v-model.number="meterForm.rate" type="number" placeholder="默认 1" />
-                    </div>
-                    <div class="form-item">
-                      <label>默认单价</label>
-                      <t-input v-model.number="meterForm.default_unit_price" type="number" :placeholder="`元/${unitLabel}`" />
-                    </div>
-                    <div class="form-item">
-                      <label>使用单位</label>
-                      <t-input v-model="meterForm.use_unit" placeholder="选填"  />
-                    </div>
-                      <div class="form-item">
-                        <label>管理人员</label>
-                        <t-input v-model="meterForm.manager" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>联系方式</label>
-                        <t-input v-model="meterForm.contact" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>抄表方式</label>
-                        <t-radio-group v-model="meterForm.meter_mode">
-                          <t-radio-button value="auto">自动抄表</t-radio-button>
-                          <t-radio-button value="manual">手动抄表</t-radio-button>
-                        </t-radio-group>
-                      </div>
-                      <div class="form-item">
-                        <label>安装日期</label>
-                        <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                      </div>
-                      <div class="form-item">
-                        <label>启用</label>
-                        <t-switch v-model="meterForm.enabled" />
-                      </div>
-                    </div>
-                    <div class="form-item form-item--full">
-                      <label>备注</label>
-                      <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
-                    </div>
-                    <div class="meter-form-actions">
-                      <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-                      <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            <div v-if="!activeGroupItems.length" class="meter-empty">
-              <t-icon name="setting" size="28px" class="meter-empty-icon" />
-              <span class="meter-empty-text">暂无{{ meterLabel }}</span>
-            </div>
-          </div>
-        </div>
-      </t-drawer>
-
-      <!-- 用途管理:内置 宿舍/工商业 可改名;公租房及其它自定义可删改增 -->
-      <t-dialog v-model:visible="kindManageVisible" :header="'用途管理(' + meterLabel + ')'" :footer="false" width="480px">
-        <div class="kind-manage-body">
-          <p class="kind-manage-tip">内置用途(宿舍/工商业)驱动分摊计算,可改名不可删除;公租房及其它自定义用途可删除、可修改、可新增,仅分组展示不参与租户核算计算。</p>
-          <div v-for="k in meterKinds" :key="k.value" class="kind-manage-row">
-            <t-input v-model="k.label" size="small" @enter="() => {}">
-              <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
-            </t-input>
-            <t-popconfirm v-if="!(k as any).builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
-              :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-              @confirm="removeCustomKind(k.value)">
-              <t-button variant="text" size="small" @click.stop>
-                <template #icon><t-icon name="delete" size="15px" /></template>
-              </t-button>
-            </t-popconfirm>
-            <span v-else class="kind-builtin-tag">内置</span>
-          </div>
-          <t-button variant="outline" size="small" block @click="addCustomKind">
-            <template #icon><t-icon name="add" /></template>
-            新增用途
-          </t-button>
-          <div class="kind-manage-actions">
-            <t-button variant="outline" size="small" @click="kindManageVisible = false">关闭</t-button>
-            <t-button theme="primary" size="small" :loading="savingKinds" @click="saveKinds">保存</t-button>
-          </div>
-        </div>
-      </t-dialog>
-    </teleport>
-
     <!-- 打印预览弹窗 -->
     <div v-if="printVisible" class="meter-print-mask">
       <div class="meter-print-dialog">
@@ -641,8 +374,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import Sortable from 'sortablejs'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
@@ -650,19 +382,14 @@ import {
   updateUtilityMeterRecord,
   deleteUtilityMeterRecord,
   listUtilityMeters,
-  createUtilityMeter,
-  updateUtilityMeter,
-  deleteUtilityMeter,
-  sortUtilityMeters,
   listUtilityKinds,
   createUtilityKind,
-  updateUtilityKind,
-  deleteUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useTableHeaderFix } from './useTableHeaderFix'
-import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
+import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
+import BusinessColumnFilter from './BusinessColumnFilter.vue'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
@@ -670,6 +397,9 @@ const props = defineProps<{
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
+
+// 「设置」→ 父级统一设置抽屉（父级常驻挂载，不随 6 个卡片视图的 v-if 卸载）
+const emit = defineEmits<{ (e: 'open-settings'): void }>()
 
 const categoryLabel = computed(() => (props.category === 'water' ? '水费' : props.category === 'electricity' ? '电费' : '气费'))
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
@@ -749,7 +479,10 @@ const tableColumns = computed(() => {
 })
 
 /** 打开中台设置抽屉（字段定义 / 提取规则），定位到本分类。 */
-function openFieldSettings() { requestEnergySettings(CATEGORY_NAME[props.category] || '') }
+function openFieldSettings() { emit('open-settings') }
+// 表计设置在统一抽屉里增删改后，记录表单的「表计」下拉必须重新拉一次
+const reloadMeters = async () => { await load() }
+defineExpose({ reloadMeters })
 
 /** 拉取本分类的字段定义（设置抽屉保存后 window 事件触发重载）。 */
 async function loadCategorySubs() {
@@ -796,7 +529,6 @@ function loadStoredKeys(): string[] {
   return activeColDefs.value.filter(c => c.default).map(c => c.key)
 }
 
-const fieldPopupVisible = ref(false)
 const selectAllColumns = () => {
   visibleKeys.value = activeColDefs.value.map(c => c.key)
   persistColumns()
@@ -826,12 +558,6 @@ const useUnitOptions = computed(() => {
   return Array.from(set).map(v => ({ label: v, value: v }))
 })
 const meterSearch = ref('')
-const filteredMeters = computed(() => {
-  const kw = meterSearch.value.trim().toLowerCase()
-  if (!kw) return meters.value
-  return meters.value.filter((m: any) =>
-    (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
-})
 // 用途体系:内置 宿舍/工商业(锁定 value 驱动租户核算计算,label 可改名) + 用户自定义
 // 公租房降为自定义用途(可删除/修改/新增),仅分组展示、不参与租户核算计算
 const KIND_BUILTIN = reactive([
@@ -842,8 +568,6 @@ const kindsStoreKey = 'weknora-utility-kinds'
 type KindItem = { id?: string; value: string; label: string }
 const customKinds = ref<KindItem[]>([])
 const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])
-const meterKindOptions = computed(() => meterKinds.value.map(k => ({ label: k.label, value: k.value })))
-const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || '未分类'
 
 // 从后端加载自定义用途；首次使用且后端为空时迁移旧 localStorage 数据（保留 value/label）
 const loadKinds = async () => {
@@ -878,93 +602,6 @@ const loadKinds = async () => {
   } catch (e) {
     console.error('load kinds failed', e)
   }
-}
-
-const addCustomKind = async () => {
-  const n = customKinds.value.length + 1
-  const value = `custom${n}`
-  const label = `自定义${n}`
-  try {
-    const res: any = await createUtilityKind(props.category, { value, label })
-    const item = res?.data || res
-    if (item?.id) {
-      customKinds.value.push({ id: item.id, value: item.value, label: item.label })
-    } else {
-      customKinds.value.push({ value, label })
-    }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '新增用途失败')
-  }
-}
-const removeCustomKind = async (value: string) => {
-  // 引用检查:有表计正在使用该用途时禁止删除
-  const used = meters.value.filter(m => String(m.meter_kind) === value)
-  if (used.length) {
-    MessagePlugin.warning(`该用途已被 ${used.length} 个表计引用,请先删除或修改这些表计的用途后再删除`)
-    return
-  }
-  const item = customKinds.value.find(k => k.value === value)
-  if (!item) return
-  if (item.id) {
-    try {
-      await deleteUtilityKind(item.id)
-    } catch (e: any) {
-      MessagePlugin.error(e?.message || '删除失败')
-      return
-    }
-  }
-  customKinds.value = customKinds.value.filter(k => k.value !== value)
-}
-const savingKinds = ref(false)
-// 保存用途配置：内置用途 upsert 到后端（改名持久化），自定义用途按 id 更新
-const saveKinds = async () => {
-  savingKinds.value = true
-  try {
-    for (const k of meterKinds.value) {
-      const label = (k.label || '').trim()
-      if (!label) {
-        MessagePlugin.warning('用途名称不能为空')
-        return
-      }
-      if ((k as any).builtin) {
-        await createUtilityKind(props.category, { value: k.value, label })
-      } else if ((k as any).id) {
-        if (label !== k.label) k.label = label
-        await updateUtilityKind((k as any).id, { label })
-      }
-    }
-    MessagePlugin.success('用途配置已保存')
-    kindManageVisible.value = false
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingKinds.value = false
-  }
-}
-
-// 设置抽屉分组标签:按用途配置动态生成(宿舍/公租房/工商业...),始终显示全部用途
-const meterGroups = computed(() => {
-  const groups = meterKinds.value.map(k => ({ key: k.value, label: k.label, items: [] as any[] }))
-  for (const m of filteredMeters.value) {
-    const g = groups.find(g => g.key === m.meter_kind)
-    ;(g || groups[groups.length - 1]).items.push(m)
-  }
-  return groups
-})
-const activeMeterGroup = ref<string>('dorm')
-const activeGroupItems = computed(() => meterGroups.value.find(g => g.key === activeMeterGroup.value)?.items || [])
-watch(meterGroups, (gs) => {
-  if (!gs.find(g => g.key === activeMeterGroup.value)) {
-    activeMeterGroup.value = (gs[0]?.key as any) || 'dorm'
-  }
-})
-// 点击行展开编辑，再次点击折叠
-const toggleMeterEdit = (m: any) => {
-  if (meterFormVisible.value && meterForm.value.id === m.id) {
-    meterFormVisible.value = false
-    return
-  }
-  openMeterForm(m)
 }
 
 const load = async () => {
@@ -1713,244 +1350,8 @@ const closePrint = () => {
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
 }
 
-// ---- 水表配置设置抽屉 ----
-const settingsVisible = ref(false)
-const savingMeter = ref(false)
-const meterFormVisible = ref(false)
-const kindManageVisible = ref(false)
-const meterForm = ref<any>({})
+// ---- 表计配置（已迁至 MeterSettingsPanel，作为统一设置抽屉的「表计设置」Tab） ----
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
-const meterTypeOptions = computed(() => {
-  if (props.category === 'electricity') return [
-    { label: '普通', value: 'normal' },
-    { label: '分时', value: 'time' },
-  ]
-  if (props.category === 'water') return [
-    { label: '总表', value: 'total' },
-    { label: '分表', value: 'sub' },
-    { label: '消防', value: 'fire' },
-  ]
-  return [{ label: '普通', value: 'normal' }]
-})
-const meterTypeLabel = (t: string) => meterTypeOptions.value.find(o => o.value === t)?.label || '普通'
-const meterAliasInput = ref()
-const settingsWidth = ref<string>(loadSettingsWidth())
-function loadSettingsWidth(): string {
-  try {
-    const v = parseInt(localStorage.getItem('weknora-utility-meter-settings-width') || '')
-    if (!Number.isNaN(v)) return clampWidth(v, 520) + 'px'
-  } catch { /* ignore */ }
-  return '680px'
-}
-
-const openSettings = async () => {
-  settingsVisible.value = true
-  meterFormVisible.value = false
-  if (!meters.value.length) {
-    try {
-      const res: any = await listUtilityMeters({ category: props.category })
-      const mets = res?.data || res || []
-      meters.value = Array.isArray(mets) ? mets : []
-    } catch { /* ignore */ }
-  }
-}
-
-const openMeterForm = (m: any) => {
-  // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
-  const defaultKind = props.category === 'water' ? 'production' : 'dorm'
-  // 新增默认类型:电表/气表默认普通;水表类型(总表/分表/消防)由用户按需选择
-  const defaultType = props.category === 'water' ? '' : 'normal'
-  meterForm.value = m ? {
-    id: m.id,
-    alias: m.alias || '',
-    meter_no: m.meter_no || '',
-    // 水表历史脏数据 normal 不在合法类型内,编辑时置空引导重选
-    meter_type: props.category === 'water' && !['total', 'sub', 'fire'].includes(m.meter_type)
-      ? '' : (m.meter_type || ''),
-    meter_kind: m.meter_kind || defaultKind,
-    owner_unit: m.owner_unit || '',
-    rate: Number(m.rate) > 0 ? m.rate : 1,
-    default_unit_price: Number(m.default_unit_price) || 0,
-    use_unit: m.use_unit || '',
-    manager: m.manager || '',
-    contact: m.contact || '',
-    meter_mode: m.meter_mode || 'manual',
-    install_date: m.install_date || '',
-    remark: m.remark || '',
-    enabled: m.enabled !== false,
-  } : {
-    id: '', alias: '', meter_no: nextMeterNo(), meter_type: defaultType,
-    meter_kind: defaultKind, owner_unit: '', rate: 1, default_unit_price: 0,
-    use_unit: '', manager: '', contact: '', meter_mode: 'manual',
-    install_date: '', remark: '', enabled: true,
-  }
-  meterFormVisible.value = true
-  nextTick(() => { if (!m) (meterAliasInput.value as any)?.focus?.() })
-}
-
-const saveMeter = async () => {
-  if (!meterForm.value.alias?.trim()) {
-    MessagePlugin.warning('请填写别名')
-    return
-  }
-  savingMeter.value = true
-  try {
-    const payload = {
-      category: props.category,
-      alias: meterForm.value.alias.trim(),
-      meter_no: meterForm.value.meter_no || '',
-      meter_type: meterForm.value.meter_type || '',
-      meter_kind: meterForm.value.meter_kind || 'dorm',
-      owner_unit: meterForm.value.owner_unit || '',
-      rate: Number(meterForm.value.rate) > 0 ? Number(meterForm.value.rate) : 1,
-      default_unit_price: Number(meterForm.value.default_unit_price) || 0,
-      use_unit: meterForm.value.use_unit || '',
-      manager: meterForm.value.manager || '',
-      contact: meterForm.value.contact || '',
-      meter_mode: meterForm.value.meter_mode || 'manual',
-      install_date: meterForm.value.install_date || '',
-      remark: meterForm.value.remark || '',
-      enabled: meterForm.value.enabled !== false,
-    }
-    const isEdit = !!meterForm.value.id
-    if (isEdit) {
-      await updateUtilityMeter(meterForm.value.id, payload)
-      MessagePlugin.success('已保存')
-    } else {
-      await createUtilityMeter(payload)
-      MessagePlugin.success('已新增')
-    }
-    await loadMetersOnly()
-    if (isEdit) {
-      // 编辑保存后关闭
-      meterFormVisible.value = false
-    } else {
-      // 连续新增：保持表单展开，表号自动递增，清空其余字段并聚焦别名
-      meterForm.value = {
-        id: '',
-        alias: '',
-        meter_no: nextMeterNo(),
-        meter_type: props.category === 'water' ? '' : 'normal',
-        meter_kind: props.category === 'water' ? 'production' : 'dorm',
-        owner_unit: '',
-        rate: '',
-        default_unit_price: '',
-        use_unit: '',
-        manager: '',
-        contact: '',
-        meter_mode: 'manual',
-        install_date: '',
-        remark: '',
-        enabled: true,
-      }
-      meterFormVisible.value = true
-      nextTick(() => { (meterAliasInput.value as any)?.focus?.() })
-    }
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingMeter.value = false
-  }
-}
-const meterNoPrefix = () => (props.category === 'water' ? 'W' : props.category === 'electricity' ? 'E' : 'G')
-const nextMeterNo = () => {
-  let max = 0
-  for (const m of meters.value) {
-    const mm = String(m.meter_no || '').match(/^[A-Za-z]*(\d+)$/)
-    if (mm) max = Math.max(max, parseInt(mm[1], 10))
-  }
-  return meterNoPrefix() + String(max + 1).padStart(3, '0')
-}
-
-const toggleEnabled = async (m: any, v: any) => {
-  try {
-    await updateUtilityMeter(m.id, { ...m, enabled: !!v })
-    m.enabled = !!v
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '操作失败')
-  }
-}
-
-const deleteMeter = async (m: any) => {
-  try {
-    await deleteUtilityMeter(m.id)
-    MessagePlugin.success('已删除')
-    meters.value = meters.value.filter(x => x.id !== m.id)
-    await load()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
-}
-
-const loadMetersOnly = async () => {
-  try {
-    const res: any = await listUtilityMeters({ category: props.category })
-    const mets = res?.data || res || []
-    meters.value = Array.isArray(mets) ? mets : []
-    sortMetersLocal()
-  } catch { /* ignore */ }
-}
-
-// ---- 表计配置拖动排序（sort_order 持久化） ----
-// .meter-table 位于 t-tab-panel 内(懒渲染,同一时刻仅激活面板存在),直接 DOM 查询取当前面板容器
-const meterSortableEl = ref<HTMLElement | null>(null)
-const setMeterSortableRef = (el: any) => {
-  meterSortableEl.value = Array.isArray(el) ? (el[0] || null) : (el || null)
-}
-let sortableInst: any = null
-const sortMetersLocal = () => {
-  meters.value = [...meters.value].sort((a: any, b: any) =>
-    (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0) ||
-    (a.created_at || '').localeCompare(b.created_at || ''))
-}
-const initMeterSortable = () => {
-  const el = meterSortableEl.value || document.querySelector('.meter-table') as HTMLElement | null
-  if (!el) return
-  if (sortableInst) { sortableInst.destroy(); sortableInst = null }
-  try {
-    sortableInst = Sortable.create(el, {
-      draggable: '.meter-table-row',
-      handle: '.meter-drag-handle',
-      animation: 150,
-      ghostClass: 'meter-row-ghost',
-      onEnd: persistMeterSort,
-    })
-  } catch (e) {
-    console.error('[Sortable] init failed:', e)
-  }
-}
-const persistMeterSort = async () => {
-  const el = meterSortableEl.value || document.querySelector('.meter-table') as HTMLElement | null
-  if (!el) return
-  const ids = [...el.querySelectorAll('.meter-table-row')]
-    .map(r => r.getAttribute('data-id')).filter(Boolean) as string[]
-  if (!ids.length) return
-  try {
-    await sortUtilityMeters(props.category, ids)
-    // 重新加载表计:后端已把全局 sort_order 重整(未拖动分组顺延),
-    // 保证新增记录下拉顺序与设置分组内顺序一致
-    await loadMetersOnly()
-    MessagePlugin.success('排序已保存')
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '排序保存失败')
-    await loadMetersOnly()
-  }
-}
-watch([activeMeterGroup, () => activeGroupItems.value], async () => {
-  await nextTick()
-  setTimeout(initMeterSortable, 120)
-})
-// 设置抽屉 v-if 懒渲染:打开抽屉后 DOM 才存在,必须重新初始化拖拽
-watch(settingsVisible, async (v) => {
-  if (v) {
-    await nextTick()
-    setTimeout(initMeterSortable, 150)
-  }
-})
-onBeforeUnmount(() => {
-  if (sortableInst) { sortableInst.destroy(); sortableInst = null }
-})
-
 // ---- 抽屉宽度拖动 ----
 const drawerWidth = ref<string>(loadDrawerWidth())
 function loadDrawerWidth(): string {
@@ -1963,9 +1364,6 @@ function loadDrawerWidth(): string {
 let dragging = false
 let startX = 0
 let startW = 640
-let draggingS = false
-let startXS = 0
-let startWS = 680
 const clampWidth = (w: number, min: number) => Math.min(Math.floor(window.innerWidth * 0.95), Math.max(min, w))
 
 // 记录抽屉宽度拖动（发票管理同款：独立手柄 + document 监听）
@@ -1989,29 +1387,6 @@ const onDrawerResizeEnd = () => {
   document.removeEventListener('mouseup', onDrawerResizeEnd)
   document.body.style.cursor = ''
   try { localStorage.setItem(`weknora-utility-${props.category}-drawer-width`, drawerWidth.value) } catch { /* ignore */ }
-}
-
-// 设置抽屉宽度拖动
-const onSettingsResizeStart = (e: MouseEvent) => {
-  e.preventDefault()
-  draggingS = true
-  startXS = e.clientX
-  startWS = parseInt(settingsWidth.value) || 680
-  document.addEventListener('mousemove', onSettingsResizeMove)
-  document.addEventListener('mouseup', onSettingsResizeEnd)
-  document.body.style.cursor = 'col-resize'
-}
-const onSettingsResizeMove = (e: MouseEvent) => {
-  if (!draggingS) return
-  settingsWidth.value = clampWidth(startWS + (startXS - e.clientX), 520) + 'px'
-}
-const onSettingsResizeEnd = () => {
-  if (!draggingS) return
-  draggingS = false
-  document.removeEventListener('mousemove', onSettingsResizeMove)
-  document.removeEventListener('mouseup', onSettingsResizeEnd)
-  document.body.style.cursor = ''
-  try { localStorage.setItem('weknora-utility-meter-settings-width', settingsWidth.value) } catch { /* ignore */ }
 }
 
 const fmtNum = (v: any) => {
@@ -2039,8 +1414,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
   document.removeEventListener('mousemove', onDrawerResizeMove)
   document.removeEventListener('mouseup', onDrawerResizeEnd)
-  document.removeEventListener('mousemove', onSettingsResizeMove)
-  document.removeEventListener('mouseup', onSettingsResizeEnd)
 })
 </script>
 

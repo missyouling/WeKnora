@@ -16,38 +16,16 @@
         </t-button>
       </div>
       <div class="doc-filter-bar__trailing">
-        <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
-          overlay-inner-class="meter-field-popup">
-          <t-button variant="outline" size="small">
-            <template #icon><t-icon name="view-list" size="14px" /></template>
-            字段
-          </t-button>
-          <template #content>
-            <div class="field-popup-content">
-              <div class="field-popup-head">
-                <span class="field-popup-title">显示字段</span>
-                <div class="field-popup-actions">
-                  <t-button variant="text" size="small" @click="selectAllColumns">全选</t-button>
-                  <t-button variant="text" size="small" @click="resetColumns">重置</t-button>
-                </div>
-              </div>
-              <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in activeColDefs" :key="col.key" :value="col.key" class="field-popup-item">
-                  {{ col.label }}
-                </t-checkbox>
-              </t-checkbox-group>
-            </div>
-          </template>
-        </t-popup>
-        <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）；
-             租户档案与分摊比例属于另一件事，单独叫「租户设置」。 -->
+        <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、
+             市电/光伏账单、三张核算表完全同款。 -->
+        <BusinessColumnFilter :columns="activeColDefs" :visible-keys="visibleKeys"
+          @update:visible-keys="(v: string[]) => { visibleKeys = v; persistColumns() }"
+          @reset="resetColumns" @select-all="selectAllColumns" />
+        <!-- 工具栏严格 3 个按钮：字段 → 设置 → 主操作。
+             原「租户设置」已融合进统一设置抽屉的「清单设置」Tab。 -->
         <t-button variant="outline" size="small" @click="openFieldSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
-        </t-button>
-        <t-button variant="outline" size="small" @click="openSettings">
-          <template #icon><t-icon name="usergroup" size="14px" /></template>
-          租户设置
         </t-button>
         <t-button theme="primary" variant="outline" size="small" :loading="generateBusy"
           :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）'"
@@ -131,176 +109,6 @@
         </div>
       </div>
     </transition>
-
-    <!-- ================= 设置抽屉（租户信息 / 分摊子项） ================= -->
-    <teleport to="body">
-      <div v-if="settingsVisible" class="doc-drawer-resize-handle" :style="{ right: settingsWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onSettingsResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="settingsVisible" :visible="true" :size="settingsWidth" :footer="false"
-        :close-on-overlay-click="true" destroy-on-close class="tenant-settings-drawer"
-        @close="settingsVisible = false" @update:visible="(v: boolean) => (settingsVisible = v)">
-        <template #header>
-          <div class="settings-header">
-            <span class="settings-header-title">设置</span>
-            <div class="settings-header-actions">
-              <t-button variant="outline" size="small" @click="openCreateTenant">
-                <template #icon><t-icon name="add" /></template>新增租户
-              </t-button>
-            </div>
-          </div>
-        </template>
-        <t-tabs v-model="settingsTab" class="settings-tabs">
-          <t-tab-panel value="tenant" label="租户信息">
-            <div class="settings-panel">
-              <div class="tenant-cards">
-                <!-- 新增租户表单：展开在网格顶部 -->
-                <div v-if="tenantFormVisible && !tenantForm.id" class="tenant-form">
-                  <div class="tenant-form-title">新增租户</div>
-                  <div class="form-grid">
-                    <div class="form-item">
-                      <label>租户名 <span class="required">*</span></label>
-                      <t-input v-model="tenantForm.name" placeholder="如：持睿汽车" />
-                    </div>
-                    <div class="form-item">
-                      <label>租户编号</label>
-                      <t-input v-model="tenantForm.tenant_no" placeholder="选填" />
-                    </div>
-                    <div class="form-item">
-                      <label>分摊方式</label>
-                      <t-select v-model="tenantForm.allocation_mode" :options="allocationOptions" />
-                    </div>
-                    <div class="form-item">
-                      <label>租赁日期</label>
-                      <t-date-picker v-model="tenantForm.lease_start" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                    </div>
-                    <div class="form-item">
-                      <label>租赁年限（年）</label>
-                      <t-input v-model.number="tenantForm.lease_years" type="number" placeholder="选填" />
-                    </div>
-                    <div class="form-item">
-                      <label>单位联系人</label>
-                      <t-input v-model="tenantForm.contact" placeholder="选填" />
-                    </div>
-                    <div class="form-item">
-                      <label>联系电话</label>
-                      <t-input v-model="tenantForm.phone" placeholder="选填" />
-                    </div>
-                    <div class="form-item form-item--full">
-                      <label>备注</label>
-                      <t-textarea v-model="tenantForm.remark" :maxlength="500" placeholder="选填" />
-                    </div>
-                  </div>
-                  <div class="form-actions">
-                    <t-button variant="outline" size="small" @click="tenantFormVisible = false">取消</t-button>
-                    <t-button theme="primary" size="small" :loading="savingTenant" @click="saveTenantForm">保存</t-button>
-                  </div>
-                </div>
-
-                <template v-for="t in tenants" :key="t.id">
-                  <div class="tenant-card">
-                    <div class="tenant-card-head">
-                      <span class="tenant-card-name">{{ t.name }}</span>
-                      <span class="tenant-card-no">{{ t.tenant_no || '—' }}</span>
-                      <span class="tenant-card-actions">
-                        <t-button variant="text" size="small" @click="openTenantForm(t)">
-                          <template #icon><t-icon name="edit" size="15px" /></template>
-                        </t-button>
-                        <t-popconfirm theme="warning" :content="`确定删除租户「${t.name}」吗？`"
-                          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-                          @confirm="removeTenant(t)">
-                          <t-button variant="text" size="small" @click.stop>
-                            <template #icon><t-icon name="delete" size="15px" /></template>
-                          </t-button>
-                        </t-popconfirm>
-                      </span>
-                    </div>
-                    <div class="tenant-card-grid">
-                      <div class="tenant-card-item"><span class="k">分摊方式</span><span class="v">{{ t.allocation_mode || '按比例分摊' }}</span></div>
-                      <div class="tenant-card-item"><span class="k">联系人</span><span class="v">{{ t.contact || '—' }}</span></div>
-                      <div class="tenant-card-item"><span class="k">联系电话</span><span class="v">{{ t.phone || '—' }}</span></div>
-                    </div>
-                  </div>
-                  <!-- 编辑租户表单：展开在当前卡片下方 -->
-                  <div v-if="tenantFormVisible && tenantForm.id === t.id" class="tenant-form">
-                    <div class="tenant-form-title">编辑租户</div>
-                    <div class="form-grid">
-                      <div class="form-item">
-                        <label>租户名 <span class="required">*</span></label>
-                        <t-input v-model="tenantForm.name" placeholder="如：持睿汽车" />
-                      </div>
-                      <div class="form-item">
-                        <label>租户编号</label>
-                        <t-input v-model="tenantForm.tenant_no" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>分摊方式</label>
-                        <t-select v-model="tenantForm.allocation_mode" :options="allocationOptions" />
-                      </div>
-                      <div class="form-item">
-                        <label>租赁日期</label>
-                        <t-date-picker v-model="tenantForm.lease_start" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-                      </div>
-                      <div class="form-item">
-                        <label>租赁年限（年）</label>
-                        <t-input v-model.number="tenantForm.lease_years" type="number" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>单位联系人</label>
-                        <t-input v-model="tenantForm.contact" placeholder="选填" />
-                      </div>
-                      <div class="form-item">
-                        <label>联系电话</label>
-                        <t-input v-model="tenantForm.phone" placeholder="选填" />
-                      </div>
-                      <div class="form-item form-item--full">
-                        <label>备注</label>
-                        <t-textarea v-model="tenantForm.remark" :maxlength="500" placeholder="选填" />
-                      </div>
-                    </div>
-                    <div class="form-actions">
-                      <t-button variant="outline" size="small" @click="tenantFormVisible = false">取消</t-button>
-                      <t-button theme="primary" size="small" :loading="savingTenant" @click="saveTenantForm">保存</t-button>
-                    </div>
-                  </div>
-                </template>
-                <div v-if="!tenants.length" class="meter-empty">暂无租户，点击右上角「新增租户」开始配置</div>
-              </div>
-            </div>
-          </t-tab-panel>
-          <t-tab-panel value="items" label="分摊子项">
-            <div class="settings-panel">
-              <div class="item-groups">
-                <div v-for="g in itemGroups" :key="g.category" class="item-group">
-                  <div class="item-group-head" @click="toggleItemGroup(g.category)">
-                    <span class="item-group-name">{{ g.category }}</span>
-                    <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
-                  </div>
-                  <div v-if="expandedItemGroup === g.category" class="item-group-body">
-                    <div class="item-row item-row--head">
-                      <span class="item-name">子项名称</span>
-                      <span class="item-op">分摊</span>
-                    </div>
-                    <div v-for="(it, i) in g.items" :key="i" class="item-row">
-                      <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
-                      <span class="item-op">
-                        <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
-                      </span>
-                    </div>
-                    <div v-if="!g.items.length" class="item-empty">暂无子项</div>
-                  </div>
-                </div>
-                <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
-              </div>
-            </div>
-          </t-tab-panel>
-          
-        </t-tabs>
-      </t-drawer>
-    </teleport>
 
     <!-- 账单详情抽屉 -->
     <teleport to="body">
@@ -475,8 +283,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant, deleteBillingTenant,
-  saveBillingTenantItems,
+  listBillingTenants,
   listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
@@ -486,10 +293,14 @@ import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
-import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
+import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
+import BusinessColumnFilter from './BusinessColumnFilter.vue'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
+
+// 「设置」→ 父级统一设置抽屉（父级常驻挂载，不随 6 个卡片视图的 v-if 卸载）
+const emit = defineEmits<{ (e: 'open-settings'): void }>()
 
 const OWNER_UNIT = '重庆星达'
 const BILL_KB_NAME = '日常事务-电费'
@@ -560,9 +371,6 @@ const activeColDefs = computed(() =>
   ),
 )
 
-/** 打开中台设置抽屉（字段定义 / 提取规则），定位到费用清单分类。 */
-function openFieldSettings() { requestEnergySettings(CATEGORY_NAME) }
-
 /** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
 async function loadCategorySubs() {
   try {
@@ -611,7 +419,6 @@ const tableColumns = computed(() => {
 })
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
-const fieldPopupVisible = ref(false)
 const selectAllColumns = () => { visibleKeys.value = activeColDefs.value.map(c => c.key); persistColumns() }
 const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c => c.default).map(c => c.key); persistColumns() }
 const persistColumns = () => { try { localStorage.setItem(colStorageKey.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
@@ -1090,143 +897,24 @@ const loadDrawerWidth = (key: string, def: string) => {
   } catch { return def }
 }
 
-// ---- 设置抽屉 ----
-const settingsVisible = ref(false)
-const settingsWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.settings, '860px'))
-const settingsTab = ref('tenant')
-const detail = ref<any>(null)
-const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
-
-const allocationOptions = [{ label: '按比例分摊', value: '按比例分摊' }]
-
-const openSettings = async () => {
-  if (!activeTenantId.value) {
-    MessagePlugin.warning('请先选择租户')
-    return
-  }
-  settingsVisible.value = true
-  settingsTab.value = 'tenant'
-  tenantFormVisible.value = false
-  await loadDetail()
-}
-
-const loadDetail = async () => {
-  if (!activeTenantId.value) return
-  try {
-    const res: any = await getBillingTenant(activeTenantId.value)
-    detail.value = res.data
-    const d = res.data
-    itemsForm.value = (d.items || []).map((it: any) => ({
-      category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
-    }))
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '加载租户详情失败')
-  }
-}
-
-// ---- 租户卡片(多租户) ----
-const tenantFormVisible = ref(false)
-const savingTenant = ref(false)
-const tenantForm = ref({ id: '', name: '', tenant_no: '', allocation_mode: '按比例分摊', lease_start: '', lease_years: 0, contact: '', phone: '', remark: '' })
-
-const emptyTenantForm = () => ({ id: '', name: '', tenant_no: '', allocation_mode: '按比例分摊', lease_start: '', lease_years: 0, contact: '', phone: '', remark: '' })
-const openCreateTenant = async () => {
-  settingsVisible.value = true
-  settingsTab.value = 'tenant'
-  tenantForm.value = emptyTenantForm()
-  tenantFormVisible.value = true
+// ---- 专属设置（租户档案 / 分摊子项） ----
+// 原「租户设置」抽屉已融合进统一设置抽屉的「清单设置」Tab（TenantSettingsPanel）。
+// 页面只保留列表需要的租户下拉，变更由面板 emit('changed') 后 reloadTenants 刷新。
+function openFieldSettings() { emit('open-settings') }
+/**
+ * 清单设置面板改完租户后的回灌。
+ *
+ * 面板里可能删掉当前正在看的租户：不校验会让 activeTenantId 指向一个已删除的
+ * id，loadAllData 直接 404，列表变空且没有任何提示。这里先纠回第一个可用租户。
+ */
+const reloadTenants = async () => {
   await loadTenants()
-}
-const openTenantForm = (t: any) => {
-  tenantForm.value = {
-    id: t.id, name: t.name || '', tenant_no: t.tenant_no || '',
-    allocation_mode: t.allocation_mode || '按比例分摊', lease_start: t.lease_start || '',
-    lease_years: Number(t.lease_years) || 0, contact: t.contact || '', phone: t.phone || '', remark: t.remark || '',
-  }
-  tenantFormVisible.value = true
-}
-const saveTenantForm = async () => {
-  if (!tenantForm.value.name.trim()) {
-    MessagePlugin.warning('请输入租户名')
-    return
-  }
-  savingTenant.value = true
-  try {
-    const payload: Record<string, unknown> = {
-      name: tenantForm.value.name.trim(),
-      tenant_no: tenantForm.value.tenant_no,
-      allocation_mode: tenantForm.value.allocation_mode || '按比例分摊',
-      lease_start: tenantForm.value.lease_start || null,
-      lease_years: Number(tenantForm.value.lease_years) || 0,
-      contact: tenantForm.value.contact,
-      phone: tenantForm.value.phone,
-      remark: tenantForm.value.remark,
-    }
-    if (tenantForm.value.id) {
-      await updateBillingTenant(tenantForm.value.id, payload)
-    } else {
-      const res: any = await createBillingTenant(payload)
-      if (!activeTenantId.value) activeTenantId.value = res.data.id
-    }
-    MessagePlugin.success('已保存')
-    tenantFormVisible.value = false
-    await loadTenants()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    savingTenant.value = false
+  if (activeTenantId.value && !tenants.value.some((t: any) => t.id === activeTenantId.value)) {
+    activeTenantId.value = tenants.value[0]?.id || ''
+    await loadAllData()
   }
 }
-const removeTenant = async (t: any) => {
-  try {
-    await deleteBillingTenant(t.id)
-    MessagePlugin.success('已删除')
-    if (activeTenantId.value === t.id) {
-      activeTenantId.value = ''
-      tenants.value = tenants.value.filter(x => x.id !== t.id)
-      if (tenants.value.length) activeTenantId.value = tenants.value[0].id
-    }
-    await loadTenants()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
-}
-
-// ---- 分摊子项（大类分组 + 内联展开 + 子项开关） ----
-const expandedItemGroup = ref('')
-
-const itemGroups = computed(() => {
-  const g: Record<string, any[]> = {}
-  itemsForm.value.forEach((it) => {
-    const cat = it.category || '其他费用'
-    ;(g[cat] = g[cat] || []).push(it)
-  })
-  return Object.entries(g).map(([category, items]) => ({
-    category,
-    items,
-  }))
-})
-const toggleItemGroup = (category: string) => {
-  expandedItemGroup.value = expandedItemGroup.value === category ? '' : category
-}
-const toggleItem = async (it: any, v: boolean) => {
-  it.enabled = !!v
-  await saveItems()
-}
-const saveItems = async () => {
-  if (!activeTenantId.value) return
-  try {
-    const items = itemsForm.value
-      .filter((it: any) => it.item_name.trim())
-      .map((it: any) => ({
-        category: it.category || '其他费用',
-        item_key: `${(it.category || '其他费用').trim()}|${it.item_name.trim()}`, item_name: it.item_name.trim(), enabled: !!it.enabled,
-      }))
-    await saveBillingTenantItems(activeTenantId.value, { items })
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存子项失败')
-  }
-}
+defineExpose({ reloadTenants })
 
 // ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
 // ---- 账单详情与打印 ----
@@ -1289,7 +977,6 @@ const onResize = (e: MouseEvent, widthRef: { value: string }, storageKey: string
   document.addEventListener('mousemove', move)
   document.addEventListener('mouseup', up)
 }
-const onSettingsResizeStart = (e: MouseEvent) => onResize(e, settingsWidth, DRAWER_W_KEYS.settings)
 const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 
 // ---- 账单明细分组（按大项排序 + 汇总） ----
