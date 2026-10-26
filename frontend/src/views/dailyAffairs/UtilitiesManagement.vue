@@ -660,7 +660,8 @@
          「字段定义」里的分组胶囊条承载，配置统一存 fleet_categories(scope=energy)。 -->
     <!-- 设置抽屉：分类与顶部 6 张卡片 1:1，打开即定位到当前卡片对应的分类 -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
-      :initial-category="settingsCategory" :kb-name="'日常事务-电费'" title="设置 · 能耗"
+      :initial-category="settingsCategory" :rule-categories="ENERGY_RULE_CATEGORIES"
+      :kb-name="'日常事务-电费'" title="设置 · 能耗"
       storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged" />
 
     <!-- 删除历史 -->
@@ -710,6 +711,7 @@ import {
   onBeforeUnmount,
 } from 'vue'
 import { useTableHeaderFix } from './useTableHeaderFix'
+import { ENERGY_OPEN_SETTINGS_EVENT } from './energyViewColumns'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { listKnowledgeFiles } from '@/api/knowledge-base'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -1084,7 +1086,29 @@ const ENERGY_TAB_CATEGORY: Record<EnergyTab, string> = {
   gas: '气费核算',
   billing: '费用清单',
 }
-const settingsCategory = computed(() => ENERGY_TAB_CATEGORY[activeTab.value] || '市电账单')
+/**
+ * 子组件工具栏「设置」要定位的分类（光伏账单 / 电费核算 / …）。
+ *
+ * 6 个卡片视图各自的工具栏都在子组件里，设置抽屉只在本页挂一份：
+ * 子组件广播 ENERGY_OPEN_SETTINGS_EVENT，这里接住并把抽屉定位到那个分类。
+ * 抽屉关闭后清空，避免下一次从 KPI 卡片进入时还停在上次的分类。
+ */
+const settingsCategoryOverride = ref('')
+const settingsCategory = computed(() =>
+  settingsCategoryOverride.value || ENERGY_TAB_CATEGORY[activeTab.value] || '市电账单')
+function onEnergyOpenSettings(e: Event) {
+  const detail = (e as CustomEvent<{ category?: string }>).detail || {}
+  settingsCategoryOverride.value = String(detail.category || '')
+  settingsVisible.value = true
+}
+watch(settingsVisible, (v) => { if (!v) settingsCategoryOverride.value = '' })
+/**
+ * 允许配置「提取规则」的分类白名单。
+ *
+ * 只有市电账单与光伏账单是 AI 从文件里提取的；电费/水费/气费核算与费用清单是
+ * 录入 + 公式算出来的计算表，没有可提取的字段，规则页对它们没有意义。
+ */
+const ENERGY_RULE_CATEGORIES = ['市电账单', '光伏账单']
 
 const onKpiCardClick = (card: any) => {
   if (card?.action === 'history') {
@@ -1235,18 +1259,25 @@ const mapRow = (r: any): Row => {
   }
 }
 
-// 进行中文件（解析中/提取中/待提取）合并进列表行，与合同模块一致
-const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
-  rowKey: `pending-${pf.id}`,
-  knowledgeId: pf.id,
-  fileName: pf.file_name || pf.title || '',
-  extractStatus: pendingLabel(pf),
-  extractError: pf.custom_metadata?.extract_error || '',
-  kind: 'pending',
-  item: {},
-  tags: [],
-  page: 0,
-})))
+// 进行中文件（解析中/提取中/待提取）合并进列表行，与合同模块一致。
+//
+// 解析失败 / 提取失败的文件**不进主列表**：它们没有任何业务数据，混在账单里只会
+// 渲染出一条「⊗ 解析失败」的空壳。异常文件统一在「历史记录 → 异常文件」里
+// 展示与重提，与发票/合同管理口径一致。
+const FAILED_ROW_STATUS = new Set(['failed', 'parse_failed'])
+const pendingRows = computed(() => pendingFiles.value
+  .filter((pf: any) => !FAILED_ROW_STATUS.has(pendingLabel(pf)))
+  .map((pf: any) => ({
+    rowKey: `pending-${pf.id}`,
+    knowledgeId: pf.id,
+    fileName: pf.file_name || pf.title || '',
+    extractStatus: pendingLabel(pf),
+    extractError: pf.custom_metadata?.extract_error || '',
+    kind: 'pending',
+    item: {},
+    tags: [],
+    page: 0,
+  })))
 // 行级全字段检索文本：把这条账单里所有可读内容拼成一个大字符串，再做包含匹配。
 //
 // 为什么不用逐列判断：字段是可配置的（用户在「字段定义」里加字段后列表就多一列），
@@ -1431,7 +1462,7 @@ const onFileInputChange = async (e: Event) => {
           let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
           // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
           if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'electricity' })
+          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'electricity', fleet_cert_type: '市电账单' })
         } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
       }
       // 解析完成后由轮询自动触发提取
@@ -2519,11 +2550,15 @@ const onSettingsChanged = async () => {
 
 onMounted(() => {
   nextTick(measureTableHeaderFix)
+  window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   // kbId 由 loadKb() 异步解析：先跑 loadTabCounts 会全部返回 0
   // （那时 kbId 还是空串，账单/光伏接口直接短路）。等它就绪再计数。
   void loadKb().then(() => loadTabCounts())
 })
-onBeforeUnmount(() => { stopPolling() })
+onBeforeUnmount(() => {
+  stopPolling()
+  window.removeEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
+})
 </script>
 
 <style lang="less" scoped>
@@ -3693,5 +3728,25 @@ onBeforeUnmount(() => { stopPolling() })
  */
 .biz-page .doc-list-view .t-table__row--folded > td {
   background-color: var(--td-bg-color-container);
+}
+
+/* 表头底色统一为 container（白）
+ *
+ * TDesign 的 sticky / 固定表头会把 th 背景改成 --td-bg-color-secondarycontainer
+ * （#f3f3f3）：发票/合同没有开 header-fixed，是纯白；能耗 6 个视图都开了
+ * sticky-header，于是表头是灰色。而右侧那块「滚动条轨道遮罩」（.doc-list-view::after）
+ * 用的是 container 白 —— 灰表头 + 白遮罩 = 表头最右端露出一块白方块 + 一条竖线，
+ * 就是截图里红框指的东西。把 th 拉回白底，遮罩自然隐形，表头也 100% 通栏。
+ *
+ * 选择器要盖住两种形态：thead 自带 .t-table__header--fixed，以及普通 th。
+ */
+.biz-page .doc-list-view .t-table th,
+.biz-page .doc-list-view .t-table thead > tr > th {
+  background-color: var(--td-bg-color-container);
+}
+
+/* 遮罩底边与表头底边同色，避免表头右侧 1px 断线 */
+.biz-page .doc-list-view::after {
+  border-bottom-color: var(--td-component-border);
 }
 </style>

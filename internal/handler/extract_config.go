@@ -229,6 +229,14 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 	if isBusinessDocumentScope(scope) && certType != "" {
 		ec = h.alignExtractConfigWithCategory(ctx, ec, scope, certType)
 	}
+	// 能耗：把配置按最新 subs 对齐，并从字段目录补齐 desc/rule/regex 的空值。
+	//
+	// 不做这一步的后果（真机）：用户在设置里打开「提取规则 → 光伏账单」，
+	// 看到的是一批 desc/rule 空白的字段，以为规则没生效 —— 实际是存量配置
+	// 由旧版目录生成，缺后加字段的规则文案。对齐只改内存副本，保存时才落库。
+	if scope == EnergyScope && ec != nil && certType != "" {
+		ec = h.alignEnergyConfigWithSubs(ctx, ec, certType)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": ec})
 }
 
@@ -236,16 +244,18 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 //
 // 六同步（同步点②）：用户在「字段定义」里删 / 改 / 增 / 排序字段后，提取规则面板必须
 // 立刻与字段定义一致。此前的实现让两处各自为政：
-//   · 字段定义删掉的字段 → 提取规则里仍在（保存时被后端静默忽略，但界面上还看得见）；
-//   · 字段改名（摘要→摘要2）→ 提取规则精确 `cfgMap.get("summary")` 命中旧键，
-//     界面上新名字 miss、旧名字无配置，用户配的 desc/rule/regex 看起来"丢了"；
-//   · 字段改类型（text→array）→ 规则面板还显示「字符串」。
+//
+//	· 字段定义删掉的字段 → 提取规则里仍在（保存时被后端静默忽略，但界面上还看得见）；
+//	· 字段改名（摘要→摘要2）→ 提取规则精确 `cfgMap.get("summary")` 命中旧键，
+//	  界面上新名字 miss、旧名字无配置，用户配的 desc/rule/regex 看起来"丢了"；
+//	· 字段改类型（text→array）→ 规则面板还显示「字符串」。
 //
 // 对齐规则（与前端 sixWaySync.buildRuleFieldsFromSubs 同一口径）：
-//   · 集合 / 顺序 / 启用 → subs；
-//   · 类型 → subs.data_type（extract_config 里的旧 type 只做缺省）；
-//   · desc / rule / regex / required → 保留用户在规则面板配的文案（按 name 命中，
-//     改名时回退按 subs.label 匹配旧行，迁移其口径）。
+//
+//	· 集合 / 顺序 / 启用 → subs；
+//	· 类型 → subs.data_type（extract_config 里的旧 type 只做缺省）；
+//	· desc / rule / regex / required → 保留用户在规则面板配的文案（按 name 命中，
+//	  改名时回退按 subs.label 匹配旧行，迁移其口径）。
 //
 // 不落库：GET 接口不得产生写副作用（用户可能只是打开看一眼）。
 func (h *BusinessExtractHandler) alignExtractConfigWithCategory(

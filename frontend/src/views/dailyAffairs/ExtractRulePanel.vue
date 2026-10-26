@@ -623,6 +623,9 @@ function typeComposite(scope: string, name: string) {
   return `${scope}__${name}`
 }
 
+/** 能耗 scope 里允许配置提取规则的分类（其余是计算表，无规则可配）。 */
+const ENERGY_EXTRACTABLE_CATEGORIES = ['市电账单', '光伏账单']
+
 const certTypeOptions = computed(() => {
   if (!isFleetScope.value) {
     // 非车队 scope：类型 = 分类列表（含新增自定义类型），平铺无分组
@@ -637,6 +640,10 @@ const certTypeOptions = computed(() => {
       // 「能耗单」走 document 台账管线，页面上没有对应卡片：规则 Tab 与
       // 「字段定义」保持同一份分类清单（设置分类 = 顶部 6 张卡片）。
       if (props.scope === 'energy' && String(c?.name || '').trim() === '能耗单') return
+      // 只有市电账单与光伏账单是 AI 从文件里提取的。电费/水费/气费核算与费用清单
+      // 是录入 + 公式算出来的计算表，字段打的是 group=cols（不进规则面），
+      // 在下拉里露出来只会得到一个空白的规则页。
+      if (props.scope === 'energy' && !ENERGY_EXTRACTABLE_CATEGORIES.includes(String(c?.name || '').trim())) return
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name)
         children.push({ label: c.name, value: typeComposite(props.scope, c.name) })

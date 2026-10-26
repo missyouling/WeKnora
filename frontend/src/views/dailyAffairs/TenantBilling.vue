@@ -39,9 +39,15 @@
             </div>
           </template>
         </t-popup>
-        <t-button variant="outline" size="small" @click="openSettings">
+        <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）；
+             租户档案与分摊比例属于另一件事，单独叫「租户设置」。 -->
+        <t-button variant="outline" size="small" @click="openFieldSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
+        </t-button>
+        <t-button variant="outline" size="small" @click="openSettings">
+          <template #icon><t-icon name="usergroup" size="14px" /></template>
+          租户设置
         </t-button>
         <t-button theme="primary" variant="outline" size="small" :loading="generateBusy"
           :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）'"
@@ -466,7 +472,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, createBillingTenant, getBillingTenant, updateBillingTenant, deleteBillingTenant,
@@ -480,6 +486,7 @@ import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
+import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
@@ -534,7 +541,37 @@ const COL_DEFS_TENANT: ColDef[] = [
   { key: 'remark', label: '备注', default: false, w: '1.5fr', tip: '手工填写' },
 ]
 const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
-const activeColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEFS_TENANT))
+// 分类名与设置抽屉里的 fleet_categories.name 逐字一致
+const CATEGORY_NAME = '费用清单'
+const categorySubs = ref<EnergySub[]>([])
+/**
+ * 生效列定义 = 费用清单分类的字段定义（subs）。
+ *
+ * 两套视角（业主 / 租户）列集不同，而 subs 是并集，所以这里 restrictToBase：
+ * 只保留当前视角本来就有的列，再用 subs 的名字/顺序/宽度/默认显示覆盖。
+ */
+const baseColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEFS_TENANT))
+const activeColDefs = computed(() =>
+  applySubsToColumns(
+    baseColDefs.value,
+    categorySubs.value,
+    undefined,
+    { restrictToBase: true },
+  ),
+)
+
+/** 打开中台设置抽屉（字段定义 / 提取规则），定位到费用清单分类。 */
+function openFieldSettings() { requestEnergySettings(CATEGORY_NAME) }
+
+/** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
+async function loadCategorySubs() {
+  try {
+    categorySubs.value = await loadEnergyCategorySubs(CATEGORY_NAME)
+  } catch {
+    categorySubs.value = []
+  }
+  syncColumnKeys()
+}
 const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
 const visibleKeys = ref<string[]>([])
 function loadStoredKeys(): string[] {
@@ -560,8 +597,15 @@ const tableColumns = computed(() => {
     { colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
+  // 宽度预算守卫：费用清单是 24 列宽表（业主 18 列 / 租户 14 列），
+  // 一旦每列都按 110px 固定排，总宽会到 2000+px，直接把表格撑出横向滚动条、
+  // 最后一列被裁到卡片外面（真机实测 thead 右边界 2377 > 卡片 1895）。
+  // 规则：可见列配置宽度总和 ≤ 1500px 时按配置生效，超出则整表回退自适应。
+  const budget = 1500
+  const wantWidth = visibleColDefs.value.reduce((sum, c) => sum + (Number((c as any).width) || 0), 0)
+  const useFixed = wantWidth > 0 && wantWidth <= budget
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: useFixed ? (Number((c as any).width) || undefined) : undefined })
   }
   return cols
 })
@@ -808,7 +852,9 @@ const buildRows = () => {
     }
     const gasOf = () => gasRows.value.filter(r => r.month === month && r.meter_kind !== 'public')
     const base: Record<string, any> = {
-      id: `row-${month}`, month, unit: useUnit.value, hasRec: !!rec,
+      // 主键必须带「使用单位」：同一月份在不同单位下各有一行，
+      // 只用 row-${month} 会撞键，勾选一行的勾选态会同时命中同月的所有行。
+      id: `row-${useUnit.value || 'unit'}__${month}`, month, unit: useUnit.value, hasRec: !!rec,
       billReady: !!bill,
       readingReady: elecRows.value.some(r => r.month === month && r.meter_type === 'time'),
     }
@@ -1320,7 +1366,11 @@ const fmtPrice = (v: any): string => {
 
 onMounted(() => {
   loadTenants()
+  void loadCategorySubs()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
+function onCategoriesChanged() { void loadCategorySubs() }
+onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onCategoriesChanged))
 </script>
 
 <style lang="less" scoped>

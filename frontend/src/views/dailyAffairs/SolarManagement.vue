@@ -24,7 +24,7 @@
         <div class="doc-filter-bar">
           <div class="doc-filter-bar__leading">
             <div class="doc-filter-field doc-filter-field--search">
-              <t-input v-model="keyword" placeholder="搜索文件名 / 源文件" clearable class="doc-filter-field__control">
+              <t-input v-model="keyword" placeholder="搜索全部字段" clearable class="doc-filter-field__control">
                 <template #prefixIcon><t-icon name="search" size="16px" /></template>
               </t-input>
             </div>
@@ -38,11 +38,6 @@
             <t-button variant="outline" size="small" @click="applyFilter">
               <template #icon><t-icon name="refresh" size="14px" /></template>
             </t-button>
-            <t-tooltip content="删除历史" placement="bottom">
-              <t-button variant="outline" size="small" @click="historyVisible = true">
-                <template #icon><t-icon name="history" size="14px" /></template>
-              </t-button>
-            </t-tooltip>
           </div>
           <div class="doc-filter-bar__trailing">
             <t-popup v-model="fieldPopupVisible" trigger="click" placement="bottom-left" :hide-empty-popup="false"
@@ -68,9 +63,15 @@
                 </div>
               </template>
             </t-popup>
-            <t-button variant="outline" size="small" @click="settingsVisible = true">
+            <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）；
+                 光伏基本户信息属于另一件事，单独叫「光伏设置」。 -->
+            <t-button variant="outline" size="small" @click="openFieldSettings">
               <template #icon><t-icon name="setting" size="14px" /></template>
               设置
+            </t-button>
+            <t-button variant="outline" size="small" @click="settingsVisible = true">
+              <template #icon><t-icon name="secured" size="14px" /></template>
+              光伏设置
             </t-button>
             <t-button theme="primary" size="small" @click="triggerUpload">
               <template #icon><t-icon name="upload" /></template>
@@ -116,7 +117,9 @@
               <span v-if="rowTags(row).length > 1" class="row-tag-more">+{{ rowTags(row).length - 1 }}</span>
             </div>
           </t-tooltip>
-          <span v-else class="row-tag-chips is-clickable" @click.stop="row.kind !== 'pending' && openTagEdit(row)">+ 标签</span>
+          <span v-else class="row-tag-chips is-clickable" @click.stop="row.kind !== 'pending' && openTagEdit(row)">
+            <span class="row-tag-add">+ 标签</span>
+          </span>
         </template>
       </t-table>
     </div>
@@ -475,8 +478,6 @@
     <SolarSettingsDrawer :visible="settingsVisible" :kb-id="kbId || ''"
       @update:visible="settingsVisible = $event" @changed="onSettingsChanged" />
 
-    <!-- 删除历史 -->
-    <DeletedKnowledgeDrawer v-model:visible="historyVisible" :kb-id="kbId || ''" module-name="能耗" />
 
     <!-- 打印预览弹窗 -->
     <teleport to="body">
@@ -536,11 +537,11 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import SolarSettingsDrawer from './SolarSettingsDrawer.vue'
-import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 import { useTableHeaderFix } from './useTableHeaderFix'
+import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
@@ -550,7 +551,7 @@ const PAGE_SIZE = 30
 const COLUMN_STORAGE_KEY = 'weknora-solar-columns-v1'
 const COLUMN_STORAGE_VERSION = 1
 
-interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string }
+interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; width?: number }
 const FALLBACK_COLUMNS: ColDef[] = [
   // 默认字段（按用户指定顺序）
   { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '1.2fr' },
@@ -578,11 +579,45 @@ const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
 const settingsVisible = ref(false)
-const historyVisible = ref(false)
 const fileInputRef = ref<HTMLInputElement>()
 
 // 字段配置
-const columnDefs = ref<ColDef[]>(FALLBACK_COLUMNS)
+// 分类名与设置抽屉里的 fleet_categories.name 逐字一致
+const CATEGORY_NAME = '光伏账单'
+const categorySubs = ref<EnergySub[]>([])
+/**
+ * 生效列定义 = 光伏账单分类的字段定义（subs）。
+ *
+ * 静态 FALLBACK_COLUMNS 只提供格式化类型（fieldType）与宽度比例；
+ * 集合 / 顺序 / 中文名 / 宽度 / 默认显示全部以 subs 为准，改完设置列表立刻变。
+ */
+const columnDefs = computed<ColDef[]>(() =>
+  applySubsToColumns(
+    FALLBACK_COLUMNS,
+    categorySubs.value,
+    (key, sub) => ({
+      key,
+      label: String(sub.label || key),
+      fieldType: 'text',
+      default: sub.is_default === true,
+      w: '1fr',
+    }),
+  ),
+)
+/** 打开中台设置抽屉（字段定义 / 提取规则），定位到光伏账单分类。 */
+function openFieldSettings() { requestEnergySettings(CATEGORY_NAME) }
+
+/** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
+async function loadCategorySubs() {
+  try {
+    categorySubs.value = await loadEnergyCategorySubs(CATEGORY_NAME)
+  } catch {
+    categorySubs.value = []
+  }
+  if (visibleColKeys.value.length && !visibleColKeys.value.some(k => columnDefs.value.some(c => c.key === k))) {
+    resetColumns()
+  }
+}
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
@@ -593,7 +628,7 @@ const tableColumns = computed(() => {
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType })
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, width: c.width || undefined })
   }
   cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
@@ -670,6 +705,15 @@ const handleRowClick = (row: Row) => {
   openDetail(row)
 }
 
+/** 日期串 → YYYY-MM（取前 7 位；非法值返回空串，由调用方兜底）。 */
+const monthOfDate = (v: any): string => {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(v || '').trim())
+  if (!m) return ''
+  const mm = Number(m[2])
+  if (mm < 1 || mm > 12) return ''
+  return `${m[1]}-${String(mm).padStart(2, '0')}`
+}
+
 const mapRow = (r: any): Row => {
   const it = r.item || {}
   const gw = (it.gateways || []).find((g: any) => g.gateway_type === '上网关口')
@@ -689,12 +733,22 @@ const mapRow = (r: any): Row => {
     meter_ratio: rd.multiplier,
     meter_reading: rd.reading_kwh,
     meter_bill: rd.bill_kwh,
-    bill_period: `${it.bill_period_start || ''} ~ ${it.bill_period_end || ''}`,
+    // 账单周期只显示 YYYY-MM：起止日范围在 1600 宽的列表里必被截成
+    // 「2026-06-01 ~ 202...」，而日精度对账期聚合毫无用处（与市电账单同口径）。
+    bill_period: it.bill_period || monthOfDate(it.bill_period_start) || monthOfDate(it.bill_period_end) || '',
     tags: r.tags || [],
   }
 }
 
-const pendingRows = computed(() => pendingFiles.value.map((pf: any) => ({
+// 解析失败 / 提取失败的文件不进主列表。
+//
+// 它们没有任何业务数据，混在账单里只会在第一行渲染一条「⊗ 解析失败」的空壳
+// （真机截图：光伏账单首行整行空白 + 红标）。异常文件统一在
+// 「历史记录 → 异常文件」里展示与重提，这与发票/合同管理的口径一致。
+const FAILED_ROW_STATUS = new Set(['failed', 'parse_failed'])
+const pendingRows = computed(() => pendingFiles.value
+  .filter((pf: any) => !FAILED_ROW_STATUS.has(pendingLabel(pf)))
+  .map((pf: any) => ({
   rowKey: `pending-${pf.id}`,
   knowledgeId: pf.id,
   fileName: pf.file_name || pf.title || '',
@@ -823,7 +877,7 @@ const startPolling = () => {
         if (ps === 'completed' && isSolarName && !meta.kind && !meta.bill_kind && !meta.extract_status && !taggingInFlight.value.has(it.id)) {
           taggingInFlight.value.add(it.id)
           try {
-            await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar' } })
+            await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar', fleet_cert_type: '光伏账单' } })
           } catch { /* 打标失败下轮重试 */ } finally {
             taggingInFlight.value.delete(it.id)
           }
@@ -891,7 +945,7 @@ const onFileInputChange = async (e: Event) => {
           let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
           // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
           if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'solar' })
+          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'solar', fleet_cert_type: '光伏账单' })
         } catch { /* 打标失败则文件保持未标记，轮询会自动补打标并提取 */ console.warn('[solar] 上传后打标失败，交由轮询自愈', f.name) }
       }
       // 解析完成后由轮询自动触发提取
@@ -910,7 +964,7 @@ const onFileInputChange = async (e: Event) => {
             if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
             const kind = meta?.kind || ''
             if (kind !== 'solar_bill') {
-              await updateBusinessMetadata(kbId.value, dupId, { ...meta, bill_kind: 'solar' })
+              await updateBusinessMetadata(kbId.value, dupId, { ...meta, bill_kind: 'solar', fleet_cert_type: '光伏账单' })
               recovered = true
             }
           } catch { /* 恢复失败则仅提示已存在 */ }
@@ -1324,8 +1378,16 @@ const fmtRate6 = (v: any) => {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 6 })
 }
 
-onMounted(() => { loadKb() })
-onBeforeUnmount(() => { stopPolling() })
+onMounted(() => {
+  loadKb()
+  void loadCategorySubs()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
+})
+function onCategoriesChanged() { void loadCategorySubs() }
+onBeforeUnmount(() => {
+  stopPolling()
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+})
 </script>
 
 <style lang="less" scoped>

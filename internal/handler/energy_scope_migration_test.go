@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -213,7 +214,7 @@ func TestNormalizeUtilityDataType(t *testing.T) {
 // 这里锁后四个的名字与字段集，防止改名或漏配（漏配的后果是点那张卡片的「设置」
 // 打开后分类列表里找不到自己，用户改不了列）。
 func TestEnergyViewCategoriesMatchCards(t *testing.T) {
-	want := []string{"电费核算", "水费核算", "气费核算", "费用清单"}
+	want := []string{"光伏账单", "电费核算", "水费核算", "气费核算", "费用清单"}
 	if len(energyViewCategorySpecs) != len(want) {
 		t.Fatalf("卡片分类数量应为 %d，实际 %d", len(want), len(energyViewCategorySpecs))
 	}
@@ -242,7 +243,7 @@ func TestWaterCategoryHasWaterOnlyFees(t *testing.T) {
 		}
 	}
 	// 电费核算不该带这三列（否则会多出永远为空的列）
-	for _, f := range energyMeterFields {
+	for _, f := range energyElectricFields {
 		switch f.Key {
 		case "garbage_fee", "secondary_water_fee", "sewage_fee":
 			t.Fatalf("电费核算不应包含水费专属字段 %q", f.Key)
@@ -253,7 +254,7 @@ func TestWaterCategoryHasWaterOnlyFees(t *testing.T) {
 // TestMeterFieldsHaveUniqueKeys 字段 key 必须唯一（重复会让 subs 里出现两条同名，
 // 前端按 name 去重时会把后一条吞掉，表现为「某个列在设置里消失」）。
 func TestMeterFieldsHaveUniqueKeys(t *testing.T) {
-	for _, group := range [][]energyViewField{energyMeterFields, energyWaterFields, energyBillingFields} {
+	for _, group := range [][]energyViewField{energyElectricFields, energyWaterFields, energyGasFields, energyBillingFields, energySolarFields} {
 		seen := map[string]bool{}
 		for _, f := range group {
 			if f.Key == "" || f.Label == "" {
@@ -263,6 +264,104 @@ func TestMeterFieldsHaveUniqueKeys(t *testing.T) {
 				t.Fatalf("字段 key 重复：%q", f.Key)
 			}
 			seen[f.Key] = true
+		}
+	}
+}
+
+// TestMeterCategoryLabelsAreMediumSpecific 核算表的表头必须按介质命名。
+//
+// 旧版 seed 用的是通用文案（表计 / 用量 / 金额），三张表长得一模一样，
+// 用户在「字段定义」里根本分不清正在改哪张表；列表表头也读不出是水还是气。
+func TestMeterCategoryLabelsAreMediumSpecific(t *testing.T) {
+	cases := []struct {
+		fields []energyViewField
+		meter  string
+		usage  string
+		amount string
+	}{
+		{energyElectricFields, "电表", "用电量", "电费"},
+		{energyWaterFields, "水表", "用水量", "水费"},
+		{energyGasFields, "气表", "用气量", "气费"},
+	}
+	labelOf := func(fields []energyViewField, key string) string {
+		for _, f := range fields {
+			if f.Key == key {
+				return f.Label
+			}
+		}
+		return ""
+	}
+	for _, c := range cases {
+		if got := labelOf(c.fields, "meter"); got != c.meter {
+			t.Errorf("meter 表头应为 %q，实际 %q", c.meter, got)
+		}
+		if got := labelOf(c.fields, "usage"); got != c.usage {
+			t.Errorf("usage 表头应为 %q，实际 %q", c.usage, got)
+		}
+		if got := labelOf(c.fields, "amount"); got != c.amount {
+			t.Errorf("amount 表头应为 %q，实际 %q", c.amount, got)
+		}
+	}
+}
+
+// TestAccountingCategoriesHaveNoExtractFields 核算 / 清单分类的字段必须打 group=cols。
+//
+// alignEnergyConfigWithSubs 只认 overview 与空分组；不打分组的话，这四类的
+// 「起度 / 止度 / 倍率」会挤进「提取规则」页，用户以为能让模型去提取它们。
+func TestAccountingCategoriesHaveNoExtractFields(t *testing.T) {
+	for _, spec := range energyViewCategorySpecs {
+		if !isEnergyAccountingCategory(spec.Name) {
+			continue
+		}
+		for _, sub := range energySubsOfSpec(spec) {
+			if sub.Group != "cols" {
+				t.Fatalf("%s 的字段 %q 必须挂 cols 分组（否则会进提取规则面）", spec.Name, sub.Name)
+			}
+		}
+	}
+}
+
+// TestSolarCategoryKeepsExtractableFields 光伏账单必须有可提取字段（group 为空）。
+//
+// 与核算四类相反：光伏账单是 AI 文档提取分类，字段必须留空分组才会进规则面；
+// 只有来自 gateways[].readings 的示数列可以打 readings 分组。
+func TestSolarCategoryKeepsExtractableFields(t *testing.T) {
+	var spec energyViewCategorySpec
+	for _, s := range energyViewCategorySpecs {
+		if s.Name == EnergyBillTypeSolar {
+			spec = s
+		}
+	}
+	if spec.Name == "" {
+		t.Fatal("缺少光伏账单分类规格")
+	}
+	if isEnergyAccountingCategory(spec.Name) {
+		t.Fatal("光伏账单是提取分类，不能按核算分类处理")
+	}
+	// 可提取 = 空分组或 overview（alignEnergyConfigWithSubs 的放行口径）
+	extractable := 0
+	for _, sub := range energySubsOfSpec(spec) {
+		if g := strings.TrimSpace(sub.Group); g == "" || g == "overview" {
+			extractable++
+		}
+	}
+	if extractable < 8 {
+		t.Fatalf("光伏账单可提取字段只有 %d 个，规则页几乎是空的", extractable)
+	}
+	if !energySubsHaveKey(energySubsOfSpec(spec), spec.Anchor) {
+		t.Fatalf("光伏账单缺少锚点字段 %q", spec.Anchor)
+	}
+}
+
+// TestEnergyFieldWidthsArePixels 列宽必须是像素值（0 = 自适应，其余 > 60）。
+//
+// 0 会让列宽随机内容抖动；写 1~59 的值在 1080 视口下必然把表头压成省略号。
+func TestEnergyFieldWidthsArePixels(t *testing.T) {
+	for _, group := range [][]energyViewField{energyElectricFields, energyWaterFields, energyGasFields, energyBillingFields, energySolarFields} {
+		for _, f := range group {
+			if f.Width != 0 && f.Width < 60 {
+				t.Fatalf("字段 %q 宽度 %d 过小（要么 0=自适应，要么 >=60）", f.Key, f.Width)
+			}
 		}
 	}
 }

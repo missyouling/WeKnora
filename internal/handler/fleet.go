@@ -2159,6 +2159,11 @@ func (h *FleetHandler) seedBusinessCategories() {
 	}
 	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
 	uh.hideEnergyLedgerCategory(ctx)
+	// 能耗账单文件的「所属分类」回填：上传只写了 bill_kind、提取只写 kind，
+	// 历史记录抽屉的分类列/分类筛选因此全空（真机实测 27 份文件全无分类）。
+	if _, err := uh.BackfillEnergyBillCategories(ctx); err != nil {
+		logger.Warnf(ctx, "backfill energy bill categories failed: %v", err)
+	}
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

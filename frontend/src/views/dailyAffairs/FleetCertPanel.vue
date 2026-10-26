@@ -676,11 +676,21 @@ async function load() {
  */
 function autoOpenInitialCategory() {
   const want = String(props.initialCategory || '').trim()
-  if (!want || editingId.value) return
+  if (!want) return
   const target = (categories.value[props.scope] || [])
     .find((c: any) => String(c.name || '').trim() === want)
-  if (target) toggleEdit(target)
+  if (!target) return
+  // 已经停在目标分类上就不动；停在别的分类上则强制切过去。
+  //
+  // 为什么不能"已经有展开项就跳过"：抽屉是常驻实例（destroy-on-close 只清内容），
+  // 上一次打开停在「市电账单」时，下一次从「费用清单」卡片进来会继续停在市电账单，
+  // 用户以为自己点开了费用清单却看到 176 个市电字段（真机踩过）。
+  if (editingId.value === target.id) return
+  toggleEdit(target)
 }
+
+// 分类变化（例如抽屉复用、或子组件改请求打开另一个分类）时重新定位
+watch(() => props.initialCategory, () => { autoOpenInitialCategory() })
 
 // ---- 字段引用判断：删除字段前检查是否已被证照记录引用 ----
 const RECORD_TYPE_MAP: Record<string, string> = {
@@ -791,7 +801,13 @@ function subGroupLabelOf(key: string): string {
 function resetSubGroupSelection() {
   const groups = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
     .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
-  activeSubGroup.value = groups[0]?.key || ''
+  // 默认停在「字段最多」的分组（通常就是主表），而不是 subs 里第一个字段所属的分组。
+  //
+  // 真机踩过：光伏账单的 subs 第一条是「账单周期」（派生字段），于是默认胶囊落在
+  // 「派生字段（不可提取）」上，20 个字段只露出 6 个示数列，用户以为账单概况丢了。
+  activeSubGroup.value = groups.length
+    ? [...groups].sort((a, b) => b.count - a.count)[0].key
+    : ''
   openChildGroup.value = ''
   openSubFieldName.value = ''
 }
@@ -981,7 +997,12 @@ const dataTypeOptions = [
   { label: '明细', value: 'items' },
 ]
 function toggleEdit(item: any) {
-  if (editingId.value === item.id) { editingId.value = ''; usedFields.value = new Set(); return }
+  if (editingId.value === item.id) {
+    editingId.value = ''
+    usedFields.value = new Set()
+    emit('category-change', '')
+    return
+  }
   editForm.name = item.name
   newFieldName.value = ''
   newSubFieldLabel.value = ''
@@ -996,6 +1017,7 @@ function toggleEdit(item: any) {
   fieldsEditable.value = fromSubsPayload(raw)
   editingId.value = item.id
   editingCertName.value = item.name
+  emit('category-change', String(item.name || ''))
   resetSubGroupSelection()
   loadUsedFields(group.value.scope, item.name)
 }
@@ -1197,6 +1219,13 @@ function goRulesAfterAiSave(certType: string, sampleText: string) {
 
 const emit = defineEmits<{
   (e: 'ai-guide', payload: { certType: string; sampleText: string; autoSuggest: boolean }): void
+  /**
+   * 当前正在编辑的分类变了。
+   *
+   * 设置抽屉据此决定要不要显示「提取规则」Tab：能耗的电费/水费/气费核算与
+   * 费用清单是计算表，根本没有可提取的字段，露出规则页只会让人以为配了没用。
+   */
+  (e: 'category-change', name: string): void
 }>()
 
 // ---- 启用/禁用 ----

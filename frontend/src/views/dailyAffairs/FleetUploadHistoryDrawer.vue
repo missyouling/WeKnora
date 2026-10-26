@@ -182,7 +182,8 @@ const columns = [
   { colKey: 'file', title: '文件', ellipsis: true },
   { colKey: 'parse', title: '解析', width: '84px' },
   { colKey: 'extract', title: '提取', width: '84px' },
-  { colKey: 'docType', title: getScope(props.scope || '')?.categoryLabel || '证照类型', width: '110px' },
+  // 能耗模块这一列装的是账单分类（市电账单 / 光伏账单），叫「证照类型」会读不懂
+  { colKey: 'docType', title: props.scope === 'energy' ? '账单类型' : (getScope(props.scope || '')?.categoryLabel || '证照类型'), width: '110px' },
   { colKey: 'createdAt', title: '上传时间', width: '160px' },
   { colKey: 'op', title: '操作', width: '48px' },
 ]
@@ -270,7 +271,9 @@ const normalize = (r: any) => ({
   parse_status: r.parse_status || '',
   created_at: r.created_at || '',
   custom_metadata: r.custom_metadata || {},
-  doc_type: invDocType(r),
+  // 能耗文件没有 invoice_category/invoices[]，只能由 kind/bill_kind 推断；
+  // 不兜这一层的话「按分类能筛出来，但列里显示 —」。
+  doc_type: invDocType(r) || energyCategoryOf(r.custom_metadata || {}),
 })
 
 const rowDocType = (r: any) => invDocType(r)
@@ -291,10 +294,36 @@ const isRowRunning = (r: any) => {
 const isRowAbnormal = (r: any) =>
   String(r.parse_status || '') === 'failed' || String(extractStatus(r) || '') === 'failed'
 
+// 能耗账单文件 → 分类中文名。
+//
+// 为什么需要这层映射：能耗文件上传时前端只写 `bill_kind`（electricity/solar），
+// 提取落库只写 `kind`（utility_bill/solar_bill），都不是分类中文名；早期存量
+// 文件连 `fleet_cert_type` 也没有（后端已加启动回填，这里再兜一层，
+// 保证新上传的文件在回填跑之前也能正确显示/筛选）。
+const ENERGY_KIND_CATEGORY: Record<string, string> = {
+  utility_bill: '市电账单',
+  solar_bill: '光伏账单',
+  energy: '能耗单',
+}
+const ENERGY_BILL_KIND_CATEGORY: Record<string, string> = {
+  electricity: '市电账单',
+  utility: '市电账单',
+  solar: '光伏账单',
+}
+
+/** 从 custom_metadata 推断能耗账单分类（无标记返回空串）。 */
+const energyCategoryOf = (m: Record<string, any>): string => {
+  const byKind = ENERGY_KIND_CATEGORY[String(m.kind || '').trim()]
+  if (byKind) return byKind
+  return ENERGY_BILL_KIND_CATEGORY[String(m.bill_kind || '').trim()] || ''
+}
+
 // 文件归属的发票分类：上传即持久化的 invoice_category 优先，历史字段兜底。
 const invoiceTypeOf = (r: any): string => {
   const m = r.custom_metadata || {}
-  return String(m.invoice_category || m.fleet_cert_type || '').trim()
+  const explicit = String(m.invoice_category || m.fleet_cert_type || '').trim()
+  if (explicit) return explicit
+  return energyCategoryOf(m)
 }
 
 // 发票类型下拉选项：全部分类 + 数据里真实出现的分类（按出现次数降序）。

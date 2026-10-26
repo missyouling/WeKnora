@@ -43,7 +43,7 @@
                 </div>
               </div>
               <t-checkbox-group v-model="visibleKeys" class="field-popup-list" @change="persistColumns">
-                <t-checkbox v-for="col in categoryCols(COLUMN_DEFS)" :key="col.key" :value="col.key" class="field-popup-item">
+                <t-checkbox v-for="col in activeColDefs" :key="col.key" :value="col.key" class="field-popup-item">
                   {{ col.label }}
                 </t-checkbox>
               </t-checkbox-group>
@@ -52,9 +52,16 @@
         </t-popup>
       </template>
       <template #right-extra>
-        <t-button variant="outline" size="small" @click="openSettings">
+        <!-- 「设置」= 中台字段定义 / 提取规则（与发票管理同名同位）。
+             表计档案是另一件事，单独叫「表计配置」，避免用户点了「设置」却
+             看到一屏表计、找不到自己那几列（真机踩过）。 -->
+        <t-button variant="outline" size="small" @click="openFieldSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
+        </t-button>
+        <t-button variant="outline" size="small" @click="openSettings">
+          <template #icon><t-icon name="gauge" size="14px" /></template>
+          表计配置
         </t-button>
       </template>
     </BusinessListToolbar>
@@ -65,7 +72,7 @@
         <t-table
         :data="displayRows"
         :columns="tableColumns"
-        :row-key="(row: any) => row.key || row.record_id"
+        row-key="rowKey"
         size="small"
         :hover="true"
         :loading="loading"
@@ -655,6 +662,7 @@ import {
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useTableHeaderFix } from './useTableHeaderFix'
+import { loadEnergyCategorySubs, applySubsToColumns, requestEnergySettings, type EnergySub } from './energyViewColumns'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
@@ -669,7 +677,7 @@ const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.cat
 const usageLabel = computed(() => (props.category === 'water' ? '用水量' : props.category === 'electricity' ? '用电量' : '用气量'))
 
 // ---- 列定义 ----
-interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string; only?: 'water' }
+interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string; only?: 'water'; width?: number }
 const categoryCols = (defs: ColDef[]) => defs.filter(c => !c.only || c.only === props.category)
 const COLUMN_DEFS: ColDef[] = [
   { key: 'month', label: '月份', default: true, w: '1fr', tip: '抄表所属月份' },
@@ -696,9 +704,36 @@ const COLUMN_DEFS: ColDef[] = [
   { key: 'default_unit_price', label: '默认单价', default: false, w: '0.9fr', tip: '表计配置单价' },
   { key: 'install_date', label: '安装日期', default: false, w: '1.1fr', tip: '表计安装日期' },
 ]
-const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v3`)
+// 分类名与设置抽屉里的 fleet_categories.name 必须逐字一致
+const CATEGORY_NAME: Record<string, string> = {
+  electricity: '电费核算',
+  water: '水费核算',
+  gas: '气费核算',
+}
+const categorySubs = ref<EnergySub[]>([])
+/**
+ * 生效列定义 = 字段定义（subs）驱动的结果。
+ *
+ * subs 是唯一权威源：改名 / 改宽度 / 拖顺序 / 显隐都在设置抽屉里改，列表立刻跟着变。
+ * 静态 COLUMN_DEFS 只负责提供渲染器与缺省宽度（subs 缺失或还没加载时兜底）。
+ */
+const activeColDefs = computed<ColDef[]>(() =>
+  applySubsToColumns(
+    categoryCols(COLUMN_DEFS),
+    categorySubs.value,
+    (key, sub) => ({
+      key,
+      label: String(sub.label || key),
+      default: sub.is_default === true,
+      w: '1fr',
+      tip: `自定义字段：${key}`,
+    }),
+  ),
+)
+// 列显隐存档键：带上分类，避免电/水/气三张表互相覆盖
+const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v4`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
-const visibleColDefs = computed(() => categoryCols(COLUMN_DEFS).filter(c => visibleKeys.value.includes(c.key)))
+const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
   // 与发票管理一致：[复选框] → [序号] → 业务列。
   // colKey 必须写 'row-select'：只写 type:'multiple' 时 TDesign 照样渲染表头，
@@ -708,10 +743,27 @@ const tableColumns = computed(() => {
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true })
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: c.width || undefined })
   }
   return cols
 })
+
+/** 打开中台设置抽屉（字段定义 / 提取规则），定位到本分类。 */
+function openFieldSettings() { requestEnergySettings(CATEGORY_NAME[props.category] || '') }
+
+/** 拉取本分类的字段定义（设置抽屉保存后 window 事件触发重载）。 */
+async function loadCategorySubs() {
+  try {
+    categorySubs.value = await loadEnergyCategorySubs(CATEGORY_NAME[props.category] || '')
+  } catch {
+    categorySubs.value = []
+  }
+  // 订阅结束后若存档里的键在新列集里一个都不剩（例如用户删光了旧列），
+  // 回退到「默认表头」，避免出现"设置里明明有字段、列表一列都不显示"。
+  if (visibleKeys.value.length && !visibleKeys.value.some(k => activeColDefs.value.some(c => c.key === k))) {
+    resetColumns()
+  }
+}
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 const expandedRowKeysArr = computed(() => Array.from(expandedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
@@ -736,21 +788,21 @@ function loadStoredKeys(): string[] {
       const arr = JSON.parse(raw)
       if (Array.isArray(arr) && arr.length) {
         // 仅保留本组件认识的字段，避免跨页面污染
-        const valid = arr.filter(k => categoryCols(COLUMN_DEFS).some(c => c.key === k))
+        const valid = arr.filter(k => activeColDefs.value.some(c => c.key === k))
         if (valid.length) return valid
       }
     }
   } catch { /* ignore */ }
-  return categoryCols(COLUMN_DEFS).filter(c => c.default).map(c => c.key)
+  return activeColDefs.value.filter(c => c.default).map(c => c.key)
 }
 
 const fieldPopupVisible = ref(false)
 const selectAllColumns = () => {
-  visibleKeys.value = categoryCols(COLUMN_DEFS).map(c => c.key)
+  visibleKeys.value = activeColDefs.value.map(c => c.key)
   persistColumns()
 }
 const resetColumns = () => {
-  visibleKeys.value = categoryCols(COLUMN_DEFS).filter(c => c.default).map(c => c.key)
+  visibleKeys.value = activeColDefs.value.filter(c => c.default).map(c => c.key)
   persistColumns()
 }
 const persistColumns = () => {
@@ -936,6 +988,9 @@ const load = async () => {
           record_id: rec.id,
           item_id: it.id,
           key: `${rec.id}__${it.id}`,
+          // TDesign 的 row-key 只认字符串字段名；直接把 rowKey 落成字段，
+          // 三处兜底保证任何一行都不会是 undefined/空串（否则勾选一行=全选）。
+          rowKey: `${rec.id || rec.month || 'rec'}__${it.id || it.meter_id || flat.length}`,
           month: rec.month,
           record_date: rec.record_date || '',
           reading_date: it.reading_date || '',
@@ -1974,8 +2029,14 @@ const fmtUnitPrice = (v: any) => {
   return String(Math.round(n * 1000) / 1000)
 }
 
-onMounted(() => { load() })
+onMounted(() => {
+  load()
+  void loadCategorySubs()
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
+})
+function onCategoriesChanged() { void loadCategorySubs() }
 onBeforeUnmount(() => {
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
   document.removeEventListener('mousemove', onDrawerResizeMove)
   document.removeEventListener('mouseup', onDrawerResizeEnd)
   document.removeEventListener('mousemove', onSettingsResizeMove)
