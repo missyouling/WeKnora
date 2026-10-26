@@ -1,47 +1,16 @@
 <template>
   <div class="utility-meter-tab">
-    <!-- 筛选工具栏（中台化） -->
-    <BusinessListToolbar
-      v-model:keyword="meterSearch"
-      search-placeholder="搜索表计/使用单位"
-      :show-print="false"
-      primary-action-text="新增记录"
-      :selected-count="selectedRowKeysArr.length"
-      hide-batch-bar
-      @refresh="load"
-      @primary="openCreate"
-      @clear-selection="clearSelection"
-    >
-      <template #type-extra>
-        <div class="doc-filter-field">
-          <t-date-picker v-model="filters.month" mode="month" placeholder="月份" format="YYYY-MM" value-type="YYYY-MM" clearable
-            class="doc-date-picker doc-filter-field__control" @change="load" />
-        </div>
-        <div class="doc-filter-field">
-          <t-select v-model="filters.kind" placeholder="表计类型" clearable class="doc-filter-select doc-filter-field__control"
-            :options="kindFilterOptions" @change="load" />
-        </div>
-        <div class="doc-filter-field">
-          <t-select v-model="filters.useUnit" placeholder="使用单位" clearable filterable class="doc-filter-select doc-filter-field__control"
-            :options="useUnitOptions" @change="load" />
-        </div>
-      </template>
-      <template #columns>
-        <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、
-             市电/光伏账单、费用清单完全同款。 -->
-        <BusinessColumnFilter :columns="activeColDefs" :visible-keys="visibleKeys"
-          @update:visible-keys="(v: string[]) => { visibleKeys = v; persistColumns() }"
-          @reset="resetColumns" @select-all="selectAllColumns" />
-      </template>
-      <template #right-extra>
-        <!-- 工具栏严格 3 个按钮：字段 → 设置 → 新增记录。
-             原「表计配置」已融合进统一设置抽屉的「表计设置」Tab。 -->
-        <t-button variant="outline" size="small" @click="openFieldSettings">
-          <template #icon><t-icon name="setting" size="14px" /></template>
-          设置
-        </t-button>
-      </template>
-    </BusinessListToolbar>
+    <!-- 筛选工具栏：与发票/合同/制度/通知、市电账单完全同一个 BusinessFilterBar
+         （搜索全部字段 220px/32px、月份与下拉 32px、gap 8px、右侧 字段→设置→主按钮）。
+         旧自写 BusinessListToolbar + 手写下拉已淘汰——那是搜索框占位文案、控件高度
+         与发票不一致的根源。 -->
+    <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+      :columns="activeColDefs" :visible-keys="visibleKeys" :selected-count="selectedRowKeysArr.length"
+      settings-text="设置" hide-batch-bar :primary-action="{ text: '新增记录', icon: 'add' }"
+      @columns-change="(v: string[]) => { visibleKeys = v; persistColumns() }"
+      @reset-columns="resetColumns" @select-all-columns="selectAllColumns"
+      @filter-change="load" @settings="openFieldSettings" @primary="openCreate"
+      @clear-selection="clearSelection" />
 
     <!-- 列表（自绘 grid，数据少时只包裹记录行，超出滚动） -->
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
@@ -206,149 +175,24 @@
       </div>
     </transition>
 
-    <!-- 编辑/新增抽屉 -->
-    <teleport to="body">
-      <div v-if="drawerVisible" class="doc-drawer-resize-handle" :style="{ right: drawerWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDrawerResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="drawerVisible" :visible="true" :header="drawerTitle" :size="drawerWidth" :footer="false"
-        :close-on-overlay-click="true" destroy-on-close class="meter-record-drawer"
-        @close="onDrawerClose" @update:visible="(v: boolean) => (drawerVisible = v)">
-        <div class="meter-drawer-body">
-          <div class="rec-grid">
-            <div class="rec-field">
-              <label>月份 <span class="required">*</span></label>
-              <t-date-picker v-model="form.month" mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="选择月份" />
-              <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
-            </div>
-            <div class="rec-field">
-              <label>抄表日期</label>
-              <t-date-picker v-model="form.readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选择日期" clearable />
-            </div>
-            <div class="rec-field">
-              <label>使用单位</label>
-              <t-select v-model="form.useUnit" :options="useUnits.map(u => ({ label: u, value: u }))" filterable
-                :disabled="!!editingItemId" @change="onUseUnitChange" />
-            </div>
-            <div class="rec-field">
-              <label>{{ meterLabel }} <span class="required">*</span></label>
-              <t-select v-model="form.meterId" :placeholder="'选择' + meterLabel" :options="meterEditOptions" filterable @change="onMeterChange" />
-              <p v-if="duplicateWarning" class="field-error-text">该月该{{ meterLabel }}已有记录，可直接编辑</p>
-            </div>
-
-            <div class="rec-field">
-              <label>抄表人</label>
-              <t-input v-model="form.reader" placeholder="默认取表计管理人员" />
-            </div>
-            <div class="rec-field">
-              <label>录入日期</label>
-              <div class="readonly-val">{{ form.recordDate || today }}</div>
-            </div>
-
-            <template v-if="isTimeMeter">
-              <div class="rec-field rec-field--wide">
-                <label>尖 <span class="required">*</span></label>
-                <div class="rec-period-pair">
-                  <t-input v-model.number="form.deepPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-                  <span class="rec-period-sep">→</span>
-                  <t-input v-model.number="form.deepCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-                </div>
-              </div>
-              <div class="rec-field rec-field--wide">
-                <label>峰 <span class="required">*</span></label>
-                <div class="rec-period-pair">
-                  <t-input v-model.number="form.peakPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-                  <span class="rec-period-sep">→</span>
-                  <t-input v-model.number="form.peakCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-                </div>
-              </div>
-              <div class="rec-field rec-field--wide">
-                <label>平 <span class="required">*</span></label>
-                <div class="rec-period-pair">
-                  <t-input v-model.number="form.flatPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-                  <span class="rec-period-sep">→</span>
-                  <t-input v-model.number="form.flatCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-                </div>
-              </div>
-              <div class="rec-field rec-field--wide">
-                <label>谷 <span class="required">*</span></label>
-                <div class="rec-period-pair">
-                  <t-input v-model.number="form.valleyPrev" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-                  <span class="rec-period-sep">→</span>
-                  <t-input v-model.number="form.valleyCurr" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-                </div>
-                <p v-if="readingInvalid" class="field-error-text">各时段止度不得小于起度</p>
-              </div>
-            </template>
-            <template v-else>
-              <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
-                <label>起度 <span class="required">*</span></label>
-                <t-input v-model.number="form.startReading" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''" />
-                <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
-              </div>
-              <div class="rec-field" :class="{ 'field-invalid': readingInvalid }">
-                <label>止度 <span class="required">*</span></label>
-                <t-input v-model.number="form.endReading" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''" />
-                <p v-if="readingInvalid" class="field-error-text">止度不得小于起度</p>
-              </div>
-            </template>
-
-            <div class="rec-field">
-              <label>倍率</label>
-              <div class="readonly-val">{{ fmtNum(formRate) }}×</div>
-            </div>
-            <div class="rec-field" :class="{ 'field-invalid': unitPriceDiff }">
-              <label>单价 <span class="required">*</span></label>
-              <t-input v-model.number="form.unitPrice" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''" />
-              <p v-if="unitPriceDiff" class="field-error-text">与配置默认单价 {{ fmtUnitPrice(currentMeter?.default_unit_price) }} 不同</p>
-            </div>
-            <template v-if="props.category === 'water'">
-              <div class="rec-field">
-                <label>垃圾处置费</label>
-                <t-input v-model.number="form.garbageFee" type="number" placeholder="默认 13 元/套" />
-              </div>
-              <div class="rec-field">
-                <label>二次供水费</label>
-                <t-input v-model.number="form.secondaryWaterFee" type="number" placeholder="选填" />
-              </div>
-              <div class="rec-field">
-                <label>污水处理费</label>
-                <t-input v-model.number="form.sewageFee" type="number" placeholder="选填" />
-              </div>
-            </template>
-            <div class="rec-field">
-              <label>补差</label>
-              <!-- type=number 会导致负号输入被吞,改文本输入+数字键盘;聚焦全选方便直接覆盖;非法字符由 watch 过滤 -->
-              <t-input v-model="form.subsidy" type="text" inputmode="decimal" placeholder="补差金额，可为负"
-                @focus="(e: any) => { const t = e?.target || e; t?.select?.() }" />
-            </div>
-            <div class="rec-field" v-if="!isTimeMeter">
-              <label>{{ categoryLabel }}（自动计算）</label>
-              <div class="calc-val-lg">{{ fmtMoney(formAmount) }} 元</div>
-              <p class="field-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
-            </div>
-            <div class="rec-field" v-else>
-              <label>电费</label>
-              <div class="readonly-val">按租户分摊核算</div>
-              <p class="field-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
-            </div>
-
-            <div class="rec-field rec-field--wide">
-              <label>备注</label>
-              <t-textarea v-model="form.remark" :maxlength="500" placeholder="选填" />
-            </div>
-          </div>
-        </div>
-
-        <div class="meter-drawer-footer">
-          <t-button variant="outline" size="small" @click="drawerVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="saving" @click="save">保存</t-button>
-        </div>
-      </t-drawer>
-    </teleport>
+    <!-- 编辑/新增抽屉：与发票/合同同款右侧抽屉底座（SettingDrawer + t-form 双列），
+         旧自写 <t-drawer> + 手写 .rec-field 布局已淘汰 → MeterRecordDrawer 组件。 -->
+    <MeterRecordDrawer :visible="drawerVisible" :category="props.category" :title="drawerTitle" :form="form"
+      :editing-item-id="editingItemId" :meter-options="meterEditOptions"
+      :use-unit-options="useUnits.map((u) => ({ label: u, value: u }))"
+      :default-unit-price="currentMeter?.default_unit_price" :is-time-meter="isTimeMeter"
+      :reading-invalid="readingInvalid" :unit-price-diff="unitPriceDiff" :duplicate-warning="duplicateWarning"
+      :form-rate="formRate" :form-usage="formUsage" :form-amount="formAmount" :saving="saving" :today="today"
+      @update:visible="(v: boolean) => (drawerVisible = v)" @close="onDrawerClose" @save="save"
+      @meter-change="onMeterChange" @use-unit-change="onUseUnitChange">
+      <template #footer-left>
+        <t-popconfirm v-if="editingItemId" theme="warning" :content="'确定删除该行抄表记录吗？'"
+          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
+          @confirm="deleteCurrentRow">
+          <t-button variant="outline" size="small" theme="danger">删除本行</t-button>
+        </t-popconfirm>
+      </template>
+    </MeterRecordDrawer>
 
     <!-- 打印预览弹窗 -->
     <div v-if="printVisible" class="meter-print-mask">
@@ -386,10 +230,13 @@ import {
   createUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
-import BusinessListToolbar from './BusinessListToolbar.vue'
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import MeterRecordDrawer from './MeterRecordDrawer.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
+import { colWidthOf } from './columnWidth'
+import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
@@ -473,7 +320,8 @@ const tableColumns = computed(() => {
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: c.width || undefined })
+    // subs.width>0 精确固定（clamp 60~400 防误输入）；0/未配置自适应。
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: colWidthOf(c.width, c.label, []) })
   }
   return cols
 })
@@ -546,7 +394,7 @@ const meters = ref<any[]>([])
 const rows = ref<any[]>([]) // 展开后的扁平行
 const displayRows = ref<any[]>([])
 const loading = ref(true)
-const filters = ref<{ month?: string; kind?: string; useUnit?: string }>({ month: undefined, kind: undefined, useUnit: undefined })
+const filters = ref<{ keyword?: string; month?: string; kind?: string; useUnit?: string }>({ keyword: '', month: undefined, kind: undefined, useUnit: undefined })
 
 const kindFilterOptions = computed(() => [
   ...meterKinds.value.map(k => ({ label: k.label, value: k.value })),
@@ -557,7 +405,24 @@ const useUnitOptions = computed(() => {
   meters.value.forEach((m: any) => { if (m.use_unit) set.add(m.use_unit) })
   return Array.from(set).map(v => ({ label: v, value: v }))
 })
-const meterSearch = ref('')
+// BusinessFilterBar 的扁平筛选态 ↔ 既有 filters ref 双向桥接
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'month', type: 'month', placeholder: '月份' },
+  { key: 'kind', type: 'select', placeholder: '表计类型', icon: 'file', options: kindFilterOptions.value },
+  { key: 'useUnit', type: 'select', placeholder: '使用单位', icon: 'usergroup', options: useUnitOptions.value },
+])
+const filterState = computed<FilterState>({
+  get: () => ({ keyword: filters.value.keyword || '', month: filters.value.month, kind: filters.value.kind, useUnit: filters.value.useUnit }),
+  set: (v) => {
+    filters.value = {
+      keyword: String(v?.keyword ?? ''),
+      month: v?.month || undefined,
+      kind: v?.kind || undefined,
+      useUnit: v?.useUnit || undefined,
+    }
+  },
+})
 // 用途体系:内置 宿舍/工商业(锁定 value 驱动租户核算计算,label 可改名) + 用户自定义
 // 公租房降为自定义用途(可删除/修改/新增),仅分组展示、不参与租户核算计算
 const KIND_BUILTIN = reactive([
@@ -688,6 +553,11 @@ const load = async () => {
 
 const applyFilters = () => {
   let list = rows.value
+  // 「搜索全部字段」：行内所有可读值（月份/表计/表号/起止度/用量/单价/费用/
+  // 抄表人/使用单位/备注…）拼串匹配，多关键词空格分词取 AND。
+  // 旧版把搜索框接在别处、列表根本没按 keyword 过滤（真机：搜"宿舍301"纹丝不动）。
+  const kw = String(filters.value.keyword || '').trim()
+  if (kw) list = list.filter(r => matchAllTokens(rowFlattenText(r), kw))
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
   if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
   if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
@@ -1227,6 +1097,7 @@ const save = async () => {
       lastRecordId.value = ''
     }
     await load()
+    notifyEnergyDataChanged()
     rememberReader(form.value.reader)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -1236,6 +1107,13 @@ const save = async () => {
 }
 
 const onDrawerClose = () => { drawerVisible.value = false }
+
+/** 抽屉底部「删除本行」：行打开抽屉时已被单选（onRowClick 先选中再 openEdit），
+ * 直接复用浮动条的批量删除逻辑删当前行，删完收起抽屉。 */
+const deleteCurrentRow = async () => {
+  await handleDelete()
+  drawerVisible.value = false
+}
 
 // ---- 删除 ----
 const handleDelete = async () => {
@@ -1288,6 +1166,7 @@ const handleDelete = async () => {
     MessagePlugin.success('已删除')
     clearSelection()
     await load()
+    notifyEnergyDataChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
   }
@@ -1352,43 +1231,6 @@ const closePrint = () => {
 
 // ---- 表计配置（已迁至 MeterSettingsPanel，作为统一设置抽屉的「表计设置」Tab） ----
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
-// ---- 抽屉宽度拖动 ----
-const drawerWidth = ref<string>(loadDrawerWidth())
-function loadDrawerWidth(): string {
-  try {
-    const v = parseInt(localStorage.getItem(`weknora-utility-${props.category}-drawer-width`) || '')
-    if (!Number.isNaN(v)) return clampWidth(v, 480) + 'px'
-  } catch { /* ignore */ }
-  return '640px'
-}
-let dragging = false
-let startX = 0
-let startW = 640
-const clampWidth = (w: number, min: number) => Math.min(Math.floor(window.innerWidth * 0.95), Math.max(min, w))
-
-// 记录抽屉宽度拖动（发票管理同款：独立手柄 + document 监听）
-const onDrawerResizeStart = (e: MouseEvent) => {
-  e.preventDefault()
-  dragging = true
-  startX = e.clientX
-  startW = parseInt(drawerWidth.value) || 640
-  document.addEventListener('mousemove', onDrawerResizeMove)
-  document.addEventListener('mouseup', onDrawerResizeEnd)
-  document.body.style.cursor = 'col-resize'
-}
-const onDrawerResizeMove = (e: MouseEvent) => {
-  if (!dragging) return
-  drawerWidth.value = clampWidth(startW + (startX - e.clientX), 480) + 'px'
-}
-const onDrawerResizeEnd = () => {
-  if (!dragging) return
-  dragging = false
-  document.removeEventListener('mousemove', onDrawerResizeMove)
-  document.removeEventListener('mouseup', onDrawerResizeEnd)
-  document.body.style.cursor = ''
-  try { localStorage.setItem(`weknora-utility-${props.category}-drawer-width`, drawerWidth.value) } catch { /* ignore */ }
-}
-
 const fmtNum = (v: any) => {
   const n = Number(v) || 0
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
@@ -1412,8 +1254,6 @@ onMounted(() => {
 function onCategoriesChanged() { void loadCategorySubs() }
 onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
-  document.removeEventListener('mousemove', onDrawerResizeMove)
-  document.removeEventListener('mouseup', onDrawerResizeEnd)
 })
 </script>
 

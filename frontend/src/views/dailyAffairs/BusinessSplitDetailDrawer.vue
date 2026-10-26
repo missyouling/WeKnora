@@ -95,7 +95,7 @@
       <slot name="extra" />
 
       <!-- 最底部：源文件预览，默认折叠（不挂载重型资源），展开原地展开 -->
-      <section class="bsd-preview-block">
+      <section v-if="showPreview !== false" class="bsd-preview-block">
         <button type="button" class="bsd-preview-toggle" :title="previewExpanded ? '收起源文件预览' : '展开源文件预览'"
           @click="previewExpanded = !previewExpanded">
           <t-icon :name="previewExpanded ? 'chevron-down' : 'chevron-right'" size="14px" />
@@ -154,6 +154,11 @@ const props = withDefaults(defineProps<{
   storageKey?: string
   showDelete?: boolean
   showReExtract?: boolean
+  /**
+   * 是否渲染底部「源文件预览」区块。
+   * 费用清单/核算表是**计算行**，没有源文件可预览，硬留一个空折叠条会让人点了没反应。
+   */
+  showPreview?: boolean
 }>(), {
   title: '',
   row: null,
@@ -170,6 +175,7 @@ const props = withDefaults(defineProps<{
   width: '654px',
   storageKey: 'weknora-business-detail-drawer-width',
   showDelete: false,
+  showPreview: true,
   showReExtract: false,
 })
 

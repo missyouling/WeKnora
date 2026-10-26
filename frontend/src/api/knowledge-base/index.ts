@@ -1480,6 +1480,11 @@ export function getBillingRecord(id: string) {
   return get(`/api/v1/billing/records/${id}`);
 }
 
+/** 更新账单（备注 / 宿舍·水费金额等人工调整项；核算值仍由生成管线固化）。 */
+export function updateBillingRecord(id: string, payload: Record<string, unknown>) {
+  return put(`/api/v1/billing/records/${id}`, payload);
+}
+
 
 export function deleteBillingRecord(id: string) {
   return del(`/api/v1/billing/records/${id}`);

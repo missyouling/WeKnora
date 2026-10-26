@@ -150,6 +150,11 @@
                 <span class="bill-detail-title">{{ currentRow?.fileName || '账单详情' }}</span>
                 <!-- 状态标签已移除：详情页是「看这一张账单」的专注视图，
                      提取状态在列表的「状态」列已经明确，标题栏再挂一枚徽标只是噪声。 -->
+                <t-button variant="outline" size="small" class="bill-detail-edit" :disabled="!currentRow"
+                  @click="openBillDetailDrawer">
+                  <template #icon><t-icon name="edit" size="14px" /></template>
+                  编辑字段
+                </t-button>
               </div>
               <div class="bill-detail-body">
                 <!-- 左侧分层菜单 -->
@@ -474,77 +479,6 @@
         </div>
       </div>
 
-    <!-- 详情抽屉 -->
-    <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" :size="`${drawerWidth}px`" :footer="false"
-      :close-on-overlay-click="true" @close="closeDetail"
-      @update:visible="(v: boolean) => (v || closeDetail())">
-      <div class="utility-detail-drawer">
-        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
-        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
-
-        <!-- 字段编辑 -->
-        <section class="detail-block">
-          <div class="detail-block-title">账单字段</div>
-          <div class="detail-block-content">
-            <div class="field-grid">
-              <div v-for="cfg in detailFieldDefs" :key="(cfg as any).field_key" class="field-grid-item">
-                <label class="field-label">{{ cfg.label }}</label>
-                <t-input v-if="cfg.fieldType === 'text'" :model-value="fieldValue(cfg)" size="small"
-                  @update:model-value="(v: string) => setFieldValue(cfg, v)" />
-                <t-date-picker v-else-if="cfg.fieldType === 'date'" :model-value="fieldValue(cfg)" size="small"
-                  format="YYYY-MM-DD" value-type="YYYY-MM-DD" clearable
-                  @change="(v: any) => setFieldValue(cfg, v)" />
-                <t-input v-else :model-value="fieldValue(cfg)" size="small" type="number"
-                  @update:model-value="(v: string) => setFieldValue(cfg, v)" />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 费用明细（可编辑，总账联动，可折叠） -->
-        <section class="detail-block">
-          <div class="detail-block-title" @click="feeExpanded = !feeExpanded">
-            <span>费用明细</span>
-            <span class="fee-count">{{ editForm.fee_items?.length || 0 }} 项</span>
-            <t-icon :name="feeExpanded ? 'chevron-up' : 'chevron-down'" size="14px" class="detail-block-caret" />
-          </div>
-          <div v-if="feeExpanded" class="detail-block-content">
-            <div class="fee-table">
-              <div class="fee-row fee-head">
-                <span>类别</span><span>费用组成</span><span>时段</span><span>电量</span><span>标准</span><span>电费</span><span></span>
-              </div>
-              <div v-for="(it, i) in editForm.fee_items" :key="i" class="fee-row">
-                <t-input v-model="it.category" size="small" placeholder="类别" />
-                <t-input v-model="it.name" size="small" placeholder="费用组成" />
-                <t-input v-model="it.period" size="small" placeholder="时段" />
-                <t-input v-model="it.qty" size="small" type="number" />
-                <t-input v-model="it.rate" size="small" type="number" />
-                <t-input v-model="it.fee" size="small" type="number" />
-                <t-button variant="text" size="small" shape="square" @click="removeFeeItem(Number(i))">
-                  <template #icon><t-icon name="delete" size="14px" /></template>
-                </t-button>
-              </div>
-            </div>
-            <div class="fee-actions">
-              <t-button variant="text" size="small" @click="addFeeItem">
-                <template #icon><t-icon name="add" size="14px" /></template>
-                添加明细
-              </t-button>
-              <span class="fee-total">合计 {{ fmtMoney(feeTotal) }} 元</span>
-            </div>
-          </div>
-        </section>
-
-        <!-- 源文件预览 -->
-        <section class="detail-block">
-          <div class="detail-block-title">源文件预览</div>
-          <div class="detail-block-content">
-            <DocumentPreview v-if="currentRow" :knowledge-id="currentRow.knowledgeId"
-              :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-          </div>
-        </section>
-      </div>
-    </t-drawer>
 
     <!-- 电量明细编辑抽屉 -->
     <t-drawer v-if="meterEditVisible" :visible="true" :header="'编辑电量 · ' + meterEditTitle" :size="'420px'" :footer="false"
@@ -659,6 +593,14 @@
          旧的 12 宫格卡片抽屉（UtilitySettingsDrawer）已下线——分组改由
          「字段定义」里的分组胶囊条承载，配置统一存 fleet_categories(scope=energy)。 -->
     <!-- 设置抽屉：分类与顶部 6 张卡片 1:1，打开即定位到当前卡片对应的分类 -->
+    <!-- 账单字段编辑抽屉：与发票/合同同款中台 BusinessSplitDetailDrawer。
+         整页详情视图保留（分层分析），「编辑字段」在这里改，避免在整页里塞表单。 -->
+    <BusinessSplitDetailDrawer v-model:visible="billDrawerVisible" :title="billDrawerTitle"
+      :row="currentRow" :page-no="Number(currentRow?.item?.page) || 0" :form="billFormWrapper"
+      :fields="detailFieldDefs" block-title="账单字段" :quality="detailQuality" :label-of="qualityLabel"
+      :saving="billSaving" :storage-key="'weknora-utility-bill-drawer-width'"
+      @save="saveBillDetail" />
+
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
       :initial-category="settingsCategory" :rule-categories="ENERGY_RULE_CATEGORIES"
       :kb-name="'日常事务-电费'" title="设置 · 能耗"
@@ -721,8 +663,9 @@ import {
 } from 'vue'
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { ENERGY_OPEN_SETTINGS_EVENT } from './energyViewColumns'
+import { countMeterRows, billingRowCount, historyStats, ENERGY_DATA_CHANGED_EVENT, notifyEnergyDataChanged } from './energyCounters'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
-import { listKnowledgeFiles } from '@/api/knowledge-base'
+import { listKnowledgeFiles, listBillingRecords } from '@/api/knowledge-base'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
@@ -741,7 +684,6 @@ import {
   previewKnowledgeFile,
   reparseKnowledge,
 } from '@/api/knowledge-base'
-import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
@@ -749,6 +691,7 @@ import UtilityMeterTab from './UtilityMeterTab.vue'
 import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import SolarSettingsPanel from './SolarSettingsPanel.vue'
 import MeterSettingsPanel from './MeterSettingsPanel.vue'
 import TenantSettingsPanel from './TenantSettingsPanel.vue'
@@ -760,7 +703,6 @@ import BusinessFilterBar from './BusinessFilterBar.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
-import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 // 表头右侧滚动条轨道遮罩（实测，四模块 + 能耗统一）
@@ -773,7 +715,7 @@ const COLUMN_STORAGE_VERSION = 5
 
 // group 用于费用分项归类：'industrial'/'residential' 是旧口径，
 // 其余值来自 subs.group（overview/market/line/...），故放宽为 string。
-interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: string }
+interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: string; width?: number }
 const FALLBACK_COLUMNS: ColDef[] = [
   // 账单概况：严格 20 个业务字段（与后端 electricityDefaultGroupFields("overview") 逐项一致）。
   //
@@ -845,8 +787,14 @@ const tableColumns = computed(() => {
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
   return cols
 })
-/** 列宽：配置里的 px 优先；fr 字串回落到固定像素，防止列被挤压到截断。 */
+/**
+ * 列宽：用户在「字段定义」配置的 subs.width 最高优先（>0 精确生效，clamp 60~400
+ * 防误输入）；0/未配置才回落内置 w 兜底，再不行自适应。
+ * 真机踩过：subs 有 width 但 ColDef 没把字段下传 → 填 260 保存后列纹丝不动。
+ */
 function colWidthPx(c: ColDef): number | undefined {
+  const cfg = Number(c.width) || 0
+  if (cfg > 0) return Math.min(Math.max(cfg, 60), 400)
   const w = String(c.w || '')
   const px = Number(w.replace('px', ''))
   if (w.endsWith('px') && Number.isFinite(px) && px > 0) return px
@@ -968,6 +916,8 @@ const loadFieldConfigs = async () => {
           fieldType: s.data_type || fb.fieldType,
           default: s.is_default === true,
           w: colWidth(fb.key),
+          // subs.width 是列宽唯一权威源：>0 精确固定（clamp 60~400），0/未配置走 w 兜底
+          width: Number(s.width) || 0,
           group: g || undefined,
         }
       })
@@ -987,6 +937,7 @@ const loadFieldConfigs = async () => {
         fieldType: s.data_type || 'text',
         default: s.is_default === true,
         w: '1fr',
+        width: Number(s.width) || 0,
         group: g || undefined,
       })
     }
@@ -1013,6 +964,8 @@ interface Row {
   item: Record<string, any>
   tags?: any[]
   page?: number
+  /** 归一到 YYYY-MM 的账单周期（mapRow 写入，标题栏与搜索都用它） */
+  bill_period?: string
 }
 const rows = ref<Row[]>([])
 const summary = ref<{ total: number; sumKwh: number; sumAmount: number }>({ total: 0, sumKwh: 0, sumAmount: 0 })
@@ -1174,30 +1127,26 @@ const onKpiCardClick = (card: any) => {
 }
 // 拉取 6 个 tab 的记录数。任一失败都不影响其它卡片与列表（各自 catch）。
 //
-// 三个接口的返回形态各不相同，实测后分别取值：
-//   utility-bill-records / solar-bill-records → { data: [...] }（无 total 字段，
-//       只有 data 数组，所以用长度而不是 total）；
-//   utilities/meter-records                  → { data: { meters, records } }；
-//   billing/tenants                          → { data: [...] }。
+// **口径铁律**：卡片数字 === 切到该卡片后列表底部「共 N 条」。
+//   市电/光伏 = 账单记录数（列表一行一账单，failed 文件本就不落 records）；
+//   电/水/气核算 = record→item **展平后的抄表明细行数**（列表一行一表计，
+//     原口径取 records.length：3 个月显示 3 条、列表却是 77 行——真机踩过）；
+//   费用清单 = 月份并集行数（与 TenantBilling.buildRows 同一份纯函数）。
 async function loadTabCounts() {
+  if (!kbId.value) return
   const jobs: [EnergyTab, () => Promise<number>][] = [
     ['electricity', async () => {
-      if (!kbId.value) return 0
       const res: any = await listUtilityBillRecords(kbId.value, { page_size: 500 })
-      return Number((res?.data || []).length || 0)
+      return Number(res?.total || (res?.data || []).length || 0)
     }],
     ['solar', async () => {
-      if (!kbId.value) return 0
       const res: any = await listSolarBillRecords(kbId.value, { page_size: 500 })
-      return Number((res?.data || []).length || 0)
+      return Number(res?.total || (res?.data || []).length || 0)
     }],
-    ['electric-meter', async () => countMeterRecords('electricity')],
-    ['water', async () => countMeterRecords('water')],
-    ['gas', async () => countMeterRecords('gas')],
-    ['billing', async () => {
-      const res: any = await listBillingTenants()
-      return Number((res?.data || []).length || 0)
-    }],
+    ['electric-meter', async () => countMeterRowsOf('electricity')],
+    ['water', async () => countMeterRowsOf('water')],
+    ['gas', async () => countMeterRowsOf('gas')],
+    ['billing', billingRowCountOf],
   ]
   await Promise.all(jobs.map(async ([tab, fn]) => {
     try {
@@ -1208,23 +1157,72 @@ async function loadTabCounts() {
   }))
 }
 
-async function countMeterRecords(category: string): Promise<number> {
+/** 核算卡片 = 展平明细行数（与 UtilityMeterTab 列表同一口径）。 */
+async function countMeterRowsOf(category: string): Promise<number> {
   const res: any = await listUtilityMeterRecords({ category })
-  return Number((res?.data?.records || []).length || 0)
+  const recData = res?.data || {}
+  const records = recData?.records || res?.records || []
+  return countMeterRows(Array.isArray(records) ? records : [])
+}
+
+/**
+ * 费用清单卡片 = buildRows 的月份并集行数。
+ *
+ * 原口径取 listBillingTenants().length（租户数 = 1），列表却是按月展开的
+ * 账期行（真机：卡片 1 条 / 列表 18 条）。这里用与 TenantBilling 完全相同的
+ * 数据源集合（市电∪光伏∪rec∪电∪气∪水读数）计算，避免两套逻辑漂移。
+ */
+async function billingRowCountOf(): Promise<number> {
+  const res: any = await listBillingTenants()
+  const tenants = res?.data || []
+  const tid = (Array.isArray(tenants) && tenants.length) ? tenants[0].id : ''
+  const tasks: Promise<any>[] = [
+    listUtilityBillRecords(kbId.value, { page_size: 500 }),
+    listSolarBillRecords(kbId.value, { page_size: 500 }),
+    listUtilityMeterRecords({ category: 'electricity' }),
+    listUtilityMeterRecords({ category: 'gas' }),
+    listUtilityMeterRecords({ category: 'water' }),
+  ]
+  if (tid) tasks.push(listBillingRecords(tid))
+  const [billRes, solarRes, elecRes, gasRes, waterRes, recRes] = await Promise.all(
+    tasks.map((t) => t.catch(() => null)),
+  )
+  const flat = (res: any) => {
+    const recData = res?.data || {}
+    const records = recData?.records || res?.records || []
+    const flatRows: any[] = []
+    for (const rec of (Array.isArray(records) ? records : [])) {
+      for (const it of (rec.items || [])) flatRows.push({ month: rec.month, ...it })
+    }
+    return flatRows
+  }
+  return billingRowCount({
+    utilityBills: billRes?.data || [],
+    solarBills: solarRes?.data || [],
+    records: recRes?.data || [],
+    elecRows: flat(elecRes),
+    gasRows: flat(gasRes),
+    waterReadings: flat(waterRes),
+  })
 }
 async function loadOverviewFileStats() {
   if (!kbId.value) return
   try {
-    const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 200 })
-    const list = res?.data || res?.list || []
-    const arr = Array.isArray(list) ? list : []
-    let failed = 0
-    for (const f of arr) {
-      const ps = String(f?.parse_status || '')
-      const es = String(f?.custom_metadata?.extract_status || '')
-      if (ps === 'failed' || es === 'failed') failed++
+    // 与 FleetUploadHistoryDrawer.reload() 同口径：一次拉全 + fleet_history_hidden 过滤，
+    // 「全部文件/异常文件」两张计数必须与抽屉状态卡 100% 相等（曾取 page_size=200 单页，
+    // 库超过 200 就少算；也曾用未过滤的 res.total，多算了隐藏文件）。
+    const collected: any[] = []
+    let p = 1
+    for (;;) {
+      const res: any = await listKnowledgeFiles(kbId.value, { page: p, page_size: 200 })
+      const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+      collected.push(...arr)
+      const totalCnt = Number(res?.total || 0)
+      if (arr.length === 0 || collected.length >= totalCnt || collected.length >= 2000) break
+      p++
     }
-    overviewFileStats.value = { total: Number(res?.total || arr.length || 0), failed }
+    const st = historyStats(collected)
+    overviewFileStats.value = { total: st.total, failed: st.abnormal }
   } catch { /* KPI 降级：保持 0，不影响列表 */ }
 }
 const onHistoryChanged = () => {
@@ -1462,7 +1460,8 @@ const { extractInFlight, extractFailed, pendingFiles, start: startPolling, stop:
     return true
   },
   onPendingFiles: () => { /* pendingRows computed 直接读 pendingFiles */ },
-  onTick: () => { loadFiles() },
+  // 每轮刷新列表 + 卡片计数：提取落库后 records 会变，卡片不跟着刷就永远停在旧数
+  onTick: () => { loadFiles(); void loadTabCounts() },
 })
 
 // ---- KB ----
@@ -1572,25 +1571,58 @@ const openTagManage = () => { tagManageVisible.value = true }
 const onTagManageChanged = () => { loadTags(); loadFiles(true) }
 
 // ---- 详情抽屉 ----
-const detailVisible = ref(false)
 const currentRow = ref<Row | null>(null)
+// 账单字段编辑抽屉（BSD）：与发票同款底座，字段跟随「字段定义（subs）」
+const billDrawerVisible = ref(false)
+const billSaving = ref(false)
+const billDrawerTitle = computed(() => {
+  const r = currentRow.value
+  if (!r) return '账单详情'
+  const period = String(r.bill_period || r.item?.bill_period || '').trim()
+  return period ? `${period} 市电账单` : (r.fileName || '账单详情')
+})
+// BSD 表单契约 { data, remarkParts, items }：data 直接指向 editForm，
+// v-model 写 form.data[key] 即落回 editForm，保存链路完全复用 saveEditForm。
+const billFormWrapper = computed(() => ({ data: editForm.value, remarkParts: {}, items: [] }))
+
+function openBillDetailDrawer() {
+  if (!currentRow.value) return
+  billDrawerVisible.value = true
+}
+/** 抽屉保存：复用整页详情的保存链路（金额反算/明细覆盖/购销方归一都在后端）。 */
+async function saveBillDetail() {
+  billSaving.value = true
+  try {
+    await saveEditForm()
+    billDrawerVisible.value = false
+    notifyEnergyDataChanged()
+  } finally {
+    billSaving.value = false
+  }
+}
 const editForm = ref<Record<string, any>>({})
-const detailFieldDefs = computed(() => columnDefs.value)
-const feeExpanded = ref(false)
+// 不向 BSD 传 :dirty：账单字段编辑即时可保存（billFormWrapper.data 直接指向 editForm）。
+/**
+ * BSD 抽屉字段：主列表口径的 subs 列（与列表列同源，改字段定义后同步）。
+ * ColDef 用 key / fieldType，DetailFieldMeta 用 name / dataType —— 必须显式映射，
+ * 直接把 columnDefs 丢进去会渲染出一屏没有 name 的空行。
+ */
+const detailFieldDefs = computed<Array<{ name: string; label: string; dataType?: string }>>(() =>
+  columnDefs.value.map((c) => ({
+    name: c.key,
+    label: c.label,
+    dataType: c.fieldType === 'amount' || c.fieldType === 'number' ? 'number'
+      : c.fieldType === 'date' ? 'date' : 'text',
+  })),
+)
+const qualityLabel = (f: string) => f
 const autoSaving = ref(false)
 let autoSaveDirty = false
 let feeItemsSnapshot = ''
 
-const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
 
 // 详情页标题栏不再挂状态徽标（列表的「状态」列已表达同一信息），
 // 因此这里不再维护 currentStatus 计算属性。
-
-const fieldValue = (cfg: ColDef) => editForm.value?.[cfg.key] ?? ''
-const setFieldValue = (cfg: ColDef, v: any) => {
-  if (v === undefined || v === null) return
-  editForm.value[cfg.key] = v
-}
 
 const openDetail = async (row: Row) => {
   currentRow.value = row
@@ -1602,7 +1634,6 @@ const openDetail = async (row: Row) => {
 
 // 提取质量与溯源：详情接口的 custom_metadata（按账单页定位记录 index）
 const detailQuality = ref<ExtractQuality>(EMPTY_QUALITY)
-const qualityLabel = (f: string) => f
 
 const loadEditForm = async (row: Row) => {
   autoSaveDirty = false
@@ -1628,10 +1659,6 @@ const loadEditForm = async (row: Row) => {
   }
 }
 
-const closeDetail = () => {
-  detailVisible.value = false
-  currentRow.value = null
-}
 
 // ---- 详情视图（分层菜单） ----
 const detailMode = ref(false)
@@ -2374,16 +2401,6 @@ const saveEditForm = async () => {
 }
 
 // 费用明细操作
-const feeTotal = computed(() =>
-  (editForm.value.fee_items || []).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0))
-const addFeeItem = () => {
-  if (!Array.isArray(editForm.value.fee_items)) editForm.value.fee_items = []
-  editForm.value.fee_items.push({ category: '', name: '', period: '', qty: 0, rate: 0, fee: 0 })
-}
-const removeFeeItem = (i: number) => {
-  editForm.value.fee_items.splice(i, 1)
-}
-
 // ---- 抽屉宽度拖动 ----
 const DRAWER_WIDTH_KEY = 'weknora-utility-drawer-width'
 const DRAWER_DEFAULT_WIDTH = 720
@@ -2606,9 +2623,14 @@ const onSettingsChanged = async () => {
   await tenantTabRef.value?.reloadTenants?.()
 }
 
+// 子视图（核算/清单/光伏）增删改落库后广播：卡片计数必须跟着重算，
+// 否则「保存了一条抄表 → 列表 78 行、卡片还停在 77」。
+function onEnergyDataChanged() { void loadTabCounts() }
+
 onMounted(() => {
   nextTick(measureTableHeaderFix)
   window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
+  window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
   // kbId 由 loadKb() 异步解析：先跑 loadTabCounts 会全部返回 0
   // （那时 kbId 还是空串，账单/光伏接口直接短路）。等它就绪再计数。
   void loadKb().then(() => loadTabCounts())
@@ -2616,6 +2638,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling()
   window.removeEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
+  window.removeEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
 })
 </script>
 
@@ -3228,6 +3251,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.bill-detail-edit { margin-left: auto; }
 .bill-detail-head {
   display: flex;
   align-items: center;

@@ -110,7 +110,9 @@ const emit = defineEmits<{
 }
 .doc-filter-field { display: flex; align-items: center; }
 /* 搜索框固定宽度且禁止 flex 收缩：避免被容器挤压 */
-.doc-search-field { width: 240px; flex-shrink: 0; }
+/* 搜索框 220px × 32px：与发票管理工具栏逐像素对齐（用户验收口径 220） */
+.doc-search-field { width: 220px; flex-shrink: 0; }
+.doc-search-field :deep(.t-input) { height: 32px; }
 /* 类型下拉随选项内容自适应宽度，禁止收缩避免截断 */
 .doc-type-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .doc-batch-bar-fixed {

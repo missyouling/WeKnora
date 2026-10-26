@@ -1,40 +1,28 @@
 ﻿<template>
   <div class="tenant-billing-container">
-    <!-- 筛选工具栏（与电费/合同管理一致） -->
-    <div class="doc-filter-bar">
-      <div class="doc-filter-bar__leading">
-        <div class="doc-filter-field">
-          <t-select v-model="useUnit" placeholder="使用单位" filterable class="doc-filter-select doc-filter-field__control"
-            :options="useUnitOptions" @change="onUseUnitChange" />
-        </div>
-        <div class="doc-filter-field">
-          <t-date-picker v-model="filters.month" mode="month" placeholder="账单月份" format="YYYY-MM" value-type="YYYY-MM"
-            clearable class="doc-date-picker doc-filter-field__control" @change="loadRecords" />
-        </div>
-        <t-button variant="outline" size="small" @click="loadRecords">
-          <template #icon><t-icon name="refresh" size="14px" /></template>
-        </t-button>
-      </div>
-      <div class="doc-filter-bar__trailing">
-        <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、
-             市电/光伏账单、三张核算表完全同款。 -->
-        <BusinessColumnFilter :columns="activeColDefs" :visible-keys="visibleKeys"
-          @update:visible-keys="(v: string[]) => { visibleKeys = v; persistColumns() }"
-          @reset="resetColumns" @select-all="selectAllColumns" />
-        <!-- 工具栏严格 3 个按钮：字段 → 设置 → 主操作。
-             原「租户设置」已融合进统一设置抽屉的「清单设置」Tab。 -->
+    <!-- 筛选工具栏：与发票/合同/制度/通知、市电账单同一个 BusinessFilterBar
+         （搜索全部字段 220px/32px、控件 32px、gap 8px）。
+         右侧固定 字段 → 设置 → 主操作 三按钮；主操作带 loading/title，
+         中台 primaryAction 插槽不带这两个属性，因此放 right-extra
+         （BusinessListToolbar 渲染顺序：columns → right-extra → primaryAction）。 -->
+    <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+      :columns="activeColDefs" :visible-keys="visibleKeys" :selected-count="selectedKeys.size"
+      hide-batch-bar @columns-change="(v: string[]) => { visibleKeys = v; persistColumns() }"
+      @reset-columns="resetColumns" @select-all-columns="selectAllColumns"
+      @filter-change="onBarFilterChange" @clear-selection="clearSelection">
+      <template #right-extra>
         <t-button variant="outline" size="small" @click="openFieldSettings">
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" variant="outline" size="small" :loading="generateBusy"
+        <t-button theme="primary" size="small" :loading="generateBusy"
           :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）'"
           @click="handleGenerateAll">
           <template #icon><t-icon name="refresh" size="14px" /></template>
           {{ isOwnerView ? '重新核算' : '生成账单' }}
         </t-button>
-      </div>
-    </div>
+      </template>
+    </BusinessFilterBar>
 
     <!-- 列表 -->
     <div class="doc-list-scroll tenant-list-scroll">
@@ -110,156 +98,97 @@
       </div>
     </transition>
 
-    <!-- 账单详情抽屉 -->
-    <teleport to="body">
-      <div v-if="recordVisible" class="doc-drawer-resize-handle" :style="{ right: recordWidth }" role="separator"
-        :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onRecordResizeStart">
-        <div class="doc-drawer-resize-line" />
-      </div>
-    </teleport>
-    <teleport to="body">
-      <t-drawer v-if="recordVisible" :visible="true" :header="`${recordDetail?.record?.month || ''} 账单明细`" :size="recordWidth"
-        :close-on-overlay-click="true" destroy-on-close class="tenant-record-drawer"
-        @close="recordVisible = false" @update:visible="(v: boolean) => (recordVisible = v)">
-        <div v-if="recordDetail" class="record-detail">
-          <div class="rd-print-title">{{ recordDetail.record.month }} 账单明细</div>
-          <div class="record-overview">
-            <div class="ro-item">
-              <span class="ro-label">使用电量</span>
-              <span class="ro-value row-mono">{{ fmtKwh(recordDetail.record.total_kwh) }}</span>
-            </div>
-            <div class="ro-item">
-              <span class="ro-label">线损</span>
-              <span class="ro-value row-mono">{{ fmtKwh(recordDetail.record.line_loss) }}</span>
-            </div>
-            <div class="ro-item">
-              <span class="ro-label">分摊比例</span>
-              <span class="ro-value row-mono">{{ fmtRatio(recordDetail.record.ratio) }}</span>
-            </div>
-            <div class="ro-item">
-              <span class="ro-label">市电本期电费</span>
-              <span class="ro-value row-mono">{{ fmtMoney(recordDetail.record.bill_total_amount) }}</span>
-            </div>
+    <!-- 账单详情抽屉：与发票/合同同款中台 BusinessSplitDetailDrawer
+         （右侧滑出 + 标题栏 + 双列 t-form 网格 + 统一底栏）。
+         旧自写 <t-drawer> + .record-detail 表格已淘汰。
+         字段顺序严格跟随当前分类「字段定义（subs）」，见 billingFields。 -->
+    <BusinessSplitDetailDrawer v-model:visible="recordVisible" :title="recordTitle" :row="null"
+      :form="recordFormWrapper" :fields="billingFields" :show-preview="false"
+      block-title="费用清单" :saving="recordSaving"
+      :storage-key="'weknora-tenant-record-drawer-width'" @save="saveRecordDetail">
+      <template #footer-left>
+        <t-button variant="outline" size="small" @click="printRecord">打印</t-button>
+      </template>
+      <template #extra>
+        <!-- 分摊明细（电量表 / 费用大项 / 水表）：只读表格，与发票「项目明细」同形 -->
+        <section v-if="recordDetail" class="bsd-block">
+          <div class="bsd-block-title">电量明细</div>
+          <div v-if="recordDetail.meters?.length" class="tb-items">
+            <table class="tb-items-table">
+              <thead>
+                <tr><th>分时电表</th><th>起度</th><th>止度</th><th>倍率</th><th>使用电量</th><th>损耗</th><th>加减电量</th><th>计费电量</th><th>差额分摊</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(mr, i) in recordDetail.meters" :key="i">
+                  <td>{{ mr.meter_name }}<span class="tb-period">{{ mr.period }}</span></td>
+                  <td class="row-mono">{{ fmtNum(mr.prev) }}</td>
+                  <td class="row-mono">{{ fmtNum(mr.curr) }}</td>
+                  <td class="row-mono">{{ fmtNum(mr.rate) }}</td>
+                  <td class="row-mono">{{ fmtKwh(mr.usage) }}</td>
+                  <td class="row-mono">{{ fmtKwh(mr.line_loss) }}</td>
+                  <td class="row-mono">{{ fmtKwh(mr.adjust) }}</td>
+                  <td class="row-mono">{{ fmtKwh(mr.bill_kwh) }}</td>
+                  <td class="row-mono">{{ fmtKwh(mr.diff_kwh) }}</td>
+                </tr>
+                <tr class="tb-total">
+                  <td>汇总</td><td></td><td></td><td></td>
+                  <td class="row-mono">{{ fmtKwh(recordMeterSum('usage')) }}</td>
+                  <td class="row-mono">{{ fmtKwh(recordMeterSum('line_loss')) }}</td>
+                  <td class="row-mono">{{ fmtKwh(recordMeterSum('adjust')) }}</td>
+                  <td class="row-mono">{{ fmtKwh(recordMeterSum('bill_kwh')) }}</td>
+                  <td class="row-mono">{{ fmtKwh(recordMeterSum('diff_kwh')) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+          <div v-else class="tb-items-empty">该月未固化分时电量明细</div>
+        </section>
 
-          <!-- 电量明细卡片（分时电表×时段） -->
-          <div v-if="recordDetail.meters?.length" class="rd-card">
-            <div class="rd-card-title">电量明细</div>
-            <div class="record-items rd-meter-grid">
-              <div class="record-items-head rd-meter-head">
-                <span>分时电表</span>
-                <span>起度</span>
-                <span>止度</span>
-                <span>倍率</span>
-                <span>使用电量</span>
-                <span>损耗</span>
-                <span>加减电量</span>
-                <span>计费电量</span>
-                <span>差额分摊电量</span>
-              </div>
-              <div v-for="(mr, i) in recordDetail.meters" :key="i" class="record-items-row rd-meter-row">
-                <span>{{ mr.meter_name }}<span class="rd-period">{{ mr.period }}</span></span>
-                <span class="row-mono">{{ fmtNum(mr.prev) }}</span>
-                <span class="row-mono">{{ fmtNum(mr.curr) }}</span>
-                <span class="row-mono">{{ fmtNum(mr.rate) }}</span>
-                <span class="row-mono">{{ fmtKwh(mr.usage) }}</span>
-                <span class="row-mono">{{ fmtKwh(mr.line_loss) }}</span>
-                <span class="row-mono">{{ fmtKwh(mr.adjust) }}</span>
-                <span class="row-mono">{{ fmtKwh(mr.bill_kwh) }}</span>
-                <span class="row-mono">{{ fmtKwh(mr.diff_kwh) }}</span>
-              </div>
-              <div class="record-items-row record-items-total rd-meter-row">
-                <span>汇总</span>
-                <span></span><span></span><span></span>
-                <span class="row-mono">{{ fmtKwh(recordMeterSum('usage')) }}</span>
-                <span class="row-mono">{{ fmtKwh(recordMeterSum('line_loss')) }}</span>
-                <span class="row-mono">{{ fmtKwh(recordMeterSum('adjust')) }}</span>
-                <span class="row-mono">{{ fmtKwh(recordMeterSum('bill_kwh')) }}</span>
-                <span class="row-mono">{{ fmtKwh(recordMeterSum('diff_kwh')) }}</span>
-              </div>
+        <section v-if="recordDetail && feeGroups.length" class="bsd-block">
+          <div class="bsd-block-title">费用明细</div>
+          <div v-for="g in feeGroups" :key="g.category" class="tb-fee-group">
+            <div class="tb-fee-head">
+              <span class="tb-fee-name">{{ g.category }}</span>
+              <span class="tb-fee-sum">小计 {{ fmtMoney(g.sum) }}</span>
             </div>
+            <table class="tb-items-table">
+              <thead>
+                <tr><th>项目</th><th>时段</th><th>电量</th><th>单价</th><th>费用</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(it, i) in g.rows" :key="i" :class="{ 'os-neg': Number(it.fee) < 0 }">
+                  <td>{{ it.name }}</td>
+                  <td>{{ it.period || '—' }}</td>
+                  <td class="row-mono">{{ fmtKwh(it.qty) }}</td>
+                  <td class="row-mono">{{ fmtRate(it.rate) }}</td>
+                  <td class="row-mono">{{ fmtMoney(it.fee) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+          <div class="tb-fee-total">合计 {{ fmtMoney(totalElecFee) }} 元</div>
+        </section>
 
-          <!-- 费用明细（按大项分组+汇总） -->
-          <div class="rd-card">
-            <div class="rd-card-title">费用明细</div>
-            <div v-for="g in feeGroups" :key="g.category" class="rd-fee-group">
-              <div class="rd-fee-group-head">
-                <span class="rd-fee-group-name">{{ g.category }}</span>
-                <span class="rd-fee-group-sum">小计 {{ fmtMoney(g.sum) }}</span>
-              </div>
-              <div class="record-items">
-                <div class="record-items-head">
-                  <span>项目</span>
-                  <span>时段</span>
-                  <span>电量</span>
-                  <span>单价</span>
-                  <span>费用</span>
-                </div>
-                <div v-for="(it, i) in g.rows" :key="i" class="record-items-row" :class="{ 'os-neg': Number(it.fee) < 0 }">
-                  <span>{{ it.name }}</span>
-                  <span>{{ it.period || '—' }}</span>
-                  <span class="row-mono">{{ fmtKwh(it.qty) }}</span>
-                  <span class="row-mono">{{ fmtRate(it.rate) }}</span>
-                  <span class="row-mono">{{ fmtMoney(it.fee) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 总电费清单及汇总 -->
-            <div class="rd-fee-group">
-              <div class="rd-fee-group-head">
-                <span class="rd-fee-group-name">总电费清单及汇总</span>
-                <span class="rd-fee-group-sum">合计 {{ fmtMoney(totalElecFee) }}</span>
-              </div>
-              <div class="record-items">
-                <div class="record-items-row">
-                  <span>工业电费（分摊）</span><span>—</span>
-                  <span class="row-mono">{{ fmtKwh(recordDetail.record.total_kwh) }}</span>
-                  <span class="row-mono">—</span>
-                  <span class="row-mono">{{ fmtMoney(recordDetail.record.industrial_fee) }}</span>
-                </div>
-                <div class="record-items-row">
-                  <span>宿舍电费</span><span>—</span>
-                  <span class="row-mono">{{ fmtKwh(recordDetail.record.dorm_kwh) }}</span>
-                  <span class="row-mono">{{ fmtRate(recordDetail.record.dorm_kwh ? recordDetail.record.dorm_fee / recordDetail.record.dorm_kwh : 0) }}</span>
-                  <span class="row-mono">{{ fmtMoney(recordDetail.record.dorm_fee) }}</span>
-                </div>
-                <div class="record-items-row record-items-total">
-                  <span>合计</span><span></span><span></span><span></span>
-                  <span class="row-mono">{{ fmtMoney(totalElecFee) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 水费清单及汇总（逐表） -->
-            <div v-if="recordDetail.waters?.length" class="rd-fee-group">
-              <div class="rd-fee-group-head">
-                <span class="rd-fee-group-name">水费清单及汇总</span>
-                <span class="rd-fee-group-sum">小计 {{ fmtMoney(recordDetail.record.water_fee) }}</span>
-              </div>
-              <div class="record-items rd-water-grid">
-                <div class="record-items-head rd-water-head">
-                  <span>水表</span><span>起度</span><span>止度</span><span>用量</span><span>单价</span><span>水费</span>
-                </div>
-                <div v-for="(wr, i) in recordDetail.waters" :key="i" class="record-items-row rd-water-row">
-                  <span>{{ wr.meter_name }}</span>
-                  <span class="row-mono">{{ fmtNum(wr.prev) }}</span>
-                  <span class="row-mono">{{ fmtNum(wr.curr) }}</span>
-                  <span class="row-mono">{{ fmtKwh(wr.usage) }}</span>
-                  <span class="row-mono">{{ fmtRate(wr.price) }}</span>
-                  <span class="row-mono">{{ fmtMoney(wr.fee) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <template #footer>
-          <t-button variant="outline" size="small" @click="recordVisible = false">关闭</t-button>
-          <t-button theme="primary" size="small" @click="printRecord">打印</t-button>
-        </template>
-      </t-drawer>
-    </teleport>
+        <section v-if="recordDetail?.waters?.length" class="bsd-block">
+          <div class="bsd-block-title">水费明细（小计 {{ fmtMoney(recordDetail.record.water_fee) }} 元）</div>
+          <table class="tb-items-table">
+            <thead>
+              <tr><th>水表</th><th>起度</th><th>止度</th><th>用量</th><th>单价</th><th>水费</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(wr, i) in recordDetail.waters" :key="i">
+                <td>{{ wr.meter_name }}</td>
+                <td class="row-mono">{{ fmtNum(wr.prev) }}</td>
+                <td class="row-mono">{{ fmtNum(wr.curr) }}</td>
+                <td class="row-mono">{{ fmtKwh(wr.usage) }}</td>
+                <td class="row-mono">{{ fmtRate(wr.price) }}</td>
+                <td class="row-mono">{{ fmtMoney(wr.fee) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </template>
+    </BusinessSplitDetailDrawer>
 
     <!-- 打印预览 -->
     <div v-if="printVisible" class="tenant-print-mask">
@@ -284,17 +213,20 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants,
-  listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
+  listBillingRecords, generateBillingRecord, getBillingRecord, updateBillingRecord, deleteBillingRecord,
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
 const { headerFixStyle } = useTableHeaderFix()
@@ -405,15 +337,13 @@ const tableColumns = computed(() => {
     { colKey: 'row-select', type: 'multiple', width: 46 },
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
-  // 宽度预算守卫：费用清单是 24 列宽表（业主 18 列 / 租户 14 列），
-  // 一旦每列都按 110px 固定排，总宽会到 2000+px，直接把表格撑出横向滚动条、
-  // 最后一列被裁到卡片外面（真机实测 thead 右边界 2377 > 卡片 1895）。
-  // 规则：可见列配置宽度总和 ≤ 1500px 时按配置生效，超出则整表回退自适应。
-  const budget = 1500
-  const wantWidth = visibleColDefs.value.reduce((sum, c) => sum + (Number((c as any).width) || 0), 0)
-  const useFixed = wantWidth > 0 && wantWidth <= budget
+  // 宽度严格跟随「字段定义」：subs.width>0 → clamp(60~400) 精确生效；0 → 自适应。
+  // （旧「总和 ≤1500 预算守卫」已删除：24 列宽表一超过阈值就把用户配置的全部
+  // 宽度作废，真机表现为「填 260 保存后列纹丝不动」。列总宽超出容器时，
+  // 和其它宽表一样启用横向滚动即可，没有任何理由静默吞掉用户配置。）
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: useFixed ? (Number((c as any).width) || undefined) : undefined })
+    const cfg = Number((c as any).width) || 0
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: cfg > 0 ? Math.min(Math.max(cfg, 60), 400) : undefined })
   }
   return cols
 })
@@ -432,7 +362,32 @@ const useUnitOptions = computed(() => {
   tenants.value.forEach((t: any) => { if (t.name) units.add(t.name) })
   return Array.from(units).map(v => ({ label: v, value: v }))
 })
-const filters = ref<{ month?: string }>({ month: undefined })
+const filters = ref<{ keyword?: string; month?: string; useUnit?: string }>({ keyword: '', month: undefined, useUnit: undefined })
+
+// BusinessFilterBar 扁平筛选态 ↔ 既有 ref 双向桥接。
+// 「使用单位」在费用清单里不只是筛选器：它切换整个视角（业主/租户列集、
+// 存档列偏好），所以 set 里检测变化后直接走既有 onUseUnitChange 副作用链。
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'month', type: 'month', placeholder: '账单月份' },
+  { key: 'useUnit', type: 'select', placeholder: '使用单位', icon: 'usergroup', options: useUnitOptions.value, immediate: true },
+])
+const filterState = computed<FilterState>({
+  get: () => ({ keyword: filters.value.keyword || '', month: filters.value.month, useUnit: useUnit.value }),
+  set: (v) => {
+    filters.value.keyword = String(v?.keyword ?? '')
+    filters.value.month = v?.month || undefined
+    const unit = String(v?.useUnit ?? '')
+    if (unit && unit !== useUnit.value) {
+      useUnit.value = unit
+      onUseUnitChange()
+    } else {
+      buildRows()
+    }
+  },
+})
+/** 刷新按钮 / immediate 控件变更：重建行集（全本地过滤，无需请求）。 */
+function onBarFilterChange() { buildRows() }
 const records = ref<any[]>([])
 const displayRows = ref<any[]>([])
 
@@ -736,7 +691,11 @@ const buildRows = () => {
     base.remark = rec?.remark || ''
     return base
   })
-  displayRows.value = filters.value.month ? list.filter(r => r.month === filters.value.month) : list
+  let out = filters.value.month ? list.filter(r => r.month === filters.value.month) : list
+  // 「搜索全部字段」：行内所有可读值拼串匹配（多关键词空格分词 AND）。
+  const kw = String(filters.value.keyword || '').trim()
+  if (kw) out = out.filter((r) => matchAllTokens(rowFlattenText(r), kw))
+  displayRows.value = out
   clearSelection()
 }
 
@@ -771,12 +730,14 @@ const summaryWaterFee = computed(() => {
   const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return Math.round(arr.reduce((s, r) => s + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0), 0) * 100) / 100
 })
+// 行点击 = 打开详情抽屉（业主/租户两个视角一致）。
+//
+// 旧实现只在租户视角、且该月已固化 billing_records 时才开抽屉 ——
+// 业主视角点行永远没有任何反应（这就是「费用清单点击记录无弹窗」）。
+// 现在传的是**行本身**，抽屉直接用行上的核算值渲染，不再依赖固化记录。
 const onRowClick = (row: any) => {
   selectedKeys.value = new Set([row.id])
-  if (!isOwnerView.value) {
-    const rec = records.value.find((r: any) => r.month === row.month)
-    if (rec) openRecord(rec)
-  }
+  void openRecord(row)
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
 
@@ -825,6 +786,7 @@ const handleGenerateAll = async () => {
     if (okMonths.length) MessagePlugin.success(`已生成 ${okMonths.length} 个月度账单：${okMonths.join('、')}`)
     if (fail.length) MessagePlugin.warning(`以下月份生成失败：${fail.join('；')}`)
     await loadAllData()
+    notifyEnergyDataChanged()
   } finally {
     generateBusy.value = false
   }
@@ -876,6 +838,7 @@ const handleDelete = async () => {
   try {
     for (const r of arr) await deleteBillingRecord(r.id)
     MessagePlugin.success('已删除')
+    notifyEnergyDataChanged()
     clearSelection()
     await loadRecords()
   } catch (e: any) {
@@ -884,19 +847,6 @@ const handleDelete = async () => {
 }
 
 // ---- 抽屉拖动调宽(宽度持久化) ----
-const DRAWER_W_KEYS = {
-  reading: 'tenant_reading_width',
-  settings: 'tenant_settings_width',
-  record: 'tenant_record_width',
-}
-const loadDrawerWidth = (key: string, def: string) => {
-  try {
-    const v = localStorage.getItem(key)
-    const n = v ? parseInt(v, 10) : 0
-    return n >= 520 && n <= 1100 ? `${n}px` : def
-  } catch { return def }
-}
-
 // ---- 专属设置（租户档案 / 分摊子项） ----
 // 原「租户设置」抽屉已融合进统一设置抽屉的「清单设置」Tab（TenantSettingsPanel）。
 // 页面只保留列表需要的租户下拉，变更由面板 emit('changed') 后 reloadTenants 刷新。
@@ -918,20 +868,107 @@ defineExpose({ reloadTenants })
 
 // ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
 // ---- 账单详情与打印 ----
+// 行点击详情：与发票同款 BusinessSplitDetailDrawer。
+//
+// 数据来源是**行本身**（buildRows 的核算结果）而不是 billing_records：
+// 业主视角多数月份没有固化账单，早期实现「找不到 rec 就 return」正是
+// 「费用清单点行没反应」的直接原因。字段顺序跟随「字段定义（subs）」。
 const recordVisible = ref(false)
-const recordWidth = ref(loadDrawerWidth(DRAWER_W_KEYS.record, '760px'))
 const recordDetail = ref<any>(null)
+const recordRow = ref<any>(null)
+const recordSaving = ref(false)
+const recordForm = ref<Record<string, any>>({})
+// 说明：不向 BSD 传 :dirty —— 费用清单行是即时可编辑的核算值，
+// 保存按钮恒可点（BSD 的 dirty===false 会禁用保存，这里不需要该门禁）。
 const printVisible = ref(false)
 const printUrl = ref('')
 const printTitle = ref('')
 
-const openRecord = async (r: any) => {
+const recordTitle = computed(() => {
+  const r = recordRow.value
+  if (!r) return '费用清单'
+  return `${r.month || ''} 费用清单 · ${r.unit || useUnit.value || ''}`
+})
+
+/**
+ * 详情字段 = 费用清单 subs（启用项，按序）∩ 该行真实存在的键。
+ *
+ * 交集是必须的：subs 是业主视角 ∪ 租户视角的并集，直接铺开会给
+ * 「业主视角」多出一堆只在租户视角有意义的空字段（分摊比例等）。
+ * subs 不可用时回退当前可见列定义，保证任何情况下都有字段可看。
+ */
+const billingFields = computed<Array<{ name: string; label: string; dataType?: string }>>(() => {
+  const row = recordRow.value || {}
+  const has = (k: string) => k in row && row[k] !== undefined
+  const subs = (categorySubs.value || []).filter((x: any) => x && x.enabled !== false && has(String(x.name)))
+  if (subs.length) {
+    return subs.map((x: any) => ({
+      name: String(x.name),
+      label: String(x.label || x.name),
+      dataType: x.data_type === 'number' || x.data_type === 'amount' ? 'number'
+        : x.data_type === 'date' ? 'date' : 'text',
+    }))
+  }
+  return activeColDefs.value
+    .filter((c) => has(c.key))
+    .map((c) => ({ name: c.key, label: c.label, dataType: 'text' }))
+})
+
+// BSD 表单契约 { data, remarkParts, items }：data 指向行副本，编辑不回写列表
+const recordFormWrapper = computed(() => ({ data: recordForm.value, remarkParts: {}, items: [] }))
+
+const openRecord = async (row: any) => {
+  recordRow.value = row
+  const editable: Record<string, any> = {}
+  for (const f of billingFields.value) editable[f.name] = row[f.name] ?? ''
+  recordForm.value = editable
+  recordDetail.value = null
+  recordVisible.value = true
+  if (!row?.hasRec) return
+  const rec = records.value.find((r: any) => r.month === row.month)
+  if (!rec) return
   try {
-    const res: any = await getBillingRecord(r.id)
-    recordDetail.value = res.data
-    recordVisible.value = true
+    const res: any = await getBillingRecord(rec.id)
+    recordDetail.value = res?.data || null
+  } catch { /* 明细拉取失败不影响主表单：质量面板与明细区静默 */ }
+}
+
+/**
+ * 保存：把可人工调整的项写回 billing_records（备注 / 宿舍电费 / 水费 / 总应付）。
+ *
+ * 其余列是核算派生值（总电量、均价、工业电费…），改它们等于改口径，
+ * 必须走「生成账单/重新核算」，不能在这里静默覆盖。
+ */
+const saveRecordDetail = async () => {
+  const row = recordRow.value
+  if (!row?.hasRec) {
+    MessagePlugin.warning('该月尚未生成账单，请先生成账单后再编辑')
+    return
+  }
+  const rec = records.value.find((r: any) => r.month === row.month)
+  if (!rec) return
+  recordSaving.value = true
+  try {
+    const payload: Record<string, unknown> = {}
+    if ('remark' in recordForm.value) payload.remark = String(recordForm.value.remark ?? '')
+    for (const k of ['dorm_fee', 'water_fee', 'total_fee']) {
+      if (k in recordForm.value && recordForm.value[k] !== '' && recordForm.value[k] !== undefined) {
+        payload[k] = Number(recordForm.value[k]) || 0
+      }
+    }
+    if (!Object.keys(payload).length) {
+      MessagePlugin.info('该行没有可保存的人工字段')
+      return
+    }
+    await updateBillingRecord(rec.id, payload)
+    MessagePlugin.success('已保存')
+    recordVisible.value = false
+    await loadAllData()
+    notifyEnergyDataChanged()
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '加载账单失败')
+    MessagePlugin.error(e?.message || '保存失败')
+  } finally {
+    recordSaving.value = false
   }
 }
 
@@ -939,7 +976,7 @@ const openRecord = async (r: any) => {
 // 长内容可多页分页：克隆明细到 body 顶层(脱离抽屉 fixed 容器)后打印,每个大项分组尽量不跨页
 const printRecord = () => {
   if (!recordDetail.value) return
-  const src = document.querySelector('.record-detail') as HTMLElement | null
+  const src = document.querySelector('.bsd-drawer .bsd-body') as HTMLElement | null
   if (!src) return
   const clone = src.cloneNode(true) as HTMLElement
   clone.id = 'rd-print-clone'
@@ -961,23 +998,6 @@ const closePrint = () => {
 }
 
 // ---- 抽屉拖动调宽(宽度持久化) ----
-const onResize = (e: MouseEvent, widthRef: { value: string }, storageKey: string) => {
-  const startX = e.clientX
-  const startW = parseFloat(widthRef.value)
-  const maxW = Math.min(1100, Math.floor(window.innerWidth * 0.95))
-  const move = (ev: MouseEvent) => {
-    const w = Math.min(maxW, Math.max(520, startW + (startX - ev.clientX)))
-    widthRef.value = `${w}px`
-  }
-  const up = () => {
-    try { localStorage.setItem(storageKey, widthRef.value) } catch { /* ignore */ }
-    document.removeEventListener('mousemove', move)
-    document.removeEventListener('mouseup', up)
-  }
-  document.addEventListener('mousemove', move)
-  document.addEventListener('mouseup', up)
-}
-const onRecordResizeStart = (e: MouseEvent) => onResize(e, recordWidth, DRAWER_W_KEYS.record)
 
 // ---- 账单明细分组（按大项排序 + 汇总） ----
 const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
@@ -1526,6 +1546,31 @@ onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onC
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 /* 详情抽屉 */
+.tb-items { overflow-x: auto; }
+.tb-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th, td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--td-component-stroke);
+    white-space: nowrap;
+  }
+  th { color: var(--td-text-color-secondary); font-weight: 500; background: var(--td-bg-color-secondarycontainer); }
+  td { color: var(--td-text-color-primary); }
+  tr:last-child td { border-bottom: none; }
+  .tb-total td { font-weight: 600; background: var(--td-bg-color-secondarycontainer); }
+}
+.tb-period { margin-left: 4px; color: var(--td-text-color-placeholder); font-size: 11px; }
+.tb-items-empty { padding: 14px 0; color: var(--td-text-color-placeholder); font-size: 12px; }
+.tb-fee-group { margin-bottom: 10px; }
+.tb-fee-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.tb-fee-name { font-size: 12px; font-weight: 600; color: var(--td-text-color-primary); }
+.tb-fee-sum { font-size: 12px; color: var(--td-text-color-secondary); font-variant-numeric: tabular-nums; }
+.tb-fee-total { margin-top: 8px; text-align: right; font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
+
 .record-detail {
   .record-overview {
     display: grid;

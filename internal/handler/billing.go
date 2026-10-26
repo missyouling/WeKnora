@@ -892,6 +892,62 @@ func (h *BillingHandler) GetBillingRecord(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items, "meters": meters, "waters": waters}})
 }
 
+// UpdateBillingRecord godoc
+// @Summary      更新账单（备注/宿舍·水费金额等人工调整项）
+// @Description  只允许改人工字段；电量/分摊等核算值由生成管线固化，不从外部覆盖。
+// @Router       /billing/records/:id [put]
+func (h *BillingHandler) UpdateBillingRecord(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	var req struct {
+		Remark    *string  `json:"remark"`
+		DormFee   *float64 `json:"dorm_fee"`
+		WaterFee  *float64 `json:"water_fee"`
+		TotalFee  *float64 `json:"total_fee"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError("invalid request body"))
+		return
+	}
+	var rec types.BillingRecord
+	if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&rec).Error; err != nil {
+		c.Error(errors.NewNotFoundError("账单不存在"))
+		return
+	}
+	updates := map[string]interface{}{}
+	if req.Remark != nil {
+		updates["remark"] = strings.TrimSpace(*req.Remark)
+	}
+	// 金额类字段：负数视为非法输入直接拒绝（账单金额语义上非负；调整项走明细）
+	for k, v := range map[string]*float64{
+		"dorm_fee": req.DormFee, "water_fee": req.WaterFee, "total_fee": req.TotalFee,
+	} {
+		if v == nil {
+			continue
+		}
+		if *v < 0 {
+			c.Error(errors.NewBadRequestError(k + " 不能为负数"))
+			return
+		}
+		updates[k] = *v
+	}
+	if len(updates) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": rec})
+		return
+	}
+	// 手工调整后置为 adjusted，与 generated 区分数据来源
+	if _, ok := updates["remark"]; ok || updates["dorm_fee"] != nil || updates["water_fee"] != nil || updates["total_fee"] != nil {
+		updates["status"] = "adjusted"
+	}
+	updates["updated_at"] = timeNowUTC()
+	if err := h.db.WithContext(ctx).Model(&types.BillingRecord{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		c.Error(errors.NewInternalServerError("update billing record failed"))
+		return
+	}
+	_ = h.db.WithContext(ctx).Where("id = ?", id).First(&rec).Error
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rec})
+}
+
 // DeleteBillingRecord godoc
 // @Summary      删除账单
 // @Router       /billing/records/:id [delete]

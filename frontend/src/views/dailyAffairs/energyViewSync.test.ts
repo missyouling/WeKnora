@@ -116,11 +116,12 @@ test('核算 / 费用清单 / 光伏 三张表的列定义都由 subs 派生', (
 })
 
 test('表头宽度下传（改宽度要真的生效）', () => {
-  assert.match(meter, /width: c\.width \|\| undefined/)
-  assert.match(solar, /width: c\.width \|\| undefined/)
-  // 费用清单有 24 列：宽度总和超过预算时整表回退自适应，避免横向滚动条
-  assert.match(tenant, /const useFixed = wantWidth > 0 && wantWidth <= budget/)
-  assert.match(tenant, /width: useFixed \? \(Number\(\(c as any\)\.width\) \|\| undefined\) : undefined/)
+  // 宽度唯一权威源 = subs.width：>0 固定（clamp 60~400），0 才自适应。
+  // 旧「总和 ≤1500 才生效」的预算守卫已删除——它会把用户填的宽度整体作废。
+  assert.match(meter, /width: colWidthOf\(c\.width/, '核算表必须按 subs.width 渲染')
+  assert.match(solar, /width: colWidthOf\(c\.width/, '光伏必须按 subs.width 渲染')
+  assert.match(tenant, /cfg > 0 \? Math\.min\(Math\.max\(cfg, 60\), 400\) : undefined/, '费用清单必须按 subs.width 渲染')
+  assert.doesNotMatch(tenant, /const budget = 1500/, '预算守卫必须删除')
 })
 
 // ---- ③ 解析失败不进主列表 ----
@@ -223,12 +224,12 @@ test('分类编辑区块必须渲染在分类表之后（不能在行间展开�
 })
 
 test('工具栏严格 3 个按钮：字段 → 设置 → 主操作', () => {
-  // 光伏主按钮改名
-  assert.match(solar, />\s*上传账单\s*</, '光伏主按钮必须叫「上传账单」')
+  // 光伏主按钮改名（现由 BusinessFilterBar 的 primaryAction 渲染）
+  assert.match(solar, /text: '上传账单'/, '光伏主按钮必须叫「上传账单」')
   assert.doesNotMatch(solar, /上传光伏账单/, '光伏主按钮不得再叫「上传光伏账单」')
-  // 三张表 / 费用清单的列显隐统一走中台组件
+  // 三张表 / 费用清单的列显隐统一走中台 BusinessFilterBar（内部即 BusinessColumnFilter）
   for (const [name, src] of [['UtilityMeterTab', meter], ['SolarManagement', solar], ['TenantBilling', tenant]] as const) {
-    assert.match(src, /<BusinessColumnFilter/, `${name} 的「字段」必须复用 BusinessColumnFilter`)
+    assert.match(src, /<BusinessFilterBar/, `${name} 必须走中台 BusinessFilterBar`)
     assert.match(src, /emit\('open-settings'\)/, `${name} 的设置入口必须走父级统一抽屉`)
   }
 })

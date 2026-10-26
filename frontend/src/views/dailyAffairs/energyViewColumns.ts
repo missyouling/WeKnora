@@ -124,3 +124,4 @@ export function requestEnergySettings(category: string): void {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent(ENERGY_OPEN_SETTINGS_EVENT, { detail: { category: String(category || '') } }))
 }
+

@@ -20,41 +20,14 @@
     <div v-else class="solar-main">
       <!-- ================= 列表视图 ================= -->
       <template v-if="!detailMode">
-        <!-- 筛选工具栏 -->
-        <div class="doc-filter-bar">
-          <div class="doc-filter-bar__leading">
-            <div class="doc-filter-field doc-filter-field--search">
-              <t-input v-model="keyword" placeholder="搜索全部字段" clearable class="doc-filter-field__control">
-                <template #prefixIcon><t-icon name="search" size="16px" /></template>
-              </t-input>
-            </div>
-            <div class="doc-filter-field">
-              <t-date-picker v-model="monthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
-                placeholder="账单月份" class="doc-date-range doc-filter-field__control" clearable allow-input
-                @change="applyFilter">
-                <template #prefixIcon><t-icon name="time" size="16px" /></template>
-              </t-date-picker>
-            </div>
-            <t-button variant="outline" size="small" @click="applyFilter">
-              <template #icon><t-icon name="refresh" size="14px" /></template>
-            </t-button>
-          </div>
-          <div class="doc-filter-bar__trailing">
-            <!-- 列显隐统一走中台 BusinessColumnFilter：与发票/合同/制度/通知、市电账单
-                 及核算/清单完全同款（弹窗宽度、全选/重置头、勾选行高一致）。 -->
-            <BusinessColumnFilter :columns="columnDefs" :visible-keys="visibleColKeys"
-              @update:visible-keys="(v: string[]) => (visibleColKeys = v)"
-              @reset="resetColumns" @select-all="selectAllColumns" />
-            <t-button variant="outline" size="small" @click="openFieldSettings">
-              <template #icon><t-icon name="setting" size="14px" /></template>
-              设置
-            </t-button>
-            <t-button theme="primary" size="small" @click="triggerUpload">
-              <template #icon><t-icon name="upload" /></template>
-              上传账单
-            </t-button>
-          </div>
-        </div>
+        <!-- 筛选工具栏：与发票/合同/制度/通知、市电账单同一个 BusinessFilterBar
+             （搜索全部字段 220px/32px、控件 32px、gap 8px、右侧 字段→设置→主按钮）。 -->
+        <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+          :columns="columnDefs" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
+          settings-text="设置" hide-batch-bar :primary-action="{ text: '上传账单', icon: 'upload' }"
+          @columns-change="(v: string[]) => (visibleColKeys = v)" @reset-columns="resetColumns"
+          @select-all-columns="selectAllColumns" @filter-change="applyFilter" @settings="openFieldSettings"
+          @primary="triggerUpload" @clear-selection="clearSelection" />
 
         <!-- 列表 -->
         <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
@@ -364,48 +337,14 @@
       </div>
     </div>
 
-    <!-- 详情抽屉 -->
-    <div v-if="detailVisible" class="us-resize-handle" :style="{ right: `${detailWidth}px` }" role="separator"
-      :aria-label="'调整宽度'" :title="'拖动调整宽度'" @mousedown="onDetailResizeStart">
-      <div class="us-resize-line" />
-    </div>
-    <t-drawer v-if="detailVisible" :visible="true" :header="detailTitle" :size="`${detailWidth}px`" :footer="false"
-      :close-on-overlay-click="true" @close="closeDetail"
-      @update:visible="(v: boolean) => (v || closeDetail())">
-      <div class="utility-detail-drawer">
-        <!-- 提取质量与溯源：静默优先（无问题/无补洞时不占位） -->
-        <ExtractQualityPanel :quality="detailQuality" :label-of="qualityLabel" compact />
-
-        <!-- 字段编辑 -->
-        <section class="detail-block">
-          <div class="detail-block-title">账单字段</div>
-          <div class="detail-block-content">
-            <div class="field-grid">
-              <div v-for="f in detailFields" :key="f.key" class="field-grid-item" :class="{ 'field-grid-item--full': f.key === 'remark' }">
-                <label class="field-label">{{ f.label }}</label>
-                <t-textarea v-if="f.key === 'remark'" :model-value="String(detailForm[f.key] ?? '')"
-                  :autosize="{ minRows: 3, maxRows: 6 }"
-                  @update:model-value="(v: string) => { detailForm[f.key] = v }" />
-                <t-input v-else :model-value="String(detailForm[f.key] ?? '')" :type="f.type === 'number' ? 'number' : 'text'" size="small"
-                  @update:model-value="(v: string) => { detailForm[f.key] = f.type === 'number' ? Number(v) || 0 : v }" />
-              </div>
-            </div>
-            <div class="edit-drawer-footer">
-              <t-button theme="primary" size="small" @click="saveDetailFields">保存</t-button>
-            </div>
-          </div>
-        </section>
-
-        <!-- 源文件预览 -->
-        <section class="detail-block">
-          <div class="detail-block-title">源文件预览</div>
-          <div class="detail-block-content">
-            <DocumentPreview v-if="currentRow" :knowledge-id="currentRow.knowledgeId"
-              :file-type="currentRow?.fileType || ''" :file-name="currentRow?.fileName || ''" :active="true" />
-          </div>
-        </section>
-      </div>
-    </t-drawer>
+    <!-- 详情抽屉：与发票/合同同款中台 BusinessSplitDetailDrawer
+         （质量面板 → 双列字段表单 → 底部折叠源文件预览 → 统一底栏）。
+         旧自写 <t-drawer> + field-grid 已淘汰。表单契约是 { data, remarkParts, items }，
+         data 直接指向 detailForm，v-model 写 form.data[key] 即落回 detailForm。 -->
+    <BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="currentRow"
+      :page-no="Number(currentRow?.item?.page) || 0" :form="detailFormWrapper" :fields="bsdFields"
+      block-title="光伏账单字段" :quality="detailQuality" :label-of="qualityLabel"
+      :storage-key="'weknora-solar-detail-drawer-width'" @save="saveDetailFields" />
 
     <!-- 费用编辑抽屉 -->
     <t-drawer v-if="feeEditVisible" :visible="true" :header="'编辑费用 · ' + feeEditTitle" size="460px" :footer="false"
@@ -507,12 +446,14 @@ import {
   listSolarBillRecords,
   previewKnowledgeFile,
 } from '@/api/knowledge-base'
-import DocumentPreview from '@/components/document-preview.vue'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
-import BusinessColumnFilter from './BusinessColumnFilter.vue'
-import ExtractQualityPanel from './ExtractQualityPanel.vue'
+import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import BusinessFilterBar from './BusinessFilterBar.vue'
+import type { FilterFieldSpec, FilterState } from './businessFilter'
+import { colWidthOf } from './columnWidth'
+import { notifyEnergyDataChanged } from './energyCounters'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -605,7 +546,8 @@ const tableColumns = computed(() => {
     { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, width: c.width || undefined })
+    // subs.width>0 精确固定（clamp 60~400）；0/未配置走内容自适应（与发票同一套 colWidthOf）
+    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, width: colWidthOf(c.width, c.label, displayRows.value.map((r: any) => r[c.key])) })
   }
   cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
@@ -653,6 +595,19 @@ const page = ref(1)
 const hasMore = ref(true)
 const monthFilter = ref('')
 const keyword = ref('')
+// BusinessFilterBar 扁平筛选态 ↔ 既有 ref 桥接（keyword/monthFilter 仍是单一真源，
+// applyFilter 直接读它们）
+const filterFields = computed<FilterFieldSpec[]>(() => [
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  { key: 'month', type: 'month', placeholder: '账单月份' },
+])
+const filterState = computed<FilterState>({
+  get: () => ({ keyword: keyword.value, month: monthFilter.value }),
+  set: (v) => {
+    keyword.value = String(v?.keyword ?? '')
+    monthFilter.value = v?.month || ''
+  },
+})
 const selectedRowKeys = ref<string[]>([])
 const extractInFlight = ref<Set<string>>(new Set())
 const taggingInFlight = ref<Set<string>>(new Set())
@@ -864,6 +819,7 @@ const startPolling = () => {
           try {
             await extractSolarBill(kbId.value, it.id)
             loadFiles(true)
+            notifyEnergyDataChanged()
           } catch { /* 失败下轮重试 */ } finally {
             extractInFlight.value.delete(it.id)
           }
@@ -958,6 +914,7 @@ const onFileInputChange = async (e: Event) => {
     }
   }
   await loadFiles(true)
+  notifyEnergyDataChanged()
 }
 
 // ---- 详情 ----
@@ -966,25 +923,6 @@ const detailMode = ref(false)
 const currentRow = ref<Row | null>(null)
 const activeMenu = ref<'overview' | 'grid-fee' | 'subsidy-fee' | 'meter'>('overview')
 const detailForm = ref<Record<string, any>>({})
-
-const DETAIL_WIDTH_KEY = 'weknora-solar-detail-width'
-const detailWidth = ref(Number(localStorage.getItem(DETAIL_WIDTH_KEY)) || 560)
-const onDetailResizeStart = (e: MouseEvent) => {
-  e.preventDefault()
-  const startX = e.clientX
-  const startW = detailWidth.value
-  const onMove = (ev: MouseEvent) => {
-    const w = Math.min(960, Math.max(480, startW - (ev.clientX - startX)))
-    detailWidth.value = w
-  }
-  const onUp = () => {
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onUp)
-    try { localStorage.setItem(DETAIL_WIDTH_KEY, String(detailWidth.value)) } catch { /* ignore */ }
-  }
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onUp)
-}
 
 const it = computed(() => currentRow.value?.item || {})
 const detailTitle = computed(() => currentRow.value?.fileName || '账单详情')
@@ -1017,6 +955,26 @@ const detailFields = computed(() => [
   { key: 'remark', label: '备注', type: 'text' },
 ])
 
+/**
+ * 详情字段跟随「字段定义（subs）」：六同步——用户在设置里改名/停用字段后，
+ * 详情抽屉必须同步（旧版写死 detailFields 数组，改了没反应）。
+ * subs 不可用（后端未迁移）时回退内置 detailFields。
+ */
+const bsdFields = computed(() => {
+  const subs = (categorySubs.value || []).filter((x: any) => x && x.enabled !== false)
+  if (subs.length) {
+    return subs.map((x: any) => ({
+      name: String(x.name),
+      label: String(x.label || x.name),
+      dataType: x.data_type === 'number' || x.data_type === 'amount' ? 'number' : (x.data_type || 'text'),
+    }))
+  }
+  return detailFields.value.map((f) => ({ name: f.key, label: f.label, dataType: f.type === 'number' ? 'number' : 'text' }))
+})
+// BSD 表单契约 { data, remarkParts, items }：data 直接指向 detailForm，
+// v-model 写 form.data[key] 即落回 detailForm，零包装成本（合同页同款做法）。
+const detailFormWrapper = computed(() => ({ data: detailForm.value, remarkParts: {}, items: [] }))
+
 // 提取质量与溯源：详情接口的 custom_metadata（光伏账单一份文件通常一条记录）
 const detailQuality = ref<ExtractQuality>(EMPTY_QUALITY)
 const qualityLabel = (f: string) => f
@@ -1027,10 +985,6 @@ const openDetail = async (row: Row) => {
   detailQuality.value = EMPTY_QUALITY
   detailVisible.value = true
   try {
-    const pv: any = await previewKnowledgeFile(row.knowledgeId)
-    printUrl.value = pv?.data?.url || pv?.url || ''
-  } catch { printUrl.value = '' }
-  try {
     const kd: any = await getKnowledgeDetails(row.knowledgeId)
     const meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
     const page = Number(row.item?.page)
@@ -1040,10 +994,15 @@ const openDetail = async (row: Row) => {
     detailQuality.value = EMPTY_QUALITY
   }
 }
-const closeDetail = () => {
-  detailVisible.value = false
-}
 // 字段失焦自动保存（与合同/发票一致；数字字段清洗后仅更新该字段）
+/** 数字字段收敛：BSD 的 number 控件产出字符串，落库前按 detailFields 类型清洗。 */
+function typedDetailForm(): Record<string, any> {
+  const out: Record<string, any> = { ...detailForm.value }
+  for (const f of detailFields.value) {
+    if (f.type === 'number' && out[f.key] !== undefined && out[f.key] !== '') out[f.key] = Number(out[f.key]) || 0
+  }
+  return out
+}
 const saveDetailFields = async () => {
   if (!currentRow.value || !kbId.value) return
   try {
@@ -1055,14 +1014,14 @@ const saveDetailFields = async () => {
     meta.kind = 'solar_bill'
     meta.records = meta.records || []
     if (meta.records.length) {
-      meta.records[0] = { ...(meta.records[0] || {}), ...detailForm.value }
+      meta.records[0] = { ...(meta.records[0] || {}), ...typedDetailForm() }
     } else {
-      meta.records = [{ ...detailForm.value, gateways: currentRow.value.item?.gateways || [] }]
+      meta.records = [{ ...typedDetailForm(), gateways: currentRow.value.item?.gateways || [] }]
     }
     // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
     await updateBusinessMetadata(kbId.value, kid, meta)
     // 本地行同步
-    currentRow.value.item = { ...(currentRow.value.item || {}), ...detailForm.value }
+    currentRow.value.item = { ...(currentRow.value.item || {}), ...typedDetailForm() }
     MessagePlugin.success('已保存')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -1171,6 +1130,7 @@ const saveFeeEdit = async () => {
   }
 }
 
+// 上传 / 删除 / 提取落库后广播：父页 KPI 卡片计数跟着重算（口径铁律）。
 // ---- 浮动工具栏 ----
 const handleReExtract = async () => {
   const row = selectedSingle.value
@@ -1198,6 +1158,7 @@ const handleBatchDelete = async () => {
     MessagePlugin.success('已移至删除历史')
     clearSelection()
     loadFiles(true)
+    notifyEnergyDataChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '删除失败')
   }

@@ -590,6 +590,7 @@ func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, 
 		bl.GET("/tenants/:id/records", g.Viewer(), handler.ListBillingRecords)
 		bl.POST("/tenants/:id/records", g.Contributor(), handler.GenerateBillingRecord)
 		bl.GET("/records/:id", g.Viewer(), handler.GetBillingRecord)
+		bl.PUT("/records/:id", g.Contributor(), handler.UpdateBillingRecord)
 		bl.DELETE("/records/:id", g.Contributor(), handler.DeleteBillingRecord)
 	}
 }
