@@ -86,7 +86,7 @@
 
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-              <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
+              <div class="doc-list-view" :style="headerFixStyle">
                 <t-table
           :data="displayRows"
           :columns="tableColumns"
@@ -709,6 +709,7 @@ import {
   onMounted,
   onBeforeUnmount,
 } from 'vue'
+import { useTableHeaderFix } from './useTableHeaderFix'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { listKnowledgeFiles } from '@/api/knowledge-base'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -747,6 +748,9 @@ import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
+
+// 表头右侧滚动条轨道遮罩（实测，四模块 + 能耗统一）
+const { headerFixStyle, measureTableHeaderFix } = useTableHeaderFix()
 
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
@@ -792,17 +796,6 @@ const activeTab = ref<EnergyTab>('electricity')
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）：
 // 滚动条属于滚动容器 UI 层，绘制层级高于 sticky 表头，靠表头背景盖不住，
 // 必须在 .doc-list-view 上挂一块与表头同色的绝对定位色块。
-const headerFix = reactive({ sbw: 17, thh: 39 })
-const measureTableHeaderFix = () => {
-  const th = document.querySelector('.doc-list-view thead th')
-  if (th) headerFix.thh = Math.max(30, Math.round(th.getBoundingClientRect().height))
-  const d = document.createElement('div')
-  d.style.cssText = 'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;left:-9999px'
-  document.body.appendChild(d)
-  const w = d.offsetWidth - d.clientWidth
-  document.body.removeChild(d)
-  if (w > 0) headerFix.sbw = w
-}
 const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
@@ -2777,19 +2770,6 @@ onBeforeUnmount(() => { stopPolling() })
 /* 表头右侧滚动条轨道遮罩：滚动条绘制层级高于 sticky 表头，表头背景盖不住，
    在滚动容器父层挂一块与表头同色的绝对定位色块（宽度=实测滚动条宽、高度=实测表头高），
    垂直滚动条便只在表体区域可见。与发票管理同一套机制、同一组 CSS 变量。 */
-.doc-list-view::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 20;
-  width: var(--invoice-sbw, 17px);
-  height: var(--invoice-thh, 39px);
-  box-sizing: border-box;
-  pointer-events: none;
-  background: var(--td-bg-color-container);
-  border-bottom: 1px solid var(--td-component-stroke);
-}
 
 /* 列表组件样式（与合同/发票/知识库列表保持一致，scoped 自包含） */
 .doc-list-view {
@@ -3701,5 +3681,17 @@ onBeforeUnmount(() => { stopPolling() })
     color: var(--td-text-color-placeholder);
     line-height: 1.5;
   }
+}
+</style>
+
+<style>
+/* 无作用域：TDesign 内部的 td 不带页面的 data-v 属性，scoped 规则命中不到。
+ *
+ * 可展开行（电费/水费/气费核算的分时明细）TDesign 会加 .t-table__row--folded，
+ * 并把 td 背景设成 --td-bg-color-secondarycontainer（#f3f3f3）。发票管理没有可展开行
+ * 所以是纯白；不覆盖的话这三张表整表发灰，与发票并排看非常明显。
+ */
+.biz-page .doc-list-view .t-table__row--folded > td {
+  background-color: var(--td-bg-color-container);
 }
 </style>

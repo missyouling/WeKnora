@@ -45,7 +45,7 @@
 
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置；虚拟滚动：>100 行自动仅渲染视口内 DOM） -->
       <div class="doc-list-scroll" ref="listScrollRef">
-        <div class="doc-list-view" :style="{ '--invoice-sbw': headerFix.sbw + 'px', '--invoice-thh': headerFix.thh + 'px' }">
+        <div class="doc-list-view" :style="headerFixStyle">
           <t-table
         ref="invoiceTableRef"
         :data="filteredRows"
@@ -351,12 +351,12 @@
 import {
   ref,
   shallowRef,
-  reactive,
   computed,
   watch,
   onMounted,
   onBeforeUnmount,
 } from 'vue'
+import { useTableHeaderFix } from './useTableHeaderFix'
 import { useRoute } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -403,6 +403,9 @@ import { parseExtractQuality } from './extractQuality'
 import { extractFieldLabel } from './extractFieldMeta'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
+
+// 表头右侧滚动条轨道遮罩（实测，四模块 + 能耗统一）
+const { headerFixStyle, measureTableHeaderFix } = useTableHeaderFix()
 
 const KB_NAME = '日常事务-发票'
 const PAGE_SIZE = 20
@@ -2176,17 +2179,6 @@ const onCategoriesChanged = () => {
 
 // ---- 表头右侧滚动条轨道遮罩（Q5）：宽度=真实滚动条宽度、高度=表头实测高度，
 // 背景与表头 th 同令牌（container）→ 主题切换同步变色，无色差残留 ----
-const headerFix = reactive({ sbw: 17, thh: 39 })
-const measureTableHeaderFix = () => {
-  const th = document.querySelector('.doc-list-view thead th')
-  if (th) headerFix.thh = Math.max(30, Math.round(th.getBoundingClientRect().height))
-  const d = document.createElement('div')
-  d.style.cssText = 'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;left:-9999px'
-  document.body.appendChild(d)
-  const w = d.offsetWidth - d.clientWidth
-  d.remove()
-  if (w > 0) headerFix.sbw = w
-}
 
 // ---- 生命周期 ----
 onMounted(() => {
@@ -2290,19 +2282,6 @@ watch(printVisible, (v) => {
    盖住表头高内的轨道段 → 垂直滚动条仅在表体区域可见；
    底边框与 th 底边框同色同位 → 表头横线在滚动条区单线闭合（无缝隙、无双线）。
    背景与 th 同令牌(container)，深色主题下两者同步变化，不产生主题色差 */
-.doc-list-view::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 20;
-  width: var(--invoice-sbw, 17px);
-  height: var(--invoice-thh, 39px);
-  box-sizing: border-box;
-  pointer-events: none;
-  background: var(--td-bg-color-container);
-  border-bottom: 1px solid var(--td-component-stroke);
-}
 
 .doc-list-header, .doc-list-row {
   display: grid;

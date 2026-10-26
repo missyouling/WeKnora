@@ -45,7 +45,7 @@
 
       <!-- 制度列表（自绘 grid，可横向滚动，字段可配置） -->
       <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-        <div class="doc-list-view">
+        <div class="doc-list-view" :style="headerFixStyle">
           <t-table
         :data="filteredRows"
         :columns="tableColumns"
@@ -299,6 +299,7 @@
 
 <script setup lang="ts">
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useTableHeaderFix } from './useTableHeaderFix'
 import { useRoute } from 'vue-router'
 import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -342,6 +343,9 @@ import type { FilterFieldSpec, FilterState } from './businessFilter'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
+
+// 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
+const { headerFixStyle } = useTableHeaderFix()
 
 const KB_NAME = '日常事务-制度'
 const PAGE_SIZE = 20

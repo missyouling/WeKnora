@@ -123,10 +123,12 @@ test('底部汇总栏位于列表白色卡片容器内部', () => {
   assert.match(src, /class="[^"]*doc-summary-bar/, '汇总栏应复用中台 doc-summary-bar 样式')
 })
 
-test('表头吸顶不穿透：sticky-header + 表头滚动条遮罩', () => {
+test('表头吸顶不穿透：sticky-header + 实测遮罩变量', () => {
   assert.match(src, /sticky-header/, 't-table 必须开启 sticky-header，否则表头被滚走')
-  assert.match(src, /--invoice-sbw|headerFix/, '必须实测滚动条宽度用于表头右侧遮罩')
-  assert.match(src, /doc-list-view::after|::after/, '必须有表头右侧滚动条轨道遮罩，避免滚动条压在表头上')
+  // 遮罩本体已收敛到共享样式（business-list-shared.css 的 .doc-list-view::after），
+  // 页面只负责把实测值绑到 .doc-list-view 上。
+  assert.match(src, /:style="headerFixStyle"/, '必须把实测的滚动条宽/表头高绑到 .doc-list-view')
+  assert.match(src, /useTableHeaderFix/, '必须使用统一的表头量测 composable')
 })
 
 // ---- 本轮：KPI 卡片栏必须在各 tab 模板之外 ----

@@ -7,6 +7,7 @@
       :show-print="false"
       primary-action-text="新增记录"
       :selected-count="selectedRowKeysArr.length"
+      hide-batch-bar
       @refresh="load"
       @primary="openCreate"
       @clear-selection="clearSelection"
@@ -60,7 +61,7 @@
 
     <!-- 列表（自绘 grid，数据少时只包裹记录行，超出滚动） -->
     <div class="doc-list-scroll meter-list-scroll" ref="listScrollRef">
-      <div class="doc-list-view">
+      <div class="doc-list-view" :style="headerFixStyle">
         <t-table
         :data="displayRows"
         :columns="tableColumns"
@@ -69,6 +70,8 @@
         :hover="true"
         :loading="loading"
         max-height="100%"
+        sticky-header
+        :expand-icon="false"
         class="doc-table"
         :selected-row-keys="selectedRowKeysArr"
         select-on-change
@@ -83,7 +86,8 @@
         </template>
         <template #meter="{ row }: any">
           <span class="row-text" :title="row.meter_alias">
-            <span v-if="isTimeRow(row)" class="row-expand-toggle">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
+            <span v-if="isTimeRow(row)" class="row-expand-toggle" title="展开/收起分时明细"
+              @click.stop="toggleExpand(row)">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
             {{ row.meter_alias }}
           </span>
         </template>
@@ -174,15 +178,16 @@
         </template>
       </t-table>
     </div>
+      <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端；
+           旧版挂在外层灰底上，视觉上「汇总条游离在表格外」（真机截图）。 -->
+      <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
+        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
+        <span class="doc-summary-item">总用量 <span class="doc-summary-val">{{ fmtNum(summaryUsage) }}</span> {{ unitLabel }}</span>
+        <span class="doc-summary-item">总金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
+      </div>
     </div>
             <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
 
-    <!-- 底部汇总（列表容器外固定显示；选中时按选中统计并避让浮动工具栏，样式与发票管理一致） -->
-    <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-      <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-      <span class="doc-summary-item">总用量 <span class="doc-summary-val">{{ fmtNum(summaryUsage) }}</span> {{ unitLabel }}</span>
-      <span class="doc-summary-item">总金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
-    </div>
 
     <!-- 底部浮动工具栏（选中行时显示；打印弹窗打开时隐藏） -->
     <transition name="batch-bar-fade">
@@ -649,10 +654,14 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import BusinessListToolbar from './BusinessListToolbar.vue'
+import { useTableHeaderFix } from './useTableHeaderFix'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
 }>()
+
+// 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
+const { headerFixStyle } = useTableHeaderFix()
 
 const categoryLabel = computed(() => (props.category === 'water' ? '水费' : props.category === 'electricity' ? '电费' : '气费'))
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
@@ -691,7 +700,13 @@ const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-colu
 const visibleKeys = ref<string[]>(loadStoredKeys())
 const visibleColDefs = computed(() => categoryCols(COLUMN_DEFS).filter(c => visibleKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
-  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  // 与发票管理一致：[复选框] → [序号] → 业务列。
+  // colKey 必须写 'row-select'：只写 type:'multiple' 时 TDesign 照样渲染表头，
+  // 但 tbody 单元格是空的（列标识对不上），看着像「复选框没渲染」。
+  const cols: any[] = [
+    { colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
+  ]
   for (const c of visibleColDefs.value) {
     cols.push({ colKey: c.key, title: c.label, ellipsis: true })
   }
@@ -700,6 +715,15 @@ const tableColumns = computed(() => {
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 const expandedRowKeysArr = computed(() => Array.from(expandedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
+/** 表计名前的小三角：展开/收起该行的分时明细（替代 TDesign 自带的展开列，
+ *  那列会插在复选框左边，破坏「复选框 + 序号」的标准列序）。 */
+function toggleExpand(row: any) {
+  const next = new Set(expandedKeys.value)
+  if (next.has(row.key)) next.delete(row.key)
+  else next.add(row.key)
+  expandedKeys.value = next
+}
+
 function onExpandChange(ctx: any) {
   const keys = Array.isArray(ctx?.expandedRowKeys) ? ctx.expandedRowKeys : []
   expandedKeys.value = new Set(keys)
@@ -1960,6 +1984,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="less" scoped>
+/* 中台列表共享样式：.doc-list-scroll / .doc-list-view / 表头遮罩 / 表格令牌。
+   子组件是挂在 .biz-page 下的（父页面提供），但共享样式是按组件独立 import 的，
+   不引入就会退化成 display:block + overflow:visible —— 表格不被限高、
+   滚动条落在外层容器上，表现就是「滚动条侵入表头 + 汇总栏被顶到几千像素」。 */
+@import './styles/business-list-shared.css';
+
 .utility-meter-tab {
   display: flex;
   flex-direction: column;
@@ -2191,13 +2221,11 @@ onBeforeUnmount(() => {
 .expand-mono { font-family: var(--app-font-family); color: var(--td-text-color-primary); }
 
 .meter-list-scroll {
+  /* 只保留尺寸：overflow / 边框 / 圆角 / 背景 / 阴影一律走共享的
+     `.biz-page .doc-list-scroll`。这里写 overflow-y:auto 会让滚动落到外层容器，
+     表头 sticky 失效、垂直滚动条从容器顶端开始 → 侵入表头标题栏（真机截图）。 */
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .meter-empty {
@@ -2231,7 +2259,8 @@ onBeforeUnmount(() => {
     display: inline-flex; align-items: baseline; gap: 6px;
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
-  &.is-batch-visible { margin-bottom: 72px; }
+  /* 汇总栏已进卡片内部：不再用 margin-bottom 上移（旧版挂在卡片外才需要），
+     浮动栏与它重叠的表现与发票管理一致。 */
 }
 
 /* 抽屉 resize 手柄（发票管理同款，teleport 到 body 避免被抽屉遮罩遮挡） */

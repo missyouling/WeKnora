@@ -81,7 +81,7 @@
 
         <!-- 列表 -->
         <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-          <div class="doc-list-view">
+          <div class="doc-list-view" :style="headerFixStyle">
             <t-table
         :data="displayRows"
         :columns="tableColumns"
@@ -90,6 +90,7 @@
         :hover="true"
         :loading="loading"
         max-height="100%"
+        sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
@@ -119,12 +120,13 @@
         </template>
       </t-table>
     </div>
-        </div>
-        <div v-if="summary.total" class="doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
-          <span>共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
-          <span>发电量 {{ fmtKwh(summaryUsage) }} 千瓦时</span>
-          <span>结算金额 {{ fmtMoney(summaryAmount) }} 元</span>
-          <span v-if="selectedRowKeys.length" class="summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
+          <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端 -->
+          <div v-if="summary.total" class="doc-summary-bar">
+            <span class="doc-summary-count">共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
+            <span class="doc-summary-item">发电量 <span class="doc-summary-val">{{ fmtKwh(summaryUsage) }}</span> 千瓦时</span>
+            <span class="doc-summary-item">结算金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
+            <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
+          </div>
         </div>
 
         <!-- 底部浮动工具栏 -->
@@ -538,6 +540,11 @@ import DeletedKnowledgeDrawer from './DeletedKnowledgeDrawer.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
+import { useTableHeaderFix } from './useTableHeaderFix'
+
+// 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
+const { headerFixStyle } = useTableHeaderFix()
+
 const KB_NAME = '日常事务-电费'
 const PAGE_SIZE = 30
 const COLUMN_STORAGE_KEY = 'weknora-solar-columns-v1'
@@ -580,7 +587,11 @@ const visibleColKeys = ref<string[]>(loadStoredColumns())
 const fieldPopupVisible = ref(false)
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
-  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  // 与发票管理一致：[复选框] → [序号] → 业务列
+  const cols: any[] = [
+    { colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
+  ]
   for (const c of visibleColDefs.value) {
     cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType })
   }
@@ -1318,6 +1329,12 @@ onBeforeUnmount(() => { stopPolling() })
 </script>
 
 <style lang="less" scoped>
+/* 中台列表共享样式：.doc-list-scroll / .doc-list-view / 表头遮罩 / 表格令牌。
+   子组件是挂在 .biz-page 下的（父页面提供），但共享样式是按组件独立 import 的，
+   不引入就会退化成 display:block + overflow:visible —— 表格不被限高、
+   滚动条落在外层容器上，表现就是「滚动条侵入表头 + 汇总栏被顶到几千像素」。 */
+@import './styles/business-list-shared.css';
+
 .solar-management-container {
   display: flex;
   flex-direction: column;
@@ -1405,14 +1422,12 @@ onBeforeUnmount(() => { stopPolling() })
 
 /* 列表 */
 .doc-list-scroll {
-  flex: 0 1 auto;
+  /* 只保留尺寸：滚动交给 t-table 内部（sticky-header + max-height:100%），
+     外层写 overflow-y:auto 会让滚动条从容器顶端开始、侵入表头标题栏。 */
+  flex: 1;
   max-height: 100%;
   min-width: 0;
-  overflow-y: auto;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  min-height: 0;
 }
 .doc-list-view { display: flex; flex-direction: column; }
 .doc-list-header, .doc-list-row {

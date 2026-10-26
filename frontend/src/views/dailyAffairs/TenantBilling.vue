@@ -54,7 +54,7 @@
 
     <!-- 列表 -->
     <div class="doc-list-scroll tenant-list-scroll">
-      <div class="doc-list-view">
+      <div class="doc-list-view" :style="headerFixStyle">
         <t-table
         :data="displayRows"
         :columns="tableColumns"
@@ -63,6 +63,7 @@
         :hover="true"
         :loading="loading"
         max-height="100%"
+        sticky-header
         class="doc-table"
         :selected-row-keys="selectedRowKeysArr"
         select-on-change
@@ -84,10 +85,8 @@
         </template>
       </t-table>
     </div>
-    </div>
-
-    <!-- 底部汇总 -->
-    <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
+      <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端 -->
+      <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
       <template v-if="isOwnerView">
         <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
         <span class="doc-summary-item">总电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
@@ -98,6 +97,7 @@
         <span class="doc-summary-item">总应付电费 <span class="doc-summary-val">{{ fmtMoney(summaryPayableFee) }}</span> 元</span>
         <span class="doc-summary-item">总应付水费 <span class="doc-summary-val">{{ fmtMoney(summaryWaterFee) }}</span> 元</span>
       </template>
+    </div>
     </div>
 
     <!-- 底部浮动工具栏 -->
@@ -479,6 +479,11 @@ import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
+import { useTableHeaderFix } from './useTableHeaderFix'
+
+// 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
+const { headerFixStyle } = useTableHeaderFix()
+
 const OWNER_UNIT = '重庆星达'
 const BILL_KB_NAME = '日常事务-电费'
 const useUnit = ref(OWNER_UNIT)
@@ -550,7 +555,11 @@ syncColumnKeys()
 watch(useUnit, syncColumnKeys)
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
 const tableColumns = computed(() => {
-  const cols: any[] = [{ type: 'multiple', width: 44, colKey: 'multiple' }]
+  // 与发票管理一致：[复选框] → [序号] → 业务列
+  const cols: any[] = [
+    { colKey: 'row-select', type: 'multiple', width: 46 },
+    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
+  ]
   for (const c of visibleColDefs.value) {
     cols.push({ colKey: c.key, title: c.label, ellipsis: true })
   }
@@ -1315,6 +1324,12 @@ onMounted(() => {
 </script>
 
 <style lang="less" scoped>
+/* 中台列表共享样式：.doc-list-scroll / .doc-list-view / 表头遮罩 / 表格令牌。
+   子组件是挂在 .biz-page 下的（父页面提供），但共享样式是按组件独立 import 的，
+   不引入就会退化成 display:block + overflow:visible —— 表格不被限高、
+   滚动条落在外层容器上，表现就是「滚动条侵入表头 + 汇总栏被顶到几千像素」。 */
+@import './styles/business-list-shared.css';
+
 .tenant-billing-container {
   display: flex;
   flex-direction: column;
@@ -1439,13 +1454,9 @@ onMounted(() => {
 .strong { font-weight: 600; }
 
 .tenant-list-scroll {
+  /* 只保留尺寸：滚动由 t-table 内部承担，外层不滚（否则滚动条侵表头） */
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 9px;
-  background: var(--td-bg-color-container);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 /* 底部汇总 */
@@ -1461,7 +1472,8 @@ onMounted(() => {
     display: inline-flex; align-items: baseline; gap: 6px;
     .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
   }
-  &.is-batch-visible { margin-bottom: 72px; }
+  /* 汇总栏已进卡片内部：不再用 margin-bottom 上移（旧版挂在卡片外才需要），
+     浮动栏与它重叠的表现与发票管理一致。 */
 }
 
 /* 抽屉 resize 手柄（发票管理同款） */

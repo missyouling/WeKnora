@@ -192,6 +192,35 @@
    与下方表头右侧遮罩同令牌 → 主题切换同步变色，永不产生色差 */
 .biz-page .doc-list-view .t-table__header--fixed > tr > th {
   background-color: var(--td-bg-color-container);
+  /* 数据行滚动时必须被表头完全盖住：不设 z-index 时部分浏览器会把
+     sticky th 与 td 画在同一层，行文字会从表头下沿透出来。 */
+  z-index: 3;
+}
+
+/* 表头右侧滚动条轨道遮罩（四模块 + 能耗统一）
+ *
+ * 为什么需要：滚动条是滚动容器的 UI 层，绘制层级高于 sticky 表头，
+ * 表头背景盖不住它。不遮的话垂直滚动条会从表格最顶端开始画，
+ * 看起来就是「滚动条侵入表头标题栏」（真机截图红箭头所指）。
+ *
+ * 做法：在 .doc-list-view 上盖一块与表头同色的绝对定位色块，
+ * 宽度=实测滚动条宽度(--invoice-sbw)、高度=实测表头高度(--invoice-thh)。
+ * 页面只需在 .doc-list-view 的 style 上绑这两个变量（见 useTableHeaderFix）。
+ *
+ * 默认 0px：滚动条为 overlay（不占位）时不画色块，避免盖住表头内容。
+ */
+.biz-page .doc-list-view::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  width: var(--invoice-sbw, 0px);
+  height: var(--invoice-thh, 39px);
+  box-sizing: border-box;
+  pointer-events: none;
+  background: var(--td-bg-color-container);
+  border-bottom: 1px solid var(--td-component-stroke);
 }
 
 /* 列内边距收紧：减少列间视觉空隙（表头与单元格同步） */
@@ -218,10 +247,14 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 16px;
+  /* 与发票管理底栏一致的固定高度，让 6 个分类视图的底栏完全同高 */
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 16px;
   font-size: 13px;
   background: var(--td-bg-color-container);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+  /* 用实线分隔代替上投影：投影在白色卡片里像「浮起来的第二层」，与发票不符 */
+  border-top: 1px solid var(--td-border-level-1-color, #eef0f3);
   color: var(--td-text-color-secondary);
 }
 .biz-page .doc-summary-bar .doc-summary-count {

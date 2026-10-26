@@ -63,10 +63,12 @@ test('共享样式文件覆盖列表骨架 / 工具栏 / 表格 / 底栏', () =>
   const scroll = css.slice(css.indexOf('.biz-page .doc-list-scroll {'), css.indexOf('.biz-page .doc-list-view {'))
   assert.match(scroll, /overflow: hidden;/)
   assert.match(scroll, /border-radius: var\(--td-radius-large\);/)
-  // 底栏必须是 sticky 贴列表底部
+  // 底栏必须是 sticky 贴列表底部，且四模块 + 能耗 6 视图统一为 40px 高
   const summary = css.slice(css.indexOf('.biz-page .doc-summary-bar {'), css.indexOf('.biz-page .doc-batch-bar {'))
   assert.match(summary, /position: sticky;/)
-  assert.match(summary, /padding: 10px 16px;/)
+  assert.match(summary, /height: 40px;/)
+  assert.match(summary, /padding: 0 16px;/)
+  assert.match(summary, /border-top: 1px solid/)
 })
 
 test('工具栏：单行不折行 + 右组贴右 + 左组控件 32px 等高', () => {
