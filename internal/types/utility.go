@@ -284,7 +284,18 @@ type SolarBillExtractionItem struct {
 	TaxAmount       float64 `json:"tax_amount"`       // 税额 元
 	// 关口明细（1 个上网关口 + N 个发电关口）
 	Gateways []SolarGateway `json:"gateways"`
-	Remark   string         `json:"remark"`
+	// 上网关口首行电量明细的**顶层镜像**（上期示数/本期示数/倍率/抄见电量/计费电量）。
+	//
+	// 为什么要有：列表列与编辑抽屉绑定的是「字段定义」里的 meter_prev 等 5 个字段，
+	// 而提取结果只把它们放在 gateways[].readings[0]。不镜像到顶层，抽屉打开就是
+	// 一屏空输入框（真机：列表显示 16.91 / 18.75 / 3000 / 5520，抽屉全是「请输入」）。
+	// 落库时由 NormalizeSolarBillExtractionResult 上提，保存时前端再双向写回。
+	MeterPrev    float64 `json:"meter_prev"`
+	MeterCurr    float64 `json:"meter_curr"`
+	MeterRatio   float64 `json:"meter_ratio"`
+	MeterReading float64 `json:"meter_reading"`
+	MeterBill    float64 `json:"meter_bill"`
+	Remark       string  `json:"remark"`
 	// Fields 动态字段桶：用户在「字段定义」里新增的扩展字段统一收集到这里。
 	// 与 UtilityBillExtractionItem.Fields 同口径（固定结构体之外的字段必须有序可落）。
 	Fields map[string]any `json:"fields,omitempty"`

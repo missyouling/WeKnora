@@ -1450,7 +1450,7 @@ const pendingLabel = (pf: any) => {
 }
 
 // 轮询：解析完成后自动触发提取；提取中动态刷新状态
-const { extractInFlight, extractFailed, pendingFiles, start: startPolling, stop: stopPolling } = useBusinessPolling({
+const { extractInFlight, extractFailed, pendingFiles, scanOnce, start: startPolling, stop: stopPolling } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractUtilityBill(kid, fileId),
   filter: (item: any) => {
@@ -1530,7 +1530,10 @@ const onFileInputChange = async (e: Event) => {
     }
   }
   MessagePlugin.success(`已上传 ${files.length} 个文件，正在解析...`)
-  setTimeout(() => loadFiles(true), 1500)
+  // 立即扫一轮在途文件：状态条要马上出现，不能等 3s 定时器
+  // （长任务里用户会以为没反应，真机截图就是「什么提示都没有」）。
+  void scanOnce()
+  setTimeout(() => { loadFiles(true); void scanOnce() }, 1500)
 }
 
 // ---- 标签 ----
@@ -1730,12 +1733,15 @@ const feeRowsOf = (key: string) => {
   // 按行配置过滤 + 排序 + 改名（未配置的行隐藏；分时子项按 名称(时段) 一一对应）
   return cfgs.map((cfg: any) => {
     const want = parseRowKey(cfg.field_key)
-    const hit = list.find((it: any) => {
+    const hits = list.filter((it: any) => {
       const n = normRowName(it.name)
       const p = (it.period || '').trim()
       if (want.period) return n === normRowName(want.name) && p === want.period
       return n === normRowName(want.name)
     })
+    // 同名多行时优先取有金额的那行：合并单元格解析出的「全 0 影子行」若排在前，
+    // find 会拿到 0，账单概况就少算这笔钱（真机：少 31520.93 的偏差回收返还）。
+    const hit = hits.find((it: any) => (Number(it.fee) || 0) !== 0 || (Number(it.qty) || 0) !== 0) || hits[0]
     if (!hit) return null
     return { ...hit, name: cfg.label || cfg.field_key }
   }).filter(Boolean)
@@ -2429,7 +2435,9 @@ const handleReExtract = async () => {
     // 与合同管理一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
     await reparseKnowledge(r.knowledgeId)
     MessagePlugin.success(`已触发「${r.fileName}」重新解析与提取`)
-    setTimeout(() => loadFiles(true), 1500)
+    // 重提后文件立刻进入解析态，状态条必须同步亮起
+    void scanOnce()
+    setTimeout(() => { loadFiles(true); void scanOnce() }, 1500)
   } catch (e: any) {
     extractFailed.value.set(r.knowledgeId, Date.now())
     MessagePlugin.error(e?.message || '重新提取失败')

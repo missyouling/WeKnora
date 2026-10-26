@@ -233,3 +233,33 @@ test('工具栏严格 3 个按钮：字段 → 设置 → 主操作', () => {
     assert.match(src, /emit\('open-settings'\)/, `${name} 的设置入口必须走父级统一抽屉`)
   }
 })
+
+test('市电/光伏都必须挂解析提取状态条，且上传与重新提取后立即刷新在途', () => {
+  // 真机两处踩过：
+  //   ① 光伏页压根没挂 BusinessParseStatusBar —— 解析提取几分钟里页面零反馈；
+  //   ② 市电页挂了，但只用 3s 定时器刷新在途，点完「重新提取」状态条迟滞，
+  //      用户以为没反应（大账单要跑 1~6 分钟）。
+  assert.match(utilities, /<BusinessParseStatusBar/, '市电账单必须挂状态条')
+  assert.match(solar, /<BusinessParseStatusBar/, '光伏账单必须挂状态条')
+  // 在途数据源必须来自知识库原始文件列表，且暴露「立即刷一轮」的入口
+  assert.match(utilities, /scanOnce/, '市电需要能立即扫一轮在途文件')
+  assert.match(solar, /const pollOnce = async/, '光伏需要可立即执行的扫描函数')
+  assert.match(solar, /const refreshPending = /, '光伏需要暴露 refreshPending')
+  // 上传 / 重新提取后各调用一次
+  const solarRefreshCalls = (solar.match(/refreshPending\(\)/g) || []).length
+  assert.ok(solarRefreshCalls >= 3, `光伏上传与重提后都应立即刷新（当前 ${solarRefreshCalls} 处）`)
+  const utilityScanCalls = (utilities.match(/void scanOnce\(\)/g) || []).length
+  assert.ok(utilityScanCalls >= 2, `市电上传与重提后都应立即刷新（当前 ${utilityScanCalls} 处）`)
+})
+
+test('光伏编辑抽屉：五項示数/电量必须从 gateways 上提，保存时双向写回', () => {
+  // 真机：列表已有 16.91 / 18.75 / 3000 / 5520 / 5520，抽屉里五个输入框全空。
+  // 根因是抽屉直接铺了原始 item（五个值在 gateways[].readings[0] 里）。
+  assert.match(solar, /function detailFormOf/, '抽屉表单初始化必须做电量明细上提')
+  assert.match(solar, /detailForm\.value = detailFormOf\(row\.item\)/, 'openDetail 必须走上提后的表单')
+  for (const k of ['meter_prev', 'meter_curr', 'meter_ratio', 'meter_reading', 'meter_bill']) {
+    assert.ok(solar.includes(`lift('${k}'`), `抽屉必须上提 ${k}`)
+  }
+  assert.match(solar, /function syncSolarMeterReading/, '保存时必须把五项同步回 gateways')
+  assert.match(solar, /gw\.readings\[0\] = \{ \.\.\.gw\.readings\[0\], \.\.\.meter \}/, '上网关口首行要写回同一份值')
+})

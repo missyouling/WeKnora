@@ -210,5 +210,52 @@ func NormalizeSolarBillExtractionResult(extracted *SolarBillExtractionResult) {
 			clean = append(clean, g)
 		}
 		r.Gateways = clean
+		upliftSolarMeterReading(r)
+	}
+}
+
+// upliftSolarMeterReading 把上网关口首行电量明细镜像到记录顶层。
+//
+// 「字段定义」里光伏账单有 meter_prev / meter_curr / meter_ratio / meter_reading /
+// meter_bill 五个字段（列表列、编辑抽屉都绑它们），而提取结果天然落在
+// gateways[].readings[]。不同步的话列表能显示、抽屉却是空的（真机长期存在）。
+// 优先上网关口（列表展示的就是上网关口），没有再取第一个有关口。
+func upliftSolarMeterReading(r *types.SolarBillExtractionItem) {
+	if r == nil || len(r.Gateways) == 0 {
+		return
+	}
+	var gate *types.SolarGateway
+	for i := range r.Gateways {
+		if r.Gateways[i].GatewayType == "上网关口" && len(r.Gateways[i].Readings) > 0 {
+			gate = &r.Gateways[i]
+			break
+		}
+	}
+	if gate == nil {
+		for i := range r.Gateways {
+			if len(r.Gateways[i].Readings) > 0 {
+				gate = &r.Gateways[i]
+				break
+			}
+		}
+	}
+	if gate == nil {
+		return
+	}
+	rd := gate.Readings[0]
+	if r.MeterPrev == 0 {
+		r.MeterPrev = rd.Prev
+	}
+	if r.MeterCurr == 0 {
+		r.MeterCurr = rd.Curr
+	}
+	if r.MeterRatio == 0 {
+		r.MeterRatio = rd.Multiplier
+	}
+	if r.MeterReading == 0 {
+		r.MeterReading = rd.ReadingKwh
+	}
+	if r.MeterBill == 0 {
+		r.MeterBill = rd.BillKwh
 	}
 }

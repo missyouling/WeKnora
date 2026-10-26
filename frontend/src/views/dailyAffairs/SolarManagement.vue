@@ -29,6 +29,11 @@
           @select-all-columns="selectAllColumns" @filter-change="applyFilter" @settings="openFieldSettings"
           @primary="triggerUpload" @clear-selection="clearSelection" />
 
+        <!-- 进行中文件状态横幅（解析/提取实时进度，终态自动收起）。
+             与发票管理、市电账单同一个组件：上传/重新提取后必须立刻可见，
+             否则用户只能盯着空列表等（真机：光伏页此前根本没挂这个条）。 -->
+        <BusinessParseStatusBar :progress="[]" :pending-files="pendingFiles" />
+
         <!-- 列表 -->
         <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
           <div class="doc-list-view" :style="headerFixStyle">
@@ -450,10 +455,12 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
 import { notifyEnergyDataChanged } from './energyCounters'
+import { withTimeout } from '@/composables/useBusinessPolling'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -778,55 +785,77 @@ const pendingLabel = (pf: any) => {
 
 // ---- 轮询 ----
 let pollTimer: ReturnType<typeof setInterval> | null = null
-const startPolling = () => {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (!kbId.value) return
-    try {
-      const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-      const data = res?.data || res?.list || []
-      const arr = Array.isArray(data) ? data : []
-      // 光伏相关文件：仅处理打标 bill_kind=solar 或已提取 kind=solar_bill 的文件，
-      // 电费文件（bill_kind=electricity / kind=utility_bill / 无标记）一律跳过
-      pendingFiles.value = arr.filter((it: any) => {
-        const ps = it.parse_status
-        const meta = it.custom_metadata || {}
-        if (meta.kind === 'utility_bill') return false
-        if (meta.bill_kind && meta.bill_kind !== 'solar') return false
-        return ps === 'parsing' || ps === 'pending' || ps === 'failed' ||
-          meta.extract_status === 'failed' ||
-          meta.extract_status === 'extracting' || it.extract_status === 'extracting' ||
-          (meta.extract_status == null && ps === 'completed' && meta.bill_kind === 'solar')
-      })
-      // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取；
-      // 文件名含「光伏」但未打标未提取的自动补打标后提取（自愈，避免上传打标失败导致列表不可见）
-      for (const it of arr) {
-        const ps = it.parse_status
-        const meta = it.custom_metadata || {}
-        if (meta.kind === 'utility_bill') continue
-        if (meta.bill_kind && meta.bill_kind !== 'solar') continue
-        const isSolarName = /光伏/.test(it.file_name || '')
-        if (ps === 'completed' && isSolarName && !meta.kind && !meta.bill_kind && !meta.extract_status && !taggingInFlight.value.has(it.id)) {
-          taggingInFlight.value.add(it.id)
-          try {
-            await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar', fleet_cert_type: '光伏账单' } })
-          } catch { /* 打标失败下轮重试 */ } finally {
-            taggingInFlight.value.delete(it.id)
-          }
-        }
-        if (ps === 'completed' && meta.bill_kind === 'solar' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
-          extractInFlight.value.add(it.id)
-          try {
-            await extractSolarBill(kbId.value, it.id)
-            loadFiles(true)
-            notifyEnergyDataChanged()
-          } catch { /* 失败下轮重试 */ } finally {
-            extractInFlight.value.delete(it.id)
-          }
+let polling = false
+
+/**
+ * 立即执行一轮扫描。
+ *
+ * 上传 / 重新提取后必须马上刷一次：只靠 3s 定时器的话，状态条最多晚 3s 才出现，
+ * 长任务（几分钟）里用户会以为没反应。
+ */
+const pollOnce = async () => {
+  if (!kbId.value || polling) return
+  polling = true
+  try {
+    // 同 useBusinessPolling：单次请求悬住会冻结整个轮询 → 状态条永不收起
+    const res: any = await withTimeout(listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 }))
+    const data = res?.data || res?.list || []
+    const arr = Array.isArray(data) ? data : []
+    // 在途文件（状态条数据源）：解析中、提取中都要算。
+    // 注意必须从**知识库原始文件列表**里筛，不能从已渲染的表格行里筛——
+    // 在途/失败行本来就不进主列表，从行里取永远是空数组（真机踩过）。
+    pendingFiles.value = arr.filter((it: any) => {
+      const ps = it.parse_status
+      const meta = it.custom_metadata || {}
+      if (meta.kind === 'utility_bill') return false
+      if (meta.bill_kind && meta.bill_kind !== 'solar') return false
+      const es = meta.extract_status || it.extract_status
+      if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return true
+      if (ps === 'failed') return true
+      if (es === 'failed') return true
+      // 后端在途态有两种写法：extracting（旧）与 processing（asynq 队列）
+      if (es === 'extracting' || es === 'processing' || es === 'pending') return true
+      return es == null && ps === 'completed' && meta.bill_kind === 'solar'
+    })
+    // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取；
+    // 文件名含「光伏」但未打标未提取的自动补打标后提取（自愈，避免上传打标失败导致列表不可见）
+    for (const it of arr) {
+      const ps = it.parse_status
+      const meta = it.custom_metadata || {}
+      if (meta.kind === 'utility_bill') continue
+      if (meta.bill_kind && meta.bill_kind !== 'solar') continue
+      const isSolarName = /光伏/.test(it.file_name || '')
+      if (ps === 'completed' && isSolarName && !meta.kind && !meta.bill_kind && !meta.extract_status && !taggingInFlight.value.has(it.id)) {
+        taggingInFlight.value.add(it.id)
+        try {
+          await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar', fleet_cert_type: '光伏账单' } })
+        } catch { /* 打标失败下轮重试 */ } finally {
+          taggingInFlight.value.delete(it.id)
         }
       }
-    } catch { /* 轮询失败静默 */ }
-  }, 3000)
+      if (ps === 'completed' && meta.bill_kind === 'solar' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
+        extractInFlight.value.add(it.id)
+        try {
+          await extractSolarBill(kbId.value, it.id)
+          loadFiles(true)
+          notifyEnergyDataChanged()
+        } catch { /* 失败下轮重试 */ } finally {
+          extractInFlight.value.delete(it.id)
+        }
+      }
+    }
+  } catch { /* 轮询失败静默 */ } finally {
+    polling = false
+  }
+}
+
+/** 上传 / 重新提取 / 手动提取后主动刷一次在途状态（状态条立即出现）。 */
+const refreshPending = () => { void pollOnce() }
+
+const startPolling = () => {
+  stopPolling()
+  void pollOnce()
+  pollTimer = setInterval(() => { void pollOnce() }, 3000)
 }
 const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -915,6 +944,8 @@ const onFileInputChange = async (e: Event) => {
   }
   await loadFiles(true)
   notifyEnergyDataChanged()
+  // 立即刷一次在途状态：否则状态条要等 3s 定时器，长任务里像没反应
+  refreshPending()
 }
 
 // ---- 详情 ----
@@ -979,9 +1010,36 @@ const detailFormWrapper = computed(() => ({ data: detailForm.value, remarkParts:
 const detailQuality = ref<ExtractQuality>(EMPTY_QUALITY)
 const qualityLabel = (f: string) => f
 
+/**
+ * 详情表单数据 = 记录 + 电量明细上提。
+ *
+ * 「字段定义」里光伏账单有 meter_prev / meter_curr / meter_ratio / meter_reading /
+ * meter_bill 五个字段，而提取结果把它们放在 gateways[].readings[0]。列表列做过
+ * 这层拍平所以能显示，编辑抽屉若直接铺原始 item 就是一屏空输入框
+ * （真机：列表 16.91 / 18.75 / 3000 / 5520，抽屉全是「请输入」）。
+ * 这里统一补齐：顶层缺失时用上网关口首行回填，保证列表与抽屉同源。
+ */
+function detailFormOf(item: any): Record<string, any> {
+  const out: Record<string, any> = { ...(item || {}) }
+  const gateways: any[] = Array.isArray(out.gateways) ? out.gateways : []
+  const gw = gateways.find((g: any) => g?.gateway_type === '上网关口' && g?.readings?.length)
+    || gateways.find((g: any) => g?.readings?.length)
+  const rd = gw?.readings?.[0]
+  if (!rd) return out
+  const lift = (key: string, val: any) => {
+    if (out[key] === undefined || out[key] === null || out[key] === '') out[key] = val
+  }
+  lift('meter_prev', rd.prev)
+  lift('meter_curr', rd.curr)
+  lift('meter_ratio', rd.multiplier)
+  lift('meter_reading', rd.reading_kwh)
+  lift('meter_bill', rd.bill_kwh)
+  return out
+}
+
 const openDetail = async (row: Row) => {
   currentRow.value = row
-  detailForm.value = { ...(row.item || {}) }
+  detailForm.value = detailFormOf(row.item)
   detailQuality.value = EMPTY_QUALITY
   detailVisible.value = true
   try {
@@ -1003,6 +1061,44 @@ function typedDetailForm(): Record<string, any> {
   }
   return out
 }
+/**
+ * 保存时把顶层 5 项示数/电量同步回 gateways[].readings[0]。
+ *
+ * 顶层 meter_* 是列表与抽屉的读写面，gateways 是原始提取结构（明细表、导出、
+ * 后续重提都按它走）。两边不同步会出现「抽屉改了、明细表还是旧值」，
+ * 所以保存时双向写：顶层照用户输入，上网关口首行同步同一份值。
+ */
+function syncSolarMeterReading(rec: Record<string, any>): Record<string, any> {
+  const num = (v: any) => (v === '' || v === undefined || v === null ? 0 : Number(v) || 0)
+  const meter = {
+    prev: num(rec.meter_prev),
+    curr: num(rec.meter_curr),
+    multiplier: num(rec.meter_ratio),
+    reading_kwh: num(rec.meter_reading),
+    bill_kwh: num(rec.meter_bill),
+  }
+  // 顶层补齐：详情抽屉只改 gateways 之外的字段时也要保证顶层可读
+  rec.meter_prev = meter.prev
+  rec.meter_curr = meter.curr
+  rec.meter_ratio = meter.multiplier
+  rec.meter_reading = meter.reading_kwh
+  rec.meter_bill = meter.bill_kwh
+  const gateways: any[] = Array.isArray(rec.gateways) ? rec.gateways : []
+  let gw = gateways.find((g: any) => g?.gateway_type === '上网关口')
+  if (!gw) {
+    gw = { gateway_type: '上网关口', meter_no: '', project_name: '', readings: [], fees: [] }
+    gateways.unshift(gw)
+  }
+  if (!Array.isArray(gw.readings)) gw.readings = []
+  if (!gw.readings.length) {
+    gw.readings.push({ meter_type: '反向有功（总）', ...meter })
+  } else {
+    gw.readings[0] = { ...gw.readings[0], ...meter }
+  }
+  rec.gateways = gateways
+  return rec
+}
+
 const saveDetailFields = async () => {
   if (!currentRow.value || !kbId.value) return
   try {
@@ -1013,10 +1109,11 @@ const saveDetailFields = async () => {
     if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
     meta.kind = 'solar_bill'
     meta.records = meta.records || []
+    const payload = typedDetailForm()
     if (meta.records.length) {
-      meta.records[0] = { ...(meta.records[0] || {}), ...typedDetailForm() }
+      meta.records[0] = syncSolarMeterReading({ ...(meta.records[0] || {}), ...payload })
     } else {
-      meta.records = [{ ...typedDetailForm(), gateways: currentRow.value.item?.gateways || [] }]
+      meta.records = [syncSolarMeterReading({ ...payload, gateways: currentRow.value.item?.gateways || [] })]
     }
     // records 为数组型元数据，原生 PUT /knowledge/:id 标量校验会 500；走二开通用持久化路由
     await updateBusinessMetadata(kbId.value, kid, meta)
@@ -1139,7 +1236,8 @@ const handleReExtract = async () => {
     // 与电费/合同一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
     await reparseKnowledge(row.knowledgeId)
     MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
-    setTimeout(() => loadFiles(true), 1500)
+    refreshPending()
+    setTimeout(() => { loadFiles(true); refreshPending() }, 1500)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '重新提取失败')
   }

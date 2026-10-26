@@ -29,6 +29,25 @@ type utilityBillCustomMetadata struct {
 	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
+// markUtilityBillExtracting 在真正开跑前把 extract_status 落库为 processing。
+//
+// 为什么必须落库而不是只在前端内存里记「在途」：一份多页账单要跑 1~6 分钟，
+// 期间用户刷新页面或换设备再打开，前端 in-flight 集合是空的 ——
+// 状态条就不出现，用户只能对着不动的列表等（真机：点完「重新提取」毫无反馈）。
+// 落库后任何一次轮询都能看到在途态，状态条自然亮起。
+func (h *BusinessExtractHandler) markUtilityBillExtracting(ctx context.Context, knowledgeID string, cur utilityBillCustomMetadata) {
+	cur.ExtractStatus = "processing"
+	cur.ExtractError = ""
+	if cur.Kind == "" {
+		cur.Kind = "utility_bill"
+	}
+	if b, err := json.Marshal(cur); err == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(b)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist utility bill processing state: %v", serr)
+		}
+	}
+}
+
 // ExtractUtilityBill godoc
 // @Summary      提取电费账单字段
 // @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取电费账单四组字段并写入 custom_metadata。幂等：对同一知识重复调用会覆盖写。
@@ -88,6 +107,9 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 		})
 		return
 	}
+
+	// 开跑前先落库在途态，状态条才能在任意页面刷新后继续显示
+	h.markUtilityBillExtracting(effCtx, knowledgeID, curMeta)
 
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
@@ -187,6 +209,20 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 	if h.db != nil {
 		for i := range extracted.Records {
 			service.RecalculateUtilityBillFees(&extracted.Records[i])
+		}
+	}
+
+	// 费用明细的确定性还原（在重算之后，保留账单原值）。
+	//
+	// 国网「电费明细」是合并单元格宽表，解析成 Markdown 后费用组成列被摊平、
+	// 多行被压成一行，模型对同一份账单的输出极不稳定（真机：2026.09 连续多次
+	// 提取，有时 4 条、有时 0 条 → 详情页 7 个分项全 0、子表「暂无数据」）。
+	// 这里按列位置 + 费用组成字典把行还原出来，并与账单概况对账后采纳。
+	if len(extracted.Records) > 0 {
+		parsedFeeRows := service.ParseUtilityFeeRows(strings.Join(batches, "\n"))
+		if service.ApplyParsedUtilityFeeRows(&extracted.Records[0], parsedFeeRows) {
+			logger.Infof(ctx, "Utility bill fee rows rebuilt from source text: %d rows, sum=%.2f, knowledge ID: %s",
+				len(parsedFeeRows), service.SumUtilityFeeRows(parsedFeeRows), knowledgeID)
 		}
 	}
 
@@ -330,6 +366,33 @@ func mergeUtilityBillRecords(target, src *types.UtilityBillExtractionItem) {
 	setNum(&target.AdjustRatio, src.AdjustRatio)
 	// 费用明细按序拼接
 	target.FeeItems = append(target.FeeItems, src.FeeItems...)
+	// 电量明细：按示数类型并集（分页账单的峰平谷行常落在后一批，
+	// 旧实现不合并 → 用能分析只剩第 1 页的几行）。
+	if len(src.MeterReadings) > 0 {
+		have := make(map[string]bool, len(target.MeterReadings))
+		for _, m := range target.MeterReadings {
+			have[strings.TrimSpace(m.MeterType)] = true
+		}
+		for _, m := range src.MeterReadings {
+			t := strings.TrimSpace(m.MeterType)
+			if t != "" && have[t] {
+				continue
+			}
+			target.MeterReadings = append(target.MeterReadings, m)
+			if t != "" {
+				have[t] = true
+			}
+		}
+	}
+	if len(target.ResidentialReadings) == 0 && len(src.ResidentialReadings) > 0 {
+		target.ResidentialReadings = src.ResidentialReadings
+	}
+	if target.CapacityDetail == nil && src.CapacityDetail != nil {
+		target.CapacityDetail = src.CapacityDetail
+	}
+	if target.PfDetail == nil && src.PfDetail != nil {
+		target.PfDetail = src.PfDetail
+	}
 	// 多批次合并时动态字段也要并集保留：否则分页账单从第 2 批起，
 	// 用户在「字段定义」里配的扩展字段会全部丢失（每批只有各自的部分）。
 	if len(src.Fields) > 0 {

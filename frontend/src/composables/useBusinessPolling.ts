@@ -62,6 +62,28 @@ loadFlightSnapshot()
  */
 export const POLLING_MAX_BACKOFF_MS = 60_000
 
+/**
+ * 轮询间隔单次请求的硬超时。
+ *
+ * 为什么必须有：轮询循环是 `await tick()` 后 setTimeout 排下一轮，只要有一次
+ * 请求悬住（后端在跑提取、连接池打满、代理 keep-alive 卡死），`busy` 永远是 true，
+ * 整个轮询就冻结——表现是**状态条一直转、永不消失**（真机复现过：账单已提取完成、
+ * 库里已是 success，横幅还挂在页面上）。
+ * 超时后本轮按失败计（触发指数退避），下一轮重新发请求，状态条即可跟上真实状态。
+ */
+export const POLLING_REQUEST_TIMEOUT_MS = 15_000
+
+/** 给 promise 套一个硬超时；超时按失败抛出，由调用方计入退避。 */
+export function withTimeout<T>(p: Promise<T>, ms = POLLING_REQUEST_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('polling request timeout')), ms)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 /** 计算下一轮轮询延迟：无失败用基础间隔，失败按 2^n 退避并封顶。 */
 export function pollingBackoffDelay(baseMs: number, failures: number): number {
   if (!Number.isFinite(failures) || failures <= 0) return baseMs
@@ -122,7 +144,7 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
     busy = true
     let ok = true
     try {
-      const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
+      const res: any = await withTimeout(listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 }))
       const data = res?.data || res?.list || []
       const arr: BusinessFileItem[] = Array.isArray(data) ? data : []
       const needExtract: BusinessFileItem[] = []

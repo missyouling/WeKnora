@@ -346,6 +346,52 @@ func NormalizeUtilityBillExtractionResult(extracted *UtilityBillExtractionResult
 		if r.PfDetail != nil && r.PfDetail.AdjustFee == 0 && r.PfAdjustAmount != 0 {
 			r.PfDetail.AdjustFee = r.PfAdjustAmount
 		}
+		// 分时电量：模型经常只填「电量明细」表（meter_readings）而漏掉概况里的
+		// 尖/峰/平/谷汇总，导致详情页「用能分析」四行全 0（真机 2026.09 账单）。
+		// 计费电量优先（与电费口径一致），缺失时回退抄见电量。
+		deriveUtilityTOUKwh(r)
+	}
+}
+
+// deriveUtilityTOUKwh 用「电量明细」表回填尖/峰/平/谷与无功电量。
+//
+// 前提：meter_readings 每行带示数类型（正向有功（尖峰）等）与计费电量。
+// 只填空值，不覆盖模型已给出的汇总值（用户可能在详情页手工改过）。
+func deriveUtilityTOUKwh(r *types.UtilityBillExtractionItem) {
+	if r == nil {
+		return
+	}
+	for _, m := range r.MeterReadings {
+		kwh := m.BillKwh
+		if kwh == 0 {
+			kwh = m.ReadingKwh
+		}
+		if kwh == 0 {
+			continue
+		}
+		t := strings.TrimSpace(m.MeterType)
+		switch {
+		case strings.Contains(t, "无功"):
+			if r.ReactiveKwh == 0 {
+				r.ReactiveKwh = kwh
+			}
+		case strings.Contains(t, "尖峰") || strings.Contains(t, "尖"):
+			if r.DeepPeakKwh == 0 {
+				r.DeepPeakKwh = kwh
+			}
+		case strings.Contains(t, "峰"):
+			if r.PeakKwh == 0 {
+				r.PeakKwh = kwh
+			}
+		case strings.Contains(t, "平"):
+			if r.FlatKwh == 0 {
+				r.FlatKwh = kwh
+			}
+		case strings.Contains(t, "谷"):
+			if r.ValleyKwh == 0 {
+				r.ValleyKwh = kwh
+			}
+		}
 	}
 }
 

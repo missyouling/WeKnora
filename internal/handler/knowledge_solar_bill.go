@@ -29,6 +29,21 @@ type solarBillCustomMetadata struct {
 	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
+// markSolarBillExtracting 同电费账单：开跑前把 processing 落库，
+// 让状态条在刷新/换设备后仍能看到在途（否则用户以为点了没反应）。
+func (h *BusinessExtractHandler) markSolarBillExtracting(ctx context.Context, knowledgeID string, cur solarBillCustomMetadata) {
+	cur.ExtractStatus = "processing"
+	cur.ExtractError = ""
+	if cur.Kind == "" {
+		cur.Kind = "solar_bill"
+	}
+	if b, err := json.Marshal(cur); err == nil {
+		if serr := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(b)); serr != nil {
+			logger.Warnf(ctx, "Failed to persist solar bill processing state: %v", serr)
+		}
+	}
+}
+
 // ExtractSolarBill godoc
 // @Summary      提取光伏发电账单字段
 // @Description  读取已解析文档文本，调用提取模型（复用知识库 summary_model_id）提取光伏账单字段并写入 custom_metadata（kind=solar_bill）。幂等：对同一知识重复调用会覆盖写。
@@ -88,6 +103,9 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 		})
 		return
 	}
+
+	// 开跑前先落库在途态
+	h.markSolarBillExtracting(effCtx, knowledgeID, curMeta)
 
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
