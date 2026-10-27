@@ -94,6 +94,14 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	}
 	var curMeta solarBillCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curMeta)
+	// 分类守卫（与电费侧对称）：明确属于市电账单的文件不走光伏管线。
+	// 例外：文件名带「光伏」或已标成 solar_bill 的（含误归档后修正的存量），
+	// 允许用光伏管线重提，否则修不回来。
+	if billMetaLooksUtility(knowledge.CustomMetadata, knowledge.Title) &&
+		!strings.Contains(knowledge.Title, "光伏") && curMeta.Kind != "solar_bill" {
+		c.Error(errors.NewBadRequestError("该文件属于市电账单，请从「市电账单」重新提取（不应用光伏管线）"))
+		return
+	}
 	if curMeta.ExtractStatus == "manual" {
 		logger.Infof(ctx, "Solar bill extraction skipped: knowledge %s is manual intake", knowledgeID)
 		c.JSON(http.StatusOK, gin.H{

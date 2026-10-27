@@ -29,6 +29,54 @@ type utilityBillCustomMetadata struct {
 	RegexPatches   []service.RegexFieldPatch   `json:"regex_patches,omitempty"`
 }
 
+// billMetaLooksSolar 判断一份文件是否明确属于「光伏账单」。
+//
+// 市电与光伏共用一个知识库，两页轮询都常驻：只要有一边判断失误，就会把
+// 对方的文件拉进自己的提取管线，写成对方的 kind —— 结果是「一张单子只出现在
+// 错误的列表里，正确列表查不到」，还会污染按月取账单（真机事故：774e6b74）。
+// 判据按可靠性排序：分类标签（fleet_cert_type / invoice_category）> 已有 kind >
+// 文件名。任一命中即认为属于光伏，宁可拒绝也不能错归档。
+func billMetaLooksSolar(raw types.JSON, title string) bool {
+	var m map[string]interface{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &m)
+	}
+	str := func(k string) string {
+		if v, ok := m[k].(string); ok {
+			return strings.TrimSpace(v)
+		}
+		return ""
+	}
+	if str("fleet_cert_type") == "光伏账单" || str("invoice_category") == "光伏账单" {
+		return true
+	}
+	if str("kind") == "solar_bill" || str("bill_kind") == "solar" {
+		return true
+	}
+	return strings.Contains(title, "光伏")
+}
+
+// billMetaLooksUtility 镜像判定：文件是否明确属于「市电账单」。
+func billMetaLooksUtility(raw types.JSON, title string) bool {
+	var m map[string]interface{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &m)
+	}
+	str := func(k string) string {
+		if v, ok := m[k].(string); ok {
+			return strings.TrimSpace(v)
+		}
+		return ""
+	}
+	if str("fleet_cert_type") == "市电账单" || str("invoice_category") == "市电账单" {
+		return true
+	}
+	if str("kind") == "utility_bill" || str("bill_kind") == "electricity" {
+		return true
+	}
+	return false
+}
+
 // markUtilityBillExtracting 在真正开跑前把 extract_status 落库为 processing。
 //
 // 为什么必须落库而不是只在前端内存里记「在途」：一份多页账单要跑 1~6 分钟，
@@ -98,6 +146,13 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 	}
 	var curMeta utilityBillCustomMetadata
 	_ = json.Unmarshal(knowledge.CustomMetadata, &curMeta)
+	// 分类守卫：明确属于光伏账单的文件拒绝走电费管线。
+	// 前端已双向隔离，这里是最后一道闸 —— 任何遗留调用（旧页面、脚本、误点）
+	// 都不能再把光伏账单写成 kind=utility_bill。
+	if billMetaLooksSolar(knowledge.CustomMetadata, knowledge.Title) {
+		c.Error(errors.NewBadRequestError("该文件属于光伏账单，请从「光伏账单」重新提取（不应用电费管线）"))
+		return
+	}
 	if curMeta.ExtractStatus == "manual" {
 		logger.Infof(ctx, "Utility bill extraction skipped: knowledge %s is manual intake", knowledgeID)
 		c.JSON(http.StatusOK, gin.H{

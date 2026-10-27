@@ -177,22 +177,17 @@
 
     <!-- 编辑/新增抽屉：与发票/合同同款右侧抽屉底座（SettingDrawer + t-form 双列），
          旧自写 <t-drawer> + 手写 .rec-field 布局已淘汰 → MeterRecordDrawer 组件。 -->
+    <!-- 字段全部由当前分类的「字段定义（subs）」驱动：编辑与新增共用，天然 1:1。
+         底部只留 取消 / 保存；删除入口在浮动批量栏（单选后「删除」），
+         抽屉里再放一个「删除本行」既重复又与中台抽屉规范不符。 -->
     <MeterRecordDrawer :visible="drawerVisible" :category="props.category" :title="drawerTitle" :form="form"
-      :editing-item-id="editingItemId" :meter-options="meterEditOptions"
+      :subs="categorySubs" :meter="currentMeter" :editing-item-id="editingItemId" :meter-options="meterEditOptions"
       :use-unit-options="useUnits.map((u) => ({ label: u, value: u }))"
       :default-unit-price="currentMeter?.default_unit_price" :is-time-meter="isTimeMeter"
       :reading-invalid="readingInvalid" :unit-price-diff="unitPriceDiff" :duplicate-warning="duplicateWarning"
       :form-rate="formRate" :form-usage="formUsage" :form-amount="formAmount" :saving="saving" :today="today"
       @update:visible="(v: boolean) => (drawerVisible = v)" @close="onDrawerClose" @save="save"
-      @meter-change="onMeterChange" @use-unit-change="onUseUnitChange">
-      <template #footer-left>
-        <t-popconfirm v-if="editingItemId" theme="warning" :content="'确定删除该行抄表记录吗？'"
-          :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-          @confirm="deleteCurrentRow">
-          <t-button variant="outline" size="small" theme="danger">删除本行</t-button>
-        </t-popconfirm>
-      </template>
-    </MeterRecordDrawer>
+      @meter-change="onMeterChange" @use-unit-change="onUseUnitChange" />
 
     <!-- 打印预览弹窗 -->
     <div v-if="printVisible" class="meter-print-mask">
@@ -1108,12 +1103,6 @@ const save = async () => {
 
 const onDrawerClose = () => { drawerVisible.value = false }
 
-/** 抽屉底部「删除本行」：行打开抽屉时已被单选（onRowClick 先选中再 openEdit），
- * 直接复用浮动条的批量删除逻辑删当前行，删完收起抽屉。 */
-const deleteCurrentRow = async () => {
-  await handleDelete()
-  drawerVisible.value = false
-}
 
 // ---- 删除 ----
 const handleDelete = async () => {

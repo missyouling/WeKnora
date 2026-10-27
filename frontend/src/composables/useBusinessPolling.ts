@@ -102,6 +102,15 @@ export interface UseBusinessPollingOptions {
   onRemoved?: (item: BusinessFileItem) => void
   /** 每轮扫描完额外的业务行刷新回调（合同刷新聚合行、发票刷新文件行等） */
   onTick?: () => Promise<void> | void
+  /**
+   * 在途文件由「有」变「无」的回调（整批上传/解析/提取全部结束）。
+   *
+   * 为什么必须有：账单页此前只靠 `onTick` 每 3s 拉一次列表，而光伏页干脆
+   * 只在自己触发提取时刷新 —— 用户在别处（上传弹窗）完成提取后，列表永远
+   * 停在旧数据上，得手动刷新（真机：解析提取都成功，列表里没有新账单）。
+   * 这里给出唯一的「全流程结束」信号，各业务页接上即可自动刷新列表与卡片计数。
+   */
+  onSettled?: () => Promise<void> | void
   /** 轮询间隔，默认 3s */
   intervalMs?: number
   /** 文件过滤器：只处理匹配的文件（能耗模块按 bill_kind 区分电费/光伏） */
@@ -116,7 +125,7 @@ export interface UseBusinessPollingOptions {
  * 4) 把 pending 文件回调给业务层渲染状态行。
  */
 export function useBusinessPolling(opts: UseBusinessPollingOptions) {
-  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, intervalMs = 3000, filter } = opts
+  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, onSettled, intervalMs = 3000, filter } = opts
 
   const extractInFlight = ref<Set<string>>(sharedExtractInFlight)
   // 失败记录：id -> 首次失败时间戳。5 分钟后允许重试，避免一次网络抖动永久拉黑
@@ -131,6 +140,8 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
   // 状态条就一直显示「正在提取…」不消失（真机曾挂到 11 分 3 秒）。
   const PENDING_STALE_MS = 15 * 60 * 1000
   const pendingSince = new Map<string, number>()
+  /** 上一轮在途数量：用于识别「由有变无」的整批完成时刻 */
+  let lastPendingCount = 0
   // 整轮（扫描 + onTick 刷新列表）在途锁。此前只有 scanOnce 有 busy 护栏，
   // onTick（发票页 loadFiles）没有——列表接口一旦超过 intervalMs，每 3s 就会
   // 新起一轮 onTick，请求层层叠加堆积，最终压垮后端连接池。
@@ -206,8 +217,17 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
         }
       }
 
+      const prevPendingCount = lastPendingCount
+      lastPendingCount = visiblePend.length
       pendingFiles.value = visiblePend
       onPendingFiles?.(visiblePend)
+      // 整批完成（上一轮还有在途、这一轮清零）：通知业务页刷新列表与卡片计数。
+      // 放在 onTick 之前，保证「列表里能立刻看到刚提取完的文件」。
+      if (prevPendingCount > 0 && visiblePend.length === 0 && onSettled) {
+        try {
+          await onSettled()
+        } catch { /* 刷新失败不影响轮询节奏，下轮 onTick 仍会兜住 */ }
+      }
 
       for (const item of needExtract.slice(0, 5)) {
         extractInFlight.value.add(item.id)

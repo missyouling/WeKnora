@@ -69,6 +69,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { uploadKnowledgeFile, getKnowledgeDetails, updateKnowledgeMetadata } from '@/api/knowledge-base'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
+import { extractUtilityBill, extractSolarBill } from '@/api/knowledge-base'
 import { sharedExtractInFlight, saveFlightSnapshot } from '@/composables/useBusinessPolling'
 import { isExtractInProgress } from '@/composables/extractConflict'
 import { getScope } from '../../registry'
@@ -81,6 +82,18 @@ const props = defineProps<{
   defaultType?: string
   /** 自定义弹窗标题；未传时按 scope 自动推断（invoice→上传发票，其它→上传证照） */
   title?: string
+  /**
+   * 提取通道。
+   * - scope（默认）：按 registry 的 api.extract 分发（发票走 business，车队走 fleet）；
+   * - energy-bill：电费 / 光伏账单专用管线，按所选分类调用
+   *   extract-utility-bill / extract-solar-bill。
+   *
+   * 为什么必须显式声明而不是靠 scope：账单提取不走 business 通用管线，
+   * 通用管线写的是 energy 台账结构（energy_items），账单列表读的是
+   * custom_metadata.records（kind=utility_bill / solar_bill）。
+   * 走错通道的表现是「解析提取都完成，但列表里没有这条」。
+   */
+  extractMode?: 'scope' | 'energy-bill'
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -476,6 +489,16 @@ function drainExtractQueue() {
 }
 
 async function extractFile(kid: string, scope: string, certType: string) {
+  // 账单专用通道：分类决定管线（光伏账单 → extract-solar-bill，其余 → extract-utility-bill）。
+  // 不能靠 scope 推断：市电与光伏共用一个知识库，「按库选接口」必然二选一错一半。
+  if (props.extractMode === 'energy-bill') {
+    if (/光伏/.test(certType)) {
+      await extractSolarBill(props.kbId, kid)
+    } else {
+      await extractUtilityBill(props.kbId, kid)
+    }
+    return
+  }
   const body = certType ? { scope, cert_type: certType } : { scope }
   if (scopeDesc.value?.api.extract === 'business') {
     await extractBusinessDocument(props.kbId, kid, body)

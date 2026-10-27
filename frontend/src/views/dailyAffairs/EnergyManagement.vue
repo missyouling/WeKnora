@@ -13,7 +13,8 @@
 
     <!-- 加载中 -->
     <div v-if="loading && !kbId" class="loading-area">
-      <t-loading size="large" text="正在初始化能耗管理..." />
+      <!-- 模块初始化加载：与上游项目完全一致（small、无文字、父容器居中） -->
+      <t-loading size="small" />
     </div>
 
     <!-- KB 不存在：空状态 -->

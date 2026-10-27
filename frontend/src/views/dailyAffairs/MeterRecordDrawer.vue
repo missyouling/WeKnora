@@ -2,13 +2,14 @@
   <!--
     抄表记录抽屉（电费/水费/气费核算共用）。
 
-    为什么抽组件：三张核算表此前各自用自写 <t-drawer> + 手写 .rec-field 布局，
-    与发票/合同的中台详情抽屉（BusinessSplitDetailDrawer：SettingDrawer 底座 +
-    t-form-item 双列 + 统一底栏）风格割裂。表单结构 100% 一致（只有介质文案、
-    水费附加费、分时四段三种差异），所以共用一份实现：
-      · 底座换成 SettingDrawer（自带拖拽调宽/宽度持久化，与发票同手柄）；
-      · 字段用 t-form-item 双列网格（.bsd-grid 同款栅格与控件右缘对齐）；
-      · 分时/普通两种形态与校验提示全保留。
+    字段来源只有一个：当前分类的「字段定义（subs）」。
+    编辑与新增共用本组件，因此两条路径天然与配置 1:1 —— 顺序、显隐、标签全部照 subs 走，
+    不再有写死的表单项（旧版多出 subs 里不存在的「录入日期」，又漏掉已启用的
+    抄表方式 / 表号 / 默认单价 / 安装日期 / 用量，真机截图对比确认）。
+
+    差异只有两种，都在字段渲染注册表（meterFieldRenderers.ts）里表达：
+      · 分时电表：在「起度」位置整行渲染 尖/峰/平/谷 四段起止度；
+      · 派生/档案类字段（电量、金额、倍率、表号、抄表方式、安装日期、默认单价）只读。
 
     状态契约：`form` 由父级持有并直接传入（对象引用共享，组件写属性即父级生效），
     月份/表计联动仍走父级 watch([form.month, form.meterId])，组件只透传 change 事件。
@@ -17,107 +18,105 @@
     class="meter-record-drawer" :storage-key="`weknora-utility-${category}-record-drawer-width`"
     @update:visible="(v: boolean) => emit('update:visible', v)" @cancel="emit('close')">
     <div class="mr-grid">
-      <t-form-item label="月份" label-width="96px">
-        <t-date-picker :model-value="form.month" mode="month" format="YYYY-MM" value-type="YYYY-MM"
-          placeholder="选择月份" @update:model-value="(v: any) => (form.month = String(v || ''))" />
-        <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
-      </t-form-item>
-      <t-form-item label="抄表日期" label-width="96px">
-        <t-date-picker :model-value="form.readingDate" format="YYYY-MM-DD" value-type="YYYY-MM-DD"
-          placeholder="选择日期" clearable @update:model-value="(v: any) => (form.readingDate = String(v || ''))" />
-      </t-form-item>
-      <t-form-item label="使用单位" label-width="96px">
-        <t-select :model-value="form.useUnit" :options="useUnitOptions" filterable :disabled="!!editingItemId"
-          @update:model-value="(v: any) => (form.useUnit = String(v ?? ''))" @change="emit('use-unit-change')" />
-      </t-form-item>
-      <t-form-item :label="meterLabel" label-width="96px">
-        <t-select :model-value="form.meterId" :placeholder="'选择' + meterLabel" :options="meterOptions" filterable
-          @update:model-value="(v: any) => (form.meterId = String(v ?? ''))" @change="emit('meter-change')" />
-        <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
-      </t-form-item>
-
-      <t-form-item label="抄表人" label-width="96px">
-        <t-input :model-value="form.reader" placeholder="默认取表计管理人员"
-          @update:model-value="(v: string) => (form.reader = v)" />
-      </t-form-item>
-      <t-form-item label="录入日期" label-width="96px">
-        <div class="mr-readonly">{{ form.recordDate || today }}</div>
-      </t-form-item>
-
-      <template v-if="isTimeMeter">
-        <div v-for="p in timePeriods" :key="p.key" class="mr-field-wide">
-          <t-form-item :label="p.label" label-width="96px">
-            <div class="mr-period-pair">
-              <t-input :model-value="String(form[p.prevKey] ?? '')" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''"
-                @update:model-value="(v: string) => (form[p.prevKey] = Number(v) || 0)" />
-              <span class="mr-period-sep">→</span>
-              <t-input :model-value="String(form[p.currKey] ?? '')" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''"
-                @update:model-value="(v: string) => (form[p.currKey] = Number(v) || 0)" />
-            </div>
-            <p v-if="p.key === 'valley' && readingInvalid" class="mr-error">各时段止度不得小于起度</p>
+      <template v-for="f in fields" :key="f.key">
+        <!-- 分时电表：四段起止度整行块（替代「起度/止度」两个单项） -->
+        <div v-if="f.spec.kind === 'readings'" class="mr-field-wide">
+          <template v-if="isTimeMeter">
+            <t-form-item v-for="p in timePeriods" :key="p.key" :label="p.label" label-width="96px">
+              <div class="mr-period-pair">
+                <t-input :model-value="String(form[p.prevKey] ?? '')" type="number" placeholder="起度"
+                  :status="readingInvalid ? 'error' : ''"
+                  @update:model-value="(v: string) => (form[p.prevKey] = Number(v) || 0)" />
+                <span class="mr-period-sep">→</span>
+                <t-input :model-value="String(form[p.currKey] ?? '')" type="number" placeholder="止度"
+                  :status="readingInvalid ? 'error' : ''"
+                  @update:model-value="(v: string) => (form[p.currKey] = Number(v) || 0)" />
+              </div>
+              <p v-if="p.key === 'valley' && readingInvalid" class="mr-error">各时段止度不得小于起度</p>
+            </t-form-item>
+          </template>
+          <t-form-item v-else :label="f.label" label-width="96px">
+            <t-input :model-value="String(form[f.formKey] ?? '')"
+              type="number" :placeholder="f.label" :status="readingInvalid ? 'error' : ''"
+              @update:model-value="(v: string) => (form[f.formKey] = Number(v) || 0)" />
+            <p v-if="readingInvalid" class="mr-error">止度不得小于起度</p>
           </t-form-item>
         </div>
-      </template>
-      <template v-else>
-        <t-form-item label="起度" label-width="96px">
-          <t-input :model-value="String(form.startReading ?? '')" type="number" placeholder="起度" :status="readingInvalid ? 'error' : ''"
-            @update:model-value="(v: string) => (form.startReading = Number(v) || 0)" />
-          <p v-if="readingInvalid" class="mr-error">止度不得小于起度</p>
-        </t-form-item>
-        <t-form-item label="止度" label-width="96px">
-          <t-input :model-value="String(form.endReading ?? '')" type="number" placeholder="止度" :status="readingInvalid ? 'error' : ''"
-            @update:model-value="(v: string) => (form.endReading = Number(v) || 0)" />
-          <p v-if="readingInvalid" class="mr-error">止度不得小于起度</p>
-        </t-form-item>
-      </template>
 
-      <t-form-item label="倍率" label-width="96px">
-        <div class="mr-readonly">{{ fmtNum(formRate) }}×</div>
-      </t-form-item>
-      <t-form-item label="单价" label-width="96px">
-        <t-input :model-value="String(form.unitPrice ?? '')" type="number" placeholder="单价" :status="unitPriceDiff ? 'error' : ''"
-          @update:model-value="(v: string) => (form.unitPrice = Number(v) || 0)" />
-        <p v-if="unitPriceDiff" class="mr-error">与配置默认单价 {{ fmtUnitPrice(defaultUnitPrice) }} 不同</p>
-      </t-form-item>
-      <template v-if="category === 'water'">
-        <t-form-item label="垃圾处置费" label-width="96px">
-          <t-input :model-value="String(form.garbageFee ?? '')" type="number" placeholder="默认 13 元/套"
-            @update:model-value="(v: string) => (form.garbageFee = Number(v) || 0)" />
-        </t-form-item>
-        <t-form-item label="二次供水费" label-width="96px">
-          <t-input :model-value="String(form.secondaryWaterFee ?? '')" type="number" placeholder="选填"
-            @update:model-value="(v: string) => (form.secondaryWaterFee = Number(v) || 0)" />
-        </t-form-item>
-        <t-form-item label="污水处理费" label-width="96px">
-          <t-input :model-value="String(form.sewageFee ?? '')" type="number" placeholder="选填"
-            @update:model-value="(v: string) => (form.sewageFee = Number(v) || 0)" />
+        <!-- 备注等长文本：整行 -->
+        <div v-else-if="f.spec.fullWidth" class="mr-field-wide">
+          <t-form-item :label="f.label" label-width="96px">
+            <t-textarea :model-value="form[f.formKey]" :maxlength="500" placeholder="选填"
+              @update:model-value="(v: string) => (form[f.formKey] = v)" />
+          </t-form-item>
+        </div>
+
+        <t-form-item v-else :label="f.label" label-width="96px">
+          <!-- 月份 -->
+          <template v-if="f.spec.kind === 'month'">
+            <t-date-picker :model-value="form[f.formKey]" mode="month" format="YYYY-MM" value-type="YYYY-MM"
+              placeholder="选择月份" @update:model-value="(v: any) => (form[f.formKey] = String(v || ''))" />
+            <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
+          </template>
+
+          <!-- 日期 -->
+          <t-date-picker v-else-if="f.spec.kind === 'date'" :model-value="form[f.formKey]" format="YYYY-MM-DD"
+            value-type="YYYY-MM-DD" placeholder="选择日期" clearable
+            @update:model-value="(v: any) => (form[f.formKey] = String(v || ''))" />
+
+          <!-- 使用单位 -->
+          <t-select v-else-if="f.spec.kind === 'use-unit'" :model-value="form[f.formKey]" :options="useUnitOptions"
+            filterable :disabled="!!editingItemId"
+            @update:model-value="(v: any) => (form[f.formKey] = String(v ?? ''))" @change="emit('use-unit-change')" />
+
+          <!-- 表计 -->
+          <template v-else-if="f.spec.kind === 'meter'">
+            <t-select :model-value="form[f.formKey]" :placeholder="'选择' + meterLabel" :options="meterOptions" filterable
+              @update:model-value="(v: any) => (form[f.formKey] = String(v ?? ''))" @change="emit('meter-change')" />
+            <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
+          </template>
+
+          <!-- 文本 -->
+          <t-input v-else-if="f.spec.kind === 'text'" :model-value="String(form[f.formKey] ?? '')" placeholder="选填"
+            @update:model-value="(v: string) => (form[f.formKey] = v)" />
+
+          <!-- 数值（单价 / 水费附加费） -->
+          <t-input v-else-if="f.spec.kind === 'number'" :model-value="String(form[f.formKey] ?? '')" type="number"
+            :placeholder="f.label" @update:model-value="(v: string) => (form[f.formKey] = Number(v) || 0)" />
+
+          <!-- 补差：type=number 会吞负号 → 文本 + 数字键盘，聚焦全选 -->
+          <t-input v-else-if="f.spec.kind === 'signed'" :model-value="String(form[f.formKey] ?? '')" type="text"
+            inputmode="decimal" placeholder="补差金额，可为负"
+            @update:model-value="(v: string) => (form[f.formKey] = v)"
+            @focus="(e: any) => { const t = e?.target || e; t?.select?.() }" />
+
+          <!-- 用量：派生只读 -->
+          <template v-else-if="f.spec.kind === 'usage'">
+            <div class="mr-stack">
+              <div class="mr-readonly">{{ fmtNum(formUsage) }} {{ unitLabel }}</div>
+              <p class="mr-hint">{{ isTimeMeter ? '四时段电量合计' : '（止度 − 起度）× 倍率' }}</p>
+            </div>
+          </template>
+
+          <!-- 金额：派生只读 -->
+          <template v-else-if="f.spec.kind === 'amount'">
+            <div class="mr-stack">
+              <div class="mr-calc">{{ fmtMoney(formAmount) }} 元</div>
+              <p class="mr-hint">{{ amountHint }}</p>
+            </div>
+          </template>
+
+          <!-- 档案/倍率等只读项 -->
+          <template v-else>
+            <div class="mr-readonly">{{ readonlyText(f.key) }}</div>
+            <p v-if="f.key === 'unit_price' && unitPriceDiff" class="mr-error">与配置默认单价 {{ fmtUnitPrice(defaultUnitPrice) }} 不同</p>
+            <p v-if="f.key === 'install_date'" class="mr-hint">表计档案</p>
+          </template>
         </t-form-item>
       </template>
-      <t-form-item label="补差" label-width="96px">
-        <!-- type=number 会吞负号：文本输入 + 数字键盘，聚焦全选便于覆盖 -->
-        <t-input :model-value="String(form.subsidy ?? '')" type="text" inputmode="decimal" placeholder="补差金额，可为负"
-          @update:model-value="(v: string) => (form.subsidy = v)"
-          @focus="(e: any) => { const t = e?.target || e; t?.select?.() }" />
-      </t-form-item>
-      <t-form-item v-if="!isTimeMeter" :label="categoryLabel" label-width="96px">
-        <div class="mr-calc">{{ fmtMoney(formAmount) }} 元</div>
-        <p class="mr-hint">自动计算 · {{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
-      </t-form-item>
-      <t-form-item v-else label="电费" label-width="96px">
-        <div class="mr-readonly">按租户分摊核算</div>
-        <p class="mr-hint">{{ usageLabel }} {{ fmtNum(formUsage) }} {{ unitLabel }}</p>
-      </t-form-item>
-
-      <div class="mr-field-wide">
-        <t-form-item label="备注" label-width="96px">
-          <t-textarea :model-value="form.remark" :maxlength="500" placeholder="选填"
-            @update:model-value="(v: string) => (form.remark = v)" />
-        </t-form-item>
-      </div>
     </div>
 
     <div class="mr-footer">
-      <slot name="footer-left" />
       <t-button variant="outline" size="small" @click="emit('close')">取消</t-button>
       <t-button theme="primary" size="small" :loading="saving" @click="emit('save')">保存</t-button>
     </div>
@@ -127,14 +126,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import { METER_FALLBACK_FIELDS, meterArchiveValue, meterFieldSpec } from './meterFieldRenderers'
 
 type MeterCategory = 'electricity' | 'water' | 'gas'
+
 const props = defineProps<{
   visible: boolean
   category: MeterCategory
   title: string
   /** 父级持有的表单对象（引用共享：组件写属性 = 父级 form 更新，watch 联动照常触发） */
   form: Record<string, any>
+  /** 当前分类的「字段定义」；为空时回落到内置兜底字段集 */
+  subs?: Array<{ name: string; label?: string; enabled?: boolean; data_type?: string }>
+  /** 当前选中的表计档案（表号 / 抄表方式 / 安装日期 / 默认单价 从这里取） */
+  meter?: Record<string, any> | null
   /** 当前编辑行的 item id（有值 = 编辑态，使用单位锁定） */
   editingItemId?: string
   meterOptions: Array<{ label: string; value: string; disabled?: boolean }>
@@ -161,8 +166,65 @@ const emit = defineEmits<{
 
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
 const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.category === 'electricity' ? '千瓦时' : 'm³'))
-const categoryLabel = computed(() => (props.category === 'water' ? '水费' : props.category === 'electricity' ? '电费' : '气费'))
-const usageLabel = computed(() => (props.category === 'water' ? '用水量' : props.category === 'electricity' ? '用电量' : '用气量'))
+
+/**
+ * 渲染清单 = subs（启用项，保持配置顺序）。
+ *
+ * 分时电表下「止度」不再单独出现：它已经被「起度」位置的四段块覆盖，
+ * 再渲染一遍会出现一行无意义的普通起止度（旧版就是这种双份）。
+ */
+const fields = computed(() => {
+  const src = (props.subs || []).filter((s: any) => s && s.enabled !== false && String(s.name || '').trim())
+  const list = src.length ? src : METER_FALLBACK_FIELDS
+  return list
+    .map((s: any) => {
+      const key = String(s.name || '')
+      // 兜底集的「表计」标签按介质自适应（电表/水表/气表）
+      const label = key === 'meter' && !src.length ? meterLabel.value : String(s.label || key)
+      return {
+        key,
+        label,
+        formKey: formKeyOf(key),
+        spec: meterFieldSpec(key, s.data_type),
+      }
+    })
+    .filter((f) => !(props.isTimeMeter && f.key === 'end_reading'))
+})
+
+/**
+ * subs 的 key 是 snake_case（后端字段目录/列表列名），表单对象是 camelCase。
+ * 这层映射是唯一转换点：两侧各自保持既有命名习惯，靠这里对齐
+ * （漏一个就会出现「填了但保存不到」的静默丢值）。
+ */
+const FORM_KEY: Record<string, string> = {
+  month: 'month',
+  reading_date: 'readingDate',
+  use_unit: 'useUnit',
+  meter: 'meterId',
+  reader: 'reader',
+  meter_no: 'meterNo',
+  meter_mode: 'meterMode',
+  install_date: 'installDate',
+  default_unit_price: 'defaultUnitPrice',
+  start_reading: 'startReading',
+  end_reading: 'endReading',
+  rate: 'rate',
+  usage: 'usage',
+  unit_price: 'unitPrice',
+  subsidy: 'subsidy',
+  garbage_fee: 'garbageFee',
+  secondary_water_fee: 'secondaryWaterFee',
+  sewage_fee: 'sewageFee',
+  amount: 'amount',
+  remark: 'remark',
+}
+function formKeyOf(key: string): string {
+  return FORM_KEY[key] || key
+}
+
+const amountHint = computed(() =>
+  props.isTimeMeter ? '按租户分摊核算' : `自动计算 · ${fmtNum(props.formUsage)} ${unitLabel.value}`,
+)
 
 const timePeriods = [
   { key: 'deep', label: '尖', prevKey: 'deepPrev', currKey: 'deepCurr' },
@@ -184,6 +246,18 @@ const fmtUnitPrice = (v: any) => {
   if (v === '' || v == null || Number.isNaN(n)) return ''
   return String(Math.round(n * 1000) / 1000)
 }
+
+/** 只读项取值：倍率 → 记录派生；其余 → 表计档案。 */
+function readonlyText(key: string): string {
+  if (key === 'rate') return `${fmtNum(props.formRate)}×`
+  const v = meterArchiveValue(props.meter, key)
+  if (key === 'default_unit_price') {
+    const s = fmtUnitPrice(v)
+    return s === '' ? '—' : `${s} 元`
+  }
+  return v === '' || v == null ? '—' : String(v)
+}
+
 </script>
 
 <style lang="less" scoped>
@@ -223,6 +297,7 @@ const fmtUnitPrice = (v: any) => {
 }
 .mr-period-sep { color: var(--td-text-color-placeholder); font-size: 13px; flex-shrink: 0; }
 
+.mr-stack { width: 100%; display: flex; flex-direction: column; }
 .mr-calc {
   font-size: 15px;
   font-weight: 600;

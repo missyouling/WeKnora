@@ -7,12 +7,11 @@
         <p class="header-subtitle">市电、光伏账单自动解析归档；电、水、气按表计录入自动汇总</p>
       </div>
     </div>
-    <input ref="fileInputRef" type="file" multiple accept=".pdf,.jpg,.jpeg,.png" style="display: none"
-      @change="onFileInputChange" />
 
     <!-- 加载中 -->
     <div v-if="loading && activeTab === 'electricity'" class="loading-area">
-      <t-loading size="large" text="正在初始化电费管理..." />
+      <!-- 模块初始化加载：与上游项目完全一致（small、无文字、父容器居中） -->
+      <t-loading size="small" />
     </div>
 
     <!-- KB 不存在：空状态（仅电费 Tab 需要知识库） -->
@@ -615,6 +614,13 @@
       </template>
     </StandardSettingDrawer>
 
+    <!-- 上传账单：与发票管理完全同一个 FleetUploadDialog（拖拽/多选/队列进度/重复文件智能恢复），
+         分类固定为「市电账单」，提取走账单专用管线（extract-utility-bill）。
+         上传即写 fleet_cert_type=市电账单，轮询据此认领，不再靠文件名猜。 -->
+    <FleetUploadDialog v-model:visible="uploadVisible" :kb-id="kbId || ''" scope="utility"
+      :type-options="uploadTypeOptions" default-type="市电账单" title="上传账单" extract-mode="energy-bill"
+      @done="onUploadDone" />
+
     <!-- 删除历史 -->
     <!-- 上传历史抽屉：复用中台 FleetUploadHistoryDrawer（三态统计卡 / 即输即搜 / 分类+日期筛选 /
          中文错误提示 / 双击文件名全屏预览），与发票、合同、制度、通知完全同款。
@@ -671,7 +677,6 @@ import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
 import {
   listKnowledgeBases,
-  uploadKnowledgeFile,
   getKnowledgeDetails,
   updateBusinessMetadata,
   listKnowledgeTags,
@@ -703,6 +708,7 @@ import BusinessFilterBar from './BusinessFilterBar.vue'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
+import FleetUploadDialog from './FleetUploadDialog.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 // 表头右侧滚动条轨道遮罩（实测，四模块 + 能耗统一）
@@ -756,7 +762,6 @@ const kbId = ref('')
 const loading = ref(true)
 const wizardVisible = ref(false)
 const settingsVisible = ref(false)
-const fileInputRef = ref<HTMLInputElement>()
 
 // 字段配置（来自后端 /utilities/field-configs?category=electricity，动态加载）
 const columnDefs = ref<ColDef[]>(FALLBACK_COLUMNS)
@@ -1450,18 +1455,39 @@ const pendingLabel = (pf: any) => {
 }
 
 // 轮询：解析完成后自动触发提取；提取中动态刷新状态
+/**
+ * 是否「本页该管」的电费账单文件。
+ *
+ * 铁律：市电与光伏**共用一个知识库**，本页轮询又是页面级常驻，只要过滤放松一点，
+ * 光伏文件在上传后、分类打标落地前的一瞬间就会被本页抢走，调用
+ * extract-utility-bill 写成 kind=utility_bill —— 结果是「光伏列表里没有它、
+ * 市电列表多一条垃圾行」，还会污染 loadUtilityBillByMonth 的按月取数
+ * （真机事故：2026.09光伏账单.pdf 774e6b74）。
+ *
+ * 所以认领条件收紧为「显式声明是电费」，任一光伏痕迹即排除：
+ *   ① 分类/类型/文件名出现「光伏」→ 不是本页的；
+ *   ② kind=solar_bill / bill_kind=solar → 不是本页的；
+ *   ③ 只有 kind=utility_bill / bill_kind=electricity / fleet_cert_type=市电账单
+ *     才认领；完全没打标的一律不碰（等上传流程把标签写进去，或用户手动重提）。
+ */
+function isElectricityBillFile(item: any): boolean {
+  const meta = item?.custom_metadata || {}
+  const name = String(item?.file_name || item?.title || '')
+  if (meta.kind === 'solar_bill' || meta.bill_kind === 'solar' || meta.fleet_cert_type === '光伏账单') return false
+  if (/光伏/.test(name)) return false
+  return meta.kind === 'utility_bill' || meta.bill_kind === 'electricity' || meta.fleet_cert_type === '市电账单'
+}
+
 const { extractInFlight, extractFailed, pendingFiles, scanOnce, start: startPolling, stop: stopPolling } = useBusinessPolling({
   kbId,
   extractFn: (kid, fileId) => extractUtilityBill(kid, fileId),
-  filter: (item: any) => {
-    const meta = item.custom_metadata || {}
-    if (meta.kind === 'solar_bill') return false
-    if (meta.bill_kind && meta.bill_kind !== 'electricity') return false
-    return true
-  },
+  // 只在本 Tab 生效：切到光伏/核算/清单时本页不再扫描，从根上避免跨分类抢提
+  filter: (item: any) => activeTab.value === 'electricity' && isElectricityBillFile(item),
   onPendingFiles: () => { /* pendingRows computed 直接读 pendingFiles */ },
   // 每轮刷新列表 + 卡片计数：提取落库后 records 会变，卡片不跟着刷就永远停在旧数
   onTick: () => { loadFiles(); void loadTabCounts() },
+  // 整批结束（在途清零）：立刻刷一次列表与卡片，用户不用等下一轮 3s
+  onSettled: async () => { await loadFiles(true); void loadTabCounts() },
 })
 
 // ---- KB ----
@@ -1498,42 +1524,16 @@ const onKbCreated = async (kb: any) => {
 }
 
 // ---- 上传 ----
-const triggerUpload = () => fileInputRef.value?.click()
-const onFileInputChange = async (e: Event) => {
-  const input = e.target as HTMLInputElement
-  const files = input.files ? Array.from(input.files) : []
-  input.value = ''
-  if (!files.length || !kbId.value) return
-  for (const f of files) {
-    try {
-      // 上传后立即打标 bill_kind=electricity（custom_metadata），与光伏文件在共享知识库中互不干扰
-      const res: any = await uploadKnowledgeFile(kbId.value, { file: f })
-      const knowledge = res?.data || res
-      const kid = knowledge?.id || knowledge?.knowledge_id
-      if (kid) {
-        try {
-          const kd: any = await getKnowledgeDetails(kid)
-          let meta = kd?.data?.custom_metadata || kd?.custom_metadata || {}
-          // 兼容历史双层结构：{custom_metadata: {...}} 取内层再打标
-          if (meta && meta.custom_metadata && typeof meta.custom_metadata === 'object' && Object.keys(meta).length === 1) meta = meta.custom_metadata
-          await updateBusinessMetadata(kbId.value, kid, { ...meta, bill_kind: 'electricity', fleet_cert_type: '市电账单' })
-        } catch { /* 打标失败则文件保持未标记，轮询不会自动提取，可手动处理 */ }
-      }
-      // 解析完成后由轮询自动触发提取
-    } catch (e2: any) {
-      const msg = e2?.message || ''
-      if (msg.includes('already exists') || msg.includes('文件重复')) {
-        MessagePlugin.warning(`${f.name} 已存在，忽略重复上传`)
-      } else {
-        MessagePlugin.error(`${f.name} 上传失败：${msg}`)
-      }
-    }
-  }
-  MessagePlugin.success(`已上传 ${files.length} 个文件，正在解析...`)
-  // 立即扫一轮在途文件：状态条要马上出现，不能等 3s 定时器
-  // （长任务里用户会以为没反应，真机截图就是「什么提示都没有」）。
+// 统一走中台上传弹窗：原生 <input type=file> 没有分类锁定、没有队列进度、没有
+// 重复文件智能恢复，也无法在「创建记录的第一时间」写分类 → 轮询认领时会串台。
+const uploadVisible = ref(false)
+const uploadTypeOptions = [{ label: '市电账单', value: '市电账单' }]
+const triggerUpload = () => { uploadVisible.value = true }
+/** 弹窗内整批任务全部结束：立刻刷新列表与卡片（不等下一轮 3s 轮询）。 */
+const onUploadDone = async () => {
+  await loadFiles(true)
+  void loadTabCounts()
   void scanOnce()
-  setTimeout(() => { loadFiles(true); void scanOnce() }, 1500)
 }
 
 // ---- 标签 ----

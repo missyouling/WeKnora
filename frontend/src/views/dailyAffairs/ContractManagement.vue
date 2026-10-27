@@ -10,7 +10,8 @@
 
     <!-- 加载中 -->
     <div v-if="loading && !kbId" class="loading-area">
-      <t-loading size="large" text="正在初始化合同管理..." />
+      <!-- 模块初始化加载：与上游项目完全一致（small、无文字、父容器居中） -->
+      <t-loading size="small" />
     </div>
 
     <!-- KB 不存在：空状态 -->
@@ -2007,6 +2008,8 @@ onBeforeUnmount(() => {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 16px; min-height: 300px;
 }
+/* 只有转圈时不需要 gap，避免视觉上被顶偏 */
+.loading-area { gap: 0; }
 
 .contract-main { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 

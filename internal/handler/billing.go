@@ -967,6 +967,10 @@ func (h *BillingHandler) DeleteBillingRecord(c *gin.Context) {
 type utilityBillMeta struct {
 	Kind    string                            `json:"kind"`
 	Records []types.UtilityBillExtractionItem `json:"records"`
+	// 分类标签：光伏账单曾被误归档成 utility_bill（两页轮询抢文件），
+	// 取月账单时必须跳过，否则会拿着光伏的钱去算租户分摊。
+	FleetCertType string `json:"fleet_cert_type"`
+	BillKind      string `json:"bill_kind"`
 }
 
 // loadUtilityBillByMonth 从市电账单知识库中按账单周期月份取电费提取数据。
@@ -975,7 +979,9 @@ func (h *BillingHandler) loadUtilityBillByMonth(ctx context.Context, kbID, month
 		return nil, errors.NewBadRequestError("未配置市电账单知识库")
 	}
 	var knowledges []types.Knowledge
-	if err := h.db.WithContext(ctx).Where("knowledge_base_id = ?", kbID).
+	// deleted_at：已删除的文件不能继续参与取数（旧实现漏了这个条件，
+	// 删掉的账单仍会被算进生成管线）。
+	if err := h.db.WithContext(ctx).Where("knowledge_base_id = ? AND deleted_at IS NULL", kbID).
 		Find(&knowledges).Error; err != nil {
 		return nil, err
 	}
@@ -988,6 +994,11 @@ func (h *BillingHandler) loadUtilityBillByMonth(ctx context.Context, kbID, month
 			continue
 		}
 		if meta.Kind != "utility_bill" || len(meta.Records) == 0 {
+			continue
+		}
+		// 跳过误归档的光伏账单（历史脏数据兜底）：它们的分项结构与电费不同，
+		// 混进来会让租户分摊算出完全错误的数字。
+		if meta.FleetCertType == "光伏账单" || meta.BillKind == "solar" {
 			continue
 		}
 		for i := range meta.Records {
