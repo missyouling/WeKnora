@@ -40,8 +40,14 @@
           <template v-for="f in formFields" :key="f.name">
             <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
+                <!-- 只读模式（费用清单等「查看型」抽屉）：所有字段只展示不可改，
+                     也不出现保存按钮。费用清单的值是核算结果，编辑只能走「生成/重算」，
+                     在查看抽屉里改等于绕过口径。 -->
+                <div v-if="readonly" class="bsd-readonly-value" :class="{ 'is-long': isLongType(f) }">
+                  {{ displayValueOf(f) }}
+                </div>
                 <!-- 备注片段字段：无标准存储位，值存 remark 的「字段名：值」片段 -->
-                <t-textarea v-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
+                <t-textarea v-else-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
                   :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
                 <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                 <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
@@ -110,12 +116,12 @@
 
     <div class="bsd-footer">
       <slot name="footer-left" />
-      <t-popconfirm v-if="showDelete" content="确定删除该记录吗？该操作不可恢复" @confirm="emit('delete')">
+      <t-popconfirm v-if="showDelete && !readonly" content="确定删除该记录吗？该操作不可恢复" @confirm="emit('delete')">
         <t-button variant="outline" size="small" theme="danger">删除</t-button>
       </t-popconfirm>
-      <t-button v-if="showReExtract" variant="outline" size="small" @click="emit('re-extract')">重新提取</t-button>
-      <t-button variant="outline" size="small" @click="close">取消</t-button>
-      <t-button theme="primary" size="small" :loading="saving" :disabled="dirty === false"
+      <t-button v-if="showReExtract && !readonly" variant="outline" size="small" @click="emit('re-extract')">重新提取</t-button>
+      <t-button variant="outline" size="small" @click="close">{{ readonly ? '关闭' : '取消' }}</t-button>
+      <t-button v-if="!readonly" theme="primary" size="small" :loading="saving" :disabled="dirty === false"
         @click="emit('save')">保存</t-button>
     </div>
   </SettingDrawer>
@@ -155,6 +161,11 @@ const props = withDefaults(defineProps<{
   showDelete?: boolean
   showReExtract?: boolean
   /**
+   * 只读模式：字段全部以纯文本展示，底栏不出现「保存」。
+   * 用于费用清单这类「核算结果查看」抽屉（编辑只能走生成/重算）。
+   */
+  readonly?: boolean
+  /**
    * 是否渲染底部「源文件预览」区块。
    * 费用清单/核算表是**计算行**，没有源文件可预览，硬留一个空折叠条会让人点了没反应。
    */
@@ -176,6 +187,7 @@ const props = withDefaults(defineProps<{
   storageKey: 'weknora-business-detail-drawer-width',
   showDelete: false,
   showPreview: true,
+  readonly: false,
   showReExtract: false,
 })
 
@@ -200,6 +212,15 @@ watch(() => props.row?.knowledgeId, () => { previewExpanded.value = false })
 // 表单由父级持有：这里用 computed 代理（读写都落在父级的同一个对象上），
 // 既保持"保存链路在父级"的单一职责，也避免组件直接改写 prop。
 const form = computed<any>(() => props.form || { data: {}, remarkParts: {}, items: [] })
+/** 只读展示值：数组拼顿号、数字按原值、空值显示 —（避免空白行看起来像丢数据）。 */
+function displayValueOf(f: any): string {
+  const v = f?.remarkPart ? form.value?.remarkParts?.[f.remarkPart] : form.value?.data?.[f.name]
+  if (v === null || v === undefined || v === '') return '—'
+  if (Array.isArray(v)) return v.length ? v.join('、') : '—'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
 const itemRows = computed<any[]>(() => (Array.isArray(form.value.items) ? form.value.items : []))
 // 子列：未配置时按第一行实际键生成（不写死任何业务字段集）
 const itemCols = computed<any[]>(() => {
@@ -356,6 +377,31 @@ function close() {
   max-width: 100%;
   overflow: auto;
 }
+/* 只读字段值：与输入框同高同左内距，视觉上仍是一张「表单」，只是不可编辑 */
+.bsd-readonly-value {
+  width: 100%;
+  min-height: 32px;
+  line-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--td-radius-default);
+  background: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &.is-long {
+    height: auto;
+    line-height: 20px;
+    padding: 6px 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
 .bsd-footer {
   display: flex;
   align-items: center;

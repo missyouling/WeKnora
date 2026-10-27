@@ -135,30 +135,57 @@
         <div class="settings-panel">
           <div class="panel-head">
             <span class="panel-title">分摊子项</span>
-            <t-select v-if="tenants.length" v-model="selectedTenantId" size="small" :options="tenantOptions"
-              class="tenant-picker" placeholder="选择租户" @change="loadDetail" />
+            <div class="panel-head-actions">
+              <t-select v-if="tenants.length" v-model="selectedTenantId" size="small" :options="tenantOptions"
+                class="tenant-picker" placeholder="选择租户" @change="onTenantChange" />
+              <t-button variant="outline" size="small" :loading="importing" :disabled="!selectedTenantId"
+                @click="importUtilityFields">导入市电账单字段</t-button>
+              <t-button theme="primary" size="small" :loading="savingItems" :disabled="!selectedTenantId"
+                @click="saveItems(true)">保存</t-button>
+            </div>
           </div>
+
+          <!-- 搜索添加：只允许从「除市电账单外」的其它分类检索字段，
+               候选项带 [来源分类] 徽标，避免同名误选。 -->
+          <div class="item-add-row">
+            <SourceFieldPicker v-if="selectedTenantId" :exclude="presentItemKeys"
+              :only-categories="nonUtilityCategories" @select="addSourceItem" />
+            <span class="item-add-tip">从其它分类检索添加；市电账单费用分项请用右上角「导入市电账单字段」</span>
+          </div>
+
           <div class="item-groups">
             <div v-for="g in itemGroups" :key="g.category" class="item-group">
               <div class="item-group-head" @click="toggleItemGroup(g.category)">
                 <span class="item-group-name">{{ g.category }}</span>
+                <span class="item-group-meta">{{ enabledCountOf(g.items) }}/{{ g.items.length }}</span>
                 <t-icon :name="expandedItemGroup === g.category ? 'chevron-down' : 'chevron-right'" class="item-group-arrow" />
               </div>
               <div v-if="expandedItemGroup === g.category" class="item-group-body">
                 <div class="item-row item-row--head">
                   <span class="item-name">子项名称</span>
-                  <span class="item-op">分摊</span>
+                  <span class="item-src">来源</span>
+                  <span class="item-op">参与分摊</span>
+                  <span class="item-del"></span>
                 </div>
-                <div v-for="(it, i) in g.items" :key="i" class="item-row">
+                <div v-for="(it, i) in g.items" :key="`${it.item_key}-${i}`" class="item-row">
                   <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
+                  <span class="item-src">{{ it.source_category || '市电账单' }}</span>
                   <span class="item-op">
                     <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+                  </span>
+                  <span class="item-del">
+                    <t-button variant="text" size="small" title="移除该子项" @click="removeItem(g.items, i)">
+                      <template #icon><t-icon name="close" size="14px" /></template>
+                    </t-button>
                   </span>
                 </div>
                 <div v-if="!g.items.length" class="item-empty">暂无子项</div>
               </div>
             </div>
-            <div v-if="!itemGroups.length" class="item-empty">暂无子项，生成账单后自动从市电账单引入</div>
+            <div v-if="!itemGroups.length" class="item-empty">
+              暂无子项：点击右上角「导入市电账单字段」一键引入全部费用分项，
+              或用上方搜索框从其它分类添加
+            </div>
           </div>
         </div>
       </t-tab-panel>
@@ -171,10 +198,12 @@ import { ref, computed, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, createBillingTenant, updateBillingTenant, deleteBillingTenant,
-  getBillingTenant, saveBillingTenantItems,
+  getBillingTenant, saveBillingTenantItems, listUtilityBillRecords,
 } from '@/api/knowledge-base'
+import SourceFieldPicker from './SourceFieldPicker.vue'
+import { SOURCE_CATEGORIES } from './tenantBillingSources'
 
-const props = defineProps<{ tenantId?: string }>()
+const props = defineProps<{ tenantId?: string; kbId?: string }>()
 const emit = defineEmits<{ (e: 'changed'): void; (e: 'select', id: string): void }>()
 
 // 分摊子项归属哪个租户：面板内自持选择（设置抽屉不依赖列表当前选中行，
@@ -191,8 +220,22 @@ const emptyTenantForm = () => ({ id: '', name: '', tenant_no: '', allocation_mod
 const tenantForm = ref<any>(emptyTenantForm())
 
 const detail = ref<any>(null)
-const itemsForm = ref<{ category: string; item_key: string; item_name: string; enabled: boolean }[]>([])
+interface ItemForm {
+  category: string
+  item_key: string
+  item_name: string
+  enabled: boolean
+  source_category?: string
+  source_key?: string
+  source_mode?: string
+  value_mode?: string
+}
+const itemsForm = ref<ItemForm[]>([])
 const expandedItemGroup = ref('')
+const importing = ref(false)
+const savingItems = ref(false)
+/** 除市电账单外的其它来源分类（搜索添加只允许这些） */
+const nonUtilityCategories = SOURCE_CATEGORIES.filter((c) => c !== '市电账单') as unknown as string[]
 
 const tenantOptions = computed(() => tenants.value.map((t: any) => ({ label: t.name, value: t.id })))
 
@@ -204,6 +247,12 @@ const itemGroups = computed(() => {
   })
   return Object.entries(g).map(([category, items]) => ({ category, items }))
 })
+
+/** 已存在的子项 key（`分类__字段`），用于过滤选择器候选项。 */
+const presentItemKeys = computed(() =>
+  itemsForm.value.map((it) => `${it.source_category || ''}__${it.source_key || it.item_name}`),
+)
+const enabledCountOf = (items: any[]) => items.filter((it) => it.enabled !== false).length
 
 const loadTenants = async () => {
   try {
@@ -221,8 +270,16 @@ const loadDetail = async () => {
     detail.value = res.data
     const d = res.data
     itemsForm.value = (d.items || []).map((it: any) => ({
-      category: it.category || '其他费用', item_key: it.item_key, item_name: it.item_name, enabled: !!it.enabled,
+      category: it.category || '其他费用',
+      item_key: it.item_key,
+      item_name: it.item_name,
+      enabled: !!it.enabled,
+      source_category: it.source_category || '',
+      source_key: it.source_key || '',
+      source_mode: it.source_mode || '',
+      value_mode: it.value_mode || '',
     }))
+    expandedItemGroup.value = itemsForm.value[0]?.category || ''
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载租户详情失败')
   }
@@ -293,19 +350,117 @@ const toggleItem = async (it: any, v: boolean) => {
   it.enabled = !!v
   await saveItems()
 }
-const saveItems = async () => {
+/**
+ * 一键导入市电账单字段。
+ *
+ * 为什么从**已提取的账单**取而不是等账单生成：生成前用户就要决定哪些费用
+ * 参与分摊（那正是生成入参）。旧实现只有 ensureDefaultItems 在生成时才播种，
+ * 于是「从没生成过账单」的新租户看到的是空态（真机截图就是这个空态）。
+ * 这里直接读当月账单的 fee_items，按费用组成去重后全量导入，默认：
+ * 居民 / 目录电费不参与比例分摊，其余开启（与生成管线口径一致）。
+ */
+const importUtilityFields = async () => {
+  if (!selectedTenantId.value) { MessagePlugin.warning('请先选择租户'); return }
+  if (!props.kbId) { MessagePlugin.warning('知识库尚未就绪'); return }
+  importing.value = true
+  try {
+    const res: any = await listUtilityBillRecords(props.kbId, { page: 1, page_size: 500 })
+    const bills: any[] = res?.data || []
+    const existing = new Set(itemsForm.value.map((it) => it.item_key))
+    let added = 0
+    // 按月份倒序收集（最近的账单结构最全），同 key 只留第一次
+    for (const b of bills) {
+      for (const f of (b?.item?.fee_items || [])) {
+        const category = String(f?.category || '其他费用').trim() || '其他费用'
+        const name = String(f?.name || '').trim()
+        if (!name) continue
+        const key = `${category}|${name}`
+        if (existing.has(key)) continue
+        existing.add(key)
+        const enabled = !/居民|目录电费/.test(category)
+        itemsForm.value.push({
+          category,
+          item_key: key,
+          item_name: name,
+          enabled,
+          source_category: '市电账单',
+          source_key: name,
+          source_mode: 'fee_row',
+          value_mode: 'apportion',
+        })
+        added += 1
+      }
+      if (added > 0) break // 一份账单已含全部费用组成，无需叠加其它月份
+    }
+    if (!added) {
+      MessagePlugin.info('没有可导入的费用分项（可能尚未提取账单）')
+      return
+    }
+    expandedItemGroup.value = itemsForm.value[0]?.category || ''
+    await saveItems()
+    MessagePlugin.success(`已导入 ${added} 个市电账单费用分项，请按需开关后保存`)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '导入市电账单字段失败')
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 搜索添加其它分类字段：直接取该分类当月 + 归属本租户的合计，不再乘分摊比例。 */
+const addSourceItem = (payload: {
+  key: string
+  label: string
+  dataType: string
+  source: { category: string; field: string; mode: 'field' }
+}) => {
+  const key = `${payload.source.category}|${payload.source.field}`
+  if (itemsForm.value.some((it) => it.item_key === key)) {
+    MessagePlugin.warning('该字段已添加')
+    return
+  }
+  itemsForm.value.push({
+    category: payload.source.category,
+    item_key: key,
+    item_name: payload.label,
+    enabled: true,
+    source_category: payload.source.category,
+    source_key: payload.source.field,
+    source_mode: 'field',
+    value_mode: 'direct_sum',
+  })
+  expandedItemGroup.value = payload.source.category
+}
+
+const removeItem = (items: any[], index: number) => {
+  const target = items[index]
+  itemsForm.value = itemsForm.value.filter((it) => it !== target)
+}
+
+const onTenantChange = () => { void loadDetail() }
+
+const saveItems = async (notify = false) => {
   if (!selectedTenantId.value) return
+  savingItems.value = true
   try {
     const items = itemsForm.value
-      .filter((it: any) => it.item_name.trim())
+      .filter((it: any) => String(it.item_name || '').trim())
       .map((it: any) => ({
         category: it.category || '其他费用',
-        item_key: `${(it.category || '其他费用').trim()}|${it.item_name.trim()}`, item_name: it.item_name.trim(), enabled: !!it.enabled,
+        item_key: it.item_key || `${(it.category || '其他费用').trim()}|${String(it.item_name).trim()}`,
+        item_name: String(it.item_name).trim(),
+        enabled: !!it.enabled,
+        source_category: it.source_category || '',
+        source_key: it.source_key || '',
+        source_mode: it.source_mode || '',
+        value_mode: it.value_mode || '',
       }))
     await saveBillingTenantItems(selectedTenantId.value, { items })
     emit('changed')
+    if (notify) MessagePlugin.success('已保存分摊子项')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存子项失败')
+  } finally {
+    savingItems.value = false
   }
 }
 
@@ -322,7 +477,10 @@ onMounted(async () => {
   :deep(.t-tabs__content) { padding-top: 12px; }
 }
 .settings-panel { display: flex; flex-direction: column; gap: 12px; }
-.panel-head { display: flex; align-items: center; justify-content: space-between; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.panel-head-actions { display: flex; align-items: center; gap: 8px; }
+.item-add-row { display: flex; flex-direction: column; gap: 4px; }
+.item-add-tip { font-size: 12px; color: var(--td-text-color-placeholder); }
 .panel-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
 .tenant-picker { width: 200px; }
 .panel-empty { padding: 28px 0; text-align: center; color: var(--td-text-color-placeholder); font-size: 13px; }
@@ -365,20 +523,26 @@ onMounted(async () => {
 .item-groups { display: flex; flex-direction: column; gap: 8px; }
 .item-group { border: 1px solid var(--td-component-stroke); border-radius: 9px; overflow: hidden; }
 .item-group-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; cursor: pointer; background: var(--td-bg-color-container);
-  .item-group-name { font-size: 13px; color: var(--td-text-color-primary); }
+  .item-group-name { flex: 1 1 auto; font-size: 13px; color: var(--td-text-color-primary); }
+  .item-group-meta { font-size: 12px; color: var(--td-text-color-placeholder); font-variant-numeric: tabular-nums; }
   .item-group-arrow { color: var(--td-text-color-secondary); }
 }
 .item-group-body { padding: 4px 12px 10px; }
 .item-row {
-  display: grid; grid-template-columns: 1fr 64px; align-items: center; gap: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 88px 76px 28px; align-items: center; gap: 8px;
   padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--td-component-stroke);
   &:last-child { border-bottom: none; }
   &--head { color: var(--td-text-color-placeholder); border-bottom: 1px solid var(--td-component-stroke); }
   .item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--td-text-color-primary); }
   &--head .item-name { color: var(--td-text-color-placeholder); }
+  .item-src {
+    font-size: 11px; color: var(--td-text-color-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .item-op { display: flex; justify-content: flex-start; }
+  .item-del { display: flex; justify-content: flex-end; }
 }
 .item-empty { padding: 14px 0; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
 </style>

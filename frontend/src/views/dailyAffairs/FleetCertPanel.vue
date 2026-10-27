@@ -138,6 +138,13 @@
                          ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。
                          费用分组里「费用组成 / 分时时段」右侧另有细项展开按钮：
                          它们的下级不是子字段而是"行项集合"，单独渲染在下方。 -->
+                    <!-- 引用字段（费用清单专属）：名称不可改、口径固定在来源分类，
+                         右侧徽标直接标出 [来源分类]，避免同名歧义与误改名断链。 -->
+                    <div v-else-if="fd.source" class="fc-name-wrap fc-name-wrap--ref"
+                      :title="`引用自「${fd.source.category}」字段 ${fd.source.field}`">
+                      <span class="fc-ref-badge">{{ fd.source.category }}</span>
+                      <span class="fc-ref-name">{{ fieldLabelOf(fd) }}</span>
+                    </div>
                     <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(fd) }"
                       @click.stop="toggleChildGroup(fd)">
                       <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
@@ -286,7 +293,12 @@
                     </div>
                   </div>
                 </template>
-                <div class="field-config-add">
+                <!-- 费用清单是综合汇总列表，字段全部来自其它分类：
+                     这里只允许「检索并引用」，不提供自由输入新建（禁止无源字段）。 -->
+                <div v-if="isRefCategory" class="field-config-add">
+                  <SourceFieldPicker class="fc-add-input" :exclude="refFieldKeys" @select="addRefField" />
+                </div>
+                <div v-else class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                     @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
@@ -347,6 +359,7 @@ import {
 } from './fleetCategorySubs'
 import { listSubGroups } from './sixWaySync'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
+import SourceFieldPicker from './SourceFieldPicker.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
@@ -587,6 +600,48 @@ const groupItems = computed(() => buildItems(group.value))
  * （真机截图踩过）。统一按「分类表 → 编辑分类 → 字段配置」三段式排列。
  */
 const editingItem = computed(() => groupItems.value.find((it: any) => it.id === editingId.value) || null)
+/**
+ * 是否「只允许引用其它分类字段」的分类（当前仅费用清单）。
+ *
+ * 费用清单没有自己的存储：一行 = 一个账期，一列 = 某个来源分类的字段。
+ * 因此它的字段定义不允许手输新建，只能从市电账单/光伏账单/电水气核算检索引用。
+ */
+const isRefCategory = computed(() => props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单')
+/** 已添加的引用 key（`分类__字段`），传给选择器过滤候选。 */
+const refFieldKeys = computed(() =>
+  fieldsVisible.value.filter((f) => f.source).map((f) => `${f.source!.category}__${f.source!.field}`),
+)
+
+/** 添加一条引用字段：name 由来源固定生成，保证同一来源不会重复添加。 */
+function addRefField(payload: {
+  key: string
+  label: string
+  dataType: string
+  source: { category: string; field: string; mode: 'field' }
+}) {
+  const name = `src_${payload.source.category}_${payload.source.field}`
+  if (fieldsEditable.value.some((f) => f.name === name)) {
+    MessagePlugin.warning('该字段已添加，无需重复引用')
+    return
+  }
+  // 继承当前分组：能耗类分类的字段定义带 group 胶囊条，字段若 group 为空会被
+  // fieldsVisible 过滤掉（表现是「选了字段但列表里不出现」）。
+  const group = activeSubGroup.value || String(fieldsEditable.value.find((f) => f.group)?.group || '')
+  const groupLabel = group
+    ? String((fieldsEditable.value.find((f) => f.group === group) as any)?.groupLabel || '')
+    : ''
+  fieldsEditable.value.push({
+    name,
+    label: payload.label,
+    enabled: true,
+    isDefault: false,
+    dataType: payload.dataType,
+    width: 0,
+    source: payload.source,
+    ...(group ? { group } : {}),
+    ...(groupLabel ? { groupLabel } : {}),
+  })
+}
 function groupCount(key: string) {
   const g = groupList.value.find((x: any) => x.key === key)
   return g ? buildItems(g).length : 0
@@ -1672,6 +1727,38 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
 
   /* 字段名 + 细项展开徽标（费用组成 / 分时时段） */
+  /* 引用字段（费用清单）：[来源分类] 徽标 + 只读字段名，占位与输入框等宽等高 */
+  .fc-name-wrap--ref {
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-secondarycontainer);
+    cursor: default;
+  }
+  .fc-ref-badge {
+    flex: none;
+    max-width: 68px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 16px;
+    padding: 0 4px;
+    border-radius: 2px;
+    color: var(--td-brand-color);
+    background: var(--td-brand-color-light);
+  }
+  .fc-ref-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--td-text-color-primary);
+  }
+
   .fc-name-wrap {
     position: relative;
     display: flex;

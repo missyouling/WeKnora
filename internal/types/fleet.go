@@ -170,6 +170,20 @@ type FleetCategorySub struct {
 	Group string `json:"group,omitempty"`
 	// GroupLabel 分组中文名（仅用于展示；空则按 group 键的字典值显示）。
 	GroupLabel string `json:"group_label,omitempty"`
+	// Source 跨分类字段引用（仅「费用清单」）。
+	//
+	// 费用清单是综合汇总列表，自身没有存储：每个字段都是对其它分类（市电账单 /
+	// 光伏账单 / 电费核算 / 水费核算 / 气费核算）某个字段的**引用**。
+	// 空值 = 内置派生列（由列表自身核算逻辑算出来），保持与改造前完全一致。
+	Source *FleetCategorySubSource `json:"source,omitempty"`
+}
+
+// FleetCategorySubSource 引用字段的来源描述。
+type FleetCategorySubSource struct {
+	Category string `json:"category"`
+	Field    string `json:"field"`
+	// Mode: field=普通字段；fee_row=市电账单的费用组成行（按名称匹配）
+	Mode string `json:"mode,omitempty"`
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

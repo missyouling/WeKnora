@@ -45,6 +45,12 @@ export interface EditableField {
   width: number
   /** 系统内置字段：禁止删除。 */
   builtin?: boolean
+  /**
+   * 跨分类字段引用（仅「费用清单」）。
+   * 有 source = 引用其它分类的字段（名称只读、取值走 tenantBillingSources）；
+   * 无 source = 内置派生列。
+   */
+  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
   /** 仅 dataType === 'items' 时有值；随 subs 一并持久化，是明细子列的权威源。 */
   subFields?: EditableSubField[]
   /**
@@ -68,6 +74,7 @@ export interface SubPayload {
   data_type: string
   width: number
   builtin?: boolean
+  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
   sub_fields?: Array<{
     key: string
     label: string
@@ -264,6 +271,19 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
       const gl = String(r.group_label ?? r.groupLabel ?? '').trim()
       if (gl) field.groupLabel = gl
     }
+    // 跨分类引用（费用清单）：category/field 缺一即视为脏数据丢弃
+    const srcRaw = r.source as Record<string, unknown> | undefined
+    if (srcRaw && typeof srcRaw === 'object') {
+      const category = String(srcRaw.category ?? '').trim()
+      const fieldName = String(srcRaw.field ?? '').trim()
+      if (category && fieldName) {
+        field.source = {
+          category,
+          field: fieldName,
+          mode: srcRaw.mode === 'fee_row' ? 'fee_row' : 'field',
+        }
+      }
+    }
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
     if (dataType === 'items' && subFields.length) field.subFields = subFields
     out.push(field)
@@ -295,6 +315,13 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
     const label = String(f.label ?? '').trim()
     if (label && label !== name) payload.label = label
     if (f.builtin) payload.builtin = true
+    if (f.source && f.source.category && f.source.field) {
+      payload.source = {
+        category: f.source.category,
+        field: f.source.field,
+        mode: f.source.mode === 'fee_row' ? 'fee_row' : 'field',
+      }
+    }
     // 业务分组：仅在有值时下发，无 group 的旧分类序列化结果与改造前一致
     const group = String(f.group ?? '').trim()
     if (group) {

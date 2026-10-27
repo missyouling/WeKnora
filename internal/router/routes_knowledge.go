@@ -565,6 +565,9 @@ func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, 
 	if handler == nil {
 		return
 	}
+	// 幂等补列（分摊子项来源字段）：历史表没有 AutoMigrate 路径，
+	// 不加这一步线上会直接 500（列不存在），而不是功能不可用。
+	handler.EnsureBillingSchema()
 	bl := g.apiKeyGroup(r.Group("/billing"), apiKeyRetrieve(apiKeyFullAccess()))
 	{
 		bl.GET("/tenants", g.Viewer(), handler.ListBillingTenants)

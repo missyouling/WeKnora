@@ -70,6 +70,25 @@ func (h *BillingHandler) ListBillingTenants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": out})
 }
 
+// EnsureBillingSchema 补齐分摊子项的「来源」列。
+//
+// 背景：billing_* 这些表早期由一次性脚本创建，没有走 AutoMigrate 路径，
+// 所以给 struct 加字段不会自动落列。这里在路由注册时做一次幂等的
+// 「缺列则加」——只加不删不改，Postgres / sqlite 由 GORM Migrator 统一处理。
+func (h *BillingHandler) EnsureBillingSchema() {
+	if h == nil || h.db == nil {
+		return
+	}
+	for _, field := range []string{"SourceCategory", "SourceKey", "SourceMode", "ValueMode", "Width"} {
+		if h.db.Migrator().HasColumn(&types.BillingTenantItem{}, field) {
+			continue
+		}
+		if err := h.db.Migrator().AddColumn(&types.BillingTenantItem{}, field); err != nil {
+			logger.Warnf(context.Background(), "add billing_tenant_items.%s failed: %v", field, err)
+		}
+	}
+}
+
 // GetBillingTenant godoc
 // @Summary      租户详情(含设置/子项/表计引用/分时电表)
 // @Router       /billing/tenants/:id [get]
@@ -754,10 +773,15 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Items []struct {
-			Category string `json:"category"`
-			ItemKey  string `json:"item_key"`
-			ItemName string `json:"item_name"`
-			Enabled  bool   `json:"enabled"`
+			Category       string `json:"category"`
+			ItemKey        string `json:"item_key"`
+			ItemName       string `json:"item_name"`
+			Enabled        bool   `json:"enabled"`
+			SourceCategory string `json:"source_category"`
+			SourceKey      string `json:"source_key"`
+			SourceMode     string `json:"source_mode"`
+			ValueMode      string `json:"value_mode"`
+			Width          int    `json:"width"`
 		} `json:"items"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -780,7 +804,12 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 				ID: uuid.NewString(), BillingTenantID: id,
 				Category: strings.TrimSpace(it.Category),
 				ItemKey:  key, ItemName: it.ItemName, Enabled: it.Enabled,
-				Sort: i, CreatedAt: now, UpdatedAt: now,
+				SourceCategory: strings.TrimSpace(it.SourceCategory),
+				SourceKey:      strings.TrimSpace(it.SourceKey),
+				SourceMode:     strings.TrimSpace(it.SourceMode),
+				ValueMode:      strings.TrimSpace(it.ValueMode),
+				Width:          it.Width,
+				Sort:           i, CreatedAt: now, UpdatedAt: now,
 			}
 			if item.ItemName == "" {
 				item.ItemName = key
@@ -1871,6 +1900,8 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 			ID: uuid.NewString(), BillingTenantID: tenantID,
 			Category: r.cat, ItemKey: key, ItemName: r.name,
 			Enabled: r.on, Sort: i, CreatedAt: now, UpdatedAt: now,
+			// 从市电账单引入的费用分项：按分摊比例折算
+			SourceCategory: "市电账单", SourceKey: r.name, SourceMode: "fee_row", ValueMode: "apportion",
 		})
 	}
 	if err := h.db.WithContext(ctx).Create(&items).Error; err != nil {

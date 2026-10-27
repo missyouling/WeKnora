@@ -253,3 +253,129 @@ export async function generateCatalogPdf(opts: {
 
   return doc.save()
 }
+
+// ---------------------------------------------------------------------------
+// 打印清单（结算单）：与「打印目录」并列的另一种版式。
+//
+// 目录 = 列表表头 + 行的横向表格（一屏看全，适合对账）；
+// 清单 = 每个所选记录一页纵向结算单（基本信息 + 逐项分摊明细 + 合计），
+// 适合直接发给租户。两者共用同一套中文字体与折行逻辑，样式天然一致。
+// ---------------------------------------------------------------------------
+
+const PORTRAIT_W = 595.28
+const PORTRAIT_H = 841.89
+
+export interface StatementItem {
+  label: string
+  /** 来源分类（市电账单 / 电费核算 …），打印时单独一列便于对账 */
+  category?: string
+  value: string
+}
+
+export interface StatementRecord {
+  /** 标题（如「2026-09 费用清单 · 持睿汽车」） */
+  title: string
+  /** 基本信息行（月份 / 使用单位 / 分摊比例 …） */
+  meta: Array<{ label: string; value: string }>
+  items: StatementItem[]
+  /** 合计应付 */
+  total: string
+}
+
+export async function generateStatementPdf(opts: {
+  title: string
+  records: StatementRecord[]
+}): Promise<Uint8Array> {
+  const { title, records } = opts
+  if (!records.length) throw new Error('无可用数据生成清单')
+
+  const fontBytes = await loadCatalogFont()
+  const doc = await PDFDocument.create()
+  doc.registerFontkit(fontkit)
+  const font = await doc.embedFont(fontBytes)
+
+  const avail = PORTRAIT_W - MARGIN * 2
+  const colW = [avail - 90 - 110, 90, 110]
+  const now = new Date()
+  const dateStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`
+
+  let page = doc.addPage([PORTRAIT_W, PORTRAIT_H])
+  let y = PORTRAIT_H - MARGIN - TITLE_SIZE - 4
+  let pageNo = 1
+  const drawFooter = () => {
+    page.drawText(`${title} · 第 ${pageNo} 页 · 生成时间 ${dateStr}`, { x: MARGIN, y: MARGIN - 8, size: 7.5, font, color: COLOR_MUTED })
+  }
+  const newPage = () => {
+    drawFooter()
+    page = doc.addPage([PORTRAIT_W, PORTRAIT_H])
+    pageNo++
+    y = PORTRAIT_H - MARGIN - 16
+  }
+  const ensure = (need: number) => { if (y - need < MARGIN + 24) newPage() }
+
+  page.drawText(title, { x: MARGIN, y, size: TITLE_SIZE, font, color: COLOR_TITLE })
+  y -= 6
+
+  for (const rec of records) {
+    ensure(70)
+    // 记录标题
+    page.drawText(rec.title, { x: MARGIN, y, size: 12, font, color: COLOR_TEXT })
+    y -= 14
+    // 基本信息两列
+    for (const m of rec.meta) {
+      page.drawText(`${m.label}：${m.value}`, { x: MARGIN + 2, y, size: META_SIZE, font, color: COLOR_MUTED })
+      y -= 12
+    }
+    y -= 4
+    // 明细表头
+    ensure(HEADER_HEIGHT + 24)
+    const drawRowBg = (h: number, bg?: any) => {
+      page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, color: bg ?? rgb(1, 1, 1) })
+      page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, borderColor: COLOR_BORDER, borderWidth: 0.5 })
+    }
+    let x = MARGIN
+    drawRowBg(HEADER_HEIGHT, COLOR_HEADER_BG)
+    for (const [i, label] of ['项目', '来源分类', '金额(元)'].entries()) {
+      page.drawText(label, { x: x + CELL_PAD, y: y - HEADER_HEIGHT + 9, size: HEADER_SIZE, font, color: COLOR_TEXT })
+      x += colW[i]
+    }
+    y -= HEADER_HEIGHT
+
+    for (const [idx, it] of rec.items.entries()) {
+      const nameLines = wrapText(font, it.label, colW[0] - CELL_PAD * 2, CELL_SIZE)
+      const h = Math.max(ROW_MIN_HEIGHT, nameLines.length * LINE_HEIGHT + CELL_PAD)
+      ensure(h)
+      const top = y
+      if (idx % 2 === 1) drawRowBg(h, COLOR_ZEBRA_BG)
+      else drawRowBg(h)
+      let cx = MARGIN
+      const totalH = nameLines.length * LINE_HEIGHT
+      nameLines.forEach((line, li) => {
+        page.drawText(line, {
+          x: cx + CELL_PAD,
+          y: top - h + (h - totalH) / 2 + totalH - (li + 1) * LINE_HEIGHT,
+          size: CELL_SIZE, font, color: COLOR_TEXT,
+        })
+      })
+      cx += colW[0]
+      page.drawText(it.category || '—', { x: cx + CELL_PAD, y: top - h + 7, size: CELL_SIZE, font, color: COLOR_MUTED })
+      cx += colW[1]
+      page.drawText(it.value, { x: cx + CELL_PAD, y: top - h + 7, size: CELL_SIZE, font, color: COLOR_TEXT })
+      y -= h
+    }
+
+    // 合计
+    ensure(ROW_MIN_HEIGHT + 8)
+    drawRowBg(ROW_MIN_HEIGHT, COLOR_HEADER_BG)
+    page.drawText('合计应付', { x: MARGIN + CELL_PAD, y: y - ROW_MIN_HEIGHT + 7, size: CELL_SIZE + 0.5, font, color: COLOR_TEXT })
+    const totalW = font.widthOfTextAtSize(rec.total, CELL_SIZE + 0.5)
+    page.drawText(rec.total, {
+      x: MARGIN + avail - CELL_PAD - totalW, y: y - ROW_MIN_HEIGHT + 7,
+      size: CELL_SIZE + 0.5, font, color: COLOR_TEXT,
+    })
+    y -= ROW_MIN_HEIGHT + 18
+  }
+
+  drawFooter()
+  return doc.save()
+}

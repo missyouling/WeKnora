@@ -117,15 +117,25 @@ func (BillingWaterReading) TableName() string { return "billing_water_meter_read
 
 // BillingTenantItem 分摊子项开关（市电账单各费用子项是否参与分摊，按子项名 name 粒度）。
 type BillingTenantItem struct {
-	ID              string    `gorm:"primaryKey" json:"id"`
-	BillingTenantID string    `gorm:"index" json:"billing_tenant_id"`
-	Category        string    `json:"category"` // 大类（如 (1)市场化购电费），用于 UI 分组
-	ItemKey         string    `json:"item_key"`
-	ItemName        string    `json:"item_name"`
-	Enabled         bool      `json:"enabled"`
-	Sort            int       `json:"sort"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string `gorm:"primaryKey" json:"id"`
+	BillingTenantID string `gorm:"index" json:"billing_tenant_id"`
+	Category        string `json:"category"` // 大类（如 (1)市场化购电费），用于 UI 分组
+	ItemKey         string `json:"item_key"`
+	ItemName        string `json:"item_name"`
+	Enabled         bool   `json:"enabled"`
+	Sort            int    `json:"sort"`
+	// 来源描述（分摊子项不再只有市电费用分项）：
+	//   source_category 市电账单 / 光伏账单 / 电费核算 / 水费核算 / 气费核算
+	//   source_key      该分类下的字段 key（mode=field）或费用组成名（mode=fee_row）
+	//   source_mode     field | fee_row
+	//   value_mode      apportion（按市电分摊比例折算）| direct_sum（直接取归属合计）
+	SourceCategory string    `json:"source_category"`
+	SourceKey      string    `json:"source_key"`
+	SourceMode     string    `json:"source_mode"`
+	ValueMode      string    `json:"value_mode"`
+	Width          int       `json:"width"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (BillingTenantItem) TableName() string { return "billing_tenant_items" }

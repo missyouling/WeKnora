@@ -15,12 +15,17 @@
           <template #icon><t-icon name="setting" size="14px" /></template>
           设置
         </t-button>
-        <t-button theme="primary" size="small" :loading="generateBusy"
-          :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '为当前筛选范围内未生成账单的月份生成月度账单（数据齐全时自动生成）'"
-          @click="handleGenerateAll">
-          <template #icon><t-icon name="refresh" size="14px" /></template>
-          {{ isOwnerView ? '重新核算' : '生成账单' }}
-        </t-button>
+        <!-- 二次确认是硬要求：生成会覆盖该月账单，误点代价高。
+             文案区分「所选 N 条」与「未选择 → 全部」，让用户清楚影响范围。 -->
+        <t-popconfirm theme="warning" :content="generateConfirmText" placement="bottom-right"
+          :confirm-btn="{ content: '确认生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }"
+          @confirm="handleGenerateAll">
+          <t-button theme="primary" size="small" :loading="generateBusy"
+            :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '按所选记录生成账单；未选择则全部重新生成（数据不全时禁止生成）'">
+            <template #icon><t-icon name="refresh" size="14px" /></template>
+            {{ isOwnerView ? '重新核算' : '生成账单' }}
+          </t-button>
+        </t-popconfirm>
       </template>
     </BusinessFilterBar>
 
@@ -81,9 +86,18 @@
             <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelection">清除</t-button>
           </div>
           <div class="batch-bar-actions">
-            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" :disabled="!printableRows.length" @click="handlePrint">
-              <template #icon><t-icon name="print" size="14px" /></template>
+            <!-- 两种打印版式，语义不同：
+                 清单 = 每个所选记录一页纵向结算单（逐项分摊明细 + 合计），发给租户；
+                 目录 = 当前列表表头 + 所选行数据（横向汇总表），内部对账用。 -->
+            <t-button theme="default" variant="outline" size="small" :loading="statementBusy"
+              :disabled="!printableRows.length" @click="handlePrintStatement">
+              <template #icon><t-icon name="file-pdf" size="14px" /></template>
               打印清单
+            </t-button>
+            <t-button theme="default" variant="outline" size="small" :loading="catalogBusy"
+              :disabled="!printableRows.length" @click="handlePrintCatalog">
+              <template #icon><t-icon name="print" size="14px" /></template>
+              打印目录
             </t-button>
             <t-popconfirm theme="warning" :content="`确定删除所选 ${selectedKeys.size} 条账单吗？`"
               :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
@@ -102,10 +116,11 @@
          （右侧滑出 + 标题栏 + 双列 t-form 网格 + 统一底栏）。
          旧自写 <t-drawer> + .record-detail 表格已淘汰。
          字段顺序严格跟随当前分类「字段定义（subs）」，见 billingFields。 -->
+    <!-- 只读抽屉：费用清单的每一列都是核算结果，查看可以、编辑必须走「生成/重算」，
+         所以这里 readonly（无输入框、无保存按钮），字段与列表启用列 1:1 对应。 -->
     <BusinessSplitDetailDrawer v-model:visible="recordVisible" :title="recordTitle" :row="null"
-      :form="recordFormWrapper" :fields="billingFields" :show-preview="false"
-      block-title="费用清单" :saving="recordSaving"
-      :storage-key="'weknora-tenant-record-drawer-width'" @save="saveRecordDetail">
+      :form="recordFormWrapper" :fields="billingFields" :show-preview="false" readonly
+      block-title="费用清单" :storage-key="'weknora-tenant-record-drawer-width'">
       <template #footer-left>
         <t-button variant="outline" size="small" @click="printRecord">打印</t-button>
       </template>
@@ -212,13 +227,14 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  listBillingTenants,
-  listBillingRecords, generateBillingRecord, getBillingRecord, updateBillingRecord, deleteBillingRecord,
+  listBillingTenants, getBillingTenant,
+  listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
-import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
+import { parseFieldSource, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -240,7 +256,19 @@ const useUnit = ref(OWNER_UNIT)
 const kbId = ref('')
 
 // ---- 列定义(按使用单位双视图) ----
-interface ColDef { key: string; label: string; default: boolean; w: string; tip?: string }
+interface ColDef {
+  key: string
+  label: string
+  default: boolean
+  w: string
+  tip?: string
+  /** 精确列宽（px）；0/未配置走表格自适应 */
+  width?: number
+  /** 跨分类引用字段的来源（仅「字段定义」里添加的字段有值） */
+  source?: FieldSource
+  /** 该列来自租户分摊子项（租户视角） */
+  item?: any
+}
 const COL_DEFS_OWNER: ColDef[] = [
   { key: 'month', label: '账单周期', default: true, w: '0.8fr', tip: '账单月份' },
   { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
@@ -287,6 +315,8 @@ const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
 // 分类名与设置抽屉里的 fleet_categories.name 逐字一致
 const CATEGORY_NAME = '费用清单'
 const categorySubs = ref<EnergySub[]>([])
+/** 当前租户的「分摊子项」配置（切换使用单位时按需加载） */
+const tenantItems = ref<any[]>([])
 /**
  * 生效列定义 = 费用清单分类的字段定义（subs）。
  *
@@ -294,14 +324,87 @@ const categorySubs = ref<EnergySub[]>([])
  * 只保留当前视角本来就有的列，再用 subs 的名字/顺序/宽度/默认显示覆盖。
  */
 const baseColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEFS_TENANT))
-const activeColDefs = computed(() =>
-  applySubsToColumns(
-    baseColDefs.value,
-    categorySubs.value,
-    undefined,
-    { restrictToBase: true },
-  ),
+
+/**
+ * 租户视角：当前租户在「清单设置 -> 分摊子项」里启用的项目（按 sort）。
+ *
+ * 这些项目既是列表列，也是抽屉字段的唯一来源 —— 所以列与数据天然一一对应，
+ * 不存在「配置里开了、列表里看不到」。
+ */
+const tenantEnabledItems = computed(() =>
+  tenantItems.value.filter((it: any) => it && it.enabled !== false),
 )
+
+/** 分摊子项列 key（item_key 内已含「大类|子项名」，加前缀避免与内置列撞名）。 */
+const tenantItemColKey = (it: any) => `item_${String(it?.item_key || it?.itemKey || '')}`
+
+/**
+ * 生效列定义。
+ *
+ * 业主视角：内置派生列 + 「字段定义」里跨分类引用的字段（追加列）。
+ * 租户视角：固定锚点列（月份/使用单位/总电量/总电费/分摊比例）+ 该租户启用的
+ * 分摊子项 + 合计应付。未配置任何子项时回落到内置租户列，避免空表。
+ */
+const activeColDefs = computed<ColDef[]>(() => {
+  const subs = categorySubs.value || []
+  // 内置派生列：仍受 subs 的改名/顺序/宽度/默认显隐控制（restrictToBase =
+  // 只有本来就存在的列会被应用，避免把引用字段误当成内置列）。
+  const builtinSubs = subs.filter((s) => !parseFieldSource(s))
+  const base = applySubsToColumns(baseColDefs.value, builtinSubs, undefined, { restrictToBase: true })
+
+  if (!isOwnerView.value) {
+    const anchors = base.filter((c) => ['month', 'unit', 'total_kwh', 'total_fee', 'ratio'].includes(c.key))
+    const items = tenantEnabledItems.value.map((it: any) => ({
+      key: tenantItemColKey(it),
+      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      default: true,
+      w: '1fr',
+      width: Number(it.width) || undefined,
+      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+      item: it,
+    })) as ColDef[]
+    if (!items.length) return base
+    const totalCol: ColDef = { key: 'item_total', label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
+    return [...anchors, ...items, totalCol]
+  }
+
+  // 引用字段一律追加在内置列之后：它们是「从别的分类借来的列」，
+  // 不能插进内置口径列中间（否则读表顺序会变成混排，用户很难对着看）。
+  const extras: ColDef[] = []
+  for (const sub of subs) {
+    const src = parseFieldSource(sub)
+    if (!src || sub.enabled === false) continue
+    extras.push({
+      key: String(sub.name),
+      label: String(sub.label || sub.name),
+      default: sub.is_default === true,
+      w: '1fr',
+      width: Number(sub.width) || undefined,
+      tip: `引用自 ${src.category}`,
+      source: src,
+    })
+  }
+  return extras.length ? [...base, ...extras] : base
+})
+
+/**
+ * 拉取当前租户的「分摊子项」。
+ *
+ * 租户视角的列 = 锚点列 + 这里启用的项目，所以必须在切换使用单位后立即拉一次；
+ * 否则列表会停在上一家的列（用户看到的字段与所选单位不匹配）。
+ */
+async function loadTenantItems() {
+  const id = activeTenantId.value
+  if (!id) { tenantItems.value = []; return }
+  try {
+    const res: any = await getBillingTenant(id)
+    const items: any[] = res?.data?.items || []
+    tenantItems.value = [...items].sort((a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0))
+  } catch {
+    tenantItems.value = []
+  }
+  syncColumnKeys()
+}
 
 /** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
 async function loadCategorySubs() {
@@ -421,6 +524,7 @@ const loadTenants = async () => {
     if (tenants.value.length && !activeTenantId.value) {
       activeTenantId.value = tenants.value[0].id
     }
+    await loadTenantItems()
     await loadAllData()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载租户失败')
@@ -584,6 +688,35 @@ const tenantWater = (owner: string, month: string, dormOnly = false) => {
 }
 
 // 组装列表行
+/**
+ * 引用字段取值上下文。
+ *
+ * 所有数据集都是列表已经加载过的（市电账单 / 光伏账单 / 电/气抄表 / 水表读数），
+ * 直接用同一份内存数据算，避免后端再聚合一版造成口径漂移。
+ */
+const sourceCtxOf = (month: string, bill: any, solarArr: any[]): SourceResolveContext => ({
+  month,
+  tenantName: useUnit.value,
+  bill,
+  solarItems: solarArr,
+  elecRows: elecRows.value,
+  waterMeters: waterMeters.value,
+  waterReadingMap: waterReadingMap.value,
+  gasRows: gasRows.value,
+})
+
+/** 当月分摊比例：已生成账单用固化值；未生成按月内星达分时总电量 ÷ 账单电量估算。 */
+const ratioOfMonth = (month: string, bill: any, rec: any): number => {
+  const fixed = Number(rec?.ratio) || 0
+  if (fixed > 0) return fixed
+  const billKwh = Number(bill?.item?.total_kwh) || 0
+  if (billKwh <= 0) return 0
+  const star = elecRows.value
+    .filter((r) => r.month === month && r.meter_type === 'time' && r.use_unit === OWNER_UNIT)
+    .reduce((sum, r) => sum + (Number(r.usage) || 0), 0)
+  return star > 0 ? Math.round((star / billKwh) * 1e6) / 1e6 : 0
+}
+
 const buildRows = () => {
   const tenant = tenants.value.find((t: any) => t.id === activeTenantId.value)
   const tenantName = tenant?.name || ''
@@ -666,6 +799,12 @@ const buildRows = () => {
         gas_usage: sumBy(gas, 'usage'),
         gas_fee: sumBy(gas, 'amount'),
       })
+      // 跨分类引用字段（费用清单「字段定义」里检索添加的列）
+      const ctx = sourceCtxOf(month, bill, solarArr)
+      for (const c of activeColDefs.value) {
+        if (!c.source) continue
+        base[c.key] = resolveSourceValue(c.source, ctx)
+      }
     } else {
       // ===== 持睿(租户)视图 =====
       const totalKwh = Number(bill?.item?.total_kwh) || 0
@@ -687,6 +826,16 @@ const buildRows = () => {
         water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
         water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
       })
+      // 该租户的分摊子项：列与值同源（tenantEnabledItems），不可能出现「有列无数」
+      const ctx = sourceCtxOf(month, bill, solarArr)
+      const ratio = ratioOfMonth(month, bill, rec)
+      let total = 0
+      for (const it of tenantEnabledItems.value) {
+        const v = resolveTenantItemValue(it, ctx, ratio)
+        base[tenantItemColKey(it)] = v
+        total += v
+      }
+      if (tenantEnabledItems.value.length) base.item_total = Math.round(total * 100) / 100
     }
     base.remark = rec?.remark || ''
     return base
@@ -707,6 +856,8 @@ const loadRecords = async () => {
 const onUseUnitChange = () => {
   clearSelection()
   syncColumnKeys()
+  // 切到租户视角要按该租户的分摊子项重建列（异步，buildRows 在拿到后重跑）
+  void loadTenantItems().then(() => buildRows())
   buildRows()
 }
 
@@ -741,10 +892,66 @@ const onRowClick = (row: any) => {
 }
 const clearSelection = () => { selectedKeys.value = new Set() }
 
-// ---- 生成月度账单（仅租户视图） ----
+// ---- 生成月度账单 ----
 const generateBusy = ref(false)
-// 星达视图：重新加载账单与表计数据并重新核算；租户视图：对未生成月份生成账单
+/** 生成目标：勾选了就只处理所选，未勾选 = 全部（与确认文案一致）。 */
+const generateTargets = computed(() => (selectedKeys.value.size ? selectedRows.value : displayRows.value))
+const generateConfirmText = computed(() => (selectedKeys.value.size
+  ? `确认重新生成所选 ${selectedKeys.value.size} 条记录的账单？`
+  : '当前未选择记录，确认全部重新生成账单？'))
+
+/**
+ * 生成前完整性校验（产品口径：严格拦截）。
+ *
+ * 逐月检查：市电账单、星达分时读数、该租户电表读数，以及已开启分摊子项
+ * 依赖的水/气读数。任一缺失即整批禁止生成 —— 带病生成出来的账单会静默
+ * 少算/错算，比生成失败更难发现。
+ */
+function readinessOf(rows: any[]): Array<{ month: string; missing: string[] }> {
+  const issues: Array<{ month: string; missing: string[] }> = []
+  const itemCats = new Set(tenantEnabledItems.value.map((it: any) => String(it.source_category || '市电账单')))
+  for (const r of rows) {
+    const missing: string[] = []
+    if (!r.billReady) missing.push('市电账单')
+    if (!r.readingReady) missing.push('星达分时读数')
+    if (!isOwnerView.value) {
+      const dormRows = elecRows.value.filter((x) =>
+        x.month === r.month && x.use_unit === useUnit.value && x.meter_kind === 'dorm')
+      if (!dormRows.length) missing.push(`「${useUnit.value}」电表读数`)
+      if (itemCats.has('水费核算')) {
+        const meters = waterMeters.value.filter((m: any) =>
+          m.enabled !== false && (m.owner_unit === useUnit.value || m.use_unit === useUnit.value))
+        if (!meters.some((m: any) => waterReadingMap.value.get(`${m.id}__${r.month}`))) missing.push('水表读数')
+      }
+      if (itemCats.has('气费核算')) {
+        const hasGas = gasRows.value.some((g) =>
+          g.month === r.month && g.use_unit === useUnit.value && g.meter_kind !== 'public')
+        if (!hasGas) missing.push('气表读数')
+      }
+    }
+    if (missing.length) issues.push({ month: r.month, missing })
+  }
+  return issues
+}
+
+/** 数据不全提示：逐月列出缺失项，明确告诉用户去补什么。 */
+function reportReadiness(issues: Array<{ month: string; missing: string[] }>): boolean {
+  const detail = `以下月份数据不全，已禁止生成：\n${issues
+    .map((i) => `· ${i.month}：缺少 ${i.missing.join('、')}`)
+    .join('\n')}`
+  MessagePlugin.error({ content: detail, duration: 8000 })
+  return false
+}
+
 const handleGenerateAll = async () => {
+  const targets = generateTargets.value
+  if (!targets.length) {
+    MessagePlugin.warning('当前没有可生成的记录')
+    return
+  }
+  const issues = readinessOf(targets)
+  if (issues.length) { reportReadiness(issues); return }
+
   if (isOwnerView.value) {
     generateBusy.value = true
     try {
@@ -756,26 +963,11 @@ const handleGenerateAll = async () => {
     return
   }
   if (!activeTenantId.value) return
-  const pending = displayRows.value.filter((r: any) => !r.hasRec)
-  if (!pending.length) {
-    MessagePlugin.warning('当前月份均已生成账单，如需重算请选中记录使用「重新生成」')
-    return
-  }
-  const missingBill = pending.filter((r: any) => !r.billReady)
-  const missingReading = pending.filter((r: any) => r.billReady && !r.readingReady)
-  if (missingBill.length) {
-    MessagePlugin.error(`以下月份缺少市电账单，无法生成：${missingBill.map((r: any) => r.month).join('、')}`)
-    return
-  }
-  if (missingReading.length) {
-    MessagePlugin.error(`以下月份缺少星达分表读数，无法生成：${missingReading.map((r: any) => r.month).join('、')}`)
-    return
-  }
   generateBusy.value = true
   try {
     const okMonths: string[] = []
     const fail: string[] = []
-    for (const row of pending) {
+    for (const row of targets) {
       try {
         await generateBillingRecord(activeTenantId.value, { month: row.month })
         okMonths.push(row.month)
@@ -791,6 +983,7 @@ const handleGenerateAll = async () => {
     generateBusy.value = false
   }
 }
+
 // 数据齐全时默认自动生成（租户视图；缺市电账单或分时读数的月份跳过，交给手动生成）
 const autoGenAttempted = ref<Set<string>>(new Set())
 const autoGenerateReady = async () => {
@@ -807,10 +1000,48 @@ const autoGenerateReady = async () => {
   await loadAllData()
 }
 
-// ---- 浮动工具栏：打印清单 ----
+// ---- 浮动工具栏：打印 ----
 const catalogBusy = ref(false)
+const statementBusy = ref(false)
 const printableRows = computed(() => (selectedKeys.value.size ? selectedRows.value : displayRows.value))
-const handlePrint = async () => {
+
+/**
+ * 打印清单（结算单版式）。
+ *
+ * 与「打印目录」的区别：目录只列当前表头 + 行值（横向表格，内部对账用）；
+ * 清单是**每个记录一页纵向结算单** —— 基本信息 + 逐项分摊明细（带来源分类）
+ * + 合计应付，可以直接发给租户。
+ */
+const handlePrintStatement = async () => {
+  const arr = printableRows.value
+  if (!arr.length) return
+  statementBusy.value = true
+  try {
+    const cols = visibleColDefs.value.filter((c) => !['month', 'unit'].includes(c.key))
+    const records = arr.map((r: any) => ({
+      title: `${r.month || ''} 费用清单 · ${r.unit || useUnit.value}`,
+      meta: [
+        { label: '账单周期', value: String(r.month || '') },
+        { label: '使用单位', value: String(r.unit || useUnit.value) },
+        { label: '分摊比例', value: Number(r.ratio) > 0 ? Number(r.ratio).toFixed(6) : '—' },
+      ],
+      items: cols.map((c) => ({
+        label: c.label,
+        category: c.source?.category || (c.item?.source_category as string) || '',
+        value: cellText(c.key, r) || '—',
+      })),
+      total: String(r.item_total ?? r.ind_fee ?? r.total_fee ?? '—'),
+    }))
+    const bytes = await generateStatementPdf({ title: `${useUnit.value} 费用清单`, records })
+    showPrint(`${useUnit.value} 费用清单（${arr.length} 条）`, bytes)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '生成清单失败')
+  } finally {
+    statementBusy.value = false
+  }
+}
+
+const handlePrintCatalog = async () => {
   const arr = printableRows.value
   if (!arr.length) return
   catalogBusy.value = true
@@ -876,7 +1107,6 @@ defineExpose({ reloadTenants })
 const recordVisible = ref(false)
 const recordDetail = ref<any>(null)
 const recordRow = ref<any>(null)
-const recordSaving = ref(false)
 const recordForm = ref<Record<string, any>>({})
 // 说明：不向 BSD 传 :dirty —— 费用清单行是即时可编辑的核算值，
 // 保存按钮恒可点（BSD 的 dirty===false 会禁用保存，这里不需要该门禁）。
@@ -900,18 +1130,17 @@ const recordTitle = computed(() => {
 const billingFields = computed<Array<{ name: string; label: string; dataType?: string }>>(() => {
   const row = recordRow.value || {}
   const has = (k: string) => k in row && row[k] !== undefined
-  const subs = (categorySubs.value || []).filter((x: any) => x && x.enabled !== false && has(String(x.name)))
-  if (subs.length) {
-    return subs.map((x: any) => ({
-      name: String(x.name),
-      label: String(x.label || x.name),
-      dataType: x.data_type === 'number' || x.data_type === 'amount' ? 'number'
-        : x.data_type === 'date' ? 'date' : 'text',
+  // 与列表当前生效的列严格同源：列上有的、值也有的才进抽屉。
+  // （旧实现从 subs 出发，租户视角的分摊子项列不在 subs 里 → 抽屉缺字段。）
+  const cols = activeColDefs.value.filter((c) => has(c.key))
+  if (cols.length) {
+    return cols.map((c) => ({
+      name: c.key,
+      label: c.label,
+      dataType: /fee|amount|price|kwh|usage|total|ratio|gen|grid|_fee$/.test(c.key) ? 'number' : 'text',
     }))
   }
-  return activeColDefs.value
-    .filter((c) => has(c.key))
-    .map((c) => ({ name: c.key, label: c.label, dataType: 'text' }))
+  return visibleColDefs.value.filter((c) => has(c.key)).map((c) => ({ name: c.key, label: c.label, dataType: 'text' }))
 })
 
 // BSD 表单契约 { data, remarkParts, items }：data 指向行副本，编辑不回写列表
@@ -933,44 +1162,9 @@ const openRecord = async (row: any) => {
   } catch { /* 明细拉取失败不影响主表单：质量面板与明细区静默 */ }
 }
 
-/**
- * 保存：把可人工调整的项写回 billing_records（备注 / 宿舍电费 / 水费 / 总应付）。
- *
- * 其余列是核算派生值（总电量、均价、工业电费…），改它们等于改口径，
- * 必须走「生成账单/重新核算」，不能在这里静默覆盖。
- */
-const saveRecordDetail = async () => {
-  const row = recordRow.value
-  if (!row?.hasRec) {
-    MessagePlugin.warning('该月尚未生成账单，请先生成账单后再编辑')
-    return
-  }
-  const rec = records.value.find((r: any) => r.month === row.month)
-  if (!rec) return
-  recordSaving.value = true
-  try {
-    const payload: Record<string, unknown> = {}
-    if ('remark' in recordForm.value) payload.remark = String(recordForm.value.remark ?? '')
-    for (const k of ['dorm_fee', 'water_fee', 'total_fee']) {
-      if (k in recordForm.value && recordForm.value[k] !== '' && recordForm.value[k] !== undefined) {
-        payload[k] = Number(recordForm.value[k]) || 0
-      }
-    }
-    if (!Object.keys(payload).length) {
-      MessagePlugin.info('该行没有可保存的人工字段')
-      return
-    }
-    await updateBillingRecord(rec.id, payload)
-    MessagePlugin.success('已保存')
-    recordVisible.value = false
-    await loadAllData()
-    notifyEnergyDataChanged()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  } finally {
-    recordSaving.value = false
-  }
-}
+// 说明：费用清单抽屉是**只读**的（所有值都是核算结果）。
+// 需要改数 → 走工具栏「生成账单 / 重新核算」；需要写备注 → 备注本身也属核算记录，
+// 由生成管线维护。这里不再保留逐字段保存通道，避免绕过口径直接改金额。
 
 // 直接打印明细页面（浏览器打印，默认纵向 A4）
 // 长内容可多页分页：克隆明细到 body 顶层(脱离抽屉 fixed 容器)后打印,每个大项分组尽量不跨页

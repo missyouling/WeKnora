@@ -22,6 +22,14 @@ export interface EnergySub {
   width?: number
   group?: string
   group_label?: string
+  /**
+   * 跨分类字段引用（仅「费用清单」使用）。
+   *
+   * 费用清单是综合汇总列表，自身没有独立存储：它的每个字段都来自市电账单 /
+   * 光伏账单 / 电/水/气核算。带 source 的条目 = 用户检索并添加的外部字段；
+   * 不带 source = 内置派生列（由列表自身的核算逻辑算出来）。
+   */
+  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
 }
 
 /** 列表列定义的最小形态（各组件自带更丰富的扩展字段）。 */
