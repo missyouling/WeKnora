@@ -12,8 +12,10 @@
     不触发（真机复现：选中候选后毫无反应）。改成输入框 + 自绘候选面板，行为确定。
   -->
   <div ref="rootRef" class="source-field-picker">
+    <!-- 不能写 @keydown.enter：TDesign 的 t-input 把 keydown 的第一个参数当「输入值字符串」传，
+         Vue 的 .enter 修饰符会执行 `'key' in "总电量"` 直接抛 TypeError。用原生 @enter。 -->
     <t-input :model-value="keyword" :placeholder="placeholder" clearable
-      @update:model-value="onInput" @focus="open = true" @keydown.enter.prevent="pickFirst">
+      @update:model-value="onInput" @focus="open = true" @enter="pickFirst">
       <template #prefixIcon><t-icon name="search" size="16px" /></template>
     </t-input>
     <div v-if="open" class="sfp-panel">

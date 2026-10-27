@@ -327,18 +327,26 @@ async function loadCategorySubs() {
 }
 const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
 const visibleKeys = ref<string[]>([])
+/** 存档清洗：字段被删/被禁用后旧 key 不得存活（否则「重置」会把它带回来）。 */
 function loadStoredKeys(): string[] {
+  const defaults = activeColDefs.value.filter(c => c.default).map(c => c.key)
   try {
     const raw = localStorage.getItem(colStorageKey.value)
     if (raw) {
       const arr = JSON.parse(raw)
       if (Array.isArray(arr) && arr.length) {
         const valid = arr.filter(k => activeColDefs.value.some(c => c.key === k))
-        if (valid.length) return valid
+        if (valid.length) {
+          if (valid.length !== arr.length) {
+            try { localStorage.setItem(colStorageKey.value, JSON.stringify(valid)) } catch { /* ignore */ }
+          }
+          return valid
+        }
+        return defaults
       }
     }
   } catch { /* ignore */ }
-  return activeColDefs.value.filter(c => c.default).map(c => c.key)
+  return defaults
 }
 const syncColumnKeys = () => { visibleKeys.value = loadStoredKeys() }
 syncColumnKeys()
@@ -444,11 +452,27 @@ const loadTenants = async () => {
 }
 
 // 并行加载所有数据源并计算行
+/**
+ * 装载全部数据源。
+ *
+ * 顺序说明（性能关键）：
+ *   1. `loadKb()` 必须先完成 —— 市电/光伏两份账单列表都依赖它解析出的 kbId，
+ *      这是**真实的数据依赖**，不能并行；
+ *   2. 其余 6 个数据源（已生成账单 / 电 / 气 / 水表档案 / 水读数）与它无关，
+ *      全部塞进同一个 Promise.all 并发发出去。
+ * 旧实现把 7 个请求依次 `await`，再叠加 `autoGenerateReady` 的逐月串行生成，
+ * 切到「费用清单」要等数秒。
+ */
 const loadAllData = async () => {
-  await loadKb()
   const tenantId = activeTenantId.value
-  if (!tenantId) { records.value = []; displayRows.value = []; return }
+  if (!tenantId) {
+    await loadKb()
+    records.value = []
+    displayRows.value = []
+    return
+  }
   try {
+    await loadKb()
     const tasks: Promise<any>[] = []
     if (kbId.value) {
       tasks.push(listUtilityBillRecords(kbId.value, { page: 1, page_size: 500 }))
@@ -461,7 +485,15 @@ const loadAllData = async () => {
       listUtilityMeters({ category: 'water' }),
       listUtilityMeterRecords({ category: 'water' }),
     )
-    const [billRes, solarRes, recRes, elecRes, gasRes, wmRes, wrRes]: any[] = await Promise.all(tasks)
+    const results: any[] = await Promise.all(tasks)
+    let cursor = 0
+    const billRes = kbId.value ? results[cursor++] : null
+    const solarRes = kbId.value ? results[cursor++] : null
+    const recRes = results[cursor++]
+    const elecRes = results[cursor++]
+    const gasRes = results[cursor++]
+    const wmRes = results[cursor++]
+    const wrRes = results[cursor++]
     utilityBills.value = Array.isArray(billRes?.data || billRes?.list) ? (billRes.data || billRes.list) : []
     solarBills.value = Array.isArray(solarRes?.data || solarRes?.list) ? (solarRes.data || solarRes.list) : []
     records.value = recRes?.data || []
@@ -540,15 +572,38 @@ const sumBy = (arr: any[], key: string): number => Math.round(arr.reduce((s, r) 
 // 市电账单居民电量/电费
 // 电量(定比)= 账单提取 residential_readings 的定比电量原值 kwh(不取 bill_kwh:部分月份 bill_kwh 被算成 kwh×0.015)
 // 电费(定比)= 账单提取 residential_amount(目录电费+政府性基金及附加)；旧账单无该字段时兜底 = catalog_amount + 政府性基金及附加(居民)
+/**
+ * 居民（定比）电量与电费。
+ *
+ * `residential_readings` 的语义陷阱：**每一行的 `kwh` 都是同一个「本期电量」基数**，
+ * `ratio` 是该行的比例（定比行 0.015、基础电费 0.5003、各类基金 0.001~0.02），
+ * `bill_kwh` 才是这行的计费电量。旧实现把所有行的 `kwh` 相加 → 7 行 × 596168
+ * 得到天文数字，再被 `indKwh = 总电量 − 居民电量` 一减，定比电量/工业电量全废
+ * （真机表现：定比电量恒为 0、工业电量对不上）。
+ *
+ * 正确口径：**只取主行**（定比 / 第一行），用它的 `bill_kwh`（= 定比电量，如 8938）。
+ */
 const residentInfoOf = (bill: any) => {
   const item = bill?.item || bill || {}
-  const rows = Array.isArray(item.residential_readings) ? item.residential_readings : []
-  const kwh = Math.round(rows.reduce((s: number, r: any) => s + (Number(r.kwh) || 0), 0) * 100) / 100
+  const rows: any[] = Array.isArray(item.residential_readings) ? item.residential_readings : []
+  // 主行：优先 ratio≈0.015 的定比行；否则取第一行（没有 ratio 时视为唯一的定比行）
+  const main = rows.find((r) => {
+    const ratio = Number(r?.ratio) || 0
+    return ratio > 0 && ratio < 0.05 && String(r?.project || '').includes('定比')
+  }) || rows[0]
+  // 计费电量优先取 bill_kwh（后端已算出）；缺失时按 kwh × ratio + adjust 反算
+  let kwh = Number(main?.bill_kwh) || 0
+  if (!kwh) {
+    const base = Number(main?.kwh) || 0
+    const ratio = Number(main?.ratio) || 0
+    const adjust = Number(main?.adjust) || 0
+    kwh = base > 0 && ratio > 0 ? Math.round((base * ratio + adjust) * 100) / 100 : 0
+  }
   const gov = (Array.isArray(item.fee_items) ? item.fee_items : [])
     .filter((f: any) => String(f.category || '').includes('政府性基金') && Number(f.qty || 0) < 100000 && !String(f.name || '').includes('功率因数'))
     .reduce((s: number, f: any) => s + (Number(f.fee) || 0), 0)
   const fee = Math.round((Number(item.residential_amount) || (Number(item.catalog_amount) || 0) + (Number(gov) || 0)) * 100) / 100
-  return { kwh, fee }
+  return { kwh: Math.round(kwh * 100) / 100, fee }
 }
 
 // 水表读数按 (meterId, month) 索引(utility 子行)
@@ -760,7 +815,16 @@ const buildRows = () => {
   const kw = String(filters.value.keyword || '').trim()
   if (kw) out = out.filter((r) => matchAllTokens(rowFlattenText(r), kw))
   displayRows.value = out
-  clearSelection()
+
+  // 选中态校正：只剔除「已不在列表里」的 id，不整批清空。
+  //
+  // 旧实现无条件 clearSelection()。而 buildRows 会被 loadAllData / 视野切换 /
+  // 保存后刷新反复调用 —— 用户勾选一条记录再点「生成账单」，只要中间有过一次
+  // 数据重载，选中态就被清空，generateTargets 退化成「全部记录」，
+  // 于是校验了所有月份并报「其它月份数据不全」（真机问题 8）。
+  const alive = new Set(out.map((r: any) => r.id))
+  const nextSelected = new Set([...selectedKeys.value].filter((id) => alive.has(id)))
+  if (nextSelected.size !== selectedKeys.value.size) selectedKeys.value = nextSelected
 }
 
 const loadRecords = async () => {
@@ -864,6 +928,10 @@ const handleGenerateAll = async () => {
     MessagePlugin.warning('当前没有可生成的记录')
     return
   }
+  // 校验范围 == 生成范围，不多查一条：
+  //   勾选了 N 条 → 只查这 N 条对应月份；
+  //   未勾选（= 全部重新生成）→ 才查全部月份。
+  // 阈值不变（源数据不全仍然拦截），只是范围跟着所选走。
   const issues = readinessOf(targets)
   if (issues.length) { reportReadiness(issues); return }
 
@@ -907,10 +975,15 @@ const autoGenerateReady = async () => {
     !r.hasRec && r.billReady && r.readingReady && !autoGenAttempted.value.has(r.month))
   if (!pending.length) return
   autoGenAttempted.value = new Set([...autoGenAttempted.value, ...pending.map((r: any) => r.month)])
-  for (const row of pending) {
-    try {
-      await generateBillingRecord(activeTenantId.value, { month: row.month })
-    } catch { /* 缺项由手动生成提示 */ }
+  // 并发度 4：逐月串行会让 16 个月排成一条长链（N 次 RTT 叠加），
+  // 而全部并发又可能打满后端。分批并发既快又不冲击写接口。
+  const CONCURRENCY = 4
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
+    await Promise.all(pending.slice(i, i + CONCURRENCY).map(async (row: any) => {
+      try {
+        await generateBillingRecord(activeTenantId.value, { month: row.month })
+      } catch { /* 缺项由手动生成提示 */ }
+    }))
   }
   await loadAllData()
 }

@@ -418,7 +418,12 @@ func (h *BusinessExtractHandler) SaveExtractConfig(c *gin.Context) {
 	}
 	certType := strings.TrimSpace(req.CertType)
 	fields := normalizeExtractFields(req.Fields)
+	// 写入侧规范化：高级模板必须带 {{fields_schema}} 插槽，否则字段规则无法注入。
+	// 用户可能粘贴了不含插槽的模板，这里幂等补齐后再落库，避免"保存成功但规则不生效"。
 	promptTemplate := strings.TrimSpace(req.PromptTemplate)
+	if promptTemplate != "" {
+		promptTemplate = service.EnsureFieldsSchemaSlot(promptTemplate)
+	}
 	effCtx := context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)
 	now := time.Now().UTC()
 
@@ -629,7 +634,7 @@ func (h *BusinessExtractHandler) TestExtractConfig(c *gin.Context) {
 	fields := normalizeExtractFields(req.Fields)
 	ec := &types.KbExtractConfig{
 		Scope: scope, CertType: certType, Fields: fields,
-		AdvancedEnabled: req.AdvancedEnabled, PromptTemplate: strings.TrimSpace(req.PromptTemplate),
+		AdvancedEnabled: req.AdvancedEnabled, PromptTemplate: normalizePromptTemplate(req.PromptTemplate),
 	}
 
 	// 结果统一容器：发票走结构体管线，其它 scope 走通用 map 管线，最后汇成同一种响应。
@@ -871,6 +876,16 @@ func invoiceRuleDescFor(fieldName, catName string) (string, string) {
 		}
 		return "自定义字段", "从票面及备注信息中尽力识别并提取该字段对应内容。"
 	}
+}
+
+// normalizePromptTemplate 写入前的模板规范化：去空白 + 幂等补 {{fields_schema}}。
+// 空模板保持为空（= 未启用高级模式），不能凭空造出一个插槽。
+func normalizePromptTemplate(tpl string) string {
+	v := strings.TrimSpace(tpl)
+	if v == "" {
+		return ""
+	}
+	return service.EnsureFieldsSchemaSlot(v)
 }
 
 // defaultInvoicePromptTemplate 按分类生成默认高级 Prompt 模板。

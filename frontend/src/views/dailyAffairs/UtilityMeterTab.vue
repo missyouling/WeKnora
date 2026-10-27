@@ -430,7 +430,15 @@ function detailTotalOf(key: string, row: any): string {
   return ''
 }
 
+/**
+ * 读取列显隐存档。
+ *
+ * 存档里的 key 必须仍存在于 `activeColDefs`（= subs 派生结果）：
+ * 字段在「字段配置」里被删掉后，旧存档 key 属于幽灵，原样返回会让
+ * 「重置」基于过期集合 —— 这里直接剔除并回写，保证重置只落到现有字段。
+ */
 function loadStoredKeys(): string[] {
+  const defaults = activeColDefs.value.filter(c => c.default).map(c => c.key)
   try {
     const raw = localStorage.getItem(STORAGE_KEY.value)
     if (raw) {
@@ -438,11 +446,17 @@ function loadStoredKeys(): string[] {
       if (Array.isArray(arr) && arr.length) {
         // 仅保留本组件认识的字段，避免跨页面污染
         const valid = arr.filter(k => activeColDefs.value.some(c => c.key === k))
-        if (valid.length) return valid
+        if (valid.length) {
+          if (valid.length !== arr.length) {
+            try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(valid)) } catch { /* ignore */ }
+          }
+          return valid
+        }
+        return defaults
       }
     }
   } catch { /* ignore */ }
-  return activeColDefs.value.filter(c => c.default).map(c => c.key)
+  return defaults
 }
 
 const selectAllColumns = () => {

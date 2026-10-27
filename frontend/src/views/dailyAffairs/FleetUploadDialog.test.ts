@@ -32,7 +32,10 @@ test('未选择证照类型时禁止添加文件并提示', () => {
 
 test('打开弹窗时继承父组件筛选的证照类型（defaultType）', () => {
   assert.match(dialog, /props\.defaultType/)
-  assert.match(dialog, /selectedType\.value = props\.defaultType/)
+  // 不能无条件硬拼：父级可能给裸名（行驶证），选项 value 是复合值（vehicle__行驶证），
+  // 直接赋值会让 t-select 选不中 → 弹窗里类型显示为空（真机问题）。
+  assert.match(dialog, /selectedType\.value = resolveDefaultType\(\)/)
+  assert.match(dialog, /function resolveDefaultType/)
 })
 
 test('上传任务携带所选证照类型：提取请求带 cert_type', () => {

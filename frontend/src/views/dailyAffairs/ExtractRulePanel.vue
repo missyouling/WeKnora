@@ -56,12 +56,15 @@
           <!-- 正则兜底：LLM 漏抽时从原文回填（Go RE2）。行内只做快速填写，完整编辑在展开区 -->
           <span class="rtr-regex" @click.stop>
             <t-tooltip :content="regexTip(f.name)" placement="top">
+              <!-- 阻止冒泡放在外层原生 span 上（见上 .rtr-regex）。
+                   t-input 自己吃 @click.stop 会拿到 { e } 对象而非原生事件，
+                   Vue 的 .stop 调 e.stopPropagation() 直接抛 TypeError。 -->
               <t-input v-model="f.regex" size="small" class="rtr-regex-input" placeholder="未配置"
-                :disabled="!regexPatchable(f.name)" @click.stop />
+                :disabled="!regexPatchable(f.name)" />
             </t-tooltip>
           </span>
-          <span class="rtr-status">
-            <t-switch v-model="f.enabled" size="small" @click.stop @change="() => {}" />
+          <span class="rtr-status" @click.stop>
+            <t-switch v-model="f.enabled" size="small" @change="() => {}" />
           </span>
         </div>
           <!-- 行内展开配置（复刻证照配置展开编辑） -->

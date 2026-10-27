@@ -71,8 +71,8 @@
                     <t-popconfirm theme="warning" :content="`确定删除租户「${t.name}」吗？`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                       @confirm="removeTenant(t)">
-                      <t-button variant="text" size="small" @click.stop>
-                        <template #icon><t-icon name="delete" size="15px" /></template>
+                      <t-button variant="text" size="small" class="biz-del-btn" @click.stop>
+                        <template #icon><t-icon name="delete" size="16px" /></template>
                       </t-button>
                     </t-popconfirm>
                   </span>
@@ -174,9 +174,15 @@
                     <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
                   </span>
                   <span class="item-del">
-                    <t-button variant="text" size="small" title="移除该子项" @click="removeItem(g.items, i)">
-                      <template #icon><t-icon name="close" size="14px" /></template>
-                    </t-button>
+                    <t-popconfirm theme="warning" placement="left"
+                      :content="`确认移除分摊子项「${it.item_name}」吗？该子项将不再参与租户账单计算。`"
+                      :confirm-btn="{ content: '移除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                      @confirm="removeItem(g.items, i)">
+                      <t-button variant="text" size="small" shape="square" theme="danger" class="item-del-btn biz-del-btn"
+                        title="移除该子项">
+                        <template #icon><t-icon name="delete" size="16px" /></template>
+                      </t-button>
+                    </t-popconfirm>
                   </span>
                 </div>
                 <div v-if="!g.items.length" class="item-empty">暂无子项</div>
@@ -545,4 +551,9 @@ onMounted(async () => {
   .item-del { display: flex; justify-content: flex-end; }
 }
 .item-empty { padding: 14px 0; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
+</style>
+
+<style>
+/* 删除图标统一口径（16px 灰→红悬停 + 浅红底 + .15s），全系统共用一份 */
+@import './styles/business-delete-btn.css';
 </style>

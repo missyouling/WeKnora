@@ -62,6 +62,34 @@ func BuildFieldsSchema(fields []types.ExtractFieldConfig) string {
 	return sb.String()
 }
 
+// EnsureFieldsSchemaSlot 幂等补齐高级模板的 `{{fields_schema}}` 插槽。
+//
+// 为什么必须做：高级模式下字段规则只通过 `{{fields_schema}}` 注入。存量配置
+// （早期版本保存的自定义模板、迁移前 seed 的默认模板）常常没有这个插槽，
+// 于是「用户在字段定义里配的一堆规则」在提示词里完全不出现 —— 界面上还会
+// 挂一条黄色告警，但提取仍然静默降级。这里在**写入与渲染两侧**都做幂等补齐：
+//   · 已含插槽 → 原样返回；
+//   · 不含插槽 → 插到「字段与规则 / 字段说明」小节之后；找不到小节就追加一个。
+func EnsureFieldsSchemaSlot(tpl string) string {
+	if !strings.Contains(tpl, "{{fields_schema}}") {
+		// 优先插到既有小节标题后，保持模板的阅读顺序
+		for _, anchor := range []string{
+			"【字段与规则】",
+			"【字段说明】",
+			"【字段定义】",
+			"【提取字段】",
+			"字段说明：",
+		} {
+			if idx := strings.Index(tpl, anchor); idx >= 0 {
+				insertAt := idx + len(anchor)
+				return tpl[:insertAt] + "\n{{fields_schema}}\n" + tpl[insertAt:]
+			}
+		}
+		return strings.TrimRight(tpl, "\n") + "\n\n【字段与规则】\n{{fields_schema}}\n"
+	}
+	return tpl
+}
+
 // BuildExtractSystemPrompt 由配置拼装 System Prompt（提取中台的通用入口）。
 // 高级模式（模板非空）→ 模板替换变量插槽；否则 → 结构化默认拼装 + JSON Schema。
 // 输出结构：{kind, doc_type, fields}。
@@ -87,11 +115,13 @@ func BuildExtractSystemPrompt(cfg *types.KbExtractConfig) string {
 	// 高级模式：用户模板优先，替换变量后强制追加 JSON 输出兜底约束，
 	// 防止用户模板未声明 JSON 输出格式（如仅写字段定义）导致模型输出非 JSON、解析失败。
 	if strings.TrimSpace(cfg.PromptTemplate) != "" {
+		// 存量模板缺插槽时先补齐：否则用户配置的字段规则一条都进不了提示词
+		tpl := EnsureFieldsSchemaSlot(strings.TrimSpace(cfg.PromptTemplate))
 		r := strings.NewReplacer(
 			"{{fields_schema}}", schema,
 			"{{document_text}}", "<document>\n{{document_text}}\n</document>",
 		)
-		prompt := strings.TrimSpace(r.Replace(cfg.PromptTemplate))
+		prompt := strings.TrimSpace(r.Replace(tpl))
 		var sb strings.Builder
 		sb.WriteString(prompt)
 		sb.WriteString("\n\n【系统强制输出约束】(该约束优先级高于以上模板，必须无条件遵守)\n")

@@ -1,0 +1,59 @@
+/*
+ * 全系统统一的「删除」图标按钮样式。
+ *
+ * 为什么独立成文件：删除入口散落在字段配置 / 表计设置 / 清单设置 / 上传历史 /
+ * 各业务列表里，此前各自写了一版 —— 有 12px 也有 15px，有灰色也有默认蓝，
+ * 有的有悬停反馈有的没有。删除是不可逆操作，视觉上必须始终是同一个样子，
+ * 用户才敢点。
+ *
+ * 统一口径（需求 5）：
+ *   尺寸   16px 图标 / 28px 方形按钮 / 4px 圆角
+ *   常态   #9ca3af 中性灰（不抢注意力，但一定看得见）
+ *   悬停   #e34d59 危险红 + rgba(227,77,89,.08) 浅红底
+ *   过渡   all .15s ease
+ *
+ * 用法：<t-button class="biz-del-btn" ...>，或在自定义元素上直接套 class。
+ */
+.biz-del-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  svg,
+  .t-icon {
+    width: 16px;
+    height: 16px;
+    font-size: 16px;
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: #e34d59;
+    background: rgba(227, 77, 89, 0.08);
+  }
+
+  &:active { background: rgba(227, 77, 89, 0.16); }
+
+  &:disabled,
+  &.is-disabled {
+    color: var(--td-text-color-disabled);
+    background: transparent;
+    cursor: not-allowed;
+  }
+}
+
+/* 危险语义按钮（非图标形态）：同一套主色，只在悬停时加浅红底 */
+.biz-danger-text {
+  color: #9ca3af;
+  transition: all 0.15s ease;
+  &:hover { color: #e34d59; background: rgba(227, 77, 89, 0.08); }
+}

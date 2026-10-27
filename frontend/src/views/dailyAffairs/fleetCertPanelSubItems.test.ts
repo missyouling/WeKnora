@@ -88,7 +88,10 @@ test('细项行是紧凑单行 5 列：拖拽手柄 / 序号 / 名称 / 启用 /
   assert.match(src, /function onChildDragStart/, '必须有细项拖拽开始处理')
   assert.match(src, /function onChildDrop/, '必须有细项放置处理')
   assert.match(src, /\{\{ ci \+ 1 \}\}/, '细项行必须显示自增序号')
-  assert.match(src, /@click="removeChild\(ch\)"/, '细项行必须有删除按钮')
+  // 删除必须二次确认（popconfirm 包住按钮 + @confirm 才真正删），不得一键直删
+  assert.match(src, /@confirm="removeChild\(ch\)"/, '细项行必须有删除按钮（经二次确认触发）')
+  assert.match(src, /t-popconfirm[\s\S]{0,600}?removeChild\(ch\)/, '细项删除必须包在 t-popconfirm 里')
+  assert.match(src, /biz-del-btn/, '细项删除图标必须走统一删除按钮样式')
   // 操作改为单行按钮后，不再需要 ⋮ 下拉菜单（那是列宽塞不下时的退让）
   assert.doesNotMatch(src, /childMenuOptions/, '不应再有细项下拉菜单')
   assert.doesNotMatch(src, /onChildMenu/, '不应再有细项下拉菜单回调')

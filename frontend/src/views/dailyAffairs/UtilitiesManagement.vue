@@ -220,7 +220,9 @@
                             <span class="os-qty">{{ qtyLabelOf(r) }}</span>
                             <span class="os-amount" :class="{ 'os-neg': r.displayValue < 0 }" @click.stop="!r.total && feeEditingKey !== r.key && startFeeEdit(r)">
                               <template v-if="feeEditingKey === r.key">
-                                <t-input v-model="feeEditValue" size="small" class="os-fee-input" @click.stop
+                                <!-- 阻止冒泡交给外层 .os-amount（原生 span）：
+                                     t-input 的 click 首参是 { e } 对象，@click.stop 会抛 TypeError -->
+                                <t-input v-model="feeEditValue" size="small" class="os-fee-input"
                                   @blur="commitFeeOverride(r)" @enter="commitFeeOverride(r)" />
                               </template>
                               <template v-else>
@@ -232,7 +234,7 @@
                             </span>
                             <span class="os-amount" :class="{ 'os-neg': Number(r.billFee) < 0 }" @click.stop="!r.total && billFeeEditingKey !== (r as any).ovBillKey && startBillFeeEdit(r)">
                               <template v-if="billFeeEditingKey === (r as any).ovBillKey">
-                                <t-input v-model="billFeeEditValue" size="small" class="os-fee-input" @click.stop
+                                <t-input v-model="billFeeEditValue" size="small" class="os-fee-input"
                                   @blur="commitBillFeeOverride(r)" @enter="commitBillFeeOverride(r)" />
                               </template>
                               <template v-else>
@@ -799,18 +801,39 @@ function cellOf(c: ColDef) {
 }
 function onTableSelectChange(val: any) { selectedRowKeys.value = Array.isArray(val) ? val : [] }
 
+/**
+ * 读取列显隐存档。
+ *
+ * 存档里的 key 必须仍存在于当前 `columnDefs`（= subs 派生结果）：
+ * 用户在「字段配置」删掉一个字段后，旧存档里的 key 就成了幽灵，
+ * 若原样返回，`visibleColDefs` 过滤时虽然渲不出来，但 `[☰ 字段]` 的
+ * 「全选/重置」仍会以 columnDefs 为准 —— 所以这里直接剔除并把存档回写，
+ * 保证「重置」只会落到当前 subs 里真实存在的字段。
+ */
 function loadStoredColumns(): string[] {
+  const defaults = columnDefs.value.filter(c => c.default).map(c => c.key)
   try {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
       const obj = JSON.parse(raw)
       // 带版本校验：旧版本或结构不符时采用新默认集
       if (obj && obj.v === COLUMN_STORAGE_VERSION && Array.isArray(obj.keys) && obj.keys.length) {
-        return obj.keys.filter((k: string) => columnDefs.value.some(c => c.key === k))
+        const valid = obj.keys.filter((k: string) => columnDefs.value.some(c => c.key === k))
+        if (valid.length) {
+          // 存档里有已删除字段 → 就地清洗，避免下次打开又被读回来
+          if (valid.length !== obj.keys.length) {
+            try {
+              localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify({ v: COLUMN_STORAGE_VERSION, keys: valid }))
+            } catch { /* ignore */ }
+          }
+          return valid
+        }
+        // 全部失效（字段被删光）→ 回落到当前默认列
+        return defaults
       }
     }
   } catch { /* ignore */ }
-  return columnDefs.value.filter(c => c.default).map(c => c.key)
+  return defaults
 }
 function selectAllColumns() { visibleColKeys.value = columnDefs.value.map(c => c.key) }
 function resetColumns() { visibleColKeys.value = columnDefs.value.filter(c => c.default).map(c => c.key) }
@@ -875,52 +898,34 @@ const loadFieldConfigs = async () => {
         deleted_at: null,
       }))
 
-    const byName = new Map<string, any>()
-    for (const s of subs) {
-      const n = String(s?.name || '').trim()
-      if (n && !byName.has(n)) byName.set(n, s)
-    }
+    // 主列表口径：**subs 是唯一权威源**。
+    //
+    // 旧实现在这里做 `FALLBACK_COLUMNS.map()`，subs 里找不到就 `return { ...fb }`
+    // 保留硬编码兜底列 —— 于是用户在「字段配置」里删掉的字段（如「上期电量」）
+    // 会从 FALLBACK_COLUMNS 里复活，点「重置」更是必现（真机复现）。
+    // 现在：subs 一旦有配置，列集合与顺序 100% 由 subs 决定；
+    // FALLBACK_COLUMNS 只在 subs 为空（后端未迁移/用户从未配置）时整表兜底。
     const isEnabled = (s: any) => s.enabled !== false
     const labelOfSub = (s: any) => String(s.label || '').trim() || String(s.name).trim()
+    const fbByKey = new Map(FALLBACK_COLUMNS.map((f) => [f.key, f]))
 
-    // 主列表口径 = 内置默认集的**顺序与集合**（保证 16 份存量账单列表视觉零退化），
-    // 但名称/类型/默认显隐取自 subs（用户改名、改类型、关显隐即刻生效）。
-    // 同时按 group 过滤：只有「账单概况」与未分组的字段进主列表，
-    // 避免 163 个费用分项字段把表头淹没。
-    const primary = FALLBACK_COLUMNS
-      .map((fb) => {
-        const s = byName.get(fb.key)
-        if (!s) return { ...fb } // subs 里没有 → 保留默认列（后端可能还没迁移完）
-        if (!isEnabled(s)) return null // 用户禁用 → 该列消失
-        const g = String(s.group || '')
-        if (g && g !== 'overview') return null // 子表字段不进主列表
-        return {
-          key: fb.key,
-          label: labelOfSub(s),
-          fieldType: s.data_type || fb.fieldType,
-          default: s.is_default === true,
-          w: colWidth(fb.key),
-          // subs.width 是列宽唯一权威源：>0 精确固定（clamp 60~400），0/未配置走 w 兜底
-          width: Number(s.width) || 0,
-          group: g || undefined,
-        }
-      })
-      .filter(Boolean) as ColDef[]
-
-    // 用户自定义字段（subs 里有、内置默认集里没有）：追加在末尾，
-    // 仅收主分组口径（overview / 未分组），子表格字段只在各自子表出现。
-    const known = new Set(FALLBACK_COLUMNS.map((f) => f.key))
+    const primary: ColDef[] = []
+    const seen = new Set<string>()
     for (const s of subs) {
       const n = String(s?.name || '').trim()
-      if (!n || known.has(n) || !isEnabled(s)) continue
+      if (!n || seen.has(n)) continue
+      if (!isEnabled(s)) continue            // 用户禁用 → 不出列
       const g = String(s.group || '')
-      if (g && g !== 'overview') continue
+      if (g && g !== 'overview') continue     // 子表字段不进主列表
+      seen.add(n)
+      const fb = fbByKey.get(n)
       primary.push({
         key: n,
         label: labelOfSub(s),
-        fieldType: s.data_type || 'text',
+        fieldType: s.data_type || fb?.fieldType || 'text',
         default: s.is_default === true,
-        w: '1fr',
+        w: fb ? fb.w : '1fr',
+        // subs.width 是列宽唯一权威源：>0 精确固定（clamp 60~400），0/未配置走 w 兜底
         width: Number(s.width) || 0,
         group: g || undefined,
       })
@@ -929,13 +934,9 @@ const loadFieldConfigs = async () => {
     columnDefs.value = primary
     // 默认列变更后重算可见列（保留用户已存储的偏好；存档缺默认列时自动重置）
     visibleColKeys.value = loadStoredColumns()
+    persistColumns()
   } catch { /* 字段配置加载失败用内置默认 */ }
 }
-function colWidth(key: string): string {
-  const fb = FALLBACK_COLUMNS.find(f => f.key === key)
-  return fb ? fb.w : '1fr'
-}
-
 // ---- 列表 ----
 interface Row {
   rowKey: string

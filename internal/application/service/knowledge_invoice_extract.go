@@ -560,8 +560,10 @@ func buildInvoiceRuleSystemPrompt(cfg *types.KbExtractConfig) string {
 	}
 	var sb strings.Builder
 	if hasTemplate {
+		// 存量模板可能没有 {{fields_schema}} 插槽：先幂等补齐，
+		// 否则用户配的字段规则在提示词里完全缺席（界面上只挂一条告警，提取静默降级）。
 		r := strings.NewReplacer("{{fields_schema}}", BuildFieldsSchema(cfg.Fields))
-		sb.WriteString(strings.TrimSpace(r.Replace(cfg.PromptTemplate)))
+		sb.WriteString(strings.TrimSpace(r.Replace(EnsureFieldsSchemaSlot(cfg.PromptTemplate))))
 		sb.WriteString("\n\n")
 	}
 	if hasFields {

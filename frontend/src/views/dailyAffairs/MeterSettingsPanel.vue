@@ -127,8 +127,8 @@
               <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"
                 :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
                 @confirm="deleteMeter(m)">
-                <t-button variant="text" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="15px" /></template>
+                <t-button variant="text" size="small" class="biz-del-btn" @click.stop>
+                  <template #icon><t-icon name="delete" size="16px" /></template>
                 </t-button>
               </t-popconfirm>
             </span>
@@ -221,8 +221,8 @@
           <t-popconfirm v-if="!(k as any).builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
             :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
             @confirm="removeCustomKind(k.value)">
-            <t-button variant="text" size="small" @click.stop>
-              <template #icon><t-icon name="delete" size="15px" /></template>
+            <t-button variant="text" size="small" class="biz-del-btn" @click.stop>
+              <template #icon><t-icon name="delete" size="16px" /></template>
             </t-button>
           </t-popconfirm>
           <span v-else class="kind-builtin-tag">内置</span>
@@ -830,4 +830,9 @@ onBeforeUnmount(() => {
     margin-top: 14px;
   }
 }
+</style>
+
+<style>
+/* 删除图标统一口径（16px 灰→红悬停 + 浅红底 + .15s），全系统共用一份 */
+@import './styles/business-delete-btn.css';
 </style>

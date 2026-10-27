@@ -374,6 +374,28 @@ watch(
   },
 )
 
+/**
+ * pdf.js 的「主动取消」不是故障，不能当错误打日志。
+ *
+ * 触发场景（都是正常行为）：
+ *   · 抽屉/弹窗关闭 → onBeforeUnmount 里 destroy() 掉在途的 loadingTask；
+ *   · 快速切换文件 → 旧任务被新任务顶掉；
+ *   · 页面滚动导致尚未开始的渲染页被 unrenderPage 取消。
+ * pdf.js 这几条路径统一以 `Loading aborted` / `RenderingCancelledException` /
+ * `AbortException` 抛出，落到 catch 里就是一条吓人的红色报错（真机控制台噪音）。
+ */
+function isAbortError(err: unknown): boolean {
+  if (!err) return false
+  const anyErr = err as any
+  const name = String(anyErr.name || '')
+  const msg = String(anyErr.message || anyErr || '')
+  return name === 'AbortException'
+    || name === 'RenderingCancelledException'
+    || /Loading aborted/i.test(msg)
+    || /Rendering cancelled/i.test(msg)
+    || /Worker was destroyed/i.test(msg)
+}
+
 async function load() {
   error.value = ''
   if (!props.data) return
@@ -384,6 +406,8 @@ async function load() {
     containerWidth = scroller.value?.clientWidth ? scroller.value.clientWidth - 24 : 600
     if (props.locate) await applyLocate(props.locate)
   } catch (err) {
+    // 已卸载 / 主动取消：静默返回，既不报错也不弹「加载失败」
+    if (isAbortError(err) || disposed) return
     console.error('PDF preview failed:', err)
     error.value = t('preview.loadFailed')
     emit('error', error.value)

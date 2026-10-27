@@ -527,10 +527,34 @@ const waitExtractSettled = async (kid: string, timeoutMs = 180000): Promise<stri
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
 
+/**
+ * 默认选中分类。
+ *
+ * 两条约束必须同时成立，否则 t-select 会显示空白（真机：光伏账单上传窗口
+ * 分类是空的，因为选项 value 是裸 `光伏账单`，而这里硬拼成了 `solar__光伏账单`）：
+ *   ① 优先在 `typeOptions` 里精确匹配（裸值 或 `scope__name` 复合值都算命中）；
+ *   ② 都不命中时才按 scope 拼复合值兜底。
+ */
+function resolveDefaultType(): string {
+  const want = String(props.defaultType || '').trim()
+  if (!want) return ''
+  const opts = typeOptions.value || []
+  // ① 精确命中（父级直接用复合值）
+  if (opts.some((o: any) => String(o?.value) === want)) return want
+  // ② 命中复合值的名字段（父级给裸名、选项是复合值）
+  const byName = opts.find((o: any) => String(o?.value || '').split('__').slice(1).join('__') === want)
+  if (byName) return String((byName as any).value)
+  // ③ 命中选项 label（父级给中文名、选项 value 是别的）
+  const byLabel = opts.find((o: any) => String(o?.label) === want)
+  if (byLabel) return String((byLabel as any).value)
+  // ④ 兜底：父级给了复合值就原样用，否则按 scope 拼
+  return want.includes('__') ? want : `${props.scope}__${want}`
+}
+
 // 打开时：车队按当前筛选证照类型默认选中（防漏选）；发票 scope 类型必须手动选择（防误分类），不自动注入
 watch(() => props.visible, (v) => {
   if (v && !selectedType.value && props.defaultType && !isInvoice.value) {
-    selectedType.value = props.defaultType.includes('__') ? props.defaultType : (props.scope + '__' + props.defaultType)
+    selectedType.value = resolveDefaultType()
   }
   // 剪贴板粘贴：弹窗打开时挂载全局 paste 监听（支持粘贴图片/文件直接入队）
   if (v) {

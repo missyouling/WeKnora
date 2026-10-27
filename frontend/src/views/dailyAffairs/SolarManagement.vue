@@ -546,17 +546,26 @@ const tableColumns = computed(() => {
 })
 function onTableSelectChange(val: any) { selectedRowKeys.value = Array.isArray(val) ? val : [] }
 
+/** 存档清洗：字段在 subs 里被删掉后，旧 key 不得存活（否则「重置」会把它带回来）。 */
 function loadStoredColumns(): string[] {
+  const defaults = columnDefs.value.filter(c => c.default).map(c => c.key)
   try {
     const raw = localStorage.getItem(COLUMN_STORAGE_KEY)
     if (raw) {
       const obj = JSON.parse(raw)
       if (obj && obj.v === COLUMN_STORAGE_VERSION && Array.isArray(obj.keys) && obj.keys.length) {
-        return obj.keys.filter((k: string) => columnDefs.value.some(c => c.key === k))
+        const valid = obj.keys.filter((k: string) => columnDefs.value.some(c => c.key === k))
+        if (valid.length) {
+          if (valid.length !== obj.keys.length) {
+            try { localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify({ v: COLUMN_STORAGE_VERSION, keys: valid })) } catch { /* ignore */ }
+          }
+          return valid
+        }
+        return defaults
       }
     }
   } catch { /* ignore */ }
-  return columnDefs.value.filter(c => c.default).map(c => c.key)
+  return defaults
 }
 function selectAllColumns() { visibleColKeys.value = columnDefs.value.map(c => c.key) }
 function resetColumns() { visibleColKeys.value = columnDefs.value.filter(c => c.default).map(c => c.key) }

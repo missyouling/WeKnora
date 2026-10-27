@@ -553,6 +553,11 @@ const handleCancel = () => {
     min-width: 0;
     max-width: 100vw;
     overflow-x: hidden;
+    // 纵向三段布局（header / body / footer）：body 用 flex:1 + overflow-y 自己滚，
+    // 这样底部按钮栏永远贴住抽屉下沿，滚到底不会压住最后一行的边框。
+    display: flex;
+    flex-direction: column;
+    height: 100%;
   }
 
   .t-drawer__header {
@@ -561,16 +566,27 @@ const handleCancel = () => {
     // 就和正文里的字段标签一样大，层级会塌。
     padding: 10px 18px;
     border-bottom: 1px solid var(--td-component-stroke);
+    flex: 0 0 auto;
   }
 
   .t-drawer__body {
     padding: 16px 18px;
+    // 滚动条必须落在抽屉内容区内部：
+    //   · 头部（标题栏）与底部（取消/保存）常驻不动；
+    //   · 只有 body 滚动，滚到底时内容不会被 footer 遮住、也不会把 footer 顶走。
+    // 旧版没有约束高度，长表单会把整页撑高，滚动条跑到抽屉外层（真机问题 1）。
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .t-drawer__footer {
     padding: 10px 18px;
     border-top: 1px solid var(--td-component-stroke);
     box-shadow: 0 -2px 8px rgba(15, 23, 42, 0.04);
+    // 与 body 的 flex:1 配套：footer 不参与压缩，底部边线与抽屉下沿严丝合缝
+    flex: 0 0 auto;
   }
 }
 

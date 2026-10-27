@@ -145,11 +145,13 @@
                       <span class="fc-ref-badge">{{ fd.source.category }}</span>
                       <span class="fc-ref-name">{{ fieldLabelOf(fd) }}</span>
                     </div>
+                    <!-- 阻止冒泡只挂在外层 div（原生元素）。绝不能写在 t-input 上：
+                         t-input 的 click 首参是 { e } 上下文对象而非原生 MouseEvent，
+                         Vue 的 .stop 会调 e.stopPropagation() 直接抛 TypeError（真机控制台）。 -->
                     <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(fd) }"
                       @click.stop="toggleChildGroup(fd)">
                       <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
                         :ref="(el: any) => setFieldInputRef(fd.name, el)"
-                        @click.stop
                         @update:model-value="(v: string) => setFieldEdit(fd, v)" />
                       <!-- 细项展开徽标：绝对定位在输入框右内边距上，不占列宽、不挤字段名。
                            旧版在这里塞了实心绿底按钮，把 160px 的字段名压到约 80px。 -->
@@ -216,8 +218,8 @@
                         :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
                         @confirm="removeSubField(fd, sf)">
                         <t-tooltip content="删除子项" placement="top">
-                          <t-button variant="text" size="small" shape="square" theme="danger">
-                            <template #icon><t-icon name="delete" size="15px" /></template>
+                          <t-button variant="text" size="small" shape="square" class="biz-del-btn">
+                            <template #icon><t-icon name="delete" size="16px" /></template>
                           </t-button>
                         </t-tooltip>
                       </t-popconfirm>
@@ -279,12 +281,16 @@
                         <t-switch :model-value="!!ch.enabled" size="small"
                           @change="(v: any) => (ch.enabled = !!v)" />
                       </t-tooltip>
-                      <t-tooltip content="删除细项" placement="top">
-                        <t-button variant="text" size="small" shape="square" theme="danger"
-                          class="child-del" @click="removeChild(ch)">
-                          <template #icon><t-icon name="delete" size="15px" /></template>
-                        </t-button>
-                      </t-tooltip>
+                      <t-popconfirm theme="warning" placement="left"
+                        :content="`确认删除细项「${ch.label || ch.name}」吗？删除后账单里对应的行将不再单独统计。`"
+                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                        @confirm="removeChild(ch)">
+                        <t-tooltip content="删除细项" placement="top">
+                          <t-button variant="text" size="small" shape="square" theme="danger" class="fc-del-btn biz-del-btn">
+                            <template #icon><t-icon name="delete" size="16px" /></template>
+                          </t-button>
+                        </t-tooltip>
+                      </t-popconfirm>
                     </div>
                     <div class="field-config-add child-add">
                       <t-input v-model="newChildLabel" size="small" class="fc-add-input"
@@ -892,13 +898,31 @@ function switchSubGroup(key: string) {
 const openChildGroup = ref('')
 const newChildLabel = ref('')
 
-/** 该字段是否有下级细项；有则返回细项所属 group 键。 */
+/**
+ * 该字段是否有下级细项；有则返回细项所属 group 键。
+ *
+ * 三类字段可展开细项：
+ *   · `name`     → `<分组>-rows`（费用组成：该分组账单行项集合）
+ *   · `period`   → `<分组>-periods`（分时时段：尖/峰/平/谷）
+ *   · `meter_type` → `<分组>-rows`（示数类型：正向有功（总）/（尖峰）/（无功总）…）
+ *
+ * 第三类是本期补充：市电账单「电量明细（工商业）」的 `meter-rows` 在库里
+ * 早就存了 6 条示数类型，但 UI 只认 name/period，这 6 条细项无处展开 ——
+ * 用户在字段配置里根本看不到、也改不了（截图红框指的就是这里）。
+ */
 function childGroupOf(fd: any): string {
   if (!activeSubGroup.value) return ''
   const n = String(fd?.name || '').trim()
   // 费用组成 = 该分组的行项集合；分时时段 = 该分组的时段集合
   if (n === 'name') return `${activeSubGroup.value}-rows`
   if (n === 'period') return `${activeSubGroup.value}-periods`
+  // 示数类型：与「费用组成」共用同一份行项集合（电量明细表里每一行就是一种示数类型）
+  if (n === 'meter_type') {
+    const g = `${activeSubGroup.value}-rows`
+    // 只有该细项集合真实存在时才显示徽标（否则是个点不开的空徽标）
+    const exists = groupList.value.some((x: any) => x.key === g) || childItemsOf(g).length > 0
+    return exists ? g : ''
+  }
   return ''
 }
 
@@ -1936,6 +1960,11 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     display: flex;
     flex-direction: column;
     gap: 6px;
+    // 纵向滚动收进列表容器内部：抽屉 body 已改为 flex 滚动区，
+    // 这里不再叠加第二个纵向滚动条；底边线用整块下边框闭合，
+    // 避免最后一行折行/贴边时视觉上"没画完"（真机问题 3）。
+    border-bottom: 1px solid var(--td-component-stroke);
+    padding-bottom: 8px;
   }
 
   .field-colhead {
@@ -2112,4 +2141,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     margin-top: 2px;
   }
 }
+</style>
+
+<style>
+/* 删除图标统一口径（16px 灰→红悬停 + 浅红底 + .15s），全系统共用一份 */
+@import './styles/business-delete-btn.css';
 </style>
