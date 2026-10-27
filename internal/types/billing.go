@@ -122,8 +122,17 @@ type BillingTenantItem struct {
 	Category        string `json:"category"` // 大类（如 (1)市场化购电费），用于 UI 分组
 	ItemKey         string `json:"item_key"`
 	ItemName        string `json:"item_name"`
-	Enabled         bool   `json:"enabled"`
-	Sort            int    `json:"sort"`
+	// Enabled = 「参与分摊」：该子项金额是否按本月分摊比例折算并计入应付。
+	Enabled bool `json:"enabled"`
+	Sort    int  `json:"sort"`
+	// FieldEnabled = 「启用字段」：该子项是否作为列出现在费用清单列表、
+	// 字段筛选器与详情抽屉里。与 Enabled 正交——可以「参与分摊但不显示列」
+	// （例如内部核算用的费用项），也可以「显示列但不参与分摊」。
+	//
+	// 为什么另开一列而不是复用 Enabled：旧版的 Enabled 已经被当作分摊开关
+	// 用了（后端 enabled map 直接决定基本电费/力调是否计入），语义不能改；
+	// 直接复用会让「只想隐藏列」的操作顺手把分摊也关掉。
+	FieldEnabled bool `json:"field_enabled"`
 	// 来源描述（分摊子项不再只有市电费用分项）：
 	//   source_category 市电账单 / 光伏账单 / 电费核算 / 水费核算 / 气费核算
 	//   source_key      该分类下的字段 key（mode=field）或费用组成名（mode=fee_row）

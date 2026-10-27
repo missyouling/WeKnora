@@ -143,7 +143,7 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
-import { parseFieldSource, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -238,11 +238,22 @@ const baseColDefs = computed(() => (isOwnerView.value ? COL_DEFS_OWNER : COL_DEF
 /**
  * 租户视角：当前租户在「清单设置 -> 分摊子项」里启用的项目（按 sort）。
  *
- * 这些项目既是列表列，也是抽屉字段的唯一来源 —— 所以列与数据天然一一对应，
- * 不存在「配置里开了、列表里看不到」。
+ * **只过滤「启用字段」，不过滤「参与分摊」**，两者语义正交：
+ *   · 参与分摊 = 金额按本月用电量比例折算并计入应付（算钱）；
+ *   · 启用字段 = 这一列是否显示在列表 / 字段筛选器 / 详情抽屉（显示）。
+ * 旧实现用同一个 `enabled` 兼两职，于是「只想隐藏一列」会连带把分摊关掉，
+ * 而「关闭分摊」又会让列整个消失 —— 用户无法表达「参与分摊但不显示」。
+ *
+ * 关掉「参与分摊」的子项仍出现在列表里（值按 0 显示），这样用户能看出
+ * 「这一项本月没计入」，而不是让它凭空消失、事后无法核对。
  */
 const tenantEnabledItems = computed(() =>
-  tenantItems.value.filter((it: any) => it && it.enabled !== false),
+  tenantItems.value.filter((it: any) => it && it.field_enabled !== false),
+)
+
+/** 参与分摊的子项（金额折算口径）。 */
+const tenantApportionItems = computed(() =>
+  tenantEnabledItems.value.filter((it: any) => it.enabled !== false),
 )
 
 /** 分摊子项列 key（item_key 内已含「大类|子项名」，加前缀避免与内置列撞名）。 */
@@ -796,12 +807,14 @@ const buildRows = () => {
         water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
         water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
       })
-      // 该租户的分摊子项：列与值同源（tenantEnabledItems），不可能出现「有列无数」
+      // 该租户的分摊子项：列与值同源（tenantEnabledItems），不可能出现「有列无数」。
+      // 未开启「参与分摊」的子项照常出列，但金额记 0 —— 让它显式显示为「本项未计入」，
+      // 而不是把列隐藏掉让人无从核对。
       const ctx = sourceCtxOf(month, bill, solarArr)
       const ratio = ratioOfMonth(month, bill, rec)
       let total = 0
       for (const it of tenantEnabledItems.value) {
-        const v = resolveTenantItemValue(it, ctx, ratio)
+        const v = it.enabled === false ? 0 : resolveTenantItemValue(it, ctx, ratio)
         base[tenantItemColKey(it)] = v
         total += v
       }
@@ -1016,6 +1029,11 @@ const num2 = (v: any): string => {
   const r = Math.round(n * 100) / 100
   return Number.isInteger(r) ? String(r) : r.toFixed(2)
 }
+/** 数值收敛（两位），供打印口径复用。 */
+const round2Num = (v: any): number => {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+}
 const rateText = (v: any): string => {
   const n = Number(v)
   if (!Number.isFinite(n) || n === 0) return '—'
@@ -1030,34 +1048,82 @@ function ratioForRow(row: any): number {
 
 interface PrintTable { title: string; columns: any[]; rows: string[][]; total?: string[]; empty?: string }
 
-/** 市电账单费用分项 → 细项表（租户视角按比例折算） */
+/** 市电账单费用分项 → 细项表（租户视角按比例折算、且只列参与分摊的子项） */
 function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTable {
   const bill = billIndex.value.get(month)
   const items = (bill?.item?.fee_items || []) as any[]
-  const map = new Map<string, any[]>()
-  for (const it of items) {
-    const cat = String(it.category || '其他费用')
-    if (!map.has(cat)) map.set(cat, [])
-    map.get(cat)!.push(it)
-  }
-  const order = Array.from(map.keys()).sort((a, b) => {
-    const ia = FEE_CATEGORY_ORDER.findIndex((c) => a.includes(c))
-    const ib = FEE_CATEGORY_ORDER.findIndex((c) => b.includes(c))
-    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-  })
   const rows: string[][] = []
   let sum = 0
-  for (const cat of order) {
-    for (const it of map.get(cat)!) {
-      const fee = (Number(it.fee) || 0) * unitRatio
-      const qty = (Number(it.qty) || 0) * unitRatio
-      sum += fee
-      // 提取出来的 name 通常已带「（1）市场化购电费.偏差电费」这类前缀，
-      // 再拼一次分类会变成「（1）市场化购电费｜（1）市场化购电费.偏差电费」。
-      const rawName = String(it.name || '').trim()
-      const name = rawName && cat && !rawName.includes(cat) ? `${cat}｜${rawName}` : (rawName || cat)
-      rows.push([name, it.period || '—', qty ? num2(qty) : '—', rateText(it.rate), money2(fee)])
+  const label = (cat: string, rawName: string) =>
+    // 提取出来的 name 通常已带「（1）市场化购电费.偏差电费」这类前缀，
+    // 再拼一次分类会变成「（1）市场化购电费｜（1）市场化购电费.偏差电费」。
+    (rawName && cat && !rawName.includes(cat) ? `${cat}｜${rawName}` : (rawName || cat))
+
+  if (isOwnerView.value) {
+    // 业主口径：账单 fee_items 全量 + 概况里的固定金额分项（基本电费/力调电费），
+    // 后者不是 fee_items 的行，必须单独补，否则全厂口径也会漏掉这两笔大额费用。
+    const map = new Map<string, any[]>()
+    for (const it of items) {
+      const cat = String(it.category || '其他费用')
+      if (!map.has(cat)) map.set(cat, [])
+      map.get(cat)!.push(it)
     }
+    const order = Array.from(map.keys()).sort((a, b) => {
+      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a.includes(c))
+      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b.includes(c))
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+    })
+    for (const cat of order) {
+      for (const it of map.get(cat)!) {
+        const fee = (Number(it.fee) || 0) * unitRatio
+        const qty = (Number(it.qty) || 0) * unitRatio
+        sum += fee
+        rows.push([label(cat, String(it.name || '').trim()), it.period || '—', qty ? num2(qty) : '—', rateText(it.rate), money2(fee)])
+      }
+    }
+  } else {
+    // 租户口径：**只列该租户「参与分摊」的子项**。
+    // 未参与分摊的子项（用户在分摊子项里关掉的偏差电费、绿电交易电费等）
+    // 一律不打印 —— 旧实现直接铺账单 fee_items 全量，于是关掉开关的项
+    // 依然以 4 行 0.00 的形式出现在租户清单上（真机问题）。
+    const ctx = sourceCtxOf(month, bill, [])
+    for (const it of tenantApportionItems.value) {
+      const key = String(it?.source_key || it?.item_name || '').trim()
+      if (!key) continue
+      const cat = String(it.category || '其他费用')
+      // 固定金额分项（基本电费 / 力调电费）优先按概况字段出账：
+      // 账单里它们可能没有 fee_items 行（2026-09），也可能是一条全 0 的占位行
+      // （2026-08），按行打印会打出 0.00 的假明细。
+      const fixed = fixedBillFeeOf(ctx, key)
+      if (fixed !== null) {
+        const v = round2Num(fixed * unitRatio)
+        if (!v) continue
+        sum += v
+        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
+        continue
+      }
+      const billRows = matchBillFeeItems(ctx, key)
+      if (billRows.length) {
+        // 命中账单行：保留尖/峰/平/谷 分时段明细，逐行按比例折算
+        for (const br of billRows) {
+          const fee = (Number(br.fee) || 0) * unitRatio
+          const qty = (Number(br.qty) || 0) * unitRatio
+          sum += fee
+          rows.push([label(cat, String(br.name || key).trim()), br.period || '—', qty ? num2(qty) : '—', rateText(br.rate), money2(fee)])
+        }
+      } else {
+        // 账单里查无此行：按比例折算概况字段，避免整行丢失
+        const v = resolveTenantItemValue(it, ctx, unitRatio)
+        if (!v) continue
+        sum += v
+        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
+      }
+    }
+    rows.sort((a, b) => {
+      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a[0].includes(c))
+      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b[0].includes(c))
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+    })
   }
   return {
     title: `${prefix}电费分项细项`,
@@ -1070,7 +1136,7 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
     ],
     rows,
     total: ['合计', '', '', '', money2(sum)],
-    empty: '当月无市电账单分项数据',
+    empty: isOwnerView.value ? '当月无市电账单分项数据' : '当月无参与分摊的费用分项',
   }
 }
 
@@ -1302,8 +1368,12 @@ const reloadTenants = async () => {
   await loadTenants()
   if (activeTenantId.value && !tenants.value.some((t: any) => t.id === activeTenantId.value)) {
     activeTenantId.value = tenants.value[0]?.id || ''
-    await loadAllData()
   }
+  // 子项必须重拉：在「清单设置 -> 分摊子项」里改的「启用字段 / 宽度(px) /
+  // 参与分摊」都落在这份数据上，不重拉则保存后列表列集与列宽原地不动 ——
+  // 用户看到的是「点了保存没反应」，而库里其实已经改了。
+  await loadTenantItems()
+  await loadAllData()
 }
 defineExpose({ reloadTenants })
 

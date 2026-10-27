@@ -51,6 +51,45 @@ const num = (v: any) => {
 }
 const round2 = (v: number) => Math.round(v * 100) / 100
 
+/**
+ * 名称归一（用于费用分项匹配）：在 `norm` 之上再去掉括号、统一同义词。
+ *
+ * 账单原文与用户配置的名称常年对不上，两个真实踩过的例子：
+ *   · 「功率因**数**调整电费」（账单）vs「功率因**素**调整电费」（配置）；
+ *   · 「输配容（需）量电费」（账单细项名）vs「基本电费」（分摊子项名）。
+ */
+const aliasNorm = (v: any) => norm(v).replace(/[（）()]/g, '').replace(/因素/g, '因数')
+
+/**
+ * 账单里「固定金额、不挂在 fee_items 行上」的分项 → 概况字段。
+ *
+ * 为什么必须单独处理：`基本电费`（输配容量/需量电费）与 `功率因数调整电费`
+ * 在账单里**不是可靠的 fee_items 行** —— 2026-09 的 43 行里完全没有它们
+ * （权威值在顶层 `capacity_fee=44000` / `pf_adjust_amount=-2818.07`）；
+ * 2026-08 又反过来，有一条 `name:'功率因数调整', fee:0}` 的**空占位行**。
+ * 所以只按名称匹配 fee_items 会出现两种错法：要么恒为 0，要么被 0 行钉死。
+ * 唯一可靠来源是概况字段，因此**优先**读它（见 resolveFeeRow）。
+ *
+ * 返回 `null` = 该名称不属于这两类，调用方继续走 fee_items 口径。
+ */
+const fixedBillFee = (ctx: SourceResolveContext, name: string): number | null => {
+  const key = aliasNorm(name)
+  if (!key) return null
+  const item = ctx.bill?.item || {}
+  // 别名刻意收紧：只认「基本电费」与输配容/需量口径。
+  // 不能收录裸「容量电费」——「燃气机组容量电费」「煤电容量电费」等是
+  // 系统运行费下的正常 fee_items 行，收进来会把它们全部改写成容量电费。
+  const CAPACITY_ALIASES = ['基本电费', '输配容需量电费', '输配容需量', '输配需量电费', '输配容量电费']
+  const PF_ALIASES = ['因数调整电费', '力调电费', '功率因数调整']
+  if (CAPACITY_ALIASES.some((a) => key.includes(a))) {
+    return num(item.capacity_fee ?? item.basic_fee ?? item.demand_fee)
+  }
+  if (PF_ALIASES.some((a) => key.includes(a))) {
+    return num(item.pf_adjust_amount ?? item.pf_adj_fee ?? item.power_factor_fee)
+  }
+  return null
+}
+
 export interface SourceResolveContext {
   month: string
   /** 当前选中的使用单位（租户视角 = 租户名；业主视角 = 重庆星达） */
@@ -86,32 +125,56 @@ function aggregateRows(rows: any[], field: string): number {
   return round2(rows.reduce((s, r) => s + num(r[field]), 0))
 }
 
-/** 当月市电账单的费用分项求和（mode=fee_row）。 */
-function resolveFeeRow(ctx: SourceResolveContext, name: string): number {
+/**
+ * 在当月账单 `fee_items` 里找出与该名称对应的行（可能多行，如分时 4 段）。
+ *
+ * **唯一匹配口径**：列表列取值与打印清单细项都走这里。分散写两套匹配规则
+ * 是这个模块历史上最多的 bug 来源（「列表有值、打印没有」这类漂移）。
+ *
+ * 三档递进，命中即返回，不再往下走：
+ *   ① 精确同名（含「大类|子项名」取竖线后半段）；
+ *   ② 前缀包含（费用分项常带 `(1)` 前缀或后缀差异）；
+ *   ③ 别名归一（括号、因数字/因素字）。
+ * 都不命中返回 `[]`。调用方按 `fixedBillFeeOf` 决定是否改走概况字段。
+ */
+export function matchBillFeeItems(ctx: SourceResolveContext, name: string): any[] {
   const items: any[] = ctx.bill?.item?.fee_items || []
   const want = norm(name)
-  if (!want) return 0
-  let sum = 0
-  let hit = false
-  for (const it of items) {
-    const n = norm(it?.name)
-    // 兼容「大类|子项名」写法：取竖线后半段再比对
-    const tail = norm(String(it?.name || '').split('|').pop())
-    if (n === want || tail === want) {
-      sum += num(it?.fee)
-      hit = true
-    }
+  if (!want) return []
+  const parts = (it: any) => [norm(it?.name), norm(String(it?.name || '').split('|').pop())]
+  const exact = (it: any) => parts(it).some((p) => p === want)
+  const loose = (it: any) => parts(it).some((p) => p && (p.includes(want) || want.includes(p)))
+  const wantAlias = aliasNorm(name)
+  const aliasParts = (it: any) => [aliasNorm(it?.name), aliasNorm(String(it?.name || '').split('|').pop())]
+  const alias = (it: any) => aliasParts(it).some((p) => p === wantAlias || (p && (p.includes(wantAlias) || wantAlias.includes(p))))
+  for (const test of [exact, loose, alias]) {
+    const hit = items.filter(test)
+    if (hit.length) return hit
   }
-  if (hit) return round2(sum)
-  // 名称对不上时退化为「前缀包含」匹配（费用分项常带 (1)/(2) 前缀）
-  for (const it of items) {
-    const n = norm(it?.name)
-    const tail = norm(String(it?.name || '').split('|').pop())
-    if ((n && (n.includes(want) || want.includes(n))) || (tail && (tail.includes(want) || want.includes(tail)))) {
-      sum += num(it?.fee)
-    }
-  }
-  return round2(sum)
+  return []
+}
+
+/**
+ * 固定金额分项（基本电费 / 力调电费）的权威值；不属于这两类返回 `null`。
+ *
+ * 打印清单用它决定走「概况字段 × 比例」还是「账单行 × 比例」：这两项在账单里
+ * 没有可靠的 fee_items 行（2026-09 完全没有；2026-08 是一条全 0 的占位行），
+ * 按行打印会打出 0.00 的假明细。
+ */
+export function fixedBillFeeOf(ctx: SourceResolveContext, name: string): number | null {
+  return fixedBillFee(ctx, name)
+}
+
+/** 当月市电账单的费用分项求和（mode=fee_row）。 */
+function resolveFeeRow(ctx: SourceResolveContext, name: string): number {
+  // ① 固定金额分项（基本电费 / 力调电费）**优先**读概况字段。
+  //    不能等 fee_items 匹配失败再兜底：账单里可能存在同名的空行
+  //    （2026-08 的「功率因数调整」fee=0），会把权威值挡掉。
+  const fixed = fixedBillFee(ctx, name)
+  if (fixed !== null) return round2(fixed)
+  // ② 其余分项按 fee_items 匹配求和
+  const hit = matchBillFeeItems(ctx, name)
+  return hit.length ? round2(hit.reduce((s, it) => s + num(it?.fee), 0)) : 0
 }
 
 /**

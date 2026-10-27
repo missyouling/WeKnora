@@ -165,13 +165,28 @@
                   <span class="item-name">子项名称</span>
                   <span class="item-src">来源</span>
                   <span class="item-op">参与分摊</span>
-                  <span class="item-del"></span>
+                  <span class="item-width">宽度(px)</span>
+                  <span class="item-on">启用字段</span>
+                  <span class="item-del">操作</span>
                 </div>
                 <div v-for="(it, i) in g.items" :key="`${it.item_key}-${i}`" class="item-row">
                   <span class="item-name" :title="it.item_name">{{ it.item_name }}</span>
                   <span class="item-src">{{ it.source_category || '市电账单' }}</span>
+                  <!-- 参与分摊：金额是否按本月用电量分摊比例折算并计入应付。
+                       与右侧「启用字段」正交，二者互不联动。 -->
                   <span class="item-op">
                     <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+                  </span>
+                  <!-- 宽度(px)：0 = 自适应；>0 时该列在费用清单列表按此像素宽渲染 -->
+                  <span class="item-width">
+                    <t-input v-model="it.width" size="small" type="number" :min="0" :max="400"
+                      placeholder="0" class="item-width-input" @blur="saveItems()" @enter="saveItems()" />
+                  </span>
+                  <!-- 启用字段：是否作为列出现在列表 / 字段筛选器 / 详情抽屉。
+                       关掉后该列隐藏，但它仍可照常参与分摊计算。 -->
+                  <span class="item-on">
+                    <t-switch size="small" :model-value="it.field_enabled !== false"
+                      @change="(v: boolean) => toggleFieldEnabled(it, v)" />
                   </span>
                   <span class="item-del">
                     <t-popconfirm theme="warning" placement="left"
@@ -230,7 +245,12 @@ interface ItemForm {
   category: string
   item_key: string
   item_name: string
+  /** 参与分摊（金额按比例折算并计入应付） */
   enabled: boolean
+  /** 启用字段（是否作为列显示在费用清单列表 / 字段筛选器 / 抽屉） */
+  field_enabled?: boolean
+  /** 字段宽度(px)，0 = 自适应 */
+  width?: number
   source_category?: string
   source_key?: string
   source_mode?: string
@@ -280,6 +300,10 @@ const loadDetail = async () => {
       item_key: it.item_key,
       item_name: it.item_name,
       enabled: !!it.enabled,
+      // 存量行没有该列（升级前）时视为启用：列以前一直是在的，
+      // 不能因为新增维度就一次性全隐藏（后端也已回填 true，这里再兜一次底）。
+      field_enabled: it.field_enabled !== false,
+      width: Number(it.width) || 0,
       source_category: it.source_category || '',
       source_key: it.source_key || '',
       source_mode: it.source_mode || '',
@@ -354,6 +378,11 @@ const toggleItemGroup = (category: string) => {
 }
 const toggleItem = async (it: any, v: boolean) => {
   it.enabled = !!v
+  await saveItems()
+}
+/** 启用字段：控制该子项是否作为列出现在费用清单（与「参与分摊」互不联动）。 */
+const toggleFieldEnabled = async (it: any, v: boolean) => {
+  it.field_enabled = !!v
   await saveItems()
 }
 /**
@@ -454,7 +483,12 @@ const saveItems = async (notify = false) => {
         category: it.category || '其他费用',
         item_key: it.item_key || `${(it.category || '其他费用').trim()}|${String(it.item_name).trim()}`,
         item_name: String(it.item_name).trim(),
+        // 参与分摊：金额是否按比例折算并计入应付
         enabled: !!it.enabled,
+        // 启用字段：是否作为列显示在费用清单列表 / 字段筛选器 / 详情抽屉
+        field_enabled: it.field_enabled !== false,
+        // 字段宽度(px)：0 = 自适应
+        width: Math.max(0, Math.min(400, Number(it.width) || 0)),
         source_category: it.source_category || '',
         source_key: it.source_key || '',
         source_mode: it.source_mode || '',
@@ -537,7 +571,10 @@ onMounted(async () => {
 }
 .item-group-body { padding: 4px 12px 10px; }
 .item-row {
-  display: grid; grid-template-columns: minmax(0, 1fr) 88px 76px 28px; align-items: center; gap: 8px;
+  display: grid;
+  // 子项名称 | 来源 | 参与分摊 | 宽度(px) | 启用字段 | 操作
+  grid-template-columns: minmax(0, 1fr) 76px 66px 84px 66px 28px;
+  align-items: center; gap: 8px;
   padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--td-component-stroke);
   &:last-child { border-bottom: none; }
   &--head { color: var(--td-text-color-placeholder); border-bottom: 1px solid var(--td-component-stroke); }
@@ -548,7 +585,13 @@ onMounted(async () => {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .item-op { display: flex; justify-content: flex-start; }
+  .item-width { display: flex; align-items: center; }
+  .item-on { display: flex; justify-content: flex-start; }
   .item-del { display: flex; justify-content: flex-end; }
+}
+.item-width-input {
+  width: 100%;
+  :deep(.t-input__inner) { text-align: center; }
 }
 .item-empty { padding: 14px 0; text-align: center; color: var(--td-text-color-placeholder); font-size: 12px; }
 </style>

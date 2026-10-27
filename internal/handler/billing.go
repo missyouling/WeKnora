@@ -79,13 +79,22 @@ func (h *BillingHandler) EnsureBillingSchema() {
 	if h == nil || h.db == nil {
 		return
 	}
-	for _, field := range []string{"SourceCategory", "SourceKey", "SourceMode", "ValueMode", "Width"} {
+	for _, field := range []string{"SourceCategory", "SourceKey", "SourceMode", "ValueMode", "Width", "FieldEnabled"} {
 		if h.db.Migrator().HasColumn(&types.BillingTenantItem{}, field) {
 			continue
 		}
 		if err := h.db.Migrator().AddColumn(&types.BillingTenantItem{}, field); err != nil {
 			logger.Warnf(context.Background(), "add billing_tenant_items.%s failed: %v", field, err)
 		}
+	}
+	// FieldEnabled（启用字段）必须**回填为 true**：gorm 给新 bool 列的默认值是
+	// false，存量行的语义是「以前没有这一维，列一直是显示的」，若不回填，
+	// 升级后所有分摊子项列会一次性从列表里消失——比 bug 更像数据丢失。
+	// 用 `IS NOT TRUE` 而不是 `= false`：兼顾 NULL 与重复执行（幂等）。
+	if err := h.db.Exec(
+		"UPDATE billing_tenant_items SET field_enabled = true WHERE field_enabled IS NOT TRUE OR field_enabled IS NULL",
+	).Error; err != nil {
+		logger.Warnf(context.Background(), "backfill billing_tenant_items.field_enabled failed: %v", err)
 	}
 }
 
@@ -777,6 +786,7 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 			ItemKey        string `json:"item_key"`
 			ItemName       string `json:"item_name"`
 			Enabled        bool   `json:"enabled"`
+			FieldEnabled   *bool  `json:"field_enabled"`
 			SourceCategory string `json:"source_category"`
 			SourceKey      string `json:"source_key"`
 			SourceMode     string `json:"source_mode"`
@@ -800,10 +810,16 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 				continue
 			}
 			seenKey[key] = true
+			// 「启用字段」缺省视为开启：旧前端不带该字段时不能把列全隐藏了
+			fieldEnabled := true
+			if it.FieldEnabled != nil {
+				fieldEnabled = *it.FieldEnabled
+			}
 			item := types.BillingTenantItem{
 				ID: uuid.NewString(), BillingTenantID: id,
 				Category: strings.TrimSpace(it.Category),
 				ItemKey:  key, ItemName: it.ItemName, Enabled: it.Enabled,
+				FieldEnabled:   fieldEnabled,
 				SourceCategory: strings.TrimSpace(it.SourceCategory),
 				SourceKey:      strings.TrimSpace(it.SourceKey),
 				SourceMode:     strings.TrimSpace(it.SourceMode),
@@ -1900,6 +1916,10 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 			ID: uuid.NewString(), BillingTenantID: tenantID,
 			Category: r.cat, ItemKey: key, ItemName: r.name,
 			Enabled: r.on, Sort: i, CreatedAt: now, UpdatedAt: now,
+			// 新建行的「启用字段」必须显式为 true：Go 的 bool 零值是 false，
+			// 漏了这一行会让后端自动补出来的子项列**一个都不显示**
+			// （分摊照算、界面上却看不到，比缺数据更难排查）。
+			FieldEnabled: true,
 			// 从市电账单引入的费用分项：按分摊比例折算
 			SourceCategory: "市电账单", SourceKey: r.name, SourceMode: "fee_row", ValueMode: "apportion",
 		})
@@ -1929,6 +1949,11 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 			ID: uuid.NewString(), BillingTenantID: tenantID,
 			Category: cat, ItemKey: key, ItemName: name,
 			Enabled: on, Sort: sort, CreatedAt: now, UpdatedAt: now,
+			// 同 ensureDefaultItems：自动补的子项必须显式开启显示，
+			// 否则 bool 零值 false 会让新列在界面上直接消失。
+			// source_* 保持不填：resolveTenantItemValue 对「市电账单 + 空 mode」
+			// 已默认走 fee_row + apportion，显式写反而多一处会漂移的口径。
+			FieldEnabled: true,
 		})
 		enabled[key] = on
 		enabled[name] = on

@@ -160,10 +160,32 @@ function doPrint() {
 .ppd-body {
   flex: 1;
   min-height: 0;
+  // 滚动必须落在这一层之内：body 是 dialog 里唯一的弹性区，
+  // 高度被 dialog 的定高（min(820px, 90vh)）约束住，子级才可能滚。
+  // 旧版这里还叠了 overflow，但真正的坑在 .ppd-viewer（见下）。
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--td-bg-color-page);
 }
 
-.ppd-viewer { width: 100%; height: 100%; display: block; }
+/*
+  ⚠️ 这里**不能**写 `display: block`。
+  PdfSourceViewer 的根节点自带 `display:flex; flex-direction:column`，其滚动体
+  `.pdf-source-viewer__scroller` 靠 `flex:1 + min-height:0` 拿高度。
+  两个 scoped 选择器（.ppd-viewer / .pdf-source-viewer）特异性相同，谁在后面谁赢；
+  一旦 block 生效，滚动体就失去 flex 父级，`min-height:0` 也不再兜底，
+  高度被内容撑到 6000+px，clientHeight === scrollHeight → **一点都滚不动**
+  （真机取证：打印预览 3 页只能看到第 1 页上沿，且内容溢出盖住底部按钮栏）。
+  所以这里显式声明成同样的 flex 列，与样式表顺序无关。
+*/
+.ppd-viewer {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 .ppd-loading {
   height: 100%;
