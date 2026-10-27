@@ -38,10 +38,13 @@
           <span class="row-mono">{{ row.month }}</span>
         </template>
         <template #meter="{ row }: any">
-          <span class="row-text" :title="row.meter_alias">
-            <span v-if="isTimeRow(row)" class="row-expand-toggle" title="展开/收起分时明细"
-              @click.stop="toggleExpand(row)">{{ expandedKeys.has(row.key) ? '▾' : '▸' }}</span>
-            {{ row.meter_alias }}
+          <!-- 电表名称必须与普通电表严格左对齐：展开符放在名称**右侧**，
+               不能像旧版那样用小三角占位（真机：持睿工业分表1/2/3 比宿舍312 右移 20px）。 -->
+          <span class="row-text row-meter" :title="row.meter_alias">
+            <span class="row-label">{{ row.meter_alias }}</span>
+            <button v-if="isTimeRow(row)" type="button" class="row-expand-toggle"
+              :class="{ 'is-open': expandedKey === row.key }" :title="expandedKey === row.key ? '收起分时明细' : '展开分时明细'"
+              @click.stop="toggleExpand(row)">{{ expandedKey === row.key ? '−' : '+' }}</button>
           </span>
         </template>
         <template #start_reading="{ row }: any">
@@ -99,28 +102,29 @@
           <span class="row-text" :title="String(row.remark ?? '')">{{ row.remark }}</span>
         </template>
         <template #expandedRow="{ row }: any">
-          <div v-if="isTimeRow(row)" class="expand-inner">
-            <div class="expand-grid">
-              <div class="expand-cell expand-head">时段</div>
-              <div class="expand-cell expand-head">起度</div>
-              <div class="expand-cell expand-head">止度</div>
-              <div class="expand-cell expand-head">倍率</div>
-              <div class="expand-cell expand-head">时段电量</div>
-            </div>
-            <div v-for="p in periodsOf(row)" :key="p.name" class="expand-grid expand-grid--row">
-              <div class="expand-cell expand-name">{{ p.name }}</div>
-              <div class="expand-cell expand-mono">{{ fmtNum(p.prev) }}</div>
-              <div class="expand-cell expand-mono">{{ fmtNum(p.curr) }}</div>
-              <div class="expand-cell expand-mono">{{ fmtNum(row.rate) }}</div>
-              <div class="expand-cell expand-mono">{{ fmtNum(p.usage) }} {{ unitLabel }}</div>
-            </div>
-            <div class="expand-grid expand-grid--row expand-grid--total">
-              <div class="expand-cell expand-name">合计</div>
-              <div class="expand-cell expand-mono" />
-              <div class="expand-cell expand-mono" />
-              <div class="expand-cell expand-mono" />
-              <div class="expand-cell expand-mono">{{ fmtNum(row.usage) }} {{ unitLabel }}</div>
-            </div>
+          <!-- 分时明细：与主表**同一套列宽**（colgroup 用实测表头宽度），
+               时段⟷电表名称、起度⟷起度、止度⟷止度、倍率⟷倍率、时段电量⟷用电量。
+               旧版是独立 grid 五等分，整块与主表错位（真机截图为证）。 -->
+          <div v-if="isTimeRow(row) && expandCols.length" class="expand-inner expand-inner--aligned"
+            :style="{ height: expandHeight + 'px', marginLeft: expandShift + 'px' }">
+            <table class="expand-table" :style="{ width: expandWidth + 'px' }">
+              <colgroup>
+                <col v-for="(c, i) in expandCols" :key="i" :style="{ width: c.width + 'px' }" />
+              </colgroup>
+              <tbody>
+                <tr class="expand-head-row">
+                  <td v-for="(c, i) in expandCols" :key="i" class="expand-cell">{{ detailHeadOf(c.key) }}</td>
+                </tr>
+                <tr v-for="p in periodsOf(row)" :key="p.name">
+                  <td v-for="(c, i) in expandCols" :key="i" class="expand-cell"
+                    :class="{ 'expand-cell--num': detailNumericOf(c.key) }">{{ detailCellOf(c.key, p, row) }}</td>
+                </tr>
+                <tr class="expand-total-row">
+                  <td v-for="(c, i) in expandCols" :key="i" class="expand-cell"
+                    :class="{ 'expand-cell--num': detailNumericOf(c.key) }">{{ detailTotalOf(c.key, row) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </template>
         <template #empty>
@@ -189,31 +193,15 @@
       @update:visible="(v: boolean) => (drawerVisible = v)" @close="onDrawerClose" @save="save"
       @meter-change="onMeterChange" @use-unit-change="onUseUnitChange" />
 
-    <!-- 打印预览弹窗 -->
-    <div v-if="printVisible" class="meter-print-mask">
-      <div class="meter-print-dialog">
-        <div class="meter-print-header">
-          <span class="meter-print-title">{{ categoryLabel }}目录预览（{{ printCount }} 条）</span>
-          <t-button variant="text" size="small" class="meter-print-close" @click="closePrint">
-            <t-icon name="close" size="16px" />
-          </t-button>
-        </div>
-        <div class="meter-print-body">
-          <iframe v-if="printUrl" :src="printUrl" class="print-preview-frame" @load="printLoaded = true"></iframe>
-          <div v-else class="print-preview-loading">
-            <t-loading size="small" :text="'正在生成目录…'" />
-          </div>
-        </div>
-        <div class="meter-print-footer">
-          <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
-        </div>
-      </div>
-    </div>
+    <!-- 打印预览：全中台统一组件 -->
+    <PrintPreviewDialog v-model:visible="printVisible" :title="`${categoryLabel}目录（${printCount} 条）打印预览`"
+      :url="printUrl" :data="printBytes" :download-name="`${categoryLabel}目录.pdf`" loading-text="正在生成目录…"
+      @close="closePrint" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listUtilityMeterRecords,
@@ -229,6 +217,7 @@ import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import MeterRecordDrawer from './MeterRecordDrawer.vue'
+import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
@@ -341,20 +330,104 @@ async function loadCategorySubs() {
   }
 }
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
-const expandedRowKeysArr = computed(() => Array.from(expandedKeys.value))
+// 分时明细手风琴：只允许一行展开（旧版 Set 可多行同时展开，真机截图 51/52 同时打开）
+const expandedKey = ref<string | null>(null)
+const expandedRowKeysArr = computed(() => (expandedKey.value ? [expandedKey.value] : []))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
-/** 表计名前的小三角：展开/收起该行的分时明细（替代 TDesign 自带的展开列，
+/** 名称右侧的 +/− 徽标：展开/收起该行的分时明细（替代 TDesign 自带展开列，
  *  那列会插在复选框左边，破坏「复选框 + 序号」的标准列序）。 */
 function toggleExpand(row: any) {
-  const next = new Set(expandedKeys.value)
-  if (next.has(row.key)) next.delete(row.key)
-  else next.add(row.key)
-  expandedKeys.value = next
+  expandedKey.value = expandedKey.value === row.key ? null : row.key
+  scheduleMeasure()
 }
 
 function onExpandChange(ctx: any) {
   const keys = Array.isArray(ctx?.expandedRowKeys) ? ctx.expandedRowKeys : []
-  expandedKeys.value = new Set(keys)
+  expandedKey.value = keys.length ? String(keys[0]) : null
+  scheduleMeasure()
+}
+
+/**
+ * 延迟一帧再测列宽/偏移。
+ *
+ * TDesign 的展开行不是同步插入 DOM 的（expandedRowKeys 走到内部控制态才渲染），
+ * 单个 nextTick 里 querySelector('.expand-table') 还是 null，测出来的 shift 恒为 0
+ * ——真机表现就是「子表整体右移 16px」。这里用 nextTick + rAF + 80ms 兜底三连测。
+ */
+function scheduleMeasure() {
+  void nextTick(measureTableColumns)
+  // 展开行由 TDesign 异步插入，补两次定时测量（不要挂在 rAF 上：
+  // headless / 后台标签会节流 rAF，兜底链直接断掉，shift 永远停在 0）
+  window.setTimeout(measureTableColumns, 60)
+  window.setTimeout(measureTableColumns, 220)
+}
+
+// ---- 分时明细列对齐：实测主表表头宽度，子表用同一套 colgroup ----
+//
+// 为什么不能按 colWidthOf 声明的宽度直接算：TDesign 的 table-layout:fixed 在
+// 「声明宽度之和 < 容器宽度」时会把富余宽度按比例摊到各列，真实左边界与声明值
+// 并不相等。只有实测 <th> 的 boundingClientRect 才能做到像素级对齐。
+const expandCols = ref<Array<{ key: string; width: number }>>([])
+/**
+ * 展开子表的显式宽度。
+ *
+ * 展开行的 `<td>` 内容盒比主表窄一道单元格 padding（16px），由 CSS
+ * `margin-left: calc(-1 * var(--td-comp-paddingLR-s))` 把容器拉回主表左边界；
+ * 宽度取实测列宽之和，列左缘由 colgroup 保证与主表逐列相等。
+ */
+const expandWidth = computed(() => Math.round(expandCols.value.reduce((s, c) => s + c.width, 0) * 100) / 100)
+/** 展开行的容器相对主表左缘的内缩量（负值 = 需要左移多少才能对齐） */
+const expandShift = ref(0)
+/** 展开块高度 = (表头 + 四时段 + 合计) × 单行 30px；子表绝对定位，必须显式给高 */
+const EXPAND_ROW_H = 30
+// 行间的 1px 分隔线也算进高度（6 行 = 5 条线），否则最后一行的合计会被裁掉半行
+const expandHeight = EXPAND_ROW_H * 6 + 5
+function measureTableColumns() {
+  const wrap = listScrollRef.value
+  const cols = tableColumns.value
+  if (!wrap || !cols.length) return
+  const ths = Array.from(wrap.querySelectorAll('thead th')) as HTMLElement[]
+  if (!ths.length) return
+  const next = ths.slice(0, cols.length).map((th, i) => ({
+    key: String((cols[i] as any)?.colKey || ''),
+    width: Math.round(th.getBoundingClientRect().width * 100) / 100,
+  }))
+  if (!next.length) return
+  const same = next.length === expandCols.value.length &&
+    next.every((c, i) => c.key === expandCols.value[i].key && Math.abs(c.width - expandCols.value[i].width) < 0.5)
+  if (!same) expandCols.value = next
+
+  // 残余内缩：主表左缘 − 展开容器左缘。容器当前已带 expandShift，
+  // 因此 dx 就是"还差多少"，累加即一步收敛（不会来回抖）。
+  const hostBox = wrap.querySelector('.expand-inner--aligned') as HTMLElement | null
+  const mainTable = wrap.querySelector('table') as HTMLElement | null
+  if (hostBox && mainTable) {
+    const dx = mainTable.getBoundingClientRect().left - hostBox.getBoundingClientRect().left
+    if (Math.abs(dx) > 0.5) expandShift.value = Math.round((expandShift.value + dx) * 100) / 100
+  }
+}
+/** 时段列对齐「电表名称」列；其余四列按 key 落到主表同名列 */
+const DETAIL_HEAD: Record<string, string> = {
+  meter: '时段', start_reading: '起度', end_reading: '止度', rate: '倍率', usage: '时段电量',
+}
+const detailHeadOf = (key: string) => DETAIL_HEAD[key] || ''
+const detailNumericOf = (key: string) => key === 'start_reading' || key === 'end_reading' || key === 'rate' || key === 'usage'
+/** 单元格取值：时段名 / 起度 / 止度 / 倍率 / 时段电量（纯数值，不带单位） */
+function detailCellOf(key: string, p: any, row: any): string {
+  switch (key) {
+    case 'meter': return p.name
+    case 'start_reading': return fmtNum(p.prev)
+    case 'end_reading': return fmtNum(p.curr)
+    case 'rate': return fmtNum(row.rate)
+    // 与主表「用电量」同口径：只显示数值（旧版带「千瓦时」，与主表不一致）
+    case 'usage': return fmtNum(p.usage)
+    default: return ''
+  }
+}
+function detailTotalOf(key: string, row: any): string {
+  if (key === 'meter') return '合计'
+  if (key === 'usage') return fmtNum(row.usage)
+  return ''
 }
 
 function loadStoredKeys(): string[] {
@@ -389,6 +462,8 @@ const meters = ref<any[]>([])
 const rows = ref<any[]>([]) // 展开后的扁平行
 const displayRows = ref<any[]>([])
 const loading = ref(true)
+// 列表滚动容器（表头列宽实测的观察对象）
+const listScrollRef = ref<HTMLElement>()
 const filters = ref<{ keyword?: string; month?: string; kind?: string; useUnit?: string }>({ keyword: '', month: undefined, kind: undefined, useUnit: undefined })
 
 const kindFilterOptions = computed(() => [
@@ -524,13 +599,23 @@ const load = async () => {
       }
     }
     rows.value = flat
-    // 构建 表计→月份→止度 索引（新增记录时上月止度自动填充起度）
-    const idx = new Map<string, Map<string, number>>()
+    // 构建 表计→月份→读数快照 索引（新增记录时上期止度自动填充本期起度）
+    //
+    // 快照必须带四时段止度：分时电表不使用 start_reading/end_reading，
+    // 只索引 end_reading 会让分时表的起度永远填 0（真机：2026-09 持睿工业分表1
+    // 尖峰平谷起度全是 0，而 2026-08 的止度是 1833/5449/7304/7284）。
+    const idx = new Map<string, Map<string, ReadingSnapshot>>()
     for (const r of flat) {
       if (!r.meter_id) continue
       let m = idx.get(r.meter_id)
       if (!m) { m = new Map(); idx.set(r.meter_id, m) }
-      m.set(r.month, Number(r.end_reading) || 0)
+      m.set(r.month, {
+        end_reading: Number(r.end_reading) || 0,
+        deep_curr: Number(r.deep_curr) || 0,
+        peak_curr: Number(r.peak_curr) || 0,
+        flat_curr: Number(r.flat_curr) || 0,
+        valley_curr: Number(r.valley_curr) || 0,
+      })
     }
     meterMonthEnds.value = idx
     // 抄表人兜底：本地无记录时，取最近一次已保存记录的抄表人作为默认
@@ -543,6 +628,8 @@ const load = async () => {
     MessagePlugin.error(e?.message || '加载失败')
   } finally {
     loading.value = false
+    // 数据渲染完成后再量一次列宽（首屏没有展开行，但表头宽度决定后续对齐）
+    void nextTick(() => nextTick(measureTableColumns))
   }
 }
 
@@ -555,7 +642,9 @@ const applyFilters = () => {
   if (kw) list = list.filter(r => matchAllTokens(rowFlattenText(r), kw))
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
   if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
-  if (filters.value.useUnit) list = list.filter(r => r.use_unit === filters.value.useUnit)
+  // 使用单位是表计档案属性：记录本身不带该字段，必须用扁平行上的 use_unit 比对
+  // （旧实现读的是未联动的旧 ref，选「持睿汽车」列表仍是「重庆星达」）。
+  if (filters.value.useUnit) list = list.filter(r => String(r.use_unit || '').trim() === filters.value.useUnit)
   // 同一周期内默认排序:按用途配置顺序(宿舍→公租房→工商业...);跨月保持数据原序
   const order = new Map(meterKinds.value.map((k, i) => [k.value, i]))
   list = [...list].sort((a, b) => {
@@ -563,7 +652,19 @@ const applyFilters = () => {
     return (order.get(a.meter_kind) ?? 99) - (order.get(b.meter_kind) ?? 99)
   })
   displayRows.value = list
+  // 表头列宽随数据（自适应列）变化 → 展开子表 colgroup 需要重测
+  void nextTick(measureTableColumns)
 }
+
+/**
+ * 筛选态 → 列表重算。
+ *
+ * BusinessFilterBar 只发不可变更新（`update:modelValue`），非 `immediate` 的控件
+ * 不会派发 `filter-change`。旧版把重算挂在 `load()`（只有刷新/筛选事件才走），
+ * 于是「选了下拉框但列表不动」——这是本次 6 个视图筛选失效的共同根因。
+ * 这里直接监听筛选态本身：任何键变化都立即重算，且纯本地、零请求。
+ */
+watch(filters, () => applyFilters(), { deep: true })
 
 // ---- 汇总 ----
 const summary = computed(() => {
@@ -582,7 +683,6 @@ const summaryAmount = computed(() => {
 })
 
 // ---- 分时表：行内四时段展开 ----
-const expandedKeys = ref<Set<string>>(new Set())
 const isTimeRow = (row: any) => row.meter_type === 'time'
 const periodsOf = (row: any) => {
   const rate = Number(row.rate) > 0 ? Number(row.rate) : 1
@@ -722,6 +822,8 @@ const formUsage = computed(() => {
   return Math.round((Number(form.value.endReading) - Number(form.value.startReading)) * rate * 100) / 100
 })
 const formAmount = computed(() => {
+  // 分时电表不按「用电量 × 单一标准单价」计费（费用走租户分摊核算），金额不参与计算
+  if (isTimeMeter.value) return 0
   const base = formUsage.value * Number(form.value.unitPrice)
   const fees = props.category === 'water'
     ? (Number(form.value.garbageFee) || 0) + (Number(form.value.secondaryWaterFee) || 0) + (Number(form.value.sewageFee) || 0)
@@ -747,6 +849,7 @@ const duplicateWarning = computed(() => {
   return meterMonthEnds.value.get(form.value.meterId)?.has(form.value.month) || false
 })
 const unitPriceDiff = computed(() => {
+  if (isTimeMeter.value) return false // 分时表无标准单价可比
   const up = Number(form.value.unitPrice)
   const def = Number(currentMeter.value?.default_unit_price)
   return !!form.value.meterId && up > 0 && def > 0 && up !== def
@@ -754,19 +857,16 @@ const unitPriceDiff = computed(() => {
 // 设置抽屉表计按居民/工商业分组表格展示(原卡片网格列数逻辑移除)
 
 const onMeterChange = () => {
-  // 切换表计：新增/连续录入模式清空读数便于录入；编辑模式仅回填单价与抄表人，
-  // 保留原读数（修正表号场景数据应跟随记录，而不是产生空记录）
+  // 切换表计：新增/连续录入模式清空**本期止度**便于录入；起度由
+  // applyPrevReadings() 按「该表上期止度」重填（普通表 1 个、分时表 4 段）。
+  // 编辑模式保留原读数（修正表号场景数据应跟随记录，而不是产生空记录）
   if (!editingItemId.value) {
-    form.value.startReading = 0
     form.value.endReading = 0
-    form.value.deepPrev = 0
     form.value.deepCurr = 0
-    form.value.peakPrev = 0
     form.value.peakCurr = 0
-    form.value.flatPrev = 0
     form.value.flatCurr = 0
-    form.value.valleyPrev = 0
     form.value.valleyCurr = 0
+    applyPrevReadings()
   }
   if (currentMeter.value) {
     form.value.unitPrice = Number(currentMeter.value.default_unit_price) || 0
@@ -794,13 +894,59 @@ const openCreate = () => {
   drawerVisible.value = true
 }
 
-// ---- 新增记录：上月止度自动填充本月起度 ----
-const meterMonthEnds = ref<Map<string, Map<string, number>>>(new Map())
+// ---- 新增记录：上期止度自动填充本期起度 ----
+/** 某表计某月的读数快照（普通表用 end_reading，分时表用四段 curr） */
+interface ReadingSnapshot {
+  end_reading: number
+  deep_curr: number
+  peak_curr: number
+  flat_curr: number
+  valley_curr: number
+}
+const meterMonthEnds = ref<Map<string, Map<string, ReadingSnapshot>>>(new Map())
 const prevMonthOf = (month: string) => {
   const [y, m] = month.split('-').map(Number)
   if (!y || !m) return ''
   if (m === 1) return `${y - 1}-12`
   return `${y}-${String(m - 1).padStart(2, '0')}`
+}
+/**
+ * 取该表计「账单周期之前最近一期」的读数快照。
+ *
+ * 先找上一自然月；该月没有记录时回退到更早的最近一期 —— 真机上表计常隔月抄
+ * （如 2026-09 新增时只有 2026-06 的记录），只查 M-1 会让起度直接落 0。
+ */
+function prevSnapshotOf(meterId: string, month: string): ReadingSnapshot | null {
+  const byMonth = meterMonthEnds.value.get(meterId)
+  if (!byMonth || !month) return null
+  const exact = byMonth.get(prevMonthOf(month))
+  if (exact) return exact
+  // 月份是 YYYY-MM，字典序即时间序：取 < 目标月里最大的那个
+  let best = ''
+  for (const k of byMonth.keys()) {
+    if (k < month && k > best) best = k
+  }
+  return best ? byMonth.get(best) || null : null
+}
+/** 把快照写进表单的起度位置：普通表写 startReading，分时表写四段 prev */
+function applyPrevReadings() {
+  const meter = currentMeter.value
+  const prev = prevSnapshotOf(form.value.meterId, form.value.month)
+  if (meter?.meter_type === 'time') {
+    form.value.deepPrev = prev?.deep_curr ?? 0
+    form.value.peakPrev = prev?.peak_curr ?? 0
+    form.value.flatPrev = prev?.flat_curr ?? 0
+    form.value.valleyPrev = prev?.valley_curr ?? 0
+    // 止度同步预填为起度：避免一打开就显示「止度 0 < 起度 1833」的红色报错
+    // 和 -4374000 千瓦时的负用量（抄表场景本来就是"从上次读数起抄"）。
+    form.value.deepCurr = form.value.deepPrev
+    form.value.peakCurr = form.value.peakPrev
+    form.value.flatCurr = form.value.flatPrev
+    form.value.valleyCurr = form.value.valleyPrev
+    return
+  }
+  form.value.startReading = prev?.end_reading ?? 0
+  form.value.endReading = form.value.startReading
 }
 // 连续录入时跳过自动填充（起度/单价由保存逻辑显式写入）
 const skipAutoFill = ref(false)
@@ -808,13 +954,7 @@ watch([() => form.value.month, () => form.value.meterId], () => {
   if (editingItemId.value) return // 编辑模式不填充
   if (skipAutoFill.value) { skipAutoFill.value = false; return } // 连续录入：已显式设置
   if (!form.value.month || !form.value.meterId) return
-  const ends = meterMonthEnds.value.get(form.value.meterId)
-  const prevEnd = ends?.get(prevMonthOf(form.value.month))
-  if (prevEnd) {
-    form.value.startReading = prevEnd
-  } else {
-    form.value.startReading = 0
-  }
+  applyPrevReadings()
 })
 
 const openEditSelected = () => {
@@ -916,7 +1056,7 @@ const save = async () => {
       flat_curr: Number(form.value.flatCurr) || 0,
       valley_prev: Number(form.value.valleyPrev) || 0,
       valley_curr: Number(form.value.valleyCurr) || 0,
-      unit_price: Number(form.value.unitPrice) || 0,
+      unit_price: isTimeMeter.value ? 0 : Number(form.value.unitPrice) || 0,
       garbage_fee: Number(form.value.garbageFee) || 0,
       secondary_water_fee: Number(form.value.secondaryWaterFee) || 0,
       sewage_fee: Number(form.value.sewageFee) || 0,
@@ -1078,10 +1218,14 @@ const save = async () => {
       f.readingDate = form.value.readingDate || today
       f.recordDate = form.value.recordDate || today
       f.reader = nextMeter.manager || lastReader.value || form.value.reader || ''
-      const nextEnds = meterMonthEnds.value.get(nextMeter.id)
-      const prevEnd = nextEnds?.get(prevMonthOf(form.value.month))
-      f.startReading = prevEnd ? Number(prevEnd) : 0
-      f.unitPrice = Number(form.value.unitPrice) || 0
+      const nextPrev = prevSnapshotOf(nextMeter.id, form.value.month)
+      f.startReading = nextPrev?.end_reading ?? 0
+      f.deepPrev = nextPrev?.deep_curr ?? 0
+      f.peakPrev = nextPrev?.peak_curr ?? 0
+      f.flatPrev = nextPrev?.flat_curr ?? 0
+      f.valleyPrev = nextPrev?.valley_curr ?? 0
+      // 分时电表不按单一标准单价核算（费用走租户分摊），单价留空
+      f.unitPrice = nextMeter.meter_type === 'time' ? 0 : Number(form.value.unitPrice) || 0
       form.value = f
       editingRecordId.value = ''
       editingItemId.value = ''
@@ -1164,8 +1308,8 @@ const handleDelete = async () => {
 // ---- 打印 ----
 const printVisible = ref(false)
 const catalogBusy = ref(false)
-const printLoaded = ref(false)
 const printUrl = ref('')
+const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
 const printCount = ref(0)
 
 const catalogValueOf = (r: any, key: string): string => {
@@ -1204,8 +1348,8 @@ const handlePrint = async () => {
     const bytes = await generateCatalogPdf({ title: `${categoryLabel.value}目录`, columns: cols, rows: rowsToPrint })
     printCount.value = rowsToPrint.length
     if (printUrl.value) URL.revokeObjectURL(printUrl.value)
+    printBytes.value = bytes
     printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
-    printLoaded.value = false
     printVisible.value = true
   } catch (e: any) {
     MessagePlugin.error(e?.message || '目录生成失败')
@@ -1216,6 +1360,7 @@ const handlePrint = async () => {
 const closePrint = () => {
   printVisible.value = false
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
+  printBytes.value = null
 }
 
 // ---- 表计配置（已迁至 MeterSettingsPanel，作为统一设置抽屉的「表计设置」Tab） ----
@@ -1235,14 +1380,28 @@ const fmtUnitPrice = (v: any) => {
   return String(Math.round(n * 1000) / 1000)
 }
 
+// 列宽实测的生命周期：挂载后量一次，容器尺寸变化（窗口缩放 / 侧栏收起 /
+// 列显隐切换）重测，保证展开子表的 colgroup 始终等于主表真实列宽。
+let columnResizeObserver: ResizeObserver | null = null
 onMounted(() => {
   load()
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
+  void nextTick(() => {
+    measureTableColumns()
+    const wrap = listScrollRef.value
+    if (wrap && typeof ResizeObserver !== 'undefined') {
+      columnResizeObserver = new ResizeObserver(() => measureTableColumns())
+      columnResizeObserver.observe(wrap)
+    }
+  })
 })
+watch(visibleKeys, () => void nextTick(measureTableColumns))
 function onCategoriesChanged() { void loadCategorySubs() }
 onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+  columnResizeObserver?.disconnect()
+  columnResizeObserver = null
 })
 </script>
 
@@ -1426,62 +1585,89 @@ onBeforeUnmount(() => {
 
 .os-neg { color: var(--td-error-color); }
 .row-dash { color: var(--td-text-color-placeholder); }
-.row-expand-toggle {
+/* 电表名称：文字从单元格最左侧起排（与普通电表 100% 对齐），
+   展开符是名称**右侧**的独立小徽标，不占首字缩进。 */
+.row-meter {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-right: 2px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--td-text-color-secondary);
-  cursor: pointer;
-  border-radius: 4px;
-  user-select: none;
-  &:hover { background: var(--td-bg-color-container-hover); color: var(--td-brand-color); }
-}
-
-/* 分时表行内四时段展开（参考电量明细布局） */
-.doc-list-expand {
-  display: contents;
-}
-.doc-list-expand .expand-inner {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  background: var(--td-bg-color-container-hover);
-  border-bottom: 1px solid var(--td-component-stroke);
-}
-.expand-grid {
-  display: grid;
-  grid-template-columns: 1fr 0.9fr 0.9fr 0.7fr 1.1fr;
+  max-width: 100%;
   min-width: 0;
+  vertical-align: bottom;
 }
-.expand-grid--row {
-  border-top: 1px solid var(--td-component-stroke);
-}
-.expand-grid--row:hover { background: var(--td-bg-color-container); }
-.expand-grid--total {
-  border-top: 1px solid var(--td-component-stroke);
-  font-weight: 600;
-  background: var(--td-bg-color-container);
-}
-.expand-cell {
-  padding: 6px 12px;
-  font-size: 12px;
-  line-height: 18px;
+.row-meter .row-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.expand-head {
-  color: var(--td-text-color-placeholder);
+.row-expand-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-left: 6px;
+  /* 圆形徽标：方形带边框的样式会和行首复选框混淆 */
+  border: none;
+  border-radius: 50%;
   background: var(--td-bg-color-secondarycontainer);
-  font-weight: 600;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover { background: var(--td-brand-color-light); color: var(--td-brand-color); }
+  &.is-open {
+    background: var(--td-brand-color);
+    color: var(--td-text-color-anti);
+  }
 }
-.expand-name { color: var(--td-text-color-primary); }
-.expand-mono { font-family: var(--app-font-family); color: var(--td-text-color-primary); }
+
+/* 分时明细：与主表共用列宽的展开子表（colgroup 由表头实测宽度驱动） */
+.expand-inner--aligned {
+  position: relative;
+  padding: 0;
+  /* 左缘偏移由 expandShift（运行时实测）以 inline style 补偿 */
+  /* 脱离文档流：子表比内容盒宽时不会反推主表列宽，横向溢出直接裁掉。 */
+  overflow: hidden;
+  background: var(--td-bg-color-container-hover);
+  border-bottom: 1px solid var(--td-component-stroke);
+}
+.expand-table {
+  position: absolute;
+  top: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+
+  .expand-cell {
+    /* 与 TDesign t-size-s 单元格同 padding：文字左缘与主表同列严格对齐 */
+    padding: 6px var(--td-comp-paddingLR-s);
+    height: 18px;
+    font-size: 12px;
+    line-height: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .expand-head-row .expand-cell {
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-secondarycontainer);
+    font-weight: 600;
+  }
+  .expand-cell--num {
+    font-family: var(--app-font-family);
+    font-variant-numeric: tabular-nums;
+  }
+  tr + tr .expand-cell { border-top: 1px solid var(--td-component-stroke); }
+  .expand-total-row .expand-cell {
+    font-weight: 600;
+    background: var(--td-bg-color-container);
+  }
+}
 
 .meter-list-scroll {
   /* 只保留尺寸：overflow / 边框 / 圆角 / 背景 / 阴影一律走共享的
@@ -2008,72 +2194,4 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 打印弹窗 */
-.meter-print-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 3100;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.meter-print-dialog {
-  width: min(960px, 92vw);
-  max-width: 100%;
-  height: min(720px, 88vh);
-  display: flex;
-  flex-direction: column;
-  background: var(--td-bg-color-container);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-}
-
-.meter-print-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--td-component-stroke);
-  flex: 0 0 auto;
-
-  .meter-print-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-  }
-}
-
-.meter-print-body {
-  flex: 1;
-  min-height: 0;
-  background: var(--td-bg-color-container);
-  overflow: auto;
-}
-
-.print-preview-frame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  display: block;
-}
-
-.print-preview-loading {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.meter-print-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--td-component-stroke);
-  flex: 0 0 auto;
-}
 </style>

@@ -124,102 +124,11 @@
       <template #footer-left>
         <t-button variant="outline" size="small" @click="printRecord">打印</t-button>
       </template>
-      <template #extra>
-        <!-- 分摊明细（电量表 / 费用大项 / 水表）：只读表格，与发票「项目明细」同形 -->
-        <section v-if="recordDetail" class="bsd-block">
-          <div class="bsd-block-title">电量明细</div>
-          <div v-if="recordDetail.meters?.length" class="tb-items">
-            <table class="tb-items-table">
-              <thead>
-                <tr><th>分时电表</th><th>起度</th><th>止度</th><th>倍率</th><th>使用电量</th><th>损耗</th><th>加减电量</th><th>计费电量</th><th>差额分摊</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(mr, i) in recordDetail.meters" :key="i">
-                  <td>{{ mr.meter_name }}<span class="tb-period">{{ mr.period }}</span></td>
-                  <td class="row-mono">{{ fmtNum(mr.prev) }}</td>
-                  <td class="row-mono">{{ fmtNum(mr.curr) }}</td>
-                  <td class="row-mono">{{ fmtNum(mr.rate) }}</td>
-                  <td class="row-mono">{{ fmtKwh(mr.usage) }}</td>
-                  <td class="row-mono">{{ fmtKwh(mr.line_loss) }}</td>
-                  <td class="row-mono">{{ fmtKwh(mr.adjust) }}</td>
-                  <td class="row-mono">{{ fmtKwh(mr.bill_kwh) }}</td>
-                  <td class="row-mono">{{ fmtKwh(mr.diff_kwh) }}</td>
-                </tr>
-                <tr class="tb-total">
-                  <td>汇总</td><td></td><td></td><td></td>
-                  <td class="row-mono">{{ fmtKwh(recordMeterSum('usage')) }}</td>
-                  <td class="row-mono">{{ fmtKwh(recordMeterSum('line_loss')) }}</td>
-                  <td class="row-mono">{{ fmtKwh(recordMeterSum('adjust')) }}</td>
-                  <td class="row-mono">{{ fmtKwh(recordMeterSum('bill_kwh')) }}</td>
-                  <td class="row-mono">{{ fmtKwh(recordMeterSum('diff_kwh')) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="tb-items-empty">该月未固化分时电量明细</div>
-        </section>
-
-        <section v-if="recordDetail && feeGroups.length" class="bsd-block">
-          <div class="bsd-block-title">费用明细</div>
-          <div v-for="g in feeGroups" :key="g.category" class="tb-fee-group">
-            <div class="tb-fee-head">
-              <span class="tb-fee-name">{{ g.category }}</span>
-              <span class="tb-fee-sum">小计 {{ fmtMoney(g.sum) }}</span>
-            </div>
-            <table class="tb-items-table">
-              <thead>
-                <tr><th>项目</th><th>时段</th><th>电量</th><th>单价</th><th>费用</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(it, i) in g.rows" :key="i" :class="{ 'os-neg': Number(it.fee) < 0 }">
-                  <td>{{ it.name }}</td>
-                  <td>{{ it.period || '—' }}</td>
-                  <td class="row-mono">{{ fmtKwh(it.qty) }}</td>
-                  <td class="row-mono">{{ fmtRate(it.rate) }}</td>
-                  <td class="row-mono">{{ fmtMoney(it.fee) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="tb-fee-total">合计 {{ fmtMoney(totalElecFee) }} 元</div>
-        </section>
-
-        <section v-if="recordDetail?.waters?.length" class="bsd-block">
-          <div class="bsd-block-title">水费明细（小计 {{ fmtMoney(recordDetail.record.water_fee) }} 元）</div>
-          <table class="tb-items-table">
-            <thead>
-              <tr><th>水表</th><th>起度</th><th>止度</th><th>用量</th><th>单价</th><th>水费</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="(wr, i) in recordDetail.waters" :key="i">
-                <td>{{ wr.meter_name }}</td>
-                <td class="row-mono">{{ fmtNum(wr.prev) }}</td>
-                <td class="row-mono">{{ fmtNum(wr.curr) }}</td>
-                <td class="row-mono">{{ fmtKwh(wr.usage) }}</td>
-                <td class="row-mono">{{ fmtRate(wr.price) }}</td>
-                <td class="row-mono">{{ fmtMoney(wr.fee) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-      </template>
     </BusinessSplitDetailDrawer>
 
-    <!-- 打印预览 -->
-    <div v-if="printVisible" class="tenant-print-mask">
-      <div class="tenant-print-dialog">
-        <div class="tenant-print-header">
-          <span class="tenant-print-title">{{ printTitle }} 打印预览</span>
-        </div>
-        <div class="tenant-print-body">
-          <iframe v-if="printUrl" :src="printUrl" class="print-preview-frame" @load="printLoaded = true"></iframe>
-          <div v-else class="print-preview-loading"><t-loading size="small" /></div>
-        </div>
-        <div class="tenant-print-footer">
-          <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
-        </div>
-      </div>
-    </div>
+    <!-- 打印预览：全中台统一组件（壳子只有一份，内容由本页生成） -->
+    <PrintPreviewDialog v-model:visible="printVisible" :title="`${printTitle} 打印预览`" :url="printUrl"
+      :data="printBytes" :download-name="printFileName" loading-text="正在生成费用清单…" @close="closePrint" />
   </div>
 </template>
 
@@ -228,7 +137,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, getBillingTenant,
-  listBillingRecords, generateBillingRecord, getBillingRecord, deleteBillingRecord,
+  listBillingRecords, generateBillingRecord, deleteBillingRecord,
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
@@ -242,6 +151,7 @@ import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
@@ -579,9 +489,13 @@ const flattenMeterRecords = (res: any): any[] => {
       flat.push({
         month: rec.month,
         meter_id: it.meter_id,
+        meter_alias: meter?.alias || (it as any).meter_name || '',
         meter_kind: meter?.meter_kind || 'dorm',
         meter_type: meter?.meter_type || '',
         use_unit: meter?.use_unit || (it as any).use_unit || '',
+        rate: Number(meter?.rate) > 0 ? Number(meter?.rate) : 1,
+        start_reading: Number(it.start_reading) || 0,
+        end_reading: Number(it.end_reading) || 0,
         usage: Number(it.usage) || 0,
         unit_price: Number(it.unit_price ?? meter?.default_unit_price) || 0,
         amount: Number(it.amount) || 0,
@@ -604,6 +518,7 @@ const flattenWaterRecords = (res: any): any[] => {
       flat.push({
         month: rec.month,
         meter_id: it.meter_id,
+        meter_alias: meter?.alias || (it as any).meter_name || '',
         meter_kind: meter?.meter_kind || 'dorm',
         meter_type: meter?.meter_type || 'sub',
         owner_unit: meter?.owner_unit || '',
@@ -1005,35 +920,257 @@ const catalogBusy = ref(false)
 const statementBusy = ref(false)
 const printableRows = computed(() => (selectedKeys.value.size ? selectedRows.value : displayRows.value))
 
+// ---- 打印清单：按市电账单「概览 + 细项 + 水电气分区」组装 ----
+//
+// 版式来源：市电账单详情页（概览 → 各费用组成细项）。租户视角下所有市电分项
+// 按「用电量分摊比例」折算，水/电/气核算明细按「当月 + 使用单位」直接归属，
+// 且**水、电、气各自独立成表**（旧版混在一张 3 列表里，电量还落在「金额(元)」列）。
+const billIndex = computed(() => {
+  const m = new Map<string, any>()
+  for (const r of utilityBills.value as any[]) {
+    const mo = monthOfPeriod(r.item?.bill_period_start || r.item?.bill_period_end || r.item?.bill_month)
+    if (mo) m.set(mo, r)
+  }
+  return m
+})
+const money2 = (v: any): string => {
+  const n = Number(v)
+  return Number.isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : '—'
+}
+const num2 = (v: any): string => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  const r = Math.round(n * 100) / 100
+  return Number.isInteger(r) ? String(r) : r.toFixed(2)
+}
+const rateText = (v: any): string => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n === 0) return '—'
+  return String(parseFloat(n.toFixed(6)))
+}
+
+/** 该行的分摊比例：已生成账单用固化值，否则按月内星达分时电量 ÷ 账单电量估算 */
+function ratioForRow(row: any): number {
+  const rec = records.value.find((r: any) => r.month === row.month)
+  return ratioOfMonth(String(row.month || ''), billIndex.value.get(String(row.month || '')), rec)
+}
+
+interface PrintTable { title: string; columns: any[]; rows: string[][]; total?: string[]; empty?: string }
+
+/** 市电账单费用分项 → 细项表（租户视角按比例折算） */
+function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTable {
+  const bill = billIndex.value.get(month)
+  const items = (bill?.item?.fee_items || []) as any[]
+  const map = new Map<string, any[]>()
+  for (const it of items) {
+    const cat = String(it.category || '其他费用')
+    if (!map.has(cat)) map.set(cat, [])
+    map.get(cat)!.push(it)
+  }
+  const order = Array.from(map.keys()).sort((a, b) => {
+    const ia = FEE_CATEGORY_ORDER.findIndex((c) => a.includes(c))
+    const ib = FEE_CATEGORY_ORDER.findIndex((c) => b.includes(c))
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+  })
+  const rows: string[][] = []
+  let sum = 0
+  for (const cat of order) {
+    for (const it of map.get(cat)!) {
+      const fee = (Number(it.fee) || 0) * unitRatio
+      const qty = (Number(it.qty) || 0) * unitRatio
+      sum += fee
+      // 提取出来的 name 通常已带「（1）市场化购电费.偏差电费」这类前缀，
+      // 再拼一次分类会变成「（1）市场化购电费｜（1）市场化购电费.偏差电费」。
+      const rawName = String(it.name || '').trim()
+      const name = rawName && cat && !rawName.includes(cat) ? `${cat}｜${rawName}` : (rawName || cat)
+      rows.push([name, it.period || '—', qty ? num2(qty) : '—', rateText(it.rate), money2(fee)])
+    }
+  }
+  return {
+    title: `${prefix}电费分项细项`,
+    columns: [
+      { label: '费用组成', weight: 3.4 },
+      { label: '时段', weight: 1, align: 'center' },
+      { label: '计费数量', weight: 1.3, align: 'right' },
+      { label: '单价/标准', weight: 1.2, align: 'right' },
+      { label: '金额(元)', weight: 1.4, align: 'right' },
+    ],
+    rows,
+    total: ['合计', '', '', '', money2(sum)],
+    empty: '当月无市电账单分项数据',
+  }
+}
+
+/** 电费核算抄表明细（分表 / 宿舍表），与主表同口径：用量 × 单价 = 金额 */
+function elecTableOf(month: string, unit: string, prefix: string): PrintTable {
+  const rows = elecRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === unit)
+  const body = rows.map((r: any) => [
+    r.meter_alias || '—',
+    r.meter_kind === 'dorm' ? '宿舍' : '工商业',
+    num2(r.start_reading), num2(r.end_reading), num2(r.rate),
+    num2(r.usage), rateText(r.unit_price), money2(r.amount),
+  ])
+  return {
+    title: `${prefix}电费核算明细`,
+    columns: [
+      { label: '电表', weight: 2.2 },
+      { label: '用途', weight: 1, align: 'center' },
+      { label: '起度', weight: 1.1, align: 'right' },
+      { label: '止度', weight: 1.1, align: 'right' },
+      { label: '倍率', weight: 0.8, align: 'right' },
+      { label: '用电量', weight: 1.2, align: 'right' },
+      { label: '单价', weight: 1, align: 'right' },
+      { label: '电费(元)', weight: 1.3, align: 'right' },
+    ],
+    rows: body,
+    total: ['合计', '', '', '', '', num2(sumBy(rows, 'usage')), '', money2(sumBy(rows, 'amount'))],
+    empty: '当月无电费核算记录',
+  }
+}
+
+/** 水费核算明细（独立区块，绝不与电费合表） */
+function waterTableOf(month: string, unit: string, prefix: string): PrintTable {
+  const meters = (waterMeters.value as any[]).filter((m: any) =>
+    m.enabled !== false && (m.owner_unit === unit || m.use_unit === unit))
+  const rows: any[] = []
+  for (const m of meters) {
+    const r = waterReadingMap.value.get(`${m.id}__${month}`)
+    if (r) rows.push({ ...r, alias: m.alias })
+  }
+  const body = rows.map((r: any) => [
+    r.alias || '—',
+    num2(r.start_reading), num2(r.end_reading), num2(r.usage),
+    rateText(r.unit_price ?? r.price), money2(r.amount),
+  ])
+  return {
+    title: `${prefix}水费核算明细`,
+    columns: [
+      { label: '水表', weight: 2.6 },
+      { label: '起度', weight: 1.2, align: 'right' },
+      { label: '止度', weight: 1.2, align: 'right' },
+      { label: '用量(吨)', weight: 1.2, align: 'right' },
+      { label: '单价', weight: 1, align: 'right' },
+      { label: '水费(元)', weight: 1.4, align: 'right' },
+    ],
+    rows: body,
+    total: ['合计', '', '', num2(rows.reduce((s, r) => s + (Number(r.usage) || 0), 0)), '', money2(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0))],
+    empty: '当月无用水记录',
+  }
+}
+
+/** 气费核算明细（独立区块；公租房不参与核算） */
+function gasTableOf(month: string, unit: string, prefix: string): PrintTable {
+  const rows = gasRows.value.filter((r: any) =>
+    r.month === month && String(r.use_unit || '').trim() === unit && r.meter_kind !== 'public')
+  const body = rows.map((r: any) => [
+    r.meter_alias || '—',
+    num2(r.start_reading), num2(r.end_reading), num2(r.usage),
+    rateText(r.unit_price), money2(r.amount),
+  ])
+  return {
+    title: `${prefix}气费核算明细`,
+    columns: [
+      { label: '气表', weight: 2.6 },
+      { label: '起度', weight: 1.2, align: 'right' },
+      { label: '止度', weight: 1.2, align: 'right' },
+      { label: '用量(m³)', weight: 1.2, align: 'right' },
+      { label: '单价', weight: 1, align: 'right' },
+      { label: '气费(元)', weight: 1.4, align: 'right' },
+    ],
+    rows: body,
+    total: ['合计', '', '', num2(rows.reduce((s, r) => s + (Number(r.usage) || 0), 0)), '', money2(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0))],
+    empty: '当月无燃气记录',
+  }
+}
+
+/** 应收汇总：工商业电费 / 居民宿舍电费 / 水费 / 气费 → 合计 */
+function summaryTableOf(rows: any[], unit: string, prefix: string): PrintTable {
+  let ind = 0; let dorm = 0; let water = 0; let gas = 0
+  for (const r of rows) {
+    ind += Number(r.ind_fee) || 0
+    dorm += (Number(r.dorm_fee) || 0) + (Number(r.res_fee) || 0)
+    water += (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
+    gas += Number(r.gas_fee) || 0
+  }
+  const total = Math.round((ind + dorm + water + gas) * 100) / 100
+  return {
+    title: `${prefix}应收费用汇总`,
+    columns: [
+      { label: '费用项目', weight: 3 },
+      { label: '使用单位', weight: 2 },
+      { label: '金额(元)', weight: 1.6, align: 'right' },
+    ],
+    rows: [
+      ['工商业电费（分摊后）', unit, money2(ind)],
+      ['居民 / 宿舍电费', unit, money2(dorm)],
+      ['水费（分表 + 宿舍）', unit, money2(water)],
+      ['气费', unit, money2(gas)],
+    ],
+    total: ['应收合计', unit, money2(total)],
+  }
+}
+
 /**
- * 打印清单（结算单版式）。
+ * 打印清单（结算单）。
  *
- * 与「打印目录」的区别：目录只列当前表头 + 行值（横向表格，内部对账用）；
- * 清单是**每个记录一页纵向结算单** —— 基本信息 + 逐项分摊明细（带来源分类）
- * + 合计应付，可以直接发给租户。
+ * 与「打印目录」的区别：目录 = 列表表头 + 行值（横向表格，内部对账）；
+ * 清单 = 市电账单同款「概览 + 分项细项 + 水电气分区」纵向文档，可直接发租户。
  */
 const handlePrintStatement = async () => {
   const arr = printableRows.value
   if (!arr.length) return
   statementBusy.value = true
   try {
-    const cols = visibleColDefs.value.filter((c) => !['month', 'unit'].includes(c.key))
-    const records = arr.map((r: any) => ({
-      title: `${r.month || ''} 费用清单 · ${r.unit || useUnit.value}`,
+    const unit = (arr[0]?.unit as string) || useUnit.value
+    const months = arr.map((r: any) => r.month).filter(Boolean)
+    const single = arr.length === 1
+    const ratioList = arr.map((r: any) => ratioForRow(r)).filter((v) => v > 0)
+    const ratio = ratioList.length ? ratioList[0] : 0
+    const tables: PrintTable[] = []
+    arr.forEach((row: any) => {
+      const month = String(row.month || '')
+      const prefix = single ? '' : `${month} · `
+      // 租户视角必须按真实分摊比例；ratio=0（当月未生成/未抄表）时按 0 列示，
+      // 绝不能兜底成 1 —— 那会把「整张市电账单」当成该租户的份额打印出去。
+      const r = isOwnerView.value ? 1 : ratioForRow(row)
+      tables.push(feeTableOf(month, r, prefix))
+      tables.push(elecTableOf(month, unit, prefix))
+      tables.push(waterTableOf(month, unit, prefix))
+      const gas = gasTableOf(month, unit, prefix)
+      if (gas.rows.length) tables.push(gas)
+      tables.push(summaryTableOf([row], unit, prefix))
+    })
+    const totalKwh = arr.reduce((s, r: any) => s + (Number(r.total_kwh) || 0), 0)
+    const totalFee = arr.reduce((s, r: any) => s + (Number(r.total_fee) || 0), 0)
+    const payable = arr.reduce((s, r: any) => s
+      + (Number(r.ind_fee) || 0) + (Number(r.dorm_fee) || 0) + (Number(r.res_fee) || 0)
+      + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
+      + (Number(r.gas_fee) || 0), 0)
+    const doc = {
+      title: `${unit} 费用清单`,
+      subtitle: `${months.join('、')} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
+      overviewTitle: '一、账单概览',
       meta: [
-        { label: '账单周期', value: String(r.month || '') },
-        { label: '使用单位', value: String(r.unit || useUnit.value) },
-        { label: '分摊比例', value: Number(r.ratio) > 0 ? Number(r.ratio).toFixed(6) : '—' },
+        { label: '账单周期', value: months.join('、') },
+        { label: '使用单位', value: unit },
+        { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
+        { label: '分摊比例', value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
+        { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
+        { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
       ],
-      items: cols.map((c) => ({
-        label: c.label,
-        category: c.source?.category || (c.item?.source_category as string) || '',
-        value: cellText(c.key, r) || '—',
-      })),
-      total: String(r.item_total ?? r.ind_fee ?? r.total_fee ?? '—'),
-    }))
-    const bytes = await generateStatementPdf({ title: `${useUnit.value} 费用清单`, records })
-    showPrint(`${useUnit.value} 费用清单（${arr.length} 条）`, bytes)
+      kpis: [
+        { label: '本期总电量', value: `${num2(totalKwh)} kWh` },
+        { label: '本期电费合计', value: `${money2(totalFee)} 元` },
+        { label: isOwnerView.value ? '工商业电费' : '分摊电费合计', value: `${money2(arr.reduce((s, r: any) => s + (Number(r.ind_fee) || 0), 0))} 元` },
+        { label: '应收合计', value: `${money2(payable)} 元` },
+      ],
+      tables,
+      footerNote: isOwnerView.value || ratio > 0
+        ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
+        : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
+    }
+    const bytes = await generateStatementPdf({ doc })
+    showPrint(`${unit} 费用清单（${arr.length} 条）`, bytes, `${unit}-费用清单.pdf`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '生成清单失败')
   } finally {
@@ -1056,7 +1193,7 @@ const handlePrintCatalog = async () => {
       columns,
       rows: arr,
     })
-    showPrint(`${arr[0].month} 账单目录（${arr.length} 条）`, bytes)
+    showPrint(`${arr[0].month} 账单目录（${arr.length} 条）`, bytes, `${useUnit.value}-账单目录.pdf`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '打印生成失败')
   } finally {
@@ -1105,14 +1242,15 @@ defineExpose({ reloadTenants })
 // 业主视角多数月份没有固化账单，早期实现「找不到 rec 就 return」正是
 // 「费用清单点行没反应」的直接原因。字段顺序跟随「字段定义（subs）」。
 const recordVisible = ref(false)
-const recordDetail = ref<any>(null)
 const recordRow = ref<any>(null)
 const recordForm = ref<Record<string, any>>({})
 // 说明：不向 BSD 传 :dirty —— 费用清单行是即时可编辑的核算值，
 // 保存按钮恒可点（BSD 的 dirty===false 会禁用保存，这里不需要该门禁）。
 const printVisible = ref(false)
 const printUrl = ref('')
+const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
 const printTitle = ref('')
+const printFileName = ref('preview.pdf')
 
 const recordTitle = computed(() => {
   const r = recordRow.value
@@ -1146,80 +1284,94 @@ const billingFields = computed<Array<{ name: string; label: string; dataType?: s
 // BSD 表单契约 { data, remarkParts, items }：data 指向行副本，编辑不回写列表
 const recordFormWrapper = computed(() => ({ data: recordForm.value, remarkParts: {}, items: [] }))
 
-const openRecord = async (row: any) => {
+/**
+ * 打开只读详情抽屉。
+ *
+ * 抽屉只渲染字段（到「备注」为止），不再追加电量/费用/水费明细块 ——
+ * 那些数据在「打印清单」的结构化 PDF 里按水/电/气分区展示。
+ */
+const openRecord = (row: any) => {
   recordRow.value = row
   const editable: Record<string, any> = {}
   for (const f of billingFields.value) editable[f.name] = row[f.name] ?? ''
   recordForm.value = editable
-  recordDetail.value = null
   recordVisible.value = true
-  if (!row?.hasRec) return
-  const rec = records.value.find((r: any) => r.month === row.month)
-  if (!rec) return
-  try {
-    const res: any = await getBillingRecord(rec.id)
-    recordDetail.value = res?.data || null
-  } catch { /* 明细拉取失败不影响主表单：质量面板与明细区静默 */ }
 }
 
 // 说明：费用清单抽屉是**只读**的（所有值都是核算结果）。
 // 需要改数 → 走工具栏「生成账单 / 重新核算」；需要写备注 → 备注本身也属核算记录，
 // 由生成管线维护。这里不再保留逐字段保存通道，避免绕过口径直接改金额。
 
-// 直接打印明细页面（浏览器打印，默认纵向 A4）
-// 长内容可多页分页：克隆明细到 body 顶层(脱离抽屉 fixed 容器)后打印,每个大项分组尽量不跨页
+/**
+ * 抽屉底栏「打印」：走与浮动栏「打印清单」同一套 PDF（`概览 + 细项 + 水电气分区`）。
+ * 旧实现是克隆抽屉 DOM 交给浏览器打印 —— 抽屉里已经没有明细块（按需求移除），
+ * 而且 DOM 打印的分页/表头完全不可控。
+ */
 const printRecord = () => {
-  if (!recordDetail.value) return
-  const src = document.querySelector('.bsd-drawer .bsd-body') as HTMLElement | null
-  if (!src) return
-  const clone = src.cloneNode(true) as HTMLElement
-  clone.id = 'rd-print-clone'
-  clone.style.cssText = 'position:absolute;left:0;top:0;width:100%;background:#fff;padding:16px;box-sizing:border-box;'
-  document.body.appendChild(clone)
-  window.print()
-  setTimeout(() => { clone.remove() }, 200)
+  const row = recordRow.value
+  if (!row) return
+  statementBusy.value = true
+  void (async () => {
+    try {
+      const unit = String(row.unit || useUnit.value || '')
+      const month = String(row.month || '')
+      const ratio = isOwnerView.value ? 1 : ratioForRow(row)
+      const bytes = await generateStatementPdf({
+        doc: {
+          title: `${unit} 费用清单`,
+          subtitle: `${month} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
+          overviewTitle: '一、账单概览',
+          meta: [
+            { label: '账单周期', value: month },
+            { label: '使用单位', value: unit },
+            { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
+            { label: '分摊比例', value: isOwnerView.value ? '—' : `${(ratio * 100).toFixed(2)}%` },
+          ],
+          kpis: [
+            { label: '本期总电量', value: `${num2(row.total_kwh)} kWh` },
+            { label: '本期电费合计', value: `${money2(row.total_fee)} 元` },
+            { label: isOwnerView.value ? '工商业电费' : '分摊电费合计', value: `${money2(row.ind_fee)} 元` },
+            { label: '应收合计', value: `${money2((Number(row.ind_fee) || 0) + (Number(row.dorm_fee) || 0) + (Number(row.res_fee) || 0) + (Number(row.water_ind_fee) || 0) + (Number(row.water_dorm_fee) || 0) + (Number(row.gas_fee) || 0))} 元` },
+          ],
+          tables: [
+            feeTableOf(month, ratio, ''),
+            elecTableOf(month, unit, ''),
+            waterTableOf(month, unit, ''),
+            ...(gasTableOf(month, unit, '').rows.length ? [gasTableOf(month, unit, '')] : []),
+            summaryTableOf([row], unit, ''),
+          ],
+          footerNote: isOwnerView.value || ratio > 0
+            ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
+            : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
+        },
+      })
+      showPrint(`${unit} 费用清单`, bytes, `${unit}-${month}-费用清单.pdf`)
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '生成清单失败')
+    } finally {
+      statementBusy.value = false
+    }
+  })()
 }
 
-const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array) => {
+const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array, fileName = 'preview.pdf') => {
   printTitle.value = title
+  printFileName.value = fileName
   if (printUrl.value) URL.revokeObjectURL(printUrl.value)
+  printBytes.value = bytes
   printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
   printVisible.value = true
 }
 const closePrint = () => {
   printVisible.value = false
   if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
+  printBytes.value = null
 }
 
 // ---- 抽屉拖动调宽(宽度持久化) ----
 
-// ---- 账单明细分组（按大项排序 + 汇总） ----
+// ---- 账单费用分组的排序基准（打印清单「电费分项细项」按此顺序） ----
 const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
-const feeGroups = computed(() => {
-  const items = (recordDetail.value?.items || []).filter((it: any) => it.category !== '水费')
-  const map = new Map<string, any[]>()
-  const order: string[] = []
-  for (const it of items) {
-    const cat = it.category || '其他费用'
-    if (!map.has(cat)) { map.set(cat, []); order.push(cat) }
-    map.get(cat)!.push(it)
-  }
-  order.sort((a, b) => {
-    const ia = FEE_CATEGORY_ORDER.findIndex(c => a.includes(c))
-    const ib = FEE_CATEGORY_ORDER.findIndex(c => b.includes(c))
-    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-  })
-  return order.map(cat => ({
-    category: cat,
-    rows: map.get(cat)!,
-    sum: Math.round(map.get(cat)!.reduce((s, it) => s + (Number(it.fee) || 0), 0) * 100) / 100,
-  }))
-})
-const recordMeterSum = (key: string): number =>
-  Math.round((recordDetail.value?.meters || []).reduce((s: number, mr: any) => s + (Number(mr[key]) || 0), 0) * 100) / 100
-// 总电费 = 工业(分摊) + 宿舍,不含水费(水费归水费清单)
-const totalElecFee = computed(() =>
-  Math.round(((Number(recordDetail.value?.record?.total_fee) || 0) - (Number(recordDetail.value?.record?.water_fee) || 0)) * 100) / 100)
 
 // ---- 格式化 ----
 const fmtMoney = (v: any): string => {
@@ -1234,16 +1386,6 @@ const fmtKwh = (v: any): string => {
   const r = Math.round(n * 100) / 100
   return Number.isInteger(r) ? String(r) : String(r)
 }
-const fmtNum = (v: any): string => {
-  const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n)) return '—'
-  return String(parseFloat(n.toFixed(4)))
-}
-const fmtRate = (v: any): string => {
-  const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n) || n === 0) return '—'
-  return String(parseFloat(n.toFixed(6)))
-}
 const fmtRatio = (v: any): string => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return '—'
@@ -1251,7 +1393,6 @@ const fmtRatio = (v: any): string => {
 }
 const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee', 'solar_amount']
 const KWH_KEYS = ['total_kwh', 'ind_kwh', 'res_kwh', 'dorm_kwh', 'water_ind_usage', 'water_dorm_usage', 'water_fire_usage', 'gas_usage', 'solar_gen', 'solar_grid']
-const printLoaded = ref(false)
 const cellText = (key: string, row: any): string => {
   if (key === 'ratio') return fmtRatio(row.ratio)
   if (key === 'ind_price') return fmtPrice(row.ind_price)
@@ -1849,43 +1990,6 @@ onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onC
 }
 
 /* 打印预览 */
-.tenant-print-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  .tenant-print-dialog {
-    width: min(960px, 92vw);
-    height: min(720px, 88vh);
-    background: var(--td-bg-color-container);
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    .tenant-print-header {
-      display: flex;
-      align-items: center;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--td-component-stroke);
-      .tenant-print-title { font-size: 14px; font-weight: 600; }
-    }
-    .tenant-print-body {
-      flex: 1;
-      min-height: 0;
-      .print-preview-frame { width: 100%; height: 100%; border: none; }
-      .print-preview-loading { height: 100%; display: flex; align-items: center; justify-content: center; }
-    }
-    .tenant-print-footer {
-      display: flex;
-      justify-content: flex-end;
-      padding: 10px 16px;
-      border-top: 1px solid var(--td-component-stroke);
-    }
-  }
-}
 </style>
 
 <style>

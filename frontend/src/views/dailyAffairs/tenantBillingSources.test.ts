@@ -159,7 +159,12 @@ test('浮动栏双打印：打印清单（结算单）与打印目录（表格�
   assert.match(tenant, /handlePrintStatement/, '打印清单要独立实现')
   assert.match(tenant, /handlePrintCatalog/, '打印目录要独立实现')
   assert.match(pdf, /export async function generateStatementPdf/, '必须有结算单 PDF 生成器')
-  assert.match(pdf, /'项目', '来源分类', '金额\(元\)'/, '结算单必须逐项列出金额与来源')
+  // 第 3 轮重构：结算单不再是「项目 | 来源分类 | 金额」三列，而是
+  // 市电账单同款「概览 + 分项细项 + 水电气分区」；来源分类列随之取消。
+  assert.match(pdf, /export interface StatementTable/, '结算单必须有分区表格模型')
+  assert.match(tenant, /label: '费用组成'/, '电费细项必须按费用组成列示')
+  assert.match(tenant, /function elecTableOf/, '电费核算必须独立成表')
+  assert.match(tenant, /function waterTableOf/, '水费核算必须独立成表（水与电分开）')
 })
 
 // ---- 需求 9：生成账单 ----

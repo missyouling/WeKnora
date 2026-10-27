@@ -77,8 +77,8 @@
       </t-table>
     </div>
           <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端 -->
-          <div v-if="summary.total" class="doc-summary-bar">
-            <span class="doc-summary-count">共 {{ selectedRowKeys.length ? selectedRowKeys.length : summary.total }} 条</span>
+          <div v-if="summaryCount" class="doc-summary-bar">
+            <span class="doc-summary-count">共 {{ summaryCount }} 条</span>
             <span class="doc-summary-item">发电量 <span class="doc-summary-val">{{ fmtKwh(summaryUsage) }}</span> 千瓦时</span>
             <span class="doc-summary-item">结算金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
             <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
@@ -404,32 +404,10 @@
          「光伏设置」Tab，由 UtilitiesManagement 注入 SolarSettingsPanel。 -->
 
 
-    <!-- 打印预览弹窗 -->
-    <teleport to="body">
-      <div v-if="printVisible" class="utility-print-mask">
-        <div class="utility-print-dialog">
-          <div class="utility-print-header">
-            <span class="utility-print-title">打印预览（{{ printCount }} 份）</span>
-            <t-button variant="text" size="small" class="utility-print-close" @click="closePrint">
-              <template #icon><t-icon name="close" size="16px" /></template>
-            </t-button>
-          </div>
-          <div class="utility-print-body">
-            <iframe v-if="printUrl" :src="printUrl" class="print-preview-frame" @load="printLoaded = true"></iframe>
-            <div v-else class="print-preview-loading">
-              <t-loading size="small" text="正在加载账单 PDF…" />
-            </div>
-          </div>
-          <div class="utility-print-footer">
-            <t-button variant="outline" size="small" @click="closePrint">关闭</t-button>
-            <t-button theme="primary" size="small" :loading="printBusy" :disabled="!printUrl" @click="doPrint">
-              <template #icon><t-icon name="print" size="14px" /></template>
-              打印
-            </t-button>
-          </div>
-        </div>
-      </div>
-    </teleport>
+    <!-- 打印预览：全中台统一组件 -->
+    <PrintPreviewDialog v-model:visible="printVisible" :title="`打印预览（${printCount} 份）`" :url="printUrl"
+      :data="printBytes" :download-name="`${printCount}份光伏账单.pdf`" loading-text="正在加载账单 PDF…"
+      @close="closePrint" />
   </div>
 </template>
 
@@ -463,9 +441,10 @@ import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
-import { notifyEnergyDataChanged } from './energyCounters'
+import { notifyEnergyDataChanged, rowFlattenText, matchAllTokens, billMonthOfItem } from './energyCounters'
 import { withTimeout } from '@/composables/useBusinessPolling'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
@@ -625,14 +604,16 @@ const extractInFlight = ref<Set<string>>(new Set())
 const taggingInFlight = ref<Set<string>>(new Set())
 const listScrollRef = ref<HTMLElement>()
 
+// 汇总口径 = 当前可见行（已按关键词 / 账期过滤）
 const summaryUsage = computed(() => {
-  const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
+  const target = selectedRowKeys.value.length ? selectedRows.value : displayRows.value
   return target.reduce((s, r) => s + (Number((r.item as any)?.generation_kwh) || 0), 0)
 })
 const summaryAmount = computed(() => {
-  const target = selectedRowKeys.value.length ? selectedRows.value : rows.value
+  const target = selectedRowKeys.value.length ? selectedRows.value : displayRows.value
   return target.reduce((s, r) => s + (Number((r.item as any)?.settlement_amount) || 0), 0)
 })
+const summaryCount = computed(() => (selectedRowKeys.value.length ? selectedRowKeys.value.length : displayRows.value.length))
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
@@ -702,12 +683,22 @@ const pendingRows = computed(() => pendingFiles.value
   item: {},
   tags: [],
 })))
+// 列表过滤：月份 + 「搜索全部字段」全部在**本地**做。
+//
+// 旧实现把月份丢给接口的 date_from/date_to，而这对参数在后端是按通用日期
+// 字段过滤的（不是账期），跨月账单会被整条丢掉；关键词又只比文件名，
+// 搜「星达」「2026-08」「-5000」一律零命中。两张表都已整表加载（十几条），
+// 本地过滤既准确又没有口径漂移。
 const displayRows = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  const all = [...pendingRows.value, ...rows.value]
-  if (!kw) return all
-  return all.filter(r =>
-    (r.fileName || '').toLowerCase().includes(kw) || ((r as any).title || '').toLowerCase().includes(kw))
+  const kw = keyword.value.trim()
+  const month = monthFilter.value
+  let all = [...pendingRows.value, ...rows.value] as any[]
+  if (month) {
+    // 解析中/待提取的文件还没有账期，按月筛选时不占位
+    all = all.filter((r: any) => r.kind !== 'pending' && billMonthOfItem(r) === month)
+  }
+  if (kw) all = all.filter((r: any) => matchAllTokens(`${String(r.fileName || '')} ${rowFlattenText(r)}`.toLowerCase(), kw))
+  return all
 })
 
 const metricPeriodOf = (it: any) => {
@@ -733,9 +724,9 @@ const loadFiles = async (reset = false) => {
   } else if (listLoading.value || loadingMore.value) return
   else loadingMore.value = true
   try {
+    // 月份不交给接口：账期是账单内的业务字段（bill_period），
+    // 接口的 date_from/date_to 打的是通用日期，跨月账单会被误杀。见 displayRows。
     const res: any = await listSolarBillRecords(kbId.value, {
-      date_from: monthFilter.value ? `${monthFilter.value}-01` : undefined,
-      date_to: monthFilter.value ? `${monthFilter.value}-31` : undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     })
@@ -1298,38 +1289,19 @@ const isImageRow = (r: any, blob: any) => {
 }
 const printVisible = ref(false)
 const printUrl = ref('')
+const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
 const printCount = ref(1)
-const printLoaded = ref(false)
 const printBusy = ref(false)
 const closePrint = () => {
   printVisible.value = false
   printUrl.value = ''
-}
-const doPrint = () => {
-  const frame = document.querySelector('.print-preview-frame') as HTMLIFrameElement
-  if (!frame) return
-  printBusy.value = true
-  try {
-    frame.contentWindow?.focus()
-    frame.contentWindow?.print()
-  } catch {
-    try {
-      const w = window.open('', '_blank')
-      w?.document.write(`<iframe src="${printUrl.value}" style="width:100%;height:100%"></iframe>`)
-      w?.print()
-    } catch (e: any) {
-      MessagePlugin.error(e?.message || '打印失败')
-    }
-  } finally {
-    printBusy.value = false
-  }
+  printBytes.value = null
 }
 const handleBatchPrint = async () => {
   const rowsSel = selectedRows.value
   if (!rowsSel.length) return
   printBusy.value = true
   printUrl.value = ''
-  printLoaded.value = false
   printCount.value = rowsSel.length
   printVisible.value = true
   try {
@@ -1364,6 +1336,7 @@ const handleBatchPrint = async () => {
       return
     }
     const bytes = await out.save()
+    printBytes.value = bytes
     printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
     if (notes.length) setTimeout(() => MessagePlugin.warning(notes.join('；')), 300)
   } catch (e: any) {
@@ -1841,44 +1814,4 @@ onBeforeUnmount(() => {
 .edit-label { font-size: 12px; color: var(--td-text-color-secondary); }
 .edit-note { font-size: 12px; color: var(--td-text-color-secondary); line-height: 1.6; }
 
-/* 打印 */
-.utility-print-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.utility-print-dialog {
-  display: flex;
-  flex-direction: column;
-  width: min(920px, 92vw);
-  height: min(820px, 90vh);
-  background: var(--td-bg-color-container);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.utility-print-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--td-component-stroke);
-  background: var(--td-bg-color-secondarycontainer);
-}
-.utility-print-title { font-size: 14px; font-weight: 600; color: var(--td-text-color-primary); }
-.utility-print-body { flex: 1; min-height: 0; display: flex; }
-.print-preview-frame { width: 100%; height: 100%; border: none; background: var(--td-bg-color-container); }
-.print-preview-loading { display: flex; align-items: center; justify-content: center; width: 100%; }
-.utility-print-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--td-component-stroke);
-  background: var(--td-bg-color-secondarycontainer);
-}
 </style>

@@ -80,9 +80,11 @@
           <t-input v-else-if="f.spec.kind === 'text'" :model-value="String(form[f.formKey] ?? '')" placeholder="选填"
             @update:model-value="(v: string) => (form[f.formKey] = v)" />
 
-          <!-- 数值（单价 / 水费附加费） -->
-          <t-input v-else-if="f.spec.kind === 'number'" :model-value="String(form[f.formKey] ?? '')" type="number"
-            :placeholder="f.label" @update:model-value="(v: string) => (form[f.formKey] = Number(v) || 0)" />
+          <!-- 数值（单价 / 水费附加费）。分时电表没有单一标准单价：费用按租户分摊核算，
+               单价置灰禁用（与「倍率」「表号」同款只读态），禁止输入。 -->
+          <t-input v-else-if="f.spec.kind === 'number'" :model-value="unitPriceLocked(f.key) ? '' : String(form[f.formKey] ?? '')"
+            type="number" :disabled="unitPriceLocked(f.key)" :placeholder="unitPriceLocked(f.key) ? '分时电表不适用' : f.label"
+            @update:model-value="(v: string) => (form[f.formKey] = Number(v) || 0)" />
 
           <!-- 补差：type=number 会吞负号 → 文本 + 数字键盘，聚焦全选 -->
           <t-input v-else-if="f.spec.kind === 'signed'" :model-value="String(form[f.formKey] ?? '')" type="text"
@@ -101,7 +103,7 @@
           <!-- 金额：派生只读 -->
           <template v-else-if="f.spec.kind === 'amount'">
             <div class="mr-stack">
-              <div class="mr-calc">{{ fmtMoney(formAmount) }} 元</div>
+              <div class="mr-calc">{{ isTimeMeter ? '—' : fmtMoney(formAmount) + ' 元' }}</div>
               <p class="mr-hint">{{ amountHint }}</p>
             </div>
           </template>
@@ -225,6 +227,11 @@ function formKeyOf(key: string): string {
 const amountHint = computed(() =>
   props.isTimeMeter ? '按租户分摊核算' : `自动计算 · ${fmtNum(props.formUsage)} ${unitLabel.value}`,
 )
+
+/** 分时电表的「单价」是禁用项：没有单一标准单价，费用走租户分摊。 */
+function unitPriceLocked(key: string): boolean {
+  return key === 'unit_price' && props.isTimeMeter
+}
 
 const timePeriods = [
   { key: 'deep', label: '尖', prevKey: 'deepPrev', currKey: 'deepCurr' },
