@@ -86,7 +86,8 @@ test('候选展示必须带二级分组路径，且支持「分组 字段」组�
 test('取值必须按分组定位，不得跨组求和', () => {
   const src = read('tenantBillingSources.ts')
   assert.match(src, /function resolveByBillGroup/)
-  assert.match(src, /if \(src\.group\) \{/, 'resolveSourceValue 必须先按分组定位')
+  // 分组候选 = label → 键 → 键别名（单测「键撞中文分类」在 billingSyncRound12）
+  assert.match(src, /for \(const g of billGroupCandidates\(src\.group, src\.groupLabel\)\)/, 'resolveSourceValue 必须先按分组定位')
   // 单价不可相加：按金额÷数量加权
   const fn = src.slice(src.indexOf('function resolveByBillGroup'), src.indexOf('export function fixedBillFeeOf'))
   assert.match(fn, /if \(fieldKey === 'rate'\)/)

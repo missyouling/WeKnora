@@ -1766,7 +1766,25 @@ onMounted(() => {
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
-function onCategoriesChanged() { void loadCategorySubs() }
+/**
+ * 字段定义保存后的联动。
+ *
+ * 事件 detail 里带着**刚保存的 subs**：保存接口已经把权威数据返回过了，
+ * 再发一次 GET 分类只是白等一轮网络（真机：改名后表头要滞后半秒以上）。
+ * 这里直接落内存、重建列与行 —— 纯前端计算，不碰任何账单/抄表接口。
+ * 只有 detail 缺失（增删分类、从别的入口广播）时才回退到重新拉取。
+ */
+function onCategoriesChanged(ev?: Event) {
+  const detail = (ev as CustomEvent | undefined)?.detail as { name?: string; subs?: any[] } | undefined
+  const name = String(detail?.name || '').trim()
+  if (Array.isArray(detail?.subs) && (!name || name === CATEGORY_NAME)) {
+    categorySubs.value = detail!.subs as EnergySub[]
+    syncColumnKeys()
+    if (dataReady.value) buildRows()
+    return
+  }
+  void loadCategorySubs()
+}
 onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onCategoriesChanged))
 </script>
 

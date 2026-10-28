@@ -206,6 +206,45 @@ const groupNorm = (v: any) => String(v ?? '')
   .replace(/[\s（）()\-—_·・,，.。/\\|]+/g, '')
 
 /**
+ * 分组**键** → 账单 `fee_items.category` 的中文别名。
+ *
+ * 为什么需要：`source.group` 存的是字段定义里的分组键（`catalog` / `market` /
+ * `gov-industrial`…），而账单 `fee_items.category` 是 PDF 原文（`(5)目录电费`、
+ * `(1)市场化购电费`、`(6)政府性基金及附加-工商业`）。拿键去和中文分类比，
+ * 一条都匹配不上 → 分组取值恒为 null → 列全空（真机：目录电费（居民）·计费电量）。
+ *
+ * 取值顺序是「group_label → group → 本别名表」：旧数据可能只存了键，
+ * 新数据两者都有；label 是人工可读名，匹配成功率最高。
+ */
+const BILL_GROUP_KEY_ALIASES: Record<string, readonly string[]> = {
+  overview: ['账单概况'],
+  market: ['市场化购电费'],
+  line: ['上网环节线损费用', '上网环节线损费'],
+  trans: ['输配电量电费', '输配电费', '零售输配电费'],
+  sys: ['系统运行费'],
+  catalog: ['目录电费', '目录电费（居民）'],
+  'gov-industrial': ['政府性基金及附加-工商业', '政府基金及附加（工商业）'],
+  'gov-residential': ['政府性基金及附加-居民', '政府基金及附加（居民）'],
+  capacity: ['输配容（需）量电费', '基本电费', '输配容需量电费'],
+  pf: ['功率因数调整电费', '功率因素调整电费', '力调电费'],
+  meter: ['电量明细（工商业）', '电量明细（居民）', '电量明细'],
+  'meter-rows': ['电量明细（工商业）', '电量明细（居民）'],
+}
+
+/** 按分组取值的候选名（label 优先，其次键，最后别名表）。 */
+function billGroupCandidates(group?: string, groupLabel?: string): string[] {
+  const out: string[] = []
+  const push = (v?: string) => {
+    const s = String(v || '').trim()
+    if (s && !out.includes(s)) out.push(s)
+  }
+  push(groupLabel)
+  push(group)
+  for (const alias of BILL_GROUP_KEY_ALIASES[String(group || '').trim()] || []) push(alias)
+  return out
+}
+
+/**
  * 按「分组 + 字段」定位市电账单里的费用分项（带 group 的引用字段用它）。
  *
  * 市电账单 8 个分组共用 `qty` / `rate` / `fee` 等列名，「计费电量」在 7 个分组里
@@ -257,7 +296,12 @@ function resolveByBillGroup(ctx: SourceResolveContext, group: string, field: str
   }
   if (fieldKey === 'qty') return round2(inGroup.reduce((s, it) => s + num(it?.qty), 0))
   if (fieldKey === 'rate') {
-    // 单价不可相加：按「金额 ÷ 数量」加权，避免直接取首行的分时单价
+    // 单价不可相加：同价分段直接用账单原值（`fee ÷ qty` 会因金额已四舍五入
+    // 产生 0.500305 vs 0.500306 这类末位漂移，用户对着账单核不上）；
+    // 真正的分时差价（尖/峰/平/谷各不同）才用「金额 ÷ 数量」加权。
+    const rates = inGroup.map((it) => num(it?.rate)).filter((v) => v > 0)
+    const uniq = new Set(rates.map((v) => v.toFixed(6)))
+    if (uniq.size === 1) return rates[0]
     const qty = inGroup.reduce((s, it) => s + num(it?.qty), 0)
     const fee = inGroup.reduce((s, it) => s + num(it?.fee), 0)
     if (qty > 0) return Math.round((fee / qty) * 1000000) / 1000000
@@ -303,8 +347,10 @@ export function resolveSourceValue(src: FieldSource, ctx: SourceResolveContext):
       if (src.mode === 'fee_row') return resolveFeeRow(ctx, src.field)
       // 带分组 = 该分组的费用分项列（qty/rate/fee…）：
       // 必须按分组定位，否则「计费电量」会把 7 个分组的数量全加起来。
-      if (src.group) {
-        const grouped = resolveByBillGroup(ctx, src.group, src.field)
+      // 候选顺序 label → 键 → 键别名：旧数据可能只存了 `catalog` 这类键，
+      // 直接拿键去撞中文分类必然落空（真机：目录电费（居民）·计费电量 全空）。
+      for (const g of billGroupCandidates(src.group, src.groupLabel)) {
+        const grouped = resolveByBillGroup(ctx, g, src.field)
         if (grouped !== null) return grouped
       }
       const v = ctx.bill?.item?.[src.field]

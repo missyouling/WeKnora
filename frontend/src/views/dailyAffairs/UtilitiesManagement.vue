@@ -2614,11 +2614,17 @@ const onSettingsChanged = async () => {
 // 子视图（核算/清单/光伏）增删改落库后广播：卡片计数必须跟着重算，
 // 否则「保存了一条抄表 → 列表 78 行、卡片还停在 77」。
 function onEnergyDataChanged() { void loadTabCounts() }
+/**
+ * 字段定义保存后：只重建列定义（`loadFieldConfigs` 是一次很小的分类请求），
+ * **不重拉账单列表** —— 改列配置不影响任何业务数据，重拉几百 KB 纯属浪费。
+ */
+function onCategoriesChanged() { void loadFieldConfigs() }
 
 onMounted(() => {
   nextTick(measureTableHeaderFix)
   window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
+  window.addEventListener('fleet-categories-changed', onCategoriesChanged)
   // kbId 由 loadKb() 异步解析：先跑 loadTabCounts 会全部返回 0
   // （那时 kbId 还是空串，账单/光伏接口直接短路）。等它就绪再计数。
   void loadKb().then(() => loadTabCounts())
@@ -2627,6 +2633,7 @@ onBeforeUnmount(() => {
   stopPolling()
   window.removeEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   window.removeEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
 </script>
 

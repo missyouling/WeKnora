@@ -517,15 +517,20 @@ const columnDefs = computed<ColDef[]>(() =>
 /** 打开中台设置抽屉（字段定义 / 提取规则），定位到光伏账单分类。 */
 function openFieldSettings() { emit('open-settings') }
 
-/** 拉取字段定义（设置抽屉保存后由 window 事件触发重载）。 */
-async function loadCategorySubs() {
-  try {
-    categorySubs.value = await loadEnergyCategorySubs(CATEGORY_NAME)
-  } catch {
-    categorySubs.value = []
-  }
+/** 落到本地 subs 并校正可见列（保存事件与首次加载共用同一段收尾）。 */
+function applySubs(subs: EnergySub[]) {
+  categorySubs.value = subs
   if (visibleColKeys.value.length && !visibleColKeys.value.some(k => columnDefs.value.some(c => c.key === k))) {
     resetColumns()
+  }
+}
+
+/** 拉取字段定义（事件里没带 subs 时才走这条，含一次网络往返）。 */
+async function loadCategorySubs() {
+  try {
+    applySubs(await loadEnergyCategorySubs(CATEGORY_NAME))
+  } catch {
+    applySubs([])
   }
 }
 const visibleColKeys = ref<string[]>(loadStoredColumns())
@@ -1381,7 +1386,22 @@ onMounted(() => {
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
 })
-function onCategoriesChanged() { void loadCategorySubs() }
+/**
+ * 字段定义保存后的联动。
+ *
+ * 事件 detail 带的是**刚保存成功的 subs**，直接落内存即可：再发一次 GET 分类
+ * 只是白等一轮网络（保存接口已经把权威数据返回过了）。detail 缺失
+ * （增删分类等其它来源的广播）时回退到重新拉取。
+ */
+function onCategoriesChanged(ev?: Event) {
+  const detail = (ev as CustomEvent | undefined)?.detail as { name?: string; subs?: any[] } | undefined
+  const name = String(detail?.name || '').trim()
+  if (Array.isArray(detail?.subs) && (!name || name === CATEGORY_NAME)) {
+    applySubs(detail!.subs as EnergySub[])
+    return
+  }
+  void loadCategorySubs()
+}
 onBeforeUnmount(() => {
   stopPolling()
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)

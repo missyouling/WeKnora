@@ -69,7 +69,8 @@ defineExpose({ open })
           </div>
           <t-checkbox-group :value="visibleKeys" class="field-popup-list"
             @change="(val: any) => emit('update:visibleKeys', val as string[])">
-            <t-checkbox v-for="col in columns" :key="col.key" :value="col.key" class="field-popup-item">
+            <t-checkbox v-for="col in columns" :key="col.key" :value="col.key" class="field-popup-item"
+              :title="col.label">
               {{ col.label }}
             </t-checkbox>
           </t-checkbox-group>
@@ -93,7 +94,10 @@ defineExpose({ open })
   box-sizing: border-box;
 }
 .field-popup-content {
+  /* box-sizing 缺省是 content-box：220 + 左右 padding 24 = 244 会撑出弹窗，
+     而内部列表又按 220 排版，两层宽度不一致就把底部横向滚动条顶出来了。 */
   width: 220px;
+  box-sizing: border-box;
   padding: 12px;
 }
 .field-popup-head {
@@ -107,8 +111,31 @@ defineExpose({ open })
 .field-popup-list {
   max-height: 320px;
   overflow-y: auto;
+  /* 长字段名（如「需求响应分摊费（含租赁或购置柴发保生产补贴）」）不换行，
+     会把列表撑宽并顶出横向滚动条。这里禁掉横向滚动，改由单项省略号收敛。 */
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  .field-popup-item { display: flex; align-items: center; }
+}
+/* 注意：本文件的 <style> 是**纯 CSS**（无 lang="less"），
+   嵌套写法 + :deep() 会被编译器拼成非法选择器（真机：样式整块失效）。
+   涉及 :deep 的规则一律平铺在顶层。 */
+.field-popup-list .field-popup-item {
+  display: flex;
+  align-items: center;
+  /* t-checkbox 默认按内容撑开（inline-flex），长字段名会把列表撑宽 →
+     底部出现横向滚动条。强制占满列表宽度，溢出一律裁掉。 */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.field-popup-list :deep(.t-checkbox__label) {
+  /* TDesign 的标签 span 默认不截断：撑满剩余宽度并省略，完整文案在 title 里 */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

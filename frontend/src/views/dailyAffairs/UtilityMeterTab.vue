@@ -316,17 +316,22 @@ function openFieldSettings() { emit('open-settings') }
 const reloadMeters = async () => { await load() }
 defineExpose({ reloadMeters })
 
-/** 拉取本分类的字段定义（设置抽屉保存后 window 事件触发重载）。 */
-async function loadCategorySubs() {
-  try {
-    categorySubs.value = await loadEnergyCategorySubs(CATEGORY_NAME[props.category] || '')
-  } catch {
-    categorySubs.value = []
-  }
+/** 落到本地 subs 并校正可见列（保存事件与首次加载共用同一段收尾）。 */
+function applySubs(subs: EnergySub[]) {
+  categorySubs.value = subs
   // 订阅结束后若存档里的键在新列集里一个都不剩（例如用户删光了旧列），
   // 回退到「默认表头」，避免出现"设置里明明有字段、列表一列都不显示"。
   if (visibleKeys.value.length && !visibleKeys.value.some(k => activeColDefs.value.some(c => c.key === k))) {
     resetColumns()
+  }
+}
+
+/** 拉取本分类的字段定义（事件里没带 subs 时才走这条，含一次网络往返）。 */
+async function loadCategorySubs() {
+  try {
+    applySubs(await loadEnergyCategorySubs(CATEGORY_NAME[props.category] || ''))
+  } catch {
+    applySubs([])
   }
 }
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
@@ -1411,7 +1416,20 @@ onMounted(() => {
   })
 })
 watch(visibleKeys, () => void nextTick(measureTableColumns))
-function onCategoriesChanged() { void loadCategorySubs() }
+/**
+ * 字段定义保存后的联动：事件 detail 带 subs 时直接落内存（省一次 GET），
+ * 否则回退到重新拉取。
+ */
+function onCategoriesChanged(ev?: Event) {
+  const detail = (ev as CustomEvent | undefined)?.detail as { name?: string; subs?: any[] } | undefined
+  const name = String(detail?.name || '').trim()
+  const mine = CATEGORY_NAME[props.category] || ''
+  if (Array.isArray(detail?.subs) && (!name || name === mine)) {
+    applySubs(detail!.subs as EnergySub[])
+    return
+  }
+  void loadCategorySubs()
+}
 onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
   columnResizeObserver?.disconnect()

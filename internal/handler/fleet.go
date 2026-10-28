@@ -1064,12 +1064,15 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	}
 	now := timeNowUTC()
 	dataJSON, _ := json.Marshal(req.Subs)
+	// enabled 只在请求体**显式**带上时才更新。
+	//
+	// 旧实现把 `"enabled": req.Enabled` 先塞进 updates（Go bool 零值 = false），
+	// 再用 reqRaw.Enabled != nil 覆盖——「缺字段保护」形同虚设：
+	// 请求体不带 enabled 时（只改 subs 的局部 PUT、旧版前端、脚本调用），
+	// 分类会被静默关停，界面上整行变灰、顶部卡片/类型下拉全部消失。
 	updates := map[string]interface{}{
-		"enabled":    req.Enabled,
 		"updated_at": now,
 	}
-	// 缺失字段保护：请求体未显式传 enabled 时保留库中原值，
-	// 防止「仅更新 subs/name」的局部 PUT 被 Go bool 零值(false)误关分类
 	var reqRaw struct {
 		Enabled *bool `json:"enabled"`
 	}

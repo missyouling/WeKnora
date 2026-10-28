@@ -733,8 +733,12 @@ function onFieldDrop(target: any) {
 }
 
 // 分类变更后通知列表页刷新证照类型选项（上传弹窗 / 筛选框依赖 categories）
-function notifyCategoriesChanged() {
-  window.dispatchEvent(new CustomEvent('fleet-categories-changed'))
+//
+// `detail.subs` 是**刚保存成功的字段定义**：列表组件拿到后直接在内存里重建列，
+// 不必再发一次 GET 分类请求（真机：改个字段名要等一轮网络往返才看到表头变化）。
+// 不传 detail（增删分类等）时，订阅方仍按事件语义自行重载。
+function notifyCategoriesChanged(detail?: { name?: string; subs?: any[] }) {
+  window.dispatchEvent(new CustomEvent('fleet-categories-changed', { detail: detail || {} }))
 }
 
 // 注意：这里曾经有一次性的 `migrateDefaultFlags`——在一次 GET 分类列表的副作用里
@@ -1241,13 +1245,18 @@ async function commitEdit() {
         notifyCategoriesChanged()
       }
     } else {
-      await updateFleetCategory(item.id, { name, subs, enabled: item.enabled })
+      // `enabled` 必须按**当前分类的真实状态**回传（undefined 视为开启）。
+      // 只传 subs 的局部 PUT 会让后端拿到 bool 零值 false，分类被静默关停：
+      // 顶部分类行整行变灰、顶部卡片与类型下拉里再也找不到这个分类。
+      const enabled = item.enabled !== false
+      await updateFleetCategory(item.id, { name, subs, enabled })
       const list = categories.value[group.value.scope]
       const idx = list.findIndex((c: any) => c.id === item.id)
-      if (idx >= 0) list[idx] = { ...list[idx], name, subs }
+      // 本地回写同样只改 name/subs，绝不动 enabled（开着的不许因为一次保存变灰）
+      if (idx >= 0) list[idx] = { ...list[idx], name, subs, enabled }
       // AI 保存路径会给出「字段已保存，已为您切换至提取规则」，这里不再叠加第二条
       if (!aiContext) MessagePlugin.success('已保存')
-      notifyCategoriesChanged()
+      notifyCategoriesChanged({ name, subs })
     }
     editingId.value = ''
     // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
@@ -1792,9 +1801,10 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
   .fc-ref-badge {
     flex: none;
-    // 分组路径（`市电账单 · 市场化购电费`）比裸分类长，放宽到 120px 并允许省略，
-    // 完整路径放在 title 里（鼠标悬停可见）。
-    max-width: 120px;
+    // 分组路径（`市电账单 · 市场化购电费`）比裸分类长，允许省略；
+    // 130px 是「字段名列 280px − 间距 6 − 输入框最小 140」算出来的上限，
+    // 再多就会把输入框压到截断。完整路径在 title 里（鼠标悬停可见）。
+    max-width: 130px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1805,8 +1815,10 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     color: var(--td-brand-color);
     background: var(--td-brand-color-light);
   }
-  /* 引用字段的名称已改为可编辑输入框，与普通字段输入框共用 .fc-name 宽度规则 */
-  .fc-name--ref { flex: 1 1 auto; min-width: 0; }
+  /* 引用字段的名称已改为可编辑输入框，与普通字段输入框共用 .fc-name 宽度规则。
+     min-width: 140px —— 低于这个宽度「账单周期」「计费电量」就会被省略成「账...」「计」，
+     用户既看不清也改不了（真机问题 3）。 */
+  .fc-name--ref { flex: 1 1 auto; min-width: 140px; }
 
   .fc-name-wrap {
     position: relative;
@@ -1994,17 +2006,20 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-colhead {
     display: grid;
-    grid-template-columns: 24px 160px 90px 64px 64px 92px;
+    // 字段名列 `minmax(280px, 1fr)`：固定的 160px 会把引用字段的输入框挤成
+    // 「账...」「计」这种只剩一个字的状态（真机截图）。源徽标最多 130px，
+    // 余下 ≥140px 全部留给输入框；抽屉拉宽时这一列继续吃满剩余空间。
+    // 末列「操作」只有一个 ⋮ 按钮，92px 是纯浪费，收紧到 48px。
+    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 48px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
-    min-width: 612px;
     box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 24px 160px 90px 70px 64px 64px 92px;
+      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 48px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -2014,17 +2029,15 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
   .field-config-row {
     display: grid;
-    grid-template-columns: 24px 160px 90px 64px 64px 92px;
+    // 与 .field-colhead 严格同构（列宽错一格整行就错位）
+    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 48px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
-    /* 字段名列 160px：既要放字段名输入，又要放「细项 N」展开按钮，
-       110px 时输入框会被挤成「费...」（真机截图为证）。 */
-    min-width: 612px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 24px 160px 90px 70px 64px 64px 92px;
+      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 48px;
     }
     .fc-width {
       width: 100%;
