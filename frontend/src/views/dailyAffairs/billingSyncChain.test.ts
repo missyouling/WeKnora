@@ -20,27 +20,24 @@ const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url
 
 // ---- B：两套视角都必须出列 ----
 
-test('租户视角不得丢弃跨分类引用字段（两套视角都要拼 extras）', () => {
+test('租户视角不得丢弃跨分类引用字段（同一循环产出，不按视角分支丢弃）', () => {
   const src = read('TenantBilling.vue')
-  const fn = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('/**\n * 拉取当前租户的「分摊子项」'))
-  // extras 必须在分支之前算好，而不是写在业主分支里
-  assert.ok(fn.indexOf('const extras: ColDef[] = []') < fn.indexOf('if (!isOwnerView.value)'),
-    'extras 必须在视角分支之前构建，否则租户视角拿不到')
-  assert.match(fn, /return \[\.\.\.anchors, \.\.\.items, \.\.\.extras, totalCol\]/,
-    '租户视角返回列必须包含 extras')
-  assert.match(fn, /return extras\.length \? \[\.\.\.base, \.\.\.extras\] : base/,
-    '无分摊子项时的回落路径也要带上 extras')
-  assert.match(fn, /return extras\.length \? \[\.\.\.base, \.\.\.extras\] : base\s*\}\)/,
-    '业主视角返回列同样要包含 extras')
+  const fn = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const colStorageKey'))
+  // 单一主循环：内置列与引用列都按 subs 下标顺序 push
+  assert.match(fn, /for \(const sub of subs\)/)
+  assert.match(fn, /const src = parseFieldSource\(sub\)/)
+  // 视角差异只剩「是否追加租户分摊子项」，不得再过滤/重排 subs 列
+  assert.match(fn, /if \(isOwnerView\.value\) return columns/)
+  assert.match(fn, /return \[\.\.\.columns, \.\.\.items, totalCol\]/)
 })
 
 test('引用字段列不得被内置列白名单过滤掉', () => {
   const src = read('TenantBilling.vue')
-  const head = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const extras: ColDef[] = []'))
-  assert.ok(!/restrictToBase:\s*true/.test(head),
-    '不得再用 restrictToBase 白名单：没写进 COL_DEFS_* 的内置字段会被静默丢弃')
+  const head = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const colStorageKey'))
+  assert.ok(!/restrictToBase/.test(head),
+    '不得用 restrictToBase 白名单：没写进 COL_DEFS_* 的内置字段会被静默丢弃')
   // 引用字段仍必须由 source 分流（否则会被当成内置列套用错误宽度/口径）
-  assert.match(head, /!parseFieldSource\(s\)/)
+  assert.match(head, /const src = parseFieldSource\(sub\)/)
 })
 
 test('引用字段列 key 必须带跨分类前缀，避免与内置同比名（如内置「账单周期」= month）撞键', () => {

@@ -147,7 +147,7 @@ import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
-import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
+import { loadEnergyCategorySubs, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
@@ -260,72 +260,76 @@ const tenantApportionItems = computed(() =>
 const tenantItemColKey = (it: any) => `item_${String(it?.item_key || it?.itemKey || '')}`
 
 /**
- * 生效列定义。
+ * 生效列定义 —— **严格以「字段定义（subs）」的下标顺序为唯一主序**。
  *
- * 业主视角：内置派生列 + 「字段定义」里跨分类引用的字段（追加列）。
- * 租户视角：固定锚点列（月份/使用单位/总电量/总电费/分摊比例）+ 该租户启用的
- * 分摊子项 + 合计应付。未配置任何子项时回落到内置租户列，避免空表。
+ * 三端（设置抽屉 / `[☰ 字段]` 筛选器 / 列表表头）必须同名、同量、同序。
+ * 旧实现是「先铺内置列（按 subs 里的相对顺序），再把带 source 的跨分类引用列
+ * 追加到末尾」——于是用户把「账单周期 / 使用单位 / 本期电量…」拖到定义列表最前面
+ * 保存后，列表里它们仍被压在十几列之后（真机问题 1）。
+ *
+ * 遍历口径（subs[0] → subs[n-1]，一步不跳）：
+ *   · `enabled === false` → 跳过（关了「启用字段」的字段不得出现在任何一端）；
+ *   · 带 `source` → 跨分类引用列；
+ *   · 否则按 key 命中**当前视角**的内置渲染器 → 内置列（名称/宽度/默认显隐取 subs）。
+ * 当前视角没有渲染器的键（如业主视角里的「分摊比例」）不产出列 —— 生成了也是空列。
  */
 const activeColDefs = computed<ColDef[]>(() => {
   const subs = categorySubs.value || []
-  // 内置派生列：受 subs 的改名/顺序/宽度/默认显隐控制。
-  //
-  // 这里不再传 `restrictToBase`：那是「只允许组件静态表里已有的键通过」的白名单，
-  // 一旦某个内置字段没写进 COL_DEFS_OWNER/TENANT，用户在「字段定义」里加它就被
-  // 静默丢弃。真正需要防的是「把引用字段误当内置列」，而引用字段已在下面用
-  // `parseFieldSource` 单独分流（makeExtra 也没传，不会凭空造列）。
-  const builtinSubs = subs.filter((s) => !parseFieldSource(s))
-  const base = applySubsToColumns(baseColDefs.value, builtinSubs)
-
-  /**
-   * 跨分类引用字段（「字段定义」里检索添加的列）。
-   *
-   * **两套视角都必须出列**。旧实现只在业主视角拼接 extras，租户视角直接
-   * `return [...anchors, ...items, totalCol]` —— 用户在持睿汽车视角加完
-   * 「账单周期 / 本期电费 / 本期电量」并保存，表头与 [☰ 字段] 里一个都不出现
-   * （真机：换回业主视角才看得见）。引用字段是**全厂口径**（当月账单概况），
-   * 与视角无关，没有任何理由在租户视角丢弃。
-   *
-   * 顺序严格跟随 subs（用户拖拽/新增的顺序即列顺序）；追加在内置列之后，
-   * 避免把「借来的列」插进内置口径列中间造成混排。
-   */
-  const extras: ColDef[] = []
+  const base = baseColDefs.value
+  const byKey = new Map(base.map((c) => [String(c.key), c]))
+  const out: ColDef[] = []
+  const seen = new Set<string>()
   for (const sub of subs) {
-    const src = parseFieldSource(sub)
-    if (!src || sub.enabled === false) continue
+    if (!sub || sub.enabled === false) continue
     const key = String(sub.name || '').trim()
-    if (!key) continue
-    extras.push({
-      key,
-      label: String(sub.label || sub.name),
-      // `is_default !== false`（缺省视为显示）：新增引用字段本来就是用户主动
-      // 检索添加的，让它默认出列；只有用户显式关掉「默认表头」才隐藏。
-      default: sub.is_default !== false,
-      w: '1fr',
-      width: Number(sub.width) || undefined,
-      tip: `引用自 ${src.category}${src.groupLabel || src.group ? ` · ${src.groupLabel || src.group}` : ''}`,
-      source: src,
-    })
+    if (!key || seen.has(key)) continue
+    const src = parseFieldSource(sub)
+    const hit = src ? null : byKey.get(key)
+    if (!src && !hit) continue
+    seen.add(key)
+    const label = String(sub.label || '').trim()
+    const width = Number(sub.width) > 0 ? Math.round(Number(sub.width)) : 0
+    if (src) {
+      out.push({
+        key,
+        label: label || key,
+        // `is_default !== false`（缺省视为显示）：新增引用字段本就是用户主动
+        // 检索添加的，让它默认出列；只有显式关掉「默认表头」才隐藏。
+        default: sub.is_default !== false,
+        w: '1fr',
+        width: width || undefined,
+        tip: `引用自 ${src.category}${src.groupLabel || src.group ? ` · ${src.groupLabel || src.group}` : ''}`,
+        source: src,
+      })
+    } else {
+      out.push({
+        ...hit!,
+        label: label || hit!.label,
+        default: sub.is_default === true,
+        width: width || hit!.width,
+      })
+    }
   }
 
-  if (!isOwnerView.value) {
-    const anchors = base.filter((c) => ['month', 'unit', 'total_kwh', 'total_fee', 'ratio'].includes(c.key))
-    const items = tenantEnabledItems.value.map((it: any) => ({
-      key: tenantItemColKey(it),
-      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
-      default: true,
-      w: '1fr',
-      width: Number(it.width) || undefined,
-      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
-      item: it,
-    })) as ColDef[]
-    if (!items.length) return extras.length ? [...base, ...extras] : base
-    const totalCol: ColDef = { key: 'item_total', label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
-    // 「合计应付」必须留在最后：它是整行金额的收口列。
-    return [...anchors, ...items, ...extras, totalCol]
-  }
+  // 完全没有字段定义（首次进入 / 分类未配置）→ 回落静态列，避免空白表格。
+  // 有定义但全被关掉时保持空列，这才是「用户的选择」。
+  const columns = subs.length ? out : [...base]
+  if (isOwnerView.value) return columns
 
-  return extras.length ? [...base, ...extras] : base
+  // 租户视角：分摊子项是**另一份配置**（billing_tenant_items，不在 subs 里），
+  // 按 sort 追加在 subs 列之后、「合计应付」之前 —— 后者是整行金额的收口列。
+  const items = tenantEnabledItems.value.map((it: any) => ({
+    key: tenantItemColKey(it),
+    label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+    default: true,
+    w: '1fr',
+    width: Number(it.width) || undefined,
+    tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+    item: it,
+  })) as ColDef[]
+  if (!items.length) return columns
+  const totalCol: ColDef = { key: 'item_total', label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
+  return [...columns, ...items, totalCol]
 })
 
 /**

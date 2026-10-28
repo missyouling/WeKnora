@@ -102,11 +102,16 @@ test('费用清单行主键必须带使用单位（同一月份多单位不能�
 // ---- ② 六同步：三张表都以 subs 为列权威源 ----
 
 test('核算 / 费用清单 / 光伏 三张表的列定义都由 subs 派生', () => {
-  for (const [name, src] of [['UtilityMeterTab', meter], ['TenantBilling', tenant], ['SolarManagement', solar]] as const) {
+  for (const [name, src] of [['UtilityMeterTab', meter], ['SolarManagement', solar]] as const) {
     assert.match(src, /applySubsToColumns\(/, `${name} 未接入 subs 派生`)
     assert.match(src, /loadEnergyCategorySubs\(/, `${name} 未拉取分类字段定义`)
     assert.match(src, /fleet-categories-changed/, `${name} 未订阅设置变更事件`)
   }
+  // 费用清单：内置列与跨分类引用列必须按**同一个 subs 主循环**产出（不许先内置后追加）
+  assert.match(tenant, /for \(const sub of subs\)[\s\S]{0,400}?parseFieldSource\(sub\)/,
+    'TenantBilling 未按 subs 顺序派生列')
+  assert.match(tenant, /loadEnergyCategorySubs\(/, 'TenantBilling 未拉取分类字段定义')
+  assert.match(tenant, /fleet-categories-changed/, 'TenantBilling 未订阅设置变更事件')
   // 分类名必须与设置抽屉逐字一致
   assert.match(meter, /electricity: '电费核算'/)
   assert.match(meter, /water: '水费核算'/)

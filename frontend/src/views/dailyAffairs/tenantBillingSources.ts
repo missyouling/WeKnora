@@ -144,8 +144,21 @@ const PRICE_FIELDS = new Set(['unit_price', 'price', 'avg_price', 'ind_price', '
 /** 取首值的字段（倍率/表号等非可加量）。 */
 const FIRST_VALUE_FIELDS = new Set(['rate', 'meter_no', 'meter_type', 'meter_kind', 'install_date', 'reading_date', 'reader'])
 
-function aggregateRows(rows: any[], field: string): number {
+function aggregateRows(rows: any[], field: string): number | string {
   if (!rows.length) return 0
+  // 文本字段（使用单位 / 抄表人 / 表计名称 / 抄表方式…）**不能求和**。
+  //
+  // 旧实现一律走 `sum(num(r[field]))`，`num('重庆星达')` = 0 —— 于是
+  // 「[电费核算] 使用单位」整列显示 0（真机问题 3）。这里先判定列的取值形态：
+  // 只要不是「全部能当数字」，就按文本处理：去重后用「、」连接（单值即原样）。
+  const raw = rows
+    .map((r) => r?.[field])
+    .filter((v) => v !== null && v !== undefined && String(v).trim() !== '')
+  const allNumeric = raw.length > 0 && raw.every((v) => !Number.isNaN(Number(v)))
+  if (!allNumeric && raw.length) {
+    const uniq = [...new Set(raw.map((v) => String(v).trim()))]
+    return uniq.join('、')
+  }
   if (PRICE_FIELDS.has(field)) {
     const qty = rows.reduce((s, r) => s + (num(r.usage) || num(r.qty)), 0)
     const amount = rows.reduce((s, r) => s + (num(r.amount) || num(r.fee) || num(r.usage) * num(r.unit_price)), 0)
