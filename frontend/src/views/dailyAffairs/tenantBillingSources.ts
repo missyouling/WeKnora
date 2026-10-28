@@ -143,9 +143,21 @@ export interface SourceResolveContext {
 const PRICE_FIELDS = new Set(['unit_price', 'price', 'avg_price', 'ind_price', 'default_unit_price'])
 /** 取首值的字段（倍率/表号等非可加量）。 */
 const FIRST_VALUE_FIELDS = new Set(['rate', 'meter_no', 'meter_type', 'meter_kind', 'install_date', 'reading_date', 'reader'])
+/**
+ * 「使用单位」类字段：值恒等于当前核算单位。
+ *
+ * 它出现在费用清单的默认分组里（引用自电费核算），而**某个月没有该单位的抄表
+ * 记录**时明细行是空的 —— 旧实现 `if (!rows.length) return 0` 于是整列显示 0
+ * （真机：持睿汽车视角下 2026-06 ~ 2025-08 十行「使用单位」全是 0）。
+ * 使用单位是行的身份，不是聚合值，没有明细也必须显示单位名。
+ */
+const UNIT_FIELDS = new Set(['use_unit', 'unit'])
 
-function aggregateRows(rows: any[], field: string): number | string {
-  if (!rows.length) return 0
+function aggregateRows(rows: any[], field: string, fallbackUnit = ''): number | string {
+  if (!rows.length) {
+    if (UNIT_FIELDS.has(field)) return String(fallbackUnit || '').trim()
+    return 0
+  }
   // 文本字段（使用单位 / 抄表人 / 表计名称 / 抄表方式…）**不能求和**。
   //
   // 旧实现一律走 `sum(num(r[field]))`，`num('重庆星达')` = 0 —— 于是
@@ -381,11 +393,11 @@ export function resolveSourceValue(src: FieldSource, ctx: SourceResolveContext):
     }
     case '电费核算': {
       const rows = ctx.elecRows.filter((r) => r.month === ctx.month && (!ctx.tenantName || r.use_unit === ctx.tenantName))
-      return aggregateRows(rows, src.field)
+      return aggregateRows(rows, src.field, ctx.tenantName)
     }
     case '气费核算': {
       const rows = ctx.gasRows.filter((r) => r.month === ctx.month && (!ctx.tenantName || r.use_unit === ctx.tenantName) && r.meter_kind !== 'public')
-      return aggregateRows(rows, src.field)
+      return aggregateRows(rows, src.field, ctx.tenantName)
     }
     case '水费核算': {
       const meters = ctx.waterMeters.filter((m: any) =>
@@ -395,7 +407,7 @@ export function resolveSourceValue(src: FieldSource, ctx: SourceResolveContext):
         const r = ctx.waterReadingMap.get(`${m.id}__${ctx.month}`)
         if (r) rows.push({ ...r, unit_price: r.unit_price ?? r.price ?? m.unit_price })
       }
-      return aggregateRows(rows, src.field)
+      return aggregateRows(rows, src.field, ctx.tenantName)
     }
     default:
       return 0

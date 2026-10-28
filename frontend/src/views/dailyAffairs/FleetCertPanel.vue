@@ -46,7 +46,7 @@
             <span class="mtr-scope">{{ displayLabel(group) }}</span>
             <span class="mtr-fields">{{ item.fields }}</span>
             <span class="mtr-switch" @click.stop>
-              <t-switch :model-value="!!item.enabled" size="small" @change="(v: any) => toggleEnabled(item, v)" />
+              <t-switch :model-value="!!item.enabled" size="small" @update:model-value="(v: any) => toggleEnabled(item, !!v)" />
             </span>
             <span class="meter-row-actions" @click.stop>
               <t-popconfirm theme="warning" :visible="delItemPop?.id === item.id" placement="left"
@@ -174,9 +174,9 @@
                     <!-- 明细行不作为普通文本列平铺在主表头里，「默认表头」开关对它没有意义 -->
                     <span v-if="fd.dataType === 'items'" class="sub-blank"></span>
                     <t-tooltip v-else content="默认字段：重置字段筛选器时自动勾选" placement="top">
-                      <t-switch :model-value="!!fd.isDefault" size="small" @change="(v: any) => (fd.isDefault = !!v)" />
+                      <t-switch :model-value="!!fd.isDefault" size="small" @update:model-value="(v: any) => (fd.isDefault = !!v)" />
                     </t-tooltip>
-                    <t-switch :model-value="!!fd.enabled" size="small" @change="(v: any) => (fd.enabled = !!v)" />
+                    <t-switch :model-value="!!fd.enabled" size="small" @update:model-value="(v: any) => (fd.enabled = !!v)" />
                     <template v-if="isBuiltinField(fd)">
                       <t-tooltip content="系统内置字段，不可删除" placement="top">
                         <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
@@ -217,7 +217,7 @@
                       </t-tooltip>
                       <span class="sub-blank"></span>
                       <t-switch :model-value="subFieldEnabled(sf)" size="small"
-                        @change="(v: any) => (sf.enabled = !!v)" />
+                        @update:model-value="(v: any) => (sf.enabled = !!v)" />
                       <t-popconfirm theme="warning" placement="left"
                         :content="`确认删除子项「${sf.label || sf.key}」吗？`"
                         :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
@@ -370,6 +370,19 @@ import {
 } from './fleetCategorySubs'
 import { listSubGroups } from './sixWaySync'
 import { sourcePathText } from './tenantBillingSources'
+import {
+  COST_LIST_CATEGORY,
+  DEFAULT_GROUP_KEY,
+  DEFAULT_GROUP_LABEL,
+  costListGroupLabel,
+  normalizeCostListDefaults,
+  normalizeCostListGroup,
+  tenantIdOfGroup,
+  withCostListGroups,
+  type BillingTenantLike,
+  type TenantApportionItem,
+} from './billingFieldGroups'
+import { listBillingTenants, getBillingTenant } from '@/api/knowledge-base'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import SourceFieldPicker from './SourceFieldPicker.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
@@ -873,20 +886,35 @@ const newSubFieldLabel = ref('')
 // `activeSubGroup === ''` 表示「全部」。无 group 的分类（发票/合同/制度/公告）
 // 枚举结果为空 → 胶囊条不渲染 → 行为与改造前完全一致。
 const activeSubGroup = ref('')
-const subGroupTabs = computed(() =>
+const subGroupTabs = computed(() => {
   // `-rows` 是子表行标题（非提取字段），不进字段定义的分组胶囊条
-  listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
+  const raw = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
     // -rows / -periods 是细项集合，挂在「费用组成 / 分时时段」下展开，不单独出胶囊
-    .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods')),
-)
+    .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
+  if (!isCostList.value) return raw
+  // 费用清单：先按归一后的键合并（cols 与 default 是同一个「默认分组」），
+  // 分组名以租户档案为准（租户改名后胶囊立即跟随），默认分组恒定排第一。
+  const merged: Array<{ key: string; label: string; count: number }> = []
+  const at = new Map<string, number>()
+  for (const g of raw) {
+    const key = normalizeCostListGroup(g.key)
+    const idx = at.get(key)
+    if (idx !== undefined) { merged[idx].count += g.count; continue }
+    at.set(key, merged.length)
+    merged.push({ key, label: costListTabLabel(key), count: g.count })
+  }
+  return merged.sort((a, b) => (a.key === DEFAULT_GROUP_KEY ? -1 : b.key === DEFAULT_GROUP_KEY ? 1 : 0))
+})
 /** 当前分组下可见的字段（模板里 v-for 的源）。 */
 const fieldsVisible = computed(() => {
   if (!activeSubGroup.value) return fieldsEditable.value
-  return fieldsEditable.value.filter((f: any) => String(f.group ?? '').trim() === activeSubGroup.value)
+  const want = tabGroupKey(activeSubGroup.value)
+  return fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want)
 })
 function subGroupLabelOf(key: string): string {
-  const hit = fieldsEditable.value.find((f: any) => String(f.group ?? '').trim() === key)
-  return String((hit as any)?.groupLabel ?? '').trim() || key
+  const want = tabGroupKey(key)
+  const hit = fieldsEditable.value.find((f: any) => tabGroupKey(f.group) === want)
+  return String((hit as any)?.groupLabel ?? '').trim() || want
 }
 /**
  * 载入分类后自动选中第一个分组。
@@ -896,8 +924,20 @@ function subGroupLabelOf(key: string): string {
  * 用户看到一屏滚动条却找不到重点；而胶囊条又没有"全部"项，等于停在非法态。
  */
 function resetSubGroupSelection() {
-  const groups = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
-    .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
+  // 直接用胶囊条的口径（费用清单已按归一键合并、默认分组在前），
+  // 避免这里再算一遍 listSubGroups 造成「胶囊键与选中键不是同一个」。
+  const groups = subGroupTabs.value
+  // 费用清单：恒定停在「默认分组」。
+  // 它对应业主单位视角，是用户点开「费用清单 → 字段配置」想看的第一个分组；
+  // 若沿用「字段最多的分组」，租户分组（派生字段 + 十几个分摊子项）会把它挤掉。
+  if (isCostList.value) {
+    activeSubGroup.value = groups.some((g) => g.key === DEFAULT_GROUP_KEY)
+      ? DEFAULT_GROUP_KEY
+      : groups[0]?.key || ''
+    openChildGroup.value = ''
+    openSubFieldName.value = ''
+    return
+  }
   // 默认停在「字段最多」的分组（通常就是主表），而不是 subs 里第一个字段所属的分组。
   //
   // 真机踩过：光伏账单的 subs 第一条是「账单周期」（派生字段），于是默认胶囊落在
@@ -910,9 +950,95 @@ function resetSubGroupSelection() {
 }
 
 function switchSubGroup(key: string) {
-  activeSubGroup.value = key
+  activeSubGroup.value = tabGroupKey(key)
   openSubFieldName.value = ''
   openChildGroup.value = ''
+}
+
+// ---- 费用清单：默认分组 + 动态租户分组 ----
+//
+// 分组不是独立数据源，而是**同一份 subs 的 group 维度**：
+//   · `default`     → 默认分组（业主单位视角，存量的 23 个字段）；
+//   · `tenant:<id>` → 一个租户档案一个分组，字段 = 租户派生字段 + 该租户
+//                     「清单设置 → 分摊子项」里开启的分摊项。
+// 这样「字段配置」里改的顺序/宽度/显隐/重命名随 subs 一起落库，
+// 主列表、[☰ 字段]、详情抽屉天然同源（六同步零改动）。
+const isCostList = computed(() => isCostListFor(editingItem.value))
+/**
+ * 判定「这个分类是不是费用清单」。
+ *
+ * 必须按**传入的分类**判定，不能只读 `isCostList`（它依赖 editingId）：
+ * toggleEdit 里 editingId 是在字段载入之后才赋值的，用 computed 判定会拿到
+ * 上一个分类的结果，于是归一化被静默跳过（真机：胶囊显示「默认分组 23 /
+ * 持睿汽车 35」，但两个胶囊都不是 active、字段列表 0 行 —— 选中键停在旧 group 上）。
+ */
+function isCostListFor(item: any): boolean {
+  return props.scope === 'energy' && String(item?.name || '') === COST_LIST_CATEGORY
+}
+/**
+ * 胶囊条的分组键归一：费用清单把 cols/空值视作默认分组，
+ * 其它分类原样返回（它们的 group 有各自的业务含义）。
+ */
+function tabGroupKey(key: unknown): string {
+  return isCostList.value ? normalizeCostListGroup(key) : String(key ?? '').trim()
+}
+/** 租户档案（分组胶囊的来源；增删租户后胶囊实时增减）。 */
+const billingTenants = ref<BillingTenantLike[]>([])
+/** 各租户在「清单设置 → 分摊子项」里的配置（按租户 id 缓存）。 */
+const tenantItemsMap = ref<Record<string, TenantApportionItem[]>>({})
+/** 正在同步租户分组（胶囊条会出现「加载中」的占位，不阻塞默认分组编辑）。 */
+const tenantGroupsLoading = ref(false)
+
+/**
+ * 拉取租户档案 + 各自的分摊子项，并把租户分组补进编辑态。
+ *
+ * 只拉一次（缓存命中就直接重建），避免每次切分组都打接口。
+ * 失败不阻断：拿不到租户时退化为「只有默认分组」，与改造前一致。
+ */
+async function hydrateCostListGroups(force = false) {
+  if (!isCostList.value) return
+  if (!force && billingTenants.value.length && Object.keys(tenantItemsMap.value).length) {
+    fieldsEditable.value = withCostListGroups(fieldsEditable.value, billingTenants.value, tenantItemsMap.value)
+    return
+  }
+  // 异步期间用户可能切到别的分类：切走了就不要再回写（否则会把市电账单的
+  // 字段列表整片替换成费用清单的分组）。
+  const myEditingId = editingId.value
+  tenantGroupsLoading.value = true
+  try {
+    const res: any = await listBillingTenants()
+    const list: BillingTenantLike[] = (res?.data || []).filter((t: any) => t && t.id)
+    const map: Record<string, TenantApportionItem[]> = {}
+    await Promise.all(
+      list.map(async (t) => {
+        try {
+          const detail: any = await getBillingTenant(String(t.id))
+          map[String(t.id)] = detail?.data?.items || []
+        } catch {
+          map[String(t.id)] = []
+        }
+      }),
+    )
+    if (editingId.value !== myEditingId || !isCostList.value) return
+    billingTenants.value = list
+    tenantItemsMap.value = map
+    fieldsEditable.value = withCostListGroups(fieldsEditable.value, list, map)
+  } catch {
+    if (editingId.value !== myEditingId) return
+    billingTenants.value = []
+    tenantItemsMap.value = {}
+  } finally {
+    tenantGroupsLoading.value = false
+  }
+}
+
+/** 分组胶囊显示名：默认分组 / 租户名（租户改名后自动跟随）。 */
+function costListTabLabel(key: string): string {
+  const k = normalizeCostListGroup(key)
+  if (k === DEFAULT_GROUP_KEY) return DEFAULT_GROUP_LABEL
+  const id = tenantIdOfGroup(k)
+  const hit = billingTenants.value.find((t) => String(t.id) === id)
+  return costListGroupLabel(k, hit?.name)
 }
 
 // ---- 细项配置（费用组成 / 分时时段）----
@@ -1130,11 +1256,23 @@ function toggleEdit(item: any) {
     ? item.subs
     : subsPayloadFromNames([...(b?.base || []), ...(b?.detail || [])])
   fieldsEditable.value = fromSubsPayload(raw)
+  // 费用清单：先把存量 subs 归一到「默认分组」（历史 group='cols'）。
+  // 注意判定用 isCostListFor(item) 而不是 isCostList —— 后者要等 editingId 赋值后才准。
+  const costList = isCostListFor(item)
+  if (costList) {
+    // 只归一默认分组，**保留**已保存的租户分组字段：
+    // 租户档案是异步拉的，这里若调 withCostListGroups(fields, [], {}) 会把
+    // 租户分组整片丢掉，用户保存过的顺序/改名/宽度随之消失。
+    fieldsEditable.value = normalizeCostListDefaults(fieldsEditable.value)
+  }
   editingId.value = item.id
   editingCertName.value = item.name
   emit('category-change', String(item.name || ''))
   resetSubGroupSelection()
   loadUsedFields(group.value.scope, item.name)
+  // 租户分组要打两次接口（租户档案 + 各自分摊子项），异步补入：
+  // 默认分组先可编辑，胶囊条随后多出租户分组，不阻塞首屏。
+  if (costList) void hydrateCostListGroups(true)
 }
 // ---- 字段行操作：竖向三点菜单（复制 / 删除，图标+文字）；删除为受控气泡，中文化文案 ----
 const fieldDelPop = ref<any>(null)

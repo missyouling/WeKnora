@@ -121,7 +121,7 @@
             <span class="mtr-mono">{{ fmtUnitPrice(m.default_unit_price) }} 元/{{ unitLabel }}</span>
             <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
             <span class="mtr-switch" @click.stop>
-              <t-switch :model-value="!!m.enabled" size="small" @change="(v: any) => toggleEnabled(m, v)" />
+              <t-switch :model-value="!!m.enabled" size="small" @update:model-value="(v: any) => toggleEnabled(m, !!v)" />
             </span>
             <span class="meter-row-actions" @click.stop>
               <t-popconfirm theme="warning" :content="`确定删除${meterLabel}「${m.alias}」吗？`"

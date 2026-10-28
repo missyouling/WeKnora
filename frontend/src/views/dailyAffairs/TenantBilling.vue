@@ -142,6 +142,12 @@ import {
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
 import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import {
+  DEFAULT_GROUP_KEY,
+  TENANT_TOTAL_FIELD,
+  subsOfGroup,
+  tenantGroupKey,
+} from './billingFieldGroups'
 import { buildRowTips, sourceFieldTip, tenantItemTip } from './tenantBillingTips'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -219,6 +225,10 @@ const COL_DEFS_TENANT: ColDef[] = [
   { key: 'water_ind_fee', label: '水费（工业）', default: true, w: '0.9fr', tip: '持睿工业水表 水费汇总(用量×单价)' },
   { key: 'water_dorm_usage', label: '用水量（居民）', default: true, w: '1fr', tip: '持睿宿舍水表 用水量汇总' },
   { key: 'water_dorm_fee', label: '水费（居民）', default: true, w: '0.9fr', tip: '持睿宿舍水表 水费汇总(用量×单价)' },
+  // 气费：租户分组的派生字段里有「用气量 / 气费」，这里必须有同名渲染器，
+  // 否则 subs 里那两条会被 activeColDefs 当成无渲染器的键丢掉（表头缺列）。
+  { key: 'gas_usage', label: '用气量', default: true, w: '0.9fr', tip: '气表记录汇总(公租房除外)' },
+  { key: 'gas_fee', label: '气费', default: true, w: '0.9fr', tip: '气表记录费用汇总(用量×单价)' },
   { key: 'remark', label: '备注', default: false, w: '1.5fr', tip: '手工填写' },
 ]
 const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
@@ -274,21 +284,57 @@ const tenantItemColKey = (it: any) => `item_${String(it?.item_key || it?.itemKey
  * 当前视角没有渲染器的键（如业主视角里的「分摊比例」）不产出列 —— 生成了也是空列。
  */
 const activeColDefs = computed<ColDef[]>(() => {
-  const subs = categorySubs.value || []
+  const allSubs = categorySubs.value || []
   const base = baseColDefs.value
   const byKey = new Map(base.map((c) => [String(c.key), c]))
+  // 当前生效的分组：业主单位 → 默认分组；具体租户 → tenant:<id> 分组。
+  // 「字段定义」把每个分组各存一份（subs.group），这里只取当前单位那一份，
+  // 否则业主表头会混进租户的分摊子项、租户表头会混进默认分组的引用字段。
+  const groupKey = isOwnerView.value ? DEFAULT_GROUP_KEY : tenantGroupKey(activeTenantId.value)
+  const subs = subsOfGroup(allSubs, groupKey)
+  const itemByKey = new Map(tenantEnabledItems.value.map((it: any) => [tenantItemColKey(it), it]))
+
   const out: ColDef[] = []
   const seen = new Set<string>()
   for (const sub of subs) {
     if (!sub || sub.enabled === false) continue
     const key = String(sub.name || '').trim()
     if (!key || seen.has(key)) continue
+    const label = String(sub.label || '').trim()
+    const width = Number(sub.width) > 0 ? Math.round(Number(sub.width)) : 0
+    // 合计应付：租户视角的金额收口列，值由 buildRows 汇总
+    if (key === TENANT_TOTAL_FIELD) {
+      seen.add(key)
+      out.push({
+        key,
+        label: label || '合计应付',
+        default: sub.is_default === true,
+        w: '1fr',
+        width: width || undefined,
+        tip: '该租户当月应付合计',
+      })
+      continue
+    }
+    // 分摊子项列：由「清单设置 → 分摊子项」驱动，subs 只负责顺序/文案/宽度/显隐
+    if (key.startsWith('item_')) {
+      const it = itemByKey.get(key)
+      if (!it) continue
+      seen.add(key)
+      out.push({
+        key,
+        label: label || String(it.item_name || it.itemName || it.source_key || '分摊项'),
+        default: sub.is_default === true,
+        w: '1fr',
+        width: width || Number(it.width) || undefined,
+        tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+        item: it,
+      })
+      continue
+    }
     const src = parseFieldSource(sub)
     const hit = src ? null : byKey.get(key)
     if (!src && !hit) continue
     seen.add(key)
-    const label = String(sub.label || '').trim()
-    const width = Number(sub.width) > 0 ? Math.round(Number(sub.width)) : 0
     if (src) {
       out.push({
         key,
@@ -311,25 +357,48 @@ const activeColDefs = computed<ColDef[]>(() => {
     }
   }
 
-  // 完全没有字段定义（首次进入 / 分类未配置）→ 回落静态列，避免空白表格。
+  // 完全没有该分组的字段定义（首次进入 / 分类未配置）→ 回落静态列，避免空白表格。
   // 有定义但全被关掉时保持空列，这才是「用户的选择」。
-  const columns = subs.length ? out : [...base]
-  if (isOwnerView.value) return columns
+  if (!subs.length) {
+    if (isOwnerView.value) return [...base]
+    // 租户视角回落：静态列 + 分摊子项 + 合计应付（与改造前一致）
+    const items = tenantEnabledItems.value.map((it: any) => ({
+      key: tenantItemColKey(it),
+      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      default: true,
+      w: '1fr',
+      width: Number(it.width) || undefined,
+      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+      item: it,
+    })) as ColDef[]
+    if (!items.length) return [...base]
+    const totalCol: ColDef = { key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
+    return [...base, ...items, totalCol]
+  }
+  if (isOwnerView.value) return out
 
-  // 租户视角：分摊子项是**另一份配置**（billing_tenant_items，不在 subs 里），
-  // 按 sort 追加在 subs 列之后、「合计应付」之前 —— 后者是整行金额的收口列。
-  const items = tenantEnabledItems.value.map((it: any) => ({
-    key: tenantItemColKey(it),
-    label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
-    default: true,
-    w: '1fr',
-    width: Number(it.width) || undefined,
-    tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
-    item: it,
-  })) as ColDef[]
-  if (!items.length) return columns
-  const totalCol: ColDef = { key: 'item_total', label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
-  return [...columns, ...items, totalCol]
+  // 租户视角：清单设置里新开启、但「字段定义」还没保存过的分摊子项，
+  // 追加在末尾（字段定义面板的合并逻辑同样把它们追加在末尾 → 两端一致）。
+  // 不追加会让用户在清单设置里勾完发现列表没反应，必须先回设置抽屉保存一次。
+  for (const it of tenantEnabledItems.value) {
+    const key = tenantItemColKey(it)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push({
+      key,
+      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      default: true,
+      w: '1fr',
+      width: Number(it.width) || undefined,
+      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+      item: it,
+    })
+  }
+  // 合计应付缺失时补在最后（老数据没有这条 subs）
+  if (!seen.has(TENANT_TOTAL_FIELD) && tenantEnabledItems.value.length) {
+    out.push({ key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' })
+  }
+  return out
 })
 
 /**
@@ -364,7 +433,13 @@ async function loadCategorySubs() {
   // 详情抽屉也会因为 `key in row` 判定失败而缺字段。
   if (dataReady.value) buildRows()
 }
-const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
+// 列可见性存档按**单位**隔离：每个租户有自己的分组字段集，
+// 共用一份存档会让「切到 B 租户时 A 的列全部隐藏、B 的列全部复活」。
+// activeTenantId 提前到这里声明：syncColumnKeys() 在 setup 阶段就会读存档。
+const activeTenantId = ref('')
+const colStorageKey = computed(() => `weknora-tenant-billing-cols-${
+  isOwnerView.value ? 'owner' : `tenant-${activeTenantId.value || 'none'}`
+}-v3`)
 const visibleKeys = ref<string[]>([])
 /**
  * 列可见性存档。
@@ -488,7 +563,7 @@ const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c =>
 // ---- 租户与账单 ----
 const loading = ref(false)
 const tenants = ref<any[]>([])
-const activeTenantId = ref('')
+// activeTenantId 在列存档（colStorageKey）之前已声明，此处不再重复定义
 const useUnitOptions = computed(() => {
   const units = new Set<string>([OWNER_UNIT])
   tenants.value.forEach((t: any) => { if (t.name) units.add(t.name) })
@@ -936,6 +1011,7 @@ const buildRows = () => {
       const wDorm = tenantWater(tenantName, month, true)
       const indKwh = Number(rec?.total_kwh) || 0
       const indFee = Number(rec?.industrial_fee) || 0
+      const gas = gasOf()
       Object.assign(base, {
         total_kwh: totalKwh,
         total_fee: totalFee,
@@ -947,6 +1023,9 @@ const buildRows = () => {
         dorm_fee: dorm.fee,
         water_ind_usage: wInd.usage, water_ind_fee: wInd.fee,
         water_dorm_usage: wDorm.usage, water_dorm_fee: wDorm.fee,
+        // 气费：租户分组的派生字段里有「用气量 / 气费」，没有值就是一列空白
+        gas_usage: sumBy(gas, 'usage'),
+        gas_fee: sumBy(gas, 'amount'),
       })
       // 该租户的分摊子项：列与值同源（tenantEnabledItems），不可能出现「有列无数」。
       // 未开启「参与分摊」的子项照常出列，但金额记 0 —— 让它显式显示为「本项未计入」，
@@ -983,7 +1062,9 @@ const buildRows = () => {
           participating,
         })
       }
-      if (tenantEnabledItems.value.length) base.item_total = Math.round(total * 100) / 100
+      // 合计应付恒有值（没有分摊子项时就是 0）：租户分组的字段定义里有这一列，
+      // 只在有子项时才写会让它变成空白单元格。
+      base.item_total = Math.round(total * 100) / 100
       // 跨分类引用字段：与业主视角同一口径（当月账单概况 / 核算汇总）。
       //
       // 这一步过去只写在业主分支里，于是即便列被拼出来，租户视角的单元格也是空的

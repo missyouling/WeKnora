@@ -175,7 +175,7 @@
                   <!-- 参与分摊：金额是否按本月用电量分摊比例折算并计入应付。
                        与右侧「启用字段」正交，二者互不联动。 -->
                   <span class="item-op">
-                    <t-switch size="small" :model-value="!!it.enabled" @change="(v: boolean) => toggleItem(it, v)" />
+                    <t-switch size="small" :model-value="!!it.enabled" @update:model-value="(v: any) => toggleItem(it, !!v)" />
                   </span>
                   <!-- 宽度(px)：0 = 自适应；>0 时该列在费用清单列表按此像素宽渲染 -->
                   <span class="item-width">
@@ -186,7 +186,7 @@
                        关掉后该列隐藏，但它仍可照常参与分摊计算。 -->
                   <span class="item-on">
                     <t-switch size="small" :model-value="it.field_enabled !== false"
-                      @change="(v: boolean) => toggleFieldEnabled(it, v)" />
+                      @update:model-value="(v: any) => toggleFieldEnabled(it, !!v)" />
                   </span>
                   <span class="item-del">
                     <t-popconfirm theme="warning" placement="left"

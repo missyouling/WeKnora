@@ -26,9 +26,11 @@ test('租户视角不得丢弃跨分类引用字段（同一循环产出，不�
   // 单一主循环：内置列与引用列都按 subs 下标顺序 push
   assert.match(fn, /for \(const sub of subs\)/)
   assert.match(fn, /const src = parseFieldSource\(sub\)/)
-  // 视角差异只剩「是否追加租户分摊子项」，不得再过滤/重排 subs 列
-  assert.match(fn, /if \(isOwnerView\.value\) return columns/)
-  assert.match(fn, /return \[\.\.\.columns, \.\.\.items, totalCol\]/)
+  // 视角差异只剩「是否追加租户分摊子项」，不得再过滤/重排 subs 列：
+  // 业主视角直接返回主循环产出；租户视角在同一个 out 上追加子项与合计应付。
+  assert.match(fn, /if \(isOwnerView\.value\) return out/)
+  assert.match(fn, /for \(const it of tenantEnabledItems\.value\)/)
+  assert.match(fn, /out\.push\(\{\s*key,/, '分摊子项必须追加进同一个 out（不是另起一份列集）')
 })
 
 test('引用字段列不得被内置列白名单过滤掉', () => {
