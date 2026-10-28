@@ -71,13 +71,21 @@ test('市电账单列派生不得用 FALLBACK_COLUMNS 兜底复活已删字段',
 })
 
 test('四个能耗视图的列存档必须清洗已不存在的 key（重置不得复活）', () => {
-  for (const f of ['UtilitiesManagement.vue', 'SolarManagement.vue', 'UtilityMeterTab.vue', 'TenantBilling.vue']) {
+  // 费用清单（TenantBilling）例外：它必须「清洗 + 补新」——只清洗会让
+  // 用户新加的引用字段永远进不了可见列（真机：配了 7 个字段，列表毫无变化）。
+  // 见 billingRefFields.test.ts 的「列存档必须『补新』」。
+  for (const f of ['UtilitiesManagement.vue', 'SolarManagement.vue', 'UtilityMeterTab.vue']) {
     const src = read(f)
     assert.match(src, /const valid = .*filter\(.*columnDefs\.value\.some|const valid = .*filter\(.*activeColDefs\.value\.some/,
       `${f} 必须按当前列集过滤存档`)
     assert.match(src, /localStorage\.setItem\((COLUMN_STORAGE_KEY|STORAGE_KEY\.value|colStorageKey\.value)/,
       `${f} 必须把清洗后的存档回写`)
   }
+  // 费用清单同时要求清洗（旧键不复活）与补新（新列要出现）
+  const billing = read('TenantBilling.vue')
+  assert.match(billing, /const valid = stored\.filter\(k => defs\.some\(c => c\.key === k\)\)/,
+    'TenantBilling 必须清洗已删列的旧键')
+  assert.match(billing, /localStorage\.setItem\(colStorageKey\.value/, 'TenantBilling 必须回写清洗后的存档')
 })
 
 // ---- ③ 定比电量：只取主行 bill_kwh，不能把各比例行的 kwh 累加 ----

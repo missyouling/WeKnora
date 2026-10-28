@@ -48,15 +48,10 @@
         @row-click="({ row }: any) => onRowClick(row)"
         @select-change="(val: any) => onTableSelectChange(val)"
       >
-        <template #month="{ row }: any">
-          <span class="row-mono">{{ row.month }}</span>
-        </template>
-        <template #ratio="{ row }: any">
-          <span class="row-mono">{{ fmtRatio(row.ratio) }}</span>
-        </template>
-        <template #ind_price="{ row }: any">
-          <span class="row-mono">{{ fmtPrice(row.ind_price) }}</span>
-        </template>
+        <!-- 单元格统一由 tableColumns 的 cell 渲染器输出（含数值对齐与悬浮说明）。
+             不再单独写 #month / #ratio / #ind_price 具名插槽：
+             插槽与 cell 渲染器会打架（TDesign 优先用 cell），
+             两套并存时格式化口径容易漂移（一处 fmtRatio、一处裸值）。 -->
         <template #empty>
           <EmptyState v-if="!loading" title="暂无数据" icon="search-error" compact />
         </template>
@@ -129,6 +124,9 @@
     <!-- 打印预览：全中台统一组件（壳子只有一份，内容由本页生成） -->
     <PrintPreviewDialog v-model:visible="printVisible" :title="`${printTitle} 打印预览`" :url="printUrl"
       :data="printBytes" :download-name="printFileName" loading-text="正在生成费用清单…" @close="closePrint" />
+
+    <!-- 单元格口径浮层：独立组件（不参与本页渲染，避免 hover 触发整表重绘） -->
+    <BillingCellTip />
   </div>
 </template>
 
@@ -144,6 +142,7 @@ import {
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
 import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { buildRowTips, sourceFieldTip, tenantItemTip } from './tenantBillingTips'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -152,6 +151,7 @@ import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './en
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
+import BillingCellTip from './BillingCellTip.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
@@ -338,20 +338,39 @@ async function loadCategorySubs() {
 }
 const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
 const visibleKeys = ref<string[]>([])
-/** 存档清洗：字段被删/被禁用后旧 key 不得存活（否则「重置」会把它带回来）。 */
+/**
+ * 读列可见性存档。
+ *
+ * ⚠️ 关键：**新增列不能被旧存档挡住**。
+ * 旧实现只把存档里「还存在」的键过滤一遍返回，于是用户在「字段配置」里新加的
+ * 跨分类字段永远进不了 visibleKeys —— 列不渲染、值也不显示，用户看到的是
+ * 「配了 7 个字段，保存后列表毫无变化」（真机问题）。
+ *
+ * 现在的口径：
+ *   · 存档里的键按当前列集清洗（删列的旧键不许复活）；
+ *   · **新出现的列**（不在存档里的）按它的 `default` 决定是否自动显示；
+ *   · 用户显式取消过勾选的列，只要它一直在存档里，就保持隐藏 ——
+ *     用「是否出现在存档中」区分「用户关掉了」与「这是新加的」。
+ */
 function loadStoredKeys(): string[] {
-  const defaults = activeColDefs.value.filter(c => c.default).map(c => c.key)
+  const defs = activeColDefs.value
+  const defaults = defs.filter(c => c.default).map(c => c.key)
   try {
     const raw = localStorage.getItem(colStorageKey.value)
     if (raw) {
       const arr = JSON.parse(raw)
-      if (Array.isArray(arr) && arr.length) {
-        const valid = arr.filter(k => activeColDefs.value.some(c => c.key === k))
-        if (valid.length) {
-          if (valid.length !== arr.length) {
-            try { localStorage.setItem(colStorageKey.value, JSON.stringify(valid)) } catch { /* ignore */ }
+      if (Array.isArray(arr)) {
+        const stored = arr.map(String)
+        const known = new Set(stored)
+        // 当前列集里、存档没提过的 = 这一版新增的列
+        const fresh = defs.filter(c => !known.has(c.key) && c.default).map(c => c.key)
+        const valid = stored.filter(k => defs.some(c => c.key === k))
+        const merged = [...valid, ...fresh.filter(k => !valid.includes(k))]
+        if (merged.length) {
+          if (merged.length !== arr.length) {
+            try { localStorage.setItem(colStorageKey.value, JSON.stringify(merged)) } catch { /* ignore */ }
           }
-          return valid
+          return merged
         }
         return defaults
       }
@@ -375,10 +394,35 @@ const tableColumns = computed(() => {
   // 和其它宽表一样启用横向滚动即可，没有任何理由静默吞掉用户配置。）
   for (const c of visibleColDefs.value) {
     const cfg = Number((c as any).width) || 0
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, width: cfg > 0 ? Math.min(Math.max(cfg, 60), 400) : undefined })
+    cols.push({
+      colKey: c.key,
+      title: c.label,
+      ellipsis: true,
+      width: cfg > 0 ? Math.min(Math.max(cfg, 60), 400) : undefined,
+      // 数值单元格悬停显示「计算方式 / 数据来源」。
+      // 只对算得出来的列挂提示：文本列（备注等）没有口径可讲，挂空提示反而碍事。
+      cell: (h: any, { row }: any) => renderCell(h, c.key, row),
+    })
   }
   return cols
 })
+
+/**
+ * 单元格渲染：把口径说明挂到 `data-tip` 上，由**一个共享浮层**统一展示。
+ *
+ * 为什么不用「每个单元格一个 t-tooltip」：
+ *   这张表有 20+ 个数值列 × 十几行，就是几百个 Tooltip 实例；实测 hover 事件
+ *   互相抢占，同一列有时弹有时不弹（真机验证反复失败）。改成一个浮层 + 事件委托：
+ *     · 列表里只多一个浮层节点，行数再多也不会掉帧；
+ *     · 触发路径只有一条（容器的 mouseover），行为确定。
+ * 说明文本来自 buildRows 当行算出的 `row.__tips`，与单元格数值同源。
+ */
+function renderCell(h: any, key: string, row: any) {
+  const text = cellText(key, row)
+  const tip = row?.__tips?.[key]
+  if (!tip) return h('span', { class: 'row-cell-text' }, text)
+  return h('span', { class: 'row-cell-text row-cell-text--has-tip', 'data-tip': tip }, text)
+}
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
 const selectAllColumns = () => { visibleKeys.value = activeColDefs.value.map(c => c.key); persistColumns() }
@@ -780,12 +824,45 @@ const buildRows = () => {
         gas_usage: sumBy(gas, 'usage'),
         gas_fee: sumBy(gas, 'amount'),
       })
-      // 跨分类引用字段（费用清单「字段定义」里检索添加的列）
+      // 跨分类引用字段（费用清单「字段定义」里检索添加的列）+ 悬浮说明
       const ctx = sourceCtxOf(month, bill, solarArr)
+      const extraTips: Record<string, string> = {}
       for (const c of activeColDefs.value) {
         if (!c.source) continue
-        base[c.key] = resolveSourceValue(c.source, ctx)
+        const v = resolveSourceValue(c.source, ctx)
+        base[c.key] = v
+        extraTips[c.key] = sourceFieldTip({
+          category: c.source.category,
+          groupLabel: c.source.groupLabel || c.source.group,
+          // 原名优先，缺失时回退到**当前列名**（存量数据没有 source.label，
+          // 直接显示 `total_kwh` 这种英文键对用户毫无意义）
+          fieldLabel: c.source.label || c.label || c.source.field,
+          month,
+          value: v,
+          // 核算类是多表汇总，条数写进提示才说得清「这个数是怎么来的」
+          rowCount: c.source.category === '电费核算'
+            ? elecRows.value.filter((r: any) => r.month === month && r.use_unit === useUnit.value).length
+            : c.source.category === '气费核算'
+              ? gasRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === useUnit.value).length
+              : undefined,
+        })
       }
+      base.__tips = buildRowTips({
+        ownerView: true, useUnit: useUnit.value, tenantName, month,
+        totalKwh, totalFee,
+        resKwh: res.kwh, resFee: res.fee,
+        dormKwh: dorm.kwh, dormFee: dorm.fee,
+        recKwh: Number(rec?.total_kwh) || 0, recFee: Number(rec?.industrial_fee) || 0,
+        ratio: ratioOfMonth(month, bill, rec),
+        indKwh, indFee, indPrice,
+        tenantDormKwh: tenantDorm.kwh, tenantDormFee: tenantDorm.fee,
+        waterTotalUsage: totalMain.usage, waterTotalPrice: totalMain.price || 0,
+        waterIndUsage: wIndUsage, waterIndFee: wIndFee,
+        waterDormUsage: wDorm.usage, waterDormFee: wDorm.fee,
+        waterFireUsage: wFire.usage, waterFireFee: wFire.fee,
+        waterTenantDormUsage: tDorm.usage, waterTenantIndUsage: tInd.usage,
+        gasUsage: sumBy(gas, 'usage'), gasFee: sumBy(gas, 'amount'), gasCount: gas.length,
+      }, extraTips)
     } else {
       // ===== 持睿(租户)视图 =====
       const totalKwh = Number(bill?.item?.total_kwh) || 0
@@ -813,12 +890,52 @@ const buildRows = () => {
       const ctx = sourceCtxOf(month, bill, solarArr)
       const ratio = ratioOfMonth(month, bill, rec)
       let total = 0
+      const itemTips: Record<string, string> = {}
       for (const it of tenantEnabledItems.value) {
-        const v = it.enabled === false ? 0 : resolveTenantItemValue(it, ctx, ratio)
+        const participating = it.enabled !== false
+        const v = participating ? resolveTenantItemValue(it, ctx, ratio) : 0
         base[tenantItemColKey(it)] = v
         total += v
+        const key = String(it?.source_key || it?.item_name || '').trim()
+        // 分时项：把账单里的尖/峰/平/谷 明细带进提示，用户能逐段核对
+        const billRows = participating && key ? matchBillFeeItems(ctx, key) : []
+        const periods = billRows
+          .filter((r) => String(r.period || '').trim())
+          .map((r) => ({
+            period: String(r.period || ''),
+            qty: round2Num((Number(r.qty) || 0) * ratio),
+            rate: Number(r.rate) || 0,
+            fee: round2Num((Number(r.fee) || 0) * ratio),
+          }))
+        // 固定金额项没有分时行，直接用概况字段值写「金额 × 比例」
+        const fixed = participating && key ? fixedBillFeeOf(ctx, key) : null
+        itemTips[tenantItemColKey(it)] = tenantItemTip({
+          itemName: String(it.item_name || key),
+          sourceCategory: it.source_category || '市电账单',
+          billAmount: fixed !== null ? fixed : (periods.length ? periods.reduce((s, p) => s + p.fee, 0) : undefined),
+          ratio,
+          periods: periods.length ? periods : undefined,
+          value: v,
+          participating,
+        })
       }
       if (tenantEnabledItems.value.length) base.item_total = Math.round(total * 100) / 100
+      base.__tips = buildRowTips({
+        ownerView: false, useUnit: useUnit.value, tenantName, month,
+        totalKwh, totalFee,
+        resKwh: 0, resFee: 0,
+        dormKwh: dorm.kwh, dormFee: dorm.fee,
+        recKwh: indKwh, recFee: indFee,
+        ratio,
+        indKwh, indFee, indPrice: indKwh > 0 ? Math.round(indFee / indKwh * 10000) / 10000 : 0,
+        tenantDormKwh: dorm.kwh, tenantDormFee: dorm.fee,
+        waterTotalUsage: 0, waterTotalPrice: 0,
+        waterIndUsage: wInd.usage, waterIndFee: wInd.fee,
+        waterDormUsage: wDorm.usage, waterDormFee: wDorm.fee,
+        waterFireUsage: 0, waterFireFee: 0,
+        waterTenantDormUsage: 0, waterTenantIndUsage: 0,
+        gasUsage: 0, gasFee: 0, gasCount: 0,
+      }, itemTips)
     }
     base.remark = rec?.remark || ''
     return base
@@ -2163,3 +2280,4 @@ onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onC
 }
 .rd-print-title { display: none; }
 </style>
+

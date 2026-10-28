@@ -33,6 +33,25 @@ export interface EditableSubField {
   regex?: string
 }
 
+/** 跨分类引用来源（费用清单专用）。 */
+export interface FieldSourceRef {
+  category: string
+  field: string
+  mode?: 'field' | 'fee_row'
+  /**
+   * 来源字段在**原分类里所属的业务分组**。
+   *
+   * 市电账单有 8 个分组共用同一批列名（「计费电量」在 7 个分组里各有一条），
+   * 只带 category+field 时：候选下拉 8 条同名项无法区分，取值也定位不到分组
+   * （只能全分类求和，金额被放大）。空值 = 旧数据，取值退化为旧口径。
+   */
+  group?: string
+  /** 分组中文名（展示用）。 */
+  groupLabel?: string
+  /** 来源字段在**原分类里的原始名称**（费用清单里可能已改名，回溯要用它）。 */
+  label?: string
+}
+
 /** 分类字段（前端编辑态形态）。 */
 export interface EditableField {
   /** 字段身份：标准字段是契约键（invoice_no），扩展字段是后端分配的 snake_case 键。 */
@@ -47,10 +66,10 @@ export interface EditableField {
   builtin?: boolean
   /**
    * 跨分类字段引用（仅「费用清单」）。
-   * 有 source = 引用其它分类的字段（名称只读、取值走 tenantBillingSources）；
+   * 有 source = 引用其它分类的字段（取值走 tenantBillingSources）；
    * 无 source = 内置派生列。
    */
-  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
+  source?: FieldSourceRef
   /** 仅 dataType === 'items' 时有值；随 subs 一并持久化，是明细子列的权威源。 */
   subFields?: EditableSubField[]
   /**
@@ -74,7 +93,14 @@ export interface SubPayload {
   data_type: string
   width: number
   builtin?: boolean
-  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
+  source?: {
+    category: string
+    field: string
+    mode?: 'field' | 'fee_row'
+    group?: string
+    group_label?: string
+    label?: string
+  }
   sub_fields?: Array<{
     key: string
     label: string
@@ -282,6 +308,15 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
           field: fieldName,
           mode: srcRaw.mode === 'fee_row' ? 'fee_row' : 'field',
         }
+        // 分组层级：市电账单 8 个分组共用列名，缺了它候选项无法区分、取值也定位不到。
+        const srcGroup = String(srcRaw.group ?? srcRaw.groupLabel ?? '').trim()
+        if (srcGroup) {
+          field.source.group = srcGroup
+          const gl = String(srcRaw.group_label ?? srcRaw.groupLabel ?? '').trim()
+          if (gl) field.source.groupLabel = gl
+        }
+        const srcLabel = String(srcRaw.label ?? '').trim()
+        if (srcLabel) field.source.label = srcLabel
       }
     }
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
@@ -321,6 +356,14 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
         field: f.source.field,
         mode: f.source.mode === 'fee_row' ? 'fee_row' : 'field',
       }
+      const srcGroup = String(f.source.group ?? '').trim()
+      if (srcGroup) {
+        payload.source.group = srcGroup
+        const gl = String(f.source.groupLabel ?? '').trim()
+        if (gl) payload.source.group_label = gl
+      }
+      const srcLabel = String(f.source.label ?? '').trim()
+      if (srcLabel) payload.source.label = srcLabel
     }
     // 业务分组：仅在有值时下发，无 group 的旧分类序列化结果与改造前一致
     const group = String(f.group ?? '').trim()

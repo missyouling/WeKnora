@@ -184,6 +184,19 @@ type FleetCategorySubSource struct {
 	Field    string `json:"field"`
 	// Mode: field=普通字段；fee_row=市电账单的费用组成行（按名称匹配）
 	Mode string `json:"mode,omitempty"`
+	// Group / GroupLabel 来源字段在**原分类里所属的业务分组**。
+	//
+	// 为什么必须持久化：市电账单有 8 个分组共用同一批列名
+	// （qty/rate/fee 在 市场化购电费 / 输配电量电费 / 系统运行费 … 各存一份，
+	// 「计费电量」在 7 个分组里各有一条）。若 source 只记 category+field，
+	//   · 候选下拉里 8 条同名项无法区分（用户不知道引用的是哪一组）；
+	//   · 取值时也定位不到分组，只能全表求和，金额被放大成天文数字。
+	// 空值 = 旧数据（未带分组），取值退化为「全分类同名求和」的旧口径。
+	Group      string `json:"group,omitempty"`
+	GroupLabel string `json:"group_label,omitempty"`
+	// Label 来源字段在**原分类里的原始名称**（用户可能已在费用清单里改名，
+	// 保留原名才能在悬浮/抽屉里回溯「这条数据到底取自哪个字段」）。
+	Label string `json:"label,omitempty"`
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

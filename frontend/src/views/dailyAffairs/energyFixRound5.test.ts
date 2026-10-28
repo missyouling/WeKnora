@@ -129,10 +129,13 @@ test('「参与分摊」与「启用字段」是两个独立维度，不得互�
   const src = read('TenantBilling.vue')
   assert.match(src, /field_enabled !== false/, '列表列必须按 field_enabled 过滤')
   assert.match(src, /tenantApportionItems/, '打印/合计必须按参与分摊过滤')
-  // tenantEnabledItems 只允许按 field_enabled 过滤，不得再串 enabled
+  // 只截取 tenantEnabledItems 这一个定义（到右括号为止）：
+  // 紧随其后的 tenantApportionItems 本来就该用 enabled 过滤，不能算违规。
   const start = src.indexOf('const tenantEnabledItems = computed(')
-  const block = src.slice(start, start + 260)
+  const end = src.indexOf(')', src.indexOf('field_enabled !== false', start))
+  const block = src.slice(start, end + 1)
   assert.ok(!/it\.enabled !== false/.test(block), '列显隐不得用 enabled（那是分摊开关）')
+  assert.match(block, /it\.field_enabled !== false/)
 })
 
 test('分摊子项面板必须是 6 列：名称/来源/参与分摊/宽度/启用字段/操作', () => {

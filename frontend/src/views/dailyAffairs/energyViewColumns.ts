@@ -29,7 +29,16 @@ export interface EnergySub {
    * 光伏账单 / 电/水/气核算。带 source 的条目 = 用户检索并添加的外部字段；
    * 不带 source = 内置派生列（由列表自身的核算逻辑算出来）。
    */
-  source?: { category: string; field: string; mode?: 'field' | 'fee_row' }
+  source?: {
+    category: string
+    field: string
+    mode?: 'field' | 'fee_row'
+    /** 来源字段在原分类里所属的分组（同名候选靠它区分、取值靠它定位）。 */
+    group?: string
+    group_label?: string
+    /** 来源字段在原分类里的原始名称。 */
+    label?: string
+  }
 }
 
 /** 列表列定义的最小形态（各组件自带更丰富的扩展字段）。 */

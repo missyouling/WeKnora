@@ -111,13 +111,19 @@ test('费用清单字段定义：引用模式禁止自由新建，改用带来�
   assert.match(certPanel, /=== '费用清单'/, '判定条件必须是费用清单')
   assert.match(certPanel, /<SourceFieldPicker/, '引用模式必须用跨分类选择器')
   assert.match(certPanel, /v-if="isRefCategory"/, '引用模式要分支渲染')
-  assert.match(certPanel, /fc-ref-badge/, '引用字段行必须显示来源分类徽标')
-  assert.match(certPanel, /`src_\$\{payload\.source\.category\}_\$\{payload\.source\.field\}`/, '引用字段 key 由来源固定生成')
-  // 选择器候选项带 [来源分类] 前缀
-  assert.match(picker, /label: `\[\$\{cat\}\] \$\{sub\.label \|\| sub\.name\}`/, '候选项必须带 [来源分类]')
-  // 字段模型要能持久化 source
+  assert.match(certPanel, /fc-ref-badge/, '引用字段行必须显示来源徽标')
+  // 引用字段 key 由来源固定生成，且必须含**来源分组**：
+  // 市电账单 8 个分组都有 qty（「计费电量」7 条），只用 分类_字段 会撞名，
+  // 第二条起被判「已添加」而加不进来。
+  assert.match(certPanel, /\['src', src\.category, src\.group, src\.field\]\.filter\(Boolean\)\.join\('_'\)/,
+    '引用字段 key 必须含来源分组')
+  // 选择器候选项带 [分类 · 分组] 路径前缀（只带分类无法区分同名项）
+  assert.match(picker, /const path = groupLabel \? `\$\{cat\} · \$\{groupLabel\}` : cat/, '候选项必须拼多级路径')
+  assert.match(picker, /label: `\[\$\{path\}\] \$\{name\}`/, '候选项必须带 [分类 · 分组] 前缀')
+  // 字段模型要能持久化 source（含分组层级）
   const subs = read('./fleetCategorySubs.ts')
-  assert.match(subs, /source\?: \{ category: string; field: string; mode\?: 'field' \| 'fee_row' \}/, 'EditableField 要带 source')
+  assert.match(subs, /source\?: FieldSourceRef/, 'EditableField 要带 source')
+  assert.match(subs, /group\?: string/, 'source 必须能带分组')
   assert.match(subs, /payload\.source = \{/, '保存时必须回写 source')
 })
 

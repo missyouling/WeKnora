@@ -24,6 +24,17 @@ export interface FieldSource {
   /** 来源字段 key；mode=fee_row 时是费用组成名称 */
   field: string
   mode: 'field' | 'fee_row'
+  /**
+   * 来源字段在原分类里所属的分组（市电账单的 12 个费用分项）。
+   *
+   * 必须带上：市电账单 8 个分组共用同一批列名（`qty`「计费电量」在 7 个分组里
+   * 各有一条），只按 field 名称取值会跨组求和、金额被放大数倍；
+   * 候选下拉里也会出现 8 条无法分辨的同名项。
+   */
+  group?: string
+  groupLabel?: string
+  /** 来源字段的原始名称（费用清单里可能已改名，回溯/悬浮要显示它）。 */
+  label?: string
 }
 
 export const SOURCE_CATEGORIES = ['市电账单', '光伏账单', '电费核算', '水费核算', '气费核算'] as const
@@ -35,13 +46,34 @@ export function parseFieldSource(sub: any): FieldSource | null {
   const category = String(raw.category || '').trim()
   const field = String(raw.field || '').trim()
   if (!category || !field) return null
-  return { category, field, mode: raw.mode === 'fee_row' ? 'fee_row' : 'field' }
+  const src: FieldSource = { category, field, mode: raw.mode === 'fee_row' ? 'fee_row' : 'field' }
+  const group = String(raw.group || raw.groupLabel || '').trim()
+  if (group) {
+    src.group = group
+    const gl = String(raw.group_label || raw.groupLabel || '').trim()
+    if (gl) src.groupLabel = gl
+  }
+  const label = String(raw.label || '').trim()
+  if (label) src.label = label
+  return src
 }
 
-/** 引用字段的展示名：`[来源分类] 字段名`（防同名误选）。 */
+/**
+ * 来源的完整路径文本：`分类 · 分组`（有分组时）。
+ * 候选下拉与悬浮提示共用同一份拼法，避免两处文案漂移。
+ */
+export function sourcePathText(src: FieldSource | null, fallback = ''): string {
+  if (!src) return fallback
+  const parts = [src.category]
+  const g = src.groupLabel || src.group
+  if (g) parts.push(g)
+  return parts.join(' · ')
+}
+
+/** 引用字段的展示名：`[来源分类 · 分组] 字段名`（防同名误选）。 */
 export function sourceBadge(src: FieldSource | null, fallback = ''): string {
   if (!src) return ''
-  return `[${src.category}] ${fallback || src.field}`
+  return `[${sourcePathText(src)}] ${fallback || src.field}`
 }
 
 const norm = (v: any) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, '')
@@ -155,6 +187,88 @@ export function matchBillFeeItems(ctx: SourceResolveContext, name: string): any[
 }
 
 /**
+ * 分组的强归一：去序号前缀、去「性」、去标点，只留中英文数字。
+ *
+ * 分组名来自「字段定义」的分组胶囊条，账单 `fee_items.category` 来自 PDF 原文，
+ * 同一个分组在两处的写法常年不同。真机取证的真实差异：
+ *   分组「政府基金及附加（工商业）」 vs 账单「(6)政府性基金及附加-工商业」
+ *   分组「目录电费（居民）」        vs 账单「(5)目录电费」
+ *   分组「功率因素调整」            vs 账单「功率因数调整电费」
+ * 只做「包含」判断会全部落空（于是分组取值退化成 0）。这里统一掉这三类噪声：
+ *   ① 去掉 `(1)` / `1.` 这类序号前缀；
+ *   ② 去掉「性」（政府性基金 = 政府基金）；
+ *   ③ 去掉括号、连字符、空格。
+ */
+const groupNorm = (v: any) => String(v ?? '')
+  .toLowerCase()
+  .replace(/^\s*[（(]?\d+[)）]?[.、]?\s*/g, '')
+  .replace(/性/g, '')
+  .replace(/[\s（）()\-—_·・,，.。/\\|]+/g, '')
+
+/**
+ * 按「分组 + 字段」定位市电账单里的费用分项（带 group 的引用字段用它）。
+ *
+ * 市电账单 8 个分组共用 `qty` / `rate` / `fee` 等列名，「计费电量」在 7 个分组里
+ * 各有一条：不带分组只能全表求和（金额被放大数倍），带了才能精确到那一组。
+ *
+ * 匹配优先级：强归一全等 → 双向包含（容忍「上网环节线损费」vs「…费用」这类后缀差）。
+ * 都不中返回 `null`，调用方退回「概况字段 / 全分类同名」的老口径
+ * —— 「账单概况」这类分组本来就不在 fee_items 里，必须让它落到概况字段。
+ */
+function resolveByBillGroup(ctx: SourceResolveContext, group: string, field: string): number | null {
+  const want = groupNorm(group)
+  if (!want) return null
+  const item = ctx.bill?.item || {}
+  const fieldKey = String(field || '').trim()
+
+  // 「电量明细（工商业/居民）」不是 fee_items 的行，而是 meter_readings /
+  // residential_readings 数组：市电账单的示数表按示数类型分行，字段就是列名。
+  // 不单独处理的话，这组字段（计费电量/抄见电量/上期示数…）会永远取到 0。
+  if (want.includes('电量明细')) {
+    const isResident = want.includes('居民')
+    const rows: any[] = isResident
+      ? (Array.isArray(item.residential_readings) ? item.residential_readings : [])
+      : (Array.isArray(item.meter_readings) ? item.meter_readings : [])
+    if (!rows.length) return null
+    // 居民示数表用 bill_kwh/kwh/ratio，工商业用 bill_kwh/reading_kwh/curr…
+    if (fieldKey === 'bill_kwh') return round2(rows.reduce((s, r) => s + num(r?.bill_kwh), 0))
+    if (fieldKey === 'reading_kwh') return round2(rows.reduce((s, r) => s + num(r?.reading_kwh ?? r?.kwh), 0))
+    if (fieldKey === 'qty' || fieldKey === 'kwh') return round2(rows.reduce((s, r) => s + num(r?.kwh ?? r?.reading_kwh), 0))
+    if (fieldKey === 'curr') return round2(rows.reduce((s, r) => s + num(r?.curr), 0))
+    if (fieldKey === 'prev') return round2(rows.reduce((s, r) => s + num(r?.prev), 0))
+    if (fieldKey === 'adjust') return round2(rows.reduce((s, r) => s + num(r?.adjust), 0))
+    const first = rows[0]?.[fieldKey]
+    return first === undefined ? null : round2(num(first))
+  }
+
+  const items: any[] = item.fee_items || []
+  if (!items.length) return null
+  const catOf = (it: any) => groupNorm(it?.category)
+  let inGroup = items.filter((it) => catOf(it) === want)
+  if (!inGroup.length) {
+    inGroup = items.filter((it) => {
+      const c = catOf(it)
+      return !!c && (c.includes(want) || want.includes(c))
+    })
+  }
+  if (!inGroup.length) return null
+  if (fieldKey === 'fee' || fieldKey === 'fee_amount') {
+    return round2(inGroup.reduce((s, it) => s + num(it?.fee ?? it?.fee_amount), 0))
+  }
+  if (fieldKey === 'qty') return round2(inGroup.reduce((s, it) => s + num(it?.qty), 0))
+  if (fieldKey === 'rate') {
+    // 单价不可相加：按「金额 ÷ 数量」加权，避免直接取首行的分时单价
+    const qty = inGroup.reduce((s, it) => s + num(it?.qty), 0)
+    const fee = inGroup.reduce((s, it) => s + num(it?.fee), 0)
+    if (qty > 0) return Math.round((fee / qty) * 1000000) / 1000000
+    return num(inGroup[0]?.rate)
+  }
+  // 其余键（name/period 等）取首值：它们不是可加量
+  const first = inGroup[0]?.[fieldKey]
+  return first === undefined ? null : round2(num(first))
+}
+
+/**
  * 固定金额分项（基本电费 / 力调电费）的权威值；不属于这两类返回 `null`。
  *
  * 打印清单用它决定走「概况字段 × 比例」还是「账单行 × 比例」：这两项在账单里
@@ -187,6 +301,12 @@ export function resolveSourceValue(src: FieldSource, ctx: SourceResolveContext):
   switch (src.category) {
     case '市电账单': {
       if (src.mode === 'fee_row') return resolveFeeRow(ctx, src.field)
+      // 带分组 = 该分组的费用分项列（qty/rate/fee…）：
+      // 必须按分组定位，否则「计费电量」会把 7 个分组的数量全加起来。
+      if (src.group) {
+        const grouped = resolveByBillGroup(ctx, src.group, src.field)
+        if (grouped !== null) return grouped
+      }
       const v = ctx.bill?.item?.[src.field]
       if (v === undefined || v === null || v === '') {
         // 概况别名：账单电费在不同管线里叫 grand_total / total_amount

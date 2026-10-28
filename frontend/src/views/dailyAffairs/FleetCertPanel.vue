@@ -138,12 +138,17 @@
                          ② v-for 以 name 为 key，name 一变输入框每敲一键就重挂、丢焦点。
                          费用分组里「费用组成 / 分时时段」右侧另有细项展开按钮：
                          它们的下级不是子字段而是"行项集合"，单独渲染在下方。 -->
-                    <!-- 引用字段（费用清单专属）：名称不可改、口径固定在来源分类，
-                         右侧徽标直接标出 [来源分类]，避免同名歧义与误改名断链。 -->
+                    <!-- 引用字段（费用清单专属）：左侧只读来源徽标 + 右侧可编辑显示名。
+                         名称可改（只写当前分类的 label），来源徽标不可改（那是数据身份）：
+                         改 label 只影响费用清单表头/筛选器/抽屉文案，
+                         取值仍绑定 source.category + source.group + source.field，
+                         绝不回写原分类字段名（作用域严格隔离）。
+                         徽标带分组路径：市电账单 8 个分组共用列名，只显示分类会误判来源。 -->
                     <div v-else-if="fd.source" class="fc-name-wrap fc-name-wrap--ref"
-                      :title="`引用自「${fd.source.category}」字段 ${fd.source.field}`">
-                      <span class="fc-ref-badge">{{ fd.source.category }}</span>
-                      <span class="fc-ref-name">{{ fieldLabelOf(fd) }}</span>
+                      :title="`引用自「${sourcePathOf(fd)}」字段 ${fd.source.label || fd.source.field}`">
+                      <span class="fc-ref-badge">{{ sourcePathOf(fd) }}</span>
+                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
+                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
                     </div>
                     <!-- 阻止冒泡只挂在外层 div（原生元素）。绝不能写在 t-input 上：
                          t-input 的 click 首参是 { e } 上下文对象而非原生 MouseEvent，
@@ -364,6 +369,7 @@ import {
   type EditableSubField,
 } from './fleetCategorySubs'
 import { listSubGroups } from './sixWaySync'
+import { sourcePathText } from './tenantBillingSources'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import SourceFieldPicker from './SourceFieldPicker.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
@@ -615,7 +621,13 @@ const editingItem = computed(() => groupItems.value.find((it: any) => it.id === 
 const isRefCategory = computed(() => props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单')
 /** 已添加的引用 key（`分类__字段`），传给选择器过滤候选。 */
 const refFieldKeys = computed(() =>
-  fieldsVisible.value.filter((f) => f.source).map((f) => `${f.source!.category}__${f.source!.field}`),
+  // 排除键必须与 SourceFieldPicker 的候选 key 同构（含来源分组）：
+  // 只写 分类__字段 时，加了「市场化购电费·计费电量」会把其余 6 个分组的
+  // 同名候选一起隐藏掉。
+  fieldsVisible.value.filter((f) => f.source).map((f) => {
+    const s = f.source!
+    return [s.category, s.group, s.field].filter(Boolean).join('__')
+  }),
 )
 
 /** 添加一条引用字段：name 由来源固定生成，保证同一来源不会重复添加。 */
@@ -623,15 +635,21 @@ function addRefField(payload: {
   key: string
   label: string
   dataType: string
-  source: { category: string; field: string; mode: 'field' }
+  source: { category: string; field: string; mode?: 'field' | 'fee_row'; group?: string; groupLabel?: string; label?: string }
 }) {
-  const name = `src_${payload.source.category}_${payload.source.field}`
+  // name 必须含**来源分组**：市电账单 8 个分组都有 qty（「计费电量」在 7 个分组里
+  // 各有一条），只用 分类_字段 会算出同一个 name，第二条起全被判成「已添加」
+  // —— 用户点第二个「计费电量」时毫无反应。
+  const src = payload.source
+  const name = ['src', src.category, src.group, src.field].filter(Boolean).join('_')
   if (fieldsEditable.value.some((f) => f.name === name)) {
     MessagePlugin.warning('该字段已添加，无需重复引用')
     return
   }
   // 继承当前分组：能耗类分类的字段定义带 group 胶囊条，字段若 group 为空会被
   // fieldsVisible 过滤掉（表现是「选了字段但列表里不出现」）。
+  // 注意这个 group 是**费用清单自己的**分组（归属哪个胶囊条），
+  // 与 source.group（来源分类里的分组）是两回事，不能混用。
   const group = activeSubGroup.value || String(fieldsEditable.value.find((f) => f.group)?.group || '')
   const groupLabel = group
     ? String((fieldsEditable.value.find((f) => f.group === group) as any)?.groupLabel || '')
@@ -643,7 +661,7 @@ function addRefField(payload: {
     isDefault: false,
     dataType: payload.dataType,
     width: 0,
-    source: payload.source,
+    source: src,
     ...(group ? { group } : {}),
     ...(groupLabel ? { groupLabel } : {}),
   })
@@ -1113,6 +1131,13 @@ function toggleEdit(item: any) {
 const fieldDelPop = ref<any>(null)
 // 字段名展示：自定义 label → registry 字典中文名 → 无字典 scope 回退 desc/原名
 const fieldLabelOf = (fd: any) => (fd?.label || labelOf(group.value.scope, fd.name) || fd.desc || fd.name)
+/**
+ * 引用字段的来源路径：`分类 · 分组`。
+ *
+ * 市电账单 8 个分组共用同一批列名（「计费电量」在 7 个分组里各有一条），
+ * 只显示分类会让用户误以为引用的是账单概况里的同一个字段。
+ */
+const sourcePathOf = (fd: any) => sourcePathText(fd?.source as any, fd?.source?.category || '')
 // 字段名输入框的显示值：与 fieldLabelOf 同源（label 优先，契约键回退字典中文名）
 const fieldEditOf = (fd: any) => String(fd?.label || labelOf(group.value.scope, fd?.name || '') || fd?.name || '')
 /**
@@ -1754,15 +1779,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   /* 引用字段（费用清单）：[来源分类] 徽标 + 只读字段名，占位与输入框等宽等高 */
   .fc-name-wrap--ref {
     gap: 6px;
-    height: 24px;
-    padding: 0 8px;
-    border-radius: var(--td-radius-default);
-    background: var(--td-bg-color-secondarycontainer);
+    // 名称改成可编辑输入框后，外层不再需要灰底「只读块」外观：
+    // 只留左侧来源徽标承担「来源不可改」的语义，右侧与普通字段输入框一致。
+    padding: 0;
+    background: transparent;
     cursor: default;
   }
   .fc-ref-badge {
     flex: none;
-    max-width: 68px;
+    // 分组路径（`市电账单 · 市场化购电费`）比裸分类长，放宽到 120px 并允许省略，
+    // 完整路径放在 title 里（鼠标悬停可见）。
+    max-width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1773,15 +1800,8 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     color: var(--td-brand-color);
     background: var(--td-brand-color-light);
   }
-  .fc-ref-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--td-text-color-primary);
-  }
+  /* 引用字段的名称已改为可编辑输入框，与普通字段输入框共用 .fc-name 宽度规则 */
+  .fc-name--ref { flex: 1 1 auto; min-width: 0; }
 
   .fc-name-wrap {
     position: relative;
