@@ -32,11 +32,11 @@ test('列存档必须「补新」：新增的默认列要自动进入可见列',
 
 test('引用字段列由 subs 派生，且带 source 的列必须带上分组信息', () => {
   const src = read('TenantBilling.vue')
-  const block = src.slice(src.indexOf('const extras: ColDef[] = []'), src.indexOf('return extras.length'))
+  const block = src.slice(src.indexOf('const extras: ColDef[] = []'), src.indexOf('if (!isOwnerView.value)'))
   assert.match(block, /parseFieldSource/)
   assert.match(block, /enabled === false/)
   // 列 key 用 subs.name（数据身份），label 用 subs.label（可被重命名覆盖）
-  assert.match(block, /key: String\(sub\.name\)/)
+  assert.match(block, /const key = String\(sub\.name/)
   assert.match(block, /label: String\(sub\.label \|\| sub\.name\)/)
 })
 

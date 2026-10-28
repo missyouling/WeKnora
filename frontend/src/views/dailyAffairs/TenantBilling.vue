@@ -268,10 +268,45 @@ const tenantItemColKey = (it: any) => `item_${String(it?.item_key || it?.itemKey
  */
 const activeColDefs = computed<ColDef[]>(() => {
   const subs = categorySubs.value || []
-  // 内置派生列：仍受 subs 的改名/顺序/宽度/默认显隐控制（restrictToBase =
-  // 只有本来就存在的列会被应用，避免把引用字段误当成内置列）。
+  // 内置派生列：受 subs 的改名/顺序/宽度/默认显隐控制。
+  //
+  // 这里不再传 `restrictToBase`：那是「只允许组件静态表里已有的键通过」的白名单，
+  // 一旦某个内置字段没写进 COL_DEFS_OWNER/TENANT，用户在「字段定义」里加它就被
+  // 静默丢弃。真正需要防的是「把引用字段误当内置列」，而引用字段已在下面用
+  // `parseFieldSource` 单独分流（makeExtra 也没传，不会凭空造列）。
   const builtinSubs = subs.filter((s) => !parseFieldSource(s))
-  const base = applySubsToColumns(baseColDefs.value, builtinSubs, undefined, { restrictToBase: true })
+  const base = applySubsToColumns(baseColDefs.value, builtinSubs)
+
+  /**
+   * 跨分类引用字段（「字段定义」里检索添加的列）。
+   *
+   * **两套视角都必须出列**。旧实现只在业主视角拼接 extras，租户视角直接
+   * `return [...anchors, ...items, totalCol]` —— 用户在持睿汽车视角加完
+   * 「账单周期 / 本期电费 / 本期电量」并保存，表头与 [☰ 字段] 里一个都不出现
+   * （真机：换回业主视角才看得见）。引用字段是**全厂口径**（当月账单概况），
+   * 与视角无关，没有任何理由在租户视角丢弃。
+   *
+   * 顺序严格跟随 subs（用户拖拽/新增的顺序即列顺序）；追加在内置列之后，
+   * 避免把「借来的列」插进内置口径列中间造成混排。
+   */
+  const extras: ColDef[] = []
+  for (const sub of subs) {
+    const src = parseFieldSource(sub)
+    if (!src || sub.enabled === false) continue
+    const key = String(sub.name || '').trim()
+    if (!key) continue
+    extras.push({
+      key,
+      label: String(sub.label || sub.name),
+      // `is_default !== false`（缺省视为显示）：新增引用字段本来就是用户主动
+      // 检索添加的，让它默认出列；只有用户显式关掉「默认表头」才隐藏。
+      default: sub.is_default !== false,
+      w: '1fr',
+      width: Number(sub.width) || undefined,
+      tip: `引用自 ${src.category}${src.groupLabel || src.group ? ` · ${src.groupLabel || src.group}` : ''}`,
+      source: src,
+    })
+  }
 
   if (!isOwnerView.value) {
     const anchors = base.filter((c) => ['month', 'unit', 'total_kwh', 'total_fee', 'ratio'].includes(c.key))
@@ -284,27 +319,12 @@ const activeColDefs = computed<ColDef[]>(() => {
       tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
       item: it,
     })) as ColDef[]
-    if (!items.length) return base
+    if (!items.length) return extras.length ? [...base, ...extras] : base
     const totalCol: ColDef = { key: 'item_total', label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
-    return [...anchors, ...items, totalCol]
+    // 「合计应付」必须留在最后：它是整行金额的收口列。
+    return [...anchors, ...items, ...extras, totalCol]
   }
 
-  // 引用字段一律追加在内置列之后：它们是「从别的分类借来的列」，
-  // 不能插进内置口径列中间（否则读表顺序会变成混排，用户很难对着看）。
-  const extras: ColDef[] = []
-  for (const sub of subs) {
-    const src = parseFieldSource(sub)
-    if (!src || sub.enabled === false) continue
-    extras.push({
-      key: String(sub.name),
-      label: String(sub.label || sub.name),
-      default: sub.is_default === true,
-      w: '1fr',
-      width: Number(sub.width) || undefined,
-      tip: `引用自 ${src.category}`,
-      source: src,
-    })
-  }
   return extras.length ? [...base, ...extras] : base
 })
 
@@ -335,50 +355,83 @@ async function loadCategorySubs() {
     categorySubs.value = []
   }
   syncColumnKeys()
+  // 列集变了必须**重算行**：引用字段的值是 buildRows 写进 row 对象的
+  // （不是渲染期现算），不重建就会出现「表头有了、单元格整列空白」，
+  // 详情抽屉也会因为 `key in row` 判定失败而缺字段。
+  if (dataReady.value) buildRows()
 }
 const colStorageKey = computed(() => `weknora-tenant-billing-cols-${isOwnerView.value ? 'owner' : 'tenant'}-v3`)
 const visibleKeys = ref<string[]>([])
 /**
- * 读列可见性存档。
+ * 列可见性存档。
  *
- * ⚠️ 关键：**新增列不能被旧存档挡住**。
- * 旧实现只把存档里「还存在」的键过滤一遍返回，于是用户在「字段配置」里新加的
- * 跨分类字段永远进不了 visibleKeys —— 列不渲染、值也不显示，用户看到的是
- * 「配了 7 个字段，保存后列表毫无变化」（真机问题）。
+ * v1（旧）= 纯数组，只记「当时可见的列」。这**信息量不够**：
+ * 无法区分「用户主动取消了勾选」与「这一列是这一版新增的」，两者都会表现为
+ * 「不在数组里」。于是必然有一头出错：
+ *   · 只做补新 → 用户取消勾选的默认列下次加载自己复活；
+ *   · 只做过滤 → 新增列永远不出现（上一轮真机问题）。
  *
- * 现在的口径：
- *   · 存档里的键按当前列集清洗（删列的旧键不许复活）；
- *   · **新出现的列**（不在存档里的）按它的 `default` 决定是否自动显示；
- *   · 用户显式取消过勾选的列，只要它一直在存档里，就保持隐藏 ——
- *     用「是否出现在存档中」区分「用户关掉了」与「这是新加的」。
+ * v2 = `{ v: 2, known, visible }`
+ *   · known   = 存档时**存在过**的列 → 用「不在 known 里」判定「这是新列」；
+ *   · visible = 存档时**勾选**的列 → 不在其中且属于 known 的，就是用户关掉的。
+ * 读 v1 数组时把 known 近似成那份可见数组：宁可让隐藏的默认列复活一次，
+ * 也绝不吞掉用户新加的字段（后者无法自行恢复，前者点一下就好）。
+ */
+interface ColStore { v: 2; known: string[]; visible: string[] }
+function readColStore(): ColStore | null {
+  try {
+    const raw = localStorage.getItem(colStorageKey.value)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      const arr = parsed.map(String)
+      return { v: 2, known: arr, visible: arr }
+    }
+    if (parsed && typeof parsed === 'object') {
+      const known = Array.isArray((parsed as any).known) ? (parsed as any).known.map(String) : []
+      const visible = Array.isArray((parsed as any).visible) ? (parsed as any).visible.map(String) : []
+      return { v: 2, known, visible }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+/**
+ * 读列可见性。
+ *
+ * 口径：
+ *   ① 存档里勾选过的列 → 保留（但只保留**当前列集仍存在**的键，删掉的列不许复活）；
+ *   ② 存档里从没出现过的列（新增字段）→ 按 `default` 自动勾上；
+ *   ③ 存档里出现过、但没勾的列 → 保持隐藏（用户明确关掉的）。
  */
 function loadStoredKeys(): string[] {
   const defs = activeColDefs.value
   const defaults = defs.filter(c => c.default).map(c => c.key)
-  try {
-    const raw = localStorage.getItem(colStorageKey.value)
-    if (raw) {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr)) {
-        const stored = arr.map(String)
-        const known = new Set(stored)
-        // 当前列集里、存档没提过的 = 这一版新增的列
-        const fresh = defs.filter(c => !known.has(c.key) && c.default).map(c => c.key)
-        const valid = stored.filter(k => defs.some(c => c.key === k))
-        const merged = [...valid, ...fresh.filter(k => !valid.includes(k))]
-        if (merged.length) {
-          if (merged.length !== arr.length) {
-            try { localStorage.setItem(colStorageKey.value, JSON.stringify(merged)) } catch { /* ignore */ }
-          }
-          return merged
-        }
-        return defaults
-      }
-    }
-  } catch { /* ignore */ }
-  return defaults
+  const store = readColStore()
+  if (!store) return defaults
+  const known = new Set(store.known)
+  const picked = new Set(store.visible)
+  const valid = defs.filter(c => picked.has(c.key)).map(c => c.key)
+  const fresh = defs.filter(c => !known.has(c.key) && c.default).map(c => c.key)
+  const merged = [...valid, ...fresh.filter(k => !valid.includes(k))]
+  // 空 = 用户把所有列都关了，或存档全是已删除的键：回落到默认列，
+  // 否则表头会变成空白表格，用户只能清缓存自救。
+  return merged.length ? merged : defaults
 }
-const syncColumnKeys = () => { visibleKeys.value = loadStoredKeys() }
+/** 写存档：同时记下「当前存在过的列」与「当前勾选的列」。 */
+const persistColumns = () => {
+  const defs = activeColDefs.value
+  const store: ColStore = {
+    v: 2,
+    known: defs.map(c => c.key),
+    visible: visibleKeys.value.filter(k => defs.some(c => c.key === k)),
+  }
+  try { localStorage.setItem(colStorageKey.value, JSON.stringify(store)) } catch { /* ignore */ }
+}
+const syncColumnKeys = () => {
+  visibleKeys.value = loadStoredKeys()
+  // 顺手把 known 记下来：否则「用户取消勾选的默认列」每次加载都会被当成新列复活。
+  persistColumns()
+}
 syncColumnKeys()
 watch(useUnit, syncColumnKeys)
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
@@ -427,7 +480,6 @@ const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
 const selectAllColumns = () => { visibleKeys.value = activeColDefs.value.map(c => c.key); persistColumns() }
 const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c => c.default).map(c => c.key); persistColumns() }
-const persistColumns = () => { try { localStorage.setItem(colStorageKey.value, JSON.stringify(visibleKeys.value)) } catch { /* ignore */ } }
 
 // ---- 租户与账单 ----
 const loading = ref(false)
@@ -466,6 +518,13 @@ const filterState = computed<FilterState>({
 function onBarFilterChange() { buildRows() }
 const records = ref<any[]>([])
 const displayRows = ref<any[]>([])
+/**
+ * 首批数据是否已装载完成。
+ *
+ * 用途：设置抽屉保存后 `fleet-categories-changed` 会触发 `loadCategorySubs`，
+ * 此时若数据还没到，直接 buildRows 会把空行集写进列表（闪一下空表）。
+ */
+const dataReady = ref(false)
 
 // ---- 数据源缓存(市电/光伏/水电气记录/水表) ----
 const utilityBills = ref<any[]>([])      // 市电账单 record(含 item)
@@ -557,6 +616,7 @@ const loadAllData = async () => {
     waterMeters.value = Array.isArray(wmRes?.data) ? wmRes.data : (Array.isArray(wmRes) ? wmRes : [])
     waterReadings.value = flattenWaterRecords(wrRes)
     buildRows()
+    dataReady.value = true
     autoGenerateReady()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载账单失败')
@@ -920,6 +980,27 @@ const buildRows = () => {
         })
       }
       if (tenantEnabledItems.value.length) base.item_total = Math.round(total * 100) / 100
+      // 跨分类引用字段：与业主视角同一口径（当月账单概况 / 核算汇总）。
+      //
+      // 这一步过去只写在业主分支里，于是即便列被拼出来，租户视角的单元格也是空的
+      // —— 用户看到「有表头、没数据」，会误判成取值链路坏了。
+      for (const c of activeColDefs.value) {
+        if (!c.source) continue
+        const v = resolveSourceValue(c.source, ctx)
+        base[c.key] = v
+        itemTips[c.key] = sourceFieldTip({
+          category: c.source.category,
+          groupLabel: c.source.groupLabel || c.source.group,
+          fieldLabel: c.source.label || c.label || c.source.field,
+          month,
+          value: v,
+          rowCount: c.source.category === '电费核算'
+            ? elecRows.value.filter((r: any) => r.month === month && r.use_unit === useUnit.value).length
+            : c.source.category === '气费核算'
+              ? gasRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === useUnit.value).length
+              : undefined,
+        })
+      }
       base.__tips = buildRowTips({
         ownerView: false, useUnit: useUnit.value, tenantName, month,
         totalKwh, totalFee,
@@ -1492,7 +1573,18 @@ const reloadTenants = async () => {
   await loadTenantItems()
   await loadAllData()
 }
-defineExpose({ reloadTenants })
+/**
+ * 字段定义（`fleet_categories.subs`）变更后重载列集。
+ *
+ * 主链路是 `fleet-categories-changed` 事件（设置抽屉保存时派发，本页在
+ * onMounted 里监听）；这里额外暴露一个方法，供父级在「抽屉关闭 / 保存成功」
+ * 这类没有事件可依赖的时机显式调用，避免六同步任何一环靠猜测。
+ */
+const reloadSubs = async () => {
+  await loadCategorySubs()
+  buildRows()
+}
+defineExpose({ reloadTenants, reloadSubs })
 
 // ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
 // ---- 账单详情与打印 ----
@@ -1658,7 +1750,10 @@ const cellText = (key: string, row: any): string => {
   if (key === 'ind_price') return fmtPrice(row.ind_price)
   if (MONEY_KEYS.includes(key)) return fmtMoney(row[key])
   if (KWH_KEYS.includes(key)) return fmtKwh(row[key])
-  return row[key] || ''
+  const v = row[key]
+  // 0 是有效值（如「参与分摊关闭」的分项、当月用量为 0），不能当空值吞掉
+  if (v === 0) return '0'
+  return v === null || v === undefined ? '' : String(v)
 }
 const fmtPrice = (v: any): string => {
   const n = Number(v)

@@ -658,7 +658,12 @@ function addRefField(payload: {
     name,
     label: payload.label,
     enabled: true,
-    isDefault: false,
+    // 新增引用字段默认「显示」。
+    //
+    // 旧实现给 false：用户检索添加完、保存，列表里什么都不出现（列不是默认列，
+    // 又被 localStorage 存档判成「用户主动关掉的」），只能再去「默认表头」里
+    // 手动勾一次 —— 六同步在第一步就断了。用户主动添加的字段本就该出现。
+    isDefault: true,
     dataType: payload.dataType,
     width: 0,
     source: src,

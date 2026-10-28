@@ -81,11 +81,15 @@ test('四个能耗视图的列存档必须清洗已不存在的 key（重置不�
     assert.match(src, /localStorage\.setItem\((COLUMN_STORAGE_KEY|STORAGE_KEY\.value|colStorageKey\.value)/,
       `${f} 必须把清洗后的存档回写`)
   }
-  // 费用清单同时要求清洗（旧键不复活）与补新（新列要出现）
+  // 费用清单同时要求清洗（旧键不复活）与补新（新列要出现）。
+  // 它已升级到 v2 存档（known + visible）：清洗体现在
+  // 「按当前列集 defs 过滤 visible」，而不是直接过滤一个字符串数组。
   const billing = read('TenantBilling.vue')
-  assert.match(billing, /const valid = stored\.filter\(k => defs\.some\(c => c\.key === k\)\)/,
+  assert.match(billing, /const valid = defs\.filter\(c => picked\.has\(c\.key\)\)/,
     'TenantBilling 必须清洗已删列的旧键')
   assert.match(billing, /localStorage\.setItem\(colStorageKey\.value/, 'TenantBilling 必须回写清洗后的存档')
+  assert.match(billing, /visible: visibleKeys\.value\.filter\(k => defs\.some/,
+    '回写时 visible 必须按当前列集清洗')
 })
 
 // ---- ③ 定比电量：只取主行 bill_kwh，不能把各比例行的 kwh 累加 ----
