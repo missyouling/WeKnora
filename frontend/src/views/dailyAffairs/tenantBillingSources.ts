@@ -211,8 +211,30 @@ function aggregateRows(rows: any[], field: string, fallbackUnit = ''): number | 
  *   ③ 别名归一（括号、因数字/因素字）。
  * 都不命中返回 `[]`。调用方按 `fixedBillFeeOf` 决定是否改走概况字段。
  */
-export function matchBillFeeItems(ctx: SourceResolveContext, name: string): any[] {
-  const items: any[] = ctx.bill?.item?.fee_items || []
+/**
+ * 账单「费用类别」归一（用于**按分组**圈定匹配范围）。
+ *
+ * 为什么必须有它：`(6)政府性基金及附加` 下 5 个基金子项在「工商业」与「居民」
+ * 两个分组里**同名同价**（农网还贷 0.02、国家重大水利 0.001969…），只是计费电量
+ * 一个 58.7 万、一个 8,938。旧实现只按名称匹配，于是把两组同名行一起求和：
+ * 农网还贷 11,744.60（工商业）+ 178.76（居民）= 11,923.36（真机错值）。
+ * 分组名本身就是账单原文里的 `(6)…-工商业` / `(6)…-居民`，属于强约束。
+ */
+const catNorm = (v: any) => norm(v).replace(/[（）()]/g, '').replace(/因素/g, '因数')
+
+/** 账单行是否属于该分组（group 空 = 不约束）。 */
+function rowInGroup(rowCategory: unknown, group?: string | null): boolean {
+  const want = catNorm(group)
+  if (!want) return true
+  const got = catNorm(rowCategory)
+  if (!got) return false
+  return got === want || got.includes(want) || want.includes(got)
+}
+
+export function matchBillFeeItems(ctx: SourceResolveContext, name: string, group?: string | null): any[] {
+  const all: any[] = ctx.bill?.item?.fee_items || []
+  // 先按分组圈定，再做名称匹配：跨分组同名（工商业/居民政府基金）绝不允许混加
+  const items = group ? all.filter((it) => rowInGroup(it?.category, group)) : all
   const want = norm(name)
   if (!want) return []
   const parts = (it: any) => [norm(it?.name), norm(String(it?.name || '').split('|').pop())]
@@ -373,19 +395,19 @@ export function fixedBillFeeOf(ctx: SourceResolveContext, name: string): number 
  * || 0` → 文案变成 `= 0 × 21.24% = 4,434.02 元`（真机截图，逻辑自相矛盾）。
  * 统一从这里取，保证「账单原始金额」只有一处口径。
  */
-export function billRawAmountOf(ctx: SourceResolveContext, name: string): number {
-  return resolveFeeRow(ctx, name)
+export function billRawAmountOf(ctx: SourceResolveContext, name: string, group?: string | null): number {
+  return resolveFeeRow(ctx, name, group)
 }
 
 /** 当月市电账单的费用分项求和（mode=fee_row）。 */
-function resolveFeeRow(ctx: SourceResolveContext, name: string): number {
+function resolveFeeRow(ctx: SourceResolveContext, name: string, group?: string | null): number {
   // ① 固定金额分项（基本电费 / 力调电费）**优先**读概况字段。
   //    不能等 fee_items 匹配失败再兜底：账单里可能存在同名的空行
   //    （2026-08 的「功率因数调整」fee=0），会把权威值挡掉。
   const fixed = fixedBillFee(ctx, name)
   if (fixed !== null) return round2(fixed)
-  // ② 其余分项按 fee_items 匹配求和
-  const hit = matchBillFeeItems(ctx, name)
+  // ② 其余分项按「分组 + 名称」匹配求和
+  const hit = matchBillFeeItems(ctx, name, group)
   return hit.length ? round2(hit.reduce((s, it) => s + num(it?.fee), 0)) : 0
 }
 
@@ -535,9 +557,9 @@ export function allocateTimedKwh(
 }
 
 /** 账单里该子项的分时段单价（尖峰/峰/平/谷）。 */
-export function periodRatesOf(ctx: SourceResolveContext, name: string): Record<string, number> {
+export function periodRatesOf(ctx: SourceResolveContext, name: string, group?: string | null): Record<string, number> {
   const rates: Record<string, number> = {}
-  for (const r of matchBillFeeItems(ctx, name)) {
+  for (const r of matchBillFeeItems(ctx, name, group)) {
     const label = String(r?.period || '')
     const p = label.includes('尖') ? 'deep' : label.includes('峰') ? 'peak' : label.includes('平') ? 'flat' : label.includes('谷') ? 'valley' : ''
     if (!p) continue
@@ -560,8 +582,9 @@ export function isTimedFeeItem(ctx: SourceResolveContext, name: string): boolean
 export function resolveTimedItemFee(
   ctx: SourceResolveContext,
   name: string,
+  group?: string | null,
 ): { value: number; allocation: TimedAllocation; rates: Record<string, number>; periods: Array<{ period: string; qty: number; rate: number; fee: number }> } | null {
-  const rates = periodRatesOf(ctx, name)
+  const rates = periodRatesOf(ctx, name, group)
   const isTimed = !!(rates.deep || rates.peak || rates.valley)
   if (!isTimed) return null
   const meters = ctx.timedMeters || []
@@ -587,7 +610,9 @@ export function resolveTenantItemValue(item: any, ctx: SourceResolveContext, rat
   const valueMode = String(item?.value_mode || item?.valueMode || 'apportion').trim()
   if (!key) return 0
   if (category === '市电账单' && mode === 'fee_row') {
-    const fee = resolveFeeRow(ctx, key)
+    // 子项自带的大类（如 `(6)政府性基金及附加-工商业`）就是匹配范围：
+    // 少了它，工商业与居民的同名基金会被一起累加（农网还贷 11744.6+178.76）。
+    const fee = resolveFeeRow(ctx, key, item?.category || item?.source_group || '')
     return valueMode === 'direct_sum' ? fee : round2(fee * (Number(ratio) || 0))
   }
   const v = resolveSourceValue({ category, field: key, mode: mode === 'fee_row' ? 'fee_row' : 'field' }, ctx)

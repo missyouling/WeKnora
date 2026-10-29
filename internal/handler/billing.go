@@ -959,10 +959,10 @@ func (h *BillingHandler) UpdateBillingRecord(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	var req struct {
-		Remark    *string  `json:"remark"`
-		DormFee   *float64 `json:"dorm_fee"`
-		WaterFee  *float64 `json:"water_fee"`
-		TotalFee  *float64 `json:"total_fee"`
+		Remark   *string  `json:"remark"`
+		DormFee  *float64 `json:"dorm_fee"`
+		WaterFee *float64 `json:"water_fee"`
+		TotalFee *float64 `json:"total_fee"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewBadRequestError("invalid request body"))
@@ -1244,8 +1244,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		// 无电量无单价但带金额的固定项(返还类)按分摊比例计算。
 		for _, sg := range groupFeeItemsByName(cat.Rows) {
 			// 开关:新格式「大类|子项名」优先,兼容旧格式(子项名)
-			on := enabled[strings.TrimSpace(cat.Name)+"|"+sg.Name] || enabled[sg.Name]
-			if !on {
+			if !billingItemEnabled(enabled, cat.Name, sg.Name) {
 				continue
 			}
 			// 子项大类严格跟随市电账单结构(零售损益分摊电费归属市场化购电费)
@@ -1387,7 +1386,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		ID: recordID, BillingTenantID: id, Month: req.Month, Status: "generated",
 		TotalKwh: round2(starTotal), LineLoss: lineLoss, Ratio: ratio,
 		BillTotalAmount: billItem.TotalAmount,
-		DormKwh: round2(dormKwh), DormFee: dormFee,
+		DormKwh:         round2(dormKwh), DormFee: dormFee,
 		WaterUsage: round2(waterUsage), WaterFee: waterFee,
 		IndustrialFee: industrialFee, TotalFee: totalFee,
 		CreatedAt: now, UpdatedAt: now,
@@ -1769,7 +1768,8 @@ func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.Billing
 	return rows, round2(total), round2(feeTotal), nil
 }
 
-func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {	var refs []types.BillingTenantMeterRef
+func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {
+	var refs []types.BillingTenantMeterRef
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&refs).Error
 	if len(refs) == 0 {
 		return refs
@@ -1811,6 +1811,29 @@ func (h *BillingHandler) loadRefsByUseUnit(ctx context.Context, useUnit string) 
 	return refs
 }
 
+// billingItemEnabled 判断某「大类 + 子项名」是否参与分摊。
+//
+// 必须**精确键优先**：`(6)政府性基金及附加-工商业|农网还贷` 与
+// `…-居民|农网还贷` 是两个独立开关（前者启用、后者默认关闭），
+// 但 loadEnabledItems 还会写一份「裸子项名」的兼容键。
+// 旧实现写成 `enabled[大类|名] || enabled[名]`：居民行自己的键明明是 false，
+// 也会被裸名（工商业那条）翻成 true，于是居民 8,938 度的同名基金被算进
+// 工商业分摊（真机：农网还贷 11744.60 → 11923.36）。
+// 这里先查精确键，只有完全没有分组键时才回落到裸名（老数据兼容）。
+func billingItemEnabled(enabled map[string]bool, cat, name string) bool {
+	key := strings.TrimSpace(cat) + "|" + name
+	if v, ok := enabled[key]; ok {
+		return v
+	}
+	if v, ok := enabled[billingItemSignature(cat, name)]; ok {
+		return v
+	}
+	if v, ok := enabled[name]; ok {
+		return v
+	}
+	return false
+}
+
 func (h *BillingHandler) loadEnabledItems(ctx context.Context, tenantID string) map[string]bool {
 	var items []types.BillingTenantItem
 	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&items).Error
@@ -1818,14 +1841,46 @@ func (h *BillingHandler) loadEnabledItems(ctx context.Context, tenantID string) 
 	for _, it := range items {
 		m[it.ItemKey] = it.Enabled
 		if strings.Contains(it.ItemKey, "|") {
-			// 新格式「大类|子项名」→ 兼容按子项名查询
-			m[it.ItemKey[strings.LastIndex(it.ItemKey, "|")+1:]] = it.Enabled
+			// 新格式「大类|子项名」→ 兼容按子项名查询。
+			// 裸名只做兜底（先到先得）：同名子项在工商/居民两个分组里各有一条，
+			// 后写覆盖前写会让「是否参与分摊」取决于数据库返回顺序。
+			bare := it.ItemKey[strings.LastIndex(it.ItemKey, "|")+1:]
+			if _, ok := m[bare]; !ok {
+				m[bare] = it.Enabled
+			}
 		} else if strings.TrimSpace(it.Category) != "" {
 			// 旧格式(子项名)→ 兼容按「大类|子项名」查询
 			m[strings.TrimSpace(it.Category)+"|"+it.ItemKey] = it.Enabled
 		}
 	}
 	return m
+}
+
+// billingItemSignature 分摊子项的**去重签名**（不是 item_key）。
+//
+// 为什么需要：同一个费用项在账单里会以多种写法出现，`item_key`（大类|子项名）
+// 因此会生成多条记录，界面上就多出几列同名表头（真机：合计应付右侧多出
+// 「功率因数调…」「功率因数调整」两列，而字段定义里根本没有它们）：
+//
+//	功率因素调整电费|功率因素调整电费
+//	功率因数调整电费|功率因数调整电费    ← 全/半角 + 因素/因数
+//	功率因数调整电费|功率因数调整        ← 少「电费」两字
+//	(6)…-工商业|小型水库移民后期扶持资金（地方） / …(地方)  ← 全/半角括号
+//
+// 签名把全半角括号、空白、因素/因数、其它/其他 归一，并把力调电费的三种写法
+// 折叠成一个规范名。item_key 仍然按原文生成（历史数据/排序不变），只有
+// 「要不要再建一条」用签名判断。
+func billingItemSignature(cat, name string) string {
+	norm := func(v string) string {
+		return strings.NewReplacer(
+			"（", "(", "）", ")", " ", "", "\t", "", "因素", "因数", "其它", "其他",
+		).Replace(strings.TrimSpace(v))
+	}
+	n := norm(name)
+	if strings.Contains(n, "功率因数调整") {
+		n = "功率因数调整电费"
+	}
+	return norm(cat) + "|" + n
 }
 
 // ensureDefaultItems 首次生成账单时按账单 FeeItems 自动初始化分摊子项(子项级)：
@@ -1842,7 +1897,13 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 		if name == "" {
 			return
 		}
-		// 按「大类|子项名」区分同名子项(如工商/居民政府基金同名),保证 item_key 唯一
+		// 先按签名去重（同一费用项的不同写法只留一条），再按「大类|子项名」区分
+		// 工商/居民政府基金这类**真同名**子项。
+		sig := billingItemSignature(cat, name)
+		if seen[sig] {
+			return
+		}
+		seen[sig] = true
 		key := strings.TrimSpace(cat) + "|" + name
 		if seen[key] {
 			return
@@ -1874,6 +1935,7 @@ func (h *BillingHandler) ensureDefaultItems(ctx context.Context, tenantID string
 	for i, r := range rows {
 		key := strings.TrimSpace(r.cat) + "|" + r.name
 		enabled[key] = r.on
+		enabled[billingItemSignature(r.cat, r.name)] = r.on
 		enabled[r.name] = r.on
 		items = append(items, types.BillingTenantItem{
 			ID: uuid.NewString(), BillingTenantID: tenantID,
@@ -1907,6 +1969,12 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 		if _, ok := enabled[key]; ok {
 			return
 		}
+		// 同一费用项的不同写法（因素/因数、全半角括号、力调三种叫法）不再新建：
+		// 否则每次生成账单都会往 billing_tenant_items 里补一条重复记录，
+		// 最终表现是表头多出若干同名但字段定义里没有的列。
+		if _, ok := enabled[billingItemSignature(cat, name)]; ok {
+			return
+		}
 		on := !strings.Contains(cat, "居民") && !strings.Contains(cat, "目录电费")
 		created = append(created, types.BillingTenantItem{
 			ID: uuid.NewString(), BillingTenantID: tenantID,
@@ -1919,6 +1987,7 @@ func (h *BillingHandler) syncMissingItems(ctx context.Context, tenantID string, 
 			FieldEnabled: true,
 		})
 		enabled[key] = on
+		enabled[billingItemSignature(cat, name)] = on
 		enabled[name] = on
 		sort++
 	}
@@ -2007,8 +2076,8 @@ func (h *BillingHandler) sumRefFee(ctx context.Context, refs []types.BillingTena
 }
 
 type feeCatGroup struct {
-	Name  string
-	Rows  []types.UtilityBillFeeItem
+	Name string
+	Rows []types.UtilityBillFeeItem
 }
 
 // groupFeeItems 按费用类别分组并保持账单顺序。

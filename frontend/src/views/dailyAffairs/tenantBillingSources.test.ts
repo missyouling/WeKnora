@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseFieldSource, resolveSourceValue, resolveTenantItemValue } from './tenantBillingSources'
+import { parseFieldSource, resolveSourceValue, resolveTenantItemValue, matchBillFeeItems, billRawAmountOf } from './tenantBillingSources'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const read = (f: string) => readFileSync(join(here, f), 'utf8')
@@ -233,4 +233,48 @@ test('费用分项匹配：同一分组内按名称取值，不受数组顺序�
   for (const [name, fee] of expect) {
     assert.equal(resolveSourceValue({ category: '市电账单', field: name, mode: 'fee_row' }, c), fee, name)
   }
+})
+
+// ---- 第 14 轮：政府性基金「工商业 / 居民」分组隔离 ----
+
+test('分摊子项按分组取值：工商业基金不得混入居民同名行', () => {
+  const ratio = 0.212356
+  const c = ctx({
+    bill: {
+      item: {
+        total_kwh: 596168,
+        fee_items: [
+          { category: '(6)政府性基金及附加-工商业', name: '农网还贷', qty: 587230, rate: 0.02, fee: 11744.6 },
+          { category: '(6)政府性基金及附加-居民', name: '农网还贷', qty: 8938, rate: 0.02, fee: 178.76 },
+          { category: '(6)政府性基金及附加-工商业', name: '国家重大水利工程建设基金', qty: 587230, rate: 0.001969, fee: 1156.26 },
+          { category: '(6)政府性基金及附加-居民', name: '国家重大水利工程建设基金', qty: 8938, rate: 0.001969, fee: 16.4 },
+        ],
+      },
+    },
+  })
+  const grp = '(6)政府性基金及附加-工商业'
+  // 分组内只有 1 行；不带分组时才会把两行加在一起（旧 bug 的形态）
+  assert.equal(matchBillFeeItems(c, '农网还贷', grp).length, 1)
+  assert.equal(matchBillFeeItems(c, '农网还贷').length, 2)
+  assert.equal(billRawAmountOf(c, '农网还贷', grp), 11744.6)
+  assert.equal(billRawAmountOf(c, '农网还贷'), 11923.36)
+
+  const item = {
+    category: grp, item_name: '农网还贷', source_key: '农网还贷',
+    source_category: '市电账单', source_mode: 'fee_row', value_mode: 'apportion',
+  }
+  assert.ok(Math.abs(resolveTenantItemValue(item, c, ratio) - 11744.6 * ratio) < 0.005,
+    `分摊后应为 11744.6 × ${ratio}`)
+
+  const water = { ...item, item_name: '国家重大水利工程建设基金', source_key: '国家重大水利工程建设基金' }
+  assert.ok(Math.abs(resolveTenantItemValue(water, c, ratio) - 1156.26 * ratio) < 0.005)
+})
+
+test('六同步：列表列按归一名称去重，重复力调子项不得追加成额外列', () => {
+  const billing = read('TenantBilling.vue')
+  assert.match(billing, /const itemSignature = /, '必须有子项签名归一')
+  assert.match(billing, /if \(seenNames\.has\(itemSignature\(itemName\)\)\) continue/,
+    '追加列前必须按签名去重（否则表头比字段配置多列）')
+  assert.match(billing, /n\.includes\('功率因数调整'\) \? '功率因数调整电费' : n/,
+    '力调电费的三种写法必须折叠成同一签名')
 })

@@ -261,6 +261,28 @@ const tenantEnabledItems = computed(() =>
   tenantItems.value.filter((it: any) => it && it.field_enabled !== false),
 )
 
+/**
+ * 分摊子项名称归一（六同步去重用）。
+ *
+ * 「功率因数调整电费 / 功率因数调整 / 功率因素调整电费」在库里是三条不同
+ * `item_key` 的记录（大类、名称都不同），但它们指同一个费用项。旧实现只按
+ * `item_key` 去重，于是 subs 里有的那一列照常出，另外两条被当成「清单设置里
+ * 新开、字段定义还没保存」而**追加到表头末尾** —— 列表比字段配置多出 2 列
+ * （真机：合计应付右侧多两个 -598.43）。
+ * 归一后再比较，这三个名字折叠成同一个签名。
+ */
+const normItemName = (v: any) => String(v ?? '').trim()
+  .replace(/[（(]/g, '(').replace(/[）)]/g, ')')
+  .replace(/\s+/g, '')
+  .replace(/因素/g, '因数')
+  .replace(/其它/g, '其他')
+  .toLowerCase()
+/** 同一费用项的规范签名（力调电费的三种写法折叠为一种）。 */
+const itemSignature = (v: any) => {
+  const n = normItemName(v)
+  return n.includes('功率因数调整') ? '功率因数调整电费' : n
+}
+
 /** 参与分摊的子项（金额折算口径）。 */
 const tenantApportionItems = computed(() =>
   tenantEnabledItems.value.filter((it: any) => it.enabled !== false),
@@ -380,13 +402,18 @@ const activeColDefs = computed<ColDef[]>(() => {
   // 租户视角：清单设置里新开启、但「字段定义」还没保存过的分摊子项，
   // 追加在末尾（字段定义面板的合并逻辑同样把它们追加在末尾 → 两端一致）。
   // 不追加会让用户在清单设置里勾完发现列表没反应，必须先回设置抽屉保存一次。
+  const seenNames = new Set(out.map((c) => itemSignature(c.label)))
   for (const it of tenantEnabledItems.value) {
     const key = tenantItemColKey(it)
     if (!key || seen.has(key)) continue
+    const itemName = String(it.item_name || it.itemName || it.source_key || '分摊项')
+    // 与已出列的同名项（含同义写法）重复 → 不追加，否则表头会比字段配置多列
+    if (seenNames.has(itemSignature(itemName))) continue
+    seenNames.add(itemSignature(itemName))
     seen.add(key)
     out.push({
       key,
-      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      label: itemName,
       default: true,
       w: '1fr',
       width: Number(it.width) || undefined,
@@ -1072,7 +1099,9 @@ const buildRows = () => {
         // 分时项（零售交易电费 / 零售输配电费…）：按「逐表逐时段基准电量 × 时段单价」算。
         // 旧实现是「账单整月金额 × 分摊比例」，把尖峰高价电与谷段低价电按同一比例摊，
         // 2026-09 持睿汽车因此算成 54,369.99（标准 54,422.79）。
-        const timed = participating && key ? resolveTimedItemFee(ctx, key) : null
+        // 分组（item.category）参与匹配：工商业/居民政府基金同名，靠它隔离
+        const grp = String(it?.category || '')
+        const timed = participating && key ? resolveTimedItemFee(ctx, key, grp) : null
         const v = !participating ? 0 : timed ? timed.value : resolveTenantItemValue(it, ctx, ratio)
         base[tenantItemColKey(it)] = v
         total += v
@@ -1094,7 +1123,7 @@ const buildRows = () => {
         // 其余分项一律 undefined → `Number(undefined) || 0` → 文案变成
         // 「= 0 × 21.24% = 4,434.02 元」（真机截图）：乘数是 0 却得出非零金额。
         // 现在统一走 billRawAmountOf（与列表取值同一个 resolveFeeRow）。
-        const billAmount = participating && key ? billRawAmountOf(ctx, key) : 0
+        const billAmount = participating && key ? billRawAmountOf(ctx, key, grp) : 0
         itemTips[tenantItemColKey(it)] = tenantItemTip({
           itemName: String(it.item_name || key),
           sourceCategory: it.source_category || '市电账单',
@@ -1490,7 +1519,7 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
       // （resolveTimedItemFee → 逐表逐时段基准电量 × 时段单价）。
       // 旧实现对分时项也走「账单分时行 × 比例」，于是 PDF 打出的是
       // 5228.63 / 2279.68 这类旧值，与列表的 5085.43 / 2217.25 对不上。
-      const timed = resolveTimedItemFee(ctx, key)
+      const timed = resolveTimedItemFee(ctx, key, String(it.category || ''))
       if (timed) {
         const name = label(cat, String(it.item_name || key).trim())
         let subQty = 0
@@ -1506,7 +1535,7 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
         rows.push([`${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee)])
         continue
       }
-      const billRows = matchBillFeeItems(ctx, key)
+      const billRows = matchBillFeeItems(ctx, key, String(it.category || ''))
       if (billRows.length) {
         // 命中账单行：保留尖/峰/平/谷 分时段明细，逐行按比例折算
         for (const br of billRows) {

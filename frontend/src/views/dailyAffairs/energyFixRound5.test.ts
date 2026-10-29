@@ -108,7 +108,7 @@ test('固定金额分项优先读概况字段（防止全 0 的同名占位行�
   const fn = src.slice(src.indexOf('function resolveFeeRow'), src.indexOf('function resolveFeeRow') + 700)
   // 必须先判 fixedBillFee，再走 fee_items 匹配
   const iFixed = fn.indexOf('fixedBillFee(ctx, name)')
-  const iMatch = fn.indexOf('matchBillFeeItems(ctx, name)')
+  const iMatch = fn.indexOf('matchBillFeeItems(ctx, name, group)')
   assert.ok(iFixed >= 0 && iMatch >= 0, '缺少两档判定')
   assert.ok(iFixed < iMatch, '固定金额分项必须优先：2026-08 存在 fee=0 的「功率因数调整」占位行会挡住 pf_adjust_amount')
 })

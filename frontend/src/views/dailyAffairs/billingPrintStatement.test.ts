@@ -92,7 +92,8 @@ test('浮窗：未参与分摊的项明确写「本行金额记 0」', () => {
 test('打印细项表：分时子项走 resolveTimedItemFee（不再按账单行 × 比例）', () => {
   const billing = read('TenantBilling.vue')
   const feeTable = billing.slice(billing.indexOf('function feeTableOf'), billing.indexOf('function elecTableOf'))
-  assert.match(feeTable, /resolveTimedItemFee\(ctx, key\)/, '打印细项必须复用分时核算引擎')
+  assert.match(feeTable, /resolveTimedItemFee\(ctx, key, String\(it\.category \|\| ''\)\)/,
+    '打印细项必须复用分时核算引擎，且按分组圈定匹配范围')
   // 分时分支必须逐段出行（时段 / 基准电量 / 单价 / 金额）
   assert.match(feeTable, /for \(const p of timed\.periods\)/)
   assert.match(feeTable, /num2\(p\.qty\)/, '计费数量必须是基准电量')
@@ -108,8 +109,8 @@ test('列表与打印共用「账单原始金额」唯一实现', () => {
   const sources = read('tenantBillingSources.ts')
   assert.match(sources, /export function billRawAmountOf/)
   const billing = read('TenantBilling.vue')
-  assert.match(billing, /const billAmount = participating && key \? billRawAmountOf\(ctx, key\) : 0/,
-    '浮窗账单原始金额必须真的去账单里取（旧实现传 undefined → 0 × 比例）')
+  assert.match(billing, /const billAmount = participating && key \? billRawAmountOf\(ctx, key, grp\) : 0/,
+    '浮窗账单原始金额必须真的去账单里取（旧实现传 undefined → 0 × 比例），且按分组圈定')
   // 不允许再退回「只传固定金额分项」的老写法
   assert.ok(!/billAmount: fixed !== null \? fixed : undefined/.test(billing))
 })
