@@ -141,14 +141,14 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
-import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
   TENANT_TOTAL_FIELD,
   subsOfGroup,
   tenantGroupKey,
 } from './billingFieldGroups'
-import { buildRowTips, sourceFieldTip, tenantItemTip } from './tenantBillingTips'
+import { buildRowTips, sourceFieldTip, tenantItemTip, tenantTimedTip } from './tenantBillingTips'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -725,6 +725,14 @@ const flattenMeterRecords = (res: any): any[] => {
         usage: Number(it.usage) || 0,
         unit_price: Number(it.unit_price ?? meter?.default_unit_price) || 0,
         amount: Number(it.amount) || 0,
+        // 分时表逐段抄见电量：分时电费要按「逐表逐时段基准电量 × 时段单价」算，
+        // 只有整月 usage 是算不出来的（见 tenantBillingSources.allocateTimedKwh）
+        period_usage: {
+          deep: round2Num(((Number(it.deep_curr) || 0) - (Number(it.deep_prev) || 0)) * (Number(meter?.rate) > 0 ? Number(meter.rate) : 1)),
+          peak: round2Num(((Number(it.peak_curr) || 0) - (Number(it.peak_prev) || 0)) * (Number(meter?.rate) > 0 ? Number(meter.rate) : 1)),
+          flat: round2Num(((Number(it.flat_curr) || 0) - (Number(it.flat_prev) || 0)) * (Number(meter?.rate) > 0 ? Number(meter.rate) : 1)),
+          valley: round2Num(((Number(it.valley_curr) || 0) - (Number(it.valley_prev) || 0)) * (Number(meter?.rate) > 0 ? Number(meter.rate) : 1)),
+        },
       })
     }
   }
@@ -858,16 +866,37 @@ const tenantWater = (owner: string, month: string, dormOnly = false) => {
  * 所有数据集都是列表已经加载过的（市电账单 / 光伏账单 / 电/气抄表 / 水表读数），
  * 直接用同一份内存数据算，避免后端再聚合一版造成口径漂移。
  */
-const sourceCtxOf = (month: string, bill: any, solarArr: any[]): SourceResolveContext => ({
-  month,
-  tenantName: useUnit.value,
-  bill,
-  solarItems: solarArr,
-  elecRows: elecRows.value,
-  waterMeters: waterMeters.value,
-  waterReadingMap: waterReadingMap.value,
-  gasRows: gasRows.value,
-})
+const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): SourceResolveContext => {
+  // 分时电费的两项输入：该租户当月分时表的逐段抄见电量、当月差额电量 ΔQ
+  const timedMeters = elecRows.value
+    .filter((r: any) => r.month === month && r.meter_type === 'time' && String(r.use_unit || '').trim() === useUnit.value)
+    .map((r: any) => ({ name: String(r.meter_alias || ''), usage: r.period_usage || {} }))
+  // ΔQ 优先取已生成账单的固话值；未生成时用「星达工业分表合计 − 租户分时表合计」现算，
+  // 否则那些月份的差额分摊会凭空少掉（分时电费整体偏低）。
+  let deltaQ = Number(rec?.line_loss) || 0
+  if (!rec) {
+    const starUsage = elecRows.value
+      .filter((r: any) => r.month === month && r.use_unit === OWNER_UNIT && r.meter_type !== 'time' && r.meter_kind !== 'dorm')
+      .reduce((s: number, r: any) => s + (Number(r.usage) || 0), 0)
+    const subUsage = timedMeters.reduce(
+      (s: number, m: any) => s + Object.values(m.usage || {}).reduce((a: number, b: any) => a + (Number(b) || 0), 0),
+      0,
+    )
+    if (starUsage > 0 && subUsage > 0) deltaQ = Math.round((starUsage - subUsage) * 100) / 100
+  }
+  return {
+    month,
+    tenantName: useUnit.value,
+    bill,
+    solarItems: solarArr,
+    elecRows: elecRows.value,
+    waterMeters: waterMeters.value,
+    waterReadingMap: waterReadingMap.value,
+    gasRows: gasRows.value,
+    timedMeters,
+    deltaQ,
+  }
+}
 
 /** 当月分摊比例：已生成账单用固化值；未生成按月内星达分时总电量 ÷ 账单电量估算。 */
 const ratioOfMonth = (month: string, bill: any, rec: any): number => {
@@ -1030,34 +1059,39 @@ const buildRows = () => {
       // 该租户的分摊子项：列与值同源（tenantEnabledItems），不可能出现「有列无数」。
       // 未开启「参与分摊」的子项照常出列，但金额记 0 —— 让它显式显示为「本项未计入」，
       // 而不是把列隐藏掉让人无从核对。
-      const ctx = sourceCtxOf(month, bill, solarArr)
+      const ctx = sourceCtxOf(month, bill, solarArr, rec)
       const ratio = ratioOfMonth(month, bill, rec)
       let total = 0
       const itemTips: Record<string, string> = {}
       for (const it of tenantEnabledItems.value) {
         const participating = it.enabled !== false
-        const v = participating ? resolveTenantItemValue(it, ctx, ratio) : 0
+        const key = String(it?.source_key || it?.item_name || '').trim()
+        // 分时项（零售交易电费 / 零售输配电费…）：按「逐表逐时段基准电量 × 时段单价」算。
+        // 旧实现是「账单整月金额 × 分摊比例」，把尖峰高价电与谷段低价电按同一比例摊，
+        // 2026-09 持睿汽车因此算成 54,369.99（标准 54,422.79）。
+        const timed = participating && key ? resolveTimedItemFee(ctx, key) : null
+        const v = !participating ? 0 : timed ? timed.value : resolveTenantItemValue(it, ctx, ratio)
         base[tenantItemColKey(it)] = v
         total += v
-        const key = String(it?.source_key || it?.item_name || '').trim()
-        // 分时项：把账单里的尖/峰/平/谷 明细带进提示，用户能逐段核对
-        const billRows = participating && key ? matchBillFeeItems(ctx, key) : []
-        const periods = billRows
-          .filter((r) => String(r.period || '').trim())
-          .map((r) => ({
-            period: String(r.period || ''),
-            qty: round2Num((Number(r.qty) || 0) * ratio),
-            rate: Number(r.rate) || 0,
-            fee: round2Num((Number(r.fee) || 0) * ratio),
-          }))
+        if (timed) {
+          itemTips[tenantItemColKey(it)] = tenantTimedTip({
+            itemName: String(it.item_name || key),
+            sourceCategory: it.source_category || '市电账单',
+            deltaQ: timed.allocation.deltaQ,
+            totalUsage: timed.allocation.totalUsage,
+            totalBill: timed.allocation.totalBill,
+            periods: timed.periods,
+            value: v,
+          })
+          continue
+        }
         // 固定金额项没有分时行，直接用概况字段值写「金额 × 比例」
         const fixed = participating && key ? fixedBillFeeOf(ctx, key) : null
         itemTips[tenantItemColKey(it)] = tenantItemTip({
           itemName: String(it.item_name || key),
           sourceCategory: it.source_category || '市电账单',
-          billAmount: fixed !== null ? fixed : (periods.length ? periods.reduce((s, p) => s + p.fee, 0) : undefined),
+          billAmount: fixed !== null ? fixed : undefined,
           ratio,
-          periods: periods.length ? periods : undefined,
           value: v,
           participating,
         })

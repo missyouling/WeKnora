@@ -749,7 +749,10 @@ const emptyForm = (): MeterForm => ({
   deepPrev: 0, deepCurr: 0, peakPrev: 0, peakCurr: 0,
   flatPrev: 0, flatCurr: 0, valleyPrev: 0, valleyCurr: 0,
   unitPrice: 0, subsidy: '', remark: '',
-  garbageFee: props.category === 'water' ? 13 : 0, secondaryWaterFee: 0, sewageFee: 0,
+  // 水费三项附加费默认全 0：旧实现把「垃圾处置费」预填 13 元/套，
+  // 新增记录时用户没注意就被算进金额（金额 = 用量×单价 + 三项附加）。
+  // 需要时手工填，编辑已有记录仍按 saved 值回显。
+  garbageFee: 0, secondaryWaterFee: 0, sewageFee: 0,
 })
 const form = ref<MeterForm>(emptyForm())
 // 补差输入过滤:仅保留数字、负号(仅开头)、小数点(仅一个),直接输入 -0.16 不被吞

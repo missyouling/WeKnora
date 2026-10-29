@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"math"
 	"strings"
 	"time"
 
@@ -1284,8 +1285,13 @@ func computeMeterRecord(r *types.UtilityMeterRecord) {
 	computeMeterRecordWithRates(r, nil)
 }
 
+// round2 四舍五入到分。
+//
+// 必须用 math.Round：旧实现 `int64(v*100+0.5)` 对**负数**是向零截断，
+// -276.14 → -27613.99 → 截断后 -276.13（少 1 分），
+// 分摊/加减电量全是负数，于是分时电费整体偏大（真机：计费电量合计多 0.04 度）。
 func round2(v float64) float64 {
-	return float64(int64(v*100+0.5)) / 100
+	return math.Round(v*100) / 100
 }
 // electricityDefaultGroupFields 返回电费某一分组的默认字段集。
 func electricityDefaultGroupFields(group string) []utilityFieldDef {

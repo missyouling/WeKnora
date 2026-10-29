@@ -174,6 +174,34 @@ export function tenantItemTip(opts: {
   ].join('\n')
 }
 
+/**
+ * 分时子项浮窗：逐时段「基准电量 × 时段单价 = 时段电费」+ 四段合计。
+ *
+ * 旧文案是「合计 = 54,369.99 × 21.24% = 54,369.99 元」—— 分母写成金额、
+ * 比例又乘在金额上，自相矛盾且与标准核算表对不上。分时电费的本质是
+ * **电量 × 单价**，比例法根本不适用，所以这里把逐段的电量构成写清楚：
+ * 抄见 + 损耗 + 加减 = 计费电量，再加差额分摊 = 基准电量。
+ */
+export function tenantTimedTip(opts: {
+  itemName: string
+  sourceCategory?: string
+  deltaQ: number
+  totalUsage: number
+  totalBill: number
+  periods: Array<{ period: string; qty: number; rate: number; fee: number }>
+  value: number
+}): string {
+  const { sourceCategory, deltaQ, totalUsage, totalBill, periods, value } = opts
+  const lines = periods.map((p) => `  ${p.period}：${n2(p.qty)} 度 × ${p.rate} = ${n2(p.fee)} 元`)
+  return [
+    `「${opts.itemName}」来源：${sourceCategory || '市电账单'}（分时电费）`,
+    `计算方式：基准电量 = 抄见电量 + 损耗 + 加减电量 + 差额分摊电量`,
+    `  三表抄见合计 ${n2(totalUsage)} 度，计费电量合计 ${n2(totalBill)} 度，差额电量 ${n2(deltaQ)} 度`,
+    ...lines,
+    `合计 = ${n2(value)} 元（四段基准电量 × 各段单价之和，不乘分摊比例）`,
+  ].join('\n')
+}
+
 /** 跨分类引用字段的提示。 */
 export function sourceFieldTip(opts: {
   category: string

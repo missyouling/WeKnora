@@ -79,22 +79,36 @@ func (h *BillingHandler) EnsureBillingSchema() {
 	if h == nil || h.db == nil {
 		return
 	}
+	addedFieldEnabled := false
 	for _, field := range []string{"SourceCategory", "SourceKey", "SourceMode", "ValueMode", "Width", "FieldEnabled"} {
 		if h.db.Migrator().HasColumn(&types.BillingTenantItem{}, field) {
 			continue
 		}
 		if err := h.db.Migrator().AddColumn(&types.BillingTenantItem{}, field); err != nil {
 			logger.Warnf(context.Background(), "add billing_tenant_items.%s failed: %v", field, err)
+			continue
+		}
+		if field == "FieldEnabled" {
+			addedFieldEnabled = true
 		}
 	}
-	// FieldEnabled（启用字段）必须**回填为 true**：gorm 给新 bool 列的默认值是
-	// false，存量行的语义是「以前没有这一维，列一直是显示的」，若不回填，
-	// 升级后所有分摊子项列会一次性从列表里消失——比 bug 更像数据丢失。
-	// 用 `IS NOT TRUE` 而不是 `= false`：兼顾 NULL 与重复执行（幂等）。
-	if err := h.db.Exec(
-		"UPDATE billing_tenant_items SET field_enabled = true WHERE field_enabled IS NOT TRUE OR field_enabled IS NULL",
+	// FieldEnabled（启用字段）**只在列刚加出来时**回填一次 true：
+	// gorm 新 bool 列的默认值是 false，存量行的语义是「以前没有这一维，列一直显示」，
+	// 不回填会让升级后所有分摊子项列一次性消失。
+	//
+	// 绝不能每次启动都跑 `WHERE field_enabled IS NOT TRUE`：那会把用户显式关掉的
+	// 「启用字段」在每次重启 / 每次部署后**重新打开**（真机：重启一次，
+	// 36 个分摊子项全部冒出来，费用清单表头从 34 列涨到 51 列）。
+	if addedFieldEnabled {
+		if err := h.db.Exec(
+			"UPDATE billing_tenant_items SET field_enabled = true WHERE field_enabled IS NOT TRUE OR field_enabled IS NULL",
+		).Error; err != nil {
+			logger.Warnf(context.Background(), "backfill billing_tenant_items.field_enabled failed: %v", err)
+		}
+	} else if err := h.db.Exec(
+		"UPDATE billing_tenant_items SET field_enabled = true WHERE field_enabled IS NULL",
 	).Error; err != nil {
-		logger.Warnf(context.Background(), "backfill billing_tenant_items.field_enabled failed: %v", err)
+		logger.Warnf(context.Background(), "null-backfill billing_tenant_items.field_enabled failed: %v", err)
 	}
 }
 
@@ -1143,111 +1157,60 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		billBase = 0
 	}
 
-	// 3.1 市电账单四时段线损/加减（电量明细表），用于持睿工业分表计费电量折算
-	billLineLoss := make(map[string]float64, 4)
+	// 3.1 分时电量分摊（计费电量 → 差额分摊 → 基准电量）
+	//
+	// 口径见 billing_timed.go：计费电量 = 抄见 + 变损 + 线损 + 加减（账单电量明细，
+	// 整体落在第一块表），差额电量按各表各时段计费电量占比分摊，基准电量参与分时电费。
+	// 旧实现把账单损耗按 lossRatio 缩水后再分摊，分时电费因此对不上人工核算表
+	// （2026-09 持睿：零售交易电费算成 54,369.99，标准表是 54,422.79）。
+	billLoss := make(map[string]float64, 4)
 	billAdjust := make(map[string]float64, 4)
 	for _, mr := range billItem.MeterReadings {
 		p := meterPeriodByType(mr.MeterType)
 		if p == "" {
 			continue
 		}
-		billLineLoss[p] = mr.LineLoss
-		billAdjust[p] = mr.Adjust
+		// 变损与线损是两条独立列，电量明细里都体现在计费电量上
+		billLoss[p] = round2(mr.TransLoss + mr.LineLoss)
+		billAdjust[p] = round2(mr.Adjust)
 	}
-	residKwh := 0.0
-	for _, rr := range billItem.ResidentialReadings {
-		residKwh += rr.Kwh
-	}
-	// 损耗/加减折算比例（与手工口径一致）：(星达分表总-宿舍) / (市电本期电量-居民定比电量)
-	lossRatio := ratio
-	if denom := billItem.TotalKwh - residKwh; denom > 0 && billBase > 0 {
-		lossRatio = billBase / denom
-	}
-	// 分时计费电量 = 三表抄见用电量 + 各时段线损折算 + 各时段加减折算
-	subBill := make(map[string]float64, 4)
-	for _, p := range []string{"deep", "peak", "flat", "valley"} {
-		subBill[p] = round2(subPeriod[p] + billLineLoss[p]*lossRatio + billAdjust[p]*lossRatio)
-	}
-	// 差额电量（星达总-三表合计）按各时段计费电量占分摊基数的比例分摊，末时段补差
-	billPeriod := make(map[string]float64, 4)
-	diffAssigned := 0.0
-	if subTotal > 0 && billBase > 0 {
-		ps := []string{"deep", "peak", "flat", "valley"}
-		for i, p := range ps {
-			if i == len(ps)-1 {
-				billPeriod[p] = round2(subBill[p] + (lineLoss - diffAssigned))
-				continue
-			}
-			d := lineLoss * subBill[p] / billBase
-			billPeriod[p] = round2(subBill[p] + d)
-			diffAssigned += d
-		}
-	} else {
-		// 无工业分表读数时直接使用星达分表分时电量
+	timedUsages := make([]timedMeterUsage, 0, len(subRows))
+	for _, mr := range subRows {
+		usage := make(map[string]float64, 4)
 		for _, p := range []string{"deep", "peak", "flat", "valley"} {
-			billPeriod[p] = round2(starPeriod[p])
+			pr := mr.Periods[p]
+			usage[p] = round2((pr.Curr - pr.Prev) * mr.Rate)
 		}
+		timedUsages = append(timedUsages, timedMeterUsage{Key: mr.MeterID, Name: mr.Name, Rate: mr.Rate, Usage: usage})
+	}
+	timed := allocateTimedKwh(timedUsages, billLoss, billAdjust, lineLoss)
+	// 各时段基准电量（参与分时电费计算的电量）：用**未取整**值，
+	// 取整后乘单价会在四段累加时产生 1 分误差
+	billPeriod := make(map[string]float64, 4)
+	for _, p := range []string{"deep", "peak", "flat", "valley"} {
+		billPeriod[p] = timed.PeriodBaseExact[p]
 	}
 
 	// 3.2 电量明细卡片:分时电表×时段(起度/止度/倍率/使用电量/损耗/加减电量/计费电量/差额分摊电量)
-	// 折算总量(线损折算、加减折算、差额分摊)按各时段各表使用电量占比分摊到表行,末时段补差保证合计一致。
+	//
+	// 直接取 3.1 的分摊结果：卡片与费用必须同源，否则「明细合计 ≠ 分时电费」
+	// （旧实现这里按 billBase×用量占比 另算一套计费电量，卡片上 5,325.87、
+	// 标准表 4,927，两套账谁也对不上）。
 	now := timeNowUTC()
 	recordID := uuid.NewString()
 	var meterRows []types.BillingRecordMeter
 	meterSort := 0
-	if len(subRows) > 0 {
-		ps := []string{"deep", "peak", "flat", "valley"}
-		// 预汇总各表各时段使用电量
-		usageOf := make(map[string]map[string]float64, len(subRows))
-		totalUsage := 0.0
-		for _, mr := range subRows {
-			usageOf[mr.MeterID] = make(map[string]float64, 4)
-			for _, p := range ps {
-				pr := mr.Periods[p]
-				usageOf[mr.MeterID][p] = round2((pr.Curr - pr.Prev) * mr.Rate)
-				totalUsage += usageOf[mr.MeterID][p]
-			}
-		}
-		// 各时段已分摊差额(末时段补差)
-		for _, p := range ps {
-			subBillP := 0.0
-			subUsageP := 0.0
-			for _, mr := range subRows {
-				subUsageP += usageOf[mr.MeterID][p]
-			}
-			if subUsageP <= 0 {
-				continue
-			}
-			subBillP = round2(subUsageP + billLineLoss[p]*lossRatio + billAdjust[p]*lossRatio)
-			diffTotal := round2(billPeriod[p] - subBillP)
-			assigned := 0.0
-			for _, mr := range subRows {
-				u := usageOf[mr.MeterID][p]
-				share := u / subUsageP
-				lossShare := round2(billLineLoss[p] * lossRatio * share)
-				adjShare := round2(billAdjust[p] * lossRatio * share)
-				// 计费电量 = (星达分表总电量 - 宿舍电量) 按各表各时段使用电量占比分摊,
-				// 与费用计算计费基数(billBase)口径一致
-				bill := 0.0
-				if totalUsage > 0 {
-					bill = round2(billBase * u / totalUsage)
-				}
-				var diff float64
-				if mr.MeterID == subRows[len(subRows)-1].MeterID {
-					diff = round2(diffTotal - assigned)
-				} else {
-					diff = round2(diffTotal * share)
-					assigned += diff
-				}
-				pr := mr.Periods[p]
-				meterRows = append(meterRows, types.BillingRecordMeter{
-					ID: uuid.NewString(), RecordID: recordID, MeterName: mr.Name,
-					Period: periodLabel(p), Prev: pr.Prev, Curr: pr.Curr, Rate: mr.Rate,
-					Usage: u, LineLoss: lossShare, Adjust: adjShare,
-					BillKwh: bill, DiffKwh: diff, Sort: meterSort, CreatedAt: now,
-				})
-				meterSort++
-			}
+	for _, mr := range subRows {
+		rows := timed.Rows[mr.MeterID]
+		for _, r := range rows {
+			pr := mr.Periods[r.Period]
+			meterRows = append(meterRows, types.BillingRecordMeter{
+				ID: uuid.NewString(), RecordID: recordID, MeterName: mr.Name,
+				Period: periodLabel(r.Period), Prev: pr.Prev, Curr: pr.Curr, Rate: mr.Rate,
+				Usage: r.Usage, LineLoss: r.Loss, Adjust: r.Adjust,
+				BillKwh: r.BillKwh, DiffKwh: r.DiffKwh, Sort: meterSort, CreatedAt: now,
+			})
+			meterSort++
 		}
 	}
 
@@ -1333,7 +1296,7 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
 						Category: catName, Name: sg.Name, Period: periodLabel(p),
-						Qty: billPeriod[p], Rate: rate, Fee: f, Sort: sortNo, CreatedAt: now,
+						Qty: round2(billPeriod[p]), Rate: rate, Fee: f, Sort: sortNo, CreatedAt: now,
 					})
 					sortNo++
 					fee += f

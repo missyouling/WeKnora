@@ -137,6 +137,14 @@ export interface SourceResolveContext {
   waterReadingMap: Map<string, any>
   /** 气费核算明细行 */
   gasRows: any[]
+  /**
+   * 该租户当月分时电表的逐段抄见电量（meter_type=time 的表）。
+   * 分时电费（零售交易电费 / 零售输配电费等）必须按「逐表逐时段基准电量 × 时段单价」
+   * 计算，光有整月合计金额是算不出来的。
+   */
+  timedMeters?: Array<{ name: string; usage: Record<string, number> }>
+  /** 该月差额电量 ΔQ = 星达分表总电量 − 各分表抄见合计（取自已生成账单 line_loss）。 */
+  deltaQ?: number
 }
 
 /** 单价类字段：不能直接求和，按 金额÷用量 加权。 */
@@ -422,6 +430,135 @@ export function resolveSourceValue(src: FieldSource, ctx: SourceResolveContext):
  *   · 其它分类字段 + value_mode=direct_sum → 直接取「当月 + 使用单位=该租户」的合计，
  *     不再乘比例（水/气/电核算天然按户归属，再乘比例会重复折算）。
  */
+// ---- 分时电费：逐表逐时段基准电量 × 时段单价 ----
+//
+// 与后端 internal/handler/billing_timed.go **同一口径**（改一处必须改另一处）：
+//   计费电量 c = 抄见 + 变损 + 线损 + 加减（账单电量明细，整体落在第一块表）
+//   差额分摊 d = ΔQ × c / C总
+//   基准电量 b = c + d，分时电费 = Σ b × 时段单价
+//
+// 为什么不能用「账单整月金额 × 分摊比例」：2026-09 持睿汽车按比例算得 54,369.99，
+// 标准核算表是 54,422.79（差 52.8 元）。比例法把「尖峰高价电」和「谷段低价电」
+// 按同一个比例摊，本质上丢掉了分时结构。
+export const TIMED_PERIODS = ['deep', 'peak', 'flat', 'valley'] as const
+export const TIMED_PERIOD_LABELS: Record<string, string> = { deep: '尖峰', peak: '峰', flat: '平', valley: '谷' }
+
+export interface TimedMeterRow {
+  period: string
+  usage: number
+  loss: number
+  adjust: number
+  billKwh: number
+  diffKwh: number
+  baseKwh: number
+}
+export interface TimedAllocation {
+  totalUsage: number
+  totalBill: number
+  deltaQ: number
+  /** 各时段基准电量合计（两位小数，用于展示）。 */
+  periodBase: Record<string, number>
+  /** 各时段基准电量合计（未取整）：分时电费必须用它乘单价，否则四段累加差 1 分。 */
+  periodBaseExact: Record<string, number>
+  rows: TimedMeterRow[]
+}
+
+/** 从市电账单「电量明细」取四段变损+线损 / 加减电量（按 period 键）。 */
+export function billPeriodLossAdjust(bill: any): { loss: Record<string, number>; adjust: Record<string, number> } {
+  const loss: Record<string, number> = {}
+  const adjust: Record<string, number> = {}
+  const readings: any[] = bill?.item?.meter_readings || []
+  for (const mr of readings) {
+    const t = String(mr?.meter_type || '')
+    const p = t.includes('尖') ? 'deep' : t.includes('峰') ? 'peak' : t.includes('平') ? 'flat' : t.includes('谷') ? 'valley' : ''
+    if (!p) continue
+    loss[p] = round2((Number(mr?.trans_loss) || 0) + (Number(mr?.line_loss) || 0))
+    adjust[p] = round2(Number(mr?.adjust) || 0)
+  }
+  return { loss, adjust }
+}
+
+/** 分时电量分摊（纯函数，与 Go 侧 allocateTimedKwh 一一对应）。 */
+export function allocateTimedKwh(
+  meters: Array<{ name: string; usage: Record<string, number> }>,
+  loss: Record<string, number>,
+  adjust: Record<string, number>,
+  deltaQ: number,
+): TimedAllocation {
+  const out: TimedAllocation = {
+    totalUsage: 0, totalBill: 0, deltaQ: round2(Number(deltaQ) || 0),
+    periodBase: {}, periodBaseExact: {}, rows: [],
+  }
+  const rows: TimedMeterRow[] = []
+  meters.forEach((m, i) => {
+    for (const p of TIMED_PERIODS) {
+      const u = round2(Number(m.usage?.[p]) || 0)
+      out.totalUsage = round2(out.totalUsage + u)
+      // 损耗/加减整体落在第一块表：账单电量明细是按表 1 列示的
+      const l = i === 0 ? round2(Number(loss?.[p]) || 0) : 0
+      const a = i === 0 ? round2(Number(adjust?.[p]) || 0) : 0
+      const c = round2(u + l + a)
+      out.totalBill = round2(out.totalBill + c)
+      rows.push({ period: p, usage: u, loss: l, adjust: a, billKwh: c, diffKwh: 0, baseKwh: 0 })
+    }
+  })
+  for (const r of rows) {
+    const d = out.totalBill > 0 ? (out.deltaQ * r.billKwh) / out.totalBill : 0
+    r.diffKwh = round2(d)
+    r.baseKwh = round2(r.billKwh + d)
+    out.periodBase[r.period] = round2((out.periodBase[r.period] || 0) + r.baseKwh)
+    out.periodBaseExact[r.period] = (out.periodBaseExact[r.period] || 0) + r.billKwh + d
+  }
+  out.rows = rows
+  return out
+}
+
+/** 账单里该子项的分时段单价（尖峰/峰/平/谷）。 */
+export function periodRatesOf(ctx: SourceResolveContext, name: string): Record<string, number> {
+  const rates: Record<string, number> = {}
+  for (const r of matchBillFeeItems(ctx, name)) {
+    const label = String(r?.period || '')
+    const p = label.includes('尖') ? 'deep' : label.includes('峰') ? 'peak' : label.includes('平') ? 'flat' : label.includes('谷') ? 'valley' : ''
+    if (!p) continue
+    const rate = Number(r?.rate) > 0 ? Number(r.rate) : (Number(r?.fee) || 0) / (Number(r?.qty) || 1)
+    if (rate) rates[p] = rate
+  }
+  return rates
+}
+
+/** 分时子项是否该走「基准电量 × 时段单价」口径（账单里确有分时段行）。 */
+export function isTimedFeeItem(ctx: SourceResolveContext, name: string): boolean {
+  const rates = periodRatesOf(ctx, name)
+  return !!(rates.deep || rates.peak || rates.valley)
+}
+
+/**
+ * 分时子项金额 + 明细（列表取值与浮窗同源）。
+ * 返回 null 表示该子项不是分时项，调用方走原有「账单金额 × 比例」口径。
+ */
+export function resolveTimedItemFee(
+  ctx: SourceResolveContext,
+  name: string,
+): { value: number; allocation: TimedAllocation; rates: Record<string, number>; periods: Array<{ period: string; qty: number; rate: number; fee: number }> } | null {
+  const rates = periodRatesOf(ctx, name)
+  const isTimed = !!(rates.deep || rates.peak || rates.valley)
+  if (!isTimed) return null
+  const meters = ctx.timedMeters || []
+  if (!meters.length) return null
+  const { loss, adjust } = billPeriodLossAdjust(ctx.bill)
+  const alloc = allocateTimedKwh(meters, loss, adjust, Number(ctx.deltaQ) || 0)
+  const periods = TIMED_PERIODS
+    .filter((p) => rates[p])
+    .map((p) => ({
+      period: TIMED_PERIOD_LABELS[p],
+      qty: alloc.periodBase[p] || 0,
+      rate: rates[p],
+      fee: round2((alloc.periodBaseExact[p] || 0) * rates[p]),
+    }))
+  const value = round2(periods.reduce((s, p) => s + p.fee, 0))
+  return { value, allocation: alloc, rates, periods }
+}
+
 export function resolveTenantItemValue(item: any, ctx: SourceResolveContext, ratio: number): number {
   const category = String(item?.source_category || item?.sourceCategory || '市电账单').trim()
   const key = String(item?.source_key || item?.sourceKey || item?.item_name || item?.itemName || '').trim()

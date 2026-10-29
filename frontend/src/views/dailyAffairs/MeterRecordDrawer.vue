@@ -17,6 +17,14 @@
   <SettingDrawer :visible="visible" :title="title" width="654px" hide-footer destroy-on-close
     class="meter-record-drawer" :storage-key="`weknora-utility-${category}-record-drawer-width`"
     @update:visible="(v: boolean) => emit('update:visible', v)" @cancel="emit('close')">
+    <!-- 「系统内已有数据」提示必须整行、且**在网格之外**：
+         旧实现把它塞进「月份」「表计」两个 t-form-item 内部，双列 grid 里它只占 1 格，
+         多出来的高度让后续所有表单项整体下移半行 → 左右两列从此错位（真机截图）。
+         放在网格上方通栏，出现/消失都不影响网格行高。 -->
+    <div v-if="duplicateWarning" class="mr-banner">
+      <t-icon name="info-circle-filled" size="16px" class="mr-banner__icon" />
+      <span class="mr-banner__text">该月该{{ meterLabel }}已有记录，可直接编辑</span>
+    </div>
     <div class="mr-grid">
       <template v-for="f in fields" :key="f.key">
         <!-- 分时电表：四段起止度整行块（替代「起度/止度」两个单项） -->
@@ -56,7 +64,6 @@
           <template v-if="f.spec.kind === 'month'">
             <t-date-picker :model-value="form[f.formKey]" mode="month" format="YYYY-MM" value-type="YYYY-MM"
               placeholder="选择月份" @update:model-value="(v: any) => (form[f.formKey] = String(v || ''))" />
-            <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
           </template>
 
           <!-- 日期 -->
@@ -73,7 +80,6 @@
           <template v-else-if="f.spec.kind === 'meter'">
             <t-select :model-value="form[f.formKey]" :placeholder="'选择' + meterLabel" :options="meterOptions" filterable
               @update:model-value="(v: any) => (form[f.formKey] = String(v ?? ''))" @change="emit('meter-change')" />
-            <p v-if="duplicateWarning" class="mr-error">该月该{{ meterLabel }}已有记录，可直接编辑</p>
           </template>
 
           <!-- 文本 -->
@@ -280,6 +286,27 @@ function readonlyText(key: string): string {
   :deep(.t-date-picker), :deep(.t-select), :deep(.t-input), :deep(.t-textarea) { width: 100%; }
 }
 .mr-field-wide { grid-column: 1 / -1; }
+
+/* 「系统内已有数据」通栏提示：与表单网格完全解耦（不参与 grid 排版）。
+   颜色取语义令牌，出现/消失都只改变自身高度，网格行高与列对齐不受影响。 */
+.mr-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: var(--td-radius-default);
+  background: var(--td-error-color-1);
+  border: 1px solid var(--td-error-color-3);
+  color: var(--td-error-color-6);
+  font-size: 13px;
+  line-height: 20px;
+
+  .mr-banner__icon { flex: none; color: var(--td-error-color-6); }
+  .mr-banner__text { flex: 1 1 auto; min-width: 0; }
+}
 
 .mr-readonly {
   width: 100%;
