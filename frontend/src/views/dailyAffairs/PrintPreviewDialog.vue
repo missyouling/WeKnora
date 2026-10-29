@@ -29,7 +29,10 @@
         </header>
 
         <div class="ppd-body">
-          <PdfSourceViewer v-if="viewerData" :data="viewerData" :file-name="downloadName" class="ppd-viewer" />
+          <!-- :key 绑序号：同一弹窗复用/重新生成清单时必须换实例，
+               否则 pdf.js 会沿用上一份文档的渲染状态（真机：一直转圈）。 -->
+          <PdfSourceViewer v-if="viewerData" :key="viewerSeq" :data="viewerData"
+            :file-name="downloadName" class="ppd-viewer" />
           <div v-else class="ppd-loading">
             <t-loading size="small" :text="loadingText" />
           </div>
@@ -59,6 +62,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import PdfSourceViewer from '@/components/source-preview/PdfSourceViewer.vue'
+import { warmupPdfJs } from '@/components/source-preview/pdfjsLoader'
+
+// 预热 pdf.js：从点击「打印清单」到弹窗真正出画只有几百毫秒，
+// 把「动态 import 库 + 启动 worker」留到点击之后，用户看到的就是一段转圈
+// （真机 2.4s）。本组件随页面常驻挂载，在 setup 阶段就把库拉下来，
+// 点击时只剩解析与首屏绘制。
+warmupPdfJs()
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -76,6 +86,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'close'): void }>()
 
 const viewerData = ref<ArrayBuffer | null>(null)
+/** 每次换字节自增，作为 PdfSourceViewer 的 key（强制换实例）。 */
+const viewerSeq = ref(0)
 
 /** 统一成「独立」ArrayBuffer：pdf.js 只认 ArrayBuffer，不能拿别人的视图/偏移。 */
 function toArrayBuffer(v: ArrayBuffer | Uint8Array): ArrayBuffer {
@@ -85,6 +97,7 @@ function toArrayBuffer(v: ArrayBuffer | Uint8Array): ArrayBuffer {
 
 watch(() => props.data, (v) => {
   viewerData.value = v ? toArrayBuffer(v) : null
+  if (viewerData.value) viewerSeq.value++
 }, { immediate: true })
 
 function close() {

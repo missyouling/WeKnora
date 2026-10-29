@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { SourceLocateRequest } from '@/utils/sourceLocator'
 import { resolvePdfSource, mergeSourceRects, type PdfTarget } from '@/utils/pdfSourceLocate'
 import { findTextRanges } from '@/utils/sourceLocatorDom'
-import { loadPdfJs, type PdfJs } from './pdfjsLoader'
+import { getPdfWorker, loadPdfJs, type PdfJs } from './pdfjsLoader'
 
 type PdfDocument = Awaited<ReturnType<PdfJs['getDocument']>['promise']>
 type PdfPage = Awaited<ReturnType<PdfDocument['getPage']>>
@@ -84,16 +84,21 @@ function setPageRef(page: number, el: unknown) {
   }
 }
 
-async function openDocument(data: ArrayBuffer) {
+async function openDocument(data: ArrayBuffer, seq: number) {
   const lib = await loadPdfJs()
+  if (disposed || seq !== loadSeq) return
   pdfjs = lib
-  if (disposed) return
+  // 复用同一个 worker（不再随文档销毁）：省掉每次打开预览的线程启动时间。
+  // 拿不到就退化为 pdf.js 自己建（宁可慢，不能不出来）。
+  const worker = await getPdfWorker().catch(() => undefined)
+  if (disposed || seq !== loadSeq) return
   // pdf.js takes ownership of the buffer; keep the caller's copy intact.
-  const task = lib.getDocument({ data: new Uint8Array(data.slice(0)) })
+  const task = lib.getDocument(worker ? { data: new Uint8Array(data.slice(0)), worker } : { data: new Uint8Array(data.slice(0)) })
   loadingTask = task
   const doc = await task.promise
-  if (disposed) {
-    await task.destroy()
+  // 旧任务被新的 src 顶掉：销毁自己，别把 pdf.value 指过去
+  if (disposed || seq !== loadSeq) {
+    await task.destroy().catch(() => {})
     return
   }
   pdf.value = doc
@@ -101,6 +106,27 @@ async function openDocument(data: ArrayBuffer) {
   const first = await doc.getPage(1)
   const vp = first.getViewport({ scale: 1 })
   ratios[1] = vp.height / vp.width
+}
+
+/**
+ * 彻底放掉当前文档：清空已渲染页、页高缓存、页码，并销毁 loadingTask。
+ *
+ * 为什么必须显式做：`openDocument` 只负责「加载新文档」，新的 src 到来时
+ * 旧的 loadingTask / worker 仍在跑，两个文档共用同一份 `rendered` / `ratios`
+ * 状态，先到的旧文档可能把后到的覆盖掉 → 界面停在 0 页 + 转圈。
+ */
+async function releaseDocument() {
+  for (const p of [...rendered.keys()]) unrenderPage(p)
+  rendered.clear()
+  renderOrder.length = 0
+  pageTexts.clear()
+  for (const key of Object.keys(ratios)) delete ratios[Number(key)]
+  for (const key of Object.keys(marks)) delete marks[Number(key)]
+  pageCount.value = 0
+  pdf.value = null
+  const task = loadingTask
+  loadingTask = null
+  if (task) await task.destroy().catch(() => {})
 }
 
 function renderScale(page: PdfPage): number {
@@ -177,8 +203,19 @@ async function paintPage(
   oldText?.remove()
   canvas.after(textDiv)
 
+  // 用 getTextContent()（按页缓存）而不是 streamTextContent()：
+  // 后者是**一次性流**，同一页被重渲染（窗口尺寸变化触发 rerenderVisible、
+  // 或先按默认宽度渲染一次再按真实宽度重画）时流已被消费，第二次拿到空流，
+  // 文本层就是空的 —— 真机表现：中间那页能看不能选、复制不出来。
+  let textContent: Awaited<ReturnType<PdfPage['getTextContent']>>
+  try {
+    textContent = await page.getTextContent()
+  } catch {
+    return // 文档已被销毁 / 正在取消，页面本身仍可读
+  }
+  if (rendered.get(pageNumber) !== entry) return
   const textLayer = new lib.TextLayer({
-    textContentSource: page.streamTextContent(),
+    textContentSource: textContent,
     container: textDiv,
     viewport,
   })
@@ -374,6 +411,10 @@ watch(
   },
 )
 
+// 字节变了（重新生成清单 / 换一条记录）必须重新加载。
+// 旧实现只在 onMounted 里 load 一次：弹窗复用时新 PDF 永远不生效。
+watch(() => props.data, () => { void load() })
+
 /**
  * pdf.js 的「主动取消」不是故障，不能当错误打日志。
  *
@@ -396,24 +437,50 @@ function isAbortError(err: unknown): boolean {
     || /Worker was destroyed/i.test(msg)
 }
 
+/**
+ * 加载序号锁：每次 `load()` 自增，只有「最新一次」允许写状态。
+ *
+ * 真机故障：打开「打印清单」时弹窗先挂载、PDF 字节随后到位，旧实现只在
+ * onMounted 里 `load()` 一次且 `finally` 无条件把 `loading` 置 false ——
+ * 一旦有第二次（切换 src / 重开弹窗）在第一次未完成时进来，先完成的那个
+ * 会把 loading 关掉、后完成的又把 pageCount 写成旧文档，表现就是
+ * **永久转圈、页面渲染不出来**。序号锁让「过期的那次」既不写 loading，
+ * 也不写 pageCount / error，等价于被丢弃。
+ */
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   error.value = ''
-  if (!props.data) return
+  await releaseDocument()
+  if (disposed || seq !== loadSeq) return
+  if (!props.data) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    await openDocument(props.data)
+    await openDocument(props.data, seq)
+    if (disposed || seq !== loadSeq) return
     await nextTick()
+    if (seq !== loadSeq) return
     containerWidth = scroller.value?.clientWidth ? scroller.value.clientWidth - 24 : 600
+    // 首页主动渲染一次：弹窗刚挂载时滚动容器高度可能还是 0，
+    // IntersectionObserver 的首次回调会全部判定「不可见」，
+    // 于是页面永远空白、只剩转圈（真机问题 1 的直接成因之一）。
+    void renderPage(1)
     if (props.locate) await applyLocate(props.locate)
   } catch (err) {
-    // 已卸载 / 主动取消：静默返回，既不报错也不弹「加载失败」
-    if (isAbortError(err) || disposed) return
+    // 已卸载 / 主动取消 / 已被新 src 顶掉：静默返回，既不报错也不弹「加载失败」
+    if (seq !== loadSeq || isAbortError(err) || disposed) return
     console.error('PDF preview failed:', err)
     error.value = t('preview.loadFailed')
     emit('error', error.value)
     emit('located', { found: false, precise: false, reason: 'unavailable' })
   } finally {
-    loading.value = false
+    // 只有最新一次 load 有权关掉转圈；过期的那些不能碰 loading，
+    // 否则会把仍在加载的新文档误标成「加载完成」（随后就是永久空白）。
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -433,6 +500,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   disposed = true
+  loadSeq++
   locateVersion++
   observer?.disconnect()
   resizeObserver?.disconnect()

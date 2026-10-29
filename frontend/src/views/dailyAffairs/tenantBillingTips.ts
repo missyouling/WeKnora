@@ -147,6 +147,8 @@ export function tenantItemTip(opts: {
   value: number
   /** 是否参与分摊 */
   participating: boolean
+  /** 值型为「账单金额直接计入」（value_mode=direct_sum），此时不乘比例 */
+  directSum?: boolean
 }): string {
   const { itemName, sourceCategory, billAmount, ratio, periods, value, participating } = opts
   const head = sourceCategory ? `来源：${sourceCategory}` : '来源：市电账单费用分项'
@@ -154,19 +156,40 @@ export function tenantItemTip(opts: {
     return `${head}\n「${itemName}」未开启「参与分摊」，本行金额记 0（不计入应付合计）`
   }
   if (periods && periods.length) {
+    // 分时段明细的每一行已经是「基准电量 × 时段单价」的最终值，**不能再乘比例**。
+    // 旧文案写成「各时段求和 × 分摊比例」，与 tenantTimedTip 的口径互相矛盾。
     const lines = periods
       .filter((p) => p.qty || p.fee)
       .map((p) => `  ${p.period || '平'}：${n2(p.qty)} × ${p.rate} = ${n2(p.fee)}`)
     const sum = periods.reduce((s, p) => s + (Number(p.fee) || 0), 0)
     return [
-      `${head}`,
-      `计算方式：各时段「分摊电量 × 单价」后求和，再按分摊比例折算`,
+      head,
+      '计算方式：各时段「基准电量 × 时段单价」后求和（不乘分摊比例）',
       ...lines,
-      `  小计 = ${n2(sum)}`,
-      `合计 = ${n2(sum)} × ${pct(ratio)} = ${n2(value)} 元`,
+      `合计 = ${n2(sum || value)} 元`,
     ].join('\n')
   }
-  const base = Number(billAmount) || 0
+  const base = Number(billAmount)
+  const hasBase = Number.isFinite(base)
+  if (opts.directSum) {
+    return [
+      head,
+      `计算方式：账单该项金额直接计入（不乘分摊比例）`,
+      `= ${n2(hasBase ? base : value)} 元`,
+    ].join('\n')
+  }
+  // 原始金额缺失时**绝不能**拼出 `0 × 21.24% = 4,434.02`：
+  // 乘数为 0 却得出非零金额，用户第一时间会怀疑整列算错。
+  // 此时只陈述结果与口径，并明确标注原始金额未取到。
+  if (!hasBase || base === 0) {
+    return [
+      head,
+      `计算方式：账单该项金额 × 分摊比例`,
+      value
+        ? `本行金额 = ${n2(value)} 元（原账单金额未取到，请核对账单该分项）`
+        : '本行金额 = 0 元（账单无该分项金额）',
+    ].join('\n')
+  }
   return [
     head,
     `计算方式：账单该项金额 × 分摊比例`,

@@ -431,11 +431,16 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   }
 
   // ---- 概览指标卡：一行最多 4 张 ----
+  //
+  // 卡片可以带一行 `hint`（如「工业 126600 + 宿舍 930」）。有 hint 时卡片加高到 54，
+  // 三行文本自上而下是 标题(8pt) / 构成(7pt) / 数值(11.5pt)，互不重叠：
+  // 标题基线 y-12、构成基线 y-23、数值基线 y-cardH+11。
   if (source.kpis?.length) {
     const perRow = Math.min(4, source.kpis.length)
     const gap = 8
     const cardW = (avail - gap * (perRow - 1)) / perRow
-    const cardH = 42
+    const hasHint = source.kpis.some((k) => k.hint)
+    const cardH = hasHint ? 54 : 42
     for (let i = 0; i < source.kpis.length; i += perRow) {
       ensure(cardH + 10)
       const row = source.kpis.slice(i, i + perRow)
@@ -445,11 +450,18 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
           x, y: y - cardH, width: cardW, height: cardH,
           color: rgb(0.985, 0.99, 0.988), borderColor: C_KPI_BORDER, borderWidth: 0.6,
         })
-        text(k.label, x + 8, y - 13, 8, C_MUTED)
+        text(k.label, x + 8, y - 12, 8, C_MUTED)
+        if (k.hint) {
+          // 构成说明按卡片宽度截断，宁可少写几个字也不能压到右侧数值
+          let hint = k.hint
+          const maxW = cardW - 16
+          while (hint.length > 1 && font.widthOfTextAtSize(hint, 7) > maxW) hint = hint.slice(0, -1)
+          if (hint !== k.hint) hint = `${hint.slice(0, -1)}…`
+          text(hint, x + 8, y - 23, 7, C_MUTED)
+        }
         const vSize = 11.5
         const vw = font.widthOfTextAtSize(k.value, vSize)
-        text(k.value, x + cardW - 8 - vw, y - cardH + 12, vSize, C_INK)
-        if (k.hint) text(k.hint, x + 8, y - cardH + 12, 7.5, C_MUTED)
+        text(k.value, x + cardW - 8 - vw, y - cardH + 11, vSize, C_INK)
       })
       y -= cardH + 10
     }

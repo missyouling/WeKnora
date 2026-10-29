@@ -356,6 +356,18 @@ export function fixedBillFeeOf(ctx: SourceResolveContext, name: string): number 
   return fixedBillFee(ctx, name)
 }
 
+/**
+ * 账单里该分项的**原始金额**（未乘分摊比例）。
+ *
+ * 浮窗文案与打印清单都要写「原始金额 × 比例 = 本行金额」，此前浮窗调用点
+ * 只把「固定金额分项」的概况值传了进去，其余分项一律 `undefined` → `Number()
+ * || 0` → 文案变成 `= 0 × 21.24% = 4,434.02 元`（真机截图，逻辑自相矛盾）。
+ * 统一从这里取，保证「账单原始金额」只有一处口径。
+ */
+export function billRawAmountOf(ctx: SourceResolveContext, name: string): number {
+  return resolveFeeRow(ctx, name)
+}
+
 /** 当月市电账单的费用分项求和（mode=fee_row）。 */
 function resolveFeeRow(ctx: SourceResolveContext, name: string): number {
   // ① 固定金额分项（基本电费 / 力调电费）**优先**读概况字段。

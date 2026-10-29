@@ -139,9 +139,9 @@ import {
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
-import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
+import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
-import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
   TENANT_TOTAL_FIELD,
@@ -657,6 +657,9 @@ const loadTenants = async () => {
  * 切到「费用清单」要等数秒。
  */
 const loadAllData = async () => {
+  // 数据一重载，已缓存的打印清单就可能过期（分摊比例/子项金额都会变），
+  // 直接整片清掉比逐条失效更安全。
+  statementCache.clear()
   const tenantId = activeTenantId.value
   if (!tenantId) {
     await loadKb()
@@ -1085,15 +1088,21 @@ const buildRows = () => {
           })
           continue
         }
-        // 固定金额项没有分时行，直接用概况字段值写「金额 × 比例」
-        const fixed = participating && key ? fixedBillFeeOf(ctx, key) : null
+        // 浮窗里的「账单原始金额」必须真的去账单里取。
+        //
+        // 旧实现只把「固定金额分项」（基本电费/力调电费）的概况值传进来，
+        // 其余分项一律 undefined → `Number(undefined) || 0` → 文案变成
+        // 「= 0 × 21.24% = 4,434.02 元」（真机截图）：乘数是 0 却得出非零金额。
+        // 现在统一走 billRawAmountOf（与列表取值同一个 resolveFeeRow）。
+        const billAmount = participating && key ? billRawAmountOf(ctx, key) : 0
         itemTips[tenantItemColKey(it)] = tenantItemTip({
           itemName: String(it.item_name || key),
           sourceCategory: it.source_category || '市电账单',
-          billAmount: fixed !== null ? fixed : undefined,
+          billAmount,
           ratio,
           value: v,
           participating,
+          directSum: String(it.value_mode || '').trim() === 'direct_sum',
         })
       }
       // 合计应付恒有值（没有分摊子项时就是 0）：租户分组的字段定义里有这一列，
@@ -1365,6 +1374,60 @@ function ratioForRow(row: any): number {
 
 interface PrintTable { title: string; columns: any[]; rows: string[][]; total?: string[]; empty?: string }
 
+/**
+ * 「一、账单概览」的指标卡。
+ *
+ * 业主视角 = 全厂口径（市电账单本期电量/电费）；租户视角**绝不能**继续沿用
+ * 全厂数字 —— 真机：持睿汽车的 PDF 概览写着「本期总电量 596168 / 本期电费合计
+ * 433433.07」，那是星达整张市电账单，租户拿到的单据上不是自己的数。
+ *
+ * 租户口径按「工业 + 宿舍」两段拆分，两段之和即该租户当期应收：
+ *   电量 = 分表总电量（含差额分摊）+ 宿舍电表用电量
+ *   电费 = 分摊后工业电费 + 宿舍电费
+ *   水量 = 分表水表用水量 + 宿舍水表用水量；水费同理。
+ */
+function statementKpis(rows: any[]): Array<{ label: string; value: string; hint?: string }> {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  if (isOwnerView.value) {
+    return [
+      { label: '本期总电量', value: `${num2(sum('total_kwh'))} kWh` },
+      { label: '本期电费合计', value: `${money2(sum('total_fee'))} 元` },
+      { label: '工商业电费', value: `${money2(sum('ind_fee'))} 元` },
+      { label: '应收合计', value: `${money2(sum('ind_fee') + sum('dorm_fee') + sum('res_fee') + sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee') + sum('gas_fee'))} 元` },
+    ]
+  }
+  const indKwh = sum('ind_kwh')
+  const dormKwh = sum('dorm_kwh')
+  const indFee = sum('ind_fee')
+  const dormFee = sum('dorm_fee') + sum('res_fee')
+  const wIndU = sum('water_ind_usage')
+  const wDormU = sum('water_dorm_usage')
+  const wIndF = sum('water_ind_fee')
+  const wDormF = sum('water_dorm_fee') + sum('water_fire_fee')
+  return [
+    { label: '本期总电量', value: `${num2(indKwh + dormKwh)} 度`, hint: `工业 ${num2(indKwh)} + 宿舍 ${num2(dormKwh)}` },
+    { label: '本期总电费', value: `${money2(indFee + dormFee)} 元`, hint: `工业 ${money2(indFee)} + 宿舍 ${money2(dormFee)}` },
+    { label: '本期用水量', value: `${num2(wIndU + wDormU)} 吨`, hint: `分表 ${num2(wIndU)} + 宿舍 ${num2(wDormU)}` },
+    { label: '本期总水费', value: `${money2(wIndF + wDormF)} 元`, hint: `分表 ${money2(wIndF)} + 宿舍 ${money2(wDormF)}` },
+  ]
+}
+
+/** 租户视角概览里的「电水合计应收」：指标卡只有四张，合计金额写成一行元信息。 */
+function statementMeta(rows: any[], unit: string, months: string[], ratio: number) {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  const power = sum('ind_fee') + sum('dorm_fee') + sum('res_fee')
+  const water = sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee')
+  return [
+    { label: '账单周期', value: months.join('、') },
+    { label: '使用单位', value: unit },
+    { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
+    { label: '分摊比例', value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
+    { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
+    { label: isOwnerView.value ? '应收合计' : '电水合计应收', value: `${money2(isOwnerView.value ? power + water + sum('gas_fee') : power + water)} 元` },
+    { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
+  ]
+}
+
 /** 市电账单费用分项 → 细项表（租户视角按比例折算、且只列参与分摊的子项） */
 function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTable {
   const bill = billIndex.value.get(month)
@@ -1403,7 +1466,11 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
     // 未参与分摊的子项（用户在分摊子项里关掉的偏差电费、绿电交易电费等）
     // 一律不打印 —— 旧实现直接铺账单 fee_items 全量，于是关掉开关的项
     // 依然以 4 行 0.00 的形式出现在租户清单上（真机问题）。
-    const ctx = sourceCtxOf(month, bill, [])
+    // 必须带上已生成账单：分时核算的差额电量 ΔQ 优先取账单固化值
+    // （rec.line_loss），缺失时才按「星达分表 − 分表合计」现算。
+    // 不传 rec 会让打印口径与列表口径在个别月份分叉。
+    const rec = records.value.find((r: any) => r.month === month)
+    const ctx = sourceCtxOf(month, bill, [], rec)
     for (const it of tenantApportionItems.value) {
       const key = String(it?.source_key || it?.item_name || '').trim()
       if (!key) continue
@@ -1417,6 +1484,26 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
         if (!v) continue
         sum += v
         rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
+        continue
+      }
+      // 分时项（零售交易电费 / 零售输配电费…）：与列表**同一个**核算引擎
+      // （resolveTimedItemFee → 逐表逐时段基准电量 × 时段单价）。
+      // 旧实现对分时项也走「账单分时行 × 比例」，于是 PDF 打出的是
+      // 5228.63 / 2279.68 这类旧值，与列表的 5085.43 / 2217.25 对不上。
+      const timed = resolveTimedItemFee(ctx, key)
+      if (timed) {
+        const name = label(cat, String(it.item_name || key).trim())
+        let subQty = 0
+        let subFee = 0
+        for (const p of timed.periods) {
+          sum += p.fee
+          subQty += p.qty
+          subFee += p.fee
+          rows.push([name, p.period, num2(p.qty), rateText(p.rate), money2(p.fee)])
+        }
+        // 逐段之后补一行小计：分时项有 4 行明细，没有小计的话
+        // 「PDF 的 54422.79 与列表的 54422.79 一致」只能靠人脑加总验算。
+        rows.push([`${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee)])
         continue
       }
       const billRows = matchBillFeeItems(ctx, key)
@@ -1567,65 +1654,112 @@ function summaryTableOf(rows: any[], unit: string, prefix: string): PrintTable {
 }
 
 /**
+ * 打印清单的字节缓存。
+ *
+ * 为什么需要：`generateStatementPdf` 要把内嵌中文字体嵌进 PDF 并做子集化，
+ * 单次 700~900ms（真机实测）。而用户的操作节奏是「勾一行 → 看两眼 → 点打印」，
+ * 这份 PDF 与「哪些行 + 这些行的核算结果」一一对应，同一次会话里几乎不会变。
+ * 缓存后第二次打开是**解析级别**的快（≈ viewer 自身耗时），也能让
+ * 关闭弹窗后重新打开不至于又等小一秒。
+ *
+ * 失效策略：`loadAllData()` 里整片清空（任何数据刷新都会走到那里）；
+ * 键里再带上行值与月份，避免「行对象换了但 id 没变」时分到旧字节。
+ */
+const statementCache = new Map<string, Uint8Array>()
+const statementKey = (rows: any[], unit: string) =>
+  `${unit}|${rows.map((r) => [r.id, r.month, r.total_kwh, r.ind_fee, r.item_total, r.dorm_fee, r.water_ind_fee, r.water_dorm_fee, r.gas_fee].join(':')).join(',')}`
+
+/** 同一份内容只算一次；**在途**的那次也要复用，否则预生成与点击会各算一遍。 */
+let statementInflight: { key: string; p: Promise<Uint8Array> } | null = null
+async function statementBytesOf(rows: any[], unit: string, build: () => StatementDoc): Promise<Uint8Array> {
+  const key = statementKey(rows, unit)
+  const hit = statementCache.get(key)
+  if (hit) return hit
+  if (statementInflight?.key === key) return statementInflight.p
+  const p = generateStatementPdf({ doc: build() })
+    .then((bytes) => {
+      statementCache.set(key, bytes)
+      return bytes
+    })
+    .finally(() => {
+      if (statementInflight?.key === key) statementInflight = null
+    })
+  statementInflight = { key, p }
+  return p
+}
+
+/**
  * 打印清单（结算单）。
  *
  * 与「打印目录」的区别：目录 = 列表表头 + 行值（横向表格，内部对账）；
  * 清单 = 市电账单同款「概览 + 分项细项 + 水电气分区」纵向文档，可直接发租户。
  */
+/**
+ * 组装结算单文档模型。
+ *
+ * 抽出来是为了让「浮动栏打印清单」与「抽屉底栏打印」共用同一份内容 ——
+ * 两条入口曾经各写一遍，字段顺序/概览口径改一处漏一处。
+ */
+function buildStatementDoc(rows: any[], unit: string): StatementDoc {
+  const months = rows.map((r: any) => r.month).filter(Boolean)
+  const single = rows.length === 1
+  const ratioList = rows.map((r: any) => ratioForRow(r)).filter((v) => v > 0)
+  const ratio = ratioList.length ? ratioList[0] : 0
+  const tables: PrintTable[] = []
+  rows.forEach((row: any) => {
+    const month = String(row.month || '')
+    const prefix = single ? '' : `${month} · `
+    // 租户视角必须按真实分摊比例；ratio=0（当月未生成/未抄表）时按 0 列示，
+    // 绝不能兜底成 1 —— 那会把「整张市电账单」当成该租户的份额打印出去。
+    const r = isOwnerView.value ? 1 : ratioForRow(row)
+    tables.push(feeTableOf(month, r, prefix))
+    tables.push(elecTableOf(month, unit, prefix))
+    tables.push(waterTableOf(month, unit, prefix))
+    const gas = gasTableOf(month, unit, prefix)
+    if (gas.rows.length) tables.push(gas)
+    tables.push(summaryTableOf([row], unit, prefix))
+  })
+  return {
+    title: `${unit} 费用清单`,
+    subtitle: `${months.join('、')} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
+    overviewTitle: '一、账单概览',
+    meta: statementMeta(rows, unit, months, ratio),
+    kpis: statementKpis(rows),
+    tables,
+    footerNote: isOwnerView.value || ratio > 0
+      ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
+      : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
+  }
+}
+
+/**
+ * 勾选后**预生成**打印清单。
+ *
+ * 生成要嵌中文字体+子集化（r 真机 ~750ms），而用户「勾一行 → 点打印」之间
+ * 通常有半秒以上的间隔。这里在勾选后立即后台生成，点击时直接命中缓存，
+ * 体感从「转圈一秒多」变成「点开就有」。失败静默（真正点击时还会重试一次）。
+ */
+let statementPrewarm: ReturnType<typeof setTimeout> | null = null
+watch(selectedKeys, () => {
+  if (statementPrewarm) clearTimeout(statementPrewarm)
+  if (!selectedKeys.value.size) return
+  statementPrewarm = setTimeout(() => {
+    statementPrewarm = null
+    const arr = printableRows.value
+    if (!arr.length) return
+    const unit = (arr[0]?.unit as string) || useUnit.value
+    void statementBytesOf(arr, unit, () => buildStatementDoc(arr, unit)).catch(() => {})
+  }, 0)
+})
+onBeforeUnmount(() => { if (statementPrewarm) clearTimeout(statementPrewarm) })
+
 const handlePrintStatement = async () => {
   const arr = printableRows.value
   if (!arr.length) return
   statementBusy.value = true
   try {
     const unit = (arr[0]?.unit as string) || useUnit.value
-    const months = arr.map((r: any) => r.month).filter(Boolean)
-    const single = arr.length === 1
-    const ratioList = arr.map((r: any) => ratioForRow(r)).filter((v) => v > 0)
-    const ratio = ratioList.length ? ratioList[0] : 0
-    const tables: PrintTable[] = []
-    arr.forEach((row: any) => {
-      const month = String(row.month || '')
-      const prefix = single ? '' : `${month} · `
-      // 租户视角必须按真实分摊比例；ratio=0（当月未生成/未抄表）时按 0 列示，
-      // 绝不能兜底成 1 —— 那会把「整张市电账单」当成该租户的份额打印出去。
-      const r = isOwnerView.value ? 1 : ratioForRow(row)
-      tables.push(feeTableOf(month, r, prefix))
-      tables.push(elecTableOf(month, unit, prefix))
-      tables.push(waterTableOf(month, unit, prefix))
-      const gas = gasTableOf(month, unit, prefix)
-      if (gas.rows.length) tables.push(gas)
-      tables.push(summaryTableOf([row], unit, prefix))
-    })
-    const totalKwh = arr.reduce((s, r: any) => s + (Number(r.total_kwh) || 0), 0)
-    const totalFee = arr.reduce((s, r: any) => s + (Number(r.total_fee) || 0), 0)
-    const payable = arr.reduce((s, r: any) => s
-      + (Number(r.ind_fee) || 0) + (Number(r.dorm_fee) || 0) + (Number(r.res_fee) || 0)
-      + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
-      + (Number(r.gas_fee) || 0), 0)
-    const doc = {
-      title: `${unit} 费用清单`,
-      subtitle: `${months.join('、')} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
-      overviewTitle: '一、账单概览',
-      meta: [
-        { label: '账单周期', value: months.join('、') },
-        { label: '使用单位', value: unit },
-        { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
-        { label: '分摊比例', value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
-        { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
-        { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
-      ],
-      kpis: [
-        { label: '本期总电量', value: `${num2(totalKwh)} kWh` },
-        { label: '本期电费合计', value: `${money2(totalFee)} 元` },
-        { label: isOwnerView.value ? '工商业电费' : '分摊电费合计', value: `${money2(arr.reduce((s, r: any) => s + (Number(r.ind_fee) || 0), 0))} 元` },
-        { label: '应收合计', value: `${money2(payable)} 元` },
-      ],
-      tables,
-      footerNote: isOwnerView.value || ratio > 0
-        ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
-        : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
-    }
-    const bytes = await generateStatementPdf({ doc })
+    const bytes = await statementBytesOf(arr, unit, () => buildStatementDoc(arr, unit))
     showPrint(`${unit} 费用清单（${arr.length} 条）`, bytes, `${unit}-费用清单.pdf`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '生成清单失败')
@@ -1786,36 +1920,9 @@ const printRecord = () => {
     try {
       const unit = String(row.unit || useUnit.value || '')
       const month = String(row.month || '')
-      const ratio = isOwnerView.value ? 1 : ratioForRow(row)
-      const bytes = await generateStatementPdf({
-        doc: {
-          title: `${unit} 费用清单`,
-          subtitle: `${month} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
-          overviewTitle: '一、账单概览',
-          meta: [
-            { label: '账单周期', value: month },
-            { label: '使用单位', value: unit },
-            { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
-            { label: '分摊比例', value: isOwnerView.value ? '—' : `${(ratio * 100).toFixed(2)}%` },
-          ],
-          kpis: [
-            { label: '本期总电量', value: `${num2(row.total_kwh)} kWh` },
-            { label: '本期电费合计', value: `${money2(row.total_fee)} 元` },
-            { label: isOwnerView.value ? '工商业电费' : '分摊电费合计', value: `${money2(row.ind_fee)} 元` },
-            { label: '应收合计', value: `${money2((Number(row.ind_fee) || 0) + (Number(row.dorm_fee) || 0) + (Number(row.res_fee) || 0) + (Number(row.water_ind_fee) || 0) + (Number(row.water_dorm_fee) || 0) + (Number(row.gas_fee) || 0))} 元` },
-          ],
-          tables: [
-            feeTableOf(month, ratio, ''),
-            elecTableOf(month, unit, ''),
-            waterTableOf(month, unit, ''),
-            ...(gasTableOf(month, unit, '').rows.length ? [gasTableOf(month, unit, '')] : []),
-            summaryTableOf([row], unit, ''),
-          ],
-          footerNote: isOwnerView.value || ratio > 0
-            ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
-            : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
-        },
-      })
+      // 与浮动栏「打印清单」同一份文档模型 + 同一份字节缓存：
+      // 抽屉里点过打印，出去再点浮动栏打印同一行不会重算一遍。
+      const bytes = await statementBytesOf([row], unit, () => buildStatementDoc([row], unit))
       showPrint(`${unit} 费用清单`, bytes, `${unit}-${month}-费用清单.pdf`)
     } catch (e: any) {
       MessagePlugin.error(e?.message || '生成清单失败')
@@ -1881,6 +1988,9 @@ const fmtPrice = (v: any): string => {
 }
 
 onMounted(() => {
+  // 中文字体是打印链路的固定前置（清单与目录都要内嵌）：进页面就拉，
+  // 别等用户点「打印」才开始下载（真机首次点击多花 200~400ms）。
+  void loadCatalogFont().catch(() => {})
   loadTenants()
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
