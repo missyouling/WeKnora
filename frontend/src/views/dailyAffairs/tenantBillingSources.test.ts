@@ -188,3 +188,49 @@ test('生成账单：勾选优先 + 气泡二次确认 + 数据不全禁止生�
   }
   assert.match(tenant, /if \(issues\.length\) \{ reportReadiness\(issues\); return \}/, '校验失败必须直接返回，不落库')
 })
+
+// ---- 第 13 轮：按「名称」精确匹配（同义词归一），绝不按数组下标 ----
+
+test('费用分项匹配：名称同义词（其它/其他、因素/因数、全半角括号）都能命中', () => {
+  const c = ctx({
+    bill: {
+      item: {
+        total_kwh: 596168,
+        // 力调电费的权威值在概况字段（fee_items 里常常没有行 / 只有 0 占位行）
+        pf_adjust_amount: -2818.07,
+        fee_items: [
+          { category: '(4)系统运行费', name: '其他系统运行费用', fee: 2646.06 },
+          { category: '(4)系统运行费', name: '上网环节线损代理采购损益', fee: -570.2 },
+          { category: '(1)市场化购电费', name: '绿电交易电费（省间）', fee: 12.34 },
+        ],
+      },
+    },
+  })
+  // 账单写「其他」，配置写「其它」
+  assert.equal(resolveSourceValue({ category: '市电账单', field: '其它系统运行费用', mode: 'fee_row' }, c), 2646.06)
+  // 账单写「因数」，配置写「因素」
+  assert.equal(resolveSourceValue({ category: '市电账单', field: '功率因素调整电费', mode: 'fee_row' }, c), -2818.07)
+  // 全半角括号
+  assert.equal(resolveSourceValue({ category: '市电账单', field: '绿电交易电费(省间)', mode: 'fee_row' }, c), 12.34)
+})
+
+test('费用分项匹配：同一分组内按名称取值，不受数组顺序影响', () => {
+  // 故意把账单行序打乱：取值必须只认名称，不能靠下标
+  const rows = [
+    { category: '(4)系统运行费', name: '其他系统运行费用', fee: 2646.06, rate: 0.004506 },
+    { category: '(4)系统运行费', name: '新能源机制差价分摊电费', fee: 4431.24, rate: 0.007546 },
+    { category: '(4)系统运行费', name: '电价交叉补贴新增损益', fee: -3250.91, rate: -0.005536 },
+    { category: '(4)系统运行费', name: '上网环节线损代理采购损益', fee: -570.2, rate: -0.000971 },
+  ]
+  const c = ctx({ bill: { item: { total_kwh: 596168, fee_items: rows } } })
+  const expect: Array<[string, number]> = [
+    ['燃气机组容量电费', 0],
+    ['新能源机制差价分摊电费', 4431.24],
+    ['电价交叉补贴新增损益', -3250.91],
+    ['上网环节线损代理采购损益', -570.2],
+    ['其他系统运行费用', 2646.06],
+  ]
+  for (const [name, fee] of expect) {
+    assert.equal(resolveSourceValue({ category: '市电账单', field: name, mode: 'fee_row' }, c), fee, name)
+  }
+})

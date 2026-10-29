@@ -66,6 +66,72 @@ func utilityFeeSumByCategory(rows []ParsedFeeRow, cat string) float64 {
 	return math.Round(sum*100) / 100
 }
 
+// 名称列被 PDF 拆成两个物理列时，必须按**视觉行**交错配对，不能先左格再右格。
+//
+// 真机 2026-09 的 (4)系统运行费 那一行：
+//
+//	左格：燃气机组容量电费 / 电价交叉补贴新增损益 / 其他系统运行费用
+//	右格：新能源机制差价分摊电费 / 上网环节线损代理采购损益
+//	数值：0.018983 0.007546 -0.005536 -0.000971 0.004506 ｜ 11147.39 4431.24 -3250.91 -570.2 2646.06
+//
+// 顺次拼接会让「新能源机制差价」拿到 -570.2、「电价交叉补贴」拿到 4431.24（张冠李戴）。
+func TestParseUtilityFeeRowsPairsNameByVisualRow(t *testing.T) {
+	rows := ParseUtilityFeeRows(utilityFeeParserSample)
+	type pair struct{ fee, rate float64 }
+	got := map[string]pair{}
+	for _, r := range rows {
+		if r.Category != "(4)系统运行费" {
+			continue
+		}
+		got[r.Name] = pair{r.Fee, r.Rate}
+	}
+	want := map[string]pair{
+		"燃气机组容量电费":     {11147.39, 0.018983},
+		"新能源机制差价分摊电费":  {4431.24, 0.007546},
+		"电价交叉补贴新增损益":   {-3250.91, -0.005536},
+		"上网环节线损代理采购损益": {-570.2, -0.000971},
+		"其他系统运行费用":     {2646.06, 0.004506},
+		"抽水蓄能容量电费":     {4292.65, 0.00731},
+		"煤电容量电费":       {13539.17, 0.023056},
+	}
+	for name, w := range want {
+		g, ok := got[name]
+		if !ok {
+			t.Fatalf("缺少费用组成 %s（实际：%v）", name, got)
+		}
+		if math.Abs(g.fee-w.fee) > 0.011 {
+			t.Errorf("%s 电费错位：期望 %.2f，实际 %.2f", name, w.fee, g.fee)
+		}
+		if math.Abs(g.rate-w.rate) > 1e-9 {
+			t.Errorf("%s 单价错位：期望 %v，实际 %v", name, w.rate, g.rate)
+		}
+	}
+}
+
+func TestInterleaveUtilityFeeNames(t *testing.T) {
+	cases := []struct {
+		name  string
+		cells [][]string
+		want  []string
+	}{
+		{"单列原样", [][]string{{"甲", "乙", "丙"}}, []string{"甲", "乙", "丙"}},
+		{"双列交错", [][]string{{"甲", "乙", "丙"}, {"丁", "戊"}}, []string{"甲", "丁", "乙", "戊", "丙"}},
+		{"空列忽略", [][]string{{"甲"}, {}, {"乙"}}, []string{"甲", "乙"}},
+		{"全空", nil, nil},
+	}
+	for _, c := range cases {
+		got := interleaveUtilityFeeNames(c.cells)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s：长度不符 got=%v want=%v", c.name, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("%s：第 %d 项不符 got=%v want=%v", c.name, i, got, c.want)
+			}
+		}
+	}
+}
+
 // 这张账单的「账单概况」印刷值：7 个分项电费与合计 433433.07（力调 -2818.07）。
 func TestParseUtilityFeeRowsReconcilesRealBill(t *testing.T) {
 	rows := ParseUtilityFeeRows(utilityFeeParserSample)

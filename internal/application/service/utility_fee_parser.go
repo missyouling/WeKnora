@@ -52,38 +52,38 @@ var utilityFeePeriodTokens = map[string]bool{
 // 费用组成名在全行业统一，映射比位置可靠。
 var utilityFeeCategoryByName = map[string]string{
 	// (1) 市场化购电费
-	"零售交易电费":        "(1)市场化购电费",
-	"偏差电费":          "(1)市场化购电费",
-	"绿电交易电费(省间)":    "(1)市场化购电费",
-	"绿电交易电费(省内)":    "(1)市场化购电费",
-	"绿电环境价值电费(省外)":  "(1)市场化购电费",
-	"中长期偏差回收返还(用户)": "(1)市场化购电费",
+	"零售交易电费":          "(1)市场化购电费",
+	"偏差电费":            "(1)市场化购电费",
+	"绿电交易电费(省间)":      "(1)市场化购电费",
+	"绿电交易电费(省内)":      "(1)市场化购电费",
+	"绿电环境价值电费(省外)":    "(1)市场化购电费",
+	"中长期偏差回收返还(用户)":   "(1)市场化购电费",
 	"中长期超额申报费用返还(用户)": "(1)市场化购电费",
-	"中长期超额申报回收费用":   "(1)市场化购电费",
-	"零售交易发电侧收益返还电费": "(1)市场化购电费",
-	"零售损益分摊电费":      "(1)市场化购电费",
+	"中长期超额申报回收费用":     "(1)市场化购电费",
+	"零售交易发电侧收益返还电费":   "(1)市场化购电费",
+	"零售损益分摊电费":        "(1)市场化购电费",
 	// (2) 上网环节线损费用
 	"上网环节线损费用": "(2)上网环节线损费用",
 	// (3) 输配电量电费
 	"零售输配电费": "(3)输配电量电费",
 	// (4) 系统运行费
-	"燃气机组容量电费":   "(4)系统运行费",
-	"新能源机制差价分摊电费": "(4)系统运行费",
-	"电价交叉补贴新增损益":  "(4)系统运行费",
+	"燃气机组容量电费":     "(4)系统运行费",
+	"新能源机制差价分摊电费":  "(4)系统运行费",
+	"电价交叉补贴新增损益":   "(4)系统运行费",
 	"上网环节线损代理采购损益": "(4)系统运行费",
-	"其他系统运行费用":    "(4)系统运行费",
-	"抽水蓄能容量电费":    "(4)系统运行费",
-	"辅助服务费用":      "(4)系统运行费",
-	"煤电容量电费":      "(4)系统运行费",
+	"其他系统运行费用":     "(4)系统运行费",
+	"抽水蓄能容量电费":     "(4)系统运行费",
+	"辅助服务费用":       "(4)系统运行费",
+	"煤电容量电费":       "(4)系统运行费",
 	// (5) 目录电费
 	"基础电费": "(5)目录电费",
 	// (6) 政府性基金及附加（工商业/居民由前端按计费电量区分）
-	"农网还贷":            "(6)政府性基金及附加",
-	"可再生能源附加":         "(6)政府性基金及附加",
-	"国家重大水利工程建设基金":    "(6)政府性基金及附加",
-	"库区移民基金":          "(6)政府性基金及附加",
+	"农网还贷":             "(6)政府性基金及附加",
+	"可再生能源附加":          "(6)政府性基金及附加",
+	"国家重大水利工程建设基金":     "(6)政府性基金及附加",
+	"库区移民基金":           "(6)政府性基金及附加",
 	"小型水库移民后期扶持资金(地方)": "(6)政府性基金及附加",
-	"重大水利工程建设基金":      "(6)政府性基金及附加",
+	"重大水利工程建设基金":       "(6)政府性基金及附加",
 }
 
 // utilityFeeCategoryPrefixRe 单元格里的费用类别标记，如 (1)市场化购电费。
@@ -158,7 +158,10 @@ func ParseUtilityFeeRows(text string) []ParsedFeeRow {
 // 判据收得很紧：同类别同名、且组内**恰好只有一行**有金额，其余全 0 —— 才丢零行。
 // 绿电/偏差电费这类整组都是 0 的不会被误删（它们本来就没有非零兄弟）。
 func dropZeroShadowRows(rows []ParsedFeeRow) []ParsedFeeRow {
-	type grp struct{ idx []int; nonZero, zero int }
+	type grp struct {
+		idx           []int
+		nonZero, zero int
+	}
 	groups := make(map[string]*grp, len(rows))
 	order := make([]string, 0, len(rows))
 	for i, r := range rows {
@@ -257,7 +260,19 @@ func parseUtilityFeePipeLine(line, runningCategory string) ([]ParsedFeeRow, stri
 	}
 	// 类别标记可能出现在时段列之前（含与名称同一格的情况）
 	category := ""
-	var names []string
+	// 名称**按单元格收集**，不能直接摊成一个一维数组。
+	//
+	// 真机根因（2026-09 的 (4)系统运行费）：
+	//
+	//	||(4)系统运行费用|燃气机组容量电费 电价交叉补贴新增损益 其他系统运行费用|新能源机制差价分摊电费 上网环节线损代理采购损益|||平×5|...
+	//
+	// PDF 的「费用组成」列被拆成**两个物理列**，抽取后变成两个单元格：左边 3 个名字、
+	// 右边 2 个名字。若按「先左格全部、再右格全部」摊平，得到
+	// [燃气机组, 电价交叉补贴, 其他系统运行, 新能源机制差价, 上网线损代理]，
+	// 而数值列是单行阅读顺序 [燃气机组, 新能源机制差价, 电价交叉补贴, 上网线损代理, 其他系统运行]，
+	// 按位置一一对应就会张冠李戴：新能源机制差价拿到 -570.2、电价交叉补贴拿到 4431.24……
+	// 正确做法是按**视觉行**交错取（左1, 右1, 左2, 右2, 左3），还原 PDF 的阅读顺序。
+	var nameCells [][]string
 	for i := 0; i < len(cells); i++ {
 		if i == periodIdx {
 			continue
@@ -279,8 +294,11 @@ func parseUtilityFeePipeLine(line, runningCategory string) ([]ParsedFeeRow, stri
 		if periodIdx >= 0 && i > periodIdx {
 			continue
 		}
-		names = append(names, strings.Fields(c)...)
+		if tokens := strings.Fields(c); len(tokens) > 0 {
+			nameCells = append(nameCells, tokens)
+		}
 	}
+	names := interleaveUtilityFeeNames(nameCells)
 	if periodIdx < 0 {
 		if category != "" {
 			return nil, category
@@ -348,6 +366,37 @@ func parseUtilityFeePipeLine(line, runningCategory string) ([]ParsedFeeRow, stri
 		}
 	}
 	return rows, category
+}
+
+// interleaveUtilityFeeNames 把「被拆成多列的名称单元格」按视觉行交错成一维。
+//
+// 每个单元格是 PDF 里一列（费用组成列被拆成 1~2 列），列内顺序即自上而下；
+// 交错（左1 右1 左2 右2 …）才等价于「一行一行读」的真实顺序，
+// 直接顺次拼接会让名称与数值整体错位（见 parseUtilityFeePipeLine 的注释）。
+func interleaveUtilityFeeNames(cells [][]string) []string {
+	if len(cells) == 0 {
+		return nil
+	}
+	if len(cells) == 1 {
+		return append([]string(nil), cells[0]...)
+	}
+	maxLen := 0
+	total := 0
+	for _, c := range cells {
+		if len(c) > maxLen {
+			maxLen = len(c)
+		}
+		total += len(c)
+	}
+	out := make([]string, 0, total)
+	for i := 0; i < maxLen; i++ {
+		for _, c := range cells {
+			if i < len(c) {
+				out = append(out, c[i])
+			}
+		}
+	}
+	return out
 }
 
 // parseUtilityFeePlainLine 解析纯文本形态的「费用组成 时段 电量 标准 电费」元组。
@@ -480,8 +529,14 @@ func utilityFeeCategoryOf(name string) string {
 }
 
 // normalizeUtilityFeeName 全半角括号归一：账单里两种写法混用。
+// normalizeUtilityFeeName 归一费用组成名：全半角括号、空白，以及同义写法。
+//
+// 「其它 / 其他」「因素 / 因数」在国网账单与人工配置里都出现过，
+// 不归一会导致按名称匹配时整项落空（→ 0）。
 func normalizeUtilityFeeName(name string) string {
-	return strings.TrimSpace(strings.NewReplacer("（", "(", "）", ")", " ", "").Replace(name))
+	return strings.TrimSpace(strings.NewReplacer(
+		"（", "(", "）", ")", " ", "", "其它", "其他", "因素", "因数",
+	).Replace(name))
 }
 
 func utilityFeeRowKey(r ParsedFeeRow) string {
