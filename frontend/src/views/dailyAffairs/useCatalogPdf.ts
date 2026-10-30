@@ -4,6 +4,7 @@
 // 内嵌开源中文字体（霞鹜文楷，OFL）。
 import { PDFDocument, PDFFont, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
+import { fitColumnWidths, wrapNoBreakNumbers, type CatalogMetrics } from './catalogLayout'
 
 export interface CatalogColumn {
   key: string
@@ -33,14 +34,9 @@ const PAGE_H = 595.28
 const MARGIN = 32
 const TITLE_SIZE = 15
 const META_SIZE = 9
-const HEADER_SIZE = 8.5
-const CELL_SIZE = 8.5
-const LINE_HEIGHT = 12.5
+// 字号 / 左右内边距 / 列宽全部由 catalogLayout 按列数动态给：
+// 20+ 列时必须缩到 6~7.5pt 且总宽严格等于内容区，否则最右列会被纸张裁掉。
 const HEADER_HEIGHT = 26
-const CELL_PAD = 6
-const MIN_COL_W = 40
-// 单列上限：约页宽 30%，超过则内容换行完整显示
-const MAX_COL_W = Math.floor((PAGE_W - MARGIN * 2) * 0.3)
 const ROW_MIN_HEIGHT = 22
 
 const COLOR_BORDER = rgb(0.82, 0.82, 0.82)
@@ -117,57 +113,42 @@ export async function generateCatalogPdf(opts: {
 
   const avail = PAGE_W - MARGIN * 2
 
-  // 列宽：按 表头/内容 最大宽度估算（内容权重），clamp 到 [MIN_COL_W, MAX_COL_W]
-  // 多行文本取「最长单行」而非整段宽度：否则一段带换行的备注会把列撑到 MAX_COL_W，
-  // 其余列被压到 MIN_COL_W，整张目录表比例失衡。
-  const colMax = columns.map((c) => {
-    let max = font.widthOfTextAtSize(c.label, HEADER_SIZE)
-    for (const r of rows) {
-      for (const line of splitExplicitLines(c.value(r) || '')) {
-        const w = font.widthOfTextAtSize(line, CELL_SIZE)
-        if (w > max) max = w
-      }
-    }
-    return Math.min(MAX_COL_W, Math.max(MIN_COL_W, max + CELL_PAD * 2))
+  // 列宽：交给 catalogLayout 统一收敛。
+  //
+  // 旧实现「每列保底 40pt + 按比例压缩」在 20 列时会算出 800pt > 777.89pt，
+  // 表格右边界越过纸张（「燃气费」整列消失）；且 40pt 扣掉 12pt 内边距只剩 28pt，
+  // 6 位数字放不下被拆行。现在：总宽严格 = avail，列多则自动缩字号/内边距，
+  // 数字串绝不拆行。
+  const cellTexts: string[][] = rows.map((row) => columns.map((c) => String(c.value(row) ?? '')))
+  const fit = fitColumnWidths({
+    avail,
+    headers: columns.map((c) => c.label),
+    cells: cellTexts,
+    measure: (text, size) => font.widthOfTextAtSize(text, size),
   })
-  // 归一化：未超出则按比例撑满；超出则按比例压缩（保底 MIN_COL_W）
-  let widths: number[]
-  const rawSum = colMax.reduce((a, b) => a + b, 0)
-  if (rawSum <= avail) {
-    const extra = avail - rawSum
-    widths = colMax.map((w) => Math.min(MAX_COL_W, w + (w / rawSum) * extra))
-    // 撑满后仍有富余则平均补到最后一列，避免表格不贴底
-    const sum = widths.reduce((a, b) => a + b, 0)
-    if (sum < avail) widths[widths.length - 1] += avail - sum
-  } else {
-    const scale = avail / rawSum
-    widths = colMax.map((w) => Math.max(MIN_COL_W, w * scale))
-    const sum = widths.reduce((a, b) => a + b, 0)
-    if (sum > avail) {
-      const floored = widths.filter((w) => w > MIN_COL_W).length
-      const extraNeed = sum - avail
-      const shrink = floored > 0 ? extraNeed / floored : 1
-      widths = widths.map((w) => (w > MIN_COL_W ? Math.max(MIN_COL_W, w - shrink) : w))
-    }
-  }
+  const widths = fit.widths
+  const metrics: CatalogMetrics = fit.metrics
+  const { padX, lineHeight, cellSize, headerSize } = metrics
+  const textWidths = fit.textWidths
 
   const now = new Date()
   const dateStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`
 
-  // 预计算每行的换行行数与行高
-  const rowLines = rows.map((row) =>
-    columns.map((c, i) => wrapText(font, c.value(row) || '', widths[i] - CELL_PAD * 2, CELL_SIZE))
+  // 预计算每行的换行行数与行高（数字串不拆）
+  const rowLines = cellTexts.map((cells) =>
+    cells.map((text, i) => wrapNoBreakNumbers((s) => font.widthOfTextAtSize(s, cellSize), text, textWidths[i]))
   )
   const rowHeights = rowLines.map((linesArr) => {
     const maxLines = Math.max(...linesArr.map((ls) => ls.length))
-    return Math.max(ROW_MIN_HEIGHT, maxLines * LINE_HEIGHT + CELL_PAD)
+    return Math.max(ROW_MIN_HEIGHT, maxLines * lineHeight + padX * 2)
   })
-  // 表头单行自适应：优先单行完整显示，列宽不足时缩小字号（下限 6），仍不足才换行兜底
+  // 表头：允许优雅换行（中文按字断），但绝不丢字。
+  // 字号已在 fitColumnWidths 里随列数收敛；这里只在个别超长表头上再压一档。
   const headerFonts = columns.map((c, i) => {
-    const availW = widths[i] - CELL_PAD * 2
-    let size = HEADER_SIZE
+    const availW = textWidths[i]
+    let size = headerSize
     while (size > 6 && font.widthOfTextAtSize(c.label, size) > availW) size -= 0.5
-    const lines = wrapText(font, c.label, availW, size)
+    const lines = wrapNoBreakNumbers((s) => font.widthOfTextAtSize(s, size), c.label, availW)
     return { size, lines }
   })
   const headerMaxLines = Math.max(...headerFonts.map((h) => h.lines.length))
@@ -190,17 +171,24 @@ export async function generateCatalogPdf(opts: {
 
   const drawHeaderRow = () => {
     let x = MARGIN
-    const h = Math.max(HEADER_HEIGHT, headerMaxLines * LINE_HEIGHT + CELL_PAD)
+    const h = Math.max(HEADER_HEIGHT, headerMaxLines * lineHeight + padX * 2)
     page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, color: COLOR_HEADER_BG })
     page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, borderColor: COLOR_BORDER, borderWidth: 0.5 })
     columns.forEach((c, i) => {
       const w = widths[i]
       const { size, lines } = headerFonts[i]
-      const totalH = lines.length * LINE_HEIGHT
+      const totalH = lines.length * lineHeight
       const startY = y - h + (h - totalH) / 2
       lines.forEach((line, li) => {
-        page.drawText(line, { x: x + CELL_PAD, y: startY + totalH - (li + 1) * LINE_HEIGHT, size, font, color: COLOR_TEXT })
+        page.drawText(line, { x: x + padX, y: startY + totalH - (li + 1) * lineHeight, size, font, color: COLOR_TEXT })
       })
+      // 列分隔线：20+ 列时没有竖线几乎无法对齐读数
+      if (i > 0) {
+        page.drawLine({
+          start: { x, y }, end: { x, y: y - h },
+          color: COLOR_BORDER, thickness: 0.4,
+        })
+      }
       x += w
     })
     y -= h
@@ -233,17 +221,23 @@ export async function generateCatalogPdf(opts: {
     columns.forEach((c, i) => {
       const w = widths[i]
       const lines = linesArr[i]
-      const totalH = lines.length * LINE_HEIGHT
+      const totalH = lines.length * lineHeight
       const startY = rowTop - rh + (rh - totalH) / 2
       lines.forEach((line, li) => {
         page.drawText(line, {
-          x: x + CELL_PAD,
-          y: startY + totalH - (li + 1) * LINE_HEIGHT,
-          size: CELL_SIZE,
+          x: x + padX,
+          y: startY + totalH - (li + 1) * lineHeight,
+          size: cellSize,
           font,
           color: c.value(row) ? COLOR_TEXT : COLOR_MUTED,
         })
       })
+      if (i > 0) {
+        page.drawLine({
+          start: { x, y: rowTop }, end: { x, y: rowTop - rh },
+          color: COLOR_BORDER, thickness: 0.4,
+        })
+      }
       x += w
     })
     y -= rh

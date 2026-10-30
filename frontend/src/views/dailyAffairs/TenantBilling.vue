@@ -21,7 +21,7 @@
           :confirm-btn="{ content: '确认生成', theme: 'primary' }" :cancel-btn="{ content: '取消' }"
           @confirm="handleGenerateAll">
           <t-button theme="primary" size="small" :loading="generateBusy"
-            :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '按所选记录生成账单；未选择则全部重新生成（数据不全时禁止生成）'">
+            :title="isOwnerView ? '重新加载账单与表计数据并重新核算列表（数据有误时可随时点击）' : '按所选记录生成账单；未选择则全部重新生成（缺项按 0 参与核算，不再拦截）'">
             <template #icon><t-icon name="refresh" size="14px" /></template>
             {{ isOwnerView ? '重新核算' : '生成账单' }}
           </t-button>
@@ -1178,7 +1178,16 @@ const buildRows = () => {
       const arr = elecOf(unit)
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
     }
-    const gasOf = () => gasRows.value.filter(r => r.month === month && r.meter_kind !== 'public')
+    /**
+     * 当月气表记录 —— **必须按使用单位过滤**。
+     *
+     * 旧实现只按月 + `meter_kind !== 'public'` 过滤，等于把全厂所有单位的气费
+     * 加在一起：2026-09 持睿汽车的费用清单里凭空多出一行「气费 1,188.20」，
+     * 而那是重庆星达的气表读数，PDF 应收合计因此比列表「合计应付」多 1,188.20。
+     * 气费与电/水不同，不是按比例分摊的，只能「谁的表算谁的钱」。
+     */
+    const gasOf = (unit: string) => gasRows.value.filter((r: any) =>
+      r.month === month && r.meter_kind !== 'public' && String(r.use_unit || '').trim() === unit)
     const base: Record<string, any> = {
       // 主键必须带「使用单位」：同一月份在不同单位下各有一行，
       // 只用 row-${month} 会撞键，勾选一行的勾选态会同时命中同月的所有行。
@@ -1200,7 +1209,8 @@ const buildRows = () => {
       const tInd = tenantWater(tenantName, month, false)
       const tDorm = tenantWater(tenantName, month, true)
       const wDorm = waterAgg('sub', OWNER_UNIT, month, true)
-      const gas = gasOf()
+      // 业主视角 = 星达自己的气表（气费不参与分摊，别的单位的表不能算进来）
+      const gas = gasOf(OWNER_UNIT)
       // 星达工业用电量 = 总电量 - 星达居民电量 - 持睿工业电量(星达分表总电量)
       const indKwh = Math.round((totalKwh - res.kwh - (Number(rec?.total_kwh) || 0)) * 100) / 100
       // 星达工业均价 = (总电费 - 持睿居民电费 - 持睿工业电费) ÷ (总电量 - 持睿居民电量 - 持睿工业电量)
@@ -1282,7 +1292,9 @@ const buildRows = () => {
       const wDorm = tenantWater(tenantName, month, true)
       const indKwh = Number(rec?.total_kwh) || 0
       const indFee = Number(rec?.industrial_fee) || 0
-      const gas = gasOf()
+      // 租户视角 = 该租户自己的气表。没有气表的租户（持睿汽车）这里是空数组，
+      // 「用气量 / 气费」两列恒为 0，打印清单也不会出现气费区块。
+      const gas = gasOf(tenantName)
       Object.assign(base, {
         total_kwh: totalKwh,
         total_fee: totalFee,
@@ -1540,47 +1552,15 @@ const generateConfirmText = computed(() => (selectedKeys.value.size
   : '当前未选择记录，确认全部重新生成账单？'))
 
 /**
- * 生成前完整性校验（产品口径：严格拦截）。
+ * 生成前完整性校验 —— **已弃用**（产品口径变更）。
  *
- * 逐月检查：市电账单、星达分时读数、该租户电表读数，以及已开启分摊子项
- * 依赖的水/气读数。任一缺失即整批禁止生成 —— 带病生成出来的账单会静默
- * 少算/错算，比生成失败更难发现。
+ * 旧实现逐月检查市电账单 / 星达分时读数 / 该租户电表读数 / 水气读数，任一缺失
+ * 即整批禁止生成。真机反馈：2026-05 只缺「星达分时读数」就整批拒绝，
+ * 而其余月份本来能算、用户也没有别的补数路径 —— 门禁比缺数本身更阻碍业务。
+ *
+ * 现在一律允许生成，缺项按 0 参与计算（后端 GenerateBillingRecord 同步放开），
+ * 结果里缺失的部分显示 0，用户补完数据再点一次「重新核算」即可。
  */
-function readinessOf(rows: any[]): Array<{ month: string; missing: string[] }> {
-  const issues: Array<{ month: string; missing: string[] }> = []
-  const itemCats = new Set(tenantEnabledItems.value.map((it: any) => String(it.source_category || '市电账单')))
-  for (const r of rows) {
-    const missing: string[] = []
-    if (!r.billReady) missing.push('市电账单')
-    if (!r.readingReady) missing.push('星达分时读数')
-    if (!isOwnerView.value) {
-      const dormRows = elecRows.value.filter((x) =>
-        x.month === r.month && x.use_unit === useUnit.value && x.meter_kind === 'dorm')
-      if (!dormRows.length) missing.push(`「${useUnit.value}」电表读数`)
-      if (itemCats.has('水费核算')) {
-        const meters = waterMeters.value.filter((m: any) =>
-          m.enabled !== false && (m.owner_unit === useUnit.value || m.use_unit === useUnit.value))
-        if (!meters.some((m: any) => waterReadingMap.value.get(`${m.id}__${r.month}`))) missing.push('水表读数')
-      }
-      if (itemCats.has('气费核算')) {
-        const hasGas = gasRows.value.some((g) =>
-          g.month === r.month && g.use_unit === useUnit.value && g.meter_kind !== 'public')
-        if (!hasGas) missing.push('气表读数')
-      }
-    }
-    if (missing.length) issues.push({ month: r.month, missing })
-  }
-  return issues
-}
-
-/** 数据不全提示：逐月列出缺失项，明确告诉用户去补什么。 */
-function reportReadiness(issues: Array<{ month: string; missing: string[] }>): boolean {
-  const detail = `以下月份数据不全，已禁止生成：\n${issues
-    .map((i) => `· ${i.month}：缺少 ${i.missing.join('、')}`)
-    .join('\n')}`
-  MessagePlugin.error({ content: detail, duration: 8000 })
-  return false
-}
 
 const handleGenerateAll = async () => {
   const targets = generateTargets.value
@@ -1588,12 +1568,6 @@ const handleGenerateAll = async () => {
     MessagePlugin.warning('当前没有可生成的记录')
     return
   }
-  // 校验范围 == 生成范围，不多查一条：
-  //   勾选了 N 条 → 只查这 N 条对应月份；
-  //   未勾选（= 全部重新生成）→ 才查全部月份。
-  // 阈值不变（源数据不全仍然拦截），只是范围跟着所选走。
-  const issues = readinessOf(targets)
-  if (issues.length) { reportReadiness(issues); return }
 
   if (isOwnerView.value) {
     generateBusy.value = true
@@ -1734,10 +1708,12 @@ function statementKpis(rows: any[]): Array<{ label: string; value: string; hint?
 }
 
 /** 租户视角概览里的「电水合计应收」：指标卡只有四张，合计金额写成一行元信息。 */
-function statementMeta(rows: any[], unit: string, months: string[], ratio: number) {
+function statementMeta(rows: any[], unit: string, months: string[], ratio: number, includeGas = false) {
   const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
   const power = sum('ind_fee') + sum('dorm_fee') + sum('res_fee')
   const water = sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee')
+  const gas = includeGas ? sum('gas_fee') : 0
+  const tenantTotal = power + water + gas
   return [
     { label: '账单周期', value: months.join('、') },
     { label: '使用单位', value: unit },
@@ -1746,8 +1722,13 @@ function statementMeta(rows: any[], unit: string, months: string[], ratio: numbe
     { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
     // 应收合计必须与列表「合计应付」逐分相等：
     //   业主 = 电 + 水 + 气（三块都有列）；
-    //   租户 = 工业电费 + 宿舍电费 + 水费（气费列未启用，不并入）。
-    { label: isOwnerView.value ? '应收合计' : '电水合计应收', value: `${money2(isOwnerView.value ? power + water + sum('gas_fee') : power + water)} 元` },
+    //   租户 = 工业电费 + 宿舍电费 + 水费（+ 该租户确有气表时并入气费）。
+    // 租户没有气表时**绝不能**并入 gas_fee —— 旧实现会把全厂气费加进来，
+    // 2026-09 持睿汽车因此多出 1,188.20（那是星达的气费）。
+    {
+      label: isOwnerView.value || includeGas ? '应收合计' : '电水合计应收',
+      value: `${money2(isOwnerView.value ? power + water + sum('gas_fee') : tenantTotal)} 元`,
+    },
     { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
   ]
 }
@@ -1950,8 +1931,30 @@ function gasTableOf(month: string, unit: string, prefix: string): PrintTable {
   }
 }
 
-/** 应收汇总：工商业电费 / 居民宿舍电费 / 水费 / 气费 → 合计 */
-function summaryTableOf(rows: any[], unit: string, prefix: string): PrintTable {
+/**
+ * 该单位本次打印是否适用「气费」。
+ *
+ * 两道条件缺一不可（真机 2026-09 持睿汽车误出气费 1,188.20 的根因）：
+ *   ① 该单位确有气表记录（当月、非公租房、使用单位精确匹配）；
+ *   ② 当前视角的字段定义里「气费」列是启用的（用户可在设置里停用该字段）。
+ * 任一不满足 → 既不出「气费核算明细」表，也不出「应收费用汇总」里的气费行。
+ */
+function gasApplicableOf(unit: string, months: string[]): boolean {
+  const hasMeter = gasRows.value.some((r: any) =>
+    r.meter_kind !== 'public'
+    && String(r.use_unit || '').trim() === unit
+    && months.includes(String(r.month || '')))
+  if (!hasMeter) return false
+  return activeColDefs.value.some((c) => c.key === 'gas_fee')
+}
+
+/**
+ * 应收汇总：工商业电费 / 居民宿舍电费 / 水费 →（适用时）气费 → 合计。
+ *
+ * `includeGas` 由 `gasApplicableOf` 决定：没有气表的单位连「气费 0.00」这一行
+ * 都不该出现 —— 一行恒为 0 的费用项会让租户以为「有气表但没用气」。
+ */
+function summaryTableOf(rows: any[], unit: string, prefix: string, includeGas: boolean): PrintTable {
   let ind = 0; let dorm = 0; let water = 0; let gas = 0
   for (const r of rows) {
     ind += Number(r.ind_fee) || 0
@@ -1959,7 +1962,13 @@ function summaryTableOf(rows: any[], unit: string, prefix: string): PrintTable {
     water += (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
     gas += Number(r.gas_fee) || 0
   }
-  const total = Math.round((ind + dorm + water + gas) * 100) / 100
+  const total = Math.round((ind + dorm + water + (includeGas ? gas : 0)) * 100) / 100
+  const body: string[][] = [
+    ['工商业电费（分摊后）', unit, money2(ind)],
+    ['居民 / 宿舍电费', unit, money2(dorm)],
+    ['水费（分表 + 宿舍）', unit, money2(water)],
+  ]
+  if (includeGas) body.push(['气费', unit, money2(gas)])
   return {
     title: `${prefix}应收费用汇总`,
     columns: [
@@ -1967,12 +1976,7 @@ function summaryTableOf(rows: any[], unit: string, prefix: string): PrintTable {
       { label: '使用单位', weight: 2 },
       { label: '金额(元)', weight: 1.6, align: 'right' },
     ],
-    rows: [
-      ['工商业电费（分摊后）', unit, money2(ind)],
-      ['居民 / 宿舍电费', unit, money2(dorm)],
-      ['水费（分表 + 宿舍）', unit, money2(water)],
-      ['气费', unit, money2(gas)],
-    ],
+    rows: body,
     total: ['应收合计', unit, money2(total)],
   }
 }
@@ -2029,6 +2033,9 @@ function buildStatementDoc(rows: any[], unit: string): StatementDoc {
   const single = rows.length === 1
   const ratioList = rows.map((r: any) => ratioForRow(r)).filter((v) => v > 0)
   const ratio = ratioList.length ? ratioList[0] : 0
+  // 气费是否适用：整份清单统一判定（同一单位、同一批月份），
+  // 逐行判会让「多月份打印」里某几页有气费行、某几页没有。
+  const includeGas = gasApplicableOf(unit, months)
   const tables: PrintTable[] = []
   rows.forEach((row: any) => {
     const month = String(row.month || '')
@@ -2039,15 +2046,17 @@ function buildStatementDoc(rows: any[], unit: string): StatementDoc {
     tables.push(feeTableOf(month, r, prefix))
     tables.push(elecTableOf(month, unit, prefix))
     tables.push(waterTableOf(month, unit, prefix))
-    const gas = gasTableOf(month, unit, prefix)
-    if (gas.rows.length) tables.push(gas)
-    tables.push(summaryTableOf([row], unit, prefix))
+    if (includeGas) {
+      const gas = gasTableOf(month, unit, prefix)
+      if (gas.rows.length) tables.push(gas)
+    }
+    tables.push(summaryTableOf([row], unit, prefix, includeGas))
   })
   return {
     title: `${unit} 费用清单`,
     subtitle: `${months.join('、')} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
     overviewTitle: '一、账单概览',
-    meta: statementMeta(rows, unit, months, ratio),
+    meta: statementMeta(rows, unit, months, ratio, includeGas),
     kpis: statementKpis(rows),
     tables,
     footerNote: isOwnerView.value || ratio > 0

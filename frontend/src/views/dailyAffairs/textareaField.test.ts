@@ -186,8 +186,11 @@ test('目录 PDF：换行符按行切段，不被 drawText 吞掉', () => {
   const at = src.indexOf('function wrapText')
   const body = src.slice(at, src.indexOf('\nexport async function generateCatalogPdf', at))
   assert.match(body, /wrapParagraphs\(/, 'wrapText 必须委托 wrapParagraphs 折行')
-  // 列宽估算同样按最长单行（否则一段长备注会把整列撑到上限）
-  assert.match(src, /splitExplicitLines\(c\.value\(r\) \|\| ''\)/)
+  // 列宽估算同样按最长单行（否则一段长备注会把整列撑到上限）。
+  // 第 17 轮起列宽计算搬进 catalogLayout.fitColumnWidths，这里改断言新落点。
+  const layout = read('catalogLayout.ts')
+  assert.match(layout, /String\(row\?\.\[i\] \?\? ''\)\.split\('\\n'\)/, '列宽估算必须按显式换行取最长单行')
+  assert.match(src, /fitColumnWidths\(/, '目录 PDF 必须复用 catalogLayout 的列宽算法')
 })
 
 test('目录 PDF 折行行为：显式换行保留、超宽折行、空行与制表符正确', () => {

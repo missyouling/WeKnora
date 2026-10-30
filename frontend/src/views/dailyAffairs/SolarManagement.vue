@@ -96,22 +96,36 @@
                 </t-button>
               </div>
               <div class="batch-bar-actions">
+                <!-- 浮动工具栏（第 17 轮，与市电账单逐字一致）：
+                     重新解析 → 重新提取 → 打印清单 → 打印目录 → 删除。
+                     「编辑数据」已删除（点行即进详情）。 -->
                 <t-popconfirm theme="warning"
-                  :content="`确定重新解析并提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
+                  :content="`确定重新解析「${selectedSingle?.fileName || '该文件'}」吗？将重新解析源文件，解析完成后自动提取。`"
+                  :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                  @confirm="handleReparse">
+                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                    <template #icon><t-icon name="refresh" size="14px" /></template>
+                    重新解析
+                  </t-button>
+                </t-popconfirm>
+                <t-popconfirm theme="warning"
+                  :content="`确定重新提取「${selectedSingle?.fileName || '该文件'}」吗？将覆盖已有提取结果。`"
                   :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                   @confirm="handleReExtract">
                   <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                    <template #icon><t-icon name="refresh" size="14px" /></template>
+                    <template #icon><t-icon name="file-copy" size="14px" /></template>
                     重新提取
                   </t-button>
                 </t-popconfirm>
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
-                  <template #icon><t-icon name="edit" size="14px" /></template>
-                  编辑数据
-                </t-button>
-                <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
+                <t-button theme="default" variant="outline" size="small" :loading="statementBusy"
+                  :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handlePrintStatement">
                   <template #icon><t-icon name="print" size="14px" /></template>
-                  打印
+                  打印清单
+                </t-button>
+                <t-button theme="default" variant="outline" size="small" :loading="catalogBusy"
+                  :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handlePrintCatalog">
+                  <template #icon><t-icon name="view-list" size="14px" /></template>
+                  打印目录
                 </t-button>
                 <t-popconfirm theme="warning"
                   :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
@@ -119,7 +133,7 @@
                   @confirm="handleBatchDelete">
                   <t-button theme="danger" variant="outline" size="small" @click.stop>
                     <template #icon><t-icon name="delete" size="14px" /></template>
-                    删除记录
+                    删除
                   </t-button>
                 </t-popconfirm>
               </div>
@@ -404,9 +418,9 @@
          「光伏设置」Tab，由 UtilitiesManagement 注入 SolarSettingsPanel。 -->
 
 
-    <!-- 打印预览：全中台统一组件 -->
-    <PrintPreviewDialog v-model:visible="printVisible" :title="`打印预览（${printCount} 份）`" :url="printUrl"
-      :data="printBytes" :download-name="`${printCount}份光伏账单.pdf`" loading-text="正在加载账单 PDF…"
+    <!-- 打印预览：全中台统一组件（打印清单 / 打印目录共用） -->
+    <PrintPreviewDialog v-model:visible="printVisible" :title="printTitle" :url="printUrl"
+      :data="printBytes" :download-name="printFileName" :loading-text="printLoadingText"
       @close="closePrint" />
   </div>
 </template>
@@ -420,7 +434,6 @@ import {
   onBeforeUnmount,
 } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { PDFDocument } from 'pdf-lib'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -432,8 +445,9 @@ import {
   extractSolarBill,
   reparseKnowledge,
   listSolarBillRecords,
-  previewKnowledgeFile,
 } from '@/api/knowledge-base'
+import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
+import { buildSolarBillStatementDoc } from './energyBillStatements'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
@@ -1219,24 +1233,34 @@ const saveFeeEdit = async () => {
 
 // 上传 / 删除 / 提取落库后广播：父页 KPI 卡片计数跟着重算（口径铁律）。
 // ---- 浮动工具栏 ----
+/**
+ * 「重新解析」：重跑文档解析，解析完成后由轮询自动触发字段提取。
+ * 与「重新提取」的分工见 UtilitiesManagement 同名注释（第 17 轮统一口径）。
+ */
+const handleReparse = async () => {
+  const row = selectedSingle.value
+  if (!row || !kbId.value) return
+  try {
+    await reparseKnowledge(row.knowledgeId)
+    MessagePlugin.success(`已触发「${row.fileName}」重新解析，解析完成后将自动提取`)
+    refreshPending()
+    setTimeout(() => { loadFiles(true); refreshPending() }, 1500)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '重新解析失败')
+  }
+}
 const handleReExtract = async () => {
   const row = selectedSingle.value
   if (!row || !kbId.value) return
   try {
-    // 与电费/合同一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
-    await reparseKnowledge(row.knowledgeId)
-    MessagePlugin.success(`已触发「${row.fileName}」重新解析与提取`)
+    // 复用已有解析结果直接重跑字段提取（不重新解析，快一个量级）
+    await extractSolarBill(kbId.value, row.knowledgeId)
+    MessagePlugin.success(`已触发「${row.fileName}」重新提取`)
     refreshPending()
     setTimeout(() => { loadFiles(true); refreshPending() }, 1500)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '重新提取失败')
   }
-}
-const handleBatchEdit = async () => {
-  const row = selectedSingle.value
-  if (!row) return
-  clearSelection()
-  await openDetail(row)
 }
 const handleBatchDelete = async () => {
   const ids = selectedRows.value.map(r => r.knowledgeId)
@@ -1293,71 +1317,80 @@ const onTagCreated = async () => { await loadTags() }
 const onTagManageChanged = async () => { await loadTags() }
 const openTagManage = () => { tagManageVisible.value = true }
 
-// ---- 打印（合并多份账单为一个 PDF，iframe 预览，与电费一致） ----
-const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
-const isImageRow = (r: any, blob: any) => {
-  const ext = String((r as any).fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
-  if (IMAGE_EXTS.includes(ext)) return true
-  const mime = (blob?.type || '').toLowerCase()
-  return mime.startsWith('image/')
-}
+// ---- 打印（清单 / 目录 两种版式，共用统一预览弹窗） ----
+//
+// 清单 = 纵向结算单（账单概况 + 关口电量明细 + 上网电费 + 发电补助 + 结算汇总）；
+// 目录 = 横向汇总表（当前列表已启用表头列 × 勾选行）。
 const printVisible = ref(false)
 const printUrl = ref('')
 const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
-const printCount = ref(1)
-const printBusy = ref(false)
+const printTitle = ref('打印预览')
+const printFileName = ref('preview.pdf')
+const printLoadingText = ref('正在生成 PDF…')
+const statementBusy = ref(false)
+const catalogBusy = ref(false)
+
+/** 列表单元格的可打印文本：与屏幕显示同源。 */
+function cellTextOf(c: ColDef, row: any): string {
+  const v = row?.[c.key]
+  if (v === undefined || v === null || v === '') return ''
+  if (c.fieldType === 'amount') return fmtMoney(v)
+  if (c.fieldType === 'number') return fmtKwh(v)
+  return String(v)
+}
+
+const openPrint = (title: string, fileName: string, loading: string) => {
+  if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
+  printBytes.value = null
+  printTitle.value = title
+  printFileName.value = fileName
+  printLoadingText.value = loading
+  printVisible.value = true
+}
+const finishPrint = (bytes: Uint8Array) => {
+  printBytes.value = bytes
+  printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
+}
 const closePrint = () => {
   printVisible.value = false
-  printUrl.value = ''
+  if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
   printBytes.value = null
 }
-const handleBatchPrint = async () => {
+
+/** 打印清单：概况 + 电量电费明细。 */
+const handlePrintStatement = async () => {
   const rowsSel = selectedRows.value
   if (!rowsSel.length) return
-  printBusy.value = true
-  printUrl.value = ''
-  printCount.value = rowsSel.length
-  printVisible.value = true
+  statementBusy.value = true
+  openPrint(`账单清单（${rowsSel.length} 份）`, `${rowsSel.length}份光伏账单清单.pdf`, '正在生成账单清单…')
   try {
-    const out = await PDFDocument.create()
-    const notes: string[] = []
-    let mergedPages = 0
-    for (const r of rowsSel) {
-      const blob: any = await previewKnowledgeFile(r.knowledgeId)
-      if (!blob) { notes.push(`${r.fileName}（获取源文件失败）`); continue }
-      try {
-        const src = await blob.arrayBuffer()
-        if (isImageRow(r, blob)) {
-          const ext = String((r as any).fileType || '').toLowerCase()
-          const isPng = ext.includes('png') || (blob?.type || '').toLowerCase().includes('png')
-          const img = isPng ? await out.embedPng(src) : await out.embedJpg(src)
-          const page = out.addPage([img.width, img.height])
-          page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height })
-          mergedPages++
-          continue
-        }
-        const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
-        const pages = await out.copyPages(pdf, pdf.getPageIndices())
-        pages.forEach(p => out.addPage(p))
-        mergedPages += pages.length
-      } catch {
-        notes.push(`${r.fileName}（该文件无法合并，可单独打印）`)
-      }
-    }
-    if (mergedPages === 0) {
-      MessagePlugin.error('未获取到可打印的账单页面')
-      printVisible.value = false
-      return
-    }
-    const bytes = await out.save()
-    printBytes.value = bytes
-    printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
-    if (notes.length) setTimeout(() => MessagePlugin.warning(notes.join('；')), 300)
+    finishPrint(await generateStatementPdf({ doc: buildSolarBillStatementDoc(rowsSel) }))
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '打印预览生成失败')
+    MessagePlugin.error(e?.message || '打印清单生成失败')
     printVisible.value = false
   } finally {
-    printBusy.value = false
+    statementBusy.value = false
+  }
+}
+
+/** 打印目录：已启用表头列 × 勾选行。 */
+const handlePrintCatalog = async () => {
+  const rowsSel = selectedRows.value
+  if (!rowsSel.length) return
+  catalogBusy.value = true
+  openPrint(`账单目录（${rowsSel.length} 条）`, `${rowsSel.length}条光伏账单目录.pdf`, '正在生成账单目录…')
+  try {
+    const columns: CatalogColumn[] = visibleColDefs.value.map((c) => ({
+      key: c.key,
+      label: c.label,
+      value: (r: any) => cellTextOf(c, r),
+    }))
+    finishPrint(await generateCatalogPdf({ title: '光伏账单目录', columns, rows: rowsSel }))
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '打印目录生成失败')
+    printVisible.value = false
+  } finally {
+    catalogBusy.value = false
   }
 }
 

@@ -1115,14 +1115,15 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	subRows := h.loadSubMeterRows(ctx, tenant.Name, req.Month)
 	starTotal := periodSum(starPeriod)
 	subTotal := periodSum(subPeriod)
-	if starTotal <= 0 {
-		c.Error(errors.NewBadRequestError("请先录入该月星达分表读数"))
-		return
-	}
+	// 口径（第 17 轮）：**不再因缺读数阻断生成**。
+	// 旧实现 starTotal<=0 直接 400「请先录入该月星达分表读数」，前端也有一层
+	// readiness 门禁，导致「2026-05 只缺一项分时读数」整批月份都生成不了。
+	// 现在缺项一律按 0 参与计算，算完用户可以补数再点「重新核算」。
 	lineLoss := round2(starTotal - subTotal)
 	if lineLoss < 0 {
-		c.Error(errors.NewBadRequestError("星达分表电量小于工业分表合计,请检查读数"))
-		return
+		// 读数填反/分表大于总表：差额分摊按 0 处理，不再阻断（负的 ΔQ 会把
+		// 分时电费算成负数，比 0 更难解释）。
+		lineLoss = 0
 	}
 
 	// 2) 宿舍/水表引用读数（按使用单位=租户名自动匹配优先，显式引用兜底）
@@ -1141,17 +1142,19 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		return
 	}
 
-	// 3) 市电账单
+	// 3) 市电账单（缺失/电量为空**不再阻断**：按 0 参与计算，ratio 记 0）
+	//
+	// 旧实现「未找到该月的市电账单」直接 400，前端也就无法对「只有抄表没有账单」
+	// 的月份做任何核算。现在改为零值账单：所有市电分项金额 = 原金额(0) × 比例 = 0，
+	// 宿舍电费与水费仍按实际读数正常计入，用户看到的就是「电费待补」而不是报错。
 	billItem, err := h.loadUtilityBillByMonth(ctx, st.BillKBID, req.Month)
-	if err != nil {
-		c.Error(err)
-		return
+	if err != nil || billItem == nil {
+		billItem = &types.UtilityBillExtractionItem{}
 	}
-	if billItem.TotalKwh <= 0 {
-		c.Error(errors.NewBadRequestError("市电账单本期电量为空,无法计算比例"))
-		return
+	ratio := 0.0
+	if billItem.TotalKwh > 0 && starTotal > 0 {
+		ratio = round6(starTotal / billItem.TotalKwh)
 	}
-	ratio := round6(starTotal / billItem.TotalKwh)
 
 	// 3.1 分时电量分摊（计费电量 → 差额分摊 → 基准电量）
 	//

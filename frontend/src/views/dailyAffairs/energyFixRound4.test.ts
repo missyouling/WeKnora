@@ -114,11 +114,11 @@ test('buildRows 不得无条件清空勾选（否则单选生成退化成全量�
   assert.match(body, /const alive = new Set\(out\.map/)
 })
 
-test('生成账单的校验只针对 generateTargets', () => {
+test('生成账单不再做完整性拦截（第 17 轮：门禁已弃用）', () => {
   const src = read('TenantBilling.vue')
   const body = src.slice(src.indexOf('const handleGenerateAll = async'), src.indexOf('// 数据齐全时默认自动生成'))
-  assert.match(body, /readinessOf\(targets\)/)
-  assert.ok(!/readinessOf\(displayRows\.value\)/.test(body), '不得对全部行做校验')
+  assert.ok(!/readinessOf/.test(body), '生成流程不得再调用完整性校验')
+  assert.ok(!/禁止生成/.test(body), '不得再出现「禁止生成」阻断提示')
 })
 
 // ---- ⑤ 上传弹窗：默认分类必须与选项 value 对得上 ----

@@ -51,22 +51,38 @@
               @settings="settingsVisible = true" @primary="triggerUpload"
               @clear-selection="clearSelection">
   <template #batch-actions>
+                  <!-- 浮动工具栏（第 17 轮统一口径）：重新解析 → 重新提取 → 打印清单 → 打印目录 → 删除。
+                       · 「编辑数据」已删除：点行即进详情，工具栏再放一个入口只是重复；
+                       · 「重新解析」= 重新解析源文件（解析完成后由轮询自动触发提取）；
+                       · 「重新提取」= 复用已有解析结果直接重跑字段提取；
+                       · 「打印」拆成「打印清单」（纵向结算单）与「打印目录」（横向汇总表）。 -->
                   <t-popconfirm theme="warning"
-                    :content="`确定重新解析并提取「${selectedSingle?.fileName || ''}」吗？将覆盖已有提取结果。`"
+                    :content="`确定重新解析「${selectedSingle?.fileName || ''}」吗？将重新解析源文件，解析完成后自动提取。`"
+                    :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                    @confirm="handleReparse">
+                    <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
+                      <template #icon><t-icon name="refresh" size="14px" /></template>
+                      重新解析
+                    </t-button>
+                  </t-popconfirm>
+                  <t-popconfirm theme="warning"
+                    :content="`确定重新提取「${selectedSingle?.fileName || ''}」吗？将覆盖已有提取结果。`"
                     :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
                     @confirm="handleReExtract">
                     <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1" @click.stop>
-                      <template #icon><t-icon name="refresh" size="14px" /></template>
+                      <template #icon><t-icon name="file-copy" size="14px" /></template>
                       重新提取
                     </t-button>
                   </t-popconfirm>
-                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.length !== 1 || selectedSingle?.kind === 'pending'" @click="handleBatchEdit">
-                    <template #icon><t-icon name="edit" size="14px" /></template>
-                    编辑数据
-                  </t-button>
-                  <t-button theme="default" variant="outline" size="small" :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handleBatchPrint">
+                  <t-button theme="default" variant="outline" size="small" :loading="statementBusy"
+                    :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handlePrintStatement">
                     <template #icon><t-icon name="print" size="14px" /></template>
-                    打印
+                    打印清单
+                  </t-button>
+                  <t-button theme="default" variant="outline" size="small" :loading="catalogBusy"
+                    :disabled="selectedRows.some(r => r.kind === 'pending')" @click="handlePrintCatalog">
+                    <template #icon><t-icon name="view-list" size="14px" /></template>
+                    打印目录
                   </t-button>
                   <t-popconfirm theme="warning"
                     :content="`确定删除所选 ${selectedRowKeys.length} 条账单记录吗？源文件将移入删除历史。`"
@@ -74,7 +90,7 @@
                     @confirm="handleBatchDelete">
                     <t-button theme="danger" variant="outline" size="small" @click.stop>
                       <template #icon><t-icon name="delete" size="14px" /></template>
-                      删除记录
+                      删除
                     </t-button>
                   </t-popconfirm>
                 </template>
@@ -630,9 +646,9 @@
     <FleetUploadHistoryDrawer v-model:visible="uploadHistoryVisible" :kb-id="kbId || ''" scope="energy"
       @changed="onHistoryChanged" />
 
-    <!-- 打印预览：全中台统一组件 -->
-    <PrintPreviewDialog v-model:visible="printVisible" :title="`打印预览（${printCount} 份）`" :url="printUrl"
-      :data="printBytes" :download-name="`${printCount}份市电账单.pdf`" loading-text="正在合并账单 PDF…"
+    <!-- 打印预览：全中台统一组件（打印清单 / 打印目录共用，标题与文件名按当前动作切换） -->
+    <PrintPreviewDialog v-model:visible="printVisible" :title="printTitle" :url="printUrl"
+      :data="printBytes" :download-name="printFileName" :loading-text="printLoadingText"
       @close="closePrint" />
   </div>
 </template>
@@ -653,7 +669,6 @@ import { countMeterRows, billingRowCount, historyStats, ENERGY_DATA_CHANGED_EVEN
 import { useBusinessPolling } from '@/composables/useBusinessPolling'
 import { listKnowledgeFiles, listBillingRecords } from '@/api/knowledge-base'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { PDFDocument } from 'pdf-lib'
 import * as echarts from 'echarts'
 import {
   listKnowledgeBases,
@@ -666,9 +681,10 @@ import {
   listSolarBillRecords,
   listUtilityMeterRecords,
   listBillingTenants,
-  previewKnowledgeFile,
   reparseKnowledge,
 } from '@/api/knowledge-base'
+import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
+import { buildUtilityBillStatementDoc } from './energyBillStatements'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
@@ -2406,11 +2422,35 @@ function loadDrawerWidth() {
 }
 
 // ---- 浮动工具栏 ----
-const handleBatchEdit = () => {
-  const r = selectedRows.value
-  if (r.length !== 1) { MessagePlugin.info('请选中单行后编辑，或点击列表中的账单行进入编辑'); return }
-  openDetail(r[0])
+// 「编辑数据」按钮已下线（第 17 轮）：点行即进详情，工具栏里再放一个编辑入口
+// 既与行点击重复，也让工具栏在窄屏下换行。原 handleBatchEdit 随之移除。
+/**
+ * 「重新解析」：重新跑文档解析（PDF → 文本/表格），解析完成后由轮询自动触发字段提取。
+ *
+ * 与「重新提取」的分工（第 17 轮产品口径）：
+ *   · 重新解析 = 怀疑**解析**结果坏了（扫描件识别错、表格串行）时用，慢但彻底；
+ *   · 重新提取 = 解析结果没问题、只想按最新字段规则重算，直接调 extract-utility-bill。
+ */
+const handleReparse = async () => {
+  const row = selectedRows.value
+  if (row.length !== 1) { MessagePlugin.info('重新解析仅支持单选'); return }
+  const r = row[0]
+  extractInFlight.value.add(r.knowledgeId)
+  extractFailed.value.delete(r.knowledgeId)
+  try {
+    await reparseKnowledge(r.knowledgeId)
+    MessagePlugin.success(`已触发「${r.fileName}」重新解析，解析完成后将自动提取`)
+    // 重解析后文件立刻进入解析态，状态条必须同步亮起
+    void scanOnce()
+    setTimeout(() => { loadFiles(true); void scanOnce() }, 1500)
+  } catch (e: any) {
+    extractFailed.value.set(r.knowledgeId, Date.now())
+    MessagePlugin.error(e?.message || '重新解析失败')
+  } finally {
+    extractInFlight.value.delete(r.knowledgeId)
+  }
 }
+
 const handleReExtract = async () => {
   const row = selectedRows.value
   if (row.length !== 1) { MessagePlugin.info('重新提取仅支持单选'); return }
@@ -2418,10 +2458,9 @@ const handleReExtract = async () => {
   extractInFlight.value.add(r.knowledgeId)
   extractFailed.value.delete(r.knowledgeId)
   try {
-    // 与合同管理一致：重新解析并提取（解析完成后由轮询自动触发字段提取）
-    await reparseKnowledge(r.knowledgeId)
-    MessagePlugin.success(`已触发「${r.fileName}」重新解析与提取`)
-    // 重提后文件立刻进入解析态，状态条必须同步亮起
+    // 复用已有解析结果直接重跑字段提取：比「重新解析」快一个量级
+    await extractUtilityBill(kbId.value, r.knowledgeId)
+    MessagePlugin.success(`已触发「${r.fileName}」重新提取`)
     void scanOnce()
     setTimeout(() => { loadFiles(true); void scanOnce() }, 1500)
   } catch (e: any) {
@@ -2432,67 +2471,85 @@ const handleReExtract = async () => {
   }
 }
 
-// ---- 打印（合并多份账单为一个 PDF，iframe 预览） ----
-const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff']
-const isImageRow = (r: any, blob: any) => {
-  const ext = String((r as any).fileType || '').toLowerCase().replace(/^\./, '').split('/').pop() || ''
-  if (IMAGE_EXTS.includes(ext)) return true
-  const mime = (blob?.type || '').toLowerCase()
-  return mime.startsWith('image/')
-}
+// ---- 打印（清单 / 目录 两种版式，共用统一预览弹窗） ----
+//
+// 「打印清单」= 纵向结算单：账单概况 + 各分项细项（按账单分类逐表）+ 电量明细 + 合计；
+// 「打印目录」= 横向汇总表：当前列表**已启用的表头列** × 勾选行。
+// 旧版「打印」是把源 PDF 直接合并，与「清单」在业务上完全不是一回事，
+// 而且合并件里全是扫描页，租户拿不到结构化金额。
 const printVisible = ref(false)
-const printBusy = ref(false)
 const printUrl = ref('')
 const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
 const printCount = ref(0)
+const printTitle = ref('打印预览')
+const printFileName = ref('preview.pdf')
+const printLoadingText = ref('正在生成 PDF…')
+const statementBusy = ref(false)
+const catalogBusy = ref(false)
 
-const handleBatchPrint = async () => {
+/** 列表单元格的**可打印文本**：与屏幕显示同源（金额两位小数、数值去尾 0）。 */
+function cellTextOf(c: ColDef, row: any): string {
+  const v = row?.[c.key]
+  if (v === undefined || v === null || v === '') return ''
+  if (c.fieldType === 'amount') return fmtAmount(v)
+  if (c.fieldType === 'number') return fmtRate6(v)
+  return String(v)
+}
+
+const openPrint = (title: string, fileName: string, loading: string, count: number) => {
+  if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
+  printBytes.value = null
+  printTitle.value = title
+  printFileName.value = fileName
+  printLoadingText.value = loading
+  printCount.value = count
+  printVisible.value = true
+}
+const finishPrint = (bytes: Uint8Array) => {
+  printBytes.value = bytes
+  printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
+}
+
+/** 打印清单：按所选账单逐份生成「概况 + 分项细项 + 电量明细」。 */
+const handlePrintStatement = async () => {
   const rowsSel = selectedRows.value
   if (!rowsSel.length) return
-  printBusy.value = true
-  printUrl.value = ''
-  printCount.value = rowsSel.length
-  printVisible.value = true
+  statementBusy.value = true
+  openPrint(`账单清单（${rowsSel.length} 份）`, `${rowsSel.length}份市电账单清单.pdf`, '正在生成账单清单…', rowsSel.length)
   try {
-    const out = await PDFDocument.create()
-    const notes: string[] = []
-    let mergedPages = 0
-    for (const r of rowsSel) {
-      const blob: any = await previewKnowledgeFile(r.knowledgeId)
-      if (!blob) { notes.push(`${r.fileName}（获取源文件失败）`); continue }
-      try {
-        const src = await blob.arrayBuffer()
-        if (isImageRow(r, blob)) {
-          const ext = String((r as any).fileType || '').toLowerCase()
-          const isPng = ext.includes('png') || (blob?.type || '').toLowerCase().includes('png')
-          const img = isPng ? await out.embedPng(src) : await out.embedJpg(src)
-          const page = out.addPage([img.width, img.height])
-          page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height })
-          mergedPages++
-          continue
-        }
-        const pdf = await PDFDocument.load(src, { ignoreEncryption: true })
-        const pages = await out.copyPages(pdf, pdf.getPageIndices())
-        pages.forEach(p => out.addPage(p))
-        mergedPages += pages.length
-      } catch {
-        notes.push(`${r.fileName}（该文件无法合并，可单独打印）`)
-      }
-    }
-    if (mergedPages === 0) {
-      MessagePlugin.error('未获取到可打印的账单页面')
-      printVisible.value = false
-      return
-    }
-    const bytes = await out.save()
-    printBytes.value = bytes
-    printUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }))
-    if (notes.length) setTimeout(() => MessagePlugin.warning(notes.join('；')), 300)
+    const bytes = await generateStatementPdf({ doc: buildUtilityBillStatementDoc(rowsSel) })
+    finishPrint(bytes)
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '打印预览生成失败')
+    MessagePlugin.error(e?.message || '打印清单生成失败')
     printVisible.value = false
   } finally {
-    printBusy.value = false
+    statementBusy.value = false
+  }
+}
+
+/** 打印目录：当前已启用表头列 × 勾选行（横向 A4，列多时自动缩字号不裁列）。 */
+const handlePrintCatalog = async () => {
+  const rowsSel = selectedRows.value
+  if (!rowsSel.length) return
+  catalogBusy.value = true
+  openPrint(`账单目录（${rowsSel.length} 条）`, `${rowsSel.length}条市电账单目录.pdf`, '正在生成账单目录…', rowsSel.length)
+  try {
+    const columns: CatalogColumn[] = visibleColDefs.value.map((c) => ({
+      key: c.key,
+      label: c.label,
+      value: (r: any) => cellTextOf(c, r),
+    }))
+    const bytes = await generateCatalogPdf({
+      title: '市电账单目录',
+      columns,
+      rows: rowsSel,
+    })
+    finishPrint(bytes)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '打印目录生成失败')
+    printVisible.value = false
+  } finally {
+    catalogBusy.value = false
   }
 }
 const closePrint = () => {

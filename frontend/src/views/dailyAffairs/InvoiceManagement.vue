@@ -230,7 +230,7 @@
                 </template>
                 <t-button theme="danger" variant="outline" size="small" @click.stop>
                   <template #icon><t-icon name="delete" size="14px" /></template>
-                  删除记录
+                  删除
                 </t-button>
               </t-popconfirm>
             </div>

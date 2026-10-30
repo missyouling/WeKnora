@@ -174,19 +174,22 @@ test('浮动栏双打印：打印清单（结算单）与打印目录（表格�
 })
 
 // ---- 需求 9：生成账单 ----
+// 第 17 轮口径变更：**弃用「数据不全禁止生成」门禁**。
+// 旧断言（必须 readinessOf / 已禁止生成）已随产品口径作废：只要有数据就允许核算，
+// 缺项按 0 参与计算。这里反向断言，防止有人把门禁加回来。
 
-test('生成账单：勾选优先 + 气泡二次确认 + 数据不全禁止生成', () => {
+test('生成账单：勾选优先 + 气泡二次确认，且不得再有「数据不全禁止生成」门禁', () => {
   assert.match(tenant, /const generateTargets = computed/, '必须区分所选/全部')
   assert.match(tenant, /selectedKeys\.value\.size \? selectedRows\.value : displayRows\.value/, '勾选优先，否则全部')
   assert.match(tenant, /generateConfirmText/, '确认文案必须区分所选与全部')
   assert.match(tenant, /<t-popconfirm[\s\S]{0,220}@confirm="handleGenerateAll"/, '主按钮必须包气泡确认')
-  assert.match(tenant, /function readinessOf/, '必须做完整性校验')
-  assert.match(tenant, /已禁止生成/, '数据不全必须明确提示禁止生成')
-  // 校验必须覆盖：市电账单 / 星达分时读数 / 租户电表 / 水 / 气
-  for (const kw of ['市电账单', '星达分时读数', '电表读数', '水表读数', '气表读数']) {
-    assert.ok(tenant.includes(kw), `校验必须覆盖 ${kw}`)
-  }
-  assert.match(tenant, /if \(issues\.length\) \{ reportReadiness\(issues\); return \}/, '校验失败必须直接返回，不落库')
+  assert.ok(!/function readinessOf/.test(tenant), '不得再有生成前完整性门禁')
+  assert.ok(!/已禁止生成/.test(tenant), '不得再出现「已禁止生成」提示')
+  assert.ok(!/reportReadiness/.test(tenant), '不得再调用门禁上报')
+  // 主流程必须直奔生成，中间不得插入 return 阻断
+  const fn = tenant.slice(tenant.indexOf('const handleGenerateAll'), tenant.indexOf('// 数据齐全时默认自动生成'))
+  assert.ok(!/if \(issues\.length\)/.test(fn), '生成流程不得被校验中断')
+  assert.match(fn, /await generateBillingRecord\(activeTenantId\.value, \{ month: row\.month \}\)/, '必须逐月落库')
 })
 
 // ---- 第 13 轮：按「名称」精确匹配（同义词归一），绝不按数组下标 ----
