@@ -168,8 +168,27 @@ export function sortTenantItems<T extends TenantApportionItem>(items: readonly T
   return list.sort((a, b) => (Number(a?.sort) || 0) - (Number(b?.sort) || 0))
 }
 
-/** 合计应付列的字段名（租户视角的金额收口列）。 */
-export const TENANT_TOTAL_FIELD = 'item_total'
+/**
+ * 租户视角的两条金额收口列（第 18 轮拆分）。
+ *
+ * 旧实现只有一条「合计应付 = 工业电费 + 宿舍电费 + 水费」，用户看不出
+ * 「这笔钱里电多少、水多少」，也没法只对电费做核对。现在拆成两条：
+ *   · 电费合计 = 分摊后工业电费 + 宿舍电费（含定比居民电费）
+ *   · 水费合计 = 工业水费 + 宿舍水费
+ */
+export const TENANT_ELEC_TOTAL_FIELD = 'elec_total_fee'
+export const TENANT_WATER_TOTAL_FIELD = 'water_total_fee'
+
+/** 旧的合并列名：存量 subs 里必须被替换掉，任何一端都不许再出现。 */
+export const LEGACY_TOTAL_FIELDS: readonly string[] = ['item_total']
+
+/** 收口列（按展示顺序）。 */
+export const TENANT_TOTAL_FIELDS: readonly string[] = [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD]
+
+/** 该字段名是否是（新或旧）金额收口列。 */
+export function isTenantTotalField(name: string): boolean {
+  return TENANT_TOTAL_FIELDS.includes(name) || LEGACY_TOTAL_FIELDS.includes(name)
+}
 
 interface DerivedSpec {
   name: string
@@ -236,20 +255,33 @@ function itemField(item: TenantApportionItem, group: string, groupLabel: string)
   }
 }
 
-function totalField(group: string, groupLabel: string): EditableField {
-  return {
-    name: TENANT_TOTAL_FIELD,
-    label: '合计应付',
-    enabled: true,
-    isDefault: true,
-    dataType: 'number',
-    width: 0,
-    group,
-    groupLabel,
-  }
+/** 两条收口列：电费合计 / 水费合计（顺序即表头顺序，恒排在最后）。 */
+function totalFields(group: string, groupLabel: string): EditableField[] {
+  return [
+    {
+      name: TENANT_ELEC_TOTAL_FIELD,
+      label: '电费合计',
+      enabled: true,
+      isDefault: true,
+      dataType: 'number',
+      width: 0,
+      group,
+      groupLabel,
+    },
+    {
+      name: TENANT_WATER_TOTAL_FIELD,
+      label: '水费合计',
+      enabled: true,
+      isDefault: true,
+      dataType: 'number',
+      width: 0,
+      group,
+      groupLabel,
+    },
+  ]
 }
 
-/** 从零生成一个租户分组的字段列表（派生字段 → 分摊子项 → 合计应付）。 */
+/** 从零生成一个租户分组的字段列表（派生字段 → 分摊子项 → 电费合计 / 水费合计）。 */
 export function buildTenantGroupFields(
   tenant: BillingTenantLike,
   items: readonly TenantApportionItem[] | undefined,
@@ -264,7 +296,7 @@ export function buildTenantGroupFields(
     if (f.name === 'item_') continue
     out.push(f)
   }
-  out.push(totalField(group, label))
+  out.push(...totalFields(group, label))
   return mergeFeeGroupFields(out, group, label)
 }
 
@@ -274,9 +306,11 @@ export function buildTenantGroupFields(
  * 规则（与产品口径一致）：
  *   1. 已保存项保留用户的顺序、重命名、宽度、默认表头、启用开关 —— 一个都不覆盖；
  *   2. 派生字段缺失时补在末尾（老数据没有它们，或用户删过）；
- *   3. 清单设置里新开启的分摊子项追加进来（插在「合计应付」之前，保持收口列在最后）；
+ *   3. 清单设置里新开启的分摊子项追加进来（插在两条收口列之前）；
  *   4. 清单设置里关掉「启用字段」的分摊子项从分组里移除，避免出现永远 0 的列；
- *   5. 「合计应付」始终存在且排在最后。
+ *   5. 「电费合计 / 水费合计」始终存在且排在最后；
+ *   6. 存量的合并列「合计应付（item_total）」**一律丢弃**，由两条新列取代
+ *      （幂等：库里已经有新列时只是把它剔掉，不会重复追加）。
  */
 export function mergeTenantGroupFields(
   saved: readonly EditableField[] | undefined,
@@ -298,9 +332,9 @@ export function mergeTenantGroupFields(
     const name = String(f?.name ?? '').trim()
     if (!name || seen.has(name)) continue
     // 分摊子项已被关掉 → 整条移除（否则会留下一列恒为 0 的僵尸字段）
-    if (name.startsWith('item_') && name !== TENANT_TOTAL_FIELD && !visibleNames.has(name)) continue
-    // 合计应付稍后统一补在末尾，避免它被夹在中间
-    if (name === TENANT_TOTAL_FIELD) continue
+    if (name.startsWith('item_') && !isTenantTotalField(name) && !visibleNames.has(name)) continue
+    // 收口列稍后统一补在末尾，避免被夹在中间；旧「合计应付」直接丢弃
+    if (isTenantTotalField(name)) continue
     seen.add(name)
     out.push({ ...f, group, groupLabel: label })
   }
@@ -318,7 +352,7 @@ export function mergeTenantGroupFields(
     out.push(f)
   }
 
-  out.push(totalField(group, label))
+  out.push(...totalFields(group, label))
   // 大类汇总列：把 (1)/(4)/(6) 的细项收进「市场化购电费 / 系统运行费用 /
   // 政府性基金及附加」三列（成员仍在列表里，只是不再各自出列）。
   return mergeFeeGroupFields(out, group, label)
@@ -388,9 +422,11 @@ export function tenantGroupNeedsSync(
   )
   const has = new Set((saved || []).map((f) => String(f?.name ?? '').trim()).filter(Boolean))
   for (const n of visible) if (!has.has(n)) return true
-  for (const n of has) if (n.startsWith('item_') && n !== TENANT_TOTAL_FIELD && !visible.has(n)) return true
+  for (const n of has) if (n.startsWith('item_') && !isTenantTotalField(n) && !visible.has(n)) return true
   for (const spec of TENANT_DERIVED_FIELDS) if (!has.has(spec.name)) return true
-  return !has.has(TENANT_TOTAL_FIELD)
+  // 旧的合并列还留着 → 必须同步（否则列表会少两条收口列、多一条废弃列）
+  for (const legacy of LEGACY_TOTAL_FIELDS) if (has.has(legacy)) return true
+  return TENANT_TOTAL_FIELDS.some((n) => !has.has(n))
 }
 
 // ---- 大类汇总列：市场化购电费 / 系统运行费用 / 政府性基金及附加 ----------------
@@ -442,7 +478,7 @@ export const TENANT_FEE_GROUPS: readonly FeeGroupSpec[] = [
 /** 分摊子项名 → 所属账单大类（`item_<大类>|<子项名>`）。 */
 export function itemCategoryOfName(name: unknown): string {
   const n = String(name ?? '').trim()
-  if (!n.startsWith('item_') || n === TENANT_TOTAL_FIELD) return ''
+  if (!n.startsWith('item_') || isTenantTotalField(n)) return ''
   const rest = n.slice(5)
   const i = rest.indexOf('|')
   return i > 0 ? rest.slice(0, i) : ''

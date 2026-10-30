@@ -1,0 +1,36 @@
+/*
+  列表「逐列表尾汇总」行样式（中台统一）。
+
+  为什么是普通 CSS 而不是 scoped：表尾 <td> 由 TDesign 内部渲染，
+  拿不到页面的 data-v 作用域 id，scoped 规则一律命中不到。
+  与 styles/row-expand-toggle.css 同一套做法，页面直接 import。
+
+  视觉口径与 .doc-summary-bar 一致：白底、上沿一条分隔线、数值加粗，
+  表头/单元格的横向内边距沿用 TDesign 默认，保证与上方列 100% 对齐。
+*/
+.t-table__footer td {
+  background: var(--td-bg-color-container);
+  border-top: 2px solid var(--td-component-stroke);
+  border-bottom: 1px solid var(--td-component-stroke);
+  font-weight: 600;
+  font-size: var(--td-font-size-body-small);
+  color: var(--td-text-color-primary);
+  /* 数字列不允许折行：汇总值一折行就和上方单元格错位 */
+  white-space: nowrap;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  /* 表尾是「结果」，不能被 hover 行底色盖住 */
+  background-image: none;
+}
+
+/* 首列「合计（共 N 条）」左对齐，与表头文字对齐 */
+.t-table__footer td:first-child {
+  text-align: left;
+  color: var(--td-text-color-secondary);
+  font-weight: 500;
+}
+
+/* 金额/数量为 0 或不可累加时的占位符弱化显示 */
+.t-table__footer td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}

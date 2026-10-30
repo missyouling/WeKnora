@@ -112,6 +112,8 @@
           max-height="100%"
           sticky-header
           class="doc-table"
+          :foot-data="footData"
+          :rowspan-and-colspan-in-footer="footSpan"
           :selected-row-keys="selectedRowKeys"
           select-on-change
           :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
@@ -144,10 +146,9 @@
     </div>
             <!-- 底部汇总：与发票管理一致，位于列表白色卡片容器（.doc-list-scroll）内部最底端，
          不随表格内容滚动；sticky bottom 让它贴在滚动容器下沿。选中时按选中统计。 -->
+            <!-- 底部状态栏：只留条数/已选；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
             <div v-if="summaryCount" class="doc-summary-bar doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
               <span class="doc-summary-count">共 {{ summaryCount }} 条</span>
-              <span class="doc-summary-item">电量 <span class="doc-summary-val">{{ fmtKwh(summaryUsage) }}</span> 千瓦时</span>
-              <span class="doc-summary-item">电费 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
               <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
             </div>
             </div>
@@ -685,6 +686,9 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { buildUtilityBillStatementDoc } from './energyBillStatements'
+import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+// 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
+import './styles/list-summary-footer.css'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
@@ -764,6 +768,20 @@ const settingsVisible = ref(false)
 const columnDefs = ref<ColDef[]>(FALLBACK_COLUMNS)
 const visibleColKeys = ref<string[]>(loadStoredColumns())
 const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKeys.value.includes(c.key)))
+
+/**
+ * 表尾逐列汇总（中台统一口径，见 listSummary）。
+ *
+ * 列口径 = 当前**可见列**（用户关掉的列不参与），行口径 = 当前筛选后的
+ * displayRows（「搜索全部字段 / 账单月份」过滤之后），与用户看到的表格严格一致。
+ */
+const summaryColumns = computed<SummaryColumn[]>(() =>
+  visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: c.fieldType })),
+)
+const footData = computed(() => (displayRows.value.length
+  ? [buildFootRow(summaryColumns.value, displayRows.value)]
+  : []))
+const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
   // 列结构与发票/合同/制度/通知逐项一致：
   //   [复选框] → [序号] → 业务列… → 状态 → 标签
@@ -1239,15 +1257,8 @@ function onColumnsChange(keys: string[]) {
 const selectedRowKeys = ref<string[]>([])
 const listScrollRef = ref<HTMLElement>()
 
-// 汇总口径 = 当前**可见**行（已按关键词/月份过滤）：筛选后底部统计必须同步收敛
-const summaryUsage = computed(() => {
-  const target = selectedRowKeys.value.length ? selectedRows.value : displayRows.value
-  return target.reduce((s, r) => s + (Number((r.item as any)?.total_kwh) || 0), 0)
-})
-const summaryAmount = computed(() => {
-  const target = selectedRowKeys.value.length ? selectedRows.value : displayRows.value
-  return target.reduce((s, r) => s + (Number((r.item as any)?.total_amount) || 0), 0)
-})
+// 表尾汇总口径 = 当前**可见**行（已按关键词/月份过滤）：筛选后合计必须同步收敛。
+// 逐列合计统一由 listSummary 计算（见 footData），这里只保留「共 N 条」。
 /** 底部「共 N 条」：与列表同口径（选中优先，否则可见行数） */
 const summaryCount = computed(() => (selectedRowKeys.value.length ? selectedRowKeys.value.length : displayRows.value.length))
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))

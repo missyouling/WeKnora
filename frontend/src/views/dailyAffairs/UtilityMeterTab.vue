@@ -28,6 +28,8 @@
         class="doc-table"
         :selected-row-keys="selectedRowKeysArr"
         select-on-change
+        :foot-data="footData"
+        :rowspan-and-colspan-in-footer="footSpan"
         :row-class-name="({ row }: any) => selectedKeys.has(row.key) ? 'row-selected' : ''"
         :expanded-row-keys="expandedRowKeysArr"
         @row-click="({ row }: any) => onRowClick(row)"
@@ -135,12 +137,10 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端；
-           旧版挂在外层灰底上，视觉上「汇总条游离在表格外」（真机截图）。 -->
+      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
       <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-        <span class="doc-summary-item">总用量 <span class="doc-summary-val">{{ fmtNum(summaryUsage) }}</span> {{ unitLabel }}</span>
-        <span class="doc-summary-item">总金额 <span class="doc-summary-val">{{ fmtMoney(summaryAmount) }}</span> 元</span>
+        <span class="doc-summary-count">共 {{ summary.total }} 条</span>
+        <span v-if="selectedKeys.size" class="doc-summary-item summary-selected">已选 {{ selectedKeys.size }} 条</span>
       </div>
     </div>
             <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
@@ -213,6 +213,9 @@ import {
   createUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+// 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
+import './styles/list-summary-footer.css'
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
@@ -297,6 +300,29 @@ const activeColDefs = computed<ColDef[]>(() =>
 const STORAGE_KEY = computed(() => `weknora-utility-meter-${props.category}-columns-v4`)
 const visibleKeys = ref<string[]>(loadStoredKeys())
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
+
+/**
+ * 表尾逐列汇总（中台统一口径，见 listSummary）。
+ *
+ * 电/水/气核算的列类型要按「键名 + 中文表头」双判定：
+ *   · 可加：用量（usage）、金额（amount）、附加费（垃圾/二次供水/污水）、补差（subsidy）；
+ *   · 不可加：起度/止度/倍率/单价/默认单价（listSummary 内置黑名单已覆盖）。
+ * 起止度必须显示 `—`：相加没有任何业务含义，且会把列宽撑到无法阅读。
+ */
+const colTypeOf = (c: ColDef): string => {
+  const key = String(c.key || '')
+  if (key === 'amount' || /_fee$/.test(key) || key === 'subsidy') return 'amount'
+  if (key === 'usage' || key === 'qty') return 'number'
+  if (key === 'unit_price' || key === 'default_unit_price' || key === 'rate') return 'number'
+  return 'text'
+}
+const summaryColumns = computed<SummaryColumn[]>(() =>
+  visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: colTypeOf(c) })),
+)
+const footData = computed(() => (displayRows.value.length
+  ? [buildFootRow(summaryColumns.value, displayRows.value)]
+  : []))
+const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
   // 与发票管理一致：[复选框] → [序号] → 业务列。
   // colKey 必须写 'row-select'：只写 type:'multiple' 时 TDesign 照样渲染表头，
@@ -688,20 +714,13 @@ const applyFilters = () => {
 watch(filters, () => applyFilters(), { deep: true })
 
 // ---- 汇总 ----
+// 逐列合计统一由 listSummary 计算（见 footData）；这里只保留「共 N 条」。
 const summary = computed(() => {
   const base = selectedKeys.value.size ? selectedRows.value : displayRows.value
   return { total: base.length }
 })
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRows = computed(() => rows.value.filter(r => selectedKeys.value.has(r.key)))
-const summaryUsage = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0), 0) * 100) / 100
-})
-const summaryAmount = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100
-})
 
 // ---- 分时表：行内四时段展开 ----
 const isTimeRow = (row: any) => row.meter_type === 'time'

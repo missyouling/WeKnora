@@ -59,6 +59,8 @@
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         select-on-change
+        :foot-data="footData"
+        :rowspan-and-colspan-in-footer="footSpan"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
         @row-click="({ row }: any) => openDetail(row)"
         @select-change="(val: string[]) => onSelectChange(val)"
@@ -142,12 +144,9 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；发票基准同款位置与样式） -->
+      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
       <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
-        <span v-if="displaySummary.total" class="doc-summary-item">
-          合同金额合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
-        </span>
       </div>
     </div>
     </div>
@@ -342,6 +341,9 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
+import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+// 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
+import './styles/list-summary-footer.css'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -576,6 +578,35 @@ const tableColumns = computed(() => {
 // 虚拟滚动配置跟随列定义：出现多行文本列（data_type=textarea）必须关掉固定行高，
 // 否则 TDesign 仍按 48px 推算滚动位置，折行后的行会错位、长文本被裁在窗口外。
 const tableScroll = computed(() => tableScrollOf(tableColumns.value))
+
+/**
+ * 表尾逐列汇总（中台统一口径，见 listSummary）。
+ *
+ * 合同能加的只有「合同金额」这一列（其余是甲乙方/日期/状态等文本）。
+ * 金额键名随分类 subs 变化（amount / 合同金额 / contract_amount），
+ * 因此按「键名 + 中文表头」双判定，绝不把质保金/税率之类当金额加。
+ */
+const CONTRACT_AMOUNT_KEYS = new Set(['amount', 'contract_amount', 'total_amount', '合同金额', '金额'])
+const contractColType = (key: string, label: string): string => {
+  if (CONTRACT_AMOUNT_KEYS.has(key) || CONTRACT_AMOUNT_KEYS.has(String(label || '').trim())) return 'amount'
+  return 'text'
+}
+const summaryColumns = computed<SummaryColumn[]>(() =>
+  visibleColDefs.value.map((c: any) => ({
+    key: c.key,
+    label: c.label,
+    fieldType: contractColType(c.key, c.label),
+    value: (r: any) => {
+      const v = colValue(r, c.key)
+      return v === '-' ? 0 : v
+    },
+  })),
+)
+const footRows = computed(() => filteredRows.value.filter((r: any) => r.kind !== 'pending'))
+const footData = computed(() => (footRows.value.length
+  ? [buildFootRow(summaryColumns.value, footRows.value)]
+  : []))
+const footSpan = computed(() => footSpanOf(summaryColumns.value))
 
 
 // ---- 标签 ----

@@ -5,7 +5,10 @@ import {
   DEFAULT_GROUP_KEY,
   DEFAULT_GROUP_LABEL,
   TENANT_DERIVED_FIELDS,
-  TENANT_TOTAL_FIELD,
+  TENANT_ELEC_TOTAL_FIELD,
+  TENANT_WATER_TOTAL_FIELD,
+  TENANT_TOTAL_FIELDS,
+  LEGACY_TOTAL_FIELDS,
   TENANT_FEE_GROUPS,
   buildTenantGroupFields,
   collapseFeeGroups,
@@ -101,7 +104,7 @@ test('sortTenantItems 不改原数组', () => {
   assert.deepEqual(raw.map((x) => x.item_key), ['b', 'a'])
 })
 
-test('buildTenantGroupFields：派生字段 → 分摊子项 → 合计应付，且只收可见子项', () => {
+test('buildTenantGroupFields：派生字段 → 分摊子项 → 电费合计/水费合计，且只收可见子项', () => {
   const fields = buildTenantGroupFields(TENANT, items)
   const names = fields.map((f) => f.name)
   // 派生字段按固定顺序打头
@@ -109,13 +112,13 @@ test('buildTenantGroupFields：派生字段 → 分摊子项 → 合计应付，
   // 子项按 sort 排序，被关掉「启用字段」的不进来。
   // (1) 市场化购电费 只有 1 个可见子项 → 仍折叠成大类列（成员留在 subs 里），
   // 所以这里看到的是 `grp_market` 而不是 `item_(1)…|零售交易电费`。
-  assert.deepEqual(names.slice(TENANT_DERIVED_FIELDS.length, -1), [
+  assert.deepEqual(names.slice(TENANT_DERIVED_FIELDS.length, -2), [
     'item_基本电费|基本电费',
     'grp_market',
     'item_(1)市场化购电费|零售交易电费',
     'item_功率因素调整电费|功率因素调整电费',
   ])
-  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
   // 每条都带本租户的 group，否则胶囊条会把它们算进默认分组
   const g = tenantGroupKey(TENANT.id)
   assert.ok(fields.every((f) => f.group === g))
@@ -130,10 +133,10 @@ test('buildTenantGroupFields：派生字段 → 分摊子项 → 合计应付，
   assert.equal(byName.get('ind_price')?.label, '工业均价')
 })
 
-test('buildTenantGroupFields：没有子项时只留派生字段 + 合计应付', () => {
+test('buildTenantGroupFields：没有子项时只留派生字段 + 两条收口列', () => {
   const names = buildTenantGroupFields(TENANT, []).map((f) => f.name)
-  assert.equal(names.length, TENANT_DERIVED_FIELDS.length + 1)
-  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
+  assert.equal(names.length, TENANT_DERIVED_FIELDS.length + 2)
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
 })
 
 test('mergeTenantGroupFields：保留用户排序/改名/宽度/开关，不覆盖', () => {
@@ -156,13 +159,13 @@ test('mergeTenantGroupFields：保留用户排序/改名/宽度/开关，不覆�
   assert.deepEqual(merged.map((f) => f.name), reordered.map((f) => f.name))
 })
 
-test('mergeTenantGroupFields：清单设置新开启的子项追加到合计应付之前', () => {
+test('mergeTenantGroupFields：清单设置新开启的子项追加到收口列之前', () => {
   const saved = buildTenantGroupFields(TENANT, items)
   const extra = [...items, { item_key: '新增项|新增项', item_name: '新增项', enabled: true, field_enabled: true, sort: 9 }]
   const merged = mergeTenantGroupFields(saved, TENANT, extra)
   const names = merged.map((f) => f.name)
-  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
-  assert.equal(names[names.length - 2], 'item_新增项|新增项')
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
+  assert.equal(names[names.length - 3], 'item_新增项|新增项')
 })
 
 test('mergeTenantGroupFields：清单设置关掉的子项从分组移除', () => {
@@ -172,27 +175,40 @@ test('mergeTenantGroupFields：清单设置关掉的子项从分组移除', () =
   assert.equal(merged.some((f) => f.name === 'item_基本电费|基本电费'), false)
 })
 
-test('mergeTenantGroupFields：老数据缺派生字段时补齐，合计应付只出现一次且在最后', () => {
+test('mergeTenantGroupFields：老数据缺派生字段时补齐，两条收口列各只出现一次且在最后', () => {
   const saved = [
     { name: 'month', label: '账单周期', enabled: true, isDefault: true, dataType: 'text', width: 0 },
     { name: 'unit', label: '使用单位', enabled: true, isDefault: true, dataType: 'text', width: 0 },
   ]
   const merged = mergeTenantGroupFields(saved, TENANT, items)
   const names = merged.map((f) => f.name)
-  assert.equal(names.filter((n) => n === TENANT_TOTAL_FIELD).length, 1)
-  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
+  assert.equal(names.filter((n) => n === TENANT_ELEC_TOTAL_FIELD).length, 1)
+  assert.equal(names.filter((n) => n === TENANT_WATER_TOTAL_FIELD).length, 1)
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
   for (const d of TENANT_DERIVED_FIELDS) assert.ok(names.includes(d.name), `缺少 ${d.name}`)
   // 已保存项不被重复追加
   assert.equal(names.filter((n) => n === 'month').length, 1)
 })
 
-test('mergeTenantGroupFields：中间位置的合计应付被挪到末尾（收口列）', () => {
+test('mergeTenantGroupFields：中间位置的收口列被挪到末尾', () => {
   const saved = buildTenantGroupFields(TENANT, items)
-  const total = saved.find((f) => f.name === TENANT_TOTAL_FIELD)!
-  const moved = [total, ...saved.filter((f) => f.name !== TENANT_TOTAL_FIELD)]
+  const totals = saved.filter((f) => TENANT_TOTAL_FIELDS.includes(f.name))
+  const moved = [...totals, ...saved.filter((f) => !TENANT_TOTAL_FIELDS.includes(f.name))]
   const merged = mergeTenantGroupFields(moved, TENANT, items)
-  assert.equal(merged[merged.length - 1].name, TENANT_TOTAL_FIELD)
-  assert.equal(merged.filter((f) => f.name === TENANT_TOTAL_FIELD).length, 1)
+  assert.deepEqual(merged.slice(-2).map((f) => f.name), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
+  assert.equal(merged.filter((f) => TENANT_TOTAL_FIELDS.includes(f.name)).length, 2)
+})
+
+test('mergeTenantGroupFields：存量「合计应付」被彻底丢弃，换成两条新收口列', () => {
+  const legacy = buildTenantGroupFields(TENANT, items)
+    .filter((f) => !TENANT_TOTAL_FIELDS.includes(f.name))
+  legacy.push({ name: 'item_total', label: '合计应付', enabled: true, isDefault: true, dataType: 'number', width: 0 })
+  const merged = mergeTenantGroupFields(legacy, TENANT, items)
+  const names = merged.map((f) => f.name)
+  assert.equal(names.some((n) => LEGACY_TOTAL_FIELDS.includes(n)), false, '旧「合计应付」必须被剔除')
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
+  assert.equal(merged.find((f) => f.name === TENANT_ELEC_TOTAL_FIELD)?.label, '电费合计')
+  assert.equal(merged.find((f) => f.name === TENANT_WATER_TOTAL_FIELD)?.label, '水费合计')
 })
 
 test('withCostListGroups：存量 cols 归一到默认分组，租户分组自动补出', () => {
@@ -402,5 +418,5 @@ test('buildTenantGroupFields：租户分组默认带出三个大类汇总列', (
   // 上网线损不属于三大类，仍然独立成列
   assert.ok(names.includes('item_(2)上网环节线损费用|上网环节线损费用'))
   // 合计应付仍在最后
-  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
 })

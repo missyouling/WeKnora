@@ -129,13 +129,14 @@ test('费用清单字段定义：引用模式禁止自由新建，改用带来�
 
 // ---- 需求 7：只读抽屉 ----
 
-test('费用清单抽屉：BSD 只读模式，无输入框与保存按钮', () => {
+test('费用清单抽屉已下线（BSD 仍支持只读模式供其它模块用）', () => {
   assert.match(bsd, /readonly\?: boolean/, 'BSD 必须支持 readonly')
   assert.match(bsd, /v-if="readonly" class="bsd-readonly-value"/, '只读模式必须渲染纯文本')
   assert.match(bsd, /v-if="!readonly" theme="primary"/, '只读模式不得出现保存按钮')
   assert.match(bsd, /\{\{ readonly \? '关闭' : '取消' \}\}/, '只读底栏主按钮应是「关闭」')
-  assert.match(tenant, /:show-preview="false" readonly/, '费用清单抽屉必须传 readonly')
-  assert.doesNotMatch(tenant, /@save="saveRecordDetail"/, '费用清单抽屉不得再挂保存')
+  // 第 18 轮：费用清单不再挂载抽屉（点行不开弹窗），只保留打印两个入口。
+  assert.ok(!/BusinessSplitDetailDrawer/.test(tenant), '费用清单不得再挂载详情抽屉')
+  assert.ok(!/:show-preview="false" readonly/.test(tenant), '不得再传只读抽屉参数')
 })
 
 // ---- 需求 8：分摊子项 + 双打印 ----
@@ -156,7 +157,10 @@ test('费用清单：选择租户后按分摊子项动态加载列与数据', ()
   assert.match(tenant, /async function loadTenantItems\(\)/, '必须加载该租户子项')
   assert.match(tenant, /getBillingTenant\(id\)/, '子项来自租户详情')
   assert.match(tenant, /resolveTenantItemValue\(it, ctx, ratio\)/, '列值必须走同一份口径')
-  assert.match(tenant, /item_total/, '必须有「合计应付」列')
+  // 第 18 轮：合并列「合计应付」拆成「电费合计 / 水费合计」两条收口列
+  assert.match(tenant, /TENANT_ELEC_TOTAL_FIELD/, '必须有「电费合计」列')
+  assert.match(tenant, /TENANT_WATER_TOTAL_FIELD/, '必须有「水费合计」列')
+  assert.ok(!/base\.item_total/.test(tenant), '不得再写旧的合并列 item_total')
 })
 
 test('浮动栏双打印：打印清单（结算单）与打印目录（表格）', () => {

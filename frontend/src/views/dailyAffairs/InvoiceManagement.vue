@@ -60,6 +60,8 @@
         class="doc-table"
         :selected-row-keys="selectedRowKeys"
         :sort="sortState"
+        :foot-data="footData"
+        :rowspan-and-colspan-in-footer="footSpan"
         :row-class-name="({ row }: any) => selectedRowKeys.includes(row.rowKey) ? 'is-selected' : ''"
         :scroll="tableScroll"
         @scroll="onListScroll"
@@ -155,18 +157,9 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部汇总（列表容器内部底部固定，不随表格滚动；选中时避让底部浮动工具栏） -->
+      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
       <div class="doc-summary-bar">
         <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
-        <span v-if="displaySummary.total && summaryShowAmount" class="doc-summary-item">
-          金额 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumAmount) }}</span>
-        </span>
-        <span v-if="displaySummary.total && summaryShowTax" class="doc-summary-item">
-          税额 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTax) }}</span>
-        </span>
-        <span v-if="displaySummary.total && summaryShowTotal" class="doc-summary-item">
-          价税合计 <span class="doc-summary-val">{{ formatAmount(displaySummary.sumTotal) }}</span>
-        </span>
       </div>
       <!-- 底部悬浮工具条：fixed 脱离文档流，出现/消失不占物理空间；选中行时显示 -->
         <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
@@ -364,6 +357,9 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
+import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+// 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
+import './styles/list-summary-footer.css'
 import {
   listKnowledgeBases,
   listKnowledgeFiles,
@@ -758,6 +754,37 @@ const tableColumns = computed(() => {
 // 虚拟滚动配置跟随列定义：出现多行文本列（data_type=textarea）必须关掉固定行高，
 // 否则 TDesign 仍按 48px 推算滚动位置，折行后的行会错位、长文本被裁在窗口外。
 const tableScroll = computed(() => tableScrollOf(tableColumns.value))
+
+/**
+ * 表尾逐列汇总（中台统一口径，见 listSummary）。
+ *
+ * 发票的可累加列只有金额/税额/价税合计这几类（key 由分类 subs 决定，
+ * 自定义分类的 colKey 可能是 `金额`/`tax_amount` 等），因此取值统一走
+ * `invoiceColValue`（含 snake/camel 归一与 items 明细回退），
+ * 类型则按「金额类键名」判定，其余列（日期/类型/状态/明细）一律显示 `—`。
+ */
+const INVOICE_SUM_AMOUNT_KEYS = new Set(['amount', 'tax', 'totalAmount', 'taxAmount', 'tax_amount', 'total_amount', '价税合计', '金额', '税额'])
+const invoiceColType = (key: string): string => {
+  if (INVOICE_SUM_AMOUNT_KEYS.has(key)) return 'amount'
+  if (['qty', '数量', 'taxRate', 'tax_rate'].includes(key)) return 'number'
+  return 'text'
+}
+const summaryColumns = computed<SummaryColumn[]>(() =>
+  visibleColDefs.value.map((c: any) => ({
+    key: c.key,
+    label: c.label,
+    fieldType: invoiceColType(c.key),
+    value: (r: any) => {
+      const v = invoiceColValue(r, c.key)
+      return v === '-' ? 0 : v
+    },
+  })),
+)
+const footRows = computed(() => filteredRows.value.filter((r: any) => r.kind !== 'pending'))
+const footData = computed(() => (footRows.value.length
+  ? [buildFootRow(summaryColumns.value, footRows.value)]
+  : []))
+const footSpan = computed(() => footSpanOf(summaryColumns.value))
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，
 // 用 watch 兜底，确保取消列（如备注）后硬刷新不恢复默认。
@@ -1330,20 +1357,9 @@ const selectedSummary = computed(() => {
 })
 const displaySummary = computed(() => selectedSummary.value || invoiceSummary.value)
 
-// 底部统计条按当前分类字段动态显示：无 tax/totalAmount 字段的分类（如三联收据）不显示冗余统计项。
-// subs.name 为中文自定义名（金额/税额…），经 invoiceFieldKeyOf 归一为契约键后再比对。
-const currentCatSubs = computed(() => {
-  const t = filterInvoiceType.value
-  const cats = (invoiceCats.value || []).filter((c: any) => c.enabled !== false)
-  const hit = cats.find((c: any) => c.name === t) || cats[0]
-  return Array.isArray(hit?.subs) ? hit.subs : []
-})
-const summaryShowAmount = computed(() =>
-  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'amount' && s.enabled !== false))
-const summaryShowTax = computed(() =>
-  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'tax' && s.enabled !== false))
-const summaryShowTotal = computed(() =>
-  currentCatSubs.value.some((s: any) => invoiceFieldKeyOf(String(s.name)) === 'totalAmount' && s.enabled !== false))
+// 底部统计条的旧三行（金额/税额/价税合计）已由「逐列表尾汇总」取代：
+// 现在每一列（含当前分类自定义的金额/税额列）都有自己的合计，不再需要
+// 按分类字段动态决定「要不要显示某一项」这套特例逻辑。
 
 const applyFilter = () => { loadFiles(true); loadInvoiceOverview() }
 

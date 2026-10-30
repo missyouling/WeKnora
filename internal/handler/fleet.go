@@ -2160,6 +2160,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.EnsureEnergyViewCategories(ctx); err != nil {
 		logger.Warnf(ctx, "seed energy view categories failed: %v", err)
 	}
+	// 费用清单：存量「合计应付（item_total）」拆成「电费合计 / 水费合计」（幂等）
+	if _, err := uh.MigrateTenantTotalFields(ctx); err != nil {
+		logger.Warnf(ctx, "migrate tenant total fields failed: %v", err)
+	}
 	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
 	uh.hideEnergyLedgerCategory(ctx)
 	// 能耗账单文件的「所属分类」回填：上传只写了 bill_kind、提取只写 kind，

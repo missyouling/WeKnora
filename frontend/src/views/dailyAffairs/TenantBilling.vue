@@ -47,7 +47,8 @@
         :expanded-row-keys="expandedRowKeys"
         :expand-icon="false"
         :row-class-name="({ row }: any) => selectedKeys.has(row.id) ? 'row-selected' : ''"
-        @row-click="({ row }: any) => onRowClick(row)"
+        :foot-data="footData"
+        :rowspan-and-colspan-in-footer="footSpan"
         @select-change="(val: any) => onTableSelectChange(val)"
         @expand-change="onExpandChange"
       >
@@ -97,19 +98,13 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部汇总：与发票管理一致，位于白色列表卡片（.doc-list-scroll）内部最底端 -->
+      <!-- 底部状态栏：只保留「条数 / 已选」这类状态信息。
+           每一列的合计已经由表尾汇总行（t-table foot-data）逐列展示，
+           这里再重复「总电量 / 总电费」只会和表尾打架、且无法覆盖其余列。 -->
       <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-      <template v-if="isOwnerView">
-        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条</span>
-        <span class="doc-summary-item">总电量 <span class="doc-summary-val">{{ fmtKwh(summaryKwh) }}</span> 千瓦时</span>
-        <span class="doc-summary-item">总电费 <span class="doc-summary-val">{{ fmtMoney(summaryFee) }}</span> 元</span>
-      </template>
-      <template v-else>
-        <span class="doc-summary-count">共 {{ selectedKeys.size ? selectedKeys.size : summary.total }} 条记录</span>
-        <span class="doc-summary-item">总应付电费 <span class="doc-summary-val">{{ fmtMoney(summaryPayableFee) }}</span> 元</span>
-        <span class="doc-summary-item">总应付水费 <span class="doc-summary-val">{{ fmtMoney(summaryWaterFee) }}</span> 元</span>
-      </template>
-    </div>
+        <span class="doc-summary-count">共 {{ summary.total }} 条</span>
+        <span v-if="selectedKeys.size" class="doc-summary-item summary-selected">已选 {{ selectedKeys.size }} 条</span>
+      </div>
     </div>
 
     <!-- 底部浮动工具栏 -->
@@ -147,19 +142,9 @@
       </div>
     </transition>
 
-    <!-- 账单详情抽屉：与发票/合同同款中台 BusinessSplitDetailDrawer
-         （右侧滑出 + 标题栏 + 双列 t-form 网格 + 统一底栏）。
-         旧自写 <t-drawer> + .record-detail 表格已淘汰。
-         字段顺序严格跟随当前分类「字段定义（subs）」，见 billingFields。 -->
-    <!-- 只读抽屉：费用清单的每一列都是核算结果，查看可以、编辑必须走「生成/重算」，
-         所以这里 readonly（无输入框、无保存按钮），字段与列表启用列 1:1 对应。 -->
-    <BusinessSplitDetailDrawer v-model:visible="recordVisible" :title="recordTitle" :row="null"
-      :form="recordFormWrapper" :fields="billingFields" :show-preview="false" readonly
-      block-title="费用清单" :storage-key="'weknora-tenant-record-drawer-width'">
-      <template #footer-left>
-        <t-button variant="outline" size="small" @click="printRecord">打印</t-button>
-      </template>
-    </BusinessSplitDetailDrawer>
+    <!-- 详情抽屉已下线（第 18 轮）：费用清单是纯核算结果表，点行不再弹右侧抽屉。
+         查看/输出统一走底部浮动栏的「打印清单 / 打印目录」，
+         行内交互只保留 复选框 / 大类 +− 展开 / 单元格 hover 口径浮窗。 -->
 
     <!-- 打印预览：全中台统一组件（壳子只有一份，内容由本页生成） -->
     <PrintPreviewDialog v-model:visible="printVisible" :title="`${printTitle} 打印预览`" :url="printUrl"
@@ -184,24 +169,29 @@ import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energ
 import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
-  TENANT_TOTAL_FIELD,
+  TENANT_ELEC_TOTAL_FIELD,
+  TENANT_WATER_TOTAL_FIELD,
+  TENANT_TOTAL_FIELDS,
+  LEGACY_TOTAL_FIELDS,
   collapseFeeGroups,
   subsOfGroup,
   uniqueTenantItems,
   tenantGroupKey,
 } from './billingFieldGroups'
 import { buildRowTips, sourceFieldTip, tenantItemTip, tenantTimedTip } from './tenantBillingTips'
+import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
-import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import BillingCellTip from './BillingCellTip.vue'
 // 行内展开徽标的唯一样式源（与「电费核算」共用；h() 生成的节点拿不到 scoped 样式）
 import './styles/row-expand-toggle.css'
+// 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
+import './styles/list-summary-footer.css'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
@@ -285,6 +275,10 @@ const COL_DEFS_TENANT: ColDef[] = [
   // 否则 subs 里那两条会被 activeColDefs 当成无渲染器的键丢掉（表头缺列）。
   { key: 'gas_usage', label: '用气量', default: true, w: '0.9fr', tip: '气表记录汇总(公租房除外)' },
   { key: 'gas_fee', label: '气费', default: true, w: '0.9fr', tip: '气表记录费用汇总(用量×单价)' },
+  // 金额收口列（第 18 轮由「合计应付」拆出）：
+  // 电费合计 = 工业电费 + 宿舍电费；水费合计 = 工业水费 + 宿舍水费。
+  { key: TENANT_ELEC_TOTAL_FIELD, label: '电费合计', default: true, w: '0.9fr', tip: '工业电费 + 宿舍电费' },
+  { key: TENANT_WATER_TOTAL_FIELD, label: '水费合计', default: true, w: '0.9fr', tip: '工业水费 + 宿舍水费' },
   { key: 'remark', label: '备注', default: false, w: '1.5fr', tip: '手工填写' },
 ]
 const isOwnerView = computed(() => useUnit.value === OWNER_UNIT)
@@ -390,7 +384,8 @@ const activeColDefs = computed<ColDef[]>(() => {
   }
   let effective = subs as any[]
   if (extra.length) {
-    const at = subs.findIndex((s: any) => String(s?.name || '').trim() === TENANT_TOTAL_FIELD)
+    // 新开的子项插在两条收口列之前，保证「电费合计 / 水费合计」始终在最后
+    const at = subs.findIndex((s: any) => TENANT_TOTAL_FIELDS.includes(String(s?.name || '').trim()))
     effective = at < 0 ? [...subs, ...extra] : [...subs.slice(0, at), ...extra, ...subs.slice(at)]
   }
 
@@ -434,19 +429,8 @@ const activeColDefs = computed<ColDef[]>(() => {
     if (seen.has(key)) continue
     const label = String(sub.label || '').trim()
     const width = Number(sub.width) > 0 ? Math.round(Number(sub.width)) : 0
-    // 合计应付：租户视角的金额收口列，值由 buildRows 汇总
-    if (key === TENANT_TOTAL_FIELD) {
-      seen.add(key)
-      out.push({
-        key,
-        label: label || '合计应付',
-        default: sub.is_default === true,
-        w: '1fr',
-        width: width || undefined,
-        tip: '该租户当月应付合计（工业电费 + 宿舍电费 + 水费）',
-      })
-      continue
-    }
+    // 旧的合并列「合计应付」已废弃：即使 subs 里还残留也不出列（六同步铁律）。
+    if (LEGACY_TOTAL_FIELDS.includes(key)) continue
     // 分摊子项列：由「清单设置 → 分摊子项」驱动，subs 只负责顺序/文案/宽度/显隐
     if (key.startsWith('item_')) {
       const it = itemByKey.get(key)
@@ -493,7 +477,7 @@ const activeColDefs = computed<ColDef[]>(() => {
   // 有定义但全被关掉时保持空列，这才是「用户的选择」。
   if (!subs.length) {
     if (isOwnerView.value) return [...base]
-    // 租户视角回落：静态列 + 分摊子项 + 合计应付（与改造前一致）
+    // 租户视角回落：静态列（已含两条收口列）+ 分摊子项
     const items = tenantItemsUnique.value.map((it: any) => ({
       key: tenantItemColKey(it),
       label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
@@ -504,14 +488,17 @@ const activeColDefs = computed<ColDef[]>(() => {
       item: it,
     })) as ColDef[]
     if (!items.length) return [...base]
-    const totalCol: ColDef = { key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' }
-    return [...base, ...items, totalCol]
+    return [...base, ...items]
   }
   if (isOwnerView.value) return out
 
-  // 合计应付缺失时补在最后（老数据没有这条 subs）
-  if (!seen.has(TENANT_TOTAL_FIELD) && tenantItemsUnique.value.length) {
-    out.push({ key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计（工业电费 + 宿舍电费 + 水费）' })
+  // 收口列缺失时补在最后（老数据没有这两条 subs）：
+  // 必须补，否则「合计」信息会整片消失，用户只能自己拿计算器加。
+  for (const key of TENANT_TOTAL_FIELDS) {
+    if (seen.has(key)) continue
+    const hit = baseColDefs.value.find((c) => c.key === key)
+    if (!hit) continue
+    out.push({ ...hit, default: true })
   }
   return out
 })
@@ -631,6 +618,35 @@ const syncColumnKeys = () => {
 syncColumnKeys()
 watch(useUnit, syncColumnKeys)
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
+
+/**
+ * 列的数据类型（费用清单的列定义没有 fieldType，只能按键名推断）。
+ *
+ * 只影响「表尾汇总要不要相加」与金额格式，不影响单元格渲染：
+ *   · 金额列：`*_fee / *_amount / total_*`（分摊子项、大类汇总、两条收口列都在内）；
+ *   · 数量列：`*_kwh / *_usage`；
+ *   · 其余（单价/比例/备注…）交给 listSummary 的不可累加判定兜底。
+ */
+function colTypeOf(c: ColDef): string {
+  const key = String(c.key || '')
+  // 大类汇总列与分摊子项列都是**金额**：子项 key 形如
+  // `item_(2)上网环节线损费用|上网环节线损费用`，不含 `_fee` 后缀，
+  // 只靠后缀判定会让「上网环节线损费用 / 零售输配电费 / 系统运行费用」
+  // 这些真正要合计的列在表尾显示 `—`（真机 2026-09 持睿列表）。
+  if (c.feeGroup || key.startsWith('item_')) return 'amount'
+  if (/_fee$|_amount$|_total$|^total_fee$|^solar_amount$/.test(key)) return 'amount'
+  if (/_kwh$|_usage$|_price$|^ratio$|_count$/.test(key)) return 'number'
+  return 'text'
+}
+/** 表尾汇总的列口径（与当前可见列严格同序，保证逐列对齐）。 */
+const summaryColumns = computed<SummaryColumn[]>(() =>
+  visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: colTypeOf(c) })),
+)
+/** 表尾汇总行：数据随筛选/视角/勾选变化实时重算。 */
+const footData = computed(() => (displayRows.value.length
+  ? [buildFootRow(summaryColumns.value, displayRows.value)]
+  : []))
+const footSpan = computed(() => footSpanOf(summaryColumns.value))
 /**
  * 列的最小宽度（px）。
  *
@@ -698,8 +714,9 @@ function renderCell(h: any, key: string, row: any) {
   const col = feeGroupColMap.value.get(key)
   const tip = row?.__tips?.[key]
   if (col) {
-    // 大类汇总列：金额 + `+ / −`。按钮 click 必须 stop：整行是 @row-click（开抽屉），
-    // 不拦会变成「点展开顺带把详情抽屉也拉起来」（真机反馈）。
+    // 大类汇总列：金额 + `+ / −` 展开徽标。
+    // 第 18 轮起整行不再有 @row-click（不弹详情抽屉），但仍显式 stop：
+    // 徽标是行内唯一可点区域，阻止冒泡可避免未来再加行级监听时「点展开连带触发」。
     const open = expandedGroupOf.value[String(row?.id)] === key
     return h('div', { class: 'fee-group-cell' }, [
       h('span', {
@@ -1423,14 +1440,24 @@ const buildRows = () => {
           rows,
         }
       }
-      // 合计应付 = 工业电费 + 宿舍电费 + 水费（+ 其它已启用费用项），
-      // 与打印清单 PDF 概览里的「应收合计」同一口径。
-      // 旧实现只累加分摊子项，于是「合计应付」既不等于应收合计，也不含水电。
-      const waterTotal = (wInd.fee || 0) + (wDorm.fee || 0)
-      // 只收「工业电费 + 宿舍电费 + 水费」：气费列当前不在租户分组的字段定义里
-      //（TENANT_DERIVED_FIELDS 有 gas_*，但这个分组还没保存过），把它算进合计
-      // 会出现「合计比可见列之和大一笔、无从核对」的情况。等气费列启用后再并入。
-      base.item_total = Math.round((indFee + (dorm.fee || 0) + waterTotal) * 100) / 100
+      // 两条金额收口列（第 18 轮由「合计应付」拆出）：
+      //   电费合计 = 分摊后工业电费 + 宿舍电费（宿舍电费已含定比居民电费）
+      //   水费合计 = 工业水费 + 宿舍水费
+      // 口径与「打印清单」的应收汇总、底部表尾汇总完全一致（三处同源）。
+      const elecTotal = Math.round((indFee + (dorm.fee || 0)) * 100) / 100
+      const waterTotal = Math.round(((wInd.fee || 0) + (wDorm.fee || 0)) * 100) / 100
+      base[TENANT_ELEC_TOTAL_FIELD] = elecTotal
+      base[TENANT_WATER_TOTAL_FIELD] = waterTotal
+      itemTips[TENANT_ELEC_TOTAL_FIELD] = [
+        // 浮窗算式按产品口径固定两位小数（930 要写成 930.00，
+        // 与「电费合计 102,079.06 = 101,149.06 + 930.00」的读法一致）
+        `计算方式：工业电费 (${money2(indFee)}) + 宿舍电费 (${money2(dorm.fee)}) = ${money2(elecTotal)} 元`,
+        '工业电费为市电分项按当月分摊比例折算后的合计；宿舍电费按宿舍电表读数 × 单价。',
+      ].join('\n')
+      itemTips[TENANT_WATER_TOTAL_FIELD] = [
+        `计算方式：工业水费 (${money2(wInd.fee)}) + 宿舍水费 (${money2(wDorm.fee)}) = ${money2(waterTotal)} 元`,
+        '水费按水表读数 × 单价直接归属该租户，不参与市电分摊。',
+      ].join('\n')
       // 跨分类引用字段：与业主视角同一口径（当月账单概况 / 核算汇总）。
       //
       // 这一步过去只写在业主分支里，于是即便列被拼出来，租户视角的单元格也是空的
@@ -1516,31 +1543,11 @@ const onUseUnitChange = () => {
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRows = computed(() => displayRows.value.filter(r => selectedKeys.value.has(r.id)))
 const summary = computed(() => ({ total: (selectedKeys.value.size ? selectedRows.value : displayRows.value).length }))
-const summaryKwh = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.total_kwh) || 0), 0) * 100) / 100
-})
-const summaryFee = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.total_fee) || 0), 0) * 100) / 100
-})
-const summaryPayableFee = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.ind_fee) || 0) + (Number(r.dorm_fee) || 0), 0) * 100) / 100
-})
-const summaryWaterFee = computed(() => {
-  const arr = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return Math.round(arr.reduce((s, r) => s + (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0), 0) * 100) / 100
-})
-// 行点击 = 打开详情抽屉（业主/租户两个视角一致）。
+// 行点击 = **不再打开详情抽屉**（第 18 轮）。
 //
-// 旧实现只在租户视角、且该月已固化 billing_records 时才开抽屉 ——
-// 业主视角点行永远没有任何反应（这就是「费用清单点击记录无弹窗」）。
-// 现在传的是**行本身**，抽屉直接用行上的核算值渲染，不再依赖固化记录。
-const onRowClick = (row: any) => {
-  selectedKeys.value = new Set([row.id])
-  void openRecord(row)
-}
+// 费用清单的每一列都是核算结果，只读抽屉既不能改数、又容易被误当成「点行能编辑」；
+// 真正的查看入口是「打印清单 / 打印目录」。行内仍保留：复选框勾选、
+// 大类汇总列的 +/− 展开、单元格 hover 口径浮窗。
 const clearSelection = () => { selectedKeys.value = new Set() }
 
 // ---- 生成月度账单 ----
@@ -1667,7 +1674,15 @@ function ratioForRow(row: any): number {
   return ratioOfMonth(String(row.month || ''), billIndex.value.get(String(row.month || '')), rec)
 }
 
-interface PrintTable { title: string; columns: any[]; rows: string[][]; total?: string[]; empty?: string }
+interface PrintTable {
+  title: string
+  columns: any[]
+  rows: string[][]
+  total?: string[]
+  empty?: string
+  /** 结论表（应收汇总）：0 元也保留，不参与「空表隐藏」 */
+  alwaysShow?: boolean
+}
 
 /**
  * 「一、账单概览」的指标卡。
@@ -1978,6 +1993,8 @@ function summaryTableOf(rows: any[], unit: string, prefix: string, includeGas: b
     ],
     rows: body,
     total: ['应收合计', unit, money2(total)],
+    // 结论表：0 元也必须出现（租户要看到「本期应收多少」）
+    alwaysShow: true,
   }
 }
 
@@ -1995,7 +2012,7 @@ function summaryTableOf(rows: any[], unit: string, prefix: string, includeGas: b
  */
 const statementCache = new Map<string, Uint8Array>()
 const statementKey = (rows: any[], unit: string) =>
-  `${unit}|${rows.map((r) => [r.id, r.month, r.total_kwh, r.ind_fee, r.item_total, r.dorm_fee, r.water_ind_fee, r.water_dorm_fee, r.gas_fee].join(':')).join(',')}`
+  `${unit}|${rows.map((r) => [r.id, r.month, r.total_kwh, r.ind_fee, r[TENANT_ELEC_TOTAL_FIELD], r[TENANT_WATER_TOTAL_FIELD], r.dorm_fee, r.water_ind_fee, r.water_dorm_fee, r.gas_fee].join(':')).join(',')}`
 
 /** 同一份内容只算一次；**在途**的那次也要复用，否则预生成与点击会各算一遍。 */
 let statementInflight: { key: string; p: Promise<Uint8Array> } | null = null
@@ -2173,97 +2190,14 @@ const reloadSubs = async () => {
 defineExpose({ reloadTenants, reloadSubs })
 
 // ---- 分时电表 CRUD(按归属单位分组 + 内联表单) ----
-// ---- 账单详情与打印 ----
-// 行点击详情：与发票同款 BusinessSplitDetailDrawer。
-//
-// 数据来源是**行本身**（buildRows 的核算结果）而不是 billing_records：
-// 业主视角多数月份没有固化账单，早期实现「找不到 rec 就 return」正是
-// 「费用清单点行没反应」的直接原因。字段顺序跟随「字段定义（subs）」。
-const recordVisible = ref(false)
-const recordRow = ref<any>(null)
-const recordForm = ref<Record<string, any>>({})
-// 说明：不向 BSD 传 :dirty —— 费用清单行是即时可编辑的核算值，
-// 保存按钮恒可点（BSD 的 dirty===false 会禁用保存，这里不需要该门禁）。
+// ---- 打印 ----
+// 详情抽屉已下线（第 18 轮）：行内不再有任何「打开详情」入口，
+// 打印统一走浮动栏的「打印清单 / 打印目录」两个入口。
 const printVisible = ref(false)
 const printUrl = ref('')
 const printBytes = ref<Uint8Array | ArrayBuffer | null>(null)
 const printTitle = ref('')
 const printFileName = ref('preview.pdf')
-
-const recordTitle = computed(() => {
-  const r = recordRow.value
-  if (!r) return '费用清单'
-  return `${r.month || ''} 费用清单 · ${r.unit || useUnit.value || ''}`
-})
-
-/**
- * 详情字段 = 费用清单 subs（启用项，按序）∩ 该行真实存在的键。
- *
- * 交集是必须的：subs 是业主视角 ∪ 租户视角的并集，直接铺开会给
- * 「业主视角」多出一堆只在租户视角有意义的空字段（分摊比例等）。
- * subs 不可用时回退当前可见列定义，保证任何情况下都有字段可看。
- */
-const billingFields = computed<Array<{ name: string; label: string; dataType?: string }>>(() => {
-  const row = recordRow.value || {}
-  const has = (k: string) => k in row && row[k] !== undefined
-  // 与列表当前生效的列严格同源：列上有的、值也有的才进抽屉。
-  // （旧实现从 subs 出发，租户视角的分摊子项列不在 subs 里 → 抽屉缺字段。）
-  const cols = activeColDefs.value.filter((c) => has(c.key))
-  if (cols.length) {
-    return cols.map((c) => ({
-      name: c.key,
-      label: c.label,
-      dataType: /fee|amount|price|kwh|usage|total|ratio|gen|grid|_fee$/.test(c.key) ? 'number' : 'text',
-    }))
-  }
-  return visibleColDefs.value.filter((c) => has(c.key)).map((c) => ({ name: c.key, label: c.label, dataType: 'text' }))
-})
-
-// BSD 表单契约 { data, remarkParts, items }：data 指向行副本，编辑不回写列表
-const recordFormWrapper = computed(() => ({ data: recordForm.value, remarkParts: {}, items: [] }))
-
-/**
- * 打开只读详情抽屉。
- *
- * 抽屉只渲染字段（到「备注」为止），不再追加电量/费用/水费明细块 ——
- * 那些数据在「打印清单」的结构化 PDF 里按水/电/气分区展示。
- */
-const openRecord = (row: any) => {
-  recordRow.value = row
-  const editable: Record<string, any> = {}
-  for (const f of billingFields.value) editable[f.name] = row[f.name] ?? ''
-  recordForm.value = editable
-  recordVisible.value = true
-}
-
-// 说明：费用清单抽屉是**只读**的（所有值都是核算结果）。
-// 需要改数 → 走工具栏「生成账单 / 重新核算」；需要写备注 → 备注本身也属核算记录，
-// 由生成管线维护。这里不再保留逐字段保存通道，避免绕过口径直接改金额。
-
-/**
- * 抽屉底栏「打印」：走与浮动栏「打印清单」同一套 PDF（`概览 + 细项 + 水电气分区`）。
- * 旧实现是克隆抽屉 DOM 交给浏览器打印 —— 抽屉里已经没有明细块（按需求移除），
- * 而且 DOM 打印的分页/表头完全不可控。
- */
-const printRecord = () => {
-  const row = recordRow.value
-  if (!row) return
-  statementBusy.value = true
-  void (async () => {
-    try {
-      const unit = String(row.unit || useUnit.value || '')
-      const month = String(row.month || '')
-      // 与浮动栏「打印清单」同一份文档模型 + 同一份字节缓存：
-      // 抽屉里点过打印，出去再点浮动栏打印同一行不会重算一遍。
-      const bytes = await statementBytesOf([row], unit, () => buildStatementDoc([row], unit))
-      showPrint(`${unit} 费用清单`, bytes, `${unit}-${month}-费用清单.pdf`)
-    } catch (e: any) {
-      MessagePlugin.error(e?.message || '生成清单失败')
-    } finally {
-      statementBusy.value = false
-    }
-  })()
-}
 
 const showPrint = (title: string, bytes: ArrayBuffer | Uint8Array, fileName = 'preview.pdf') => {
   printTitle.value = title
@@ -2489,6 +2423,16 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
 }
+
+/*
+  行不再可点开抽屉（第 18 轮）→ 光标必须是默认箭头。
+  仅保留两处可点击语义：复选框、大类汇总列的 +/− 展开徽标。
+  不写 `:deep(.doc-table tbody tr)` 全表规则的话，浏览器会沿用
+  TDesign 默认的默认光标，但历史样式里曾经加过 pointer，这里显式钉死防回归。
+*/
+.doc-table :deep(tbody tr) { cursor: default; }
+.doc-table :deep(tbody tr .t-checkbox) { cursor: pointer; }
+.doc-table :deep(tbody tr .row-expand-toggle) { cursor: pointer; }
 
 /* 底部汇总 */
 .doc-summary-bar {

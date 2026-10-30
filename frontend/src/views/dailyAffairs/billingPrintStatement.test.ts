@@ -130,15 +130,17 @@ test('概览卡片：租户视角按工业/宿舍两段拆，业主视角保持�
   assert.ok(!/total_fee/.test(tenantPart), '租户卡片不得用全厂 total_fee')
 })
 
-test('概览卡片：两个打印入口共用 buildStatementDoc（单一构造点）', () => {
+test('概览卡片：打印清单只有浮动栏一条入口，共用 buildStatementDoc', () => {
   const billing = read('TenantBilling.vue')
-  // 只允许在 buildStatementDoc 里拼一次卡片/元信息，避免两条入口各写一遍
+  // 只允许在 buildStatementDoc 里拼一次卡片/元信息，避免多条入口各写一遍
   assert.equal((billing.match(/kpis: statementKpis\(/g) || []).length, 1, '卡片构造只应有一处')
   assert.equal((billing.match(/meta: statementMeta\(/g) || []).length, 1, '元信息构造只应有一处')
   const statement = billing.slice(billing.indexOf('const handlePrintStatement'), billing.indexOf('const handlePrintCatalog'))
   assert.match(statement, /statementBytesOf\(arr, unit, \(\) => buildStatementDoc\(arr, unit\)\)/)
-  const drawer = billing.slice(billing.indexOf('const printRecord = () =>'), billing.indexOf('const showPrint = (title:'))
-  assert.match(drawer, /statementBytesOf\(\[row\], unit, \(\) => buildStatementDoc\(\[row\], unit\)\)/)
+  // 第 18 轮：详情抽屉已下线（行点击不再弹抽屉），抽屉里的「打印」入口随之移除，
+  // 打印清单的唯一入口是底部浮动栏。这里反向断言，防止抽屉被悄悄加回来。
+  assert.ok(!/printRecord/.test(billing), '抽屉底栏打印入口应随抽屉一起下线')
+  assert.ok(!/BusinessSplitDetailDrawer/.test(billing), '费用清单不得再挂载详情抽屉')
 })
 
 test('概览元信息：租户视角展示「电水合计应收」', () => {

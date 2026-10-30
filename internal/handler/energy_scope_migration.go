@@ -893,6 +893,92 @@ func isEnergyAccountingCategory(name string) bool {
 	return false
 }
 
+// MigrateTenantTotalFields 把费用清单租户分组里的「合计应付」拆成
+// 「电费合计 / 水费合计」两条收口列（幂等）。
+//
+// 为什么必须做在后端：subs 是字段定义的唯一权威源，前端 activeColDefs 只按它
+// 派生列。存量库里租户分组最后一条是 `item_total`（label=合计应付），
+// 若只改前端，六同步的「①字段设置抽屉」仍会把它读出来并显示成旧名。
+//
+// 幂等策略（逐条 subs 处理，不重建整组）：
+//  1. `item_total` 一律删除（不论在哪个分组、label 被改成什么）；
+//  2. 每个含租户分组（group 以 `tenant:` 开头）的字段集，若缺 `elec_total_fee`
+//     或 `water_total_fee`，就在**该分组末尾**按顺序补齐（enabled/is_default 均为 true）；
+//  3. 已经是新结构时不做任何写入（不触碰 updated_at，避免每次启动都写库）。
+func (h *UtilityHandler) MigrateTenantTotalFields(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, "费用清单").
+		Find(&cats).Error; err != nil {
+		return 0, nil
+	}
+	written := 0
+	for i := range cats {
+		subs := cats[i].Subs
+		// 分组 → 该组现有键集合（用于判断是否需要补两条收口列）
+		groupOrder := make([]string, 0, 8)
+		groupLabels := make(map[string]string, 8)
+		hasTotal := make(map[string]bool, 8)
+		next := make([]types.FleetCategorySub, 0, len(subs)+8)
+		changed := false
+		for _, s := range subs {
+			name := strings.TrimSpace(s.Name)
+			if name == "item_total" {
+				changed = true
+				continue
+			}
+			next = append(next, s)
+			g := strings.TrimSpace(s.Group)
+			if g == "" || !strings.HasPrefix(g, "tenant:") {
+				continue
+			}
+			if _, ok := groupLabels[g]; !ok {
+				groupOrder = append(groupOrder, g)
+				groupLabels[g] = strings.TrimSpace(s.GroupLabel)
+			}
+			if name == "elec_total_fee" || name == "water_total_fee" {
+				hasTotal[g+"/"+name] = true
+			}
+		}
+		for _, g := range groupOrder {
+			label := groupLabels[g]
+			missing := make([]types.FleetCategorySub, 0, 2)
+			if !hasTotal[g+"/elec_total_fee"] {
+				missing = append(missing, types.FleetCategorySub{
+					Name: "elec_total_fee", Label: "电费合计", Enabled: true, IsDefault: true,
+					DataType: "number", Group: g, GroupLabel: label,
+				})
+			}
+			if !hasTotal[g+"/water_total_fee"] {
+				missing = append(missing, types.FleetCategorySub{
+					Name: "water_total_fee", Label: "水费合计", Enabled: true, IsDefault: true,
+					DataType: "number", Group: g, GroupLabel: label,
+				})
+			}
+			if len(missing) == 0 {
+				continue
+			}
+			changed = true
+			next = append(next, missing...)
+		}
+		if !changed {
+			continue
+		}
+		// 必须用结构体 Save：map/slice 直写 jsonb 会被 pgx 当成 record 报 42804。
+		cats[i].Subs = next
+		cats[i].UpdatedAt = timeNowUTC()
+		if err := h.db.WithContext(ctx).Save(&cats[i]).Error; err != nil {
+			return written, err
+		}
+		written++
+		logger.Infof(ctx, "费用清单 subs 收口列迁移：item_total → elec_total_fee/water_total_fee（%d 条）", len(next))
+	}
+	return written, nil
+}
+
 // energySubsHaveKey 判断 subs 里是否有某个键（用于识别旧版结构）。
 func energySubsHaveKey(subs []types.FleetCategorySub, key string) bool {
 	key = strings.TrimSpace(key)

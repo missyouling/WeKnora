@@ -300,6 +300,13 @@ export interface StatementTable {
   total?: string[]
   /** 无数据时的占位文案 */
   empty?: string
+  /**
+   * 即使所有明细行都是 0 也保留（应收汇总 / 账单合计 / 结算汇总这类**结论表**）。
+   *
+   * 结论表的作用是「告诉租户这一期总共多少钱」，0 元也必须显示；
+   * 而明细表（费用分项 / 电量明细 / 水电气核算）0 行毫无意义，必须裁掉。
+   */
+  alwaysShow?: boolean
 }
 export interface StatementDoc {
   /** 主标题，如「重庆星达 费用清单」 */
@@ -312,6 +319,74 @@ export interface StatementDoc {
   kpis?: StatementKpi[]
   tables: StatementTable[]
   footerNote?: string
+}
+
+/**
+ * 明细行「有实际数据」判定。
+ *
+ * 口径（产品要求）：金额为 0/空/`0.00` **且** 数量为 0/空/`—` 的行没有发生过业务，
+ * 打印时一律隐藏 —— 一张 2026-09 账单里 `偏差电费`、`绿电交易电费（省间/省内）`、
+ * `绿电环境价值电费（省外）`、`中长期超额申报回收费用` 全 0，却各占 4 行，
+ * 把单月清单撑到 4 页，真正有数的分项反被挤到后页。
+ *
+ * 判定顺序：
+ *   ① 显式 `__skip` 标记（业务侧已判定「无数据」）→ 隐藏；
+ *   ② 找出「金额列 / 数量列」：按列标签（金额(元) / 电费 / 水费 / 气费 / 计费数量 / 用量…）；
+ *   ③ 金额列与数量列**全部为 0 或占位** → 隐藏；任一非 0 → 保留。
+ * 没有金额/数量列的表（如纯文本清单）一律保留，避免误删。
+ */
+const AMOUNT_COL = /金额|电费|水费|气费|结算|税额|价税|\(元\)|（元）/
+const QTY_COL = /数量|用量|电量|水量|气量|kwh|吨|m³|立方/
+/** 「空值」占位：破折号、全角破折号、空串、纯 0 的各种写法。 */
+const isBlankOrZero = (v: unknown): boolean => {
+  const s = String(v ?? '').trim()
+  if (!s || s === '—' || s === '-' || s === '–' || s === '——') return true
+  const n = Number(s.replace(/[,，¥￥\s]/g, ''))
+  if (!Number.isFinite(n)) return false
+  return n === 0
+}
+
+/**
+ * 该行是否没有任何实际发生的数据（应隐藏）。
+ *
+ * 数值列的识别顺序（越靠前越可靠）：
+ *   ① 右对齐列（本项目的所有金额/数量列都是 `align: 'right'`，而名称列都是左对齐）；
+ *   ② 没有右对齐列时，才按列标签匹配「金额/电费/水费/计费数量/用量…」。
+ *
+ * **不能只按标签匹配**：`费用组成` 里含「费用」二字，会被当成金额列，
+ * 于是「偏差电费 | 尖峰 | 0 | — | 0.00」这一行因为第 1 格是文字而判为「有数据」，
+ * 空行裁剪整体失效（真机 2026-09 清单仍是 4 页的直接原因）。
+ */
+export function isEmptyDetailRow(columns: StatementColumn[], cells: string[]): boolean {
+  if ((cells as any)?.__skip) return true
+  let probes = columns.map((c, i) => (c.align === 'right' ? i : -1)).filter((i) => i >= 0)
+  if (!probes.length) {
+    probes = columns
+      .map((c, i) => (AMOUNT_COL.test(String(c.label || '')) || QTY_COL.test(String(c.label || '')) ? i : -1))
+      .filter((i) => i >= 0)
+  }
+  if (!probes.length) return false
+  return probes.every((i) => isBlankOrZero(cells[i]))
+}
+
+/**
+ * 过滤掉空明细行，并**同步隐藏过滤后为空**的整张表。
+ *
+ * 返回新的 tables 数组；`total` 行不需要重算（它本来就是各行金额的累加，
+ * 被删的都是 0 行，合计不变）。
+ */
+export function pruneEmptyTables(tables: StatementTable[]): StatementTable[] {
+  const out: StatementTable[] = []
+  for (const t of tables) {
+    if (t.alwaysShow) { out.push(t); continue }
+    // 本来就没有行（该月无水费 / 无某分项 / 无关口电量）→ 整表连同标题一起隐藏。
+    // 保留的话会打出一行「当月无用水记录」占掉版面，与「紧凑只展示真实数据」相悖。
+    if (!t.rows.length) continue
+    const kept = t.rows.filter((row) => !isEmptyDetailRow(t.columns, row))
+    if (!kept.length) continue
+    out.push(kept.length === t.rows.length ? t : { ...t, rows: kept })
+  }
+  return out
 }
 
 const alignRight = (align: string | undefined) => align === 'right'
@@ -338,6 +413,10 @@ function columnWidths(columns: StatementColumn[], avail: number): number[] {
 export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise<Uint8Array> {
   const { doc: source } = opts
   if (!source?.tables?.length) throw new Error('无可用数据生成清单')
+  // 空明细行 + 空表在**进入排版前**统一裁剪：
+  // 排在排版里做的话，被删行的行高已经被 ensure/翻页消费掉，PDF 仍会多出空白页。
+  const doc: StatementDoc = { ...source, tables: pruneEmptyTables(source.tables) }
+  if (!doc.tables.length) throw new Error('本期没有任何发生数据的明细')
 
   const fontBytes = await loadCatalogFont()
   const pdf = await PDFDocument.create()
@@ -372,10 +451,10 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   const newPage = () => {
     page = pdf.addPage([PORTRAIT_W, PORTRAIT_H])
     y = PORTRAIT_H - S_MARGIN
-    text(source.title, S_MARGIN, y - 9, 9, C_MUTED)
-    if (source.subtitle) {
-      const w = font.widthOfTextAtSize(source.subtitle, 9)
-      text(source.subtitle, S_MARGIN + avail - w, y - 9, 9, C_MUTED)
+    text(doc.title, S_MARGIN, y - 9, 9, C_MUTED)
+    if (doc.subtitle) {
+      const w = font.widthOfTextAtSize(doc.subtitle, 9)
+      text(doc.subtitle, S_MARGIN + avail - w, y - 9, 9, C_MUTED)
     }
     y -= 16
     hline(S_MARGIN, S_MARGIN + avail, y)
@@ -393,25 +472,25 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   }
 
   // ---- 页眉：主标题（居中）+ 副标题 + 分隔线 ----
-  const titleW = font.widthOfTextAtSize(source.title, S_TITLE_SIZE)
-  text(source.title, S_MARGIN + (avail - titleW) / 2, y - S_TITLE_SIZE, S_TITLE_SIZE, C_BRAND)
+  const titleW = font.widthOfTextAtSize(doc.title, S_TITLE_SIZE)
+  text(doc.title, S_MARGIN + (avail - titleW) / 2, y - S_TITLE_SIZE, S_TITLE_SIZE, C_BRAND)
   y -= S_TITLE_SIZE + 10
-  if (source.subtitle) {
-    const subW = font.widthOfTextAtSize(source.subtitle, S_SUBTITLE_SIZE)
-    text(source.subtitle, S_MARGIN + (avail - subW) / 2, y - S_SUBTITLE_SIZE, S_SUBTITLE_SIZE, C_MUTED)
+  if (doc.subtitle) {
+    const subW = font.widthOfTextAtSize(doc.subtitle, S_SUBTITLE_SIZE)
+    text(doc.subtitle, S_MARGIN + (avail - subW) / 2, y - S_SUBTITLE_SIZE, S_SUBTITLE_SIZE, C_MUTED)
     y -= S_SUBTITLE_SIZE + 10
   }
   page.drawRectangle({ x: S_MARGIN, y: y - 2, width: avail, height: 2, color: C_BRAND })
   y -= 16
 
   // ---- 概览：基本信息两列网格 ----
-  if (source.overviewTitle) drawSectionTitle(source.overviewTitle)
-  if (source.meta?.length) {
+  if (doc.overviewTitle) drawSectionTitle(doc.overviewTitle)
+  if (doc.meta?.length) {
     const half = avail / 2
     const perRow = 2
-    for (let i = 0; i < source.meta.length; i += perRow) {
+    for (let i = 0; i < doc.meta.length; i += perRow) {
       ensure(S_META_SIZE + 12)
-      const row = source.meta.slice(i, i + perRow)
+      const row = doc.meta.slice(i, i + perRow)
       row.forEach((m, idx) => {
         const label = `${m.label}`
         const labelW = font.widthOfTextAtSize(`${label}：`, S_META_SIZE)
@@ -429,15 +508,15 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   // 卡片可以带一行 `hint`（如「工业 126600 + 宿舍 930」）。有 hint 时卡片加高到 54，
   // 三行文本自上而下是 标题(8pt) / 构成(7pt) / 数值(11.5pt)，互不重叠：
   // 标题基线 y-12、构成基线 y-23、数值基线 y-cardH+11。
-  if (source.kpis?.length) {
-    const perRow = Math.min(4, source.kpis.length)
+  if (doc.kpis?.length) {
+    const perRow = Math.min(4, doc.kpis.length)
     const gap = 8
     const cardW = (avail - gap * (perRow - 1)) / perRow
-    const hasHint = source.kpis.some((k) => k.hint)
+    const hasHint = doc.kpis.some((k) => k.hint)
     const cardH = hasHint ? 54 : 42
-    for (let i = 0; i < source.kpis.length; i += perRow) {
+    for (let i = 0; i < doc.kpis.length; i += perRow) {
       ensure(cardH + 10)
-      const row = source.kpis.slice(i, i + perRow)
+      const row = doc.kpis.slice(i, i + perRow)
       row.forEach((k, idx) => {
         const x = S_MARGIN + idx * (cardW + gap)
         page.drawRectangle({
@@ -462,7 +541,7 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   }
 
   // ---- 表格区 ----
-  for (const table of source.tables) {
+  for (const table of doc.tables) {
     drawSectionTitle(table.title)
 
     const widths = columnWidths(table.columns, avail)
@@ -538,9 +617,9 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   }
 
   // ---- 页脚备注 ----
-  if (source.footerNote) {
+  if (doc.footerNote) {
     ensure(30)
-    const lines = wrapText(font, source.footerNote, avail, 8)
+    const lines = wrapText(font, doc.footerNote, avail, 8)
     lines.forEach((line) => {
       text(line, S_MARGIN, y - 9, 8, C_MUTED)
       y -= 12
@@ -550,7 +629,7 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   // ---- 统一页脚：标题 · 生成时间 · 第 N / 共 M 页 ----
   const pages = pdf.getPages()
   pages.forEach((p, i) => {
-    const label = `${source.title} · 生成于 ${dateStr}`
+    const label = `${doc.title} · 生成于 ${dateStr}`
     p.drawLine({
       start: { x: S_MARGIN, y: S_MARGIN - 6 },
       end: { x: PORTRAIT_W - S_MARGIN, y: S_MARGIN - 6 },

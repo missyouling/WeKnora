@@ -72,13 +72,14 @@ test('subs.width>0 必须精确生效（clamp 60~400），0 才自适应', () =>
 
 // ---- ③ 抽屉统一 ----
 
-test('费用清单 / 光伏行点击统一 BusinessSplitDetailDrawer', () => {
-  assert.match(tenant, /<BusinessSplitDetailDrawer/, '费用清单必须用 BSD 抽屉')
+test('光伏 / 市电仍用 BusinessSplitDetailDrawer；费用清单已下线行点击抽屉', () => {
+  // 第 18 轮：费用清单是纯核算结果表，点行不再弹只读抽屉（只保留复选框 / +− / hover）。
+  // 这里反向断言，防止有人把抽屉加回来。
+  assert.doesNotMatch(tenant, /<BusinessSplitDetailDrawer/, '费用清单不得再挂载详情抽屉')
+  assert.doesNotMatch(tenant, /@row-click=/, '费用清单不得再绑定行点击')
+  assert.doesNotMatch(tenant, /const onRowClick/, '行点击处理函数应一并移除')
   assert.match(solar, /<BusinessSplitDetailDrawer/, '光伏必须用 BSD 抽屉')
   assert.match(utilities, /<BusinessSplitDetailDrawer/, '市电字段编辑必须用 BSD 抽屉')
-  // 行点击必须真的打开抽屉（业主视角曾完全没反应）
-  assert.match(tenant, /const onRowClick = \(row: any\) => \{[\s\S]{0,120}void openRecord\(row\)/, '费用清单行点击必须打开抽屉')
-  assert.doesNotMatch(tenant, /if \(!isOwnerView\.value\) \{[\s\S]{0,40}records\.value\.find/, '不得只在租户视角打开')
   // 没有源文件的计算行：预览区必须可关
   assert.match(bsd, /showPreview\?: boolean/, 'BSD 需支持关闭源文件预览')
 })

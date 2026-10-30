@@ -174,6 +174,8 @@ export function buildUtilityBillStatementDoc(rows: any[], title = '市电账单�
         ['功率因数调整电费', '—', money(it?.pf_adjust_amount)],
       ],
       total: ['合计应付', num(it?.total_kwh), money(grandTotal)],
+      // 结论表：本期电费为 0 也要显示（否则「账单合计」整块消失，用户以为漏打）
+      alwaysShow: true,
     })
   })
 
@@ -309,6 +311,7 @@ export function buildSolarBillStatementDoc(rows: any[], title = '光伏账单清
         ['发电补助', num(it?.generation_kwh), money(subsidyTotal)],
       ],
       total: ['结算金额', num(it?.grid_kwh), money(total)],
+      alwaysShow: true,
     })
   })
 
