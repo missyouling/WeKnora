@@ -101,7 +101,7 @@ test('费用清单引用字段的名称必须是可编辑输入框（且保留�
   const src = read('FleetCertPanel.vue')
   const blk = src.slice(src.indexOf('fc-name-wrap--ref'), src.indexOf('fc-name-wrap--ref') + 900)
   assert.match(blk, /<t-input/, '名称必须是可编辑输入框，不能是只读 span')
-  assert.match(blk, /setFieldEdit\(fd, v\)/, '改名必须走 setFieldEdit（只写 label）')
+  assert.match(blk, /setFieldEdit\(row\.fd, v\)/, '改名必须走 setFieldEdit（只写 label）')
   assert.match(blk, /fc-ref-badge/, '来源徽标必须保留（数据身份不可改）')
   assert.ok(!/fc-ref-name/.test(blk), '旧的只读名称 span 必须移除')
 })

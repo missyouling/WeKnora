@@ -2164,6 +2164,14 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.MigrateTenantTotalFields(ctx); err != nil {
 		logger.Warnf(ctx, "migrate tenant total fields failed: %v", err)
 	}
+	// 费用清单：默认分组（业主视角列）缺失时按目录重建（幂等）
+	if _, err := uh.EnsureCostListDefaultGroup(ctx); err != nil {
+		logger.Warnf(ctx, "ensure cost list default group failed: %v", err)
+	}
+	// 费用清单：剔除租户分组里的跨分组污染字段（幂等，只删不补）
+	if _, err := uh.SanitizeTenantGroupFields(ctx); err != nil {
+		logger.Warnf(ctx, "sanitize tenant group fields failed: %v", err)
+	}
 	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
 	uh.hideEnergyLedgerCategory(ctx)
 	// 能耗账单文件的「所属分类」回填：上传只写了 bill_kind、提取只写 kind，

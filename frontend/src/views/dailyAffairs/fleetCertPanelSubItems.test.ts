@@ -62,8 +62,8 @@ test('subs 往返：-rows / -periods 细项带 group 持久化', () => {
 test('展开入口：点击字段行/徽标，不再有挤占输入框的实心按钮', () => {
   // 旧版在 160px 字段名列里塞了实心按钮，输入框被压到 ~80px（真机截图为证）
   assert.doesNotMatch(src, /class="fc-child-toggle"/, '不得再有用按钮承载的细项开关')
-  assert.match(src, /@click\.stop="toggleChildGroup\(fd\)"/, '字段行/徽标点击应切换细项展开')
-  assert.match(src, /class="fc-name-wrap" :class="\{ 'has-child': !!childGroupOf\(fd\) \}"/, '含细项的字段名区必须打 has-child 标记')
+  assert.match(src, /@click\.stop="toggleChildGroup\(row\.fd\)"/, '字段行/徽标点击应切换细项展开')
+  assert.match(src, /class="fc-name-wrap" :class="\{ 'has-child': !!childGroupOf\(row\.fd\) \}"/, '含细项的字段名区必须打 has-child 标记')
   assert.match(src, /\.fc-child-badge\s*\{/, '必须有轻量徽标样式')
 })
 

@@ -117,20 +117,39 @@
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
                 </div>
-                <!-- 明细子项不再是独立的底部区块：点「项目明细」字段行就在它正下方展开，
-                     子项行与主字段行共用同一套网格/行高/圆角/间距（.field-config-row）。 -->
-                <template v-for="fd in fieldsVisible" :key="fd.name">
-                  <div class="field-config-row"
-                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === fd.name }]"
-                    draggable="true" @dragstart="onFieldDragStart(fd)" @dragover.prevent
-                    @drop.prevent="onFieldDrop(fd)" @dragend="onFieldDragEnd">
+                <!-- 租户分组（持睿汽车…）：字段按「派生字段 / 分摊子项」分两块展示。
+                     需求（第 19 轮）：用户在持睿汽车胶囊里要能一眼看出
+                     哪些是内置算出来的（工业电量/宿舍水费/电费合计…）、
+                     哪些来自「清单设置 → 分摊子项」（市场化购电费/零售输配电费…）。
+                     非租户分组（默认分组 / 发票 / 合同…）不插区块标题，视觉与改造前一致。 -->
+                <template v-for="row in fieldRows" :key="row.key">
+                  <div v-if="row.kind === 'header'" class="fc-origin-block"
+                    :class="`fc-origin-block--${row.origin}`">
+                    <span class="fc-origin-title">{{ row.title }}</span>
+                    <span class="fc-origin-count">{{ row.count }}</span>
+                    <span class="fc-origin-hint">{{ row.hint }}</span>
+                  </div>
+                  <div v-else class="field-config-row"
+                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === row.fd.name }]"
+                    draggable="true" @dragstart="onFieldDragStart(row.fd)" @dragover.prevent
+                    @drop.prevent="onFieldDrop(row.fd)" @dragend="onFieldDragEnd">
                     <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
+                    <!-- 来源徽标（仅租户分组）：派生字段 / 分摊子项 / 分摊汇总·细项 N。
+                         放在拖拽手柄与字段名之间，不占字段名输入框的宽度（
+                         输入框 flex:1 会自适应让位），因此不会把名称挤成「账...」。 -->
+                    <span v-if="isTenantGroupActive" class="fc-origin-badge"
+                      :class="`fc-origin-badge--${originBadgeOf(row.fd).kind}`"
+                      :title="originBadgeOf(row.fd).kind === 'derived'
+                        ? '派生字段：由费用清单自身核算逻辑算出'
+                        : '分摊子项：来自「清单设置 → 分摊子项」'">
+                      {{ originBadgeOf(row.fd).text }}
+                    </span>
                     <!-- items 字段：字段名即展开开关，点击在下方展开子项 -->
-                    <button v-if="fd.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
-                      :title="`${fd.label || fieldLabelOf(fd)} · 点击${isSubFieldsOpen(fd) ? '收起' : '展开'}明细子项`"
-                      @click="toggleSubFields(fd)">
-                      <span class="fc-name-text">{{ fieldLabelOf(fd) }}</span>
-                      <span class="fc-sub-count">{{ subFieldsOf(fd).length }}</span>
+                    <button v-if="row.fd?.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
+                      :title="`${row.fd.label || fieldLabelOf(row.fd)} · 点击${isSubFieldsOpen(row.fd) ? '收起' : '展开'}明细子项`"
+                      @click="toggleSubFields(row.fd)">
+                      <span class="fc-name-text">{{ fieldLabelOf(row.fd) }}</span>
+                      <span class="fc-sub-count">{{ subFieldsOf(row.fd).length }}</span>
                     </button>
                     <!-- 字段名可编辑（2026-10-21）：复制/新增字段中文命名后可直接改名。
                          改名只写 label（表头文案），name 是数据身份（契约键/后端 key）不动——
@@ -146,68 +165,68 @@
                          徽标带分组路径：市电账单 8 个分组共用列名，只显示分类会误判来源。 -->
                     <!-- 大类汇总字段：名称可改；右侧「细项 N」胶囊点开看下属分项。
                          细项仍在 subs 里（各自的启用/改名照常保存），只是不再各占一行。 -->
-                    <div v-else-if="isFeeGroupField(fd)" class="fc-name-wrap fc-name-wrap--ref fc-name-wrap--group"
-                      :title="`${fieldLabelOf(fd)} · 市电账单 ${fd.source.group || ''} 下属细项的汇总列`">
+                    <div v-else-if="isFeeGroupField(row.fd)" class="fc-name-wrap fc-name-wrap--ref fc-name-wrap--group"
+                      :title="`${fieldLabelOf(row.fd)} · 市电账单 ${row.fd.source.group || ''} 下属细项的汇总列`">
                       <span class="fc-ref-badge">汇总</span>
-                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
-                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
-                      <span class="fc-child-badge" :class="{ open: isFeeGroupOpen(fd) }"
-                        :title="`${fieldLabelOf(fd)} · 点击${isFeeGroupOpen(fd) ? '收起' : '展开'}下属细项`"
-                        @click.stop="toggleFeeGroupOpen(fd)">
-                        <span class="fc-child-badge-num">{{ feeGroupMemberFields(fd).length }}</span>
+                      <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
+                        @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
+                      <span class="fc-child-badge" :class="{ open: isFeeGroupOpen(row.fd) }"
+                        :title="`${fieldLabelOf(row.fd)} · 点击${isFeeGroupOpen(row.fd) ? '收起' : '展开'}下属细项`"
+                        @click.stop="toggleFeeGroupOpen(row.fd)">
+                        <span class="fc-child-badge-num">{{ feeGroupMemberFields(row.fd).length }}</span>
                         <t-icon name="chevron-right" size="12px" class="fc-child-caret" />
                       </span>
                     </div>
-                    <div v-else-if="fd.source" class="fc-name-wrap fc-name-wrap--ref"
-                      :title="`引用自「${sourcePathOf(fd)}」字段 ${fd.source.label || fd.source.field}`">
-                      <span class="fc-ref-badge">{{ sourcePathOf(fd) }}</span>
-                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
-                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
+                    <div v-else-if="row.fd.source" class="fc-name-wrap fc-name-wrap--ref"
+                      :title="`引用自「${sourcePathOf(row.fd)}」字段 ${row.fd.source.label || row.fd.source.field}`">
+                      <span class="fc-ref-badge">{{ sourcePathOf(row.fd) }}</span>
+                      <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
+                        @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
                     </div>
                     <!-- 阻止冒泡只挂在外层 div（原生元素）。绝不能写在 t-input 上：
                          t-input 的 click 首参是 { e } 上下文对象而非原生 MouseEvent，
                          Vue 的 .stop 会调 e.stopPropagation() 直接抛 TypeError（真机控制台）。 -->
-                    <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(fd) }"
-                      @click.stop="toggleChildGroup(fd)">
-                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="字段名" class="fc-name"
-                        :ref="(el: any) => setFieldInputRef(fd.name, el)"
-                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
+                    <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(row.fd) }"
+                      @click.stop="toggleChildGroup(row.fd)">
+                      <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="字段名" class="fc-name"
+                        :ref="(el: any) => setFieldInputRef(row.fd.name, el)"
+                        @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
                       <!-- 细项展开徽标：绝对定位在输入框右内边距上，不占列宽、不挤字段名。
                            旧版在这里塞了实心绿底按钮，把 160px 的字段名压到约 80px。 -->
-                      <span v-if="childGroupOf(fd)" class="fc-child-badge"
-                        :class="{ open: openChildGroup === childGroupOf(fd) }"
-                        :title="`${fieldLabelOf(fd)} · 点击${openChildGroup === childGroupOf(fd) ? '收起' : '展开'}细项配置`">
-                        <span class="fc-child-badge-num">{{ childItemsOf(childGroupOf(fd)).length }}</span>
+                      <span v-if="childGroupOf(row.fd)" class="fc-child-badge"
+                        :class="{ open: openChildGroup === childGroupOf(row.fd) }"
+                        :title="`${fieldLabelOf(row.fd)} · 点击${openChildGroup === childGroupOf(row.fd) ? '收起' : '展开'}细项配置`">
+                        <span class="fc-child-badge-num">{{ childItemsOf(childGroupOf(row.fd)).length }}</span>
                         <t-icon name="chevron-right" size="12px" class="fc-child-caret" />
                       </span>
                     </div>
-                    <t-select v-model="fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
+                    <t-select v-model="row.fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
-                      <t-input-number v-model="fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
+                      <t-input-number v-model="row.fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
                     </t-tooltip>
                     <!-- 明细行不作为普通文本列平铺在主表头里，「默认表头」开关对它没有意义 -->
-                    <span v-if="fd.dataType === 'items'" class="sub-blank"></span>
+                    <span v-if="row.fd?.dataType === 'items'" class="sub-blank"></span>
                     <t-tooltip v-else content="默认字段：重置字段筛选器时自动勾选" placement="top">
-                      <t-switch :model-value="!!fd.isDefault" size="small" @update:model-value="(v: any) => (fd.isDefault = !!v)" />
+                      <t-switch :model-value="!!row.fd.isDefault" size="small" @update:model-value="(v: any) => (row.fd.isDefault = !!v)" />
                     </t-tooltip>
-                    <t-switch :model-value="!!fd.enabled" size="small" @update:model-value="(v: any) => (fd.enabled = !!v)" />
-                    <template v-if="isBuiltinField(fd)">
+                    <t-switch :model-value="!!row.fd.enabled" size="small" @update:model-value="(v: any) => (row.fd.enabled = !!v)" />
+                    <template v-if="isBuiltinField(row.fd)">
                       <t-tooltip content="系统内置字段，不可删除" placement="top">
                         <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
                       </t-tooltip>
                     </template>
-                    <template v-else-if="usedFields.has(fd.name)">
+                    <template v-else-if="usedFields.has(row.fd.name)">
                       <t-tooltip :content="`该字段已被证照记录引用，不能删除`" placement="top">
                         <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
                       </t-tooltip>
                     </template>
-                    <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === fd.name" placement="left"
-                      :content="`确定删除字段「${fieldLabelOf(fd)}」吗？该字段将不可恢复。`"
+                    <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === row.fd.name" placement="left"
+                      :content="`确定删除字段「${fieldLabelOf(row.fd)}」吗？该字段将不可恢复。`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
                       @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
                       @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
-                      <t-dropdown :options="fieldMenuOptions(fd)" placement="bottom-right" min-column-width="110px"
-                        @click="(ctx: any) => onFieldMenu(fd, ctx.value)">
+                      <t-dropdown :options="fieldMenuOptions(row.fd)" placement="bottom-right" min-column-width="110px"
+                        @click="(ctx: any) => onFieldMenu(row.fd, ctx.value)">
                         <t-button variant="text" size="small" shape="square">
                           <template #icon><t-icon name="more" size="15px" /></template>
                         </t-button>
@@ -217,12 +236,12 @@
 
                   <!-- 大类下属细项：只读展示 + 可改名/可关「启用字段」。
                        细项不出列（列表里点 + 展开），所以这里不提供宽度/默认表头。 -->
-                  <div v-if="isFeeGroupField(fd) && isFeeGroupOpen(fd)" class="fee-group-members">
+                  <div v-if="row.kind === 'field' && isFeeGroupField(row.fd) && isFeeGroupOpen(row.fd)" class="fee-group-members">
                     <div class="fgm-head">
-                      下属细项 {{ feeGroupMemberFields(fd).length }} 项 · 主表头只显示「{{ fieldLabelOf(fd) }}」合计，
+                      下属细项 {{ feeGroupMemberFields(row.fd).length }} 项 · 主表头只显示「{{ fieldLabelOf(row.fd) }}」合计，
                       细项在列表里点单元格右侧 + 展开
                     </div>
-                    <div v-for="(m, mi) in feeGroupMemberFields(fd)" :key="m.name" class="fgm-row">
+                    <div v-for="(m, mi) in feeGroupMemberFields(row.fd)" :key="m.name" class="fgm-row">
                       <span class="fgm-idx">{{ mi + 1 }}</span>
                       <t-input :model-value="fieldEditOf(m)" size="small" class="fgm-name"
                         @update:model-value="(v: string) => setFieldEdit(m, v)" />
@@ -236,9 +255,9 @@
                   </div>
 
                   <!-- 明细子项内联展开区：紧贴 items 字段行，复用主字段行网格 -->
-                  <div v-if="fd.dataType === 'items' && isSubFieldsOpen(fd)" class="sub-inline">
+                  <div v-if="row.kind === 'field' && row.fd?.dataType === 'items' && isSubFieldsOpen(row.fd)" class="sub-inline">
                     <div
-                      v-for="(sf, si) in subFieldsOf(fd)" :key="sf.key"
+                      v-for="(sf, si) in subFieldsOf(row.fd)" :key="sf.key"
                       class="field-config-row sub-row" :class="{ 'has-width': showWidthCol }">
                       <span class="fc-drag sub-drag" :title="`子项编码：${sf.key}`">{{ si + 1 }}</span>
                       <!-- 子项隐藏 key 输入：key 是数据对齐口径，新建时由系统按中文名生成 -->
@@ -255,7 +274,7 @@
                       <t-popconfirm theme="warning" placement="left"
                         :content="`确认删除子项「${sf.label || sf.key}」吗？`"
                         :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
-                        @confirm="removeSubField(fd, sf)">
+                        @confirm="removeSubField(row.fd, sf)">
                         <t-tooltip content="删除子项" placement="top">
                           <t-button variant="text" size="small" shape="square" class="biz-del-btn">
                             <template #icon><t-icon name="delete" size="16px" /></template>
@@ -265,8 +284,8 @@
                     </div>
                     <div class="field-config-add sub-inline-add">
                       <t-input v-model="newSubFieldLabel" size="small" class="fc-add-input"
-                        placeholder="新增子项名称（如 规格型号）" @enter="addSubField(fd)" />
-                      <t-button variant="outline" size="small" @click="addSubField(fd)">添加</t-button>
+                        placeholder="新增子项名称（如 规格型号）" @enter="addSubField(row.fd)" />
+                      <t-button variant="outline" size="small" @click="addSubField(row.fd)">添加</t-button>
                     </div>
                   </div>
 
@@ -277,16 +296,16 @@
                        父字段下展开 —— 否则字段定义表会被 22 条行项淹没。
                        编辑只改 label（显示名），name 是账单 row 的匹配键，改了就对不上
                        fee_items 的 name/period。 -->
-                  <div v-if="childGroupOf(fd) && openChildGroup === childGroupOf(fd)" class="child-drawer">
+                  <div v-if="row.kind === 'field' && childGroupOf(row.fd) && openChildGroup === childGroupOf(row.fd)" class="child-drawer">
                     <!-- 抽屉小标题：说明这批细项属于哪个字段，并给一个明确的收起口 -->
                     <div class="child-drawer-head">
                       <span class="child-drawer-title">
-                        {{ fieldLabelOf(fd) }} · 细项列表
-                        <span class="child-drawer-count">{{ childItemsOf(childGroupOf(fd)).length }} 项</span>
+                        {{ fieldLabelOf(row.fd) }} · 细项列表
+                        <span class="child-drawer-count">{{ childItemsOf(childGroupOf(row.fd)).length }} 项</span>
                       </span>
                       <span class="child-drawer-tip">拖拽左侧手柄可调整顺序</span>
                       <t-button variant="text" size="small" class="child-drawer-fold"
-                        @click="toggleChildGroup(fd)">收起</t-button>
+                        @click="toggleChildGroup(row.fd)">收起</t-button>
                     </div>
                     <!-- 小表头：与下面每行的 5 列网格严格对齐 -->
                     <div class="child-row-head">
@@ -296,7 +315,7 @@
                       <span>启用</span>
                       <span>操作</span>
                     </div>
-                    <div v-if="!childItemsOf(childGroupOf(fd)).length" class="fc-child-empty">
+                    <div v-if="!childItemsOf(childGroupOf(row.fd)).length" class="fc-child-empty">
                       暂无细项，可在下方添加（如「零售交易电费(平)」或「尖」）。
                     </div>
                     <!-- 细项行：单行 5 列（拖拽手柄 / 序号 / 名称 / 启用 / 删除）。
@@ -304,7 +323,7 @@
                          · 不设列可见性开关（对它没有意义，旧版多这一个开关）；
                          · 排序用拖拽而不是 ↑↓ 小箭头（箭头会折到第二行，行高被撑成两倍）；
                          · name 是 fee_items 的行匹配键，改名只写 label。 -->
-                    <div v-for="(ch, ci) in childItemsOf(childGroupOf(fd))" :key="ch.name"
+                    <div v-for="(ch, ci) in childItemsOf(childGroupOf(row.fd))" :key="ch.name"
                       class="field-config-row child-row"
                       :class="{ 'fc-dragging': childDragName === ch.name }"
                       draggable="true" @dragstart="onChildDragStart(ch)" @dragover.prevent
@@ -333,8 +352,8 @@
                     </div>
                     <div class="field-config-add child-add">
                       <t-input v-model="newChildLabel" size="small" class="fc-add-input"
-                        :placeholder="childPlaceholderOf(fd)" @enter="addChild(fd)" />
-                      <t-button variant="outline" size="small" @click="addChild(fd)">添加细项</t-button>
+                        :placeholder="childPlaceholderOf(row.fd)" @enter="addChild(row.fd)" />
+                      <t-button variant="outline" size="small" @click="addChild(row.fd)">添加细项</t-button>
                     </div>
                   </div>
                 </template>
@@ -418,7 +437,12 @@ import {
   type BillingTenantLike,
   type TenantApportionItem,
 } from './billingFieldGroups'
-import { listBillingTenants, getBillingTenant } from '@/api/knowledge-base'
+import { listBillingTenants, getBillingTenant, saveBillingTenantItems } from '@/api/knowledge-base'
+import {
+  applyFieldsToItems,
+  originBadgeOf,
+  splitFieldsByOrigin,
+} from './tenantGroupSync'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import SourceFieldPicker from './SourceFieldPicker.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
@@ -744,18 +768,11 @@ async function onDrop(i: number) {
   let gi = 0
   const prev = arr
   categories.value[scope] = arr.map((c0: any) => ((c0.group_id || '') === gid ? (newGroupItems[gi++] ?? c0) : c0)) as any
-  // 已入库项同步后端 sort_order
-  const ids = newGroupItems.map((it: any) => it.id)
-  if (!ids.length) return
-  try {
-    await sortFleetCategories(scope, ids)
-    MessagePlugin.success('顺序已保存')
-    notifyCategoriesChanged()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '排序保存失败')
-    void prev
-    load()
-  }
+  // 第 19 轮：拖拽排序**只改本地顺序**，不再自动调 sortFleetCategories。
+  // 旧实现一放下鼠标就发一次排序 PUT，用户本想「先摆好再一起保存」，
+  // 结果半成品顺序已经落库。现在顺序随「保存」一并提交（commitEdit 里带 subs 顺序）。
+  void prev
+  void sortFleetCategories
 }
 
 // ---- 字段级拖拽排序（仅调整编辑态 fieldsEditable 顺序，保存时随 subs 持久化）----
@@ -937,7 +954,17 @@ const subGroupTabs = computed(() => {
     const idx = at.get(key)
     if (idx !== undefined) { merged[idx].count += g.count; continue }
     at.set(key, merged.length)
-    merged.push({ key, label: costListTabLabel(key), count: g.count })
+    merged.push({ key, label: costListTabLabel(key, g.label), count: g.count })
+  }
+  // 计数口径修正（第 19 轮）：胶囊上的数字必须是**顶层可见行数**。
+  //
+  // 旧口径直接数 subs 条数，把折叠在「市场化购电费 / 系统运行费用 / 政府性基金及附加」
+  // 三个大类里的成员也算进去了（持睿汽车显示 38，而表头实际只有 22 列）。
+  // 用户拿这个数字核对表头永远对不上，所以这里按 collapseFeeGroups 的行数重算。
+  for (const g of merged) {
+    const groupFields = fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === g.key)
+    if (!groupFields.length) continue
+    g.count = collapseFeeGroups(groupFields as any[]).length
   }
   return merged.sort((a, b) => (a.key === DEFAULT_GROUP_KEY ? -1 : b.key === DEFAULT_GROUP_KEY ? 1 : 0))
 })
@@ -978,6 +1005,52 @@ const fieldsVisible = computed(() => {
       },
     }
   })
+})
+
+/**
+ * 当前胶囊分组是否「租户分组」（group=tenant:<id>）。
+ *
+ * 只有租户分组才做「派生字段 / 分摊子项」分块与来源徽标：
+ * 默认分组、发票/合同/制度等其它 scope 的分组没有这个语义，
+ * 强加徽标会污染它们既有的字段列表视觉（六同步的旧验收依赖原样）。
+ */
+const isTenantGroupActive = computed(() =>
+  String(activeSubGroup.value || '').trim().startsWith('tenant:'))
+
+/**
+ * 字段列表的渲染序列：区块标题 + 字段行。
+ *
+ * 租户分组 → 先「派生字段」标题（N 项），再派生字段行，再「分摊子项」标题（M 项），
+ * 最后分摊子项行；其它分组 → 只有字段行（与改造前逐字节一致）。
+ *
+ * 为什么把标题也放进同一个 v-for：TDesign 的 .field-config-list 是 flex 容器，
+ * 若标题与行分两段渲染，drag 事件的 onFieldDrop 仍按 fieldsVisible 的下标计算，
+ * 分段后视觉顺序与下标顺序不一致，拖拽会错位。
+ */
+const fieldRows = computed<Array<Record<string, any>>>(() => {
+  const list = fieldsVisible.value as any[]
+  if (!isTenantGroupActive.value) {
+    return list.map((fd, i) => ({ kind: 'field', key: `f-${fd.name}-${i}`, fd }))
+  }
+  const { derived, items } = splitFieldsByOrigin(list)
+  const rows: Array<Record<string, any>> = []
+  if (derived.length) {
+    rows.push({
+      kind: 'header', key: 'h-derived', origin: 'derived',
+      title: '派生字段', count: derived.length,
+      hint: '由费用清单自身核算得出，不来自账单分项',
+    })
+    derived.forEach((fd, i) => rows.push({ kind: 'field', key: `d-${fd.name}-${i}`, fd }))
+  }
+  if (items.length) {
+    rows.push({
+      kind: 'header', key: 'h-items', origin: 'items',
+      title: '分摊子项', count: items.length,
+      hint: '来自「清单设置 → 分摊子项」，可在此改宽度/显隐',
+    })
+    items.forEach((fd, i) => rows.push({ kind: 'field', key: `i-${fd.name}-${i}`, fd }))
+  }
+  return rows
 })
 
 /** 大类汇总字段（市场化购电费 / 系统运行费用 / 政府性基金及附加）。 */
@@ -1119,12 +1192,18 @@ async function hydrateCostListGroups(force = false) {
 }
 
 /** 分组胶囊显示名：默认分组 / 租户名（租户改名后自动跟随）。 */
-function costListTabLabel(key: string): string {
+function costListTabLabel(key: string, fallback?: string): string {
   const k = normalizeCostListGroup(key)
   if (k === DEFAULT_GROUP_KEY) return DEFAULT_GROUP_LABEL
   const id = tenantIdOfGroup(k)
   const hit = billingTenants.value.find((t) => String(t.id) === id)
-  return costListGroupLabel(k, hit?.name)
+  // 租户档案是异步拉的：还没回来时**不能**直接把 `tenant:<uuid>` 这种内部键
+  // 显示给用户（真机截图：胶囊上是一串 uuid）。subs 里每条都带 group_label
+  // （= 租户名），所以先用它兜底，租户档案到货后 computed 会自然刷成正式名。
+  const label = costListGroupLabel(k, hit?.name)
+  if (hit?.name) return label
+  const gl = String(fallback || '').trim()
+  return gl && gl !== k ? gl : label
 }
 
 // ---- 细项配置（费用组成 / 分时时段）----
@@ -1481,6 +1560,8 @@ async function commitEdit() {
       // AI 保存路径会给出「字段已保存，已为您切换至提取规则」，这里不再叠加第二条
       if (!aiContext) MessagePlugin.success('已保存')
       notifyCategoriesChanged({ name, subs })
+      // 反向同步：费用清单的租户分组改了宽度/启用字段 → 回写 billing_tenant_items
+      void syncFieldsToTenantItems(item, fieldsEditable.value)
     }
     editingId.value = ''
     // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
@@ -1492,6 +1573,44 @@ async function commitEdit() {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+/**
+ * 反向同步：费用清单「租户分组」的字段改动 → 回写该租户的 billing_tenant_items。
+ *
+ * 为什么需要它：用户在字段定义里把某个分摊项的宽度改成 180、或关掉「启用字段」，
+ * 这只改了 `fleet_categories.subs`。而费用清单列表的列是**按 billing_tenant_items**
+ * 派生的（TenantBilling 的 activeColDefs 走 subs，但取值/参与分摊走 items），
+ * 不回写就会出现「字段定义里关了列、列表里还显示」的双向分叉。
+ *
+ * 只回写 `field_enabled` 与 `width`：
+ *   · `enabled`（参与分摊）在字段定义侧没有对应开关，硬写会把手动设置的分摊口径冲掉；
+ *   · 名称/来源/顺序仍由「清单设置 → 分摊子项」独占。
+ * 失败只告警不回滚：subs 已落库，下次打开「分摊子项」会按 items 重新对齐。
+ */
+async function syncFieldsToTenantItems(item: any, fields: any[]) {
+  if (props.scope !== 'energy' || String(item?.name || '') !== COST_LIST_CATEGORY) return
+  const groups = new Set<string>()
+  for (const f of fields) {
+    const g = String(f?.group || '').trim()
+    if (g.startsWith('tenant:')) groups.add(g)
+  }
+  if (!groups.size) return
+  for (const g of groups) {
+    const tenantId = g.slice('tenant:'.length)
+    if (!tenantId) continue
+    try {
+      const detail: any = await getBillingTenant(tenantId)
+      const items: any[] = detail?.data?.items || []
+      if (!items.length) continue
+      const groupFields = fields.filter((f: any) => String(f?.group || '').trim() === g)
+      const { items: next, changed } = applyFieldsToItems(items, groupFields)
+      if (!changed) continue
+      await saveBillingTenantItems(tenantId, { items: next })
+    } catch (e: any) {
+      console.warn('[cost-list] sync fields to tenant items failed', tenantId, e)
+    }
   }
 }
 
@@ -1596,15 +1715,11 @@ async function toggleEnabled(item: any, v: boolean) {
     }
     return
   }
-  try {
-    await updateFleetCategory(item.id, { name: item.name, subs: item.subs || [], enabled: v })
-    const list = categories.value[group.value.scope]
-    const idx = list.findIndex((c: any) => c.id === item.id)
-    if (idx >= 0) list[idx] = { ...list[idx], enabled: v }
-    notifyCategoriesChanged()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '保存失败')
-  }
+  // 第 19 轮：状态开关只改本地，由「保存」统一提交。
+  // 旧实现每次拨动都 updateFleetCategory，一屏连拨几个分类就是几个并发 PUT。
+  const list = categories.value[group.value.scope]
+  const idx = list.findIndex((c: any) => c.id === item.id)
+  if (idx >= 0) list[idx] = { ...list[idx], enabled: v }
 }
 
 // ---- 删除（仅自定义，二次确认）----
@@ -2250,6 +2365,72 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
   .fc-h-switch, .fc-h-op, .fc-h-type { text-align: center; }
   .fc-h-name { text-align: left; }
+
+  /* ===== 来源分组：派生字段 / 分摊子项（仅租户分组） =====
+     视觉口径：浅色区块条 + 圆点色块 + 计数徽标，与 TDesign 的 design token 一致。
+     派生字段用中性灰蓝（内置计算、不可改来源），分摊子项用品牌绿
+     （可追溯到「清单设置 → 分摊子项」，与列表里的大类汇总列同色系）。 */
+  .fc-origin-block {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 2px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 18px;
+
+    &--derived {
+      background: var(--td-bg-color-secondarycontainer);
+      border-left: 3px solid var(--td-gray-color-6, #8b95a1);
+      .fc-origin-title { color: var(--td-text-color-primary); }
+    }
+    &--items {
+      background: var(--td-brand-color-1, #e8f8f0);
+      border-left: 3px solid var(--td-brand-color);
+      .fc-origin-title { color: var(--td-brand-color-7, #046a37); }
+    }
+  }
+  .fc-origin-title { font-weight: 600; }
+  .fc-origin-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--td-bg-color-container);
+    color: var(--td-text-color-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fc-origin-hint { color: var(--td-text-color-placeholder); }
+
+  /* 每行的来源徽标：占固定视觉宽度，不挤压字段名输入框 */
+  .fc-origin-badge {
+    flex: none;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 6px;
+    height: 20px;
+    line-height: 20px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-align: center;
+
+    &--derived {
+      background: var(--td-bg-color-secondarycontainer);
+      color: var(--td-text-color-secondary);
+    }
+    &--item, &--feeGroup {
+      background: var(--td-brand-color-1, #e8f8f0);
+      color: var(--td-brand-color-7, #046a37);
+    }
+    &--feeGroup { font-weight: 600; }
+  }
 
   .field-config-row {
     display: grid;

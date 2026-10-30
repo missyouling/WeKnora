@@ -180,7 +180,7 @@
                   <!-- 宽度(px)：0 = 自适应；>0 时该列在费用清单列表按此像素宽渲染 -->
                   <span class="item-width">
                     <t-input v-model="it.width" size="small" type="number" :min="0" :max="400"
-                      placeholder="0" class="item-width-input" @blur="saveItems()" @enter="saveItems()" />
+                      placeholder="0" class="item-width-input" />
                   </span>
                   <!-- 启用字段：是否作为列出现在列表 / 字段筛选器 / 详情抽屉。
                        关掉后该列隐藏，但它仍可照常参与分摊计算。 -->
@@ -221,8 +221,16 @@ import {
   listBillingTenants, createBillingTenant, updateBillingTenant, deleteBillingTenant,
   getBillingTenant, saveBillingTenantItems, listUtilityBillRecords,
 } from '@/api/knowledge-base'
+import { listFleetCategories, updateFleetCategory } from '@/api/fleet'
 import SourceFieldPicker from './SourceFieldPicker.vue'
 import { SOURCE_CATEGORIES } from './tenantBillingSources'
+import {
+  COST_LIST_CATEGORY,
+  mergeTenantGroupFields,
+  tenantGroupKey,
+} from './billingFieldGroups'
+import { mergeItemsIntoFields } from './tenantGroupSync'
+import { fromSubsPayload, toSubsPayload } from './fleetCategorySubs'
 
 const props = defineProps<{ tenantId?: string; kbId?: string }>()
 const emit = defineEmits<{ (e: 'changed'): void; (e: 'select', id: string): void }>()
@@ -264,6 +272,9 @@ const savingItems = ref(false)
 const nonUtilityCategories = SOURCE_CATEGORIES.filter((c) => c !== '市电账单') as unknown as string[]
 
 const tenantOptions = computed(() => tenants.value.map((t: any) => ({ label: t.name, value: t.id })))
+/** 当前选中租户的名称（用于字段分组的 group_label 与同步后的分组标题）。 */
+const tenantName = computed(() =>
+  String(tenants.value.find((t: any) => String(t.id) === String(selectedTenantId.value))?.name || ''))
 
 const itemGroups = computed(() => {
   const g: Record<string, any[]> = {}
@@ -376,14 +387,19 @@ const removeTenant = async (t: any) => {
 const toggleItemGroup = (category: string) => {
   expandedItemGroup.value = expandedItemGroup.value === category ? '' : category
 }
-const toggleItem = async (it: any, v: boolean) => {
+/**
+ * 参与分摊开关：**只改本地响应式状态**（第 19 轮）。
+ *
+ * 旧实现每次切换都 await saveItems()，而全量保存是「DELETE 全表 + 逐条 INSERT」，
+ * 连点几个开关就是几个并发事务，后提交的那个撞唯一索引 → 500。
+ * 现在必须由用户点右上角「保存」才落库。
+ */
+const toggleItem = (it: any, v: boolean) => {
   it.enabled = !!v
-  await saveItems()
 }
 /** 启用字段：控制该子项是否作为列出现在费用清单（与「参与分摊」互不联动）。 */
-const toggleFieldEnabled = async (it: any, v: boolean) => {
+const toggleFieldEnabled = (it: any, v: boolean) => {
   it.field_enabled = !!v
-  await saveItems()
 }
 /**
  * 一键导入市电账单字段。
@@ -432,8 +448,9 @@ const importUtilityFields = async () => {
       return
     }
     expandedItemGroup.value = itemsForm.value[0]?.category || ''
-    await saveItems()
-    MessagePlugin.success(`已导入 ${added} 个市电账单费用分项，请按需开关后保存`)
+    // 只进本地列表：导入本身不落库，用户确认开关后再点「保存」
+    dirty.value = true
+    MessagePlugin.success(`已导入 ${added} 个市电账单费用分项，请按需开关后点「保存」`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '导入市电账单字段失败')
   } finally {
@@ -469,14 +486,67 @@ const addSourceItem = (payload: {
     width: 0,
   })
   expandedItemGroup.value = payload.source.category
+  dirty.value = true
 }
 
 const removeItem = (items: any[], index: number) => {
   const target = items[index]
   itemsForm.value = itemsForm.value.filter((it) => it !== target)
+  dirty.value = true
 }
 
 const onTenantChange = () => { void loadDetail() }
+
+/**
+ * 未保存标记：只用于给「保存」按钮加高亮提示，不参与任何自动提交。
+ * 所有开关 / 宽度 / 增删都只改本地，必须用户点「保存」才落库（第 19 轮）。
+ */
+const dirty = ref(false)
+
+/**
+ * 把当前分摊子项同步进「字段定义 → 费用清单 → 租户分组」的 subs。
+ *
+ * 为什么必须同步：分摊子项与字段定义是同一份事实的两个落点
+ * （`billing_tenant_items` 与 `fleet_categories.subs` 里 `group=tenant:<id>` 的部分）。
+ * 旧实现只写前者，用户在「分摊子项」里开启的项在字段定义里看不到，
+ * 两边长期分叉（真机：分摊子项开了 7 项，字段定义仍是旧的 22 个字段）。
+ *
+ * 幂等：只做「增 / 删 / 属性兜底」，已保存字段的改名、宽度、顺序、默认表头不覆盖；
+ * 字段定义侧没有该分类（首次进入）时静默跳过，不阻断保存主流程。
+ */
+const syncItemsToCostList = async (items: any[]) => {
+  const tenantId = String(selectedTenantId.value || '').trim()
+  if (!tenantId) return
+  const group = tenantGroupKey(tenantId)
+  try {
+    const res: any = await listFleetCategories({ scope: 'energy' })
+    const cats: any[] = res?.data || []
+    const cat = cats.find((c: any) => String(c.name || '') === COST_LIST_CATEGORY)
+    if (!cat?.id) return
+    const all = fromSubsPayload(cat.subs)
+    // **只替换目标租户分组**，其它分组（默认分组 = 业主视角的 24 列、
+    // 其它租户分组）必须原样保留。
+    //
+    // 真机踩坑：第一版直接用 mergeTenantGroupFields 的返回值整体覆盖 subs，
+    // 而它只产出该租户分组的字段 —— 默认分组被整片删除，库里只剩
+    // tenant:xxx 一组，胶囊条因为「分组数 < 2」直接不渲染，用户再也
+    // 进不去业主视角的字段定义。
+    const others = all.filter((f: any) => String(f.group || '').trim() !== group)
+    const savedGroup = all.filter((f: any) => String(f.group || '').trim() === group)
+    const { fields, changed } = mergeItemsIntoFields(savedGroup, items, group, tenantName.value || group)
+    if (!changed) return
+    // 交给 mergeTenantGroupFields 收口：保证收口列在最后、大类折叠、派生字段补齐
+    const merged = mergeTenantGroupFields(fields, { id: tenantId, name: tenantName.value }, items, tenantName.value)
+    await updateFleetCategory(cat.id, {
+      name: cat.name,
+      subs: toSubsPayload([...others, ...merged]),
+      enabled: cat.enabled !== false,
+    })
+  } catch (e: any) {
+    // 同步失败不回滚已保存的分摊子项：主数据已落库，字段定义下次打开会按子项重建
+    console.warn('[tenant-settings] sync items to cost list failed', e)
+  }
+}
 
 const saveItems = async (notify = false) => {
   if (!selectedTenantId.value) return
@@ -500,8 +570,11 @@ const saveItems = async (notify = false) => {
         value_mode: it.value_mode || '',
       }))
     await saveBillingTenantItems(selectedTenantId.value, { items })
+    // 双向同步：分摊子项 → 费用清单租户分组 subs（增/删/宽度兜底）
+    await syncItemsToCostList(items)
+    dirty.value = false
     emit('changed')
-    if (notify) MessagePlugin.success('已保存分摊子项')
+    if (notify) MessagePlugin.success('已保存分摊子项，字段定义已同步')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存子项失败')
   } finally {

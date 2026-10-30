@@ -226,6 +226,26 @@ export const TENANT_DERIVED_FIELDS: readonly DerivedSpec[] = [
 /** 派生字段名集合（用于判断「这条 subs 是派生字段还是分摊子项」）。 */
 export const TENANT_DERIVED_NAMES: readonly string[] = TENANT_DERIVED_FIELDS.map((f) => f.name)
 
+/**
+ * 某个字段名是否属于「租户分组」的合法成员（派生字段 ∪ 分摊子项 ∪ 大类汇总）。
+ *
+ * 与后端 `tenantFieldAllowed` 同一口径。用于把「别的分组的字段」挡在租户分组之外：
+ * 默认分组的内置列（total_kwh / solar_gen / res_kwh / water_fire_fee…）
+ * 与跨分类引用列（`src_` 前缀）在默认分组已有一份，重复进租户分组就会让
+ * 字段定义里同名行出现两遍，六同步的「同量」直接失效。
+ */
+export function isTenantGroupMember(name: unknown): boolean {
+  const n = String(name ?? '').trim()
+  if (!n) return false
+  if (n.startsWith('item_')) return true
+  if (TENANT_DERIVED_NAMES.includes(n)) return true
+  // 收口列（电费合计 / 水费合计）不在 TENANT_DERIVED_FIELDS 里：
+  // 它们是 mergeTenantGroupFields 末尾统一补的两条，但「是否属于本分组」
+  // 的判定必须承认它们，否则守卫会把它们当外来字段剔掉。
+  if (TENANT_TOTAL_FIELDS.includes(n)) return true
+  return TENANT_FEE_GROUPS.some((g) => g.name === n)
+}
+
 function derivedField(spec: DerivedSpec, group: string, groupLabel: string): EditableField {
   return {
     name: spec.name,
@@ -335,6 +355,14 @@ export function mergeTenantGroupFields(
     if (name.startsWith('item_') && !isTenantTotalField(name) && !visibleNames.has(name)) continue
     // 收口列稍后统一补在末尾，避免被夹在中间；旧「合计应付」直接丢弃
     if (isTenantTotalField(name)) continue
+    // **跨分组污染守卫**（第 19 轮）：只收「租户分组合法成员」，其余原样丢弃。
+    //
+    // 这里是最容易出事的一处：本函数会给每个留下来的字段**重打 group**，
+    // 所以一旦入参里混进默认分组的列（总电量 / 光伏发电量 / 居民电量 / src_*），
+    // 它们就被永久钉成租户分组字段，字段定义里「账单周期」「使用单位」各显示两遍
+    // （真机：持睿汽车 42 行里有 16 行是业主视角的列）。
+    // 判定与后端 SanitizeTenantGroupFields 同一口径：派生字段 ∪ item_* ∪ 大类汇总。
+    if (!isTenantGroupMember(name)) continue
     seen.add(name)
     out.push({ ...f, group, groupLabel: label })
   }

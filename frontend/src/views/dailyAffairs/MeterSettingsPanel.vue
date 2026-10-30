@@ -504,6 +504,13 @@ const saveMeter = async () => {
       await createUtilityMeter(payload)
       MessagePlugin.success('已新增')
     }
+    // 保存时一并提交此前拖拽产生的顺序（第 19 轮：拖拽不再自动落库）
+    if (pendingSortIds.value.length) {
+      try {
+        await sortUtilityMeters(props.category, pendingSortIds.value)
+        pendingSortIds.value = []
+      } catch { /* 顺序提交失败不阻断表计保存本身 */ }
+    }
     await loadMetersOnly()
     emit('changed')
     if (isEdit) {
@@ -537,14 +544,14 @@ const saveMeter = async () => {
   }
 }
 
-const toggleEnabled = async (m: any, v: any) => {
-  try {
-    await updateUtilityMeter(m.id, { ...m, enabled: !!v })
-    m.enabled = !!v
-    emit('changed')
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '操作失败')
-  }
+/**
+ * 表计启用开关：只改本地（第 19 轮）。
+ *
+ * 旧实现每次拨动就 PUT 一次，用户在配置表计档案时顺手关几个就会连发请求。
+ * 现在开关状态随该表计的「保存」按钮一起提交（见 saveMeter）。
+ */
+const toggleEnabled = (m: any, v: any) => {
+  m.enabled = !!v
 }
 
 const deleteMeter = async (m: any) => {
@@ -580,20 +587,22 @@ const initMeterSortable = () => {
     console.error('[Sortable] init failed:', e)
   }
 }
-const persistMeterSort = async () => {
+/**
+ * 拖拽结束：**只本地生效**（第 19 轮）。
+ *
+ * 旧实现在 onEnd 里直接调 sortUtilityMeters，一放下鼠标就落库。
+ * 现在顺序改动记在 pendingSortIds 里，等用户点「保存」（saveMeter）时一并提交，
+ * 避免「还没排完就已经写库」以及连续拖拽产生的并发请求。
+ */
+const pendingSortIds = ref<string[]>([])
+const persistMeterSort = () => {
   const el = meterSortableEl.value
   if (!el) return
   const ids = [...el.querySelectorAll('.meter-table-row')]
     .map(r => r.getAttribute('data-id')).filter(Boolean) as string[]
-  if (!ids.length) return
-  try {
-    await sortUtilityMeters(props.category, ids)
-    await loadMetersOnly()
-    MessagePlugin.success('排序已保存')
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '排序保存失败')
-    await loadMetersOnly()
-  }
+  pendingSortIds.value = ids
+  // 不再自动提交：sortUtilityMeters 由 saveMeter 在保存时调用
+  void sortUtilityMeters
 }
 watch([activeMeterGroup, () => activeGroupItems.value], async () => {
   await nextTick()

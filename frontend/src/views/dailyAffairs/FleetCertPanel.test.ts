@@ -113,10 +113,11 @@ test('明细子项内联展开在 items 字段行正下方，不再有底部独�
   assert.doesNotMatch(panel, /sub-fields-head/)
   // 新结构：点字段名在该行正下方展开，子行复用主行网格
   assert.match(panel, /class="fc-name fc-name-toggle"/)
-  assert.match(panel, /@click="toggleSubFields\(fd\)"/)
+  // 第 19 轮：字段行改为 row.fd（fieldRows 行序列，含区块标题）
+  assert.match(panel, /@click="toggleSubFields\(row\.fd\)"/)
   assert.match(panel, /class="field-config-row sub-row"/)
-  assert.match(panel, /@enter="addSubField\(fd\)"/)
-  assert.match(panel, /removeSubField\(fd, sf\)/)
+  assert.match(panel, /@enter="addSubField\(row\.fd\)"/)
+  assert.match(panel, /removeSubField\(row\.fd, sf\)/)
 })
 
 test('子项行隐藏 key 输入：只留名称/类型/启用/列宽', () => {
@@ -154,7 +155,7 @@ test('系统内置字段只有 3 个（发票类型/提取状态/标签），其
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceType'), true)
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceNo'), false)
   assert.equal(isBuiltinFieldOf('vehicle', 'invoiceType'), false)
-  assert.match(panel, /<template v-if="isBuiltinField\(fd\)">[\s\S]{0,200}lock-on/)
+  assert.match(panel, /<template v-if="isBuiltinField\(row\.fd\)">[\s\S]{0,200}lock-on/)
   assert.match(panel, /系统内置字段，不可删除/)
   // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除
   assert.doesNotMatch(panel, /系统内置子项，不可删除/)
@@ -166,13 +167,13 @@ test('系统内置字段只有 3 个（发票类型/提取状态/标签），其
 test('明细子项删除走冒泡二次确认；items 行无箭头、无默认表头开关', () => {
   // 冒泡确认
   const subBlock = panel.slice(panel.indexOf('class="field-config-row sub-row"'))
-  assert.match(subBlock.slice(0, 2200), /<t-popconfirm[\s\S]{0,300}removeSubField\(fd, sf\)/)
+  assert.match(subBlock.slice(0, 2200), /<t-popconfirm[\s\S]{0,300}removeSubField\(row\.fd, sf\)/)
   assert.match(subBlock.slice(0, 2200), /确认删除子项/)
   // 无展开箭头（点击字段名本体展开/收起）
   assert.doesNotMatch(panel, /fc-caret/, 'items 行不再渲染箭头图标')
   assert.match(panel, /class="fc-name fc-name-toggle"/)
   // items 行的「默认表头」列改成占位，保持网格对齐
-  assert.match(panel, /<span v-if="fd\.dataType === 'items'" class="sub-blank"><\/span>/)
+  assert.match(panel, /<span v-if="row\.fd\?\.dataType === 'items'" class="sub-blank"><\/span>/)
 })
 
 test('子项 contract 扩展字段（enabled/builtin/desc/rule/regex）严格往返', () => {
@@ -281,7 +282,8 @@ test('duplicateField 用 copyFieldUniqueName 且不再拼 _copy 英文后缀', (
 
 test('字段名可编辑（t-input 绑定显示名），不再有只读 static 展示', () => {
   // 所有非 items 字段名都是输入框；显示值走 fieldEditOf（label 优先，契约键回退字典中文名）
-  assert.match(panel, /:model-value="fieldEditOf\(fd\)"/, '输入框显示值必须走 fieldEditOf')
+  // 第 19 轮：字段行改为 row.fd（fieldRows 行序列），表达式随之外移一层
+  assert.match(panel, /:model-value="fieldEditOf\(row\.fd\)"/, '输入框显示值必须走 fieldEditOf')
   assert.match(panel, /@update:model-value="[^"]*setFieldEdit/, '改名走 setFieldEdit（契约键只改表头）')
   assert.doesNotMatch(panel, /fc-name-static/, '字段名只读 static 展示已废除')
 })

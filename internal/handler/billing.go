@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -788,9 +790,46 @@ func (h *BillingHandler) SaveBillingTimeReading(c *gin.Context) {
 // 子项开关 & 表计引用
 // ---------------------------------------------------------------------------
 
+// billingItemsMu 串行化「同一租户的分摊子项全量保存」。
+//
+// 为什么必须有：全量保存的实现是「先 DELETE 该租户全部子项，再逐条 INSERT」。
+// 前端历史上在 switch / 宽度失焦 / 导入后各自自动调了一次保存，两三个请求并发进来时
+// 两个事务都先删后插，后提交的一方插入即撞唯一索引 `uq_billing_tenant_items`
+// （真机日志：duplicate key value violates unique constraint, SQLSTATE 23505 → 500）。
+// 前端已改为只手动保存，但并发仍可能来自「双击保存」「两个标签页」，
+// 所以后端必须自己保证同一租户的保存是串行的。
+var billingItemsMu sync.Map // map[string]*sync.Mutex
+
+func billingItemsLock(tenantID string) func() {
+	v, _ := billingItemsMu.LoadOrStore(tenantID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// normalizeBillingItemKey 归一化子项键，用于入库前去重。
+//
+// 「功率因数调整电费」与「功率因素调整电费」是同一笔账单费用的两种写法
+// （账单原文用「因素」，字段目录用「因数」），历史数据里两者并存，
+// 前端把整组一起提交时就会出现两个逻辑上重复的 item_key。
+// 归一化只处理这一类同义字差异，不改变键的业务语义。
+func normalizeBillingItemKey(key string) string {
+	k := strings.TrimSpace(key)
+	k = strings.ReplaceAll(k, "功率因素", "功率因数")
+	k = strings.ReplaceAll(k, "　", " ") // 全角空格
+	return k
+}
+
 // SaveBillingTenantItems godoc
 // @Summary      保存分摊子项开关(全量)
 // @Router       /billing/tenants/:id/items [put]
+//
+// 全量覆盖语义：请求里的 items 就是该租户最终的子项集合。
+// 为了「绝不返回 500」做了三层保护：
+//  1. 同一租户串行（billingItemsLock）；
+//  2. 入库前按归一化 item_key 去重（同义字、重复提交都只留一条）；
+//  3. INSERT 走 ON CONFLICT (billing_tenant_id, item_key) DO UPDATE 兜底，
+//     即使并发/残留数据让 DELETE 没删干净，也不会撞唯一索引。
 func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
@@ -812,50 +851,68 @@ func (h *BillingHandler) SaveBillingTenantItems(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("invalid request body"))
 		return
 	}
+
+	unlock := billingItemsLock(id)
+	defer unlock()
+
 	now := timeNowUTC()
-	seenKey := make(map[string]bool, len(req.Items))
+	// 归一化 + 去重：保留首次出现的顺序与内容（后出现的重复项视为同一条）
+	seen := make(map[string]bool, len(req.Items))
+	rows := make([]types.BillingTenantItem, 0, len(req.Items))
+	for _, it := range req.Items {
+		raw := strings.TrimSpace(it.ItemKey)
+		key := normalizeBillingItemKey(raw)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		// 「启用字段」缺省视为开启：旧前端不带该字段时不能把列全隐藏了
+		fieldEnabled := true
+		if it.FieldEnabled != nil {
+			fieldEnabled = *it.FieldEnabled
+		}
+		name := strings.TrimSpace(it.ItemName)
+		if name == "" {
+			name = key
+		}
+		rows = append(rows, types.BillingTenantItem{
+			ID: uuid.NewString(), BillingTenantID: id,
+			Category: strings.TrimSpace(it.Category),
+			ItemKey:  key, ItemName: name, Enabled: it.Enabled,
+			FieldEnabled:   fieldEnabled,
+			SourceCategory: strings.TrimSpace(it.SourceCategory),
+			SourceKey:      strings.TrimSpace(it.SourceKey),
+			SourceMode:     strings.TrimSpace(it.SourceMode),
+			ValueMode:      strings.TrimSpace(it.ValueMode),
+			Width:          it.Width,
+			Sort:           len(rows), CreatedAt: now, UpdatedAt: now,
+		})
+	}
+
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("billing_tenant_id = ?", id).Delete(&types.BillingTenantItem{}).Error; err != nil {
 			return err
 		}
-		for i, it := range req.Items {
-			key := strings.TrimSpace(it.ItemKey)
-			if key == "" || seenKey[key] {
-				continue
-			}
-			seenKey[key] = true
-			// 「启用字段」缺省视为开启：旧前端不带该字段时不能把列全隐藏了
-			fieldEnabled := true
-			if it.FieldEnabled != nil {
-				fieldEnabled = *it.FieldEnabled
-			}
-			item := types.BillingTenantItem{
-				ID: uuid.NewString(), BillingTenantID: id,
-				Category: strings.TrimSpace(it.Category),
-				ItemKey:  key, ItemName: it.ItemName, Enabled: it.Enabled,
-				FieldEnabled:   fieldEnabled,
-				SourceCategory: strings.TrimSpace(it.SourceCategory),
-				SourceKey:      strings.TrimSpace(it.SourceKey),
-				SourceMode:     strings.TrimSpace(it.SourceMode),
-				ValueMode:      strings.TrimSpace(it.ValueMode),
-				Width:          it.Width,
-				Sort:           i, CreatedAt: now, UpdatedAt: now,
-			}
-			if item.ItemName == "" {
-				item.ItemName = key
-			}
-			if err := tx.Create(&item).Error; err != nil {
-				return err
-			}
+		if len(rows) == 0 {
+			return nil
 		}
-		return nil
+		// ON CONFLICT 兜底：唯一键 (billing_tenant_id, item_key)。
+		// 只覆盖业务列，不覆盖 id/created_at（保持首次入库的身份与时间）。
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "billing_tenant_id"}, {Name: "item_key"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"category", "item_name", "enabled", "field_enabled", "sort",
+				"source_category", "source_key", "source_mode", "value_mode",
+				"width", "updated_at",
+			}),
+		}).CreateInBatches(&rows, 100).Error
 	})
 	if err != nil {
 		logger.Errorf(ctx, "save billing items failed: %v", err)
 		c.Error(errors.NewInternalServerError("save items failed"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"count": len(rows)}})
 }
 
 // SaveBillingTenantRefs godoc

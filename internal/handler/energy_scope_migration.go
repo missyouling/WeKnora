@@ -979,6 +979,141 @@ func (h *UtilityHandler) MigrateTenantTotalFields(ctx context.Context) (int, err
 	return written, nil
 }
 
+// EnsureCostListDefaultGroup 保证「费用清单」始终有一个默认分组（group=default/cols）。
+//
+// 为什么单独做：前端把「分摊子项」同步进租户分组时，若实现有误会整体覆盖 subs，
+// 默认分组（业主视角的 24 列）被整片删掉 —— 真机表现是胶囊条只剩「持睿汽车」一组，
+// 字段定义页的分组胶囊因为「分组数 < 2」直接不渲染，业主视角再也进不去。
+// 这里按字段目录幂等补齐：只要 subs 里没有任何 default/cols 分组字段，
+// 就把目录里的默认列整套补回去（保留租户分组原样，不重建整表）。
+func (h *UtilityHandler) EnsureCostListDefaultGroup(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cat types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, "费用清单").
+		First(&cat).Error; err != nil {
+		return 0, nil
+	}
+	hasDefault := false
+	for _, s := range cat.Subs {
+		g := strings.TrimSpace(s.Group)
+		if g == "" || g == "default" || g == "cols" {
+			hasDefault = true
+			break
+		}
+	}
+	if hasDefault {
+		return 0, nil
+	}
+	// 默认分组缺失：用字段目录重建（group=cols，与 EnsureEnergyViewCategories 的 seed 同口径）
+	rebuilt := make([]types.FleetCategorySub, 0, len(energyBillingFields))
+	for _, f := range energyBillingFields {
+		rebuilt = append(rebuilt, types.FleetCategorySub{
+			Name: f.Key, Label: f.Label, Enabled: true, IsDefault: f.Default,
+			DataType: f.DataType, Width: f.Width,
+			Group: "cols", GroupLabel: "默认分组",
+		})
+	}
+	// 默认分组排在租户分组之前（胶囊顺序：默认分组恒第一）
+	next := append(rebuilt, cat.Subs...)
+	cat.Subs = next
+	cat.UpdatedAt = timeNowUTC()
+	if err := h.db.WithContext(ctx).Save(&cat).Error; err != nil {
+		return 0, err
+	}
+	logger.Infof(ctx, "费用清单默认分组已按目录重建：%d 列", len(rebuilt))
+	return len(rebuilt), nil
+}
+
+// tenantDerivedFieldNames 租户分组里允许出现的「派生字段」（与前端
+// billingFieldGroups.TENANT_DERIVED_FIELDS 一一对应）。
+//
+// 为什么要在后端也维护一份：subs 是字段定义的唯一权威源，前端只按它派生列。
+// 一旦租户分组被写进别的分组的字段（历史上真发生过），前端没有能力判断
+// 「总电量 / 光伏发电量 / 居民电量」这些是业主视角的列、不该出现在租户分组里，
+// 于是字段定义面板会把它们当租户派生字段展示，六同步的「同量」直接破功。
+var tenantDerivedFieldNames = map[string]bool{
+	"month": true, "unit": true, "ratio": true,
+	"ind_kwh": true, "ind_fee": true, "ind_price": true,
+	"dorm_kwh": true, "dorm_fee": true,
+	"water_ind_usage": true, "water_ind_fee": true,
+	"water_dorm_usage": true, "water_dorm_fee": true,
+	"gas_usage": true, "gas_fee": true, "remark": true,
+	// 收口列（电费合计 / 水费合计）
+	"elec_total_fee": true, "water_total_fee": true,
+	// 大类汇总列（分摊子项折叠后的汇总，语义上属于租户分组）
+	"grp_market": true, "grp_system": true, "grp_gov": true,
+}
+
+// tenantFieldAllowed 判断某个字段名是否属于「租户分组」的合法成员。
+//
+// 合法 = 派生字段 ∪ 分摊子项（`item_` 前缀）。其余一律视为跨分组污染：
+// 默认分组的内置列（total_kwh / solar_gen / res_kwh / water_fire_fee…）
+// 和跨分类引用列（`src_` 前缀）都不该出现在租户分组里 —— 它们在默认分组
+// 已经有一份，重复出现会让字段定义里「账单周期」「使用单位」各显示两遍。
+func tenantFieldAllowed(name string) bool {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return false
+	}
+	if strings.HasPrefix(n, "item_") {
+		return true
+	}
+	return tenantDerivedFieldNames[n]
+}
+
+// SanitizeTenantGroupFields 剔除租户分组里的跨分组污染字段（幂等）。
+//
+// 真机现象（第 19 轮）：字段定义「持睿汽车」显示 42 行，其中 35 行标「派生字段」，
+// 但里面混着「总电量 / 总电费 / 光伏发电量 / 上网电量 / 结算金额 / 本期电量 /
+// 居民电量 / 居民电费 / src_市电账单_*」等 16 个**业主视角**的列，
+// 于是「账单周期」「使用单位」「光伏发电量」在同一列表里各出现两遍。
+// 根因是前端早期版本的同步把整份 subs（含默认分组）重打成租户分组写回。
+//
+// 只删不补：合法字段一个不动（顺序、宽度、改名、默认表头全部保留），
+// 因此对正常数据是空操作，不会碰 updated_at。
+func (h *UtilityHandler) SanitizeTenantGroupFields(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, "费用清单").
+		Find(&cats).Error; err != nil {
+		return 0, nil
+	}
+	written := 0
+	for i := range cats {
+		next := make([]types.FleetCategorySub, 0, len(cats[i].Subs))
+		removed := make([]string, 0, 8)
+		for _, s := range cats[i].Subs {
+			g := strings.TrimSpace(s.Group)
+			if !strings.HasPrefix(g, "tenant:") {
+				next = append(next, s)
+				continue
+			}
+			if tenantFieldAllowed(s.Name) {
+				next = append(next, s)
+				continue
+			}
+			removed = append(removed, strings.TrimSpace(s.Name))
+		}
+		if len(removed) == 0 {
+			continue
+		}
+		cats[i].Subs = next
+		cats[i].UpdatedAt = timeNowUTC()
+		if err := h.db.WithContext(ctx).Save(&cats[i]).Error; err != nil {
+			return written, err
+		}
+		written++
+		logger.Infof(ctx, "费用清单租户分组清理跨分组污染字段：移除 %d 条（%v）", len(removed), removed)
+	}
+	return written, nil
+}
+
 // energySubsHaveKey 判断 subs 里是否有某个键（用于识别旧版结构）。
 func energySubsHaveKey(subs []types.FleetCategorySub, key string) bool {
 	key = strings.TrimSpace(key)
