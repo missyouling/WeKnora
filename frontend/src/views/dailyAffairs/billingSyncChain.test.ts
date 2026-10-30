@@ -23,13 +23,14 @@ const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url
 test('租户视角不得丢弃跨分类引用字段（同一循环产出，不按视角分支丢弃）', () => {
   const src = read('TenantBilling.vue')
   const fn = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const colStorageKey'))
-  // 单一主循环：内置列与引用列都按 subs 下标顺序 push
-  assert.match(fn, /for \(const sub of subs\)/)
+  // 单一主循环：内置列与引用列都按 subs 下标顺序 push（第 15 轮起先做大类折叠）
+  assert.match(fn, /for \(const row of collapseFeeGroups\(effective\)\)/)
   assert.match(fn, /const src = parseFieldSource\(sub\)/)
   // 视角差异只剩「是否追加租户分摊子项」，不得再过滤/重排 subs 列：
   // 业主视角直接返回主循环产出；租户视角在同一个 out 上追加子项与合计应付。
   assert.match(fn, /if \(isOwnerView\.value\) return out/)
-  assert.match(fn, /for \(const it of tenantEnabledItems\.value\)/)
+  // 分摊子项（去重后）补进同一个 out：字段定义里没保存过的新子项也要能出列
+  assert.match(fn, /for \(const it of tenantItemsUnique\.value\)/)
   assert.match(fn, /out\.push\(\{\s*key,/, '分摊子项必须追加进同一个 out（不是另起一份列集）')
 })
 
@@ -61,7 +62,9 @@ test('新增引用字段默认「默认表头」，保存后立即出列', () =>
 
 test('buildRows 两套视角都要回填引用字段的值与口径说明', () => {
   const src = read('TenantBilling.vue')
-  const fill = src.match(/if \(!c\.source\) continue/g) || []
+  // 第 15 轮起大类汇总列也带 source（mode=fee_group），必须显式跳过，
+  // 否则会被当成「引用字段」用 resolveSourceValue 覆盖掉汇总值。
+  const fill = src.match(/if \(!c\.source \|\| c\.feeGroup\) continue/g) || []
   assert.ok(fill.length >= 2, `业主/租户都要回填引用字段值，实际命中 ${fill.length} 处`)
   const assign = src.match(/base\[c\.key\] = v/g) || []
   assert.ok(assign.length >= 2, `两套视角都要把值写进行对象，实际命中 ${assign.length} 处`)

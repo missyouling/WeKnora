@@ -112,6 +112,56 @@ export function isTenantItemVisible(item: TenantApportionItem | null | undefined
   return item.field_enabled !== false && item.fieldEnabled !== false
 }
 
+/**
+ * 分摊子项的去重签名（大类 + 归一名称）。
+ *
+ * 库里同一费用项可能存在多条记录（功率因数调整电费 / 功率因素调整电费 /
+ * 功率因数调整），item_key 各不相同。不去重会让字段配置多出两行同名同值的
+ * 「功率因数调整」，而列表只显示一列 —— 六同步对不上。
+ */
+function normName(v: unknown): string {
+  return String(v ?? '')
+    .replace(/[（(]/g, '(')
+    .replace(/[）)]/g, ')')
+    .replace(/\s+/g, '')
+    .replace(/因素/g, '因数')
+    .replace(/其它/g, '其他')
+    .toLowerCase()
+}
+export function tenantItemSignature(item: TenantApportionItem | null | undefined): string {
+  const key = String(item?.item_key ?? item?.itemKey ?? '').trim()
+  const i = key.indexOf('|')
+  const cat = normName(i > 0 ? key.slice(0, i) : '')
+  const rawName = i > 0 ? key.slice(i + 1) : String(item?.item_name ?? item?.itemName ?? '')
+  const n = normName(rawName)
+  return `${cat}::${n.includes('功率因数调整') ? '功率因数调整电费' : n}`
+}
+
+/**
+ * 按签名去重（同一费用项只留一条）。
+ *
+ * `prefer` 里是「字段定义已经引用到的字段名」：优先保留它们，
+ * 否则去重后留下的那条不在 subs 里，列表端会因为「找不到对应子项」而丢列。
+ */
+export function uniqueTenantItems<T extends TenantApportionItem>(
+  items: readonly T[] | undefined,
+  prefer?: ReadonlySet<string>,
+): T[] {
+  const list = Array.isArray(items) ? items : []
+  const bySig = new Map<string, T>()
+  for (const it of list) {
+    const sig = tenantItemSignature(it)
+    const cur = bySig.get(sig)
+    if (!cur) {
+      bySig.set(sig, it)
+      continue
+    }
+    if (prefer && !prefer.has(tenantItemSubName(cur)) && prefer.has(tenantItemSubName(it))) bySig.set(sig, it)
+  }
+  const keep = new Set(bySig.values())
+  return list.filter((it) => keep.has(it))
+}
+
 /** 按 sort 升序（与清单设置里的展示顺序一致）。 */
 export function sortTenantItems<T extends TenantApportionItem>(items: readonly T[] | undefined): T[] {
   const list = Array.isArray(items) ? [...items] : []
@@ -147,8 +197,10 @@ export const TENANT_DERIVED_FIELDS: readonly DerivedSpec[] = [
   { name: 'water_ind_fee', label: '工业水费', dataType: 'number', isDefault: true },
   { name: 'water_dorm_usage', label: '宿舍水量', dataType: 'number', isDefault: true },
   { name: 'water_dorm_fee', label: '宿舍水费', dataType: 'number', isDefault: true },
-  { name: 'gas_usage', label: '用气量', dataType: 'number', isDefault: true },
-  { name: 'gas_fee', label: '气费', dataType: 'number', isDefault: true },
+  // 气费：租户分组尚未启用（列表没有气表列、打印也不含气），
+  // 默认表头关闭 —— 否则字段配置会凭空比表头多两列（六同步违规）。
+  { name: 'gas_usage', label: '用气量', dataType: 'number', isDefault: false },
+  { name: 'gas_fee', label: '气费', dataType: 'number', isDefault: false },
   { name: 'remark', label: '备注', dataType: 'text', isDefault: false },
 ]
 
@@ -206,14 +258,14 @@ export function buildTenantGroupFields(
   const group = tenantGroupKey(String(tenant?.id ?? ''))
   const label = String(groupLabel ?? tenant?.name ?? '').trim() || group
   const out: EditableField[] = TENANT_DERIVED_FIELDS.map((d) => derivedField(d, group, label))
-  for (const it of sortTenantItems(items)) {
+  for (const it of uniqueTenantItems(sortTenantItems(items))) {
     if (!isTenantItemVisible(it)) continue
     const f = itemField(it, group, label)
     if (f.name === 'item_') continue
     out.push(f)
   }
   out.push(totalField(group, label))
-  return out
+  return mergeFeeGroupFields(out, group, label)
 }
 
 /**
@@ -234,7 +286,10 @@ export function mergeTenantGroupFields(
 ): EditableField[] {
   const group = tenantGroupKey(String(tenant?.id ?? ''))
   const label = String(groupLabel ?? tenant?.name ?? '').trim() || group
-  const visibleItems = sortTenantItems(items).filter(isTenantItemVisible)
+  const preferNames = new Set(
+    (saved || []).map((f) => String(f?.name ?? '').trim()).filter(Boolean),
+  )
+  const visibleItems = uniqueTenantItems(sortTenantItems(items).filter(isTenantItemVisible), preferNames)
   const visibleNames = new Set(visibleItems.map((it) => tenantItemSubName(it)).filter(Boolean))
 
   const out: EditableField[] = []
@@ -264,7 +319,9 @@ export function mergeTenantGroupFields(
   }
 
   out.push(totalField(group, label))
-  return out
+  // 大类汇总列：把 (1)/(4)/(6) 的细项收进「市场化购电费 / 系统运行费用 /
+  // 政府性基金及附加」三列（成员仍在列表里，只是不再各自出列）。
+  return mergeFeeGroupFields(out, group, label)
 }
 
 /**
@@ -334,4 +391,250 @@ export function tenantGroupNeedsSync(
   for (const n of has) if (n.startsWith('item_') && n !== TENANT_TOTAL_FIELD && !visible.has(n)) return true
   for (const spec of TENANT_DERIVED_FIELDS) if (!has.has(spec.name)) return true
   return !has.has(TENANT_TOTAL_FIELD)
+}
+
+// ---- 大类汇总列：市场化购电费 / 系统运行费用 / 政府性基金及附加 ----------------
+//
+// 问题：租户分组把「清单设置 → 分摊子项」里开启的市电分项全部平铺成列，
+// 2026-09 的持睿汽车因此有 31 列，其中 (1) 3 列 + (4) 8 列 + (6) 5 列。
+// 产品口径：主表头只留三个大类和少量独立列，点单元格的 +/− 在行下方展开细项。
+//
+// 实现：大类本身也是一条 sub（source.mode='fee_group'），成员仍在 subs 里
+// （保留启用/顺序/宽度/默认表头），但**不再各自出列**。
+// 这样六同步（表头 / 筛选器 / 字段配置 / 抽屉）仍然只有 subs 一个权威源。
+
+export interface FeeGroupSpec {
+  /** subs.name（列 key），稳定不变 */
+  name: string
+  label: string
+  /** 市电账单大类（billing_tenant_items.category 的前缀形态） */
+  category: string
+  tip: string
+  /** 账单大类匹配（账单原文可能带 `费用`/`及附加` 等后缀差异） */
+  match: (category: string) => boolean
+}
+
+export const TENANT_FEE_GROUPS: readonly FeeGroupSpec[] = [
+  {
+    name: 'grp_market',
+    label: '市场化购电费',
+    category: '(1)市场化购电费',
+    tip: '(1)市场化购电费 下属细项汇总（零售交易电费 / 零售损益分摊电费 / 偏差电费等）',
+    match: (c) => c.startsWith('(1)') && c.includes('市场化购电'),
+  },
+  {
+    name: 'grp_system',
+    label: '系统运行费用',
+    category: '(4)系统运行费',
+    tip: '(4)系统运行费用 下属细项汇总（燃气机组 / 新能源机制差价 / 抽水蓄能 / 煤电容量等）',
+    match: (c) => c.startsWith('(4)') && c.includes('系统运行'),
+  },
+  {
+    name: 'grp_gov',
+    label: '政府性基金及附加',
+    category: '(6)政府性基金及附加-工商业',
+    tip: '(6)政府性基金及附加（工商业）下属细项汇总（农网还贷 / 重大水利 / 库区移民 / 可再生能源等）',
+    // 只认「工商业」：居民同名基金是另一套（计费电量 8938 度），混进来就重复计费
+    match: (c) => c.startsWith('(6)') && c.includes('政府性基金') && c.includes('工商业'),
+  },
+]
+
+/** 分摊子项名 → 所属账单大类（`item_<大类>|<子项名>`）。 */
+export function itemCategoryOfName(name: unknown): string {
+  const n = String(name ?? '').trim()
+  if (!n.startsWith('item_') || n === TENANT_TOTAL_FIELD) return ''
+  const rest = n.slice(5)
+  const i = rest.indexOf('|')
+  return i > 0 ? rest.slice(0, i) : ''
+}
+
+/** 账单大类 → 大类汇总定义（不属于三大类返回 null）。 */
+export function feeGroupSpecOfCategory(category: unknown): FeeGroupSpec | null {
+  const c = String(category ?? '').trim()
+  if (!c) return null
+  return TENANT_FEE_GROUPS.find((g) => g.match(c)) || null
+}
+
+/** subs 里的「大类汇总字段」→ 定义（普通字段返回 null）。 */
+export function feeGroupSpecOfSub(sub: any): FeeGroupSpec | null {
+  if (String(sub?.source?.mode || '') !== 'fee_group') return null
+  const cat = String(sub?.source?.group || sub?.source?.groupLabel || '').trim()
+  const byCat = feeGroupSpecOfCategory(cat)
+  if (byCat) return byCat
+  const n = String(sub?.name || '').trim()
+  return TENANT_FEE_GROUPS.find((g) => g.name === n) || null
+}
+
+/** 大类汇总字段（写入 subs）。members 顺序 = 展开后的明细顺序。 */
+export function buildFeeGroupField(
+  spec: FeeGroupSpec,
+  members: readonly string[],
+  group: string,
+  groupLabel: string,
+): EditableField {
+  return {
+    name: spec.name,
+    label: spec.label,
+    enabled: true,
+    isDefault: true,
+    dataType: 'number',
+    width: 0,
+    group,
+    groupLabel,
+    source: {
+      category: '市电账单',
+      field: spec.name,
+      mode: 'fee_group',
+      group: spec.category,
+      label: spec.label,
+      members: [...members],
+    },
+  }
+}
+
+/** 折叠后的一行：普通字段 或 大类（含成员）。 */
+export type CostListRow<T> =
+  | { kind: 'field'; name: string; sub: T }
+  | { kind: 'group'; name: string; label: string; spec: FeeGroupSpec; sub: T | null; members: Array<{ name: string; sub: T }> }
+
+/**
+ * 把 subs 折叠成「表头行」序列：大类成员被收进大类里，不再单独出列。
+ *
+ * 两种来源都支持：
+ *   · subs 里已有 `mode=fee_group` 的字段 → 用它（保留用户的名称/宽度/显隐/位置）；
+ *   · 没有（用户还没保存过）→ 按账单大类**现算**一个大类，位置取第一个成员的位置。
+ * 两条路径产出同样的顺序，所以列表表头与字段配置永远一致（六同步）。
+ */
+export function collapseFeeGroups<T extends { name?: string; label?: string; source?: any }>(
+  subs: readonly T[],
+): Array<CostListRow<T>> {
+  const list = Array.isArray(subs) ? subs : []
+  const explicit = new Map<string, { sub: T; index: number }>()
+  list.forEach((s, i) => {
+    const spec = feeGroupSpecOfSub(s)
+    if (spec && !explicit.has(spec.name)) explicit.set(spec.name, { sub: s, index: i })
+  })
+
+  // 成员归属：显式 group 的 members 优先；其余按账单大类自动归入
+  const memberOf = new Map<string, string>() // sub.name -> group spec name
+  const membersOf = new Map<string, string[]>()
+  const pushMember = (gname: string, subName: string) => {
+    if (!gname || !subName) return
+    const arr = membersOf.get(gname) || []
+    if (!arr.includes(subName)) arr.push(subName)
+    membersOf.set(gname, arr)
+    memberOf.set(subName, gname)
+  }
+  // ① 显式声明
+  for (const [gname, { sub }] of explicit) {
+    const declared = Array.isArray((sub as any)?.source?.members) ? (sub as any).source.members : []
+    for (const m of declared) pushMember(gname, String(m || '').trim())
+  }
+  // ② 未声明/新开启的子项按大类自动归入（保持 subs 顺序）
+  for (const s of list) {
+    const name = String(s?.name || '').trim()
+    if (!name) continue
+    const cat = itemCategoryOfName(name)
+    if (!cat) continue
+    const spec = feeGroupSpecOfCategory(cat)
+    if (!spec) continue
+    if (memberOf.has(name)) continue
+    pushMember(spec.name, name)
+  }
+  // ③ 补齐显式 group 的成员（声明的 members 里可能有已被删掉的字段）
+  for (const [, arr] of membersOf) {
+    for (const n of [...arr]) {
+      if (!list.some((s) => String(s?.name || '').trim() === n)) {
+        arr.splice(arr.indexOf(n), 1)
+      }
+    }
+  }
+
+  const rows: Array<CostListRow<T>> = []
+  const emitted = new Set<string>()
+  for (const s of list) {
+    const name = String(s?.name || '').trim()
+    if (!name) continue
+    const spec = feeGroupSpecOfSub(s)
+    if (spec) {
+      if (emitted.has(spec.name)) continue
+      emitted.add(spec.name)
+      const members = (membersOf.get(spec.name) || [])
+        .map((n) => ({ name: n, sub: list.find((x) => String(x?.name || '').trim() === n) as T }))
+        .filter((m) => !!m.sub)
+      rows.push({ kind: 'group', name: spec.name, label: String(s?.label || '').trim() || spec.label, spec, sub: s, members })
+      continue
+    }
+    const gname = memberOf.get(name)
+    if (!gname) {
+      rows.push({ kind: 'field', name, sub: s })
+      continue
+    }
+    if (emitted.has(gname)) continue
+    // 合成大类：放在第一个成员的位置
+    emitted.add(gname)
+    const gspec = TENANT_FEE_GROUPS.find((g) => g.name === gname)
+    if (!gspec) {
+      rows.push({ kind: 'field', name, sub: s })
+      continue
+    }
+    const members = (membersOf.get(gname) || [])
+      .map((n) => ({ name: n, sub: list.find((x) => String(x?.name || '').trim() === n) as T }))
+      .filter((m) => !!m.sub)
+    rows.push({ kind: 'group', name: gname, label: gspec.label, spec: gspec, sub: null, members })
+  }
+  return rows
+}
+
+/**
+ * 在字段列表里补齐大类汇总字段（插在第一个成员之前），成员保持原位置。
+ *
+ * 只改「有成员的三大类」，其它字段原封不动 —— 用户拖过的顺序、改过的名称、
+ * 宽度、显隐全部保留。已存在的大类字段只刷新 members（清单设置新开/关掉子项后同步）。
+ */
+export function mergeFeeGroupFields(
+  fields: readonly EditableField[] | undefined,
+  group: string,
+  groupLabel: string,
+): EditableField[] {
+  const list = (Array.isArray(fields) ? fields : []).map((f) => ({ ...f }))
+  const existing = new Map<string, number>()
+  list.forEach((f, i) => {
+    const spec = feeGroupSpecOfSub(f)
+    if (spec) existing.set(spec.name, i)
+  })
+  for (const spec of TENANT_FEE_GROUPS) {
+    const members = list
+      .map((f) => String(f?.name || '').trim())
+      .filter((n) => {
+        const cat = itemCategoryOfName(n)
+        return !!cat && !!feeGroupSpecOfCategory(cat) && feeGroupSpecOfCategory(cat)!.name === spec.name
+      })
+    const at = existing.get(spec.name)
+    if (!members.length) {
+      // 没有成员就撤掉大类列，否则会留下一列永远 0
+      if (at !== undefined) list.splice(at, 1)
+      continue
+    }
+    if (at !== undefined) {
+      const cur = list[at]
+      list[at] = {
+        ...cur,
+        group,
+        groupLabel,
+        source: {
+          ...(cur.source || { category: '市电账单', field: spec.name }),
+          mode: 'fee_group',
+          group: spec.category,
+          label: cur.source?.label || spec.label,
+          members,
+        },
+      }
+      continue
+    }
+    const firstMember = list.findIndex((f) => members.includes(String(f?.name || '').trim()))
+    const field = buildFeeGroupField(spec, members, group, groupLabel)
+    list.splice(firstMember < 0 ? list.length : firstMember, 0, field)
+  }
+  return list
 }

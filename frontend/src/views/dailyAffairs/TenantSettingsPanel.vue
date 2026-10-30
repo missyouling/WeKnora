@@ -446,7 +446,7 @@ const addSourceItem = (payload: {
   key: string
   label: string
   dataType: string
-  source: { category: string; field: string; mode?: 'field' | 'fee_row'; group?: string; groupLabel?: string; label?: string }
+  source: { category: string; field: string; mode?: 'field' | 'fee_row' | 'fee_group'; group?: string; groupLabel?: string; label?: string; members?: string[] }
 }) => {
   // item_key 必须含分组：市电账单 8 个分组共用 qty/rate/fee 等列名，
   // 只用「分类|字段」会让两条不同分组的「计费电量」被判成重复而加不进来。

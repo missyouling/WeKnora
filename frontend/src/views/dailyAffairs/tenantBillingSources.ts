@@ -23,7 +23,12 @@ export interface FieldSource {
   category: string
   /** 来源字段 key；mode=fee_row 时是费用组成名称 */
   field: string
-  mode: 'field' | 'fee_row'
+  /**
+   * fee_group = 「大类汇总列」：它不对应任何真实字段，而是把 `members`
+   * 里那几条市电分项折叠成一个可展开的大类（市场化购电费 / 系统运行费用 /
+   * 政府性基金及附加）。值为成员分摊后金额之和。
+   */
+  mode: 'field' | 'fee_row' | 'fee_group'
   /**
    * 来源字段在原分类里所属的分组（市电账单的 12 个费用分项）。
    *
@@ -35,6 +40,8 @@ export interface FieldSource {
   groupLabel?: string
   /** 来源字段的原始名称（费用清单里可能已改名，回溯/悬浮要显示它）。 */
   label?: string
+  /** 大类汇总列的成员字段名（仅 mode=fee_group；与 subs 里的 name 一致）。 */
+  members?: string[]
 }
 
 export const SOURCE_CATEGORIES = ['市电账单', '光伏账单', '电费核算', '水费核算', '气费核算'] as const
@@ -46,7 +53,13 @@ export function parseFieldSource(sub: any): FieldSource | null {
   const category = String(raw.category || '').trim()
   const field = String(raw.field || '').trim()
   if (!category || !field) return null
-  const src: FieldSource = { category, field, mode: raw.mode === 'fee_row' ? 'fee_row' : 'field' }
+  const rawMode = String(raw.mode || '').trim()
+  const mode: FieldSource['mode'] = rawMode === 'fee_row' ? 'fee_row' : rawMode === 'fee_group' ? 'fee_group' : 'field'
+  const src: FieldSource = { category, field, mode }
+  if (mode === 'fee_group') {
+    const members = Array.isArray(raw.members) ? raw.members.map((m: any) => String(m || '').trim()).filter(Boolean) : []
+    if (members.length) src.members = members
+  }
   const group = String(raw.group || raw.groupLabel || '').trim()
   if (group) {
     src.group = group

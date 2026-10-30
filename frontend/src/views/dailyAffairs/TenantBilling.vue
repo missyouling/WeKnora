@@ -44,10 +44,61 @@
         class="doc-table"
         :selected-row-keys="selectedRowKeysArr"
         select-on-change
+        :expanded-row-keys="expandedRowKeys"
+        :expand-icon="false"
         :row-class-name="({ row }: any) => selectedKeys.has(row.id) ? 'row-selected' : ''"
         @row-click="({ row }: any) => onRowClick(row)"
         @select-change="(val: any) => onTableSelectChange(val)"
+        @expand-change="onExpandChange"
       >
+        <!-- 大类明细（手风琴）：点单元格的 + 在**当前行下方**展开，
+             同时只允许展开一个大类（toggleFeeGroup 里保证互斥）。 -->
+        <template #expanded-row="{ row }">
+          <div v-if="expandedGroupOfRow(row)" class="fee-group-panel"
+            :style="groupPanelWidth ? { width: groupPanelWidth + 'px' } : undefined">
+            <div class="fgp-head">
+              <span class="fgp-title">{{ expandedGroupOfRow(row).label }}</span>
+              <span class="fgp-cat">{{ expandedGroupOfRow(row).category }}</span>
+              <span class="fgp-sum">
+                小计 <b>{{ fmtMoney(expandedGroupOfRow(row).total) }}</b> 元
+                <em>（{{ expandedGroupOfRow(row).rows.length }} 个细项之和，与单元格同源）</em>
+              </span>
+            </div>
+            <table class="fgp-table">
+              <colgroup>
+                <col style="width: 30%" />
+                <col style="width: 15%" />
+                <col style="width: 12%" />
+                <col style="width: 26%" />
+                <col style="width: 17%" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>细项名称</th>
+                  <th class="is-num">账单原值(元)</th>
+                  <th class="is-num">分摊比例</th>
+                  <th>计算方式</th>
+                  <th class="is-num">分摊后金额(元)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in expandedGroupOfRow(row).rows" :key="d.key">
+                  <td class="fgp-name">{{ d.label }}</td>
+                  <td class="is-num">{{ d.raw == null ? '—' : fmtMoney(d.raw) }}</td>
+                  <td class="is-num">{{ d.raw == null ? '—' : fmtRatio(d.ratio) }}</td>
+                  <td class="fgp-method">{{ d.method }}</td>
+                  <td class="is-num fgp-amount">{{ fmtMoney(d.value) }}</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="4" class="fgp-foot-label">小计</td>
+                  <td class="is-num fgp-amount">{{ fmtMoney(expandedGroupOfRow(row).total) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </template>
         <!-- 单元格统一由 tableColumns 的 cell 渲染器输出（含数值对齐与悬浮说明）。
              不再单独写 #month / #ratio / #ind_price 具名插槽：
              插槽与 cell 渲染器会打架（TDesign 优先用 cell），
@@ -145,7 +196,9 @@ import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, billRawAmountOf, r
 import {
   DEFAULT_GROUP_KEY,
   TENANT_TOTAL_FIELD,
+  collapseFeeGroups,
   subsOfGroup,
+  uniqueTenantItems,
   tenantGroupKey,
 } from './billingFieldGroups'
 import { buildRowTips, sourceFieldTip, tenantItemTip, tenantTimedTip } from './tenantBillingTips'
@@ -184,6 +237,18 @@ interface ColDef {
   source?: FieldSource
   /** 该列来自租户分摊子项（租户视角） */
   item?: any
+  /**
+   * 大类汇总列（市场化购电费 / 系统运行费用 / 政府性基金及附加）。
+   *
+   * 值 = 成员分摊后金额之和；单元格旁边有 +/−，点开在行下方展开成员明细。
+   * 成员仍是普通分摊子项（各自有列 key），只是不出现在表头里。
+   */
+  feeGroup?: {
+    name: string
+    label: string
+    category: string
+    members: Array<{ key: string; label: string; itemKey: string }>
+  }
 }
 const COL_DEFS_OWNER: ColDef[] = [
   { key: 'month', label: '账单周期', default: true, w: '0.8fr', tip: '账单月份' },
@@ -262,30 +327,22 @@ const tenantEnabledItems = computed(() =>
 )
 
 /**
- * 分摊子项名称归一（六同步去重用）。
+ * 去重后的分摊子项。
  *
- * 「功率因数调整电费 / 功率因数调整 / 功率因素调整电费」在库里是三条不同
- * `item_key` 的记录（大类、名称都不同），但它们指同一个费用项。旧实现只按
- * `item_key` 去重，于是 subs 里有的那一列照常出，另外两条被当成「清单设置里
- * 新开、字段定义还没保存」而**追加到表头末尾** —— 列表比字段配置多出 2 列
- * （真机：合计应付右侧多两个 -598.43）。
- * 归一后再比较，这三个名字折叠成同一个签名。
+ * 库里同一个费用项可能存在多条记录（功率因数调整电费 / 功率因素调整电费 /
+ * 功率因数调整），item_key 各不相同。列表列早已按签名去重，但**取值循环**
+ * 没有 —— 力调被算两次（-598.43 × 2），「合计应付」因此比「工业电费」少 598。
+ * 去重规则收在 billingFieldGroups.tenantItemSignature（与字段配置同一份），
+ * 优先保留「字段定义里引用到的」那条，避免列表丢列。
  */
-const normItemName = (v: any) => String(v ?? '').trim()
-  .replace(/[（(]/g, '(').replace(/[）)]/g, ')')
-  .replace(/\s+/g, '')
-  .replace(/因素/g, '因数')
-  .replace(/其它/g, '其他')
-  .toLowerCase()
-/** 同一费用项的规范签名（力调电费的三种写法折叠为一种）。 */
-const itemSignature = (v: any) => {
-  const n = normItemName(v)
-  return n.includes('功率因数调整') ? '功率因数调整电费' : n
-}
+const tenantItemsUnique = computed(() => {
+  const inSubs = new Set((categorySubs.value || []).map((s: any) => String(s?.name || '').trim()))
+  return uniqueTenantItems(tenantEnabledItems.value, inSubs)
+})
 
 /** 参与分摊的子项（金额折算口径）。 */
 const tenantApportionItems = computed(() =>
-  tenantEnabledItems.value.filter((it: any) => it.enabled !== false),
+  tenantItemsUnique.value.filter((it: any) => it.enabled !== false),
 )
 
 /** 分摊子项列 key（item_key 内已含「大类|子项名」，加前缀避免与内置列撞名）。 */
@@ -314,14 +371,70 @@ const activeColDefs = computed<ColDef[]>(() => {
   // 否则业主表头会混进租户的分摊子项、租户表头会混进默认分组的引用字段。
   const groupKey = isOwnerView.value ? DEFAULT_GROUP_KEY : tenantGroupKey(activeTenantId.value)
   const subs = subsOfGroup(allSubs, groupKey)
-  const itemByKey = new Map(tenantEnabledItems.value.map((it: any) => [tenantItemColKey(it), it]))
+  const itemByKey = new Map(tenantItemsUnique.value.map((it: any) => [tenantItemColKey(it), it]))
+
+  // 清单设置里新开启、字段定义还没保存过的子项：补在「合计应付」之前。
+  // 必须走同一套 collapseFeeGroups —— 否则它们会单独出一列，而字段配置把
+  // 它们收进了大类，两端列数就对不上（六同步违规）。
+  const known = new Set(subs.map((s: any) => String(s?.name || '').trim()))
+  const extra: any[] = []
+  for (const it of tenantItemsUnique.value) {
+    const key = tenantItemColKey(it)
+    if (!key || known.has(key)) continue
+    extra.push({
+      name: key,
+      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      enabled: true,
+      is_default: true,
+      data_type: 'number',
+      width: Number(it.width) || 0,
+      group: groupKey,
+    })
+  }
+  let effective = subs as any[]
+  if (extra.length) {
+    const at = subs.findIndex((s: any) => String(s?.name || '').trim() === TENANT_TOTAL_FIELD)
+    effective = at < 0 ? [...subs, ...extra] : [...subs.slice(0, at), ...extra, ...subs.slice(at)]
+  }
 
   const out: ColDef[] = []
   const seen = new Set<string>()
-  for (const sub of subs) {
+
+  for (const row of collapseFeeGroups(effective)) {
+    // ---- 大类汇总列：值 = 成员之和，单元格带 +/− 展开明细 ----
+    if (row.kind === 'group') {
+      const sub: any = row.sub
+      if (sub && sub.enabled === false) continue
+      if (seen.has(row.name)) continue
+      const members = row.members
+        .map((m) => {
+          const it = itemByKey.get(m.name)
+          if (!it) return null
+          const ms: any = m.sub
+          const label = String(ms?.label || it.item_name || it.itemName || m.name).trim() || m.name
+          return { key: m.name, label, itemKey: String(it.item_key || it.itemKey || '') }
+        })
+        .filter(Boolean) as Array<{ key: string; label: string; itemKey: string }>
+      // 成员全被关掉 → 大类列也没有意义（不能留一列恒为 0 的空壳）
+      if (!members.length) continue
+      seen.add(row.name)
+      const label = String(sub?.label || '').trim() || row.label
+      out.push({
+        key: row.name,
+        label,
+        default: sub ? sub.is_default === true : true,
+        w: '1fr',
+        width: Number(sub?.width) > 0 ? Math.round(Number(sub.width)) : undefined,
+        tip: row.spec.tip,
+        feeGroup: { name: row.name, label, category: row.spec.category, members },
+      })
+      continue
+    }
+
+    const sub: any = row.sub
+    const key = row.name
     if (!sub || sub.enabled === false) continue
-    const key = String(sub.name || '').trim()
-    if (!key || seen.has(key)) continue
+    if (seen.has(key)) continue
     const label = String(sub.label || '').trim()
     const width = Number(sub.width) > 0 ? Math.round(Number(sub.width)) : 0
     // 合计应付：租户视角的金额收口列，值由 buildRows 汇总
@@ -333,7 +446,7 @@ const activeColDefs = computed<ColDef[]>(() => {
         default: sub.is_default === true,
         w: '1fr',
         width: width || undefined,
-        tip: '该租户当月应付合计',
+        tip: '该租户当月应付合计（工业电费 + 宿舍电费 + 水费）',
       })
       continue
     }
@@ -384,7 +497,7 @@ const activeColDefs = computed<ColDef[]>(() => {
   if (!subs.length) {
     if (isOwnerView.value) return [...base]
     // 租户视角回落：静态列 + 分摊子项 + 合计应付（与改造前一致）
-    const items = tenantEnabledItems.value.map((it: any) => ({
+    const items = tenantItemsUnique.value.map((it: any) => ({
       key: tenantItemColKey(it),
       label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
       default: true,
@@ -399,31 +512,9 @@ const activeColDefs = computed<ColDef[]>(() => {
   }
   if (isOwnerView.value) return out
 
-  // 租户视角：清单设置里新开启、但「字段定义」还没保存过的分摊子项，
-  // 追加在末尾（字段定义面板的合并逻辑同样把它们追加在末尾 → 两端一致）。
-  // 不追加会让用户在清单设置里勾完发现列表没反应，必须先回设置抽屉保存一次。
-  const seenNames = new Set(out.map((c) => itemSignature(c.label)))
-  for (const it of tenantEnabledItems.value) {
-    const key = tenantItemColKey(it)
-    if (!key || seen.has(key)) continue
-    const itemName = String(it.item_name || it.itemName || it.source_key || '分摊项')
-    // 与已出列的同名项（含同义写法）重复 → 不追加，否则表头会比字段配置多列
-    if (seenNames.has(itemSignature(itemName))) continue
-    seenNames.add(itemSignature(itemName))
-    seen.add(key)
-    out.push({
-      key,
-      label: itemName,
-      default: true,
-      w: '1fr',
-      width: Number(it.width) || undefined,
-      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
-      item: it,
-    })
-  }
   // 合计应付缺失时补在最后（老数据没有这条 subs）
-  if (!seen.has(TENANT_TOTAL_FIELD) && tenantEnabledItems.value.length) {
-    out.push({ key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计' })
+  if (!seen.has(TENANT_TOTAL_FIELD) && tenantItemsUnique.value.length) {
+    out.push({ key: TENANT_TOTAL_FIELD, label: '合计应付', default: true, w: '1fr', tip: '该租户当月应付合计（工业电费 + 宿舍电费 + 水费）' })
   }
   return out
 })
@@ -577,10 +668,93 @@ const tableColumns = computed(() => {
  * 说明文本来自 buildRows 当行算出的 `row.__tips`，与单元格数值同源。
  */
 function renderCell(h: any, key: string, row: any) {
-  const text = cellText(key, row)
+  const col = feeGroupColMap.value.get(key)
   const tip = row?.__tips?.[key]
+  if (col) {
+    // 大类汇总列：金额 + `+ / −`。按钮 click 必须 stop：整行是 @row-click（开抽屉），
+    // 不拦会变成「点展开顺带把详情抽屉也拉起来」（真机反馈）。
+    const open = expandedGroupOf.value[String(row?.id)] === key
+    return h('div', { class: 'fee-group-cell' }, [
+      h('span', {
+        class: ['row-cell-text', 'row-cell-text--has-tip', open ? 'is-open' : ''],
+        'data-tip': tip || '',
+      }, fmtMoney(row?.[key])),
+      h('button', {
+        class: ['fee-group-toggle', open ? 'is-open' : ''],
+        type: 'button',
+        title: open ? `收起「${col.feeGroup!.label}」细项` : `展开「${col.feeGroup!.label}」细项`,
+        onClick: (e: any) => {
+          e?.stopPropagation?.()
+          toggleFeeGroup(row, key)
+        },
+      }, open ? '−' : '+'),
+    ])
+  }
+  const text = cellText(key, row)
   if (!tip) return h('span', { class: 'row-cell-text' }, text)
   return h('span', { class: 'row-cell-text row-cell-text--has-tip', 'data-tip': tip }, text)
+}
+
+/**
+ * 大类明细的展开态（手风琴互斥）。
+ *
+ * TDesign 的 expandedRowKeys 只认 rowKey，所以「展开哪一行」与「展开哪一列」
+ * 要分开记：rowKeys 决定行、expandedGroupOf[rowId] 决定列。
+ * 互斥是硬要求（同一时间全表最多 1 个明细子表），否则一屏展开十几个子表。
+ */
+const expandedRowKeys = ref<Array<string | number>>([])
+const expandedGroupOf = ref<Record<string, string>>({})
+const feeGroupColMap = computed(() => {
+  const m = new Map<string, ColDef>()
+  for (const c of activeColDefs.value) if (c.feeGroup) m.set(c.key, c)
+  return m
+})
+
+/**
+ * 明细面板的宽度。
+ *
+ * 为什么必须显式给宽度：展开行是一个 colspan 全表的 <td>，宽度等于**整张表**
+ * （20 列约 2000px，比视口宽）。用户是横向滚到右边才点开大类的，此时面板左半边
+ * （细项名称列）就在屏幕外 —— 真机截图里「只有金额、没有名称」就是这么来的。
+ * 面板用 position: sticky + left: 0 钉在可视区左侧，宽度取滚动容器的 clientWidth。
+ */
+const groupPanelWidth = ref(0)
+function measureGroupPanel() {
+  const el = document.querySelector('.tenant-list-scroll') as HTMLElement | null
+  if (el && el.clientWidth > 0) groupPanelWidth.value = Math.max(360, el.clientWidth - 4)
+}
+
+function toggleFeeGroup(row: any, key: string) {
+  const rid = String(row?.id ?? '')
+  if (!rid) return
+  measureGroupPanel()
+  const same = expandedRowKeys.value.length === 1
+    && String(expandedRowKeys.value[0]) === rid
+    && expandedGroupOf.value[rid] === key
+  if (same) {
+    expandedRowKeys.value = []
+    expandedGroupOf.value = {}
+    return
+  }
+  expandedRowKeys.value = [rid]
+  expandedGroupOf.value = { [rid]: key }
+}
+
+/** TDesign 的展开回调（默认图标已关闭，仅作兜底：保持单行单列互斥）。 */
+function onExpandChange(keys: Array<string | number>) {
+  const next = Array.isArray(keys) ? keys.slice(0, 1) : []
+  expandedRowKeys.value = next
+  const rid = next.length ? String(next[0]) : ''
+  const prev = expandedGroupOf.value[rid]
+  expandedGroupOf.value = rid && prev ? { [rid]: prev } : {}
+}
+
+/** 当前行正在展开的大类明细（模板用）。 */
+function expandedGroupOfRow(row: any) {
+  const rid = String(row?.id ?? '')
+  const key = expandedGroupOf.value[rid]
+  if (!key) return null
+  return row?.__groups?.[key] || null
 }
 const selectedRowKeysArr = computed(() => Array.from(selectedKeys.value))
 function onTableSelectChange(val: any) { selectedKeys.value = new Set(Array.isArray(val) ? val : []) }
@@ -1026,7 +1200,9 @@ const buildRows = () => {
       const ctx = sourceCtxOf(month, bill, solarArr)
       const extraTips: Record<string, string> = {}
       for (const c of activeColDefs.value) {
-        if (!c.source) continue
+        // 大类汇总列带 source（mode=fee_group），但它不是「引用字段」——
+        // 交给上面的汇总逻辑，绝不能再用 resolveSourceValue 覆盖一遍。
+        if (!c.source || c.feeGroup) continue
         const v = resolveSourceValue(c.source, ctx)
         base[c.key] = v
         extraTips[c.key] = sourceFieldTip({
@@ -1091,9 +1267,12 @@ const buildRows = () => {
       // 而不是把列隐藏掉让人无从核对。
       const ctx = sourceCtxOf(month, bill, solarArr, rec)
       const ratio = ratioOfMonth(month, bill, rec)
-      let total = 0
       const itemTips: Record<string, string> = {}
-      for (const it of tenantEnabledItems.value) {
+      // 每个子项的分摊后金额 + 原账单金额（大类展开明细要按成员逐条列示）
+      const itemValue = new Map<string, number>()
+      const itemRaw = new Map<string, number>()
+      const itemTimed = new Map<string, boolean>()
+      for (const it of tenantItemsUnique.value) {
         const participating = it.enabled !== false
         const key = String(it?.source_key || it?.item_name || '').trim()
         // 分时项（零售交易电费 / 零售输配电费…）：按「逐表逐时段基准电量 × 时段单价」算。
@@ -1103,8 +1282,10 @@ const buildRows = () => {
         const grp = String(it?.category || '')
         const timed = participating && key ? resolveTimedItemFee(ctx, key, grp) : null
         const v = !participating ? 0 : timed ? timed.value : resolveTenantItemValue(it, ctx, ratio)
-        base[tenantItemColKey(it)] = v
-        total += v
+        const ckey = tenantItemColKey(it)
+        base[ckey] = v
+        itemValue.set(ckey, v)
+        itemTimed.set(ckey, !!timed)
         if (timed) {
           itemTips[tenantItemColKey(it)] = tenantTimedTip({
             itemName: String(it.item_name || key),
@@ -1124,6 +1305,7 @@ const buildRows = () => {
         // 「= 0 × 21.24% = 4,434.02 元」（真机截图）：乘数是 0 却得出非零金额。
         // 现在统一走 billRawAmountOf（与列表取值同一个 resolveFeeRow）。
         const billAmount = participating && key ? billRawAmountOf(ctx, key, grp) : 0
+        itemRaw.set(ckey, billAmount)
         itemTips[tenantItemColKey(it)] = tenantItemTip({
           itemName: String(it.item_name || key),
           sourceCategory: it.source_category || '市电账单',
@@ -1134,15 +1316,56 @@ const buildRows = () => {
           directSum: String(it.value_mode || '').trim() === 'direct_sum',
         })
       }
-      // 合计应付恒有值（没有分摊子项时就是 0）：租户分组的字段定义里有这一列，
-      // 只在有子项时才写会让它变成空白单元格。
-      base.item_total = Math.round(total * 100) / 100
+      // 大类汇总列：值 = 成员分摊后金额之和；同时备好展开明细（与单元格同源）。
+      const groupDetails: Record<string, any> = {}
+      for (const c of activeColDefs.value) {
+        if (!c.feeGroup) continue
+        const rows: any[] = []
+        let sum = 0
+        for (const m of c.feeGroup.members) {
+          const v = Number(itemValue.get(m.key)) || 0
+          sum += v
+          const timed = !!itemTimed.get(m.key)
+          rows.push({
+            key: m.key,
+            label: m.label,
+            // 账单原值：分时项在账单里是四段行，这里给四段金额合计（仅供对账参考）
+            raw: timed ? null : (Number(itemRaw.get(m.key)) || 0),
+            ratio,
+            // 计算方式严格区分两种口径，与悬浮窗一致
+            method: timed ? '分时：四段基准电量 × 时段单价' : '账单原值 × 分摊比例',
+            value: Math.round(v * 100) / 100,
+          })
+        }
+        base[c.key] = Math.round(sum * 100) / 100
+        itemTips[c.key] = [
+          `「${c.feeGroup.label}」= 下属 ${rows.length} 个细项之和（${c.feeGroup.category}）`,
+          ...rows.map((r) => `  ${r.label}：${fmtMoney(r.value)}`),
+          `合计 = ${fmtMoney(base[c.key])} 元`,
+          '点单元格右侧 + 可展开明细（表头只留大类，细项配置在「设置 → 字段定义」）',
+        ].join('\n')
+        groupDetails[c.key] = {
+          name: c.feeGroup.name,
+          label: c.feeGroup.label,
+          category: c.feeGroup.category,
+          total: base[c.key],
+          rows,
+        }
+      }
+      // 合计应付 = 工业电费 + 宿舍电费 + 水费（+ 其它已启用费用项），
+      // 与打印清单 PDF 概览里的「应收合计」同一口径。
+      // 旧实现只累加分摊子项，于是「合计应付」既不等于应收合计，也不含水电。
+      const waterTotal = (wInd.fee || 0) + (wDorm.fee || 0)
+      // 只收「工业电费 + 宿舍电费 + 水费」：气费列当前不在租户分组的字段定义里
+      //（TENANT_DERIVED_FIELDS 有 gas_*，但这个分组还没保存过），把它算进合计
+      // 会出现「合计比可见列之和大一笔、无从核对」的情况。等气费列启用后再并入。
+      base.item_total = Math.round((indFee + (dorm.fee || 0) + waterTotal) * 100) / 100
       // 跨分类引用字段：与业主视角同一口径（当月账单概况 / 核算汇总）。
       //
       // 这一步过去只写在业主分支里，于是即便列被拼出来，租户视角的单元格也是空的
       // —— 用户看到「有表头、没数据」，会误判成取值链路坏了。
       for (const c of activeColDefs.value) {
-        if (!c.source) continue
+        if (!c.source || c.feeGroup) continue
         const v = resolveSourceValue(c.source, ctx)
         base[c.key] = v
         itemTips[c.key] = sourceFieldTip({
@@ -1158,6 +1381,7 @@ const buildRows = () => {
               : undefined,
         })
       }
+      base.__groups = groupDetails
       base.__tips = buildRowTips({
         ownerView: false, useUnit: useUnit.value, tenantName, month,
         totalKwh, totalFee,
@@ -1183,6 +1407,15 @@ const buildRows = () => {
   const kw = String(filters.value.keyword || '').trim()
   if (kw) out = out.filter((r) => matchAllTokens(rowFlattenText(r), kw))
   displayRows.value = out
+  // 切换使用单位 / 重算后行 id 会变：把已经不存在的展开态清掉，
+  // 否则 TDesign 会记着一个不存在的 rowKey（表格显示为「没展开」但状态还在）。
+  if (expandedRowKeys.value.length) {
+    const aliveIds = new Set(out.map((r: any) => String(r.id)))
+    if (!expandedRowKeys.value.every((k) => aliveIds.has(String(k)))) {
+      expandedRowKeys.value = []
+      expandedGroupOf.value = {}
+    }
+  }
 
   // 选中态校正：只剔除「已不在列表里」的 id，不整批清空。
   //
@@ -1452,6 +1685,9 @@ function statementMeta(rows: any[], unit: string, months: string[], ratio: numbe
     { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
     { label: '分摊比例', value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
     { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
+    // 应收合计必须与列表「合计应付」逐分相等：
+    //   业主 = 电 + 水 + 气（三块都有列）；
+    //   租户 = 工业电费 + 宿舍电费 + 水费（气费列未启用，不并入）。
     { label: isOwnerView.value ? '应收合计' : '电水合计应收', value: `${money2(isOwnerView.value ? power + water + sum('gas_fee') : power + water)} 元` },
     { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
   ]
@@ -2023,6 +2259,7 @@ onMounted(() => {
   loadTenants()
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
+  window.addEventListener('resize', measureGroupPanel)
 })
 /**
  * 字段定义保存后的联动。
@@ -2043,7 +2280,10 @@ function onCategoriesChanged(ev?: Event) {
   }
   void loadCategorySubs()
 }
-onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onCategoriesChanged))
+onBeforeUnmount(() => {
+  window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
+  window.removeEventListener('resize', measureGroupPanel)
+})
 </script>
 
 <style lang="less" scoped>
@@ -2621,6 +2861,120 @@ onBeforeUnmount(() => window.removeEventListener('fleet-categories-changed', onC
 }
 
 /* 打印预览 */
+</style>
+
+<style lang="less">
+/* ---- 大类汇总列：单元格 +/− 与展开后的明细子表 ----
+   这一块**必须非 scoped**：
+   · 单元格内容由 renderCell 用 h() 生成，vnode 带的是 t-table 的 scopeId，
+     父组件的 scoped 规则匹配不到（.row-cell-text 一直没样式就是这个原因）；
+   · expanded-row 插槽内容由子组件渲染，同样不受父 scoped 约束。
+   前缀 fee-group-/fgp- 全局唯一，不会污染其它页面。 */
+.fee-group-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+
+  .row-cell-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+  }
+  .row-cell-text.is-open {
+    color: var(--td-brand-color-7);
+    font-weight: 600;
+  }
+}
+
+.fee-group-toggle {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid var(--td-brand-color-3);
+  background: var(--td-brand-color-1);
+  color: var(--td-brand-color-7);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover { background: var(--td-brand-color-2); }
+  &.is-open {
+    background: var(--td-brand-color);
+    border-color: var(--td-brand-color);
+    color: #fff;
+  }
+}
+
+/* 展开区：紧贴当前行下方，缩进对齐业务列（复选框 46 + 序号 56） */
+.t-table__row--expanded > td { padding: 0 !important; }
+.fee-group-panel {
+  box-sizing: border-box;
+  /* 钉在横向滚动容器的左边缘：展开行是整表宽的 td，宽表滚到右边时
+     左半边（细项名称）本来会被推到屏幕外。 */
+  position: sticky;
+  left: 0;
+  padding: 10px 16px 12px 16px;
+  background: var(--td-bg-color-container-hover);
+  border-top: 1px solid var(--td-component-stroke);
+
+  .fgp-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+  }
+  .fgp-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
+  .fgp-cat { color: var(--td-text-color-placeholder); }
+  .fgp-sum { margin-left: auto; color: var(--td-text-color-secondary); }
+  .fgp-sum b { color: var(--td-error-color-7); font-size: 13px; }
+  .fgp-sum em { font-style: normal; color: var(--td-text-color-placeholder); }
+
+  .fgp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-default);
+    overflow: hidden;
+
+    th, td {
+      padding: 6px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--td-component-stroke);
+      color: var(--td-text-color-primary);
+      white-space: nowrap;
+    }
+    th {
+      background: var(--td-bg-color-secondarycontainer);
+      color: var(--td-text-color-secondary);
+      font-weight: 500;
+    }
+    .is-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .fgp-name { color: var(--td-text-color-primary); }
+    .fgp-method { color: var(--td-text-color-secondary); white-space: normal; }
+    .fgp-amount { font-weight: 600; }
+    tfoot td {
+      border-bottom: none;
+      background: var(--td-bg-color-secondarycontainer);
+      font-weight: 600;
+    }
+    .fgp-foot-label { text-align: right; color: var(--td-text-color-secondary); }
+  }
+}
 </style>
 
 <style>

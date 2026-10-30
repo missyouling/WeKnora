@@ -197,6 +197,13 @@ type FleetCategorySubSource struct {
 	// Label 来源字段在**原分类里的原始名称**（用户可能已在费用清单里改名，
 	// 保留原名才能在悬浮/抽屉里回溯「这条数据到底取自哪个字段」）。
 	Label string `json:"label,omitempty"`
+	// Members 大类汇总字段的下属字段名（仅 mode=fee_group）。
+	//
+	// 费用清单的租户分组有十几个市电分项，全平铺会让表头长到 31 列。产品口径是
+	// 「主表头只留大类、点 +/− 展开细项」，于是大类本身也是一条 sub（mode=fee_group），
+	// 它把成员字段折叠进自己名下：成员仍在 subs 里（保留启用/顺序/宽度），
+	// 但**不再各自出列**。空值 = 普通字段，与改造前完全一致。
+	Members []string `json:"members,omitempty"`
 }
 
 // FleetCategory 档案分类配置：scope=vehicle|driver|maintain

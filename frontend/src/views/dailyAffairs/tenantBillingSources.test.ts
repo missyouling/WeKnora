@@ -272,9 +272,16 @@ test('分摊子项按分组取值：工商业基金不得混入居民同名行',
 
 test('六同步：列表列按归一名称去重，重复力调子项不得追加成额外列', () => {
   const billing = read('TenantBilling.vue')
-  assert.match(billing, /const itemSignature = /, '必须有子项签名归一')
-  assert.match(billing, /if \(seenNames\.has\(itemSignature\(itemName\)\)\) continue/,
-    '追加列前必须按签名去重（否则表头比字段配置多列）')
-  assert.match(billing, /n\.includes\('功率因数调整'\) \? '功率因数调整电费' : n/,
+  const groups = read('billingFieldGroups.ts')
+  // 第 15 轮起去重规则收敛到 billingFieldGroups（列表与字段配置共用同一份签名）：
+  // 列表取值用 uniqueTenantItems，字段配置用 uniqueTenantItems(build/merge)。
+  assert.match(billing, /uniqueTenantItems\(tenantEnabledItems\.value, inSubs\)/,
+    '列表必须用共享签名去重子项（否则力调被算两次）')
+  assert.match(groups, /export function tenantItemSignature/, '缺少子项签名归一')
+  assert.match(groups, /n\.includes\('功率因数调整'\) \? '功率因数调整电费' : n/,
     '力调电费的三种写法必须折叠成同一签名')
+  assert.match(groups, /export function uniqueTenantItems/, '缺少共享去重函数')
+  // 字段配置也必须去重：否则配置里两行「功率因数调整」而表头只有一列
+  assert.match(groups, /uniqueTenantItems\(sortTenantItems\(items\)\.filter\(isTenantItemVisible\), preferNames\)/,
+    'mergeTenantGroupFields 必须按签名去重（优先保留 subs 已引用的那条）')
 })

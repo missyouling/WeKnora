@@ -110,7 +110,9 @@ test('核算 / 费用清单 / 光伏 三张表的列定义都由 subs 派生', (
   // 费用清单：内置列与跨分类引用列必须按**同一个 subs 主循环**产出（不许先内置后追加）。
   // 窗口放到 1200 字符：主循环里在 parseFieldSource 之前还有「合计应付 / 分摊子项」
   // 两个分支（多租户分组引入），但仍是同一个 for-of 循环、同一次下标遍历。
-  assert.match(tenant, /for \(const sub of subs\)[\s\S]{0,1200}?parseFieldSource\(sub\)/,
+  // 主循环里多了一段「大类折叠」分支（市场化购电费 / 系统运行费用 / 政府性基金及附加），
+  // 距 parseFieldSource 约 2KB，窗口给到 4000 字符。
+  assert.match(tenant, /for \(const row of collapseFeeGroups\(effective\)\)[\s\S]{0,4000}?parseFieldSource\(sub\)/,
     'TenantBilling 未按 subs 顺序派生列')
   assert.match(tenant, /loadEnergyCategorySubs\(/, 'TenantBilling 未拉取分类字段定义')
   assert.match(tenant, /fleet-categories-changed/, 'TenantBilling 未订阅设置变更事件')

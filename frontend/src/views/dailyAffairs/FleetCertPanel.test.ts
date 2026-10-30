@@ -294,3 +294,26 @@ test('复制后自动聚焦新字段名输入框', () => {
   // 输入框注册 ref，供 duplicateField 聚焦
   assert.match(panel, /setFieldInputRef\(/)
 })
+
+// 大类汇总字段（mode=fee_group）的 members 必须无损往返：
+// 它是「哪些细项属于这一列」的唯一依据，丢了就退化成「按大类名自动归并」，
+// 用户在字段配置里关掉的细项会被重新算进汇总列（金额变大）。
+test('费用清单大类汇总字段（fee_group + members）严格往返', () => {
+  const raw = [
+    {
+      name: 'grp_system', label: '系统运行费用', enabled: true, is_default: true,
+      data_type: 'number', width: 0, group: 'tenant:t1', group_label: '持睿汽车',
+      source: {
+        category: '市电账单', field: 'grp_system', mode: 'fee_group',
+        group: '(4)系统运行费', group_label: '(4)系统运行费', label: '系统运行费用',
+        members: ['item_(4)系统运行费|煤电容量电费', 'item_(4)系统运行费|燃气机组容量电费'],
+      },
+    },
+  ]
+  const round = toSubsPayload(fromSubsPayload(raw))
+  assert.deepEqual(round, raw, 'fee_group 字段往返必须逐字段一致（含 members）')
+  // 反向：members 不能在解析时被丢掉
+  const parsed = fromSubsPayload(raw)[0]
+  assert.equal(parsed.source?.mode, 'fee_group')
+  assert.deepEqual(parsed.source?.members, raw[0].source.members)
+})

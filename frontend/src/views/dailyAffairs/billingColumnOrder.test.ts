@@ -23,8 +23,9 @@ const read = (f: string) => readFileSync(join(here, f), 'utf8')
 test('列派生必须单循环遍历 subs：内置列与引用列按同一顺序产出', () => {
   const src = read('TenantBilling.vue')
   const fn = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const colStorageKey'))
-  // 只允许一个 for-of subs 主循环，且同时处理 source 与非 source
-  assert.match(fn, /for \(const sub of subs\)/)
+  // 只允许一个主循环（第 15 轮起先按大类折叠 subs，再逐个产出列），
+  // 且同时处理 source 与非 source
+  assert.match(fn, /for \(const row of collapseFeeGroups\(effective\)\)/)
   assert.match(fn, /const src = parseFieldSource\(sub\)/)
   assert.match(fn, /if \(src\) \{[\s\S]{0,700}?\} else \{/, '引用列与内置列必须在同一循环里分流')
   // 不允许再出现「extras 追加到 base 之后」的旧结构

@@ -144,6 +144,20 @@
                          取值仍绑定 source.category + source.group + source.field，
                          绝不回写原分类字段名（作用域严格隔离）。
                          徽标带分组路径：市电账单 8 个分组共用列名，只显示分类会误判来源。 -->
+                    <!-- 大类汇总字段：名称可改；右侧「细项 N」胶囊点开看下属分项。
+                         细项仍在 subs 里（各自的启用/改名照常保存），只是不再各占一行。 -->
+                    <div v-else-if="isFeeGroupField(fd)" class="fc-name-wrap fc-name-wrap--ref fc-name-wrap--group"
+                      :title="`${fieldLabelOf(fd)} · 市电账单 ${fd.source.group || ''} 下属细项的汇总列`">
+                      <span class="fc-ref-badge">汇总</span>
+                      <t-input :model-value="fieldEditOf(fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
+                        @update:model-value="(v: string) => setFieldEdit(fd, v)" />
+                      <span class="fc-child-badge" :class="{ open: isFeeGroupOpen(fd) }"
+                        :title="`${fieldLabelOf(fd)} · 点击${isFeeGroupOpen(fd) ? '收起' : '展开'}下属细项`"
+                        @click.stop="toggleFeeGroupOpen(fd)">
+                        <span class="fc-child-badge-num">{{ feeGroupMemberFields(fd).length }}</span>
+                        <t-icon name="chevron-right" size="12px" class="fc-child-caret" />
+                      </span>
+                    </div>
                     <div v-else-if="fd.source" class="fc-name-wrap fc-name-wrap--ref"
                       :title="`引用自「${sourcePathOf(fd)}」字段 ${fd.source.label || fd.source.field}`">
                       <span class="fc-ref-badge">{{ sourcePathOf(fd) }}</span>
@@ -199,6 +213,26 @@
                         </t-button>
                       </t-dropdown>
                     </t-popconfirm>
+                  </div>
+
+                  <!-- 大类下属细项：只读展示 + 可改名/可关「启用字段」。
+                       细项不出列（列表里点 + 展开），所以这里不提供宽度/默认表头。 -->
+                  <div v-if="isFeeGroupField(fd) && isFeeGroupOpen(fd)" class="fee-group-members">
+                    <div class="fgm-head">
+                      下属细项 {{ feeGroupMemberFields(fd).length }} 项 · 主表头只显示「{{ fieldLabelOf(fd) }}」合计，
+                      细项在列表里点单元格右侧 + 展开
+                    </div>
+                    <div v-for="(m, mi) in feeGroupMemberFields(fd)" :key="m.name" class="fgm-row">
+                      <span class="fgm-idx">{{ mi + 1 }}</span>
+                      <t-input :model-value="fieldEditOf(m)" size="small" class="fgm-name"
+                        @update:model-value="(v: string) => setFieldEdit(m, v)" />
+                      <span class="fgm-cat">{{ itemCategoryOfName(m.name) }}</span>
+                      <span class="fgm-switch">
+                        <t-switch :model-value="m.enabled !== false" size="small"
+                          @update:model-value="(v: any) => (m.enabled = !!v)" />
+                        <span class="fgm-switch-label">启用字段</span>
+                      </span>
+                    </div>
                   </div>
 
                   <!-- 明细子项内联展开区：紧贴 items 字段行，复用主字段行网格 -->
@@ -374,7 +408,9 @@ import {
   COST_LIST_CATEGORY,
   DEFAULT_GROUP_KEY,
   DEFAULT_GROUP_LABEL,
+  collapseFeeGroups,
   costListGroupLabel,
+  itemCategoryOfName,
   normalizeCostListDefaults,
   normalizeCostListGroup,
   tenantIdOfGroup,
@@ -648,7 +684,7 @@ function addRefField(payload: {
   key: string
   label: string
   dataType: string
-  source: { category: string; field: string; mode?: 'field' | 'fee_row'; group?: string; groupLabel?: string; label?: string }
+  source: { category: string; field: string; mode?: 'field' | 'fee_row' | 'fee_group'; group?: string; groupLabel?: string; label?: string; members?: string[] }
 }) {
   // name 必须含**来源分组**：市电账单 8 个分组都有 qty（「计费电量」在 7 个分组里
   // 各有一条），只用 分类_字段 会算出同一个 name，第二条起全被判成「已添加」
@@ -906,11 +942,61 @@ const subGroupTabs = computed(() => {
   return merged.sort((a, b) => (a.key === DEFAULT_GROUP_KEY ? -1 : b.key === DEFAULT_GROUP_KEY ? 1 : 0))
 })
 /** 当前分组下可见的字段（模板里 v-for 的源）。 */
+/**
+ * 当前分组里「要显示成行」的字段。
+ *
+ * 费用清单的租户分组把 (1)/(4)/(6) 的十几个分项收进了三个大类字段
+ * （市场化购电费 / 系统运行费用 / 政府性基金及附加）：大类自己占一行，
+ * 成员**不再各自成行**（点「细项 N」胶囊在下方展开，见 .fee-group-members）。
+ * 这样字段配置的行数、顺序与列表表头严格一致（六同步）。
+ */
 const fieldsVisible = computed(() => {
-  if (!activeSubGroup.value) return fieldsEditable.value
   const want = tabGroupKey(activeSubGroup.value)
-  return fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want)
+  const list = activeSubGroup.value
+    ? fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want)
+    : fieldsEditable.value
+  return collapseFeeGroups(list as any[]).map((row: any) => {
+    if (row.kind !== 'group') return row.sub
+    // 已保存的大类字段直接用原对象（改名/宽度/开关都写回 subs）
+    if (row.sub) return row.sub
+    // 还没保存过（刚升级的分组）：给一份可编辑的临时对象，保存后即落库
+    return {
+      name: row.name,
+      label: row.label,
+      enabled: true,
+      isDefault: true,
+      dataType: 'number',
+      width: 0,
+      group: want,
+      source: {
+        category: '市电账单',
+        field: row.name,
+        mode: 'fee_group',
+        group: row.spec.category,
+        label: row.label,
+        members: row.members.map((m: any) => m.name),
+      },
+    }
+  })
 })
+
+/** 大类汇总字段（市场化购电费 / 系统运行费用 / 政府性基金及附加）。 */
+const isFeeGroupField = (fd: any) => String(fd?.source?.mode || '') === 'fee_group'
+/** 大类下属细项（fieldsEditable 里的真实对象：改名/启用开关会写回 subs）。 */
+function feeGroupMemberFields(fd: any): any[] {
+  const names: string[] = Array.isArray(fd?.source?.members) ? fd.source.members : []
+  const want = tabGroupKey(activeSubGroup.value)
+  return names
+    .map((n) => fieldsEditable.value.find((f: any) => String(f.name || '').trim() === String(n).trim() && tabGroupKey(f.group) === want))
+    .filter(Boolean) as any[]
+}
+/** 大类字段的展开态（同一个面板只展开一个，避免把列表拉得很长）。 */
+const openFeeGroup = ref('')
+const isFeeGroupOpen = (fd: any) => openFeeGroup.value === String(fd?.name || '')
+function toggleFeeGroupOpen(fd: any) {
+  const n = String(fd?.name || '')
+  openFeeGroup.value = openFeeGroup.value === n ? '' : n
+}
 function subGroupLabelOf(key: string): string {
   const want = tabGroupKey(key)
   const hit = fieldsEditable.value.find((f: any) => tabGroupKey(f.group) === want)
@@ -2278,6 +2364,53 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       color: var(--td-text-color-secondary);
       background: var(--td-bg-color-component);
       font-variant-numeric: tabular-nums;
+    }
+  }
+
+  /* 大类汇总字段：字段名左侧徽标 + 右侧「细项 N」胶囊 */
+  .fc-name-wrap--group {
+    .fc-ref-badge { background: var(--td-brand-color-1); color: var(--td-brand-color-7); }
+  }
+
+  /* 大类下属细项：只展示名称/所属大类/启用开关，不占表头（列表里点 + 展开） */
+  .fee-group-members {
+    margin: -2px 0 6px 28px;
+    padding: 8px 10px 10px;
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-container-hover);
+
+    .fgm-head {
+      margin-bottom: 6px;
+      font-size: 12px;
+      line-height: 18px;
+      color: var(--td-text-color-secondary);
+    }
+    .fgm-row {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 200px 120px;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+    }
+    .fgm-idx {
+      font-size: 12px;
+      color: var(--td-text-color-placeholder);
+      text-align: center;
+    }
+    .fgm-cat {
+      font-size: 12px;
+      color: var(--td-text-color-placeholder);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fgm-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--td-text-color-secondary);
+      white-space: nowrap;
     }
   }
 

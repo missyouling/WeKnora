@@ -6,8 +6,14 @@ import {
   DEFAULT_GROUP_LABEL,
   TENANT_DERIVED_FIELDS,
   TENANT_TOTAL_FIELD,
+  TENANT_FEE_GROUPS,
   buildTenantGroupFields,
+  collapseFeeGroups,
   costListGroupLabel,
+  feeGroupSpecOfCategory,
+  feeGroupSpecOfSub,
+  itemCategoryOfName,
+  mergeFeeGroupFields,
   isTenantGroupKey,
   isTenantItemVisible,
   mergeTenantGroupFields,
@@ -100,9 +106,12 @@ test('buildTenantGroupFields：派生字段 → 分摊子项 → 合计应付，
   const names = fields.map((f) => f.name)
   // 派生字段按固定顺序打头
   assert.deepEqual(names.slice(0, TENANT_DERIVED_FIELDS.length), TENANT_DERIVED_FIELDS.map((d) => d.name))
-  // 子项按 sort 排序，被关掉「启用字段」的不进来
+  // 子项按 sort 排序，被关掉「启用字段」的不进来。
+  // (1) 市场化购电费 只有 1 个可见子项 → 仍折叠成大类列（成员留在 subs 里），
+  // 所以这里看到的是 `grp_market` 而不是 `item_(1)…|零售交易电费`。
   assert.deepEqual(names.slice(TENANT_DERIVED_FIELDS.length, -1), [
     'item_基本电费|基本电费',
+    'grp_market',
     'item_(1)市场化购电费|零售交易电费',
     'item_功率因素调整电费|功率因素调整电费',
   ])
@@ -262,4 +271,136 @@ test('tenantGroupNeedsSync：集合差异才提示，顺序/文案差异不提�
   )
   // 关掉一项
   assert.equal(tenantGroupNeedsSync(saved, items.map((it) => ({ ...it, field_enabled: false }))), true)
+})
+
+// ---- 第 15 轮：大类汇总列（市场化购电费 / 系统运行费用 / 政府性基金及附加）----
+
+const itemSub = (cat: string, name: string) => ({
+  name: `item_${cat}|${name}`,
+  label: name,
+  enabled: true,
+  isDefault: true,
+  dataType: 'number',
+  width: 0,
+  group: 'tenant:t1',
+})
+
+test('itemCategoryOfName：从子项字段名反解账单大类', () => {
+  assert.equal(itemCategoryOfName('item_(4)系统运行费|煤电容量电费'), '(4)系统运行费')
+  assert.equal(itemCategoryOfName('item_total'), '')
+  assert.equal(itemCategoryOfName('ind_fee'), '')
+})
+
+test('feeGroupSpecOfCategory：只认工商业基金，居民基金不归入', () => {
+  assert.equal(feeGroupSpecOfCategory('(1)市场化购电费')?.name, 'grp_market')
+  assert.equal(feeGroupSpecOfCategory('(4)系统运行费')?.name, 'grp_system')
+  assert.equal(feeGroupSpecOfCategory('(6)政府性基金及附加-工商业')?.name, 'grp_gov')
+  // 居民同名基金是另一套账，绝不能折叠进工商业汇总列
+  assert.equal(feeGroupSpecOfCategory('(6)政府性基金及附加-居民'), null)
+  assert.equal(feeGroupSpecOfCategory('基本电费'), null)
+})
+
+test('collapseFeeGroups：三大类成员被折叠，顺序按第一个成员的位置', () => {
+  const subs = [
+    { name: 'month', label: '账单周期' },
+    itemSub('(1)市场化购电费', '零售交易电费'),
+    itemSub('(1)市场化购电费', '零售损益分摊电费'),
+    { name: 'item_(2)上网环节线损费用|上网环节线损费用', label: '上网环节线损费用' },
+    itemSub('(4)系统运行费', '煤电容量电费'),
+    itemSub('(4)系统运行费', '燃气机组容量电费'),
+    itemSub('(6)政府性基金及附加-工商业', '农网还贷'),
+    { name: 'item_total', label: '合计应付' },
+  ]
+  const rows = collapseFeeGroups(subs)
+  assert.deepEqual(rows.map((r) => r.name), [
+    'month', 'grp_market', 'item_(2)上网环节线损费用|上网环节线损费用', 'grp_system', 'grp_gov', 'item_total',
+  ])
+  const market = rows.find((r) => r.name === 'grp_market') as any
+  assert.equal(market.kind, 'group')
+  assert.deepEqual(market.members.map((m: any) => m.name), [
+    'item_(1)市场化购电费|零售交易电费', 'item_(1)市场化购电费|零售损益分摊电费',
+  ])
+  const gov = rows.find((r) => r.name === 'grp_gov') as any
+  assert.equal(gov.spec.category, '(6)政府性基金及附加-工商业')
+})
+
+test('collapseFeeGroups：已有大类字段时用它的名称/位置，新成员自动并入末尾', () => {
+  const subs = [
+    { name: 'month', label: '账单周期' },
+    {
+      name: 'grp_system', label: '系统运行（自定义）', enabled: true, isDefault: true, dataType: 'number', width: 220,
+      source: { category: '市电账单', field: 'grp_system', mode: 'fee_group', group: '(4)系统运行费', members: ['item_(4)系统运行费|煤电容量电费'] },
+    },
+    itemSub('(4)系统运行费', '煤电容量电费'),
+    itemSub('(4)系统运行费', '新增的电费项'),
+  ]
+  const rows = collapseFeeGroups(subs)
+  assert.deepEqual(rows.map((r) => r.name), ['month', 'grp_system'])
+  const g = rows[1] as any
+  assert.equal(g.label, '系统运行（自定义）')
+  assert.deepEqual(g.members.map((m: any) => m.name), [
+    'item_(4)系统运行费|煤电容量电费', 'item_(4)系统运行费|新增的电费项',
+  ])
+})
+
+test('mergeFeeGroupFields：大类插在第一个成员之前，成员留在原位', () => {
+  const fields: any[] = [
+    { name: 'month', label: '账单周期' },
+    itemSub('(4)系统运行费', '煤电容量电费'),
+    itemSub('(4)系统运行费', '燃气机组容量电费'),
+    { name: 'item_total', label: '合计应付' },
+  ]
+  const out = mergeFeeGroupFields(fields, 'tenant:t1', '持睿汽车')
+  assert.deepEqual(out.map((f) => f.name), [
+    'month', 'grp_system', 'item_(4)系统运行费|煤电容量电费', 'item_(4)系统运行费|燃气机组容量电费', 'item_total',
+  ])
+  const g = out[1]
+  assert.equal(g.source?.mode, 'fee_group')
+  assert.deepEqual(g.source?.members, ['item_(4)系统运行费|煤电容量电费', 'item_(4)系统运行费|燃气机组容量电费'])
+})
+
+test('mergeFeeGroupFields：保留用户改过的大类名称与宽度，只刷新 members', () => {
+  const fields: any[] = [
+    {
+      name: 'grp_gov', label: '基金（改名）', enabled: false, isDefault: false, dataType: 'number', width: 180,
+      source: { category: '市电账单', field: 'grp_gov', mode: 'fee_group', group: '(6)政府性基金及附加-工商业', members: [] },
+    },
+    itemSub('(6)政府性基金及附加-工商业', '农网还贷'),
+    itemSub('(6)政府性基金及附加-工商业', '可再生能源附加'),
+  ]
+  const out = mergeFeeGroupFields(fields, 'tenant:t1', '持睿汽车')
+  const g: any = out.find((f) => f.name === 'grp_gov')
+  assert.equal(g.label, '基金（改名）')
+  assert.equal(g.width, 180)
+  assert.equal(g.enabled, false)
+  assert.deepEqual(g.source.members, [
+    'item_(6)政府性基金及附加-工商业|农网还贷',
+    'item_(6)政府性基金及附加-工商业|可再生能源附加',
+  ])
+})
+
+test('mergeFeeGroupFields：成员全被关掉时撤掉大类列（不留恒 0 空壳）', () => {
+  const fields: any[] = [
+    { name: 'grp_market', label: '市场化购电费', enabled: true, isDefault: true, dataType: 'number', width: 0,
+      source: { category: '市电账单', field: 'grp_market', mode: 'fee_group', group: '(1)市场化购电费', members: [] } },
+    { name: 'month', label: '账单周期' },
+  ]
+  const out = mergeFeeGroupFields(fields, 'tenant:t1', '持睿汽车')
+  assert.equal(out.some((f) => f.name === 'grp_market'), false)
+})
+
+test('buildTenantGroupFields：租户分组默认带出三个大类汇总列', () => {
+  const items = [
+    { item_key: '(1)市场化购电费|零售交易电费', item_name: '零售交易电费', field_enabled: true },
+    { item_key: '(4)系统运行费|煤电容量电费', item_name: '煤电容量电费', field_enabled: true },
+    { item_key: '(6)政府性基金及附加-工商业|农网还贷', item_name: '农网还贷', field_enabled: true },
+    { item_key: '(2)上网环节线损费用|上网环节线损费用', item_name: '上网环节线损费用', field_enabled: true },
+  ]
+  const fields = buildTenantGroupFields({ id: 't1', name: '持睿汽车' }, items)
+  const names = fields.map((f) => f.name)
+  for (const g of TENANT_FEE_GROUPS) assert.ok(names.includes(g.name), `缺少大类 ${g.name}`)
+  // 上网线损不属于三大类，仍然独立成列
+  assert.ok(names.includes('item_(2)上网环节线损费用|上网环节线损费用'))
+  // 合计应付仍在最后
+  assert.equal(names[names.length - 1], TENANT_TOTAL_FIELD)
 })

@@ -36,8 +36,8 @@ test('引用字段列由 subs 派生，且带 source 的列必须带上分组信
   const block = src.slice(src.indexOf('const activeColDefs = computed'), src.indexOf('const colStorageKey'))
   assert.match(block, /parseFieldSource/)
   assert.match(block, /enabled === false/)
-  // 列 key 用 subs.name（数据身份），label 用 subs.label（可被重命名覆盖）
-  assert.match(block, /const key = String\(sub\.name/)
+  // 列 key 用 subs.name（数据身份，折叠后是 row.name），label 用 subs.label
+  assert.match(block, /const key = row\.name/)
   assert.match(block, /label: label \|\| key/)
 })
 

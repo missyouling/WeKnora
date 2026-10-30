@@ -1152,10 +1152,6 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		return
 	}
 	ratio := round6(starTotal / billItem.TotalKwh)
-	billBase := round2(starTotal - dormKwh) // 非分时子项计费基数(星达分表-宿舍)
-	if billBase < 0 {
-		billBase = 0
-	}
 
 	// 3.1 分时电量分摊（计费电量 → 差额分摊 → 基准电量）
 	//
@@ -1239,9 +1235,16 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		if strings.Contains(cat.Name, "功率因数调整电费") || strings.Contains(cat.Name, "功率因素调整电费") {
 			continue
 		}
-		// 子项(name)开关控制:大类下同名子项可多行(分时时段)。
-		// 同一子项内:分时行按时段电量×时段单价;非分时行按计费基数×单价;
-		// 无电量无单价但带金额的固定项(返还类)按分摊比例计算。
+		// 子项开关控制（name 级）：同一大类下的同名子项可有多行（分时时段）。
+		//
+		// **统一口径**（与前端 tenantBillingSources / 打印清单 PDF 完全一致）：
+		//   · 分时子项   = 四段基准电量 × 该时段单价；
+		//   · 非分时子项 = 市电账单该子项的**原金额合计** × 分摊比例。
+		//
+		// 旧实现给非分时项用「(星达分表−宿舍) × 平段单价」，与前端「原金额 × 比例」
+		// 差着尾差（真机 2026-09：工业电费 101299.42，而各分项累加只有 100550），
+		// 于是「工业电费」列、分项之、PDF 应收合计是三个数。这里统一到后者，
+		// 三方从此只有一套算法。
 		for _, sg := range groupFeeItemsByName(cat.Rows) {
 			// 开关:新格式「大类|子项名」优先,兼容旧格式(子项名)
 			if !billingItemEnabled(enabled, cat.Name, sg.Name) {
@@ -1249,43 +1252,29 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 			}
 			// 子项大类严格跟随市电账单结构(零售损益分摊电费归属市场化购电费)
 			catName := cat.Name
-			fee := 0.0
-			hasPeriod := false
 			rateByPeriod := make(map[string]float64, 4)
-			flatSet := false
-			var flatRate float64
-			var fixedFee float64
 			seenPeriod := make(map[string]bool, 4)
+			rawTotal := 0.0
 			for _, r := range sg.Rows {
-				// 固定金额项(qty=0 且 rate=0 但 fee≠0,如返还类):按分摊比例承担
-				if r.Qty <= 0 && r.Rate <= 0 && r.Fee != 0 {
-					fixedFee += r.Fee
+				rawTotal += r.Fee
+				p := normalizePeriod(r.Period)
+				if p == "" {
 					continue
 				}
-				p := normalizePeriod(r.Period)
-				if p != "" {
-					seenPeriod[p] = true
-					rate := r.Rate
-					if rate <= 0 && r.Qty > 0 {
-						rate = r.Fee / r.Qty
-					}
-					if rate != 0 {
-						rateByPeriod[p] = rate
-					}
-				} else {
-					rate := r.Rate
-					if rate <= 0 && r.Qty > 0 {
-						rate = r.Fee / r.Qty
-					}
-					if rate != 0 {
-						flatRate = rate
-						flatSet = true
-					}
+				seenPeriod[p] = true
+				rate := r.Rate
+				if rate <= 0 && r.Qty > 0 {
+					rate = r.Fee / r.Qty
+				}
+				if rate != 0 {
+					rateByPeriod[p] = rate
 				}
 			}
+			rawTotal = round2(rawTotal)
+
 			// 真正分时子项:含尖峰/峰/谷任一时段(如零售交易、零售输配、偏差电费)
-			hasPeriod = seenPeriod["deep"] || seenPeriod["peak"] || seenPeriod["valley"]
-			if hasPeriod {
+			if seenPeriod["deep"] || seenPeriod["peak"] || seenPeriod["valley"] {
+				fee := 0.0
 				for _, p := range []string{"deep", "peak", "flat", "valley"} {
 					rate, ok := rateByPeriod[p]
 					if !ok || rate == 0 {
@@ -1300,44 +1289,22 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					sortNo++
 					fee += f
 				}
-				// 分时子项内的非分时行(若有):按计费基数
-				if flatSet && flatRate != 0 {
-					f := round2(billBase * flatRate)
-					items = append(items, types.BillingRecordItem{
-						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Category: catName, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
-					})
-					sortNo++
-					fee += f
-				}
-			} else if flatSet {
-				f := round2(billBase * flatRate)
-				items = append(items, types.BillingRecordItem{
-					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: catName, Name: sg.Name, Period: "", Qty: billBase, Rate: flatRate, Fee: f, Sort: sortNo, CreatedAt: now,
-				})
-				sortNo++
-				fee = f
-			} else if flatRate0, ok := rateByPeriod["flat"]; ok && flatRate0 != 0 {
-				// 仅"平"时段的子项(线损/系统运行/政府基金等):按计费基数×平段单价
-				f := round2(billBase * flatRate0)
-				items = append(items, types.BillingRecordItem{
-					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: catName, Name: sg.Name, Period: "平", Qty: billBase, Rate: flatRate0, Fee: f, Sort: sortNo, CreatedAt: now,
-				})
-				sortNo++
-				fee = f
+				industrialFee += fee
+				continue
 			}
-			if fixedFee != 0 {
-				f := round2(fixedFee * ratio)
+
+			// 非分时子项（含固定金额的返还类）：原账单金额 × 分摊比例
+			if rawTotal != 0 {
+				f := round2(rawTotal * ratio)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: catName, Name: sg.Name, Period: "", Qty: 0, Rate: ratio, Fee: f, Sort: sortNo, CreatedAt: now,
+					Category: catName, Name: sg.Name, Period: "",
+					// Qty/Rate 仅为「可反算」而写：qty × rate = fee（与基本电费同构）
+					Qty: ratio, Rate: rawTotal, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
-				fee += f
+				industrialFee += f
 			}
-			industrialFee += fee
 		}
 	}
 

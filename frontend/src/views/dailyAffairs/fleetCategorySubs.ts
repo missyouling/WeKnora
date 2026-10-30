@@ -37,7 +37,8 @@ export interface EditableSubField {
 export interface FieldSourceRef {
   category: string
   field: string
-  mode?: 'field' | 'fee_row'
+  /** fee_group = 大类汇总列（把 members 折叠成一列，点 +/− 展开细项）。 */
+  mode?: 'field' | 'fee_row' | 'fee_group'
   /**
    * 来源字段在**原分类里所属的业务分组**。
    *
@@ -50,6 +51,8 @@ export interface FieldSourceRef {
   groupLabel?: string
   /** 来源字段在**原分类里的原始名称**（费用清单里可能已改名，回溯要用它）。 */
   label?: string
+  /** 大类汇总列的下属字段名（仅 mode=fee_group）；顺序即展开后的明细顺序。 */
+  members?: string[]
 }
 
 /** 分类字段（前端编辑态形态）。 */
@@ -96,10 +99,11 @@ export interface SubPayload {
   source?: {
     category: string
     field: string
-    mode?: 'field' | 'fee_row'
+    mode?: 'field' | 'fee_row' | 'fee_group'
     group?: string
     group_label?: string
     label?: string
+    members?: string[]
   }
   sub_fields?: Array<{
     key: string
@@ -303,10 +307,17 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
       const category = String(srcRaw.category ?? '').trim()
       const fieldName = String(srcRaw.field ?? '').trim()
       if (category && fieldName) {
+        const srcMode = String(srcRaw.mode ?? '').trim()
         field.source = {
           category,
           field: fieldName,
-          mode: srcRaw.mode === 'fee_row' ? 'fee_row' : 'field',
+          mode: srcMode === 'fee_row' ? 'fee_row' : srcMode === 'fee_group' ? 'fee_group' : 'field',
+        }
+        if (field.source.mode === 'fee_group') {
+          const members = Array.isArray(srcRaw.members)
+            ? (srcRaw.members as unknown[]).map((m) => String(m ?? '').trim()).filter(Boolean)
+            : []
+          if (members.length) field.source.members = members
         }
         // 分组层级：市电账单 8 个分组共用列名，缺了它候选项无法区分、取值也定位不到。
         const srcGroup = String(srcRaw.group ?? srcRaw.groupLabel ?? '').trim()
@@ -351,10 +362,15 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
     if (label && label !== name) payload.label = label
     if (f.builtin) payload.builtin = true
     if (f.source && f.source.category && f.source.field) {
+      const srcMode = f.source.mode === 'fee_row' ? 'fee_row' : f.source.mode === 'fee_group' ? 'fee_group' : 'field'
       payload.source = {
         category: f.source.category,
         field: f.source.field,
-        mode: f.source.mode === 'fee_row' ? 'fee_row' : 'field',
+        mode: srcMode,
+      }
+      if (srcMode === 'fee_group') {
+        const members = (f.source.members || []).map((m) => String(m ?? '').trim()).filter(Boolean)
+        if (members.length) payload.source.members = members
       }
       const srcGroup = String(f.source.group ?? '').trim()
       if (srcGroup) {
