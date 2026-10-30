@@ -217,6 +217,8 @@ import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, applySubsToColumns, type EnergySub } from './energyViewColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import MeterRecordDrawer from './MeterRecordDrawer.vue'
+// 行内展开徽标的唯一样式源（与「费用清单」共用，避免各写一套）
+import './styles/row-expand-toggle.css'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
@@ -1635,32 +1637,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.row-expand-toggle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  margin-left: 6px;
-  /* 圆形徽标：方形带边框的样式会和行首复选框混淆 */
-  border: none;
-  border-radius: 50%;
-  background: var(--td-bg-color-secondarycontainer);
-  color: var(--td-text-color-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  user-select: none;
-
-  &:hover { background: var(--td-brand-color-light); color: var(--td-brand-color); }
-  &.is-open {
-    background: var(--td-brand-color);
-    color: var(--td-text-color-anti);
-  }
-}
+/* 行内展开徽标（.row-expand-toggle）样式在 styles/row-expand-toggle.css，
+   与「费用清单」共用同一份，避免两边各写一套（曾出现 16px / 方形绿框两套）。 */
 
 /* 分时明细：与主表共用列宽的展开子表（colgroup 由表头实测宽度驱动） */
 .expand-inner--aligned {

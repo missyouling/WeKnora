@@ -129,7 +129,7 @@ test('表头宽度下传（改宽度要真的生效）', () => {
   // 旧「总和 ≤1500 才生效」的预算守卫已删除——它会把用户填的宽度整体作废。
   assert.match(meter, /width: colWidthOf\(c\.width/, '核算表必须按 subs.width 渲染')
   assert.match(solar, /width: colWidthOf\(c\.width/, '光伏必须按 subs.width 渲染')
-  assert.match(tenant, /cfg > 0 \? Math\.min\(Math\.max\(cfg, 60\), 400\) : undefined/, '费用清单必须按 subs.width 渲染')
+  assert.match(tenant, /width: Math\.min\(400, Math\.max\(cfg > 0 \? cfg : 0, minW\)\)/, '费用清单必须按 subs.width 渲染（带表头最小宽保底）')
   assert.doesNotMatch(tenant, /const budget = 1500/, '预算守卫必须删除')
 })
 

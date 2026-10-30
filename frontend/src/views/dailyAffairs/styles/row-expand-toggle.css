@@ -1,0 +1,46 @@
+/* 「行内展开」圆形徽标的**唯一**样式源。
+ *
+ * 使用方：
+ *   · 电费核算（UtilityMeterTab）—— 分时电表行展开四时段明细；
+ *   · 费用清单（TenantBilling）  —— 大类汇总列展开下属细项。
+ *
+ * 为什么抽成独立 css 而不是各写一份 scoped：
+ *   费用清单的按钮由 renderCell 用 h() 生成，vnode 带的是 t-table 的 scopeId，
+ *   父组件的 scoped 规则匹配不到它（表现为「点了没样式的裸加号」）。
+ *   统一放全局后两边像素级一致，也不会再各改各的。
+ *
+ * 视觉：18×18 正圆；收起态浅灰底 + 次级文字色；展开态实心品牌绿 + 白色 −。
+ */
+
+.row-expand-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 6px;
+  /* 圆形徽标：方形带边框的样式会和行首复选框混淆 */
+  border: none;
+  border-radius: 50%;
+  background: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.row-expand-toggle:hover {
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+}
+
+.row-expand-toggle.is-open {
+  background: var(--td-brand-color);
+  color: var(--td-text-color-anti);
+}

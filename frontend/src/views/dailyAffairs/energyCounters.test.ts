@@ -58,8 +58,10 @@ test('禁止任何宽度预算守卫吞掉用户配置', () => {
 })
 
 test('subs.width>0 必须精确生效（clamp 60~400），0 才自适应', () => {
-  // 费用清单：直接 clamp 后写进 TDesign 列
-  assert.match(tenant, /cfg > 0 \? Math\.min\(Math\.max\(cfg, 60\), 400\) : undefined/, '费用清单必须按配置宽度渲染')
+  // 费用清单：用户配置宽度生效（clamp 400 上限），但不得小于表头文字所需宽度
+  // —— 否则「上网环节线损费用」会被截成「上网环节线...」（第 16 轮）。
+  assert.match(tenant, /width: Math\.min\(400, Math\.max\(cfg > 0 \? cfg : 0, minW\)\)/, '费用清单必须按配置宽度渲染（带表头最小宽保底）')
+  assert.match(tenant, /function minColumnWidth\(c: ColDef\): number/, '必须有表头最小宽估算')
   // 三张表/光伏：走 colWidthOf（width>0 固定，dataType textarea 走中等宽，其余自适应）
   assert.match(meter, /colWidthOf\(c\.width/, '核算表列宽必须走 colWidthOf')
   assert.match(solar, /colWidthOf\(c\.width/, '光伏列宽必须走 colWidthOf')

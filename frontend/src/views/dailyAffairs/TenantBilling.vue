@@ -52,57 +52,46 @@
         @expand-change="onExpandChange"
       >
         <!-- 大类明细（手风琴）：点单元格的 + 在**当前行下方**展开，
-             同时只允许展开一个大类（toggleFeeGroup 里保证互斥）。 -->
+             同时只允许展开一个大类（toggleFeeGroup 里保证互斥）。
+             视觉 100% 对齐「电费核算」的分时明细：浅灰表头行 + 明细行 + 底部加粗合计行，
+             没有标题横幅、没有卡片边框/阴影（旧版那套是另起的样式，已废弃）。 -->
         <template #expanded-row="{ row }">
           <div v-if="expandedGroupOfRow(row)" class="fee-group-panel"
             :style="groupPanelWidth ? { width: groupPanelWidth + 'px' } : undefined">
-            <div class="fgp-head">
-              <span class="fgp-title">{{ expandedGroupOfRow(row).label }}</span>
-              <span class="fgp-cat">{{ expandedGroupOfRow(row).category }}</span>
-              <span class="fgp-sum">
-                小计 <b>{{ fmtMoney(expandedGroupOfRow(row).total) }}</b> 元
-                <em>（{{ expandedGroupOfRow(row).rows.length }} 个细项之和，与单元格同源）</em>
-              </span>
-            </div>
-            <table class="fgp-table">
+            <table class="fee-group-table">
               <colgroup>
-                <col style="width: 30%" />
-                <col style="width: 15%" />
-                <col style="width: 12%" />
                 <col style="width: 26%" />
-                <col style="width: 17%" />
+                <col style="width: 8%" />
+                <col style="width: 15%" />
+                <col style="width: 14%" />
+                <col style="width: 21%" />
+                <col style="width: 16%" />
               </colgroup>
-              <thead>
-                <tr>
-                  <th>细项名称</th>
-                  <th class="is-num">账单原值(元)</th>
-                  <th class="is-num">分摊比例</th>
-                  <th>计算方式</th>
-                  <th class="is-num">分摊后金额(元)</th>
-                </tr>
-              </thead>
               <tbody>
+                <tr class="fg-head-row">
+                  <td class="fg-cell">细项名称</td>
+                  <td class="fg-cell">时段</td>
+                  <td class="fg-cell fg-num">账单原值/计费数量</td>
+                  <td class="fg-cell fg-num">单价/分摊比例</td>
+                  <td class="fg-cell">计算方式</td>
+                  <td class="fg-cell fg-num">分摊后金额(元)</td>
+                </tr>
                 <tr v-for="d in expandedGroupOfRow(row).rows" :key="d.key">
-                  <td class="fgp-name">{{ d.label }}</td>
-                  <td class="is-num">{{ d.raw == null ? '—' : fmtMoney(d.raw) }}</td>
-                  <td class="is-num">{{ d.raw == null ? '—' : fmtRatio(d.ratio) }}</td>
-                  <td class="fgp-method">{{ d.method }}</td>
-                  <td class="is-num fgp-amount">{{ fmtMoney(d.value) }}</td>
+                  <td class="fg-cell">{{ d.label }}</td>
+                  <td class="fg-cell">{{ d.period }}</td>
+                  <td class="fg-cell fg-num">{{ d.qty != null ? fmtKwh(d.qty) : fmtMoney(d.raw) }}</td>
+                  <td class="fg-cell fg-num">{{ d.price != null ? d.price : fmtRatio(d.ratio) }}</td>
+                  <td class="fg-cell">{{ d.method }}</td>
+                  <td class="fg-cell fg-num">{{ fmtMoney(d.value) }}</td>
+                </tr>
+                <tr class="fg-total-row">
+                  <td class="fg-cell" colspan="5">合计</td>
+                  <td class="fg-cell fg-num">{{ fmtMoney(expandedGroupOfRow(row).total) }}</td>
                 </tr>
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colspan="4" class="fgp-foot-label">小计</td>
-                  <td class="is-num fgp-amount">{{ fmtMoney(expandedGroupOfRow(row).total) }}</td>
-                </tr>
-              </tfoot>
             </table>
           </div>
         </template>
-        <!-- 单元格统一由 tableColumns 的 cell 渲染器输出（含数值对齐与悬浮说明）。
-             不再单独写 #month / #ratio / #ind_price 具名插槽：
-             插槽与 cell 渲染器会打架（TDesign 优先用 cell），
-             两套并存时格式化口径容易漂移（一处 fmtRatio、一处裸值）。 -->
         <template #empty>
           <EmptyState v-if="!loading" title="暂无数据" icon="search-error" compact />
         </template>
@@ -211,6 +200,8 @@ import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import BillingCellTip from './BillingCellTip.vue'
+// 行内展开徽标的唯一样式源（与「电费核算」共用；h() 生成的节点拿不到 scoped 样式）
+import './styles/row-expand-toggle.css'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
@@ -371,14 +362,20 @@ const activeColDefs = computed<ColDef[]>(() => {
   // 否则业主表头会混进租户的分摊子项、租户表头会混进默认分组的引用字段。
   const groupKey = isOwnerView.value ? DEFAULT_GROUP_KEY : tenantGroupKey(activeTenantId.value)
   const subs = subsOfGroup(allSubs, groupKey)
-  const itemByKey = new Map(tenantItemsUnique.value.map((it: any) => [tenantItemColKey(it), it]))
+  // 业主（默认分组）视角**不存在**分摊子项：`tenantItems` 是「上一家租户」的残留
+  // （activeTenantId 不会因为切回业主而被清空），拿它去补列会在重庆星达表头右侧
+  // 长出 7 列空值 + 孤立的 +/−（真机截图）。这里直接按视角切断。
+  const ownerView = isOwnerView.value
+  const itemByKey = ownerView
+    ? new Map<string, any>()
+    : new Map(tenantItemsUnique.value.map((it: any) => [tenantItemColKey(it), it]))
 
   // 清单设置里新开启、字段定义还没保存过的子项：补在「合计应付」之前。
   // 必须走同一套 collapseFeeGroups —— 否则它们会单独出一列，而字段配置把
   // 它们收进了大类，两端列数就对不上（六同步违规）。
   const known = new Set(subs.map((s: any) => String(s?.name || '').trim()))
   const extra: any[] = []
-  for (const it of tenantItemsUnique.value) {
+  for (const it of ownerView ? [] : tenantItemsUnique.value) {
     const key = tenantItemColKey(it)
     if (!key || known.has(key)) continue
     extra.push({
@@ -527,7 +524,9 @@ const activeColDefs = computed<ColDef[]>(() => {
  */
 async function loadTenantItems() {
   const id = activeTenantId.value
-  if (!id) { tenantItems.value = []; return }
+  // 业主视角不需要分摊子项：切回重庆星达必须清空，否则上一家租户的
+  // 子项会留在内存里被 activeColDefs 当成「新开字段」补到业主表头。
+  if (!id || isOwnerView.value) { tenantItems.value = []; syncColumnKeys(); return }
   try {
     const res: any = await getBillingTenant(id)
     const items: any[] = res?.data?.items || []
@@ -632,6 +631,30 @@ const syncColumnKeys = () => {
 syncColumnKeys()
 watch(useUnit, syncColumnKeys)
 const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKeys.value.includes(c.key)))
+/**
+ * 列的最小宽度（px）。
+ *
+ * 两个约束取大：
+ *   ① 表头文字必须完整显示 —— 14px 中文字按 15px/字 估，加左右 padding；
+ *   ② 单元格内容不能被截断 —— 数字按 8px/字符 估（等宽数字），加 padding。
+ * 大类汇总列再补 26px：单元格里除了金额还有 18px 的 +/− 徽标。
+ *
+ * 为什么要算而不是写死：字段名由用户在「字段定义」里随便改，
+ * 写死宽度只会在下一次改名后再截断一次。
+ */
+function minColumnWidth(c: ColDef): number {
+  const label = String(c.label || '')
+  // 表头：t-size-s 约 14px，中文按 15px/字（含字距）估，左右 padding 各 16
+  let need = label.length * 15 + 34
+  const extra = c.feeGroup ? 26 : 0
+  for (const r of displayRows.value) {
+    const t = cellText(c.key, r)
+    if (!t) continue
+    need = Math.max(need, String(t).length * 8 + 26 + extra)
+  }
+  return Math.min(400, Math.max(96, Math.round(need)))
+}
+
 const tableColumns = computed(() => {
   // 与发票管理一致：[复选框] → [序号] → 业务列
   const cols: any[] = [
@@ -644,11 +667,15 @@ const tableColumns = computed(() => {
   // 和其它宽表一样启用横向滚动即可，没有任何理由静默吞掉用户配置。）
   for (const c of visibleColDefs.value) {
     const cfg = Number((c as any).width) || 0
+    const minW = minColumnWidth(c)
     cols.push({
       colKey: c.key,
       title: c.label,
       ellipsis: true,
-      width: cfg > 0 ? Math.min(Math.max(cfg, 60), 400) : undefined,
+      // 用户配的宽度可以更大，但**不能小于表头文字所需宽度**：
+      // 「上网环节线损费用 / 政府性基金及附加 / 功率因素调整电费」在 100px 里
+      // 会被 TDesign 截成「上网环节线...」，用户分不清列（真机截图）。
+      width: Math.min(400, Math.max(cfg > 0 ? cfg : 0, minW)),
       // 数值单元格悬停显示「计算方式 / 数据来源」。
       // 只对算得出来的列挂提示：文本列（备注等）没有口径可讲，挂空提示反而碍事。
       cell: (h: any, { row }: any) => renderCell(h, c.key, row),
@@ -680,7 +707,9 @@ function renderCell(h: any, key: string, row: any) {
         'data-tip': tip || '',
       }, fmtMoney(row?.[key])),
       h('button', {
-        class: ['fee-group-toggle', open ? 'is-open' : ''],
+        // 与「电费核算」共用 .row-expand-toggle（styles/row-expand-toggle.css），
+        // 圆形徽标：浅灰底 + 深色 +，展开后实心品牌绿底 + 白色 −。
+        class: ['row-expand-toggle', open ? 'is-open' : ''],
         type: 'button',
         title: open ? `收起「${col.feeGroup!.label}」细项` : `展开「${col.feeGroup!.label}」细项`,
         onClick: (e: any) => {
@@ -720,8 +749,15 @@ const feeGroupColMap = computed(() => {
  */
 const groupPanelWidth = ref(0)
 function measureGroupPanel() {
-  const el = document.querySelector('.tenant-list-scroll') as HTMLElement | null
-  if (el && el.clientWidth > 0) groupPanelWidth.value = Math.max(360, el.clientWidth - 4)
+  // 真正的横向滚动容器是 TDesign 的 `.t-table__content`（overflow-x:auto），
+  // 不是外层的 .tenant-list-scroll（那一层 overflow 被共享样式收掉了，
+  // 拿它量出来的宽度和可视区并不一致）。sticky 的参照系也是它。
+  const el = document.querySelector('.t-table__content') as HTMLElement | null
+  if (!el || el.clientWidth <= 0) return
+  // 留 24px 余量：sticky 元素不能溢出其包含块（展开行 td = 整表宽），
+  // 面板与容器等宽时，滚到最右会被 td 右缘顶回来几像素（真机 22px），
+  // 细项名称列因此被裁掉一截。收窄 24px 后左缘恒定贴住可视区。
+  groupPanelWidth.value = Math.max(360, el.clientWidth - 24)
 }
 
 function toggleFeeGroup(row: any, key: string) {
@@ -1271,7 +1307,9 @@ const buildRows = () => {
       // 每个子项的分摊后金额 + 原账单金额（大类展开明细要按成员逐条列示）
       const itemValue = new Map<string, number>()
       const itemRaw = new Map<string, number>()
-      const itemTimed = new Map<string, boolean>()
+      // 分时项的四段明细（尖峰/峰/平/谷）：展开大类时要逐段列出来，
+      // 只给一个合计用户没法核对「54,422.79 是怎么来的」。
+      const itemPeriods = new Map<string, Array<{ period: string; qty: number; rate: number; fee: number }>>()
       for (const it of tenantItemsUnique.value) {
         const participating = it.enabled !== false
         const key = String(it?.source_key || it?.item_name || '').trim()
@@ -1285,8 +1323,8 @@ const buildRows = () => {
         const ckey = tenantItemColKey(it)
         base[ckey] = v
         itemValue.set(ckey, v)
-        itemTimed.set(ckey, !!timed)
         if (timed) {
+          itemPeriods.set(ckey, timed.periods)
           itemTips[tenantItemColKey(it)] = tenantTimedTip({
             itemName: String(it.item_name || key),
             sourceCategory: it.source_category || '市电账单',
@@ -1325,21 +1363,42 @@ const buildRows = () => {
         for (const m of c.feeGroup.members) {
           const v = Number(itemValue.get(m.key)) || 0
           sum += v
-          const timed = !!itemTimed.get(m.key)
+          const periods = itemPeriods.get(m.key) || []
+          if (periods.length) {
+            // 分时项：尖峰 / 峰 / 平 / 谷 各一行（电量 × 单价 = 金额）。
+            // 旧实现只给一行「分时：四段基准电量 × 时段单价」+ 合计，
+            // 用户看不到每一段的电量与单价，等于没明细。
+            for (const pd of periods) {
+              rows.push({
+                key: `${m.key}#${pd.period}`,
+                label: m.label,
+                period: pd.period,
+                qty: Math.round(pd.qty * 100) / 100,
+                price: pd.rate,
+                ratio: null,
+                raw: null,
+                method: '基准电量 × 时段单价',
+                value: Math.round(pd.fee * 100) / 100,
+              })
+            }
+            continue
+          }
           rows.push({
             key: m.key,
             label: m.label,
-            // 账单原值：分时项在账单里是四段行，这里给四段金额合计（仅供对账参考）
-            raw: timed ? null : (Number(itemRaw.get(m.key)) || 0),
+            period: '—',
+            qty: null,
+            price: null,
+            raw: Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
             ratio,
             // 计算方式严格区分两种口径，与悬浮窗一致
-            method: timed ? '分时：四段基准电量 × 时段单价' : '账单原值 × 分摊比例',
+            method: '账单原值 × 分摊比例',
             value: Math.round(v * 100) / 100,
           })
         }
         base[c.key] = Math.round(sum * 100) / 100
         itemTips[c.key] = [
-          `「${c.feeGroup.label}」= 下属 ${rows.length} 个细项之和（${c.feeGroup.category}）`,
+          `「${c.feeGroup.label}」= 下属 ${c.feeGroup.members.length} 个细项之和（${c.feeGroup.category}）`,
           ...rows.map((r) => `  ${r.label}：${fmtMoney(r.value)}`),
           `合计 = ${fmtMoney(base[c.key])} 元`,
           '点单元格右侧 + 可展开明细（表头只留大类，细项配置在「设置 → 字段定义」）',
@@ -2891,88 +2950,51 @@ onBeforeUnmount(() => {
   }
 }
 
-.fee-group-toggle {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border-radius: 4px;
-  border: 1px solid var(--td-brand-color-3);
-  background: var(--td-brand-color-1);
-  color: var(--td-brand-color-7);
-  font-size: 12px;
-  line-height: 1;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
-
-  &:hover { background: var(--td-brand-color-2); }
-  &.is-open {
-    background: var(--td-brand-color);
-    border-color: var(--td-brand-color);
-    color: #fff;
-  }
-}
-
-/* 展开区：紧贴当前行下方，缩进对齐业务列（复选框 46 + 序号 56） */
+/* 展开区：与「电费核算」的分时明细完全同一套视觉 ——
+   浅灰表头行 + 明细行（行间 1px 分隔）+ 底部加粗合计行；
+   没有标题横幅、没有卡片边框/阴影。
+   宽度与 left:0 由 groupPanelWidth / sticky 保证：展开行是整表宽的 td，
+   宽表横向滚动时若不钉左，细项名称会跑到屏幕外（真机截图「只有金额没有名称」）。 */
 .t-table__row--expanded > td { padding: 0 !important; }
+
 .fee-group-panel {
   box-sizing: border-box;
-  /* 钉在横向滚动容器的左边缘：展开行是整表宽的 td，宽表滚到右边时
-     左半边（细项名称）本来会被推到屏幕外。 */
   position: sticky;
   left: 0;
-  padding: 10px 16px 12px 16px;
   background: var(--td-bg-color-container-hover);
-  border-top: 1px solid var(--td-component-stroke);
+  border-bottom: 1px solid var(--td-component-stroke);
+  overflow: hidden;
+}
 
-  .fgp-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 8px;
-    font-size: 12px;
-    color: var(--td-text-color-secondary);
-  }
-  .fgp-title { font-size: 13px; font-weight: 600; color: var(--td-text-color-primary); }
-  .fgp-cat { color: var(--td-text-color-placeholder); }
-  .fgp-sum { margin-left: auto; color: var(--td-text-color-secondary); }
-  .fgp-sum b { color: var(--td-error-color-7); font-size: 13px; }
-  .fgp-sum em { font-style: normal; color: var(--td-text-color-placeholder); }
+.fee-group-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
 
-  .fgp-table {
-    width: 100%;
-    border-collapse: collapse;
+  .fg-cell {
+    /* 与 TDesign t-size-s 单元格同 padding：文字左缘与主表同列严格对齐 */
+    padding: 6px var(--td-comp-paddingLR-s);
+    height: 18px;
     font-size: 12px;
-    background: var(--td-bg-color-container);
-    border-radius: var(--td-radius-default);
+    line-height: 18px;
     overflow: hidden;
-
-    th, td {
-      padding: 6px 10px;
-      text-align: left;
-      border-bottom: 1px solid var(--td-component-stroke);
-      color: var(--td-text-color-primary);
-      white-space: nowrap;
-    }
-    th {
-      background: var(--td-bg-color-secondarycontainer);
-      color: var(--td-text-color-secondary);
-      font-weight: 500;
-    }
-    .is-num { text-align: right; font-variant-numeric: tabular-nums; }
-    .fgp-name { color: var(--td-text-color-primary); }
-    .fgp-method { color: var(--td-text-color-secondary); white-space: normal; }
-    .fgp-amount { font-weight: 600; }
-    tfoot td {
-      border-bottom: none;
-      background: var(--td-bg-color-secondarycontainer);
-      font-weight: 600;
-    }
-    .fgp-foot-label { text-align: right; color: var(--td-text-color-secondary); }
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fg-head-row .fg-cell {
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-secondarycontainer);
+    font-weight: 600;
+  }
+  .fg-num {
+    font-family: var(--app-font-family);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  tr + tr .fg-cell { border-top: 1px solid var(--td-component-stroke); }
+  .fg-total-row .fg-cell {
+    font-weight: 600;
+    background: var(--td-bg-color-container);
   }
 }
 </style>

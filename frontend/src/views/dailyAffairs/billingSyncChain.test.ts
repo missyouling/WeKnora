@@ -30,7 +30,8 @@ test('租户视角不得丢弃跨分类引用字段（同一循环产出，不�
   // 业主视角直接返回主循环产出；租户视角在同一个 out 上追加子项与合计应付。
   assert.match(fn, /if \(isOwnerView\.value\) return out/)
   // 分摊子项（去重后）补进同一个 out：字段定义里没保存过的新子项也要能出列
-  assert.match(fn, /for \(const it of tenantItemsUnique\.value\)/)
+  assert.match(fn, /for \(const it of ownerView \? \[\] : tenantItemsUnique\.value\)/,
+    '租户子项只在租户视角补列（业主视角补了会多出空列）')
   assert.match(fn, /out\.push\(\{\s*key,/, '分摊子项必须追加进同一个 out（不是另起一份列集）')
 })
 

@@ -157,7 +157,8 @@ test('分摊子项面板必须是 6 列：名称/来源/参与分摊/宽度/启�
 test('列宽 CSS 由子项 width 驱动（0=自适应）', () => {
   const src = read('TenantBilling.vue')
   assert.match(src, /width:\s*Number\(it\.width\) \|\| undefined/)
-  assert.match(src, /cfg > 0 \? Math\.min\(Math\.max\(cfg, 60\), 400\) : undefined/)
+  // 第 16 轮：用户配置只允许更大，不允许小于表头文字所需宽度（避免表头被截断）
+  assert.match(src, /width: Math\.min\(400, Math\.max\(cfg > 0 \? cfg : 0, minW\)\)/)
 })
 
 // ---- 后端：field_enabled 列与回填 ----
