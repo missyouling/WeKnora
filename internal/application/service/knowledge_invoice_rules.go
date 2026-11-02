@@ -19,6 +19,12 @@ const (
 	InvoiceRuleKindFlat          InvoiceRuleKind = "flat"
 	// InvoiceRuleKindHTMLTable 覆盖 MinerU HTML 表格版汇总单（第 23 轮 issue 4）。
 	InvoiceRuleKindHTMLTable InvoiceRuleKind = "html_table"
+	// InvoiceRuleKindFuel 覆盖成品油增值税专用发票（第 24 轮任务二）。
+	//
+	// 独立成一条规则而不是扩展 HTMLTable：成品油票的明细是 9 列固定列序
+	// （项目名称/规格型号/单位/数量/单价/金额/税率/税额）且有折扣行与跨行括号，
+	// 与通行费票（车牌/车型/通行日期）的列语义完全不同。
+	InvoiceRuleKindFuel InvoiceRuleKind = "fuel"
 )
 
 // InvoiceRuleOutcome 是三套确定性前置规则的统一产物。
@@ -78,6 +84,18 @@ func ExtractInvoiceByRules(chunks []*types.Chunk, docHint string) InvoiceRuleOut
 	if !out.Hit {
 		if res, ok := ExtractInvoicesByFlatLayoutFromChunks(chunks); ok {
 			out.Result, out.Hit, out.Kind = res, true, InvoiceRuleKindFlat
+		}
+	}
+	// 成品油专票（第 24 轮任务二）：**必须排在三套通用规则之前**。
+	//
+	// 理由：成品油票的明细表是 9 列固定列序 + 折扣行 + 跨行括号，
+	// 三套通用规则（Line/MarkdownTable/FlatLayout）按「名称在前、金额在后」
+	// 猜列位，会把 `车用柴油(VI)` 当规格型号、`0#柴油` 当单位（真机列错位），
+	// 且折扣行会被当成「名称=负数金额」的垃圾行。
+	// 它们即使「命中」也是错的结果，比不命中更糟 —— 所以本规则优先。
+	if !out.Hit {
+		if res, ok := ExtractInvoicesByFuelRulesFromChunks(chunks); ok {
+			out.Result, out.Hit, out.Kind = res, true, InvoiceRuleKindFuel
 		}
 	}
 	// HTML 表格版（MinerU 新输出）放最后：它只认「发票号码：」段落 + HTML 数据行，

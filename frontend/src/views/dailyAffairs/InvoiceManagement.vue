@@ -385,6 +385,7 @@ import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate } from './businessFormat'
 import { useBusinessListSync } from './useBusinessListSync'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import { filterRowsByPendingFiles } from './invoicePendingGate'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
@@ -1199,7 +1200,22 @@ const numOrUndef = (v: any): number | undefined => {
 // 过滤/搜索/去重已由后端发票级接口完成，前端直接使用返回的分页数据。
 // 「进行中文件」（解析中/提取中/待提取）不再以伪行占用列表，改为列表上方的独立
 // 状态条（BusinessParseStatusBar）滚动展示；列表只渲染已产生发票行的记录。
-const filteredRows = computed(() => invoiceRows.value)
+//
+// **第二道门禁（第 24 轮）**：后端已经按 parse_status/extract_status 过滤，
+// 但前端必须再挡一次 —— 因为轮询周期内后端返回的是**上一次快照**，而
+// pendingFiles 已经先一步反映了「这个文件正在解析」。真机事故：
+// 状态栏还显示「正在解析 2026.9-10油费发票.pdf」，列表第 17~20 行已经
+// 出现了该文件的 P1~P4（第 20 行还是「待提取 + 0.00」），KPI 卡片也提前变了。
+//
+// 判据：pendingFiles 里的文件 ID（= knowledgeId）对应的**所有分页子记录**
+// 一律剔除。这是「同一文件的行必须整组进出」的强约束 —— 不允许 P1/P2 先进、
+// P3/P4 后进，那样用户会看到半份文件。
+// 只收非空 ID：空串若进了集合，配合门禁的「空 ID 不剔除」保护虽不会清表，
+// 但会让判断多一层歧义 —— 直接在构造时剔掉更干净。
+const pendingFileIds = computed(() => new Set(
+  pendingFiles.value.map((f: any) => String(f.id || '')).filter((id: string) => Boolean(id)),
+))
+const filteredRows = computed(() => filterRowsByPendingFiles(invoiceRows.value, pendingFileIds.value))
 
 // 表格高度约束：数据加载后由空串切到 '100%'，驱动 TDesign useFixed 重算
 // isFixedHeader（scrollHeight > clientHeight）→ 表头/表体分离，滚动条仅在表体
@@ -1464,7 +1480,19 @@ const {
     MessagePlugin.info(`「${item.file_name || item.title}」不是电子发票，已保留待人工复核`)
     loadTaxRates()
   },
-  onTick: () => loadFiles(),
+  // 轮询 tick：**reset 请求进行中时直接跳过**。
+  //
+  // 真机事故（第 24 轮任务一）：搜索关键词后 applyFilter → loadFiles(true)，
+  // 与此同时 onTick 的 loadFiles()（非 reset）也在发请求。两者共享 listSeq，
+  // reset 请求的响应回来时发现 mySeq !== listSeq（被 tick 递增了）→ **被当作过期
+  // 响应丢弃** → 列表停在 0 行，用户看到「搜索后一条都没有」。
+  //
+  // 判据用 listLoading（reset 期间为 true）：reset 期间不发起轮询请求，
+  // 等它落定后下一轮 tick 再补 —— 最多延迟一个轮询周期（3s），不会丢数据。
+  onTick: () => {
+    if (listLoading.value) return
+    loadFiles()
+  },
 })
 
 // 上传任务实时进度（来自上传弹窗 @progress，车队同款）：多文件同时进行时轮播展示

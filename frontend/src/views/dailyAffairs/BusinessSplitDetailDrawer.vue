@@ -100,6 +100,16 @@
                 <td v-for="sf in itemCols" :key="sf.key" :class="itemCellClass(sf)">{{ formatItemCell(it, sf) }}</td>
               </tr>
             </tbody>
+            <!--
+              合计行（第 24 轮任务三）：与列表悬停浮层（BusinessSubItemsPopover）
+              完全同口径 —— 两者都调 itemTotals，保证「浮窗看到的合计 == 抽屉里的合计」。
+              首列写「合计」，金额/税额列给精确汇总，其余列留空（不可累加）。
+            -->
+            <tfoot v-if="hasSumCols">
+              <tr class="bsd-items-total">
+                <td v-for="(txt, i) in totalRow" :key="i" :class="itemCellClass(itemCols[i])">{{ txt }}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </section>
@@ -139,6 +149,7 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { formatItemCell, itemCellClass } from './businessFormat'
+import { hasSumColumn, totalRowTexts } from './itemTotals'
 import { normalizeArrayValue, type DetailFieldMeta } from './businessDetailForm'
 
 const props = withDefaults(defineProps<{
@@ -235,6 +246,11 @@ const itemCols = computed<any[]>(() => {
   for (const it of itemRows.value) for (const k of Object.keys(it || {})) if (k !== 'extra') keys.add(k)
   return [...keys].map((k) => ({ key: k, label: k }))
 })
+// 合计行（第 24 轮任务三）：判据与求和都走 itemTotals，
+// 与列表悬停浮层（BusinessSubItemsPopover）共用同一实现 —— 两处数字必须一致。
+const hasSumCols = computed(() => hasSumColumn(itemCols.value))
+const totalRow = computed(() => totalRowTexts(itemRows.value, itemCols.value))
+
 // 主表单只渲染真实字段：items 类型（明细容器）交由下方明细表格承载，绝不生成占位行
 const formFields = computed<DetailFieldMeta[]>(
   () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
@@ -344,6 +360,13 @@ function close() {
 }
 .bsd-items-table th { font-weight: 500; color: var(--td-text-color-secondary); }
 .bsd-items-table td { color: var(--td-text-color-primary); }
+/* 合计行：加粗 + 上边框 + 略深背景，与明细行明确分层（与列表浮层同一套视觉） */
+.bsd-items-table tfoot .bsd-items-total td {
+  font-weight: 600;
+  border-top: 1px solid var(--td-component-border);
+  border-bottom: none;
+  background: var(--td-bg-color-secondarycontainer);
+}
 .bsd-items-table :deep(.item-cell--num) { text-align: right; }
 /* 明细里的多行文本子列（如「说明」）：默认 nowrap + ellipsis 会把长内容裁掉，
    看起来像数据丢了。改成折行完整显示，与列表/打印同一呈现口径。 */

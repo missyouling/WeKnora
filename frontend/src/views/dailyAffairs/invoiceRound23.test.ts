@@ -31,6 +31,15 @@ test('后端：列表与概览共用同一道「提取未完成」守卫', () =>
   // 只有「还没跑完 + 一条子记录都没有」才拦：存量数据不能因为状态字段缺失整体隐身
   assert.match(gate, /func hasNoExtractedItems\(/, '必须有子记录数判定')
 
+  // 第 24 轮升级：判据从「未完成 + 无子记录」升级为 extractionShouldHide，
+  // 增加两条**不看子记录**的拦截（解析未完成 / 提取明确在途）。
+  // 原因：图 1 里状态栏还显示「正在解析 2026.9-10油费发票.pdf」，
+  // 列表第 17~20 行已经出现该文件的 P1~P4（第 20 行「待提取 + 0.00」），
+  // 旧判据一旦有半成品子记录就不再成立，直接放行。
+  assert.match(gate, /func extractionShouldHide\(/, '必须有统一准入判据')
+  assert.match(gate, /func extractionParseIncomplete\(/, '必须判解析是否完成')
+  assert.match(gate, /func extractionInFlight\(/, '必须判提取是否明确在途')
+
   for (const f of [
     'knowledge_invoice_list.go',
     'knowledge_contract_list.go',
@@ -40,13 +49,20 @@ test('后端：列表与概览共用同一道「提取未完成」守卫', () =>
     'knowledge_utility_bill_list.go',
   ]) {
     const src = readGo(`internal/application/service/${f}`)
-    assert.match(src, /extractionNotStarted\(/, `${f} 必须拦截未完成提取的文件`)
-    assert.match(src, /hasNoExtractedItems\(/, `${f} 必须同时判「无子记录」以免历史数据隐身`)
+    // 必须用统一判据（传 parse_status + extract_status + 子记录数）
+    assert.match(src, /extractionShouldHide\(/, `${f} 必须用统一准入判据`)
+    // 反向断言：不得再退回旧的「只看未完成 + 子记录数」判据
+    // （那会在有半成品子记录时放行，正是图 1 的事故形态）
+    assert.doesNotMatch(
+      src,
+      /extractionNotStarted\(meta\.ExtractStatus\) && hasNoExtractedItems\(/,
+      `${f} 不得退回旧判据（有半成品子记录时会放行）`,
+    )
   }
   // 发票概览（KPI 卡）必须与列表同口径，否则出现「卡片 3 张、点进去只有 1 行」
   const inv = readGo('internal/application/service/knowledge_invoice_list.go')
   const overview = inv.slice(inv.indexOf('func (s *BusinessExtractService) InvoiceOverviewStats'))
-  assert.match(overview, /extractionNotStarted\(/, '发票概览统计必须与列表同口径')
+  assert.match(overview, /extractionShouldHide\(/, '发票概览统计必须与列表同口径')
 })
 
 // ---- 契约 2/3：分类必须是「上传选择」，且读写同键 ----

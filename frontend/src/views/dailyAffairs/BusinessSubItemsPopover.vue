@@ -35,6 +35,22 @@
               </td>
             </tr>
           </tbody>
+          <!--
+            合计行（第 24 轮任务三）：票面明细下方本来就有 `合 计 | ¥金额 | ¥税额`，
+            浮层不显示合计时用户没法当场核对「明细加起来是不是票面那个数」。
+            口径见 sumOfAmountKey / sumOfTaxKey：
+              · 首列固定写「合计」；
+              · 金额列 / 税额列 = 所有明细行的精确汇总（按「分」整数累加，避免浮点尾巴）；
+              · 其余列（规格型号/单位/单价/税率…）留空 —— 它们不可累加，
+                写 0 或空串都容易被误读成「合计值为 0」。
+          -->
+          <tfoot v-if="rows.length && hasSumCols">
+            <tr class="biz-sub-total">
+              <td v-for="(sf, i) in cols" :key="sf.key" :class="itemCellClass(sf)" :style="colStyle(sf)">
+                {{ i === 0 ? '合计' : sumCellOf(sf) }}
+              </td>
+            </tr>
+          </tfoot>
         </table>
         <div v-else class="biz-sub-empty">{{ emptyText }}</div>
       </div>
@@ -53,6 +69,7 @@ import {
   ITEM_POP_MAX,
   ITEM_POP_MIN,
 } from './businessFormat'
+import { hasSumColumn, sumTextOfColumn } from './itemTotals'
 
 const props = withDefaults(defineProps<{
   /** 明细行数组（空/未传 → 展示空态） */
@@ -77,6 +94,12 @@ const rows = computed<any[]>(() => (Array.isArray(props.items) ? props.items : [
 const cols = computed<any[]>(() => enabledSubFields(props.subFields))
 const popWidth = computed(() => subItemPopoverWidth(cols.value, props.minWidth, props.maxWidth))
 const colStyle = (sf: any) => (Number(sf?.width) > 0 ? { width: Number(sf.width) + 'px' } : undefined)
+
+// ---- 合计行（第 24 轮任务三）----
+// 判据与求和都在 itemTotals：浮层与抽屉**必须完全一致**，
+// 各写一份就是「浮窗 51989.49、抽屉 51989.48」这类分叉的源头。
+const hasSumCols = computed(() => hasSumColumn(cols.value))
+const sumCellOf = (sf: any) => sumTextOfColumn(rows.value, sf)
 </script>
 
 <style scoped>
@@ -122,5 +145,16 @@ const colStyle = (sf: any) => (Number(sf?.width) > 0 ? { width: Number(sf.width)
   color: var(--td-text-color-secondary);
   font-size: 12px;
   padding: 4px 8px;
+}
+/* 合计行：加粗 + 上边框 + 略深背景，与明细行明确分层 */
+:global(.biz-sub-popover .biz-sub-table .biz-sub-total td) {
+  font-weight: 600;
+  color: var(--td-text-color-primary);
+  border-top: 1px solid var(--td-component-border);
+  border-bottom: none;
+  background: var(--td-bg-color-secondarycontainer);
+}
+:global(.biz-sub-popover .biz-sub-table .biz-sub-total td:first-child) {
+  text-align: left;
 }
 </style>

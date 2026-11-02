@@ -503,6 +503,20 @@ func parsePlainAmount(s string) *float64 {
 	if t == "" {
 		return nil
 	}
+	// **必须支持负号**：折扣行的金额/税额是负数（`-513.35` / `-66.73`），
+	// 旧实现只认数字和小数点，遇到负号直接判「不是金额」→ 整条折扣行被丢弃，
+	// 明细之和就比票面合计多出折扣那部分（真机 P2 金额算错的直接原因之一）。
+	// 负号只允许出现在**首位**（`1-2` 这种不是合法金额）。
+	neg := false
+	if strings.HasPrefix(t, "-") {
+		neg = true
+		t = t[1:]
+		if t == "" {
+			return nil
+		}
+	}
+	// 千分位逗号：票面金额偶有渲染成 `50,724.26`，必须容忍（否则整行被判非金额）
+	t = strings.ReplaceAll(t, ",", "")
 	dot := false
 	for _, c := range t {
 		if c == '.' {
@@ -516,7 +530,15 @@ func parsePlainAmount(s string) *float64 {
 			return nil
 		}
 	}
-	return parseAmountToFloat(t)
+	v := parseAmountToFloat(t)
+	if v == nil {
+		return nil
+	}
+	if neg {
+		n := -*v
+		return &n
+	}
+	return v
 }
 
 // roundMoney 金额两位小数（四舍五入，加 1e-6 抵消浮点表示误差）。

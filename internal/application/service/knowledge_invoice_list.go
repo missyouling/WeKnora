@@ -184,7 +184,7 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 			// 解析/提取中的文件只在顶部进度条与「历史记录」抽屉展示 —— 旧实现会给
 			// 它们渲染占位行，于是主列表出现「发票号码: 提取中 / 待提取」的假记录。
 			// 有存量子记录的（哪怕状态字段为空）继续展示，避免历史数据整体隐身。
-			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Invoices)) &&
+			if extractionShouldHide(k.ParseStatus, meta.ExtractStatus, len(meta.Invoices)) &&
 				meta.AutoDeletedCount == 0 {
 				continue
 			}
@@ -913,7 +913,7 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 			// 概览 KPI 与列表同口径（第 23 轮 issue 1）：提取尚未产生结论的文件
 			// 不计入分类卡片张数。否则会出现「卡片显示 3 张能耗发票、点进去只有 1 行」
 			// —— 多出来的两张正是解析中/待提取的占位记录。
-			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Invoices)) &&
+			if extractionShouldHide(k.ParseStatus, meta.ExtractStatus, len(meta.Invoices)) &&
 				meta.AutoDeletedCount == 0 {
 				continue
 			}
