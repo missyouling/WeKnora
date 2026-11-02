@@ -179,6 +179,15 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 				placeholderFor("文件记录异常", "", "")
 				continue
 			}
+
+			// 提取尚未产生结论的文件不进主列表（第 23 轮 issue 1）。
+			// 解析/提取中的文件只在顶部进度条与「历史记录」抽屉展示 —— 旧实现会给
+			// 它们渲染占位行，于是主列表出现「发票号码: 提取中 / 待提取」的假记录。
+			// 有存量子记录的（哪怕状态字段为空）继续展示，避免历史数据整体隐身。
+			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Invoices)) &&
+				meta.AutoDeletedCount == 0 {
+				continue
+			}
 			// 交互契约（2026-10-20）：**提取失败**的文件不进发票主列表（含「其它票据」）。
 			// 背景：批量上传触发 429/1302 限流时，一批文件会同时提取失败并各自生成
 			// 一条「提取失败：…」占位行，把「其它票据」列表整屏染成橙色占位行，
@@ -900,6 +909,13 @@ func (s *BusinessExtractService) InvoiceOverviewStats(ctx context.Context, kbID 
 			// 已打标 invoice 的文件计入已上传文件数（解析失败文件在上面已计，避免重复）
 			if k.ParseStatus != "failed" {
 				fileCount++
+			}
+			// 概览 KPI 与列表同口径（第 23 轮 issue 1）：提取尚未产生结论的文件
+			// 不计入分类卡片张数。否则会出现「卡片显示 3 张能耗发票、点进去只有 1 行」
+			// —— 多出来的两张正是解析中/待提取的占位记录。
+			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Invoices)) &&
+				meta.AutoDeletedCount == 0 {
+				continue
 			}
 			for _, inv := range meta.Invoices {
 				if invoiceExtractionItemBlank(inv) {

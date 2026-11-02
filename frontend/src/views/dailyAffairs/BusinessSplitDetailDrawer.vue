@@ -52,8 +52,14 @@
                 <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                 <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
                   format="YYYY-MM-DD" clearable allow-input />
-                <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
-                  @input="(v: string) => (form.data[f.name] = sanitizeNum(v))" />
+                <!-- 数值字段：**只做双向绑定，输入时不过滤**（第 23 轮 issue 4）。
+                     旧实现在 @input 里跑 sanitizeNum，把值改写成过滤后的字符串，
+                     与 v-model 的内部赋值形成「写—回写」竞争，真机表现为
+                     「金额/税额怎么敲都变成空」。过滤没有任何收益：保存路径
+                     buildDetailPayload 里每个数值都过 toNumber()，脏字符本来就会被
+                     收敛成数字；而在输入过程中过滤反而会挡住负数、小数点的中间态
+                     （"−1" 输入第一个字符就被吃掉）。 -->
+                <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
                      支持换行与自动折行，长内容完整录入与展示不截断。
                      用户显式选择的类型优先于下方的字段名兜底。 -->
@@ -133,7 +139,7 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { formatItemCell, itemCellClass } from './businessFormat'
-import { normalizeArrayValue, sanitizeNum, type DetailFieldMeta } from './businessDetailForm'
+import { normalizeArrayValue, type DetailFieldMeta } from './businessDetailForm'
 
 const props = withDefaults(defineProps<{
   visible: boolean

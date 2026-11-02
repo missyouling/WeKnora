@@ -17,6 +17,8 @@ const (
 	InvoiceRuleKindLine          InvoiceRuleKind = "line"
 	InvoiceRuleKindMarkdownTable InvoiceRuleKind = "markdown_table"
 	InvoiceRuleKindFlat          InvoiceRuleKind = "flat"
+	// InvoiceRuleKindHTMLTable 覆盖 MinerU HTML 表格版汇总单（第 23 轮 issue 4）。
+	InvoiceRuleKindHTMLTable InvoiceRuleKind = "html_table"
 )
 
 // InvoiceRuleOutcome 是三套确定性前置规则的统一产物。
@@ -59,6 +61,13 @@ func ExtractInvoiceByRules(chunks []*types.Chunk, docHint string) InvoiceRuleOut
 	if !out.Hit {
 		if res, ok := ExtractInvoicesByFlatLayoutFromChunks(chunks); ok {
 			out.Result, out.Hit, out.Kind = res, true, InvoiceRuleKindFlat
+		}
+	}
+	// HTML 表格版（MinerU 新输出）放最后：它只认「发票号码：」段落 + HTML 数据行，
+	// 与前两套的判据不重叠，但放最后可以保证更精确的旧格式仍优先命中。
+	if !out.Hit {
+		if res, ok := ExtractInvoicesByHTMLTableRulesFromChunks(chunks); ok {
+			out.Result, out.Hit, out.Kind = res, true, InvoiceRuleKindHTMLTable
 		}
 	}
 	if !out.Hit || out.Result == nil {

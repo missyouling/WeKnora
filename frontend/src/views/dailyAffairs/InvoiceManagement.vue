@@ -276,10 +276,11 @@
         </div>
         <span v-else class="row-muted">—</span>
       </template>
-      <!-- 税率：与主表单/明细表统一为百分比展示（输入 9 即 9%），加 % 单位提示避免割裂感 -->
+      <!-- 税率：与主表单/明细表统一为百分比展示（输入 9 即 9%），加 % 单位提示避免割裂感。
+           同样只做双向绑定、不在 @input 里过滤（原因见 BusinessSplitDetailDrawer 的
+           数值字段注释：输入期过滤会与 v-model 回写竞争，把值清成空）。 -->
       <template #field-taxRate>
-        <t-input :value="editForm.data.taxRate" placeholder="如 9 表示 9%"
-          @input="(v: string) => (editForm.data.taxRate = sanitizeNum(v))">
+        <t-input v-model="editForm.data.taxRate" placeholder="如 9 表示 9%">
           <template #suffix>%</template>
         </t-input>
       </template>
@@ -378,7 +379,7 @@ import { pdfPageOf } from './pdfPage'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import {
   buildDetailPayload, buildDetailFieldDefs, cascadeInvoiceType, extractStatusOf, fillDetailForm, findInvoiceIndex,
-  hasInvoiceData, isDetailFormDirty, mergeRowAfterSave, sanitizeNum,
+  hasInvoiceData, isDetailFormDirty, mergeRowAfterSave,
 } from './businessDetailForm'
 import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate } from './businessFormat'
@@ -1581,7 +1582,7 @@ const openDetail = async (row: InvoiceRow) => {
   // 先填充表单再打开抽屉：editFieldDefs 依赖 editForm.invoice_type，
   // 若先 detailVisible=true 再 fillEditForm，抽屉打开瞬间会渲染上一分类（或空）的字段，
   // 造成「先显示发票字段再跳转收据字段」的闪烁。行级 invoiceType/category 已就绪，可立即定字段。
-  fillEditForm()
+  fillEditForm(true)
   detailVisible.value = true
   try {
     const res: any = await getKnowledgeDetails(row.knowledgeId)
@@ -1599,8 +1600,9 @@ const openDetail = async (row: InvoiceRow) => {
           // 抽屉先显示车牌号、1 秒后（详情返回重填时）又消失。
           const keepItems = Array.isArray(row.items) && row.items.length ? row.items : (match.items || [])
           currentRow.value = { ...row, ...match, items: keepItems }
-          // 详情数据到达后重填一次（发票类型/字段值以落库数据为准）
-          fillEditForm()
+          // 详情数据到达后补填一次（发票类型/字段值以落库数据为准）。
+          // 非强制：用户在等待期间已经动过的输入必须保留（见 fillEditForm 注释）。
+          fillEditForm(false)
         }
       }
     }
@@ -1663,10 +1665,19 @@ const itemSubFields = computed(() => subFieldsOfRow(currentRow.value))
 // 本页只注入发票自己的字典与工具函数（分类/备注片段/契约键归一）。
 const detailBaseline = ref<any>(null)
 const detailDirty = ref(false)
-const fillEditForm = () => {
+/**
+ * 行数据 → 编辑表单。
+ *
+ * `force = false`（详情异步返回时的重填）**不覆盖用户已经动过的字段**：
+ * 打开抽屉时先用列表行填一次让界面立刻有值，详情接口返回（通常 0.3~2 秒）再填一次
+ * 会把这期间用户敲进去的内容整片冲掉 —— 真机表现就是「金额/税率/税额/开票人
+ * 怎么都输不进去」。所以重填只在用户尚未编辑（非 dirty）时整体替换；
+ * 已编辑则只补齐**仍为空**的字段（详情常带列表没有的值，如页内明细 extra）。
+ */
+const fillEditForm = (force = true) => {
   const r = currentRow.value
   if (!r) return
-  editForm.value = fillDetailForm({
+  const next = fillDetailForm({
     row: r,
     cats: invoiceCats.value || [],
     filterType: filterInvoiceType.value || '',
@@ -1676,6 +1687,17 @@ const fillEditForm = () => {
     fieldKeyOf: (n: string) => invoiceFieldKeyOf(n),
     dict: INVOICE_FIELD_LABELS,
   })
+  if (!force && detailDirty.value) {
+    // 用户已在编辑：只补空字段，绝不覆盖已输入的值
+    const cur = editForm.value
+    for (const [k, v] of Object.entries(next.data || {})) {
+      const cv = cur.data?.[k]
+      if (cv === '' || cv === null || cv === undefined) cur.data[k] = v
+    }
+    cur.items = Array.isArray(cur.items) && cur.items.length ? cur.items : next.items
+    return
+  }
+  editForm.value = next
   // 脏检查基线：保存按钮按"是否真改动"启用，避免打开抽屉就允许空保存
   detailBaseline.value = JSON.parse(JSON.stringify(editForm.value))
   detailDirty.value = false
@@ -1728,13 +1750,18 @@ const persistEditForm = async (force: boolean) => {
     else invoices.push({ ...updated, page: nowPage || 0 })
     // 无任何有效字段 → 保持"待补录"状态，记录不因空数据而从列表消失
     const { status: nextStatus, error: nextError } = extractStatusOf(hasInvoiceData(invoices))
-    // 文件级归档分类同步为最新发票类型：列表平铺以文件级 fleet_cert_type 为优先，
-    // 不同步会导致改类型后仍按旧分类展示
+    // 文件级归档分类同步为最新发票类型。
+    //
+    // **两个分类键必须同源**（第 23 轮 issue 3）：列表分类归属读 invoice_category
+    // 优先、fleet_cert_type 兜底，只写其中一个就会出现「抽屉里改了类型、列表还挂在
+    // 原分类」。这里两个键一起写；后端 UpdateInvoiceMetadata 也会再归一一次兜底。
+    const nextType = editForm.value.invoice_type || ''
     const newMeta = {
       ...meta,
       kind: 'invoice',
       invoices,
-      fleet_cert_type: editForm.value.invoice_type || '',
+      invoice_category: nextType,
+      fleet_cert_type: nextType,
       extract_status: nextStatus,
       extract_error: nextError,
     }

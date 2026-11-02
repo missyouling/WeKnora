@@ -93,6 +93,13 @@ func (s *BusinessExtractService) ListUtilityBillRecords(ctx context.Context, kbI
 			if meta.Kind != wantKind && !legacyManual {
 				continue
 			}
+			// 提取尚未产生结论的文件不进主列表（第 23 轮 issue 1）：
+			// 解析/提取中的账单只在顶部进度条与「历史记录」抽屉展示。
+			// 有存量子记录的（哪怕状态字段为空）继续展示，避免历史数据整体隐身。
+			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Records)) &&
+				meta.AutoDeletedCount == 0 {
+				continue
+			}
 			tags := make([]string, 0, len(k.Tags))
 			for _, t := range k.Tags {
 				if t != nil && t.Name != "" {

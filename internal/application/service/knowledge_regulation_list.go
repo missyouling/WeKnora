@@ -84,6 +84,15 @@ func (s *BusinessExtractService) ListRegulationRecords(ctx context.Context, kbID
 			if err := json.Unmarshal(k.CustomMetadata, &meta); err != nil {
 				continue
 			}
+
+			// 提取尚未产生结论的文件不进主列表（第 23 轮 issue 1）。
+			// 解析/提取中的文件只在顶部进度条与「历史记录」抽屉展示 —— 旧实现会给
+			// 它们渲染占位行，于是主列表出现「发票号码: 提取中 / 待提取」的假记录。
+			// 有存量子记录的（哪怕状态字段为空）继续展示，避免历史数据整体隐身。
+			if extractionNotStarted(meta.ExtractStatus) && hasNoExtractedItems(len(meta.Regulations)) &&
+				meta.AutoDeletedCount == 0 {
+				continue
+			}
 			// 旧版恢复行兜底：meta 无 kind 但保留 auto_deleted_count → 视作待补录占位行。
 			legacyManual := meta.Kind != "regulation" && meta.AutoDeletedCount > 0
 			if meta.Kind != "regulation" && !legacyManual {

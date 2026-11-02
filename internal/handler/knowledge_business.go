@@ -2856,6 +2856,53 @@ func mustArray(v interface{}) []interface{} {
 	return nil
 }
 
+// normalizeInvoiceCategoryKeys 把 invoice_category / fleet_cert_type 归一到同一个值。
+//
+// 背景：这两个键是同一份「上传时手选的发票分类」的历史双写（新键 + 旧键）。
+// 列表的分类归属（resolveInvoiceCategory）读 invoice_category 优先，而多处写入
+// 只更新 fleet_cert_type，于是两键漂移 —— 抽屉里显示的是新分类、列表仍按旧分类
+// 归档（真机现象：在「能耗发票」里把某张改成通行费发票并保存，行还留在能耗发票里）。
+//
+// 规则（原地修改 meta）：
+//   - 两个键都没出现 → 返回空串，调用方不落库（本次编辑没碰分类）；
+//   - 只有一个键有值 → 另一个补齐为同值（含显式清空）；
+//   - 两个都有值且不同 → 以 **invoice_category** 为准（新权威键，上传弹窗写它）。
+//
+// 返回归一后的分类（空串表示无需处理）。
+func normalizeInvoiceCategoryKeys(meta map[string]interface{}) string {
+	if meta == nil {
+		return ""
+	}
+	readStr := func(key string) (string, bool) {
+		v, ok := meta[key]
+		if !ok {
+			return "", false
+		}
+		s, isStr := v.(string)
+		if !isStr {
+			return "", false
+		}
+		return strings.TrimSpace(s), true
+	}
+	newCat, newOK := readStr("invoice_category")
+	oldCat, oldOK := readStr("fleet_cert_type")
+	if !newOK && !oldOK {
+		return ""
+	}
+	// 权威值：invoice_category 非空则用它；否则用 fleet_cert_type（历史文件只有旧键）
+	authoritative := newCat
+	if authoritative == "" {
+		authoritative = oldCat
+	}
+	if newCat != authoritative {
+		meta["invoice_category"] = authoritative
+	}
+	if oldCat != authoritative {
+		meta["fleet_cert_type"] = authoritative
+	}
+	return authoritative
+}
+
 // UpdateInvoiceMetadata godoc
 // @Summary      保存发票提取元数据
 // @Description  直接持久化发票 custom_metadata（含 invoices 数组），绕过原生
@@ -2914,6 +2961,21 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 		}
 		c.Error(errors.NewConflictError(code + ":已存在相同的" + label + " " + dupNo))
 		return
+	}
+	// 分类双键同源归一（第 23 轮 issue 2/3，写库前的最后一道闸）。
+	//
+	// 分类有**两个**历史键：invoice_category（新权威）与 fleet_cert_type（旧键）。
+	// 读取侧 resolveInvoiceCategory 的候选顺序是 invoice_category **优先**，
+	// 但写入侧（本接口）此前只覆盖 fleet_cert_type —— 于是用户在抽屉里把
+	// 「发票类型」改成通行费发票并保存后，fleet_cert_type 变了、invoice_category
+	// 还是旧值，列表仍按旧分类展示（真机现象：改完保存，行还留在原分类列表）。
+	//
+	// 修复原则：**本次请求里显式出现的分类键为准，并把另一个键同步成同值**。
+	// 两个都没出现（用户在改金额/开票人等别的字段）则完全不碰分类，避免误改。
+	if cat := normalizeInvoiceCategoryKeys(meta); cat != "" {
+		if raw, merr := json.Marshal(meta); merr == nil {
+			body.CustomMetadata = raw
+		}
 	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(body.CustomMetadata)); err != nil {
 		logger.Error(ctx, "Failed to persist invoice metadata", err)
