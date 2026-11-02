@@ -248,6 +248,13 @@ var invoiceNo20Re = regexp.MustCompile(`[0-9]{20}`)
 // invoiceNoLabelRe 匹配「发票号码：」标签（旧版 8 位票号文件的锚点）。
 var invoiceNoLabelRe = regexp.MustCompile(`发票号码\s*[:：]`)
 
+// invoiceNoLabelNoRe 匹配「发票号码：<6~20 位数字>」，用于**按票号去重**。
+//
+// 为什么需要它：同一票号在多个分块里重复出现（跨页续行的常见形态），
+// 只数标签会把 21 张票数成 42 个锚点；带上号码才能去重。
+// 长度放宽到 6~20 位是为了同时覆盖老版纸质票（8 位）与全电发票（20 位）。
+var invoiceNoLabelNoRe = regexp.MustCompile(`发票号码\s*[:：]\s*([0-9]{6,20})`)
+
 // standaloneDigits 判断 s[start:end] 是否是独立数字串（左右都不是数字）。
 // 21 位校验码不能被截出 20 位，否则锚点数会虚高、触发无谓的补提。
 func standaloneDigits(s string, start, end int) bool {
@@ -266,23 +273,46 @@ func standaloneDigits(s string, start, end int) bool {
 // 规则或模型就会漏抓那两页；而抓到的票字段完整，半残守卫判「完整」后直接
 // 短路，漏掉的票被静默丢弃（真机 6 页只落 4 张）。锚点数就是「应该有几十张」。
 //
-// 优先数 20 位票号（去重，票号是票面唯一标识）；没有 20 位票号时退回数
-// 「发票号码：」标签出现次数（一票一标签）。
+// **锚点必须优先认「发票号码：」标签，不能先数裸 20 位数字**（第 24 轮修正）：
+//
+//	老版纸质票（8 位票号）的票面上还有 **20 位校验码**（如 `01154312287907017257`），
+//	裸数 20 位数字会把校验码也算成票号 → 21 张票被数成 24 个锚点 →
+//	上层判「提取不全」→ 白白转 LLM 补提 → 撞限流 429 →
+//	整份文档卡在 processing（真机 22d87e28 的事故链就是这么来的）。
+//
+// 现在的口径：
+//  1. 先数「发票号码：」标签（一票一标签，最可靠，新旧票号长度都适用）；
+//  2. 标签数为 0 时才退回数「独立 20 位数字」（应对无标签、纯号码行的版式）。
+//
+// 注意：同一票号在多个分块重复出现时，标签数会翻倍（真机 21 张票 = 42 个标签），
+// 所以标签路径也要按票号去重 —— 但标签后可能跟 8 位或 20 位，需要都取到。
 func CountInvoiceAnchors(chunks []*types.Chunk) int {
 	src := BuildExtractSourceText(chunks)
 	if src.Content == "" {
 		return 0
 	}
+	// ① 标签路径：按「标签 + 紧随其后的号码」去重
 	seen := make(map[string]struct{}, 8)
-	for _, m := range invoiceNo20Re.FindAllStringIndex(src.Content, -1) {
-		if !standaloneDigits(src.Content, m[0], m[1]) {
-			continue
+	for _, m := range invoiceNoLabelNoRe.FindAllStringSubmatch(src.Content, -1) {
+		if len(m) > 1 && m[1] != "" {
+			seen[m[1]] = struct{}{}
 		}
-		seen[src.Content[m[0]:m[1]]] = struct{}{}
 	}
 	if len(seen) > 0 {
 		return len(seen)
 	}
+	// ② 无标签路径：数独立 20 位数字（此时票面没有校验码，不会误判）
+	bare := make(map[string]struct{}, 8)
+	for _, m := range invoiceNo20Re.FindAllStringIndex(src.Content, -1) {
+		if !standaloneDigits(src.Content, m[0], m[1]) {
+			continue
+		}
+		bare[src.Content[m[0]:m[1]]] = struct{}{}
+	}
+	if len(bare) > 0 {
+		return len(bare)
+	}
+	// ③ 兜底：标签出现次数（号码被 OCR 吃掉时至少知道「有几张票」）
 	return len(invoiceNoLabelRe.FindAllStringIndex(src.Content, -1))
 }
 

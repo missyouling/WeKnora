@@ -45,7 +45,12 @@ type BusinessExtractHandler struct {
 	tenantService  interfaces.TenantService
 	// extractMu 按 knowledgeID 防重入：同一文档并发提取会重复烧 token 且后写覆盖。
 	// 单实例内存锁（多实例部署时需换分布式锁）。
-	extractMu sync.Map // map[string]struct{}
+	//
+	// 值存**加锁时刻**（time.Time）而不是空结构体：worker 若 panic 且没走到
+	// defer Delete（或进程被 kill），锁会永久残留 —— 真机踩过：某份文件此后
+	// 每次重提都 409，用户以为「一直在提取」，实际早就没任务了。
+	// 存时刻后可以按超时判定「锁已失效」，让重提自愈。
+	extractMu sync.Map // map[string]time.Time
 }
 
 // NewBusinessExtractHandler 构造业务提取 Handler。
@@ -161,6 +166,49 @@ func parseSandboxPagination(c *gin.Context) (page, pageSize int) {
 	return page, pageSize
 }
 
+// extractLockTTL 是防重入锁的失效时限。
+//
+// 取值依据：单份文档的业务提取（规则命中时只读 chunk 文本，秒级；走 LLM 时
+// 一页一票的汇总单最多 24 页）实测最长约 3 分钟。留 5 倍余量 → 15 分钟。
+// 超过这个时长还持锁，几乎必然是 worker 已死（panic / 进程重启 / OOM 被 kill），
+// 此时继续拒绝重提只会让文档永久卡死（真机踩过：某份文件此后每次重提都 409，
+// 用户以为「一直在提取」，实际早就没有任务在跑）。
+const extractLockTTL = 15 * time.Minute
+
+// extractLocked 判断该文档当前是否「确实有提取在途」（带超时自愈）。
+//
+// 超时后**顺手清理**残留锁：不清的话，下次仍会走到同样的判定，
+// 而且锁里的时间戳会一直停留在很久以前（排查时容易误读成「刚加锁」）。
+func (h *BusinessExtractHandler) extractLocked(knowledgeID string) bool {
+	v, loaded := h.extractMu.Load(knowledgeID)
+	if !loaded {
+		return false
+	}
+	at, ok := v.(time.Time)
+	if !ok {
+		// 理论上不会发生（本文件内所有写入都写 time.Time）；真遇到就当作已失效。
+		h.extractMu.Delete(knowledgeID)
+		return false
+	}
+	if time.Since(at) > extractLockTTL {
+		logger.Warnf(context.Background(),
+			"extract lock for %s expired after %s (worker likely died), releasing",
+			knowledgeID, time.Since(at).Round(time.Second))
+		h.extractMu.Delete(knowledgeID)
+		return false
+	}
+	return true
+}
+
+// tryLockExtract 加锁并写入加锁时刻；已有**未超时**的锁时返回 false。
+func (h *BusinessExtractHandler) tryLockExtract(knowledgeID string) bool {
+	if h.extractLocked(knowledgeID) {
+		return false
+	}
+	h.extractMu.Store(knowledgeID, time.Now())
+	return true
+}
+
 // extractInProgressReason 是「同一文档已有提取任务在途」的机器可读标识。
 // 409 是同一 HTTP 状态但语义分两类：本值代表并发重复提交（数据仍会由持锁
 // 请求完成），另一类是业务性冲突（单号重复）。前端据此把前者判为「已在提取
@@ -240,7 +288,7 @@ func (h *BusinessExtractHandler) ExtractContract(c *gin.Context, certType string
 	}
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
-	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
+	if h.extractLocked(knowledgeID) {
 		c.Error(errors.NewConflictError("extraction already in progress for this document").
 			WithDetails(extractInProgressDetails(knowledgeID, "contract")))
 		return
@@ -992,7 +1040,9 @@ func (h *BusinessExtractHandler) ExtractInvoice(c *gin.Context, certType string)
 	}
 	// 快速失败提示（真正防重入由 worker 端 extractMu 保证）：同一文档已有任务在跑时
 	// 直接 409，避免连点重复投递。
-	if _, loaded := h.extractMu.Load(knowledgeID); loaded {
+	// **带超时**：锁超过 extractLockTTL 未释放，说明持锁的 worker 已经没了
+	// （panic / 进程重启 / 被 kill），此时必须允许重新投递，否则这份文档永久卡死。
+	if h.extractLocked(knowledgeID) {
 		c.Error(errors.NewConflictError("extraction already in progress for this document").
 			WithDetails(extractInProgressDetails(knowledgeID, "invoice")))
 		return
@@ -1570,7 +1620,7 @@ func (h *BusinessExtractHandler) ExtractInvoicePage(c *gin.Context) {
 		return
 	}
 	// 防重入：与整份提取共用同一文档锁
-	if _, loaded := h.extractMu.LoadOrStore(knowledgeID, struct{}{}); loaded {
+	if !h.tryLockExtract(knowledgeID) {
 		c.Error(errors.NewConflictError("extraction already in progress for this document"))
 		return
 	}

@@ -87,10 +87,12 @@ test('清单 PDF 引擎：标题不重叠、支持概览指标与分区表格', 
   const src = read('useCatalogPdf.ts')
   assert.match(src, /overviewTitle\?: string/)
   assert.match(src, /export interface StatementTable/)
-  // 页标题与内容之间必须有明确下推：旧版 y -= 6 导致两个标题叠印
-  assert.match(src, /y -= S_TITLE_SIZE \+ 10/)
+  // 页标题与内容之间必须有明确下推：旧版 y -= 6 导致两个标题叠印。
+  // 第 24 轮：游标统一走 PdfSurface（surface.y），断言跟随重构后的形态，
+  // 但**语义不变** —— 仍要求「标题后必须下推 S_TITLE_SIZE + 10」，且不得回到 y -= 6。
+  assert.match(src, /surface\.y -= S_TITLE_SIZE \+ 10/)
   assert.doesNotMatch(src, /y -= 6\b/)
-  assert.match(src, /const pages = pdf\.getPages\(\)/, '页脚页码需要总页数')
+  assert.match(src, /const pages = surface\.doc\.getPages\(\)/, '页脚页码需要总页数')
 })
 
 test('市电/光伏：月份与关键词都在本地过滤，汇总按可见行统计', () => {

@@ -16,8 +16,18 @@ import { readFileSync } from 'node:fs'
  */
 const src = readFileSync(new URL('./UtilitiesManagement.vue', import.meta.url), 'utf8')
 
-/** 取源码里某函数的函数体（兼容 `const NAME = ...` 与 `function NAME(...)` 两种写法） */
-function bodyOf(name: string): string {
+/** 取源码里某函数的函数体（兼容 `const NAME = ...` 与 `function NAME(...)` 两种写法）。
+ *  `file` 用于取已抽离到独立模块的实现（第 24 轮起 cellOf 的实现搬到 utilityBillColumns）。 */
+function bodyOf(name: string, file = 'UtilitiesManagement.vue'): string {
+  if (file !== 'UtilitiesManagement.vue') {
+    const other = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
+    let st = other.indexOf(`const ${name} = `)
+    if (st < 0) st = other.indexOf(`function ${name}(`)
+    assert.ok(st >= 0, `未找到 ${name}`)
+    const rest = other.slice(st + 1)
+    const nextTop = rest.search(/\nconst |\nfunction |\n\/\*\*|\n\/\/ ----/)
+    return nextTop > 0 ? rest.slice(0, nextTop) : rest
+  }
   let start = src.indexOf(`const ${name} = `)
   if (start < 0) start = src.indexOf(`function ${name}(`)
   assert.ok(start >= 0, `未找到 ${name}`)
@@ -57,7 +67,9 @@ test('fmtAmount 必须先按分收敛再千分位', () => {
 })
 
 test('cellOf 仅对 amount 列生效，其它类型保持默认渲染', () => {
-  const body = bodyOf('cellOf')
+  // 第 24 轮：实现搬到 utilityBillColumns.makeAmountCell（页面只剩一行注入），
+  // 分流逻辑与空值守卫都跟着搬过去，断言取新函数体。
+  const body = bodyOf('makeAmountCell', 'utilityBillColumns.ts')
   assert.match(body, /c\.fieldType !== 'amount'/, 'cellOf 必须按 fieldType 分流')
   assert.match(body, /return undefined/, '非 amount 列必须返回 undefined 走默认渲染')
   assert.match(body, /fmtAmount\(v\)/, 'amount 列必须走 fmtAmount')

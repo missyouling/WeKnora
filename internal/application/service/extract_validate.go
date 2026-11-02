@@ -320,6 +320,17 @@ func FinalizeInvoiceRuleResult(
 	if res == nil {
 		return nil
 	}
+	// 双源融合兜底（第 24 轮任务二）：用**整份文档原文**给缺字段的票补车牌/开票人。
+	//
+	// 为什么需要：多页 PDF 切块时，一页的「号码行 + 表头」与「数据行 + 开票人」
+	// 经常落在相邻的两个 chunk 里（真机 chunk 3 只有号码行、chunk 4 才有数据行）。
+	// 段落内找不到 → 该票金额全 0、开票人空白。全文兜底按发票号定位后取其后
+	// 1500 字扫描，只填空、不覆盖，且**找不到就留空**（绝不猜）。
+	if text != "" {
+		for i := range res.Invoices {
+			applyPlateAndIssuerFromFullText(&res.Invoices[i], text)
+		}
+	}
 	issues := validateInvoiceExtraction(res, cfg)
 	if patches := RegexFallbackInvoiceFields(res, text, cfg); len(patches) > 0 {
 		logger.Infof(ctx, "invoice regex fallback patched %d field(s): %v", len(patches), patchFieldNames(patches))

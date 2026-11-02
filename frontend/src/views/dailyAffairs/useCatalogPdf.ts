@@ -2,9 +2,15 @@
 // 表格式清单，固定 A4 横向；列宽按内容权重自适应（单列上限约页宽 30%），
 // 超长内容自动换行完整显示（不做省略号截断），行高随行数自适应。
 // 内嵌开源中文字体（霞鹜文楷，OFL）。
-import { PDFDocument, PDFFont, rgb } from 'pdf-lib'
-import fontkit from '@pdf-lib/fontkit'
+import { PDFFont, rgb } from 'pdf-lib'
 import { fitColumnWidths, wrapNoBreakNumbers, type CatalogMetrics } from './catalogLayout'
+import {
+  createPdfSurface,
+  drawWrappedCell,
+  fitHeaderFontSize,
+  loadSharedFont,
+  type PdfSurface,
+} from './pdfSurface'
 
 export interface CatalogColumn {
   key: string
@@ -12,21 +18,9 @@ export interface CatalogColumn {
   value: (row: any) => string
 }
 
-let fontPromise: Promise<ArrayBuffer> | null = null
-export function loadCatalogFont(): Promise<ArrayBuffer> {
-  if (!fontPromise) {
-    fontPromise = fetch('/fonts/LXGWWenKai-Regular.subset.ttf')
-      .then((r) => {
-        if (!r.ok) throw new Error('中文字体加载失败')
-        return r.arrayBuffer()
-      })
-      .catch((e) => {
-        fontPromise = null
-        throw e
-      })
-  }
-  return fontPromise
-}
+// 字体加载收敛到 pdfSurface（两套引擎共用同一份缓存与错误处理）。
+// 对外保留 loadCatalogFont 名字：9 个页面的 import 不动。
+export const loadCatalogFont = loadSharedFont
 
 // 固定 A4 横向（方向由生成时定死，用户打印时可在系统打印对话框内用缩放适配）
 const PAGE_W = 841.89
@@ -106,13 +100,22 @@ export async function generateCatalogPdf(opts: {
   const { title, columns, rows } = opts
   if (!columns.length || !rows.length) throw new Error('无可用数据生成目录')
 
-  const fontBytes = await loadCatalogFont()
-  const doc = await PDFDocument.create()
-  doc.registerFontkit(fontkit)
-  const font = await doc.embedFont(fontBytes)
-
-  const avail = PAGE_W - MARGIN * 2
-
+  // 页面面板（字体 / 分页 / 页脚 / 游标）统一由 pdfSurface 提供。
+  // 两套引擎此前各写一遍「加载字体 → 建文档 → 游标 → 翻页 → 页脚」，
+  // 收敛后差异只剩「续页画什么」——目录重画表头行（横向表格跨页后不看表头无法读数）。
+  const surface = await createPdfSurface({
+    geom: { width: PAGE_W, height: PAGE_H, margin: MARGIN },
+    startY: PAGE_H - MARGIN - TITLE_SIZE - 4,
+    footerText: (n) => `${title} · 第 ${n} 页`,
+    onNewPage: (s) => {
+      s.y = PAGE_H - MARGIN - HEADER_HEIGHT
+      drawHeaderRow()
+    },
+  })
+  const { doc, font, avail } = surface
+  // **不能解构 page**：它是快照，surface.newPage() 之后局部变量仍指向旧页，
+  // 继续往上画会全部落在已完成的页面上（且没有任何报错）。用访问器每次取当前页。
+  const curPage = () => surface.page
   // 列宽：交给 catalogLayout 统一收敛。
   //
   // 旧实现「每列保底 40pt + 按比例压缩」在 20 列时会算出 800pt > 777.89pt，
@@ -143,65 +146,44 @@ export async function generateCatalogPdf(opts: {
     return Math.max(ROW_MIN_HEIGHT, maxLines * lineHeight + padX * 2)
   })
   // 表头：允许优雅换行（中文按字断），但绝不丢字。
-  // 字号已在 fitColumnWidths 里随列数收敛；这里只在个别超长表头上再压一档。
-  const headerFonts = columns.map((c, i) => {
-    const availW = textWidths[i]
-    let size = headerSize
-    while (size > 6 && font.widthOfTextAtSize(c.label, size) > availW) size -= 0.5
-    const lines = wrapNoBreakNumbers((s) => font.widthOfTextAtSize(s, size), c.label, availW)
-    return { size, lines }
-  })
+  // 字号已在 fitColumnWidths 里随列数收敛；这里只在个别超长表头上再压一档
+  // （收敛逻辑抽到 pdfSurface.fitHeaderFontSize，与清单引擎共用）。
+  const headerFonts = columns.map((c, i) =>
+    fitHeaderFontSize(c.label, textWidths[i], headerSize, (t, sz) => font.widthOfTextAtSize(t, sz))
+  )
   const headerMaxLines = Math.max(...headerFonts.map((h) => h.lines.length))
 
-  let page = doc.addPage([PAGE_W, PAGE_H])
-  let y = PAGE_H - MARGIN - TITLE_SIZE - 4
-
   // 标题基线；副标题必须落到标题下沿之外，否则 15pt 标题与 9pt 元信息会叠字
-  page.drawText(title, { x: MARGIN, y, size: TITLE_SIZE, font, color: COLOR_TITLE })
-  y -= TITLE_SIZE + 6
+  curPage().drawText(title, { x: MARGIN, y: surface.y, size: TITLE_SIZE, font, color: COLOR_TITLE })
+  surface.y -= TITLE_SIZE + 6
   // 元信息（共 N 条 / 生成时间）
   const meta = `共 ${rows.length} 条 · 生成时间 ${dateStr}`
-  page.drawText(meta, { x: MARGIN, y, size: META_SIZE, font, color: COLOR_MUTED })
-  y -= META_SIZE + 14
-
-  let pageNo = 1
-  const drawFooter = () => {
-    page.drawText(`${title} · 第 ${pageNo} 页`, { x: MARGIN, y: MARGIN - 8, size: 8, font, color: COLOR_MUTED })
-  }
+  curPage().drawText(meta, { x: MARGIN, y: surface.y, size: META_SIZE, font, color: COLOR_MUTED })
+  surface.y -= META_SIZE + 14
 
   const drawHeaderRow = () => {
     let x = MARGIN
     const h = Math.max(HEADER_HEIGHT, headerMaxLines * lineHeight + padX * 2)
-    page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, color: COLOR_HEADER_BG })
-    page.drawRectangle({ x: MARGIN, y: y - h, width: avail, height: h, borderColor: COLOR_BORDER, borderWidth: 0.5 })
+    const top = surface.y
+    curPage().drawRectangle({ x: MARGIN, y: top - h, width: avail, height: h, color: COLOR_HEADER_BG })
+    curPage().drawRectangle({ x: MARGIN, y: top - h, width: avail, height: h, borderColor: COLOR_BORDER, borderWidth: 0.5 })
     columns.forEach((c, i) => {
       const w = widths[i]
       const { size, lines } = headerFonts[i]
-      const totalH = lines.length * lineHeight
-      const startY = y - h + (h - totalH) / 2
-      lines.forEach((line, li) => {
-        page.drawText(line, { x: x + padX, y: startY + totalH - (li + 1) * lineHeight, size, font, color: COLOR_TEXT })
+      // 单元格绘制复用共享实现（垂直居中 + 多行基线，见 pdfSurface.drawWrappedCell）
+      drawWrappedCell(curPage(), {
+        lines, x, top, height: h, size, lineHeight, padX, font, color: COLOR_TEXT,
       })
       // 列分隔线：20+ 列时没有竖线几乎无法对齐读数
       if (i > 0) {
-        page.drawLine({
-          start: { x, y }, end: { x, y: y - h },
+        curPage().drawLine({
+          start: { x, y: top }, end: { x, y: top - h },
           color: COLOR_BORDER, thickness: 0.4,
         })
       }
       x += w
     })
-    y -= h
-  }
-
-  const ensureSpace = (needed: number) => {
-    if (y - needed < MARGIN + 22) {
-      drawFooter()
-      page = doc.addPage([PAGE_W, PAGE_H])
-      pageNo++
-      y = PAGE_H - MARGIN - HEADER_HEIGHT
-      drawHeaderRow()
-    }
+    surface.y -= h
   }
 
   drawHeaderRow()
@@ -209,41 +191,35 @@ export async function generateCatalogPdf(opts: {
   rows.forEach((row, idx) => {
     const linesArr = rowLines[idx]
     const rh = rowHeights[idx]
-    ensureSpace(rh)
-    const rowTop = y
+    surface.ensure(rh)
+    const rowTop = surface.y
     // 斑马纹
     if (idx % 2 === 1) {
-      page.drawRectangle({ x: MARGIN, y: y - rh, width: avail, height: rh, color: COLOR_ZEBRA_BG })
+      curPage().drawRectangle({ x: MARGIN, y: rowTop - rh, width: avail, height: rh, color: COLOR_ZEBRA_BG })
     }
     // 边框
-    page.drawRectangle({ x: MARGIN, y: y - rh, width: avail, height: rh, borderColor: COLOR_BORDER, borderWidth: 0.5 })
+    curPage().drawRectangle({ x: MARGIN, y: rowTop - rh, width: avail, height: rh, borderColor: COLOR_BORDER, borderWidth: 0.5 })
     let x = MARGIN
     columns.forEach((c, i) => {
       const w = widths[i]
-      const lines = linesArr[i]
-      const totalH = lines.length * lineHeight
-      const startY = rowTop - rh + (rh - totalH) / 2
-      lines.forEach((line, li) => {
-        page.drawText(line, {
-          x: x + padX,
-          y: startY + totalH - (li + 1) * lineHeight,
-          size: cellSize,
-          font,
-          color: c.value(row) ? COLOR_TEXT : COLOR_MUTED,
-        })
+      // 空值用浅灰：一眼能分辨「这一格没数据」与「有值但很短」
+      drawWrappedCell(curPage(), {
+        lines: linesArr[i], x, top: rowTop, height: rh, size: cellSize, lineHeight, padX, font,
+        color: c.value(row) ? COLOR_TEXT : COLOR_MUTED,
       })
       if (i > 0) {
-        page.drawLine({
+        curPage().drawLine({
           start: { x, y: rowTop }, end: { x, y: rowTop - rh },
           color: COLOR_BORDER, thickness: 0.4,
         })
       }
       x += w
     })
-    y -= rh
+    surface.y -= rh
   })
 
-  drawFooter()
+  // 收尾页脚：ensure 只在翻页前画页脚，最后一页要在这里补
+  surface.drawFooter()
 
   return doc.save()
 }
@@ -418,70 +394,65 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   const doc: StatementDoc = { ...source, tables: pruneEmptyTables(source.tables) }
   if (!doc.tables.length) throw new Error('本期没有任何发生数据的明细')
 
-  const fontBytes = await loadCatalogFont()
-  const pdf = await PDFDocument.create()
-  pdf.registerFontkit(fontkit)
-  const font = await pdf.embedFont(fontBytes)
+  // 页面面板（字体 / 分页 / 页脚 / 游标）统一由 pdfSurface 提供 —— 与目录引擎同一份实现。
+  // 清单是 A4 纵向 + 概览区，续页只画一条紧凑页眉（不重画表头：纵向表格每张表
+  // 自己带表头，重画会与当前表的列宽冲突）。
+  const surface = await createPdfSurface({
+    geom: { width: PORTRAIT_W, height: PORTRAIT_H, margin: S_MARGIN },
+    startY: PORTRAIT_H - S_MARGIN,
+    bottomReserve: 30,
+    onNewPage: (s) => {
+      text(s, doc.title, S_MARGIN, s.y - 9, 9, C_MUTED)
+      if (doc.subtitle) {
+        const w = s.font.widthOfTextAtSize(doc.subtitle, 9)
+        text(s, doc.subtitle, S_MARGIN + s.avail - w, s.y - 9, 9, C_MUTED)
+      }
+      s.y -= 16
+      hline(s, S_MARGIN, S_MARGIN + s.avail, s.y)
+      s.y -= 16
+    },
+  })
+  const { font, avail } = surface
+  // **不能解构 page**：翻页后局部变量仍指向旧页（见目录引擎同处注释）。
+  const curPage = () => surface.page
 
-  const avail = PORTRAIT_W - S_MARGIN * 2
   const now = new Date()
   const dateStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`
 
-  let page = pdf.addPage([PORTRAIT_W, PORTRAIT_H])
-  let y = PORTRAIT_H - S_MARGIN
-
-  const text = (
-    s: string,
-    x: number,
-    baseline: number,
-    size: number,
-    color = C_INK,
-  ) => {
-    if (!s) return
-    page.drawText(s, { x, y: baseline, size, font, color })
+  // 三个绘制原语全部显式接收 surface：它们要跟着翻页走，
+  // 写成闭包捕获局部 page 变量正是旧实现的隐患来源。
+  const text = (s: PdfSurface, str: string, x: number, baseline: number, size: number, color = C_INK) => {
+    if (!str) return
+    s.page.drawText(str, { x, y: baseline, size, font, color })
   }
-  const hline = (fromX: number, toX: number, yy: number, color = C_RULE, thickness = 0.6) => {
-    page.drawLine({ start: { x: fromX, y: yy }, end: { x: toX, y: yy }, color, thickness })
+  const hline = (s: PdfSurface, fromX: number, toX: number, yy: number, color = C_RULE, thickness = 0.6) => {
+    s.page.drawLine({ start: { x: fromX, y: yy }, end: { x: toX, y: yy }, color, thickness })
   }
-  const vline = (x: number, top: number, bottom: number, color = C_RULE, thickness = 0.5) => {
-    page.drawLine({ start: { x, y: top }, end: { x, y: bottom }, color, thickness })
-  }
-
-  /** 续页：留一个紧凑的页眉，避免翻页后不知道在看哪张表 */
-  const newPage = () => {
-    page = pdf.addPage([PORTRAIT_W, PORTRAIT_H])
-    y = PORTRAIT_H - S_MARGIN
-    text(doc.title, S_MARGIN, y - 9, 9, C_MUTED)
-    if (doc.subtitle) {
-      const w = font.widthOfTextAtSize(doc.subtitle, 9)
-      text(doc.subtitle, S_MARGIN + avail - w, y - 9, 9, C_MUTED)
-    }
-    y -= 16
-    hline(S_MARGIN, S_MARGIN + avail, y)
-    y -= 16
-  }
-  const ensure = (need: number) => {
-    if (y - need < S_MARGIN + 30) newPage()
+  const vline = (s: PdfSurface, x: number, top: number, bottom: number, color = C_RULE, thickness = 0.5) => {
+    s.page.drawLine({ start: { x, y: top }, end: { x, y: bottom }, color, thickness })
   }
 
   const drawSectionTitle = (title: string) => {
-    ensure(S_SECTION_SIZE + 22)
-    page.drawRectangle({ x: S_MARGIN, y: y - S_SECTION_SIZE - 1, width: 3, height: S_SECTION_SIZE + 2, color: C_BRAND })
-    text(title, S_MARGIN + 9, y - S_SECTION_SIZE, S_SECTION_SIZE, C_INK)
-    y -= S_SECTION_SIZE + 10
+    surface.ensure(S_SECTION_SIZE + 22)
+    curPage().drawRectangle({
+      x: S_MARGIN, y: surface.y - S_SECTION_SIZE - 1,
+      width: 3, height: S_SECTION_SIZE + 2, color: C_BRAND,
+    })
+    text(surface, title, S_MARGIN + 9, surface.y - S_SECTION_SIZE, S_SECTION_SIZE, C_INK)
+    surface.y -= S_SECTION_SIZE + 10
   }
 
   // ---- 页眉：主标题（居中）+ 副标题 + 分隔线 ----
   const titleW = font.widthOfTextAtSize(doc.title, S_TITLE_SIZE)
-  text(doc.title, S_MARGIN + (avail - titleW) / 2, y - S_TITLE_SIZE, S_TITLE_SIZE, C_BRAND)
-  y -= S_TITLE_SIZE + 10
+  text(surface, doc.title, S_MARGIN + (avail - titleW) / 2, surface.y - S_TITLE_SIZE, S_TITLE_SIZE, C_BRAND)
+  surface.y -= S_TITLE_SIZE + 10
   if (doc.subtitle) {
     const subW = font.widthOfTextAtSize(doc.subtitle, S_SUBTITLE_SIZE)
-    text(doc.subtitle, S_MARGIN + (avail - subW) / 2, y - S_SUBTITLE_SIZE, S_SUBTITLE_SIZE, C_MUTED)
-    y -= S_SUBTITLE_SIZE + 10
+    text(surface, doc.subtitle, S_MARGIN + (avail - subW) / 2, surface.y - S_SUBTITLE_SIZE, S_SUBTITLE_SIZE, C_MUTED)
+    surface.y -= S_SUBTITLE_SIZE + 10
   }
-  page.drawRectangle({ x: S_MARGIN, y: y - 2, width: avail, height: 2, color: C_BRAND })
-  y -= 16
+  curPage().drawRectangle({ x: S_MARGIN, y: surface.y - 2, width: avail, height: 2, color: C_BRAND })
+  surface.y -= 16
 
   // ---- 概览：基本信息两列网格 ----
   if (doc.overviewTitle) drawSectionTitle(doc.overviewTitle)
@@ -489,18 +460,18 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     const half = avail / 2
     const perRow = 2
     for (let i = 0; i < doc.meta.length; i += perRow) {
-      ensure(S_META_SIZE + 12)
+      surface.ensure(S_META_SIZE + 12)
       const row = doc.meta.slice(i, i + perRow)
       row.forEach((m, idx) => {
         const label = `${m.label}`
         const labelW = font.widthOfTextAtSize(`${label}：`, S_META_SIZE)
         const x = S_MARGIN + idx * half
-        text(`${label}：`, x, y - S_META_SIZE, S_META_SIZE, C_MUTED)
-        text(m.value || '—', x + labelW, y - S_META_SIZE, S_META_SIZE, C_INK)
+        text(surface, `${label}：`, x, surface.y - S_META_SIZE, S_META_SIZE, C_MUTED)
+        text(surface, m.value || '—', x + labelW, surface.y - S_META_SIZE, S_META_SIZE, C_INK)
       })
-      y -= S_META_SIZE + 11
+      surface.y -= S_META_SIZE + 11
     }
-    y -= 4
+    surface.y -= 4
   }
 
   // ---- 概览指标卡：一行最多 4 张 ----
@@ -515,28 +486,28 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     const hasHint = doc.kpis.some((k) => k.hint)
     const cardH = hasHint ? 54 : 42
     for (let i = 0; i < doc.kpis.length; i += perRow) {
-      ensure(cardH + 10)
+      surface.ensure(cardH + 10)
       const row = doc.kpis.slice(i, i + perRow)
       row.forEach((k, idx) => {
         const x = S_MARGIN + idx * (cardW + gap)
-        page.drawRectangle({
-          x, y: y - cardH, width: cardW, height: cardH,
+        curPage().drawRectangle({
+          x, y: surface.y - cardH, width: cardW, height: cardH,
           color: rgb(0.985, 0.99, 0.988), borderColor: C_KPI_BORDER, borderWidth: 0.6,
         })
-        text(k.label, x + 8, y - 12, 8, C_MUTED)
+        text(surface, k.label, x + 8, surface.y - 12, 8, C_MUTED)
         if (k.hint) {
           // 构成说明按卡片宽度截断，宁可少写几个字也不能压到右侧数值
           let hint = k.hint
           const maxW = cardW - 16
           while (hint.length > 1 && font.widthOfTextAtSize(hint, 7) > maxW) hint = hint.slice(0, -1)
           if (hint !== k.hint) hint = `${hint.slice(0, -1)}…`
-          text(hint, x + 8, y - 23, 7, C_MUTED)
+          text(surface, hint, x + 8, surface.y - 23, 7, C_MUTED)
         }
         const vSize = 11.5
         const vw = font.widthOfTextAtSize(k.value, vSize)
-        text(k.value, x + cardW - 8 - vw, y - cardH + 11, vSize, C_INK)
+        text(surface, k.value, x + cardW - 8 - vw, surface.y - cardH + 11, vSize, C_INK)
       })
-      y -= cardH + 10
+      surface.y -= cardH + 10
     }
   }
 
@@ -550,9 +521,11 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     for (const w of widths) { xs.push(acc); acc += w }
 
     const drawHead = () => {
-      page.drawRectangle({ x: S_MARGIN, y: y - S_HEADER_H, width: avail, height: S_HEADER_H, color: C_HEAD_BG })
-      hline(S_MARGIN, S_MARGIN + avail, y, C_RULE, 0.8)
-      hline(S_MARGIN, S_MARGIN + avail, y - S_HEADER_H, C_RULE, 0.8)
+      curPage().drawRectangle({
+        x: S_MARGIN, y: surface.y - S_HEADER_H, width: avail, height: S_HEADER_H, color: C_HEAD_BG,
+      })
+      hline(surface, S_MARGIN, S_MARGIN + avail, surface.y, C_RULE, 0.8)
+      hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - S_HEADER_H, C_RULE, 0.8)
       table.columns.forEach((c, i) => {
         const label = c.label
         const tw = font.widthOfTextAtSize(label, S_TH_SIZE)
@@ -561,73 +534,75 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
           : c.align === 'center'
             ? xs[i] + (widths[i] - tw) / 2
             : xs[i] + S_CELL_PAD
-        text(label, cx, y - S_HEADER_H + 7, S_TH_SIZE, C_INK)
-        if (i > 0) vline(xs[i], y, y - S_HEADER_H, C_RULE, 0.5)
+        text(surface, label, cx, surface.y - S_HEADER_H + 7, S_TH_SIZE, C_INK)
+        if (i > 0) vline(surface, xs[i], surface.y, surface.y - S_HEADER_H, C_RULE, 0.5)
       })
-      y -= S_HEADER_H
+      surface.y -= S_HEADER_H
     }
 
-    ensure(S_HEADER_H + S_ROW_MIN * 2)
+    surface.ensure(S_HEADER_H + S_ROW_MIN * 2)
     drawHead()
 
-    const drawRow = (cells: string[], opts: { total?: boolean; zebra?: boolean } = {}) => {
-      const wrapped = table.columns.map((c, i) => wrapText(font, String(cells[i] ?? ''), widths[i] - S_CELL_PAD * 2, S_TD_SIZE))
+    const drawRow = (cells: string[], rowOpts: { total?: boolean; zebra?: boolean } = {}) => {
+      const wrapped = table.columns.map((c, i) =>
+        wrapText(font, String(cells[i] ?? ''), widths[i] - S_CELL_PAD * 2, S_TD_SIZE))
       const lines = Math.max(...wrapped.map((w) => w.length))
       const h = Math.max(S_ROW_MIN, lines * S_LINE_H + 8)
-      if (y - h < S_MARGIN + 24) {
-        newPage()
+      if (surface.y - h < S_MARGIN + 24) {
+        surface.newPage()
         // 翻页后重画表头（列宽不变）
         drawHead()
       }
-      if (opts.total) {
-        page.drawRectangle({ x: S_MARGIN, y: y - h, width: avail, height: h, color: C_TOTAL_BG })
-        hline(S_MARGIN, S_MARGIN + avail, y, C_RULE, 0.9)
-      } else if (opts.zebra) {
-        page.drawRectangle({ x: S_MARGIN, y: y - h, width: avail, height: h, color: C_ZEBRA })
+      if (rowOpts.total) {
+        curPage().drawRectangle({
+          x: S_MARGIN, y: surface.y - h, width: avail, height: h, color: C_TOTAL_BG,
+        })
+        hline(surface, S_MARGIN, S_MARGIN + avail, surface.y, C_RULE, 0.9)
+      } else if (rowOpts.zebra) {
+        curPage().drawRectangle({ x: S_MARGIN, y: surface.y - h, width: avail, height: h, color: C_ZEBRA })
       }
       table.columns.forEach((c, i) => {
-        const cellLines = wrapped[i]
-        const totalH = cellLines.length * S_LINE_H
-        const startBaseline = y - h + (h - totalH) / 2 + totalH - S_LINE_H + 2.5
-        cellLines.forEach((line, li) => {
-          const lw = font.widthOfTextAtSize(line, S_TD_SIZE)
-          const lx = alignRight(c.align)
-            ? xs[i] + widths[i] - S_CELL_PAD - lw
-            : c.align === 'center'
-              ? xs[i] + (widths[i] - lw) / 2
-              : xs[i] + S_CELL_PAD
-          text(line, lx, startBaseline - li * S_LINE_H, S_TD_SIZE, C_INK)
+        // 单元格绘制复用共享实现；baselineShift=2.5 保留清单历史版式
+        // （行高 `lines*S_LINE_H + 8` 上下留白不对称，纯居中会整体偏上）。
+        drawWrappedCell(curPage(), {
+          lines: wrapped[i], x: xs[i], top: surface.y, height: h, size: S_TD_SIZE,
+          lineHeight: S_LINE_H, padX: S_CELL_PAD, font, color: C_INK,
+          align: alignRight(c.align) ? 'right' : 'left',
+          width: widths[i],
+          baselineShift: 2.5,
         })
-        if (i > 0) vline(xs[i], y, y - h, C_RULE, 0.4)
+        if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
       })
-      if (!opts.total) hline(S_MARGIN, S_MARGIN + avail, y - h, C_RULE, 0.4)
-      y -= h
+      if (!rowOpts.total) hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - h, C_RULE, 0.4)
+      surface.y -= h
     }
 
     if (!table.rows.length) {
-      ensure(S_ROW_MIN)
-      text(table.empty || '本期无数据', S_MARGIN + S_CELL_PAD, y - 13, S_TD_SIZE, C_MUTED)
-      hline(S_MARGIN, S_MARGIN + avail, y - S_ROW_MIN, C_RULE, 0.4)
-      y -= S_ROW_MIN
+      surface.ensure(S_ROW_MIN)
+      text(surface, table.empty || '本期无数据', S_MARGIN + S_CELL_PAD, surface.y - 13, S_TD_SIZE, C_MUTED)
+      hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - S_ROW_MIN, C_RULE, 0.4)
+      surface.y -= S_ROW_MIN
     } else {
       table.rows.forEach((row, idx) => drawRow(row, { zebra: idx % 2 === 1 }))
     }
     if (table.total?.length && table.rows.length) drawRow(table.total, { total: true })
-    y -= 10
+    surface.y -= 10
   }
 
   // ---- 页脚备注 ----
   if (doc.footerNote) {
-    ensure(30)
+    surface.ensure(30)
     const lines = wrapText(font, doc.footerNote, avail, 8)
     lines.forEach((line) => {
-      text(line, S_MARGIN, y - 9, 8, C_MUTED)
-      y -= 12
+      text(surface, line, S_MARGIN, surface.y - 9, 8, C_MUTED)
+      surface.y -= 12
     })
   }
 
   // ---- 统一页脚：标题 · 生成时间 · 第 N / 共 M 页 ----
-  const pages = pdf.getPages()
+  // 清单页脚要写「共 M 页」，只有全部页生成完才知道 M，所以不能走 surface 的
+  // 逐页页脚钩子（那是目录引擎的「第 N 页」形态），在这里统一补一遍。
+  const pages = surface.doc.getPages()
   pages.forEach((p, i) => {
     const label = `${doc.title} · 生成于 ${dateStr}`
     p.drawLine({
@@ -641,5 +616,5 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     p.drawText(pn, { x: PORTRAIT_W - S_MARGIN - pw, y: S_MARGIN - 17, size: 7.2, font, color: C_MUTED })
   })
 
-  return pdf.save()
+  return surface.doc.save()
 }

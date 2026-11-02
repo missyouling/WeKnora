@@ -708,6 +708,34 @@ import type { KpiCard } from '@/components/business/DashboardKpiGroup.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
+import { buildEnergyChartOption } from './utilityEnergyChart'
+import { buildBillMetrics } from './utilityBillMetrics'
+import { buildOverviewRows, overviewTotalOf, qtyLabelOf as qtyLabelOfUtil } from './utilityBillOverview'
+import {
+  BILL_MENUS,
+  CAPACITY_FIELDS,
+  PF_FIELDS,
+  buildEnergyCompareRows,
+  buildMeterRows,
+  buildResidentMeterRows,
+  feeMenuOf,
+  feeRowsOf as feeRowsOfUtil,
+  feeSubtotalOf as feeSubtotalOfUtil,
+  matchRow as matchRowUtil,
+  menuLabelOf,
+  pickPrevEnergy,
+  rowConfigsOf as rowConfigsOfUtil,
+  ROW_GROUP_OF_MENU,
+} from './utilityBillDetail'
+import {
+  FALLBACK_COLUMNS,
+  colWidthPx,
+  feeCellTextOf,
+  feeGroupColsOf,
+  displayMultiplierOf,
+  makeAmountCell,
+  type ColDef,
+} from './utilityBillColumns'
 
 // 表头右侧滚动条轨道遮罩（实测，四模块 + 能耗统一）
 const { headerFixStyle, measureTableHeaderFix } = useTableHeaderFix()
@@ -717,36 +745,10 @@ const PAGE_SIZE = 30
 const COLUMN_STORAGE_KEY = 'weknora-utility-electricity-columns-v5'
 const COLUMN_STORAGE_VERSION = 5
 
-// group 用于费用分项归类：'industrial'/'residential' 是旧口径，
+// 列定义 / 列宽 / 金额渲染 / 费用子表列派生全部来自 utilityBillColumns：
+// 这些是纯函数（不读响应式状态），抽出去后能直接单测口径，页面只做组装。
+// group 字段用于费用分项归类：'industrial'/'residential' 是旧口径，
 // 其余值来自 subs.group（overview/market/line/...），故放宽为 string。
-interface ColDef { key: string; label: string; fieldType: string; default: boolean; w: string; group?: string; width?: number }
-const FALLBACK_COLUMNS: ColDef[] = [
-  // 账单概况：严格 20 个业务字段（与后端 electricityDefaultGroupFields("overview") 逐项一致）。
-  //
-  // 上一版这里塞了 7 个费用汇总列（购电电费/线损费用/…）与 capacity_fee，
-  // 但它们不在 subs 的 overview 分组里，于是列表列与「字段定义」两套口径打架，
-  // 「账单周期」也因为 bill_period_start 混入而出现两列。现在统一按 20 项。
-  { key: 'bill_period', label: '账单周期', fieldType: 'text', default: true, w: '110px' },
-  { key: 'account_no', label: '户号', fieldType: 'text', default: true, w: '150px' },
-  { key: 'account_name', label: '户名', fieldType: 'text', default: true, w: '170px' },
-  { key: 'usage_category', label: '用电类别', fieldType: 'text', default: true, w: '120px' },
-  { key: 'voltage_level', label: '电压等级', fieldType: 'text', default: true, w: '110px' },
-  { key: 'market_attr', label: '市场化属性', fieldType: 'text', default: true, w: '130px' },
-  { key: 'supply_unit', label: '供电服务单位', fieldType: 'text', default: true, w: '150px' },
-  { key: 'address', label: '用电地址', fieldType: 'text', default: true, w: '220px' },
-  { key: 'meter_no', label: '电能表编号', fieldType: 'text', default: true, w: '160px' },
-  { key: 'total_kwh', label: '本期电量', fieldType: 'number', default: true, w: '110px' },
-  { key: 'total_amount', label: '本期电费', fieldType: 'amount', default: true, w: '120px' },
-  { key: 'prev_kwh', label: '上期电量', fieldType: 'number', default: true, w: '110px' },
-  { key: 'mom_change', label: '环比', fieldType: 'text', default: true, w: '90px' },
-  { key: 'avg_price', label: '平均电价', fieldType: 'number', default: true, w: '110px' },
-  { key: 'power_factor', label: '功率因素', fieldType: 'number', default: true, w: '100px' },
-  { key: 'due_date', label: '交费截止', fieldType: 'text', default: true, w: '110px' },
-  { key: 'industrial_amount', label: '工商业电费', fieldType: 'amount', default: true, w: '120px' },
-  { key: 'residential_amount', label: '居民电费', fieldType: 'amount', default: true, w: '110px' },
-  { key: 'pf_adjust_amount', label: '力调电费', fieldType: 'amount', default: true, w: '110px' },
-  { key: 'grand_total', label: '合计', fieldType: 'amount', default: true, w: '120px' },
-]
 
 /** 能耗页 6 个业务视图（原侧边栏菜单项，现为顶部 KPI 卡片）。 */
 type EnergyTab = 'electricity' | 'solar' | 'electric-meter' | 'water' | 'gas' | 'billing'
@@ -812,32 +814,9 @@ const tableColumns = computed(() => {
   cols.push({ colKey: 'tags', title: '标签', width: 140 })
   return cols
 })
-/**
- * 列宽：用户在「字段定义」配置的 subs.width 最高优先（>0 精确生效，clamp 60~400
- * 防误输入）；0/未配置才回落内置 w 兜底，再不行自适应。
- * 真机踩过：subs 有 width 但 ColDef 没把字段下传 → 填 260 保存后列纹丝不动。
- */
-function colWidthPx(c: ColDef): number | undefined {
-  const cfg = Number(c.width) || 0
-  if (cfg > 0) return Math.min(Math.max(cfg, 60), 400)
-  const w = String(c.w || '')
-  const px = Number(w.replace('px', ''))
-  if (w.endsWith('px') && Number.isFinite(px) && px > 0) return px
-  return undefined
-}
-/**
- * 列单元格渲染：金额列统一走 fmtAmount。
- * TDesign 默认单元格会把原始数值直接上屏，浮点累加残留（如 53441.77999999996）
- * 就会原样暴露；这里做渲染期收敛，与聚合期按分累加形成双保险。
- */
-function cellOf(c: ColDef) {
-  if (c.fieldType !== 'amount') return undefined
-  return (_h: any, { row }: any) => {
-    const v = row?.[c.key]
-    if (v === undefined || v === null || v === '') return ''
-    return fmtAmount(v)
-  }
-}
+// 金额列渲染器：实现与口径都在 utilityBillColumns.makeAmountCell，
+// 这里只把本页的 fmtAmount 注入进去（避免模块反向依赖 formatNumber）。
+const cellOf = (c: ColDef) => makeAmountCell(c, fmtAmount)
 function onTableSelectChange(val: any) { selectedRowKeys.value = Array.isArray(val) ? val : [] }
 
 /**
@@ -882,34 +861,14 @@ function persistColumns() {
 watch(visibleColKeys, () => persistColumns(), { deep: true })
 
 const allFieldConfigs = ref<any[]>([])
-// 费用菜单默认列（分组字段配置缺省时兜底）
-const DEFAULT_FEE_COLS = [
-  { field_key: 'name', label: '费用组成', field_type: 'text' },
-  { field_key: 'period', label: '时段', field_type: 'text' },
-  { field_key: 'qty', label: '计费电量', field_type: 'number' },
-  { field_key: 'rate', label: '计费标准', field_type: 'number' },
-  { field_key: 'fee', label: '电费', field_type: 'amount' },
-]
-// 分组菜单列：按字段配置（group + 默认显示）渲染，设置中增删改后自动同步
-const feeGroupCols = (group: string) => {
-  const list = allFieldConfigs.value.filter((c: any) => c.group === group && c.deleted_at == null)
-  if (!list.length) return DEFAULT_FEE_COLS
-  const cols = list.filter((c: any) => c.default_visible).sort((a: any, b: any) => a.sort_order - b.sort_order)
-  if (!cols.length) return list.sort((a: any, b: any) => a.sort_order - b.sort_order)
-  return cols
-}
-const feeCellText = (it: any, col: any) => {
-  const v = it[col.field_key]
-  if (col.field_type === 'number') return v || v === 0 ? fmtRate6(v) : ''
-  if (col.field_type === 'amount') return v || v === 0 ? fmtMoney(v) : ''
-  if (v === undefined || v === null || v === '') return ''
-  return String(v)
-}
-// 电量明细倍率：仅使用提取值
-const displayMultiplier = (r: any) => {
-  if (r.multiplier !== undefined && r.multiplier !== null && Number(r.multiplier) !== 0) return fmtRate6(r.multiplier)
-  return ''
-}
+// 费用子表三件事全部委托 utilityBillColumns（口径在模块内，可单测）：
+//   feeGroupCols  —— 按 subs.group + default_visible 派生列，三级兜底顺序不变；
+//   feeCellText   —— 数值走 fmtRate6、金额走 fmtMoney，**0 必须上屏**；
+//   displayMultiplier —— 倍率只用提取值，不推算。
+const feeGroupCols = (group: string) => feeGroupColsOf(allFieldConfigs.value, group)
+const feeCellText = (it: any, col: any) =>
+  feeCellTextOf(it, col, { rate6: fmtRate6, money: fmtMoney })
+const displayMultiplier = (r: any) => displayMultiplierOf(r, fmtRate6)
 
 const loadFieldConfigs = async () => {
   // 字段配置的唯一权威源：fleet_categories(scope=energy, name=市电账单) 的 subs。
@@ -1685,141 +1644,25 @@ const loadEditForm = async (row: Row) => {
 const detailMode = ref(false)
 const activeMenu = ref('overview')
 
-interface BillMenu { key: string; label: string; group?: boolean; children?: { key: string; label: string }[] }
-const BILL_MENUS: BillMenu[] = [
-  { key: 'overview', label: '账单概况' },
-  {
-    key: 'industrial', label: '工商业电费', group: true, children: [
-      { key: 'industrial-meter', label: '电量明细' },
-      { key: 'industrial-market', label: '市场化购电费' },
-      { key: 'industrial-line', label: '上网环节线损费' },
-      { key: 'industrial-trans', label: '输配电量电费' },
-      { key: 'industrial-sys', label: '系统运行费' },
-      { key: 'industrial-gov', label: '政府基金及附加' },
-    ],
-  },
-  {
-    key: 'residential', label: '居民电费', group: true, children: [
-      { key: 'residential-meter', label: '电量明细' },
-      { key: 'residential-catalog', label: '目录电费' },
-      { key: 'residential-gov', label: '政府性基金及附加' },
-    ],
-  },
-  { key: 'capacity', label: '输配容（需）量电费' },
-  { key: 'pf-adjust', label: '功率因素调整电费' },
-]
-
+/** 退出详情：回到列表并重载（详情里可能改过金额/分类，列表必须重新拉）。 */
 const exitDetail = () => {
   detailMode.value = false
   activeMenu.value = 'overview'
   loadFiles(true)
 }
 
-const FEE_MENU_MAP: Record<string, (it: any) => boolean> = {
-  'industrial-market': (it) => (it.category || '').includes('市场化购电'),
-  'industrial-line': (it) => (it.category || '').includes('上网环节线损'),
-  'industrial-trans': (it) => (it.category || '').includes('输配电量'),
-  'industrial-sys': (it) => (it.category || '').includes('系统运行'),
-  'industrial-gov': (it) => (it.category || '').includes('政府性基金') && Number(it.qty || 0) >= 100000 && !(it.name || '').includes('功率因数'),
-  'residential-catalog': (it) => (it.category || '').includes('目录电费'),
-  'residential-gov': (it) => (it.category || '').includes('政府性基金') && Number(it.qty || 0) < 100000 && !(it.name || '').includes('功率因数'),
-  'pf-adjust': (it) => (it.category || '').includes('功率因数') || (it.name || '').includes('功率因数'),
-}
-const feeMenuOf = (key: string) => key in FEE_MENU_MAP && key !== 'pf-adjust' // pf-adjust 独立明细列表
-// 费用菜单 → 行配置分组（行字段配置驱动各费用表格的行）
-const ROW_GROUP_OF_MENU: Record<string, string> = {
-  'industrial-market': 'market-rows',
-  'industrial-trans': 'trans-rows',
-  'industrial-sys': 'sys-rows',
-  'industrial-gov': 'gov-industrial-rows',
-  'residential-catalog': 'catalog-rows',
-  'residential-gov': 'gov-residential-rows',
-}
-// 分时时段（仅括号内为这些时段时，配置 key 才拆分为 名称+时段；如"零售交易电费(尖峰)"）
-const ROW_PERIODS = ['尖峰', '峰', '平', '谷']
-const normRowName = (s: string) => (s || '').trim().replace(/[（(]/g, '(').replace(/[）)]/g, ')')
-const parseRowKey = (k: string) => {
-  const m = /^(.+?)\(([^)]+)\)$/.exec(k || '')
-  if (m && ROW_PERIODS.includes(m[2])) return { name: m[1], period: m[2] }
-  return { name: k || '', period: '' }
-}
-const feeRowsOf = (key: string) => {
-  const list = (editForm.value.fee_items || []).filter(FEE_MENU_MAP[key])
-  const rg = ROW_GROUP_OF_MENU[key]
-  const cfgs = (rg ? rowConfigsOf(rg) : []).filter((c: any) => c.default_visible !== false)
-  if (!cfgs.length) return list // 无行配置 → 原样展示提取结果
-  // 按行配置过滤 + 排序 + 改名（未配置的行隐藏；分时子项按 名称(时段) 一一对应）
-  return cfgs.map((cfg: any) => {
-    const want = parseRowKey(cfg.field_key)
-    const hits = list.filter((it: any) => {
-      const n = normRowName(it.name)
-      const p = (it.period || '').trim()
-      if (want.period) return n === normRowName(want.name) && p === want.period
-      return n === normRowName(want.name)
-    })
-    // 同名多行时优先取有金额的那行：合并单元格解析出的「全 0 影子行」若排在前，
-    // find 会拿到 0，账单概况就少算这笔钱（真机：少 31520.93 的偏差回收返还）。
-    const hit = hits.find((it: any) => (Number(it.fee) || 0) !== 0 || (Number(it.qty) || 0) !== 0) || hits[0]
-    if (!hit) return null
-    return { ...hit, name: cfg.label || cfg.field_key }
-  }).filter(Boolean)
-}
-const feeSubtotalOf = (key: string) => Math.round(feeRowsOf(key).reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
-const menuLabel = (key: string) => {
-  for (const m of BILL_MENUS) {
-    if (m.children) {
-      const c = m.children.find(x => x.key === key)
-      if (c) return c.label
-    }
-  }
-  return key
-}
-
-// 容需量字段（编辑抽屉）
-const CAPACITY_FIELDS = [
-  { key: 'demand', label: '需量值（kW）', type: 'number' },
-  { key: 'demand_price', label: '需量电价（元/kW）', type: 'number' },
-  { key: 'demand_fee', label: '输配需量电费（元）', type: 'number' },
-  { key: 'kwh_per_kva', label: '月每千伏安用电量（kWh/kVA）', type: 'number' },
-  { key: 'discount_demand_fee', label: '折扣需量电费（元）', type: 'number' },
-  { key: 'capacity', label: '容量（kVA）', type: 'number' },
-  { key: 'capacity_price', label: '容量电价（元/kVA）', type: 'number' },
-  { key: 'capacity_fee', label: '输配容量电费（元）', type: 'number' },
-]
-
-// 功率因数字段（编辑抽屉）
-const PF_FIELDS = [
-  { key: 'project', label: '项目', type: 'text' },
-  { key: 'power_factor', label: '功率因素实际值', type: 'number' },
-  { key: 'pf_standard', label: '功率因素标准', type: 'number' },
-  { key: 'adjust_ratio', label: '调整系数', type: 'number' },
-  { key: 'pf_active_kwh', label: '参与调整有功电量（kWh）', type: 'number' },
-  { key: 'pf_reactive_kwh', label: '参与调整无功电量（kvarh）', type: 'number' },
-  { key: 'pf_fee_base', label: '参与调整电费金额（元）', type: 'number' },
-  { key: 'adjust_fee', label: '功率因素调整电费（元）', type: 'number' },
-]
-
-// 居民电量明细（与工商业电量明细一致 9 列；行=定比0.015，计费电量=本期电量×定比+加减，差异可手动修改）
-const residentMeterRows = computed(() => {
-  const totalKwh = Number(editForm.value.total_kwh) || 0
-  const list = editForm.value.residential_readings
-  const arr = Array.isArray(list) && list.length ? list : []
-  const build = (cfgLabel: string, hit: any) => {
-    const ratio = Number(hit?.ratio) || 0.015
-    const adjust = Number(hit?.adjust) || 0
-    const autoBill = totalKwh > 0 ? Math.round((totalKwh * ratio + adjust) * 100) / 100 : 0
-    const bill = hit?.bill_kwh_manual ? (Number(hit.bill_kwh) || 0) : autoBill
-    return { meter_type: cfgLabel, prev: '', curr: '', multiplier: '', reading_kwh: '', trans_loss: '', line_loss: '', adjust, bill_kwh: bill }
-  }
-  const cfgs = residentRowConfigs.value
-  if (!cfgs.length) {
-    return [build('定比0.015', arr[0] || { ratio: 0.015, adjust: 0, bill_kwh: 0 })]
-  }
-  return cfgs.map((cfg: any, ci: number) => {
-    const hit = arr[ci] || arr[0] || null
-    return build(cfg.label || cfg.field_key, hit)
-  })
-})
+// 详情视图的菜单结构、费用归属判定、行配置匹配、容需量/功率因数字段
+// 全部来自 utilityBillDetail（纯函数，可单测）；这里只保留与响应式状态
+// 相关的包装：把 allFieldConfigs / editForm 喂进去。
+// 详情视图的菜单结构、费用归属判定、行配置匹配、容需量/功率因数字段
+// 全部来自 utilityBillDetail（纯函数，可单测）；这里只保留与响应式状态
+// 相关的**同名包装**：把 allFieldConfigs / editForm 喂进去。
+// 保留原名（而不是全站改名）是因为模板里 feeRowsOf(activeMenu) / feeMenuOf /
+// menuLabel / BILL_MENUS 出现十余次，改名纯属机械操作且容易漏掉模板里的引用。
+const feeRowsOf = (key: string) => feeRowsOfUtil(editForm.value.fee_items || [], key, rowConfigsOfUtil(allFieldConfigs.value, ROW_GROUP_OF_MENU[key] || ''))
+const feeSubtotalOf = (key: string) => feeSubtotalOfUtil(editForm.value.fee_items || [], key, rowConfigsOfUtil(allFieldConfigs.value, ROW_GROUP_OF_MENU[key] || ''))
+const menuLabel = (key: string) => menuLabelOf(key)
+const residentMeterRows = computed(() => buildResidentMeterRows(editForm.value, residentRowConfigs.value))
 const residentBillTotal = computed(() => residentMeterRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
 const residentMeterEditIdx = ref(-1)
 let residentEditSnapshot = ''
@@ -1843,81 +1686,26 @@ const pfRow = computed(() => editForm.value.pf_detail || null)
 const capacityRows = computed(() => (capacityRow.value ? [capacityRow.value] : []))
 const pfRows = computed(() => (pfRow.value ? [pfRow.value] : []))
 
-const sumFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee) || 0), 0) * 100) / 100
-// 类别计费数量：取该类别行中最大计费电量（子项分时段的 qty 各为其段电量，类别口径用整表电量代表值）
-const sumQty = (arr: any[]) => {
-  if (!arr.length) return 0
-  return Math.round(Math.max(...arr.map((it: any) => Number(it.qty) || 0)) * 10) / 10
-}
-const sumBillFee = (arr: any[]) => Math.round(arr.reduce((s: number, it: any) => s + (Number(it.fee_amount) || 0), 0) * 100) / 100
-
-const overviewRows = computed(() => {
-  const edit = editForm.value
-  const market = sumFee(feeRowsOf('industrial-market'))
-  const line = sumFee(feeRowsOf('industrial-line'))
-  const trans = sumFee(feeRowsOf('industrial-trans'))
-  const sys = sumFee(feeRowsOf('industrial-sys'))
-  const govI = sumFee(feeRowsOf('industrial-gov'))
-  const catalog = sumFee(feeRowsOf('residential-catalog'))
-  const govR = sumFee(feeRowsOf('residential-gov'))
-  const capacity = Number(edit.capacity_fee) || 0
-  const pf = Number(edit.pf_adjust_amount) || 0
-  const marketBill = sumBillFee(feeRowsOf('industrial-market'))
-  const lineBill = sumBillFee(feeRowsOf('industrial-line'))
-  const transBill = sumBillFee(feeRowsOf('industrial-trans'))
-  const sysBill = sumBillFee(feeRowsOf('industrial-sys'))
-  const govIBill = sumBillFee(feeRowsOf('industrial-gov'))
-  const catalogBill = sumBillFee(feeRowsOf('residential-catalog'))
-  const govRBill = sumBillFee(feeRowsOf('residential-gov'))
-  // 工商业小计 = 市场化+线损+输配量+系统+政府基金(工商业)+输配容(需)量电费（子项手动覆盖后随动）
-  const ovOf = (key: string, value: number) => {
-    const ov = feeOverrides.value[key]
-    return ov !== undefined ? ov : value
-  }
-  const industrial = Math.round((ovOf('market', market) + ovOf('line', line) + ovOf('trans', trans) + ovOf('sys', sys) + ovOf('govI', govI) + ovOf('capacity', capacity)) * 100) / 100
-  const residential = Math.round((ovOf('catalog', catalog) + ovOf('govR', govR)) * 100) / 100
-  const industrialBill = Math.round((ovOf('bill:market', marketBill) + ovOf('bill:line', lineBill) + ovOf('bill:trans', transBill) + ovOf('bill:sys', sysBill) + ovOf('bill:govI', govIBill) + ovOf('bill:capacity', capacity)) * 100) / 100
-  const residentialBill = Math.round((ovOf('bill:catalog', catalogBill) + ovOf('bill:govR', govRBill)) * 100) / 100
-  const m = (key: string) => sumQty(feeRowsOf(key))
-  const withOv = (key: string, value: number) => {
-    const ov = feeOverrides.value[key]
-    return { value, displayValue: ov !== undefined ? ov : value }
-  }
-  const withBillOv = (key: string, value: number) => {
-    const ov = feeOverrides.value[`bill:${key}`]
-    return { billFee: ov !== undefined ? ov : value, ovBillKey: `bill:${key}` }
-  }
-  return [
-    { key: 'market', label: '市场化购电费', ...withOv('market', market), ...withBillOv('market', marketBill), qty: m('industrial-market'), menuKey: 'industrial-market' },
-    { key: 'line', label: '上网环节线损费', ...withOv('line', line), ...withBillOv('line', lineBill), qty: m('industrial-line'), menuKey: 'industrial-line' },
-    { key: 'trans', label: '输配电量电费', ...withOv('trans', trans), ...withBillOv('trans', transBill), qty: m('industrial-trans'), menuKey: 'industrial-trans' },
-    { key: 'sys', label: '系统运行费', ...withOv('sys', sys), ...withBillOv('sys', sysBill), qty: m('industrial-sys'), menuKey: 'industrial-sys' },
-    { key: 'govI', label: '政府基金及附加（工商业）', ...withOv('govI', govI), ...withBillOv('govI', govIBill), qty: m('industrial-gov'), menuKey: 'industrial-gov' },
-    { key: 'industrial', label: '工商业电费小计', value: industrial, displayValue: industrial, billFee: industrialBill, qty: -1, menuKey: '', total: true },
-    { key: 'catalog', label: '目录电费（居民）', ...withOv('catalog', catalog), ...withBillOv('catalog', catalogBill), qty: m('residential-catalog'), menuKey: 'residential-catalog' },
-    { key: 'govR', label: '政府性基金及附加（居民）', ...withOv('govR', govR), ...withBillOv('govR', govRBill), qty: m('residential-gov'), menuKey: 'residential-gov' },
-    { key: 'residential', label: '居民电费小计', value: residential, displayValue: residential, billFee: residentialBill, qty: -1, menuKey: '', total: true },
-    { key: 'capacity', label: '输配容（需）量电费', ...withOv('capacity', capacity), ...withBillOv('capacity', capacity), qty: Number(edit.capacity) || 0, menuKey: 'capacity' },
-    { key: 'pf', label: '功率因数调整电费', ...withOv('pf', pf), ...withBillOv('pf', pf), qty: -1, menuKey: 'pf-adjust' },
-  ]
-})
-const qtyLabelOf = (r: any) => {
-  if (r.qty < 0) return ''
-  if (r.key === 'capacity') return r.qty ? `${fmtKwh(r.qty)} kVA` : ''
-  return r.qty ? `${fmtKwh(r.qty)} 千瓦时` : ''
-}
+// 账单概况的 11 行构造 + 合计全部在 utilityBillOverview（纯函数，可单测）。
+// 这里只把「本页的取行方式」注入进去：rowsOf = feeRowsOf（已按行配置过滤）。
+//
+// 口径提醒（改动必须同步改单测）：
+//   · 类别电量取**最大值**而不是求和（分时子项的 qty 是各时段电量，相加会翻倍）；
+//   · 概览合计 = 工商业小计 + 居民小计 + 功率因数调整电费。
+const overviewRows = computed(() => buildOverviewRows({
+  feeItems: editForm.value.fee_items || [],
+  rowsOf: (k: string) => feeRowsOf(k),
+  editForm: editForm.value,
+  overrides: feeOverrides.value,
+}))
+const qtyLabelOf = (r: any) => qtyLabelOfUtil(r, fmtKwh)
+/** 点击概况行跳到对应子表（menuKey 为空的行不可跳）。 */
 const gotoMenu = (key: string) => {
   if (!key) return
   activeMenu.value = key
 }
-const overviewTotal = computed(() => {
-  const vals = overviewRows.value
-  const industrial = vals.find(r => r.key === 'industrial')?.displayValue || 0
-  const residential = vals.find(r => r.key === 'residential')?.displayValue || 0
-  // 容量电费已计入工商业小计，功率因数调整电费单独计
-  const pf = vals.find(r => r.key === 'pf')?.displayValue || 0
-  return Math.round((industrial + residential + pf) * 100) / 100
-})
+const overviewTotal = computed(() => overviewTotalOf(overviewRows.value))
+
 // 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
 const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
 const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
@@ -1935,183 +1723,17 @@ const overviewDiff = computed(() => {
   return Math.round((overviewTotal.value - nominal) * 100) / 100
 })
 
-// ---- 概览页指标卡（数据均来自子项计算 / 提取字段，非直接填充汇总） ----
-const metricKwh = computed(() => Number(editForm.value.total_kwh) || 0)
-const metricFee = computed(() => overviewTotal.value)
-const metricPeriod = computed(() => {
-  const v = editForm.value.bill_period_start || editForm.value.bill_period_end
-  return v ? String(v).slice(0, 7) : '—'
-})
-const metricDue = computed(() => {
-  const v = editForm.value.due_date || editForm.value.pay_deadline
-  return v ? String(v).slice(0, 10) : '—'
-})
-// 指标卡环比（本期电量 / 本期电费，均与上期对比）
-const metricKwhDelta = computed(() => {
-  if (!prevEnergy.value.exists) return 0
-  return metricKwh.value - prevEnergy.value.total
-})
-const metricKwhDeltaArrow = computed(() => (metricKwhDelta.value > 0 ? '↑' : metricKwhDelta.value < 0 ? '↓' : '—'))
-const metricKwhDeltaClass = computed(() => (metricKwhDelta.value > 0 ? 'ea-delta--up' : metricKwhDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const metricKwhDeltaSub = computed(() => {
-  if (metricKwhDelta.value === 0) return '持平'
-  const sign = metricKwhDelta.value > 0 ? '+' : '-'
-  return `${sign}${fmtKwh(Math.abs(metricKwhDelta.value))} 千瓦时`
-})
-const metricKwhTip = computed(() => {
-  if (!prevEnergy.value.exists) return '暂无上期数据'
-  const cur = metricKwh.value, prev = prevEnergy.value.total
-  const pct = prev ? ((cur - prev) / prev) * 100 : 0
-  return `本期电量 ${fmtKwh(cur)} 千瓦时，上期 ${fmtKwh(prev)} 千瓦时\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
-})
-const metricFeeDelta = computed(() => {
-  if (!prevEnergy.value.exists) return 0
-  return metricFee.value - prevEnergy.value.fee
-})
-const metricFeeDeltaArrow = computed(() => (metricFeeDelta.value > 0 ? '↑' : metricFeeDelta.value < 0 ? '↓' : '—'))
-const metricFeeDeltaClass = computed(() => (metricFeeDelta.value > 0 ? 'ea-delta--up' : metricFeeDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const metricFeeDeltaSub = computed(() => {
-  if (metricFeeDelta.value === 0) return '持平'
-  const sign = metricFeeDelta.value > 0 ? '+' : '-'
-  return `${sign}${fmtMoney(Math.abs(metricFeeDelta.value))} 元`
-})
-const metricFeeTip = computed(() => {
-  if (!prevEnergy.value.exists) return '暂无上期数据'
-  const cur = metricFee.value, prev = prevEnergy.value.fee
-  const pct = prev ? ((cur - prev) / prev) * 100 : 0
-  return `本期电费 ${fmtMoney(cur)} 元，上期 ${fmtMoney(prev)} 元\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
-})
-// 用能分析
-const momText = computed(() => {
-  const prev = prevEnergy.value.exists ? prevEnergy.value.total : 0
-  const cur = Number(editForm.value.total_kwh) || 0
-  if (!prev || !cur) return '—'
-  const pct = Math.round(((cur - prev) / prev) * 1000) / 10
-  return `${pct > 0 ? '+' : ''}${pct}%`
-})
-const momDelta = computed(() => {
-  const prev = prevEnergy.value.exists ? prevEnergy.value.total : 0
-  const cur = Number(editForm.value.total_kwh) || 0
-  if (!prev || !cur) return 0
-  return cur - prev
-})
-const momDeltaArrow = computed(() => (momDelta.value > 0 ? '↑' : momDelta.value < 0 ? '↓' : ''))
-const momDeltaClass = computed(() => (momDelta.value > 0 ? 'ea-delta--up' : momDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const momDeltaSub = computed(() => {
-  if (momDelta.value === 0) return '持平'
-  return `${fmtKwh(Math.abs(momDelta.value))} 千瓦时`
-})
-const momTip = computed(() => {
-  const cur = Number(editForm.value.total_kwh) || 0
-  const prev = prevEnergy.value.total
-  if (!prev || !cur) return '暂无上期数据'
-  const pct = ((cur - prev) / prev) * 100
-  return `本期电量 ${fmtKwh(cur)} 千瓦时，上期 ${fmtKwh(prev)} 千瓦时\n环比 = (本期 − 上期) ÷ 上期 = ${pct.toFixed(2)}%`
-})
-const pfText = computed(() => {
-  const v = editForm.value.power_factor
-  return v === null || v === undefined || v === '' ? '—' : String(v)
-})
-const pfDelta = computed(() => {
-  const cur = Number(editForm.value.power_factor) || 0
-  const prev = Number(prevEnergy.value.power_factor) || 0
-  if (!cur && !prev) return 0
-  return Math.round((cur - prev) * 1000) / 1000
-})
-const pfDeltaArrow = computed(() => (pfDelta.value > 0 ? '↑' : pfDelta.value < 0 ? '↓' : ''))
-const pfDeltaClass = computed(() => (pfDelta.value > 0 ? 'ea-delta--up' : pfDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const pfDeltaSub = computed(() => (pfDelta.value === 0 ? '持平' : `${Math.abs(pfDelta.value).toFixed(2)}`))
-const pfTip = computed(() => {
-  const cur = Number(editForm.value.power_factor) || 0
-  const prev = Number(prevEnergy.value.power_factor) || 0
-  if (!cur && !prev) return '暂无上期数据'
-  return `本期功率因数 ${cur}，上期 ${prev}\n变化 = ${pfDelta.value > 0 ? '+' : ''}${pfDelta.value.toFixed(2)}`
-})
-const avgPriceText = computed(() => {
-  const v = editForm.value.avg_price
-  if (v !== null && v !== undefined && v !== '') return String(Number(v))
-  const cur = Number(editForm.value.total_kwh) || 0
-  if (!cur) return '—'
-  return String(Math.round((metricFee.value / cur) * 10000) / 10000)
-})
-const avgPriceDelta = computed(() => {
-  const cur = Number(avgPriceText.value) || 0
-  const prev = prevEnergy.value.avg_price
-  if (!cur && !prev) return 0
-  return Math.round((cur - prev) * 10000) / 10000
-})
-const avgDeltaArrow = computed(() => (avgPriceDelta.value > 0 ? '↑' : avgPriceDelta.value < 0 ? '↓' : ''))
-const avgDeltaClass = computed(() => (avgPriceDelta.value > 0 ? 'ea-delta--up' : avgPriceDelta.value < 0 ? 'ea-delta--down' : 'ea-delta--flat'))
-const avgDeltaSub = computed(() => (avgPriceDelta.value === 0 ? '持平' : `${Math.abs(avgPriceDelta.value).toFixed(4)} 元/千瓦时`))
-const avgTip = computed(() => {
-  const cur = Number(avgPriceText.value) || 0
-  const prev = prevEnergy.value.avg_price
-  if (!cur && !prev) return '暂无上期数据'
-  const pct = prev ? ((cur - prev) / prev) * 100 : 0
-  return `平均电价 = 本期电费 ÷ 本期电量 = ${cur} 元/千瓦时\n上期 ${prev} 元/千瓦时，变化 ${avgPriceDelta.value > 0 ? '+' : ''}${avgPriceDelta.value.toFixed(4)}（${pct.toFixed(2)}%）`
-})
-
 // ---- 上期分时数据（按账单周期取最近上一期） ----
-const prevEnergy = computed(() => {
-  const curStart = editForm.value.bill_period_start || ''
-  const prevs = allRecords.value
-    .map(r => r.item || {})
-    .filter(m => m.bill_period_start && String(m.bill_period_start) < curStart)
-    .sort((a: any, b: any) => String(b.bill_period_start).localeCompare(String(a.bill_period_start)))
-  const p = prevs[0] || {}
-  const exists = !!p.bill_period_start
-  return {
-    exists,
-    period: exists ? String(p.bill_period_start).slice(0, 7) : '',
-    deep: Number(p.deep_peak_kwh) || 0,
-    peak: Number(p.peak_kwh) || 0,
-    flat: Number(p.flat_kwh) || 0,
-    valley: Number(p.valley_kwh) || 0,
-    total: Number(p.total_kwh) || 0,
-    fee: Number(p.total_amount) || Number(p.grand_total) || 0,
-    power_factor: p.power_factor === null || p.power_factor === undefined || p.power_factor === '' ? 0 : Number(p.power_factor),
-    avg_price: p.avg_price === null || p.avg_price === undefined || p.avg_price === '' ? 0 : Number(p.avg_price),
-  }
-})
+// 取数口径在 utilityBillDetail.pickPrevEnergy（字符串比较 YYYY-MM-DD，避开时区坑）。
+const prevEnergy = computed(() => pickPrevEnergy(allRecords.value, editForm.value.bill_period_start || ''))
 
-// 分时占比对比表（本期占比 = 时段电量 ÷ 本期总电量 × 100%；尖/峰/谷按公式，平段取余量，保证四舍五入后合计 100%）
-const energyCompareRows = computed(() => {
-  const curTotal = Number(editForm.value.total_kwh) || 0
-  const prevTotal = prevEnergy.value.total
-  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 10000) / 100 : 0)
-  const cur = [
-    { key: 'deep', label: '尖', v: Number(editForm.value.deep_peak_kwh) || 0 },
-    { key: 'peak', label: '峰', v: Number(editForm.value.peak_kwh) || 0 },
-    { key: 'flat', label: '平', v: Number(editForm.value.flat_kwh) || 0 },
-    { key: 'valley', label: '谷', v: Number(editForm.value.valley_kwh) || 0 },
-  ]
-  const prev = {
-    deep: prevEnergy.value.deep, peak: prevEnergy.value.peak,
-    flat: prevEnergy.value.flat, valley: prevEnergy.value.valley,
-  }
-  const round2 = (n: number) => Math.round(n * 100) / 100
-  const curPcts = cur.map(c => ({ key: c.key, pct: pct(c.v, curTotal) }))
-  const prevPcts = cur.map(c => ({ key: c.key, pct: prevTotal ? pct((prev as any)[c.key] || 0, prevTotal) : 0 }))
-  const sumExcl = (arr: { key: string; pct: number }[], excl: string) =>
-    arr.filter(a => a.key !== excl).reduce((s, a) => s + a.pct, 0)
-  const curFlat = curTotal ? Math.max(0, round2(100 - sumExcl(curPcts, 'flat'))) : 0
-  const prevFlat = prevTotal ? Math.max(0, round2(100 - sumExcl(prevPcts, 'flat'))) : 0
-  const curPctOf = (key: string) => (key === 'flat' ? curFlat : curPcts.find(p => p.key === key)!.pct)
-  const prevPctOf = (key: string) => (key === 'flat' ? prevFlat : prevPcts.find(p => p.key === key)!.pct)
-  return cur.map(c => {
-    const pv = (prev as any)[c.key] || 0
-    const curPct = curPctOf(c.key)
-    const prevPct = prevPctOf(c.key)
-    return {
-      key: c.key, label: c.label,
-      cur: c.v, curPct,
-      prev: pv, prevPct,
-      delta: prevTotal ? Math.round((curPct - prevPct) * 10) / 10 : 0,
-    }
-  })
-})
+// 分时占比对比表（本期占比 = 时段电量 ÷ 本期总电量 × 100%；
+// 尖/峰/谷按公式，**平段取余量**，保证四舍五入后四段合计恰好 100%）
+const energyCompareRows = computed(() => buildEnergyCompareRows(editForm.value, prevEnergy.value))
 
 // ---- 用能分析 ECharts（分时电量占比对比：本期 vs 上期） ----
+// option 的构造（含配色口径、空柱处理、纵轴上限公式）在 utilityEnergyChart；
+// 这里只保留实例的 DOM 生命周期（创建 / resize / dispose）——那是与数据无关的部分。
 const energyChartRef = ref<HTMLDivElement | null>(null)
 let energyChart: echarts.ECharts | null = null
 const renderEnergyChart = async () => {
@@ -2130,55 +1752,7 @@ const renderEnergyChart = async () => {
     // 容器尺寸变化（如概览布局调整）后同步图表尺寸
     energyChart.resize()
   }
-  const rows = energyCompareRows.value
-  const prevExists = prevEnergy.value.exists
-  const pctLabel = (p: any) => `${p.value}%`
-  const c = chartPalette()
-  energyChart.setOption({
-    animation: true,
-    animationDuration: 600,
-    animationEasing: 'cubicOut',
-    // 图表高度收到 160px 后，顶部留白也要跟着收（42 → 30），否则绘图区被压扁
-    grid: { left: 8, right: 8, top: 30, bottom: 2, containLabel: true },
-    tooltip: {
-      trigger: 'axis',
-      formatter: (ps: any) => {
-        const arr = Array.isArray(ps) ? ps : [ps]
-        return arr.map((p: any) => `${p.seriesName}：${p.value}%`).join('<br/>')
-      },
-    },
-    // 配色一律从主题变量取（chartPalette），不写死色值：
-    // 旧实现写的是品牌蓝 #0052d9，主题切绿后这张图仍是蓝的，一眼看出没跟上改版。
-    legend: { data: ['本期占比', '上期占比'], top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 12, color: c.text } },
-    xAxis: {
-      type: 'category', data: rows.map(r => r.label),
-      axisLine: { lineStyle: { color: c.axis } }, axisLabel: { color: c.text, fontSize: 12 },
-      axisTick: { show: false },
-    },
-    yAxis: {
-      type: 'value',
-      max: (v: any) => Math.ceil((v.max * 1.15) / 10) * 10,
-      axisLabel: { color: c.text, fontSize: 12, formatter: '{value}%' },
-      splitLine: { lineStyle: { color: c.grid } },
-    },
-    series: [
-      {
-        name: '本期占比', type: 'bar', data: rows.map(r => r.curPct), barWidth: 22,
-        itemStyle: { color: c.brand, borderRadius: [3, 3, 0, 0] },
-        label: { show: true, position: 'top', distance: 4, color: c.brand, fontSize: 10, formatter: pctLabel },
-      },
-      {
-        name: '上期占比', type: 'bar', data: rows.map(r => (prevExists ? r.prevPct : null)), barWidth: 22,
-        itemStyle: { color: c.brandWeak, borderRadius: [3, 3, 0, 0] },
-        // 标签放柱体正中（inside），不要 insideTop：柱体矮时顶端标签会压在上边缘、
-        // 与柱色糊成一片。浅色柱上用主色深档（≈6:1），白字只有 2.2:1 读不清。
-        label: {
-          show: prevExists, position: 'inside', color: c.brandDeep, fontSize: 10,
-          fontWeight: 600, formatter: pctLabel,
-        },
-      },
-    ],
-  })
+  energyChart.setOption(buildEnergyChartOption(energyCompareRows.value, prevEnergy.value.exists, chartPalette()))
 }
 watch([detailMode, activeMenu, () => currentRow.value, energyCompareRows, () => editForm.value], () => {
   if (detailMode.value && activeMenu.value === 'overview') renderEnergyChart()
@@ -2189,53 +1763,13 @@ watch(detailMode, (v) => {
 })
 onBeforeUnmount(() => { energyChart?.dispose(); energyChart = null })
 
-// 电量明细
-const META_ORDER = ['正向有功（总）', '正向有功（尖峰）', '正向有功（峰）', '正向有功（平）', '正向有功（谷）', '正向无功（总）']
-// 行配置：按设置中「电量明细行」分组渲染（field_key=默认行文本，label 可改名）
-const rowConfigsOf = (group: string) => {
-  const list = allFieldConfigs.value.filter((c: any) => c.group === group && c.deleted_at == null)
-  return [...list].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
-}
+// 电量明细：行配置派生 + 行匹配 + 排序全部在 utilityBillDetail
+// （buildMeterRows 会按配置逐行输出，匹配不到给空串占位而非 0）。
+const rowConfigsOf = (group: string) => rowConfigsOfUtil(allFieldConfigs.value, group)
 const meterRowConfigs = computed(() => rowConfigsOf('meter-rows').filter((c: any) => c.default_visible !== false))
 const residentRowConfigs = computed(() => rowConfigsOf('resident-meter-rows').filter((c: any) => c.default_visible !== false))
-const matchRow = (row: any, cfg: any) => {
-  const t = row?.meter_type || row?.project || ''
-  if (!t) return false
-  return t === cfg.field_key || t === cfg.label || t.includes(cfg.field_key) || cfg.field_key.includes(t)
-}
-// 电量明细：账单「电量明细」表逐行（示数类型/上期/本期/倍率/抄见/变损/线损/加减/计费电量）
-const meterRows = computed(() => {
-  let list: any[]
-  const mr = editForm.value.meter_readings
-  if (Array.isArray(mr) && mr.length) {
-    list = mr
-  } else {
-    // 旧数据兜底：仅计费电量有值
-    const e = editForm.value
-    const row = (meter_type: string, bill_kwh: number) => ({ meter_type, prev: 0, curr: 0, multiplier: 1, reading_kwh: 0, trans_loss: 0, line_loss: 0, adjust: 0, bill_kwh: Number(bill_kwh) || 0 })
-    list = [
-      row('正向有功（总）', e.total_kwh),
-      row('正向有功（尖峰）', e.deep_peak_kwh),
-      row('正向有功（峰）', e.peak_kwh),
-      row('正向有功（平）', e.flat_kwh),
-      row('正向有功（谷）', e.valley_kwh),
-      row('正向无功（总）', e.reactive_kwh),
-    ]
-  }
-  const cfgs = meterRowConfigs.value
-  if (!cfgs.length) {
-    return [...list].sort((a, b) => {
-      const ia = META_ORDER.indexOf(a.meter_type)
-      const ib = META_ORDER.indexOf(b.meter_type)
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
-    })
-  }
-  return cfgs.map(cfg => {
-    const hit = list.find(m => matchRow(m, cfg))
-    if (hit) return { ...hit, meter_type: cfg.label }
-    return { meter_type: cfg.label, prev: '', curr: '', multiplier: '', reading_kwh: '', trans_loss: '', line_loss: '', adjust: '', bill_kwh: '' }
-  })
-})
+const matchRow = (row: any, cfg: any) => matchRowUtil(row, cfg)
+const meterRows = computed(() => buildMeterRows(editForm.value, meterRowConfigs.value))
 const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
 
 // 电量明细编辑（9 字段）
@@ -2603,6 +2137,56 @@ const applyFilter = () => loadFiles(true)
 // 抹掉浮点累加残留（如 53441.77999999996 / 43316.740000000005）。
 const fmtKwh = (v: any) => grouped(v)
 const fmtMoney = (v: any) => grouped(v, { fixed: true })
+
+// ---- 概览页指标卡（数据均来自子项计算 / 提取字段，非直接填充汇总） ----
+// 位置说明：本块依赖 prevEnergy（上期数据）、overviewTotal（子项合计）
+// 与 fmtKwh/fmtMoney（格式化），因此**必须排在这些之后**。
+// computed 虽是惰性求值，但 `const` 有 TDZ —— 声明在前会让首次求值落在
+// 未初始化区，报 ReferenceError（开发模式下 SSR/预渲染时会真踩到）。
+// 派生计算全部在 utilityBillMetrics（纯函数，可单测边界：无上期 / 除零 / 持平）。
+// 这里只做**同名展开**：模板里用的是 metricKwh / metricKwhDelta / metricKwhTip
+// 这类扁平名字，展开后模板零改动。
+//
+// 口径提醒：metricFee 的输入是 overviewTotal（概览各子项合计），
+// 不是票面 grand_total —— 两处算法一旦分叉，卡片和明细表就对不上。
+const metrics = computed(() => buildBillMetrics(
+  editForm.value,
+  overviewTotal.value,
+  prevEnergy.value,
+  { kwh: fmtKwh, money: fmtMoney },
+))
+// 说明：`*.delta.delta`（环比原始差值）模板里没有直接用到 ——
+// 卡片只展示箭头 + 副文案（sub），悬浮说明里也带了具体数值。
+// 因此这里不导出裸差值，避免出现「声明了但没人用」的死变量。
+const metricPeriod = computed(() => metrics.value.period)
+const metricDue = computed(() => metrics.value.due)
+const metricKwh = computed(() => metrics.value.kwh.text)
+const metricKwhDeltaArrow = computed(() => metrics.value.kwh.delta.arrow)
+const metricKwhDeltaClass = computed(() => metrics.value.kwh.delta.cls)
+const metricKwhDeltaSub = computed(() => metrics.value.kwh.delta.sub)
+const metricKwhTip = computed(() => metrics.value.kwh.delta.tip)
+const metricFee = computed(() => metrics.value.fee.text)
+const metricFeeDeltaArrow = computed(() => metrics.value.fee.delta.arrow)
+const metricFeeDeltaClass = computed(() => metrics.value.fee.delta.cls)
+const metricFeeDeltaSub = computed(() => metrics.value.fee.delta.sub)
+const metricFeeTip = computed(() => metrics.value.fee.delta.tip)
+// 用能分析
+const momText = computed(() => metrics.value.mom.text)
+const momDeltaArrow = computed(() => metrics.value.mom.delta.arrow)
+const momDeltaClass = computed(() => metrics.value.mom.delta.cls)
+const momDeltaSub = computed(() => metrics.value.mom.delta.sub)
+const momTip = computed(() => metrics.value.mom.delta.tip)
+const pfText = computed(() => metrics.value.pf.text)
+const pfDeltaArrow = computed(() => metrics.value.pf.delta.arrow)
+const pfDeltaClass = computed(() => metrics.value.pf.delta.cls)
+const pfDeltaSub = computed(() => metrics.value.pf.delta.sub)
+const pfTip = computed(() => metrics.value.pf.delta.tip)
+const avgPriceText = computed(() => metrics.value.avgPrice.text)
+const avgDeltaArrow = computed(() => metrics.value.avgPrice.delta.arrow)
+const avgDeltaClass = computed(() => metrics.value.avgPrice.delta.cls)
+const avgDeltaSub = computed(() => metrics.value.avgPrice.delta.sub)
+const avgTip = computed(() => metrics.value.avgPrice.delta.tip)
+
 /** 金额列（空值不占位） */
 const fmtAmount = (v: any) => grouped(v, { fallback: '' })
 /** 明细电费/单价：最多 6 位小数，去尾 0 */

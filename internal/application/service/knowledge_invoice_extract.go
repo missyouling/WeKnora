@@ -1710,6 +1710,10 @@ func NormalizeInvoiceExtractionResult(res *InvoiceExtractionResult) {
 		kept = append(kept, inv)
 	}
 	res.Invoices = kept
+	// 字段补齐（第 24 轮）：车牌 / 开票人 / 金额四段交叉推算。
+	// 放在这里而不是各规则内部，是因为规则（Line/MarkdownTable/FlatLayout/HTMLTable）
+	// 与 LLM 四条路径、以及存量重提都必经本函数 —— 收口一次，全部受益。
+	normalizeInvoiceExtras(res)
 }
 
 // cleanInvoiceItemSpec 清理明细行规格型号：规格型号（spec）与单位（unit）

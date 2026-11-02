@@ -42,6 +42,23 @@ func (o InvoiceRuleOutcome) AllIncomplete() bool {
 	return o.Hit && o.Total > 0 && o.IncompleteCount >= o.Total
 }
 
+// shouldSupplementWithHTML 判断「规则张数不足时是否该用 HTML 规则结果替换」。
+//
+// 三个条件缺一不可：
+//   - 有锚点（没有锚点就无法判断「应该有多少张」，此时不补足，保持原行为）；
+//   - 当前张数少于锚点（已经够了就不必再解析一次）；
+//   - HTML 规则确实能提更多（否则替换没收益，还可能把 FlatLayout 已读对的
+//     字段改坏 —— 例如 FlatLayout 能读跨行备注，HTML 规则读不到）。
+func shouldSupplementWithHTML(current, anchors, htmlCount int) bool {
+	if anchors <= 0 {
+		return false
+	}
+	if current >= anchors {
+		return false
+	}
+	return htmlCount > current
+}
+
 // ExtractInvoiceByRules 依次尝试三套确定性规则：Line → MarkdownTable → FlatLayout，
 // 并做半残统计。
 //
@@ -72,6 +89,32 @@ func ExtractInvoiceByRules(chunks []*types.Chunk, docHint string) InvoiceRuleOut
 	}
 	if !out.Hit || out.Result == nil {
 		return out
+	}
+	// **张数不足时用 HTML 规则补足**（第 24 轮任务二）。
+	//
+	// 真机事故：一页一票的通行费汇总单（`22d87e28`）被 FlatLayout 命中，
+	// 但只提到 21 张，而原文锚点有 24 个 —— 于是上层判「rule result shorter
+	// than anchors」→ 转 LLM 补提 → 撞模型限流 429，整份文档的
+	// extract_status 卡在 processing，金额/车牌全丢。
+	//
+	// FlatLayout 对「整行压进一个 colspan 格」的形态天然弱（它按行锚点找金额行，
+	// 合并格会让锚点与数据行错位）；而 HTML 规则正是为这种形态写的。
+	// 因此这里在「张数不足」时**再跑一次 HTML 规则**，若能补到更多张就换用它 ——
+	// 仍然是纯确定性、零 token，比转 LLM 稳得多。
+	//
+	// 只在张数确实更少时才替换：FlatLayout 对某些旧格式的字段覆盖更好
+	//（比如它能读到跨行的备注），无脑替换会把已经正确的字段改坏。
+	anchors := CountInvoiceAnchors(chunks)
+	if len(out.Result.Invoices) < anchors {
+		// 先跑一遍 HTML 规则看它能不能提更多（纯确定性、零 token）
+		htmlRes, htmlOK := ExtractInvoicesByHTMLTableRulesFromChunks(chunks)
+		htmlCount := 0
+		if htmlOK && htmlRes != nil {
+			htmlCount = len(htmlRes.Invoices)
+		}
+		if shouldSupplementWithHTML(len(out.Result.Invoices), anchors, htmlCount) {
+			out.Result, out.Kind = htmlRes, InvoiceRuleKindHTMLTable
+		}
 	}
 	out.Total = len(out.Result.Invoices)
 	for _, inv := range out.Result.Invoices {

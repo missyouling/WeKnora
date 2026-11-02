@@ -31,15 +31,19 @@ test('chartPalette：无 DOM 时回落到主题默认值（不得为空串）', 
 })
 
 test('能耗页图表不再写死色值，且确实用 chartPalette 取色', () => {
+  // 第 24 轮：option 构造搬到 utilityEnergyChart，取色仍发生在页面（渲染入口）。
+  // 两个文件都要查 —— 只查页面会漏掉「新模块里写死色值」这种最可能的回退。
   const src = readFileSync(new URL('./UtilitiesManagement.vue', import.meta.url), 'utf8')
+  const chart = readFileSync(new URL('./utilityEnergyChart.ts', import.meta.url), 'utf8')
   assert.match(src, /import \{ chartPalette \} from '\.\/chartTheme'/, '必须引入 chartPalette')
-  assert.match(src, /const c = chartPalette\(\)/, '渲染前必须取当前主题配色')
+  assert.match(src, /buildEnergyChartOption\([^)]*chartPalette\(\)/, '渲染前必须取当前主题配色并传给 option 构造器')
   // 旧的三个硬编码图表色不得再出现（注释里提到不算：去掉注释行再判）
-  const code = src
-    .split('\n')
-    .filter((l) => !l.trim().startsWith('//'))
-    .join('\n')
+  const strip = (t: string) =>
+    t.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
   for (const bad of ['#0052d9', '#9ab6e8', '#12395f']) {
-    assert.ok(!code.includes(bad), `图表配置仍有硬编码色值 ${bad}`)
+    assert.ok(!strip(src).includes(bad), `页面仍有硬编码色值 ${bad}`)
+    assert.ok(!strip(chart).includes(bad), `图表模块仍有硬编码色值 ${bad}`)
   }
+  // 图表模块不得自己取色（否则主题切换后与页面取到的色不一致）
+  assert.doesNotMatch(strip(chart), /chartPalette\(/, '图表模块只接收配色，不得自行取色')
 })

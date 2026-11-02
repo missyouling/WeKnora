@@ -65,9 +65,12 @@ test('subs.width>0 必须精确生效（clamp 60~400），0 才自适应', () =>
   // 三张表/光伏：走 colWidthOf（width>0 固定，dataType textarea 走中等宽，其余自适应）
   assert.match(meter, /colWidthOf\(c\.width/, '核算表列宽必须走 colWidthOf')
   assert.match(solar, /colWidthOf\(c\.width/, '光伏列宽必须走 colWidthOf')
-  // 市电账单：subs.width 必须下传到 ColDef，否则填了不生效
+  // 市电账单：subs.width 必须下传到 ColDef，否则填了不生效。
+  // 第 24 轮：ColDef 构造留在页面，列宽收敛（clamp 60~400）搬到了
+  // utilityBillColumns —— 两处分别断言，避免「搬走后没人管」。
   assert.match(utilities, /width: Number\(s\.width\) \|\| 0/, '市电 ColDef 必须携带 subs.width')
-  assert.match(utilities, /if \(cfg > 0\) return Math\.min\(Math\.max\(cfg, 60\), 400\)/, '市电列宽必须优先 subs.width')
+  const billCols = read('utilityBillColumns.ts')
+  assert.match(billCols, /if \(cfg > 0\) return Math\.min\(Math\.max\(cfg, 60\), 400\)/, '市电列宽必须优先 subs.width')
 })
 
 // ---- ③ 抽屉统一 ----

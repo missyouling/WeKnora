@@ -14,6 +14,8 @@ import { readFileSync } from 'node:fs'
  */
 
 const src = readFileSync(new URL('./UtilitiesManagement.vue', import.meta.url), 'utf8')
+/** 读取同目录下的其它源文件（第 24 轮瘦身后，部分常量/函数已抽到独立模块）。 */
+const read = (p: string) => readFileSync(new URL(`./${p}`, import.meta.url), 'utf8')
 
 test('接入中台四件套：KPI / 状态条 / 筛选栏 / 历史抽屉', () => {
   assert.match(src, /import DashboardKpiGroup from '@\/components\/business\/DashboardKpiGroup\.vue'/)
@@ -50,8 +52,11 @@ test('搜索为全字段穿透（占位符 + 检索范围）', () => {
 })
 
 test('账单周期唯一且为 YYYY-MM', () => {
-  // 默认列里只能有一个「账单周期」，且键是派生的 bill_period
-  const billingPeriodLabels = (src.match(/label: '账单周期'/g) || []).length
+  // 默认列里只能有一个「账单周期」，且键是派生的 bill_period。
+  // 第 24 轮：默认列搬到 utilityBillColumns，计数必须覆盖两个文件，
+  // 否则「页面里 0 处」会让这条唯一性断言恒真、失去意义。
+  const colSrc = read('utilityBillColumns.ts')
+  const billingPeriodLabels = ((src + colSrc).match(/label: '账单周期'/g) || []).length
   assert.equal(billingPeriodLabels, 1, '「账单周期」只能出现一列')
   assert.doesNotMatch(src, /label: '账单周期起'/, '不得再有「账单周期起」列')
   assert.doesNotMatch(src, /`\$\{it\.bill_period_start \|\| ''\} ~ \$\{it\.bill_period_end \|\| ''\}`/, '不得再拼接起止范围')
@@ -59,7 +64,10 @@ test('账单周期唯一且为 YYYY-MM', () => {
 })
 
 test('账单概况 20 字段 + 序号列 + 共享表格样式', () => {
-  const fallback = /const FALLBACK_COLUMNS: ColDef\[\] = \[([\s\S]*?)\n\]/.exec(src)
+  // 第 24 轮：FALLBACK_COLUMNS 搬到 utilityBillColumns（纯常量，可单测）。
+  // 断言跟到新位置，但**数量与顺序必须一字不差** —— 这是与后端
+  // electricityDefaultGroupFields("overview") 的逐项对齐契约。
+  const fallback = /export const FALLBACK_COLUMNS: ColDef\[\] = \[([\s\S]*?)\n\]/.exec(read('utilityBillColumns.ts'))
   assert.ok(fallback, '缺少默认列定义')
   const keys = [...fallback![1].matchAll(/key: '([^']+)'/g)].map(m => m[1])
   assert.equal(keys.length, 20, `账单概况应为 20 列，实际 ${keys.length}`)

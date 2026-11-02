@@ -47,8 +47,18 @@ var (
 	htmlPlateRe = regexp.MustCompile("^[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Za-z][A-Za-z0-9]{4,6}$")
 	// htmlVehicleRe 车型：该模板固定枚举，避免把「20261022」或金额当车型。
 	htmlVehicleRe = regexp.MustCompile("^(客车|货车|专项作业车|挂车|轿车|摩托车|其他)$")
-	// htmlCompactDateRe 8 位紧凑日期。
+	// htmlCompactDateRe 8 位紧凑日期（整格）。
 	htmlCompactDateRe = regexp.MustCompile("^\\d{8}$")
+	// compactDateInTextRe 从混合文本里抠 8 位连续日期（前后须是边界）。
+	compactDateInTextRe = regexp.MustCompile(`(?:^|[^0-9.])(\d{8})(?:[^0-9.]|$)`)
+	// percentInCellRe 格内任意位置的百分数：`3%` 与 `3% 15.51` 都能命中。
+	//
+	// 不能只判「整格以 % 结尾」：末格 colspan 合并会把税率与税额压进同一格
+	// （`3% 15.51`），此时整格不以 % 结尾，旧的 HasSuffix 判定直接找不到税率格，
+	// 于是金额/税额全空（图 2 里 P2/P14 那批 0.00 的第二种成因）。
+	percentInCellRe = regexp.MustCompile(`\d+(?:\.\d+)?\s*%`)
+	// percentTailAmountRe 百分数**之后**紧跟的金额（同格合并形态的税额）。
+	percentTailAmountRe = regexp.MustCompile(`%\s*([0-9]+(?:\.[0-9]+)?)`)
 )
 
 // htmlTollRow 是一行的确定性解析结果（表格版汇总单的数据行）。
@@ -243,11 +253,69 @@ func collectHTMLTollRows(seg string) []htmlTollRow {
 	return out
 }
 
+// splitMergedTollCell 把「整行压进一个 colspan 格」的串切成虚拟单元格。
+//
+// 输入形态（真机原文）：
+//
+//	`*生产生活服务*通行费 渝D95256 货车 20261031 20261031 5.28 3% 0.16`
+//	`$ ^{{*}}经营租赁^{{*}}通行费 $ 渝C87567 货车 20250701 20250729 778.17 3% 23.35`
+//
+// 切法按空白分（该模板用单空格分隔各列），但**项目名自身可能含空格**
+// （`$ ^{{*}}经营租赁^{{*}}通行费 $` 就被渲染成 4 个 token），
+// 因此不能简单 Split —— 要在「车牌」这个锚点上做归并：
+//
+//	车牌之前的所有 token 合成一格（项目名，保留原文供明细行使用），
+//	车牌之后逐个成格。
+//
+// 找不到车牌时退化为「整串一格」，交给上层的标签/日期兜底逻辑 ——
+// 宁可拿不到金额，也不能把项目名拆碎当成金额（那会把票面金额算成 1）。
+func splitMergedTollCell(raw string) []string {
+	t := strings.TrimSpace(raw)
+	if t == "" {
+		return nil
+	}
+	tokens := strings.Fields(t)
+	if len(tokens) <= 1 {
+		return []string{t}
+	}
+	// 定位车牌 token（车牌在原文里一定是独立 token）
+	plateIdx := -1
+	for i, tk := range tokens {
+		if cnPlateRe.MatchString(tk) {
+			plateIdx = i
+			break
+		}
+	}
+	if plateIdx < 0 {
+		return []string{t}
+	}
+	out := make([]string, 0, len(tokens)-plateIdx+1)
+	// 车牌及之前：项目名（可能含空格）+ 车牌
+	if plateIdx > 0 {
+		out = append(out, strings.Join(tokens[:plateIdx], " "))
+	}
+	for _, tk := range tokens[plateIdx:] {
+		out = append(out, tk)
+	}
+	return out
+}
+
 // parseHTMLTollRow 从一行的单元格里抽取通行费字段（标签优先，位置兜底）。
 //
 // 不用固定下标：该模板大量使用 colspan，行内实际格数在 8~9 之间浮动，
 // 位置法会整体错位（历史教训）。
 func parseHTMLTollRow(cells []string) (htmlTollRow, bool) {
+	// **整行单格形态**（真机第二种主流，第 24 轮补）：
+	//   `<tr><td colspan="8">*生产生活服务*通行费 渝D95256 货车 20261031 20261031 5.28 3% 0.16</td></tr>`
+	// MinerU 把整行 8 列压进一个 colspan=8 的格子里。此时 cells 只有一个元素，
+	// 逐格语义识别全部失效（没有「税率格」「金额格」可分），车牌与日期倒是能从
+	// 串里抠出来 —— 但金额四段拿不到，整票金额为 0。
+	// 先把它按空白切成虚拟格，再走同一套解析：这样两条路径共用一份语义，
+	// 不会出现「单格形态单独一套金额规则」的维护分叉。
+	if len(cells) == 1 {
+		cells = splitMergedTollCell(cells[0])
+	}
+
 	var row htmlTollRow
 	var dates []string
 	for _, cell := range cells {
@@ -258,27 +326,56 @@ func parseHTMLTollRow(cells []string) (htmlTollRow, bool) {
 					continue
 				}
 			}
+			// 整格就是一个车牌
 			if htmlPlateRe.MatchString(cell) {
 				row.Plate = cell
 				continue
 			}
+			// **合并格形态**（真机主流）：`*生产生活服务*通行费 渝D95256 货车 20261006`
+			// —— 项目名/车牌/车型/通行起被塞进同一个 colspan 格。纯车牌匹配对整格
+			// 必然失配，必须从串里抠出车牌（否则车牌整列为空，正是图 2 左红框）。
+			if m := cnPlateRe.FindString(cell); m != "" {
+				row.Plate = m
+				continue
+			}
 		}
+		// 整格就是 8 位日期
 		if htmlCompactDateRe.MatchString(cell) {
 			dates = append(dates, cell)
 			continue
 		}
+		// 带标签形态：`通行日期起20261022`
 		if m := htmlLabelFromRe.FindStringSubmatch(cell); m != nil && htmlCompactDateRe.MatchString(m[1]) {
 			dates = append(dates, m[1])
 			continue
 		}
 		if m := htmlLabelToRe.FindStringSubmatch(cell); m != nil && htmlCompactDateRe.MatchString(m[1]) {
 			dates = append(dates, m[1])
+			continue
+		}
+		// **合并格里的日期**（真机主流）：`*生产生活服务*通行费 渝D95256 货车 20261006`
+		// —— 通行日期起与项目名/车牌/车型挤在同一格，独立日期只剩「通行日期止」一个，
+		// 旧逻辑 `len(dates) < 2` 直接判「不是数据行」→ 整份文档 rows=0（真机 P9/P11
+		// 金额全 0 就是这个原因）。从格内抠第一段 8 位连续数字即可，带小数点的
+		// 金额/税额（11.04 / 719.61）天然不会被 8 位连续数字匹配到。
+		// **必须取子组**（不是 FindString）：该正则的边界符 `(?:^|[^0-9.])`
+		// 与 `(?:[^0-9.]|$)` 会被 FindString 一并返回，得到 `" 20261006"`（带前导空格），
+		// 落库后「通行日期起」就带空格，按日期比较/展示都会出问题。
+		if m := compactDateInTextRe.FindStringSubmatch(cell); m != nil {
+			dates = append(dates, m[1])
 		}
 	}
-	if row.Plate == "" || len(dates) < 2 {
+	if row.Plate == "" || len(dates) == 0 {
 		return row, false
 	}
-	row.From, row.To = dates[0], dates[1]
+	// 通行日期起/止：合并格会把「通行起」塞进项目名格，此时独立日期只剩「通行止」。
+	// 只有一个日期时按它填通行止（通行起留空，由明细行原文兜底）——
+	// 旧逻辑要求两个日期，导致真机整份文档 rows=0（P9/P11 金额全 0 的根因）。
+	if len(dates) >= 2 {
+		row.From, row.To = dates[0], dates[1]
+	} else {
+		row.To = dates[0]
+	}
 
 	// 金额 / 税率 / 税额：先按标签取（最稳），再按「末三格」位置兜底
 	joined := strings.Join(cells, "\n")
@@ -291,17 +388,46 @@ func parseHTMLTollRow(cells []string) (htmlTollRow, bool) {
 	if m := htmlLabelTaxRe.FindStringSubmatch(joined); m != nil {
 		row.TaxAmount = parseAmountToFloat(m[1])
 	}
-	if row.Amount == nil || row.TaxAmount == nil {
-		if len(cells) >= 3 {
-			tail := cells[len(cells)-3:]
-			if row.Amount == nil {
-				row.Amount = parseAmountToFloat(tail[0])
+	// 位置兜底不可靠（该模板 colspan 让行内格数在 4~9 之间浮动，末三格可能全是日期）。
+	// 改为**按格语义识别**：先找到「含百分号的那一格」，再按票面固定列序
+	// （金额 → 税率 → 税额）取它前面最近的纯数字格作金额、它自身或后面的作税额。
+	//
+	// 该格内部还有两种形态（真机都出现过）：
+	//   · `3%`            —— 税率独占一格，税额在下一格；
+	//   · `3% 15.51`      —— 税率与税额被压进同一格（末格 colspan 合并）。
+	// 后者若只按「整格必须以 % 结尾」判定就完全找不到税率格，
+	// 于是金额/税额全空 —— 这是图 2 里 P2/P14 那批 0.00 的第二种成因。
+	if row.TaxRate == nil || row.Amount == nil || row.TaxAmount == nil {
+		idx := -1
+		for i, c := range cells {
+			if percentInCellRe.MatchString(c) {
+				idx = i
+				break
 			}
+		}
+		if idx >= 0 {
 			if row.TaxRate == nil {
-				row.TaxRate = parsePercentToFloat(tail[1])
+				if m := percentInCellRe.FindString(cells[idx]); m != "" {
+					row.TaxRate = parsePercentToFloat(m)
+				}
 			}
+			// 同格内 % 之后若还有数字，那就是税额
 			if row.TaxAmount == nil {
-				row.TaxAmount = parseAmountToFloat(tail[2])
+				if m := percentTailAmountRe.FindStringSubmatch(cells[idx]); m != nil {
+					row.TaxAmount = parsePlainAmount(m[1])
+				}
+			}
+			// 税率前一个数字格 = 金额
+			for i := idx - 1; i >= 0 && row.Amount == nil; i-- {
+				if v := parsePlainAmount(cells[i]); v != nil {
+					row.Amount = v
+				}
+			}
+			// 税率后一个数字格 = 税额（同格已取到就跳过）
+			for i := idx + 1; i < len(cells) && row.TaxAmount == nil; i++ {
+				if v := parsePlainAmount(cells[i]); v != nil {
+					row.TaxAmount = v
+				}
 			}
 		}
 	}
@@ -365,6 +491,32 @@ func htmlInvoiceDateOf(seg string) string {
 		return fmt.Sprintf("%04d-%02d-%02d", y, mo, d)
 	}
 	return ""
+}
+
+// parsePlainAmount 只在「整格就是一个十进制数字」时返回金额。
+//
+// 与 parseAmountToFloat 的区别：后者对任意串做 ParseFloat，遇到
+// `*生产生活服务*通行费 渝D95256 货车 20261006` 这种合并格会解析失败，
+// 而这里要求整格纯数字，避免把日期/车牌/项目名误当金额。
+func parsePlainAmount(s string) *float64 {
+	t := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(s, "¥"), "￥"))
+	if t == "" {
+		return nil
+	}
+	dot := false
+	for _, c := range t {
+		if c == '.' {
+			if dot {
+				return nil
+			}
+			dot = true
+			continue
+		}
+		if c < '0' || c > '9' {
+			return nil
+		}
+	}
+	return parseAmountToFloat(t)
 }
 
 // roundMoney 金额两位小数（四舍五入，加 1e-6 抵消浮点表示误差）。
