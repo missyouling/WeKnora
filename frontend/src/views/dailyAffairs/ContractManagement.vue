@@ -144,10 +144,7 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
-      <div class="doc-summary-bar">
-        <span class="doc-summary-count">共 {{ displaySummary.total }} 份</span>
-      </div>
+      <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含条数。 -->
     </div>
     </div>
 
@@ -1009,27 +1006,7 @@ const selectedRows = computed(() => {
 })
 const selectedIds = computed(() => Array.from(new Set(selectedRows.value.map(r => r.knowledgeId))))
 
-// 底部汇总：选中记录时显示选中合同的汇总，未选中时显示全部
-const selectedSummary = computed(() => {
-  const rows = selectedRows.value
-  if (!rows.length) return null
-  let sumTotal = 0
-  for (const r of rows) {
-    sumTotal += Number(r.amount) || 0
-  }
-  return { total: rows.length, sumAmount: sumTotal, sumTotal }
-})
-const displaySummary = computed(() => {
-  if (selectedSummary.value) return selectedSummary.value
-  // 履约状态筛选为前端派生过滤：汇总按过滤后的已加载行现算（与列表可见行一致）
-  if (filterFulfillStatus.value) {
-    const rows = fulfillFilteredRows.value
-    let sum = 0
-    for (const r of rows) sum += Number(r.amount) || 0
-    return { total: rows.length, sumAmount: sum, sumTotal: sum }
-  }
-  return contractSummary.value
-})
+// 底部摘要栏已下线（第 21 轮）：条数与合同金额合计都由表尾合计行承载。
 
 const applyFilter = () => { loadFiles(true) }
 

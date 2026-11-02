@@ -157,10 +157,7 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
-      <div class="doc-summary-bar">
-        <span class="doc-summary-count">共 {{ displaySummary.total }} 条</span>
-      </div>
+      <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含条数。 -->
       <!-- 底部悬浮工具条：fixed 脱离文档流，出现/消失不占物理空间；选中行时显示 -->
         <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
           <div class="batch-bar-inner">
@@ -1349,21 +1346,8 @@ const selectedRows = computed(() => {
 })
 const selectedIds = computed(() => Array.from(new Set(selectedRows.value.map(r => r.knowledgeId))))
 
-// 底部汇总：选中记录时显示选中发票的汇总，未选中时显示全部
-const selectedSummary = computed(() => {
-  const rows = selectedRows.value
-  if (!rows.length) return null
-  let sumAmount = 0
-  let sumTax = 0
-  let sumTotal = 0
-  for (const r of rows) {
-    sumAmount += Number(r.amount) || 0
-    sumTax += Number(r.tax) || 0
-    sumTotal += Number(r.totalAmount) || 0
-  }
-  return { total: rows.length, sumAmount, sumTax, sumTotal }
-})
-const displaySummary = computed(() => selectedSummary.value || invoiceSummary.value)
+// 底部摘要栏已下线（第 21 轮）：条数与各列合计都由表尾合计行承载，
+// selectedSummary / displaySummary 这套「选中优先」的底部统计随之删除。
 
 // 底部统计条的旧三行（金额/税额/价税合计）已由「逐列表尾汇总」取代：
 // 现在每一列（含当前分类自定义的金额/税额列）都有自己的合计，不再需要

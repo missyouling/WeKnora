@@ -129,14 +129,36 @@ test('四个页面列表表格参数一致（sticky-header + 虚拟滚动 48px�
   )
 })
 
-test('底栏位于列表边框容器内部（与基准页同层级）', () => {
+test('底栏（若存在）位于列表边框容器内部，且早于批量浮条', () => {
   for (const f of PAGE_FILES) {
     const src = read(f)
     const docScroll = src.indexOf('class="doc-list-scroll"')
     const summary = src.indexOf('class="doc-summary-bar"')
-    const viewEnd = src.indexOf('class="doc-batch-bar"')
-    assert.ok(docScroll > 0 && summary > docScroll, `${f} 底栏必须写在 .doc-list-scroll 之内`)
-    assert.ok(viewEnd === -1 || viewEnd > summary, `${f} 底栏必须早于批量浮条`)
+    const batchBar = src.indexOf('class="doc-batch-bar"')
+    assert.ok(docScroll > 0, `${f} 必须有 .doc-list-scroll 容器`)
+    // 制度 / 奖惩尚未接入表尾合计行，仍需靠摘要栏显示条数：
+    // 只校验「有底栏时必须在容器内、且早于批量浮条」。
+    if (summary > 0) {
+      assert.ok(summary > docScroll, `${f} 底栏必须写在 .doc-list-scroll 之内`)
+      assert.ok(batchBar === -1 || batchBar > summary, `${f} 底栏必须早于批量浮条`)
+    }
+  }
+})
+
+/**
+ * 已接入「表尾合计行」的页面不得再挂摘要栏（第 21 轮）。
+ *
+ * 合计行首列已经是「合计（共 N 条）/（已选 K 条）」，下方再放一条「共 N 条」
+ * 既重复又占纵向空间（用户截图红框）。制度 / 奖惩没有合计行，不在此列。
+ */
+test('已接入合计行的页面不再挂摘要栏', () => {
+  for (const f of ['InvoiceManagement.vue', 'ContractManagement.vue']) {
+    const src = read(f)
+    assert.equal(
+      src.includes('class="doc-summary-bar"'),
+      false,
+      `${f} 不得再有底部摘要栏（条数由表尾合计行承载）`,
+    )
   }
 })
 

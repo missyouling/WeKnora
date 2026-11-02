@@ -144,13 +144,8 @@
           </template>
         </t-table>
     </div>
-            <!-- 底部汇总：与发票管理一致，位于列表白色卡片容器（.doc-list-scroll）内部最底端，
-         不随表格内容滚动；sticky bottom 让它贴在滚动容器下沿。选中时按选中统计。 -->
-            <!-- 底部状态栏：只留条数/已选；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
-            <div v-if="summaryCount" class="doc-summary-bar doc-list-footer-summary" :class="{ 'with-toolbar': selectedRowKeys.length }">
-              <span class="doc-summary-count">共 {{ summaryCount }} 条</span>
-              <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
-            </div>
+            <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含「合计（共 N 条）/（已选 K 条）」，
+                 再挂一条「共 N 条」属重复且占纵向空间（用户截图红框）。 -->
             </div>
             </div>
             </template>
@@ -1268,7 +1263,7 @@ const listScrollRef = ref<HTMLElement>()
 // 表尾汇总口径 = 当前**可见**行（已按关键词/月份过滤）：筛选后合计必须同步收敛。
 // 逐列合计统一由 listSummary 计算（见 footData），这里只保留「共 N 条」。
 /** 底部「共 N 条」：与列表同口径（选中优先，否则可见行数） */
-const summaryCount = computed(() => (selectedRowKeys.value.length ? selectedRowKeys.value.length : displayRows.value.length))
+// 底部摘要栏已下线（第 21 轮），条数由表尾合计行首列承载。
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
@@ -2935,19 +2930,6 @@ onBeforeUnmount(() => {
   min-width: 150px;
   padding: 16px 12px;
   gap: 10px;
-}
-
-/* 底部汇总：与发票管理 100% 一致 —— 位于列表白色卡片容器（.doc-list-scroll）
-   内部最底端，sticky bottom 贴住容器下沿，不随表格内容滚动。
-   视觉规则（背景/分割线/内边距/字号）全部来自四模块共享样式的 .doc-summary-bar，
-   这里只保留能耗特有的「选中条数」着色。 */
-.doc-list-footer-summary {
-  flex-shrink: 0;
-
-  .summary-selected {
-    color: var(--td-brand-color);
-    font-weight: 600;
-  }
 }
 
 /* 列表滚动容器：边框/圆角/背景/阴影一律走四模块共享样式（.biz-page .doc-list-scroll），

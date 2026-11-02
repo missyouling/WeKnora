@@ -72,11 +72,14 @@ test('浮动批量栏全局唯一：工具栏不得再渲染一条', () => {
   assert.match(pages.Meter, /hide-batch-bar/, '核算工具栏必须关掉自带浮动栏')
 })
 
-test('汇总栏位于列表卡片内部（子组件模板顺序）', () => {
+test('不再有底部摘要栏，条数由表尾合计行承载（第 21 轮）', () => {
   for (const name of ['Meter', 'Solar', 'Tenant'] as const) {
     const src = pages[name]
-    const idxT = src.lastIndexOf('</t-table>')
-    const idxS = src.indexOf('doc-summary-bar', idxT)
-    assert.ok(idxS > 0, `${name} 的汇总栏必须写在 </t-table> 之后（即卡片容器内部）`)
+    // 摘要栏「共 N 条」与表尾合计行首列重复，已整体下线
+    assert.equal(
+      src.includes('doc-summary-bar'),
+      false,
+      `${name} 不得再有底部摘要栏（.doc-summary-bar）`,
+    )
   }
 })

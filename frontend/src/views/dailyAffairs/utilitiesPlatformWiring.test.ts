@@ -110,17 +110,13 @@ test('点击前 6 张卡片切换列表视图', () => {
   assert.match(src, /uploadHistoryVisible\.value = true/, '点击历史记录卡片必须打开上传历史抽屉')
 })
 
-test('底部汇总栏位于列表白色卡片容器内部', () => {
-  // .doc-list-footer-summary 必须出现在 .doc-list-scroll 开标签之后、其闭标签之前
+test('底部摘要栏已下线，条数由表尾合计行承载（第 21 轮）', () => {
+  // .doc-list-scroll 容器必须仍在（列表滚动与边框依赖它）
   const open = src.indexOf('<div class="doc-list-scroll"')
   assert.ok(open > 0, '缺少 .doc-list-scroll 滚动容器')
-  const summaryIdx = src.indexOf('doc-list-footer-summary')
-  assert.ok(summaryIdx > open, '汇总栏必须在 .doc-list-scroll 之后出现（即位于其内部）')
-  // 汇总栏之后、模板结尾前必须还有一个 </div> 收口 scroll 容器
-  const after = src.slice(summaryIdx)
-  assert.match(after, /<\/div>\s*<\/div>/, '汇总栏之后必须收口 .doc-list-scroll')
-  // 复用中台 doc-summary-bar 的粘性底栏样式类
-  assert.match(src, /class="[^"]*doc-summary-bar/, '汇总栏应复用中台 doc-summary-bar 样式')
+  // 摘要栏「共 N 条」与表尾合计行首列重复，已整体移除
+  assert.equal(src.includes('doc-list-footer-summary'), false, '不得再有 .doc-list-footer-summary 摘要栏')
+  assert.equal(src.includes('class="doc-summary-bar'), false, '不得再有 .doc-summary-bar 摘要栏')
 })
 
 test('表头吸顶不穿透：sticky-header + 实测遮罩变量', () => {

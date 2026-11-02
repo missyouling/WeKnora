@@ -78,11 +78,7 @@
         </template>
       </t-table>
     </div>
-          <!-- 底部状态栏：只留条数/已选；每一列的合计由表尾汇总行逐列给出 -->
-          <div v-if="summaryCount" class="doc-summary-bar">
-            <span class="doc-summary-count">共 {{ summaryCount }} 条</span>
-            <span v-if="selectedRowKeys.length" class="doc-summary-item summary-selected">已选 {{ selectedRowKeys.length }} 条</span>
-          </div>
+          <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含条数/选中数。 -->
         </div>
 
         <!-- 底部浮动工具栏 -->
@@ -654,7 +650,7 @@ const listScrollRef = ref<HTMLElement>()
 
 // 汇总口径 = 当前可见行（已按关键词 / 账期过滤）。
 // 逐列合计统一由 listSummary 计算（见 footData），这里只保留「共 N 条」。
-const summaryCount = computed(() => (selectedRowKeys.value.length ? selectedRowKeys.value.length : displayRows.value.length))
+// 底部摘要栏已下线（第 21 轮），条数由表尾合计行首列承载。
 const selectedRows = computed(() => displayRows.value.filter(r => selectedRowKeys.value.includes(r.rowKey)))
 const selectedSingle = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0] : null))
 const clearSelection = () => { selectedRowKeys.value = [] }
@@ -1657,19 +1653,6 @@ onBeforeUnmount(() => {
 @keyframes solar-icon-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .list-loading { display: flex; justify-content: center; padding: 24px; }
 .list-empty { display: flex; justify-content: center; padding: 48px 0; }
-
-/* 底部汇总 */
-.doc-list-footer-summary {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  padding: 6px 2px 0;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  flex-shrink: 0;
-  &.with-toolbar { margin-bottom: 56px; }
-  .summary-selected { color: var(--td-brand-color); }
-}
 
 /* 浮动工具栏 */
 .doc-batch-bar-fixed {

@@ -95,7 +95,9 @@ test('市电/光伏：月份与关键词都在本地过滤，汇总按可见行�
   for (const f of ['UtilitiesManagement.vue', 'SolarManagement.vue']) {
     const src = read(f)
     assert.match(src, /if \(month\)/, `${f} 月份必须在本地过滤`)
-    assert.match(src, /const summaryCount = computed/, `${f} 底部条数必须与可见行同口径`)
+    // 第 21 轮：底部摘要栏下线，条数改由表尾合计行首列承载（displayRows 同口径）
+    assert.match(src, /buildFootRow\(summaryColumns\.value, rows, \{ selectedCount \}\)/,
+      `${f} 表尾合计行必须带 selectedCount（勾选优先、否则可见行同口径）`)
   }
   assert.match(read('SolarManagement.vue'), /billMonthOfItem\(r\) === month/)
 })

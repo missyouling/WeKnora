@@ -137,11 +137,7 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部状态栏：只留条数；每一列的合计由表尾汇总行（foot-data）逐列给出 -->
-      <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-        <span class="doc-summary-count">共 {{ summary.total }} 条</span>
-        <span v-if="selectedKeys.size" class="doc-summary-item summary-selected">已选 {{ selectedKeys.size }} 条</span>
-      </div>
+      <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含条数/选中数。 -->
     </div>
             <!-- 分时表：行内展开四时段明细（参考电量明细布局） -->
 
@@ -722,11 +718,7 @@ const applyFilters = () => {
 watch(filters, () => applyFilters(), { deep: true })
 
 // ---- 汇总 ----
-// 逐列合计统一由 listSummary 计算（见 footData）；这里只保留「共 N 条」。
-const summary = computed(() => {
-  const base = selectedKeys.value.size ? selectedRows.value : displayRows.value
-  return { total: base.length }
-})
+// 逐列合计统一由 listSummary 计算（见 footData）；条数由表尾合计行首列承载。
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRows = computed(() => rows.value.filter(r => selectedKeys.value.has(r.key)))
 
@@ -1733,23 +1725,6 @@ onBeforeUnmount(() => {
     font-size: 13px;
     color: var(--td-text-color-placeholder);
   }
-}
-
-/* 底部汇总（与电费/光伏一致） */
-.doc-summary-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 2px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
-  .doc-summary-item {
-    display: inline-flex; align-items: baseline; gap: 6px;
-    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
-  }
-  /* 汇总栏已进卡片内部：不再用 margin-bottom 上移（旧版挂在卡片外才需要），
-     浮动栏与它重叠的表现与发票管理一致。 */
 }
 
 /* 抽屉 resize 手柄（发票管理同款，teleport 到 body 避免被抽屉遮罩遮挡） */

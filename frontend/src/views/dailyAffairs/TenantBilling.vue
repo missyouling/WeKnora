@@ -98,13 +98,9 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部状态栏：只保留「条数 / 已选」这类状态信息。
-           每一列的合计已经由表尾汇总行（t-table foot-data）逐列展示，
-           这里再重复「总电量 / 总电费」只会和表尾打架、且无法覆盖其余列。 -->
-      <div v-if="summary.total" class="doc-summary-bar" :class="{ 'is-batch-visible': selectedKeys.size }">
-        <span class="doc-summary-count">共 {{ summary.total }} 条</span>
-        <span v-if="selectedKeys.size" class="doc-summary-item summary-selected">已选 {{ selectedKeys.size }} 条</span>
-      </div>
+    <!-- 底部**不再**挂摘要栏（第 21 轮）：表尾合计行的首列已经是
+         「合计（共 N 条）/ 合计（已选 K 条）」，条数与选中数都在里面；
+         下方再放一条「共 N 条」既重复又占纵向空间（用户截图红框）。 -->
     </div>
 
     <!-- 底部浮动工具栏 -->
@@ -1602,7 +1598,7 @@ const onUseUnitChange = () => {
 // ---- 汇总 ----
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRows = computed(() => displayRows.value.filter(r => selectedKeys.value.has(r.id)))
-const summary = computed(() => ({ total: (selectedKeys.value.size ? selectedRows.value : displayRows.value).length }))
+// 底部摘要栏已下线（第 21 轮），条数由表尾合计行首列承载，不再单独维护 summary。
 // 行点击 = **不再打开详情抽屉**（第 18 轮）。
 //
 // 费用清单的每一列都是核算结果，只读抽屉既不能改数、又容易被误当成「点行能编辑」；
@@ -2521,23 +2517,6 @@ onBeforeUnmount(() => {
 .doc-table :deep(tbody tr) { cursor: default; }
 .doc-table :deep(tbody tr .t-checkbox) { cursor: pointer; }
 .doc-table :deep(tbody tr .row-expand-toggle) { cursor: pointer; }
-
-/* 底部汇总 */
-.doc-summary-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 2px;
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-  .doc-summary-count { font-weight: 600; color: var(--td-text-color-primary); }
-  .doc-summary-item {
-    display: inline-flex; align-items: baseline; gap: 6px;
-    .doc-summary-val { font-variant-numeric: tabular-nums; color: var(--td-text-color-primary); font-weight: 600; }
-  }
-  /* 汇总栏已进卡片内部：不再用 margin-bottom 上移（旧版挂在卡片外才需要），
-     浮动栏与它重叠的表现与发票管理一致。 */
-}
 
 /* 抽屉 resize 手柄（发票管理同款） */
 .doc-drawer-resize-handle {

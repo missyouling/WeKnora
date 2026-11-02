@@ -11,7 +11,7 @@
  * 三条硬规则（产品口径）：
  *   ① 首列/标识列显示 `合计（共 N 条）`，并横向合并掉复选框 / 序号 / 首个标识列；
  *   ② 只有**可累加的数量与金额**才求和：单价、均价、比例、倍率、功率因数、
- *      起度、止度、上期/本期示数、环比、税率、文本/日期列一律显示 `—`；
+ *      起度、止度、上期/本期示数、环比、税率、文本/日期列一律**留空**（不写 `—`）；
  *   ③ 金额按「分」累加再除回（避免 0.1+0.2 这类浮点残留），显示与单元格同格式。
  */
 
@@ -97,16 +97,25 @@ export function fmtSumNumber(v: number): string {
   return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
-/** 表尾单元格文本：不可加列 / 无数据 → `—`。 */
+/**
+ * 表尾单元格文本。
+ *
+ * **不可累加的列一律返回空字符串**（第 21 轮）：账单周期 / 使用单位 / 均价 /
+ * 单价 / 分摊比例 / 功率因素 / 起度 / 止度 / 倍率 / 抄表人 / 备注等列，
+ * 在合计行里写 `—` 会被读成「这一列没有数据」，而实际只是「不该相加」。
+ * 留空后整行只剩真正的合计值，视觉上不会与「值为空的行」混淆。
+ *
+ * 可累加列**即使全为 0 也输出真实合计值**（`0.00` / `0`），不写 `—`：
+ * 合计行的语义就是「这一列在本屏数据里的合计」，0 也是合计结果。
+ * 写 `—` 会与「不可累加列」的空白形成两套「没有值」的表示，用户无法区分。
+ */
 export function summaryCellOf(col: SummaryColumn, rows: any[]): string {
-  if (!isSummableColumn(col)) return '—'
+  if (!isSummableColumn(col)) return ''
   const pick = col.value || ((r: any) => r?.[col.key])
   if (col.fieldType === 'amount' || col.fieldType === 'money' || col.fieldType === 'currency') {
-    const total = sumAmount(rows, pick)
-    return total === 0 && !rows.some((r) => toNum(pick(r)) !== 0) ? '—' : fmtSumAmount(total)
+    return fmtSumAmount(sumAmount(rows, pick))
   }
-  const total = sumNumber(rows, pick)
-  return total === 0 && !rows.some((r) => toNum(pick(r)) !== 0) ? '—' : fmtSumNumber(total)
+  return fmtSumNumber(sumNumber(rows, pick))
 }
 
 /**

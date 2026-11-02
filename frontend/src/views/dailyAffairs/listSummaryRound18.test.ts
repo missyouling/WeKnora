@@ -44,7 +44,7 @@ test('可累加列：电量/电费/水费/气费/金额都求和', () => {
   for (const c of cols) assert.equal(isSummableColumn(c), true, `${c.label} 必须可累加`)
 })
 
-test('不可累加列：单价/均价/比例/倍率/起止度/示数/环比/日期/文本 → —', () => {
+test('不可累加列：单价/均价/比例/倍率/起止度/示数/环比/日期/文本 → 空白', () => {
   const cols: SummaryColumn[] = [
     { key: 'unit_price', label: '单价', fieldType: 'number' },
     { key: 'ind_price', label: '工业均价', fieldType: 'amount' },
@@ -62,7 +62,9 @@ test('不可累加列：单价/均价/比例/倍率/起止度/示数/环比/日�
   ]
   for (const c of cols) {
     assert.equal(isSummableColumn(c), false, `${c.label} 不得累加`)
-    assert.equal(summaryCellOf(c, [{ [c.key]: 12 }, { [c.key]: 34 }]), '—', `${c.label} 表尾必须是 —`)
+    // 第 21 轮：不可累加列在合计行里**留空**，不写 `—`
+    // （`—` 会被读成「这列没数据」，实际只是「不该相加」）
+    assert.equal(summaryCellOf(c, [{ [c.key]: 12 }, { [c.key]: 34 }]), '', `${c.label} 表尾必须留空`)
   }
 })
 
@@ -116,9 +118,10 @@ test('buildFootRow：每个可见列都有单元格值，首列是合计文案',
   const rows = [{ bill_period: '2026-09', total_kwh: 596168, ind_price: 0.7071 }]
   const foot = buildFootRow(cols, rows)
   assert.equal(foot['row-select'], '合计（共 1 条）')
-  assert.equal(foot.bill_period, '—')
+  // 不可累加的列留空（第 21 轮），可累加列照常给合计值
+  assert.equal(foot.bill_period, '')
   assert.equal(foot.total_kwh, '596,168')
-  assert.equal(foot.ind_price, '—')
+  assert.equal(foot.ind_price, '')
 })
 
 test('表尾金额格式：千分位 + 两位小数', () => {
