@@ -237,3 +237,226 @@ test('字段定义面板：fileName 不得由前端硬编码追加', () => {
   const src = readFileSync(new URL('./FleetCertPanel.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(src, /fileName/, 'FleetCertPanel 不得出现硬编码 fileName')
 })
+
+// ===========================================================================
+// 费用清单：默认分组 / 租户分组的字段集合一致性（第 22 轮 P0-1）
+// ===========================================================================
+//
+// 第 19 轮真机事故：租户分组混进 16 个业主视角的列，表头 18 列、字段定义 42 行、
+// 浮窗 40 个 key —— 当时**单测全绿，六端已经不一致**，只能靠人眼看截图。
+//
+// 费用清单的字段集合比发票/合同多一层折叠（市电三大类），所以「同量」不能只比
+// subs 条数，必须比 `collapseFeeGroups` 折叠后的行序列 —— 那是表头/筛选器/浮窗/
+// 打印目录共同经过的唯一一步。
+
+import {
+  buildTenantGroupFields,
+  collapseFeeGroups,
+  DEFAULT_GROUP_KEY,
+  isTenantGroupMember,
+  subsOfGroup,
+  TENANT_DERIVED_FIELDS,
+  TENANT_DERIVED_NAMES,
+  TENANT_ELEC_TOTAL_FIELD,
+  TENANT_FEE_GROUPS,
+  TENANT_TOTAL_FIELDS,
+  TENANT_WATER_TOTAL_FIELD,
+  tenantGroupKey,
+} from './billingFieldGroups'
+
+/** 默认分组（业主视角）24 列 —— 与库 `fleet_categories.subs(group='default')` 一致。 */
+const DEFAULT_SUBS = ([
+  ['month', '账单周期', 'text', true],
+  ['unit', '使用单位', 'text', true],
+  ['total_kwh', '总电量', 'number', true],
+  ['total_fee', '总电费', 'number', true],
+  ['ind_kwh', '用电量（工业）', 'number', true],
+  ['ind_fee', '电费（工业）', 'number', true],
+  ['ind_price', '均价（工业）', 'number', true],
+  ['res_kwh', '电量（定比）', 'number', true],
+  ['res_fee', '电费（定比）', 'number', true],
+  ['dorm_kwh', '电量（宿舍）', 'number', true],
+  ['dorm_fee', '电费（宿舍）', 'number', true],
+  ['water_ind_usage', '用水量（工业）', 'number', true],
+  ['water_ind_fee', '水费（工业）', 'number', true],
+  ['water_dorm_usage', '用水量（宿舍）', 'number', true],
+  ['water_dorm_fee', '水费（宿舍）', 'number', true],
+  ['water_fire_usage', '用水量（消防）', 'number', true],
+  ['water_fire_fee', '水费（消防）', 'number', true],
+  ['gas_usage', '用气量', 'number', true],
+  ['gas_fee', '气费', 'number', true],
+  ['solar_gen', '光伏发电量', 'number', true],
+  ['solar_grid', '上网电量', 'number', true],
+  ['solar_amount', '结算金额', 'number', true],
+  ['ratio', '分摊比例', 'number', true],
+  ['remark', '备注', 'text', false],
+] as Array<[string, string, string, boolean]>).map(([name, label, dataType, isDefault]) => ({
+  name,
+  label,
+  dataType,
+  isDefault,
+  enabled: true,
+  width: 0,
+  group: DEFAULT_GROUP_KEY,
+  groupLabel: '默认分组',
+}))
+
+/** 持睿汽车的分摊子项（7 条，覆盖 4 个账单大类）。 */
+const TENANT_ITEMS = [
+  ['(1)市场化购电费|零售交易电费', '(1)市场化购电费', '零售交易电费'],
+  ['(1)市场化购电费|零售损益分摊电费', '(1)市场化购电费', '零售损益分摊电费'],
+  ['(3)输配电量电费|零售输配电费', '(3)输配电量电费', '零售输配电费'],
+  ['(4)系统运行费|煤电容量电费', '(4)系统运行费', '煤电容量电费'],
+  ['(4)系统运行费|抽水蓄能容量电费', '(4)系统运行费', '抽水蓄能容量电费'],
+  ['(6)政府性基金及附加-工商业|农网还贷', '(6)政府性基金及附加-工商业', '农网还贷'],
+  ['基本电费|基本电费', '基本电费', '基本电费'],
+].map(([item_key, category, item_name], i) => ({
+  item_key,
+  item_name,
+  category,
+  enabled: true,
+  field_enabled: true,
+  width: 0,
+  sort: i + 1,
+}))
+
+const TENANT_LIKE = { id: 't-chengrui', name: '持睿汽车' }
+
+/** 五端共同经过的那一步：subs → 表头行序列。 */
+function rowsOf(subs: ReadonlyArray<Record<string, any>>) {
+  return collapseFeeGroups(subs.filter((s) => s.enabled !== false))
+}
+
+test('费用清单·默认分组：24 列平铺，字段配置与表头同量同序', () => {
+  const enabled = DEFAULT_SUBS.filter((s) => s.enabled !== false)
+  const rows = rowsOf(DEFAULT_SUBS)
+  // 默认分组不含市电分摊子项 → 不产生大类折叠
+  assert.equal(rows.filter((r) => r.kind === 'group').length, 0, '默认分组不得出现大类折叠行')
+  assert.deepEqual(
+    rows.map((r) => r.name),
+    enabled.map((s) => s.name),
+    '默认分组：字段配置启用项与列表表头必须同名同序',
+  )
+})
+
+test('费用清单·默认分组：零重名，且不得含租户专属列', () => {
+  const names = rowsOf(DEFAULT_SUBS).map((r) => r.name)
+  assert.equal(new Set(names).size, names.length, '默认分组字段名不得重复')
+  for (const n of TENANT_TOTAL_FIELDS) {
+    assert.ok(!names.includes(n), `默认分组不得含收口列 ${n}`)
+  }
+  assert.ok(!names.some((n) => n.startsWith('item_')), '默认分组不得含分摊子项列')
+})
+
+test('费用清单·默认分组：备注默认不出列（否则表头比字段配置多一列）', () => {
+  const remark = DEFAULT_SUBS.find((s) => s.name === 'remark')!
+  assert.equal(remark.isDefault, false, '「备注」默认表头必须关闭')
+  assert.equal(remark.enabled, true, '「备注」字段本身必须启用')
+})
+
+test('费用清单·租户分组：大类折叠后，字段配置与表头严格同量', () => {
+  const fields = buildTenantGroupFields(TENANT_LIKE, TENANT_ITEMS)
+  const enabled = fields.filter((f) => f.enabled !== false)
+  const rows = collapseFeeGroups(enabled)
+
+  const groups = rows.filter((r) => r.kind === 'group') as any[]
+  assert.equal(groups.length, TENANT_FEE_GROUPS.length, '大类折叠行数必须等于大类定义数')
+  assert.deepEqual(
+    groups.map((g) => g.name).sort(),
+    TENANT_FEE_GROUPS.map((g) => g.name).sort(),
+    '大类名字必须与 TENANT_FEE_GROUPS 一一对应',
+  )
+
+  // 被折叠的成员不得再出现在顶层（否则同一笔费用出两列）
+  const topNames = rows.map((r) => r.name)
+  for (const g of groups) {
+    assert.ok(g.members.length > 0, `大类 ${g.name} 必须有成员`)
+    for (const m of g.members) {
+      assert.ok(!topNames.includes(m.name), `成员 ${m.name} 不得在顶层重复出列`)
+    }
+  }
+
+  const collapsed = groups.reduce((n, g) => n + g.members.length, 0)
+  assert.equal(
+    rows.length,
+    enabled.length - collapsed,
+    `表头 ${rows.length} 行 ≠ 字段配置 ${enabled.length} 项 − 折叠 ${collapsed} 项`,
+  )
+})
+
+test('费用清单·租户分组：派生字段齐全、收口列恒在最后、零重名', () => {
+  const fields = buildTenantGroupFields(TENANT_LIKE, TENANT_ITEMS)
+  assert.equal(fields[0].group, tenantGroupKey(TENANT_LIKE.id), '字段必须打上租户分组键')
+
+  const names = collapseFeeGroups(fields.filter((f) => f.enabled !== false)).map((r) => r.name)
+  for (const spec of TENANT_DERIVED_FIELDS) {
+    assert.ok(names.includes(spec.name), `派生字段 ${spec.name}（${spec.label}）必须出列`)
+  }
+  assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])
+  assert.equal(new Set(names).size, names.length, '租户分组表头不得重名')
+})
+
+test('费用清单·租户分组：不得混入业主视角（默认分组）的列', () => {
+  const ownerOnly = DEFAULT_SUBS.map((s) => s.name).filter((n) => !TENANT_DERIVED_NAMES.includes(n))
+  const tenantNames = collapseFeeGroups(
+    buildTenantGroupFields(TENANT_LIKE, TENANT_ITEMS).filter((f) => f.enabled !== false),
+  ).map((r) => r.name)
+
+  const leaked = ownerOnly.filter((n) => tenantNames.includes(n))
+  assert.deepEqual(leaked, [], `租户分组混入了业主视角列：${leaked.join(' / ')}`)
+
+  for (const n of ['total_kwh', 'solar_gen', 'res_kwh', 'water_fire_fee', 'src_市电账单_overview_total_kwh']) {
+    assert.equal(isTenantGroupMember(n), false, `${n} 不属于租户分组`)
+  }
+})
+
+test('费用清单·租户分组：关掉「启用字段」的子项不出列，大类仍保留', () => {
+  const items = TENANT_ITEMS.map((it) =>
+    it.item_key === '(4)系统运行费|煤电容量电费' ? { ...it, field_enabled: false } : it,
+  )
+  const rows = collapseFeeGroups(
+    buildTenantGroupFields(TENANT_LIKE, items).filter((f) => f.enabled !== false),
+  )
+  const names = rows.map((r) => r.name)
+  assert.ok(!names.includes('item_(4)系统运行费|煤电容量电费'), '已关闭的子项不得出列')
+
+  const system = rows.find((r) => r.name === 'grp_system') as any
+  assert.ok(system, '系统运行费用大类必须仍出列')
+  assert.deepEqual(
+    system.members.map((m: any) => m.name),
+    ['item_(4)系统运行费|抽水蓄能容量电费'],
+    '大类成员必须只剩仍启用的那个（字段名带 item_ 前缀）',
+  )
+})
+
+test('费用清单·五端同源：都从 collapseFeeGroups(subsOfGroup(...)) 派生', () => {
+  const src = readFileSync(new URL('./TenantBilling.vue', import.meta.url), 'utf8')
+
+  // ① 字段定义启用项：只取当前分组那一份 subs
+  assert.match(src, /const subs = subsOfGroup\(allSubs, groupKey\)/, '字段定义必须按分组取 subs')
+  // ② [☰ 字段] 筛选器：与表头同一个列集（组件内部按 visibleKeys 过滤）
+  assert.match(src, /:columns="activeColDefs"/, '[☰ 字段] 筛选器必须与表头同源')
+  // ③ 列表表头：colKey 逐条来自 visibleColDefs
+  assert.match(
+    src,
+    /for \(const c of visibleColDefs\.value\)[\s\S]{0,240}?colKey: c\.key/,
+    '表头 colKey 必须逐条来自 visibleColDefs',
+  )
+  // ④ 行浮窗 keys：与列 key 同一套 tenantItemColKey 规则
+  assert.match(src, /itemTips\[tenantItemColKey\(it\)\]/, '浮窗 key 必须与列 key 同规则')
+  // ⑤ 打印目录列：映射 visibleColDefs，不得另写表头数组
+  assert.match(src, /visibleColDefs\.value\.map\(col => \(\{/, '打印目录必须映射 visibleColDefs')
+
+  // 大类折叠是五端同量的前提
+  assert.match(
+    src,
+    /for \(const row of collapseFeeGroups\(effective\)\)/,
+    'activeColDefs 必须在 collapseFeeGroups 的结果上遍历',
+  )
+})
+
+test('费用清单·字段定义页与列表页共用 subsOfGroup / collapseFeeGroups', () => {
+  const panel = readFileSync(new URL('./FleetCertPanel.vue', import.meta.url), 'utf8')
+  assert.match(panel, /collapseFeeGroups/, '字段定义页必须用同一套大类折叠')
+  assert.match(panel, /normalizeCostListGroup/, '字段定义页必须按分组键取 subs（tenant:<id> 归一）')
+})

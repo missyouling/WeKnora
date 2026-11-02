@@ -2172,6 +2172,10 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.SanitizeTenantGroupFields(ctx); err != nil {
 		logger.Warnf(ctx, "sanitize tenant group fields failed: %v", err)
 	}
+	// 账单表：ratio 精度 18,6 → 18,10；补 elec_total_fee / water_total_fee 两列并回填（幂等）
+	if _, err := NewBillingHandler(h.db).EnsureBillingRecordColumns(ctx); err != nil {
+		logger.Warnf(ctx, "ensure billing record columns failed: %v", err)
+	}
 	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
 	uh.hideEnergyLedgerCategory(ctx)
 	// 能耗账单文件的「所属分类」回填：上传只写了 bill_kind、提取只写 kind，

@@ -1131,6 +1131,10 @@ func (h *BillingHandler) loadUtilityBillByMonth(ctx context.Context, kbID, month
 // GenerateBillingRecord godoc
 // @Summary      生成月度账单
 // @Router       /billing/tenants/:id/records [post]
+// GenerateBillingRecord 生成（或覆盖）某租户某月的账单。
+//
+// 四段拆分见 billing_generate.go：prepareBillingInputs / allocateTimed /
+// buildFeeItems / persistRecord。本函数只负责解析请求、串联四段、组装响应。
 func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	ctx := c.Request.Context()
 	id := c.Param("id")
@@ -1146,424 +1150,39 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("month is required (YYYY-MM)"))
 		return
 	}
-	var tenant types.BillingTenant
-	if err := h.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&tenant).Error; err != nil {
-		c.Error(errors.NewNotFoundError("租户不存在"))
-		return
-	}
-	var st types.BillingTenantSetting
-	if err := h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).First(&st).Error; err != nil {
-		st = types.BillingTenantSetting{DormPrice: 1, WaterPrice: 5.22}
-	}
-	if st.DormPrice <= 0 {
-		st.DormPrice = 1
-	}
-	if st.WaterPrice <= 0 {
-		st.WaterPrice = 5.22
-	}
 
-	// 1) 分时读数:总表(星达铜业)合计、租户分表合计
-	starPeriod, subPeriod, err := h.loadPeriodKwh(ctx, id, tenant.Name, req.Month)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-	// 分时电表逐表读数(用于账单电量明细卡片)
-	subRows := h.loadSubMeterRows(ctx, tenant.Name, req.Month)
-	starTotal := periodSum(starPeriod)
-	subTotal := periodSum(subPeriod)
-	// 口径（第 17 轮）：**不再因缺读数阻断生成**。
-	// 旧实现 starTotal<=0 直接 400「请先录入该月星达分表读数」，前端也有一层
-	// readiness 门禁，导致「2026-05 只缺一项分时读数」整批月份都生成不了。
-	// 现在缺项一律按 0 参与计算，算完用户可以补数再点「重新核算」。
-	lineLoss := round2(starTotal - subTotal)
-	if lineLoss < 0 {
-		// 读数填反/分表大于总表：差额分摊按 0 处理，不再阻断（负的 ΔQ 会把
-		// 分时电费算成负数，比 0 更难解释）。
-		lineLoss = 0
-	}
-
-	// 2) 宿舍/水表引用读数（按使用单位=租户名自动匹配优先，显式引用兜底）
-	refs := h.loadRefsByUseUnit(ctx, tenant.Name)
-	if len(refs) == 0 {
-		refs = h.loadMeterRefs(ctx, id)
-	}
-	dormKwh, dormFee, err := h.sumRefFee(ctx, refs, "electricity", req.Month)
-	if err != nil {
-		c.Error(err)
-		return
-	}
-	waterRows, waterUsage, waterFee, err := h.loadWaterRows(ctx, refs, req.Month)
+	in, err := h.prepareBillingInputs(ctx, id, req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 
-	// 3) 市电账单（缺失/电量为空**不再阻断**：按 0 参与计算，ratio 记 0）
-	//
-	// 旧实现「未找到该月的市电账单」直接 400，前端也就无法对「只有抄表没有账单」
-	// 的月份做任何核算。现在改为零值账单：所有市电分项金额 = 原金额(0) × 比例 = 0，
-	// 宿舍电费与水费仍按实际读数正常计入，用户看到的就是「电费待补」而不是报错。
-	billItem, err := h.loadUtilityBillByMonth(ctx, st.BillKBID, req.Month)
-	if err != nil || billItem == nil {
-		billItem = &types.UtilityBillExtractionItem{}
-	}
-	ratio := 0.0
-	if billItem.TotalKwh > 0 && starTotal > 0 {
-		// **8 位小数**：比例要参与两次乘法（基本电费 44,000、力调 -2,818.07），
-		// 6 位会在 44,000 × 0.212356 上丢 1 分（9,343.66 vs 标准 9,343.67）。
-		// 8 位（0.21235624）与人工核算表的除法精度一致。
-		ratio = round8(starTotal / billItem.TotalKwh)
-	}
-
-	// 3.1 分时电量分摊（计费电量 → 差额分摊 → 基准电量）
-	//
-	// 口径见 billing_timed.go：计费电量 = 抄见 + 变损 + 线损 + 加减（账单电量明细，
-	// 整体落在第一块表），差额电量按各表各时段计费电量占比分摊，基准电量参与分时电费。
-	// 旧实现把账单损耗按 lossRatio 缩水后再分摊，分时电费因此对不上人工核算表
-	// （2026-09 持睿：零售交易电费算成 54,369.99，标准表是 54,422.79）。
-	billLoss := make(map[string]float64, 4)
-	billAdjust := make(map[string]float64, 4)
-	for _, mr := range billItem.MeterReadings {
-		p := meterPeriodByType(mr.MeterType)
-		if p == "" {
-			continue
-		}
-		// 变损与线损是两条独立列，电量明细里都体现在计费电量上。
-		//
-		// **必须乘分摊比例**：账单电量明细是**全厂**口径（尖峰线损 13 度、
-		// 加减 -1341 度），持睿只承担其中 ratio 那一份。
-		// 2026-09 标准核算表：13 × 0.21235625 = 2.76、-1341 × 0.21235625 = -284.77，
-		// 尖峰计费电量 = 5200 + 2.76 - 284.77 = 4,917.99。
-		//
-		// 历史坑：旧版本用的系数是「分表合计 ÷ 全厂电量」= 122700/595860 = 0.20592，
-		// 比正确的 0.21236 小 3%，于是尖峰算成 4,926.54（差 8.55 度），
-		// 四段电费整体偏低 —— 库里 2026-09 的明细至今还是那个值。
-		billLoss[p] = round2((mr.TransLoss + mr.LineLoss) * ratio)
-		billAdjust[p] = round2(mr.Adjust * ratio)
-	}
-	timedUsages := make([]timedMeterUsage, 0, len(subRows))
-	for _, mr := range subRows {
-		usage := make(map[string]float64, 4)
-		for _, p := range []string{"deep", "peak", "flat", "valley"} {
-			pr := mr.Periods[p]
-			usage[p] = round2((pr.Curr - pr.Prev) * mr.Rate)
-		}
-		timedUsages = append(timedUsages, timedMeterUsage{Key: mr.MeterID, Name: mr.Name, Rate: mr.Rate, Usage: usage})
-	}
-	timed := allocateTimedKwh(timedUsages, billLoss, billAdjust, lineLoss)
-	// 各时段基准电量（参与分时电费计算的电量）：用**未取整**值，
-	// 取整后乘单价会在四段累加时产生 1 分误差
-	billPeriod := make(map[string]float64, 4)
-	for _, p := range []string{"deep", "peak", "flat", "valley"} {
-		billPeriod[p] = timed.PeriodBaseExact[p]
-	}
-
-	// 3.2 电量明细卡片:分时电表×时段(起度/止度/倍率/使用电量/损耗/加减电量/计费电量/差额分摊电量)
-	//
-	// 直接取 3.1 的分摊结果：卡片与费用必须同源，否则「明细合计 ≠ 分时电费」
-	// （旧实现这里按 billBase×用量占比 另算一套计费电量，卡片上 5,325.87、
-	// 标准表 4,927，两套账谁也对不上）。
 	now := timeNowUTC()
 	recordID := uuid.NewString()
-	var meterRows []types.BillingRecordMeter
-	meterSort := 0
-	for _, mr := range subRows {
-		rows := timed.Rows[mr.MeterID]
-		for _, r := range rows {
-			pr := mr.Periods[r.Period]
-			meterRows = append(meterRows, types.BillingRecordMeter{
-				ID: uuid.NewString(), RecordID: recordID, MeterName: mr.Name,
-				Period: periodLabel(r.Period), Prev: pr.Prev, Curr: pr.Curr, Rate: mr.Rate,
-				Usage: r.Usage, LineLoss: r.Loss, Adjust: r.Adjust,
-				BillKwh: r.BillKwh, DiffKwh: r.DiffKwh, Sort: meterSort, CreatedAt: now,
-			})
-			meterSort++
-		}
-	}
+	plan := allocateTimed(in, recordID, now)
+	fees := buildFeeItems(in, plan, recordID, now)
 
-	// 4) 子项开关：首次自动初始化，账单新增大类时自动补充
-	feeItems := billItem.FeeItems
-	enabled := h.loadEnabledItems(ctx, id)
-	if len(enabled) == 0 {
-		enabled = h.ensureDefaultItems(ctx, id, feeItems)
-	} else {
-		enabled = h.syncMissingItems(ctx, id, feeItems, enabled)
-	}
-
-	// 5) 费用明细(固化)
-	var items []types.BillingRecordItem
-	sortNo := 0
-	industrialFee := 0.0
-
-	// 5.1 FeeItems 子项(按时段单价/计费基数×单价)
-	catRows := groupFeeItems(feeItems)
-	for _, cat := range catRows {
-		// 居民/目录电费(定比单列)子项不参与按比例分摊
-		if strings.Contains(cat.Name, "居民") || strings.Contains(cat.Name, "目录电费") {
-			continue
-		}
-		// 力调电费由 5.2 统一按「市电金额×分摊比例」计算，跳过账单原「功率因数/功率因素调整电费」大类，避免重复计费
-		if strings.Contains(cat.Name, "功率因数调整电费") || strings.Contains(cat.Name, "功率因素调整电费") {
-			continue
-		}
-		// 子项开关控制（name 级）：同一大类下的同名子项可有多行（分时时段）。
-		//
-		// **统一口径**（与前端 tenantBillingSources / 打印清单 PDF 完全一致）：
-		//   · 分时子项   = 四段基准电量 × 该时段单价；
-		//   · 非分时子项 = 市电账单该子项的**原金额合计** × 分摊比例。
-		//
-		// 旧实现给非分时项用「(星达分表−宿舍) × 平段单价」，与前端「原金额 × 比例」
-		// 差着尾差（真机 2026-09：工业电费 101299.42，而各分项累加只有 100550），
-		// 于是「工业电费」列、分项之、PDF 应收合计是三个数。这里统一到后者，
-		// 三方从此只有一套算法。
-		for _, sg := range groupFeeItemsByName(cat.Rows) {
-			// 开关:新格式「大类|子项名」优先,兼容旧格式(子项名)
-			if !billingItemEnabled(enabled, cat.Name, sg.Name) {
-				continue
-			}
-			// 子项大类严格跟随市电账单结构(零售损益分摊电费归属市场化购电费)
-			catName := cat.Name
-			rateByPeriod := make(map[string]float64, 4)
-			seenPeriod := make(map[string]bool, 4)
-			rawTotal := 0.0
-			for _, r := range sg.Rows {
-				rawTotal += r.Fee
-				p := normalizePeriod(r.Period)
-				if p == "" {
-					continue
-				}
-				seenPeriod[p] = true
-				rate := r.Rate
-				if rate <= 0 && r.Qty > 0 {
-					rate = r.Fee / r.Qty
-				}
-				if rate != 0 {
-					rateByPeriod[p] = rate
-				}
-			}
-			rawTotal = round2(rawTotal)
-
-			// 真正分时子项:含尖峰/峰/谷任一时段(如零售交易、零售输配、偏差电费)
-			if seenPeriod["deep"] || seenPeriod["peak"] || seenPeriod["valley"] {
-				fee := 0.0
-				for _, p := range []string{"deep", "peak", "flat", "valley"} {
-					rate, ok := rateByPeriod[p]
-					if !ok || rate == 0 {
-						continue
-					}
-					// **逐表逐段** round2 后相加：人工 Excel 是「每块表的每个时段各乘单价
-					// 各占一格，合计再把格子加起来」，先汇总电量再乘单价会差 1 分
-					// （2026-09 持睿：峰 6478.51+6859.73+2203.12 = 15541.36）。
-					f := 0.0
-					for _, mr := range subRows {
-						rows := timed.Rows[mr.MeterID]
-						for _, r := range rows {
-							if r.Period == p {
-								f = round2(f + round2(r.BaseExact*rate))
-								break
-							}
-						}
-					}
-					if f == 0 {
-						// 没有分表明细（历史上只有汇总电量）时退回「时段合计电量 × 单价」
-						f = round2(billPeriod[p] * rate)
-					}
-					items = append(items, types.BillingRecordItem{
-						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-						Category: catName, Name: sg.Name, Period: periodLabel(p),
-						Qty: round2(billPeriod[p]), Rate: rate, Fee: f, Sort: sortNo, CreatedAt: now,
-					})
-					sortNo++
-					fee += f
-				}
-				industrialFee += fee
-				continue
-			}
-
-			// 非分时子项（平段按度计费）：
-			//   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
-			//
-			// 不能写「账单金额 × 分摊比例」：账单的按度项计费电量是 587,230 度
-			// （= 全厂 596,168 − 居民 8,938），除以全厂电量得到的比例乘回去
-			// 会系统性少算 —— 2026-09 零售损益分摊电费按比例算 4,434.02，
-			// 标准表是 4,501.52，差 67.5 元；上网环节线损差 32.5 元，
-			// 系统运行费用 7 项 + 政府性基金 5 项逐项差一点，工业电费累计差 264.98。
-			// 单价取账单该行的 rate；缺失时用 fee/qty 反算。
-			unitRate := 0.0
-			for _, r := range sg.Rows {
-				if r.Rate != 0 {
-					unitRate = r.Rate
-					break
-				}
-				if r.Qty > 0 && r.Fee != 0 {
-					unitRate = r.Fee / r.Qty
-					break
-				}
-			}
-			if unitRate != 0 && starTotal > 0 {
-				qty := round2(starTotal)
-				f := round2(qty * unitRate)
-				items = append(items, types.BillingRecordItem{
-					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: catName, Name: sg.Name, Period: "",
-					Qty: qty, Rate: unitRate, Fee: f, Sort: sortNo, CreatedAt: now,
-				})
-				sortNo++
-				// 累加**未取整**值：Excel 的合计是「各格原值相加后再四舍五入」，
-				// 逐项 round 再相加会让政府性基金多 1 分（6,038.07 vs 6,038.06），
-				// 工业电费随之变成 101,414.05。
-				industrialFee += qty * unitRate
-				continue
-			}
-			// 纯金额返还类（账单里 rate=0 且 qty=0）：**不计入分摊**。
-			//
-			// 「中长期偏差回收返还（用户）」「中长期超额申报费用返还」「零售交易发电侧
-			// 收益返还电费」这三条在 2026-09 账单里是 -31,520.93 / -392.08 / -4,103.60，
-			// 属于全厂冲抵项，没有计量口径可以折算到持睿头上。
-			// 旧实现按「原金额 × 分摊比例」硬摊，给持睿凭空算出 -6,693.66 / -83.26 /
-			// -871.42（合计 -7,648.34），人工核算表根本不计这三项 —— 工业电费因此
-			// 从 101,414.04 掉到 93,765.70（真机对账差 7,648）。
-			allZeroQty := true
-			for _, r := range sg.Rows {
-				if r.Qty != 0 {
-					allZeroQty = false
-					break
-				}
-			}
-			if allZeroQty {
-				continue
-			}
-			// 兜底：有计量口径但缺单价（历史脏数据）→ 按账单原金额 × 分摊比例
-			if rawTotal != 0 {
-				f := round2(rawTotal * ratio)
-				items = append(items, types.BillingRecordItem{
-					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
-					Category: catName, Name: sg.Name, Period: "",
-					Qty: ratio, Rate: rawTotal, Fee: f, Sort: sortNo, CreatedAt: now,
-				})
-				sortNo++
-				industrialFee += f
-			}
-		}
-	}
-
-	// 5.2 基本电费 / 功率因素调整电费(按比例)
-	if enabled["基本电费"] && billItem.CapacityFee != 0 {
-		// 用「原金额 × 工业电量 ÷ 账单电量」而**不是** × ratio：
-		// ratio 落库是 8 位近似（0.21235625），44,000 × 它 = 9,343.675 → 9,343.68；
-		// 直接除得到 9,343.6749 → 9,343.67（与 Excel 一致）。
-		capacityFee := billItem.CapacityFee * starTotal / billItem.TotalKwh
-		f := round2(capacityFee)
-		items = append(items, types.BillingRecordItem{
-			ID: uuid.NewString(), RecordID: recordID, Kind: "base",
-			Category: "基本电费", Name: "基本电费", Period: "", Qty: ratio, Rate: billItem.CapacityFee, Fee: f, Sort: sortNo, CreatedAt: now,
-		})
-		sortNo++
-		industrialFee += capacityFee
-	}
-	// 力调电费统一命名「功率因素调整电费」，但**必须同时认「因数」写法**。
-	//
-	// 库里 billing_tenant_items.item_key 是「功率因数调整电费|功率因数调整电费」
-	// （账单原文用「因数」），而这里的开关历史上写的是「因素」。硬按字面查
-	// 三个键全不命中 → pfOn=false → 力调 -598.43 被整条丢掉，
-	// 工业电费从 101,414.04 变成 102,012.47（真机对账差 598.43）。
-	pfOn := false
-	for k, v := range enabled {
-		if !v {
-			continue
-		}
-		if strings.Contains(strings.ReplaceAll(k, "功率因素", "功率因数"), "功率因数调整电费") {
-			pfOn = true
-			break
-		}
-	}
-	if pfOn && billItem.PfAdjustAmount != 0 {
-		pfFee := billItem.PfAdjustAmount * starTotal / billItem.TotalKwh
-		f := round2(pfFee)
-		items = append(items, types.BillingRecordItem{
-			ID: uuid.NewString(), RecordID: recordID, Kind: "pf",
-			Category: "功率因素调整电费", Name: "功率因素调整电费", Period: "", Qty: ratio, Rate: billItem.PfAdjustAmount, Fee: f, Sort: sortNo, CreatedAt: now,
-		})
-		sortNo++
-		industrialFee += pfFee
-	}
-
-	// 5.3 宿舍/水
-	if dormFee != 0 {
-		items = append(items, types.BillingRecordItem{
-			ID: uuid.NewString(), RecordID: recordID, Kind: "dorm",
-			Category: "居民电费", Name: "宿舍电费", Period: "", Qty: dormKwh, Rate: st.DormPrice, Fee: dormFee, Sort: sortNo, CreatedAt: now,
-		})
-		sortNo++
-	}
-	// 水费清单(逐表)
-	for _, wr := range waterRows {
-		items = append(items, types.BillingRecordItem{
-			ID: uuid.NewString(), RecordID: recordID, Kind: "water",
-			Category: "水费", Name: wr.MeterName, Period: "", Qty: wr.Usage, Rate: wr.Price, Fee: wr.Fee, Sort: sortNo, CreatedAt: now,
-		})
-		sortNo++
-	}
-
-	industrialFee = round2(industrialFee)
-	totalFee := round2(industrialFee + dormFee + waterFee)
+	industrialFee := round2(fees.IndustrialFee)
+	totalFee := round2(industrialFee + in.DormFee + in.WaterFee)
 	rec := types.BillingRecord{
 		ID: recordID, BillingTenantID: id, Month: req.Month, Status: "generated",
-		TotalKwh: round2(starTotal), LineLoss: lineLoss, Ratio: ratio,
-		BillTotalAmount: billItem.TotalAmount,
-		DormKwh:         round2(dormKwh), DormFee: dormFee,
-		WaterUsage: round2(waterUsage), WaterFee: waterFee,
+		TotalKwh: round2(in.StarTotal), LineLoss: in.LineLoss, Ratio: in.Ratio,
+		BillTotalAmount: in.Bill.TotalAmount,
+		DormKwh:         round2(in.DormKwh), DormFee: in.DormFee,
+		WaterUsage: round2(in.WaterUsage), WaterFee: in.WaterFee,
 		IndustrialFee: industrialFee, TotalFee: totalFee,
-		CreatedAt: now, UpdatedAt: now,
+		// 两个合计列（第 22 轮 P1-9）：口径写死在落库处，页面与报表不必再各自相加。
+		// 电费合计 = 工业电费 + 宿舍电费；水费合计 = 各水表之和（当前无工业/宿舍分档）。
+		ElecTotalFee:  round2(industrialFee + in.DormFee),
+		WaterTotalFee: in.WaterFee,
+		CreatedAt:     now, UpdatedAt: now,
 	}
-	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 同月已存在 → 覆盖(删除旧账单及子行)
-		var old types.BillingRecord
-		if err := tx.Where("billing_tenant_id = ? AND month = ?", id, req.Month).First(&old).Error; err == nil {
-			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordItem{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordMeter{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("record_id = ?", old.ID).Delete(&types.BillingRecordWater{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Delete(&old).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Create(&rec).Error; err != nil {
-			return err
-		}
-		for _, it := range items {
-			if err := tx.Create(&it).Error; err != nil {
-				return err
-			}
-		}
-		for _, mr := range meterRows {
-			if err := tx.Create(&mr).Error; err != nil {
-				return err
-			}
-		}
-		for _, wr := range waterRows {
-			w := types.BillingRecordWater{
-				ID: uuid.NewString(), RecordID: recordID, MeterName: wr.MeterName,
-				MeterKind: wr.MeterKind, Prev: wr.Prev, Curr: wr.Curr, Rate: wr.Rate,
-				Usage: wr.Usage, Price: wr.Price, Fee: wr.Fee, Sort: wr.Sort, CreatedAt: now,
-			}
-			if err := tx.Create(&w).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
+	if err := h.persistRecord(ctx, rec, fees.Items, plan.MeterRows, in.WaterRows); err != nil {
 		logger.Errorf(ctx, "generate billing record failed: %v", err)
 		c.Error(errors.NewInternalServerError("generate billing record failed"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": fees.Items}})
 }
 
 // ---------------------------------------------------------------------------

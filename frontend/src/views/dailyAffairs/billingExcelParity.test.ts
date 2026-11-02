@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   allocateTimedKwh,
   billPeriodLossAdjust,
@@ -12,77 +14,72 @@ import {
 /**
  * 2026-09 持睿汽车：与人工 Excel 核算表逐格对账。
  *
- * 这张表是业务的**唯一验收基准**（用户手写批注 + 标准 Excel），
- * 任何口径改动都必须让这组断言全绿，否则列表、浮窗、PDF 三处就会各说各话。
+ * **基准数据不在本文件里**，而是与后端 `internal/handler/billing_timed_test.go`
+ * 共读 `testdata/billing-golden-2026-09.json`（第 22 轮 P0-4）。
  *
- * 关键口径（与需求原文一致）：
- *   ① 分摊比例 ratio = 126600 / 596168 = 0.21235625，**只作用于基本电费与功率因素调整电费**；
- *   ② 账单电量明细的损耗/加减电量是**全厂**口径，进分时折算前要乘 ratio；
- *   ③ 差额电量 ΔQ = 3900 先在 3 块分表间均分（每表 1300），再按表内时段占比分摊；
- *   ④ 分时电费 = 逐表逐段 round2(基准电量 × 时段单价) 相加；
- *   ⑤ 平段按度项：计费数量 = 126600，金额 = 126600 × 账单单价（**不是**账单金额 × ratio）。
+ * 为什么必须共享：这套口径是业务的唯一验收基准，前后端各自维护一份 fixture 时，
+ * 改了一边忘了另一边，单测全绿但线上对不上账（第 20 轮就发生过：前端按新口径
+ * 算出 54,398.57，Go 侧断言仍写着 54,422.79）。共享文件后，任何口径改动都必须
+ * 让两边同时变绿，改不动就是口径没对齐。
  */
-const RATIO = 126600 / 596168
+const GOLDEN_PATH = fileURLToPath(
+  new URL('../../../../testdata/billing-golden-2026-09.json', import.meta.url),
+)
+const GOLDEN = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as {
+  month: string
+  tenantName: string
+  inputs: {
+    billTotalKwh: number
+    starTotalKwh: number
+    deltaQ: number
+    capacityFee: number
+    pfAdjustAmount: number
+    dormKwh: number
+    dormFee: number
+    waterFee: number
+    timedMeters: { name: string; usage: Record<string, number> }[]
+    meterReadings: { meter_type: string; trans_loss: number; line_loss: number; adjust: number }[]
+    feeItems: {
+      name: string
+      period: string
+      qty: number
+      rate: number
+      fee: number
+      category: string
+    }[]
+    periodRates: Record<string, { trade: number; transmission: number }>
+  }
+  expected: {
+    ratio: number
+    lossByPeriod: Record<string, number>
+    adjustByPeriod: Record<string, number>
+    baseKwh: Record<string, number>
+    baseKwhTotal: number
+    trade: { periods: Record<string, number>; total: number }
+    transmission: { periods: Record<string, number>; total: number }
+    plainFees: { name: string; group: string; qty: number; rate: number; fee: number }[]
+    summary: Record<string, number>
+  }
+}
 
-/** 三块分时表的抄见电量（2026-09 真实读数）。 */
-const meters = [
-  { name: '持睿工业分表1', usage: { deep: 5200, peak: 15200, flat: 21400, valley: 21800 } },
-  { name: '持睿工业分表2', usage: { deep: 0, peak: 15300, flat: 15300, valley: 15300 } },
-  { name: '持睿工业分表3', usage: { deep: 0, peak: 4600, flat: 4200, valley: 4400 } },
-]
-
-/** 市电账单原始 fee_items（只保留参与分摊的部分，数值取自库中 2026-09 账单）。 */
-const FEE_ITEMS = [
-  { name: '零售交易电费', period: '尖峰', qty: 24622, rate: 0.436, fee: 10735.19, category: '(1)市场化购电费' },
-  { name: '零售交易电费', period: '峰', qty: 112221, rate: 0.436, fee: 48928.36, category: '(1)市场化购电费' },
-  { name: '零售交易电费', period: '平', qty: 183205, rate: 0.436, fee: 79877.38, category: '(1)市场化购电费' },
-  { name: '零售交易电费', period: '谷', qty: 267182, rate: 0.436, fee: 116491.35, category: '(1)市场化购电费' },
-  { name: '零售损益分摊电费', period: '平', qty: 587230, rate: 0.035557, fee: 20880.13, category: '(1)市场化购电费' },
-  { name: '上网环节线损费用', period: '平', qty: 587230, rate: 0.017144, fee: 10067.47, category: '(2)上网环节线损费用' },
-  { name: '零售输配电费', period: '尖峰', qty: 24622, rate: 0.2424, fee: 5968.37, category: '(3)输配电量电费' },
-  { name: '零售输配电费', period: '峰', qty: 112221, rate: 0.2424, fee: 27202.37, category: '(3)输配电量电费' },
-  { name: '零售输配电费', period: '平', qty: 183205, rate: 0.1515, fee: 27755.56, category: '(3)输配电量电费' },
-  { name: '零售输配电费', period: '谷', qty: 267182, rate: 0.05757, fee: 15381.67, category: '(3)输配电量电费' },
-  // 系统运行费 7 项（平段按度）
-  { name: '燃气机组容量电费', period: '平', qty: 587230, rate: 0.018983, fee: 11147.39, category: '(4)系统运行费' },
-  { name: '新能源机制差价分摊电费', period: '平', qty: 587230, rate: 0.007546, fee: 4431.24, category: '(4)系统运行费' },
-  { name: '电价交叉补贴新增损益', period: '平', qty: 587230, rate: -0.005536, fee: -3250.91, category: '(4)系统运行费' },
-  { name: '上网环节线损代理采购损益', period: '平', qty: 587230, rate: -0.000971, fee: -570.2, category: '(4)系统运行费' },
-  { name: '其他系统运行费用', period: '平', qty: 587230, rate: 0.004506, fee: 2646.06, category: '(4)系统运行费' },
-  { name: '抽水蓄能容量电费', period: '平', qty: 587230, rate: 0.00731, fee: 4292.65, category: '(4)系统运行费' },
-  { name: '煤电容量电费', period: '平', qty: 587230, rate: 0.023056, fee: 13539.17, category: '(4)系统运行费' },
-  // 政府性基金及附加（工商业）5 项
-  { name: '国家重大水利工程建设基金', period: '平', qty: 587230, rate: 0.001969, fee: 1156.26, category: '(6)政府性基金及附加-工商业' },
-  { name: '可再生能源附加', period: '平', qty: 587230, rate: 0.019, fee: 11157.37, category: '(6)政府性基金及附加-工商业' },
-  { name: '库区移民基金', period: '平', qty: 587230, rate: 0.006225, fee: 3655.51, category: '(6)政府性基金及附加-工商业' },
-  { name: '农网还贷', period: '平', qty: 587230, rate: 0.02, fee: 11744.6, category: '(6)政府性基金及附加-工商业' },
-  { name: '小型水库移民后期扶持资金(地方)', period: '平', qty: 587230, rate: 0.0005, fee: 293.62, category: '(6)政府性基金及附加-工商业' },
-]
-
-/**
- * 账单电量明细（**全厂原始值**）。
- * 尖峰线损 13 度、加减 -1341 度 —— 乘 ratio 后才是持睿承担的 2.76 / -284.77。
- */
-const METER_READINGS = [
-  { meter_type: '正向有功（总）', trans_loss: 0, line_loss: 0, adjust: 0 },
-  { meter_type: '正向有功（尖峰）', trans_loss: 0, line_loss: 13, adjust: -1341 },
-  { meter_type: '正向有功（峰）', trans_loss: 0, line_loss: 59, adjust: -3128 },
-  { meter_type: '正向有功（平）', trans_loss: 0, line_loss: 96, adjust: -2681 },
-  { meter_type: '正向有功（谷）', trans_loss: 0, line_loss: 140, adjust: -1788 },
-]
+const { inputs, expected } = GOLDEN
+/** 分摊比例：以账单电量与工业电量现算（8 位），与后端 round8 同口径。 */
+const RATIO = Math.round((inputs.starTotalKwh / inputs.billTotalKwh) * 1e8) / 1e8
+const PERIODS = ['deep', 'peak', 'flat', 'valley'] as const
+const PERIOD_LABELS: Record<string, string> = { deep: '尖峰', peak: '峰', flat: '平', valley: '谷' }
 
 function ctxOf(): SourceResolveContext {
   return {
-    month: '2026-09',
-    tenantName: '持睿汽车',
+    month: GOLDEN.month,
+    tenantName: GOLDEN.tenantName,
     bill: {
       item: {
-        total_kwh: 596168,
+        total_kwh: inputs.billTotalKwh,
         // 基本电费 / 力调电费在账单概况里（fee_items 没有可靠行）
-        capacity_fee: 44000,
-        pf_adjust_amount: -2818.07,
-        meter_readings: METER_READINGS,
-        fee_items: FEE_ITEMS,
+        capacity_fee: inputs.capacityFee,
+        pf_adjust_amount: inputs.pfAdjustAmount,
+        meter_readings: inputs.meterReadings,
+        fee_items: inputs.feeItems,
       },
     },
     solarItems: [],
@@ -90,17 +87,23 @@ function ctxOf(): SourceResolveContext {
     waterMeters: [],
     waterReadingMap: new Map(),
     gasRows: [],
-    timedMeters: meters,
-    deltaQ: 3900,
+    timedMeters: inputs.timedMeters,
+    deltaQ: inputs.deltaQ,
     ratio: RATIO,
-    starTotal: 126600,
+    starTotal: inputs.starTotalKwh,
   }
 }
 
 /** 平段按度计费项：计费数量 126600 × 账单单价。 */
 function plainFee(key: string, group: string): number {
   return resolveTenantItemValue(
-    { category: group, source_category: '市电账单', source_key: key, source_mode: 'fee_row', value_mode: 'apportion' },
+    {
+      category: group,
+      source_category: '市电账单',
+      source_key: key,
+      source_mode: 'fee_row',
+      value_mode: 'apportion',
+    },
     ctxOf(),
     RATIO,
   )
@@ -108,103 +111,118 @@ function plainFee(key: string, group: string): number {
 
 const r2 = (v: number) => Math.round(v * 100) / 100
 
+test('黄金基准文件：ratio 与分时单价齐备（fixture 自检）', () => {
+  assert.equal(RATIO, expected.ratio, 'ratio = 126600 / 596168')
+  for (const p of PERIODS) {
+    assert.ok(inputs.periodRates[p], `缺少 ${p} 时段单价`)
+  }
+  assert.equal(inputs.timedMeters.length, 3, '必须是 3 块分时表')
+})
+
 test('账单损耗/加减电量：乘 ratio 后与标准表四段一致', () => {
   const { loss, adjust } = billPeriodLossAdjust(ctxOf().bill, RATIO)
-  assert.equal(loss.deep, 2.76, '尖 13 × 0.21235625')
-  assert.equal(adjust.deep, -284.77, '尖 -1341 × 0.21235625')
-  assert.equal(loss.peak, 12.53)
-  assert.equal(adjust.peak, -664.25)
-  assert.equal(loss.flat, 20.39)
-  assert.equal(adjust.flat, -569.33)
-  assert.equal(loss.valley, 29.73)
-  assert.equal(adjust.valley, -379.69)
+  for (const p of PERIODS) {
+    assert.equal(loss[p], expected.lossByPeriod[p], `${PERIOD_LABELS[p]} 损耗`)
+    assert.equal(adjust[p], expected.adjustByPeriod[p], `${PERIOD_LABELS[p]} 加减电量`)
+  }
 })
 
 test('分时四段计费数量：5024.28 / 35645.33 / 41635.45 / 42462.30', () => {
   const { loss, adjust } = billPeriodLossAdjust(ctxOf().bill, RATIO)
-  const alloc = allocateTimedKwh(meters, loss, adjust, 3900)
-  assert.equal(alloc.periodBase.deep, 5024.28)
-  assert.equal(alloc.periodBase.peak, 35645.33)
-  assert.equal(alloc.periodBase.flat, 41635.45)
-  assert.equal(alloc.periodBase.valley, 42462.3)
-  const total = r2(alloc.periodBase.deep + alloc.periodBase.peak + alloc.periodBase.flat + alloc.periodBase.valley)
-  // 标准表展示为 124,767（整数）；精确累加 124,767.36
-  assert.ok(Math.abs(total - 124767.36) < 0.02, `四段合计 ${total}`)
+  const alloc = allocateTimedKwh(inputs.timedMeters, loss, adjust, inputs.deltaQ)
+  for (const p of PERIODS) {
+    assert.equal(alloc.periodBase[p], expected.baseKwh[p], `${PERIOD_LABELS[p]} 基准电量`)
+  }
+  const total = r2(PERIODS.reduce((s, p) => s + alloc.periodBase[p], 0))
+  assert.ok(
+    Math.abs(total - expected.baseKwhTotal) < 0.02,
+    `四段合计 ${total} 应≈${expected.baseKwhTotal}`,
+  )
 })
 
-test('零售交易电费 = 54398.57（尖 2190.59 / 峰 15541.36 / 平 18153.06 / 谷 18513.56）', () => {
-  const t = resolveTimedItemFee(ctxOf(), '零售交易电费', '(1)市场化购电费')
-  assert.ok(t, '必须识别为分时项')
-  const byPeriod = Object.fromEntries(t!.periods.map((p) => [p.period, p.fee]))
-  assert.equal(byPeriod['尖峰'], 2190.59)
-  assert.equal(byPeriod['峰'], 15541.36)
-  assert.equal(byPeriod['平'], 18153.06)
-  assert.equal(byPeriod['谷'], 18513.56)
-  assert.equal(t!.value, 54398.57)
-})
+test('零售交易电费 / 零售输配电费：逐段与合计均与标准表一致', () => {
+  const trade = resolveTimedItemFee(ctxOf(), '零售交易电费', '(1)市场化购电费')
+  assert.ok(trade, '必须识别为分时项')
+  const tradeBy = Object.fromEntries(trade!.periods.map((p) => [p.period, p.fee]))
+  for (const [label, want] of Object.entries(expected.trade.periods)) {
+    assert.equal(tradeBy[label], want, `零售交易电费 ${label}`)
+  }
+  assert.equal(trade!.value, expected.trade.total)
 
-test('零售输配电费 = 18610.64（尖 1217.89 / 峰 8640.42 / 平 6307.77 / 谷 2444.56）', () => {
-  const t = resolveTimedItemFee(ctxOf(), '零售输配电费', '(3)输配电量电费')
-  assert.ok(t)
-  const byPeriod = Object.fromEntries(t!.periods.map((p) => [p.period, p.fee]))
-  assert.equal(byPeriod['尖峰'], 1217.89)
-  assert.equal(byPeriod['峰'], 8640.42)
-  assert.equal(byPeriod['平'], 6307.77)
-  assert.equal(byPeriod['谷'], 2444.56)
-  assert.equal(t!.value, 18610.64)
+  const trans = resolveTimedItemFee(ctxOf(), '零售输配电费', '(3)输配电量电费')
+  assert.ok(trans)
+  const transBy = Object.fromEntries(trans!.periods.map((p) => [p.period, p.fee]))
+  for (const [label, want] of Object.entries(expected.transmission.periods)) {
+    assert.equal(transBy[label], want, `零售输配电费 ${label}`)
+  }
+  assert.equal(trans!.value, expected.transmission.total)
 })
 
 test('平段按度项：计费数量一律 126600，金额 = 126600 × 账单单价', () => {
-  assert.equal(plainFee('零售损益分摊电费', '(1)市场化购电费'), 4501.52)
-  assert.equal(plainFee('上网环节线损费用', '(2)上网环节线损费用'), 2170.43)
-  // 系统运行费用 7 项
-  assert.equal(plainFee('燃气机组容量电费', '(4)系统运行费'), 2403.25)
-  assert.equal(plainFee('新能源机制差价分摊电费', '(4)系统运行费'), 955.32)
-  assert.equal(plainFee('电价交叉补贴新增损益', '(4)系统运行费'), -700.86)
-  assert.equal(plainFee('上网环节线损代理采购损益', '(4)系统运行费'), -122.93)
-  assert.equal(plainFee('其他系统运行费用', '(4)系统运行费'), 570.46)
-  assert.equal(plainFee('抽水蓄能容量电费', '(4)系统运行费'), 925.45)
-  assert.equal(plainFee('煤电容量电费', '(4)系统运行费'), 2918.89)
-  // 政府性基金及附加（工商业）5 项
-  assert.equal(plainFee('国家重大水利工程建设基金', '(6)政府性基金及附加-工商业'), 249.28)
-  assert.equal(plainFee('可再生能源附加', '(6)政府性基金及附加-工商业'), 2405.4)
-  assert.equal(plainFee('库区移民基金', '(6)政府性基金及附加-工商业'), 788.09)
-  assert.equal(plainFee('农网还贷', '(6)政府性基金及附加-工商业'), 2532)
-  assert.equal(plainFee('小型水库移民后期扶持资金(地方)', '(6)政府性基金及附加-工商业'), 63.3)
+  for (const row of expected.plainFees) {
+    assert.equal(plainFee(row.name, row.group), row.fee, `${row.name} = ${row.qty} × ${row.rate}`)
+  }
 })
 
-test('汇总：市场化购电费 58900.09 / 系统运行 6949.58 / 政府性基金 6038.06', () => {
-  const trade = resolveTimedItemFee(ctxOf(), '零售交易电费', '(1)市场化购电费')!
-  const market = r2(trade.value + plainFee('零售损益分摊电费', '(1)市场化购电费'))
-  assert.equal(market, 58900.09, '市场化购电费 = 54398.57 + 4501.52')
+test('纯金额返还类（rate=0 且 qty=0）不计入分摊', () => {
+  // 账单里这三条是全厂冲抵项，没有计量口径折算到单租户头上；旧实现硬摊 -7,648.34
+  for (const name of ['中长期偏差回收返还（用户）', '中长期超额申报返还', '零售交易发电侧收益返还电费']) {
+    const listed = inputs.feeItems.some((f) => f.name.includes(name.slice(0, 6)))
+    if (!listed) continue
+    const v = plainFee(name, '(1)市场化购电费')
+    assert.equal(v, 0, `${name} 必须为 0`)
+  }
+})
+
+test('汇总：市场化购电费 / 系统运行 / 政府性基金 / 工业电费 / 均价 / 电费合计', () => {
+  const s = expected.summary
+  const trade = resolveTimedItemFee(ctxOf(), '零售交易电费', '(1)市场化购电费')!.value
+  const market = r2(trade + plainFee('零售损益分摊电费', '(1)市场化购电费'))
+  assert.equal(market, s.marketPurchaseFee, '市场化购电费 = 交易电费 + 零售损益分摊')
 
   const system = r2(
-    2403.25 + 955.32 + -700.86 + -122.93 + 570.46 + 925.45 + 2918.89,
+    expected.plainFees
+      .filter((f) => f.group === '(4)系统运行费')
+      .reduce((acc, f) => acc + f.fee, 0),
   )
-  assert.equal(system, 6949.58, '系统运行费用 7 项之和')
+  assert.equal(system, s.systemOperationFee, '系统运行费用 7 项之和')
 
-  // 政府性基金：用未取整的单价累加再 round（Excel 是 6,038.06，不是逐项 round 后相加的 .07）
-  const fund = r2(126600 * (0.001969 + 0.019 + 0.006225 + 0.02 + 0.0005))
-  assert.equal(fund, 6038.06)
+  // 政府性基金：用未取整的单价累加再 round（Excel 是 6,038.06，
+  // 不是逐项 round 后相加的 6,038.07）
+  const fund = r2(
+    inputs.starTotalKwh *
+      expected.plainFees
+        .filter((f) => f.group === '(6)政府性基金及附加-工商业')
+        .reduce((acc, f) => acc + f.rate, 0),
+  )
+  assert.equal(fund, s.govFundFee, '政府性基金及附加')
 })
 
 test('工业电费 101414.04 / 均价 0.8011 / 电费合计 102344.04', () => {
+  const s = expected.summary
   const ctx = ctxOf()
   const trade = resolveTimedItemFee(ctx, '零售交易电费', '(1)市场化购电费')!.value
   const trans = resolveTimedItemFee(ctx, '零售输配电费', '(3)输配电量电费')!.value
   const marketLoss = plainFee('零售损益分摊电费', '(1)市场化购电费')
   const lineLoss = plainFee('上网环节线损费用', '(2)上网环节线损费用')
-  const system = 6949.58
-  const fund = 6038.06
-  // 基本电费 / 力调电费：**只有这两项**按账单原金额 × 比例
+  const system = s.systemOperationFee
+  const fund = s.govFundFee
+
+  // 基本电费 / 力调电费：**只有这两项**按「账单原金额 × 工业电量 ÷ 账单电量」折算
   const capacity = r2((fixedBillFeeOf(ctx, '基本电费') || 0) * RATIO)
   const pf = r2((fixedBillFeeOf(ctx, '功率因素调整电费') || 0) * RATIO)
-  assert.equal(capacity, 9343.67, '44000 × 0.21235625')
-  assert.equal(pf, -598.43, '-2818.07 × 0.21235625')
+  assert.equal(capacity, s.capacityFee, `${inputs.capacityFee} × ${RATIO}`)
+  assert.equal(pf, s.pfAdjustFee, `${inputs.pfAdjustAmount} × ${RATIO}`)
 
-  const industrial = r2(marketLoss + lineLoss + trans + trade + system + fund + capacity + pf)
-  // marketLoss+trade 已含在 market 里；这里按 Excel 的 6 大项 + 2 项比例项累加
-  assert.equal(industrial, 101414.04)
-  assert.equal(Math.round((industrial / 126600) * 10000) / 10000, 0.8011, '均价 = 工业电费 ÷ 126600')
-  assert.equal(r2(industrial + 930), 102344.04, '电费合计 = 工业电费 + 宿舍电费 930')
+  const industrial = r2(
+    marketLoss + lineLoss + trans + trade + system + fund + capacity + pf,
+  )
+  assert.equal(industrial, s.industrialFee, '工业电费 = 6 大项 + 2 项比例项')
+  assert.equal(
+    Math.round((industrial / inputs.starTotalKwh) * 10000) / 10000,
+    s.avgPrice,
+    '均价 = 工业电费 ÷ 126600',
+  )
+  assert.equal(r2(industrial + inputs.dormFee), s.elecTotalFee, '电费合计 = 工业电费 + 宿舍电费')
+  assert.equal(r2(s.elecTotalFee + inputs.waterFee), s.grandTotalFee, '本期应付 = 电费合计 + 水费合计')
 })

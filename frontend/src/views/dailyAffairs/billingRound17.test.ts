@@ -137,15 +137,23 @@ test('前端：生成账单不再有「数据不全禁止生成」门禁', () =>
 })
 
 test('后端：缺读数/缺账单一律按 0 计算，不再返回 400 阻断生成', () => {
+  // 第 22 轮 P0-3：生成流程拆成 prepareBillingInputs / allocateTimed /
+  // buildFeeItems / persistRecord，判定逻辑落在 billing_generate.go。
   const go = readGo('internal/handler/billing.go')
-  const fn = go.slice(go.indexOf('func (h *BillingHandler) GenerateBillingRecord'), go.indexOf('5.1 FeeItems 子项'))
+  const gen = readGo('internal/handler/billing_generate.go')
+  const whole = `${go}\n${gen}`
   // 注释里会引用旧文案，这里只断言「不再以错误形式返回」
-  assert.ok(!/NewBadRequestError\("请先录入该月星达分表读数"\)/.test(fn), '不得因缺分时读数阻断')
-  assert.ok(!/NewBadRequestError\("星达分表电量小于工业分表合计/.test(fn), '负差额不得阻断')
-  assert.ok(!/NewBadRequestError\("市电账单本期电量为空/.test(fn), '不得因账单电量为空阻断')
-  assert.match(fn, /if lineLoss < 0 \{/, '负差额必须收敛为 0 而不是报错')
-  assert.match(fn, /billItem = &types\.UtilityBillExtractionItem\{\}/, '缺账单必须退化为零值账单')
-  assert.match(fn, /ratio := 0\.0[\s\S]{0,120}if billItem\.TotalKwh > 0 && starTotal > 0/, 'ratio 缺数据时为 0')
+  assert.ok(!/NewBadRequestError\("请先录入该月星达分表读数"\)/.test(whole), '不得因缺分时读数阻断')
+  assert.ok(!/NewBadRequestError\("星达分表电量小于工业分表合计/.test(whole), '负差额不得阻断')
+  assert.ok(!/NewBadRequestError\("市电账单本期电量为空/.test(whole), '不得因账单电量为空阻断')
+  assert.match(gen, /if in\.LineLoss < 0 \{/, '负差额必须收敛为 0 而不是报错')
+  assert.match(gen, /billItem = &types\.UtilityBillExtractionItem\{\}/, '缺账单必须退化为零值账单')
+  // ratio 未赋值时保持结构体零值 0：只在两端电量都 > 0 时才计算
+  assert.match(
+    gen,
+    /if billItem\.TotalKwh > 0 && in\.StarTotal > 0 \{[\s\S]{0,160}?in\.Ratio = round8/,
+    'ratio 缺数据时为 0',
+  )
 })
 
 // ---- ④ 打印目录 ----

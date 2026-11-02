@@ -7,12 +7,12 @@ type BillingTenant struct {
 	ID             string     `gorm:"primaryKey" json:"id"`
 	TenantID       int64      `gorm:"index" json:"tenant_id"`
 	Name           string     `json:"name"`
-	TenantNo       string     `json:"tenant_no"`       // 租户编号
-	AllocationMode string     `json:"allocation_mode"` // 分摊方式(默认按比例分摊)
+	TenantNo       string     `json:"tenant_no"`                    // 租户编号
+	AllocationMode string     `json:"allocation_mode"`              // 分摊方式(默认按比例分摊)
 	LeaseStart     *string    `gorm:"type:date" json:"lease_start"` // 租赁日期
-	LeaseYears     int        `json:"lease_years"`     // 租赁年限
-	Contact        string     `json:"contact"`         // 单位联系人
-	Phone          string     `json:"phone"`           // 联系电话
+	LeaseYears     int        `json:"lease_years"`                  // 租赁年限
+	Contact        string     `json:"contact"`                      // 单位联系人
+	Phone          string     `json:"phone"`                        // 联系电话
 	Remark         string     `gorm:"type:text" json:"remark"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
@@ -25,7 +25,7 @@ func (BillingTenant) TableName() string { return "billing_tenants" }
 type BillingTenantSetting struct {
 	ID              string    `gorm:"primaryKey" json:"id"`
 	BillingTenantID string    `gorm:"index" json:"billing_tenant_id"`
-	DormPrice       float64   `gorm:"numeric(18,4)" json:"dorm_price"` // 宿舍电价 元/度，默认 1
+	DormPrice       float64   `gorm:"numeric(18,4)" json:"dorm_price"`  // 宿舍电价 元/度，默认 1
 	WaterPrice      float64   `gorm:"numeric(18,4)" json:"water_price"` // 水价 元/吨，默认 5.22
 	BillKBID        string    `json:"bill_kb_id"`                       // 市电账单知识库 ID
 	CreatedAt       time.Time `json:"created_at"`
@@ -164,24 +164,38 @@ func (BillingTenantMeterRef) TableName() string { return "billing_tenant_meter_r
 
 // BillingRecord 月度账单（生成时固化金额）。
 type BillingRecord struct {
-	ID              string     `gorm:"primaryKey" json:"id"`
-	BillingTenantID string     `gorm:"index" json:"billing_tenant_id"`
-	Month           string     `json:"month"`
-	Status          string     `json:"status"` // generated | adjusted
-	TotalKwh        float64    `gorm:"numeric(18,2)" json:"total_kwh"`        // 星达分表总电量
-	LineLoss        float64    `gorm:"numeric(18,2)" json:"line_loss"`        // 线损
-	Ratio           float64    `gorm:"numeric(18,6)" json:"ratio"`            // 分摊比例
-	BillTotalAmount float64    `gorm:"numeric(18,2)" json:"bill_total_amount"` // 市电本期电费
-	DormKwh         float64    `gorm:"numeric(18,2)" json:"dorm_kwh"`         // 宿舍度数
-	DormFee         float64    `gorm:"numeric(18,2)" json:"dorm_fee"`         // 宿舍电费
-	WaterUsage      float64    `gorm:"numeric(18,2)" json:"water_usage"`      // 水用量
-	WaterFee        float64    `gorm:"numeric(18,2)" json:"water_fee"`        // 水费
-	IndustrialFee   float64    `gorm:"numeric(18,2)" json:"industrial_fee"`   // 厂区电费
-	TotalFee        float64    `gorm:"numeric(18,2)" json:"total_fee"`        // 总应付
-	Remark          string     `gorm:"type:text" json:"remark"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	DeletedAt       *time.Time `gorm:"index" json:"deleted_at"`
+	ID              string  `gorm:"primaryKey" json:"id"`
+	BillingTenantID string  `gorm:"index" json:"billing_tenant_id"`
+	Month           string  `json:"month"`
+	Status          string  `json:"status"`                         // generated | adjusted
+	TotalKwh        float64 `gorm:"numeric(18,2)" json:"total_kwh"` // 星达分表总电量
+	LineLoss        float64 `gorm:"numeric(18,2)" json:"line_loss"` // 线损
+	// Ratio 分摊比例 = 工业总电量 ÷ 市电账单总电量。
+	//
+	// **18,10**：比例要乘 44,000 这种基数，6 位会让基本电费差 1 分
+	// （0.212356 × 44,000 = 9,343.664 → 9,343.66，标准表 9,343.67）。
+	Ratio           float64 `gorm:"numeric(18,10)" json:"ratio"`            // 分摊比例
+	BillTotalAmount float64 `gorm:"numeric(18,2)" json:"bill_total_amount"` // 市电本期电费
+	DormKwh         float64 `gorm:"numeric(18,2)" json:"dorm_kwh"`          // 宿舍度数
+	DormFee         float64 `gorm:"numeric(18,2)" json:"dorm_fee"`          // 宿舍电费
+	WaterUsage      float64 `gorm:"numeric(18,2)" json:"water_usage"`       // 水用量
+	WaterFee        float64 `gorm:"numeric(18,2)" json:"water_fee"`         // 水费
+	IndustrialFee   float64 `gorm:"numeric(18,2)" json:"industrial_fee"`    // 厂区电费
+	// ElecTotalFee 电费合计 = 工业电费 + 宿舍电费（不含水费）。
+	//
+	// 页面上「电费合计」列与列表合计行都读它：旧口径只能靠前端把两个字段相加，
+	// 后端报表 / PDF / 导出各写一遍，任一处漏加宿舍电费就差 930 元。
+	ElecTotalFee float64 `gorm:"numeric(18,2)" json:"elec_total_fee"`
+	// WaterTotalFee 水费合计 = 各水表之和（当前水费不分工业/宿舍档）。
+	//
+	// 与 WaterFee 同值，但**语义独立**：WaterFee 是「本期水量×水价」的计算结果，
+	// WaterTotalFee 是「水费合计」的报表口径；将来若拆工业/宿舍水费只改这里。
+	WaterTotalFee float64    `gorm:"numeric(18,2)" json:"water_total_fee"`
+	TotalFee      float64    `gorm:"numeric(18,2)" json:"total_fee"` // 本期应付 = 电费合计 + 水费合计
+	Remark        string     `gorm:"type:text" json:"remark"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeletedAt     *time.Time `gorm:"index" json:"deleted_at"`
 }
 
 func (BillingRecord) TableName() string { return "billing_records" }
@@ -190,7 +204,7 @@ func (BillingRecord) TableName() string { return "billing_records" }
 type BillingRecordItem struct {
 	ID        string    `gorm:"primaryKey" json:"id"`
 	RecordID  string    `gorm:"index" json:"record_id"`
-	Kind      string    `json:"kind"` // fee | base | pf | dorm | water
+	Kind      string    `json:"kind"`     // fee | base | pf | dorm | water
 	Category  string    `json:"category"` // 大类名(如 (1)市场化购电费),用于明细分组展示
 	Name      string    `json:"name"`
 	Period    string    `json:"period"` // 尖峰/峰/平/谷
@@ -207,8 +221,8 @@ func (BillingRecordItem) TableName() string { return "billing_record_items" }
 type BillingRecordMeter struct {
 	ID        string    `gorm:"primaryKey" json:"id"`
 	RecordID  string    `gorm:"index" json:"record_id"`
-	MeterName string    `json:"meter_name"` // 表别名
-	Period    string    `json:"period"`     // 尖峰/峰/平/谷
+	MeterName string    `json:"meter_name"`                     // 表别名
+	Period    string    `json:"period"`                         // 尖峰/峰/平/谷
 	Prev      float64   `gorm:"numeric(18,2)" json:"prev"`      // 起度
 	Curr      float64   `gorm:"numeric(18,2)" json:"curr"`      // 止度
 	Rate      float64   `gorm:"numeric(12,4)" json:"rate"`      // 倍率
@@ -227,8 +241,8 @@ func (BillingRecordMeter) TableName() string { return "billing_record_meters" }
 type BillingRecordWater struct {
 	ID        string    `gorm:"primaryKey" json:"id"`
 	RecordID  string    `gorm:"index" json:"record_id"`
-	MeterName string    `json:"meter_name"` // 表别名
-	MeterKind string    `json:"meter_kind"` // total | sub | fire
+	MeterName string    `json:"meter_name"`                // 表别名
+	MeterKind string    `json:"meter_kind"`                // total | sub | fire
 	Prev      float64   `gorm:"numeric(18,2)" json:"prev"` // 起度
 	Curr      float64   `gorm:"numeric(18,2)" json:"curr"` // 止度
 	Rate      float64   `gorm:"numeric(12,4)" json:"rate"` // 倍率

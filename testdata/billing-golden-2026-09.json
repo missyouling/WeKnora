@@ -1,0 +1,129 @@
+{
+  "_comment": [
+    "2026-09 持睿汽车电费核算黄金基准（唯一验收口径）。",
+    "",
+    "来源：用户手写批注单 + 标准 Excel 核算表。前端 billingExcelParity.test.ts",
+    "与后端 internal/handler/billing_timed_test.go **共读本文件**做硬性断言 ——",
+    "任何口径改动都必须让两边同时变绿，否则列表 / 浮窗 / PDF 会各说各话。",
+    "",
+    "口径要点：",
+    "  ① ratio = 工业总电量 ÷ 市电账单总电量 = 126600 / 596168 = 0.21235625，",
+    "      **只作用于「基本电费」与「功率因素调整电费」两项**；",
+    "  ② 账单电量明细的损耗/加减电量是**全厂**口径，进分时折算前必须乘 ratio；",
+    "  ③ 差额电量 ΔQ = 3900 先在 3 块分表间均分（每表 1300），再按表内抄见电量占比分摊；",
+    "  ④ 分时电费 = 逐表逐段 round2(基准电量 × 时段单价) 相加（Excel 逐格）；",
+    "  ⑤ 平段按度项：计费数量 = 126600，金额 = 126600 × 账单单价（**不是**账单金额 × ratio）；",
+    "  ⑥ 纯金额返还类（rate=0 且 qty=0）不计入分摊。"
+  ],
+  "month": "2026-09",
+  "tenantName": "持睿汽车",
+  "inputs": {
+    "billTotalKwh": 596168,
+    "starTotalKwh": 126600,
+    "deltaQ": 3900,
+    "capacityFee": 44000,
+    "pfAdjustAmount": -2818.07,
+    "dormKwh": 930,
+    "dormFee": 930,
+    "waterFee": 939.6,
+    "timedMeters": [
+      {
+        "name": "持睿工业分表1",
+        "usage": { "deep": 5200, "peak": 15200, "flat": 21400, "valley": 21800 }
+      },
+      {
+        "name": "持睿工业分表2",
+        "usage": { "deep": 0, "peak": 15300, "flat": 15300, "valley": 15300 }
+      },
+      {
+        "name": "持睿工业分表3",
+        "usage": { "deep": 0, "peak": 4600, "flat": 4200, "valley": 4400 }
+      }
+    ],
+    "meterReadings": [
+      { "meter_type": "正向有功（总）", "trans_loss": 0, "line_loss": 0, "adjust": 0 },
+      { "meter_type": "正向有功（尖峰）", "trans_loss": 0, "line_loss": 13, "adjust": -1341 },
+      { "meter_type": "正向有功（峰）", "trans_loss": 0, "line_loss": 59, "adjust": -3128 },
+      { "meter_type": "正向有功（平）", "trans_loss": 0, "line_loss": 96, "adjust": -2681 },
+      { "meter_type": "正向有功（谷）", "trans_loss": 0, "line_loss": 140, "adjust": -1788 }
+    ],
+    "feeItems": [
+      { "name": "零售交易电费", "period": "尖峰", "qty": 24622, "rate": 0.436, "fee": 10735.19, "category": "(1)市场化购电费" },
+      { "name": "零售交易电费", "period": "峰", "qty": 112221, "rate": 0.436, "fee": 48928.36, "category": "(1)市场化购电费" },
+      { "name": "零售交易电费", "period": "平", "qty": 183205, "rate": 0.436, "fee": 79877.38, "category": "(1)市场化购电费" },
+      { "name": "零售交易电费", "period": "谷", "qty": 267182, "rate": 0.436, "fee": 116491.35, "category": "(1)市场化购电费" },
+      { "name": "零售损益分摊电费", "period": "平", "qty": 587230, "rate": 0.035557, "fee": 20880.13, "category": "(1)市场化购电费" },
+      { "name": "上网环节线损费用", "period": "平", "qty": 587230, "rate": 0.017144, "fee": 10067.47, "category": "(2)上网环节线损费用" },
+      { "name": "零售输配电费", "period": "尖峰", "qty": 24622, "rate": 0.2424, "fee": 5968.37, "category": "(3)输配电量电费" },
+      { "name": "零售输配电费", "period": "峰", "qty": 112221, "rate": 0.2424, "fee": 27202.37, "category": "(3)输配电量电费" },
+      { "name": "零售输配电费", "period": "平", "qty": 183205, "rate": 0.1515, "fee": 27755.56, "category": "(3)输配电量电费" },
+      { "name": "零售输配电费", "period": "谷", "qty": 267182, "rate": 0.05757, "fee": 15381.67, "category": "(3)输配电量电费" },
+      { "name": "燃气机组容量电费", "period": "平", "qty": 587230, "rate": 0.018983, "fee": 11147.39, "category": "(4)系统运行费" },
+      { "name": "新能源机制差价分摊电费", "period": "平", "qty": 587230, "rate": 0.007546, "fee": 4431.24, "category": "(4)系统运行费" },
+      { "name": "电价交叉补贴新增损益", "period": "平", "qty": 587230, "rate": -0.005536, "fee": -3250.91, "category": "(4)系统运行费" },
+      { "name": "上网环节线损代理采购损益", "period": "平", "qty": 587230, "rate": -0.000971, "fee": -570.2, "category": "(4)系统运行费" },
+      { "name": "其他系统运行费用", "period": "平", "qty": 587230, "rate": 0.004506, "fee": 2646.06, "category": "(4)系统运行费" },
+      { "name": "抽水蓄能容量电费", "period": "平", "qty": 587230, "rate": 0.00731, "fee": 4292.65, "category": "(4)系统运行费" },
+      { "name": "煤电容量电费", "period": "平", "qty": 587230, "rate": 0.023056, "fee": 13539.17, "category": "(4)系统运行费" },
+      { "name": "国家重大水利工程建设基金", "period": "平", "qty": 587230, "rate": 0.001969, "fee": 1156.26, "category": "(6)政府性基金及附加-工商业" },
+      { "name": "可再生能源附加", "period": "平", "qty": 587230, "rate": 0.019, "fee": 11157.37, "category": "(6)政府性基金及附加-工商业" },
+      { "name": "库区移民基金", "period": "平", "qty": 587230, "rate": 0.006225, "fee": 3655.51, "category": "(6)政府性基金及附加-工商业" },
+      { "name": "农网还贷", "period": "平", "qty": 587230, "rate": 0.02, "fee": 11744.6, "category": "(6)政府性基金及附加-工商业" },
+      { "name": "小型水库移民后期扶持资金(地方)", "period": "平", "qty": 587230, "rate": 0.0005, "fee": 293.62, "category": "(6)政府性基金及附加-工商业" },
+      { "name": "中长期偏差回收返还（用户）", "period": "平", "qty": 0, "rate": 0, "fee": -31520.93, "category": "(1)市场化购电费" },
+      { "name": "中长期超额申报费用返还", "period": "平", "qty": 0, "rate": 0, "fee": -392.08, "category": "(1)市场化购电费" },
+      { "name": "零售交易发电侧收益返还电费", "period": "平", "qty": 0, "rate": 0, "fee": -4103.6, "category": "(1)市场化购电费" }
+    ],
+    "periodRates": {
+      "deep": { "trade": 0.436, "transmission": 0.2424 },
+      "peak": { "trade": 0.436, "transmission": 0.2424 },
+      "flat": { "trade": 0.436, "transmission": 0.1515 },
+      "valley": { "trade": 0.436, "transmission": 0.05757 }
+    }
+  },
+  "expected": {
+    "ratio": 0.21235625,
+    "lossByPeriod": { "deep": 2.76, "peak": 12.53, "flat": 20.39, "valley": 29.73 },
+    "adjustByPeriod": { "deep": -284.77, "peak": -664.25, "flat": -569.33, "valley": -379.69 },
+    "baseKwh": { "deep": 5024.28, "peak": 35645.33, "flat": 41635.45, "valley": 42462.3 },
+    "baseKwhTotal": 124767.36,
+    "trade": {
+      "periods": { "尖峰": 2190.59, "峰": 15541.36, "平": 18153.06, "谷": 18513.56 },
+      "total": 54398.57
+    },
+    "transmission": {
+      "periods": { "尖峰": 1217.89, "峰": 8640.42, "平": 6307.77, "谷": 2444.56 },
+      "total": 18610.64
+    },
+    "plainFees": [
+      { "name": "零售损益分摊电费", "group": "(1)市场化购电费", "qty": 126600, "rate": 0.035557, "fee": 4501.52 },
+      { "name": "上网环节线损费用", "group": "(2)上网环节线损费用", "qty": 126600, "rate": 0.017144, "fee": 2170.43 },
+      { "name": "燃气机组容量电费", "group": "(4)系统运行费", "qty": 126600, "rate": 0.018983, "fee": 2403.25 },
+      { "name": "新能源机制差价分摊电费", "group": "(4)系统运行费", "qty": 126600, "rate": 0.007546, "fee": 955.32 },
+      { "name": "电价交叉补贴新增损益", "group": "(4)系统运行费", "qty": 126600, "rate": -0.005536, "fee": -700.86 },
+      { "name": "上网环节线损代理采购损益", "group": "(4)系统运行费", "qty": 126600, "rate": -0.000971, "fee": -122.93 },
+      { "name": "其他系统运行费用", "group": "(4)系统运行费", "qty": 126600, "rate": 0.004506, "fee": 570.46 },
+      { "name": "抽水蓄能容量电费", "group": "(4)系统运行费", "qty": 126600, "rate": 0.00731, "fee": 925.45 },
+      { "name": "煤电容量电费", "group": "(4)系统运行费", "qty": 126600, "rate": 0.023056, "fee": 2918.89 },
+      { "name": "国家重大水利工程建设基金", "group": "(6)政府性基金及附加-工商业", "qty": 126600, "rate": 0.001969, "fee": 249.28 },
+      { "name": "可再生能源附加", "group": "(6)政府性基金及附加-工商业", "qty": 126600, "rate": 0.019, "fee": 2405.4 },
+      { "name": "库区移民基金", "group": "(6)政府性基金及附加-工商业", "qty": 126600, "rate": 0.006225, "fee": 788.09 },
+      { "name": "农网还贷", "group": "(6)政府性基金及附加-工商业", "qty": 126600, "rate": 0.02, "fee": 2532 },
+      { "name": "小型水库移民后期扶持资金(地方)", "group": "(6)政府性基金及附加-工商业", "qty": 126600, "rate": 0.0005, "fee": 63.3 }
+    ],
+    "summary": {
+      "marketPurchaseFee": 58900.09,
+      "gridLineLossFee": 2170.43,
+      "transmissionFee": 18610.64,
+      "systemOperationFee": 6949.58,
+      "govFundFee": 6038.06,
+      "capacityFee": 9343.67,
+      "pfAdjustFee": -598.43,
+      "industrialFee": 101414.04,
+      "avgPrice": 0.8011,
+      "elecTotalFee": 102344.04,
+      "waterTotalFee": 939.6,
+      "grandTotalFee": 103283.64
+    }
+  }
+}
