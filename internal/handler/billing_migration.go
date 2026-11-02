@@ -135,3 +135,53 @@ func (h *BillingHandler) EnsureBillingRecordColumns(ctx context.Context) (int, e
 	}
 	return n, nil
 }
+
+// EnsureBillingItemKeyConstraint 给 billing_tenant_items.item_key 加一条 CHECK：
+// 禁止「功率因素」写法入库（第 22 轮 P2-6）。
+//
+// 背景：「功率因数调整电费」（账单原文）与「功率因素调整电费」（配置历史写法）
+// 是同一个费用项。两者并存时，字段定义里会出现两行同名、列表只出一列，
+// 而取数循环会把力调电费算两遍（第 19 轮真机：工业电费少 598）。
+// 前端已做归一（tenantItemSignature），后端再加一道库级约束兜底 ——
+// 脚本/历史导入绕过接口写入时同样拦得住。
+//
+// 注意顺序：先把存量归一，再加约束。归一可能撞唯一索引（同一租户已存在
+// 「因数」行），撞了就只记 warn 不阻断启动，约束也随之后移（下次启动重试）。
+func (h *BillingHandler) EnsureBillingItemKeyConstraint(ctx context.Context) error {
+	if h.db == nil || h.db.Dialector.Name() != "postgres" {
+		return nil
+	}
+	m := h.db.Migrator()
+	if !m.HasTable(&types.BillingTenantItem{}) {
+		return nil
+	}
+	const constraint = "chk_billing_item_key_no_alias"
+
+	// 1) 存量归一（幂等；已无脏数据时 0 行）
+	if err := h.db.WithContext(ctx).Exec(`
+		UPDATE billing_tenant_items
+		   SET item_key = REPLACE(item_key, '功率因素', '功率因数')
+		 WHERE item_key LIKE '%功率因素%'`).Error; err != nil {
+		logger.Warnf(ctx, "billing_tenant_items 同义键归一失败（稍后重试）：%v", err)
+		return nil
+	}
+
+	// 2) 约束（Postgres 没有 ADD CONSTRAINT IF NOT EXISTS，先查 pg_constraint）
+	var exists bool
+	row := h.db.WithContext(ctx).Raw(
+		`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $1)`, constraint).Row()
+	if err := row.Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if err := h.db.WithContext(ctx).Exec(
+		`ALTER TABLE billing_tenant_items ADD CONSTRAINT ` + constraint +
+			` CHECK (item_key NOT LIKE '%功率因素%')`).Error; err != nil {
+		logger.Warnf(ctx, "添加 %s 约束失败（存量可能有冲突行）：%v", constraint, err)
+		return nil
+	}
+	logger.Infof(ctx, "billing_tenant_items 已加约束 %s（禁止「功率因素」同义键入库）", constraint)
+	return nil
+}

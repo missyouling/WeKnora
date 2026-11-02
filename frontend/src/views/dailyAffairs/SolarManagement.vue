@@ -422,6 +422,7 @@
 </template>
 
 <script setup lang="ts">
+import { grouped } from './formatNumber'
 import {
   ref,
   computed,
@@ -1404,18 +1405,9 @@ const handlePrintCatalog = async () => {
 }
 
 // ---- 格式化 ----
-const fmtKwh = (v: any) => {
-  if (v === undefined || v === null || v === '') return ''
-  const n = Number(v)
-  if (Number.isNaN(n)) return ''
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-}
-const fmtMoney = (v: any) => {
-  if (v === undefined || v === null || v === '') return ''
-  const n = Number(v)
-  if (Number.isNaN(n)) return ''
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+// 列表列格式化统一走 formatNumber.grouped（空值不占位，先按分收敛再千分位）
+const fmtKwh = (v: any) => grouped(v, { fallback: '', blankWhenEmpty: true })
+const fmtMoney = (v: any) => grouped(v, { fixed: true, fallback: '', blankWhenEmpty: true })
 const fmtRate6 = (v: any) => {
   if (v === undefined || v === null || v === '') return ''
   const n = Number(v)

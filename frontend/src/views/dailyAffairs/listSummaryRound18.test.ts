@@ -207,10 +207,13 @@ test('打印链路接入：generateStatementPdf 排版前裁剪，费用清单/�
   assert.match(pdf, /export function isEmptyDetailRow/)
   assert.match(pdf, /const doc: StatementDoc = \{ \.\.\.source, tables: pruneEmptyTables\(source\.tables\) \}/,
     '必须在排版前裁剪（排版中裁会留下空白页）')
-  const billing = read('TenantBilling.vue')
-  assert.match(billing, /alwaysShow: true/, '应收汇总必须保留')
+  // 应收汇总的 alwaysShow 在构造器里（第 22 轮 P1-2 迁出页面）
+  const statements = read('energyBillStatements.ts')
+  assert.match(statements, /alwaysShow: true/, '应收汇总必须保留')
+  // 只数「市电 / 光伏」两个构造器（同文件后面还有费用清单的应收汇总）
   const energy = read('energyBillStatements.ts')
-  assert.equal((energy.match(/alwaysShow: true/g) || []).length, 2, '市电「账单合计」与光伏「结算汇总」都必须保留')
+  const utilitySolar = energy.slice(0, energy.indexOf('费用清单（租户）的打印清单构造器'))
+  assert.equal((utilitySolar.match(/alwaysShow: true/g) || []).length, 2, '市电「账单合计」与光伏「结算汇总」都必须保留')
 })
 
 // ---- ③ 合计应付 → 电费合计 / 水费合计 ----
@@ -264,7 +267,10 @@ test('六同步：列表/字段定义/抽屉/打印全部用两条新列，任�
   assert.match(billing, /计算方式：工业电费 \(\$\{money2\(indFee\)\}\) \+ 宿舍电费 \(\$\{money2\(dorm\.fee\)\}\)/)
   assert.match(billing, /计算方式：工业水费 \(\$\{money2\(wInd\.fee\)\}\) \+ 宿舍水费 \(\$\{money2\(wDorm\.fee\)\}\)/)
   // 打印目录走可见列（自动带上两条新列）；打印清单的应收汇总按「电+水」分行
-  assert.match(billing, /label: isOwnerView\.value \|\| includeGas \? '应收合计' : '电水合计应收'/)
+  assert.match(
+    read('energyBillStatements.ts'),
+    /label: ctx\.ownerView \|\| includeGas \? '应收合计' : '电水合计应收'/,
+  )
 })
 
 // ---- ④ 行点击抽屉下线 ----

@@ -543,8 +543,13 @@ const syncItemsToCostList = async (items: any[]) => {
       enabled: cat.enabled !== false,
     })
   } catch (e: any) {
-    // 同步失败不回滚已保存的分摊子项：主数据已落库，字段定义下次打开会按子项重建
+    // 同步失败**不回滚**已保存的分摊子项：主数据已落库，字段定义下次打开会按子项重建。
+    //
+    // 但必须让用户知道：这一步失败意味着「列表表头暂时不会出现新子项」，
+    // 用户回到列表会以为保存没生效、再点一次保存 —— 反复操作会把
+    // billing_tenant_items 写成并发事务。所以升级为显式 warning 提示。
     console.warn('[tenant-settings] sync items to cost list failed', e)
+    MessagePlugin.warning('分摊子项已保存，但同步到「字段定义」失败，列表可能暂未出现新列；请重试一次保存')
   }
 }
 

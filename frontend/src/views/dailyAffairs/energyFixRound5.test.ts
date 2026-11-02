@@ -98,8 +98,9 @@ test('费用分项匹配只有一处实现（列表与打印清单共用）', ()
   assert.match(sources, /export function matchBillFeeItems/)
   const billing = read('TenantBilling.vue')
   assert.match(billing, /matchBillFeeItems/)
-  // 打印细项表不得再自己写一套 name 匹配循环
-  const feeTable = billing.slice(billing.indexOf('function feeTableOf'), billing.indexOf('function elecTableOf'))
+  // 打印细项表不得再自己写一套 name 匹配循环（构造器在 energyBillStatements）
+  const statements = read('energyBillStatements.ts')
+  const feeTable = statements.slice(statements.indexOf('function feeTableOf'), statements.indexOf('function elecTableOf'))
   assert.ok(!/\.includes\(want\)/.test(feeTable), '打印细项表不得自建第二套名称匹配')
 })
 
@@ -116,11 +117,11 @@ test('固定金额分项优先读概况字段（防止全 0 的同名占位行�
 // ---- ③ 租户打印清单只打印「参与分摊」的子项 ----
 
 test('租户打印清单按「参与分摊」过滤，未开启的项不得打印 0.00 行', () => {
-  const src = read('TenantBilling.vue')
+  const src = read('energyBillStatements.ts')
   const feeTable = src.slice(src.indexOf('function feeTableOf'), src.indexOf('function elecTableOf'))
-  assert.match(feeTable, /tenantApportionItems\.value/, '打印细项必须只遍历参与分摊的子项')
+  assert.match(feeTable, /ctx\.items/, '打印细项必须只遍历参与分摊的子项')
   // 业主视角仍走账单全量（全厂口径不分摊），两者必须分支
-  assert.match(feeTable, /isOwnerView\.value/)
+  assert.match(feeTable, /ctx\.ownerView/)
 })
 
 // ---- ④ 启用字段 / 宽度 三维正交 ----

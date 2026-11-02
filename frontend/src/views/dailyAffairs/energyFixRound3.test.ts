@@ -70,8 +70,10 @@ test('费用清单抽屉：只渲染字段，不得追加电量/费用/水费明
 })
 
 test('费用清单打印：概览 + 分项细项 + 水电气分表 + 汇总', () => {
-  const src = read('TenantBilling.vue')
-  assert.match(src, /generateStatementPdf\(\{\s*doc:/, '必须走结构化文档模型')
+  // 构造器已迁到 energyBillStatements.ts（第 22 轮 P1-2）；版式引擎仍在 useCatalogPdf
+  const page = read('TenantBilling.vue')
+  assert.match(page, /generateStatementPdf\(\{\s*doc:/, '必须走结构化文档模型')
+  const src = read('energyBillStatements.ts')
   assert.match(src, /function feeTableOf/)
   assert.match(src, /function elecTableOf/)
   assert.match(src, /function waterTableOf/)

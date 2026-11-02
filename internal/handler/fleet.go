@@ -1035,6 +1035,57 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 // UpdateFleetCategory godoc
 // @Summary      更新档案分类（名称/小项启用）
 // @Router       /fleet/categories/:id [put]
+// fleetSubDataTypes 字段定义允许的 data_type。
+//
+// 与前端 `sixWaySync.fieldTypeOfSub` 一一对应；非法值一律回落 text，
+// 否则列表会按未知类型渲染成空白单元格（且六端各自 fallback 到不同默认值）。
+var fleetSubDataTypes = map[string]bool{
+	"text": true, "textarea": true, "number": true,
+	"date": true, "array": true, "items": true,
+}
+
+// sanitizeFleetSubs 校验并修正字段定义（subs）。
+//
+// 四类问题都是真实发生过的：
+//
+//	· **空名**：前端拖拽排序时插入的占位行，保存后成为一列永远空白的表头；
+//	· **重名**：同一字段被拖两次 → 列表两列同名、六同步「同量」直接失效；
+//	· **非法 data_type**：旧版本把数组写成 `array[]`，抽屉按未知类型渲染成纯文本；
+//	· **宽度越界**：手输 99999 会把整张表撑出横向滚动条（上限 400 与前端一致）。
+//
+// 返回修正后的列表与被丢弃的条数（供调用方记一条 warn）。
+func sanitizeFleetSubs(subs []types.FleetCategorySub) ([]types.FleetCategorySub, int) {
+	out := make([]types.FleetCategorySub, 0, len(subs))
+	seen := make(map[string]bool, len(subs))
+	dropped := 0
+	for _, sub := range subs {
+		name := strings.TrimSpace(sub.Name)
+		if name == "" || seen[name] {
+			dropped++
+			continue
+		}
+		seen[name] = true
+		sub.Name = name
+		sub.Label = strings.TrimSpace(sub.Label)
+		if len([]rune(sub.Label)) > 40 {
+			sub.Label = string([]rune(sub.Label)[:40])
+		}
+		t := strings.ToLower(strings.TrimSpace(sub.DataType))
+		if t == "" {
+			t = "text"
+		}
+		if !fleetSubDataTypes[t] {
+			t = "text"
+		}
+		sub.DataType = t
+		if sub.Width < 0 || sub.Width > 400 {
+			sub.Width = 0
+		}
+		out = append(out, sub)
+	}
+	return out, dropped
+}
+
 func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := fleetTenantID(c)
@@ -1061,6 +1112,16 @@ func (h *FleetHandler) UpdateFleetCategory(c *gin.Context) {
 	}
 	if req.Name != "" {
 		req.Name = strings.TrimSpace(req.Name)
+	}
+	// subs 结构校验（第 22 轮 P2-2）：入口收敛，脏数据不进库。
+	// 只做「能安全修正的修正 + 明确无效的丢弃」，不返回 400 ——
+	// 保存动作已经发生，报错让用户重试反而更容易丢配置。
+	if req.Subs != nil {
+		sanitized, dropped := sanitizeFleetSubs(req.Subs)
+		if dropped > 0 {
+			logger.Warnf(ctx, "分类 %s 的字段定义已清理 %d 条无效子项（空名/重复/非法类型）", id, dropped)
+		}
+		req.Subs = sanitized
 	}
 	now := timeNowUTC()
 	dataJSON, _ := json.Marshal(req.Subs)
@@ -2173,8 +2234,13 @@ func (h *FleetHandler) seedBusinessCategories() {
 		logger.Warnf(ctx, "sanitize tenant group fields failed: %v", err)
 	}
 	// 账单表：ratio 精度 18,6 → 18,10；补 elec_total_fee / water_total_fee 两列并回填（幂等）
-	if _, err := NewBillingHandler(h.db).EnsureBillingRecordColumns(ctx); err != nil {
+	bh := NewBillingHandler(h.db)
+	if _, err := bh.EnsureBillingRecordColumns(ctx); err != nil {
 		logger.Warnf(ctx, "ensure billing record columns failed: %v", err)
+	}
+	// 分摊子项表：「功率因素」同义键归一 + DB CHECK 兜底（幂等）
+	if err := bh.EnsureBillingItemKeyConstraint(ctx); err != nil {
+		logger.Warnf(ctx, "ensure billing item key constraint failed: %v", err)
 	}
 	// 「能耗单」是台账分类，页面没有对应卡片：保留数据但排到末尾，避免打乱卡片顺序
 	uh.hideEnergyLedgerCategory(ctx)

@@ -90,9 +90,10 @@ test('浮窗：未参与分摊的项明确写「本行金额记 0」', () => {
 // ---- ② 打印链路必须复用列表的核算引擎
 
 test('打印细项表：分时子项走 resolveTimedItemFee（不再按账单行 × 比例）', () => {
-  const billing = read('TenantBilling.vue')
-  const feeTable = billing.slice(billing.indexOf('function feeTableOf'), billing.indexOf('function elecTableOf'))
-  assert.match(feeTable, /resolveTimedItemFee\(ctx, key, String\(it\.category \|\| ''\)\)/,
+  // 第 22 轮 P1-2：构造器已从 TenantBilling.vue 迁到 energyBillStatements.ts
+  const statements = read('energyBillStatements.ts')
+  const feeTable = statements.slice(statements.indexOf('function feeTableOf'), statements.indexOf('function elecTableOf'))
+  assert.match(feeTable, /resolveTimedItemFee\(rowCtx, key, String\(it\.category \|\| ''\)\)/,
     '打印细项必须复用分时核算引擎，且按分组圈定匹配范围')
   // 分时分支必须逐段出行（时段 / 基准电量 / 单价 / 金额）
   assert.match(feeTable, /for \(const p of timed\.periods\)/)
@@ -100,9 +101,11 @@ test('打印细项表：分时子项走 resolveTimedItemFee（不再按账单行
 })
 
 test('打印细项表：带上已生成账单，ΔQ 与列表同源', () => {
-  const billing = read('TenantBilling.vue')
-  const feeTable = billing.slice(billing.indexOf('function feeTableOf'), billing.indexOf('function elecTableOf'))
-  assert.match(feeTable, /sourceCtxOf\(month, bill, \[\], rec\)/, '打印必须传 rec，否则差额电量口径分叉')
+  const statements = read('energyBillStatements.ts')
+  const feeTable = statements.slice(statements.indexOf('function feeTableOf'), statements.indexOf('function elecTableOf'))
+  assert.match(feeTable, /ctx\.sourceCtxOf\(month, bill, \[\], rec\)/, '打印必须传 rec，否则差额电量口径分叉')
+  // 已生成账单必须由调用方按月份传进来（不再从组件 records 里捞）
+  assert.match(feeTable, /ctx\.recordOf\(month\)/, 'ΔQ 的固化值必须按月份取')
 })
 
 test('列表与打印共用「账单原始金额」唯一实现', () => {
@@ -118,9 +121,9 @@ test('列表与打印共用「账单原始金额」唯一实现', () => {
 // ---- ③ 概览卡片必须按租户拆「工业 + 宿舍」
 
 test('概览卡片：租户视角按工业/宿舍两段拆，业主视角保持全厂口径', () => {
-  const billing = read('TenantBilling.vue')
-  const fn = billing.slice(billing.indexOf('function statementKpis'), billing.indexOf('function statementMeta'))
-  assert.match(fn, /isOwnerView\.value/, '必须区分业主/租户两套口径')
+  const statements = read('energyBillStatements.ts')
+  const fn = statements.slice(statements.indexOf('function statementKpis'), statements.indexOf('function statementMeta'))
+  assert.match(fn, /ctx\.ownerView/, '必须区分业主/租户两套口径')
   for (const k of ['ind_kwh', 'dorm_kwh', 'ind_fee', 'dorm_fee', 'water_ind_usage', 'water_dorm_usage', 'water_ind_fee', 'water_dorm_fee']) {
     assert.ok(fn.includes(`'${k}'`), `概览卡片缺少 ${k}`)
   }
@@ -132,9 +135,11 @@ test('概览卡片：租户视角按工业/宿舍两段拆，业主视角保持�
 
 test('概览卡片：打印清单只有浮动栏一条入口，共用 buildStatementDoc', () => {
   const billing = read('TenantBilling.vue')
-  // 只允许在 buildStatementDoc 里拼一次卡片/元信息，避免多条入口各写一遍
-  assert.equal((billing.match(/kpis: statementKpis\(/g) || []).length, 1, '卡片构造只应有一处')
-  assert.equal((billing.match(/meta: statementMeta\(/g) || []).length, 1, '元信息构造只应有一处')
+  const statements = read('energyBillStatements.ts')
+  // 卡片/元信息只在构造器里拼一次；页面只负责把上下文传进去
+  assert.equal((statements.match(/kpis: statementKpis\(/g) || []).length, 1, '卡片构造只应有一处')
+  assert.equal((statements.match(/meta: statementMeta\(/g) || []).length, 1, '元信息构造只应有一处')
+  assert.equal((billing.match(/kpis: statementKpis\(/g) || []).length, 0, '页面不得再自带一份卡片构造')
   const statement = billing.slice(billing.indexOf('const handlePrintStatement'), billing.indexOf('const handlePrintCatalog'))
   assert.match(statement, /statementBytesOf\(arr, unit, \(\) => buildStatementDoc\(arr, unit\)\)/)
   // 第 18 轮：详情抽屉已下线（行点击不再弹抽屉），抽屉里的「打印」入口随之移除，
@@ -144,8 +149,8 @@ test('概览卡片：打印清单只有浮动栏一条入口，共用 buildState
 })
 
 test('概览元信息：租户视角展示「电水合计应收」', () => {
-  const billing = read('TenantBilling.vue')
-  const fn = billing.slice(billing.indexOf('function statementMeta'), billing.indexOf('function feeTableOf'))
+  const statements = read('energyBillStatements.ts')
+  const fn = statements.slice(statements.indexOf('function statementMeta'), statements.indexOf('function feeTableOf'))
   assert.match(fn, /电水合计应收/)
 })
 

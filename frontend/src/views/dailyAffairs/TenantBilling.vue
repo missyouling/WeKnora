@@ -160,9 +160,11 @@ import {
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
+import { cellNum, money2, round2 } from './formatNumber'
+import { gasApplicableOf, buildTenantBillingStatementDoc, type TenantStatementCtx } from './energyBillStatements'
 import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
-import { parseFieldSource, matchBillFeeItems, fixedBillFeeOf, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
   TENANT_ELEC_TOTAL_FIELD,
@@ -1703,383 +1705,14 @@ const billIndex = computed(() => {
   }
   return m
 })
-const money2 = (v: any): string => {
-  const n = Number(v)
-  return Number.isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : '—'
-}
-const num2 = (v: any): string => {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  const r = Math.round(n * 100) / 100
-  return Number.isInteger(r) ? String(r) : r.toFixed(2)
-}
-/** 数值收敛（两位），供打印口径复用。 */
-const round2Num = (v: any): number => {
-  const n = Number(v)
-  // +1e-6 抵消浮点误差（126600 × 0.006225 在 IEEE754 里是 788.0849999999999）
-  return Number.isFinite(n) ? Math.round(n * 100 + 1e-6) / 100 : 0
-}
-const rateText = (v: any): string => {
-  const n = Number(v)
-  if (!Number.isFinite(n) || n === 0) return '—'
-  return String(parseFloat(n.toFixed(6)))
-}
+// 金额 / 数量 / 单价 / 比例统一走 formatNumber（唯一出口，含 1e-6 浮点补偿）。
+// 局部保留 `round2Num` 别名，避免改动 7 处调用点。
+const round2Num = round2
 
 /** 该行的分摊比例：已生成账单用固化值，否则按月内星达分时电量 ÷ 账单电量估算 */
 function ratioForRow(row: any): number {
   const rec = records.value.find((r: any) => r.month === row.month)
   return ratioOfMonth(String(row.month || ''), billIndex.value.get(String(row.month || '')), rec)
-}
-
-interface PrintTable {
-  title: string
-  columns: any[]
-  rows: string[][]
-  total?: string[]
-  empty?: string
-  /** 结论表（应收汇总）：0 元也保留，不参与「空表隐藏」 */
-  alwaysShow?: boolean
-}
-
-/**
- * 「一、账单概览」的指标卡。
- *
- * 业主视角 = 全厂口径（市电账单本期电量/电费）；租户视角**绝不能**继续沿用
- * 全厂数字 —— 真机：持睿汽车的 PDF 概览写着「本期总电量 596168 / 本期电费合计
- * 433433.07」，那是星达整张市电账单，租户拿到的单据上不是自己的数。
- *
- * 租户口径按「工业 + 宿舍」两段拆分，两段之和即该租户当期应收：
- *   电量 = 分表总电量（含差额分摊）+ 宿舍电表用电量
- *   电费 = 分摊后工业电费 + 宿舍电费
- *   水量 = 分表水表用水量 + 宿舍水表用水量；水费同理。
- */
-function statementKpis(rows: any[]): Array<{ label: string; value: string; hint?: string }> {
-  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
-  if (isOwnerView.value) {
-    return [
-      { label: '本期总电量', value: `${num2(sum('total_kwh'))} kWh` },
-      { label: '本期电费合计', value: `${money2(sum('total_fee'))} 元` },
-      { label: '工商业电费', value: `${money2(sum('ind_fee'))} 元` },
-      { label: '应收合计', value: `${money2(sum('ind_fee') + sum('dorm_fee') + sum('res_fee') + sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee') + sum('gas_fee'))} 元` },
-    ]
-  }
-  const indKwh = sum('ind_kwh')
-  const dormKwh = sum('dorm_kwh')
-  const indFee = sum('ind_fee')
-  const dormFee = sum('dorm_fee') + sum('res_fee')
-  const wIndU = sum('water_ind_usage')
-  const wDormU = sum('water_dorm_usage')
-  const wIndF = sum('water_ind_fee')
-  const wDormF = sum('water_dorm_fee') + sum('water_fire_fee')
-  return [
-    { label: '本期总电量', value: `${num2(indKwh + dormKwh)} 度`, hint: `工业 ${num2(indKwh)} + 宿舍 ${num2(dormKwh)}` },
-    { label: '本期总电费', value: `${money2(indFee + dormFee)} 元`, hint: `工业 ${money2(indFee)} + 宿舍 ${money2(dormFee)}` },
-    { label: '本期用水量', value: `${num2(wIndU + wDormU)} 吨`, hint: `分表 ${num2(wIndU)} + 宿舍 ${num2(wDormU)}` },
-    { label: '本期总水费', value: `${money2(wIndF + wDormF)} 元`, hint: `分表 ${money2(wIndF)} + 宿舍 ${money2(wDormF)}` },
-  ]
-}
-
-/** 租户视角概览里的「电水合计应收」：指标卡只有四张，合计金额写成一行元信息。 */
-function statementMeta(rows: any[], unit: string, months: string[], ratio: number, includeGas = false) {
-  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
-  const power = sum('ind_fee') + sum('dorm_fee') + sum('res_fee')
-  const water = sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee')
-  const gas = includeGas ? sum('gas_fee') : 0
-  const tenantTotal = power + water + gas
-  return [
-    { label: '账单周期', value: months.join('、') },
-    { label: '使用单位', value: unit },
-    { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
-    {
-      label: '分摊比例',
-      // 需求原文要求带适用范围：这个比例**只**作用于基本电费与力调电费，
-      // 其余分项按分时电量或工业总电量 × 单价算，不乘它。
-      value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%（仅基本电费、功率因素调整电费按比例）` : '—'),
-    },
-    { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
-    // 应收合计必须与列表「合计应付」逐分相等：
-    //   业主 = 电 + 水 + 气（三块都有列）；
-    //   租户 = 工业电费 + 宿舍电费 + 水费（+ 该租户确有气表时并入气费）。
-    // 租户没有气表时**绝不能**并入 gas_fee —— 旧实现会把全厂气费加进来，
-    // 2026-09 持睿汽车因此多出 1,188.20（那是星达的气费）。
-    {
-      label: isOwnerView.value || includeGas ? '应收合计' : '电水合计应收',
-      value: `${money2(isOwnerView.value ? power + water + sum('gas_fee') : tenantTotal)} 元`,
-    },
-    { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
-  ]
-}
-
-/** 市电账单费用分项 → 细项表（租户视角按比例折算、且只列参与分摊的子项） */
-function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTable {
-  const bill = billIndex.value.get(month)
-  const items = (bill?.item?.fee_items || []) as any[]
-  const rows: string[][] = []
-  let sum = 0
-  const label = (cat: string, rawName: string) =>
-    // 提取出来的 name 通常已带「（1）市场化购电费.偏差电费」这类前缀，
-    // 再拼一次分类会变成「（1）市场化购电费｜（1）市场化购电费.偏差电费」。
-    (rawName && cat && !rawName.includes(cat) ? `${cat}｜${rawName}` : (rawName || cat))
-
-  if (isOwnerView.value) {
-    // 业主口径：账单 fee_items 全量 + 概况里的固定金额分项（基本电费/力调电费），
-    // 后者不是 fee_items 的行，必须单独补，否则全厂口径也会漏掉这两笔大额费用。
-    const map = new Map<string, any[]>()
-    for (const it of items) {
-      const cat = String(it.category || '其他费用')
-      if (!map.has(cat)) map.set(cat, [])
-      map.get(cat)!.push(it)
-    }
-    const order = Array.from(map.keys()).sort((a, b) => {
-      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a.includes(c))
-      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b.includes(c))
-      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-    })
-    for (const cat of order) {
-      for (const it of map.get(cat)!) {
-        const fee = (Number(it.fee) || 0) * unitRatio
-        const qty = (Number(it.qty) || 0) * unitRatio
-        sum += fee
-        rows.push([label(cat, String(it.name || '').trim()), it.period || '—', qty ? num2(qty) : '—', rateText(it.rate), money2(fee)])
-      }
-    }
-  } else {
-    // 租户口径：**只列该租户「参与分摊」的子项**。
-    // 未参与分摊的子项（用户在分摊子项里关掉的偏差电费、绿电交易电费等）
-    // 一律不打印 —— 旧实现直接铺账单 fee_items 全量，于是关掉开关的项
-    // 依然以 4 行 0.00 的形式出现在租户清单上（真机问题）。
-    // 必须带上已生成账单：分时核算的差额电量 ΔQ 优先取账单固化值
-    // （rec.line_loss），缺失时才按「星达分表 − 分表合计」现算。
-    // 不传 rec 会让打印口径与列表口径在个别月份分叉。
-    const rec = records.value.find((r: any) => r.month === month)
-    const ctx = sourceCtxOf(month, bill, [], rec)
-    for (const it of tenantApportionItems.value) {
-      const key = String(it?.source_key || it?.item_name || '').trim()
-      if (!key) continue
-      const cat = String(it.category || '其他费用')
-      // 固定金额分项（基本电费 / 力调电费）优先按概况字段出账：
-      // 账单里它们可能没有 fee_items 行（2026-09），也可能是一条全 0 的占位行
-      // （2026-08），按行打印会打出 0.00 的假明细。
-      const fixed = fixedBillFeeOf(ctx, key)
-      if (fixed !== null) {
-        // 按「原金额 × 工业电量 ÷ 账单电量」折算，**不要** × 8 位 ratio：
-        // 44,000 × 0.21235625 = 9,343.675 → 9,343.68，而标准表是 9,343.67
-        // （精确除法 44,000 × 126,600 ÷ 596,168 = 9,343.6749）。
-        const starQty = Number(ctx.starTotal) || 0
-        const billQty = Number(ctx.bill?.item?.total_kwh) || 0
-        const v = starQty > 0 && billQty > 0
-          ? round2Num((fixed * starQty) / billQty)
-          : round2Num(fixed * unitRatio)
-        if (!v) continue
-        sum += v
-        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
-        continue
-      }
-      // 分时项（零售交易电费 / 零售输配电费…）：与列表**同一个**核算引擎
-      // （resolveTimedItemFee → 逐表逐时段基准电量 × 时段单价）。
-      // 旧实现对分时项也走「账单分时行 × 比例」，于是 PDF 打出的是
-      // 5228.63 / 2279.68 这类旧值，与列表的 5085.43 / 2217.25 对不上。
-      const timed = resolveTimedItemFee(ctx, key, String(it.category || ''))
-      if (timed) {
-        const name = label(cat, String(it.item_name || key).trim())
-        let subQty = 0
-        let subFee = 0
-        for (const p of timed.periods) {
-          sum += p.fee
-          subQty += p.qty
-          subFee += p.fee
-          rows.push([name, p.period, num2(p.qty), rateText(p.rate), money2(p.fee)])
-        }
-        // 逐段之后补一行小计：分时项有 4 行明细，没有小计的话
-        // 「PDF 的 54422.79 与列表的 54422.79 一致」只能靠人脑加总验算。
-        rows.push([`${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee)])
-        continue
-      }
-      const billRows = matchBillFeeItems(ctx, key, String(it.category || ''))
-      if (billRows.length) {
-        // 平段按度计费（零售损益分摊 / 上网环节线损 / 系统运行费 / 政府性基金）：
-        //   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
-        //
-        // 旧实现在这里逐行写「账单金额 × 比例、账单数量 × 比例」，
-        // 打印出来是「124,701.81 度 / 4,434.02 元」，而 Excel 是
-        // 「126,600 度 / 4,501.52 元」—— 账单按度项的计费电量是 587,230
-        // （全厂 596,168 − 居民 8,938），比例法系统性少算。
-        const qty = Number(ctx.starTotal) || 0
-        const unit = Number(billRows[0]?.rate) || 0
-        if (qty > 0 && unit) {
-          const fee = round2Num(qty * unit)
-          sum += fee
-          rows.push([label(cat, String(billRows[0].name || key).trim()), '—', num2(qty), rateText(unit), money2(fee)])
-          continue
-        }
-        // 无单价可用（纯金额返还类）：退回逐行比例折算
-        for (const br of billRows) {
-          const fee = (Number(br.fee) || 0) * unitRatio
-          const qty2 = (Number(br.qty) || 0) * unitRatio
-          sum += fee
-          rows.push([label(cat, String(br.name || key).trim()), br.period || '—', qty2 ? num2(qty2) : '—', rateText(br.rate), money2(fee)])
-        }
-      } else {
-        // 账单里查无此行：按比例折算概况字段，避免整行丢失
-        const v = resolveTenantItemValue(it, ctx, unitRatio)
-        if (!v) continue
-        sum += v
-        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
-      }
-    }
-    rows.sort((a, b) => {
-      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a[0].includes(c))
-      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b[0].includes(c))
-      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-    })
-  }
-  return {
-    title: `${prefix}电费分项细项`,
-    columns: [
-      { label: '费用组成', weight: 3.4 },
-      { label: '时段', weight: 1, align: 'center' },
-      { label: '计费数量', weight: 1.3, align: 'right' },
-      { label: '单价/标准', weight: 1.2, align: 'right' },
-      { label: '金额(元)', weight: 1.4, align: 'right' },
-    ],
-    rows,
-    total: ['合计', '', '', '', money2(sum)],
-    empty: isOwnerView.value ? '当月无市电账单分项数据' : '当月无参与分摊的费用分项',
-  }
-}
-
-/** 电费核算抄表明细（分表 / 宿舍表），与主表同口径：用量 × 单价 = 金额 */
-function elecTableOf(month: string, unit: string, prefix: string): PrintTable {
-  const rows = elecRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === unit)
-  const body = rows.map((r: any) => [
-    r.meter_alias || '—',
-    r.meter_kind === 'dorm' ? '宿舍' : '工商业',
-    num2(r.start_reading), num2(r.end_reading), num2(r.rate),
-    num2(r.usage), rateText(r.unit_price), money2(r.amount),
-  ])
-  return {
-    title: `${prefix}电费核算明细`,
-    columns: [
-      { label: '电表', weight: 2.2 },
-      { label: '用途', weight: 1, align: 'center' },
-      { label: '起度', weight: 1.1, align: 'right' },
-      { label: '止度', weight: 1.1, align: 'right' },
-      { label: '倍率', weight: 0.8, align: 'right' },
-      { label: '用电量', weight: 1.2, align: 'right' },
-      { label: '单价', weight: 1, align: 'right' },
-      { label: '电费(元)', weight: 1.3, align: 'right' },
-    ],
-    rows: body,
-    total: ['合计', '', '', '', '', num2(sumBy(rows, 'usage')), '', money2(sumBy(rows, 'amount'))],
-    empty: '当月无电费核算记录',
-  }
-}
-
-/** 水费核算明细（独立区块，绝不与电费合表） */
-function waterTableOf(month: string, unit: string, prefix: string): PrintTable {
-  const meters = (waterMeters.value as any[]).filter((m: any) =>
-    m.enabled !== false && (m.owner_unit === unit || m.use_unit === unit))
-  const rows: any[] = []
-  for (const m of meters) {
-    const r = waterReadingMap.value.get(`${m.id}__${month}`)
-    if (r) rows.push({ ...r, alias: m.alias })
-  }
-  const body = rows.map((r: any) => [
-    r.alias || '—',
-    num2(r.start_reading), num2(r.end_reading), num2(r.usage),
-    rateText(r.unit_price ?? r.price), money2(r.amount),
-  ])
-  return {
-    title: `${prefix}水费核算明细`,
-    columns: [
-      { label: '水表', weight: 2.6 },
-      { label: '起度', weight: 1.2, align: 'right' },
-      { label: '止度', weight: 1.2, align: 'right' },
-      { label: '用量(吨)', weight: 1.2, align: 'right' },
-      { label: '单价', weight: 1, align: 'right' },
-      { label: '水费(元)', weight: 1.4, align: 'right' },
-    ],
-    rows: body,
-    total: ['合计', '', '', num2(rows.reduce((s, r) => s + (Number(r.usage) || 0), 0)), '', money2(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0))],
-    empty: '当月无用水记录',
-  }
-}
-
-/** 气费核算明细（独立区块；公租房不参与核算） */
-function gasTableOf(month: string, unit: string, prefix: string): PrintTable {
-  const rows = gasRows.value.filter((r: any) =>
-    r.month === month && String(r.use_unit || '').trim() === unit && r.meter_kind !== 'public')
-  const body = rows.map((r: any) => [
-    r.meter_alias || '—',
-    num2(r.start_reading), num2(r.end_reading), num2(r.usage),
-    rateText(r.unit_price), money2(r.amount),
-  ])
-  return {
-    title: `${prefix}气费核算明细`,
-    columns: [
-      { label: '气表', weight: 2.6 },
-      { label: '起度', weight: 1.2, align: 'right' },
-      { label: '止度', weight: 1.2, align: 'right' },
-      { label: '用量(m³)', weight: 1.2, align: 'right' },
-      { label: '单价', weight: 1, align: 'right' },
-      { label: '气费(元)', weight: 1.4, align: 'right' },
-    ],
-    rows: body,
-    total: ['合计', '', '', num2(rows.reduce((s, r) => s + (Number(r.usage) || 0), 0)), '', money2(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0))],
-    empty: '当月无燃气记录',
-  }
-}
-
-/**
- * 该单位本次打印是否适用「气费」。
- *
- * 两道条件缺一不可（真机 2026-09 持睿汽车误出气费 1,188.20 的根因）：
- *   ① 该单位确有气表记录（当月、非公租房、使用单位精确匹配）；
- *   ② 当前视角的字段定义里「气费」列是启用的（用户可在设置里停用该字段）。
- * 任一不满足 → 既不出「气费核算明细」表，也不出「应收费用汇总」里的气费行。
- */
-function gasApplicableOf(unit: string, months: string[]): boolean {
-  const hasMeter = gasRows.value.some((r: any) =>
-    r.meter_kind !== 'public'
-    && String(r.use_unit || '').trim() === unit
-    && months.includes(String(r.month || '')))
-  if (!hasMeter) return false
-  return activeColDefs.value.some((c) => c.key === 'gas_fee')
-}
-
-/**
- * 应收汇总：工商业电费 / 居民宿舍电费 / 水费 →（适用时）气费 → 合计。
- *
- * `includeGas` 由 `gasApplicableOf` 决定：没有气表的单位连「气费 0.00」这一行
- * 都不该出现 —— 一行恒为 0 的费用项会让租户以为「有气表但没用气」。
- */
-function summaryTableOf(rows: any[], unit: string, prefix: string, includeGas: boolean): PrintTable {
-  let ind = 0; let dorm = 0; let water = 0; let gas = 0
-  for (const r of rows) {
-    ind += Number(r.ind_fee) || 0
-    dorm += (Number(r.dorm_fee) || 0) + (Number(r.res_fee) || 0)
-    water += (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
-    gas += Number(r.gas_fee) || 0
-  }
-  const total = Math.round((ind + dorm + water + (includeGas ? gas : 0)) * 100) / 100
-  const body: string[][] = [
-    ['工商业电费（分摊后）', unit, money2(ind)],
-    ['居民 / 宿舍电费', unit, money2(dorm)],
-    ['水费（分表 + 宿舍）', unit, money2(water)],
-  ]
-  if (includeGas) body.push(['气费', unit, money2(gas)])
-  return {
-    title: `${prefix}应收费用汇总`,
-    columns: [
-      { label: '费用项目', weight: 3 },
-      { label: '使用单位', weight: 2 },
-      { label: '金额(元)', weight: 1.6, align: 'right' },
-    ],
-    rows: body,
-    total: ['应收合计', unit, money2(total)],
-    // 结论表：0 元也必须出现（租户要看到「本期应收多少」）
-    alwaysShow: true,
-  }
 }
 
 /**
@@ -2094,6 +1727,37 @@ function summaryTableOf(rows: any[], unit: string, prefix: string, includeGas: b
  * 失效策略：`loadAllData()` 里整片清空（任何数据刷新都会走到那里）；
  * 键里再带上行值与月份，避免「行对象换了但 id 没变」时分到旧字节。
  */
+/**
+ * 打印清单的取数上下文。
+ *
+ * 构造器已外移到 `energyBillStatements.buildTenantBillingStatementDoc`（与市电/光伏
+ * 清单同层），这里只把组件状态包成它需要的读写口 —— 版式与取数口径在那边统一，
+ * 页面不再持有一份 400 行的打印实现。
+ */
+function statementCtx(unit: string, months: string[]): TenantStatementCtx {
+  return {
+    ownerView: isOwnerView.value,
+    billOf: (month: string) => billIndex.value.get(month),
+    recordOf: (month: string) => records.value.find((r: any) => r.month === month),
+    items: tenantApportionItems.value,
+    elecRows: elecRows.value,
+    waterMeters: waterMeters.value,
+    waterReadingMap: waterReadingMap.value,
+    gasRows: gasRows.value,
+    ratioOf: (row: any) => ratioForRow(row),
+    // 气费是否适用：整份清单统一判定（同一单位、同一批月份），逐行判会让
+    // 「多月份打印」里某几页有气费行、某几页没有。
+    includeGas: gasApplicableOf(gasRows.value, activeColDefs.value.map((c) => c.key), unit, months),
+    sourceCtxOf: (month: string, bill: any, solarItems: any[], rec: any) =>
+      sourceCtxOf(month, bill, solarItems, rec),
+  }
+}
+
+const buildStatementDoc = (rows: any[], unit: string) => {
+  const months = rows.map((r: any) => r.month).filter(Boolean)
+  return buildTenantBillingStatementDoc(statementCtx(unit, months), rows, unit)
+}
+
 const statementCache = new Map<string, Uint8Array>()
 const statementKey = (rows: any[], unit: string) =>
   `${unit}|${rows.map((r) => [r.id, r.month, r.total_kwh, r.ind_fee, r[TENANT_ELEC_TOTAL_FIELD], r[TENANT_WATER_TOTAL_FIELD], r.dorm_fee, r.water_ind_fee, r.water_dorm_fee, r.gas_fee].join(':')).join(',')}`
@@ -2129,42 +1793,6 @@ async function statementBytesOf(rows: any[], unit: string, build: () => Statemen
  * 抽出来是为了让「浮动栏打印清单」与「抽屉底栏打印」共用同一份内容 ——
  * 两条入口曾经各写一遍，字段顺序/概览口径改一处漏一处。
  */
-function buildStatementDoc(rows: any[], unit: string): StatementDoc {
-  const months = rows.map((r: any) => r.month).filter(Boolean)
-  const single = rows.length === 1
-  const ratioList = rows.map((r: any) => ratioForRow(r)).filter((v) => v > 0)
-  const ratio = ratioList.length ? ratioList[0] : 0
-  // 气费是否适用：整份清单统一判定（同一单位、同一批月份），
-  // 逐行判会让「多月份打印」里某几页有气费行、某几页没有。
-  const includeGas = gasApplicableOf(unit, months)
-  const tables: PrintTable[] = []
-  rows.forEach((row: any) => {
-    const month = String(row.month || '')
-    const prefix = single ? '' : `${month} · `
-    // 租户视角必须按真实分摊比例；ratio=0（当月未生成/未抄表）时按 0 列示，
-    // 绝不能兜底成 1 —— 那会把「整张市电账单」当成该租户的份额打印出去。
-    const r = isOwnerView.value ? 1 : ratioForRow(row)
-    tables.push(feeTableOf(month, r, prefix))
-    tables.push(elecTableOf(month, unit, prefix))
-    tables.push(waterTableOf(month, unit, prefix))
-    if (includeGas) {
-      const gas = gasTableOf(month, unit, prefix)
-      if (gas.rows.length) tables.push(gas)
-    }
-    tables.push(summaryTableOf([row], unit, prefix, includeGas))
-  })
-  return {
-    title: `${unit} 费用清单`,
-    subtitle: `${months.join('、')} · 使用单位 ${unit} · ${isOwnerView.value ? '业主全厂口径' : '租户分摊口径'}`,
-    overviewTitle: '一、账单概览',
-    meta: statementMeta(rows, unit, months, ratio, includeGas),
-    kpis: statementKpis(rows),
-    tables,
-    footerNote: isOwnerView.value || ratio > 0
-      ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
-      : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
-  }
-}
 
 /**
  * 勾选后**预生成**打印清单。
@@ -2300,21 +1928,12 @@ const closePrint = () => {
 // ---- 抽屉拖动调宽(宽度持久化) ----
 
 // ---- 账单费用分组的排序基准（打印清单「电费分项细项」按此顺序） ----
-const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
 
 // ---- 格式化 ----
-const fmtMoney = (v: any): string => {
-  const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n)) return ''
-  const r = Math.round(n * 100) / 100
-  return Number.isInteger(r) ? String(r) : r.toFixed(2)
-}
-const fmtKwh = (v: any): string => {
-  const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n)) return ''
-  const r = Math.round(n * 100) / 100
-  return Number.isInteger(r) ? String(r) : String(r)
-}
+// 列表单元格口径（空值不占位）。金额与电量在这里显示规则一致：
+// 整数原样、非整数两位，只是 fmtMoney 语义上更强调金额。
+const fmtMoney = cellNum
+const fmtKwh = cellNum
 const fmtRatio = (v: any): string => {
   const n = Number(v)
   if (v === '' || v == null || Number.isNaN(n)) return '—'

@@ -45,10 +45,15 @@ test('amount 列必须挂单元格渲染，不能交给 TDesign 默认渲染', (
 })
 
 test('fmtAmount 必须先按分收敛再千分位', () => {
+  // 第 22 轮 P1-3：页面不再各写一份，统一委托 formatNumber.grouped。
+  // 收敛顺序（round2 → toLocaleString）由 formatNumber 保证，这里两处都断言。
   const body = bodyOf('fmtAmount')
-  assert.match(body, /Math\.round\(n \* 100\) \/ 100/, 'fmtAmount 必须先收敛到分')
-  assert.match(body, /toLocaleString\('zh-CN'/, 'fmtAmount 必须用 zh-CN 千分位')
-  assert.match(body, /Number\.isFinite/, 'fmtAmount 必须挡掉 NaN/Infinity')
+  assert.match(body, /grouped\(v, \{ fallback: '' \}\)/, 'fmtAmount 必须走统一格式化出口')
+  const fmt = readFileSync(new URL('./formatNumber.ts', import.meta.url), 'utf8')
+  const g = fmt.slice(fmt.indexOf('export function grouped'))
+  assert.match(g, /round2\(n\)/, 'grouped 必须先收敛到分')
+  assert.match(g, /toLocaleString\('zh-CN'/, 'grouped 必须用 zh-CN 千分位')
+  assert.match(g, /Number\.isFinite/, 'grouped 必须挡掉 NaN/Infinity')
 })
 
 test('cellOf 仅对 amount 列生效，其它类型保持默认渲染', () => {

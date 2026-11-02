@@ -75,7 +75,6 @@ test('7 处模块初始化 Loading 统一为 t-loading size=small（无文字）
   for (const f of [
     'AwardPunishManagement.vue',
     'ContractManagement.vue',
-    'EnergyManagement.vue',
     'InvoiceManagement.vue',
     'RegulationManagement.vue',
     'SolarManagement.vue',

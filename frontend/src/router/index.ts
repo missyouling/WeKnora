@@ -255,12 +255,15 @@ const router = createRouter({
           meta: { requiresInit: true, requiresAuth: true }
         },
         {
-          // 能耗台账（energy scope）：账期级中台页面。
-          // 与 utilities 的分工：utilities 承载手工抄表 / 光伏 / 费用清单（独立业务线），
-          // energy 承载电费/水费/燃气费账期台账（中台六同步 + 读数反算）。
+          // 能耗台账页已下线（第 22 轮 P1-5）。
+          //
+          // EnergyManagement.vue 与 utilities 的「电/水/气核算」KPI 语义重叠，
+          // 且全站没有任何入口指向它（路由可达、用户点不到），持续付出维护成本
+          // 却拿到两套口径。保留旧路径重定向，历史书签与 router.push({name:'energyManagement'})
+          // 都还能落到同一页面。
           path: "daily-affairs/energy",
           name: "energyManagement",
-          component: () => import("../views/dailyAffairs/EnergyManagement.vue"),
+          redirect: "/platform/daily-affairs/utilities",
           meta: { requiresInit: true, requiresAuth: true }
         },
         {

@@ -197,6 +197,7 @@
 </template>
 
 <script setup lang="ts">
+import { numOrZero } from './formatNumber'
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
@@ -1408,14 +1409,9 @@ const closePrint = () => {
 
 // ---- 表计配置（已迁至 MeterSettingsPanel，作为统一设置抽屉的「表计设置」Tab） ----
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
-const fmtNum = (v: any) => {
-  const n = Number(v) || 0
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
-}
-const fmtMoney = (v: any) => {
-  const n = Number(v) || 0
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
-}
+// 表计读数与金额同口径：0 兜底、整数原样、非整数两位（统一走 formatNumber）
+const fmtNum = numOrZero
+const fmtMoney = numOrZero
 // 单价统一保留最多三位小数,末尾 0 不显示(如 3.4 / 5.22 / 2.196)
 const fmtUnitPrice = (v: any) => {
   const n = Number(v)

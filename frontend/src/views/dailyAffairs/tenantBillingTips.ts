@@ -12,16 +12,11 @@
  *   ③ 跨分类引用列：写来源路径 `[分类 · 分组] 字段` 与取数范围。
  */
 
-const n2 = (v: any): string => {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '0'
-  // 千分位 + 最多两位小数：账单金额动辄六位数，不分组很难核对
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-}
-const pct = (v: any): string => {
-  const n = Number(v)
-  return Number.isFinite(n) && n !== 0 ? `${(n * 100).toFixed(2)}%` : '—'
-}
+import { grouped, pct } from './formatNumber'
+
+// 千分位数值与百分比统一走 formatNumber：浮点补偿与空值文案只有一处定义，
+// 避免「浮窗 21.24%、列表 21.24%、PDF 21.24%」三处各算一遍。
+const n2 = grouped
 
 /** 一行在计算过程中真实用到的中间值。 */
 export interface RowFacts {

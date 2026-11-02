@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -159,6 +161,7 @@ func (h *BillingHandler) prepareBillingInputs(
 
 	// 3.1 账单电量明细的损耗/加减电量（乘分摊比例）
 	in.BillLoss, in.BillAdjust = billLossAdjust(billItem, in.Ratio)
+	checkBillMeterHealth(ctx, id, month, billItem, in.BillLoss, in.BillAdjust)
 
 	// 4) 子项开关：首次自动初始化，账单新增大类时自动补充
 	enabled := h.loadEnabledItems(ctx, id)
@@ -195,6 +198,41 @@ func billLossAdjust(
 		adjust[p] = round2(mr.Adjust * ratio)
 	}
 	return loss, adjust
+}
+
+// checkBillMeterHealth 检查市电账单「电量明细」的损耗/加减电量是否异常。
+//
+// 这两个数是**全厂**口径，乘完分摊比例后只占工业电量的千分之几。一旦比例失真
+// （人为改数、OCR 把「13」认成「1300」，或分母用了居民口径），分时电费会整段
+// 偏掉，但页面看起来一切正常 —— 只有对账时才发现少了十几万。
+//
+// 阈值按 2026-09 实测留了很大余量（损耗 0.05%、加减 1.5%），只拦明显失真：
+//
+//	· 损耗合计 > 账单电量的 3%
+//	· |加减电量| 合计 > 账单电量的 10%
+//
+// 只告警不阻断：账单本身可能确实异常，阻断会让用户连「先按 0 算出来看看」都做不到。
+func checkBillMeterHealth(
+	ctx context.Context, tenantID, month string,
+	bill *types.UtilityBillExtractionItem,
+	loss, adjust map[string]float64,
+) {
+	if bill == nil || bill.TotalKwh <= 0 {
+		return
+	}
+	lossSum, adjustSum := 0.0, 0.0
+	for _, p := range timedPeriodOrder {
+		lossSum += loss[p]
+		adjustSum += math.Abs(adjust[p])
+	}
+	if lossSum/bill.TotalKwh > 0.03 {
+		logger.Warnf(ctx, "账单电量明细异常：租户 %s %s 损耗合计 %.2f 度，占账单电量 %.2f%%（阈值 3%%），请核对原账单",
+			tenantID, month, lossSum, lossSum/bill.TotalKwh*100)
+	}
+	if adjustSum/bill.TotalKwh > 0.10 {
+		logger.Warnf(ctx, "账单电量明细异常：租户 %s %s 加减电量绝对值合计 %.2f 度，占账单电量 %.2f%%（阈值 10%%），请核对原账单",
+			tenantID, month, adjustSum, adjustSum/bill.TotalKwh*100)
+	}
 }
 
 // allocateTimed 分摊分时电量并生成「电量明细」卡片行。

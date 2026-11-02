@@ -1601,7 +1601,11 @@ async function syncFieldsToTenantItems(item: any, fields: any[]) {
       if (!changed) continue
       await saveBillingTenantItems(tenantId, { items: next })
     } catch (e: any) {
+      // 字段定义已保存，但「启用字段 / 列宽」没回写到分摊子项 —— 表现为
+      // 保存成功、列表列宽却没变。显式提示，避免用户反复保存。
       console.warn('[cost-list] sync fields to tenant items failed', tenantId, e)
+      MessagePlugin.warning('字段定义已保存，但同步到「分摊子项」失败，列宽/启用状态可能未生效；请重试一次保存')
+      break
     }
   }
 }

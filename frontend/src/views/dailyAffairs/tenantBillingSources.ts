@@ -1,3 +1,5 @@
+import { round2, toNum } from './formatNumber'
+
 /**
  * 费用清单「跨分类字段引用」的取值层。
  *
@@ -90,18 +92,10 @@ export function sourceBadge(src: FieldSource | null, fallback = ''): string {
 }
 
 const norm = (v: any) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, '')
-const num = (v: any) => {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
-}
-/**
- * 两位小数（四舍五入）。
- *
- * 加 1e-6 是为了抵消浮点表示误差：126600 × 0.006225 在 IEEE754 里是
- * 788.0849999999999，直接 Math.round(v*100) 会得到 788.08，
- * 而 Excel 与业务预期都是 788.09（政府性基金「库区移民基金」真机对账差 1 分）。
- */
-const round2 = (v: number) => Math.round(v * 100 + 1e-6) / 100
+// 数值收敛统一走 formatNumber：`round2` 带 1e-6 浮点补偿（126600 × 0.006225
+// 在 IEEE754 里是 788.0849999999999，不补偿会得 788.08，标准表是 788.09）。
+// `num` 保留本地别名，避免改动本文件几十处调用点。
+const num = toNum
 
 /**
  * 名称归一（用于费用分项匹配）：在 `norm` 之上再去掉括号、统一同义词。

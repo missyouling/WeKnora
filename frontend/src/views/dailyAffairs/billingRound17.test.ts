@@ -29,26 +29,31 @@ test('气费汇总：必须按使用单位过滤（旧实现只按月 → 把全
 })
 
 test('打印清单：无气表/未启用气费时，既不出气费明细表也不出「气费」汇总行', () => {
-  const src = read('TenantBilling.vue')
-  assert.match(src, /function gasApplicableOf\(/, '必须有「气费是否适用」判定')
-  const fn = src.slice(src.indexOf('function gasApplicableOf'), src.indexOf('function summaryTableOf'))
+  // 第 22 轮 P1-2：构造器迁到 energyBillStatements.ts，页面只传 includeGas
+  const statements = read('energyBillStatements.ts')
+  assert.match(statements, /export function gasApplicableOf\(/, '必须有「气费是否适用」判定')
+  const fn = statements.slice(statements.indexOf('export function gasApplicableOf'), statements.indexOf('function summaryTableOf'))
   assert.match(fn, /hasMeter/, '必须检查该单位确有气表记录')
-  assert.match(fn, /activeColDefs\.value\.some\(\(c\) => c\.key === 'gas_fee'\)/, '必须检查气费字段是否启用')
+  assert.match(fn, /columnKeys\.includes\('gas_fee'\)/, '必须检查气费字段是否启用')
 
-  const sum = src.slice(src.indexOf('function summaryTableOf'), src.indexOf('打印清单的字节缓存'))
+  const sum = statements.slice(statements.indexOf('function summaryTableOf'), statements.indexOf('export function buildTenantBillingStatementDoc'))
   assert.match(sum, /includeGas: boolean/, '应收汇总必须接收 includeGas')
   assert.match(sum, /if \(includeGas\) body\.push\(\['气费'/, '气费行必须条件渲染')
   assert.ok(!/rows: \[[\s\S]*?\['气费', unit, money2\(gas\)\][\s\S]*?\],\n\s*total:/.test(sum),
     '气费行不得写死在 rows 字面量里')
 
-  const build = src.slice(src.indexOf('function buildStatementDoc'), src.indexOf('const statementPrewarm'))
-  assert.match(build, /const includeGas = gasApplicableOf\(unit, months\)/, '整份清单统一判定气费适用性')
+  const build = statements.slice(statements.indexOf('export function buildTenantBillingStatementDoc'))
+  assert.match(build, /const includeGas = ctx\.includeGas/, '整份清单统一判定气费适用性')
   assert.match(build, /if \(includeGas\) \{/, '气费明细表必须受 includeGas 控制')
-  assert.match(build, /summaryTableOf\(\[row\], unit, prefix, includeGas\)/, '汇总表必须传 includeGas')
+  assert.match(build, /summaryTableOf\(ctx, \[row\], unit, prefix, includeGas\)/, '汇总表必须传 includeGas')
+
+  // 页面侧：ctx 必须用「气表行 + 当前列 key」现算，不能写死 true
+  const page = read('TenantBilling.vue')
+  assert.match(page, /includeGas: gasApplicableOf\(gasRows\.value, activeColDefs\.value\.map\(\(c\) => c\.key\), unit, months\)/)
 })
 
 test('概览元信息：无气表的租户不得把 gas_fee 并进应收合计', () => {
-  const src = read('TenantBilling.vue')
+  const src = read('energyBillStatements.ts')
   const fn = src.slice(src.indexOf('function statementMeta'), src.indexOf('function feeTableOf'))
   assert.match(fn, /includeGas = false/, '元信息必须接收气费适用标记')
   assert.match(fn, /const gas = includeGas \? sum\('gas_fee'\) : 0/, '不适用时气费按 0 计')

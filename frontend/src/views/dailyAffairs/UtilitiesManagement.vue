@@ -650,6 +650,8 @@
 </template>
 
 <script setup lang="ts">
+import { chartPalette } from './chartTheme'
+import { grouped } from './formatNumber'
 import {
   ref,
   reactive,
@@ -2131,6 +2133,7 @@ const renderEnergyChart = async () => {
   const rows = energyCompareRows.value
   const prevExists = prevEnergy.value.exists
   const pctLabel = (p: any) => `${p.value}%`
+  const c = chartPalette()
   energyChart.setOption({
     animation: true,
     animationDuration: 600,
@@ -2144,31 +2147,33 @@ const renderEnergyChart = async () => {
         return arr.map((p: any) => `${p.seriesName}：${p.value}%`).join('<br/>')
       },
     },
-    legend: { data: ['本期占比', '上期占比'], top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 12, color: '#57606a' } },
+    // 配色一律从主题变量取（chartPalette），不写死色值：
+    // 旧实现写的是品牌蓝 #0052d9，主题切绿后这张图仍是蓝的，一眼看出没跟上改版。
+    legend: { data: ['本期占比', '上期占比'], top: 0, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 12, color: c.text } },
     xAxis: {
       type: 'category', data: rows.map(r => r.label),
-      axisLine: { lineStyle: { color: '#d0d7de' } }, axisLabel: { color: '#57606a', fontSize: 12 },
+      axisLine: { lineStyle: { color: c.axis } }, axisLabel: { color: c.text, fontSize: 12 },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
       max: (v: any) => Math.ceil((v.max * 1.15) / 10) * 10,
-      axisLabel: { color: '#57606a', fontSize: 12, formatter: '{value}%' },
-      splitLine: { lineStyle: { color: '#eaeef2' } },
+      axisLabel: { color: c.text, fontSize: 12, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: c.grid } },
     },
     series: [
       {
         name: '本期占比', type: 'bar', data: rows.map(r => r.curPct), barWidth: 22,
-        itemStyle: { color: '#0052d9', borderRadius: [3, 3, 0, 0] },
-        label: { show: true, position: 'top', distance: 4, color: '#0052d9', fontSize: 10, formatter: pctLabel },
+        itemStyle: { color: c.brand, borderRadius: [3, 3, 0, 0] },
+        label: { show: true, position: 'top', distance: 4, color: c.brand, fontSize: 10, formatter: pctLabel },
       },
       {
         name: '上期占比', type: 'bar', data: rows.map(r => (prevExists ? r.prevPct : null)), barWidth: 22,
-        itemStyle: { color: '#9ab6e8', borderRadius: [3, 3, 0, 0] },
+        itemStyle: { color: c.brandWeak, borderRadius: [3, 3, 0, 0] },
         // 标签放柱体正中（inside），不要 insideTop：柱体矮时顶端标签会压在上边缘、
-        // 与柱色糊成一片。浅蓝柱上的白字对比度只有 2.2:1，改深蓝（≈6:1）才读得清。
+        // 与柱色糊成一片。浅色柱上用主色深档（≈6:1），白字只有 2.2:1 读不清。
         label: {
-          show: prevExists, position: 'inside', color: '#12395f', fontSize: 10,
+          show: prevExists, position: 'inside', color: c.brandDeep, fontSize: 10,
           fontWeight: 600, formatter: pctLabel,
         },
       },
@@ -2594,20 +2599,12 @@ const handleBatchDelete = async () => {
 const applyFilter = () => loadFiles(true)
 
 // ---- 格式化 ----
-const fmtKwh = (v: any) => {
-  const n = Number(v) || 0
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-}
-const fmtMoney = (v: any) => {
-  const n = Number(v) || 0
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-/** 金额列：先按分四舍五入收敛，再千分位；抹掉浮点累加残留（如 53441.77999999996） */
-const fmtAmount = (v: any) => {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return ''
-  return (Math.round(n * 100) / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
-}
+// 列表列格式化统一走 formatNumber.grouped：先按分收敛再千分位，
+// 抹掉浮点累加残留（如 53441.77999999996 / 43316.740000000005）。
+const fmtKwh = (v: any) => grouped(v)
+const fmtMoney = (v: any) => grouped(v, { fixed: true })
+/** 金额列（空值不占位） */
+const fmtAmount = (v: any) => grouped(v, { fallback: '' })
 /** 明细电费/单价：最多 6 位小数，去尾 0 */
 const fmtRate6 = (v: any) => {
   const n = Number(v)

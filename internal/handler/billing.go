@@ -18,6 +18,31 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ---------------------------------------------------------------------------
+// 查询错误的「分级留痕」
+// ---------------------------------------------------------------------------
+
+// warnQueryErr 记录一次**会导致页面数据缺失**的查询错误，并按默认值继续。
+//
+// 为什么不能 `_ = err`：详情页/列表页在子行查询失败时会「静默少显示一块」，
+// 用户看到的是空表格，运维在日志里什么都找不到（历史上排查「账单明明生成了
+// 但明细空白」耗了两轮）。这里保底留下一条 warn 并带上操作语义。
+func warnQueryErr(ctx context.Context, op string, err error) {
+	if err == nil || err == gorm.ErrRecordNotFound {
+		return
+	}
+	logger.Warnf(ctx, "租户核算读取失败：%s（按空结果继续）: %v", op, err)
+}
+
+// debugQueryErr 记录**可选数据**的查询错误：设置没配、账单还没生成都属于正常态，
+// 只在 debug 级别留痕，避免每次打开页面都刷 warn。
+func debugQueryErr(ctx context.Context, op string, err error) {
+	if err == nil || err == gorm.ErrRecordNotFound {
+		return
+	}
+	logger.Debugf(ctx, "租户核算可选数据读取失败：%s（按空结果继续）: %v", op, err)
+}
+
 // BillingHandler 租户费用核算：电费按市电账单子项比例分摊 + 宿舍定额 + 水费按表计。
 type BillingHandler struct {
 	db *gorm.DB
@@ -55,7 +80,7 @@ func (h *BillingHandler) ListBillingTenants(c *gin.Context) {
 			ids = append(ids, t.ID)
 		}
 		var sts []types.BillingTenantSetting
-		_ = h.db.WithContext(ctx).Where("billing_tenant_id IN ?", ids).Find(&sts).Error
+		warnQueryErr(ctx, "租户列表·核算设置", h.db.WithContext(ctx).Where("billing_tenant_id IN ?", ids).Find(&sts).Error)
 		for _, s := range sts {
 			settings[s.BillingTenantID] = s
 		}
@@ -127,15 +152,15 @@ func (h *BillingHandler) GetBillingTenant(c *gin.Context) {
 		return
 	}
 	var st types.BillingTenantSetting
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).First(&st).Error
+	debugQueryErr(ctx, "租户详情·核算设置", h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).First(&st).Error)
 	var items []types.BillingTenantItem
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).Order("sort ASC, created_at ASC").Find(&items).Error
+	warnQueryErr(ctx, "租户详情·分摊子项", h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).Order("sort ASC, created_at ASC").Find(&items).Error)
 	var refs []types.BillingTenantMeterRef
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).Order("category ASC, created_at ASC").Find(&refs).Error
+	warnQueryErr(ctx, "租户详情·表计引用", h.db.WithContext(ctx).Where("billing_tenant_id = ?", id).Order("category ASC, created_at ASC").Find(&refs).Error)
 	var meters []types.BillingTimeMeter
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("meter_type ASC, created_at ASC").Find(&meters).Error
+	warnQueryErr(ctx, "租户详情·分时表计", h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("meter_type ASC, created_at ASC").Find(&meters).Error)
 	var waterMeters []types.BillingWaterMeter
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("created_at ASC").Find(&waterMeters).Error
+	warnQueryErr(ctx, "租户详情·水表", h.db.WithContext(ctx).Where("billing_tenant_id = ? AND deleted_at IS NULL", id).Order("created_at ASC").Find(&waterMeters).Error)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
@@ -1000,11 +1025,11 @@ func (h *BillingHandler) GetBillingRecord(c *gin.Context) {
 		return
 	}
 	var items []types.BillingRecordItem
-	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&items).Error
+	warnQueryErr(ctx, "账单详情·费用分项", h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&items).Error)
 	var meters []types.BillingRecordMeter
-	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&meters).Error
+	warnQueryErr(ctx, "账单详情·电量明细", h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&meters).Error)
 	var waters []types.BillingRecordWater
-	_ = h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&waters).Error
+	warnQueryErr(ctx, "账单详情·水费明细", h.db.WithContext(ctx).Where("record_id = ?", id).Order("sort ASC, created_at ASC").Find(&waters).Error)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items, "meters": meters, "waters": waters}})
 }
 
@@ -1060,7 +1085,7 @@ func (h *BillingHandler) UpdateBillingRecord(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("update billing record failed"))
 		return
 	}
-	_ = h.db.WithContext(ctx).Where("id = ?", id).First(&rec).Error
+	debugQueryErr(ctx, "账单更新·回读", h.db.WithContext(ctx).Where("id = ?", id).First(&rec).Error)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rec})
 }
 
@@ -1523,7 +1548,7 @@ func (h *BillingHandler) loadWaterRows(ctx context.Context, refs []types.Billing
 
 func (h *BillingHandler) loadMeterRefs(ctx context.Context, tenantID string) []types.BillingTenantMeterRef {
 	var refs []types.BillingTenantMeterRef
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&refs).Error
+	warnQueryErr(ctx, "表计引用兜底", h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&refs).Error)
 	if len(refs) == 0 {
 		return refs
 	}
@@ -1589,7 +1614,7 @@ func billingItemEnabled(enabled map[string]bool, cat, name string) bool {
 
 func (h *BillingHandler) loadEnabledItems(ctx context.Context, tenantID string) map[string]bool {
 	var items []types.BillingTenantItem
-	_ = h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&items).Error
+	warnQueryErr(ctx, "分摊子项开关", h.db.WithContext(ctx).Where("billing_tenant_id = ?", tenantID).Find(&items).Error)
 	m := make(map[string]bool, len(items)*2)
 	for _, it := range items {
 		m[it.ItemKey] = it.Enabled
