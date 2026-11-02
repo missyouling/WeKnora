@@ -109,9 +109,16 @@ export function summaryCellOf(col: SummaryColumn, rows: any[]): string {
   return total === 0 && !rows.some((r) => toNum(pick(r)) !== 0) ? '—' : fmtSumNumber(total)
 }
 
-/** 首列表尾文案。 */
-export function summaryLabelOf(count: number): string {
-  return `合计（共 ${count} 条）`
+/**
+ * 首列表尾文案。
+ *
+ * 两种口径（第 20 轮）：
+ *   · 未勾选 → `合计（共 N 条）`，N = 当前筛选后的全部可见行；
+ *   · 已勾选 → `合计（已选 K 条）`，汇总范围同步收敛到这 K 行。
+ * 用户勾了 2 行却仍看到「共 16 条」的全量合计，会误判总额（真机反馈）。
+ */
+export function summaryLabelOf(count: number, selectedCount = 0): string {
+  return selectedCount > 0 ? `合计（已选 ${selectedCount} 条）` : `合计（共 ${count} 条）`
 }
 
 /**
@@ -143,14 +150,33 @@ export function footSpanOf(columns: SummaryColumn[]) {
 export function buildFootRow(
   columns: SummaryColumn[],
   rows: any[],
-  opts: { selectKey?: string; rowKey?: string } = {},
+  opts: { selectKey?: string; rowKey?: string; selectedCount?: number } = {},
 ): Record<string, string> {
   const selectKey = opts.selectKey || 'row-select'
   const row: Record<string, string> = { id: '__summary__' }
   if (opts.rowKey) row[opts.rowKey] = '__summary__'
-  row[selectKey] = summaryLabelOf(rows.length)
+  row[selectKey] = summaryLabelOf(rows.length, opts.selectedCount || 0)
   for (const col of columns) {
     row[col.key] = summaryCellOf(col, rows)
   }
   return row
+}
+
+/**
+ * 表尾汇总的统计范围：**勾选优先，否则全部可见行**。
+ *
+ * 六个列表页共用同一口径，避免「这页勾选后汇总收敛、那页仍统计全量」的漂移。
+ * `selectedKeys` 是各页业务侧的键集合（Set / 数组皆可）。
+ */
+export function summaryScopeRows<T>(
+  allRows: readonly T[],
+  selectedKeys: ReadonlySet<string> | readonly string[],
+  rowKeyOf: (row: T) => string,
+): { rows: T[]; selectedCount: number } {
+  const keys = Array.isArray(selectedKeys) ? selectedKeys : Array.from(selectedKeys as ReadonlySet<string>)
+  if (!keys.length) return { rows: allRows as T[], selectedCount: 0 }
+  const want = new Set(keys.map((k) => String(k)))
+  // 按 allRows 的原顺序过滤：表尾顺序与列表一致，且不会把已被筛选掉的行算进来
+  const rows = (allRows as T[]).filter((r) => want.has(String(rowKeyOf(r))))
+  return { rows, selectedCount: rows.length }
 }

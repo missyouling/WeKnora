@@ -106,6 +106,8 @@ function builtinTips(f: RowFacts): Record<string, string> {
     t.ratio = [
       `计算方式：${f.tenantName}分表电量 ÷ 市电账单本期电量`,
       `= ${n2(f.recKwh)} ÷ ${n2(f.totalKwh)} = ${pct(f.ratio)}`,
+      '适用范围：仅「基本电费」「功率因素调整电费」按此比例折算；',
+      '其余分项按「分时电量 × 时段单价」或「工业总电量 × 单价」计算。',
     ].join('\n')
     t.ind_kwh = `数据来源：已生成账单「${f.tenantName}分表总电量」= ${n2(f.recKwh)} 千瓦时`
     t.ind_fee = `数据来源：已生成账单「工业电费」（各分摊项按比例折算后求和）= ${n2(f.recFee)} 元`
@@ -149,6 +151,10 @@ export function tenantItemTip(opts: {
   participating: boolean
   /** 值型为「账单金额直接计入」（value_mode=direct_sum），此时不乘比例 */
   directSum?: boolean
+  /** 平段按度计费项的计费数量（= 工业总电量 126,600）；有值时走新口径文案 */
+  qty?: number
+  /** 账单该项单价（元/度） */
+  unitRate?: number
 }): string {
   const { itemName, sourceCategory, billAmount, ratio, periods, value, participating } = opts
   const head = sourceCategory ? `来源：${sourceCategory}` : '来源：市电账单费用分项'
@@ -167,6 +173,16 @@ export function tenantItemTip(opts: {
       '计算方式：各时段「基准电量 × 时段单价」后求和（不乘分摊比例）',
       ...lines,
       `合计 = ${n2(sum || value)} 元`,
+    ].join('\n')
+  }
+  // 平段按度计费：计费数量 = 工业总电量，金额 = 电量 × 账单单价。
+  // 这一支必须排在「账单金额 × 比例」之前 —— 比例法对按度项是错的
+  // （账单按度项的计费电量是 587,230，不是全厂 596,168）。
+  if (opts.qty && opts.unitRate) {
+    return [
+      head,
+      '计算方式：工业总电量 × 账单该项单价（不乘分摊比例）',
+      `= ${n2(opts.qty)} × ${opts.unitRate} = ${n2(value)} 元`,
     ].join('\n')
   }
   const base = Number(billAmount)

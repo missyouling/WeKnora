@@ -357,7 +357,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
-import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import {
@@ -781,9 +781,17 @@ const summaryColumns = computed<SummaryColumn[]>(() =>
   })),
 )
 const footRows = computed(() => filteredRows.value.filter((r: any) => r.kind !== 'pending'))
-const footData = computed(() => (footRows.value.length
-  ? [buildFootRow(summaryColumns.value, footRows.value)]
-  : []))
+/**
+ * 表尾统计范围：**勾选优先，否则全部可见行**（第 20 轮）。
+ * 勾选后汇总收敛到所选行，首列文案切成「已选 K 条」。
+ */
+const summaryScope = computed(() =>
+  summaryScopeRows(footRows.value, selectedRowKeys.value, (r: any) => String(r?.rowKey ?? '')),
+)
+const footData = computed(() => {
+  const { rows, selectedCount } = summaryScope.value
+  return rows.length ? [buildFootRow(summaryColumns.value, rows, { selectedCount })] : []
+})
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 
 // 字段显隐变化即持久化：t-checkbox-group 的 @change 在部分勾选交互下不触发，

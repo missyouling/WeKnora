@@ -1210,7 +1210,10 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 	}
 	ratio := 0.0
 	if billItem.TotalKwh > 0 && starTotal > 0 {
-		ratio = round6(starTotal / billItem.TotalKwh)
+		// **8 位小数**：比例要参与两次乘法（基本电费 44,000、力调 -2,818.07），
+		// 6 位会在 44,000 × 0.212356 上丢 1 分（9,343.66 vs 标准 9,343.67）。
+		// 8 位（0.21235624）与人工核算表的除法精度一致。
+		ratio = round8(starTotal / billItem.TotalKwh)
 	}
 
 	// 3.1 分时电量分摊（计费电量 → 差额分摊 → 基准电量）
@@ -1226,9 +1229,18 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		if p == "" {
 			continue
 		}
-		// 变损与线损是两条独立列，电量明细里都体现在计费电量上
-		billLoss[p] = round2(mr.TransLoss + mr.LineLoss)
-		billAdjust[p] = round2(mr.Adjust)
+		// 变损与线损是两条独立列，电量明细里都体现在计费电量上。
+		//
+		// **必须乘分摊比例**：账单电量明细是**全厂**口径（尖峰线损 13 度、
+		// 加减 -1341 度），持睿只承担其中 ratio 那一份。
+		// 2026-09 标准核算表：13 × 0.21235625 = 2.76、-1341 × 0.21235625 = -284.77，
+		// 尖峰计费电量 = 5200 + 2.76 - 284.77 = 4,917.99。
+		//
+		// 历史坑：旧版本用的系数是「分表合计 ÷ 全厂电量」= 122700/595860 = 0.20592，
+		// 比正确的 0.21236 小 3%，于是尖峰算成 4,926.54（差 8.55 度），
+		// 四段电费整体偏低 —— 库里 2026-09 的明细至今还是那个值。
+		billLoss[p] = round2((mr.TransLoss + mr.LineLoss) * ratio)
+		billAdjust[p] = round2(mr.Adjust * ratio)
 	}
 	timedUsages := make([]timedMeterUsage, 0, len(subRows))
 	for _, mr := range subRows {
@@ -1340,7 +1352,23 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 					if !ok || rate == 0 {
 						continue
 					}
-					f := round2(billPeriod[p] * rate)
+					// **逐表逐段** round2 后相加：人工 Excel 是「每块表的每个时段各乘单价
+					// 各占一格，合计再把格子加起来」，先汇总电量再乘单价会差 1 分
+					// （2026-09 持睿：峰 6478.51+6859.73+2203.12 = 15541.36）。
+					f := 0.0
+					for _, mr := range subRows {
+						rows := timed.Rows[mr.MeterID]
+						for _, r := range rows {
+							if r.Period == p {
+								f = round2(f + round2(r.BaseExact*rate))
+								break
+							}
+						}
+					}
+					if f == 0 {
+						// 没有分表明细（历史上只有汇总电量）时退回「时段合计电量 × 单价」
+						f = round2(billPeriod[p] * rate)
+					}
 					items = append(items, types.BillingRecordItem{
 						ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
 						Category: catName, Name: sg.Name, Period: periodLabel(p),
@@ -1353,13 +1381,65 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 				continue
 			}
 
-			// 非分时子项（含固定金额的返还类）：原账单金额 × 分摊比例
+			// 非分时子项（平段按度计费）：
+			//   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
+			//
+			// 不能写「账单金额 × 分摊比例」：账单的按度项计费电量是 587,230 度
+			// （= 全厂 596,168 − 居民 8,938），除以全厂电量得到的比例乘回去
+			// 会系统性少算 —— 2026-09 零售损益分摊电费按比例算 4,434.02，
+			// 标准表是 4,501.52，差 67.5 元；上网环节线损差 32.5 元，
+			// 系统运行费用 7 项 + 政府性基金 5 项逐项差一点，工业电费累计差 264.98。
+			// 单价取账单该行的 rate；缺失时用 fee/qty 反算。
+			unitRate := 0.0
+			for _, r := range sg.Rows {
+				if r.Rate != 0 {
+					unitRate = r.Rate
+					break
+				}
+				if r.Qty > 0 && r.Fee != 0 {
+					unitRate = r.Fee / r.Qty
+					break
+				}
+			}
+			if unitRate != 0 && starTotal > 0 {
+				qty := round2(starTotal)
+				f := round2(qty * unitRate)
+				items = append(items, types.BillingRecordItem{
+					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
+					Category: catName, Name: sg.Name, Period: "",
+					Qty: qty, Rate: unitRate, Fee: f, Sort: sortNo, CreatedAt: now,
+				})
+				sortNo++
+				// 累加**未取整**值：Excel 的合计是「各格原值相加后再四舍五入」，
+				// 逐项 round 再相加会让政府性基金多 1 分（6,038.07 vs 6,038.06），
+				// 工业电费随之变成 101,414.05。
+				industrialFee += qty * unitRate
+				continue
+			}
+			// 纯金额返还类（账单里 rate=0 且 qty=0）：**不计入分摊**。
+			//
+			// 「中长期偏差回收返还（用户）」「中长期超额申报费用返还」「零售交易发电侧
+			// 收益返还电费」这三条在 2026-09 账单里是 -31,520.93 / -392.08 / -4,103.60，
+			// 属于全厂冲抵项，没有计量口径可以折算到持睿头上。
+			// 旧实现按「原金额 × 分摊比例」硬摊，给持睿凭空算出 -6,693.66 / -83.26 /
+			// -871.42（合计 -7,648.34），人工核算表根本不计这三项 —— 工业电费因此
+			// 从 101,414.04 掉到 93,765.70（真机对账差 7,648）。
+			allZeroQty := true
+			for _, r := range sg.Rows {
+				if r.Qty != 0 {
+					allZeroQty = false
+					break
+				}
+			}
+			if allZeroQty {
+				continue
+			}
+			// 兜底：有计量口径但缺单价（历史脏数据）→ 按账单原金额 × 分摊比例
 			if rawTotal != 0 {
 				f := round2(rawTotal * ratio)
 				items = append(items, types.BillingRecordItem{
 					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
 					Category: catName, Name: sg.Name, Period: "",
-					// Qty/Rate 仅为「可反算」而写：qty × rate = fee（与基本电费同构）
 					Qty: ratio, Rate: rawTotal, Fee: f, Sort: sortNo, CreatedAt: now,
 				})
 				sortNo++
@@ -1370,24 +1450,43 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 
 	// 5.2 基本电费 / 功率因素调整电费(按比例)
 	if enabled["基本电费"] && billItem.CapacityFee != 0 {
-		f := round2(billItem.CapacityFee * ratio)
+		// 用「原金额 × 工业电量 ÷ 账单电量」而**不是** × ratio：
+		// ratio 落库是 8 位近似（0.21235625），44,000 × 它 = 9,343.675 → 9,343.68；
+		// 直接除得到 9,343.6749 → 9,343.67（与 Excel 一致）。
+		capacityFee := billItem.CapacityFee * starTotal / billItem.TotalKwh
+		f := round2(capacityFee)
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "base",
 			Category: "基本电费", Name: "基本电费", Period: "", Qty: ratio, Rate: billItem.CapacityFee, Fee: f, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
-		industrialFee += f
+		industrialFee += capacityFee
 	}
-	// 力调电费统一命名「功率因素调整电费」,兼容旧开关「力调电费」
-	pfOn := enabled["功率因素调整电费"] || enabled["力调电费"] || enabled["功率因素调整电费|功率因素调整电费"]
+	// 力调电费统一命名「功率因素调整电费」，但**必须同时认「因数」写法**。
+	//
+	// 库里 billing_tenant_items.item_key 是「功率因数调整电费|功率因数调整电费」
+	// （账单原文用「因数」），而这里的开关历史上写的是「因素」。硬按字面查
+	// 三个键全不命中 → pfOn=false → 力调 -598.43 被整条丢掉，
+	// 工业电费从 101,414.04 变成 102,012.47（真机对账差 598.43）。
+	pfOn := false
+	for k, v := range enabled {
+		if !v {
+			continue
+		}
+		if strings.Contains(strings.ReplaceAll(k, "功率因素", "功率因数"), "功率因数调整电费") {
+			pfOn = true
+			break
+		}
+	}
 	if pfOn && billItem.PfAdjustAmount != 0 {
-		f := round2(billItem.PfAdjustAmount * ratio)
+		pfFee := billItem.PfAdjustAmount * starTotal / billItem.TotalKwh
+		f := round2(pfFee)
 		items = append(items, types.BillingRecordItem{
 			ID: uuid.NewString(), RecordID: recordID, Kind: "pf",
 			Category: "功率因素调整电费", Name: "功率因素调整电费", Period: "", Qty: ratio, Rate: billItem.PfAdjustAmount, Fee: f, Sort: sortNo, CreatedAt: now,
 		})
 		sortNo++
-		industrialFee += f
+		industrialFee += pfFee
 	}
 
 	// 5.3 宿舍/水
@@ -1526,6 +1625,14 @@ func meterPeriodByType(meterType string) string {
 
 func round6(v float64) float64 {
 	return float64(int64(v*1000000+0.5)) / 1000000
+}
+
+// round8 八位小数（分摊比例专用）。
+//
+// 比例会被拿去乘「基本电费 44,000」这种大数：6 位精度下
+// 44,000 × 0.212356 = 9,343.664 → 9,343.66，标准表是 9,343.67。
+func round8(v float64) float64 {
+	return float64(int64(v*100000000+0.5)) / 100000000
 }
 
 // loadPeriodKwh 汇总该月分时电表各时段电量(读数差×倍率)。

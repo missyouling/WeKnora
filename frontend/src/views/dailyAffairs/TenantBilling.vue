@@ -179,7 +179,7 @@ import {
   tenantGroupKey,
 } from './billingFieldGroups'
 import { buildRowTips, sourceFieldTip, tenantItemTip, tenantTimedTip } from './tenantBillingTips'
-import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -627,15 +627,32 @@ const visibleColDefs = computed(() => activeColDefs.value.filter(c => visibleKey
  *   · 数量列：`*_kwh / *_usage`；
  *   · 其余（单价/比例/备注…）交给 listSummary 的不可累加判定兜底。
  */
+/** 点位值/比率：绝不能相加（键名兜底之外，中文表头也兜一层）。 */
+const NON_SUM_LABEL = /(单价|均价|平均电价|比例|倍率|功率因|起度|止度|示数|环比|同比|税率|编号|户号|表号)/
+/** 电量类键：`solar_gen` / `solar_grid` 不带 `_kwh` 后缀，只按后缀判会漏（真机表尾显示 —）。 */
+const QTY_KEYS = new Set([
+  'solar_gen', 'solar_grid', 'total_kwh', 'ind_kwh', 'dorm_kwh', 'res_kwh',
+  'gas_usage', 'water_ind_usage', 'water_dorm_usage', 'water_fire_usage',
+])
+const AMOUNT_KEYS = new Set([
+  'total_fee', 'solar_amount', 'ind_fee', 'dorm_fee', 'res_fee', 'gas_fee',
+  'water_ind_fee', 'water_dorm_fee', 'water_fire_fee',
+  TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD,
+])
+
 function colTypeOf(c: ColDef): string {
   const key = String(c.key || '')
-  // 大类汇总列与分摊子项列都是**金额**：子项 key 形如
+  const label = String(c.label || '')
+  // ① 点位值优先判死：哪怕键名像金额（如 ind_price 含 _price）也不加
+  if (NON_SUM_LABEL.test(label) || /_price$|^ratio$|^avg_price$/.test(key)) return 'text'
+  // ② 大类汇总列与分摊子项列都是**金额**：子项 key 形如
   // `item_(2)上网环节线损费用|上网环节线损费用`，不含 `_fee` 后缀，
   // 只靠后缀判定会让「上网环节线损费用 / 零售输配电费 / 系统运行费用」
   // 这些真正要合计的列在表尾显示 `—`（真机 2026-09 持睿列表）。
   if (c.feeGroup || key.startsWith('item_')) return 'amount'
-  if (/_fee$|_amount$|_total$|^total_fee$|^solar_amount$/.test(key)) return 'amount'
-  if (/_kwh$|_usage$|_price$|^ratio$|_count$/.test(key)) return 'number'
+  if (AMOUNT_KEYS.has(key) || /_fee$|_amount$|_total$|合计|电费|水费|气费|金额|税额|价税/.test(key + label)) return 'amount'
+  // ③ 电量与用量（键白名单 + 后缀 + 中文兜底）
+  if (QTY_KEYS.has(key) || /_kwh$|_usage$|_count$/.test(key) || /电量|用量|水量|气量|度数/.test(label)) return 'number'
   return 'text'
 }
 /** 表尾汇总的列口径（与当前可见列严格同序，保证逐列对齐）。 */
@@ -643,9 +660,17 @@ const summaryColumns = computed<SummaryColumn[]>(() =>
   visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: colTypeOf(c) })),
 )
 /** 表尾汇总行：数据随筛选/视角/勾选变化实时重算。 */
-const footData = computed(() => (displayRows.value.length
-  ? [buildFootRow(summaryColumns.value, displayRows.value)]
-  : []))
+/**
+ * 表尾统计范围：**勾选优先，否则全部可见行**（第 20 轮）。
+ * 勾了 2 行还显示全量合计会让人误判总额；首列文案同步切成「已选 K 条」。
+ */
+const summaryScope = computed(() =>
+  summaryScopeRows(displayRows.value, selectedKeys.value, (r: any) => String(r?.id ?? '')),
+)
+const footData = computed(() => {
+  const { rows, selectedCount } = summaryScope.value
+  return rows.length ? [buildFootRow(summaryColumns.value, rows, { selectedCount })] : []
+})
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 /**
  * 列的最小宽度（px）。
@@ -1131,15 +1156,25 @@ const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): Sour
   // ΔQ 优先取已生成账单的固话值；未生成时用「星达工业分表合计 − 租户分时表合计」现算，
   // 否则那些月份的差额分摊会凭空少掉（分时电费整体偏低）。
   let deltaQ = Number(rec?.line_loss) || 0
+  // 星达工业分表总电量：已生成账单取固化值，否则现算（与 ratioOfMonth 同口径）
+  let starTotal = Number(rec?.total_kwh) || 0
+  const starUsage = starTotal > 0 ? starTotal : elecRows.value
+    .filter((r: any) => r.month === month && r.use_unit === OWNER_UNIT && r.meter_type !== 'time' && r.meter_kind !== 'dorm')
+    .reduce((s: number, r: any) => s + (Number(r.usage) || 0), 0)
+  if (starTotal <= 0) starTotal = starUsage
   if (!rec) {
-    const starUsage = elecRows.value
-      .filter((r: any) => r.month === month && r.use_unit === OWNER_UNIT && r.meter_type !== 'time' && r.meter_kind !== 'dorm')
-      .reduce((s: number, r: any) => s + (Number(r.usage) || 0), 0)
     const subUsage = timedMeters.reduce(
       (s: number, m: any) => s + Object.values(m.usage || {}).reduce((a: number, b: any) => a + (Number(b) || 0), 0),
       0,
     )
     if (starUsage > 0 && subUsage > 0) deltaQ = Math.round((starUsage - subUsage) * 100) / 100
+  }
+  // 分摊比例：已生成账单取固化值（6 位），否则用「工业总电量 ÷ 账单总电量」现算。
+  // 账单电量明细的损耗/加减电量是全厂口径，分时折算前要乘它。
+  const billKwh = Number(bill?.item?.total_kwh) || 0
+  let monthRatio = Number(rec?.ratio) || 0
+  if (monthRatio <= 0 && billKwh > 0 && starTotal > 0) {
+    monthRatio = Math.round((starTotal / billKwh) * 1e8) / 1e8
   }
   return {
     month,
@@ -1152,19 +1187,27 @@ const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): Sour
     gasRows: gasRows.value,
     timedMeters,
     deltaQ,
+    // 平段按度计费项的计费数量基准（工业总电量）
+    starTotal: Math.round(starTotal * 100) / 100,
+    ratio: monthRatio,
   }
 }
 
-/** 当月分摊比例：已生成账单用固化值；未生成按月内星达分时总电量 ÷ 账单电量估算。 */
+/**
+ * 当月分摊比例 = 工业电量 ÷ 市电账单电量。
+ *
+ * **优先现算，不用 rec.ratio**：`billing_records.ratio` 是 numeric(18,6)，
+ * 8 位精度落库即被截断（0.21235625 → 0.212356）。这个比例要乘 44,000
+ * 这样的基数，6 位会让基本电费差 1 分（9,343.66 vs 标准 9,343.67）。
+ * 只有拿不到两端电量时才退回固化值。
+ */
 const ratioOfMonth = (month: string, bill: any, rec: any): number => {
-  const fixed = Number(rec?.ratio) || 0
-  if (fixed > 0) return fixed
   const billKwh = Number(bill?.item?.total_kwh) || 0
-  if (billKwh <= 0) return 0
-  const star = elecRows.value
+  const star = Number(rec?.total_kwh) || elecRows.value
     .filter((r) => r.month === month && r.meter_type === 'time' && r.use_unit === OWNER_UNIT)
     .reduce((sum, r) => sum + (Number(r.usage) || 0), 0)
-  return star > 0 ? Math.round((star / billKwh) * 1e6) / 1e6 : 0
+  if (billKwh > 0 && star > 0) return Math.round((star / billKwh) * 1e8) / 1e8
+  return Number(rec?.ratio) || 0
 }
 
 const buildRows = () => {
@@ -1373,6 +1416,12 @@ const buildRows = () => {
         // 现在统一走 billRawAmountOf（与列表取值同一个 resolveFeeRow）。
         const billAmount = participating && key ? billRawAmountOf(ctx, key, grp) : 0
         itemRaw.set(ckey, billAmount)
+        // 平段按度项（非分时）的浮窗要写「工业总电量 × 单价」，
+        // 不能写「账单金额 × 比例」—— 比例法对按度项是错的口径。
+        const plainQty = participating && key && !(itemPeriods.get(ckey) || []).length
+          ? Number(ctx.starTotal) || 0
+          : 0
+        const plainRate = plainQty ? Number(matchBillFeeItems(ctx, key, grp)[0]?.rate) || 0 : 0
         itemTips[tenantItemColKey(it)] = tenantItemTip({
           itemName: String(it.item_name || key),
           sourceCategory: it.source_category || '市电账单',
@@ -1381,6 +1430,8 @@ const buildRows = () => {
           value: v,
           participating,
           directSum: String(it.value_mode || '').trim() === 'direct_sum',
+          qty: plainQty,
+          unitRate: plainRate,
         })
       }
       // 大类汇总列：值 = 成员分摊后金额之和；同时备好展开明细（与单元格同源）。
@@ -1412,16 +1463,25 @@ const buildRows = () => {
             }
             continue
           }
+          // 平段按度项：计费数量 = 工业总电量、单价 = 账单该项单价，
+          // 与列表单元格、悬浮窗同一口径（不再写「账单原值 × 比例」）。
+          // members 的 key 形如 `item_(4)系统运行费|煤电容量电费`：解析出大类与子项名
+          const rawKey = String(m.key || '').replace(/^item_/, '')
+          const barAt = rawKey.indexOf('|')
+          const plainGroup = barAt > 0 ? rawKey.slice(0, barAt) : ''
+          const plainKey = barAt > 0 ? rawKey.slice(barAt + 1) : rawKey
+          const plainUnit = Number(matchBillFeeItems(ctx, plainKey, plainGroup)[0]?.rate) || 0
+          const plainQty = plainUnit ? Number(ctx.starTotal) || 0 : 0
           rows.push({
             key: m.key,
             label: m.label,
             period: '—',
-            qty: null,
-            price: null,
+            qty: plainQty || null,
+            price: plainUnit || null,
             raw: Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
             ratio,
             // 计算方式严格区分两种口径，与悬浮窗一致
-            method: '账单原值 × 分摊比例',
+            method: plainUnit ? '工业总电量 × 单价' : '账单原值 × 分摊比例',
             value: Math.round(v * 100) / 100,
           })
         }
@@ -1660,7 +1720,8 @@ const num2 = (v: any): string => {
 /** 数值收敛（两位），供打印口径复用。 */
 const round2Num = (v: any): number => {
   const n = Number(v)
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
+  // +1e-6 抵消浮点误差（126600 × 0.006225 在 IEEE754 里是 788.0849999999999）
+  return Number.isFinite(n) ? Math.round(n * 100 + 1e-6) / 100 : 0
 }
 const rateText = (v: any): string => {
   const n = Number(v)
@@ -1733,7 +1794,12 @@ function statementMeta(rows: any[], unit: string, months: string[], ratio: numbe
     { label: '账单周期', value: months.join('、') },
     { label: '使用单位', value: unit },
     { label: '计费方式', value: isOwnerView.value ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
-    { label: '分摊比例', value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
+    {
+      label: '分摊比例',
+      // 需求原文要求带适用范围：这个比例**只**作用于基本电费与力调电费，
+      // 其余分项按分时电量或工业总电量 × 单价算，不乘它。
+      value: isOwnerView.value ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%（仅基本电费、功率因素调整电费按比例）` : '—'),
+    },
     { label: '账单户号', value: String(billIndex.value.get(months[0])?.item?.account_no || '—') },
     // 应收合计必须与列表「合计应付」逐分相等：
     //   业主 = 电 + 水 + 气（三块都有列）；
@@ -1800,7 +1866,14 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
       // （2026-08），按行打印会打出 0.00 的假明细。
       const fixed = fixedBillFeeOf(ctx, key)
       if (fixed !== null) {
-        const v = round2Num(fixed * unitRatio)
+        // 按「原金额 × 工业电量 ÷ 账单电量」折算，**不要** × 8 位 ratio：
+        // 44,000 × 0.21235625 = 9,343.675 → 9,343.68，而标准表是 9,343.67
+        // （精确除法 44,000 × 126,600 ÷ 596,168 = 9,343.6749）。
+        const starQty = Number(ctx.starTotal) || 0
+        const billQty = Number(ctx.bill?.item?.total_kwh) || 0
+        const v = starQty > 0 && billQty > 0
+          ? round2Num((fixed * starQty) / billQty)
+          : round2Num(fixed * unitRatio)
         if (!v) continue
         sum += v
         rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
@@ -1828,12 +1901,27 @@ function feeTableOf(month: string, unitRatio: number, prefix: string): PrintTabl
       }
       const billRows = matchBillFeeItems(ctx, key, String(it.category || ''))
       if (billRows.length) {
-        // 命中账单行：保留尖/峰/平/谷 分时段明细，逐行按比例折算
+        // 平段按度计费（零售损益分摊 / 上网环节线损 / 系统运行费 / 政府性基金）：
+        //   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
+        //
+        // 旧实现在这里逐行写「账单金额 × 比例、账单数量 × 比例」，
+        // 打印出来是「124,701.81 度 / 4,434.02 元」，而 Excel 是
+        // 「126,600 度 / 4,501.52 元」—— 账单按度项的计费电量是 587,230
+        // （全厂 596,168 − 居民 8,938），比例法系统性少算。
+        const qty = Number(ctx.starTotal) || 0
+        const unit = Number(billRows[0]?.rate) || 0
+        if (qty > 0 && unit) {
+          const fee = round2Num(qty * unit)
+          sum += fee
+          rows.push([label(cat, String(billRows[0].name || key).trim()), '—', num2(qty), rateText(unit), money2(fee)])
+          continue
+        }
+        // 无单价可用（纯金额返还类）：退回逐行比例折算
         for (const br of billRows) {
           const fee = (Number(br.fee) || 0) * unitRatio
-          const qty = (Number(br.qty) || 0) * unitRatio
+          const qty2 = (Number(br.qty) || 0) * unitRatio
           sum += fee
-          rows.push([label(cat, String(br.name || key).trim()), br.period || '—', qty ? num2(qty) : '—', rateText(br.rate), money2(fee)])
+          rows.push([label(cat, String(br.name || key).trim()), br.period || '—', qty2 ? num2(qty2) : '—', rateText(br.rate), money2(fee)])
         }
       } else {
         // 账单里查无此行：按比例折算概况字段，避免整行丢失

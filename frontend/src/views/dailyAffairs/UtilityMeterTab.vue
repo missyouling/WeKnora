@@ -213,7 +213,7 @@ import {
   createUtilityKind,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
-import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -319,9 +319,17 @@ const colTypeOf = (c: ColDef): string => {
 const summaryColumns = computed<SummaryColumn[]>(() =>
   visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: colTypeOf(c) })),
 )
-const footData = computed(() => (displayRows.value.length
-  ? [buildFootRow(summaryColumns.value, displayRows.value)]
-  : []))
+/**
+ * 表尾统计范围：**勾选优先，否则全部可见行**（第 20 轮）。
+ * 勾选后汇总收敛到所选行，首列文案切成「已选 K 条」。
+ */
+const summaryScope = computed(() =>
+  summaryScopeRows(displayRows.value, selectedKeys.value, (r: any) => String(r?.rowKey ?? '')),
+)
+const footData = computed(() => {
+  const { rows, selectedCount } = summaryScope.value
+  return rows.length ? [buildFootRow(summaryColumns.value, rows, { selectedCount })] : []
+})
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
   // 与发票管理一致：[复选框] → [序号] → 业务列。

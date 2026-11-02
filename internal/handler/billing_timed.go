@@ -13,8 +13,8 @@ package handler
 //   2) 计费电量 c = u + 损耗 + 加减电量（账单「电量明细」的变损+线损与加减，
 //      按账单口径整体落在第一块表上，其余分表不加成 —— 与人工核算表一致）；
 //   3) 差额电量 ΔQ = 星达分表总电量 - 各分表抄见电量合计，
-//      按各表各时段计费电量占 C总 的比例分摊：d = ΔQ × c / C总；
-//   4) 基准电量 b = c + d，分时电费 = b × 时段单价（尖/峰/平/谷各自单价）。
+//      先在 N 块表间均分（ΔQ/N），每块表再按自己内部各时段**抄见电量**占比分摊；
+//   4) 基准电量 b = c + d，分时电费 = Σ(逐表逐段 round2(b × 时段单价))。
 
 // timedPeriodOrder 分时时段顺序（尖 → 峰 → 平 → 谷）。
 var timedPeriodOrder = []string{"deep", "peak", "flat", "valley"}
@@ -35,7 +35,12 @@ type timedMeterRow struct {
 	Adjust  float64
 	BillKwh float64 // 计费电量 c
 	DiffKwh float64 // 差额分摊电量 d
-	BaseKwh float64 // 基准电量 b = c + d
+	BaseKwh float64 // 基准电量 b = c + d（两位小数，用于展示与 quantity）
+	// BaseExact 基准电量（**不取整**）。
+	//
+	// 分时电费按「逐表逐段 round2(b × 单价) 后相加」计算（与人工 Excel 逐格一致）。
+	// 若先把各表电量汇总再乘单价，四段累加会出现 1 分尾差。
+	BaseExact float64
 }
 
 // timedAllocation 整月分时电量分摊结果。
@@ -87,16 +92,35 @@ func allocateTimedKwh(meters []timedMeterUsage, loss, adjust map[string]float64,
 		}
 	}
 	// 2) 差额分摊 + 基准电量
+	//
+	// **口径（对齐人工 Excel 核算表）**：差额电量先在 N 块分表间**均分**，
+	// 每块表再按自己内部各时段**抄见电量**占比分摊这 1/N。
+	//
+	// 旧实现是「ΔQ × 该行计费电量 / 全部行计费电量合计」，等价于把三块表
+	// 当成一个大池子按电量比例分 —— 用电多的表分到的差额也多。
+	// 2026-09 持睿实测：旧算法尖峰 5,085.43 度，Excel 是 5,024.28 度，
+	// 四段合计 124,822.91 vs 124,767.36，零售交易电费因此差 24.22 元。
+	deltaPerMeter := 0.0
+	if len(meters) > 0 {
+		deltaPerMeter = deltaQ / float64(len(meters))
+	}
 	for i := range out.Rows {
 		rows := out.Rows[i]
+		// 该表抄见电量合计 = 差额分摊的分母（不是计费电量：损耗只落在表 1，
+		// 用计费电量会让表 1 的分摊占比虚高）
+		usageTotal := 0.0
+		for _, r := range rows {
+			usageTotal += r.Usage
+		}
 		for j := range rows {
 			c := rows[j].BillKwh
 			d := 0.0
-			if out.TotalBill > 0 {
-				d = deltaQ * c / out.TotalBill
+			if usageTotal > 0 {
+				d = deltaPerMeter * rows[j].Usage / usageTotal
 			}
 			rows[j].DiffKwh = round2(d)
 			rows[j].BaseKwh = round2(c + d)
+			rows[j].BaseExact = c + d
 			out.PeriodBase[rows[j].Period] = round2(out.PeriodBase[rows[j].Period] + rows[j].BaseKwh)
 			out.PeriodBaseExact[rows[j].Period] += c + d
 		}

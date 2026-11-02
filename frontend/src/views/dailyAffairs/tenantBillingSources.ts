@@ -94,7 +94,14 @@ const num = (v: any) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
 }
-const round2 = (v: number) => Math.round(v * 100) / 100
+/**
+ * 两位小数（四舍五入）。
+ *
+ * 加 1e-6 是为了抵消浮点表示误差：126600 × 0.006225 在 IEEE754 里是
+ * 788.0849999999999，直接 Math.round(v*100) 会得到 788.08，
+ * 而 Excel 与业务预期都是 788.09（政府性基金「库区移民基金」真机对账差 1 分）。
+ */
+const round2 = (v: number) => Math.round(v * 100 + 1e-6) / 100
 
 /**
  * 名称归一（用于费用分项匹配）：在 `norm` 之上再去掉括号、统一同义词。
@@ -167,6 +174,22 @@ export interface SourceResolveContext {
   timedMeters?: Array<{ name: string; usage: Record<string, number> }>
   /** 该月差额电量 ΔQ = 星达分表总电量 − 各分表抄见合计（取自已生成账单 line_loss）。 */
   deltaQ?: number
+  /**
+   * 工业总电量（星达配电分表总电量）＝ 账单生成时的 total_kwh（2026-09 为 126,600）。
+   *
+   * 平段按度计费子项（零售损益分摊 / 上网环节线损 / 系统运行费 / 政府性基金）
+   * 的计费数量一律取这个值乘账单单价，**不能**用账单原金额 × 分摊比例：
+   * 账单按度项的计费电量是 587,230 度（全厂 596,168 − 居民 8,938），
+   * 用它当分母的比例乘回去会系统性少算（零售损益 4,434.02 vs 标准 4,501.52）。
+   */
+  starTotal?: number
+  /**
+   * 当月分摊比例 = 工业总电量 ÷ 市电账单总电量（2026-09 为 0.21235625）。
+   *
+   * 账单电量明细的损耗/加减电量是全厂口径，进分时折算前必须乘这个比例。
+   * 不传则按 1 处理（只取账单原值）。
+   */
+  ratio?: number
 }
 
 /** 单价类字段：不能直接求和，按 金额÷用量 加权。 */
@@ -507,6 +530,8 @@ export interface TimedMeterRow {
   billKwh: number
   diffKwh: number
   baseKwh: number
+  /** 基准电量（未取整）：分时电费按逐表逐段 round2 后相加，与 Excel 逐格一致。 */
+  baseExact: number
 }
 export interface TimedAllocation {
   totalUsage: number
@@ -519,17 +544,29 @@ export interface TimedAllocation {
   rows: TimedMeterRow[]
 }
 
-/** 从市电账单「电量明细」取四段变损+线损 / 加减电量（按 period 键）。 */
-export function billPeriodLossAdjust(bill: any): { loss: Record<string, number>; adjust: Record<string, number> } {
+/**
+ * 从市电账单「电量明细」取四段变损+线损 / 加减电量（按 period 键）。
+ *
+ * **必须乘分摊比例**：账单电量明细是全厂口径（尖峰线损 13 度、加减 -1341 度），
+ * 持睿只承担 ratio 那一份。2026-09 标准表：13 × 0.21235625 = 2.76、
+ * -1341 × 0.21235625 = -284.77 → 尖峰计费电量 5200 + 2.76 - 284.77 = 4,917.99。
+ *
+ * `ratio` 缺省为 1（不折算），保持「只看账单原始值」的调用方可控。
+ */
+export function billPeriodLossAdjust(
+  bill: any,
+  ratio = 1,
+): { loss: Record<string, number>; adjust: Record<string, number> } {
   const loss: Record<string, number> = {}
   const adjust: Record<string, number> = {}
+  const k = Number.isFinite(ratio) && ratio > 0 ? ratio : 0
   const readings: any[] = bill?.item?.meter_readings || []
   for (const mr of readings) {
     const t = String(mr?.meter_type || '')
     const p = t.includes('尖') ? 'deep' : t.includes('峰') ? 'peak' : t.includes('平') ? 'flat' : t.includes('谷') ? 'valley' : ''
     if (!p) continue
-    loss[p] = round2((Number(mr?.trans_loss) || 0) + (Number(mr?.line_loss) || 0))
-    adjust[p] = round2(Number(mr?.adjust) || 0)
+    loss[p] = round2(((Number(mr?.trans_loss) || 0) + (Number(mr?.line_loss) || 0)) * k)
+    adjust[p] = round2((Number(mr?.adjust) || 0) * k)
   }
   return { loss, adjust }
 }
@@ -555,13 +592,27 @@ export function allocateTimedKwh(
       const a = i === 0 ? round2(Number(adjust?.[p]) || 0) : 0
       const c = round2(u + l + a)
       out.totalBill = round2(out.totalBill + c)
-      rows.push({ period: p, usage: u, loss: l, adjust: a, billKwh: c, diffKwh: 0, baseKwh: 0 })
+      rows.push({ period: p, usage: u, loss: l, adjust: a, billKwh: c, diffKwh: 0, baseKwh: 0, baseExact: 0 })
     }
   })
-  for (const r of rows) {
-    const d = out.totalBill > 0 ? (out.deltaQ * r.billKwh) / out.totalBill : 0
+  // 差额分摊：**先在 N 块表间均分，再按每块表内部各时段抄见电量占比分摊**。
+  //
+  // 与后端 billing_timed.go 的 allocateTimedKwh 一一对应。旧实现
+  // 「ΔQ × 该行计费电量 / 全部行计费电量合计」把三块表当成一个大池子按电量分，
+  // 用电多的表占便宜（2026-09：尖峰 5,085.43 vs Excel 5,024.28，
+  // 四段合计 124,822.91 vs 124,767.36，零售交易电费差 24.22 元）。
+  const meterCount = meters.length || 1
+  const deltaPerMeter = out.deltaQ / meterCount
+  for (let mi = 0; mi < rows.length; mi += 1) {
+    // 每块表在 rows 里是连续 TIMED_PERIODS.length 行，按块切分求该表抄见合计
+    const start = mi - (mi % TIMED_PERIODS.length)
+    const blockRows = rows.slice(start, start + TIMED_PERIODS.length)
+    const usageTotal = blockRows.reduce((s2, br) => s2 + br.usage, 0)
+    const r = rows[mi]
+    const d = usageTotal > 0 ? (deltaPerMeter * r.usage) / usageTotal : 0
     r.diffKwh = round2(d)
     r.baseKwh = round2(r.billKwh + d)
+    r.baseExact = r.billKwh + d
     out.periodBase[r.period] = round2((out.periodBase[r.period] || 0) + r.baseKwh)
     out.periodBaseExact[r.period] = (out.periodBaseExact[r.period] || 0) + r.billKwh + d
   }
@@ -602,16 +653,27 @@ export function resolveTimedItemFee(
   if (!isTimed) return null
   const meters = ctx.timedMeters || []
   if (!meters.length) return null
-  const { loss, adjust } = billPeriodLossAdjust(ctx.bill)
+  const { loss, adjust } = billPeriodLossAdjust(ctx.bill, Number(ctx.ratio) || 1)
   const alloc = allocateTimedKwh(meters, loss, adjust, Number(ctx.deltaQ) || 0)
   const periods = TIMED_PERIODS
     .filter((p) => rates[p])
-    .map((p) => ({
-      period: TIMED_PERIOD_LABELS[p],
-      qty: alloc.periodBase[p] || 0,
-      rate: rates[p],
-      fee: round2((alloc.periodBaseExact[p] || 0) * rates[p]),
-    }))
+    .map((p) => {
+      // **逐表逐段** round2 后相加（与人工 Excel 逐格一致）。
+      // 先汇总各表电量再乘单价会差 1 分：2026-09 峰 6478.51+6859.73+2203.12
+      // = 15541.36，而 35645.33 × 0.436 = 15541.36 只在本次恰好相同。
+      let fee = 0
+      for (let mi = 0; mi < alloc.rows.length; mi += TIMED_PERIODS.length) {
+        const block = alloc.rows.slice(mi, mi + TIMED_PERIODS.length)
+        const hit = block.find((r) => r.period === p)
+        if (hit) fee = round2(fee + round2(hit.baseExact * rates[p]))
+      }
+      return {
+        period: TIMED_PERIOD_LABELS[p],
+        qty: alloc.periodBase[p] || 0,
+        rate: rates[p],
+        fee,
+      }
+    })
   const value = round2(periods.reduce((s, p) => s + p.fee, 0))
   return { value, allocation: alloc, rates, periods }
 }
@@ -625,7 +687,48 @@ export function resolveTenantItemValue(item: any, ctx: SourceResolveContext, rat
   if (category === '市电账单' && mode === 'fee_row') {
     // 子项自带的大类（如 `(6)政府性基金及附加-工商业`）就是匹配范围：
     // 少了它，工商业与居民的同名基金会被一起累加（农网还贷 11744.6+178.76）。
-    const fee = resolveFeeRow(ctx, key, item?.category || item?.source_group || '')
+    const group = item?.category || item?.source_group || ''
+    // 固定金额分项（基本电费 / 力调电费）：**原金额 × 工业电量 ÷ 账单电量**。
+    //
+    // 不能写成 × ratio：ratio 是 numeric(18,6)/8 位近似，
+    // 44,000 × 0.21235625 = 9,343.675 → 9,343.68，而精确除法得 9,343.6749
+    // → 9,343.67（标准表）。这一分钱会一路传到「工业电费」与「电费合计」。
+    const fixedRaw = fixedBillFee(ctx, key)
+    if (fixedRaw !== null) {
+      const starQty = Number(ctx.starTotal) || 0
+      const billQty = Number(ctx.bill?.item?.total_kwh) || 0
+      if (starQty > 0 && billQty > 0) return round2((fixedRaw * starQty) / billQty)
+      return round2(fixedRaw * (Number(ratio) || 0))
+    }
+    // **平段按度计费**：计费数量 = 工业总电量（126,600），金额 = 电量 × 账单单价。
+    //
+    // 不能用「账单原金额 × 分摊比例」：账单按度项的计费电量是 587,230 度
+    // （全厂 596,168 − 居民 8,938），拿它当分母的比例乘回去会系统性少算。
+    // 2026-09 零售损益分摊：比例法 4,434.02，标准表 4,501.52（差 67.5 元）。
+    const qty = Number(ctx.starTotal) || 0
+    if (valueMode !== 'direct_sum' && qty > 0) {
+      const rows = matchBillFeeItems(ctx, key, group)
+      let rate = 0
+      for (const r of rows) {
+        const rr = Number(r?.rate) || 0
+        if (rr) { rate = rr; break }
+        const rq = Number(r?.qty) || 0
+        const rf = Number(r?.fee) || 0
+        if (rq > 0 && rf !== 0) { rate = rf / rq; break }
+      }
+      if (rate) return round2(qty * rate)
+    }
+    // 纯金额返还类（账单里 rate=0 且 qty=0）不计入分摊：它们是全厂冲抵项，
+    // 没有计量口径可折算到单个租户头上。2026-09「中长期偏差回收返还」等三条
+    // 曾经被按比例硬摊，给持睿凭空算出 -7,648.34，工业电费因此比标准表少 7,648。
+    if (valueMode !== 'direct_sum') {
+      const rows2 = matchBillFeeItems(ctx, key, group)
+      // 只有「账单**显式**给出了 qty 且全为 0」才算纯金额返还项。
+      // 缺失 qty 字段的历史/简化数据不能这么判 —— 那会让所有只有 fee 的分项变成 0。
+      const hasQtyField = rows2.some((r) => r && r.qty !== undefined && r.qty !== null)
+      if (rows2.length && hasQtyField && rows2.every((r) => !Number(r?.qty))) return 0
+    }
+    const fee = resolveFeeRow(ctx, key, group)
     return valueMode === 'direct_sum' ? fee : round2(fee * (Number(ratio) || 0))
   }
   const v = resolveSourceValue({ category, field: key, mode: mode === 'fee_row' ? 'fee_row' : 'field' }, ctx)

@@ -134,16 +134,12 @@
                     draggable="true" @dragstart="onFieldDragStart(row.fd)" @dragover.prevent
                     @drop.prevent="onFieldDrop(row.fd)" @dragend="onFieldDragEnd">
                     <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
-                    <!-- 来源徽标（仅租户分组）：派生字段 / 分摊子项 / 分摊汇总·细项 N。
-                         放在拖拽手柄与字段名之间，不占字段名输入框的宽度（
-                         输入框 flex:1 会自适应让位），因此不会把名称挤成「账...」。 -->
-                    <span v-if="isTenantGroupActive" class="fc-origin-badge"
-                      :class="`fc-origin-badge--${originBadgeOf(row.fd).kind}`"
-                      :title="originBadgeOf(row.fd).kind === 'derived'
-                        ? '派生字段：由费用清单自身核算逻辑算出'
-                        : '分摊子项：来自「清单设置 → 分摊子项」'">
-                      {{ originBadgeOf(row.fd).text }}
-                    </span>
+                    <!-- 来源不再逐行挂徽标（第 20 轮）：.field-config-row 是与 .field-colhead
+                         严格同构的 CSS Grid（拖拽 | 字段名 | 类型 | 宽度 | 默认表头 | 启用 | 操作）。
+                         在这里多插一个独立子节点就会把后面所有列整体右移一格 ——
+                         字段名输入框被挤进 90px 的类型列、⋮ 掉到第二行左侧（真机截图）。
+                         来源改由上方「派生字段 / 分摊子项」区块标题表达；
+                         分摊汇总的「细项 N」本来就在 .fc-name-wrap--group 内部（fc-child-badge）。 -->
                     <!-- items 字段：字段名即展开开关，点击在下方展开子项 -->
                     <button v-if="row.fd?.dataType === 'items'" type="button" class="fc-name fc-name-toggle"
                       :title="`${row.fd.label || fieldLabelOf(row.fd)} · 点击${isSubFieldsOpen(row.fd) ? '收起' : '展开'}明细子项`"
@@ -438,11 +434,7 @@ import {
   type TenantApportionItem,
 } from './billingFieldGroups'
 import { listBillingTenants, getBillingTenant, saveBillingTenantItems } from '@/api/knowledge-base'
-import {
-  applyFieldsToItems,
-  originBadgeOf,
-  splitFieldsByOrigin,
-} from './tenantGroupSync'
+import { applyFieldsToItems, splitFieldsByOrigin } from './tenantGroupSync'
 import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import SourceFieldPicker from './SourceFieldPicker.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
@@ -2406,31 +2398,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     font-variant-numeric: tabular-nums;
   }
   .fc-origin-hint { color: var(--td-text-color-placeholder); }
-
-  /* 每行的来源徽标：占固定视觉宽度，不挤压字段名输入框 */
-  .fc-origin-badge {
-    flex: none;
-    max-width: 96px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    padding: 0 6px;
-    height: 20px;
-    line-height: 20px;
-    border-radius: 4px;
-    font-size: 11px;
-    text-align: center;
-
-    &--derived {
-      background: var(--td-bg-color-secondarycontainer);
-      color: var(--td-text-color-secondary);
-    }
-    &--item, &--feeGroup {
-      background: var(--td-brand-color-1, #e8f8f0);
-      color: var(--td-brand-color-7, #046a37);
-    }
-    &--feeGroup { font-weight: 600; }
-  }
 
   .field-config-row {
     display: grid;

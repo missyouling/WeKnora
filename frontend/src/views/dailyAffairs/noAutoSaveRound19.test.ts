@@ -257,16 +257,30 @@ test('topLevelFieldCount：折叠在大类里的成员不重复计入', () => {
   assert.equal(topLevelFieldCount(fields), 4, 'month + ind_fee + 独立项 + 大类 = 4')
 })
 
-test('字段定义面板：租户分组插「派生字段 / 分摊子项」区块标题 + 每行来源徽标', () => {
+test('字段定义面板：租户分组插「派生字段 / 分摊子项」区块标题', () => {
   const src = read('FleetCertPanel.vue')
   assert.match(src, /const fieldRows = computed/, '必须有行序列（标题 + 字段行）')
   assert.match(src, /isTenantGroupActive/, '必须只对租户分组生效')
   assert.match(src, /startsWith\('tenant:'\)/, '租户分组键必须以 tenant: 开头')
   assert.match(src, /title: '派生字段'/, '必须有「派生字段」区块标题')
   assert.match(src, /title: '分摊子项'/, '必须有「分摊子项」区块标题')
-  assert.match(src, /originBadgeOf\(row\.fd\)\.text/, '每行必须渲染来源徽标')
   assert.match(src, /fc-origin-block--/, '必须有区块样式类')
-  assert.match(src, /fc-origin-badge--/, '必须有徽标样式类')
+})
+
+/**
+ * `.field-config-row` 必须与 `.field-colhead` 严格同构（第 20 轮真机回归）。
+ *
+ * 现象：在 7 列 Grid 里多插一个独立 `<span class="fc-origin-badge">` 子节点，
+ * 后面所有列整体右移一格 —— 字段名输入框被挤进 90px 的类型列、
+ * ⋮ 掉到第二行左下角（用户截图）。来源改由上方区块标题表达。
+ */
+test('字段行严格 7 列：不得再有独立来源徽标节点', () => {
+  const src = read('FleetCertPanel.vue')
+  assert.ok(!/fc-origin-badge/.test(src), '独立来源徽标节点必须移除（会破坏 Grid 列数）')
+  // 行首必须是拖拽手柄，紧接着就是字段名/类型/宽度/默认表头/启用/操作
+  const rowStart = src.slice(src.indexOf('class="field-config-row"'), src.indexOf('class="field-config-row"') + 700)
+  assert.match(rowStart, /^class="field-config-row"[\s\S]{0,400}?<span class="fc-drag"/, '行首必须是拖拽手柄')
+  assert.ok(!/fc-origin-badge/.test(rowStart), '字段行内不得出现徽标')
 })
 
 test('胶囊字段数按顶层行重算（不再把折叠成员计入）', () => {

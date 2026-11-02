@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -704,7 +704,7 @@ func (h *UtilityHandler) UpdateUtilityMeterRecord(c *gin.Context) {
 					"unit_price": it.UnitPrice, "garbage_fee": it.GarbageFee,
 					"secondary_water_fee": it.SecondaryWaterFee, "sewage_fee": it.SewageFee,
 					"subsidy": it.Subsidy,
-					"usage": it.Usage, "amount": it.Amount, "remark": it.Remark,
+					"usage":   it.Usage, "amount": it.Amount, "remark": it.Remark,
 					"updated_at": now,
 				}).Error; err != nil {
 					return err
@@ -1131,15 +1131,15 @@ func (h *UtilityHandler) UpdateUtilityTariffRule(c *gin.Context) {
 		res := tx.Model(&types.UtilityTariffRule{}).
 			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
 			Updates(map[string]interface{}{
-				"name":            req.Name,
-				"months":          req.Months,
-				"deep_peak_rate":  req.DeepPeakRate,
-				"peak_rate":       req.PeakRate,
-				"flat_rate":       req.FlatRate,
-				"valley_rate":     req.ValleyRate,
-				"is_default":      req.IsDefault,
-				"sort_order":      req.SortOrder,
-				"updated_at":      now,
+				"name":           req.Name,
+				"months":         req.Months,
+				"deep_peak_rate": req.DeepPeakRate,
+				"peak_rate":      req.PeakRate,
+				"flat_rate":      req.FlatRate,
+				"valley_rate":    req.ValleyRate,
+				"is_default":     req.IsDefault,
+				"sort_order":     req.SortOrder,
+				"updated_at":     now,
 			})
 		if res.Error != nil {
 			return res.Error
@@ -1290,9 +1290,15 @@ func computeMeterRecord(r *types.UtilityMeterRecord) {
 // 必须用 math.Round：旧实现 `int64(v*100+0.5)` 对**负数**是向零截断，
 // -276.14 → -27613.99 → 截断后 -276.13（少 1 分），
 // 分摊/加减电量全是负数，于是分时电费整体偏大（真机：计费电量合计多 0.04 度）。
+// round2 两位小数（四舍五入）。
+//
+// 加 1e-6 抵消浮点表示误差：126600 × 0.006225 在 IEEE754 里是
+// 788.0849999999999，直接 math.Round(v*100) 会得到 788.08，
+// 而账单/Excel 的预期是 788.09（政府性基金「库区移民基金」真机对账差 1 分）。
 func round2(v float64) float64 {
-	return math.Round(v*100) / 100
+	return math.Round(v*100+1e-6) / 100
 }
+
 // electricityDefaultGroupFields 返回电费某一分组的默认字段集。
 func electricityDefaultGroupFields(group string) []utilityFieldDef {
 	g := group

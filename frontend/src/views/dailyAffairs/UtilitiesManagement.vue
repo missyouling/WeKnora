@@ -686,7 +686,7 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { buildUtilityBillStatementDoc } from './energyBillStatements'
-import { buildFootRow, footSpanOf, type SummaryColumn } from './listSummary'
+import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -778,9 +778,17 @@ const visibleColDefs = computed(() => columnDefs.value.filter(c => visibleColKey
 const summaryColumns = computed<SummaryColumn[]>(() =>
   visibleColDefs.value.map((c) => ({ key: c.key, label: c.label, fieldType: c.fieldType })),
 )
-const footData = computed(() => (displayRows.value.length
-  ? [buildFootRow(summaryColumns.value, displayRows.value)]
-  : []))
+/**
+ * 表尾统计范围：**勾选优先，否则全部可见行**（第 20 轮）。
+ * 勾选后汇总收敛到所选行，首列文案切成「已选 K 条」。
+ */
+const summaryScope = computed(() =>
+  summaryScopeRows(displayRows.value, selectedRowKeys.value, (r: any) => String(r?.rowKey ?? '')),
+)
+const footData = computed(() => {
+  const { rows, selectedCount } = summaryScope.value
+  return rows.length ? [buildFootRow(summaryColumns.value, rows, { selectedCount })] : []
+})
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
   // 列结构与发票/合同/制度/通知逐项一致：
