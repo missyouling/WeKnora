@@ -4,7 +4,13 @@
 // 放进 .vue 里既没法单测，又会诱使消费方在模板里写业务分支。
 // 页面只负责声明 `FilterFieldSpec[]`，控件长什么样由中台决定。
 
-export type FilterFieldType = 'keyword' | 'select' | 'date-range' | 'number-range' | 'month'
+// text：自由输入的单字段筛选（如按车牌号 `渝A75R1C` 筛通行费发票）。
+//
+// 为什么不用 select：分类专属字段的候选值可能成百上千（车牌号），前端没有
+// 全量候选（列表只加载当前页），下拉会「选不到想选的值」。自由输入 + 后端
+// 结构化包含匹配才是正确形态 —— 与关键词的区别是它只匹配指定字段，
+// 不会误命中备注里的同串。
+export type FilterFieldType = 'keyword' | 'select' | 'text' | 'date-range' | 'number-range' | 'month'
 
 export interface FilterFieldSpec {
   /** 与 FilterState 的键一一对应 */
@@ -27,6 +33,7 @@ export type FilterState = Record<string, any>
 export const EMPTY_FILTER_VALUE: Record<FilterFieldType, any> = {
   keyword: '',
   select: '',
+  text: '',
   'date-range': [],
   'number-range': [],
   month: '',
@@ -35,6 +42,7 @@ export const EMPTY_FILTER_VALUE: Record<FilterFieldType, any> = {
 export const DEFAULT_FILTER_ICONS: Record<FilterFieldType, string> = {
   keyword: 'search',
   select: 'file',
+  text: 'filter',
   'date-range': 'time',
   'number-range': 'calculator',
   month: 'calendar',

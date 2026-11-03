@@ -5,7 +5,6 @@ import {
   EMPTY_DETAIL_FORM,
   numToStr,
   toNumber,
-  sanitizeNum,
   tagsToText,
   tagsFromText,
   collectRemarkParts,
@@ -50,8 +49,6 @@ test('基础清洗：空值与脏数据都不炸', () => {
   assert.equal(toNumber('abc'), undefined)
   assert.equal(toNumber('12.5'), 12.5)
   assert.equal(toNumber(0), 0)
-  assert.equal(sanitizeNum('1.2.3'), '1.23', '只保留第一个小数点')
-  assert.equal(sanitizeNum('12a3'), '123')
 })
 
 test('标签：数组↔换行文本互逆，空行丢弃', () => {

@@ -15,12 +15,9 @@
     </div>
 
     <!-- KB 不存在：空状态 -->
-    <div v-else-if="!kbId" class="empty-area">
-      <t-empty description="尚未创建「日常事务-发票」知识库">
-        <template #image><t-icon name="file" size="64px" /></template>
-      </t-empty>
-      <t-button theme="primary" @click="wizardVisible = true">创建发票知识库</t-button>
-    </div>
+    <BusinessEmptyState v-else-if="!kbId" icon="file"
+      description="尚未创建「日常事务-发票」知识库"
+      action-text="创建发票知识库" @action="wizardVisible = true" />
 
     <!-- KB 存在：主界面 -->
     <div v-else class="invoice-main biz-main">
@@ -35,11 +32,71 @@
           <!-- 筛选工具栏走中台 BusinessFilterBar：4 个筛选器改为 FilterFieldSpec 声明 -->
           <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
             :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
-            settings-text="设置" :primary-action="{ text: '上传发票', icon: 'upload' }" hide-batch-bar
+            settings-text="设置" :primary-action="{ text: '上传发票', icon: 'upload' }"
             @columns-change="onVisibleColKeysChange" @reset-columns="resetColumns"
             @select-all-columns="selectAllColumns" @filter-change="applyFilter"
             @settings="invoiceSettingsVisible = true" @primary="uploadVisible = true"
-            @clear-selection="clearSelection" />
+            @clear-selection="clearSelectionSafe">
+            <!-- 批量操作走中台 batch-actions slot：浮条外壳（fixed 定位 / 已选计数 /
+                 清除）由 BusinessListToolbar 提供，本页只声明按钮。 -->
+            <template #batch-actions>
+              <!-- 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认） -->
+              <t-popconfirm theme="warning"
+                :content="reparseConfirmText"
+                :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleReparse">
+                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="!selectedIds.length" @click.stop>
+                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                  重新解析
+                </t-button>
+              </t-popconfirm>
+              <!-- 重新提取：大模型/OCR 按最新提取规则重新提取全部字段（支持多文件批量，二次确认） -->
+              <t-popconfirm theme="warning"
+                :content="extractConfirmText"
+                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleFileExtract">
+                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="!selectedIds.length" @click.stop>
+                  <template #icon><t-icon name="cloud-upload" size="14px" /></template>
+                  重新提取
+                </t-button>
+              </t-popconfirm>
+              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+                <template #icon><t-icon name="print" size="14px" /></template>
+                单页打印
+              </t-button>
+              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+                <template #icon><t-icon name="file-paste" size="14px" /></template>
+                列表打印
+              </t-button>
+              <!-- 删除确认：单气泡内嵌二选一（多页文件时「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
+              <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+                :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+                <template #content>
+                  <div class="del-pop-body">
+                    <div v-if="delMultiCount > 0" class="del-pop-title">
+                      选中的发票涉及 {{ delMultiCount }} 份多页文件，请选择删除范围：
+                    </div>
+                    <div v-else class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 条发票记录吗？删除后不可恢复。</div>
+                    <div class="del-pop-actions">
+                      <template v-if="delMultiCount > 0">
+                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除此页</t-button>
+                        <t-button size="small" theme="danger" variant="outline" @click="confirmFileDelete">删除文件</t-button>
+                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                      </template>
+                      <template v-else>
+                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除</t-button>
+                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <t-button theme="danger" variant="outline" size="small" @click.stop>
+                  <template #icon><t-icon name="delete" size="14px" /></template>
+                  删除
+                </t-button>
+              </t-popconfirm>
+            </template>
+          </BusinessFilterBar>
 
       <!-- 进行中文件状态横幅（证照档案同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
@@ -157,75 +214,6 @@
         </template>
       </t-table>
     </div>
-      <!-- 底部摘要栏已下线（第 21 轮）：表尾合计行首列已含条数。 -->
-      <!-- 底部悬浮工具条：fixed 脱离文档流，出现/消失不占物理空间；选中行时显示 -->
-        <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
-          <div class="batch-bar-inner">
-            <div class="batch-bar-left">
-              <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-              <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
-                清除
-              </t-button>
-            </div>
-            <div class="batch-bar-actions">
-              <!-- 重新解析：物理文件重新拆页/解析（支持多文件批量，二次确认） -->
-              <t-popconfirm theme="warning"
-                :content="reparseConfirmText"
-                :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleReparse">
-                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" :disabled="!selectedIds.length" @click.stop>
-                  <template #icon><t-icon name="refresh" size="14px" /></template>
-                  重新解析
-                </t-button>
-              </t-popconfirm>
-              <!-- 重新提取：大模型/OCR 按最新提取规则重新提取全部字段（支持多文件批量，二次确认） -->
-              <t-popconfirm theme="warning"
-                :content="extractConfirmText"
-                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-                @confirm="handleFileExtract">
-                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" :disabled="!selectedIds.length" @click.stop>
-                  <template #icon><t-icon name="cloud-upload" size="14px" /></template>
-                  重新提取
-                </t-button>
-              </t-popconfirm>
-              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-                <template #icon><t-icon name="print" size="14px" /></template>
-                单页打印
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-                <template #icon><t-icon name="file-paste" size="14px" /></template>
-                列表打印
-              </t-button>
-              <!-- 删除确认：单气泡内嵌二选一（多页文件时「删除此页/删除文件」，否则普通确认），杜绝二次弹窗 -->
-              <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
-                :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
-                <template #content>
-                  <div class="del-pop-body">
-                    <div v-if="delMultiCount > 0" class="del-pop-title">
-                      选中的发票涉及 {{ delMultiCount }} 份多页文件，请选择删除范围：
-                    </div>
-                    <div v-else class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 条发票记录吗？删除后不可恢复。</div>
-                    <div class="del-pop-actions">
-                      <template v-if="delMultiCount > 0">
-                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除此页</t-button>
-                        <t-button size="small" theme="danger" variant="outline" @click="confirmFileDelete">删除文件</t-button>
-                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                      </template>
-                      <template v-else>
-                        <t-button size="small" theme="danger" @click="confirmPageDelete">删除</t-button>
-                        <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-                <t-button theme="danger" variant="outline" size="small" @click.stop>
-                  <template #icon><t-icon name="delete" size="14px" /></template>
-                  删除
-                </t-button>
-              </t-popconfirm>
-            </div>
-          </div>
-        </div>
     </div>
 
     </div>
@@ -385,6 +373,12 @@ import BusinessSubItemsPopover from './BusinessSubItemsPopover.vue'
 import { formatAmount, formatRate } from './businessFormat'
 import { useBusinessListSync } from './useBusinessListSync'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import { makeFilePlaceholder } from './invoicePlaceholder'
+import {
+  buildFieldFiltersParam,
+  buildInvoiceFieldFilterSpecs,
+  pickFieldFilterValues,
+} from './invoiceFilterFields'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -436,7 +430,7 @@ const {
   customColumns, effectiveColumns,
   visibleColKeys, visibleColDefs,
   resetColumns, selectAllColumns, 
-  selectedRowKeys, clearSelection,
+  selectedRowKeys,
   colValue,
 } = useBusinessList({
   storageKey: 'weknora-invoice-list-columns',
@@ -654,23 +648,34 @@ const dateRange = ref<Array<string>>([])
 // ---- BusinessFilterBar（P1-3）：4 个筛选器改为 FilterFieldSpec 声明 ----
 // 扁平筛选态与上面四个 ref 双向桥接，组件只发不可变更新；
 // 页面原有的筛选语义（AND 复合查询、300ms 防抖）保持不变。
+// 分类专属字段的筛选值（键 = `field:<列key>`，如 `field:plate_no`）。
+// 与固定项分开存：固定项各自有语义化的 ref，动态项的键由分类决定、
+// 数量随分类变化，塞进同一个对象会让「清空筛选」逻辑变复杂。
+const fieldFilterValues = ref<Record<string, string>>({})
+
 const filterState = computed<FilterState>({
   get: () => ({
     keyword: keyword.value,
     invoiceType: filterInvoiceType.value,
     taxRate: taxRateFilter.value,
     dateRange: dateRange.value,
+    // 展开动态键，BusinessFilterBar 按 spec.key 直接读写
+    ...fieldFilterValues.value,
   }),
   set: (v) => {
     keyword.value = String(v?.keyword ?? '')
     filterInvoiceType.value = String(v?.invoiceType ?? '')
     taxRateFilter.value = v?.taxRate ?? ''
     dateRange.value = Array.isArray(v?.dateRange) ? v.dateRange : []
+    fieldFilterValues.value = pickFieldFilterValues(v || {})
   },
 })
 const filterFields = computed<FilterFieldSpec[]>(() => [
   // 发票类型筛选统一仅由顶部概览卡片（DashboardKpiGroup）承担，工具栏不再重复下拉
   { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  // 分类专属字段（车牌号 / 车辆类型）：由当前分类的列定义派生，六同步第 ② 环。
+  // 顺序放在关键词之后、税率之前 —— 视觉上是「搜索｜分类字段｜税率｜日期」。
+  ...buildInvoiceFieldFilterSpecs(customColumns.value),
   { key: 'taxRate', type: 'select', placeholder: '税率筛选', icon: 'percent', options: taxRateOptions.value },
   { key: 'dateRange', type: 'date-range', placeholder: '开票日期', icon: 'time' },
 ])
@@ -1045,6 +1050,9 @@ const loadFiles = async (reset = false) => {
         ? undefined : Number(taxRateFilter.value),
       date_from: dateRange.value?.[0] || undefined,
       date_to: dateRange.value?.[1] || undefined,
+      // 分类专属字段筛选（六同步第 ② 环）：`plate_no:渝A75R1C`。
+      // 与关键词的区别是它只匹配指定字段，不会误命中备注里的同串。
+      field_filters: buildFieldFiltersParam(filterState.value) || undefined,
       sort_by: sortBy.value || undefined,
       sort_order: sortDirection.value || undefined,
       page: page.value,
@@ -1140,17 +1148,17 @@ const parseCustomMetadata = (item: KnowledgeItem): InvoiceRow[] => {
   const description = item.description || ''
   const base = { parseStatus, summaryStatus, fileType, tags, description }
   if (!meta || typeof meta !== 'object') {
-    return [{ rowKey: item.id, knowledgeId: item.id, fileName, extractStatus: '', kind: 'unknown', ...base }]
+    return [makeFilePlaceholder({ id: item.id, fileName, base })]
   }
   const kind = meta.kind || 'unknown'
   const extractStatus = meta.extract_status || ''
   const extractError = meta.extract_error || ''
   if (kind === 'not_invoice') {
-    return [{ rowKey: item.id, knowledgeId: item.id, fileName, extractStatus: 'not_invoice', extractError, kind, ...base }]
+    return [makeFilePlaceholder({ id: item.id, fileName, base, kind, extractError })]
   }
   const invoices = Array.isArray(meta.invoices) ? meta.invoices : []
   if (invoices.length === 0) {
-    return [{ rowKey: item.id, knowledgeId: item.id, fileName, extractStatus, extractError, kind, ...base }]
+    return [makeFilePlaceholder({ id: item.id, fileName, base, kind, extractStatus, extractError })]
   }
   return invoices.map((inv: any, idx: number) => ({
     rowKey: `${item.id}-${idx}`,
@@ -1363,8 +1371,6 @@ const selectedRows = computed(() => {
 })
 const selectedIds = computed(() => Array.from(new Set(selectedRows.value.map(r => r.knowledgeId))))
 
-// 底部摘要栏已下线（第 21 轮）：条数与各列合计都由表尾合计行承载，
-// selectedSummary / displaySummary 这套「选中优先」的底部统计随之删除。
 
 // 底部统计条的旧三行（金额/税额/价税合计）已由「逐列表尾汇总」取代：
 // 现在每一列（含当前分类自定义的金额/税额列）都有自己的合计，不再需要
@@ -2237,9 +2243,15 @@ const confirmFileDelete = async () => {
 
 // 多选清除：先调用 t-table 实例 clearSelected（内部清空并 emit select-change 同步外部），
 // 再兜底清空 selectedRowKeys，杜绝 TDesign 受控反向写回旧 key 导致浮条不消失
+// 清除选择（中台浮条的「清除」按钮走这里）。
+//
+// 必须同时关闭删除确认弹窗：浮条在选中时一直在，用户可能先点开「删除」的
+// 三选一气泡、再点「清除」—— 只清 selectedRowKeys 会让气泡留在屏幕上，
+// 而它指向的记录已经不选中了（点「删除此页」会删掉 0 条）。
 const clearSelectionSafe = () => {
   try { invoiceTableRef.value?.clearSelected?.() } catch { /* ignore */ }
   selectedRowKeys.value = []
+  delPopVisible.value = false
 }
 
 // 六同步：字段/分类配置变更后重建动态列与概览统计（类型卡/下拉由 invoiceCats computed 自动派生）
@@ -2424,10 +2436,14 @@ watch(printVisible, (v) => {
   flex-shrink: 0; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* 页码徽标（P1 / P2）：**中性色**，与「提取成功」的绿色状态徽标解耦。
+   之前借用 success 色，用户会把「第 2 页」误读成「第 2 页提取成功」；
+   页码是定位信息，不是状态，必须用中性 token。 */
 .row-page-badge {
   flex-shrink: 0; margin-left: 6px; height: 18px; padding: 0 6px; border-radius: 4px;
-  background: var(--td-success-color-1, #e8f8f2); color: var(--td-success-color, #00a870);
-  border: 1px solid var(--td-success-color-3, #94e3c5);
+  background: var(--td-bg-color-container-hover);
+  color: var(--td-text-color-secondary);
+  border: 1px solid var(--td-component-stroke);
   font-size: 11px; font-weight: 600; line-height: 16px; box-sizing: border-box;
   white-space: nowrap;
 }

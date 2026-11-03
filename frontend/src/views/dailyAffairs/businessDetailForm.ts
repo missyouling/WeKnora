@@ -59,14 +59,6 @@ export function toNumber(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-/** 数字输入辅助：只允许数字与一个小数点（不补零、不去尾随小数点，按实际输入显示） */
-export function sanitizeNum(v: string): string {
-  let s = String(v ?? '').replace(/[^\d.]/g, '')
-  const firstDot = s.indexOf('.')
-  if (firstDot >= 0) s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
-  return s
-}
-
 /** 标签数组 → 换行文本（表单里按行编辑） */
 export function tagsToText(tags: any): string {
   if (Array.isArray(tags)) return tags.map((t: any) => (typeof t === 'string' ? t : t?.name ?? t)).join('\n')

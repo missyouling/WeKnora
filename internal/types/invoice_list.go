@@ -87,6 +87,11 @@ type InvoiceListFilter struct {
 	// 由服务端从 fleet_categories 实时加载，不再依赖前端传参猜分类（口径漂移源）。
 	EnabledCategories []string
 	TaxRate           *float64 // 税率筛选（小数，如 0.03）
+	// FieldFilters 分类专属字段筛选（键 = 分类 subs 字段名，值 = 期望子串，AND 组合）。
+	// 由 `field_filters` 参数解析（格式 `车牌号:渝A75R1C;车辆类型:客车`）。
+	// 用途：六同步第 ② 环 —— 字段定义/列/浮窗/抽屉/打印都由 subs 派生，
+	// 筛选器此前写死三项，导致「按车牌号筛选」只能退化成关键词搜索（会误命中备注）。
+	FieldFilters map[string]string
 	Status            string   // extract_status
 	DateFrom          string   // YYYY-MM-DD（含）
 	DateTo            string   // YYYY-MM-DD（含）

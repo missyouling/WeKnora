@@ -125,3 +125,26 @@ export function grouped(v: any, opts: GroupedOptions = {}): string {
     ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
     : { maximumFractionDigits: 2 })
 }
+
+/**
+ * 税率百分比（业务列表/明细表口径）：`0.09` / `"0.09"` / `9` / `"9%"` 一律 → `"9%"`。
+ *
+ * 与 `pct` 的区别：
+ *   - `pct` 只接受小数（0.09 → `9.00%`），且 0 显示 `—`；
+ *   - `ratePct` 兼容「已经是百分比点数」的脏数据（9 → `9%`），且 0 显示 `0%`。
+ *
+ * 为什么要独立一个函数而不是让调用方自己判别：历史上明细表把 0.09 乘了两次 100
+ * 显示成 900%，根因就是「判别逻辑散落在各处、各写一遍」。判别只能有一处。
+ */
+export function ratePct(v: any): string {
+  if (v === undefined || v === null || v === '') return ''
+  // 已是带 % 字符串：剥离后取整再拼回，避免 "9%" → "900%"
+  if (typeof v === 'string' && v.includes('%')) {
+    const n = Number(v.replace('%', ''))
+    return Number.isFinite(n) ? `${Math.round(n)}%` : ''
+  }
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  // >=1 视作百分比点数（9）；<1 视作小数（0.09）
+  return `${Math.round(n >= 1 ? n : n * 100)}%`
+}

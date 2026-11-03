@@ -340,6 +340,11 @@ func (s *BusinessExtractService) ListInvoiceRecords(ctx context.Context, kbID st
 		if kw != "" && !invoiceRecordMatchKeyword(r, kw) {
 			continue
 		}
+		// 分类专属字段筛选（第 26 轮 O-3）：与关键词/类型/税率/日期 AND 组合。
+		// 命中票级 fields 或明细行 extra（车牌号两处都可能落）。
+		if !invoiceRecordMatchFieldFilters(r, filter.FieldFilters) {
+			continue
+		}
 		if filter.InvoiceType != "" {
 			if filter.InvoiceType == "其它票据" {
 				// 「其它票据」为排除式桶，与 InvoiceOverviewStats 卡片口径一致：

@@ -3068,6 +3068,21 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 			body.CustomMetadata = raw
 		}
 	}
+	// 保存时重算字段级告警（第 26 轮 T13a）。
+	//
+	// 用户在抽屉里补齐字段后，extract_issues 仍是提取时算的旧结论 ——
+	// 顶部「字段格式需核对」会一直挂着，让人以为没保存成功。
+	// 这里按**保存后的字段值**重算：字段齐全则清空，仍缺则保留对应项。
+	// 只处理发票（合同/制度的校验口径不同，不在此处混算）。
+	if kindOf(meta) == "invoice" {
+		var invMeta service.InvoiceCustomMetadata
+		if jerr := json.Unmarshal(body.CustomMetadata, &invMeta); jerr == nil && len(invMeta.Invoices) > 0 {
+			invMeta.ExtractIssues = service.RevalidateInvoiceIssues(&invMeta)
+			if raw, merr := json.Marshal(invMeta); merr == nil {
+				body.CustomMetadata = raw
+			}
+		}
+	}
 	if err := h.kgService.SaveInvoiceCustomMetadata(ctx, knowledgeID, types.JSON(body.CustomMetadata)); err != nil {
 		logger.Error(ctx, "Failed to persist invoice metadata", err)
 		c.Error(errors.NewInternalServerError("failed to save invoice metadata: " + err.Error()))
@@ -3075,6 +3090,14 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 	}
 	logger.Infof(ctx, "Invoice custom metadata updated, knowledge ID: %s", knowledgeID)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"id": knowledgeID}})
+}
+
+// kindOf 读 custom_metadata 的 kind（缺失时返回空串）。
+func kindOf(meta map[string]interface{}) string {
+	if v, ok := meta["kind"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
 }
 
 // ExtractBusinessDocument 统一业务文档提取入口：按 body.scope 分发到具体提取 Handler。

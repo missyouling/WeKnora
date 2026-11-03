@@ -16,12 +16,9 @@
     </div>
 
     <!-- KB 不存在：空状态 -->
-    <div v-else-if="!kbId" class="empty-area">
-      <t-empty description="尚未创建「日常事务-通知公告」知识库">
-        <template #image><t-icon name="file-copy" size="64px" /></template>
-      </t-empty>
-      <t-button theme="primary" @click="wizardVisible = true">创建通知公告知识库</t-button>
-    </div>
+    <BusinessEmptyState v-else-if="!kbId" icon="file-copy"
+      description="尚未创建「日常事务-通知公告」知识库"
+      action-text="创建通知公告知识库" @action="wizardVisible = true" />
 
     <!-- KB 存在：主界面 -->
     <div v-else class="notice-main biz-main">
@@ -35,11 +32,60 @@
           <!-- 筛选工具栏走中台 BusinessFilterBar（与发票/合同/制度同款）：分类切换只由顶部 KPI 卡片承担 -->
           <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
             :columns="effectiveColumns" :visible-keys="visibleColKeys" :selected-count="selectedRowKeys.length"
-            settings-text="设置" :primary-action="{ text: '上传公告', icon: 'upload' }" hide-batch-bar
+            settings-text="设置" :primary-action="{ text: '上传公告', icon: 'upload' }"
             @columns-change="onVisibleColKeysChange" @reset-columns="resetColumns"
             @select-all-columns="selectAllColumns" @filter-change="applyFilter"
             @settings="settingsVisible = true" @primary="uploadVisible = true"
-            @clear-selection="clearSelection" />
+            @clear-selection="clearSelectionSafe">
+            <!-- 批量操作走中台 batch-actions slot：浮条外壳（fixed 定位 / 已选计数 /
+                 清除）由 BusinessListToolbar 提供，本页只声明按钮。 -->
+            <template #batch-actions>
+              <t-popconfirm theme="warning"
+                :content="reparseConfirmText"
+                :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleReparse">
+                <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" @click.stop>
+                  <template #icon><t-icon name="refresh" size="14px" /></template>
+                  重新解析
+                </t-button>
+              </t-popconfirm>
+              <t-popconfirm theme="warning"
+                :content="extractConfirmText"
+                :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
+                @confirm="handleFileExtract">
+                <t-button theme="default" variant="outline" size="small" :loading="extractBusy" @click.stop>
+                  <template #icon><t-icon name="cloud-upload" size="14px" /></template>
+                  重新提取
+                </t-button>
+              </t-popconfirm>
+              <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
+                <template #icon><t-icon name="print" size="14px" /></template>
+                单页打印
+              </t-button>
+              <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
+                <template #icon><t-icon name="file-paste" size="14px" /></template>
+                列表打印
+              </t-button>
+              <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
+                :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
+                <template #content>
+                  <div class="del-pop-body">
+                    <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个公告记录吗？删除后不可恢复。</div>
+                    <div class="del-pop-actions">
+                      <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
+                      <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
+                    </div>
+                  </div>
+                </template>
+                <t-button theme="danger" variant="outline" size="small" @click.stop>
+                  <template #icon><t-icon name="delete" size="14px" /></template>
+                  删除
+                </t-button>
+              </t-popconfirm>
+
+            </template>
+          </BusinessFilterBar>
+
 
       <!-- 进行中文件状态横幅（发票基准同款：优先上传实时进度轮播，关闭弹窗后由轮询派生解析/提取进度，多文件滚动展示） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
@@ -141,62 +187,6 @@
       </div>
     </div>
     </div>
-    </div>
-
-    <!-- 自有批量浮条（发票基准同款） -->
-    <div v-if="selectedRowKeys.length" class="doc-batch-bar" role="region">
-      <div class="batch-bar-inner">
-        <div class="batch-bar-left">
-          <span class="batch-bar-count">已选 {{ selectedRowKeys.length }} 项</span>
-          <t-button variant="text" theme="default" size="small" class="batch-bar-clear" @click="clearSelectionSafe">
-            清除
-          </t-button>
-        </div>
-        <div class="batch-bar-actions">
-          <t-popconfirm theme="warning"
-            :content="reparseConfirmText"
-            :confirm-btn="{ content: '重新解析', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-            @confirm="handleReparse">
-            <t-button theme="default" variant="outline" size="small" :loading="reparseBusy" @click.stop>
-              <template #icon><t-icon name="refresh" size="14px" /></template>
-              重新解析
-            </t-button>
-          </t-popconfirm>
-          <t-popconfirm theme="warning"
-            :content="extractConfirmText"
-            :confirm-btn="{ content: '重新提取', theme: 'warning' }" :cancel-btn="{ content: '取消' }" placement="top"
-            @confirm="handleFileExtract">
-            <t-button theme="default" variant="outline" size="small" :loading="extractBusy" @click.stop>
-              <template #icon><t-icon name="cloud-upload" size="14px" /></template>
-              重新提取
-            </t-button>
-          </t-popconfirm>
-          <t-button theme="default" variant="outline" size="small" @click="handleBatchPrint">
-            <template #icon><t-icon name="print" size="14px" /></template>
-            单页打印
-          </t-button>
-          <t-button theme="default" variant="outline" size="small" :loading="catalogBusy" @click="handleBatchCatalog">
-            <template #icon><t-icon name="file-paste" size="14px" /></template>
-            列表打印
-          </t-button>
-          <t-popconfirm theme="warning" v-model:visible="delPopVisible" placement="top"
-            :confirm-btn="null" :cancel-btn="null" :popup-props="{ overlayStyle: { width: 'auto' } }">
-            <template #content>
-              <div class="del-pop-body">
-                <div class="del-pop-title">确定删除所选 {{ selectedRowKeys.length }} 个公告记录吗？删除后不可恢复。</div>
-                <div class="del-pop-actions">
-                  <t-button size="small" theme="danger" @click="confirmFileDelete">删除</t-button>
-                  <t-button size="small" variant="text" @click="closeDelPop">取消</t-button>
-                </div>
-              </div>
-            </template>
-            <t-button theme="danger" variant="outline" size="small" @click.stop>
-              <template #icon><t-icon name="delete" size="14px" /></template>
-              删除
-            </t-button>
-          </t-popconfirm>
-        </div>
-      </div>
     </div>
 
     <!-- 创建知识库向导 -->

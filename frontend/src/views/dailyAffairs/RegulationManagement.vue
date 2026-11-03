@@ -16,12 +16,9 @@
     </div>
 
     <!-- KB 不存在：空状态 -->
-    <div v-else-if="!kbId" class="empty-area">
-      <t-empty description="尚未创建「日常事务-制度」知识库">
-        <template #image><t-icon name="file-copy" size="64px" /></template>
-      </t-empty>
-      <t-button theme="primary" @click="wizardVisible = true">创建制度知识库</t-button>
-    </div>
+    <BusinessEmptyState v-else-if="!kbId" icon="file-copy"
+      description="尚未创建「日常事务-制度」知识库"
+      action-text="创建制度知识库" @action="wizardVisible = true" />
 
     <!-- KB 存在：主界面 -->
     <div v-else class="regulation-main biz-main">

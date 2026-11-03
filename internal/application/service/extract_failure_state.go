@@ -117,3 +117,36 @@ func SuppressInvoiceAnchorWarning(anchors int, invoices []InvoiceExtractionItem)
 	}
 	return true
 }
+
+// RevalidateInvoiceIssues 按**当前已落库字段**重算字段级校验问题（不跑模型、不读原文）。
+//
+// 为什么需要（第 26 轮 T13a）：
+//
+//	用户在编辑抽屉里补齐了缺失字段并点保存，但详情页顶部仍挂着
+//	「字段格式需核对 (1 处)」—— 因为 extract_issues 只在**重新提取**时才重算。
+//	「补齐了还报错」会让用户以为没保存成功，反复重试。
+//
+// 两条约束：
+//  1. 锚点类告警（「原文共 N 张发票锚点」）必须剔除：它需要原文/分块才能判定，
+//     保存路径没有原文，若照搬会把「无法验证」伪装成「仍然有问题」；
+//  2. 校验器会**原地归一化日期**（`2026年09月02日` → `2026-09-02`），
+//     必须把结果写回 meta.Invoices，否则库里还是旧格式。
+func RevalidateInvoiceIssues(meta *InvoiceCustomMetadata) []ExtractFieldIssue {
+	if meta == nil || len(meta.Invoices) == 0 {
+		return nil
+	}
+	res := &InvoiceExtractionResult{Kind: "invoice", Invoices: meta.Invoices}
+	issues := validateInvoiceExtraction(res, nil)
+	meta.Invoices = res.Invoices
+	out := make([]ExtractFieldIssue, 0, len(issues))
+	for _, it := range issues {
+		if strings.Contains(it.Detail, "张发票锚点") {
+			continue
+		}
+		out = append(out, it)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

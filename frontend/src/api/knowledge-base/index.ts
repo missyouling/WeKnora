@@ -906,6 +906,12 @@ export function listInvoiceRecords(kbId: string, params: {
   tax_rate?: number;
   date_from?: string;
   date_to?: string;
+  /**
+   * 分类专属字段筛选（第 26 轮 O-3）：`key:value;key:value`，如 `plate_no:渝A75R1C`。
+   * 后端按「票级 fields → 明细行 extra」做包含匹配，多条件 AND。
+   * 与 `q` 的区别：只匹配指定字段，不会误命中备注里的同串。
+   */
+  field_filters?: string;
   sort_by?: string;
   sort_order?: string;
   page?: number;

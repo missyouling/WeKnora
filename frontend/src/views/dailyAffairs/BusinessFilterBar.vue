@@ -31,6 +31,15 @@
           </t-select>
         </div>
 
+        <!-- 自由输入筛选（分类专属字段，如车牌号）：宽度固定，避免长占位符撑爆工具栏 -->
+        <div v-else-if="f.type === 'text'" class="bfs-field bfs-field--text">
+          <t-input :value="state[f.key]" :placeholder="f.placeholder || '筛选'"
+            :clearable="f.clearable !== false" class="bfs-text"
+            @update:value="(v: any) => patch(f, v)">
+            <template #prefixIcon><t-icon :name="f.icon || DEFAULT_FILTER_ICONS.text" size="16px" /></template>
+          </t-input>
+        </div>
+
         <!-- 日期区间 -->
         <t-date-range-picker v-else-if="f.type === 'date-range'" :value="state[f.key]"
           :placeholder="f.placeholder || '日期区间'" :clearable="f.clearable !== false" allow-input
@@ -162,6 +171,10 @@ function patchRange(spec: FilterFieldSpec, v: any, idx: 0 | 1) {
 <style scoped>
 /* 只补筛选控件自身的样式；工具栏布局沿用 BusinessListToolbar */
 .bfs-field { display: flex; align-items: center; gap: 4px; }
+/* 自由输入筛选（分类专属字段）：宽度与下拉一致，不随占位符长短跳动 */
+.bfs-field--text { width: 150px; }
+.bfs-text { width: 100%; }
+
 .bfs-select { width: auto; flex-shrink: 0; min-width: max-content; }
 .bfs-date-range { width: 240px; flex-shrink: 0; }
 /* 账期选择器：与 date-range 同宽，避免两页工具栏像素不对齐 */

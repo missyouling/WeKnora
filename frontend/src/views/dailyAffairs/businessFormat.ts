@@ -3,37 +3,35 @@
 // 为什么单独成模块：发票列表、明细浮层、详情抽屉三处都要把数值渲染成
 // "1,234.56" 与 "13%"。各自内联一份必然漂移，而明细浮层抽成中台组件后
 // 更不可能去 import 某个页面里的私有函数。
+//
+// 第 26 轮 O-2：**底层实现统一到 `formatNumber.ts`**，本文件降级为薄封装
+// （只做参数映射，不写格式化逻辑）。原因：此前 `formatNumber` / `businessFormat` /
+// `ContractManagement.vue` 三处各有一份金额与税率实现，合同页那份连千分位都没有。
 
-/** 金额：千分位 + 固定两位小数（1,234.56） */
+import { grouped, ratePct } from './formatNumber'
+
+/**
+ * 金额：千分位 + 固定两位小数（1,234.56），空值/非法值 → 空串。
+ *
+ * **委托 formatNumber 的单一实现**（第 26 轮 O-2）：此前本文件与
+ * `ContractManagement.vue`、`formatNumber.ts` 各有一份金额格式化，三处口径
+ * 随时可能分叉（合同页那份没有千分位）。现在只保留这一个出口，参数映射固定为
+ * 「固定两位 + 空值空串」——这是业务列表的既定展示口径，不要在此处改。
+ */
 export function formatAmount(v?: number | string | null): string {
-  if (v === undefined || v === null || v === '') return ''
-  const n = Number(v)
-  if (!Number.isFinite(n)) return ''
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return grouped(v, { fixed: true, fallback: '', blankWhenEmpty: true })
 }
 
 /**
  * 税率：归一为百分比字符串，且**绝不重复 ×100**。
  *
- * 历史 bug：明细表 0.09 被乘两次 100 变成 900%。
- * 现在按"是否已为百分比"判别：
- *   - 带 `%` 字符串（"9%"）→ 直接规范化；
- *   - 数值 `>= 1`（如 9，已是百分比点数）→ 直接取整，不再 ×100；
- *   - 数值 `< 1`（如 0.09，小数形态）→ ×100 转百分比。
- * 四种常见输入 0.09 / "0.09" / 9 / "9%" 一律输出 "9%"。
+ * 实现已移到 `formatNumber.ratePct`（第 26 轮 O-2，单一出口）；
+ * 这里只保留对外签名，避免发票/制度/奖惩/浮窗四处 import 改动。
+ *
+ * 历史 bug：明细表 0.09 被乘两次 100 变成 900%。判别逻辑现在只有一处。
  */
 export function formatRate(v?: number | string | null): string {
-  if (v === undefined || v === null || v === '') return ''
-  // 已是带 % 字符串：剥离后取整再拼回，避免 "9%"→"900%"
-  if (typeof v === 'string' && v.includes('%')) {
-    const n = Number(v.replace('%', ''))
-    if (!Number.isFinite(n)) return ''
-    return `${Math.round(n)}%`
-  }
-  const n = Number(v)
-  if (!Number.isFinite(n)) return ''
-  // >=1 视作百分比点数（9）；<1 视作小数（0.09）
-  return `${Math.round(n >= 1 ? n : n * 100)}%`
+  return ratePct(v)
 }
 
 /**

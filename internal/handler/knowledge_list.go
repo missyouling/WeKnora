@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -84,13 +85,15 @@ func (h *BusinessExtractHandler) ListInvoiceRecords(c *gin.Context) {
 		KnownCategories:   knownCategories,
 		EnabledCategories: h.invoiceCategoryHitSet(ctx),
 		TaxRate:           taxRate,
-		Status:            c.Query("status"),
-		DateFrom:          c.Query("date_from"),
-		DateTo:            c.Query("date_to"),
-		SortBy:            sortBy,
-		SortOrder:         sortOrder,
-		Page:              page,
-		PageSize:          pageSize,
+		// 分类专属字段筛选（第 26 轮 O-3）：`车牌号:渝A75R1C;车辆类型:客车`
+		FieldFilters: service.ParseInvoiceFieldFilters(c.Query("field_filters")),
+		Status:       c.Query("status"),
+		DateFrom:     c.Query("date_from"),
+		DateTo:       c.Query("date_to"),
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
+		Page:         page,
+		PageSize:     pageSize,
 	}
 
 	result, err := h.businessSvc.ListInvoiceRecords(effCtx, kbID, filter)
