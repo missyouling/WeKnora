@@ -59,6 +59,12 @@ type InvoiceExtractionItem struct {
 	BuyerBank   string   `json:"buyer_bank"`
 	BuyerAcct   string   `json:"buyer_account"`
 	Issuer      string   `json:"issuer"`
+	// Drawer 开票人的历史别名（与 issuer 同源同值）。
+	//
+	// 为什么要有两个键：早期提取链路里 drawer / issuer 两种写法都出现过，
+	// 前端列表与详情抽屉各读一个 → 同一张票在两处显示不一致（第 25 轮问题 2）。
+	// 现在由 fillInvoiceIssuer 同时写入两个键，读取侧任取其一都能拿到值。
+	Drawer string `json:"drawer,omitempty"`
 	Remark      string   `json:"remark"`
 	Category    string   `json:"category"`
 	// Tags 票内标签（历史提取结果里可能带）：参与列表关键词搜索与展示，

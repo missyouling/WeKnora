@@ -1627,7 +1627,14 @@ const openDetail = async (row: InvoiceRow) => {
           // 直接 {...row, ...match} 会让 match 的空 items 覆盖掉列表值，表现就是
           // 抽屉先显示车牌号、1 秒后（详情返回重填时）又消失。
           const keepItems = Array.isArray(row.items) && row.items.length ? row.items : (match.items || [])
-          currentRow.value = { ...row, ...match, items: keepItems }
+          // **状态必须以列表行为准**（第 25 轮问题 1）。
+          //
+          // 详情接口返回的是票级原始 JSON，可能带 `extract_status`（文档级口径）
+          // 或干脆没有该字段；而列表行的 extractStatus 是后端归一后的**记录级**
+          // 状态（核心字段齐全即 success）。用 `...match` 覆盖会让抽屉显示
+          // 「提取失败」而列表显示「提取成功」—— 同一张票两处矛盾（真机图 1）。
+          // 因此这里显式把行的状态字段钉回去。
+          currentRow.value = { ...row, ...match, items: keepItems, extractStatus: row.extractStatus, extractError: row.extractError }
           // 详情数据到达后补填一次（发票类型/字段值以落库数据为准）。
           // 非强制：用户在等待期间已经动过的输入必须保留（见 fillEditForm 注释）。
           fillEditForm(false)

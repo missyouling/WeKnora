@@ -138,11 +138,41 @@ func mergeFailedStateMeta(prev []byte, kind, extractErr string) types.JSON {
 		}
 	}
 	merged["kind"] = kind
-	merged["extract_status"] = "failed"
 	// 落库前统一转译为中文短句：原始错误是「英文调用栈 + 裸 JSON」
 	// （invoice extraction failed: ... status 429: {"error":{"code":"1302",...}}），
 	// 直接进 Tooltip 用户看不懂。原文另存 extract_error_raw 供排障，不影响展示。
-	merged["extract_error"] = service.FormatExtractErrorMessage(extractErr)
+	translated := service.FormatExtractErrorMessage(extractErr)
+	// **已有可用记录时，失败只记错误、不降级状态**（第 25 轮问题 1）。
+	//
+	// 真机事故：某文件的发票早已提取成功并显示在主列表（记录级 success），
+	// 之后一次重试撞 429 → 这里无条件写 failed → 详情抽屉显示「提取失败」、
+	// 历史文件抽屉把它统计成「异常文件」（74 份）。数据一直是对的，只有状态错了。
+	//
+	// 判据只认「发票」：合同/制度/奖惩等 kind 的记录形状不同，不在此处统一处理，
+	// 避免用发票字段去判断别的业务类型而误判。
+	if kind == "invoice" && service.HasUsableInvoiceRecords(prev) {
+		// 保持既有状态（success / manual），错误另存为「上次重试」信息，
+		// 不覆盖 extract_error —— 详情抽屉读 extract_error 时不会闪红。
+		if cur, _ := merged["extract_status"].(string); strings.TrimSpace(cur) == "" {
+			merged["extract_status"] = "success"
+		}
+		if translated != "" {
+			merged["last_extract_error"] = translated
+		}
+		if strings.TrimSpace(extractErr) != "" && translated != extractErr {
+			merged["last_extract_error_raw"] = extractErr
+		}
+		raw, err := json.Marshal(merged)
+		if err != nil {
+			return types.JSON(prev)
+		}
+		logger.Infof(context.Background(),
+			"extraction failed but usable %s record(s) already exist, keeping status %q (error recorded as last_extract_error): %s",
+			kind, merged["extract_status"], translated)
+		return types.JSON(raw)
+	}
+	merged["extract_status"] = "failed"
+	merged["extract_error"] = translated
 	if strings.TrimSpace(extractErr) != "" && merged["extract_error"] != extractErr {
 		merged["extract_error_raw"] = extractErr
 	}
@@ -1375,7 +1405,15 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 			break
 		}
 	}
-	if anchorCount > len(merged.Invoices) {
+	// 锚点缺失告警（第 25 轮问题 1）。
+	//
+	// 追加两条**抑制条件**，避免误导性提示：
+	//  1. 单页文件（锚点 ≤ 1）且确实提取到票 —— 一张物理页最多一张电子发票，
+	//     此时「原文共 N 张」的 N 只可能来自误计（早期把 20 位银行账号、印章
+	//     文字、销货清单标题当票号），绝不该提示用户复核；
+	//  2. 已提取的票字段全完整（号码+金额+价税合计+购销方）—— 数据是对的，
+	//     差额来自锚点误计而非漏提。
+	if anchorCount > len(merged.Invoices) && !service.SuppressInvoiceAnchorWarning(anchorCount, merged.Invoices) {
 		merged.ExtractIssues = append(merged.ExtractIssues,
 			service.NewExtractMissingInvoicesIssue(anchorCount-len(merged.Invoices), anchorCount))
 	}
@@ -1538,6 +1576,9 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 明细校验/归一/分类优先等多道步骤，任一步都可能重新推导金额
 	// （真机 26507000000067486566：overlay 后又被明细值覆盖回 1269.91+165.09≠1262.40）。
 	service.ReconcileInvoicePartiesForPersist(meta.Invoices)
+	// 文档级开票人回填（第 25 轮问题 2）：让 custom_metadata.issuer / drawer
+	// 与票级同源，详情抽屉在未选中具体行时也有值可读。
+	service.SyncDocumentIssuer(&meta)
 
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {

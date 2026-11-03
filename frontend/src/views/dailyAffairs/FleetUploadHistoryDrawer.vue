@@ -41,7 +41,6 @@
               row-key="id"
               size="small"
               :hover="true"
-              max-height="100%"
               class="dh-table"
               :row-class-name="({ row }: any) => activeRow?.id === row.id ? 'is-selected' : ''"
               @row-click="({ row }: any) => (activeRow = row)"
@@ -120,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, h } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
@@ -291,8 +290,29 @@ const isRowRunning = (r: any) => {
   // （真机：主列表 4 行待提取，历史记录「正在执行 0」）。
   return !es || ROW_EXTRACT_RUNNING.has(es)
 }
+
+// hasUsableInvoices 该文件是否已提取出可用发票行（号码或金额非空）。
+//
+// 用途：「异常文件」计数与红色标签的判定（第 25 轮问题 3）。真机有 74 份文件
+// 的 `extract_status` 停在 `failed`（一次重试撞模型限流留下的），但它们的发票
+// 早已提取成功并显示在主列表 —— 只看状态会把它们全标成红色「提取失败」，
+// 而用户在主列表看到的是绿色「提取成功」，两处自相矛盾。
+const hasUsableInvoices = (r: any) => {
+  const inv = (r.custom_metadata || {}).invoices
+  if (!Array.isArray(inv) || !inv.length) return false
+  return inv.some((x: any) => {
+    if (String(x?.invoice_no || '').trim()) return true
+    const amt = Number(x?.amount)
+    const total = Number(x?.total_amount)
+    return (Number.isFinite(amt) && amt !== 0) || (Number.isFinite(total) && total !== 0)
+  })
+}
+
+// 异常 = 解析真的失败，或提取失败**且没有任何可用发票行**。
+// 有可用行的文件不算异常 —— 它已经进主列表了，标红只会误导用户去重传。
 const isRowAbnormal = (r: any) =>
-  String(r.parse_status || '') === 'failed' || String(extractStatus(r) || '') === 'failed'
+  String(r.parse_status || '') === 'failed' ||
+  (String(extractStatus(r) || '') === 'failed' && !hasUsableInvoices(r))
 
 // 能耗账单文件 → 分类中文名。
 //
@@ -420,6 +440,28 @@ const onListScroll = (e: Event) => {
   const el = e.target as HTMLElement
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) loadMore()
 }
+
+// 内层滚动容器兜底绑定（第 25 轮问题 3）。
+//
+// 真机事故：`.doc-list-scroll` 的 scrollHeight === clientHeight（外层根本不滚），
+// 真正滚动发生在 TDesign 生成的 `.t-table__content`（1019 > 902）。
+// 于是绑在外层的 onListScroll 永不触发 → 永远只显示首屏 20 条。
+//
+// 已去掉 t-table 的 max-height 让外层成为唯一滚动容器；这里再兜一层：
+// 若 TDesign 仍生成可滚动的内层（列固定/虚拟滚动等场景），也把它绑上。
+const innerScrollBound = new WeakSet<HTMLElement>()
+const bindInnerScrollers = () => {
+  const root = listScrollRef.value
+  if (!root) return
+  root.querySelectorAll('.t-table__content, .t-table__body').forEach((el) => {
+    const node = el as HTMLElement
+    if (innerScrollBound.has(node)) return
+    if (node.scrollHeight <= node.clientHeight + 4) return
+    innerScrollBound.add(node)
+    node.addEventListener('scroll', onListScroll, { passive: true })
+  })
+}
+watch(rows, () => nextTick(bindInnerScrollers))
 
 // 关键词 300ms 防抖：输入停止后才应用过滤（渲染开销大时避免逐字卡顿）
 watch(keywordInput, (v) => {

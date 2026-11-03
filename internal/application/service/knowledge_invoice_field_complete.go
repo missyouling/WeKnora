@@ -40,11 +40,16 @@ var (
 	plateLabelRe = regexp.MustCompile(
 		"车\\s*牌\\s*号?\\s*码?\\s*[:：]?\\s*([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-HJ-NP-Z][A-HJ-NP-Z0-9]{4,5}[A-HJ-NP-Z0-9挂学警港澳领使电]?)")
 
-	// issuerLooseRe 开票人宽松匹配：允许字间空格、允许冒号后换行。
+	// issuerLooseRe 开票人宽松匹配：允许字间空格、允许冒号后换行，
+	// **允许末尾带数字/字母后缀**（第 25 轮问题 2）。
 	//
 	// 票面常渲染成 `开 票 人 ：\n 杨希`（PDF 文本层按字断行），旧正则
 	// `开票人\s*[:：]\s*(\S+)` 在「开 票 人」上直接失配 → 开票人整列空白。
-	issuerLooseRe = regexp.MustCompile(`开\s*票\s*人\s*[:：]?\s*\n?\s*([\p{Han}·]{2,8})`)
+	//
+	// 后缀必须允许：真机《重庆璧山天然气》发票的开票人是 `璧山1`（自助开票机
+	// 的工位号），旧字符类 `[\p{Han}·]{2,8}` 只吃到「璧山」、丢掉「1」，
+	// 于是列表出现「璧山」与「璧山1」两种值 —— 同一张票同一列不一致。
+	issuerLooseRe = regexp.MustCompile(`开\s*票\s*人\s*[:：]?\s*\n?\s*([\p{Han}·]{2,8}[0-9A-Za-z]{0,4})`)
 
 	// issuerNoise 非人名噪词：模板占位与系统账号，命中即视为未提取。
 	issuerNoise = map[string]struct{}{
@@ -195,35 +200,53 @@ func normalizePlate(raw string) string {
 }
 
 // fillInvoiceIssuer 补齐开票人（宽松正则 + 噪词过滤）。
+//
+// 同时写入 `drawer`（历史别名）：前端列表的「开票人」列与详情抽屉分别读
+// issuer / drawer，只写一个就会出现「抽屉有值、列表空白」（第 25 轮问题 2）。
 func fillInvoiceIssuer(inv *InvoiceExtractionItem) int {
 	if inv == nil {
 		return 0
 	}
-	if name := cleanIssuerName(inv.Issuer); name != "" {
-		if name != inv.Issuer {
-			inv.Issuer = name
+	var name string
+	if cur := cleanIssuerName(inv.Issuer); cur != "" {
+		name = cur
+	} else {
+		// 顶层为空 → 从备注/明细行文本里找（多页切块时开票人常落到备注）
+		for _, src := range []string{inv.Remark, itemsTextOf(inv.Items)} {
+			if m := issuerLooseRe.FindStringSubmatch(src); len(m) > 1 {
+				if cleaned := cleanIssuerName(m[1]); cleaned != "" {
+					name = cleaned
+					break
+				}
+			}
+		}
+	}
+	if name == "" {
+		// 原值是噪词（如「管理员」）→ 清空，避免列表展示假人名
+		if inv.Issuer != "" || inv.Drawer != "" {
+			inv.Issuer = ""
+			inv.Drawer = ""
 			return 1
 		}
 		return 0
 	}
-	// 顶层为空 → 从备注/明细行文本里找（多页切块时开票人常落到备注）
-	for _, src := range []string{inv.Remark, itemsTextOf(inv.Items)} {
-		if m := issuerLooseRe.FindStringSubmatch(src); len(m) > 1 {
-			if name := cleanIssuerName(m[1]); name != "" {
-				inv.Issuer = name
-				return 1
-			}
-		}
+	fixed := 0
+	if inv.Issuer != name {
+		inv.Issuer = name
+		fixed++
 	}
-	if inv.Issuer != "" {
-		// 原值是噪词（如「管理员」）→ 清空，避免列表展示假人名
-		inv.Issuer = ""
-		return 1
+	if inv.Drawer != name {
+		inv.Drawer = name
+		fixed++
 	}
-	return 0
+	return fixed
 }
 
-// cleanIssuerName 校验并清洗开票人：去空白、剔噪词、长度 2~8 个汉字。
+// cleanIssuerName 校验并清洗开票人：去空白、剔噪词、汉字 2~8 位 + 可选后缀。
+//
+// 后缀规则（第 25 轮问题 2）：允许末尾 1~4 位数字/字母，用于「璧山1」「A01」
+// 这类自助开票机的工位号。**不允许**纯数字/纯字母（那是账号或编号，不是人名），
+// 也不允许后缀出现在中间（`张1伟` 不是合法人名形态）。
 func cleanIssuerName(raw string) string {
 	s := strings.TrimSpace(strings.ReplaceAll(raw, " ", ""))
 	if s == "" {
@@ -233,17 +256,41 @@ func cleanIssuerName(raw string) string {
 		return ""
 	}
 	r := []rune(s)
-	if len(r) < 2 || len(r) > 8 {
+	if len(r) < 2 || len(r) > 12 {
 		return ""
 	}
-	// 必须全是汉字或间隔点（排除数字/字母/符号混入）
+	han, suffix := 0, 0
 	for _, c := range r {
 		if c == '·' {
+			if suffix > 0 {
+				// 间隔点必须出现在后缀之前，否则是脏字符
+				return ""
+			}
 			continue
 		}
-		if c < 0x4e00 || c > 0x9fff {
-			return ""
+		if c >= 0x4e00 && c <= 0x9fff {
+			if suffix > 0 {
+				// 汉字必须连续出现在后缀之前
+				return ""
+			}
+			han++
+			continue
 		}
+		// 字母 / 数字 → 后缀段
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			suffix++
+			if suffix > 4 {
+				return ""
+			}
+			continue
+		}
+		return ""
+	}
+	if han < 2 || han > 8 {
+		return ""
+	}
+	if suffix == 0 && han < 2 {
+		return ""
 	}
 	return s
 }
