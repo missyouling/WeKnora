@@ -94,6 +94,12 @@ const props = defineProps<{
    * 走错通道的表现是「解析提取都完成，但列表里没有这条」。
    */
   extractMode?: 'scope' | 'energy-bill'
+  /**
+   * 记录型菜单上传提取：轮胎/年检/成本 7 项传 record_type，
+   * 后端据此反查分类 scope 并保持 record_type 原值落库（不落成 *-archive）。
+   * 档案类（车辆/司机/维保）不传。
+   */
+  extractRecordType?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -499,7 +505,10 @@ async function extractFile(kid: string, scope: string, certType: string) {
     }
     return
   }
-  const body = certType ? { scope, cert_type: certType } : { scope }
+  const body: { scope: string; cert_type?: string; record_type?: string } = certType
+    ? { scope, cert_type: certType }
+    : { scope }
+  if (props.extractRecordType) body.record_type = props.extractRecordType
   if (scopeDesc.value?.api.extract === 'business') {
     await extractBusinessDocument(props.kbId, kid, body)
   } else {

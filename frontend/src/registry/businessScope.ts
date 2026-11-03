@@ -21,6 +21,11 @@ export type ScopeKey =
   | 'utility'
   | 'solar'
   | 'energy'
+  // 车队记录型菜单（第 28 轮）：轮胎/年检单分类，成本管理 7 分类。
+  // 它们与档案类一样走 subs 派生六同步，只是没有「证照」语义。
+  | 'tire'
+  | 'inspection'
+  | 'fleet-cost'
 
 // 字段值类型。textarea（多行文本）与后端 types.FieldTypeTextarea 同源：
 // 存储仍是 string，只影响渲染控件与列表折行。

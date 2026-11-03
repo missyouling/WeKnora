@@ -521,6 +521,10 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 	if handler == nil {
 		return
 	}
+	// 车队后台初始化（幂等）：车辆主数据回填 + 发票派生台账。
+	// 挂在这里而不是构造函数里：构造函数会被测试反复调用，后台全表扫描会与
+	// 测试写事务抢 sqlite 表锁。启动时跑一次即可，用户也可点「同步发票」重跑。
+	handler.StartFleetBackfillTasks(context.Background())
 	fl := g.apiKeyGroup(r.Group("/fleet"), apiKeyRetrieve(apiKeyFullAccess()))
 	{
 		fl.GET("/vehicles", g.Viewer(), handler.ListFleetVehicles)
@@ -537,6 +541,10 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 		fl.POST("/fuel-cards", g.Contributor(), handler.CreateFleetFuelCard)
 		fl.PUT("/fuel-cards/:id", g.Contributor(), handler.UpdateFleetFuelCard)
 		fl.DELETE("/fuel-cards/:id", g.Contributor(), handler.DeleteFleetFuelCard)
+		// 发票 → 成本台账幂等派生（通行费→路桥费、成品油/充电→加油充电）
+		fl.POST("/records/sync-invoices", g.Contributor(), handler.SyncInvoices)
+		// 记录统计（KPI 卡片：按 record_type 计数 + 金额合计）
+		fl.GET("/records/stats", g.Viewer(), handler.FleetRecordStatsHandler)
 		fl.GET("/records", g.Viewer(), handler.ListFleetRecords)
 		fl.POST("/records", g.Contributor(), handler.CreateFleetRecord)
 		fl.PUT("/records/:id", g.Contributor(), handler.UpdateFleetRecord)

@@ -37,25 +37,21 @@
             </transition>
           </div>
         </div>
-        <!-- 内容区：所有菜单统一复刻电费核算内容页布局，仅字段按类型替换 -->
+        <!-- 内容区：12 个菜单统一三段式中台布局（KPI + 工具栏 + 列表 + 抽屉）。
+             不再用 :key 强制销毁重建 —— 切菜单只换数据源与分类，避免整页闪烁与状态丢失。 -->
         <div class="fleet-content">
-          <FleetRecordList :key="activeTab" :record-type="activeTab" @open-settings="settingsVisible = true" />
+          <FleetRecordList :record-type="activeTab" />
         </div>
       </div>
     </div>
 
-    <!-- 设置抽屉：按当前菜单动态显示对应配置 -->
-    <FleetSettingsDrawer v-model:visible="settingsVisible" :menu-key="activeTab" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import FleetRecordList from './FleetRecordList.vue'
-import FleetSettingsDrawer from './FleetSettingsDrawer.vue'
-
-const settingsVisible = ref(false)
 
 const sideItems = [
   { key: 'vehicle-archive', label: '车辆档案', icon: 'view-module' },
@@ -75,7 +71,17 @@ const costItems = [
   { key: 'car-request', label: '请车记录', icon: 'calendar' },
 ]
 
-const costOpen = ref(true)
+// 成本管理折叠状态：默认展开，记忆到 localStorage（Q6 决策）。
+const COST_OPEN_KEY = ['weknora', 'fleet', 'cost', 'open'].join('-')
+const costOpen = ref((() => {
+  try {
+    const saved = localStorage.getItem(COST_OPEN_KEY)
+    return saved === null ? true : saved === '1'
+  } catch { return true }
+})())
+watch(costOpen, (v) => {
+  try { localStorage.setItem(COST_OPEN_KEY, v ? '1' : '0') } catch { /* ignore */ }
+})
 
 const route = useRoute()
 const router = useRouter()

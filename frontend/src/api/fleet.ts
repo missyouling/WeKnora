@@ -49,13 +49,47 @@ export function deleteFleetFuelCard(id: string) {
 }
 
 // ---- 记录 ----
-export function listFleetRecords(params: { type: string; month?: string; vehicle_id?: string; doc_type?: string }) {
+// 分页查询（第 28 轮）：返回 { items, total, page, page_size }。
+// q=关键词（穿透 data JSON 与车牌）、field_filters=`key:value;key:value`、
+// date_from/date_to=记录日期区间。参数全可选，缺省第 1 页 20 条。
+export function listFleetRecords(params: {
+  type: string
+  month?: string
+  vehicle_id?: string
+  doc_type?: string
+  q?: string
+  field_filters?: string
+  date_from?: string
+  date_to?: string
+  page?: number
+  page_size?: number
+}) {
   const query = new URLSearchParams()
   query.set('type', params.type)
   if (params.month) query.set('month', params.month)
   if (params.vehicle_id) query.set('vehicle_id', params.vehicle_id)
   if (params.doc_type) query.set('doc_type', params.doc_type)
+  if (params.q) query.set('q', params.q)
+  if (params.field_filters) query.set('field_filters', params.field_filters)
+  if (params.date_from) query.set('date_from', params.date_from)
+  if (params.date_to) query.set('date_to', params.date_to)
+  if (params.page) query.set('page', String(params.page))
+  if (params.page_size) query.set('page_size', String(params.page_size))
   return get(`/api/v1/fleet/records?${query.toString()}`)
+}
+
+/** 记录统计（KPI 卡片：按 record_type 计数 + 金额合计）。 */
+export function getFleetRecordStats(params: { types?: string; month?: string } = {}) {
+  const query = new URLSearchParams()
+  if (params.types) query.set('types', params.types)
+  if (params.month) query.set('month', params.month)
+  const qs = query.toString()
+  return get(`/api/v1/fleet/records/stats${qs ? '?' + qs : ''}`)
+}
+
+/** 发票 → 成本台账幂等派生（通行费→路桥费、成品油/充电→加油充电）。 */
+export function syncFleetInvoices() {
+  return post('/api/v1/fleet/records/sync-invoices', {})
 }
 export function createFleetRecord(payload: Record<string, unknown>) {
   return post('/api/v1/fleet/records', payload)
@@ -295,7 +329,7 @@ export function aiSuggestRules(kbId: string, payload: {
 // ---- 证照提取 ----
 
 /** 触发证照/发票提取。后端只认 cert_type（勿传 doc_type）。超时放宽到 120s。 */
-export function extractFleetDocument(kbId: string, knowledgeId: string, payload: { scope: string; cert_type?: string }) {
+export function extractFleetDocument(kbId: string, knowledgeId: string, payload: { scope?: string; cert_type?: string; record_type?: string }) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-fleet-document`, payload, { timeout: 120000 })
 }
 

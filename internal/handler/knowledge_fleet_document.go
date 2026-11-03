@@ -41,6 +41,23 @@ func fleetArchiveRecordType(scope string) string {
 	}
 }
 
+// fleetRecordScope 记录型菜单（轮胎/年检/成本 7 项）到分类 scope 的映射。
+//
+// 这些菜单同时支持「手工新增」与「上传文件提取」（第 28 轮 Q2/Q5），
+// 提取落库时 record_type 必须原样保留（不能落成 *-archive），
+// 字段由对应分类 subs 驱动。未登记的类型返回空串，由调用方按档案类处理。
+var fleetRecordTypeToScope = map[string]string{
+	types.FleetRecordTire:           types.FleetCategoryScopeTire,
+	types.FleetRecordInspection:     types.FleetCategoryScopeInspection,
+	types.FleetRecordFuelCharge:     types.FleetCategoryScopeFleetCost,
+	types.FleetRecordRoadToll:       types.FleetCategoryScopeFleetCost,
+	types.FleetRecordRepairCost:     types.FleetCategoryScopeFleetCost,
+	types.FleetRecordInsuranceClaim: types.FleetCategoryScopeFleetCost,
+	types.FleetRecordViolation:      types.FleetCategoryScopeFleetCost,
+	types.FleetRecordMaterial:       types.FleetCategoryScopeFleetCost,
+	types.FleetRecordCarRequest:     types.FleetCategoryScopeFleetCost,
+}
+
 // resolveFleetScopeByDocType 按证照类型名称在分类配置中的实际归属返回其 scope
 // （vehicle/driver/maintain）；同名分类优先取 driver，未配置时返回空串，
 // 由调用方回退到请求 scope。用于纠正上传时默认传 vehicle 导致驾驶证等司机
@@ -84,16 +101,29 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 		return
 	}
 	var body struct {
-		Scope    string `json:"scope"`
-		CertType string `json:"cert_type"`
+		Scope      string `json:"scope"`
+		CertType   string `json:"cert_type"`
+		RecordType string `json:"record_type"`
 	}
 	_ = c.ShouldBindJSON(&body)
 	scope := strings.TrimSpace(body.Scope)
+	recordType := strings.TrimSpace(body.RecordType)
+	// 记录型菜单（轮胎/年检/成本 7 项）上传提取时传 record_type：
+	// scope 由它反查（轮胎→tire、年检→inspection、成本 7 项→fleet-cost），
+	// 落库 record_type 保持原值而不是 archive 类型。
+	if recordType != "" {
+		st, ok := fleetRecordTypeToScope[recordType]
+		if !ok {
+			c.Error(errors.NewBadRequestError("record_type 不支持上传提取: " + recordType))
+			return
+		}
+		scope = st
+	}
 	if scope == "" {
 		scope = types.FleetCategoryScopeVehicle
 	}
-	if scope != types.FleetCategoryScopeVehicle && scope != types.FleetCategoryScopeDriver && scope != types.FleetCategoryScopeMaintain {
-		c.Error(errors.NewBadRequestError("scope 必须是 vehicle|driver|maintain"))
+	if !fleetCategoryScopes[scope] {
+		c.Error(errors.NewBadRequestError("scope 不合法: " + scope))
 		return
 	}
 
@@ -213,7 +243,9 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 	}
 
 	// 落库 fleet_records（幂等：按 doc_knowledge_id 更新）
-	recordType := fleetArchiveRecordType(scope)
+	if recordType == "" {
+		recordType = fleetArchiveRecordType(scope)
+	}
 	now := time.Now().UTC()
 	vehicleID := h.matchVehicleIDByPlate(effCtx, int64(effectiveTenantID), result.VehicleNo)
 	var existing types.FleetRecord

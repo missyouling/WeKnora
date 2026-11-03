@@ -31,6 +31,14 @@ const (
 	FleetCategoryScopeDriver   = "driver"
 	FleetCategoryScopeMaintain = "maintain"
 	FleetCategoryScopeInvoice  = "invoice" // 发票整体规则（无证照类型维度）
+	// FleetCategoryScopeTire / Inspection / FleetCost：记录型菜单（第 28 轮）。
+	//
+	// 为什么必须进 fleet_categories：12 个菜单要共用一套「列/筛选/抽屉/规则」
+	// 六同步派生链，而派生链的唯一数据源就是分类 subs。此前轮胎/年检/成本 7 项
+	// 的字段全部硬编码在前端 TYPES / RECORD_COLS 里，改一个字段要发一次前端。
+	FleetCategoryScopeTire       = "tire"       // 轮胎管理（单分类）
+	FleetCategoryScopeInspection = "inspection" // 年检管理（单分类）
+	FleetCategoryScopeFleetCost  = "fleet-cost" // 成本管理（7 个分类）
 )
 
 // FleetVehicle 车辆配置（历史保留）
@@ -112,11 +120,17 @@ type FleetRecord struct {
 	Data           map[string]any `gorm:"type:jsonb;serializer:json" json:"data"` // 类型专属字段
 	DocType        string         `gorm:"index" json:"doc_type"`                  // 证照类型（档案类）
 	FileName       string         `json:"file_name"`                              // 源文件名（档案类）
-	DocKnowledgeID string         `json:"doc_knowledge_id"`                       // 关联知识库文件 ID（档案类，用于源文件打印）
-	Remark         string         `gorm:"type:text" json:"remark"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      *time.Time     `gorm:"index" json:"deleted_at"`
+	DocKnowledgeID string         `json:"doc_knowledge_id"`                       // 关联知识库文件 ID（档案类/发票派生，用于源文件预览与打印）
+	// SourceKind / SourceRef 派生来源（第 28 轮）：发票自动派生到「路桥费/加油充电」时
+	// 记录来源，保证幂等（同一条发票只派生一条台账）且能回跳源 PDF。
+	//   SourceKind: invoice（发票派生）| 空（手工录入）
+	//   SourceRef:  <knowledge_id>#<invoice_no>
+	SourceKind string     `gorm:"index" json:"source_kind,omitempty"`
+	SourceRef  string     `gorm:"index" json:"source_ref,omitempty"`
+	Remark     string     `gorm:"type:text" json:"remark"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	DeletedAt  *time.Time `gorm:"index" json:"deleted_at"`
 }
 
 func (FleetRecord) TableName() string { return "fleet_records" }

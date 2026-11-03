@@ -441,7 +441,7 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
 
@@ -462,6 +462,11 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   // 能耗：市电账单 / 光伏账单 / 能耗单 三个分类同属 energy scope（见后端
   // handler/energy_extract_config.go 的 EnergyScope 常量与 EnergyBillType* 定义）
   energy: [{ key: 'energy', label: '能耗账单', scope: 'energy', groupId: '' }],
+  // 记录型 scope（第 28 轮 Q2/Q5）：轮胎/年检各 1 个分类，成本管理 7 个分类。
+  // 分组标签写「分类名称」而不是「证照名称」——这些是台账字段，不是证照。
+  tire: [{ key: 'tire', label: '轮胎', scope: 'tire', groupId: '' }],
+  inspection: [{ key: 'inspection', label: '年检', scope: 'inspection', groupId: '' }],
+  'fleet-cost': [{ key: 'fleet-cost', label: '成本项', scope: 'fleet-cost', groupId: '' }],
 }
 
 // 分类名称列文案：统一走 BusinessScopeRegistry（新增业务只改 registry/<scope>.ts）
@@ -883,7 +888,7 @@ function startAdd() {
     document.querySelector('.cert-add-row--editing')?.scrollIntoView({ block: 'nearest' })
   })
 }
-// 供抽屉标题栏右侧「新增」按钮调用（FleetSettingsDrawer header）
+// 供设置抽屉标题栏右侧「新增」按钮调用（StandardSettingDrawer header）
 // 列表末尾「新增」行文案：registry 声明了 addLabel 的 scope（发票=「新增分类」）优先
 const addLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)
 const addRowLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)

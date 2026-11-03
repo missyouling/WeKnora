@@ -5,12 +5,13 @@
 import { registerScope } from './businessScope'
 
 const fleetScopes: Array<{
-  key: 'vehicle' | 'driver' | 'maintain'
+  key: 'vehicle' | 'driver' | 'maintain' | 'tire' | 'inspection' | 'fleet-cost'
   categoryLabel: string
   categoryNoun: string
   emptyText: string
   namePlaceholder: string
   uploadNoun: string
+  uploadTypeLabel?: string
 }> = [
   {
     key: 'vehicle',
@@ -36,6 +37,35 @@ const fleetScopes: Array<{
     namePlaceholder: '请输入维保项名称',
     uploadNoun: '证照',
   },
+  // 记录型菜单（第 28 轮）：轮胎/年检单分类，成本管理 7 分类。
+  // 这些是台账字段而非证照，文案统一用「分类 / 字段」，上传名词用「票据」。
+  {
+    key: 'tire',
+    categoryLabel: '分类名称',
+    categoryNoun: '分类',
+    emptyText: '暂无分类',
+    namePlaceholder: '请输入分类名称',
+    uploadNoun: '票据',
+    uploadTypeLabel: '分类',
+  },
+  {
+    key: 'inspection',
+    categoryLabel: '分类名称',
+    categoryNoun: '分类',
+    emptyText: '暂无分类',
+    namePlaceholder: '请输入分类名称',
+    uploadNoun: '票据',
+    uploadTypeLabel: '分类',
+  },
+  {
+    key: 'fleet-cost',
+    categoryLabel: '成本项名称',
+    categoryNoun: '成本项',
+    emptyText: '暂无成本项',
+    namePlaceholder: '请输入成本项名称',
+    uploadNoun: '票据',
+    uploadTypeLabel: '成本项',
+  },
 ]
 
 for (const s of fleetScopes) {
@@ -47,7 +77,7 @@ for (const s of fleetScopes) {
     namePlaceholder: s.namePlaceholder,
     emptyText: s.emptyText,
     uploadNoun: s.uploadNoun,
-    uploadTypeLabel: s.categoryNoun,
+    uploadTypeLabel: s.uploadTypeLabel || s.categoryNoun,
     uploadTypeTip: `必须选择${s.categoryNoun}，上传后按所选类型归类提取`,
     itemLabel: '档案字段',
     supportsSubFields: false,

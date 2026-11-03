@@ -31,11 +31,31 @@ type FleetHandler struct {
 func NewFleetHandler(db *gorm.DB) *FleetHandler {
 	h := &FleetHandler{db: db}
 	// best-effort ensure table exists for cert groups (no versioned migration yet)
-	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}, &types.FleetGroupAlias{}); err != nil {
-		logger.Warnf(context.Background(), "AutoMigrate fleet_cert_groups failed: %v", err)
+	if err := db.AutoMigrate(&types.FleetCertGroup{}, &types.FleetCategory{}, &types.FleetGroupAlias{},
+		&types.FleetRecord{}); err != nil {
+		logger.Warnf(context.Background(), "AutoMigrate fleet tables failed: %v", err)
 	}
 	h.seedBusinessCategories()
+	// 车辆主数据回填与发票派生**不在这里启动**：它们要扫 knowledges 全表 JSON，
+	// 在构造函数里起协程会与同进程测试的写事务抢 sqlite 表锁
+	// （TestBusinessRenameContractCategoryCarriesNestedItems 因此 500）。
+	// 统一由 router 注册处按「启动后后台任务」批次触发，见 StartFleetBackfillTasks。
 	return h
+}
+
+// StartFleetBackfillTasks 启动车队的后台初始化任务（幂等）：
+//  1. 从发票明细与存量记录收集车牌，补建 fleet_vehicles；
+//  2. 发票 → 成本台账派生（通行费→路桥费、成品油/充电→加油充电）。
+//
+// 放在路由注册处调用而不是 NewFleetHandler：构造函数可能在测试里被反复调用，
+// 后台全表扫描会干扰测试的写事务。
+func (h *FleetHandler) StartFleetBackfillTasks(ctx context.Context) {
+	go func() {
+		h.backfillFleetVehicles(ctx)
+		if _, err := h.SyncInvoicesToFleetCost(ctx, 0); err != nil {
+			logger.Warnf(ctx, "fleet invoice sync on startup failed: %v", err)
+		}
+	}()
 }
 
 func fleetTenantID(c *gin.Context) (uint64, error) {
@@ -574,7 +594,13 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	month := strings.TrimSpace(c.Query("month"))
 	vehicleID := strings.TrimSpace(c.Query("vehicle_id"))
 	docType := strings.TrimSpace(c.Query("doc_type"))
-	q := h.db.WithContext(ctx).Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	keyword := strings.TrimSpace(c.Query("q"))
+	dateFrom := strings.TrimSpace(c.Query("date_from"))
+	dateTo := strings.TrimSpace(c.Query("date_to"))
+	page, pageSize := normalizeFleetPage(atoiSafe(c.Query("page")), atoiSafe(c.Query("page_size")))
+
+	q := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
+		Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
 	if recordType != "" {
 		q = q.Where("record_type = ?", recordType)
 	}
@@ -587,13 +613,83 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	if docType != "" {
 		q = q.Where("doc_type = ?", docType)
 	}
+	// 日期区间：record_date 是 YYYY-MM-DD 字符串，字典序即时间序，可直接比较。
+	// 派生台账（发票来源）日期取开票日期，档案类为空 —— 空值不参与区间筛选。
+	if dateFrom != "" {
+		q = q.Where("record_date >= ?", dateFrom)
+	}
+	if dateTo != "" {
+		q = q.Where("record_date <= ?", dateTo)
+	}
+	// 关键词：车牌号在 vehicle_id 上（先按车牌反查），其余字段在 data JSON 里。
+	// 统一用 CAST(data AS TEXT) LIKE，PG 与 sqlite 都能跑，不写方言函数。
+	if keyword != "" {
+		keyword = fleetLikePattern(keyword)
+		var vehicleIDs []string
+		h.db.WithContext(ctx).Model(&types.FleetVehicle{}).
+			Where("tenant_id = ? AND deleted_at IS NULL AND plate_no LIKE ? ESCAPE '\\'", tenantID, keyword).
+			Pluck("id", &vehicleIDs)
+		if len(vehicleIDs) > 0 {
+			q = q.Where("(CAST(data AS TEXT) LIKE ? ESCAPE '\\' OR vehicle_id IN ? OR remark LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+				keyword, vehicleIDs, keyword, keyword)
+		} else {
+			q = q.Where("(CAST(data AS TEXT) LIKE ? ESCAPE '\\' OR remark LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+				keyword, keyword, keyword)
+		}
+	}
+	// 字段筛选：车牌号走 vehicle_id 精确（派生记录已回填车辆），其余按键值包含。
+	for _, f := range parseFleetFieldFilters(c.Query("field_filters")) {
+		if f.Key == "车牌号" || f.Key == "plate_no" {
+			var vehicleIDs []string
+			h.db.WithContext(ctx).Model(&types.FleetVehicle{}).
+				Where("tenant_id = ? AND deleted_at IS NULL AND plate_no = ?", tenantID, f.Value).
+				Pluck("id", &vehicleIDs)
+			if len(vehicleIDs) == 0 {
+				// 车牌不存在 → 结果必为空（不能退化成不过滤，否则会返回全部）
+				q = q.Where("1 = 0")
+				continue
+			}
+			q = q.Where("vehicle_id IN ?", vehicleIDs)
+			continue
+		}
+		q = q.Where("CAST(data AS TEXT) LIKE ? ESCAPE '\\'", fleetLikePattern(f.Value))
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		logger.Errorf(ctx, "count fleet records failed: %v", err)
+		c.Error(errors.NewInternalServerError("list records failed"))
+		return
+	}
 	var items []types.FleetRecord
-	if err := q.Order("record_date DESC, created_at DESC").Find(&items).Error; err != nil {
+	if err := q.Order("record_date DESC, created_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&items).Error; err != nil {
 		logger.Errorf(ctx, "list fleet records failed: %v", err)
 		c.Error(errors.NewInternalServerError("list records failed"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+	if items == nil {
+		items = []types.FleetRecord{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": fleetRecordListResult{
+		Items: items, Total: total, Page: page, PageSize: pageSize,
+	}})
+}
+
+// atoiSafe 宽松解析整数（非法/空一律 0，由 normalizeFleetPage 兜底）。
+func atoiSafe(s string) int {
+	n := 0
+	for _, r := range strings.TrimSpace(s) {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+		if n > 1_000_000 {
+			return 1_000_000
+		}
+	}
+	return n
 }
 
 // normalizeFleetRecord 校验并补齐记录通用字段。
@@ -601,10 +697,9 @@ func normalizeFleetRecord(req *types.FleetRecord) error {
 	if req.RecordType == "" || !fleetRecordTypes[req.RecordType] {
 		return errors.NewBadRequestError("record type 不合法")
 	}
-	// 档案类记录（证照解析）不强制绑定车辆
-	if !strings.HasSuffix(req.RecordType, "-archive") && req.VehicleID == "" {
-		return errors.NewBadRequestError("请选择车辆")
-	}
+	// 车辆不再强制（第 28 轮 Q3）：fleet_vehicles 为空时「必填」会把 9 个记录型
+	// 菜单全部锁死（实测 400「请选择车辆」）。真正的兜底在 resolveFleetVehicle：
+	// 有车牌就自动查/建车辆并回填，连车牌也没有（公司级许可证/待补录）则允许空。
 	if req.Data == nil {
 		req.Data = map[string]any{}
 	}
@@ -639,6 +734,7 @@ func (h *FleetHandler) CreateFleetRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	h.resolveFleetVehicle(ctx, int64(tenantID), &req)
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
 	req.TenantID = int64(tenantID)
@@ -668,6 +764,7 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	h.resolveFleetVehicle(ctx, int64(tenantID), &req)
 	var cnt int64
 	if err := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
@@ -918,9 +1015,12 @@ func invoiceDefaultStandardSubs() []types.FleetCategorySub {
 }
 
 var fleetCategoryScopes = map[string]bool{
-	types.FleetCategoryScopeVehicle:  true,
-	types.FleetCategoryScopeDriver:   true,
-	types.FleetCategoryScopeMaintain: true,
+	types.FleetCategoryScopeVehicle:    true,
+	types.FleetCategoryScopeDriver:     true,
+	types.FleetCategoryScopeMaintain:   true,
+	types.FleetCategoryScopeTire:       true,
+	types.FleetCategoryScopeInspection: true,
+	types.FleetCategoryScopeFleetCost:  true,
 	// P2-D: 日常事务业务模块（单大类，subs 即列表列配置）
 	"contract":     true,
 	"invoice":      true,
@@ -2172,6 +2272,8 @@ func (h *FleetHandler) seedBusinessCategories() {
 	}
 
 	// 其它票据：已存在分类补齐缺失字段（复用普通发票字段集，幂等、不覆盖已有字段）
+	// 12 个菜单全量纳入分类配置（轮胎/年检/成本 7 项），六同步才有数据源。
+	h.seedFleetRecordCategories(ctx)
 	h.seedInvoiceMiscSubsBackfill(ctx)
 
 	// 发票明细子列：按分类名幂等补齐 items 字段的 sub_fields（通行费/水电发票等用户
