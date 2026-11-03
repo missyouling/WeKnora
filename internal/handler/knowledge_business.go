@@ -1576,6 +1576,24 @@ func (h *BusinessExtractHandler) runInvoiceCore(ctx context.Context, kbID, knowl
 	// 明细校验/归一/分类优先等多道步骤，任一步都可能重新推导金额
 	// （真机 26507000000067486566：overlay 后又被明细值覆盖回 1269.91+165.09≠1262.40）。
 	service.ReconcileInvoicePartiesForPersist(meta.Invoices)
+	// 明细日期格式归一（第 27 轮）：紧凑 8 位 → YYYY-MM-DD，日期筛选/排序才认得出。
+	service.NormalizeInvoiceItemDates(meta.Invoices)
+	// 四元数学强校验（第 27 轮）：金额+税额==价税合计，税率由「金额×标准档==税额」
+	// 反推验证。放在落库前最后一步，任何上游步骤（明细校验/分类优先/明细覆盖）
+	// 改过金额或税率都会在这里被重新拉回自洽；无法闭环的票记 warn 让用户核对。
+	if finIssues := service.ReconcileInvoiceFinancialsForDocument(meta.Invoices); len(finIssues) > 0 {
+		meta.ExtractIssues = append(meta.ExtractIssues, finIssues...)
+	}
+	// 明细合计必须等于票面（单行明细 == 整张票）。串页污染的兜底告警：
+	// 明细已由 ReconcileInvoiceItemsWithSource 按页重建，仍不一致说明页内数据行
+	// 本身有歧义，此时不猜、只提示人工核对。
+	// 判据限定「行金额恰好等于文档里另一张票的金额」——折扣票/红冲票/合计行的
+	// 金额天然与票面不等，不能一律告警（会重演 74 份误报）。
+	for i := range meta.Invoices {
+		if service.InvoiceItemsCrossPageSuspect(meta.Invoices, i) {
+			meta.ExtractIssues = append(meta.ExtractIssues, service.NewExtractInvoiceItemsMismatchIssue(i))
+		}
+	}
 	// 文档级开票人回填（第 25 轮问题 2）：让 custom_metadata.issuer / drawer
 	// 与票级同源，详情抽屉在未选中具体行时也有值可读。
 	service.SyncDocumentIssuer(&meta)
@@ -3077,6 +3095,10 @@ func (h *BusinessExtractHandler) UpdateInvoiceMetadata(c *gin.Context) {
 	if kindOf(meta) == "invoice" {
 		var invMeta service.InvoiceCustomMetadata
 		if jerr := json.Unmarshal(body.CustomMetadata, &invMeta); jerr == nil && len(invMeta.Invoices) > 0 {
+			// 手动保存也要过四元强校验（第 27 轮）：用户改了金额/税率/税额后若
+			// 「金额 × 税率 ≠ 税额」或「金额 + 税额 ≠ 价税合计」，按数学恒等式纠偏；
+			// 纠不动的留给下面的 RevalidateInvoiceIssues 标红。
+			service.ReconcileInvoiceFinancialsForDocument(invMeta.Invoices)
 			invMeta.ExtractIssues = service.RevalidateInvoiceIssues(&invMeta)
 			if raw, merr := json.Marshal(invMeta); merr == nil {
 				body.CustomMetadata = raw

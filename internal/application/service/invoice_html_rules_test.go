@@ -76,7 +76,7 @@ func TestExtractInvoicesByHTMLTableRulesFullFields(t *testing.T) {
 	if inv.SellerName != "重庆渝蓉高速公路有限公司" || inv.SellerTaxNo != "9150000055675000X0" {
 		t.Errorf("销售方错：%q / %q", inv.SellerName, inv.SellerTaxNo)
 	}
-	if len(inv.Items) != 1 || inv.Items[0].Extra["travel_to"] != "20261022" {
+	if len(inv.Items) != 1 || inv.Items[0].Extra["travel_to"] != "2026-10-22" {
 		t.Errorf("明细行应带通行日期止，实际 %+v", inv.Items)
 	}
 }

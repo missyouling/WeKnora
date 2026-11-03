@@ -64,9 +64,9 @@ type InvoiceExtractionItem struct {
 	// 为什么要有两个键：早期提取链路里 drawer / issuer 两种写法都出现过，
 	// 前端列表与详情抽屉各读一个 → 同一张票在两处显示不一致（第 25 轮问题 2）。
 	// 现在由 fillInvoiceIssuer 同时写入两个键，读取侧任取其一都能拿到值。
-	Drawer string `json:"drawer,omitempty"`
-	Remark      string   `json:"remark"`
-	Category    string   `json:"category"`
+	Drawer   string `json:"drawer,omitempty"`
+	Remark   string `json:"remark"`
+	Category string `json:"category"`
 	// Tags 票内标签（历史提取结果里可能带）：参与列表关键词搜索与展示，
 	// 与知识库文件级标签（knowledge_tags）合并后统一进 InvoiceRecord.Tags。
 	Tags      []string                `json:"tags,omitempty"`
@@ -1395,6 +1395,21 @@ func NewExtractInvoiceNoSanitizedIssue(n int) ExtractFieldIssue {
 	}
 }
 
+// NewExtractInvoiceItemsMismatchIssue 明细合计与票面金额/税额不一致时的告警。
+//
+// 为什么必须让用户看到：明细是「这张票买了什么」的唯一凭据，串页污染时列表
+// 金额仍然是对的（金额来自票面合计行），只有点开浮窗/抽屉才会看到别页的明细。
+// 若不提示，用户按明细做费用分摊会直接算错。
+func NewExtractInvoiceItemsMismatchIssue(index int) ExtractFieldIssue {
+	return ExtractFieldIssue{
+		Index:    index,
+		Field:    "items",
+		Kind:     "mismatch",
+		Detail:   "项目明细合计与票面金额/税额不一致（可能来自其它页），请核对源文件该页明细",
+		Severity: issueSeverityWarn,
+	}
+}
+
 // ---- 多标签表头格拆分（MinerU colspan 表头阻断明细行定位） ----
 //
 // 事故（真机 2026-10-20 P4，票号 26517905800800020367）：MinerU 把明细表头
@@ -2430,6 +2445,10 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 		// 金额自洽守卫：明细行折扣前 vs 合计行折扣后会破坏 amount+tax==total，
 		// 以价税合计为锚按税率反推（真机 26507000000067486566）。
 		reconcileInvoiceAmounts(&res.Invoices[i])
+		// 四元强校验（第 27 轮）：税率必须由「金额 × 标准档 == 税额」验证。
+		// 放在覆盖层里而不是只放落库前，是因为规则路径也会经过这里 ——
+		// 一条规则调用就能把「3% 标成 9% 档」的票当场纠回来。
+		ReconcileInvoiceFinancials(&res.Invoices[i])
 		// 购销方归一 + 原文兜底：LLM 与规则都可能把购销方写反/写成同名
 		// （PDF 竖排标签被打散时尤为常见），这里用确定性守卫纠正；
 		// 某一侧缺失时用票面原文补齐，已有正确值不被覆盖。
@@ -2440,15 +2459,65 @@ func OverlayDeterministicInvoiceFields(res *InvoiceExtractionResult, chunks []*t
 	if len(nos) != len(res.Invoices) {
 		return 0
 	}
+	// 明细行覆盖必须**按物理页码配对**（第 27 轮根因修复）。
+	//
+	// 旧实现：rows := flatItemRowRe.FindAllStringSubmatch(full) 然后 rows[i] -> invoices[i]。
+	// 它假设「全文明细行数 == 发票数且顺序一一对应」，只对**纯扁平版式**成立。
+	// 真机 19 页汇总单里只有第 12、14 页的明细能被扁平正则命中（其余页是一格一列
+	// 的 HTML 表格），于是 rows[0]=第 12 页的 2.62、rows[1]=第 14 页的 6.45 被写进了
+	// 第 1、2 张票 —— 列表金额是 198.09，浮窗/抽屉明细却是 6.45 的串页事故。
+	//
+	// 新规则：每行按其在原文中的字节偏移反查物理页码，只回填给**同页**的发票；
+	// 同页出现两行以上视为歧义（可能一页两票），一律不动。无页码信息时退回
+	// 「行数 == 发票数」的严格 1:1，绝不按下标硬套。
 	rows := flatItemRowRe.FindAllStringSubmatch(full, -1)
+	rowIdx := flatItemRowRe.FindAllStringSubmatchIndex(full, -1)
+	// 只有「页码能区分发票」时才按页配对：19 页 19 票 = P1..P19，一页一票。
+	// 纯扁平版式（无 locator、靠票面页眉推页码）常把多张票推成同一页，此时
+	// 页码无法区分发票，退回「行数 == 发票数」的严格 1:1（下面 cases）。
+	usePagePairing := invoicePagesDistinct(res.Invoices)
+	rowByPage := map[int]int{}
+	ambiguousPage := map[int]bool{}
+	if usePagePairing {
+		for i, loc := range rowIdx {
+			page := src.PageAt(loc[0])
+			if page <= 0 {
+				continue
+			}
+			if _, dup := rowByPage[page]; dup {
+				ambiguousPage[page] = true
+				continue
+			}
+			rowByPage[page] = i
+		}
+	}
+	oneToOne := len(rows) == len(res.Invoices)
 	overlaid := 0
 	for i := range res.Invoices {
 		res.Invoices[i].InvoiceNo = strings.TrimSpace(nos[i][1])
-		if i < len(rows) {
-			applyFlatItemRow(&res.Invoices[i], rows[i])
-		}
 		overlaid++
+		var row *[]string
+		switch {
+		case usePagePairing:
+			page := invoicePageOf(&res.Invoices[i])
+			if idx, ok := rowByPage[page]; ok && !ambiguousPage[page] {
+				row = &rows[idx]
+			}
+		case oneToOne:
+			row = &rows[i]
+		}
+		if row == nil {
+			continue
+		}
+		// 已有明细且自洽时不覆盖：覆盖层的职责是「补缺」，不是「重写已正确的值」。
+		if len(res.Invoices[i].Items) > 0 && !InvoiceItemsAmountMismatch(&res.Invoices[i]) {
+			continue
+		}
+		applyFlatItemRow(&res.Invoices[i], *row)
 	}
+	// 用每页原文重建明细：把上面「不敢覆盖」的空缺按页内唯一数据行补齐，
+	// 同时纠正在旧版本里已经被写串的明细（幂等，已一致则不写）。
+	ReconcileInvoiceItemsWithSource(res.Invoices, src)
 	// 票号清洗只作用于**已按序覆盖后**的号码：count 不一致时按上面的约定
 	// 一律不动任何字段（防止把 A 票的号码写到 B 票上），那条路径连清洗也不做，
 	// 由 InvoiceRuleResultIncomplete 判「缺票号」回退 LLM 补提。

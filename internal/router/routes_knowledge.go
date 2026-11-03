@@ -98,6 +98,10 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			// 会让进程启动多等约 30 秒，健康检查在这段时间返回 000（滚动发布期间表现为
 			// 「新实例还没起来」）。修复只改 invoices[].page_no，晚几秒生效没有副作用。
 			go business.RepairInvoicePhysicalPages(context.Background())
+			// 启动幂等修复：存量发票「明细串页 + 税率错标」（第 27 轮）。
+			// 只对元数据层面可疑的文件加载 chunks，按页重建明细并做四元数学强校验；
+			// 修好后 candidates 归零，后续启动不再写库。
+			go business.RepairInvoiceItemsAndFinancials(context.Background())
 			// 启动幂等清理：分类已删除、配置仍残留的孤儿提取配置（软删归档）
 			business.CleanupOrphanExtractConfigs(context.Background())
 			// 启动幂等迁移：把存量已知长文本字段（备注/摘要/说明…）从 text 升级为

@@ -190,11 +190,15 @@ func parseHTMLTableInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
 		if r.Vehicle != "" {
 			extra["vehicle_type"] = r.Vehicle
 		}
+		// 日期统一归一成 YYYY-MM-DD：票面是紧凑 8 位（20261022），而扁平规则
+		// 写的是 2026-10-22 —— 两套格式并存会让抽屉显示成「20261022」，
+		// 日期区间筛选/排序也认不出来。归一放在写入 extra 这一层，row 结构体
+		// 仍保留票面原值（解析层单测依赖紧凑形态）。
 		if r.From != "" {
-			extra["travel_from"] = r.From
+			extra["travel_from"] = mdDateFromCompact(r.From)
 		}
 		if r.To != "" {
-			extra["travel_to"] = r.To
+			extra["travel_to"] = mdDateFromCompact(r.To)
 		}
 		if len(extra) > 0 {
 			line.Extra = extra
@@ -230,7 +234,8 @@ func parseHTMLTableInvoiceSegment(seg string) (InvoiceExtractionItem, bool) {
 		inv.Fields = map[string]any{"车牌号": head.Plate}
 	}
 	if head.Plate != "" || head.From != "" || head.To != "" {
-		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s", head.Plate, head.From, head.To)
+		inv.Remark = fmt.Sprintf("车牌号：%s；通行日期起：%s；通行日期止：%s",
+			head.Plate, mdDateFromCompact(head.From), mdDateFromCompact(head.To))
 	}
 	return inv, true
 }
@@ -323,20 +328,24 @@ func parseHTMLTollRow(cells []string) (htmlTollRow, bool) {
 			if m := htmlLabelPlateRe.FindStringSubmatch(cell); m != nil {
 				if p := mdCleanText(m[1]); htmlPlateRe.MatchString(p) {
 					row.Plate = p
-					continue
 				}
 			}
 			// 整格就是一个车牌
-			if htmlPlateRe.MatchString(cell) {
+			if row.Plate == "" && htmlPlateRe.MatchString(cell) {
 				row.Plate = cell
-				continue
 			}
 			// **合并格形态**（真机主流）：`*生产生活服务*通行费 渝D95256 货车 20261006`
 			// —— 项目名/车牌/车型/通行起被塞进同一个 colspan 格。纯车牌匹配对整格
 			// 必然失配，必须从串里抠出车牌（否则车牌整列为空，正是图 2 左红框）。
-			if m := cnPlateRe.FindString(cell); m != "" {
-				row.Plate = m
-				continue
+			//
+			// 注意：这里**不能 continue**。同一格里除了车牌还有「通行日期起」，
+			// 提前跳过会让该日期永远取不到 —— 真机 19 页汇总单的「通行日期起」整列
+			// 为空（只剩独立成格的日期止）就是这个原因。取到车牌后继续走下面的
+			// 日期解析，让同一格既贡献车牌也贡献起始日期。
+			if row.Plate == "" {
+				if m := cnPlateRe.FindString(cell); m != "" {
+					row.Plate = m
+				}
 			}
 		}
 		// 整格就是 8 位日期
@@ -440,10 +449,22 @@ func parseHTMLTollRow(cells []string) (htmlTollRow, bool) {
 			row.Vehicle = cell
 		}
 		if row.ItemName == "" && strings.Contains(cell, "通行费") {
-			row.ItemName = cell
+			row.ItemName = tidyTollItemName(cell)
 		}
 	}
 	return row, true
+}
+
+// tidyTollItemName 从「项目名 + 车牌 + 车型 + 日期」的合并格里只取项目名。
+//
+// 真机合并格：`*生产生活服务*通行费 渝D95256 货车 20261006`。整格当项目名会让
+// 明细行名称变成一长串车牌日期，前端列宽被撑爆、按名称搜索也搜不到。
+func tidyTollItemName(cell string) string {
+	s := strings.TrimSpace(cell)
+	if loc := cnPlateRe.FindStringIndex(s); loc != nil && loc[0] > 0 {
+		s = strings.TrimSpace(s[:loc[0]])
+	}
+	return s
 }
 
 // htmlPartyScanText 把段落转成「一行一格」的纯文本，供购销方正则匹配。

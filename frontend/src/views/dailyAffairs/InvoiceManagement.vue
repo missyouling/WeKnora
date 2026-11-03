@@ -1625,14 +1625,27 @@ const openDetail = async (row: InvoiceRow) => {
       currentDetail.value = detail
       if (detail.custom_metadata) {
         const parsed = parseCustomMetadata(detail)
-        const match = parsed.find(p => row.page && p.page === row.page)
-          || parsed.find(p => p.invoiceNo === row.invoiceNo) || parsed[0]
-        if (match) {
-          // items 优先用列表行：列表接口返回的明细已带 extra（plate_no/vehicle_type/
-          // travel_from/travel_to 等分类子列），而详情接口的 items 结构可能不含 extra。
-          // 直接 {...row, ...match} 会让 match 的空 items 覆盖掉列表值，表现就是
-          // 抽屉先显示车牌号、1 秒后（详情返回重填时）又消失。
-          const keepItems = Array.isArray(row.items) && row.items.length ? row.items : (match.items || [])
+        // 子记录定位必须有**强标识**（票号优先，页码次之）：
+        // 旧实现末尾挂了 `|| parsed[0]`，一旦票号/页码对不上就会拿第一张票的数据
+        // 覆盖当前行 —— 多页文件里表现为「点第 5 行，抽屉显示第 1 行的购销方/明细」。
+        // 定位不到就保持列表行自身的数据，绝不跨票借用。
+        const match = parsed.find(p => !!row.invoiceNo && p.invoiceNo === row.invoiceNo)
+          || parsed.find(p => !!row.page && p.page === row.page && (!row.invoiceNo || !p.invoiceNo))
+        // 票号必须一致才允许合并（页码相同但票号不同 = 同页两张票，不可混用）。
+        if (match && (!row.invoiceNo || !match.invoiceNo || match.invoiceNo === row.invoiceNo)) {
+          // 明细严格取**该子记录自身**的 items（第 27 轮）。
+          //
+          // 多页发票的每一页都是独立子记录，明细只属于它自己那一页。文档顶层
+          // `custom_metadata.items` 是某单页的残留，一旦回退读取，整个文档所有页
+          // 会显示同一条明细（真机事故：19 页全部显示 P14 的 6.45/0.19）。
+          // 因此这里只认两个来源，且都不跨记录：
+          //   1) 列表行 items（后端按票归一后的记录级明细，含 extra 子列）；
+          //   2) 详情里**同一票号**子记录的 items。
+          // 列表行有明细时以列表行为准（它带分类子列），否则用详情同票号的明细；
+          // 两者都没有就渲染空表，让用户看到「无明细」而不是别页的脏数据。
+          const rowItems = Array.isArray(row.items) ? row.items : []
+          const matchItems = Array.isArray(match.items) ? match.items : []
+          const keepItems = rowItems.length ? rowItems : matchItems
           // **状态必须以列表行为准**（第 25 轮问题 1）。
           //
           // 详情接口返回的是票级原始 JSON，可能带 `extract_status`（文档级口径）
