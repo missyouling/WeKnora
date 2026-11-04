@@ -109,22 +109,32 @@ func (FleetFuelCard) TableName() string { return "fleet_fuel_cards" }
 // FleetRecord 车队通用记录：各类型共用一张表，
 // 通用列（vehicle/date/month/amount/mileage/remark）+ data(JSONB) 存放类型专属字段；档案类使用 doc_type/file_name/doc_knowledge_id。
 type FleetRecord struct {
-	ID             string         `gorm:"primaryKey" json:"id"`
-	TenantID       int64          `gorm:"index" json:"tenant_id"`
-	RecordType     string         `gorm:"index" json:"record_type"`               // 见常量
-	VehicleID      string         `gorm:"index" json:"vehicle_id"`                // 关联车辆（车牌号来源：档案解析或手动配置）
-	RecordMonth    string         `gorm:"index" json:"record_month"`              // YYYY-MM（筛选/汇总用）
-	RecordDate     string         `json:"record_date"`                            // YYYY-MM-DD
-	Amount         float64        `gorm:"numeric(18,2)" json:"amount"`            // 金额（通用列，费用清单汇总用）
-	Mileage        float64        `gorm:"numeric(18,2)" json:"mileage"`           // 里程（通用列）
-	Data           map[string]any `gorm:"type:jsonb;serializer:json" json:"data"` // 类型专属字段
-	DocType        string         `gorm:"index" json:"doc_type"`                  // 证照类型（档案类）
-	FileName       string         `json:"file_name"`                              // 源文件名（档案类）
-	DocKnowledgeID string         `json:"doc_knowledge_id"`                       // 关联知识库文件 ID（档案类/发票派生，用于源文件预览与打印）
-	// SourceKind / SourceRef 派生来源（第 28 轮）：发票自动派生到「路桥费/加油充电」时
-	// 记录来源，保证幂等（同一条发票只派生一条台账）且能回跳源 PDF。
-	//   SourceKind: invoice（发票派生）| 空（手工录入）
-	//   SourceRef:  <knowledge_id>#<invoice_no>
+	ID          string         `gorm:"primaryKey" json:"id"`
+	TenantID    int64          `gorm:"index" json:"tenant_id"`
+	RecordType  string         `gorm:"index" json:"record_type"`               // 见常量
+	VehicleID   string         `gorm:"index" json:"vehicle_id"`                // 关联车辆（车牌号来源：档案解析或手动配置）
+	RecordMonth string         `gorm:"index" json:"record_month"`              // YYYY-MM（筛选/汇总用）
+	RecordDate  string         `json:"record_date"`                            // YYYY-MM-DD
+	Amount      float64        `gorm:"numeric(18,2)" json:"amount"`            // 金额（通用列，费用清单汇总用）
+	Mileage     float64        `gorm:"numeric(18,2)" json:"mileage"`           // 里程（通用列）
+	Data        map[string]any `gorm:"type:jsonb;serializer:json" json:"data"` // 类型专属字段
+	DocType     string         `gorm:"index" json:"doc_type"`                  // 证照类型（档案类）
+	// SubCategory 子分类名（= 分类 name，如「道路运输证」「行驶证」）。
+	//
+	// 为什么单独成列而不是每次从 data 里推：KPI 卡片数字与列表行数必须 100% 同源
+	// （第 29 轮口径）。卡片按本列聚合、列表按本列过滤，两者查同一张表同一个条件，
+	// 才不会出现「卡片 2 份、点开 1 条」。旧数据本列为空，由
+	// backfillFleetRecordSubCategory 从 DocType/data 归一补齐。
+	SubCategory    string `gorm:"index" json:"sub_category"`
+	FileName       string `json:"file_name"`        // 源文件名（档案类）
+	DocKnowledgeID string `json:"doc_knowledge_id"` // 关联知识库文件 ID（档案类/发票派生，用于源文件预览与打印）
+	// SourceKind / SourceRef 历史遗留列（第 28 轮引入的「发票派生」标记）。
+	//
+	// 第 29 轮已**取消跨库派生**：加油充电 / 路桥费改为独立手工台账，不再从发票
+	// 同步。字段保留只为兼容已存在的表结构与历史行（不写、不读、不参与任何
+	// 业务逻辑）；后续如确认无历史数据可再迁移删除。
+	//   SourceKind: 历史上为 invoice（发票派生）| 空（手工录入）
+	//   SourceRef:  历史上为 <knowledge_id>#<invoice_no>
 	SourceKind string     `gorm:"index" json:"source_kind,omitempty"`
 	SourceRef  string     `gorm:"index" json:"source_ref,omitempty"`
 	Remark     string     `gorm:"type:text" json:"remark"`
@@ -173,6 +183,13 @@ type FleetCategorySub struct {
 	Builtin bool `json:"builtin,omitempty"`
 	// SubFields 明细子列定义（仅 data_type=items 时使用）；随 subs JSONB 一并持久化。
 	SubFields []FleetItemSubField `json:"sub_fields,omitempty"`
+	// Filterable 是否出现在**筛选栏**（第 29 轮）。
+	//
+	// 语义与 IsDefault（列表默认显示）完全独立：一个分类可能有 20 个字段，
+	// 全塞进筛选栏会占满 4 行（真机实测 29 个输入框）。默认口径是「每个分类
+	// 最多 2~3 个高频字段可筛」，其余默认 false，用户在「设置 → 字段定义」
+	// 里手动开启。空值（旧数据）按字段名白名单兜底，见 fleetColumns.filterableOf。
+	Filterable bool `json:"filterable,omitempty"`
 	// Group 字段所属业务分组（仅能耗类 scope 使用；空 = 主分组/未分组）。
 	//
 	// 为什么需要它：市电账单一个分类下挂着 12 个费用分项（账单概况 / 市场化购电费 /

@@ -21,6 +21,8 @@ export interface FleetSub {
   is_default?: boolean
   data_type?: string
   width?: number
+  /** 是否出现在筛选栏（后端 subs.filterable）。缺省按字段名白名单兜底。 */
+  filterable?: boolean
 }
 
 /** 一列（列表 / 打印共用）。 */
@@ -32,6 +34,8 @@ export interface FleetColumn {
   default: boolean
   /** 固定宽度（subs.width > 0） */
   width?: number
+  /** 是否出现在筛选栏（由 subs.filterable 派生） */
+  filterable?: boolean
   /** 取值：默认 data[name]，车牌号走 vehicle 映射 */
   value: (row: any) => string
   /** 原始值（合计行按数值累加用） */
@@ -41,10 +45,42 @@ export interface FleetColumn {
 /** 不作为筛选器的字段：备注类长文本（无检索价值）、以及纯展示派生列。 */
 const NON_FILTERABLE = new Set(['备注', '来源文件', '页码'])
 
+/**
+ * 旧数据的筛选兜底白名单：subs 里没有 filterable 键（改造前写入的分类）时，
+ * 只让这几个高频归属/编号字段可筛。**默认收窄**是关键 —— 之前把 subs 全量
+ * 塞进筛选栏，一个分类 29 个字段平铺占满 4 行（真机实测）。
+ */
+const FILTERABLE_FALLBACK = new Set([
+  '车牌号', '车牌号码', 'plate_no',
+  '证照类型', '子分类', '分类', 'doc_type',
+  '证件编号', '单号', '编号', '工单号', '保单号', '理赔单号', '违章单号', '轮胎编号',
+  '状态', '办理状态', '处理状态', '理赔状态', '当前状态', '付款状态', '提醒状态',
+  '持有人', '司机姓名', '申请人', '经办人',
+])
+
+/**
+ * 字段是否出现在筛选栏。
+ *
+ * 三级判定：显式 filterable（true/false）> 白名单兜底 > 默认不可筛。
+ * 与 is_default（列表默认显示）完全独立 —— 一个字段可以默认显示但不可筛。
+ */
+export function filterableOf(sub: FleetSub): boolean {
+  const name = String(sub?.name || '')
+  if (NON_FILTERABLE.has(name)) return false
+  if (typeof sub?.filterable === 'boolean') return sub.filterable
+  return FILTERABLE_FALLBACK.has(name)
+}
+
 /** 字段名含「日期 / 时间」→ 日期列。 */
 const DATE_HINT = /日期|时间/
-/** 字段名含「金额 / 费用 / 税额 / 单价 / 数量 / 扣分 / 保费 / 里程 / 比例 / 税率」→ 数值列。 */
-const NUMBER_HINT = /金额|费用|税额|单价|数量|扣分|保费|里程|税率|比例|天数|次数|页码|百公里/
+/**
+ * 字段名含这些词 → 数值列。
+ *
+ * 注意「费用」不能单独当判据：「费用类型」「费用说明」是文本字段，
+ * 被误判成 number 后既不能筛选、合计行也会试图累加字符串。
+ * 因此只认「费用」后接金额语义（费用金额/费用合计），或明确的金额词。
+ */
+const NUMBER_HINT = /金额|税额|单价|数量|扣分|保费|里程|税率|比例|天数|次数|页码|百公里|^费用$|费用金额|费用合计|总费用/
 
 /** 由 subs 推导 data_type（subs 已显式给类型时优先，缺省按字段名猜）。 */
 export function dataTypeOfSub(sub: FleetSub): string {
@@ -100,6 +136,7 @@ export function buildFleetColumns(
       key: name,
       label,
       dataType,
+      filterable: filterableOf(s),
       default: s.is_default === true,
       width: Number.isFinite(width) && width > 0 ? Math.round(width) : undefined,
       raw: (row: any) => {
@@ -142,7 +179,13 @@ export function buildFleetSummaryColumns(cols: readonly FleetColumn[]): SummaryC
   }))
 }
 
-/** 由列定义派生筛选器：车牌号 + 日期区间 + 其余文本字段。 */
+/**
+ * 由列定义派生筛选器。
+ *
+ * 布局对齐发票管理：搜索框（BusinessFilterBar 内置）+ 车牌号 + 日期区间 +
+ * **仅 filterable 的字段**。之前是全量 subs 平铺，29 个输入框占满 4 行。
+ * 上限再兜一层：最多 3 个字段筛选器，防止用户把 20 个字段都开启后再次爆行。
+ */
 export function buildFleetFilterSpecs(cols: readonly FleetColumn[]): FilterFieldSpec[] {
   const out: FilterFieldSpec[] = []
   const hasPlate = cols.some((c) => c.key === '车牌号' || c.key === '车牌号码')
@@ -152,8 +195,10 @@ export function buildFleetFilterSpecs(cols: readonly FleetColumn[]): FilterField
   out.push({ key: 'dateRange', type: 'date-range', placeholder: '记录日期', icon: 'time' })
   // 其余字段作为「字段筛选」：高基数用 text（车牌式自由输入），其余仍用 text
   // （记录型字段取值多为自由文本，下拉候选在前端拿不到全量，用 text 更准）。
+  let fieldCount = 0
   for (const c of cols) {
-    if (NON_FILTERABLE.has(c.key)) continue
+    if (fieldCount >= 3) break
+    if (!c.filterable) continue
     if (c.key === '车牌号' || c.key === '车牌号码') continue
     if (c.dataType === 'date' || c.dataType === 'number') continue
     out.push({
@@ -162,6 +207,7 @@ export function buildFleetFilterSpecs(cols: readonly FleetColumn[]): FilterField
       placeholder: c.label,
       clearable: true,
     })
+    fieldCount++
   }
   return out
 }
@@ -189,4 +235,111 @@ export function buildFleetFieldFiltersParam(state: Record<string, any>): string 
     parts.push(`${k.slice('field:'.length)}:${value}`)
   }
   return parts.join(';')
+}
+
+/**
+ * 汇总视图列（档案类菜单点「全部 / 已收录证照」卡片时使用）。
+ *
+ * 为什么需要单独一套：汇总视图下没有「当前分类」，各子分类字段差异很大
+ * （行驶证有「档案编号」，许可证有「许可证号」，保险单有「保单号」）。
+ * 若直接拼所有子分类的 subs，表头会变成 40+ 列且一半是空单元格。
+ *
+ * 口径：只保留**跨子分类通用的核心语义列** —— 子分类、车牌号、持有人/关联对象、
+ * 证件编号、日期、状态、更新时间。取值按「字段名候选链」逐个试，
+ * 命中即用，保证同一列在不同子分类下都能取到值。
+ */
+interface SummaryField {
+  key: string
+  label: string
+  /** 字段名候选链：按顺序试，命中第一个非空值 */
+  candidates: string[]
+  dataType: string
+}
+
+const SUMMARY_FIELDS: SummaryField[] = [
+  { key: 'sub_category', label: '证照类型', candidates: ['__sub_category'], dataType: 'text' },
+  { key: 'plate_no', label: '车牌号', candidates: ['车牌号', '车牌号码', 'plate_no'], dataType: 'text' },
+  { key: 'holder', label: '持有人/关联对象', candidates: ['持有人', '司机姓名', '车主', '业户名称', '单位名称', '姓名'], dataType: 'text' },
+  { key: 'doc_no', label: '证件编号', candidates: ['证件编号', '许可证号', '证号', '档案编号', '保单号', '工单号', '编号', '单号'], dataType: 'text' },
+  { key: 'valid_date', label: '有效期/日期', candidates: ['有效期', '有效期至', '发证日期', '初次领证日期', '出险日期', '维修日期', '日期'], dataType: 'text' },
+  { key: 'status', label: '状态', candidates: ['状态', '办理状态', '处理状态', '理赔状态', '当前状态', '是否有效'], dataType: 'text' },
+]
+
+/** 汇总视图列（不含操作列，操作列由页面固定追加）。 */
+export function buildFleetSummaryViewColumns(vehicleMap: Map<string, string>): FleetColumn[] {
+  return SUMMARY_FIELDS.map((f) => ({
+    key: f.key,
+    label: f.label,
+    dataType: f.dataType,
+    default: true,
+    value: (row: any) => {
+      if (f.key === 'sub_category') {
+        const v = String(row?.sub_category || row?.doc_type || '').trim()
+        return v || '—'
+      }
+      for (const name of f.candidates) {
+        if (name === '车牌号' || name === '车牌号码' || name === 'plate_no') {
+          const p = plateOf(row, vehicleMap)
+          if (p) return p
+          continue
+        }
+        const v = row?.data?.[name]
+        if (v !== undefined && v !== null && String(v).trim() !== '') {
+          return String(v).trim()
+        }
+      }
+      return '—'
+    },
+    raw: () => 0,
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// 保存时的「通用列」推导（金额 / 日期）
+//
+// 记录型表单的字段名由 subs 决定（金额、含税金额、总费用、单价…），而列表的
+// 金额列与合计行、费用汇总、日期筛选都读**通用列**（record.amount / record_date）。
+// 两处口径必须在这里统一，且必须可测 —— 这两段都出过 bug：
+//   · 金额把「单价」当总额，2 升 × 88.5 元记成 88.5（真机 D8 期望 177）；
+//   · 日期候选链漏字段，导致日期筛选与月份汇总永远查不到新记录。
+// ---------------------------------------------------------------------------
+
+/**
+ * 金额字段候选链（顺序即优先级）。
+ *
+ * 注意「单价/单价（元）」**不在**这里：单价是单位价格，直接当金额会把
+ * 「数量 × 单价」的总价算小。单价走下面的乘法分支单独处理。
+ */
+const AMOUNT_FIELD_PRIORITY = ['金额', '含税金额', '总费用', '定损金额', '费用', '工时费', '材料费', '缴款金额']
+
+/** 从表单数据推导通用金额列（0 表示没有可用金额）。 */
+export function amountFromForm(data: Record<string, any>): number {
+  for (const key of AMOUNT_FIELD_PRIORITY) {
+    const v = Number(data?.[key])
+    if (Number.isFinite(v) && v > 0) return v
+  }
+  // 单价 × 数量：加油/辅材这类没有「金额」字段的分类。
+  // 数量缺失时退回单价本身（只记单价的场景）。
+  const price = Number(data?.['单价'] ?? data?.['单价（元）'])
+  const qty = Number(data?.['数量'])
+  if (Number.isFinite(price) && price > 0) {
+    const n = Number.isFinite(qty) && qty > 0 ? price * qty : price
+    return Math.round(n * 100) / 100
+  }
+  return 0
+}
+
+/** 日期字段候选链（顺序即优先级）：取第一个非空日期。 */
+const DATE_FIELD_PRIORITY = [
+  '通行起始日期', '出险日期', '维修日期', '安装日期', '送检日期', '上次年检日期',
+  '开始时间', '处理日期', '购置日期', '赔付日期', '缴款日期', '结案日期',
+]
+
+/** 从表单数据推导通用日期列（YYYY-MM-DD，空串表示没有可用日期）。 */
+export function dateFromForm(data: Record<string, any>): string {
+  for (const key of DATE_FIELD_PRIORITY) {
+    const v = String(data?.[key] ?? '').trim()
+    if (v) return v.slice(0, 10)
+  }
+  return ''
 }

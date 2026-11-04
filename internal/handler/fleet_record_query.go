@@ -80,10 +80,18 @@ type fleetRecordListResult struct {
 }
 
 // FleetRecordStats 当前菜单下各分类的记录数与金额合计（KPI 卡片用）。
+//
+// ByType 与 BySubCategory 是**同一批行**的两种分组（同一查询、同一 where），
+// 保证「卡片数字 = 点开后列表条数」：卡片取 BySubCategory[分类名]，
+// 列表走 /records?record_type=..&sub_category=..，条件完全一致。
 type FleetRecordStats struct {
 	ByType map[string]int64 `json:"by_type"`
-	Total  int64            `json:"total"`
-	Amount float64          `json:"amount"`
+	// BySubCategory 子分类名 → 条数（档案类菜单的 KPI 卡片用它）。
+	BySubCategory map[string]int64 `json:"by_sub_category"`
+	// SubCategoryAmount 子分类名 → 金额合计（成本类菜单的关键指标卡用）。
+	SubCategoryAmount map[string]float64 `json:"sub_category_amount"`
+	Total             int64              `json:"total"`
+	Amount            float64            `json:"amount"`
 }
 
 // FleetRecordStatsHandler 返回若干 record_type 的计数与金额合计。
@@ -124,11 +132,48 @@ func (h *FleetHandler) FleetRecordStatsHandler(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("record stats failed: " + err.Error()))
 		return
 	}
-	out := FleetRecordStats{ByType: map[string]int64{}}
+	out := FleetRecordStats{ByType: map[string]int64{}, BySubCategory: map[string]int64{}, SubCategoryAmount: map[string]float64{}}
 	for _, r := range rows {
 		out.ByType[r.RecordType] = r.Count
 		out.Total += r.Count
 		out.Amount += r.SumAmount
+	}
+
+	// 子分类维度：同一批行再按 sub_category 分一次组。sub_category 为空的历史
+	// 记录归到 "(未分类)"，前端不会拿它当卡片（卡片只认分类配置里的名字），
+	// 但会出现在「全部」的总数里，与列表一致。
+	type subRow struct {
+		SubCategory string
+		Count       int64
+		SumAmount   float64
+	}
+	subQ := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
+		Select("sub_category, COUNT(*) AS count, COALESCE(SUM(amount), 0) AS sum_amount").
+		Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	if rawTypes != "" {
+		typesList := make([]string, 0, 8)
+		for _, t := range strings.Split(rawTypes, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				typesList = append(typesList, t)
+			}
+		}
+		if len(typesList) > 0 {
+			subQ = subQ.Where("record_type IN ?", typesList)
+		}
+	}
+	if month != "" {
+		subQ = subQ.Where("record_month = ?", month)
+	}
+	var subs []subRow
+	if err := subQ.Group("sub_category").Scan(&subs).Error; err == nil {
+		for _, r := range subs {
+			name := strings.TrimSpace(r.SubCategory)
+			if name == "" {
+				name = "(未分类)"
+			}
+			out.BySubCategory[name] += r.Count
+			out.SubCategoryAmount[name] += r.SumAmount
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": out})
 }

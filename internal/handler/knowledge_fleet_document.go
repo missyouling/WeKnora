@@ -252,13 +252,15 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 	found := h.db.WithContext(effCtx).Where("tenant_id = ? AND record_type = ? AND doc_knowledge_id = ? AND deleted_at IS NULL",
 		int64(effectiveTenantID), recordType, knowledgeID).First(&existing).Error == nil
 	rec := types.FleetRecord{
-		RecordType:     recordType,
-		VehicleID:      vehicleID,
-		RecordMonth:    "",
-		RecordDate:     "",
-		Amount:         0,
-		Data:           result.Fields,
-		DocType:        result.DocType,
+		RecordType:  recordType,
+		VehicleID:   vehicleID,
+		RecordMonth: "",
+		RecordDate:  "",
+		Amount:      0,
+		Data:        result.Fields,
+		DocType:     result.DocType,
+		// SubCategory 取证照类型名（= 分类 name），KPI 卡片与列表过滤共用这一列。
+		SubCategory:    fleetSubCategoryOf(result.Fields, result.DocType),
 		FileName:       knowledge.FileName,
 		DocKnowledgeID: knowledgeID,
 	}
@@ -269,6 +271,7 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 			"vehicle_id":       rec.VehicleID,
 			"data":             mustJSON(rec.Data),
 			"doc_type":         rec.DocType,
+			"sub_category":     rec.SubCategory,
 			"file_name":        rec.FileName,
 			"doc_knowledge_id": rec.DocKnowledgeID,
 			"updated_at":       now,
@@ -293,6 +296,7 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 					"vehicle_id":       rec.VehicleID,
 					"data":             mustJSON(rec.Data),
 					"doc_type":         rec.DocType,
+					"sub_category":     rec.SubCategory,
 					"file_name":        rec.FileName,
 					"doc_knowledge_id": rec.DocKnowledgeID,
 					"updated_at":       now,

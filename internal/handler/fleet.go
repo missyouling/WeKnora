@@ -52,9 +52,13 @@ func NewFleetHandler(db *gorm.DB) *FleetHandler {
 func (h *FleetHandler) StartFleetBackfillTasks(ctx context.Context) {
 	go func() {
 		h.backfillFleetVehicles(ctx)
-		if _, err := h.SyncInvoicesToFleetCost(ctx, 0); err != nil {
-			logger.Warnf(ctx, "fleet invoice sync on startup failed: %v", err)
-		}
+		// 子分类补齐：KPI 卡片按 sub_category 聚合、列表按它过滤，旧记录该列为空
+		// 会导致「卡片有数字、点开 0 条」。启动时幂等回填一次。
+		h.backfillFleetRecordSubCategory(ctx)
+		// 筛选栏收敛：给存量分类补 filterable 标记（否则 29 个字段平铺 4 行）
+		h.backfillFleetCategoryFilterable(ctx)
+		// 注：**不再**从发票库派生台账（第 29 轮明确取消跨库同步）。
+		// 加油充电 / 路桥费是独立手工台账，数据由用户录入或上传票据提取。
 	}()
 }
 
@@ -594,6 +598,9 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	month := strings.TrimSpace(c.Query("month"))
 	vehicleID := strings.TrimSpace(c.Query("vehicle_id"))
 	docType := strings.TrimSpace(c.Query("doc_type"))
+	// sub_category：子分类精确过滤（第 29 轮）。KPI 卡片点击后走这里，
+	// 与卡片数字共用「record_type + sub_category」同一条件 → 点开行数必然等于卡片数字。
+	subCategory := strings.TrimSpace(c.Query("sub_category"))
 	keyword := strings.TrimSpace(c.Query("q"))
 	dateFrom := strings.TrimSpace(c.Query("date_from"))
 	dateTo := strings.TrimSpace(c.Query("date_to"))
@@ -612,6 +619,9 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	}
 	if docType != "" {
 		q = q.Where("doc_type = ?", docType)
+	}
+	if subCategory != "" {
+		q = q.Where("sub_category = ?", subCategory)
 	}
 	// 日期区间：record_date 是 YYYY-MM-DD 字符串，字典序即时间序，可直接比较。
 	// 派生台账（发票来源）日期取开票日期，档案类为空 —— 空值不参与区间筛选。
@@ -716,7 +726,29 @@ func normalizeFleetRecord(req *types.FleetRecord) error {
 		}
 	}
 	req.Remark = strings.TrimSpace(req.Remark)
+	// 子分类归一（第 29 轮）：KPI 卡片按本列聚合、列表按本列过滤，必须同一口径。
+	// 显式传入优先；否则从 data 的「证照类型/分类」或 DocType 兜底。
+	if strings.TrimSpace(req.SubCategory) == "" {
+		req.SubCategory = fleetSubCategoryOf(req.Data, req.DocType)
+	}
+	req.DocType = strings.TrimSpace(req.DocType)
 	return nil
+}
+
+// fleetSubCategoryOf 从记录 data / doc_type 推导子分类名。
+//
+// 存量数据的子分类散落在 data["证照类型"]、data["分类"]、doc_type 三处，
+// 值可能是中文分类名（「道路运输证」）也可能是 builtin_key（「vehicle-license」）。
+// 统一取中文名优先，保证卡片数字与列表行数可比。
+func fleetSubCategoryOf(data map[string]any, docType string) string {
+	for _, key := range []string{"证照类型", "子分类", "分类", "doc_type"} {
+		if v, ok := data[key].(string); ok {
+			if t := strings.TrimSpace(v); t != "" {
+				return t
+			}
+		}
+	}
+	return strings.TrimSpace(docType)
 }
 
 // CreateFleetRecord godoc
@@ -734,6 +766,9 @@ func (h *FleetHandler) CreateFleetRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	// 手工录入兜底：sub_category 为空时按 record_type 的唯一分类补齐。
+	// 列表按 sub_category 过滤，缺它会出现「保存成功但列表查不到」。
+	h.fillFleetSubCategory(ctx, int64(tenantID), &req)
 	h.resolveFleetVehicle(ctx, int64(tenantID), &req)
 	now := timeNowUTC()
 	req.ID = uuid.NewString()
@@ -764,6 +799,7 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	h.fillFleetSubCategory(ctx, int64(tenantID), &req)
 	h.resolveFleetVehicle(ctx, int64(tenantID), &req)
 	var cnt int64
 	if err := h.db.WithContext(ctx).Model(&types.FleetRecord{}).
@@ -788,6 +824,7 @@ func (h *FleetHandler) UpdateFleetRecord(c *gin.Context) {
 		"mileage":      req.Mileage,
 		"data":         string(dataJSON),
 		"doc_type":     req.DocType,
+		"sub_category": req.SubCategory,
 		"remark":       req.Remark,
 		"updated_at":   now,
 	}
@@ -2996,4 +3033,69 @@ func (h *FleetHandler) reconcileNoticeCategories(ctx context.Context) {
 			logger.Infof(ctx, "reconcile notice category %q anchored to %q with %d subs", w.Name, w.Key, len(subs))
 		}
 	}
+}
+
+// fleetRecordTypeCategory 记录类型 → 固定分类名（9 个手工录入菜单）。
+//
+// 为什么不能靠「该 scope 下只有一个分类」来判断：成本 7 项共用 fleet-cost
+// 一个 scope（7 个分类），`len(cats)==1` 永远不成立，sub_category 会一直为空，
+// 列表按子分类过滤就查不到新建记录（真机 D7 因此失败）。
+var fleetRecordTypeCategory = map[string]string{
+	types.FleetRecordTire:           "轮胎管理",
+	types.FleetRecordInspection:     "年检管理",
+	types.FleetRecordFuelCharge:     "加油充电",
+	types.FleetRecordRoadToll:       "路桥费",
+	types.FleetRecordRepairCost:     "维修保养费",
+	types.FleetRecordInsuranceClaim: "保险理赔",
+	types.FleetRecordViolation:      "违章处理",
+	types.FleetRecordMaterial:       "辅材记录",
+	types.FleetRecordCarRequest:     "请车记录",
+}
+
+// fillFleetSubCategory 为缺失 sub_category 的记录补齐子分类名（幂等）。
+//
+// 判定顺序：
+//  1. 记录已带 sub_category → 不动；
+//  2. 记录型菜单（9 个）→ 直接查表拿固定分类名（不依赖分类数量）；
+//  3. 档案类（vehicle/driver/maintain）→ 取 data 里的「证照类型」并归一成分类名。
+func (h *FleetHandler) fillFleetSubCategory(ctx context.Context, tenantID int64, rec *types.FleetRecord) {
+	if rec == nil || strings.TrimSpace(rec.SubCategory) != "" {
+		return
+	}
+	scope, ok := fleetRecordTypeScope[rec.RecordType]
+	if !ok {
+		return
+	}
+	if fixed, ok := fleetRecordTypeCategory[rec.RecordType]; ok {
+		rec.SubCategory = fixed
+		return
+	}
+	// 档案类：用 data 里的证照类型，归一成分类名（builtin_key → name）
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND scope = ? AND deleted_at IS NULL", tenantID, scope).
+		Find(&cats).Error; err != nil {
+		return
+	}
+	raw := fleetSubCategoryOf(rec.Data, rec.DocType)
+	if raw == "" {
+		return
+	}
+	rec.SubCategory = normalizeFleetSubCategoryName(raw, cats)
+}
+
+// fleetRecordTypeScope 记录类型 → 分类 scope（与 knowledge_fleet_document 的映射同口径）。
+var fleetRecordTypeScope = map[string]string{
+	types.FleetRecordVehicleArchive:  types.FleetCategoryScopeVehicle,
+	types.FleetRecordDriverArchive:   types.FleetCategoryScopeDriver,
+	types.FleetRecordMaintainArchive: types.FleetCategoryScopeMaintain,
+	types.FleetRecordTire:            types.FleetCategoryScopeTire,
+	types.FleetRecordInspection:      types.FleetCategoryScopeInspection,
+	types.FleetRecordFuelCharge:      types.FleetCategoryScopeFleetCost,
+	types.FleetRecordRoadToll:        types.FleetCategoryScopeFleetCost,
+	types.FleetRecordRepairCost:      types.FleetCategoryScopeFleetCost,
+	types.FleetRecordInsuranceClaim:  types.FleetCategoryScopeFleetCost,
+	types.FleetRecordViolation:       types.FleetCategoryScopeFleetCost,
+	types.FleetRecordMaterial:        types.FleetCategoryScopeFleetCost,
+	types.FleetRecordCarRequest:      types.FleetCategoryScopeFleetCost,
 }

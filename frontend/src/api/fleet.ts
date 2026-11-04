@@ -57,6 +57,8 @@ export function listFleetRecords(params: {
   month?: string
   vehicle_id?: string
   doc_type?: string
+  /** 子分类精确过滤（= 分类 name）。与 KPI 卡片数字同条件，保证行数相等。 */
+  sub_category?: string
   q?: string
   field_filters?: string
   date_from?: string
@@ -69,6 +71,7 @@ export function listFleetRecords(params: {
   if (params.month) query.set('month', params.month)
   if (params.vehicle_id) query.set('vehicle_id', params.vehicle_id)
   if (params.doc_type) query.set('doc_type', params.doc_type)
+  if (params.sub_category) query.set('sub_category', params.sub_category)
   if (params.q) query.set('q', params.q)
   if (params.field_filters) query.set('field_filters', params.field_filters)
   if (params.date_from) query.set('date_from', params.date_from)
@@ -85,11 +88,6 @@ export function getFleetRecordStats(params: { types?: string; month?: string } =
   if (params.month) query.set('month', params.month)
   const qs = query.toString()
   return get(`/api/v1/fleet/records/stats${qs ? '?' + qs : ''}`)
-}
-
-/** 发票 → 成本台账幂等派生（通行费→路桥费、成品油/充电→加油充电）。 */
-export function syncFleetInvoices() {
-  return post('/api/v1/fleet/records/sync-invoices', {})
 }
 export function createFleetRecord(payload: Record<string, unknown>) {
   return post('/api/v1/fleet/records', payload)

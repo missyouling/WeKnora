@@ -541,8 +541,6 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 		fl.POST("/fuel-cards", g.Contributor(), handler.CreateFleetFuelCard)
 		fl.PUT("/fuel-cards/:id", g.Contributor(), handler.UpdateFleetFuelCard)
 		fl.DELETE("/fuel-cards/:id", g.Contributor(), handler.DeleteFleetFuelCard)
-		// 发票 → 成本台账幂等派生（通行费→路桥费、成品油/充电→加油充电）
-		fl.POST("/records/sync-invoices", g.Contributor(), handler.SyncInvoices)
 		// 记录统计（KPI 卡片：按 record_type 计数 + 金额合计）
 		fl.GET("/records/stats", g.Viewer(), handler.FleetRecordStatsHandler)
 		fl.GET("/records", g.Viewer(), handler.ListFleetRecords)

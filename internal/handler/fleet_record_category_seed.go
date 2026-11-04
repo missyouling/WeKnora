@@ -59,6 +59,17 @@ func def(s types.FleetCategorySub) types.FleetCategorySub {
 	return s
 }
 
+// filt 把字段标记为「筛选栏可见」。
+//
+// 口径（第 29 轮）：**每个分类最多 2~3 个高频字段可筛**。之前把 subs 全量
+// 塞进 BusinessFilterBar，29 个字段平铺占满 4 行（真机截图确认）。其余字段
+// 默认不可筛，用户可在「设置 → 字段定义」里手动开启并点保存。
+// 与 IsDefault（列表默认显示）完全独立：一个字段可以默认显示但不可筛。
+func filt(s types.FleetCategorySub) types.FleetCategorySub {
+	s.Filterable = true
+	return s
+}
+
 // fleetRecordCategorySeeds 返回 9 个记录型分类的默认配置。
 //
 // 顺序即左侧菜单顺序：轮胎 → 年检 → 成本 7 项（加油/路桥/维修/保险/违章/辅材/请车）。
@@ -67,17 +78,17 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeTire, Name: "轮胎管理", BuiltinKey: "fleet-tire", SortOrder: 1,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("轮胎编号")), def(txt("品牌")), def(txt("规格型号")), txt("轮胎类型"),
+				filt(def(txt("车牌号"))), filt(def(txt("轮胎编号"))), def(num("金额")), def(txt("规格型号")), txt("轮胎类型"),
 				txt("适用轮位"), txt("安装轮位"), def(dt("安装日期")), num("安装里程"),
-				def(txt("当前状态")), dt("购置日期"), num("购置单价"), num("当前里程"),
+				filt(def(txt("当前状态"))), dt("购置日期"), num("购置单价"), num("当前里程"),
 				txt("供应商"), txt("付款状态"), area("备注"),
 			},
 		},
 		{
 			Scope: types.FleetCategoryScopeInspection, Name: "年检管理", BuiltinKey: "fleet-inspection", SortOrder: 1,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("年检类型")), txt("检验周期"), dt("上次年检日期"), def(dt("下次年检日期")),
-				num("到期提醒天数"), txt("提醒状态"), num("逾期天数"), def(txt("办理状态")),
+				filt(def(txt("车牌号"))), filt(def(txt("年检类型"))), def(num("金额")), dt("上次年检日期"), def(dt("下次年检日期")),
+				num("到期提醒天数"), txt("提醒状态"), num("逾期天数"), filt(def(txt("办理状态"))),
 				dt("送检日期"), txt("送检人"), txt("检测站"), def(txt("检测结果")),
 				dt("检验有效期"), num("总费用"), txt("发票号"), area("备注"),
 			},
@@ -85,7 +96,7 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "加油充电", BuiltinKey: "fleet-cost-fuel", SortOrder: 1,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("交易类型")), txt("消费类型"), txt("卡号"), def(txt("油品/电价类型")),
+				filt(def(txt("车牌号"))), filt(def(txt("交易类型"))), def(num("金额")), txt("消费类型"), txt("卡号"), def(txt("油品/电价类型")),
 				def(num("数量")), def(num("单价")), num("百公里油耗/电耗"), txt("支付方式"),
 				num("税率"), num("税额"), txt("来源发票号"), area("备注"),
 			},
@@ -93,7 +104,7 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "路桥费", BuiltinKey: "fleet-cost-toll", SortOrder: 2,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("费用类型")), def(dt("通行起始日期")), def(dt("通行截止日期")),
+				filt(def(txt("车牌号"))), filt(def(txt("费用类型"))), def(num("金额")), def(dt("通行起始日期")), def(dt("通行截止日期")),
 				txt("入口站/起点"), txt("出口站/终点"), txt("停车场名称"),
 				num("税率"), def(num("税额")), def(num("含税金额")), num("停车费"),
 				txt("支付方式"), txt("票据号码"), txt("来源发票号"), area("备注"),
@@ -102,14 +113,14 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "维修保养费", BuiltinKey: "fleet-cost-repair", SortOrder: 3,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("维修项目")), def(txt("维修类别")), txt("维修厂/供应商"), txt("工单号"),
+				filt(def(txt("车牌号"))), filt(def(txt("维修项目"))), def(num("金额")), def(txt("维修类别")), txt("维修厂/供应商"), txt("工单号"),
 				def(num("工时费")), def(num("材料费")), txt("发票号"), area("备注"),
 			},
 		},
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "保险理赔", BuiltinKey: "fleet-cost-claim", SortOrder: 4,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("理赔单号")), txt("关联保单号"), txt("保险公司"), txt("险种"),
+				filt(def(txt("车牌号"))), filt(def(txt("理赔单号"))), def(num("金额")), txt("关联保单号"), txt("保险公司"), txt("险种"),
 				def(dt("出险日期")), dt("报案日期"), txt("司机姓名"), txt("事故类型"),
 				txt("事故地点"), txt("事故责任"), def(num("定损金额")), dt("赔付日期"),
 				txt("赔付方式"), def(txt("理赔状态")), num("免赔金额"), num("自付金额"),
@@ -119,7 +130,7 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "违章处理", BuiltinKey: "fleet-cost-violation", SortOrder: 5,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("违章单号")), txt("司机姓名"), def(txt("违章类型")), txt("违章行为"),
+				filt(def(txt("车牌号"))), filt(def(txt("违章单号"))), def(num("金额")), txt("司机姓名"), def(txt("违章类型")), txt("违章行为"),
 				txt("违章地点"), txt("违章代码"), def(num("扣分")), txt("处罚决定书号"),
 				def(txt("处理状态")), txt("处理人"), dt("处理日期"), dt("缴款日期"),
 				num("缴款金额"), txt("缴款方式"), txt("是否已缴款"), txt("责任人"),
@@ -129,13 +140,13 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "辅材记录", BuiltinKey: "fleet-cost-material", SortOrder: 6,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("类型")), def(num("数量")), def(num("单价（元）")), area("备注"),
+				filt(def(txt("车牌号"))), filt(def(txt("类型"))), def(num("金额")), def(num("数量")), def(num("单价（元）")), area("备注"),
 			},
 		},
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "请车记录", BuiltinKey: "fleet-cost-request", SortOrder: 7,
 			Subs: []types.FleetCategorySub{
-				def(txt("车牌号")), def(txt("申请人")), def(area("事由")), def(dt("开始时间")), dt("结束时间"),
+				filt(def(txt("车牌号"))), filt(def(txt("申请人"))), def(area("事由")), def(dt("开始时间")), dt("结束时间"),
 				txt("审批人"), area("备注"),
 			},
 		},
