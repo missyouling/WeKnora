@@ -244,6 +244,58 @@ export function matchRow(row: any, cfg: { field_key: string; label?: string }): 
  * 「这一行没有数据」与「这一行是 0 度」在页面上必须能分辨）；
  * 无配置 → 按 META_ORDER 排序后原样输出，或从顶层字段兜底（旧数据只有计费电量）。
  */
+/** 分时档位（票面顺序）。 */
+const TOU_KEYS = ['尖峰', '峰', '平', '谷'] as const
+
+/** 示数类型 → 档位（非分时行返回空串）。 */
+export function meterPeriodOfType(meterType: string): string {
+  const m = /正向(?:有功|无功)[（(](总|尖峰|峰|平|谷)[)）]/.exec(String(meterType || ''))
+  return m ? m[1] : ''
+}
+
+/**
+ * 电量明细的合计：**只累加四段计费电量**。
+ *
+ * 票面上「正向有功（总）」的计费电量通常是 0（原单不给），而无功总行即使有值
+ * 也不属于电费口径。旧实现把 6 行全加起来，2026-10 得到 1,401,690
+ * （总 623,610 + 四段 614,578 + 无功 154,410 + …），与账单 614,578 差一倍多。
+ */
+export function meterTotalOf(rows: any[]): number {
+  let sum = 0
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!TOU_KEYS.includes(meterPeriodOfType(r?.meter_type) as any)) continue
+    sum += Number(r?.bill_kwh) || 0
+  }
+  return Math.round(sum * 100) / 100
+}
+
+/**
+ * 工商业四段「计费电量」：优先取电量明细，缺失时回落到顶层字段。
+ *
+ * 用能分析的占比与尖/峰/平/谷电量都必须绑这个口径。
+ * 旧实现直接读顶层 deep_peak_kwh 等字段，而提取把它们抄成了
+ * 「抄见电量」甚至「尖峰复制到峰段」，占比因此全错。
+ */
+export function touBillKwhOf(editForm: Record<string, any>): { deep: number; peak: number; flat: number; valley: number } {
+  const form = editForm || {}
+  const fromMeter: Record<string, number> = {}
+  for (const r of Array.isArray(form.meter_readings) ? form.meter_readings : []) {
+    const p = meterPeriodOfType(r?.meter_type)
+    if (p) fromMeter[p] = Number(r?.bill_kwh) || 0
+  }
+  const pick = (period: string, fallback: any) => {
+    const v = fromMeter[period]
+    if (v !== undefined && v > 0) return v
+    return Number(fallback) || 0
+  }
+  return {
+    deep: pick('尖峰', form.deep_peak_kwh),
+    peak: pick('峰', form.peak_kwh),
+    flat: pick('平', form.flat_kwh),
+    valley: pick('谷', form.valley_kwh),
+  }
+}
+
 export function buildMeterRows(editForm: Record<string, any>, cfgs: RowCfg[]): any[] {
   let list: any[]
   const mr = editForm?.meter_readings
@@ -391,15 +443,20 @@ export function buildEnergyCompareRows(
   editForm: Record<string, any>,
   prev: ReturnType<typeof pickPrevEnergy>,
 ): EnergyCompareRow[] {
-  const curTotal = Number(editForm?.total_kwh) || 0
-  const prevTotal = prev.total
-  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 10000) / 100 : 0)
+  const tou = touBillKwhOf(editForm)
   const cur = [
-    { key: 'deep', label: '尖', v: Number(editForm?.deep_peak_kwh) || 0 },
-    { key: 'peak', label: '峰', v: Number(editForm?.peak_kwh) || 0 },
-    { key: 'flat', label: '平', v: Number(editForm?.flat_kwh) || 0 },
-    { key: 'valley', label: '谷', v: Number(editForm?.valley_kwh) || 0 },
+    { key: 'deep', label: '尖', v: tou.deep },
+    { key: 'peak', label: '峰', v: tou.peak },
+    { key: 'flat', label: '平', v: tou.flat },
+    { key: 'valley', label: '谷', v: tou.valley },
   ]
+  // 占比分母 = 工商业四段计费电量之和，不是账单总电量（总电量含居民 9,354，
+  // 会把工商业四段压到合计 98.5%，用户看到「占比加起来不到 100%」）。
+  const curSum = cur.reduce((s, c) => s + c.v, 0)
+  const curTotal = curSum > 0 ? curSum : (Number(editForm?.total_kwh) || 0)
+  const prevSum = [prev.deep, prev.peak, prev.flat, prev.valley].reduce((s, v) => s + (Number(v) || 0), 0)
+  const prevTotal = prevSum > 0 ? prevSum : prev.total
+  const pct = (v: number, total: number) => (total ? Math.round((v / total) * 10000) / 100 : 0)
   const prevQty: Record<string, number> = {
     deep: prev.deep,
     peak: prev.peak,

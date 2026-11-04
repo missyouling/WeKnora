@@ -2388,6 +2388,11 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.BackfillEnergyBillCategories(ctx); err != nil {
 		logger.Warnf(ctx, "backfill energy bill categories failed: %v", err)
 	}
+	// 历史市电账单的三张明细表回填（电量明细线损/加减、容需量、功率因素）：
+	// 模型漏抽导致详情子表空白与账单概况电费为 0，用票面原文确定性补齐（幂等）。
+	if _, err := uh.BackfillUtilityBillDetails(ctx); err != nil {
+		logger.Warnf(ctx, "backfill utility bill details failed: %v", err)
+	}
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

@@ -703,24 +703,15 @@ const mapRow = (r: any): Row => {
   }
 }
 
-// 解析失败 / 提取失败的文件不进主列表。
+// 在途文件（解析中/待提取/提取中）不合并进列表（第 33 轮门禁）。
 //
-// 它们没有任何业务数据，混在账单里只会在第一行渲染一条「⊗ 解析失败」的空壳
-// （真机截图：光伏账单首行整行空白 + 红标）。异常文件统一在
-// 「历史记录 → 异常文件」里展示与重提，这与发票/合同管理的口径一致。
-const FAILED_ROW_STATUS = new Set(['failed', 'parse_failed'])
-const pendingRows = computed(() => pendingFiles.value
-  .filter((pf: any) => !FAILED_ROW_STATUS.has(pendingLabel(pf)))
-  .map((pf: any) => ({
-  rowKey: `pending-${pf.id}`,
-  knowledgeId: pf.id,
-  fileName: pf.file_name || pf.title || '',
-  extractStatus: pendingLabel(pf),
-  extractError: pf.custom_metadata?.extract_error || '',
-  kind: 'pending',
-  item: {},
-  tags: [],
-})))
+// 旧实现把它们拼成 placeholder 行插到最前面：绿色进度条已经说明「正在解析」，
+// 下面再出现一条「解析中」空壳行纯属噪声，还会被「共 N 条」与合计算进去。
+// 解析/提取完成后由轮询触发 loadFiles 一次性入列。
+//
+// 解析失败 / 提取失败的文件同样不进主列表：它们没有任何业务数据，
+// 异常文件统一在「历史记录 → 异常文件」里展示与重提。
+
 // 列表过滤：月份 + 「搜索全部字段」全部在**本地**做。
 //
 // 旧实现把月份丢给接口的 date_from/date_to，而这对参数在后端是按通用日期
@@ -730,7 +721,7 @@ const pendingRows = computed(() => pendingFiles.value
 const displayRows = computed(() => {
   const kw = keyword.value.trim()
   const month = monthFilter.value
-  let all = [...pendingRows.value, ...rows.value] as any[]
+  let all = [...rows.value] as any[]
   if (month) {
     // 解析中/待提取的文件还没有账期，按月筛选时不占位
     all = all.filter((r: any) => r.kind !== 'pending' && billMonthOfItem(r) === month)
@@ -806,16 +797,9 @@ const statusOf = (row: Row) => {
   if (STATUS_MAP[st]) return STATUS_MAP[st]
   return { label: '--', theme: 'default' as const }
 }
-const pendingLabel = (pf: any) => {
-  const ps = pf.parse_status || ''
-  if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
-  if (ps === 'failed') return 'parse_failed'
-  const meta = pf.custom_metadata || {}
-  if (extractInFlight.value.has(pf.id)) return 'extracting'
-  if (meta.extract_status === 'failed') return 'failed'
-  if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
-  return 'pending'
-}
+// pendingLabel 随占位行一起移除（第 33 轮门禁）：在途文件只在进度条展示，
+// 不再需要把 parse_status 映射成列表状态。
+
 
 // ---- 轮询 ----
 let pollTimer: ReturnType<typeof setInterval> | null = null

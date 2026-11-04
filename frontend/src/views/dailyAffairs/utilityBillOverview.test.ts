@@ -18,14 +18,25 @@ import {
 const row = (fee: number, qty = 0, fee_amount?: number) => ({ fee, qty, fee_amount })
 
 /** 按菜单 key 分组的输入。 */
-function makeInputs(byMenu: Record<string, any[]>, editForm: Record<string, any> = {}, overrides: Record<string, number> = {}) {
+function makeInputs(
+  byMenu: Record<string, any[]>,
+  editForm: Record<string, any> = {},
+  overrides: Record<string, number> = {},
+  details: { capacityDetail?: any; pfDetail?: any } = {},
+) {
   return {
     feeItems: Object.values(byMenu).flat(),
     rowsOf: (k: string) => byMenu[k] || [],
     editForm,
     overrides,
+    capacityDetail: details.capacityDetail ?? null,
+    pfDetail: details.pfDetail ?? null,
   }
 }
+
+/** 分时费用行（列表时按尖/峰/平/谷各一段）。 */
+const touRows = (qtys: number[], fee = 10) =>
+  qtys.map((q, i) => ({ ...row(fee, q), period: ['尖峰', '峰', '平', '谷'][i] }))
 
 test('buildOverviewRows：11 行且顺序固定', () => {
   const rows = buildOverviewRows(makeInputs({}))
@@ -42,7 +53,9 @@ test('buildOverviewRows：金额按分累加，不留浮点尾巴', () => {
   assert.equal(rows[0].displayValue, 0.3, '0.1 + 0.2 必须等于 0.3')
 })
 
-test('工商业小计 = 市场化 + 线损 + 输配量 + 系统 + 政府基金 + 容需量', () => {
+test('工商业小计 = 5 项工商业细项（容需量单独成行，不进小计）', () => {
+  // 第 33 轮口径：容需量与功率因素都在小计之外，由「本期电费」汇总时再加。
+  // 若把它们塞进小计，页面上会出现「小计 480,085 + 容需量 44,000」的重复计。
   const rows = buildOverviewRows(makeInputs(
     {
       'industrial-market': [row(100)],
@@ -52,9 +65,12 @@ test('工商业小计 = 市场化 + 线损 + 输配量 + 系统 + 政府基金 +
       'industrial-gov': [row(50)],
     },
     { capacity_fee: 60 },
+    {},
+    { capacityDetail: { capacity: 2000, capacity_price: 22, capacity_fee: 60 } },
   ))
   const industrial = rows.find((r) => r.key === 'industrial')!
-  assert.equal(industrial.displayValue, 300, '100+20+30+40+50+60 = 300')
+  assert.equal(industrial.displayValue, 240, '100+20+30+40+50 = 240（不含容需量 60）')
+  assert.equal(rows.find((r) => r.key === 'capacity')!.displayValue, 60)
 })
 
 test('居民小计 = 目录电费 + 政府性基金（居民）', () => {
@@ -67,18 +83,20 @@ test('居民小计 = 目录电费 + 政府性基金（居民）', () => {
 })
 
 test('功率因数调整电费不进任何小计', () => {
-  const rows = buildOverviewRows(makeInputs({}, { pf_adjust_amount: 123 }))
+  const rows = buildOverviewRows(makeInputs({}, { pf_adjust_amount: 123 }, {}, { pfDetail: { adjust_fee: 123 } }))
   assert.equal(rows.find((r) => r.key === 'pf')!.displayValue, 123)
   assert.equal(rows.find((r) => r.key === 'industrial')!.displayValue, 0, '力调电费不进工商业小计')
   assert.equal(rows.find((r) => r.key === 'residential')!.displayValue, 0, '力调电费不进居民小计')
 })
 
-test('概览合计 = 工商业小计 + 居民小计 + 功率因数调整电费', () => {
+test('概览合计 = 工商业小计 + 居民小计 + 输配容需量 + 功率因数调整电费', () => {
   const rows = buildOverviewRows(makeInputs(
     { 'industrial-market': [row(100)], 'residential-catalog': [row(50)] },
-    { pf_adjust_amount: 30 },
+    { capacity_fee: 40, pf_adjust_amount: 30 },
+    {},
+    { capacityDetail: { capacity: 2000, capacity_fee: 40 }, pfDetail: { adjust_fee: 30 } },
   ))
-  assert.equal(overviewTotalOf(rows), 180, '100 + 50 + 30 = 180')
+  assert.equal(overviewTotalOf(rows), 220, '100 + 50 + 40 + 30 = 220')
 })
 
 test('概览合计不得把明细行重复计一遍', () => {
@@ -115,15 +133,47 @@ test('账单值也可覆盖（bill: 前缀），与计算值独立', () => {
   assert.equal(rows[0].ovBillKey, 'bill:market')
 })
 
-test('类别电量取最大值而不是求和（分时子项相加会翻倍）', () => {
+test('市场化/输配电量 = 四段计费电量之和（不是谷段单行）', () => {
+  // 第 33 轮真机 Bug：概况显示 250,440（谷段），正确是 34,105+133,236+196,797+250,440。
   const rows = buildOverviewRows(makeInputs({
-    'industrial-market': [row(10, 100), row(20, 300), row(30, 200)],
+    'industrial-market': touRows([34105, 133236, 196797, 250440]),
+    'industrial-trans': touRows([34105, 133236, 196797, 250440]),
   }))
-  assert.equal(rows[0].qty, 300, '尖/峰/平/谷各段电量取最大 = 整表电量')
+  assert.equal(rows[0].qty, 614578, '四段求和 = 614,578')
+  assert.equal(rows[2].qty, 614578)
+})
+
+test('线损/系统/政府基金取单行总电量（各行都是全量口径，不能相加）', () => {
+  const rows = buildOverviewRows(makeInputs({
+    'industrial-line': [{ ...row(10, 614578), period: '平' }],
+    'industrial-sys': [{ ...row(10, 614578), period: '平' }, { ...row(5, 614578), period: '平' }],
+    'industrial-gov': [{ ...row(1, 614578), period: '平' }],
+  }))
+  assert.equal(rows[1].qty, 614578)
+  assert.equal(rows[3].qty, 614578, '多行同值取最大，不累加成 1,229,156')
+  assert.equal(rows[4].qty, 614578)
+})
+
+test('居民两项取居民计费电量（9,354）', () => {
+  const rows = buildOverviewRows(makeInputs({
+    'residential-catalog': [{ ...row(4679.86, 9354), period: '平' }],
+    'residential-gov': [{ ...row(277.76, 9354), period: '平' }],
+  }))
+  assert.equal(rows[6].qty, 9354)
+  assert.equal(rows[7].qty, 9354)
+})
+
+test('容需量行的计费数量 = 容量（2,000），无明细时 0', () => {
+  const withDetail = buildOverviewRows(makeInputs({}, { capacity: 2000 }, {}, {
+    capacityDetail: { capacity: 2000, capacity_price: 22, capacity_fee: 44000 },
+  }))
+  assert.equal(withDetail.find((r) => r.key === 'capacity')!.qty, 2000)
+  const noDetail = buildOverviewRows(makeInputs({}, { capacity: 2000 }))
+  assert.equal(noDetail.find((r) => r.key === 'capacity')!.qty, 2000, '顶层容量仍可用于展示数量')
 })
 
 test('类别电量保留 1 位小数', () => {
-  const rows = buildOverviewRows(makeInputs({ 'industrial-market': [row(10, 123.456)] }))
+  const rows = buildOverviewRows(makeInputs({ 'industrial-market': [{ ...row(10, 123.456), period: '尖峰' }] }))
   assert.equal(rows[0].qty, 123.5)
 })
 
@@ -164,4 +214,48 @@ test('billTotalCheck：账单合计为 0 时也要给出明确结论', () => {
   assert.equal(r.bill, 0)
   assert.equal(r.diff, 100)
   assert.equal(r.ok, false, '账单合计缺失时不能默认判「对上」')
+})
+
+// ---------------------------------------------------------------------------
+// 第 33 轮：双列独立计算（电费 = 纯明细实算；账单电费 = 票面直提）
+// ---------------------------------------------------------------------------
+
+test('明细为空时：电费列必须为 0，账单电费仍显示票面值，对比状态判异常', () => {
+  // 真机事故：功率因素明细数组被清空，旧实现用顶层 pf_adjust_amount 兜底，
+  // 于是「电费」列也显示 -3,394.92 —— 两列同源，异常永远发现不了。
+  const rows = buildOverviewRows(makeInputs(
+    {},
+    { capacity_fee: 44000, pf_adjust_amount: -3394.92, capacity: 2000 },
+    {},
+    { capacityDetail: null, pfDetail: null },
+  ))
+  const pf = rows.find((r) => r.key === 'pf')!
+  assert.equal(pf.displayValue, 0, '无明细 → 电费列 0.00')
+  assert.equal(pf.billFee, -3394.92, '账单电费取票面提取值')
+  assert.equal(feeCloseOf(pf), false, '0 vs -3394.92 → 异常')
+
+  const cap = rows.find((r) => r.key === 'capacity')!
+  assert.equal(cap.displayValue, 0, '无容量明细 → 电费列 0.00')
+  assert.equal(cap.billFee, 44000)
+  assert.equal(feeCloseOf(cap), false)
+})
+
+test('明细完整时：电费列由明细实算，与账单电费一致判正常', () => {
+  const rows = buildOverviewRows(makeInputs(
+    {},
+    { capacity_fee: 44000, pf_adjust_amount: -3394.92 },
+    {},
+    {
+      capacityDetail: { demand_fee: 0, capacity: 2000, capacity_price: 22, capacity_fee: 44000 },
+      pfDetail: { adjust_fee: -3394.92 },
+    },
+  ))
+  const cap = rows.find((r) => r.key === 'capacity')!
+  assert.equal(cap.displayValue, 44000)
+  assert.equal(feeCloseOf(cap), true)
+  const pf = rows.find((r) => r.key === 'pf')!
+  assert.equal(pf.displayValue, -3394.92)
+  assert.equal(feeCloseOf(pf), true)
+  // 本期电费 = 0 + 0 + 44000 - 3394.92
+  assert.equal(overviewTotalOf(rows), 40605.08)
 })

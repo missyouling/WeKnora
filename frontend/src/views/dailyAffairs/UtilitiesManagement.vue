@@ -191,14 +191,14 @@
                     <div class="overview-metrics">
                       <div class="metric-card" :title="metricKwhTip">
                         <div class="metric-label">本期电量</div>
-                        <div class="metric-value">{{ fmtKwh(metricKwh) }}<span class="metric-unit">千瓦时</span></div>
+                        <div class="metric-value">{{ metricKwh }}<span class="metric-unit">千瓦时</span></div>
                         <span class="ea-delta" :class="metricKwhDeltaClass" v-if="prevEnergy.exists">
                           <span class="ea-arrow">{{ metricKwhDeltaArrow }}</span><span class="ea-sub">{{ metricKwhDeltaSub }}</span>
                         </span>
                       </div>
                       <div class="metric-card" :title="metricFeeTip">
                         <div class="metric-label">本期电费</div>
-                        <div class="metric-value">{{ fmtMoney(metricFee) }}<span class="metric-unit">元</span></div>
+                        <div class="metric-value">{{ metricFee }}<span class="metric-unit">元</span></div>
                         <span class="ea-delta" :class="metricFeeDeltaClass" v-if="prevEnergy.exists">
                           <span class="ea-arrow">{{ metricFeeDeltaArrow }}</span><span class="ea-sub">{{ metricFeeDeltaSub }}</span>
                         </span>
@@ -717,6 +717,7 @@ import {
   PF_FIELDS,
   buildEnergyCompareRows,
   buildMeterRows,
+  meterTotalOf,
   buildResidentMeterRows,
   feeMenuOf,
   feeRowsOf as feeRowsOfUtil,
@@ -1291,25 +1292,15 @@ const mapRow = (r: any): Row => {
   }
 }
 
-// 进行中文件（解析中/提取中/待提取）合并进列表行，与合同模块一致。
+// 在途文件（解析中/待提取/提取中）**不再合并进列表**（第 33 轮门禁）。
 //
-// 解析失败 / 提取失败的文件**不进主列表**：它们没有任何业务数据，混在账单里只会
-// 渲染出一条「⊗ 解析失败」的空壳。异常文件统一在「历史记录 → 异常文件」里
-// 展示与重提，与发票/合同管理口径一致。
-const FAILED_ROW_STATUS = new Set(['failed', 'parse_failed'])
-const pendingRows = computed(() => pendingFiles.value
-  .filter((pf: any) => !FAILED_ROW_STATUS.has(pendingLabel(pf)))
-  .map((pf: any) => ({
-    rowKey: `pending-${pf.id}`,
-    knowledgeId: pf.id,
-    fileName: pf.file_name || pf.title || '',
-    extractStatus: pendingLabel(pf),
-    extractError: pf.custom_metadata?.extract_error || '',
-    kind: 'pending',
-    item: {},
-    tags: [],
-    page: 0,
-  })))
+// 旧实现把它们拼成 placeholder 行插到最前面，于是「绿色进度条 + 首行解析中空白」
+// 同时出现，且这条空壳会被「共 N 条」和合计行算进去。现在只保留进度条，
+// 文件解析提取完成后由轮询触发 loadFiles 一次性入列。
+//
+// 解析失败 / 提取失败的文件同样不进主列表：它们没有任何业务数据，
+// 异常文件统一在「历史记录 → 异常文件」里展示与重提。
+
 // 行级全字段检索文本：把这条账单里所有可读内容拼成一个大字符串，再做包含匹配。
 //
 // 为什么不用逐列判断：字段是可配置的（用户在「字段定义」里加字段后列表就多一列），
@@ -1340,7 +1331,10 @@ function rowSearchText(r: any): string {
 const displayRows = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   const month = monthFilter.value
-  let all = [...pendingRows.value, ...rows.value]
+  // 在途文件（解析中/待提取/提取中）**不进列表**：它们没有任何业务数据，
+  // 混进来会渲染出一条空壳行（真机：绿色进度条 + 首行「解析中」空白数据），
+  // 还会被合计行与「共 N 条」算进去。状态只看工具栏下方的进度条。
+  let all = [...rows.value]
   // 月份 = 账单账期（bill_period，YYYY-MM）；解析中的文件没有账期，按月筛选时不占位
   if (month) all = all.filter((r: any) => r.kind !== 'pending' && String(r.bill_period || '').startsWith(month))
   if (!kw) return all
@@ -1419,17 +1413,9 @@ const statusOf = (row: Row) => {
   if (STATUS_MAP[st]) return STATUS_MAP[st]
   return { label: '--', theme: 'default' as const }
 }
-const pendingLabel = (pf: any) => {
-  const ps = pf.parse_status || ''
-  if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return 'parsing'
-  if (ps === 'failed') return 'parse_failed'
-  const meta = pf.custom_metadata || {}
-  // 提取进行中以前端 Set 为准（与发票模块 extractInFlight 一致）
-  if (extractInFlight.value.has(pf.id)) return 'extracting'
-  if (meta.extract_status === 'failed') return 'failed'
-  if (meta.extract_status === 'extracting' || pf.extract_status === 'extracting') return 'extracting'
-  return 'pending'
-}
+// pendingLabel 随占位行一起移除（第 33 轮门禁）：在途文件只在进度条展示，
+// 不再需要把 parse_status 映射成列表状态。
+
 
 // 轮询：解析完成后自动触发提取；提取中动态刷新状态
 /**
@@ -1460,7 +1446,7 @@ const { extractInFlight, extractFailed, pendingFiles, scanOnce, start: startPoll
   extractFn: (kid, fileId) => extractUtilityBill(kid, fileId),
   // 只在本 Tab 生效：切到光伏/核算/清单时本页不再扫描，从根上避免跨分类抢提
   filter: (item: any) => activeTab.value === 'electricity' && isElectricityBillFile(item),
-  onPendingFiles: () => { /* pendingRows computed 直接读 pendingFiles */ },
+  onPendingFiles: () => { /* 进度条直接读 pendingFiles，列表不再插占位行 */ },
   // 每轮刷新列表 + 卡片计数：提取落库后 records 会变，卡片不跟着刷就永远停在旧数
   onTick: () => { loadFiles(); void loadTabCounts() },
   // 整批结束（在途清零）：立刻刷一次列表与卡片，用户不用等下一轮 3s
@@ -1697,6 +1683,9 @@ const overviewRows = computed(() => buildOverviewRows({
   rowsOf: (k: string) => feeRowsOf(k),
   editForm: editForm.value,
   overrides: feeOverrides.value,
+  // 「电费」列只认明细实算：明细为空 → 0.00，「账单电费」列另取顶层票面值。
+  capacityDetail: editForm.value.capacity_detail || null,
+  pfDetail: editForm.value.pf_detail || null,
 }))
 const qtyLabelOf = (r: any) => qtyLabelOfUtil(r, fmtKwh)
 /** 点击概况行跳到对应子表（menuKey 为空的行不可跳）。 */
@@ -1770,7 +1759,8 @@ const meterRowConfigs = computed(() => rowConfigsOf('meter-rows').filter((c: any
 const residentRowConfigs = computed(() => rowConfigsOf('resident-meter-rows').filter((c: any) => c.default_visible !== false))
 const matchRow = (row: any, cfg: any) => matchRowUtil(row, cfg)
 const meterRows = computed(() => buildMeterRows(editForm.value, meterRowConfigs.value))
-const meterTotal = computed(() => meterRows.value.reduce((s, r) => s + (Number(r.bill_kwh) || 0), 0))
+// 合计只累加四段计费电量（总表/无功不参与，否则与票面 614,578 差一倍多）
+const meterTotal = computed(() => meterTotalOf(meterRows.value))
 
 // 电量明细编辑（9 字段）
 const meterEditVisible = ref(false)
@@ -2147,11 +2137,12 @@ const fmtMoney = (v: any) => grouped(v, { fixed: true })
 // 这里只做**同名展开**：模板里用的是 metricKwh / metricKwhDelta / metricKwhTip
 // 这类扁平名字，展开后模板零改动。
 //
-// 口径提醒：metricFee 的输入是 overviewTotal（概览各子项合计），
-// 不是票面 grand_total —— 两处算法一旦分叉，卡片和明细表就对不上。
+// 口径提醒（第 33 轮修订）：本期电费卡片绑**票面总电费**（grand_total），
+// 明细缺失时也要显示账单原值；概览各子项合计仍用于「合计 vs 票面」的对数校验。
+// 绑定 overviewTotal 的话，一旦某张明细表没提出来，卡片就显示成 0。
 const metrics = computed(() => buildBillMetrics(
   editForm.value,
-  overviewTotal.value,
+  billTotal.value || overviewTotal.value,
   prevEnergy.value,
   { kwh: fmtKwh, money: fmtMoney },
 ))

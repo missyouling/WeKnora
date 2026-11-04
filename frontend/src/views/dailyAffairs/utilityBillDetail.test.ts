@@ -16,6 +16,8 @@ import {
   ROW_GROUP_OF_MENU,
   buildEnergyCompareRows,
   buildMeterRows,
+  meterTotalOf,
+  touBillKwhOf,
   buildResidentMeterRows,
   feeMenuOf,
   feeRowsOf,
@@ -341,4 +343,58 @@ test('CAPACITY_FIELDS / PF_FIELDS：字段数固定且都是 number', () => {
   assert.equal(CAPACITY_FIELDS.filter((f) => f.type === 'text').length, 0)
   assert.equal(PF_FIELDS.filter((f) => f.type === 'text').length, 1)
   assert.equal(PF_FIELDS[0].key, 'project')
+})
+
+// ---------------------------------------------------------------------------
+// 第 33 轮：电量明细合计 / 四段计费电量 / 用能分析占比分母
+// ---------------------------------------------------------------------------
+
+test('meterTotalOf：只累加四段计费电量，总表与无功不参与', () => {
+  const rows = [
+    { meter_type: '正向有功（总）', bill_kwh: 0 },
+    { meter_type: '正向有功（尖峰）', bill_kwh: 34105 },
+    { meter_type: '正向有功（峰）', bill_kwh: 133236 },
+    { meter_type: '正向有功（平）', bill_kwh: 196797 },
+    { meter_type: '正向有功（谷）', bill_kwh: 250440 },
+    // 即便历史数据里总表/无功带值，也不得累加（否则 1,401,690）
+    { meter_type: '正向无功（总）', bill_kwh: 154410 },
+  ]
+  assert.equal(meterTotalOf(rows), 614578)
+  assert.equal(meterTotalOf([]), 0)
+})
+
+test('touBillKwhOf：优先取电量明细的计费电量，缺失才回落顶层字段', () => {
+  const form = {
+    deep_peak_kwh: 35490, peak_kwh: 35490, flat_kwh: 199560, valley_kwh: 250440,
+    meter_readings: [
+      { meter_type: '正向有功（尖峰）', bill_kwh: 34105 },
+      { meter_type: '正向有功（峰）', bill_kwh: 133236 },
+      { meter_type: '正向有功（平）', bill_kwh: 196797 },
+      { meter_type: '正向有功（谷）', bill_kwh: 250440 },
+    ],
+  }
+  const tou = touBillKwhOf(form)
+  assert.deepEqual(tou, { deep: 34105, peak: 133236, flat: 196797, valley: 250440 })
+  // 没有 meter_readings 的老数据回落顶层字段，不返回 0
+  assert.deepEqual(touBillKwhOf({ deep_peak_kwh: 1, peak_kwh: 2, flat_kwh: 3, valley_kwh: 4 }),
+    { deep: 1, peak: 2, flat: 3, valley: 4 })
+})
+
+test('buildEnergyCompareRows：占比分母是工商业四段之和（不是账单总电量）', () => {
+  const form = {
+    total_kwh: 623932,
+    meter_readings: [
+      { meter_type: '正向有功（尖峰）', bill_kwh: 34105 },
+      { meter_type: '正向有功（峰）', bill_kwh: 133236 },
+      { meter_type: '正向有功（平）', bill_kwh: 196797 },
+      { meter_type: '正向有功（谷）', bill_kwh: 250440 },
+    ],
+  }
+  const rows = buildEnergyCompareRows(form, pickPrevEnergy([], '2026-10-01'))
+  assert.deepEqual(rows.map((r) => r.cur), [34105, 133236, 196797, 250440])
+  // 票面给的占比：5.55% / 21.68% / 32.02% / 40.75%
+  assert.equal(rows[0].curPct, 5.55)
+  assert.equal(rows[1].curPct, 21.68)
+  assert.equal(rows[2].curPct, 32.02)
+  assert.equal(rows[3].curPct, 40.75)
 })

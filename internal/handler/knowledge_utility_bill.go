@@ -281,6 +281,16 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 		}
 	}
 
+	// 电量明细 / 输配容（需）量 / 功率因素明细的确定性补全（第 33 轮）。
+	//
+	// 这三张表是票面固定表结构，LLM 偶发漏抽（真机：2026-10 线损/加减全 0、
+	// 容量与力调明细整段丢失）。用原文兜底解析，只补不改、幂等。
+	if len(extracted.Records) > 0 {
+		if service.NormalizeUtilityBillDetails(&extracted.Records[0], strings.Join(batches, "\n")) {
+			logger.Infof(ctx, "Utility bill details rebuilt from source text, knowledge ID: %s", knowledgeID)
+		}
+	}
+
 	// 通用质量闭环（非发票业务口径）：账单周期/打印日/交费截止日等标准日期字段归一化，
 	// 并激活字段级 RE2 正则补洞与必填校验。
 	//

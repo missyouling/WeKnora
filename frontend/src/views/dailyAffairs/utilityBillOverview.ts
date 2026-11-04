@@ -9,10 +9,15 @@
 //     必须在一处写清楚，散在 computed 里最容易出现「改了明细没改小计」；
 //   · 覆盖键（`market` / `bill:market`）的命名规则必须与保存路径一致。
 //
-// **口径红线**：
-//   · 工商业小计 = 市场化 + 线损 + 输配量 + 系统 + 政府基金(工商业) + 输配容(需)量；
+// **口径红线**（第 33 轮修订）：
+//   · 工商业小计 = 市场化 + 线损 + 输配量 + 系统 + 政府基金(工商业) —— **5 项**；
+//     输配容(需)量与功率因数都是小计之外的独立行，由「本期电费」汇总时再加，
+//     否则「小计 480,085 + 容需量 44,000」会把容需量算两遍；
 //   · 居民小计 = 目录电费 + 政府性基金(居民)；
-//   · 功率因数调整电费**不进任何小计**（它是罚/奖，单独一行）；
+//   · 「电费」列 **100% 来自明细实算**：某子表没有明细行时必须是 0.00，
+//     绝不用顶层提取字段兜底（否则两列同源，差异永远发现不了）；
+//   · 「账单电费」列取票面直提值（顶层 capacity_fee / pf_adjust_amount）；
+//   · 对比状态 = |电费 − 账单电费| ≤ 0.02；
 //   · 所有合计按「分」整数累加（`Math.round(sum*100)/100`），不留浮点尾巴。
 
 /** 账单概况行（含计算值、账单值、覆盖键）。 */
@@ -45,16 +50,51 @@ export const roundMoney = (n: number) => Math.round(n * 100) / 100
 const sumFee = (arr: any[]) => roundMoney(arr.reduce((s, it) => s + (Number(it.fee) || 0), 0))
 const sumBillFee = (arr: any[]) => roundMoney(arr.reduce((s, it) => s + (Number(it.fee_amount) || 0), 0))
 
+/** 电量保留 1 位小数（票面精度就是 0.001，展示到 0.1 足够）。 */
+const roundQty = (v: number) => Math.round(v * 10) / 10
+
+/** 分时档位（顺序即票面顺序）。 */
+const TOU_PERIODS = ['尖峰', '峰', '平', '谷']
+
 /**
- * 类别计费数量：**取该类别行中的最大计费电量**，不是求和。
+ * 类别行中的最大计费电量。
  *
- * 为什么不是求和：分时子项（尖/峰/平/谷）的 qty 是「该时段电量」，
- * 相加会得到双倍总电量；类别口径要用整表电量（即各时段里的最大值）。
- * 保留 1 位小数（电量精度）。
+ * 适用：上网环节线损 / 系统运行费 / 政府性基金 / 居民两项 —— 这些类别下每一行
+ * 的 qty 都是**全量口径**（如每行都是 614,578），相加会翻倍，只能取最大。
  */
-const sumQty = (arr: any[]) => {
+const maxQty = (arr: any[]) => {
   if (!arr.length) return 0
-  return Math.round(Math.max(...arr.map((it: any) => Number(it.qty) || 0)) * 10) / 10
+  return roundQty(Math.max(...arr.map((it: any) => Number(it.qty) || 0)))
+}
+
+/**
+ * 分时类别（市场化购电费 / 输配电量电费）的计费电量 = 四段计费电量之和。
+ *
+ * 真机事故（第 33 轮）：旧实现用「取最大」，概况里显示 250,440（谷段单行），
+ * 而正确值是 34,105+133,236+196,797+250,440 = 614,578。
+ * 同一时段可能有多行（零售交易电费 + 偏差电费），按时段取最大后再相加，
+ * 避免把同一时段的重复行累加。
+ */
+const touQty = (arr: any[]) => {
+  const byPeriod: Record<string, number> = {}
+  for (const it of arr) {
+    const p = String(it?.period || '').trim()
+    if (!TOU_PERIODS.includes(p)) continue
+    const q = Number(it?.qty) || 0
+    if (q <= 0) continue
+    byPeriod[p] = Math.max(byPeriod[p] || 0, q)
+  }
+  const sum = TOU_PERIODS.reduce((acc, p) => acc + (byPeriod[p] || 0), 0)
+  return roundQty(sum)
+}
+
+/**
+ * 分时类别电量：优先四段求和；四段都缺（老数据没有时段字段）时退回最大值。
+ * 不能反过来 —— 「取最大」正是本轮要修的 Bug。
+ */
+const touOrMaxQty = (arr: any[]) => {
+  const sum = touQty(arr)
+  return sum > 0 ? sum : maxQty(arr)
 }
 
 /** 各费用子表的输入（由调用方按菜单 key 取好）。 */
@@ -64,6 +104,10 @@ export interface OverviewInputs {
   rowsOf: (menuKey: string) => any[]
   editForm: Record<string, any>
   overrides: FeeOverrides
+  /** 输配容（需）量明细（空 = 该子表无数据 → 电费列必须为 0）。 */
+  capacityDetail?: Record<string, any> | null
+  /** 功率因素调整明细（空 = 该子表无数据 → 电费列必须为 0）。 */
+  pfDetail?: Record<string, any> | null
 }
 
 /**
@@ -96,8 +140,16 @@ export function buildOverviewRows(inp: OverviewInputs): OverviewRow[] {
   const govI = sumFee(rowsOf('industrial-gov'))
   const catalog = sumFee(rowsOf('residential-catalog'))
   const govR = sumFee(rowsOf('residential-gov'))
-  const capacity = Number(edit.capacity_fee) || 0
-  const pf = Number(edit.pf_adjust_amount) || 0
+
+  // 「电费」列 = 纯明细实算：明细缺 → 0（不是用顶层提取值兜底）
+  const capDetail = inp.capacityDetail || null
+  const capacity = capDetail
+    ? roundMoney((Number(capDetail.demand_fee) || 0) + (Number(capDetail.capacity_fee) || 0))
+    : 0
+  const pf = inp.pfDetail ? roundMoney(Number(inp.pfDetail.adjust_fee) || 0) : 0
+  // 「账单电费」列 = 票面直提值（账单概况/小计处读到的原始金额）
+  const capacityBill = Number(edit.capacity_fee) || 0
+  const pfBill = Number(edit.pf_adjust_amount) || 0
 
   const marketBill = sumBillFee(rowsOf('industrial-market'))
   const lineBill = sumBillFee(rowsOf('industrial-line'))
@@ -109,15 +161,16 @@ export function buildOverviewRows(inp: OverviewInputs): OverviewRow[] {
 
   // 小计随子项覆盖联动：子项被手工改过，小计必须跟着变，
   // 否则「明细改了、小计没变」会让用户以为保存失败。
+  // 工商业小计只含 5 项：容需量/力调在小计之外（由本期电费汇总时加）
   const industrial = roundMoney(
     ovOf('market', market) + ovOf('line', line) + ovOf('trans', trans) +
-    ovOf('sys', sys) + ovOf('govI', govI) + ovOf('capacity', capacity),
+    ovOf('sys', sys) + ovOf('govI', govI),
   )
   const residential = roundMoney(ovOf('catalog', catalog) + ovOf('govR', govR))
   const industrialBill = roundMoney(
     ovOf('bill:market', marketBill) + ovOf('bill:line', lineBill) +
     ovOf('bill:trans', transBill) + ovOf('bill:sys', sysBill) +
-    ovOf('bill:govI', govIBill) + ovOf('bill:capacity', capacity),
+    ovOf('bill:govI', govIBill),
   )
   const residentialBill = roundMoney(ovOf('bill:catalog', catalogBill) + ovOf('bill:govR', govRBill))
 
@@ -125,27 +178,27 @@ export function buildOverviewRows(inp: OverviewInputs): OverviewRow[] {
     {
       key: 'market', label: '市场化购电费',
       ...withOv('market', market), ...withBillOv('market', marketBill),
-      qty: sumQty(rowsOf('industrial-market')), menuKey: 'industrial-market',
+      qty: touOrMaxQty(rowsOf('industrial-market')), menuKey: 'industrial-market',
     },
     {
       key: 'line', label: '上网环节线损费',
       ...withOv('line', line), ...withBillOv('line', lineBill),
-      qty: sumQty(rowsOf('industrial-line')), menuKey: 'industrial-line',
+      qty: maxQty(rowsOf('industrial-line')), menuKey: 'industrial-line',
     },
     {
       key: 'trans', label: '输配电量电费',
       ...withOv('trans', trans), ...withBillOv('trans', transBill),
-      qty: sumQty(rowsOf('industrial-trans')), menuKey: 'industrial-trans',
+      qty: touOrMaxQty(rowsOf('industrial-trans')), menuKey: 'industrial-trans',
     },
     {
       key: 'sys', label: '系统运行费',
       ...withOv('sys', sys), ...withBillOv('sys', sysBill),
-      qty: sumQty(rowsOf('industrial-sys')), menuKey: 'industrial-sys',
+      qty: maxQty(rowsOf('industrial-sys')), menuKey: 'industrial-sys',
     },
     {
       key: 'govI', label: '政府基金及附加（工商业）',
       ...withOv('govI', govI), ...withBillOv('govI', govIBill),
-      qty: sumQty(rowsOf('industrial-gov')), menuKey: 'industrial-gov',
+      qty: maxQty(rowsOf('industrial-gov')), menuKey: 'industrial-gov',
     },
     {
       key: 'industrial', label: '工商业电费小计',
@@ -155,12 +208,12 @@ export function buildOverviewRows(inp: OverviewInputs): OverviewRow[] {
     {
       key: 'catalog', label: '目录电费（居民）',
       ...withOv('catalog', catalog), ...withBillOv('catalog', catalogBill),
-      qty: sumQty(rowsOf('residential-catalog')), menuKey: 'residential-catalog',
+      qty: maxQty(rowsOf('residential-catalog')), menuKey: 'residential-catalog',
     },
     {
       key: 'govR', label: '政府性基金及附加（居民）',
       ...withOv('govR', govR), ...withBillOv('govR', govRBill),
-      qty: sumQty(rowsOf('residential-gov')), menuKey: 'residential-gov',
+      qty: maxQty(rowsOf('residential-gov')), menuKey: 'residential-gov',
     },
     {
       key: 'residential', label: '居民电费小计',
@@ -169,28 +222,30 @@ export function buildOverviewRows(inp: OverviewInputs): OverviewRow[] {
     },
     {
       key: 'capacity', label: '输配容（需）量电费',
-      ...withOv('capacity', capacity), ...withBillOv('capacity', capacity),
-      qty: Number(edit.capacity) || 0, menuKey: 'capacity',
+      ...withOv('capacity', capacity), ...withBillOv('capacity', capacityBill),
+      // 计费数量 = 实际容量（明细优先，空则用顶层提取值）
+      qty: Number(capDetail?.capacity) || Number(capDetail?.demand) || Number(edit.capacity) || 0,
+      menuKey: 'capacity',
     },
     {
       key: 'pf', label: '功率因数调整电费',
-      ...withOv('pf', pf), ...withBillOv('pf', pf),
+      ...withOv('pf', pf), ...withBillOv('pf', pfBill),
       qty: -1, menuKey: 'pf-adjust',
     },
   ]
 }
 
 /**
- * 概览合计（= 工商业小计 + 居民小计 + 功率因数调整电费）。
+ * 概览合计（= 工商业小计 + 居民小计 + 输配容（需）量电费 + 功率因数调整电费）。
  *
- * 注意组成：容量电费已计入工商业小计，**功率因数调整电费单独加进来**
- * （它不是任何小计的成员，但属于本期电费的组成部分）。
- * 用「两个小计 + pf」而不是「所有非小计行求和」：后者会把明细行
- * 重复计一遍（小计本来就是明细之和）。
+ * 口径（第 33 轮）：容需量与力调都**不在小计里**，必须在这里单独加；
+ * 票据等式：本期电费 = 工商业电费 + 居民电费 + 功率因数调整电费，
+ * 其中工商业电费口径含容需量，所以这里等价于「小计(5 项) + 居民 + 容需量 + 力调」。
+ * 用「小计 + 独立行」而不是「所有非小计行求和」：后者会把明细行重复计一遍。
  */
 export function overviewTotalOf(rows: OverviewRow[]): number {
   const pick = (key: string) => rows.find((r) => r.key === key)?.displayValue || 0
-  return roundMoney(pick('industrial') + pick('residential') + pick('pf'))
+  return roundMoney(pick('industrial') + pick('residential') + pick('capacity') + pick('pf'))
 }
 
 /** 电量列展示：`-1` 与缺失都给 `—`，其余按数值展示。 */

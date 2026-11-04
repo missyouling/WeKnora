@@ -135,11 +135,13 @@ test('表头宽度下传（改宽度要真的生效）', () => {
 
 // ---- ③ 解析失败不进主列表 ----
 
-test('市电 / 光伏 主列表都过滤解析失败行', () => {
-  assert.match(utilities, /FAILED_ROW_STATUS = new Set\(\['failed', 'parse_failed'\]\)/)
-  assert.match(utilities, /\.filter\(\(pf: any\) => !FAILED_ROW_STATUS\.has\(pendingLabel\(pf\)\)\)/)
-  assert.match(solar, /FAILED_ROW_STATUS = new Set\(\['failed', 'parse_failed'\]\)/)
-  assert.match(solar, /\.filter\(\(pf: any\) => !FAILED_ROW_STATUS\.has\(pendingLabel\(pf\)\)\)/)
+test('市电 / 光伏 主列表都不再把在途/失败文件拼成占位行', () => {
+  // 第 33 轮门禁升级：在途文件（解析中/待提取/提取中）连占位行都不出现，
+  // 列表只由已落库记录构成；失败文件仍只在「历史记录 → 异常文件」里看。
+  for (const src of [utilities, solar]) {
+    assert.doesNotMatch(src, /pendingRows/, '不得再把 pendingFiles 拼成列表占位行')
+    assert.match(src, /let all = \[\.\.\.rows\.value\]/, '列表数据源只能是已落库行')
+  }
 })
 
 // ---- ④ 光伏账单周期只显示 YYYY-MM ----
