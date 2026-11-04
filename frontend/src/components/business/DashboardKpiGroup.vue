@@ -224,6 +224,12 @@ onBeforeUnmount(() => {
 .dash-kpi-group {
   display: flex;
   flex-wrap: nowrap;
+  /* 卡片等高：flex 默认 align-items:stretch，但卡片是 flex-shrink:0 的块，
+     高度仍由内容决定 —— 有副文本的卡（发票「已收录」/车队「历史记录」）
+     比没有副文本的卡高 20px，同一行里就会出现参差。
+     显式 stretch + 卡片 align-self:stretch，让所有卡统一取行高，
+     这样能耗 / 发票 / 车队 12 个菜单的卡片尺寸才真正一致。 */
+  align-items: stretch;
   overflow-x: auto;
   overflow-y: hidden;
   gap: 14px;
@@ -273,7 +279,25 @@ onBeforeUnmount(() => {
   gap: 14px;
   padding: 18px 20px;
   flex-shrink: 0;
-  min-width: 200px;
+  /* 卡片统一高度（第 34 轮）：
+     ① align-self:stretch —— 同一行内所有卡取同一行高（有副文本的卡不再比
+        没副文本的高 20px）；
+     ② min-height 固定 —— 跨**菜单/模块**也要同高。只靠 stretch 时，行高由
+        该组内最高卡决定：车辆档案组有「历史记录」带副文本 → 全组 104px；
+        加油充电组没有副文本 → 全组 83px。两个菜单的卡片看起来就"不一样大"。
+        给一个统一最小高度后，有无副文本都是同一尺寸，副文本只是在这个高度内
+        垂直居中排布。 */
+  align-self: stretch;
+  box-sizing: border-box;
+  /* 固定尺寸（第 34 轮）：
+     · height 写死 96px —— 有/无副文本、组内最高卡多高都不影响，
+       跨菜单跨模块统一（发票/能耗/车队 12 菜单实测均为 96px）；
+     · width 写死 220px —— 只设 min-width 时，标题长的卡（「道路运输经营许可证」）
+       会被内容撑到 222px，与相邻的 200px 卡看起来"不一样宽"。
+       固定宽度后标题超长走 ellipsis，卡片网格严格对齐。 */
+  width: 220px;
+  height: 96px;
+  min-width: 220px;
   background: var(--wk-kpi-bg);
   border: 1px solid transparent;
   border-radius: var(--td-radius-large);
@@ -320,6 +344,11 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .dash-kpi-card__label {
+  /* 卡片宽度固定后，超长标题（「道路运输经营许可证」）必须省略，
+     否则会把 220px 撑破或换行导致卡片内容溢出 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 14px;
   font-weight: 500;
   color: var(--td-text-color-primary);
@@ -341,8 +370,12 @@ onBeforeUnmount(() => {
 }
 .dash-kpi-card__sub {
   font-size: 12px;
+  /* 行高压到 16px 且不占额外外边距：卡片高度写死 96px 后，
+     副文本必须在剩余空间内放下（图标 40 / 标题 18 / 数值 23 + 副文本 16 = 97，
+     由 flex 居中消化 1px 误差）。 */
+  line-height: 16px;
   color: var(--td-text-color-secondary);
-  margin-top: 4px;
+  margin-top: 2px;
 }
 /* 语义化视觉类（兼容既有 cls 透传 + theme 语义） */
 .dash-kpi-card.is-brand .dash-kpi-card__icon,

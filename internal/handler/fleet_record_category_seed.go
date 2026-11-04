@@ -140,14 +140,21 @@ func fleetRecordCategorySeeds() []fleetCategorySeed {
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "辅材记录", BuiltinKey: "fleet-cost-material", SortOrder: 6,
 			Subs: []types.FleetCategorySub{
-				filt(def(txt("车牌号"))), filt(def(txt("类型"))), def(num("金额")), def(num("数量")), def(num("单价（元）")), area("备注"),
+				// 辅材记录：类型/数量/单价/金额 之外补「品牌规格、领用人、领用日期」，
+				// 否则该分类只有 5 个默认列，列表表头过窄（需求要求 >= 6 列）。
+				filt(def(txt("车牌号"))), filt(def(txt("类型"))), def(num("金额")), def(num("数量")),
+				def(num("单价（元）")), def(txt("品牌规格")), def(txt("领用人")), def(dt("领用日期")),
+				txt("供应商"), txt("付款状态"), area("备注"),
 			},
 		},
 		{
 			Scope: types.FleetCategoryScopeFleetCost, Name: "请车记录", BuiltinKey: "fleet-cost-request", SortOrder: 7,
 			Subs: []types.FleetCategorySub{
-				filt(def(txt("车牌号"))), filt(def(txt("申请人"))), def(area("事由")), def(dt("开始时间")), dt("结束时间"),
-				txt("审批人"), area("备注"),
+				// 请车记录：事由/起止时间之外补「用车地点、随行人数、审批状态」，
+				// 否则该分类只有 4 个默认列（需求要求 >= 6 列）。
+				filt(def(txt("车牌号"))), filt(def(txt("申请人"))), def(area("事由")),
+				def(dt("开始时间")), def(dt("结束时间")), def(txt("用车地点")),
+				def(num("随行人数")), def(txt("审批状态")), txt("审批人"), area("备注"),
 			},
 		},
 	}

@@ -105,12 +105,18 @@ export function fmtSumNumber(v: number): string {
  * 在合计行里写 `—` 会被读成「这一列没有数据」，而实际只是「不该相加」。
  * 留空后整行只剩真正的合计值，视觉上不会与「值为空的行」混淆。
  *
- * 可累加列**即使全为 0 也输出真实合计值**（`0.00` / `0`），不写 `—`：
+ * 可累加列**在有数据行时即使全为 0 也输出真实合计值**（`0.00` / `0`），不写 `—`：
  * 合计行的语义就是「这一列在本屏数据里的合计」，0 也是合计结果。
  * 写 `—` 会与「不可累加列」的空白形成两套「没有值」的表示，用户无法区分。
+ *
+ * **但 0 行数据时一律留空**（第 34 轮）：空列表的合计行中间挂着 `0` / `0.00`
+ * 会被读成「这一列的值是 0」，而实际是「没有任何数据可加」。此时整行只保留
+ * 首列文案「合计（共 0 条）」，其余单元格全空 —— 与能耗/发票的既有表现一致。
  */
 export function summaryCellOf(col: SummaryColumn, rows: any[]): string {
   if (!isSummableColumn(col)) return ''
+  // 0 行 → 不输出任何合计值（区别于「1 行且值确实为 0」）
+  if (!Array.isArray(rows) || rows.length === 0) return ''
   const pick = col.value || ((r: any) => r?.[col.key])
   if (col.fieldType === 'amount' || col.fieldType === 'money' || col.fieldType === 'currency') {
     return fmtSumAmount(sumAmount(rows, pick))
@@ -164,10 +170,15 @@ export function buildFootRow(
   const selectKey = opts.selectKey || 'row-select'
   const row: Record<string, string> = { id: '__summary__' }
   if (opts.rowKey) row[opts.rowKey] = '__summary__'
-  row[selectKey] = summaryLabelOf(rows.length, opts.selectedCount || 0)
+  // 先写各列合计，**最后**再写首列文案。
+  //
+  // 顺序很关键：`row-select` 自身也是 columns 的一员时（部分页面把固定列一并
+  // 传给汇总），列循环会用它算出一个空串并把文案覆盖掉 —— 合计行首列变成空白。
+  // 首列文案是这一行的语义锚点，必须最后写、且优先级最高。
   for (const col of columns) {
     row[col.key] = summaryCellOf(col, rows)
   }
+  row[selectKey] = summaryLabelOf(rows.length, opts.selectedCount || 0)
   return row
 }
 

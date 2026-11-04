@@ -2498,10 +2498,14 @@ onBeforeUnmount(() => {
 }
 
 .overview-group :deep(.dash-kpi-card) {
-  flex: 1 1 0;
-  min-width: 150px;
-  padding: 16px 12px;
-  gap: 10px;
+  /* 卡片尺寸交给中台组件统一（第 34 轮）：此前这里写 flex:1 1 0 + min-width:150px，
+     把 7 张卡压成 151px 宽、内边距 16/12 —— 与发票 220×96、车队 220×96 完全不同，
+     用户跨模块看就是"每页卡片都不一样大"。
+     现在只保留「不收缩」：宽度与高度由 DashboardKpiGroup 的 220×96 决定，
+     7 张卡超出视口时用组件内置的左右箭头滚动（不是压缩卡片）。 */
+  flex: 0 0 auto;
+  padding: 18px 20px;
+  gap: 14px;
 }
 
 /* 列表滚动容器：边框/圆角/背景/阴影一律走四模块共享样式（.biz-page .doc-list-scroll），

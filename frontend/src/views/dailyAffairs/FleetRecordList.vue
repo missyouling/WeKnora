@@ -68,15 +68,15 @@
         </template>
       </BusinessFilterBar>
 
-      <!-- ③ 列表 -->
-      <div class="doc-list-scroll" ref="tableBoxRef">
-        <div class="doc-list-view">
+      <!-- ③ 列表：与发票管理逐字同构（.doc-list-view + :max-height="100%" + sticky-header） -->
+      <div class="doc-list-scroll">
+        <div class="doc-list-view" :style="headerFixStyle">
           <t-table :data="pagedRows" :columns="tableColumns" row-key="id" size="small"
-            :hover="true" :loading="tableLoading" :foot-data="tableFootData"
+            :hover="true" :loading="tableLoading" :max-height="tableMaxHeight"
+            :foot-data="tableFootData"
             :rowspan-and-colspan-in-footer="footSpan"
             :selected-row-keys="selectedRowKeys" :scroll="tableScroll" sticky-header
-            :class="['doc-table', 'fleet-table', { 'fleet-table--sparse': sparseTable }]"
-            :style="{ '--fleet-spacer-h': `${spacerHeight}px` }"
+            class="doc-table fleet-table"
             :row-class-name="({ row }: any) => selectedKeys.has(rowKey(row)) ? 'is-selected' : ''"
             @row-click="({ row }: any) => openDetail(row)"
             @select-change="onTableSelectChange">
@@ -125,6 +125,12 @@
         <t-select v-model="editForm.data['车牌号']" :options="vehicleOptions" filterable clearable allow-create
           placeholder="选择或输入车牌号" />
       </template>
+      <!-- 证照状态：系统派生值，只读展示（禁用输入框 + 提示来源）。
+           用插槽而不是改共享抽屉组件，是为了不动中台契约（发票/能耗的字段
+           渲染分支保持原样）。 -->
+      <template #field-__cert_status>
+        <t-input :value="detailCertStatus" disabled title="按有效期止自动计算，不可编辑" />
+      </template>
     </BusinessSplitDetailDrawer>
 
     <!-- 打印预览（统一中台组件） -->
@@ -134,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
@@ -160,7 +166,9 @@ import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import OilCardPanel from './FleetOilCardPanel.vue'
 import EtcPanel from './FleetEtcPanel.vue'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
+import { useTableHeaderFix } from './useTableHeaderFix'
 import { buildFootRow, footSpanOf, summaryScopeRows } from './listSummary'
+import './styles/list-summary-footer.css'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
 import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
@@ -168,6 +176,7 @@ import {
   certStatusOf, certStatusOptions, extractStatusOf,
   type FleetColumn,
 } from './fleetColumns'
+import { fleetCategorySeedsOf } from './fleetCategorySeed'
 import type { FilterFieldSpec } from './businessFilter'
 
 const props = defineProps<{ recordType: string }>()
@@ -220,6 +229,9 @@ const recordType = computed(() => props.recordType)
 const KB_NAME = '日常事务-车队'
 const kbId = ref('')
 const loading = ref(false)
+// 最近一次**成功渲染**的列表数据源 key（菜单+分类+筛选+分页）。
+// 用于判断 reloadList 是「换数据源」（需要清空旧行）还是「同源刷新」（不能清空）。
+const lastListKey = ref('')
 const cardsReady = ref(false)
 const vehicles = ref<any[]>([])
 const categories = ref<Record<string, any[]>>({})
@@ -230,14 +242,37 @@ const vehicleMap = computed(() => {
 })
 const vehicleOptions = computed(() => vehicles.value.map((v: any) => ({ label: v.plate_no, value: v.plate_no })))
 
-// 当前菜单的分类列表（六同步数据源）
+// 当前菜单的分类列表（六同步数据源）。
+//
+// **第 1 帧就必须完整**（第 34 轮）：分类原先只能异步拉取，首屏 `menuCategories`
+// 是空数组 → KPI 卡片只剩「已收录 / 历史记录」两张、`activeSubs` 为空 →
+// 表头只剩复选框与两个系统列，接口回来后才「蹦」出其余卡片与业务列
+// （真机：先 2 张卡停顿一下、表头先只有 2 列）。
+//
+// 现在：服务端已返回 → 用服务端数据（权威，用户在设置里改的字段/顺序/启停都生效）；
+// 还没返回 → 用前端同步种子（与后端 seed 同源）占位。两种形态结构完全一致，
+// 下游派生逻辑（卡片 / 表头 / 抽屉字段）无需区分。
 const menuCategories = computed<any[]>(() => {
-  const arr = categories.value[meta.value.scope] || []
+  const remote = categories.value[meta.value.scope]
+  const arr = Array.isArray(remote) && remote.length ? remote : fleetCategorySeedsOf(meta.value.scope)
   return arr.filter((c: any) => c && c.enabled !== false)
 })
 
-// 当前激活分类：档案类空 = 总览（文件列表）；记录型锁定菜单分类
-const activeType = ref('')
+// 当前激活分类：档案类空 = 总览（文件列表）；记录型锁定菜单分类。
+//
+// **初值必须同步算出来**（第 34 轮）：早先初始化为空串、要等 onMounted 的
+// bootstrap 异步走完才赋值，于是首帧 `activeSubs` 为空 → 表头只剩复选框与
+// 两个系统保留列（真机图 1/2/3 的残缺表头）。现在用同步种子直接算出默认焦点：
+// 档案类 = 第一个启用子分类；记录型 = 该菜单唯一分类。接口返回后 bootstrap
+// 会用服务端分类再校正一次（用户可能停用了某个分类）。
+const activeType = ref(
+  isArchive.value
+    ? (() => {
+      const first = resolveDefaultCategoryName(fleetCategorySeedsOf(meta.value.scope))
+      return first ? 'cat-' + first : ''
+    })()
+    : 'cat-' + (meta.value.singleCategory || ''),
+)
 const activeCategoryName = computed(() => {
   if (!isArchive.value) return meta.value.singleCategory || ''
   return activeType.value ? activeType.value.replace(/^cat-/, '') : ''
@@ -312,7 +347,7 @@ const pageSize = ref(20)
 // （TDesign 的 date-range-picker 已不渲染，无需再防 undefined 的 console.error）。
 // dateRange 必须是数组：TDesign date-range-picker 收到 undefined 会每帧
 // console.error（真机「控制台 0 error」硬断言会失败）。
-const initialFilterState = (): Record<string, any> => ({ keyword: '', certStatus: '', plate: '', dateRange: [] })
+const initialFilterState = (): Record<string, any> => ({ keyword: '', certStatus: '', dateRange: [] })
 const filterState = ref<Record<string, any>>(initialFilterState())
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = computed(() => Array.from(selectedKeys.value))
@@ -337,13 +372,19 @@ const todayStr = (() => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 })()
 
+// 系统保留列名：这些字段在 subs 里是**历史遗留的可编辑文本列**（旧种子把它们
+// 当普通字段录入），现在统一由系统按有效期派生，必须从业务列里剔除，
+// 否则真机上会同时出现「驾驶证状态」与「证照状态」两列（需求图 15）。
+const SYSTEM_STATUS_FIELD_NAMES = new Set(['证照状态', '证件状态', '驾驶证状态', '保单状态', '证书状态'])
+
 const columnDefs = computed<FleetColumn[]>(() => {
   const base = isSummaryView.value
     ? buildFleetSummaryViewColumns(vehicleMap.value)
     : buildFleetColumns(activeSubs.value, vehicleMap.value)
   if (!isArchive.value) return base
   return [
-    ...base,
+    // 归档类：剔除 subs 里的历史状态文本列（系统统一派生「证照状态」）
+    ...base.filter((c) => !SYSTEM_STATUS_FIELD_NAMES.has(c.key)),
     {
       key: CERT_STATUS_KEY,
       label: '证照状态',
@@ -390,13 +431,12 @@ const tableColumns = computed(() => {
       ellipsis: ellipsisOf(c),
       cell: (_h: any, params: any) => {
         const row = params?.row
-        // 证照状态：三态三色 Tag（发票管理「提取成功」同色系）
+        // 证照状态：**纯文本**（第 34 轮）。
+        // 它是「按有效期算出的派生值」，不是业务状态标签；加彩色 Tag 会与
+        // 「提取状态」的绿 Tag 混淆，也让一列文本看起来像可交互的徽标。
+        // 口径与需求图 5 一致：生效中 / 即将到期 / 已过期 三态一律素色文本。
         if (c.key === CERT_STATUS_KEY) {
-          const st = certStatusOf(row?.data, todayStr)
-          if (!st.key) return '—'
-          return _h('t-tag', {
-            theme: st.theme, variant: 'light', size: 'small',
-          }, () => st.label)
+          return certStatusOf(row?.data, todayStr).label || '—'
         }
         // 提取状态：绿底成功 Tag
         if (c.key === EXTRACT_STATUS_KEY) {
@@ -442,9 +482,10 @@ const filterFields = computed<FilterFieldSpec[]>(() => {
     key: 'certStatus', type: 'select', placeholder: '证照状态',
     options: certStatusOptions(), clearable: true,
   })
-  // 维保记录：额外提供车牌号 + 维修日期区间（该菜单按车辆与时间段查得最频繁）
+  // 维保记录：额外提供维修日期区间（按时间段查是该菜单最高频的操作）。
+  // 车牌号筛选已删除（第 34 轮）：车牌已在「搜索全部字段」里可搜，
+  // 单独一个车牌输入框既重复又占位（需求图 7 明确划掉）。
   if (props.recordType === 'maintain-archive') {
-    out.push({ key: 'plate', type: 'text', placeholder: '车牌号', clearable: true })
     out.push({ key: 'dateRange', type: 'date-range', placeholder: '维修日期', icon: 'time' })
   }
   return out
@@ -455,7 +496,15 @@ function persistColumns() {
 }
 function resetColumns() {
   const defs = columnDefs.value.filter((c) => c.default).map((c) => c.key)
-  visibleColKeys.value = defs.length ? defs : columnDefs.value.map((c) => c.key)
+  if (defs.length) {
+    visibleColKeys.value = defs
+  } else {
+    // 该分类一个默认列都没标（如「一般维修」7 个字段 is_default 全 false）：
+    // 不能把所有列都摊开（会把 35 字段的分类撑成横向滚动条），
+    // 退化为「前 8 个业务列」，保证表头有实质内容且不至于过宽。
+    // 系统保留列永远追加在末尾，由 columnDefs 顺序保证。
+    visibleColKeys.value = columnDefs.value.slice(0, 8).map((c) => c.key)
+  }
   persistColumns()
 }
 function selectAllColumns() { visibleColKeys.value = columnDefs.value.map((c) => c.key); persistColumns() }
@@ -469,7 +518,20 @@ function initColumns() {
       const allKeys = columnDefs.value.map((c) => c.key)
       const defs = columnDefs.value.filter((c) => c.default).map((c) => c.key)
       const matched = allKeys.filter((k) => Array.isArray(arr) && arr.includes(k))
-      if (matched.length && defs.every((k) => matched.includes(k))) {
+      // 记忆值的接受条件（第 34 轮收紧）：
+      //   ① 记忆里至少有一个业务列 —— 只含 __cert_status / __extract_status 的
+      //      记忆是上一轮字段集变化留下的残骸；
+      //   ② **所有**默认列都还在 —— 旧版字段集留下的记忆会缺列
+      //      （真机：辅材记录只剩 5 列、请车记录只剩 4 列，因为旧版种子默认列更少），
+      //      `defs.every` 对这种「部分缺失」恒成立，于是脏记忆被一直沿用，
+      //      表现为「设置里有字段、列表里没有表头」。
+      //   ③ defs 为空（该分类一个默认列都没标）时，退化为只要求 ①。
+      const hasBusiness = matched.some((k) => k !== CERT_STATUS_KEY && k !== EXTRACT_STATUS_KEY)
+      const defsOk = defs.length === 0 ? true : defs.every((k) => matched.includes(k))
+      // 额外兜底：业务列数量不能少于默认列数量（挡住「旧记忆比现定义少」的残骸）
+      const businessCount = matched.filter((k) => k !== CERT_STATUS_KEY && k !== EXTRACT_STATUS_KEY).length
+      const countOk = defs.length === 0 || businessCount >= defs.length
+      if (matched.length && hasBusiness && defsOk && countOk) {
         visibleColKeys.value = matched
         return
       }
@@ -477,6 +539,11 @@ function initColumns() {
   }
   resetColumns()
 }
+
+// setup 阶段先算一次列显隐：`columnDefs` 已由同步种子得出，
+// 不先算的话首帧 `visibleCols` 为空 → 表头只有复选框与序号（真机图 1/2/3）。
+// bootstrap 里分类到位后会再调一次 initColumns 校正。
+initColumns()
 
 function onTableSelectChange(val: any) {
   const arr = Array.isArray(val) ? val : []
@@ -511,18 +578,15 @@ const footData = computed(() => [buildFootRow(summaryCols.value, summaryScope.va
   selectKey: 'row-select', selectedCount: summaryScope.value.selectedCount,
 })])
 
-// 首屏门禁：卡片与列表首次请求都完成前，表格保持 loading —— 禁止在骨架屏
-// 期间闪现「暂无数据」和「合计 (共 0 条)」（第 29 轮 bug 4）。
-const tableLoading = computed(() => loading.value || !cardsReady.value)
+// 表格 loading 只由「列表请求在途」决定。
+//
+// 旧实现是 `loading || !cardsReady`，而 cardsReady 要等卡片统计接口返回 ——
+// 于是切换菜单/分类时表格会先渲染出一段「既非 loading 也无数据」的空窗期：
+// 表头不完整（分类还没到）、tbody 里先出现一个孤立序号 1 的空壳行。
+// 现在卡片与表头都有同步种子，第 1 帧即完整；loading 只跟列表请求走。
+const tableLoading = computed(() => loading.value)
 // 未就绪时合计行不渲染，避免「合计 (共 0 条)」误导
 const tableFootData = computed(() => (tableLoading.value ? [] : footData.value))
-
-// 稀疏态逻辑见文件末尾（必须放在所有 ref/computed 之后，否则 watch 注册时会
-// 立即求值 pagedRows → gatedRows → pendingFiles 而触发 TDZ）。
-
-
-
-
 
 // ---------------------------------------------------------------------------
 // 查询
@@ -550,6 +614,25 @@ watch(filterState, () => { if (filterWatchReady) scheduleFilter() }, { deep: tru
 
 async function reloadList() {
   loading.value = true
+  // 清空旧行**只在切换数据源时**做（菜单/分类/筛选条件变化），
+  // 不能无条件清空：同一数据源的分页/轮询刷新也走这里，
+  // 无条件清空会与在途请求形成竞态 —— 后发的清空把先到的结果抹掉，
+  // 真机表现为「接口返回 1 条、页面 0 行、合计（共 0 条）」。
+  //
+  // 判据：当前请求的 key 与上次成功渲染的 key 不同才清空。
+  const reqKey = [
+    recordType.value,
+    isArchive.value ? activeCategoryName.value : meta.value.singleCategory,
+    JSON.stringify(filterState.value || {}),
+    page.value,
+    pageSize.value,
+  ].join('|')
+  const changed = reqKey !== lastListKey.value
+  if (changed) {
+    rows.value = []
+    total.value = 0
+    selectedKeys.value = new Set()
+  }
   try {
     const state = filterState.value || {}
     // 12 个菜单统一读 fleet_records（第 29 轮）。
@@ -567,10 +650,6 @@ async function reloadList() {
       type: recordType.value,
       sub_category: isArchive.value ? activeCategoryName.value : undefined,
       q: String(state.keyword || '').trim() || undefined,
-      // 维保记录：车牌号走 field_filters（后端按 vehicle_id/车牌精确匹配）
-      field_filters: String(state.plate || '').trim()
-        ? `车牌号:${String(state.plate).trim()}`
-        : undefined,
       date_from: df || undefined,
       date_to: dt || undefined,
       page: statusFilter ? 1 : page.value,
@@ -579,6 +658,8 @@ async function reloadList() {
     const data = res?.data || {}
     rows.value = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : []
     total.value = Number(data.total) || rows.value.length
+    // 记住本次已渲染的数据源 key：后续同 key 的刷新不再清空（避免竞态抹掉结果）
+    lastListKey.value = reqKey
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载失败')
   } finally {
@@ -649,12 +730,22 @@ const detailKnowledgeId = computed(() =>
 const detailPageNo = computed(() => Number(detailRow.value?.data?.['页码']) || 1)
 const detailTitle = computed(() => `${menuLabel.value}详情${detailRow.value?.file_name ? ' · ' + detailRow.value.file_name : ''}`)
 
-const drawerFields = computed(() =>
-  (activeSubs.value || [])
+const drawerFields = computed(() => {
+  const base = (activeSubs.value || [])
     .filter((s: any) => s && s.enabled !== false)
-    .map((s: any) => ({ name: String(s.name), label: String(s.label || s.name), dataType: String(s.data_type || 'text') })),
-)
+    // 归档类：剔除历史状态文本列（列表已由系统派生的「证照状态」取代）
+    .filter((s: any) => !(isArchive.value && SYSTEM_STATUS_FIELD_NAMES.has(String(s.name))))
+    .map((s: any) => ({ name: String(s.name), label: String(s.label || s.name), dataType: String(s.data_type || 'text') }))
+  if (!isArchive.value) return base
+  // 证照状态是系统派生值：抽屉里以只读输入框展示（见模板 #field-__cert_status 插槽）。
+  // 不放进 editForm.data（避免脏检查把派生值当用户输入提交给后端）。
+  return [...base, { name: CERT_STATUS_KEY, label: '证照状态', dataType: 'text' }]
+})
 const drawerSubFields = computed(() => [])
+
+// 抽屉里「证照状态」的展示值：按当前编辑中的有效期止实时联动
+// （用户改了有效期止，状态要立刻跟着变，不能只在保存后才更新）。
+const detailCertStatus = computed(() => certStatusOf(editForm.value?.data, todayStr).label || '—')
 
 function openDetail(row: any) {
   detailRow.value = row
@@ -1014,23 +1105,26 @@ async function bootstrap() {
   page.value = 1
   filterWatchReady = false
   filterState.value = initialFilterState()
-  await Promise.all([loadVehicles(), ensureKb()])
-  await reloadCategories()
-  // 默认焦点（第 30 轮）：档案类直接选中第 1 个启用子分类，而不是「已收录」汇总卡。
-  // 汇总视图下各分类字段集不同，只能拼通用列且大量「—」；默认落到具体分类后
-  // 用户一进来就看到真实表头与数据。无任何启用分类时退化为汇总视图（空串）。
+  // 四路并行（第 34 轮）：vehicles / kb / 分类 / (统计 + 列表)。
   //
-  // 必须在 reloadCategories() **之后**算：分类是异步拉的，提前算只能拿到空数组，
-  // 结果永远是汇总视图（默认焦点失效）。
-  activeType.value = isArchive.value
-    ? (() => {
-      const first = resolveDefaultCategoryName(menuCategories.value)
-      return first ? 'cat-' + first : ''
-    })()
-    : 'cat-' + (meta.value.singleCategory || '')
+  // 串行是首屏慢的根因：`vehicles+kb → 分类 → stats → list` 四次往返，
+  // 跨洋链路每次 3~10s，实测首屏要 16s 才出数据（截图里一直是「0 份 + 暂无数据」）。
+  //
+  // 为什么分类不必阻塞列表：`activeType` 已在 setup 阶段用**同步种子**算好
+  // （见 activeType 的初始化），列表请求只需要分类**名字**，而名字就是种子里的
+  // 第一个分类名。分类接口返回后只用于「校正」（用户可能停用了某个分类）。
+  const catsP = reloadCategories()
+  const dataP = Promise.all([reloadStats(), reloadList()])
+  await Promise.all([loadVehicles(), ensureKb()])
+  await catsP
+  // 分类到位后用服务端数据校正默认焦点（种子里的第一个分类可能被用户停用）
+  if (isArchive.value) {
+    const first = resolveDefaultCategoryName(menuCategories.value)
+    const want = first ? 'cat-' + first : ''
+    if (want !== activeType.value) activeType.value = want
+  }
   initColumns()
-  await reloadStats()
-  await reloadList()
+  await dataP
   // 列表已就绪，之后 filterState 的任何变化都是用户输入 → 交给防抖请求
   filterWatchReady = true
   // 注：**不做**发票派生同步（第 29 轮明确取消跨库同步）。
@@ -1040,60 +1134,31 @@ async function bootstrap() {
 
 watch(() => props.recordType, () => { void bootstrap() })
 
-// 合计行贴底的「像素占位」测量（第 32 轮重写）。
-//
-// 旧实现是 tbody::after{height:100%} + table{height:100%}：loading 期间合计行还没
-// 渲染（footData 为空）、sparse 标记也还没测出来，表格先被 flex:1 撑满整个容器，
-// 唯一的数据行被拉成整屏高（真机实测 516px），而 TDesign 的单元格是垂直居中，
-// 于是首行看起来「掉到表格正中间」，加载完才弹回顶部。
-//
-// 现在表格永远保持自然高度（flex:0 0 auto），占位行高度由 JS 实测「容器剩余空间」
-// 后以像素给出：数据行高度不会被拉伸，首行始终紧贴表头下方；合计行靠这段占位被
-// 顶到容器底边。
-const spacerHeight = ref(0)
-const sparseTable = computed(() => spacerHeight.value > 0)
-const tableBoxRef = ref<HTMLElement | null>(null)
+// 表头右侧滚动条轨道遮罩（与发票管理共用同一 hook 与同一 CSS）
+const { headerFixStyle } = useTableHeaderFix()
 
-function measureSpacer() {
-  const box = tableBoxRef.value
-  const content = box?.querySelector('.t-table__content') as HTMLElement | null
-  const table = box?.querySelector('.doc-table') as HTMLElement | null
-  const head = table?.querySelector('thead') as HTMLElement | null
-  const body = table?.querySelector('.t-table__body') as HTMLElement | null
-  const foot = table?.querySelector('tfoot') as HTMLElement | null
-  if (!content || !table || !head || !body) { spacerHeight.value = 0; return }
-  // 只累加真实数据行：::after 占位行不是 Element，天然不计入，反复测量稳定。
-  let rowsH = 0
-  for (const tr of Array.from(body.children)) rowsH += (tr as HTMLElement).getBoundingClientRect().height
-  const used = head.getBoundingClientRect().height + rowsH + (foot?.getBoundingClientRect().height || 0)
-  // 留 2px 给边框，避免占位行把内容顶出 1px 竖向滚动条
-  const gap = content.clientHeight - used - 2
-  spacerHeight.value = gap > 8 ? Math.floor(gap) : 0
-}
-// 位置很关键：watch 的数组 source 在**注册时**就会读取一次（触发 computed 求值），
-// pagedRows → gatedRows → pendingFiles 里 pendingFiles 定义在文件后段，
-// 因此这段必须放在所有依赖之后，否则 setup 直接 TDZ 白屏。
-watch([pagedRows, tableLoading], () => { nextTick(measureSpacer) }, { flush: 'post' })
-
-let tableRO: ResizeObserver | null = null
+// 表格高度策略：与发票管理逐字一致 —— `:max-height="'100%'"`。
+//
+// 为什么不再自创占位行（第 34 轮，已删除上一轮的像素占位方案）：
+//   TDesign 的 tfoot 是 `position: sticky; bottom: 0`，只要滚动容器有高度上限
+//   （max-height:100% + sticky-header），合计行天然贴在容器底边；数据少时
+//   tbody 自动撑满剩余空间，数据行高度恒为内容高（不会被拉伸）。
+//   上一轮用 JS 实测剩余空间 + `tbody::after` 像素占位，是自己造了一套
+//   「表格高度计算」，直接导致：loading 期占位未算出 → 首行被拉高居中、
+//   伪行 border 与 tfoot border 叠成双横线、满页数据多撑一屏空白。
+//   全部删除，回归中台标准实现。
+const tableMaxHeight = computed(() => '100%')
 
 onMounted(() => {
   void bootstrap()
-  nextTick(measureSpacer)
-  // 容器尺寸变化（窗口缩放 / 抽屉挤压 / 侧栏折叠）后剩余空间会变，必须重算
-  if (typeof ResizeObserver !== 'undefined' && tableBoxRef.value) {
-    tableRO = new ResizeObserver(() => measureSpacer())
-    tableRO.observe(tableBoxRef.value)
-  }
   window.addEventListener('fleet-categories-changed', onCatChanged)
 })
 onBeforeUnmount(() => {
-  tableRO?.disconnect()
-  tableRO = null
   stopPolling()
   if (filterTimer) { clearTimeout(filterTimer); filterTimer = null }
   window.removeEventListener('fleet-categories-changed', onCatChanged)
 })
+
 function onCatChanged() {
   reloadCategories().then(() => { initColumns(); reloadList() })
 }
@@ -1118,11 +1183,52 @@ function onCatChanged() {
 }
 .overview-group { flex: 0 0 auto; }
 .biz-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-/* 合计行贴底（第 31 轮）：
-   TDsign 把 tfoot 渲染在滚动容器内部（.t-table__content，position:sticky），
-   容器高度只有「表头 + 数据行」，所以只有 1 行数据时合计条悬在半空。
-   这里把滚动容器改成 flex column、让合计行用 margin-top:auto 顶到底部，
-   数据多时仍随内容滚动（sticky 保留），数据少时贴容器底。 */
+
+/* 表格容器：**完全交给中台样式**（business-list-shared.css）。
+ *
+ * 第 34 轮删除了这里全部自创的表格高度逻辑：
+ *   · `tbody::after` 像素占位行（CSS 变量驱动的伪行）→ 造成 loading 期首行被拉高、
+ *     与 tfoot 上边框叠成双横线、满页数据多撑一屏空白；
+ *   · `.t-table__content { display:flex }` / `.t-table__footer { margin-top:auto }`
+ *     → 把 sticky 合计行改成 flex 布局，数据行被 flex 拉伸后垂直居中，
+ *     首行看起来「掉到表格中间」。
+ * 发票 / 能耗的标准做法只有三件事：`.doc-list-view`（中台已定义 flex 容器）+
+ * `:max-height="100%"` + `sticky-header`。TDesign 的 tfoot 是
+ * `position: sticky; bottom: 0`，容器限高后天然贴底，数据行高度只由内容决定。
+ * 这里不再写任何表格高度相关规则。 */
+/* 合计行贴底（第 34 轮，**不用伪元素占位**）：
+ *
+ * 目标：无论 0 条 / 1 条 / 满页，合计行都紧贴表格容器底边。
+ *
+ * 为什么删掉上一轮的 `tbody::after` 伪行：
+ *   伪行是 `display:table-row` 的空行，它自带表格边框 → 与 tfoot 的上边框
+ *   叠成一条 2px + 1px 的**双横线**（需求图 9 明确要求消除）；
+ *   且高度靠 JS 实测写入 CSS 变量，loading 期算不出 → 首行被拉高居中。
+ *
+ * 现在用纯 CSS 让「空状态行」撑满剩余高度：
+ *   TDesign 的 tfoot 是 `position:sticky; bottom:0`，只要 tbody 的高度足以把
+ *   合计行推到底部，它就自然贴底；tbody 高度由空状态行（0 条时）或数据行
+ *   （有数据时）提供，不会产生任何额外边框。
+ *   有数据但不足一屏时，同样靠 `.t-table__body` 的 min-height 兜底 —— 用
+ *   `min-height: 100%` 而不是伪行，就不会多画一条边框。
+ */
+/* 合计行贴底（第 34 轮，**零伪元素、零边框**）：
+ *
+ * 实测结论（对比发票页）：TDesign 的 `tfoot` 是 `position:sticky; bottom:0`，
+ * 但它位于 `<table>` 内部，表格高度由内容决定 —— 于是 `.t-table__content`
+ * 只有「表头 + 数据行」那么高（发票 17 条时 content=159px / table=615px）。
+ * 内容不溢出时 sticky 没有可粘的参照，合计行就贴在数据行下方「悬空」。
+ * 发票页数据满屏时看不出来，车队 0/1 条时立刻暴露。
+ *
+ * 解法：把滚动容器改成 flex 列，让**内层 table 撑满剩余高度**，
+ * 再用 `margin-top:auto` 把 tfoot 顶到容器底。
+ *   · 不用 `tbody::after` 伪行 —— 它会多画一条边框，与 tfoot 上边框叠成双横线；
+ *   · 数据行写 `height:auto` —— 表格被拉高时只有 tbody 底部留白，行高不变
+ *     （否则 1 行会被拉到整屏高，真机实测 477px）。
+ */
+/* 三层都要 flex：.t-table（块级）→ .t-table__content（flex:0 1 auto）→ table。
+   只给 content 设 flex 是不够的 —— 它的高度仍由内容决定（实测 218px），
+   因为父级 .t-table 是 block，content 拿不到剩余空间。 */
 .fleet-page :deep(.t-table) {
   display: flex;
   flex-direction: column;
@@ -1133,31 +1239,16 @@ function onCatChanged() {
   flex: 1;
   min-height: 0;
 }
-/* 表格撑满滚动容器的方式：**表格保持自然高度**，只在 tbody 末尾追加一条
-   高度 = 容器剩余空间的占位行（JS 实测，见 measureSpacer）。
-   tfoot 是 <table> 的子元素，只能随表格下沉；而给 table 设 percentage 高度
-   会把数据行本身拉高（真机上 1 行被拉到 516px，单元格垂直居中 → 首行看起来
-   掉到表格正中间）。占位行方案下数据行高度恒为 39px，首行永远紧贴表头。 */
 .fleet-page :deep(.t-table__content > table) {
-  flex: 0 0 auto;
+  flex: 1;
+  height: 100%;
 }
-.fleet-page :deep(.fleet-table--sparse .t-table__body)::after {
-  content: '';
-  display: table-row;
-  height: var(--fleet-spacer-h, 0px);
-}
-/* 数据行内容顶对齐：即使将来某处误设了行高，文本也不会跑到中间 */
-.fleet-page :deep(.t-table__body td) {
-  vertical-align: top;
+.fleet-page :deep(.t-table__body > tr:not(.t-table__empty-row)) {
+  height: auto;
 }
 .fleet-page :deep(.t-table__footer) {
   margin-top: auto;
 }
 
-/* 注意：这里**不要**覆盖 .doc-list-scroll。
-   中台 business-list-shared.css 已把它定义成 flex 容器 + overflow:hidden + 卡片边框，
-   表格靠 .t-table{height:100%} 撑满、合计行才能贴容器底。
-   早期这里写过 `overflow-y:auto`，结果表格退化成内容高度 → 合计行悬在半空，
-   而且卡片的圆角/边框也一起丢了（真机图 3/4/5 的红框就是这么来的）。 */
 .fleet-pager { display: flex; justify-content: flex-end; padding: 8px 0 4px; }
 </style>

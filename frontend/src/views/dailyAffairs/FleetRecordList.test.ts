@@ -50,7 +50,21 @@ test('不出现任何自绘 KPI / 浮条 / 合计条 / 打印弹窗 / 旧格式�
   ]) {
     assert.equal(list.includes(bad), false, `不得再出现 ${bad}`)
   }
-  assert.equal(list.includes('max-height'), false, 't-table 不得设 max-height（内层滚动会让懒加载失效）')
+  // 第 34 轮口径变更：**必须**用与发票管理同构的 `:max-height="'100%'"`。
+  //
+  // 旧断言（第 28 轮）写的是「不得设 max-height，内层滚动会让懒加载失效」，
+  // 前提是「表格靠滚动到底触发懒加载」。但车队页早已改为**分页**
+  // （`total > pageSize` 时出分页器），不存在滚动触发加载；
+  // 而合计行贴底恰恰需要容器限高 —— TDesign 的 tfoot 是
+  // `position: sticky; bottom: 0`，只有滚动容器有高度上限时它才贴底。
+  // 发票 / 能耗的标准实现就是 `.doc-list-view` + `max-height:100%` +
+  // `sticky-header` 三件套，车队必须逐字对齐，不再自创占位行。
+  assert.match(list, /:max-height="tableMaxHeight"/, '表格必须用与发票同构的 max-height')
+  assert.match(list, /const tableMaxHeight = computed\(\(\) => '100%'\)/)
+  // 自创的像素占位行已彻底移除（它会造成首行拉高、双横线、满页多撑一屏）
+  assert.equal(list.includes('--fleet-spacer-h'), false, '不得再出现自创的 --fleet-spacer-h 占位')
+  assert.equal(list.includes('measureSpacer'), false, '不得再出现 measureSpacer 自算表格高度')
+  assert.equal(list.includes('fleet-table--sparse'), false, '不得再出现 sparse 表格分支')
 })
 
 test('三段式中台组件全部接入', () => {

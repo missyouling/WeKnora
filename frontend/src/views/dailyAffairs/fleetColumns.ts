@@ -467,6 +467,9 @@ export function fleetEmptyState(isArchive: boolean): { description: string; hint
 export const CERT_STATUS_FIELDS = [
   '有效期止', '有效期至', '保险止期', '检验有效期止', '质保期止',
   '截止日期', '到期日期', '有效期结束', '保险止期至',
+  // 行驶证没有「有效期止」：它的合法性边界就是强制报废日期（票面唯一的时间锚点）。
+  // 漏掉它会让整张行驶证列表的「证照状态」恒为 —。
+  '强制报废日期', '报废日期',
 ] as const
 
 /** 长期有效的常见写法（不受日期约束，直接算生效中）。 */

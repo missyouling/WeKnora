@@ -322,3 +322,36 @@ test('6 个列表都接了 foot-data + 汇总行样式', () => {
     assert.match(src, /buildFootRow\(/, `${label} 必须用统一汇总实现`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// 第 34 轮：0 条数据时合计行除首列外必须全部留空
+// ---------------------------------------------------------------------------
+//
+// 真机事故：空列表（共 0 条）时合计行中间孤零零挂着 `0` 和 `0.00`，
+// 读起来像「这一列的值是 0」，实际只是「没有数据可加」。
+// 口径：可累加列**只在有数据行时**输出合计；0 行一律空串。
+
+test('0 条数据：可累加列也留空，只有首列显示「合计（共 0 条）」', () => {
+  const cols: SummaryColumn[] = [
+    { key: 'row-select', label: '', fieldType: 'text' },
+    { key: 'serial-number', label: '', fieldType: 'text' },
+    { key: 'plate', label: '车牌号', fieldType: 'text' },
+    { key: 'amount', label: '金额', fieldType: 'amount' },
+    { key: 'qty', label: '数量', fieldType: 'number' },
+  ]
+  assert.equal(summaryCellOf(cols[3], []), '', '金额列 0 行必须留空，不能是 0.00')
+  assert.equal(summaryCellOf(cols[4], []), '', '数量列 0 行必须留空，不能是 0')
+
+  const foot = buildFootRow(cols, [])
+  assert.equal(foot['row-select'], '合计（共 0 条）')
+  assert.equal(foot.plate, '')
+  assert.equal(foot.amount, '')
+  assert.equal(foot.qty, '')
+})
+
+test('有数据行时合计照常输出（含真实的 0 合计）', () => {
+  const col: SummaryColumn = { key: 'amount', label: '金额', fieldType: 'amount' }
+  // 1 行且该列就是 0 → 这是真实合计值，必须显示 0.00（不能与「无数据」混同）
+  assert.equal(summaryCellOf(col, [{ amount: 0 }]), '0.00')
+  assert.equal(summaryCellOf(col, [{ amount: 0 }, { amount: 0 }]), '0.00')
+})

@@ -15,6 +15,30 @@
 
 import { INVOICE_FIELD_KEY_ALIASES } from './invoiceFieldLabels'
 
+/**
+ * 分类字段（与后端 `types.FleetCategorySub` 的 JSON 结构一致）。
+ *
+ * 用于「前端同步种子」（fleetCategorySeed.ts）与接口返回值：两者必须同形，
+ * 页面才能在同一套派生逻辑里消费，不必区分「种子还是服务端数据」。
+ */
+export interface FleetCategorySub {
+  name: string
+  /** 自定义中文表头；空 = 按内置字典/字段名显示（name 仍是契约身份）。 */
+  label?: string
+  enabled: boolean
+  /** 列表默认展示（与 filterable 完全独立）。 */
+  is_default: boolean
+  /** text | textarea | number | date | array | items */
+  data_type: string
+  /** 列表列宽（px）：0=按内容自适应。 */
+  width?: number
+  /** 系统内置字段：禁止删除（可改文案/宽度）。 */
+  builtin?: boolean
+  sub_fields?: EditableSubField[]
+  /** 是否出现在筛选栏（第 29 轮）。 */
+  filterable?: boolean
+}
+
 /** 明细子列（前端编辑态形态）。 */
 export interface EditableSubField {
   key: string
