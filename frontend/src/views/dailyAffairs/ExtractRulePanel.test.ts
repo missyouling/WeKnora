@@ -64,8 +64,13 @@ test('标准契约定界：camelCase / snake_case 都算标准键，中文自定
   assert.equal(isStandardField('contract', 'signDate'), true)
   assert.equal(isStandardField('contract', 'sign_date'), true)
   assert.equal(isStandardField('contract', '补充条款备注'), false)
-  // 车队证照未接入通用校验：一律视为不可用，避免"开了不生效"
-  assert.equal(fieldRulesSupported('vehicle'), false)
+  // 车队三个上传提取类 scope 已接入通用校验（第 32 轮）：
+  // 后端用扁平 map 视图跑 ValidateGenericExtraction，中文键也能补洞/判必填。
+  assert.equal(fieldRulesSupported('vehicle'), true)
+  assert.equal(fieldRulesSupported('driver'), true)
+  assert.equal(fieldRulesSupported('maintain'), true)
+  // 纯手工录入的记录型菜单没有提取链路 → 仍未接入
+  assert.equal(fieldRulesSupported('tire'), false)
   assert.equal(fieldRulesSupported('invoice'), true)
   assert.equal(canonicalFieldKey('partyA_TaxNo'), 'partyataxno')
 })

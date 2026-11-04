@@ -12,6 +12,8 @@ const fleetScopes: Array<{
   namePlaceholder: string
   uploadNoun: string
   uploadTypeLabel?: string
+  /** 是否接入字段级必填校验 + 后置正则补洞（仅三个上传提取类档案） */
+  fieldRules?: boolean
 }> = [
   {
     key: 'vehicle',
@@ -20,6 +22,9 @@ const fleetScopes: Array<{
     emptyText: '暂无证照类型',
     namePlaceholder: '请输入证照名称',
     uploadNoun: '证照',
+    // 车辆档案：字段来自分类 subs（中文键），提取结果就是 map[string]any，
+    // 后端 ValidateGenericExtraction 用扁平 map 视图直接做必填校验与正则补洞。
+    fieldRules: true,
   },
   {
     key: 'driver',
@@ -28,6 +33,7 @@ const fleetScopes: Array<{
     emptyText: '暂无证照类型',
     namePlaceholder: '请输入证照名称',
     uploadNoun: '证照',
+    fieldRules: true,
   },
   {
     key: 'maintain',
@@ -36,6 +42,7 @@ const fleetScopes: Array<{
     emptyText: '暂无维保类型',
     namePlaceholder: '请输入维保项名称',
     uploadNoun: '证照',
+    fieldRules: true,
   },
   // 记录型菜单（第 28 轮）：轮胎/年检单分类，成本管理 7 分类。
   // 这些是台账字段而非证照，文案统一用「分类 / 字段」，上传名词用「票据」。
@@ -82,7 +89,8 @@ for (const s of fleetScopes) {
     itemLabel: '档案字段',
     supportsSubFields: false,
     supportsRemarkParts: false,
-    regexPatchable: false,
+    // 记录型菜单（轮胎/年检/成本）是纯手工录入，没有上传提取链路 → 不开放正则
+    regexPatchable: s.fieldRules === true,
     listRows: 'records',
     standardFields: [],
     api: { extract: 'fleet' },

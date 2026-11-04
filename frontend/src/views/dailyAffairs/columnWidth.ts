@@ -2,7 +2,9 @@
 // 系统对固定宽度做 min/max 兜底，避免用户误输入导致列表显示异常。
 
 export const MIN_COL_WIDTH = 60
-export const MAX_COL_WIDTH = 400
+// 上限 600：与设置面板的列宽输入框（60~600）保持一致。
+// 此前是 400，用户在界面上填 500 会被静默截成 400 —— 「界面能填、保存无效」。
+export const MAX_COL_WIDTH = 600
 export const AUTO_COL_CAP = 150 // 内容自适应封顶：防长文本列（发票号码/购买方等）撑爆表格
 
 // 内容自适应估算：max(表头宽度, 当前页数据最长内容)，中文 15px/字、ASCII 8px/字，+24 padding，封顶 150

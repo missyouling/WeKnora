@@ -66,7 +66,8 @@
         </template>
 
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
-          <div v-if="editingId && editingItem" class="meter-form meter-form--inline">
+          <div v-if="editingId && editingItem" class="meter-form meter-form--inline"
+            :class="{ 'is-fleet': isFleetScope }">
             <div class="meter-form-title">编辑{{ group.label }}</div>
             <div class="form-grid">
               <div class="form-item">
@@ -107,7 +108,7 @@
                   <span class="fc-group-tab__count">{{ g.count }}</span>
                 </span>
               </div>
-              <div class="field-config-list">
+              <div class="field-config-list" :class="{ 'is-compact': isFleetScope }">
                 <div class="field-colhead" :class="{ 'has-width': showWidthCol }">
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
@@ -416,6 +417,8 @@ import {
   subFieldEnabled,
   subFieldKeyForLabel,
   findDuplicateSubField,
+  defaultFieldWidth,
+  withDefaultFieldWidths,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
@@ -449,6 +452,11 @@ const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintai
 // 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
 // 用户无法给「许可证号 / 业户名称」这类长字段定宽。
 const showWidthCol = computed(() => true)
+
+// 车队类 scope：字段配置里未配宽度的字段补默认列宽。
+// 只覆盖车队，不动发票/合同/能耗的 width=0 自适应语义（改它们会动既有列表布局）。
+const FLEET_SCOPES = new Set(['vehicle', 'driver', 'maintain', 'tire', 'inspection', 'fleet-cost'])
+const isFleetScope = computed(() => FLEET_SCOPES.has(String(props.scope || '')))
 
 // 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件；发票/合同等业务 scope=单分类
 //
@@ -1425,6 +1433,12 @@ function toggleEdit(item: any) {
     ? item.subs
     : subsPayloadFromNames([...(b?.base || []), ...(b?.detail || [])])
   fieldsEditable.value = fromSubsPayload(raw)
+  // 车队类分类：未配宽度的字段补默认列宽（120/160/260）。
+  // 不补的话列宽输入框会显示 `0`，用户读成「这列没有宽度」；
+  // 发票等其它 scope 保持 width=0 的自适应语义不动，避免改变既有列表布局。
+  if (FLEET_SCOPES.has(String(group.value.scope || ''))) {
+    withDefaultFieldWidths(fieldsEditable.value)
+  }
   // 费用清单：先把存量 subs 归一到「默认分组」（历史 group='cols'）。
   // 注意判定用 isCostListFor(item) 而不是 isCostList —— 后者要等 editingId 赋值后才准。
   const costList = isCostListFor(item)
@@ -1494,7 +1508,7 @@ async function duplicateField(fd: any) {
     enabled: !!fd.enabled,
     isDefault: !!fd.isDefault,
     dataType: fd.dataType || 'text',
-    width: Number(fd.width) || 0,
+    width: Number(fd.width) || defaultFieldWidth(fd.dataType),
     // 复制出的字段必须留在同一分组：否则在市电账单里复制「峰电量」会掉进主表，
     // 用户切回该分组就找不到它了。
     group: (fd as any).group,
@@ -1521,7 +1535,7 @@ function addField() {
     enabled: true,
     isDefault: false,
     dataType: 'text',
-    width: 0,
+    width: defaultFieldWidth('text'),
     ...(g ? { group: g, groupLabel: subGroupLabelOf(g) } : {}),
   } as any)
   newFieldName.value = ''
@@ -1983,6 +1997,12 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     gap: 12px 16px;
   }
 
+  /* 车队设置：证照名称输入框与下方「字段名」列对齐（232 = 200 + AI 按钮 24 + gap 8）。
+     能耗/发票的引用字段需要更宽，保持 1fr 不动。 */
+  &.is-fleet .form-grid {
+    grid-template-columns: 232px 1fr;
+  }
+
   .form-item {
     label {
       display: block;
@@ -2349,6 +2369,24 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     // 避免最后一行折行/贴边时视觉上"没画完"（真机问题 3）。
     border-bottom: 1px solid var(--td-component-stroke);
     padding-bottom: 8px;
+  }
+
+  /* 车队类 scope 的紧凑列宽（第 32 轮）：
+     字段名固定 200px（此前 minmax(280px,1fr) 吃掉近半行），数据类型 120px、
+     列宽 88px，其余列紧凑排在右侧。
+     只作用于车队：能耗「费用清单」的引用字段需要 ≥140px 输入框 + 130px 来源徽标，
+     压到 200px 会把「账...」截断，因此其它 scope 保持弹性列。 */
+  .field-config-list.is-compact {
+    min-width: 600px;
+
+    .field-colhead {
+      grid-template-columns: 24px 200px 120px 64px 64px 48px;
+      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 48px; }
+    }
+    .field-config-row {
+      grid-template-columns: 24px 200px 120px 64px 64px 48px;
+      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 48px; }
+    }
   }
 
   .field-colhead {

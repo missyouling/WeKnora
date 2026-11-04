@@ -14,7 +14,11 @@
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
-        <ExtractRulePanel ref="extractRef" :scope="scope" :kb-name="kbName" :kb-id="kbId || ''" />
+        <!-- active-category 是「唯一定位源」：规则面板打开时就按字段定义里选中的
+             分类初始化，不再自己挑第一个再被父级纠正（真机上表现为下拉先闪
+             「车辆登记证书」再跳到「道路运输经营许可证」）。 -->
+        <ExtractRulePanel ref="extractRef" :scope="scope" :kb-name="kbName" :kb-id="kbId || ''"
+          :active-category="currentCategory" :active="activeTab === 'rules'" />
       </t-tab-panel>
       <!-- 业务专属设置 Tab：能耗的「光伏设置 / 表计设置 / 清单设置」由页面按当前卡片注入。
            工具栏只留一个「设置」按钮，专属面板在这里与字段定义同抽屉共存。 -->

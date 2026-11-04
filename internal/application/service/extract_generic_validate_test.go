@@ -426,3 +426,83 @@ func TestExtractInvoiceRequiredCamelCaseReportsError(t *testing.T) {
 		t.Fatalf("camelCase 必填缺失应产出 error 级 issue，实际 %+v", issues)
 	}
 }
+
+// 车队档案接入字段级校验的闭环测试（第 32 轮）。
+//
+// 档案类提取结果是 map[string]any 且键是中文（车牌号/业户名称/有效期止），
+// 与发票/合同的结构体视图完全不同。这里锁死三件事：
+//  1. 中文键能被精确命中（canonicalFieldKey 会把中文归一成空串，不能走它）；
+//  2. 必填字段为空时先用该字段配置的正则从原文回填；
+//  3. 补不到才产出 error 级问题（与发票口径一致，不阻断落库）。
+func TestExtractFleetArchiveFieldRulesOnMapView(t *testing.T) {
+	newCfg := func(fields ...types.ExtractFieldConfig) *types.KbExtractConfig {
+		return &types.KbExtractConfig{Scope: "vehicle", CertType: "道路运输证", Fields: fields}
+	}
+	text := "道路运输证\n车牌号：渝C81022\n业户名称：重庆某某运输有限公司\n有效期止：2027年12月31日"
+
+	// 场景 1：模型漏抽「车牌号」，用配置正则从原文补回；日期字段就地归一。
+	data := map[string]any{
+		"车牌号":  "",
+		"业户名称": "重庆某某运输有限公司",
+		"有效期止": "2027年12月31日",
+	}
+	cfg := newCfg(
+		types.ExtractFieldConfig{
+			Name: "车牌号", Enabled: true, Required: true,
+			Regex: `车牌号\s*[:：]\s*([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z][A-HJ-NP-Z0-9]{5,6})`,
+		},
+		types.ExtractFieldConfig{Name: "业户名称", Enabled: true, Required: true},
+		types.ExtractFieldConfig{Name: "有效期止", Enabled: true, Type: "date"},
+	)
+	issues, patches := ValidateGenericExtraction(
+		[]GenericExtractRecord{NewGenericRecordFromMap(0, data)}, text, cfg)
+
+	if got := data["车牌号"]; got != "渝C81022" {
+		t.Fatalf("车牌号 正则补洞失败: got %v", got)
+	}
+	if len(patches) != 1 || patches[0].Field != "车牌号" || patches[0].Source != regexPatchSourceConfig {
+		t.Fatalf("补洞明细不符: %+v", patches)
+	}
+	if got := data["有效期止"]; got != "2027-12-31" {
+		t.Fatalf("日期未归一: got %v", got)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("补洞成功后不应有问题: %+v", issues)
+	}
+
+	// 场景 2：必填字段既为空、正则也命中不到 → 产出 error（字段名保留中文原文）。
+	data2 := map[string]any{
+		"车牌号":  "渝C81022",
+		"业户名称": "",
+		"许可证号": "",
+	}
+	cfg2 := newCfg(
+		types.ExtractFieldConfig{Name: "业户名称", Enabled: true, Required: true},
+		types.ExtractFieldConfig{
+			Name: "许可证号", Enabled: true, Required: true,
+			Regex: `许可证号\s*[:：]\s*([^\s]{6,30})`,
+		},
+	)
+	issues2, patches2 := ValidateGenericExtraction(
+		[]GenericExtractRecord{NewGenericRecordFromMap(0, data2)}, text, cfg2)
+	if len(patches2) != 0 {
+		t.Fatalf("原文没有许可证号，不应补洞: %+v", patches2)
+	}
+	if len(issues2) != 2 {
+		t.Fatalf("两个必填字段为空应产出 2 条问题，实际 %+v", issues2)
+	}
+	for _, is := range issues2 {
+		if is.Severity != issueSeverityError || is.Kind != "missing" {
+			t.Fatalf("问题级别/类型不符: %+v", is)
+		}
+	}
+
+	// 场景 3：未标必填的空字段不报问题（避免把可选字段变成噪音源）。
+	data3 := map[string]any{"车牌号": "渝C81022", "备注": ""}
+	issues3, _ := ValidateGenericExtraction(
+		[]GenericExtractRecord{NewGenericRecordFromMap(0, data3)}, text,
+		newCfg(types.ExtractFieldConfig{Name: "备注", Enabled: true}))
+	if len(issues3) != 0 {
+		t.Fatalf("非必填空字段不应报问题: %+v", issues3)
+	}
+}

@@ -9,6 +9,8 @@ import {
   subFieldKeyForLabel,
   findDuplicateSubField,
   copyFieldUniqueName,
+  defaultFieldWidth,
+  withDefaultFieldWidths,
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
@@ -334,4 +336,39 @@ test('toSubsPayload：列宽 60~600 持久化，0=自适应，越界夹紧（第
   assert.equal(out[1].width, 0)
   assert.equal(out[2].width, 600)
   assert.equal(out[3].width, 30)
+})
+
+// ---------------------------------------------------------------------------
+// 默认列宽（第 32 轮）
+//
+// 设置面板的列宽输入框此前对未配置字段显示 `0`，用户读成「这列没有宽度」，
+// 也让「保存后列表宽度仍随内容跳」成为常态。现在按数据类型给初始值。
+// ---------------------------------------------------------------------------
+
+test('defaultFieldWidth：按数据类型给默认列宽，未知类型按单行文本', () => {
+  assert.equal(defaultFieldWidth('text'), 160)
+  assert.equal(defaultFieldWidth('textarea'), 260)
+  assert.equal(defaultFieldWidth('number'), 120)
+  assert.equal(defaultFieldWidth('date'), 120)
+  assert.equal(defaultFieldWidth('items'), 160)
+  // 未知/空类型兜底 160，不能返回 0（0 会让输入框又显示 0）
+  assert.equal(defaultFieldWidth(''), 160)
+  assert.equal(defaultFieldWidth(undefined), 160)
+  assert.equal(defaultFieldWidth('weird'), 160)
+})
+
+test('withDefaultFieldWidths：只补 0/空，已配置的宽度原样保留', () => {
+  const fields = [
+    { name: '车牌号', enabled: true, isDefault: true, dataType: 'text', width: 0 },
+    { name: '业户名称', enabled: true, isDefault: true, dataType: 'text', width: 220 },
+    { name: '有效期止', enabled: true, isDefault: true, dataType: 'date', width: 0 },
+    { name: '备注', enabled: true, isDefault: true, dataType: 'textarea', width: 0 },
+  ] as EditableField[]
+  const out = withDefaultFieldWidths(fields)
+  assert.equal(out[0].width, 160)
+  assert.equal(out[1].width, 220) // 用户配置不被覆盖
+  assert.equal(out[2].width, 120)
+  assert.equal(out[3].width, 260)
+  // 原地修改：调用方拿到的是同一份数组，保存链路无需额外搬运
+  assert.equal(out, fields)
 })

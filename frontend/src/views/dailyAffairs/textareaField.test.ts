@@ -57,7 +57,7 @@ test('多行文本列宽：未配置宽度时走固定中等宽度，不按内�
   assert.equal(colWidthOf(0, '备注', [longText], 'textarea'), TEXTAREA_COL_WIDTH)
   // 用户显式配置的宽度优先，且仍受 clamp 保护
   assert.equal(colWidthOf(320, '备注', [longText], 'textarea'), 320)
-  assert.equal(colWidthOf(9999, '备注', [longText], 'textarea'), 400, '显式宽度上限 400')
+  assert.equal(colWidthOf(9999, '备注', [longText], 'textarea'), 600, '显式宽度上限 600（与设置面板 60~600 同口径）')
   assert.equal(colWidthOf(10, '备注', [longText], 'textarea'), 60, '显式宽度下限 60')
 })
 

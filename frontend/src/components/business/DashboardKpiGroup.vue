@@ -120,9 +120,29 @@ const updateArrows = () => {
 }
 
 const unbindGroup = () => {
-  if (boundEl) boundEl.removeEventListener('scroll', updateArrows)
+  if (boundEl) {
+    boundEl.removeEventListener('scroll', updateArrows)
+    boundEl.removeEventListener('wheel', onWheel)
+  }
   if (groupRO) { groupRO.disconnect(); groupRO = null }
   boundEl = null
+}
+
+// 滚轮横向滚动（第 32 轮）：
+// 卡片溢出时（scrollWidth > clientWidth），鼠标滚轮 / 触控板的纵向增量转成横向滚动，
+// 否则用户会以为右侧卡片「被截断」且不知道有箭头。未溢出时什么都不做，
+// 页面纵向滚动保持原样（不能让整页在卡片区卡住）。
+// passive:false 是必须的 —— preventDefault 在 passive 监听里无效。
+const onWheel = (e: WheelEvent) => {
+  const el = groupRef.value
+  if (!el) return
+  if (el.scrollWidth <= el.clientWidth + 1) return
+  const delta = e.deltaY || e.deltaX
+  if (!delta) return
+  e.preventDefault()
+  if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = 0 }
+  el.scrollLeft += delta
+  updateArrows()
 }
 
 const bindGroup = (el?: HTMLElement | null) => {
@@ -131,6 +151,7 @@ const bindGroup = (el?: HTMLElement | null) => {
   unbindGroup()
   boundEl = el
   el.addEventListener('scroll', updateArrows, { passive: true })
+  el.addEventListener('wheel', onWheel, { passive: false })
   // 同时观察自身与父容器：内容变宽不一定改变自身宽度（flex 子项 min-width 固定时
   // 只有 scrollWidth 变），父容器 resize 也要重算。
   groupRO = new ResizeObserver(() => updateArrows())

@@ -32,7 +32,23 @@ export function canonicalFieldKey(name: string): string {
  */
 export function fieldRulesSupported(scope: string): boolean {
   const d = getScope(scope)
-  return !!d && d.standardFields.length > 0
+  if (!d) return false
+  // 有静态字段字典的 scope（发票/合同/能耗…）按字典判定；
+  // 车队档案这类「字段来自分类 subs」的动态 scope 没有字典，
+  // 但已声明 regexPatchable（后端用扁平 map 视图接入同一套校验）→ 同样算接入。
+  return d.standardFields.length > 0 || d.regexPatchable === true
+}
+
+/**
+ * 字段名是否「动态」：字段定义由用户维护（车队档案的 subs），没有静态契约键。
+ *
+ * 这类字段是中文（车牌号/业户名称），canonicalFieldKey 归一后是空串，
+ * isStandardField 永远 false —— 必填开关与正则输入会整体置灰，
+ * 必须单独识别，否则「接入字段级校验」在界面上等于没接。
+ */
+export function isDynamicFieldScope(scope: string): boolean {
+  const d = getScope(scope)
+  return !!d && d.kind === 'archive' && d.regexPatchable === true
 }
 
 /** 是否标准契约字段（自定义扩展中文 key 返回 false） */

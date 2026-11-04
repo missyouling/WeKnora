@@ -28,6 +28,9 @@ type fleetDocCustomMetadata struct {
 	FleetCertType string `json:"fleet_cert_type,omitempty"`
 	ExtractStatus string `json:"extract_status"`
 	ExtractError  string `json:"extract_error"`
+	// 字段级校验结果（必填为空 / 日期无法归一）。只做追溯，不阻断落库：
+	// 与发票一致 —— 问题清单用来提示用户补，不能把已提取到的内容整体判死。
+	ExtractIssues []service.ExtractFieldIssue `json:"extract_issues,omitempty"`
 }
 
 func fleetArchiveRecordType(scope string) string {
@@ -218,11 +221,14 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 	// 无配置时回退到内置字段定义/分类小项 + 内置 Prompt 拼装。
 	fieldNames := h.fleetFieldNames(effCtx, int64(effectiveTenantID), scope, certType)
 	extractSystemPrompt := ""
-	if ec := h.getExtractConfig(effCtx, kbID, scope, certType); ec != nil {
-		if names := service.EnabledExtractFieldNames(ec.Fields); len(names) > 0 {
+	// 提取配置保留到提取之后：同一份配置要用于「字段级必填校验 + 正则补洞」，
+	// 只在 if 作用域里取会拿不到（补洞与 Prompt 必须吃同一份 Rule/Regex）。
+	fleetCfg := h.getExtractConfig(effCtx, kbID, scope, certType)
+	if fleetCfg != nil {
+		if names := service.EnabledExtractFieldNames(fleetCfg.Fields); len(names) > 0 {
 			fieldNames = names
 		}
-		extractSystemPrompt = service.BuildExtractSystemPrompt(ec)
+		extractSystemPrompt = service.BuildExtractSystemPrompt(fleetCfg)
 	}
 
 	result, xerr := service.ExtractFleetDocumentFromContent(effCtx, chatModel, content, scope, certType, fieldNames, extractSystemPrompt)
@@ -240,6 +246,25 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 
 	if certType != "" {
 		result.DocType = certType
+	}
+
+	// 字段级闭环（第 32 轮）：与合同/制度共用 ValidateGenericExtraction。
+	//
+	// 车队档案的提取结果就是 map[string]any（中文键），用「扁平 map 视图」接入：
+	//   · 用户配了正则的字段：模型漏抽时用正则从原文唯一命中回填（只补空值）；
+	//   · 用户标了必填的字段：补不到才产出 error 级问题（不影响落库，与发票同口径）；
+	//   · 声明为 date 的字段就地归一为 YYYY-MM-DD（列表筛选/证照状态判定的前提）。
+	// 单条记录才能补洞（多记录无法判断匹配值归属），档案提取天然是一条。
+	var fleetIssues []service.ExtractFieldIssue
+	if fleetCfg != nil && len(result.Fields) > 0 {
+		rec := service.NewGenericRecordFromMap(0, result.Fields)
+		issues, patches := service.ValidateGenericExtraction(
+			[]service.GenericExtractRecord{rec}, content, fleetCfg)
+		fleetIssues = issues
+		if len(patches) > 0 {
+			names := service.PatchedFieldNames(patches)
+			logger.Infof(ctx, "fleet extract regex patched fields: %v (scope=%s cert=%s)", names, scope, certType)
+		}
 	}
 
 	// 落库 fleet_records（幂等：按 doc_knowledge_id 更新）
@@ -320,6 +345,7 @@ func (h *BusinessExtractHandler) ExtractFleetDocument(c *gin.Context) {
 
 	meta, _ := json.Marshal(fleetDocCustomMetadata{
 		Kind: "fleet_" + scope + "_document", Scope: scope, DocType: result.DocType, FleetCertType: certType, ExtractStatus: "success",
+		ExtractIssues: fleetIssues,
 	})
 	if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(meta)); serr != nil {
 		logger.Warnf(ctx, "Failed to persist fleet doc success meta: %v", serr)

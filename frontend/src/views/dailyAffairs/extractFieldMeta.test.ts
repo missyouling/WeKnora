@@ -7,6 +7,8 @@ import {
   isInvoiceStructKey,
   isRegexPatchable,
   regexDisabledReason,
+  fieldRulesSupported,
+  isDynamicFieldScope,
 } from './extractFieldMeta'
 
 // ---------------------------------------------------------------------------
@@ -48,18 +50,37 @@ test('合同/制度/公告/奖惩 已接入补洞（与后端 ScopeSchema.RegexP
 })
 
 test('未接入字段级校验的 scope 与空字段名不误判', () => {
-  assert.equal(isRegexPatchable('vehicle', '车牌号'), false)
-  assert.equal(isRegexPatchable('utility', '户号'), false)
+  // 轮胎/年检/成本是纯手工录入，没有上传提取链路 → 不开放正则
+  assert.equal(isRegexPatchable('tire', '车牌号'), false)
+  assert.equal(isRegexPatchable('inspection', '车牌号'), false)
+  assert.equal(isRegexPatchable('fleet-cost', '金额'), false)
   assert.equal(isRegexPatchable('unknown_scope', 'invoiceNo'), false)
   assert.equal(isRegexPatchable('invoice', ''), false)
   assert.equal(isRegexPatchable('invoice', '   '), false)
+})
+
+// 第 32 轮：车队三个上传提取类归档 scope 接入字段级校验 + 正则补洞。
+// 字段名由分类 subs 决定（中文键），因此判定必须走「动态 scope」而不是标准键字典。
+test('车队档案（vehicle/driver/maintain）已接入必填校验与正则补洞', () => {
+  for (const scope of ['vehicle', 'driver', 'maintain']) {
+    assert.equal(fieldRulesSupported(scope), true, `${scope} 应接入字段级校验`)
+    assert.equal(isDynamicFieldScope(scope), true, `${scope} 应是动态字段 scope`)
+    // 中文键（subs 里的真实字段名）必须可配正则
+    for (const name of ['车牌号', '业户名称', '有效期止']) {
+      assert.equal(isRegexPatchable(scope, name), true, `${scope}/${name} 应可配正则`)
+      assert.equal(regexDisabledReason(scope, name), '', `${scope}/${name} 不应有置灰原因`)
+    }
+  }
+  // 记录型菜单仍是手工录入，不因上面的改动被放开
+  assert.equal(fieldRulesSupported('tire'), false)
+  assert.equal(isDynamicFieldScope('tire'), false)
 })
 
 test('regexDisabledReason 只在「未接入 / 未命名」时给原因', () => {
   assert.equal(regexDisabledReason('invoice', 'invoiceNo'), '')
   assert.equal(regexDisabledReason('invoice', '车牌号'), '')
   assert.equal(regexDisabledReason('invoice', 'totalAmount'), '')
-  assert.match(regexDisabledReason('vehicle', '车牌号'), /暂未接入/)
+  assert.match(regexDisabledReason('tire', '车牌号'), /暂未接入/)
   assert.match(regexDisabledReason('unknown_scope', 'x'), /暂未接入/)
   assert.match(regexDisabledReason('invoice', ''), /命名/)
 })
@@ -86,11 +107,12 @@ test('正则不再按字段名白名单置灰（置灰只剩「本模块是否�
   assert.match(panel, /:disabled="!isStdField\(f\.name\)"/)
 })
 
-test('删除「只支持 8 个字段」告警条，保留「本模块未接入」提示', () => {
+test('删除「只支持 8 个字段」与「本模块未接入」两处告警条', () => {
   assert.doesNotMatch(panel, /后端补洞器只支持/)
   assert.doesNotMatch(panel, /配置后正式提取不会执行/)
   assert.doesNotMatch(panel, /:message="regexDisabledReason\(scope, f\.name\)"/)
-  assert.match(panel, /本模块暂未接入字段级校验与正则补洞/)
+  // 第 32 轮：车队档案接入后，这条自造提示没有正确受众，整条移除
+  assert.doesNotMatch(panel, /本模块暂未接入字段级校验与正则补洞/)
 })
 
 test('明细子项可逐项配置提取口径与正则（随 sub_fields 持久化）', () => {

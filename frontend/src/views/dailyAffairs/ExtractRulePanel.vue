@@ -113,8 +113,9 @@
                 </t-tooltip>
                 <t-button v-if="f.regex" variant="text" size="small" @click="f.regex = ''">清空</t-button>
               </div>
-              <t-alert v-if="!fieldRulesSupported(scope)" theme="info" variant="light" class="rule-form-alert"
-                message="本模块暂未接入字段级校验与正则补洞（目前仅发票支持）" />
+              <!-- 提示条已移除（第 32 轮）：车队档案接入字段级校验后，未接入的
+                   scope 只剩纯手工录入类，它们本身没有「提取规则」页签，
+                   这条自造文案不会再有正确受众。 -->
             </div>
             <div class="rule-form-item rule-form-item--full">
               <label>提取规则</label>
@@ -197,6 +198,7 @@ import {
   REGEX_PRESETS,
   extractFieldLabel,
   fieldRulesSupported,
+  isDynamicFieldScope,
   isStandardField,
   isRegexPatchable,
   regexDisabledReason,
@@ -209,7 +211,22 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { cacheSampleText, dropSampleText, readSampleText } from './sampleTextCache'
 import { getScope } from '../../registry'
 
-const props = defineProps<{ scope: string; kbName?: string; kbId?: string }>()
+const props = withDefaults(defineProps<{
+  scope: string
+  kbName?: string
+  kbId?: string
+  /**
+   * 外部（设置抽屉）当前选中的分类名。
+   *
+   * 这是「分类下拉框乱跳」的根治点：面板原先在 onMounted 里自己挑第一个分类
+   * （车辆档案恰好是「车辆登记证书」）并发请求，随后父级 focusCertType 才把
+   * 它改成「道路运输经营许可证」——用户看到的就是先闪一下再跳回。
+   * 传入后，初始选中与后续变化都以父级为准，面板不再自作主张选第一个。
+   */
+  activeCategory?: string
+  /** 面板是否处于激活 Tab：非激活时不跟随 activeCategory 发请求（避免无谓拉取）。 */
+  active?: boolean
+}>(), { kbName: '', kbId: '', activeCategory: '', active: true })
 
 const KB_NAME = computed(() => props.kbName || '日常事务-车队')
 const resolvedKbId = ref('')
@@ -764,7 +781,13 @@ function subsTypeToExtractType(dataType: string): string {
 
 // 字段级规则（必填/正则）是否可用。该模块已接入通用校验 + 字段确实是标准契约键。
 // 自定义扩展中文 key 只进 Prompt，后端补洞器装不下它 —— UI 必须置灰而不是装作能用。
-const isStdField = (name: string) => fieldRulesSupported(props.scope) && isStandardField(props.scope, name)
+// 必填开关的可编辑判定。
+//
+// 标准 scope 走字典键；车队档案（kind=archive 且已接入补洞）的字段名由 subs
+// 决定、是中文，isStandardField 永远 false，必须放行非空字段名。
+const isStdField = (name: string) =>
+  fieldRulesSupported(props.scope)
+  && (isStandardField(props.scope, name) || isDynamicFieldScope(props.scope))
 
 // 正则可配判定**独立于**必填判定：必填走通用校验器认的全部 22 个标准键，
 // 正则走后端补洞器实际支持的 8 个 invoiceFieldOrder 键（extract_regex_fallback.go）。
@@ -774,7 +797,7 @@ const regexPatchable = (name: string) => fieldRulesSupported(props.scope) && isR
 const requiredTip = computed(() =>
   fieldRulesSupported(props.scope)
     ? '开启后该字段为空会产出 error 级校验告警'
-    : '本模块暂未接入字段级校验（仅发票/合同/制度/奖惩生效）',
+    : '本模块暂未接入字段级校验',
 )
 
 function regexTip(name: string): string {
@@ -1203,6 +1226,9 @@ async function focusCertType(p?: { certType: string; sampleText?: string; autoSu
   // 先确保分类列表已加载，否则 certTypeOptions 里还没有该分类
   await refresh()
   const composite = typeComposite(props.scope, target)
+  // 已在该分类且字段已载入：直接返回。抽屉切 Tab 时会 refresh + focus，
+  // 没有这道守卫就会对同一个分类连发两次配置请求（且第二次会清空重绘字段表）。
+  if (certType.value === composite && fields.value.length > 0) return
   certType.value = composite
   await loadConfig()
 }
@@ -1266,12 +1292,25 @@ onMounted(async () => {
   }
   await ensureKb()
   await refresh()
-  const first = pickFirstOption()
+  const first = preferredOption()
   if (first) {
     certType.value = first
     await loadConfig()
   }
 })
+
+// 外部指定优先，其次才是「第一个分类」
+function preferredOption(): string {
+  const want = String(props.activeCategory || '').trim()
+  if (want) {
+    const composite = typeComposite(props.scope, want)
+    // 合成值必须真实存在于选项里，否则下拉会显示空白（分类被删/改名时会这样）
+    const exists = (certTypeOptions.value as any[]).some((o: any) =>
+      o?.value === composite || (Array.isArray(o?.children) && o.children.some((c: any) => c?.value === composite)))
+    if (exists) return composite
+  }
+  return pickFirstOption()
+}
 
 // 六同步：字段定义保存后派发 fleet-categories-changed，这里跟着重载
 //（否则用户切回本 Tab 前看到的还是旧字段清单）。
@@ -1296,11 +1335,21 @@ function pickFirstOption(): string {
 
 watch(certTypeOptions, (groups) => {
   if (certType.value || !groups.length) return
-  const first = pickFirstOption()
+  const first = preferredOption()
   if (first) {
     certType.value = first
     loadConfig()
   }
+})
+
+// 父级切换分类（字段定义里点了别的分类）时跟随：只在规则 Tab 激活时执行，
+// 避免用户在字段定义里逐行点选就触发一串无谓的配置请求。
+watch(() => props.activeCategory, (v) => {
+  if (!props.active) return
+  const want = String(v || '').trim()
+  if (!want) return
+  if (certTypeName.value === want) return
+  void focusCertType({ certType: want })
 })
 </script>
 

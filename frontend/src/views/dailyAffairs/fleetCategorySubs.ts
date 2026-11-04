@@ -450,3 +450,35 @@ export function subsPayloadFromNames(names: readonly string[]): SubPayload[] {
       width: 0,
     }))
 }
+// ---------------------------------------------------------------------------
+// 默认列宽（第 32 轮）
+//
+// 背景：width = 0 的语义是「按内容自适应」，但设置面板的列宽输入框会直接
+// 显示 `0`，用户读成「这列没有宽度」；而且 0 在保存后不落库，列表宽度完全
+// 依赖内容估算，同一字段在不同数据量下宽度会跳。
+//
+// 现在按数据类型给一个可用的初始值（用户仍可改），新建/复制字段也带默认宽度，
+// 保证界面上永远是正整数。
+// ---------------------------------------------------------------------------
+export const DEFAULT_FIELD_WIDTH: Record<string, number> = {
+  text: 160,
+  textarea: 260,
+  number: 120,
+  date: 120,
+  array: 160,
+  items: 160,
+}
+
+/** 字段数据类型的默认列宽（px）。未知类型按单行文本处理。 */
+export function defaultFieldWidth(dataType?: string): number {
+  const dt = String(dataType || 'text').trim()
+  return DEFAULT_FIELD_WIDTH[dt] ?? DEFAULT_FIELD_WIDTH.text
+}
+
+/** 给「未配置宽度」的字段补默认列宽（就地修改并返回同一数组）。 */
+export function withDefaultFieldWidths(fields: EditableField[]): EditableField[] {
+  for (const f of fields) {
+    if (!(Number(f.width) > 0)) f.width = defaultFieldWidth(f.dataType)
+  }
+  return fields
+}

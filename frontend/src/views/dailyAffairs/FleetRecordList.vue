@@ -76,6 +76,7 @@
             :rowspan-and-colspan-in-footer="footSpan"
             :selected-row-keys="selectedRowKeys" :scroll="tableScroll" sticky-header
             :class="['doc-table', 'fleet-table', { 'fleet-table--sparse': sparseTable }]"
+            :style="{ '--fleet-spacer-h': `${spacerHeight}px` }"
             :row-class-name="({ row }: any) => selectedKeys.has(rowKey(row)) ? 'is-selected' : ''"
             @row-click="({ row }: any) => openDetail(row)"
             @select-change="onTableSelectChange">
@@ -1039,29 +1040,56 @@ async function bootstrap() {
 
 watch(() => props.recordType, () => { void bootstrap() })
 
-// 稀疏态：仅当数据行未填满容器时才启用「伪填充行」把合计行顶到底部。
-// 必须实测：直接无条件给 tbody 加 height:100% 的伪行，在数据满页时
-// 会额外撑出一整屏空白（表格高度 100% × 伪行 100%）。
-const sparseTable = ref(false)
+// 合计行贴底的「像素占位」测量（第 32 轮重写）。
+//
+// 旧实现是 tbody::after{height:100%} + table{height:100%}：loading 期间合计行还没
+// 渲染（footData 为空）、sparse 标记也还没测出来，表格先被 flex:1 撑满整个容器，
+// 唯一的数据行被拉成整屏高（真机实测 516px），而 TDesign 的单元格是垂直居中，
+// 于是首行看起来「掉到表格正中间」，加载完才弹回顶部。
+//
+// 现在表格永远保持自然高度（flex:0 0 auto），占位行高度由 JS 实测「容器剩余空间」
+// 后以像素给出：数据行高度不会被拉伸，首行始终紧贴表头下方；合计行靠这段占位被
+// 顶到容器底边。
+const spacerHeight = ref(0)
+const sparseTable = computed(() => spacerHeight.value > 0)
 const tableBoxRef = ref<HTMLElement | null>(null)
-function measureSparse() {
-  const box = tableBoxRef.value?.querySelector('.t-table__content') as HTMLElement | null
-  const body = tableBoxRef.value?.querySelector('.t-table__body') as HTMLElement | null
-  if (!box || !body) { sparseTable.value = false; return }
-  // 预留合计行自身高度（约 40px），否则临界情况会误判成稀疏
-  sparseTable.value = body.scrollHeight + 40 < box.clientHeight
+
+function measureSpacer() {
+  const box = tableBoxRef.value
+  const content = box?.querySelector('.t-table__content') as HTMLElement | null
+  const table = box?.querySelector('.doc-table') as HTMLElement | null
+  const head = table?.querySelector('thead') as HTMLElement | null
+  const body = table?.querySelector('.t-table__body') as HTMLElement | null
+  const foot = table?.querySelector('tfoot') as HTMLElement | null
+  if (!content || !table || !head || !body) { spacerHeight.value = 0; return }
+  // 只累加真实数据行：::after 占位行不是 Element，天然不计入，反复测量稳定。
+  let rowsH = 0
+  for (const tr of Array.from(body.children)) rowsH += (tr as HTMLElement).getBoundingClientRect().height
+  const used = head.getBoundingClientRect().height + rowsH + (foot?.getBoundingClientRect().height || 0)
+  // 留 2px 给边框，避免占位行把内容顶出 1px 竖向滚动条
+  const gap = content.clientHeight - used - 2
+  spacerHeight.value = gap > 8 ? Math.floor(gap) : 0
 }
 // 位置很关键：watch 的数组 source 在**注册时**就会读取一次（触发 computed 求值），
 // pagedRows → gatedRows → pendingFiles 里 pendingFiles 定义在文件后段，
 // 因此这段必须放在所有依赖之后，否则 setup 直接 TDZ 白屏。
-watch([pagedRows, tableLoading], () => { nextTick(measureSparse) })
+watch([pagedRows, tableLoading], () => { nextTick(measureSpacer) }, { flush: 'post' })
+
+let tableRO: ResizeObserver | null = null
 
 onMounted(() => {
   void bootstrap()
-  nextTick(measureSparse)
+  nextTick(measureSpacer)
+  // 容器尺寸变化（窗口缩放 / 抽屉挤压 / 侧栏折叠）后剩余空间会变，必须重算
+  if (typeof ResizeObserver !== 'undefined' && tableBoxRef.value) {
+    tableRO = new ResizeObserver(() => measureSpacer())
+    tableRO.observe(tableBoxRef.value)
+  }
   window.addEventListener('fleet-categories-changed', onCatChanged)
 })
 onBeforeUnmount(() => {
+  tableRO?.disconnect()
+  tableRO = null
   stopPolling()
   if (filterTimer) { clearTimeout(filterTimer); filterTimer = null }
   window.removeEventListener('fleet-categories-changed', onCatChanged)
@@ -1105,21 +1133,22 @@ function onCatChanged() {
   flex: 1;
   min-height: 0;
 }
-/* 表格撑满滚动容器 + 伪填充行。
-   tfoot 是 <table> 的子元素，只能随表格下沉；直接给 table 设 height:100%
-   会把**数据行本身**拉高（实测 1 行被拉到 477px，行内会出现诡异空档）。
-   正确做法是让 tbody 末尾长出一条空的 table-row 吃掉剩余高度，
-   数据行保持 39px 原高，合计行自然贴到容器底。 */
+/* 表格撑满滚动容器的方式：**表格保持自然高度**，只在 tbody 末尾追加一条
+   高度 = 容器剩余空间的占位行（JS 实测，见 measureSpacer）。
+   tfoot 是 <table> 的子元素，只能随表格下沉；而给 table 设 percentage 高度
+   会把数据行本身拉高（真机上 1 行被拉到 516px，单元格垂直居中 → 首行看起来
+   掉到表格正中间）。占位行方案下数据行高度恒为 39px，首行永远紧贴表头。 */
 .fleet-page :deep(.t-table__content > table) {
-  flex: 1;
-}
-.fleet-page :deep(.fleet-table--sparse .t-table__content > table) {
-  height: 100%;
+  flex: 0 0 auto;
 }
 .fleet-page :deep(.fleet-table--sparse .t-table__body)::after {
   content: '';
   display: table-row;
-  height: 100%;
+  height: var(--fleet-spacer-h, 0px);
+}
+/* 数据行内容顶对齐：即使将来某处误设了行高，文本也不会跑到中间 */
+.fleet-page :deep(.t-table__body td) {
+  vertical-align: top;
 }
 .fleet-page :deep(.t-table__footer) {
   margin-top: auto;
