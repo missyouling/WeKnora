@@ -244,3 +244,108 @@ func TestNormalizeUtilityBillDetailsKeepsMultiPointMeterRows(t *testing.T) {
 			item.DeepPeakKwh, item.PeakKwh, item.FlatKwh, item.ValleyKwh)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 第 35 轮：多计量点账单的电量明细表不能只解析第一张
+// ---------------------------------------------------------------------------
+//
+// 真机事故（2025.07 / 2025.10）：这两份账单票面有**两张**电量明细表（两个计量点），
+// 四段计费电量分别是 964,183 / 908,222。但 ParseUtilityMeterReadings 的
+// `seen` 按示数类型去重（本意是跳过跨页重复的表头），把第二张表整表丢弃，
+// 结果 meter 四段只剩 361,581 / 396,632 —— 列表合计与概况口径全都对不上。
+//
+// 判据：同一示数类型出现多次时，**不能因为类型相同就丢弃**；
+// 只有「数值完全一致」的重复（跨页表头/重复行）才跳过。
+
+const utilityMeterSampleMultiPoint = `||正向有功（总）||4023.9|4231.77|3000||623610|0|0|0|0|
+||正向有功（尖峰）||238.31|250.14|3000||35490|0|18|-1403|34105|
+||正向有功（峰）||869.94|915.42|3000||136440|0|70|-3274|133236|
+||正向有功（谷）||1613.04|1697.1|3000||252180|0|131|-1871|250440|
+||正向有功（平）||1302.59|1369.11|3000||199560|0|103|-2866|196797|
+||正向有功（尖峰）||112.3|123.4|3000||33300|0|5|-2100|31205|
+||正向有功（峰）||256.7|270.1|3000||40200|0|8|-2500|37708|
+||正向有功（谷）||1020.5|1050.2|3000||89100|0|20|-5600|83520|
+||正向有功（平）||880.1|900.5|3000||61200|0|12|-3800|57412|`
+
+func TestParseUtilityMeterReadingsMultiPoint(t *testing.T) {
+	rows := ParseUtilityMeterReadings(utilityMeterSampleMultiPoint)
+	if len(rows) != 9 {
+		t.Fatalf("多计量点账单应解析 9 行（1 总表 + 4 段 × 2 张表），got %d: %+v", len(rows), rows)
+	}
+	var segSum float64
+	for _, r := range rows {
+		switch r.MeterType {
+		case "正向有功（尖峰）", "正向有功（峰）", "正向有功（平）", "正向有功（谷）":
+			segSum += r.BillKwh
+		}
+	}
+	// 34,105+133,236+250,440+196,797 + 31,205+37,708+83,520+57,412 = 824,423
+	if want := 824423.0; segSum != want {
+		t.Fatalf("四段计费电量合计 want %.0f, got %.0f（第二张表被丢弃？）", want, segSum)
+	}
+}
+
+func TestParseUtilityMeterReadingsSkipsExactDuplicateRows(t *testing.T) {
+	// 跨页重复表头/重复行：数值完全一致时仍然跳过（否则会重复计入合计）
+	dup := utilityMeterSample202610 + "\n" + utilityMeterSample202610
+	rows := ParseUtilityMeterReadings(dup)
+	if len(rows) != 5 {
+		t.Fatalf("完全重复的行应被跳过，want 5, got %d: %+v", len(rows), rows)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 第 35 轮：多计量点账单不得用「抄见+线损+加减」重算票面计费电量
+// ---------------------------------------------------------------------------
+//
+// 票面事实（2025.10）：尖峰行抄见 18,240、线损 33、加减 -2,074，
+// 但计费电量列写的是 62,699（= 两张表合计，全账单口径）。
+// 若按公式重算会得到 16,199，四段合计从 908,222 掉到 509,007。
+func TestNormalizeUtilityBillDetailsKeepsMultiPointBillKwh(t *testing.T) {
+	// 两张表：四段每段两行（多计量点）。计费电量列都是全账单口径。
+	text := `||正向有功（尖峰）||102.58|108.66|3000||18240|0|33|-2074|62699|
+||正向有功（峰）||312.04|335.28|3000||69720|0|108|-4838|205510|
+||正向有功（谷）||482.45|527.91|3000||136380|0|182|-2765|346527|
+||正向有功（平）||430.61|467.04|3000||109290|0|153|-4147|293486|
+||正向有功（尖峰）||87.08|102.58|3000||46500|0|0|0|62699|
+||正向有功（峰）||265.2|312.04|3000||140520|0|0|0|205510|
+||正向有功（谷）||411.54|482.45|3000||212730|0|0|0|346527|
+||正向有功（平）||367.88|430.61|3000||188190|0|0|0|293486|`
+	item := &types.UtilityBillExtractionItem{
+		// 门禁需要账单总电量才能判定「解析完整」（这里给全账单口径 908,222）
+		TotalKwh: 908222,
+		MeterReadings: []types.UtilityMeterReading{
+			{MeterType: "正向有功（尖峰）", ReadingKwh: 18240, LineLoss: 33, Adjust: -2074, BillKwh: 62699},
+		},
+	}
+	NormalizeUtilityBillDetails(item, text)
+	// 找到第一行（抄见 18240 的那条），票面 62,699 必须保留
+	var found bool
+	for _, r := range item.MeterReadings {
+		if r.ReadingKwh == 18240 {
+			found = true
+			if r.BillKwh != 62699 {
+				t.Fatalf("多计量点账单的票面计费电量被重算成 %.0f（应保留 62,699）", r.BillKwh)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("未找到抄见 18,240 的尖峰行")
+	}
+}
+
+func TestNormalizeUtilityBillDetailsRecalcsSinglePointBillKwh(t *testing.T) {
+	// 单计量点（每段一行）→ 公式重算仍然生效（纠正票面印刷/抽取误差）
+	text := `||正向有功（尖峰）||238.31|250.14|3000||35490|0|18|-1403|34105|`
+	item := &types.UtilityBillExtractionItem{
+		TotalKwh: 34105,
+		MeterReadings: []types.UtilityMeterReading{
+			// 票面值写错成 30000，正确应为 35490+0+18-1403 = 34105
+			{MeterType: "正向有功（尖峰）", ReadingKwh: 35490, LineLoss: 18, Adjust: -1403, BillKwh: 30000},
+		},
+	}
+	NormalizeUtilityBillDetails(item, text)
+	if got := item.MeterReadings[0].BillKwh; got != 34105 {
+		t.Fatalf("单计量点账单应按公式重算为 34,105，got %.0f", got)
+	}
+}

@@ -72,19 +72,42 @@ const maxQty = (arr: any[]) => {
  *
  * 真机事故（第 33 轮）：旧实现用「取最大」，概况里显示 250,440（谷段单行），
  * 而正确值是 34,105+133,236+196,797+250,440 = 614,578。
- * 同一时段可能有多行（零售交易电费 + 偏差电费），按时段取最大后再相加，
- * 避免把同一时段的重复行累加。
+ *
+ * 真机事故（第 35 轮，库内 13/17 份历史账单）：这些类别下**同时**存在两种行——
+ *   · 分时计费行（`零售交易电费(尖峰/峰/平/谷)`、`零售输配电费(…)`）：qty 是该时段电量；
+ *   · 全量口径行（`零售损益分摊电费`、`上网环节线损费用`）：qty 是全账单电量
+ *     （2025-10 为 908,222），且 period 也标「平」。
+ * 只按时段取最大，平段会被全量口径行顶替 → 四段和变成
+ * 62,699+205,510+**908,222**+346,527 = 1,522,958。
+ *
+ * 正确口径（对库内 17 份账单逐一验证，全部误差为 0）：
+ *   ① 只取名称含「零售交易电费 / 零售输配电费」的行（全量口径行名称不同）；
+ *   ② **同一时段多行按 qty 去重后相加**：
+ *      · 多计量点账单会把**同一个全量值**重复打印在多行上
+ *        （2025-10 尖峰两行都是 62,699）→ 去重后只剩一个值，不能翻倍；
+ *      · 另一些账单同段是**真分表值**（2025-07 尖峰 57,877 + 13,239 = 71,116）
+ *        → 不同值必须相加，取最大会漏掉第二张表。
+ *      单计量点账单每段只有一行，两种处理等价。
  */
 const touQty = (arr: any[]) => {
-  const byPeriod: Record<string, number> = {}
-  for (const it of arr) {
-    const p = String(it?.period || '').trim()
-    if (!TOU_PERIODS.includes(p)) continue
-    const q = Number(it?.qty) || 0
-    if (q <= 0) continue
-    byPeriod[p] = Math.max(byPeriod[p] || 0, q)
+  const PERIOD_NAME = /零售交易电费|零售输配电费/
+  const hasName = arr.some((it: any) => String(it?.name || '').trim() !== '')
+  // 有名称字段时只认分时计费行；老数据没有 name 则退化为全部行（保持兼容）
+  const pick = hasName
+    ? arr.filter((it: any) => PERIOD_NAME.test(String(it?.name || '')))
+    : arr
+  let sum = 0
+  for (const p of TOU_PERIODS) {
+    // 该时段所有非零 qty 的**不同值**集合：重复打印的全量值只算一次，
+    // 真分表的不同值相加。
+    const vals = new Set<number>()
+    for (const it of pick) {
+      if (String(it?.period || '').trim() !== p) continue
+      const q = Number(it?.qty) || 0
+      if (q > 0) vals.add(q)
+    }
+    for (const v of vals) sum += v
   }
-  const sum = TOU_PERIODS.reduce((acc, p) => acc + (byPeriod[p] || 0), 0)
   return roundQty(sum)
 }
 

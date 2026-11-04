@@ -73,6 +73,13 @@ func ParseUtilityMeterReadings(text string) []types.UtilityMeterReading {
 		return nil
 	}
 	out := make([]types.UtilityMeterReading, 0, 6)
+	// 去重键 = 示数类型 + 全部数值。
+	//
+	// 旧实现只按示数类型去重，本意是跳过跨页重复的表头，但多计量点账单
+	// （2025.07 / 2025.10）票面上有**两张**电量明细表，同类型行是真数据，
+	// 整表被丢弃后四段计费电量只剩第一张表（361,581 / 396,632），
+	// 与票面 964,183 / 908,222 严重不符。
+	// 现在只有「类型 + 8 个数值全一致」才判定为重复行。
 	seen := make(map[string]bool, 6)
 	for _, line := range strings.Split(text, "\n") {
 		loc := meterTypeRe.FindStringSubmatchIndex(line)
@@ -80,11 +87,6 @@ func ParseUtilityMeterReadings(text string) []types.UtilityMeterReading {
 			continue
 		}
 		meterType := line[loc[0]:loc[1]]
-		// 同一示数类型只取第一次出现（账单里可能因分页重复表头/重复行）
-		key := normalizeMeterType(meterType)
-		if seen[key] {
-			continue
-		}
 		nums := numberRe.FindAllString(line[loc[1]:], -1)
 		if len(nums) < 8 {
 			// 类型在行尾（如「示数类型 ... 正向有功（总）」）时，数字在类型之前
@@ -96,6 +98,10 @@ func ParseUtilityMeterReadings(text string) []types.UtilityMeterReading {
 		vals := make([]float64, 8)
 		for i := 0; i < 8; i++ {
 			vals[i] = parseUtilityFloat(nums[i])
+		}
+		key := normalizeMeterType(meterType) + "|" + strings.Join(nums[:8], ",")
+		if seen[key] {
+			continue
 		}
 		out = append(out, types.UtilityMeterReading{
 			MeterType:  meterType,
@@ -183,11 +189,23 @@ func NormalizeUtilityBillDetails(item *types.UtilityBillExtractionItem, text str
 	// 四段电量也被截断。判定不通过时只对空记录兜底，绝不覆盖既有数据。
 	feeTOU, feeOK := touKwhFromFeeItems(item.FeeItems)
 	if parsed := ParseUtilityMeterReadings(text); len(parsed) > 0 {
-		parsedSum := 0.0
+		// 完整性门禁：解析结果必须覆盖「全账单四段计费电量」。
+		//
+		// 多计量点账单（2025.06/07/10）有两张表，每段的计费电量列本身就是
+		// **全账单口径**（2025-10 尖峰两行都是 62,699，不是 16,199 + 46,500）。
+		// 因此求和前必须按时段去重（每段取最大），否则会把全量值重复相加，
+		// 得到 1.8M 这种荒谬值，门禁永远不通过、第二张表也就永远合并不进来。
+		byPeriod := map[string]float64{}
 		for _, r := range parsed {
 			if p := meterPeriodOf(r.MeterType); p != "" && p != "总" {
-				parsedSum += r.BillKwh
+				if r.BillKwh > byPeriod[p] {
+					byPeriod[p] = r.BillKwh
+				}
 			}
+		}
+		parsedSum := 0.0
+		for _, v := range byPeriod {
+			parsedSum += v
 		}
 		complete := false
 		if feeOK {
@@ -210,6 +228,15 @@ func NormalizeUtilityBillDetails(item *types.UtilityBillExtractionItem, text str
 	}
 
 	// 2) 逐行重算计费电量（票面公式：计费 = 抄见 + 变损 + 线损 + 加减）
+	//
+	// 先统计每个时段出现了几行：> 1 说明是多计量点账单，票面的计费电量列是
+	// 全账单口径，不能用分表的抄见电量重算（见下面守卫）。
+	periodRows := map[string]int{}
+	for i := range item.MeterReadings {
+		if k := meterPeriodOf(item.MeterReadings[i].MeterType); k != "" && k != "总" {
+			periodRows[k]++
+		}
+	}
 	var touSum float64
 	touKwh := map[string]float64{}
 	for i := range item.MeterReadings {
@@ -229,9 +256,22 @@ func NormalizeUtilityBillDetails(item *types.UtilityBillExtractionItem, text str
 		}
 		if r.ReadingKwh != 0 {
 			calc := roundUtility2(r.ReadingKwh + r.TransLoss + r.LineLoss + r.Adjust)
-			if math.Abs(calc-r.BillKwh) > 0.5 {
-				r.BillKwh = calc
-				changed = true
+			// 重算只用于「票面没给计费电量」或「票面值与公式明显不符」的**单表**行。
+			//
+			// 多计量点账单（2025.07/2025.10）的票面里，抄见电量是**分表**的，
+			// 而计费电量列给的是**全账单口径**（如 2025-10 尖峰行抄见 18,240、
+			// 线损 33、加减 -2,074，但计费电量 62,699 是两张表的合计）。
+			// 用「抄见 + 线损 + 加减」重算会得到 16,199，把全量值改小，
+			// 四段合计随之从 908,222 掉到 509,007（真机回填事故）。
+			//
+			// 守卫：同一时段出现多行（多计量点）时，**票面已有的计费电量一律保留**，
+			// 只在票面为 0 时才用公式补。
+			multiPoint := periodRows[kind] > 1
+			if r.BillKwh == 0 || (!multiPoint && math.Abs(calc-r.BillKwh) > 0.5) {
+				if r.BillKwh != calc {
+					r.BillKwh = calc
+					changed = true
+				}
 			}
 		}
 		touKwh[kind] = r.BillKwh
@@ -371,23 +411,35 @@ func setTOU(item *types.UtilityBillExtractionItem, t touKwhSet) bool {
 
 func mergeMeterReadings(existing, parsed []types.UtilityMeterReading) []types.UtilityMeterReading {
 	out := make([]types.UtilityMeterReading, 0, len(parsed)+len(existing))
-	index := make(map[string]int, len(existing))
+	// 索引用「类型 → 该类型下的旧行队列」，而不是单个下标。
+	//
+	// 旧实现 `index[类型] = i` 只能记一行：多计量点账单里同一类型有 2 行，
+	// 第二张表的行合并时又撞上同一个 key，于是把第一张表的行重复 append 两次、
+	// 第二张表的真实数据被丢掉（2025-10 回填后四段仍是 509,007 就是这个原因）。
+	index := make(map[string][]int, len(existing))
 	for i, r := range existing {
-		index[normalizeMeterType(r.MeterType)] = i
+		key := normalizeMeterType(r.MeterType)
+		index[key] = append(index[key], i)
 	}
 	// 以票面顺序为主：票面有的行用它，票面缺的行保留旧数据
 	for _, p := range parsed {
 		key := normalizeMeterType(p.MeterType)
-		if i, ok := index[key]; ok {
-			out = append(out, mergeMeterRow(existing[i], p))
-			delete(index, key)
+		if queue := index[key]; len(queue) > 0 {
+			out = append(out, mergeMeterRow(existing[queue[0]], p))
+			index[key] = queue[1:]
 			continue
 		}
 		out = append(out, p)
 	}
-	for _, r := range existing {
-		key := normalizeMeterType(r.MeterType)
-		if _, ok := index[key]; ok {
+	// 剩余未匹配的旧行（票面里没有的类型）按原顺序补在末尾
+	used := make(map[int]bool, len(existing))
+	for _, queue := range index {
+		for _, i := range queue {
+			used[i] = true
+		}
+	}
+	for i, r := range existing {
+		if used[i] {
 			out = append(out, r)
 		}
 	}
