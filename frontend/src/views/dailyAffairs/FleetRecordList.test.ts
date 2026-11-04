@@ -90,10 +90,13 @@ test('十二个菜单全部登记到分类 scope（无硬编码字段）', () =>
     // 含连字符的 key 在对象字面量里带引号（'vehicle-archive':），两种形态都认
     assert.ok(list.includes(`'${key}':`) || list.includes(`${key}:`), `菜单 ${key} 未登记`)
   }
-  // 列/筛选/抽屉字段全部由 subs 派生
+  // 列/抽屉字段全部由 subs 派生
   assert.match(list, /buildFleetColumns\(activeSubs\.value/)
-  assert.match(list, /buildFleetFilterSpecs\(/)
   assert.match(list, /drawerFields/)
+  // 第 30 轮：左侧工具栏只留「搜索全部字段」+ 刷新，不再派生任何字段筛选器
+  // （证照类型下拉、车牌、日期区间、子分类字段筛选全部移除）。
+  assert.match(list, /type: 'keyword'/)
+  assert.ok(!list.includes('buildFleetFilterSpecs('), '工具栏不应再派生字段筛选器')
 })
 
 test('中台进度横幅本身仍保留 3 秒轮播实现', () => {

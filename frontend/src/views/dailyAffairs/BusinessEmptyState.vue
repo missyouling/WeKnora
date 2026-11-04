@@ -21,6 +21,9 @@
         <t-icon :name="icon" :size="compact ? '32px' : '64px'" />
       </template>
     </t-empty>
+    <!-- 副文案：一行操作指引（如「上传文件后自动提取归档」）。
+         与主文案分开渲染，主文案保持极简，副文案弱化为次要灰字。 -->
+    <p v-if="hint" class="biz-empty__hint">{{ hint }}</p>
     <t-button v-if="actionText" theme="primary" size="medium" @click="emit('action')">
       {{ actionText }}
     </t-button>
@@ -37,10 +40,13 @@ withDefaults(defineProps<{
   actionText?: string
   /** 表格内使用：缩小图标与间距 */
   compact?: boolean
+  /** 副文案（可选）：一句操作指引，弱化为次要灰字 */
+  hint?: string
 }>(), {
   icon: 'file',
   actionText: '',
   compact: false,
+  hint: '',
 })
 
 const emit = defineEmits<{ (e: 'action'): void }>()
@@ -63,5 +69,15 @@ const emit = defineEmits<{ (e: 'action'): void }>()
   min-height: 0;
   padding: var(--td-comp-paddingTB-l, 16px) 0;
   gap: var(--td-comp-margin-s, 8px);
+}
+</style>
+
+<style scoped>
+.biz-empty__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--td-text-color-placeholder);
+  text-align: center;
 }
 </style>

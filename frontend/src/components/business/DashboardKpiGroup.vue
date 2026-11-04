@@ -1,6 +1,8 @@
 <template>
-  <!-- 加载态骨架：父页面在异步数据源未齐时传 loading，占位避免卡片分批跳变 -->
-  <div v-if="loading" class="dash-kpi-skeleton" aria-hidden="true">
+  <!-- 加载态骨架：父页面在异步数据源未齐时传 loading，占位避免卡片分批跳变。
+       注意 v-if 会让 groupRef 在挂载时不存在 —— 箭头的事件绑定必须能事后补绑，
+       否则「先 loading 后出卡片」的页面永远看不到左右箭头（见下方 bindGroup）。 -->
+  <div v-if="loading && skeleton" class="dash-kpi-skeleton" aria-hidden="true">
     <div v-for="i in 5" :key="i" class="dash-kpi-skeleton__card" />
   </div>
   <div v-else class="dash-kpi-wrapper">
@@ -9,8 +11,8 @@
         v-for="card in cards"
         :key="card.key"
         class="dash-kpi-card"
-        :class="[card.cls, card.numCls, { 'is-active': isActive(card) }]"
-        @click="$emit('card-click', card)"
+        :class="[card.cls, card.numCls, { 'is-active': isActive(card), 'is-static': card.static }]"
+        @click="onCardClick(card)"
       >
         <div class="dash-kpi-card__icon">
           <t-icon :name="card.icon" size="22px" />
@@ -47,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 // 概览 KPI 卡片组（中台统一组件）：
 // 提炼自 InvoiceManagement.vue 的 type-card 范式 —— flex 左右布局 + 40px 圆角图标底 +
 // hover 上浮 + 大字号数值（超长自动降档）。卡片点击由父级通过 card-click 事件联动业务。
@@ -57,6 +59,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 // - cls：视觉语义类，透传绑定（'' 中性 / is-brand 品牌 / is-warn 告警）
 // - numCls：主数值降档类（'' / num-sm / num-xs），超长金额防换行
 // - theme：可选语义（brand/success/warning/neutral），内部映射为对应 cls，供新模块复用
+// - static：纯展示卡（如「已收录证照」总数卡），不响应点击、无 hover 指针、永不高亮
 export interface KpiCard {
   key: string
   label: string
@@ -69,27 +72,45 @@ export interface KpiCard {
   theme?: 'brand' | 'success' | 'warning' | 'neutral'
   action?: string
   typeValue?: string
+  /** 纯展示卡：不可点击、无 hover 上浮、不参与激活态 */
+  static?: boolean
 }
 
 // activeType：父组件当前筛选的分类值（如 filterInvoiceType/filterContractType）。
 // 高亮规则：action=all 卡在 activeType 为空时激活；action=type 卡在 typeValue 与 activeType 相等时激活。
-const props = defineProps<{ cards: KpiCard[]; activeType?: string; loading?: boolean }>()
-defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
+// action=stat（纯统计卡）永不激活 —— 它不参与列表筛选。
+const props = withDefaults(
+  defineProps<{ cards: KpiCard[]; activeType?: string; loading?: boolean; skeleton?: boolean }>(),
+  { skeleton: true },
+)
+const emit = defineEmits<{ (e: 'card-click', card: KpiCard): void }>()
+
+// 纯展示卡直接吞掉点击：父级不收到事件，列表不会切到汇总视图
+const onCardClick = (card: KpiCard) => {
+  if (card.static || card.action === 'stat') return
+  emit('card-click', card)
+}
 
 const isActive = (card: KpiCard): boolean => {
+  if (card.static || card.action === 'stat') return false
   if (card.action === 'all') return !props.activeType
   if (card.action === 'type' && card.typeValue) return props.activeType === card.typeValue
   return false
 }
 
-// ---- 横向溢出导航（方案 B）：滚动条隐藏后提供左右箭头入口 ----
-// 仅当内容溢出（scrollWidth > clientWidth）时箭头才出现，滚动到边界自动隐藏对应箭头；
-// 监听 scroll 与容器尺寸变化（ResizeObserver）实时刷新状态，卸载时清理监听。
+// ---- 横向溢出导航：滚动条隐藏后提供左右箭头入口 ----
+// 仅当内容溢出（scrollWidth > clientWidth）时箭头才出现，滚动到边界自动隐藏对应箭头。
+//
+// 绑定时机是这里的核心坑：父级常见写法 `:loading="!ready"` 会让 groupRef 在挂载时
+// 根本不存在（v-if 分支），onMounted 里拿不到元素 → scroll 监听与 ResizeObserver
+// 全都没绑上，卡片加载出来后箭头永远不出现（真机现象：7 张卡被截断且无箭头）。
+// 因此改为「ref 变化 / 卡片数量变化 / loading 变化」三处都尝试补绑。
 const groupRef = ref<HTMLElement>()
 const canLeft = ref(false)
 const canRight = ref(false)
 let groupRO: ResizeObserver | null = null
 let scrollRaf = 0
+let boundEl: HTMLElement | null = null
 
 const updateArrows = () => {
   const el = groupRef.value
@@ -98,14 +119,35 @@ const updateArrows = () => {
   canRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 2
 }
 
+const unbindGroup = () => {
+  if (boundEl) boundEl.removeEventListener('scroll', updateArrows)
+  if (groupRO) { groupRO.disconnect(); groupRO = null }
+  boundEl = null
+}
+
+const bindGroup = (el?: HTMLElement | null) => {
+  if (!el) return
+  if (boundEl === el) { updateArrows(); return }
+  unbindGroup()
+  boundEl = el
+  el.addEventListener('scroll', updateArrows, { passive: true })
+  // 同时观察自身与父容器：内容变宽不一定改变自身宽度（flex 子项 min-width 固定时
+  // 只有 scrollWidth 变），父容器 resize 也要重算。
+  groupRO = new ResizeObserver(() => updateArrows())
+  groupRO.observe(el)
+  if (el.parentElement) groupRO.observe(el.parentElement)
+  updateArrows()
+}
+
 // 手动 rAF 驱动滚动动画：原生 scrollBy({behavior:'smooth'}) 的滚动事件时序不可靠
 // （真实窄窗/动画中断场景下箭头状态不随滚动更新），改为每帧设置 scrollLeft 并强制
 // 刷新箭头状态，滚动结束保证左右箭头与边界严格同步。
+// 步长固定 260px：与需求给定的滚动距离一致，且小于单卡最小宽度 200+gap，不会跳过整卡。
+const SCROLL_STEP = 260
 const scrollByStep = (dir: -1 | 1) => {
   const el = groupRef.value
   if (!el) return
-  const step = el.clientWidth * 0.7
-  const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + step * dir))
+  const target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + SCROLL_STEP * dir))
   if (Math.abs(target - el.scrollLeft) < 1) {
     updateArrows()
     return
@@ -126,22 +168,16 @@ const scrollByStep = (dir: -1 | 1) => {
   scrollRaf = requestAnimationFrame(tick)
 }
 
-onMounted(() => {
-  nextTick(() => {
-    const el = groupRef.value
-    if (!el) return
-    updateArrows()
-    el.addEventListener('scroll', updateArrows, { passive: true })
-    groupRO = new ResizeObserver(() => updateArrows())
-    groupRO.observe(el)
-  })
-})
+// ref 就绪 / 卡片增减 / loading 结束，三处都要重新绑定 + 重算（含字体加载后的抖动兜底）
+watch(groupRef, (el) => { nextTick(() => bindGroup(el as HTMLElement | null)) }, { flush: 'post' })
+watch(() => props.cards.length, () => { nextTick(() => { bindGroup(groupRef.value); setTimeout(updateArrows, 80) }) })
+watch(() => props.loading, () => { nextTick(() => { bindGroup(groupRef.value); setTimeout(updateArrows, 80) }) })
+
+onMounted(() => { nextTick(() => bindGroup(groupRef.value)) })
 
 onBeforeUnmount(() => {
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
-  const el = groupRef.value
-  if (el) el.removeEventListener('scroll', updateArrows)
-  if (groupRO) groupRO.disconnect()
+  unbindGroup()
 })
 </script>
 
@@ -228,6 +264,16 @@ onBeforeUnmount(() => {
   border-color: var(--td-brand-color);
   transform: translateY(-1px);
   box-shadow: var(--wk-kpi-shadow);
+}
+/* 纯展示卡（如「已收录证照」总数）：不暗示可点击 —— 无手型、无上浮、无高亮边框 */
+.dash-kpi-card.is-static {
+  cursor: default;
+}
+.dash-kpi-card.is-static:hover {
+  background: var(--wk-kpi-bg);
+  border-color: transparent;
+  transform: none;
+  box-shadow: none;
 }
 /* 筛选态常驻高亮：与 hover 同级醒目（主题色边框 + 浅色底 + 阴影），
    鼠标移开后保持，作为当前列表所处分类的视觉锚点 */

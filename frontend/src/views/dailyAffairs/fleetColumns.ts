@@ -343,3 +343,112 @@ export function dateFromForm(data: Record<string, any>): string {
   }
   return ''
 }
+
+// ---------------------------------------------------------------------------
+// KPI 卡片 / 默认焦点 / 空状态（第 30 轮：像素级对齐发票管理）
+// ---------------------------------------------------------------------------
+
+/** 一张 KPI 卡（结构对齐 DashboardKpiGroup 的 KpiCard，额外支持 static 纯展示卡）。 */
+export interface FleetKpiCard {
+  key: string
+  label: string
+  icon: string
+  value: string
+  unit?: string
+  sub?: string
+  theme?: 'brand' | 'success' | 'warning' | 'neutral'
+  action: 'stat' | 'type' | 'history'
+  typeValue?: string
+  /** 纯展示卡：不响应点击、无 hover 指针、永不高亮 */
+  static?: boolean
+}
+
+/**
+ * 默认激活的分类名：取第 1 个启用分类。
+ *
+ * 为什么不再默认选中「已收录证照」汇总卡：各子分类字段集完全不同（许可证 10 个
+ * 字段 vs 登记证书 35 个），汇总视图只能拼通用列且一半单元格是「—」。默认落到
+ * 第一个具体分类，用户一进来就看到真实表头与数据。
+ */
+export function resolveDefaultCategoryName(cats: readonly any[] | undefined): string {
+  for (const c of Array.isArray(cats) ? cats : []) {
+    if (!c || c.enabled === false) continue
+    const name = String(c.name || '').trim()
+    if (name) return name
+  }
+  return ''
+}
+
+/**
+ * 构造车队 KPI 卡片（纯函数，便于单测）。
+ *
+ * 文案口径对齐发票管理：
+ *   · 第 1 张「已收录…」只给数字，不给「当前菜单全部证照」这类口水话；
+ *   · 子分类卡只给标题 + 数量，**不显示占比**（旧版 `占 50%` 已移除）；
+ *   · 历史记录卡副文案与发票一致：`无异常文件` / `N 份异常`。
+ */
+export function buildFleetKpiCards(args: {
+  isArchive: boolean
+  total: number
+  categories: readonly any[]
+  subCounts: Record<string, number>
+  subAmounts: Record<string, number>
+  singleCategory?: string
+  parseFailed?: number
+  extractFailed?: number
+}): FleetKpiCard[] {
+  const { isArchive, total, categories, subCounts, singleCategory } = args
+  const unit = isArchive ? '份' : '条'
+  const cards: FleetKpiCard[] = [{
+    key: 'all',
+    label: isArchive ? '已收录证照' : '已收录记录',
+    icon: 'file-copy',
+    value: String(total),
+    unit,
+    sub: '',
+    theme: 'brand',
+    action: 'stat',
+    static: true,
+  }]
+  for (const c of Array.isArray(categories) ? categories : []) {
+    const name = String(c?.name || '').trim()
+    if (!name) continue
+    if (singleCategory && name !== singleCategory) continue
+    cards.push({
+      key: `cat-${name}`,
+      label: name,
+      icon: 'file',
+      value: String(Number(subCounts?.[name] || 0)),
+      unit,
+      sub: '',
+      action: 'type',
+      typeValue: `cat-${name}`,
+    })
+  }
+  if (isArchive) {
+    const failed = Number(args.parseFailed || 0) + Number(args.extractFailed || 0)
+    cards.push({
+      key: 'history',
+      label: '历史记录',
+      icon: 'history',
+      value: String(total),
+      unit: '份',
+      sub: failed > 0 ? `${failed} 份异常` : '无异常文件',
+      action: 'history',
+    })
+  }
+  return cards
+}
+
+/**
+ * 表格空状态文案（主文案 + 副文案）。
+ *
+ * 旧版按分类拼接「「车辆登记证书」暂无记录，可上传文件自动提取」，又长又重复；
+ * 统一为「暂无数据」+ 一句操作指引，与发票管理的极简口径一致。
+ */
+export function fleetEmptyState(isArchive: boolean): { description: string; hint: string } {
+  return {
+    description: '暂无数据',
+    hint: isArchive ? '上传文件后自动提取归档' : '点击右上角新增记录',
+  }
+}

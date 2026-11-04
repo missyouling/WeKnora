@@ -8,6 +8,9 @@ import {
   filterableOf,
   buildFleetSummaryViewColumns,
   amountFromForm,
+  resolveDefaultCategoryName,
+  buildFleetKpiCards,
+  fleetEmptyState,
   dataTypeOfSub,
 } from './fleetColumns'
 
@@ -204,4 +207,77 @@ test('amountFromForm 语义：单价×数量优先于单价，避免把「2升×
   for (const [input, want] of cases) {
     assert.equal(amountFromForm(input), want, `input=${JSON.stringify(input)}`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// KPI 卡片 / 默认焦点 / 空状态（第 30 轮：像素级对齐发票管理）
+// ---------------------------------------------------------------------------
+
+test('resolveDefaultCategoryName：取第 1 个启用分类，跳过停用与空分类', () => {
+  assert.equal(resolveDefaultCategoryName([
+    { name: '道路运输经营许可证', enabled: true },
+    { name: '道路运输证', enabled: true },
+  ]), '道路运输经营许可证')
+  // 停用的跳过
+  assert.equal(resolveDefaultCategoryName([
+    { name: '停用分类', enabled: false },
+    { name: '驾驶证', enabled: true },
+  ]), '驾驶证')
+  // 空 / 全停用 → 空串（调用方退化为汇总视图，不崩）
+  assert.equal(resolveDefaultCategoryName([]), '')
+  assert.equal(resolveDefaultCategoryName([{ name: 'A', enabled: false }]), '')
+})
+
+test('buildFleetKpiCards：第1张为纯统计卡（不可点、无副文本），分类卡无占比副文本', () => {
+  const cards = buildFleetKpiCards({
+    isArchive: true,
+    total: 2,
+    categories: [{ name: '道路运输经营许可证' }, { name: '道路运输证' }],
+    subCounts: { '道路运输经营许可证': 1, '道路运输证': 1 },
+    subAmounts: {},
+    singleCategory: '',
+    parseFailed: 0,
+    extractFailed: 0,
+  })
+  // 第 1 张：纯统计，不可点击，无「当前菜单全部证照」之类口水话
+  assert.equal(cards[0].action, 'stat')
+  assert.equal(cards[0].static, true)
+  assert.equal(cards[0].sub, '')
+  assert.equal(cards[0].label, '已收录证照')
+  assert.equal(cards[0].value, '2')
+  // 分类卡：只有数字，sub 必须为空串（不得出现「占 50%」）
+  const catCards = cards.filter((c) => c.action === 'type')
+  assert.equal(catCards.length, 2)
+  for (const c of catCards) {
+    assert.equal(c.sub, '', `${c.label} 不应有副文本`)
+    assert.ok(!/%|占/.test(c.sub), `${c.label} 副文本不得含占比`)
+  }
+  // 历史卡：文案对齐发票「无异常文件」
+  const history = cards.find((c) => c.action === 'history')!
+  assert.equal(history.sub, '无异常文件')
+})
+
+test('buildFleetKpiCards：有解析/提取失败时历史卡显示 N 份异常', () => {
+  const cards = buildFleetKpiCards({
+    isArchive: true, total: 5, categories: [], subCounts: {}, subAmounts: {},
+    singleCategory: '', parseFailed: 2, extractFailed: 1,
+  })
+  const history = cards.find((c) => c.action === 'history')!
+  assert.equal(history.sub, '3 份异常')
+})
+
+test('buildFleetKpiCards：手工录入类无历史卡，且第1张卡为纯统计', () => {
+  const cards = buildFleetKpiCards({
+    isArchive: false, total: 1, categories: [{ name: '加油充电' }],
+    subCounts: { '加油充电': 1 }, subAmounts: { '加油充电': 177 },
+    singleCategory: '加油充电', parseFailed: 0, extractFailed: 0,
+  })
+  assert.equal(cards.some((c) => c.action === 'history'), false)
+  assert.equal(cards[0].action, 'stat')
+  assert.equal(cards[0].label, '已收录记录')
+})
+
+test('fleetEmptyState：主文案统一「暂无数据」，副文案按录入模式区分', () => {
+  assert.deepEqual(fleetEmptyState(true), { description: '暂无数据', hint: '上传文件后自动提取归档' })
+  assert.deepEqual(fleetEmptyState(false), { description: '暂无数据', hint: '点击右上角新增记录' })
 })

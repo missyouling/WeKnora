@@ -861,8 +861,10 @@ async function loadUsedFields(scope: string, certName?: string) {
   const type = RECORD_TYPE_MAP[scope]
   if (!type) return
   try {
-    // 引用边界：只统计当前编辑证照类型自身记录里出现的字段，跨证照同名字段不互相牵连
-    const res: any = await listFleetRecords(certName ? { type, doc_type: certName } : { type })
+    // 引用边界：只统计当前编辑证照类型自身记录里出现的字段，跨证照同名字段不互相牵连。
+    // 过滤键必须是 sub_category（第 29 轮起记录的归属键）：手工录入记录没有 doc_type，
+    // 用 doc_type 过滤会查不到任何行 → usedFields 恒空 → 删字段时「已被引用」保护失效。
+    const res: any = await listFleetRecords(certName ? { type, sub_category: certName } : { type })
     const set = new Set<string>()
     ;(res.data || []).forEach((r: any) => Object.keys(r.data || {}).forEach((k) => set.add(String(k))))
     usedFields.value = set

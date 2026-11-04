@@ -9,7 +9,7 @@
     <div class="header">
       <div class="header-title">
         <h2>车队管理</h2>
-        <p class="header-subtitle">车辆、司机与维保记录统一管理</p>
+        <p class="header-subtitle">车队档案与台账自动归档</p>
       </div>
     </div>
 

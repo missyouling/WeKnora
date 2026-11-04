@@ -15,7 +15,9 @@
   <div class="biz-page fleet-page">
     <!-- ① 顶部 KPI 卡片组：分类卡（或档案证照卡）+ 历史记录卡 -->
     <div class="overview-group">
-      <DashboardKpiGroup :loading="!cardsReady || !kpiCards.length" :cards="kpiCards" :active-type="activeType"
+      <!-- skeleton=false：车队页不用灰色骨架占位（数量未返回前直接显示 0），
+           表格区域单独用 loading 态；卡片横向溢出时由组件内置左右箭头滚动。 -->
+      <DashboardKpiGroup :loading="!cardsReady" :skeleton="false" :cards="kpiCards" :active-type="activeType"
         @card-click="onKpiCardClick" />
     </div>
 
@@ -78,7 +80,8 @@
             @select-change="onTableSelectChange">
             <template #empty>
               <!-- 首屏未就绪时不显示「暂无数据」：否则骨架屏期间会先闪一下空态 -->
-              <BusinessEmptyState v-if="!tableLoading" compact :icon="emptyIcon" :description="emptyText" />
+              <BusinessEmptyState v-if="!tableLoading" compact :icon="emptyIcon"
+                :description="emptyText" :hint="emptyHint" />
               <div v-else class="fleet-empty-placeholder" />
             </template>
           </t-table>
@@ -158,9 +161,9 @@ import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidt
 import { buildFootRow, footSpanOf, summaryScopeRows } from './listSummary'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
 import {
-  buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns, buildFleetFilterSpecs,
-  amountFromForm, dateFromForm,
-  buildFleetFieldFiltersParam, type FleetColumn,
+  buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
+  amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
+  type FleetColumn,
 } from './fleetColumns'
 import type { FilterFieldSpec } from './businessFilter'
 
@@ -262,52 +265,19 @@ const recordSubAmount = ref<Record<string, number>>({})
 //   ② 卡片读文件表、列表读记录表 → 卡片 2 份、点开 1 条甚至 0 条。
 // 现在两者都读 fleet_records：卡片 = BySubCategory[分类名]，列表 =
 // records?record_type=..&sub_category=..，条件逐字相同。
-const kpiCards = computed(() => {
-  const cards: any[] = []
-  const totalN = Number(recordStats.value[recordType.value] || 0)
-  const unit = isArchive.value ? '份' : '条'
-  cards.push({
-    key: 'all',
-    label: isArchive.value ? '已收录证照' : '已收录记录',
-    icon: 'file-copy',
-    value: String(totalN),
-    unit,
-    sub: isArchive.value ? '当前菜单全部证照' : '当前菜单全部记录',
-    action: 'all',
-    theme: 'brand',
-  })
-  for (const c of menuCategories.value) {
-    if (meta.value.singleCategory && c.name !== meta.value.singleCategory) continue
-    const n = Number(recordSubStats.value[c.name] || 0)
-    const amt = Number(recordSubAmount.value[c.name] || 0)
-    cards.push({
-      key: 'cat-' + c.name,
-      label: c.name,
-      icon: 'file',
-      value: String(n),
-      unit,
-      // 成本类菜单（单分类）副标题给金额，档案类给条数占比
-      sub: meta.value.singleCategory
-        ? (amt > 0 ? `合计 ¥${amt.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '暂无金额')
-        : (totalN > 0 ? `占 ${Math.round((n / totalN) * 100)}%` : '暂无记录'),
-      action: 'type',
-      typeValue: 'cat-' + c.name,
-    })
-  }
-  // 历史记录卡：仅档案类（上传解析提取类）有源文件，手工录入类不展示
-  if (isArchive.value) {
-    cards.push({
-      key: 'history',
-      label: '历史记录',
-      icon: 'history',
-      value: String(totalN),
-      unit: '份',
-      sub: '源文件上传记录',
-      action: 'history',
-    })
-  }
-  return cards
-})
+//
+// 第 30 轮：卡片结构/文案抽到 fleetColumns.buildFleetKpiCards（纯函数、有单测），
+// 页面只负责喂数据。第 1 张「已收录」改为纯统计卡（action=stat，不可点击）。
+const kpiCards = computed(() => buildFleetKpiCards({
+  isArchive: isArchive.value,
+  total: Number(recordStats.value[recordType.value] || 0),
+  categories: menuCategories.value,
+  subCounts: recordSubStats.value,
+  subAmounts: recordSubAmount.value,
+  singleCategory: meta.value.singleCategory || '',
+  parseFailed: Number(overviewStats.value?.parse_failed || 0),
+  extractFailed: Number(overviewStats.value?.extract_failed || 0),
+}))
 
 function onKpiCardClick(card: any) {
   if (card.action === 'history') {
@@ -315,21 +285,14 @@ function onKpiCardClick(card: any) {
     historyVisible.value = true
     return
   }
-  if (card.action === 'all') {
-    activeType.value = ''
-    page.value = 1
-    // 切视图必须重算列显隐：汇总视图与子分类视图的字段集不同，
-    // 不重算会沿用上一个视图的 visibleColKeys → 表头只剩「操作」一列。
-    initColumns()
-    reloadList()
-    return
-  }
-  if (card.action === 'type' && card.typeValue) {
-    activeType.value = card.typeValue
-    page.value = 1
-    initColumns()
-    reloadList()
-  }
+  // 「已收录…」是纯统计卡（action=stat），组件层已吞掉点击事件；
+  // 这里再兜一层：任何非 type 卡都不切换列表、不发请求。
+  if (card.action !== 'type' || !card.typeValue) return
+  if (activeType.value === card.typeValue) return
+  activeType.value = card.typeValue
+  page.value = 1
+  initColumns()
+  reloadList()
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +305,9 @@ const pageSize = ref(20)
 // 初始态必须带 dateRange: []：TDesign 的 date-range-picker 收到 undefined 会
 // 每次渲染打 console.error「typeof value: undefined must be Array!」，
 // 真机验收的「控制台 0 error」硬断言会直接失败（发票页同样如此初始化）。
-const initialFilterState = (): Record<string, any> => ({ keyword: '', docType: '', dateRange: [] })
+// 只保留 keyword：日期区间与证照类型筛选已按需求移除，不再初始化空值
+// （TDesign 的 date-range-picker 已不渲染，无需再防 undefined 的 console.error）。
+const initialFilterState = (): Record<string, any> => ({ keyword: '' })
 const filterState = ref<Record<string, any>>(initialFilterState())
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = computed(() => Array.from(selectedKeys.value))
@@ -425,18 +390,15 @@ const summaryCols = computed(() => buildFleetSummaryColumns(visibleCols.value))
 const footSpan = computed(() => footSpanOf(summaryCols.value))
 
 // 筛选器：总览态按证照类型；其余由 subs 派生
-const filterFields = computed<FilterFieldSpec[]>(() => {
-  // 汇总视图（档案类「全部」卡）：证照类型下拉 + 车牌 + 日期 + 少量字段筛选。
-  // 之前这里只给一个 docType 下拉，而选具体分类后又把 29 个字段全铺出来。
-  if (isSummaryView.value) {
-    const base = buildFleetFilterSpecs(columnDefs.value)
-    return [
-      { key: 'docType', type: 'select', placeholder: '证照类型', options: docTypeOptions.value },
-      ...base,
-    ]
-  }
-  return buildFleetFilterSpecs(columnDefs.value)
-})
+// 左侧工具栏：**只有**「搜索全部字段」+ 刷新按钮（第 30 轮统一口径）。
+//
+// 为什么必须保留 keyword spec 而不是直接传空数组：BusinessFilterBar 的
+// keywordSpec 来自 fields 里 type=keyword 的那条，传空数组会让
+// keywordValue 恒为空、patch() 直接 no-op —— 搜索框变成打字没反应的死控件。
+// 其余筛选（证照类型下拉 / 车牌 / 日期区间 / 子分类字段）全部移除。
+const filterFields = computed<FilterFieldSpec[]>(() => ([
+  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+]))
 
 function persistColumns() {
   try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
@@ -516,13 +478,16 @@ function applyFilter() { page.value = 1; reloadList() }
 // BusinessFilterBar 只负责「不可变更新 + 可选 immediate」，防抖归父级。
 // 缺这个 watch 时文本筛选（车牌号/费用类型…）必须点刷新才生效，
 // 用户输完回车看起来「没反应」（真机 B4 因此拿到 20 行混车牌）。
-watch(filterState, () => { scheduleFilter() }, { deep: true })
+// bootstrap 里会 `filterState.value = initialFilterState()` 重置筛选，这会触发本
+// 监听 → 300ms 后再发一次与 bootstrap 重复的列表请求（每个菜单切一次多一请求）。
+// 用就绪门闩挡掉「程序性重置」，只响应用户真实输入。
+let filterWatchReady = false
+watch(filterState, () => { if (filterWatchReady) scheduleFilter() }, { deep: true })
 
 async function reloadList() {
   loading.value = true
   try {
     const state = filterState.value || {}
-    const [df, dt] = Array.isArray(state.dateRange) ? state.dateRange : []
     // 12 个菜单统一读 fleet_records（第 29 轮）。
     // 档案类不再在「全部」视图切到 knowledges 文件列表 —— 那条路径的数据源
     // 与 KPI 卡片不同表，必然出现「卡片 N 份、列表 M 条」的口径错位。
@@ -531,12 +496,7 @@ async function reloadList() {
     const res: any = await listFleetRecords({
       type: recordType.value,
       sub_category: isArchive.value ? activeCategoryName.value : undefined,
-      // 汇总视图的「证照类型」下拉：走 doc_type 精确过滤（后端已支持）
-      doc_type: isSummaryView.value && state.docType ? String(state.docType) : undefined,
       q: String(state.keyword || '').trim() || undefined,
-      field_filters: buildFleetFieldFiltersParam(state) || undefined,
-      date_from: df || undefined,
-      date_to: dt || undefined,
       page: page.value,
       page_size: pageSize.value,
     })
@@ -587,7 +547,7 @@ function onPageSizeChange(size: any) {
 // rawFileRows 保留：loadPending（在途门禁）需要原始文件列表判断解析/提取状态。
 const rawFileRows = ref<any[]>([])
 
-const docTypeOptions = computed(() => menuCategories.value.map((c: any) => ({ label: c.name, value: c.name })))
+// docTypeOptions 已随「证照类型」下拉一并移除（第 30 轮工具栏极简）
 const currentDocTypes = computed(() => new Set(menuCategories.value.map((c: any) => c.name)))
 
 async function reloadCategories() {
@@ -989,11 +949,10 @@ async function loadVehicles() {
 // 空态
 // ---------------------------------------------------------------------------
 const emptyIcon = computed(() => (isArchive.value ? 'file-copy' : 'search-error'))
-const emptyText = computed(() => {
-  if (isArchive.value && !activeType.value) return '暂无证照，上传后自动解析提取字段'
-  if (isArchive.value) return `「${activeCategoryName.value}」暂无记录，可上传文件自动提取`
-  return `暂无${menuLabel.value}记录，点击右上角「${primaryAction.value.text}」录入`
-})
+// 空状态文案统一为「暂无数据」+ 一句操作指引（见 fleetColumns.fleetEmptyState）
+const emptyState = computed(() => fleetEmptyState(isArchive.value))
+const emptyText = computed(() => emptyState.value.description)
+const emptyHint = computed(() => emptyState.value.hint)
 
 // ---------------------------------------------------------------------------
 // 生命周期
@@ -1002,13 +961,27 @@ async function bootstrap() {
   cardsReady.value = false
   selectedKeys.value = new Set()
   page.value = 1
+  filterWatchReady = false
   filterState.value = initialFilterState()
-  activeType.value = isArchive.value ? '' : 'cat-' + (meta.value.singleCategory || '')
   await Promise.all([loadVehicles(), ensureKb()])
   await reloadCategories()
+  // 默认焦点（第 30 轮）：档案类直接选中第 1 个启用子分类，而不是「已收录」汇总卡。
+  // 汇总视图下各分类字段集不同，只能拼通用列且大量「—」；默认落到具体分类后
+  // 用户一进来就看到真实表头与数据。无任何启用分类时退化为汇总视图（空串）。
+  //
+  // 必须在 reloadCategories() **之后**算：分类是异步拉的，提前算只能拿到空数组，
+  // 结果永远是汇总视图（默认焦点失效）。
+  activeType.value = isArchive.value
+    ? (() => {
+      const first = resolveDefaultCategoryName(menuCategories.value)
+      return first ? 'cat-' + first : ''
+    })()
+    : 'cat-' + (meta.value.singleCategory || '')
   initColumns()
   await reloadStats()
   await reloadList()
+  // 列表已就绪，之后 filterState 的任何变化都是用户输入 → 交给防抖请求
+  filterWatchReady = true
   // 注：**不做**发票派生同步（第 29 轮明确取消跨库同步）。
   // 加油充电 / 路桥费是独立手工台账，数据由用户录入。
   startPolling()
