@@ -205,6 +205,14 @@ func (h *BusinessExtractHandler) GetExtractConfig(c *gin.Context) {
 				ec = ensured
 			}
 		}
+	} else if service.IsFleetArchiveScope(scope) && certType != "" {
+		// 车辆/司机/维保：字段清单来自分类 subs，规则/正则由 service 注册表富化。
+		// 未保存过就现场合成并落库，用户第一次打开「提取规则」即可看到完整 Prompt。
+		if _, _, tenantID, _, aerr := h.validateKnowledgeBaseAccessWithKBID(c, kbID); aerr == nil {
+			if ensured := h.ensureFleetArchiveExtractConfigDefaults(ctx, kbID, tenantID, scope, certType); ensured != nil {
+				ec = ensured
+			}
+		}
 	}
 	if ec == nil {
 		// 发票分类没有配置时，按「分类对应的发票类型」现场合成一份底稿返回

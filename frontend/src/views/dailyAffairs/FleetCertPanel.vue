@@ -112,7 +112,7 @@
                   <span class="fc-h-drag"></span>
                   <span class="fc-h-name">字段名</span>
                   <span class="fc-h-type">数据类型</span>
-                  <span v-if="showWidthCol" class="fc-h-width">宽度(px)</span>
+                  <span v-if="showWidthCol" class="fc-h-width">列宽(px)</span>
                   <span class="fc-h-switch">默认表头</span>
                   <span class="fc-h-switch">启用字段</span>
                   <span class="fc-h-op">操作</span>
@@ -198,7 +198,9 @@
                     </div>
                     <t-select v-model="row.fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
-                      <t-input-number v-model="row.fd.width" size="small" class="fc-width" :min="0" :max="400" placeholder="0=自适应" theme="normal" />
+                      <t-input-number v-model="row.fd.width" size="small" class="fc-width"
+                        :min="0" :max="600" :step="10" :decimal-places="0" placeholder="0=自适应"
+                        title="0 = 按内容自适应；60~600 为固定列宽" theme="normal" />
                     </t-tooltip>
                     <!-- 明细行不作为普通文本列平铺在主表头里，「默认表头」开关对它没有意义 -->
                     <span v-if="row.fd?.dataType === 'items'" class="sub-blank"></span>
@@ -443,7 +445,10 @@ import { cacheSampleText } from './sampleTextCache'
 
 const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
-const showWidthCol = computed(() => props.scope !== 'vehicle' && props.scope !== 'driver' && props.scope !== 'maintain')
+// 列宽列对所有 scope 开放（第 31 轮）。
+// 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
+// 用户无法给「许可证号 / 业户名称」这类长字段定宽。
+const showWidthCol = computed(() => true)
 
 // 分组：车辆档案=公司证照；司机档案=司机证照；维保档案=维保文件；发票/合同等业务 scope=单分类
 //

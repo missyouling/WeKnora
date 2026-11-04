@@ -16,13 +16,13 @@
 -->
 <template>
   <div class="biz-empty" :class="{ 'biz-empty--compact': compact }">
-    <t-empty :description="description">
-      <template #image>
-        <t-icon :name="icon" :size="compact ? '32px' : '64px'" />
-      </template>
-    </t-empty>
-    <!-- 副文案：一行操作指引（如「上传文件后自动提取归档」）。
-         与主文案分开渲染，主文案保持极简，副文案弱化为次要灰字。 -->
+    <!-- 自绘空状态，不用 t-empty（第 31 轮）。
+         TDesign Empty 的 title 默认值就是「暂无数据」，`:title="''"` 会被当成空值
+         回退到默认文案 —— 于是 title 与 description 各渲染一次「暂无数据」，
+         真机上就是上下两行重复（图 4/图 5）。自绘后文案完全由 props 决定，
+         也顺手统一了各业务页的图标、间距与字色层级。 -->
+    <t-icon :name="icon" :size="compact ? '32px' : '64px'" class="biz-empty__icon" />
+    <p class="biz-empty__desc">{{ description }}</p>
     <p v-if="hint" class="biz-empty__hint">{{ hint }}</p>
     <t-button v-if="actionText" theme="primary" size="medium" @click="emit('action')">
       {{ actionText }}
@@ -73,6 +73,17 @@ const emit = defineEmits<{ (e: 'action'): void }>()
 </style>
 
 <style scoped>
+.biz-empty__icon {
+  color: var(--td-text-color-placeholder);
+  flex-shrink: 0;
+}
+.biz-empty__desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--td-text-color-secondary);
+  text-align: center;
+}
 .biz-empty__hint {
   margin: 0;
   font-size: 12px;

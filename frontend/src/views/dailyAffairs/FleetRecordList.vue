@@ -69,12 +69,13 @@
       </BusinessFilterBar>
 
       <!-- ③ 列表 -->
-      <div class="doc-list-scroll">
+      <div class="doc-list-scroll" ref="tableBoxRef">
         <div class="doc-list-view">
           <t-table :data="pagedRows" :columns="tableColumns" row-key="id" size="small"
             :hover="true" :loading="tableLoading" :foot-data="tableFootData"
             :rowspan-and-colspan-in-footer="footSpan"
-            :selected-row-keys="selectedRowKeys" :scroll="tableScroll" sticky-header class="doc-table fleet-table"
+            :selected-row-keys="selectedRowKeys" :scroll="tableScroll" sticky-header
+            :class="['doc-table', 'fleet-table', { 'fleet-table--sparse': sparseTable }]"
             :row-class-name="({ row }: any) => selectedKeys.has(rowKey(row)) ? 'is-selected' : ''"
             @row-click="({ row }: any) => openDetail(row)"
             @select-change="onTableSelectChange">
@@ -89,7 +90,7 @@
       </div>
 
       <!-- 分页：派生台账 1500+ 条，必须分页（懒加载会与合计行冲突） -->
-      <div v-if="total > pageSize" class="fleet-pager">
+      <div v-if="total > pageSize && !activeCertStatus" class="fleet-pager">
         <t-pagination :current="page" :page-size="pageSize" :total="total" size="small"
           :page-size-options="[20, 50, 100]" @current-change="onPageChange" @page-size-change="onPageSizeChange" />
       </div>
@@ -132,8 +133,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
   reparseKnowledge, delKnowledgeDetails,
@@ -163,6 +164,7 @@ import { filterRowsByPendingFiles } from './invoicePendingGate'
 import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
+  certStatusOf, certStatusOptions, extractStatusOf,
   type FleetColumn,
 } from './fleetColumns'
 import type { FilterFieldSpec } from './businessFilter'
@@ -307,7 +309,9 @@ const pageSize = ref(20)
 // 真机验收的「控制台 0 error」硬断言会直接失败（发票页同样如此初始化）。
 // 只保留 keyword：日期区间与证照类型筛选已按需求移除，不再初始化空值
 // （TDesign 的 date-range-picker 已不渲染，无需再防 undefined 的 console.error）。
-const initialFilterState = (): Record<string, any> => ({ keyword: '' })
+// dateRange 必须是数组：TDesign date-range-picker 收到 undefined 会每帧
+// console.error（真机「控制台 0 error」硬断言会失败）。
+const initialFilterState = (): Record<string, any> => ({ keyword: '', certStatus: '', plate: '', dateRange: [] })
 const filterState = ref<Record<string, any>>(initialFilterState())
 const selectedKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = computed(() => Array.from(selectedKeys.value))
@@ -321,9 +325,41 @@ const selectedFileRows = computed(() => selectedRows.value.filter((r) => r.__fil
 // 严格由该分类 subs 派生。手工录入类永远有单一分类，不会进汇总视图。
 const isSummaryView = computed(() => isArchive.value && !activeType.value)
 
+// 归档类固定追加的两列（不进 subs：它们是派生值，用户不可编辑）
+const CERT_STATUS_KEY = '__cert_status'
+const EXTRACT_STATUS_KEY = '__extract_status'
+// 当天日期（会话内固定）：证照状态按它算剩余天数。用本地日期而非 toISOString，
+// 否则东八区 08:00 前会被算成昨天，把「今天到期」误判成「已过期」。
+const todayStr = (() => {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+})()
+
 const columnDefs = computed<FleetColumn[]>(() => {
-  if (isSummaryView.value) return buildFleetSummaryViewColumns(vehicleMap.value)
-  return buildFleetColumns(activeSubs.value, vehicleMap.value)
+  const base = isSummaryView.value
+    ? buildFleetSummaryViewColumns(vehicleMap.value)
+    : buildFleetColumns(activeSubs.value, vehicleMap.value)
+  if (!isArchive.value) return base
+  return [
+    ...base,
+    {
+      key: CERT_STATUS_KEY,
+      label: '证照状态',
+      dataType: 'text',
+      default: true,
+      value: (row: any) => certStatusOf(row?.data, todayStr).label || '—',
+      raw: () => 0,
+    },
+    {
+      key: EXTRACT_STATUS_KEY,
+      label: '提取状态',
+      dataType: 'text',
+      default: true,
+      value: (row: any) => extractStatusOf(row).label,
+      raw: () => 0,
+    },
+  ]
 })
 const columnDefsForFilter = computed(() => columnDefs.value.map((c) => ({ key: c.key, label: c.label })))
 
@@ -351,7 +387,25 @@ const tableColumns = computed(() => {
       colKey: c.key,
       title: c.label,
       ellipsis: ellipsisOf(c),
-      cell: (_h: any, params: any) => c.value(params?.row),
+      cell: (_h: any, params: any) => {
+        const row = params?.row
+        // 证照状态：三态三色 Tag（发票管理「提取成功」同色系）
+        if (c.key === CERT_STATUS_KEY) {
+          const st = certStatusOf(row?.data, todayStr)
+          if (!st.key) return '—'
+          return _h('t-tag', {
+            theme: st.theme, variant: 'light', size: 'small',
+          }, () => st.label)
+        }
+        // 提取状态：绿底成功 Tag
+        if (c.key === EXTRACT_STATUS_KEY) {
+          const st = extractStatusOf(row)
+          return _h('t-tag', {
+            theme: st.theme === 'success' ? 'success' : 'default', variant: 'light', size: 'small',
+          }, () => st.label)
+        }
+        return c.value(row)
+      },
       dataType: c.dataType,
     }
     // 最后一列给 minWidth（随视口伸展），其余给固定 width —— 与发票页一致
@@ -360,25 +414,6 @@ const tableColumns = computed(() => {
     const cls = cellClassOf(c)
     if (cls) base.className = cls
     cols.push(base)
-  })
-  // 操作列：右固定，查看 / 编辑 / 删除
-  cols.push({
-    colKey: 'operation',
-    title: '操作',
-    width: 132,
-    fixed: 'right',
-    cell: (_h: any, params: any) => {
-      const row = params?.row
-      const acts: any[] = []
-      const mk = (content: string, theme: string, onClick: () => void) => ({
-        content, theme, size: 'small', variant: 'text', onClick,
-      })
-      acts.push(mk('查看', 'primary', () => openDetail(row)))
-      acts.push(mk('编辑', 'default', () => openDetail(row)))
-      acts.push(mk('删除', 'danger', () => requestDelete(row)))
-      return _h('div', { class: 'fleet-row-ops' }, acts.map((a) =>
-        _h('t-button', { ...a, onClick: (e: any) => { e?.stopPropagation?.(); a.onClick() } }, () => a.content)))
-    },
   })
   return cols
 })
@@ -396,9 +431,23 @@ const footSpan = computed(() => footSpanOf(summaryCols.value))
 // keywordSpec 来自 fields 里 type=keyword 的那条，传空数组会让
 // keywordValue 恒为空、patch() 直接 no-op —— 搜索框变成打字没反应的死控件。
 // 其余筛选（证照类型下拉 / 车牌 / 日期区间 / 子分类字段）全部移除。
-const filterFields = computed<FilterFieldSpec[]>(() => ([
-  { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
-]))
+const filterFields = computed<FilterFieldSpec[]>(() => {
+  const out: FilterFieldSpec[] = [
+    { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
+  ]
+  if (!isArchive.value) return out
+  // 证照状态：三个归档菜单都有（生效中 / 即将到期 / 已过期）
+  out.push({
+    key: 'certStatus', type: 'select', placeholder: '证照状态',
+    options: certStatusOptions(), clearable: true,
+  })
+  // 维保记录：额外提供车牌号 + 维修日期区间（该菜单按车辆与时间段查得最频繁）
+  if (props.recordType === 'maintain-archive') {
+    out.push({ key: 'plate', type: 'text', placeholder: '车牌号', clearable: true })
+    out.push({ key: 'dateRange', type: 'date-range', placeholder: '维修日期', icon: 'time' })
+  }
+  return out
+})
 
 function persistColumns() {
   try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
@@ -445,11 +494,18 @@ const gatedRows = computed(() => {
 })
 
 // 表格数据必须过门禁：解析中/提取中的文件绝不进列表、不参与合计。
-const pagedRows = computed(() => gatedRows.value)
+// 证照状态筛选（派生值，只能前端过滤；筛选期间已把 page_size 拉到 200）
+const activeCertStatus = computed(() => String(filterState.value?.certStatus || '').trim())
+const statusFilteredRows = computed(() => {
+  const want = activeCertStatus.value
+  if (!want) return gatedRows.value
+  return gatedRows.value.filter((r) => certStatusOf(r?.data, todayStr).key === want)
+})
+const pagedRows = computed(() => statusFilteredRows.value)
 
 // 合计行：勾选感知（选中时只汇总选中行；非累加列留空）。
 // 数据源必须是 gatedRows（不是 rows）—— 在途文件既不入列，也不入合计。
-const summaryScope = computed(() => summaryScopeRows(gatedRows.value, selectedKeys.value, rowKey))
+const summaryScope = computed(() => summaryScopeRows(statusFilteredRows.value, selectedKeys.value, rowKey))
 const footData = computed(() => [buildFootRow(summaryCols.value, summaryScope.value.rows, {
   selectKey: 'row-select', selectedCount: summaryScope.value.selectedCount,
 })])
@@ -459,6 +515,13 @@ const footData = computed(() => [buildFootRow(summaryCols.value, summaryScope.va
 const tableLoading = computed(() => loading.value || !cardsReady.value)
 // 未就绪时合计行不渲染，避免「合计 (共 0 条)」误导
 const tableFootData = computed(() => (tableLoading.value ? [] : footData.value))
+
+// 稀疏态逻辑见文件末尾（必须放在所有 ref/computed 之后，否则 watch 注册时会
+// 立即求值 pagedRows → gatedRows → pendingFiles 而触发 TDZ）。
+
+
+
+
 
 // ---------------------------------------------------------------------------
 // 查询
@@ -493,12 +556,24 @@ async function reloadList() {
     // 与 KPI 卡片不同表，必然出现「卡片 N 份、列表 M 条」的口径错位。
     // 现在「全部」= 该 record_type 的全部记录，子分类 = sub_category 精确过滤，
     // 两者与 /records/stats 的 where 条件逐字一致。
+    const [df, dt] = Array.isArray(state.dateRange) ? state.dateRange : []
+    // 证照状态是**派生值**（按有效期止与今天算），数据库里没有这一列，
+    // 无法用 SQL 精确过滤（跨 PG/sqlite 的 JSON 日期运算不可移植）。
+    // 因此状态筛选时把当前分类的记录一次拉大页（上限 200）再做前端过滤，
+    // 并在筛选期间隐藏分页器 —— 避免「合计 N 条」与分页总数互相打脸。
+    const statusFilter = String(state.certStatus || '').trim()
     const res: any = await listFleetRecords({
       type: recordType.value,
       sub_category: isArchive.value ? activeCategoryName.value : undefined,
       q: String(state.keyword || '').trim() || undefined,
-      page: page.value,
-      page_size: pageSize.value,
+      // 维保记录：车牌号走 field_filters（后端按 vehicle_id/车牌精确匹配）
+      field_filters: String(state.plate || '').trim()
+        ? `车牌号:${String(state.plate).trim()}`
+        : undefined,
+      date_from: df || undefined,
+      date_to: dt || undefined,
+      page: statusFilter ? 1 : page.value,
+      page_size: statusFilter ? 200 : pageSize.value,
     })
     const data = res?.data || {}
     rows.value = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : []
@@ -638,33 +713,8 @@ async function saveDetail() {
   }
 }
 
-// 行内「删除」入口：单行确认后删除。与批量删除共用同一后端接口，
-// 但必须先确认（操作列按钮误点代价高）。
-async function requestDelete(row: any) {
-  const label = String(row?.file_name || row?.data?.['车牌号'] || row?.data?.['证照类型'] || '该记录')
-  const ok = await new Promise<boolean>((resolve) => {
-    // MessagePlugin 只有消息能力，确认框要用 DialogPlugin（TDesign 官方 API）。
-    const dlg = DialogPlugin.confirm({
-      theme: 'warning',
-      header: '确认删除',
-      body: `确定删除「${label}」吗？删除后不可恢复。`,
-      confirmBtn: { content: '删除', theme: 'danger' },
-      onConfirm: () => { resolve(true); dlg.destroy() },
-      onCancel: () => { resolve(false); dlg.destroy() },
-      onClose: () => { resolve(false); dlg.destroy() },
-    })
-  })
-  if (!ok) return
-  try {
-    if (row.__file) await delKnowledgeDetails(row.id)
-    else await deleteFleetRecord(row.id)
-    MessagePlugin.success('已删除')
-    await reloadList()
-    await reloadStats()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || '删除失败')
-  }
-}
+// 行内操作列已移除（第 31 轮：对齐发票管理，没有右侧冻结列）。
+// 单条删除走「点行 → 详情抽屉 → 删除」，多条走批量浮条 handleDelete。
 
 async function onDetailDelete() {
   const row = detailRow.value
@@ -989,8 +1039,26 @@ async function bootstrap() {
 
 watch(() => props.recordType, () => { void bootstrap() })
 
+// 稀疏态：仅当数据行未填满容器时才启用「伪填充行」把合计行顶到底部。
+// 必须实测：直接无条件给 tbody 加 height:100% 的伪行，在数据满页时
+// 会额外撑出一整屏空白（表格高度 100% × 伪行 100%）。
+const sparseTable = ref(false)
+const tableBoxRef = ref<HTMLElement | null>(null)
+function measureSparse() {
+  const box = tableBoxRef.value?.querySelector('.t-table__content') as HTMLElement | null
+  const body = tableBoxRef.value?.querySelector('.t-table__body') as HTMLElement | null
+  if (!box || !body) { sparseTable.value = false; return }
+  // 预留合计行自身高度（约 40px），否则临界情况会误判成稀疏
+  sparseTable.value = body.scrollHeight + 40 < box.clientHeight
+}
+// 位置很关键：watch 的数组 source 在**注册时**就会读取一次（触发 computed 求值），
+// pagedRows → gatedRows → pendingFiles 里 pendingFiles 定义在文件后段，
+// 因此这段必须放在所有依赖之后，否则 setup 直接 TDZ 白屏。
+watch([pagedRows, tableLoading], () => { nextTick(measureSparse) })
+
 onMounted(() => {
   void bootstrap()
+  nextTick(measureSparse)
   window.addEventListener('fleet-categories-changed', onCatChanged)
 })
 onBeforeUnmount(() => {
@@ -1004,6 +1072,14 @@ function onCatChanged() {
 </script>
 
 <style lang="less" scoped>
+/* 中台列表样式（第 31 轮补）：
+   发票 / 合同 / 制度 / 奖惩 / 能耗 / 计量 / 账单 8 个页面都 import 了这份 CSS，
+   唯独车队页漏了 —— 结果 .doc-list-scroll 没有 flex 与卡片边框、.t-table 没有
+   height:100%，合计行只能贴着内容悬在半空（真机图 3/4/5）。
+   这里补上后高度链路才完整：.biz-page(100%) → .biz-list-view(flex:1) →
+   .doc-list-scroll(flex:1 + overflow:hidden) → .t-table(height:100%)。 */
+@import './styles/business-list-shared.css';
+
 /* 三段式纵向排布：卡片组 / 工具栏 / 列表各组件自带样式，这里只保证间距与滚动 */
 .fleet-page {
   display: flex;
@@ -1014,6 +1090,45 @@ function onCatChanged() {
 }
 .overview-group { flex: 0 0 auto; }
 .biz-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.doc-list-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+/* 合计行贴底（第 31 轮）：
+   TDsign 把 tfoot 渲染在滚动容器内部（.t-table__content，position:sticky），
+   容器高度只有「表头 + 数据行」，所以只有 1 行数据时合计条悬在半空。
+   这里把滚动容器改成 flex column、让合计行用 margin-top:auto 顶到底部，
+   数据多时仍随内容滚动（sticky 保留），数据少时贴容器底。 */
+.fleet-page :deep(.t-table) {
+  display: flex;
+  flex-direction: column;
+}
+.fleet-page :deep(.t-table__content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+/* 表格撑满滚动容器 + 伪填充行。
+   tfoot 是 <table> 的子元素，只能随表格下沉；直接给 table 设 height:100%
+   会把**数据行本身**拉高（实测 1 行被拉到 477px，行内会出现诡异空档）。
+   正确做法是让 tbody 末尾长出一条空的 table-row 吃掉剩余高度，
+   数据行保持 39px 原高，合计行自然贴到容器底。 */
+.fleet-page :deep(.t-table__content > table) {
+  flex: 1;
+}
+.fleet-page :deep(.fleet-table--sparse .t-table__content > table) {
+  height: 100%;
+}
+.fleet-page :deep(.fleet-table--sparse .t-table__body)::after {
+  content: '';
+  display: table-row;
+  height: 100%;
+}
+.fleet-page :deep(.t-table__footer) {
+  margin-top: auto;
+}
+
+/* 注意：这里**不要**覆盖 .doc-list-scroll。
+   中台 business-list-shared.css 已把它定义成 flex 容器 + overflow:hidden + 卡片边框，
+   表格靠 .t-table{height:100%} 撑满、合计行才能贴容器底。
+   早期这里写过 `overflow-y:auto`，结果表格退化成内容高度 → 合计行悬在半空，
+   而且卡片的圆角/边框也一起丢了（真机图 3/4/5 的红框就是这么来的）。 */
 .fleet-pager { display: flex; justify-content: flex-end; padding: 8px 0 4px; }
 </style>

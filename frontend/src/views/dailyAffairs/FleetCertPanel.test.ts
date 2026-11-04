@@ -319,3 +319,19 @@ test('费用清单大类汇总字段（fee_group + members）严格往返', () =
   assert.equal(parsed.source?.mode, 'fee_group')
   assert.deepEqual(parsed.source?.members, raw[0].source.members)
 })
+
+test('toSubsPayload：列宽 60~600 持久化，0=自适应，越界夹紧（第 31 轮）', () => {
+  const mk = (name: string, width: any): EditableField => ({
+    name, enabled: true, isDefault: true, dataType: 'text', width,
+  })
+  const out = toSubsPayload([
+    mk('许可证号', 180),   // 正常固定宽
+    mk('业户名称', 0),     // 自适应
+    mk('经营地址', 9999),  // 超上限 → 夹到 600
+    mk('备注', 30),        // 低于下限 → 保持原值（由输入框 min 兜底，不静默放大）
+  ])
+  assert.equal(out[0].width, 180)
+  assert.equal(out[1].width, 0)
+  assert.equal(out[2].width, 600)
+  assert.equal(out[3].width, 30)
+})

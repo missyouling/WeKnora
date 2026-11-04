@@ -452,3 +452,118 @@ export function fleetEmptyState(isArchive: boolean): { description: string; hint
     hint: isArchive ? '上传文件后自动提取归档' : '点击右上角新增记录',
   }
 }
+
+// ---------------------------------------------------------------------------
+// 证照状态三态（第 31 轮）
+//
+// 口径（需求原文）：剩余天数 > 30 → 生效中（绿）；0 ≤ 剩余 ≤ 30 → 即将到期（橙）；
+// 剩余 < 0 → 已过期（红）；长期/永久/长期有效 → 生效中。
+//
+// 必须是**派生值**而不是可编辑字段：用户手填「已过期」永远不会随日期变化，
+// 一年后整张表都是错的。抽屉里该字段只读展示，随「有效期止」实时联动。
+// ---------------------------------------------------------------------------
+
+/** 截止日期字段候选链（不同证照类型叫法不同）。 */
+export const CERT_STATUS_FIELDS = [
+  '有效期止', '有效期至', '保险止期', '检验有效期止', '质保期止',
+  '截止日期', '到期日期', '有效期结束', '保险止期至',
+] as const
+
+/** 长期有效的常见写法（不受日期约束，直接算生效中）。 */
+const LONG_TERM_HINTS = ['长期', '永久', '无固定期限', '长期有效', ' indefinite']
+
+export interface CertStatus {
+  /** '' 表示无可用日期（不渲染标签） */
+  key: '' | 'active' | 'expiring' | 'expired'
+  label: string
+  theme: '' | 'success' | 'warning' | 'danger'
+}
+
+const EMPTY_STATUS: CertStatus = { key: '', label: '', theme: '' }
+
+/** 解析为 UTC 日期零点；无法解析返回 null。 */
+function parseDateOnly(raw: unknown): Date | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  // 统一分隔符：2027/01/01 → 2027-01-01；带时间戳只取日期段
+  const norm = s.replace(/\//g, '-').replace(/[T\s].*$/, '')
+  const m = norm.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null
+  const dt = new Date(Date.UTC(y, mo - 1, d))
+  // 反向校验，挡住 2027-02-31 这类溢出日期
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null
+  return dt
+}
+
+function isLongTerm(raw: unknown): boolean {
+  const s = String(raw ?? '').trim()
+  if (!s) return false
+  const lower = s.toLowerCase()
+  return LONG_TERM_HINTS.some((h) => lower.includes(h.trim()))
+}
+
+/**
+ * 由记录 data 推导证照状态。
+ *
+ * 多字段同时存在时取**最早**的截止日期：一份证照既有长期有效期又有已过期保险，
+ * 真实风险是保险过期，不能因为长期字段就显示生效中。
+ */
+export function certStatusOf(data: Record<string, any> | undefined, today: string): CertStatus {
+  const d = data || {}
+  const todayDate = parseDateOnly(today)
+  if (!todayDate) return EMPTY_STATUS
+
+  let earliest: Date | null = null
+  let sawLongTerm = false
+  for (const key of CERT_STATUS_FIELDS) {
+    const raw = d[key]
+    if (raw === undefined || raw === null || String(raw).trim() === '') continue
+    if (isLongTerm(raw)) { sawLongTerm = true; continue }
+    const dt = parseDateOnly(raw)
+    if (!dt) continue
+    if (!earliest || dt.getTime() < earliest.getTime()) earliest = dt
+  }
+
+  if (earliest) {
+    const days = Math.round((earliest.getTime() - todayDate.getTime()) / 86400000)
+    if (days < 0) return { key: 'expired', label: '已过期', theme: 'danger' }
+    if (days <= 30) return { key: 'expiring', label: '即将到期', theme: 'warning' }
+    return { key: 'active', label: '生效中', theme: 'success' }
+  }
+  if (sawLongTerm) return { key: 'active', label: '生效中', theme: 'success' }
+  return EMPTY_STATUS
+}
+
+/** 证照状态 → 筛选下拉选项（与列表 Tag 文案同源）。 */
+export function certStatusOptions(): Array<{ label: string; value: string }> {
+  return [
+    { label: '生效中', value: 'active' },
+    { label: '即将到期', value: 'expiring' },
+    { label: '已过期', value: 'expired' },
+  ]
+}
+
+/**
+ * 字段列宽归一：0/空 = 自适应（沿用 columnWidth.ts 兜底），其余夹到 60~600。
+ *
+ * 与后端 subs[].width 同一语义；越界值（用户误输 9999）在这里夹住，
+ * 避免单列把整张表撑爆导致横向滚动条永远存在。
+ */
+export function normalizeFieldWidth(v: unknown): number {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.min(600, Math.max(60, Math.round(n)))
+}
+
+/** 提取状态（归档类）：记录能落库即代表提取成功。 */
+export function extractStatusOf(row: any): { label: string; theme: 'success' | 'default' } {
+  const hasData = !!(row && row.data && Object.keys(row.data).length > 0)
+  const hasKid = !!(row && (row.doc_knowledge_id || row.docKnowledgeId))
+  return hasData || hasKid
+    ? { label: '提取成功', theme: 'success' }
+    : { label: '未提取', theme: 'default' }
+}

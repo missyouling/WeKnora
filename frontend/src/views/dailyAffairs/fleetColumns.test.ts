@@ -9,6 +9,8 @@ import {
   buildFleetSummaryViewColumns,
   amountFromForm,
   resolveDefaultCategoryName,
+  certStatusOf,
+  normalizeFieldWidth,
   buildFleetKpiCards,
   fleetEmptyState,
   dataTypeOfSub,
@@ -280,4 +282,59 @@ test('buildFleetKpiCards：手工录入类无历史卡，且第1张卡为纯统�
 test('fleetEmptyState：主文案统一「暂无数据」，副文案按录入模式区分', () => {
   assert.deepEqual(fleetEmptyState(true), { description: '暂无数据', hint: '上传文件后自动提取归档' })
   assert.deepEqual(fleetEmptyState(false), { description: '暂无数据', hint: '点击右上角新增记录' })
+})
+
+// ---------------------------------------------------------------------------
+// 证照状态三态 / 提取状态 / 列宽（第 31 轮）
+// ---------------------------------------------------------------------------
+
+test('certStatusOf：>30 天生效中，0~30 天即将到期，<0 天已过期，无日期为空', () => {
+  const today = '2026-11-04'
+  // 剩余 366 天 → 生效中
+  assert.deepEqual(certStatusOf({ 有效期止: '2027-11-05' }, today), {
+    key: 'active', label: '生效中', theme: 'success',
+  })
+  // 剩余 31 天 → 生效中（边界外侧）
+  assert.equal(certStatusOf({ 有效期止: '2026-12-05' }, today).key, 'active')
+  // 剩余 30 天 → 即将到期（边界）
+  assert.equal(certStatusOf({ 有效期止: '2026-12-04' }, today).key, 'expiring')
+  // 今天到期 → 即将到期（剩余 0 天）
+  assert.equal(certStatusOf({ 有效期止: '2026-11-04' }, today).key, 'expiring')
+  // 昨天到期 → 已过期
+  assert.equal(certStatusOf({ 有效期止: '2026-11-03' }, today).key, 'expired')
+  // 无任何截止日期字段 → 空状态
+  assert.deepEqual(certStatusOf({}, today), { key: '', label: '', theme: '' })
+})
+
+test('certStatusOf：按优先级命中不同截止字段（保险止期/检验有效期止/质保期止）', () => {
+  const today = '2026-11-04'
+  assert.equal(certStatusOf({ 保险止期: '2027-01-01' }, today).key, 'active')
+  assert.equal(certStatusOf({ 检验有效期止: '2026-11-10' }, today).key, 'expiring')
+  assert.equal(certStatusOf({ 质保期止: '2026-01-01' }, today).key, 'expired')
+  // 多个字段时取「最早到期」的那个，避免一个过期一个长期就误判为生效中
+  assert.equal(certStatusOf({ 有效期止: '2030-01-01', 保险止期: '2026-01-01' }, today).key, 'expired')
+})
+
+test('certStatusOf：日期里的时间戳/斜杠格式能被解析', () => {
+  const today = '2026-11-04'
+  assert.equal(certStatusOf({ 有效期止: '2027-01-01T00:00:00Z' }, today).key, 'active')
+  assert.equal(certStatusOf({ 有效期止: '2027/01/01' }, today).key, 'active')
+  // 无法识别的日期按「没填」处理（长期/永久在下一个用例里单独覆盖）
+  assert.equal(certStatusOf({ 有效期止: '待定' }, today).key, '')
+})
+
+test('certStatusOf：长期有效按生效中处理（需求：剩余天数>30 或长期有效）', () => {
+  assert.equal(certStatusOf({ 有效期止: '长期' }, '2026-11-04').key, 'active')
+  assert.equal(certStatusOf({ 有效期止: '长期有效' }, '2026-11-04').key, 'active')
+  assert.equal(certStatusOf({ 有效期止: '永久' }, '2026-11-04').key, 'active')
+})
+
+test('normalizeFieldWidth：0/空=自适应，其余夹到 60~600', () => {
+  assert.equal(normalizeFieldWidth(0), 0)
+  assert.equal(normalizeFieldWidth(undefined), 0)
+  assert.equal(normalizeFieldWidth(''), 0)
+  assert.equal(normalizeFieldWidth(120), 120)
+  assert.equal(normalizeFieldWidth(59), 60)
+  assert.equal(normalizeFieldWidth(601), 600)
+  assert.equal(normalizeFieldWidth('180'), 180)
 })

@@ -980,8 +980,12 @@ onUnmounted(() => {
       </t-button>
     </div>
 
-    <!-- Unsupported -->
-    <div v-else-if="previewType === 'unsupported'" class="preview-unsupported">
+    <!-- Unsupported
+         [upstream-touch] 加载期间不得渲染本分支：loading 是 overlay（与下方 v-else-if
+         链并存），而 previewType 初值就是 'unsupported'，两者同时渲染会让
+         「正在加载文档预览」的转圈盖在「该文件类型暂不支持在线预览」空态上，
+         背景脏成两层（真机图 2）。只加一个加载期守卫，其余行为不变。 -->
+    <div v-else-if="previewType === 'unsupported' && !loading && !iframePending" class="preview-unsupported">
       <t-icon name="file-unknown" size="48px" />
       <p>{{ $t('preview.unsupported') }}</p>
       <p class="unsupported-hint">{{ $t('preview.unsupportedHint') }}</p>

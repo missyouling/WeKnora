@@ -124,7 +124,9 @@ export interface SubPayload {
 
 const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
 const MAX_SUB_FIELDS = 64
-const MAX_WIDTH = 400
+// 列宽上限（第 31 轮从 400 放宽到 600）：长文本字段（经营地址/经营范围）需要更宽，
+// 与设置面板输入框 max 保持一致，避免「界面能填 600、保存却被悄悄截成 400」。
+const MAX_WIDTH = 600
 
 // ---- 明细子项去重（同义键 / 同列头）----
 //
