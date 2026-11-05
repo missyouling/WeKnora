@@ -378,6 +378,15 @@ export interface TenantStatementCtx {
   gasRows: readonly any[]
   /** 某行 → 分摊比例 */
   ratioOf: (row: any) => number
+  /**
+   * 某月某单位的**工业分表抄见合计**（不含宿舍/公共表）。
+   *
+   * 用于「本期总电量」卡片的「工业 + 差额 + 宿舍」三段式：
+   * 差额 = 该租户工业总电量（含星达侧差额分摊）− 工业分表抄见合计。
+   * 持睿汽车 2026-10：分表合计 166,550，工业总电量 172,400 → 差额 5,850。
+   * 可选：单测/其他调用方不传时退化为「工业 + 宿舍」两段。
+   */
+  subMeterKwhOf?: (month: string, unit: string) => number
   /** 该单位本次打印是否并入气费（由 gasApplicableOf 判定） */
   includeGas: boolean
   /** 构造分项解析上下文（sourceCtxOf 的等价物） */
@@ -391,12 +400,17 @@ export interface TenantStatementCtx {
  * 全厂数字 —— 真机：持睿汽车的 PDF 概览写着「本期总电量 596168 / 本期电费合计
  * 433433.07」，那是星达整张市电账单，租户拿到的单据上不是自己的数。
  *
- * 租户口径按「工业 + 宿舍」两段拆分，两段之和即该租户当期应收：
- *   电量 = 分表总电量（含差额分摊）+ 宿舍电表用电量
+ * 租户口径按「工业 + 差额 + 宿舍」三段拆分，三段之和即该租户当期应收：
+ *   电量 = 工业分表抄见 + 差额（星达工业总量 − 工业分表抄见）+ 宿舍电表用电量
  *   电费 = 分摊后工业电费 + 宿舍电费
  *   水量 = 分表水表用水量 + 宿舍水表用水量；水费同理。
+ *
+ * 为什么电量要拆出「差额」：租户的工业电量取的是星达侧工业总量（172,400），
+ * 而三个工业分表只抄到 166,550，中间 5,850 是线路损耗/公摊等无法分表计量的部分。
+ * 只写「工业 + 宿舍」会让用户算不平（166,550 + 686 ≠ 173,086），
+ * 明细一摊开就露馅。
  */
-function statementKpis(ctx: TenantStatementCtx, rows: any[]): Array<{ label: string; value: string; hint?: string }> {
+function statementKpis(ctx: TenantStatementCtx, rows: any[], unit = ''): Array<{ label: string; value: string; hint?: string }> {
   const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
   if (ctx.ownerView) {
     return [
@@ -414,8 +428,18 @@ function statementKpis(ctx: TenantStatementCtx, rows: any[]): Array<{ label: str
   const wDormU = sum('water_dorm_usage')
   const wIndF = sum('water_ind_fee')
   const wDormF = sum('water_dorm_fee') + sum('water_fire_fee')
+  // 工业电量拆成「分表抄见 + 差额」：差额可正可负（分表合计可能超过总量）
+  const months = Array.from(new Set(rows.map((r: any) => String(r.month || '')).filter(Boolean)))
+  const subMeter = ctx.subMeterKwhOf && months.length
+    ? months.reduce((s, m) => s + (Number(ctx.subMeterKwhOf!(m, unit)) || 0), 0)
+    : 0
+  const diff = round2(indKwh - subMeter)
+  const hasSplit = subMeter > 0
+  const elecHint = hasSplit
+    ? `工业 ${num2(subMeter)} + 差额 ${num2(diff)} + 宿舍 ${num2(dormKwh)}`
+    : `工业 ${num2(indKwh)} + 宿舍 ${num2(dormKwh)}`
   return [
-    { label: '本期总电量', value: `${num2(indKwh + dormKwh)} 度`, hint: `工业 ${num2(indKwh)} + 宿舍 ${num2(dormKwh)}` },
+    { label: '本期总电量', value: `${num2(indKwh + dormKwh)} 度`, hint: elecHint },
     { label: '本期总电费', value: `${money2(indFee + dormFee)} 元`, hint: `工业 ${money2(indFee)} + 宿舍 ${money2(dormFee)}` },
     { label: '本期用水量', value: `${num2(wIndU + wDormU)} 吨`, hint: `分表 ${num2(wIndU)} + 宿舍 ${num2(wDormU)}` },
     { label: '本期总水费', value: `${money2(wIndF + wDormF)} 元`, hint: `分表 ${money2(wIndF)} + 宿舍 ${money2(wDormF)}` },
@@ -764,7 +788,7 @@ export function buildTenantBillingStatementDoc(ctx: TenantStatementCtx, rows: an
     subtitle: `${months.join('、')} · 使用单位 ${unit} · ${ctx.ownerView ? '业主全厂口径' : '租户分摊口径'}`,
     overviewTitle: '一、账单概览',
     meta: statementMeta(ctx, rows, unit, months, ratio, includeGas),
-    kpis: statementKpis(ctx, rows),
+    kpis: statementKpis(ctx, rows, unit),
     tables,
     footerNote: ctx.ownerView || ratio > 0
       ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -311,6 +312,11 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 		var items []types.UtilityMeterItem
 		if err := h.db.WithContext(ctx).Where("record_id = ?", records[i].ID).
 			Order("created_at ASC").Find(&items).Error; err == nil {
+			// 分时电表（meter_type=time）只录了四段示数，start_reading/end_reading
+			// 恒为 0。费用清单「电费核算明细」直接读这两列，于是工业分表的
+			// 「起度 / 止度」全显示 0（宿舍表是普通表，正常）。
+			// 这里在**读取时**按四段求和补齐，历史记录无需迁移即可正确展示。
+			service.NormalizeTimedMeterReadings(items, nil)
 			records[i].Items = items
 		}
 	}

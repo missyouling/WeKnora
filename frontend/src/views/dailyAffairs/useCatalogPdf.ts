@@ -496,12 +496,26 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
         })
         text(surface, k.label, x + 8, surface.y - 12, 8, C_MUTED)
         if (k.hint) {
-          // 构成说明按卡片宽度截断，宁可少写几个字也不能压到右侧数值
-          let hint = k.hint
+          // 构成说明**完整展示**，不截断。
+          //
+          // 第 36 轮：三段式「工业 166550 + 差额 5850 + 宿舍 686」比原来的
+          // 两段式长，7pt 下宽约 127pt、超过卡片可用宽 109pt，旧实现按字符
+          // 截断成「工业 166550 + 差额 5850 + …」—— 用户看不到「宿舍 686」，
+          // 三项加起来也没法核对是否等于下方大字值。
+          // 改为**自适应字号**：7 → 6.5 → 6 → 5.5，逐级缩到能放下为止。
+          // 5.5pt 仍放不下（极端长文案）才退回截断，保证不压到右侧数值。
           const maxW = cardW - 16
-          while (hint.length > 1 && font.widthOfTextAtSize(hint, 7) > maxW) hint = hint.slice(0, -1)
-          if (hint !== k.hint) hint = `${hint.slice(0, -1)}…`
-          text(surface, hint, x + 8, surface.y - 23, 7, C_MUTED)
+          let hint = k.hint
+          let hintSize = 7
+          for (const s of [7, 6.5, 6, 5.5]) {
+            hintSize = s
+            if (font.widthOfTextAtSize(hint, s) <= maxW) break
+          }
+          if (font.widthOfTextAtSize(hint, hintSize) > maxW) {
+            while (hint.length > 1 && font.widthOfTextAtSize(hint, hintSize) > maxW) hint = hint.slice(0, -1)
+            hint = `${hint.slice(0, -1)}…`
+          }
+          text(surface, hint, x + 8, surface.y - 23, hintSize, C_MUTED)
         }
         const vSize = 11.5
         const vw = font.widthOfTextAtSize(k.value, vSize)

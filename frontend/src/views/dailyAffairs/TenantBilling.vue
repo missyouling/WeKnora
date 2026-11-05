@@ -1728,6 +1728,29 @@ function ratioForRow(row: any): number {
  * 键里再带上行值与月份，避免「行对象换了但 id 没变」时分到旧字节。
  */
 /**
+ * 某月某单位的**工业分表抄见合计**（不含宿舍表 / 公共表）。
+ *
+ * 用途：「本期总电量」卡片要展示「工业 X + 差额 Y + 宿舍 Z」三段。
+ * 其中 X 是真正抄到的分表度数，Y 是工业总电量与分表合计之间的差
+ * （线路损耗 / 公摊等无法分表计量的部分）。
+ *
+ * 持睿汽车 2026-10：三个工业分表 89,400 + 57,150 + 20,000 = 166,550，
+ * 工业总电量 172,400 → 差额 5,850；三段之和 166,550 + 5,850 + 686 = 173,086
+ * 正好等于卡片大字值。
+ */
+const subMeterKwhOf = (month: string, unit: string): number => {
+  let usage = 0
+  for (const r of elecRows.value) {
+    if (r.month !== month) continue
+    if (String(r.use_unit || '').trim() !== unit) continue
+    // 只算工业表：宿舍(dorm)与公共(public)不是工业分表
+    if (['dorm', 'public'].includes(String(r.meter_kind || ''))) continue
+    usage += Number(r.usage) || 0
+  }
+  return Math.round(usage * 100) / 100
+}
+
+/**
  * 打印清单的取数上下文。
  *
  * 构造器已外移到 `energyBillStatements.buildTenantBillingStatementDoc`（与市电/光伏
@@ -1745,6 +1768,9 @@ function statementCtx(unit: string, months: string[]): TenantStatementCtx {
     waterReadingMap: waterReadingMap.value,
     gasRows: gasRows.value,
     ratioOf: (row: any) => ratioForRow(row),
+    // 工业分表抄见合计（不含宿舍/公共表）：用于「本期总电量」卡片的
+    // 「工业 + 差额 + 宿舍」三段式。差额 = 工业总电量 − 该合计。
+    subMeterKwhOf: (month: string, unitName: string) => subMeterKwhOf(month, unitName),
     // 气费是否适用：整份清单统一判定（同一单位、同一批月份），逐行判会让
     // 「多月份打印」里某几页有气费行、某几页没有。
     includeGas: gasApplicableOf(gasRows.value, activeColDefs.value.map((c) => c.key), unit, months),

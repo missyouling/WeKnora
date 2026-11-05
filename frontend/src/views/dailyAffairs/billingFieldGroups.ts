@@ -494,6 +494,15 @@ export const TENANT_FEE_GROUPS: readonly FeeGroupSpec[] = [
     match: (c) => c.startsWith('(4)') && c.includes('系统运行'),
   },
   {
+    name: 'grp_trans',
+    label: '零售输配电费',
+    category: '(3)输配电量电费',
+    tip: '(3)输配电量电费 下属四段明细（零售输配电费 尖峰 / 峰 / 平 / 谷）',
+    // 第 36 轮补：原来只有市场化/系统运行/政府基金三大类，零售输配没有汇总列，
+    // 于是这一列没有圆形 +/− 徽标、四段子列也就无法展开。
+    match: (c) => c.startsWith('(3)') && c.includes('输配'),
+  },
+  {
     name: 'grp_gov',
     label: '政府性基金及附加',
     category: '(6)政府性基金及附加-工商业',

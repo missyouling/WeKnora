@@ -311,6 +311,8 @@ test('feeGroupSpecOfCategory：只认工商业基金，居民基金不归入', (
   assert.equal(feeGroupSpecOfCategory('(1)市场化购电费')?.name, 'grp_market')
   assert.equal(feeGroupSpecOfCategory('(4)系统运行费')?.name, 'grp_system')
   assert.equal(feeGroupSpecOfCategory('(6)政府性基金及附加-工商业')?.name, 'grp_gov')
+  // 第 36 轮：零售输配电费必须有汇总列，否则列表里这一列没有圆形 +/− 徽标
+  assert.equal(feeGroupSpecOfCategory('(3)输配电量电费')?.name, 'grp_trans')
   // 居民同名基金是另一套账，绝不能折叠进工商业汇总列
   assert.equal(feeGroupSpecOfCategory('(6)政府性基金及附加-居民'), null)
   assert.equal(feeGroupSpecOfCategory('基本电费'), null)
@@ -405,17 +407,19 @@ test('mergeFeeGroupFields：成员全被关掉时撤掉大类列（不留恒 0 �
   assert.equal(out.some((f) => f.name === 'grp_market'), false)
 })
 
-test('buildTenantGroupFields：租户分组默认带出三个大类汇总列', () => {
+test('buildTenantGroupFields：租户分组默认带出四个大类汇总列', () => {
   const items = [
     { item_key: '(1)市场化购电费|零售交易电费', item_name: '零售交易电费', field_enabled: true },
     { item_key: '(4)系统运行费|煤电容量电费', item_name: '煤电容量电费', field_enabled: true },
     { item_key: '(6)政府性基金及附加-工商业|农网还贷', item_name: '农网还贷', field_enabled: true },
     { item_key: '(2)上网环节线损费用|上网环节线损费用', item_name: '上网环节线损费用', field_enabled: true },
+    // 零售输配电费：第 36 轮补成第 4 个大类（原来没有汇总列 → 没有 +/− 徽标）
+    { item_key: '(3)输配电量电费|零售输配电费', item_name: '零售输配电费', field_enabled: true },
   ]
   const fields = buildTenantGroupFields({ id: 't1', name: '持睿汽车' }, items)
   const names = fields.map((f) => f.name)
   for (const g of TENANT_FEE_GROUPS) assert.ok(names.includes(g.name), `缺少大类 ${g.name}`)
-  // 上网线损不属于三大类，仍然独立成列
+  // 上网线损不属于四大类，仍然独立成列
   assert.ok(names.includes('item_(2)上网环节线损费用|上网环节线损费用'))
   // 合计应付仍在最后
   assert.deepEqual(names.slice(-2), [TENANT_ELEC_TOTAL_FIELD, TENANT_WATER_TOTAL_FIELD])

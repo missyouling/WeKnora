@@ -2393,6 +2393,12 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.BackfillUtilityBillDetails(ctx); err != nil {
 		logger.Warnf(ctx, "backfill utility bill details failed: %v", err)
 	}
+	// 分时电表（工业分表 1~3）的起度/止度回填：
+	// 录入时只填四段示数，start_reading/end_reading 恒为 0，费用清单的
+	// 「电费核算明细」于是把工业分表起止度显示成 0（幂等）。
+	if _, err := uh.BackfillTimedMeterReadings(ctx); err != nil {
+		logger.Warnf(ctx, "backfill timed meter readings failed: %v", err)
+	}
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

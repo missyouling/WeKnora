@@ -197,3 +197,22 @@ test('复用单个 PDFWorker：第二次打开预览不再重启线程', () => {
   assert.match(viewer, /getDocument\(worker \? \{ data: new Uint8Array\(data\.slice\(0\)\), worker \}/,
     'worker 必须显式传入，才能跨文档复用')
 })
+
+// ---------------------------------------------------------------------------
+// 第 36 轮：三段式 hint 必须完整展示，不能按字符截断
+// ---------------------------------------------------------------------------
+//
+// 「工业 166550 + 差额 5850 + 宿舍 686」比两段式长，7pt 下超出卡片宽度。
+// 旧实现 `while (宽 > maxW) hint = hint.slice(0,-1)` 把它截成
+// 「工业 166550 + 差额 5850 + …」—— 沙发那一段和宿舍数都看不见，
+// 三项之和也没法与下方大字值核对（需求明确要求三数相加严格等于大字值）。
+
+test('PDF 概览卡片：hint 用自适应字号完整展示，禁止固定 7pt 按字符截断', () => {
+  const pdf = read('useCatalogPdf.ts')
+  const seg = pdf.slice(pdf.indexOf('if (k.hint) {'), pdf.indexOf('const vSize = 11.5'))
+  assert.match(seg, /6\.5|6, 5\.5|自适应字号|完整展示/, '必须有降字号逻辑（而非只按字符切）')
+  // 不能再出现「固定 7pt 边切边比」的旧写法
+  assert.ok(!/font\.widthOfTextAtSize\(hint, 7\) > maxW\) hint = hint\.slice/.test(seg),
+    '固定 7pt 按字符截断会把三段式截成「…」')
+  assert.match(seg, /hintSize/, '绘制时必须用自适应后的字号，不能恒为 7')
+})
