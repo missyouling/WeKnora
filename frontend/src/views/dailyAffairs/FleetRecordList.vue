@@ -70,7 +70,12 @@
 
       <!-- ③ 列表：与发票管理逐字同构（.doc-list-view + :max-height="100%" + sticky-header） -->
       <div class="doc-list-scroll">
-        <div :class="listViewClass" :style="headerFixStyle">
+        <!-- 表头就绪前只渲染占位块：宁可空着，也不能先用「复选框 + 状态列」
+             渲染一帧再蹦业务列（需求 4：第 1 帧必须一次性出现全部列）。 -->
+        <div v-if="!headerReady" class="doc-list-view">
+          <div class="fleet-empty-placeholder" />
+        </div>
+        <div v-else :class="listViewClass" :style="headerFixStyle">
           <t-table :data="pagedRows" :columns="tableColumns" row-key="id" size="small"
             :hover="true" :loading="tableLoading" :max-height="tableMaxHeight"
             :foot-data="tableFootData"
@@ -203,6 +208,9 @@ import { useTableHeaderFix } from './useTableHeaderFix'
 import { buildFootRow, footSpanOf, summaryScopeRows } from './listSummary'
 import './styles/list-summary-footer.css'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
+import {
+  fleetHistoryFilesOf, fleetRunningCountOf, isFleetFileRunning,
+} from './fleetHistoryStats'
 import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
@@ -350,6 +358,9 @@ const kpiCards = computed(() => buildFleetKpiCards({
   singleCategory: meta.value.singleCategory || '',
   parseFailed: Number(overviewStats.value?.parse_failed || 0),
   extractFailed: Number(overviewStats.value?.extract_failed || 0),
+  // 「历史记录」必须等于抽屉「全部文件」，副文案跟随在途/异常
+  historyCount: historyFileCount.value,
+  running: runningCount.value,
 }))
 
 function onKpiCardClick(card: any) {
@@ -550,6 +561,7 @@ function resetColumns() {
   persistColumns()
 }
 function selectAllColumns() { visibleColKeys.value = columnDefs.value.map((c) => c.key); persistColumns() }
+
 function onColumnsChange(keys: string[]) { visibleColKeys.value = keys; persistColumns() }
 
 function initColumns() {
@@ -581,6 +593,18 @@ function initColumns() {
   }
   resetColumns()
 }
+
+/**
+ * 表头就绪：有业务字段才渲染表格（第 39 轮，需求 4）。
+ *
+ * 真机现象：进入车队先出现复选框 + 两个状态列，随后业务列「依次蹦出来」。
+ * 根因是异步分类没回来前 `activeSubs` 为空，`columnDefs` 也跟着空，
+ * TDesign 就先用「只剩内置列」的表头渲染了一帧。
+ *
+ * 现在：没有业务字段就**不渲染表头**（显示占位块），有就一次性全出 ——
+ * 标准分类由同步种子兜底（第 1 帧即完整），自定义分类等分类接口回来一次成型。
+ */
+const headerReady = computed(() => columnDefs.value.length > 0)
 
 // setup 阶段先算一次列显隐：`columnDefs` 已由同步种子得出，
 // 不先算的话首帧 `visibleCols` 为空 → 表头只有复选框与序号（真机图 1/2/3）。
@@ -769,8 +793,15 @@ function onPageSizeChange(size: any) {
 // 档案类的文件列表已不再参与列表渲染（第 29 轮：列表统一读 fleet_records，
 // 与 KPI 卡片同源）。原 ensureFileRows / fileRows 已删除，避免「两套数据源」
 // 再次导致「卡片 N 份、列表 M 条」的口径错位。历史记录抽屉仍读知识库文件表。
-// rawFileRows 保留：loadPending（在途门禁）需要原始文件列表判断解析/提取状态。
-const rawFileRows = ref<any[]>([])
+// 车队知识库的**全量文件快照**（第 39 轮）。
+//
+// 它是三处数字的唯一来源：
+//   · 「历史记录」卡片的份数  == 抽屉「全部文件」；
+//   · 状态条「正在解析/提取 N 个文件」；
+//   · 在途门禁（在途文件对应的记录不进列表）。
+// 旧实现只取第一页 100 条、还按文件元数据里的 scope 过滤，历史文件缺 scope
+// 时被整批丢掉 —— 于是抽屉里 13 份、卡片 2 份、状态条永远不出现。
+const fleetFiles = ref<any[]>([])
 
 // docTypeOptions 已随「证照类型」下拉一并移除（第 30 轮工具栏极简）
 const currentDocTypes = computed(() => new Set(menuCategories.value.map((c: any) => c.name)))
@@ -1026,7 +1057,20 @@ function closePrint() {
 // ---------------------------------------------------------------------------
 // 上传进度 / 轮询（档案类）
 // ---------------------------------------------------------------------------
-const pendingFiles = ref<any[]>([])
+/**
+ * 本菜单的上传文件（抽屉「全部文件」同源）。
+ *
+ * 只按**证照类型**归属菜单，不再要求文件元数据里带 scope ——
+ * 历史文件（早期版本上传）没有 scope 字段，按 scope 过滤会让它们从卡片与
+ * 状态条里整批消失（真机：抽屉 13 份、卡片 2 份、状态条不出现）。
+ */
+const historyFileRows = computed(() => fleetHistoryFilesOf(fleetFiles.value, currentDocTypes.value))
+/** 「历史记录」卡片数字 = 抽屉「全部文件」。 */
+const historyFileCount = computed(() => historyFileRows.value.length)
+/** 正在解析/提取的文件数（状态条/卡片副文案）。 */
+const runningCount = computed(() => fleetRunningCountOf(historyFileRows.value))
+/** 在途文件（门禁 + 状态条）。 */
+const pendingFiles = computed(() => historyFileRows.value.filter(isFleetFileRunning))
 const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
 const progressIndex = ref(0)
 let progressTimer: ReturnType<typeof setInterval> | null = null
@@ -1078,37 +1122,38 @@ async function extractFile(kid: string, scope: string, certType?: string) {
   await extractFleetDocument(kbId.value, kid, payload)
 }
 
+const FILE_SNAPSHOT_CAP = 500
+
+/** 拉全量文件快照（分页，上限 500 份）。 */
+async function loadFileSnapshot(force = false): Promise<any[]> {
+  if (!kbId.value) return []
+  if (!force && fleetFiles.value.length) return fleetFiles.value
+  const collected: any[] = []
+  for (let page = 1; page <= Math.ceil(FILE_SNAPSHOT_CAP / 200); page++) {
+    const res: any = await listKnowledgeFiles(kbId.value, { page, page_size: 200 })
+    const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
+    collected.push(...arr)
+    const total = Number(res?.total || 0)
+    if (!arr.length || collected.length >= total || collected.length >= FILE_SNAPSHOT_CAP) break
+  }
+  fleetFiles.value = collected
+  return collected
+}
+
 async function loadPending() {
   if (!kbId.value || !isArchive.value) return
   pendingScopes.value = loadPendingScopes()
   try {
-    let arr = rawFileRows.value
-    if (!arr.length) {
-      const res: any = await listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 })
-      arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-      rawFileRows.value = arr
-    }
-    const scope = uploadScope.value
-    const mine = arr.filter((it: any) => {
-      const m = it.custom_metadata || {}
-      if (m.fleet_history_hidden) return false
-      const pv = pendingScopeOf(it.id)
-      return m.fleet_scope === scope || m.scope === scope || pv.s === scope
-    })
-    pendingFiles.value = mine.filter((it: any) => {
-      const ps = it.parse_status
-      const m = it.custom_metadata || {}
-      if (m.extract_status === 'success' || m.extract_status === 'failed') return false
-      return ps === 'parsing' || ps === 'pending' || ps === 'processing'
-    })
-    for (const it of mine) {
+    await loadFileSnapshot(true)
+    // 解析完成但「从未提取」的文件：自动补提取（与在途门禁同一集合）
+    for (const it of historyFileRows.value) {
       const ps = it.parse_status
       const m = it.custom_metadata || {}
       if (ps === 'completed' && !m.extract_status && !extractingSet.has(it.id)) {
         extractingSet.add(it.id)
         try {
           const pv = pendingScopeOf(it.id)
-          await extractFile(it.id, scope, pv.t || m.fleet_cert_type || '')
+          await extractFile(it.id, uploadScope.value, pv.t || m.fleet_cert_type || '')
           delete pendingScopes.value[it.id]
           savePendingScopes()
           reloadList()
@@ -1117,8 +1162,16 @@ async function loadPending() {
         }
       }
     }
+    // 在途清零 → 静默刷新列表与顶部卡片（状态条随之消失）
+    const nowRunning = runningCount.value
+    if (lastRunningCount > 0 && nowRunning === 0) {
+      reloadList()
+      reloadStats()
+    }
+    lastRunningCount = nowRunning
   } catch { /* ignore */ }
 }
+let lastRunningCount = 0
 
 function startPolling() {
   stopPolling()
@@ -1227,8 +1280,15 @@ async function bootstrap() {
       await reloadList()
     }
   }
-  initColumns()
+  // 列显隐：首帧（同步种子）已经算过列，**不要再算一遍** (第 39 轮)。
+  // 服务端配置与种子若有差异（老库少一个默认列），重算会让表头在一帧后少一列
+  // （真机 13 → 12 的跳动）。只有在完全没有业务列时（自定义分类，种子不认识）
+  // 才在分类到位后补算一次 —— 那一次是**一次性成型**，不会分批。
+  if (!visibleColKeys.value.length) initColumns()
   await dataP
+  // 文件快照：卡片「历史记录」与在途状态条的数字来源。
+  // 首屏必须拉到，否则卡片先显示 0 份、几秒后跳到 13 份。
+  void loadPending()
   // 列表已就绪，之后 filterState 的任何变化都是用户输入 → 交给防抖请求
   filterWatchReady = true
   // 注：**不做**发票派生同步（第 29 轮明确取消跨库同步）。

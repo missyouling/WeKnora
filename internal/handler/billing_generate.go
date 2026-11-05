@@ -371,6 +371,37 @@ func buildFeeItems(
 				continue
 			}
 
+			// 「零售损益分摊电费」统一按 **账单原值 × 分摊比例**（第 39 轮）。
+			//
+			// 账单里这一项有两种形态，必须走同一条公式：
+			//   · 2026-09：qty=587,230 / rate=0.035557（按度打印），
+			//     旧实现按「工业总电量 × 单价」= 4,501.52；
+			//   · 2026-10：qty=0 / rate=0 / fee=51,418.66（纯金额行），
+			//     旧实现把它当「纯金额返还」直接跳过 → 明细里根本没有这一项，
+			//     前端只能显示 0（真机图 4：计算方式写着「账单原值 × 分摊比例」，
+			//     金额却是 0）。
+			//
+			// 现在统一：计费数量 = 账单原值、单价/分摊比例 = ratio、
+			// 金额 = round2(账单原值 × ratio)。
+			//   2026-10：51,418.66 × 172400/623932 = 14,207.60
+			//   2026-09：20,880.13 × 126600/596168 = 4,434.03
+			if strings.Contains(sg.Name, "零售损益分摊") {
+				billRaw := rawTotal
+				fee := 0.0
+				if ratio > 0 && billRaw != 0 {
+					fee = round2(billRaw * ratio)
+				}
+				items = append(items, types.BillingRecordItem{
+					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
+					Category: catName, Name: sg.Name, Period: "",
+					Qty: round2(billRaw), Rate: ratio, Fee: fee,
+					Sort: sortNo, CreatedAt: now,
+				})
+				sortNo++
+				industrialFee += fee
+				continue
+			}
+
 			// 非分时子项（平段按度计费）：
 			//   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
 			//

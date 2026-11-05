@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,9 +278,24 @@ func TestBuildFeeItemsMatchesGolden(t *testing.T) {
 			t.Fatalf("%s = %.2f，期望 %.2f", row.Name, v, row.Fee)
 		}
 	}
+	// 「零售损益分摊电费」自第 39 轮起按 账单原值 × 分摊比例：
+	//   计费数量 = 账单原值（20,880.13），单价 = ratio（0.21235625），
+	//   金额 = round2(原值 × ratio) = 4,434.03（黄金基准已同步）。
+	wantRaw := 0.0
+	for _, f := range g.Inputs.FeeItems {
+		if strings.Contains(f.Name, "零售损益分摊") {
+			wantRaw += f.Fee
+		}
+	}
 	for _, it := range got.Items {
-		if it.Name == "零售损益分摊电费" && it.Qty != in.StarTotal {
-			t.Fatalf("平段项计费数量 = %.2f，必须是工业总电量 %.2f", it.Qty, in.StarTotal)
+		if it.Name != "零售损益分摊电费" {
+			continue
+		}
+		if math.Abs(it.Qty-wantRaw) > 0.01 {
+			t.Fatalf("零售损益分摊计费数量 = %.2f，必须是账单原值 %.2f", it.Qty, wantRaw)
+		}
+		if math.Abs(it.Rate-in.Ratio) > 1e-9 {
+			t.Fatalf("零售损益分摊单价 = %.8f，必须是分摊比例 %.8f", it.Rate, in.Ratio)
 		}
 	}
 

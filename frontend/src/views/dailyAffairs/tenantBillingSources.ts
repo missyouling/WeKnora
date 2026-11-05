@@ -694,11 +694,26 @@ export function resolveTenantItemValue(item: any, ctx: SourceResolveContext, rat
       if (starQty > 0 && billQty > 0) return round2((fixedRaw * starQty) / billQty)
       return round2(fixedRaw * (Number(ratio) || 0))
     }
+    // **零售损益分摊电费**：唯一按「账单原值 × 分摊比例」计费的平段项（第 39 轮）。
+    //
+    // 它与其它平段项不同：账单上这一项是**全厂口径的损益再分配**，没有可折算的
+    // 单租户电量；按「工业总电量 × 单价」会把全厂分摊额算到租户头上。
+    // 2026-10 账单是纯金额行（qty=0/rate=0/fee=51,418.66），旧实现直接跳过 → 0；
+    // 2026-09 旧口径 4,501.52，比例法 4,434.03（与后端 billing_generate 同源）。
+    if (key.includes('零售损益分摊')) {
+      const rows = matchBillFeeItems(ctx, key, group)
+      const raw = round2(rows.reduce((acc: number, r: any) => {
+        const fee = Number(r?.fee)
+        if (fee) return acc + fee
+        return acc + (Number(r?.fee_amount) || 0)
+      }, 0))
+      const rt = Number(ratio) || 0
+      if (raw !== 0 && rt > 0) return round2(raw * rt)
+    }
     // **平段按度计费**：计费数量 = 工业总电量（126,600），金额 = 电量 × 账单单价。
     //
     // 不能用「账单原金额 × 分摊比例」：账单按度项的计费电量是 587,230 度
     // （全厂 596,168 − 居民 8,938），拿它当分母的比例乘回去会系统性少算。
-    // 2026-09 零售损益分摊：比例法 4,434.02，标准表 4,501.52（差 67.5 元）。
     const qty = Number(ctx.starTotal) || 0
     if (valueMode !== 'direct_sum' && qty > 0) {
       const rows = matchBillFeeItems(ctx, key, group)

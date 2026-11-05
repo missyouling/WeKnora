@@ -158,7 +158,7 @@ test('零售交易电费 / 零售输配电费：逐段与合计均与标准表�
   assert.equal(trans!.value, expected.transmission.total)
 })
 
-test('平段按度项：计费数量一律 126600，金额 = 126600 × 账单单价', () => {
+test('平段按度项：计费数量一律 126600，金额 = 126600 × 账单单价（零售损益除外）', () => {
   for (const row of expected.plainFees) {
     assert.equal(plainFee(row.name, row.group), row.fee, `${row.name} = ${row.qty} × ${row.rate}`)
   }
@@ -198,7 +198,7 @@ test('汇总：市场化购电费 / 系统运行 / 政府性基金 / 工业电�
   assert.equal(fund, s.govFundFee, '政府性基金及附加')
 })
 
-test('工业电费 101414.04 / 均价 0.8011 / 电费合计 102344.04', () => {
+test('工业电费 101346.55 / 均价 0.8005 / 电费合计 102276.55', () => {
   const s = expected.summary
   const ctx = ctxOf()
   const trade = resolveTimedItemFee(ctx, '零售交易电费', '(1)市场化购电费')!.value

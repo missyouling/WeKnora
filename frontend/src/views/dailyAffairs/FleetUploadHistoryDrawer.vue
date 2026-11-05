@@ -123,6 +123,7 @@ import { ref, computed, watch, onBeforeUnmount, nextTick, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
 import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
+import { fleetHistoryFilesOf, isFleetFileRunning } from './fleetHistoryStats'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { isExtractInProgress } from '@/composables/extractConflict'
 import { getScope } from '../../registry'
@@ -278,18 +279,10 @@ const normalize = (r: any) => ({
 const rowDocType = (r: any) => invDocType(r)
 
 // 状态归类（唯一口径）：解析中/提取中 → running；解析失败/提取失败 → abnormal。
-const ROW_PARSE_RUNNING = new Set(['pending', 'processing', 'parsing', 'finalizing'])
-const ROW_EXTRACT_RUNNING = new Set(['pending', 'processing', 'parsing'])
-const isRowRunning = (r: any) => {
-  const ps = String(r.parse_status || '')
-  if (ROW_PARSE_RUNNING.has(ps)) return true
-  if (ps !== 'completed') return false
-  const es = String(extractStatus(r) || '')
-  // parse 已完成但「从未提取/待提取/提取中」也算正在执行：
-  // 主列表这几行显示「待提取」，历史记录若不计入，两边数量就对不上
-  // （真机：主列表 4 行待提取，历史记录「正在执行 0」）。
-  return !es || ROW_EXTRACT_RUNNING.has(es)
-}
+// 在途判定与列表上方状态条、KPI 卡片**共用一份实现**（第 39 轮）。
+// 旧实现三处各写一遍，判据略有差别（这里少了 parsing、那里多了 finalizing），
+// 于是「抽屉说 3 个在执行、状态条一个都不显示」。
+const isRowRunning = (r: any) => isFleetFileRunning(r)
 
 // hasUsableInvoices 该文件是否已提取出可用发票行（号码或金额非空）。
 //
@@ -413,9 +406,8 @@ const reload = async () => {
       if (arr.length === 0 || collected.length >= totalCnt || collected.length >= SNAPSHOT_CAP) break
       p++
     }
-    let arr = collected.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
-    const dtSet = props.docTypes
-    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet.has(dt) : true })
+    // 「全部文件」与列表卡片同源：fleetHistoryStats.fleetHistoryFilesOf
+    let arr = fleetHistoryFilesOf(collected, props.docTypes)
     // 兼容父级传入的固定筛选（保留原有对接约定）
     const f = props.filter || 'all'
     if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')

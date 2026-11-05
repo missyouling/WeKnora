@@ -48,8 +48,8 @@ test('历史记录：状态卡按全量快照计数，正在执行/异常各自�
   assert.match(src, /const statusCards = computed/)
   assert.match(src, /all\.filter\(isRowRunning\)/)
   assert.match(src, /all\.filter\(isRowAbnormal\)/)
-  // 执行中口径：解析/提取 的 pending|processing（含 parsing/finalizing）
-  assert.match(src, /ROW_PARSE_RUNNING = new Set\(\[[^\]]*'pending'[^\]]*'processing'[^\]]*\]\)/)
+  // 执行中判据：第 39 轮收敛到 fleetHistoryStats（与列表状态条/KPI 共用一份）
+  assert.match(src, /const isRowRunning = \(r: any\) => isFleetFileRunning\(r\)/)
   // 异常口径：parse_status=failed 或 extract_status=failed
   assert.match(src, /String\(r\.parse_status \|\| ''\) === 'failed'/)
 })
@@ -101,12 +101,13 @@ test('历史记录：日期区间占位符用数组形式，避免「开始 - �
   assert.equal(/placeholder="上传开始日期 - 上传结束日期"/.test(src), false)
 })
 
-test('历史记录：pending（待提取）必须计入「正在执行」卡片并可筛出', () => {
-  // parse 已完成 + extract_status 为空（主列表显示「待提取」）也算正在执行
-  assert.match(src, /const es = String\(extractStatus\(r\) \|\| ''\)/)
-  assert.match(src, /return !es \|\| ROW_EXTRACT_RUNNING\.has\(es\)/)
-  // pending 明确在集合里
-  assert.match(src, /ROW_EXTRACT_RUNNING = new Set\(\['pending', 'processing', 'parsing'\]\)/)
+test('历史记录：「正在执行」与列表状态条共用一份判定（pending 也计入）', () => {
+  // 第 39 轮：抽屉、列表上方状态条、KPI 卡片共用 fleetHistoryStats 的判定，
+  // 不再各写一套（旧实现抽屉少了 parsing、状态条缺 scope 时整批丢失）。
+  assert.match(src, /import \{ fleetHistoryFilesOf, isFleetFileRunning \} from '\.\/fleetHistoryStats'/)
+  assert.match(src, /const isRowRunning = \(r: any\) => isFleetFileRunning\(r\)/)
+  // 「全部文件」与卡片同源
+  assert.match(src, /let arr = fleetHistoryFilesOf\(collected, props\.docTypes\)/)
 })
 
 test('历史记录：发票类型与关键词/日期/状态构成 AND 组合过滤', () => {

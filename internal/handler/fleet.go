@@ -2405,6 +2405,22 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.BackfillTimedMeterReadings(ctx); err != nil {
 		logger.Warnf(ctx, "backfill timed meter readings failed: %v", err)
 	}
+	// 费用清单「零售损益分摊电费」统一按 账单原值 × 分摊比例（第 39 轮，幂等）：
+	// 2026-10 该项在账单里是纯金额行，旧实现整项丢弃 → 前端显示 0；
+	// 2026-09 旧口径按「工业总电量 × 单价」= 4,501.52，现改为 4,434.03。
+	if _, err := NewBillingHandler(h.db).BackfillRetailLossAllocation(ctx); err != nil {
+		logger.Warnf(ctx, "backfill retail loss allocation failed: %v", err)
+	}
+	// 车队档案三表对齐（第 39 轮，幂等）：
+	//   ① 已提取完成的文件补齐 fleet_records（卡片/列表才查得到）；
+	//   ② 归一非法 sub_category（历史值「维修工单」不在分类里，任何卡片都装不下）；
+	//   ③ 卡在解析/提取的僵尸文件刷终态（否则绿色状态条永远不消失）。
+	if align, err := h.BackfillFleetArchiveAlignment(ctx); err != nil {
+		logger.Warnf(ctx, "backfill fleet archive alignment failed: %v", err)
+	} else if align.RecordsCreated+align.SubCategoryFix+align.StaleFileFixed > 0 {
+		logger.Infof(ctx, "fleet archive alignment: records+%d subfix=%d stale=%d",
+			align.RecordsCreated, align.SubCategoryFix, align.StaleFileFixed)
+	}
 
 	var invSeeds []types.FleetCategory
 	if err := h.db.WithContext(ctx).Where("tenant_id = 0 AND scope = ? AND builtin_key IN ? AND deleted_at IS NULL",

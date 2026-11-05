@@ -438,6 +438,16 @@ export function buildFleetKpiCards(args: {
   singleCategory?: string
   parseFailed?: number
   extractFailed?: number
+  /**
+   * 「历史记录」卡片的数字 = 抽屉「全部文件」的数量（第 39 轮）。
+   *
+   * 旧实现复用 `total`（fleet_records 行数），于是卡片写 2 份、抽屉写 13 份 ——
+   * 一个数两个口径，用户点开就发现对不上。两个数字现在由同一个文件集合算出来
+   * （fleetHistoryStats.fleetHistoryFilesOf），卡片只是显示。
+   */
+  historyCount?: number
+  /** 正在解析/提取的文件数：>0 时副文案改为「正在执行 N」。 */
+  running?: number
 }): FleetKpiCard[] {
   const { isArchive, total, categories, subCounts, singleCategory } = args
   const unit = isArchive ? '份' : '条'
@@ -469,13 +479,18 @@ export function buildFleetKpiCards(args: {
   }
   if (isArchive) {
     const failed = Number(args.parseFailed || 0) + Number(args.extractFailed || 0)
+    const running = Number(args.running || 0)
+    // 历史记录 = 已上传文件数（与抽屉「全部文件」同一集合），不是台账行数
+    const historyCount = args.historyCount === undefined ? total : Number(args.historyCount) || 0
+    // 副文案优先级：在途 > 异常 > 正常（与抽屉顶部三个计数同序）
+    const sub = running > 0 ? `正在执行 ${running}` : failed > 0 ? `${failed} 份异常` : '无异常文件'
     cards.push({
       key: 'history',
       label: '历史记录',
       icon: 'history',
-      value: String(total),
+      value: String(historyCount),
       unit: '份',
-      sub: failed > 0 ? `${failed} 份异常` : '无异常文件',
+      sub,
       action: 'history',
     })
   }

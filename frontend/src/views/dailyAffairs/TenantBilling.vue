@@ -1470,18 +1470,26 @@ const buildRows = () => {
           const barAt = rawKey.indexOf('|')
           const plainGroup = barAt > 0 ? rawKey.slice(0, barAt) : ''
           const plainKey = barAt > 0 ? rawKey.slice(barAt + 1) : rawKey
-          const plainUnit = Number(matchBillFeeItems(ctx, plainKey, plainGroup)[0]?.rate) || 0
+          // 「零售损益分摊电费」按 **账单原值 × 分摊比例**（第 39 轮，与后端同源）：
+          // 计费数量列显示账单原值（不是电量）、单价列显示分摊比例百分比，
+          // 否则用户会看到「27.63%」被当成单价、金额却是 0（真机图 4）。
+          const isRetailLoss = plainKey.includes('零售损益分摊')
+          const lossRaw = isRetailLoss
+            ? round2(matchBillFeeItems(ctx, plainKey, plainGroup)
+              .reduce((acc: number, r: any) => acc + (Number(r?.fee) || Number(r?.fee_amount) || 0), 0))
+            : 0
+          const plainUnit = isRetailLoss ? 0 : Number(matchBillFeeItems(ctx, plainKey, plainGroup)[0]?.rate) || 0
           const plainQty = plainUnit ? Number(ctx.starTotal) || 0 : 0
           rows.push({
             key: m.key,
             label: m.label,
             period: '—',
-            qty: plainQty || null,
-            price: plainUnit || null,
-            raw: Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
+            qty: isRetailLoss ? null : (plainQty || null),
+            price: isRetailLoss ? null : (plainUnit || null),
+            raw: isRetailLoss ? lossRaw : Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
             ratio,
             // 计算方式严格区分两种口径，与悬浮窗一致
-            method: plainUnit ? '工业总电量 × 单价' : '账单原值 × 分摊比例',
+            method: isRetailLoss ? '账单原值 × 分摊比例' : (plainUnit ? '工业总电量 × 单价' : '账单原值 × 分摊比例'),
             value: Math.round(v * 100) / 100,
           })
         }

@@ -294,3 +294,52 @@ test('六同步：列表列按归一名称去重，重复力调子项不得追�
   assert.match(groups, /uniqueTenantItems\(sortTenantItems\(items\)\.filter\(isTenantItemVisible\), preferNames\)/,
     'mergeTenantGroupFields 必须按签名去重（优先保留 subs 已引用的那条）')
 })
+
+// ---------------------------------------------------------------------------
+// 第 39 轮：「零售损益分摊电费」统一按 账单原值 × 分摊比例
+// ---------------------------------------------------------------------------
+//
+// 真机图 4（2026-10）：账单上该项是**纯金额行**（qty=0 / rate=0 / fee=51,418.66），
+// 旧实现按「工业总电量 × 单价」找不到单价 → 落进「纯金额返还」判定被跳过 → 金额 0。
+// 2026-09 则是按度行（qty=587,230 / rate=0.035557），旧口径算出 4,501.52。
+// 现在两种形态统一：round2(账单原值 × ratio)。
+
+test('零售损益分摊：2026-10 纯金额行按 原值 × 比例 = 14,207.60（不是 0）', () => {
+  const c = ctx({
+    month: '2026-10',
+    bill: {
+      item: {
+        total_kwh: 623932,
+        fee_items: [
+          { category: '(1)市场化购电费', name: '零售损益分摊电费', period: '平', qty: 0, rate: 0, fee: 51418.66 },
+        ],
+      },
+    },
+    starTotal: 172400,
+    ratio: 0.27631216,
+  })
+  const item = { source_category: '市电账单', source_key: '零售损益分摊电费', category: '(1)市场化购电费' }
+  assert.equal(resolveTenantItemValue(item, c, 0.27631216), 14207.6)
+})
+
+test('零售损益分摊：2026-09 按度行同样按 原值 × 比例 = 4,434.03（旧口径 4,501.52）', () => {
+  const c = ctx({
+    bill: {
+      item: {
+        total_kwh: 596168,
+        fee_items: [
+          { category: '(1)市场化购电费', name: '零售损益分摊电费', period: '平', qty: 587230, rate: 0.035557, fee: 20880.13 },
+          { category: '(2)上网环节线损费用', name: '上网环节线损费用', period: '平', qty: 587230, rate: 0.017144, fee: 10067.47 },
+        ],
+      },
+    },
+    starTotal: 126600,
+    ratio: 0.21235625,
+  })
+  const item = { source_category: '市电账单', source_key: '零售损益分摊电费', category: '(1)市场化购电费' }
+  const got = resolveTenantItemValue(item, c, 0.21235625)
+  assert.equal(got, 4434.03)
+  // 其它平段按度项仍是「工业总电量 × 单价」——不能被这条特例带偏
+  const other = { source_category: '市电账单', source_key: '上网环节线损费用', category: '(2)上网环节线损费用' }
+  assert.ok(Math.abs(resolveTenantItemValue(other, c, 0.21235625) - 126600 * 0.017144) < 0.02)
+})

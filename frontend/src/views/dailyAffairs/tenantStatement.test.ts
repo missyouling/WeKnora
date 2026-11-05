@@ -174,9 +174,9 @@ test('打印清单：概览指标按租户口径拆「工业 + 宿舍」', () =>
   const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
   const kpi = (label: string) => (doc.kpis || []).find((k: any) => k.label === label)
   assert.equal(kpi('本期总电量')?.value, '127530 度', '工业 126600 + 宿舍 930')
-  assert.equal(kpi('本期总电费')?.value, '102344.04 元')
+  assert.equal(kpi('本期总电费')?.value, '102276.55 元')
   // 构成说明必须写清两段
-  assert.match(String(kpi('本期总电费')?.hint), /工业 101414\.04 \+ 宿舍 930\.00/)
+  assert.match(String(kpi('本期总电费')?.hint), /工业 101346\.55 \+ 宿舍 930\.00/)
 })
 
 test('打印清单：业主视角走全厂口径，不出租户两段拆分', () => {
