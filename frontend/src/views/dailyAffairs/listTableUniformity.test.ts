@@ -37,7 +37,16 @@ test('共享样式提供表头滚动条遮罩与 sticky 表头层级', () => {
 
 test('8 个列表视图都绑定表头遮罩变量并使用统一量测', () => {
   for (const [name, src] of Object.entries(pages)) {
-    assert.match(src, /class="doc-list-view"\s+:style="headerFixStyle"/, `${name} 的 .doc-list-view 未绑定 headerFixStyle`)
+    // 第 37 轮：四模块（发票/能耗/费用清单/车队）的 class 改由 listViewClass 动态给出
+    // （loading/空态追加 is-table-flat 以隐藏横向滚动条）；其余视图仍写静态 class。
+    // 两种写法都要求根类名仍是 doc-list-view —— 中台样式挂在它上面。
+    const bound = /:class="listViewClass"\s+:style="headerFixStyle"/.test(src)
+      || /class="doc-list-view"\s+:style="headerFixStyle"/.test(src)
+    assert.ok(bound, `${name} 的 .doc-list-view 未绑定 headerFixStyle`)
+    // 一旦用了 listViewClass，就必须用同一份判据（不许自己算 flat）
+    if (/:class="listViewClass"/.test(src)) {
+      assert.match(src, /flatClassOf\(isTableFlat\.value\)/, `${name} 未接 useTableFlatState`)
+    }
     assert.match(src, /useTableHeaderFix/, `${name} 未使用统一量测`)
   }
 })

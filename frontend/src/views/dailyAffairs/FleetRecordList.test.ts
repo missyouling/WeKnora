@@ -117,3 +117,68 @@ test('中台进度横幅本身仍保留 3 秒轮播实现', () => {
   assert.match(bar, /setInterval\(\(\) => \{/)
   assert.match(bar, /\}, 3000\)/)
 })
+
+// ---------------------------------------------------------------------------
+// 第 37 轮：车队列表行贴顶 / 证照状态三色 Tag / 内置不可删
+// ---------------------------------------------------------------------------
+
+test('表格：禁止任何拉高 table 或推 tbody 的自定义 CSS（首行必须贴表头）', () => {
+  const src = list
+  const style = src.slice(src.indexOf('<style'), src.lastIndexOf('</style>'))
+  // 这三条是「第 1 行悬空 250px」的直接成因
+  // 先剥掉注释再判：说明性注释里会提到这些写法（"不能用 flex:1…"），
+  // 不剥会把注释误判成真实规则。
+  const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const flat = (t: string) => t.replace(/\s+/g, ' ').replace(/\s*([{}:])\s*/g, '$1')
+  const css = flat(stripComments(style))
+  assert.ok(!/\.t-table__content>table\{[^}]*height:100%/.test(css),
+    'table{height:100%} 会把多余高度分给行，唯一那行被拉到整屏高')
+  assert.ok(!/\.t-table__footer\{[^}]*margin-top:auto/.test(css),
+    'tfoot{margin-top:auto} 会把合计顶到底，配合上面就是「行飘在半空」')
+  assert.ok(!/\.t-table__content\{[^}]*flex:1/.test(css),
+    'content{flex:1} 让滚动容器拉满，是拉高的前提')
+  assert.ok(!/tbody::after|spacer/i.test(style), '不得用伪元素占位行顶合计栏')
+})
+
+test('证照状态：列表渲染三色 Tag（模板插槽，非 cell 函数）', () => {
+  const src = list
+  // 第 37 轮：TDesign 1.19 的 cell 回调不注入 h，`_h('t-tag')` 会渲染成空白，
+  // 必须走具名插槽 #__cert_status（与发票页同款）。
+  const slot = src.slice(src.indexOf('template #__cert_status'), src.indexOf('template #__extract_status'))
+  assert.match(slot, /<t-tag/, '证照状态插槽必须渲染 t-tag')
+  assert.match(slot, /certThemeOf\(row\)/, '主题必须走 certThemeOf（三态映射）')
+  assert.match(slot, /variant="light"/, '浅底深字（light 变体）')
+  // 三态映射函数本体
+  const fn = src.slice(src.indexOf('const certThemeOf'), src.indexOf('const SYSTEM_STATUS_FIELD_NAMES'))
+  assert.match(fn, /'success'/, '生效中 → success（绿）')
+  assert.match(fn, /'warning'/, '即将到期 → warning（橙）')
+  assert.match(fn, /'danger'/, '已过期 → danger（红）')
+  // 不得再出现自造的 _h 渲染（剥掉注释再判：说明文字里会提到这种错误写法）
+  const codeOnly = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  assert.ok(!/_h\('t-tag'/.test(codeOnly), 'cell 回调里不能用 _h(\'t-tag\')，TDesign 不注入 h')
+})
+
+test('证照状态 / 提取状态列宽 ≥ 100px，表头不被截断', () => {
+  const src = list
+  for (const key of ['CERT_STATUS_KEY', 'EXTRACT_STATUS_KEY']) {
+    const i = src.indexOf(`key: ${key}`)
+    assert.ok(i > 0, `缺少 ${key} 列定义`)
+    const seg = src.slice(i, src.indexOf('},', i))
+    assert.match(seg, /minWidth:\s*100/, `${key} 必须 minWidth:100`)
+  }
+})
+
+test('抽屉：证照状态与提取状态都是只读 Tag，不是 input', () => {
+  const src = list
+  const start = src.indexOf('template #field-__cert_status')
+  assert.ok(start > 0, '缺少证照状态抽屉插槽')
+  const certSlot = src.slice(start, src.indexOf('template #field-__extract_status'))
+  assert.match(certSlot, /<t-tag/, '证照状态插槽必须是 t-tag')
+  assert.ok(!/<t-input/.test(certSlot), '证照状态不得用 input（disabled 输入框看起来像漏填）')
+  const extSlot = src.slice(src.indexOf('template #field-__extract_status'), src.indexOf('</BusinessSplitDetailDrawer>'))
+  assert.match(extSlot, /<t-tag/, '提取状态插槽必须是 t-tag')
+  // 两者都必须在 drawerFields 里注册，否则插槽不会渲染
+  const fields = src.slice(src.indexOf('const drawerFields'), src.indexOf('const drawerSubFields'))
+  assert.match(fields, /CERT_STATUS_KEY/, 'drawerFields 必须含证照状态')
+  assert.match(fields, /EXTRACT_STATUS_KEY/, 'drawerFields 必须含提取状态')
+})

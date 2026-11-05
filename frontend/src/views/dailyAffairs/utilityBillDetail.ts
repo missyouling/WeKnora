@@ -359,11 +359,19 @@ export function buildResidentMeterRows(editForm: Record<string, any>, cfgs: RowC
   const totalKwh = Number(editForm?.total_kwh) || 0
   const list = editForm?.residential_readings
   const arr = Array.isArray(list) && list.length ? list : []
+  // 基准电量取「费用行计费电量 − 加减」：这样列表显示恒等于账上的计费电量。
+  //
+  // 第 37 轮修正：旧实现 `bill = hit.bill_kwh_manual ? hit.bill_kwh : autoBill`，
+  // 而 2026-10 的 `bill_kwh` 存的是**基准值 9,358.98**（不是计费电量），
+  // 于是列表显示 9,358.98、费用行却是 9,354 —— 两个数对不上，用户以为没生效。
+  // 现在统一按公式算：计费电量 = 基准 + 加减。
+  const feeRows = Array.isArray(editForm?.fee_items) ? editForm.fee_items.filter(isResidentFeeRow) : []
+  const feeQty = feeRows.length ? Math.max(...feeRows.map((it: any) => Number(it?.qty) || 0)) : 0
   const build = (cfgLabel: string, hit: any) => {
     const ratio = Number(hit?.ratio) || 0.015
     const adjust = Number(hit?.adjust) || 0
-    const autoBill = totalKwh > 0 ? Math.round((totalKwh * ratio + adjust) * 100) / 100 : 0
-    const bill = hit?.bill_kwh_manual ? Number(hit.bill_kwh) || 0 : autoBill
+    const base = feeQty > 0 ? feeQty - adjust : totalKwh * ratio
+    const bill = Math.round((base + adjust) * 100) / 100
     return {
       meter_type: cfgLabel,
       prev: '',
@@ -487,4 +495,93 @@ export function buildEnergyCompareRows(
       delta: prevTotal ? Math.round((curPct - prevPct) * 10) / 10 : 0,
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// 居民电量明细编辑（第 37 轮）
+// ---------------------------------------------------------------------------
+//
+// 三个必须成立的口径：
+//   ① 抽屉是**草稿**：打开时深拷贝，未点保存关闭后原数据纹丝不动；
+//   ② 输入「加减」实时联动「计费电量」= round(基准电量 + 加减)；
+//   ③ 保存时把计费电量级联到居民电费（目录电费 + 政府性基金及附加 5 项），
+//      每一行按 `qty × rate` 重算金额，保证概况/小计/合计全部闭环。
+//
+// 基准电量（baseElec）取「当前计费电量 − 当前加减」：
+//   费用行 qty 才是真正落在账上的计费电量（2026-10 为 9,354），
+//   `residential_readings.kwh` 字段在多份历史账单里存的是总电量（596,168），
+//   不能直接当基准用。拿不到费用行时才退化到「本期电量 × 定比」。
+
+/** 居民电费的项目归属（级联时要改这两类的计费电量）。 */
+const RESIDENT_CATALOG = '目录电费'
+
+/** 居民费用行判定：目录电费 + 政府性基金（居民）。与详情菜单同一口径。 */
+export const isResidentFeeRow = (it: any): boolean => {
+  const cat = String(it?.category || '')
+  return cat.includes(RESIDENT_CATALOG) ||
+    (cat.includes('政府性基金') && cat.includes('居民'))
+}
+
+/**
+ * 居民电量明细的基准电量（加减 = 0 时的电量）。
+ *
+ * @param editForm 账单草稿
+ * @param idx 第几条居民读数（与 buildResidentMeterRows 的索引一致）
+ */
+export function residentBaseElecOf(editForm: Record<string, any>, idx = 0): number {
+  const list = editForm?.residential_readings
+  const arr = Array.isArray(list) && list.length ? list : []
+  const hit = arr[idx] || arr[0] || null
+  const adjust = Number(hit?.adjust) || 0
+  // ① 费用行 qty（真实计费电量）− 原加减：对历史数据逐份自洽
+  //
+  // **取最大值而不是求和**：居民电费有 6 行（目录电费 1 + 政府性基金 5），
+  // 每行的 qty 都是同一个计费电量（9354），求和会放大成 6 倍。
+  const rows = residentFeeRowsOf(editForm)
+  const feeQty = rows.length
+    ? Math.max(...rows.map((it: any) => Number(it?.qty) || 0))
+    : 0
+  if (feeQty > 0) {
+    // 计费电量 = 基准 + 加减 → 基准 = 计费电量 − 加减
+    const base = feeQty - adjust
+    return Math.round(base * 100) / 100
+  }
+  // ② 退化：本期电量 × 定比（ratio 为 0 时按票面惯例取 0.015）
+  const totalKwh = Number(editForm?.total_kwh) || 0
+  const ratio = Number(hit?.ratio) || 0.015
+  return Math.round(totalKwh * ratio * 100) / 100
+}
+
+/** 居民费用行（目录电费 + 政府性基金居民）。 */
+export function residentFeeRowsOf(editForm: Record<string, any>): any[] {
+  const items = editForm?.fee_items
+  return Array.isArray(items) ? items.filter(isResidentFeeRow) : []
+}
+
+/** 计费电量 = round(基准电量 + 加减)。 */
+export const recalcResidentBillKwh = (baseElec: number, adjust: number): number =>
+  Math.round((Number(baseElec) + Number(adjust || 0)) * 100) / 100
+
+/**
+ * 级联：把居民计费电量 Q 写到居民电费各行的 `qty`，并按 `qty × rate` 重算金额。
+ *
+ * 只改「居民」这两类（目录电费 / 政府性基金及附加-居民），
+ * 工商业同名基金（政府性基金及附加-工商业）绝不能被波及 —— 那是另一套电量。
+ *
+ * @returns 新的 fee_items 副本（不改原数组，便于比较是否有变化）
+ */
+export function syncResidentFeeQty(feeItems: any[], qty: number): { items: any[]; changed: boolean } {
+  const list = Array.isArray(feeItems) ? feeItems : []
+  const Q = Math.round((Number(qty) || 0) * 100) / 100
+  let changed = false
+  const items = list.map((it: any) => {
+    if (!isResidentFeeRow(it)) return it
+    const rate = Number(it?.rate) || 0
+    const fee = Math.round(Q * rate * 100) / 100
+    if (Number(it?.qty) === Q && Number(it?.fee) === fee) return it
+    changed = true
+    // fee_amount 是「票面原值」，人工改电量后必须同步，否则双列校验会误报异常
+    return { ...it, qty: Q, fee, fee_amount: fee }
+  })
+  return { items, changed }
 }

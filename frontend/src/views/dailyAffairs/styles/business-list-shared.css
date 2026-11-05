@@ -188,6 +188,31 @@
   scrollbar-gutter: stable;
 }
 
+/* 加载中 / 零行时**禁止横向滚动条**（第 37 轮，全模块统一）
+ *
+ * 现象（真机图 3）：列表在 loading 或没有记录时，表头下方半空中会出现一条
+ * 横向滚动条 —— 表格此时还没渲染数据行，但列总宽度已经超过容器，
+ * 浏览器就画出了滚动条轨道，视觉上像一条悬空的横线。
+ *
+ * 判据：只有「加载完成 && 有数据 && 列宽确实超出」时才有滚动条。
+ * 页面负责在 `.doc-list-view` 上挂 `is-table-flat`（loading || rows===0），
+ * 这里只做样式收口 —— 四个模块（发票/能耗/车队/费用清单）共用一份，
+ * 避免各页各写一遍 !important。
+ */
+.biz-page .doc-list-view.is-table-flat .t-table__content,
+.biz-page .doc-list-view.is-table-flat .t-table__content .t-table__body,
+.biz-page .doc-list-view.is-table-flat .doc-list-scroll,
+.biz-page .doc-list-view.is-table-flat {
+  overflow-x: hidden !important;
+}
+
+/* 空态下 t-table 自身也不该撑出滚动：高度交给空态占位，不要 flex:1 拉满 */
+.biz-page .doc-list-view.is-table-flat .t-table {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+}
+
 /* 表头 th 背景与内容区统一为 container 令牌（非 bordered 表格默认白底），
    与下方表头右侧遮罩同令牌 → 主题切换同步变色，永不产生色差 */
 .biz-page .doc-list-view .t-table__header--fixed > tr > th {

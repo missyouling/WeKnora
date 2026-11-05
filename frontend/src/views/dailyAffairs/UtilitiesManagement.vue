@@ -101,7 +101,7 @@
 
             <!-- 列表 -->
             <div class="doc-list-scroll" ref="listScrollRef" @scroll="onListScroll">
-              <div class="doc-list-view" :style="headerFixStyle">
+              <div :class="listViewClass" :style="headerFixStyle">
                 <t-table
           :data="displayRows"
           :columns="tableColumns"
@@ -429,7 +429,7 @@
                         <div class="fg-row fg-head">
                           <span>需量值</span><span>需量电价</span><span>输配需量电费</span><span>月每千伏安用电量</span><span>折扣需量电费</span><span>容量</span><span>容量电价</span><span>输配容量电费</span>
                         </div>
-                        <div v-for="(r, i) in capacityRows" :key="i" class="fg-row" @click="openDetailEdit('capacity', i)">
+                        <div v-for="(r, i) in capacityRows" :key="i" class="fg-row" @click="openDetailEdit('capacity')">
                           <span class="row-mono">{{ r.demand || r.demand === 0 ? fmtRate6(r.demand) : '' }}</span>
                           <span class="row-mono">{{ r.demand_price || r.demand_price === 0 ? fmtRate6(r.demand_price) : '' }}</span>
                           <span class="row-mono">{{ r.demand_fee || r.demand_fee === 0 ? fmtRate6(r.demand_fee) : '' }}</span>
@@ -455,7 +455,7 @@
                         <div class="fg-row fg-head">
                           <span>项目</span><span>功率因素实际值</span><span>功率因素标准</span><span>调整系数</span><span>参与调整有功电量</span><span>参与调整无功电量</span><span>参与调整电费金额</span><span>功率因素调整电费</span>
                         </div>
-                        <div v-for="(r, i) in pfRows" :key="i" class="fg-row" @click="openDetailEdit('pf', i)">
+                        <div v-for="(r, i) in pfRows" :key="i" class="fg-row" @click="openDetailEdit('pf')">
                           <span class="fg-name" :title="r.project">{{ r.project }}</span>
                           <span class="row-mono">{{ r.power_factor || r.power_factor === 0 ? fmtRate6(r.power_factor) : '' }}</span>
                           <span class="row-mono">{{ r.pf_standard || r.pf_standard === 0 ? fmtRate6(r.pf_standard) : '' }}</span>
@@ -516,11 +516,21 @@
       <div class="edit-drawer-body">
         <div class="edit-field" v-for="f in detailEditFields" :key="f.key">
           <label class="edit-label">{{ f.label }}</label>
-          <t-input :model-value="String(detailEditForm[f.key] ?? '')" :type="f.type === 'text' ? 'text' : 'number'" size="small"
+          <!-- 居民电量：加减改动要实时联动计费电量（不准等到保存才动）。
+               计费电量本身允许手改，所以两个字段走各自的处理器。 -->
+          <t-input v-if="detailEditTarget === 'resident' && f.key === 'adjust'"
+            :model-value="String(detailEditForm[f.key] ?? '')" type="number" size="small"
+            @update:model-value="onResidentAdjustInput" />
+          <t-input v-else-if="detailEditTarget === 'resident' && f.key === 'bill_kwh'"
+            :model-value="String(detailEditForm[f.key] ?? '')" type="number" size="small"
+            @update:model-value="onResidentBillInput" />
+          <t-input v-else :model-value="String(detailEditForm[f.key] ?? '')"
+            :type="f.type === 'text' ? 'text' : 'number'" size="small"
             @update:model-value="(v: string) => (detailEditForm[f.key] = f.type === 'text' ? v : Number(v) || 0)" />
         </div>
         <div class="edit-drawer-footer">
-          <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
+          <t-button theme="primary" size="small" :loading="autoSaving"
+            @click="detailEditTarget === 'resident' ? saveResidentMeterEdit() : saveEditForm({ closeDetail: true })">保存</t-button>
         </div>
       </div>
     </t-drawer>
@@ -682,6 +692,8 @@ import {
   reparseKnowledge,
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
+import { useTableFlatState, flatClassOf } from './useTableFlatState'
+
 import { buildUtilityBillStatementDoc } from './energyBillStatements'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
@@ -727,6 +739,10 @@ import {
   pickPrevEnergy,
   rowConfigsOf as rowConfigsOfUtil,
   ROW_GROUP_OF_MENU,
+  // 第 37 轮：居民电量明细编辑（草稿基准电量 / 实时联动 / 级联居民电费）
+  recalcResidentBillKwh,
+  residentBaseElecOf,
+  syncResidentFeeQty,
 } from './utilityBillDetail'
 import {
   FALLBACK_COLUMNS,
@@ -1650,22 +1666,65 @@ const feeSubtotalOf = (key: string) => feeSubtotalOfUtil(editForm.value.fee_item
 const menuLabel = (key: string) => menuLabelOf(key)
 const residentMeterRows = computed(() => buildResidentMeterRows(editForm.value, residentRowConfigs.value))
 const residentBillTotal = computed(() => residentMeterRows.value.reduce((s: number, r: any) => s + (Number(r.bill_kwh) || 0), 0))
+/**
+ * 明细抽屉当前编辑对象（居民电量 / 容需量 / 功率因数）。
+ *
+ * 必须是 ref：模板要按它切换输入控件（居民两个字段走联动处理器，其它走通用处理器），
+ * 用普通 let 时值变化不会触发重渲染，打开容需量抽屉会错误地渲染成居民的两个字段。
+ */
+const detailEditTarget = ref<'resident' | 'capacity' | 'pf'>('resident')
 const residentMeterEditIdx = ref(-1)
-let residentEditSnapshot = ''
+/** 居民电量草稿的基准电量（加减 = 0 时的电量）；输入加减时据此实时算计费电量。 */
+const residentEditBase = ref(0)
+/**
+ * 打开「编辑居民电量明细」抽屉。
+ *
+ * **草稿隔离**（第 37 轮）：`detailEditForm` 是 `row` 的深拷贝，用户在抽屉里改值
+ * 只动草稿；未点「保存」直接关闭，`editForm.residential_readings` 纹丝不动。
+ * 旧实现靠 `watch(detailEditForm)` 实时写回 editForm，等于**自动保存** ——
+ * 改完不点保存关掉抽屉，界面已被篡改（刷新才复原），正是需求里的 Bug。
+ */
 const openResidentMeterEdit = (idx: number) => {
   const r = residentMeterRows.value[idx] || {}
   residentMeterEditIdx.value = idx
-  detailEditTarget = 'resident'
-  detailEditIdx = idx
+  detailEditTarget.value = 'resident'
   detailEditTitle.value = '编辑居民电量明细'
   detailEditFields.value = [
     { key: 'adjust', label: '加减（千瓦时）', type: 'number' },
     { key: 'bill_kwh', label: '计费电量（千瓦时）', type: 'number' },
   ]
-  detailEditForm.value = { adjust: r.adjust ?? 0, bill_kwh: r.bill_kwh ?? 0 }
-  residentEditSnapshot = JSON.stringify(detailEditForm.value)
+  // 深拷贝：定比/加减/计费电量全部来自独立副本，绝不与列表数据共享引用
+  const draft = JSON.parse(JSON.stringify({
+    adjust: r.adjust ?? 0,
+    bill_kwh: r.bill_kwh ?? 0,
+  }))
+  // 基准电量按「费用行计费电量 − 原加减」反算；拿不到费用行时退化为 本期电量 × 定比
+  residentEditBase.value = residentBaseElecOf(editForm.value, idx)
+  // 打开时按「基准 + 当前加减」重算一次：历史数据里 bill_kwh 可能是未应用加减的
+  // 基准值（2026-10 存的是 9,358.98 而账上是 9,354），不重算就会显示错值。
+  draft.bill_kwh = recalcResidentBillKwh(residentEditBase.value, draft.adjust)
+  detailEditForm.value = draft
   detailEditVisible.value = true
 }
+/**
+ * 抽屉内「加减」变化 → 实时联动「计费电量」。
+ *
+ * 口径：计费电量 = round(基准电量 + 加减)。用户仍可手工微调计费电量，
+ * 一旦手改就以手改值为准（不反向覆盖）。
+ */
+const onResidentAdjustInput = (v: string | number) => {
+  const adjust = Number(v) || 0
+  detailEditForm.value = {
+    ...detailEditForm.value,
+    adjust,
+    bill_kwh: recalcResidentBillKwh(residentEditBase.value, adjust),
+  }
+}
+/** 用户直接改「计费电量」：只更新该字段（保留手工值）。 */
+const onResidentBillInput = (v: string | number) => {
+  detailEditForm.value = { ...detailEditForm.value, bill_kwh: Number(v) || 0 }
+}
+
 const capacityRow = computed(() => editForm.value.capacity_detail || null)
 const pfRow = computed(() => editForm.value.pf_detail || null)
 // 列表展示行（容量/功率因数均为单行）
@@ -1852,11 +1911,8 @@ const detailEditVisible = ref(false)
 const detailEditForm = ref<Record<string, any>>({})
 const detailEditTitle = ref('')
 const detailEditFields = ref<{ key: string; label: string; type: string }[]>([])
-let detailEditTarget: 'resident' | 'capacity' | 'pf' = 'resident'
-let detailEditIdx = -1
-const openDetailEdit = (target: 'resident' | 'capacity' | 'pf', idx = 0) => {
-  detailEditTarget = target
-  detailEditIdx = idx
+const openDetailEdit = (target: 'resident' | 'capacity' | 'pf') => {
+  detailEditTarget.value = target
   if (target === 'capacity') {
     detailEditTitle.value = '编辑输配容（需）量电费'
     detailEditFields.value = CAPACITY_FIELDS
@@ -1870,24 +1926,10 @@ const openDetailEdit = (target: 'resident' | 'capacity' | 'pf', idx = 0) => {
 }
 watch(detailEditForm, () => {
   if (!detailEditVisible.value || !autoSaveDirty) return
-  if (detailEditTarget === 'resident') {
-    let list = editForm.value.residential_readings
-    if (!Array.isArray(list)) { list = []; editForm.value.residential_readings = list }
-    const cfg = residentRowConfigs.value[residentMeterEditIdx.value >= 0 ? residentMeterEditIdx.value : detailEditIdx]
-    const title = cfg?.label || cfg?.field_key || '定比0.015'
-    let row = list[0] || list.find((r: any) => matchRow(r, { field_key: title, label: title }))
-    if (!row) {
-      row = { project: title, kwh: Number(editForm.value.total_kwh) || 0, ratio: 0.015, adjust: 0, bill_kwh: 0 }
-      list.push(row)
-    }
-    if (JSON.stringify(detailEditForm.value) !== residentEditSnapshot) {
-      if (detailEditForm.value.adjust !== undefined) row.adjust = detailEditForm.value.adjust
-      if (detailEditForm.value.bill_kwh !== undefined) {
-        row.bill_kwh = detailEditForm.value.bill_kwh
-        row.bill_kwh_manual = true
-      }
-    }
-  } else if (detailEditTarget === 'capacity') {
+  // 居民电量**绝不实时写回** editForm：那是自动保存，违反「手存生效」铁律。
+  // 居民草稿只在点击「保存」时由 saveResidentMeterEdit 一次性落盘（含级联）。
+  if (detailEditTarget.value === 'resident') return
+  if (detailEditTarget.value === 'capacity') {
     const d = { ...(editForm.value.capacity_detail || {}), ...detailEditForm.value }
     if (d.demand > 0 && d.demand_price > 0) d.demand_fee = Math.round(d.demand * d.demand_price * 100) / 100
     if (d.capacity > 0 && d.capacity_price > 0) d.capacity_fee = Math.round(d.capacity * d.capacity_price * 100) / 100
@@ -1899,8 +1941,45 @@ watch(detailEditForm, () => {
 
 
 
+/**
+ * 保存「居民电量明细」抽屉：写草稿 → 级联居民电费 → 落库。
+ *
+ * 为什么不能直接复用 `saveEditForm`：它只把 `editForm` 里已有的字段序列化提交，
+ * 而居民抽屉的改动原先靠 watch 实时写回 editForm。改掉那个自动保存之后，
+ * 必须在**点击保存时**先把草稿合进 editForm，否则点保存等于什么都没改（真机
+ * 现象就是「点了保存没反应」）。
+ *
+ * 级联：计费电量 Q → 居民（目录电费 + 政府性基金及附加 5 项）每行 qty = Q、
+ * fee = round2(Q × rate)、fee_amount 同步。工商业同名基金不受影响。
+ */
+const saveResidentMeterEdit = async () => {
+  if (detailEditTarget.value !== 'resident') { detailEditVisible.value = false; return }
+  const adjust = Number(detailEditForm.value.adjust) || 0
+  // 计费电量 = 基准 + 加减。**第二个参数必须是 adjust，不是 bill_kwh**：
+  // 传 bill_kwh（本身就已是「基准+加减」的结果）会算成 基准 + 计费电量，
+  // 真机实测保存后变成 9,358.98 + 9,354 = 18,712.98（翻倍）。
+  const billKwh = recalcResidentBillKwh(residentEditBase.value, adjust)
+  // ① 写回居民读数（草稿 → editForm），并标记为人工值
+  let list = editForm.value.residential_readings
+  if (!Array.isArray(list)) { list = []; editForm.value.residential_readings = list }
+  const idx = residentMeterEditIdx.value >= 0 ? residentMeterEditIdx.value : 0
+  while (list.length <= idx) list.push({})
+  list[idx] = {
+    ...list[idx],
+    kwh: billKwh,
+    ratio: Number(list[idx]?.ratio) || 0.015,
+    adjust,
+    bill_kwh: billKwh,
+    bill_kwh_manual: true,
+  }
+  // ② 级联居民电费：目录电费 + 政府性基金及附加（居民）计费电量与金额
+  const synced = syncResidentFeeQty(editForm.value.fee_items || [], billKwh)
+  if (synced.changed) editForm.value.fee_items = synced.items
+  // ③ 落库（保存后关闭抽屉 + 刷新账单状态都由 saveEditForm 负责）
+  await saveEditForm({ closeDetail: true })
+}
 // 保存方式：详情/编辑抽屉手动保存（点击「保存」按钮持久化）；行内编辑失焦保存走 commitFeeOverride/commitBillFeeOverride
-const saveEditForm = async () => {
+const saveEditForm = async (opts: { closeDetail?: boolean } = {}) => {
   const now = currentRow.value
   if (!now) return
   autoSaving.value = true
@@ -1944,6 +2023,13 @@ const saveEditForm = async () => {
     // 同步列表行
     const listIdx = rows.value.findIndex((r: any) => r.rowKey === now.rowKey)
     if (listIdx >= 0) rows.value[listIdx] = { ...rows.value[listIdx], item: { ...rows.value[listIdx].item, ...updated } }
+    // 从明细抽屉（居民电量/容需量/功率因数）保存时：关抽屉 + 重新拉详情，
+    // 让列表、子表、账单概况、小计与合计一次性对齐（手存生效，不做自动保存）。
+    if (opts.closeDetail) {
+      detailEditVisible.value = false
+      await loadEditForm(now)
+      MessagePlugin.success('已保存')
+    }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -2278,10 +2364,14 @@ onBeforeUnmount(() => {
   window.removeEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
 })
+
+// 列表空态/加载态禁止横向滚动条（第 37 轮）：loading 或 0 行时挂 is-table-flat，
+// 样式在 styles/business-list-shared.css 统一收口。
+const { isTableFlat } = useTableFlatState({ loading: loading, rows: rows })
+const listViewClass = computed(() => flatClassOf(isTableFlat.value))
 </script>
 
 <style lang="less" scoped>
-@import './styles/business-list-shared.css';
 .utilities-management-container {
   display: flex;
   flex-direction: column;
@@ -3366,6 +3456,12 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
+/* 共享列表样式：必须在**非 scoped** 块里导入。
+ * 放在 <style scoped> 里时 Vue 会给每条规则追加 [data-v-xxx]，
+ * 而 .t-table__content / .t-table__body 是 TDesign 子组件内部元素、
+ * 不带当前组件的 data-v 属性 → 选择器永不匹配（横向滚动条收不住）。
+ * 发票页一直是对的（它就在非 scoped 块里），其余三页对齐它。 */
+@import './styles/business-list-shared.css';
 /* 无作用域：TDesign 内部的 td 不带页面的 data-v 属性，scoped 规则命中不到。
  *
  * 可展开行（电费/水费/气费核算的分时明细）TDesign 会加 .t-table__row--folded，

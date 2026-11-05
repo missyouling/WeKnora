@@ -31,7 +31,7 @@
 
     <!-- 列表 -->
     <div class="doc-list-scroll tenant-list-scroll">
-      <div class="doc-list-view" :style="headerFixStyle">
+      <div :class="listViewClass" :style="headerFixStyle">
         <t-table
         :data="displayRows"
         :columns="tableColumns"
@@ -163,6 +163,8 @@ import {
 import { cellNum, money2, round2 } from './formatNumber'
 import { gasApplicableOf, buildTenantBillingStatementDoc, type TenantStatementCtx } from './energyBillStatements'
 import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
+import { useTableFlatState, flatClassOf } from './useTableFlatState'
+
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
 import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
 import {
@@ -2015,6 +2017,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
   window.removeEventListener('resize', measureGroupPanel)
 })
+
+// 列表空态/加载态禁止横向滚动条（第 37 轮）：loading 或 0 行时挂 is-table-flat，
+// 样式在 styles/business-list-shared.css 统一收口。
+const { isTableFlat } = useTableFlatState({ loading, rows: displayRows })
+const listViewClass = computed(() => flatClassOf(isTableFlat.value))
 </script>
 
 <style lang="less" scoped>
@@ -2022,7 +2029,6 @@ onBeforeUnmount(() => {
    子组件是挂在 .biz-page 下的（父页面提供），但共享样式是按组件独立 import 的，
    不引入就会退化成 display:block + overflow:visible —— 表格不被限高、
    滚动条落在外层容器上，表现就是「滚动条侵入表头 + 汇总栏被顶到几千像素」。 */
-@import './styles/business-list-shared.css';
 
 .tenant-billing-container {
   display: flex;
@@ -2588,6 +2594,12 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="less">
+/* 共享列表样式：必须在**非 scoped** 块里导入。
+ * 放在 <style scoped> 里时 Vue 会给每条规则追加 [data-v-xxx]，
+ * 而 .t-table__content / .t-table__body 是 TDesign 子组件内部元素、
+ * 不带当前组件的 data-v 属性 → 选择器永不匹配（横向滚动条收不住）。
+ * 发票页一直是对的（它就在非 scoped 块里），其余三页对齐它。 */
+@import './styles/business-list-shared.css';
 /* ---- 大类汇总列：单元格 +/− 与展开后的明细子表 ----
    这一块**必须非 scoped**：
    · 单元格内容由 renderCell 用 h() 生成，vnode 带的是 t-table 的 scopeId，

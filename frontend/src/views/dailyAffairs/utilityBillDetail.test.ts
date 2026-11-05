@@ -28,6 +28,11 @@ import {
   parseRowKey,
   pickPrevEnergy,
   rowConfigsOf,
+  // 第 37 轮：居民电量明细编辑
+  isResidentFeeRow,
+  recalcResidentBillKwh,
+  residentBaseElecOf,
+  syncResidentFeeQty,
 } from './utilityBillDetail'
 
 // ---- 菜单结构 ----
@@ -259,12 +264,28 @@ test('buildResidentMeterRows：定比 + 加减，按分取整', () => {
   assert.equal(rows[0].bill_kwh, 23.34, '1000×0.02 + 3.335 = 23.335 → 23.34')
 })
 
-test('buildResidentMeterRows：人工值优先，自动值不得覆盖', () => {
+test('buildResidentMeterRows：列表计费电量恒等于账上值（基准 + 加减）', () => {
+  // 第 37 轮口径变更：旧实现 `bill_kwh_manual ? bill_kwh : total*ratio+adjust`
+  // 会让 2026-10 显示 9,358.98（存的是基准值）而费用行是 9,354，两个数对不上。
+  // 现在一律按「基准 + 加减」算 —— 有费用行时基准由费用行反推，
+  // 因此列表显示恒等于账上计费电量。
   const rows = buildResidentMeterRows(
-    { total_kwh: 1000, residential_readings: [{ ratio: 0.015, adjust: 0, bill_kwh_manual: true, bill_kwh: 99 }] },
+    { total_kwh: 1000, residential_readings: [{ ratio: 0.015, adjust: -5, bill_kwh_manual: true, bill_kwh: 99 }] },
     [],
   )
-  assert.equal(rows[0].bill_kwh, 99, 'bill_kwh_manual 为真时用人工值')
+  // 无费用行 → 基准 = total*ratio = 15 → 计费 = 15 + (-5) = 10
+  assert.equal(rows[0].bill_kwh, 10, '必须按 基准 + 加减 计算，不能直接用历史 bill_kwh')
+
+  // 有费用行时以账上 qty 为准（反推基准后再加回落，值不变）
+  const withFee = buildResidentMeterRows(
+    {
+      total_kwh: 623932,
+      residential_readings: [{ ratio: 0.015, adjust: -4.98, bill_kwh: 9358.98, bill_kwh_manual: true }],
+      fee_items: [{ category: '(5)目录电费', qty: 9354, rate: 0.500306, fee: 4679.86 }],
+    },
+    [],
+  )
+  assert.equal(withFee[0].bill_kwh, 9354, '显示值必须与账上计费电量一致')
 })
 
 test('buildResidentMeterRows：有配置按索引配对', () => {
@@ -397,4 +418,87 @@ test('buildEnergyCompareRows：占比分母是工商业四段之和（不是账�
   assert.equal(rows[1].curPct, 21.68)
   assert.equal(rows[2].curPct, 32.02)
   assert.equal(rows[3].curPct, 40.75)
+})
+
+// ---------------------------------------------------------------------------
+// 第 37 轮：居民电量明细编辑（基准电量 / 实时联动 / 级联居民电费）
+// ---------------------------------------------------------------------------
+//
+// 数据取自库内 2026-10 真实账单：
+//   total_kwh=623,932，定比 0.015，加减 -4.98，计费电量 9,354
+//   居民目录电费 9,354 × 0.500306 = 4,679.86
+//   政府性基金及附加-居民 5 项，qty 均 9,354
+
+const residentBill202610 = {
+  total_kwh: 623932,
+  residential_readings: [{ kwh: 9354, ratio: 0, adjust: -4.98, bill_kwh: 9358.98, bill_kwh_manual: true }],
+  fee_items: [
+    { category: '(5)目录电费', name: '基础电费', period: '平', qty: 9354, rate: 0.500306, fee: 4679.86 },
+    { category: '(6)政府性基金及附加-居民', name: '农网还贷', period: '平', qty: 9354, rate: 0.02, fee: 187.08 },
+    { category: '(6)政府性基金及附加-居民', name: '可再生能源附加', period: '平', qty: 9354, rate: 0.001, fee: 9.35 },
+    { category: '(6)政府性基金及附加-居民', name: '国家重大水利工程建设基金', period: '平', qty: 9354, rate: 0.001969, fee: 18.42 },
+    { category: '(6)政府性基金及附加-居民', name: '库区移民基金', period: '平', qty: 9354, rate: 0.006225, fee: 58.23 },
+    { category: '(6)政府性基金及附加-居民', name: '小型水库移民后期扶持资金(地方)', period: '平', qty: 9354, rate: 0.0005, fee: 4.68 },
+    // 工商业同名基金：绝不能被级联波及
+    { category: '(6)政府性基金及附加-工商业', name: '农网还贷', period: '平', qty: 614578, rate: 0.02, fee: 12291.56 },
+  ],
+}
+
+test('居民基准电量 = 费用行计费电量 − 加减（2026-10 得 9358.98）', () => {
+  const base = residentBaseElecOf(residentBill202610, 0)
+  assert.equal(base, 9358.98, `基准电量应为 9,358.98，got ${base}`)
+})
+
+test('居民基准电量：无费用行时退化为 本期电量 × 定比', () => {
+  const base = residentBaseElecOf({ total_kwh: 623932, residential_readings: [{ ratio: 0.015, adjust: 0 }] }, 0)
+  assert.equal(base, Math.round(623932 * 0.015 * 100) / 100, '应等于 623932 × 0.015 = 9358.98')
+})
+
+test('输入加减 -4.98 → 计费电量实时算成 9354', () => {
+  const base = residentBaseElecOf(residentBill202610, 0)
+  assert.equal(recalcResidentBillKwh(base, -4.98), 9354)
+  assert.equal(recalcResidentBillKwh(base, 0), 9358.98, '加减归零应回到基准')
+  assert.equal(recalcResidentBillKwh(base, -8.98), 9350, '支持任意加减')
+})
+
+test('级联居民电费：目录电费 + 5 项基金 qty 全部同步，金额按 qty×rate 重算', () => {
+  const { items, changed } = syncResidentFeeQty(residentBill202610.fee_items, 9354)
+  assert.equal(changed, false, '同一电量重复同步不应标记为变化（幂等）')
+
+  const { items: next, changed: c2 } = syncResidentFeeQty(residentBill202610.fee_items, 9000)
+  assert.equal(c2, true, '电量变化必须报告 changed')
+  const res = next.filter((it: any) => it.category.includes('居民') || it.category.includes('目录电费'))
+  assert.equal(res.length, 6, '居民侧应有 6 行（目录 1 + 基金 5）')
+  for (const it of res) {
+    assert.equal(it.qty, 9000, `${it.name} 计费电量未同步`)
+    assert.equal(it.fee, Math.round(9000 * it.rate * 100) / 100, `${it.name} 金额未按 qty×rate 重算`)
+    assert.equal(it.fee_amount, it.fee, 'fee_amount 必须同步，否则双列校验误报异常')
+  }
+  // 工商业同名基金不能被改
+  const ind = next.find((it: any) => it.category.includes('工商业'))
+  assert.equal(ind.qty, 614578, '工商业基金电量被误改')
+  assert.equal(ind.fee, 12291.56, '工商业基金金额被误改')
+})
+
+test('isResidentFeeRow：只认目录电费与政府性基金居民', () => {
+  assert.equal(isResidentFeeRow({ category: '(5)目录电费' }), true)
+  assert.equal(isResidentFeeRow({ category: '(6)政府性基金及附加-居民' }), true)
+  assert.equal(isResidentFeeRow({ category: '(6)政府性基金及附加-工商业' }), false)
+  assert.equal(isResidentFeeRow({ category: '(1)市场化购电费' }), false)
+})
+
+// ---------------------------------------------------------------------------
+// 第 37 轮回归：保存时「计费电量 = 基准 + 加减」，第二个参数必须是加减
+// ---------------------------------------------------------------------------
+//
+// 真机事故：保存路径误把 `bill_kwh`（本身已是「基准 + 加减」的结果）
+// 当成 adjust 传进 recalcResidentBillKwh，于是算成 基准 + 计费电量：
+//   9,358.98 + 9,354 = 18,712.98（翻倍，且级联把居民电费全部带偏）。
+test('保存口径：计费电量 = 基准 + 加减，不得用「基准 + 计费电量」', () => {
+  const base = residentBaseElecOf(residentBill202610, 0)   // 9358.98
+  // 正确：传加减
+  assert.equal(recalcResidentBillKwh(base, -4.98), 9354)
+  // 错误写法（传计费电量）会得出翻倍值 —— 这正是要防的回归
+  assert.equal(recalcResidentBillKwh(base, 9354), 18712.98)
+  assert.notEqual(recalcResidentBillKwh(base, 9354), 9354, '若两者相等，本测试就失去守护意义')
 })

@@ -149,11 +149,20 @@ test('新建子项由系统生成合法 key（中文名映射 / 递增 sub_N）'
   void fields
 })
 
-test('系统内置字段只有 3 个（发票类型/提取状态/标签），其余一律可删', () => {
-  // 内置键声明在 BusinessScopeRegistry（registry/invoice.ts 的 builtinFieldKeys），
+test('内置字段：发票 3 个；车队档案「证照状态/提取状态」也锁定，其余一律可删', () => {
+  // 内置键声明在 BusinessScopeRegistry（registry/*.ts 的 builtinFieldKeys），
   // 面板按 scope 查询不再有 scope 硬编码分支。
   assert.deepEqual(getScope('invoice')?.builtinFieldKeys, ['invoiceType', 'extractStatus', 'tags'])
-  assert.equal(getScope('vehicle')?.builtinFieldKeys, undefined)
+  // 第 37 轮（需求 4.2）：三个上传提取类档案的「证照状态 / 提取状态」同为内置，
+  // 二者是列表渲染与六同步的硬依赖，删掉后列表列会静默消失。
+  assert.deepEqual(getScope('vehicle')?.builtinFieldKeys, ['证照状态', '提取状态'])
+  assert.equal(isBuiltinFieldOf('vehicle', '证照状态'), true)
+  assert.equal(isBuiltinFieldOf('vehicle', '提取状态'), true)
+  assert.equal(isBuiltinFieldOf('vehicle', '车牌号'), false)
+  // 手工录入台账（轮胎/年检/成本）没有提取链路与证照有效期，不锁：
+  // 锁了会让用户删不掉一列永远为空的派生列。
+  assert.equal(getScope('tire')?.builtinFieldKeys, undefined)
+  assert.equal(getScope('fleet-cost')?.builtinFieldKeys, undefined)
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceType'), true)
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceNo'), false)
   assert.equal(isBuiltinFieldOf('vehicle', 'invoiceType'), false)

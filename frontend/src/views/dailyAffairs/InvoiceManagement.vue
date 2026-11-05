@@ -103,7 +103,7 @@
 
       <!-- 发票列表（自绘 grid，可横向滚动，字段可配置；虚拟滚动：>100 行自动仅渲染视口内 DOM） -->
       <div class="doc-list-scroll" ref="listScrollRef">
-        <div class="doc-list-view" :style="headerFixStyle">
+        <div :class="listViewClass" :style="headerFixStyle">
           <t-table
         ref="invoiceTableRef"
         :data="filteredRows"
@@ -342,6 +342,8 @@ import { listFleetCategories } from '@/api/fleet'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
+import { useTableFlatState, flatClassOf } from './useTableFlatState'
+
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
@@ -2298,6 +2300,11 @@ onBeforeUnmount(() => {
 watch(printVisible, (v) => {
   if (!v) revokePrintUrl()
 })
+
+// 列表空态/加载态禁止横向滚动条（第 37 轮）：loading 或 0 行时挂 is-table-flat，
+// 样式在 styles/business-list-shared.css 统一收口。
+const { isTableFlat } = useTableFlatState({ loading: listLoading, rows: filteredRows })
+const listViewClass = computed(() => flatClassOf(isTableFlat.value))
 </script>
 
 <style scoped lang="less">

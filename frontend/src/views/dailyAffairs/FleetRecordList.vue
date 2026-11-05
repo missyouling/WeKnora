@@ -70,7 +70,7 @@
 
       <!-- ③ 列表：与发票管理逐字同构（.doc-list-view + :max-height="100%" + sticky-header） -->
       <div class="doc-list-scroll">
-        <div class="doc-list-view" :style="headerFixStyle">
+        <div :class="listViewClass" :style="headerFixStyle">
           <t-table :data="pagedRows" :columns="tableColumns" row-key="id" size="small"
             :hover="true" :loading="tableLoading" :max-height="tableMaxHeight"
             :foot-data="tableFootData"
@@ -80,6 +80,24 @@
             :row-class-name="({ row }: any) => selectedKeys.has(rowKey(row)) ? 'is-selected' : ''"
             @row-click="({ row }: any) => openDetail(row)"
             @select-change="onTableSelectChange">
+            <!-- 证照状态：**三色只读 Tag**（第 37 轮，需求图 5）
+                 颜色与需求给的值一一对应，TDesign light 变体即浅底深字：
+                   生效中 → success（#e8f8f0 / #00a870）
+                   即将到期 → warning（#fff3e6 / #ed7b2f）
+                   已过期 → danger（#fdecee / #e34d59）
+                 空态（没填有效期）显示「—」，不强行造状态。 -->
+            <template #__cert_status="{ row }: any">
+              <t-tag v-if="certStatusOf(row?.data, todayStr).label"
+                :theme="certThemeOf(row)" variant="light" size="small">
+                {{ certStatusOf(row?.data, todayStr).label }}
+              </t-tag>
+              <span v-else>—</span>
+            </template>
+            <!-- 提取状态：同为派生值，绿底成功 Tag -->
+            <template #__extract_status="{ row }: any">
+              <t-tag :theme="extractStatusOf(row).theme === 'success' ? 'success' : 'default'"
+                variant="light" size="small">{{ extractStatusOf(row).label }}</t-tag>
+            </template>
             <template #empty>
               <!-- 首屏未就绪时不显示「暂无数据」：否则骨架屏期间会先闪一下空态 -->
               <BusinessEmptyState v-if="!tableLoading" compact :icon="emptyIcon"
@@ -125,11 +143,24 @@
         <t-select v-model="editForm.data['车牌号']" :options="vehicleOptions" filterable clearable allow-create
           placeholder="选择或输入车牌号" />
       </template>
-      <!-- 证照状态：系统派生值，只读展示（禁用输入框 + 提示来源）。
+      <!-- 证照状态：系统派生值，**只读彩色 Tag**（第 37 轮，需求 4.2）
+           视觉与「提取状态」完全一致：浅底 + 深字 + 同尺寸，只是颜色按三态变。
+           旧实现是 disabled 输入框 —— 灰底灰字长得像「可编辑但被锁住」，
+           与旁边同为派生值的提取状态（绿 Tag）风格断裂，用户以为这里漏填了。
            用插槽而不是改共享抽屉组件，是为了不动中台契约（发票/能耗的字段
            渲染分支保持原样）。 -->
       <template #field-__cert_status>
-        <t-input :value="detailCertStatus" disabled title="按有效期止自动计算，不可编辑" />
+        <div class="bsd-readonly-tag">
+          <t-tag v-if="detailCertStatus && detailCertStatus !== '—'"
+            :theme="detailCertTheme" variant="light" size="small">{{ detailCertStatus }}</t-tag>
+          <span v-else class="bsd-readonly-empty">—</span>
+        </div>
+      </template>
+      <!-- 提取状态：同为派生值，抽屉里也是只读 Tag（与列表同款） -->
+      <template #field-__extract_status>
+        <div class="bsd-readonly-tag">
+          <t-tag :theme="detailExtractTheme" variant="light" size="small">{{ detailExtractLabel }}</t-tag>
+        </div>
       </template>
     </BusinessSplitDetailDrawer>
 
@@ -151,6 +182,8 @@ import {
   listFleetCategories, getFleetRecordStats, extractFleetDocument,
 } from '@/api/fleet'
 import { generateCatalogPdf } from './useCatalogPdf'
+import { useTableFlatState, flatClassOf } from './useTableFlatState'
+
 import { isExtractInProgress } from '@/composables/extractConflict'
 import { selectInitialModelId } from '@/utils/modelDefaults'
 import { useChatResourcesStore } from '@/stores/chatResources'
@@ -372,6 +405,12 @@ const todayStr = (() => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 })()
 
+/** 证照状态的三色主题：生效中绿 / 即将到期橙 / 已过期红（需求图 5 的色值）。 */
+const certThemeOf = (row: any): 'success' | 'warning' | 'danger' => {
+  const st = certStatusOf(row?.data, todayStr)
+  return st.theme === 'success' ? 'success' : st.theme === 'warning' ? 'warning' : 'danger'
+}
+
 // 系统保留列名：这些字段在 subs 里是**历史遗留的可编辑文本列**（旧种子把它们
 // 当普通字段录入），现在统一由系统按有效期派生，必须从业务列里剔除，
 // 否则真机上会同时出现「驾驶证状态」与「证照状态」两列（需求图 15）。
@@ -392,6 +431,9 @@ const columnDefs = computed<FleetColumn[]>(() => {
       default: true,
       value: (row: any) => certStatusOf(row?.data, todayStr).label || '—',
       raw: () => 0,
+      // 需求图 5：表头曾被截断成「证照状」—— 三色 Tag 比纯文本更宽，
+      // 必须给足 100px（Tag 四周 padding + 4 个汉字）。
+      minWidth: 100,
     },
     {
       key: EXTRACT_STATUS_KEY,
@@ -400,6 +442,7 @@ const columnDefs = computed<FleetColumn[]>(() => {
       default: true,
       value: (row: any) => extractStatusOf(row).label,
       raw: () => 0,
+      minWidth: 100,
     },
   ]
 })
@@ -424,29 +467,22 @@ const tableColumns = computed(() => {
   const vis = visibleCols.value
   vis.forEach((c, i) => {
     const values = rows.value.slice(0, 30).map((r) => c.value(r))
-    const w = colWidthOf(c.width, c.label, values, c.dataType)
+    // minWidth 是**列的下限**（证照状态/提取状态需要 100px，否则表头会被
+    // TDesign 的 ellipsis 截成「证照状」）。有下限时按它兜住估计值。
+    const minW = Number((c as any).minWidth) || 0
+    const w = Math.max(colWidthOf(c.width, c.label, values, c.dataType), minW)
     const base: any = {
       colKey: c.key,
       title: c.label,
       ellipsis: ellipsisOf(c),
-      cell: (_h: any, params: any) => {
-        const row = params?.row
-        // 证照状态：**纯文本**（第 34 轮）。
-        // 它是「按有效期算出的派生值」，不是业务状态标签；加彩色 Tag 会与
-        // 「提取状态」的绿 Tag 混淆，也让一列文本看起来像可交互的徽标。
-        // 口径与需求图 5 一致：生效中 / 即将到期 / 已过期 三态一律素色文本。
-        if (c.key === CERT_STATUS_KEY) {
-          return certStatusOf(row?.data, todayStr).label || '—'
-        }
-        // 提取状态：绿底成功 Tag
-        if (c.key === EXTRACT_STATUS_KEY) {
-          const st = extractStatusOf(row)
-          return _h('t-tag', {
-            theme: st.theme === 'success' ? 'success' : 'default', variant: 'light', size: 'small',
-          }, () => st.label)
-        }
-        return c.value(row)
-      },
+      // 两列派生状态走**模板插槽**（#__cert_status / #__extract_status）。
+      //
+      // 不能用 `cell: (_h, params) => _h('t-tag', …)`：TDesign 1.19 的 cell
+      // 回调不注入 h，`_h` 恒为 undefined → 两列渲染成空白（真机实测
+      // 单元格 text 为空、无 .t-tag）。发票页用的是具名插槽，这里对齐它。
+      cell: c.key === CERT_STATUS_KEY || c.key === EXTRACT_STATUS_KEY
+        ? undefined
+        : (_h: any, params: any) => c.value(params?.row),
       dataType: c.dataType,
     }
     // 最后一列给 minWidth（随视口伸展），其余给固定 width —— 与发票页一致
@@ -737,15 +773,35 @@ const drawerFields = computed(() => {
     .filter((s: any) => !(isArchive.value && SYSTEM_STATUS_FIELD_NAMES.has(String(s.name))))
     .map((s: any) => ({ name: String(s.name), label: String(s.label || s.name), dataType: String(s.data_type || 'text') }))
   if (!isArchive.value) return base
-  // 证照状态是系统派生值：抽屉里以只读输入框展示（见模板 #field-__cert_status 插槽）。
-  // 不放进 editForm.data（避免脏检查把派生值当用户输入提交给后端）。
-  return [...base, { name: CERT_STATUS_KEY, label: '证照状态', dataType: 'text' }]
+  // 两个系统派生值都以**只读 Tag** 展示（模板 #field-__cert_status / #field-__extract_status）。
+  // 不放进 editForm.data：避免脏检查把派生值当用户输入提交给后端。
+  // 提取状态也必须进抽屉：它是判断「这条记录到底提没提出来」的唯一锚点，
+  // 列表里能看、进详情反而看不到，用户会以为数据丢了。
+  return [
+    ...base,
+    { name: CERT_STATUS_KEY, label: '证照状态', dataType: 'text' },
+    { name: EXTRACT_STATUS_KEY, label: '提取状态', dataType: 'text' },
+  ]
 })
 const drawerSubFields = computed(() => [])
 
 // 抽屉里「证照状态」的展示值：按当前编辑中的有效期止实时联动
 // （用户改了有效期止，状态要立刻跟着变，不能只在保存后才更新）。
 const detailCertStatus = computed(() => certStatusOf(editForm.value?.data, todayStr).label || '—')
+/**
+ * 抽屉里证照状态 Tag 的主题与文案。
+ *
+ * 跟随 `editForm` 实时算：用户改「有效期止」时 Tag 必须立刻变色 ——
+ * 这正是需求「随有效期止日期的修改自动重算更新 Tag 状态」的要求。
+ */
+const detailCertTheme = computed(() => {
+  const st = certStatusOf(editForm.value?.data, todayStr)
+  return st.theme === 'success' ? 'success' : st.theme === 'warning' ? 'warning' : 'danger'
+})
+/** 抽屉里的提取状态（与列表同一个 extractStatusOf，颜色语义一致）。 */
+const detailExtractLabel = computed(() => extractStatusOf(detailRow.value).label)
+const detailExtractTheme = computed(() =>
+  extractStatusOf(detailRow.value).theme === 'success' ? 'success' : 'default')
 
 function openDetail(row: any) {
   detailRow.value = row
@@ -1162,6 +1218,11 @@ onBeforeUnmount(() => {
 function onCatChanged() {
   reloadCategories().then(() => { initColumns(); reloadList() })
 }
+
+// 列表空态/加载态禁止横向滚动条（第 37 轮）：loading 或 0 行时挂 is-table-flat，
+// 样式在 styles/business-list-shared.css 统一收口。
+const { isTableFlat } = useTableFlatState({ loading: loading, rows: rows })
+const listViewClass = computed(() => flatClassOf(isTableFlat.value))
 </script>
 
 <style lang="less" scoped>
@@ -1171,7 +1232,6 @@ function onCatChanged() {
    height:100%，合计行只能贴着内容悬在半空（真机图 3/4/5）。
    这里补上后高度链路才完整：.biz-page(100%) → .biz-list-view(flex:1) →
    .doc-list-scroll(flex:1 + overflow:hidden) → .t-table(height:100%)。 */
-@import './styles/business-list-shared.css';
 
 /* 三段式纵向排布：卡片组 / 工具栏 / 列表各组件自带样式，这里只保证间距与滚动 */
 .fleet-page {
@@ -1184,71 +1244,45 @@ function onCatChanged() {
 .overview-group { flex: 0 0 auto; }
 .biz-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 
-/* 表格容器：**完全交给中台样式**（business-list-shared.css）。
+/* 表格：**完全复刻 InvoiceManagement.vue**，不写任何自定义高度规则。
  *
- * 第 34 轮删除了这里全部自创的表格高度逻辑：
- *   · `tbody::after` 像素占位行（CSS 变量驱动的伪行）→ 造成 loading 期首行被拉高、
- *     与 tfoot 上边框叠成双横线、满页数据多撑一屏空白；
- *   · `.t-table__content { display:flex }` / `.t-table__footer { margin-top:auto }`
- *     → 把 sticky 合计行改成 flex 布局，数据行被 flex 拉伸后垂直居中，
- *     首行看起来「掉到表格中间」。
- * 发票 / 能耗的标准做法只有三件事：`.doc-list-view`（中台已定义 flex 容器）+
- * `:max-height="100%"` + `sticky-header`。TDesign 的 tfoot 是
- * `position: sticky; bottom: 0`，容器限高后天然贴底，数据行高度只由内容决定。
- * 这里不再写任何表格高度相关规则。 */
-/* 合计行贴底（第 34 轮，**不用伪元素占位**）：
+ * 第 37 轮真机事故（图 5）：只有 1 条记录时，第 1 行离表头近 250px，
+ * 悬在表格半空中。根因是下面这段（已删除）：
+ *   .t-table{display:flex} / .t-table__content{flex:1} / table{flex:1;height:100%}
+ * `table{height:100%}` 在 CSS 表格布局里是「最小高度」语义 —— 容器拉满后，
+ * 多出来的高度会被**分配给行**，唯一那一行就被撑到整屏高、内容垂直居中。
+ * 而 `tfoot{margin-top:auto}` 又把合计行顶到底，看起来就像数据行飘在半空。
  *
- * 目标：无论 0 条 / 1 条 / 满页，合计行都紧贴表格容器底边。
+ * 发票页零自定义 CSS 就能正确贴顶：`.doc-list-view`（中台 flex 容器）+
+ * `:max-height="100%"` + `sticky-header`。TDesign 的 tfoot 是 `position:sticky;
+ * bottom:0`，数据满屏时自然贴底；不满屏时紧跟最后一行 —— 这才是中台标准行为，
+ * 也是需求「thead 与 tbody 首行 0px 紧贴」的前提。
  *
- * 为什么删掉上一轮的 `tbody::after` 伪行：
- *   伪行是 `display:table-row` 的空行，它自带表格边框 → 与 tfoot 的上边框
- *   叠成一条 2px + 1px 的**双横线**（需求图 9 明确要求消除）；
- *   且高度靠 JS 实测写入 CSS 变量，loading 期算不出 → 首行被拉高居中。
- *
- * 现在用纯 CSS 让「空状态行」撑满剩余高度：
- *   TDesign 的 tfoot 是 `position:sticky; bottom:0`，只要 tbody 的高度足以把
- *   合计行推到底部，它就自然贴底；tbody 高度由空状态行（0 条时）或数据行
- *   （有数据时）提供，不会产生任何额外边框。
- *   有数据但不足一屏时，同样靠 `.t-table__body` 的 min-height 兜底 —— 用
- *   `min-height: 100%` 而不是伪行，就不会多画一条边框。
- */
-/* 合计行贴底（第 34 轮，**零伪元素、零边框**）：
- *
- * 实测结论（对比发票页）：TDesign 的 `tfoot` 是 `position:sticky; bottom:0`，
- * 但它位于 `<table>` 内部，表格高度由内容决定 —— 于是 `.t-table__content`
- * 只有「表头 + 数据行」那么高（发票 17 条时 content=159px / table=615px）。
- * 内容不溢出时 sticky 没有可粘的参照，合计行就贴在数据行下方「悬空」。
- * 发票页数据满屏时看不出来，车队 0/1 条时立刻暴露。
- *
- * 解法：把滚动容器改成 flex 列，让**内层 table 撑满剩余高度**，
- * 再用 `margin-top:auto` 把 tfoot 顶到容器底。
- *   · 不用 `tbody::after` 伪行 —— 它会多画一条边框，与 tfoot 上边框叠成双横线；
- *   · 数据行写 `height:auto` —— 表格被拉高时只有 tbody 底部留白，行高不变
- *     （否则 1 行会被拉到整屏高，真机实测 477px）。
- */
-/* 三层都要 flex：.t-table（块级）→ .t-table__content（flex:0 1 auto）→ table。
-   只给 content 设 flex 是不够的 —— 它的高度仍由内容决定（实测 218px），
-   因为父级 .t-table 是 block，content 拿不到剩余空间。 */
-.fleet-page :deep(.t-table) {
-  display: flex;
-  flex-direction: column;
-}
-.fleet-page :deep(.t-table__content) {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.fleet-page :deep(.t-table__content > table) {
-  flex: 1;
-  height: 100%;
-}
-.fleet-page :deep(.t-table__body > tr:not(.t-table__empty-row)) {
-  height: auto;
-}
-.fleet-page :deep(.t-table__footer) {
-  margin-top: auto;
-}
+ * 铁律：**永远不要为「顶合计栏」去改 table / tbody / tr 的高度或布局**。 */
 
+/* 证照状态三色 Tag（第 37 轮）：与「提取状态」同一套 Tag 视觉，靠颜色区分三态。
+ * 颜色值居中台 design token，不在模板里写死 style。 */
+.cell-cert-active :deep(.t-tag) { --td-tag-light-primary-color: #00a870; }
 .fleet-pager { display: flex; justify-content: flex-end; padding: 8px 0 4px; }
+/* 抽屉里的只读派生值（证照状态 / 提取状态）：与普通字段左对齐、垂直居中，
+   不出现输入框的边框感 —— 让用户一眼看出「这是算出来的，不是填的」。
+   插槽内容渲染在父组件作用域（FleetRecordList），所以样式必须写在这里，
+   不能落到 BusinessSplitDetailDrawer 的 scoped 块里。 */
+.bsd-readonly-tag {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+.bsd-readonly-empty {
+  color: var(--td-text-color-placeholder);
+}
+</style>
+
+<style>
+/* 共享列表样式：必须在**非 scoped** 块里导入。
+ * 放在 <style scoped> 里时 Vue 会给每条规则追加 [data-v-xxx]，
+ * 而 .t-table__content / .t-table__body 是 TDesign 子组件内部元素、
+ * 不带当前组件的 data-v 属性 → 选择器永不匹配（横向滚动条收不住）。
+ * 发票页一直是对的（它就在非 scoped 块里），其余三页对齐它。 */
+@import './styles/business-list-shared.css';
 </style>

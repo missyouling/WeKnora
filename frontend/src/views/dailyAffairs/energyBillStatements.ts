@@ -459,9 +459,10 @@ function statementMeta(ctx: TenantStatementCtx, rows: any[], unit: string, month
     { label: '计费方式', value: ctx.ownerView ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
     {
       label: '分摊比例',
-      // 需求原文要求带适用范围：这个比例**只**作用于基本电费与力调电费，
-      // 其余分项按分时电量或工业总电量 × 单价算，不乘它。
-      value: ctx.ownerView ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%（仅基本电费、功率因素调整电费按比例）` : '—'),
+      // 只显示比例本身。第 37 轮：删除「（仅基本电费、功率因素调整电费按比例）」
+      // 这段括号说明 —— 打印页 metas 是两列排布，括号一长就换行挤掉后一行；
+      // 适用范围属于口径细节，不进对外单据。
+      value: ctx.ownerView ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—'),
     },
     { label: '账单户号', value: String(ctx.billOf(months[0])?.item?.account_no || '—') },
     // 应收合计必须与列表「合计应付」逐分相等：

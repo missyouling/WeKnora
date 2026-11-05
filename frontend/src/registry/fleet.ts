@@ -93,6 +93,20 @@ for (const s of fleetScopes) {
     regexPatchable: s.fieldRules === true,
     listRows: 'records',
     standardFields: [],
+    // 系统内置字段**不可删除**（第 37 轮，需求 4.2）。
+    //
+    // `证照状态` 与 `提取状态` 是列表渲染 + 六同步的硬依赖：
+    //   · 证照状态 = 按有效期止算出的派生值（certStatusOf），不是 subs 里的列。
+    //     历史 subs 里仍残留一条同名字段（vehicle 库内确实有），前端列表会把它
+    //     过滤掉再渲染派生列 —— 用户若在设置里删掉这条残留，派生列本身不受影响，
+    //     但「字段定义」里少了一条再也加不回来的锚点，六同步就断了一环；
+    //   · 提取状态 同理（extractStatusOf）。
+    // 键用**中文字段名**（车队 subs 是中文键，canonicalFieldKey 会把中文归一成
+    // 空串，所以不能走英文 key），比较时两侧都转小写。
+    // 只对**三个上传提取类档案**（vehicle/driver/maintain）声明：
+    // 轮胎/年检/成本是手工录入台账，既没有提取链路也没有证照有效期，
+    // 锁死这两列反而让用户删不掉无意义的空列。
+    builtinFieldKeys: s.fieldRules === true ? ['证照状态', '提取状态'] : undefined,
     api: { extract: 'fleet' },
   })
 }
