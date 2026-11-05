@@ -289,6 +289,13 @@ func (h *BusinessExtractHandler) ExtractUtilityBill(c *gin.Context) {
 		if service.NormalizeUtilityBillDetails(&extracted.Records[0], strings.Join(batches, "\n")) {
 			logger.Infof(ctx, "Utility bill details rebuilt from source text, knowledge ID: %s", knowledgeID)
 		}
+		// 「本期电费」总额归一（第 38 轮）：模型给的 grand_total 与分项经常对不上
+		// （2026-10 落库 446,003.1、分项实算 481,647.91）。明细补齐之后立即按
+		// 分项重算，保证落库值、列表列、账单概况、打印清单四处同源。
+		if service.ReconcileUtilityBillTotals(&extracted.Records[0]) {
+			logger.Infof(ctx, "Utility bill total reconciled from fee items: %.2f, knowledge ID: %s",
+				extracted.Records[0].GrandTotal, knowledgeID)
+		}
 	}
 
 	// 通用质量闭环（非发票业务口径）：账单周期/打印日/交费截止日等标准日期字段归一化，

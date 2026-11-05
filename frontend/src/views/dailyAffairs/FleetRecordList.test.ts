@@ -182,3 +182,43 @@ test('抽屉：证照状态与提取状态都是只读 Tag，不是 input', () =
   assert.match(fields, /CERT_STATUS_KEY/, 'drawerFields 必须含证照状态')
   assert.match(fields, /EXTRACT_STATUS_KEY/, 'drawerFields 必须含提取状态')
 })
+
+// ---------------------------------------------------------------------------
+// 第 38 轮：取消冻结列 / 合计行贴底骨架 / 驾驶证首屏直出
+// ---------------------------------------------------------------------------
+
+test('列表列定义不得再有 fixed（冻结列会遮住后方业务列文字）', () => {
+  // 真机图 44/46：勾选列 + 序号列 fixed:'left' → 横向滚动时钉在左侧并画分割线，
+  // 许可证号被压成「订字5002…」。
+  const cols = list.slice(list.indexOf('const tableColumns'), list.indexOf('const vis = visibleCols.value'))
+  // 先剥注释：说明文字里会提到 `fixed: 'left'` 这种历史写法
+  const colCode = cols.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  assert.ok(!colCode.includes('fixed'), '列定义不得再有 fixed（左/右固定都会遮住后方列）')
+  // 勾选 + 序号是 TDesign 的内置列类型，去掉 fixed 后仍要保留
+  assert.match(cols, /colKey: 'row-select'/, '复选框列必须保留')
+  assert.match(cols, /colKey: 'serial-number'/, '序号列必须保留')
+})
+
+test('切一级菜单时先同步重置子分类焦点，再拉列表（否则首屏 0 条）', () => {
+  const bootRaw = list.slice(list.indexOf('async function bootstrap()'), list.indexOf("watch(() => props.recordType"))
+  // 剥注释再定位：说明文字里也写了 `reloadList()`，会把「第一次调用」判断带偏
+  const boot = bootRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const resetAt = boot.indexOf('activeType.value = seeded')
+  const listAt = boot.indexOf('reloadList()')
+  assert.ok(resetAt > 0, 'bootstrap 必须用同步种子重置 activeType')
+  assert.ok(listAt > resetAt, '重置必须发生在第一次 reloadList 之前（时序错了就是 0 条）')
+  // 服务端分类校正焦点后要补一次列表请求
+  assert.match(boot, /if \(want !== activeType\.value\)[\s\S]{0,220}reloadList\(\)/,
+    '服务端分类校正后必须重拉列表，不能等用户点刷新')
+})
+
+test('子分类过滤兼容英文 key（driver_license / driving_license）', () => {
+  assert.match(list, /subCategoryMatches\(r\?\.sub_category/, '必须用别名匹配兜底历史英文 key')
+})
+
+test('列显隐跟着菜单/分类走：STORAGE_KEY 变化即重新读该分类的列记忆', () => {
+  // 真机：车辆档案 → 司机档案，visibleColKeys 仍是上一个分类的键，
+  // 与新的 columnDefs 求交集只剩「有效期起/止/发证机关」→ 表头少 7 列。
+  assert.match(list, /watch\(STORAGE_KEY, \(\) => \{ initColumns\(\) \}\)/,
+    '必须 watch STORAGE_KEY 重新 initColumns')
+})

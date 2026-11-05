@@ -722,7 +722,7 @@ import FleetUploadDialog from './FleetUploadDialog.vue'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 import { buildEnergyChartOption } from './utilityEnergyChart'
 import { buildBillMetrics } from './utilityBillMetrics'
-import { buildOverviewRows, overviewTotalOf, qtyLabelOf as qtyLabelOfUtil } from './utilityBillOverview'
+import { buildOverviewRows, overviewTotalOf, overviewBillTotalOf, qtyLabelOf as qtyLabelOfUtil } from './utilityBillOverview'
 import {
   BILL_MENUS,
   CAPACITY_FIELDS,
@@ -1754,8 +1754,18 @@ const gotoMenu = (key: string) => {
 }
 const overviewTotal = computed(() => overviewTotalOf(overviewRows.value))
 
-// 账单电费（解析提取）与汇总对比：优先合计电费 grand_total（新口径，含容需量/力调），旧数据回退 total_amount
-const billTotal = computed(() => Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0)
+// 账单电费（票面口径）：**四个汇总行的账单电费相加**（工商业小计 + 居民小计 +
+// 容需量 + 力调），而不是直接读顶层 grand_total。
+//
+// 真机 2026-10：分项 11 行全绿，底部合计却报「异常」—— grand_total 落库成
+// 446,003.1，而分项实算 481,647.91。脏的是那一个汇总字段，不是明细。
+// 分项账单电费逐行提取，可靠得多；只要分项对得上，合计必然对得上。
+// 老账单没有 fee_items 时（分项全 0）才回退到顶层字段。
+const billTotal = computed(() => {
+  const sum = overviewBillTotalOf(overviewRows.value)
+  if (sum > 0) return sum
+  return Number(editForm.value.grand_total) || Number(editForm.value.total_amount) || 0
+})
 const billTotalText = computed(() => (billTotal.value ? fmtRate6(billTotal.value) : ''))
 const billTotalOk = computed(() => {
   const v = billTotal.value

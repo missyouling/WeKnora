@@ -12,6 +12,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTenantBillingStatementDoc } from './energyBillStatements'
 
+/**
+ * 取 KPI 卡片的防空守卫（第 38 轮，修 CI type-check TS18048）。
+ *
+ * `StatementDoc.kpis` 在类型上是可选字段（有的单据确实没有概览卡），
+ * 直接 `doc.kpis.find(...)` 在 `vue-tsc --build` 下会报 'doc.kpis' is possibly
+ * 'undefined'（CI 图 48 的 90,17 / 109,15 两处）。这里统一走一个守卫，
+ * 顺带兜住 `doc` 本身为空的极端情况。
+ */
+const kpisOf = (doc: any): any[] => (Array.isArray(doc?.kpis) ? doc.kpis : [])
+
 // 库内 2026-10 真实读数（回填后 start/end_reading 已落库）
 const ELEC_2026_10 = [
   { month: '2026-10', use_unit: '持睿汽车', meter_alias: '持睿工业分表1', meter_kind: 'industrial',
@@ -87,7 +97,7 @@ for (const [month, elec, subMeter, indKwh, dormKwh, expInd, expDiff, expDorm, ex
         ind_fee: 100, dorm_fee: 10, res_fee: 0,
         water_ind_usage: 0, water_dorm_usage: 0, water_ind_fee: 0, water_dorm_fee: 0, water_fire_fee: 0, gas_fee: 0 },
     ], '持睿汽车')
-    const kpi = (doc.kpis || []).find((k: any) => k.label === '本期总电量')
+    const kpi = kpisOf(doc).find((k: any) => k.label === '本期总电量')
     assert.ok(kpi, '必须有本期总电量卡片')
     const norm = (s: string) => String(s || '').replace(/,/g, '').replace(/\s+/g, ' ').trim()
     assert.equal(norm(kpi!.hint || ''), norm(`工业 ${expInd} + 差额 ${expDiff} + 宿舍 ${expDorm}`),
@@ -106,7 +116,7 @@ test('subMeterKwhOf 缺失时退化为「工业 + 宿舍」两段（向后兼容
       ind_fee: 100, dorm_fee: 10, res_fee: 0,
       water_ind_usage: 0, water_dorm_usage: 0, water_ind_fee: 0, water_dorm_fee: 0, water_fire_fee: 0, gas_fee: 0 },
   ], '持睿汽车')
-  const kpi = (doc.kpis || []).find((k: any) => k.label === '本期总电量')
+  const kpi = kpisOf(doc).find((k: any) => k.label === '本期总电量')
   assert.match(String(kpi!.hint || ''), /工业.*宿舍/, '退化路径仍要有构成说明')
   assert.ok(!String(kpi!.hint || '').includes('差额'), '无分表数据时不应出现差额')
 })

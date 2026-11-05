@@ -2393,6 +2393,12 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.BackfillUtilityBillDetails(ctx); err != nil {
 		logger.Warnf(ctx, "backfill utility bill details failed: %v", err)
 	}
+	// 「本期电费」总额回填：grand_total/total_amount 曾被模型写错并落库
+	// （2026-10 = 446,003.1，分项实算 481,647.91 → 账单概况底部误报异常）。
+	// 总额一律按分项（fee_amount + 容需量 + 力调）重算（幂等）。
+	if _, err := uh.BackfillUtilityBillTotals(ctx); err != nil {
+		logger.Warnf(ctx, "reconcile utility bill totals failed: %v", err)
+	}
 	// 分时电表（工业分表 1~3）的起度/止度回填：
 	// 录入时只填四段示数，start_reading/end_reading 恒为 0，费用清单的
 	// 「电费核算明细」于是把工业分表起止度显示成 0（幂等）。

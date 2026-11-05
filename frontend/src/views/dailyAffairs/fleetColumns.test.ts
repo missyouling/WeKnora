@@ -14,6 +14,8 @@ import {
   buildFleetKpiCards,
   fleetEmptyState,
   dataTypeOfSub,
+  subCategoryAliasesOf,
+  subCategoryMatches,
 } from './fleetColumns'
 
 const plateMap = new Map<string, string>([['v1', '渝C81022']])
@@ -337,4 +339,26 @@ test('normalizeFieldWidth：0/空=自适应，其余夹到 60~600', () => {
   assert.equal(normalizeFieldWidth(59), 60)
   assert.equal(normalizeFieldWidth(601), 600)
   assert.equal(normalizeFieldWidth('180'), 180)
+})
+
+// ---------------------------------------------------------------------------
+// 第 38 轮：子分类别名（中文名 ↔ 英文 key）
+// ---------------------------------------------------------------------------
+
+test('subCategoryMatches：中文名与英文 key 都能命中', () => {
+  assert.equal(subCategoryMatches('驾驶证', '驾驶证'), true)
+  assert.equal(subCategoryMatches('driver_license', '驾驶证'), true)
+  assert.equal(subCategoryMatches('driving_license', '驾驶证'), true)
+  assert.equal(subCategoryMatches('从业资格证', '驾驶证'), false)
+  assert.equal(subCategoryMatches('', '驾驶证'), false)
+  // 反向：传英文 key 作为分类名也要能匹配中文记录
+  assert.equal(subCategoryMatches('驾驶证', 'driver_license'), true)
+})
+
+test('subCategoryAliasesOf：返回同组全部写法，且不含自身', () => {
+  const list = subCategoryAliasesOf('驾驶证')
+  assert.ok(list.includes('driver_license'))
+  assert.ok(list.includes('driving_license'))
+  assert.ok(!list.includes('驾驶证'), '别名列表不应包含自身')
+  assert.deepEqual(subCategoryAliasesOf(''), [])
 })

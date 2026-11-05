@@ -289,6 +289,29 @@ export const FEE_TOLERANCE = 0.02
 export const feeCloseOf = (row: OverviewRow) => Math.abs(feeDiffOf(row)) <= FEE_TOLERANCE
 
 /**
+ * 概览「本期电费」行的**账单电费**（票面口径合计）。
+ *
+ * 口径（第 38 轮，真机图 image_9cdbe3）：
+ *   本期电费·账单电费 = 工商业账单小计 + 居民账单小计 + 输配容（需）量账单电费
+ *                       + 功率因数调整账单电费
+ * 也就是**四个汇总行各自的账单电费相加**，与「电费」列（明细实算）用同一组行，
+ * 只是取 billFee 侧。这样只要分项对得上，合计必然对得上。
+ *
+ * 为什么不再直接用 `editForm.grand_total`：
+ *   真机 2026-10 的电费列是 481,647.91（分项逐个都对、全绿），
+ *   而 grand_total 存的是 446,003.1 —— 提取阶段算错并落库，
+ *   底部合计就凭这一个脏字段报「异常」，前面 10 行全绿也救不回来。
+ *   分项账单电费（fee_amount / capacity_fee / pf_adjust_amount）是逐行提的，
+ *   可靠性远高于单一汇总字段。
+ *
+ * 兜底：分项一个都没有（老账单没有 fee_items）时返回 0，由调用方回退到顶层字段。
+ */
+export function overviewBillTotalOf(rows: OverviewRow[]): number {
+  const pick = (key: string) => Number(rows.find((r) => r.key === key)?.billFee) || 0
+  return roundMoney(pick('industrial') + pick('residential') + pick('capacity') + pick('pf'))
+}
+
+/**
  * 账单合计校验：把「计算合计」与「账单合计」对齐。
  *
  * 用于账单概况底部的「合计」行 —— 用户看到的是两个数 + 一个是否相符的标记。

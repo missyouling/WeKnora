@@ -188,6 +188,54 @@
   scrollbar-gutter: stable;
 }
 
+/* ---- 表格纵向骨架：表头 → 数据行 → 弹性空白 → 贴底合计 → 横向滚动条（第 38 轮） ----
+ *
+ * 现象（真机图 45/46/47）：0 条或 1 条记录时，合计行紧贴在唯一那行数据下方「悬在半空」，
+ * 下面留出整屏空白；而合计行本该是列表的底边。
+ *
+ * 为什么不能用 `table { height: 100% }`：
+ *   CSS 表格的 height 是**最小高度**语义 —— 容器拉满后浏览器把多余高度**分给数据行**，
+ *   唯一那行会被撑到整屏高、内容垂直居中。真机实测首行 477px、行文字飘在半空
+ *   （第 34/37 轮各踩过一次，都是这个原因）。
+ *
+ * 现在改成「弹性占位行」：
+ *   ① `.t-table` / `.t-table__content` 都 flex 列，content 撑满卡片剩余高度；
+ *   ② `table` 作为 flex 项拉满 content（列宽算法不变，仍是真表格）；
+ *   ③ tbody 末尾追加一个 `display: table-row; height: 100%` 的**无内容占位行**，
+ *      多余高度全部落在它身上 —— 数据行高度只由内容决定（39~42px），不会被拉伸；
+ *   ④ tfoot 是表格的最后一行，占位行把它顶到容器底边；
+ *      横向滚动条属于 `.t-table__content`，天然画在 tfoot **下方**（容器最底部）。
+ *
+ * 为什么占位行不产生「双横线」：
+ *   它没有 td，TDesign 的边框画在 `td` 上（不是 tr），因此不落任何线条；
+ *   这里再显式清零 border/background，避免主题里给 tr 加背景时露出条纹。
+ *
+ * 为什么不用 JS 实测像素（第 31/34 轮的做法）：
+ *   loading 期算不出高度 → 首行会被拉高；伪行高度又与 tfoot 上边框叠成 2px 双线。
+ *   `height: 100%` 由浏览器在布局阶段解析，永远等于「剩余空间」，没有时序问题。
+ */
+.biz-page .doc-list-view .t-table {
+  display: flex;
+  flex-direction: column;
+}
+.biz-page .doc-list-view .t-table__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.biz-page .doc-list-view .t-table__content > table {
+  flex: 1 1 auto;
+}
+.biz-page .doc-list-view .t-table__body::after {
+  content: '';
+  display: table-row;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 /* 加载中 / 零行时**禁止横向滚动条**（第 37 轮，全模块统一）
  *
  * 现象（真机图 3）：列表在 loading 或没有记录时，表头下方半空中会出现一条
@@ -206,11 +254,11 @@
   overflow-x: hidden !important;
 }
 
-/* 空态下 t-table 自身也不该撑出滚动：高度交给空态占位，不要 flex:1 拉满 */
+/* 空态/加载态只需要「没有横向滚动条」，**高度仍然要拉满**：
+ * 合计行必须贴在卡片底边（第 38 轮），所以这里不能再把 `.t-table` 收成 auto
+ * ——那会让表格塌到内容高度，合计行又回到半空中。 */
 .biz-page .doc-list-view.is-table-flat .t-table {
-  flex: 0 0 auto;
-  height: auto;
-  max-height: none;
+  max-height: 100%;
 }
 
 /* 表头 th 背景与内容区统一为 container 令牌（非 bordered 表格默认白底），

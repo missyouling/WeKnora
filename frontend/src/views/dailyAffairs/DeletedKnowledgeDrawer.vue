@@ -137,7 +137,9 @@ const columns = [
   { colKey: 'reason', title: '删除原因', width: '120px' },
   { colKey: 'deletedAt', title: '删除时间', width: '160px' },
   { colKey: 'deleteCount', title: '次数', width: '80px' },
-  { colKey: 'op', title: '操作', width: '70px', fixed: 'right' as const },
+  // 第 38 轮：取消右固定。冻结列会在横向滚动时遮住相邻列文字，
+  // 抽屉里的表格宽度有限，整表一起滑动反而更好读。
+  { colKey: 'op', title: '操作', width: '70px' },
 ]
 
 const fileExt = (name: string) => {

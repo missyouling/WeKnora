@@ -206,7 +206,7 @@ import { filterRowsByPendingFiles } from './invoicePendingGate'
 import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
-  certStatusOf, certStatusOptions, extractStatusOf,
+  certStatusOf, certStatusOptions, extractStatusOf, subCategoryMatches,
   type FleetColumn,
 } from './fleetColumns'
 import { fleetCategorySeedsOf } from './fleetCategorySeed'
@@ -265,6 +265,8 @@ const loading = ref(false)
 // 最近一次**成功渲染**的列表数据源 key（菜单+分类+筛选+分页）。
 // 用于判断 reloadList 是「换数据源」（需要清空旧行）还是「同源刷新」（不能清空）。
 const lastListKey = ref('')
+// 别名兜底只做一次的分类键（`recordType|分类名`），避免空分类反复多打请求。
+const aliasTried = new Set<string>()
 const cardsReady = ref(false)
 const vehicles = ref<any[]>([])
 const categories = ref<Record<string, any[]>>({})
@@ -459,10 +461,14 @@ const STORAGE_KEY = computed(() => {
 const visibleCols = computed(() => columnDefs.value.filter((c) => visibleColKeys.value.includes(c.key)))
 
 const tableColumns = computed(() => {
-  // 与发票管理同款固定列：勾选 + 序号，二者都左固定，横向滚动时保持可见。
+  // 第 38 轮（需求图 44/46）：**取消所有冻结列**。
+  //
+  // 原来勾选列与序号列是 `fixed: 'left'`，横向滚动时它们被钉在左侧并画一条
+  // 分割竖线，把后面的业务列文字压掉半截（真机：许可证号只剩「订字5002…」）。
+  // 现在全部列（含勾选/序号/状态）一起随横向滚动条滑动，表格是一个整体。
   const cols: any[] = [
-    { colKey: 'row-select', type: 'multiple', width: 44, fixed: 'left' },
-    { colKey: 'serial-number', title: '', width: 56, fixed: 'left' },
+    { colKey: 'row-select', type: 'multiple', width: 44 },
+    { colKey: 'serial-number', title: '', width: 56 },
   ]
   const vis = visibleCols.value
   vis.forEach((c, i) => {
@@ -692,8 +698,34 @@ async function reloadList() {
       page_size: statusFilter ? 200 : pageSize.value,
     })
     const data = res?.data || {}
-    rows.value = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : []
-    total.value = Number(data.total) || rows.value.length
+    let items: any[] = Array.isArray(data.items) ? data.items : Array.isArray(data) ? data : []
+    let totalNum = Number(data.total) || items.length
+    // 子分类别名兜底（第 38 轮，需求 5.2）：库里历史记录可能把分类存成英文 key
+    // （driver_license / driving_license），而后端是 `sub_category = ?` 精确匹配
+    // → 中文名查不到它们，页面显示「暂无数据」。
+    // 命中 0 条时按该分类的全部别名重查一次（先不带分类、前端过滤），
+    // 结果为空也是合法结论，所以每个「菜单+分类」只试一次，避免每次翻页多打一次请求。
+    const aliasKey = `${recordType.value}|${activeCategoryName.value}`
+    if (isArchive.value && items.length === 0 && activeCategoryName.value && !aliasTried.has(aliasKey)) {
+      aliasTried.add(aliasKey)
+      const fallback: any = await listFleetRecords({
+        type: recordType.value,
+        q: String(state.keyword || '').trim() || undefined,
+        date_from: df || undefined,
+        date_to: dt || undefined,
+        page: 1,
+        page_size: 200,
+      })
+      const fdata = fallback?.data || {}
+      const all: any[] = Array.isArray(fdata.items) ? fdata.items : Array.isArray(fdata) ? fdata : []
+      const hit = all.filter((r) => subCategoryMatches(r?.sub_category, activeCategoryName.value))
+      if (hit.length) {
+        items = hit
+        totalNum = hit.length
+      }
+    }
+    rows.value = items
+    total.value = totalNum
     // 记住本次已渲染的数据源 key：后续同 key 的刷新不再清空（避免竞态抹掉结果）
     lastListKey.value = reqKey
   } catch (e: any) {
@@ -1161,23 +1193,39 @@ async function bootstrap() {
   page.value = 1
   filterWatchReady = false
   filterState.value = initialFilterState()
+  // 切换一级菜单时**先把子分类焦点落到本菜单第 1 个分类**，再发列表请求（第 38 轮）。
+  //
+  // 真机事故（图 47）：车辆档案 → 司机档案，顶部「驾驶证 1 份」已亮，列表却
+  // 「暂无数据 / 合计 0 条」，必须点刷新。根因是竞态：`activeType` 只在 setup
+  // 时算过一次，切菜单后仍是 `cat-行驶证`；而 bootstrap 里 `reloadList()` 与
+  // `reloadCategories()` 并行发出 → 列表带着上一个菜单的分类名去查，必然 0 条；
+  // 分类接口回来后虽然把 activeType 改成了「驾驶证」，却没有再拉一次列表。
+  //
+  // 现在：① 用同步种子（与后端 seed 同源）立即重置焦点，第一帧的请求就带对分类；
+  //       ② 服务端分类到位后若校正了焦点，再补一次列表请求。
+  if (isArchive.value) {
+    const seeded = resolveDefaultCategoryName(fleetCategorySeedsOf(meta.value.scope))
+    activeType.value = seeded ? 'cat-' + seeded : ''
+  }
   // 四路并行（第 34 轮）：vehicles / kb / 分类 / (统计 + 列表)。
   //
   // 串行是首屏慢的根因：`vehicles+kb → 分类 → stats → list` 四次往返，
   // 跨洋链路每次 3~10s，实测首屏要 16s 才出数据（截图里一直是「0 份 + 暂无数据」）。
-  //
-  // 为什么分类不必阻塞列表：`activeType` 已在 setup 阶段用**同步种子**算好
-  // （见 activeType 的初始化），列表请求只需要分类**名字**，而名字就是种子里的
-  // 第一个分类名。分类接口返回后只用于「校正」（用户可能停用了某个分类）。
   const catsP = reloadCategories()
   const dataP = Promise.all([reloadStats(), reloadList()])
   await Promise.all([loadVehicles(), ensureKb()])
   await catsP
-  // 分类到位后用服务端数据校正默认焦点（种子里的第一个分类可能被用户停用）
+  // 分类到位后用服务端数据校正默认焦点（种子里的第一个分类可能被用户停用/改名）
   if (isArchive.value) {
     const first = resolveDefaultCategoryName(menuCategories.value)
     const want = first ? 'cat-' + first : ''
-    if (want !== activeType.value) activeType.value = want
+    if (want !== activeType.value) {
+      activeType.value = want
+      initColumns()
+      // 焦点变了 → 之前那次列表请求查的是别的分类，必须按新分类重拉，
+      // 否则「卡片有数、列表为空」会一直停在那里等用户点刷新。
+      await reloadList()
+    }
   }
   initColumns()
   await dataP
@@ -1189,6 +1237,14 @@ async function bootstrap() {
 }
 
 watch(() => props.recordType, () => { void bootstrap() })
+
+// 列显隐必须跟着「菜单 + 分类」走（第 38 轮）。
+//
+// 每个子分类有独立的列记忆键（STORAGE_KEY），切菜单/切卡片后如果不重新读一遍，
+// `visibleColKeys` 还是上一个分类的键 —— 与当前 columnDefs 求交集后只剩**两套字段
+// 的重叠部分**（真机：车辆档案 → 司机档案，驾驶证只剩「有效期起/止/发证机关」3 列，
+// 用户以为数据没加载出来）。
+watch(STORAGE_KEY, () => { initColumns() })
 
 // 表头右侧滚动条轨道遮罩（与发票管理共用同一 hook 与同一 CSS）
 const { headerFixStyle } = useTableHeaderFix()

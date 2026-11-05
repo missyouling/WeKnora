@@ -380,6 +380,48 @@ export function resolveDefaultCategoryName(cats: readonly any[] | undefined): st
 }
 
 /**
+ * 子分类别名（第 38 轮，需求 5.2）。
+ *
+ * 同一分类在库里可能以**英文 key** 落库（历史导入、外部接口写入、早期种子），
+ * 而界面按中文名过滤 `sub_category` 时是精确匹配 —— 这些记录会静默消失
+ * （真机：司机档案卡片显示「驾驶证 1 份」，列表却是「暂无数据」）。
+ *
+ * 这里给出「中文名 ↔ 英文 key」的规范映射；改名/新增分类时同步补一行即可。
+ */
+const SUB_CATEGORY_ALIASES: Record<string, readonly string[]> = {
+  行驶证: ['vehicle_license', 'driving_license'],
+  道路运输证: ['road_transport_certificate', 'transport_certificate'],
+  道路运输经营许可证: ['road_transport_business_license', 'operation_license'],
+  驾驶证: ['driver_license', 'driving_license'],
+  从业资格证: ['qualification_certificate', 'employment_certificate'],
+  维修工单: ['maintenance_order', 'repair_order'],
+}
+
+/** 某分类的全部可接受写法（中文名→英文 key，也支持反向传英文 key）。 */
+export function subCategoryAliasesOf(name: string): string[] {
+  const key = String(name || '').trim()
+  if (!key) return []
+  const out = new Set<string>()
+  const direct = SUB_CATEGORY_ALIASES[key]
+  if (direct) direct.forEach((a) => out.add(a))
+  for (const [cn, list] of Object.entries(SUB_CATEGORY_ALIASES)) {
+    if (!list.includes(key)) continue
+    out.add(cn)
+    list.forEach((a) => out.add(a))
+  }
+  out.delete(key)
+  return [...out]
+}
+
+/** 记录的 sub_category 是否属于该分类（中文名或任一英文别名）。 */
+export function subCategoryMatches(recordSub: string, categoryName: string): boolean {
+  const r = String(recordSub || '').trim()
+  const c = String(categoryName || '').trim()
+  if (!r || !c) return false
+  return r === c || subCategoryAliasesOf(c).includes(r)
+}
+
+/**
  * 构造车队 KPI 卡片（纯函数，便于单测）。
  *
  * 文案口径对齐发票管理：

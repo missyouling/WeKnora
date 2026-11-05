@@ -11,6 +11,7 @@ import {
   feeCloseOf,
   feeDiffOf,
   overviewTotalOf,
+  overviewBillTotalOf,
   qtyLabelOf,
 } from './utilityBillOverview'
 
@@ -320,4 +321,43 @@ test('四段求和：老数据无时段字段时才退回最大值', () => {
     'industrial-market': [{ ...row(100, 908222), name: '零售交易电费' }],
   }))
   assert.equal(rows[0].qty, 908222, '无时段 → 退回最大值，不返回 0')
+})
+
+// ---------------------------------------------------------------------------
+// 第 38 轮：「本期电费」行的账单电费 = 四个汇总行的账单电费相加
+// ---------------------------------------------------------------------------
+//
+// 真机事故（image_9cdbe3）：2026-10 账单概况 11 行分项全绿，
+// 底部「本期电费」却 电费 481,647.91 / 账单电费 446,003.1 → 误报「异常」。
+// 根因是 grand_total 落库时就算错了（提取阶段的汇总字段不可靠），
+// 而分项账单电费（fee_amount / capacity_fee / pf_adjust_amount）是逐行提取的。
+const overviewRows202610 = buildOverviewRows(makeInputs({
+  // row(fee, qty, fee_amount)：账单电费列读的是 fee_amount
+  'industrial-market': [{ ...row(310189.88, 614578, 310189.88), name: '零售交易电费' }],
+  'industrial-line': [{ ...row(8991.28, 614578, 8991.28), name: '上网环节线损费用' }],
+  'industrial-trans': [{ ...row(84796.04, 614578, 84796.04), name: '零售输配电费' }],
+  'industrial-sys': [{ ...row(2796.33, 614578, 2796.33), name: '煤电容量电费' }],
+  'industrial-gov': [{ ...row(29311.68, 614578, 29311.68), name: '农网还贷' }],
+  'residential-catalog': [{ ...row(4679.86, 9354, 4679.86), name: '基础电费' }],
+  'residential-gov': [{ ...row(277.76, 9354, 277.76), name: '农网还贷' }],
+}, { capacity_fee: 44000, pf_adjust_amount: -3394.92 }, {}, {
+  capacityDetail: { capacity: 2000, capacity_fee: 44000 },
+  pfDetail: { adjust_fee: -3394.92 },
+}))
+
+test('本期电费·账单电费 = 工商业小计 + 居民小计 + 容需量 + 力调（2026-10 得 481,647.91）', () => {
+  const calc = overviewTotalOf(overviewRows202610)
+  assert.equal(calc, 481647.91, '电费列 = 分项实算')
+  const bill = overviewBillTotalOf(overviewRows202610)
+  assert.equal(bill, 481647.91, `账单电费列应为 481,647.91，got ${bill}`)
+  assert.equal(bill, calc, '两列必须完全相等（否则底部误报异常）')
+  // 全表 11 行都要对得上，不能只修合计
+  for (const r of overviewRows202610) {
+    assert.ok(feeCloseOf(r), `${r.label} 两列不一致：${r.displayValue} vs ${r.billFee}`)
+  }
+})
+
+test('本期电费·账单电费：分项账单电费缺失时返回 0（由页面回退顶层字段）', () => {
+  const rows = buildOverviewRows(makeInputs({}))
+  assert.equal(overviewBillTotalOf(rows), 0)
 })
