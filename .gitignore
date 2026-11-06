@@ -4,6 +4,10 @@
 !.env.example
 !.gitignore
 !.github/
+# 项目级 Agent 技能随仓库共享；其余 .workbuddy 本地数据仍忽略
+!.workbuddy/
+.workbuddy/*
+!.workbuddy/skills/
 
 # 敏感文件
 *.pem
