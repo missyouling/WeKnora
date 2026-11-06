@@ -351,8 +351,9 @@ export function buildSolarBillStatementDoc(rows: any[], title = '光伏账单清
 // 内联在页面里约 400 行，改一处概览口径要在 3000 行的 SFC 里找，而市电/光伏
 // 的同类逻辑早已抽到本文件 —— 同一个版式两套维护方式。
 
-/** 打印分项的分类排序基准（账单原文顺序：市场化 → 线损 → 输配 → 系统运行 → 基金）。 */
-const FEE_CATEGORY_ORDER = ['市场化购电费', '上网环节线损', '输配电', '系统运行费', '政府性基金及附加', '居民', '基本电费', '功率因素调整电费']
+// 第 40 轮删掉旧的 `FEE_CATEGORY_ORDER`：它靠「拼接串 includes」排序，
+// 把「(4)系统运行费｜上网环节线损代理采购损益」误吸进 (2) 线损组。
+// 现在统一由 FEE_GROUPS 的 rank 精确归类（见下方 feeGroupOf）。
 
 const sumBy = (arr: readonly any[], key: string): number =>
   round2(arr.reduce((s, r) => s + (Number(r[key]) || 0), 0))
@@ -478,145 +479,231 @@ function statementMeta(ctx: TenantStatementCtx, rows: any[], unit: string, month
   ]
 }
 
+/**
+ * 第 40 轮：打印预览「费用类别 + 费用组成」双列 + 跨行合并。
+ *
+ * 旧实现每一行第 1 列都拼成「(1)市场化购电费 | 零售交易电费」，
+ * 重复啰嗦、列宽被挤到折行；更严重的是排序用拼接串 `includes('上网环节线损')`
+ * 匹配，把「(4)系统运行费 | 上网环节线损代理采购损益」吸到了 (2) 线损组里，
+ * 与原账单顺序不符。
+ *
+ * 现在：
+ *   · 先按**大类**分组（规范化成简洁名），排序只认大类、绝不认细项名；
+ *   · 同一大类的所有明细行与小计行共用 1 个「费用类别」单元格（rowspan）；
+ *   · 同名分时项（尖/峰/平/谷 4 行）共用 1 个「费用组成」单元格（rowspan=4）；
+ *   · 系统运行费用 / 政府性基金及附加 / 市场化购电费 / 输配电量电费
+ *     在大类末尾补小计行。
+ */
+
+/** 分项行的中间结构（组装前按大类分组）。 */
+interface FeeLine {
+  cat: string
+  name: string
+  period: string
+  qty: string
+  rate: string
+  amount: string
+  /** 未取整金额，用于大类小计与整表合计；小计行自身为 0（不重复累加） */
+  exact: number
+  isSubtotal?: boolean
+}
+
+/** 大类规范化 + 排序权重（严格按账单分类，不用细项名做子串匹配）。 */
+const FEE_GROUPS: Array<{ match: RegExp; label: string; rank: number; subtotal?: string }> = [
+  { match: /市场化购电费/, label: '(1) 市场化购电费', rank: 1, subtotal: '市场化购电费（小计）' },
+  { match: /上网环节线损费/, label: '(2) 上网环节线损费', rank: 2 },
+  { match: /输配电量电费|输配电费/, label: '(3) 输配电量电费', rank: 3, subtotal: '输配电量电费（小计）' },
+  // 系统运行费排在线损之后判，但**分类取的是 cat（大类）**，细项名里的
+  // 「上网环节线损代理采购损益」不会参与匹配 —— 这正是旧实现的 bug。
+  { match: /系统运行/, label: '(4) 系统运行费用', rank: 4, subtotal: '系统运行费用（小计）' },
+  { match: /政府性基金/, label: '(6) 政府性基金及附加', rank: 5, subtotal: '政府性基金及附加（小计）' },
+  { match: /居民/, label: '居民电费', rank: 6 },
+  { match: /基本电费/, label: '基本电费', rank: 7 },
+  { match: /功率因(?:素|数)调整|力调/, label: '功率因素调整电费', rank: 8 },
+  { match: /容量|需量/, label: '容（需）量电费', rank: 9 },
+]
+
+function feeGroupOf(cat: string) {
+  const s = String(cat || '').trim()
+  const hit = FEE_GROUPS.find((g) => g.match.test(s))
+  return hit || { label: s || '其他费用', rank: 99, subtotal: undefined as string | undefined }
+}
+
+/** 细项名去大类前缀：账单里有些 name 自带「（1）市场化购电费.偏差电费」。 */
+function cleanFeeName(cat: string, rawName: string): string {
+  let s = String(rawName || '').trim()
+  if (!s) return '—'
+  // 去掉全角/半角竖线拼接符后面重复的大类前缀
+  s = s.replace(/^.*[|｜]\s*/, '')
+  s = s.replace(/^[（(]\d+[）)]\s*/, '')
+  // 只有「大类前缀 + 细项名」这种拼接才剥前缀；name 与 cat 同名时
+  // （基本电费 / 功率因素调整电费）整名保留，不能削成「—」。
+  if (cat && s.length > cat.length && s.startsWith(cat)) s = s.slice(cat.length).replace(/^[.．:：\s]+/, '')
+  return s || '—'
+}
+
+/** 把中间行组装成 6 列 + rowSpans 元数据。 */
+function assembleFeeRows(lines: FeeLine[]): { rows: string[][]; rowSpans: number[][]; sum: number } {
+  const groups = new Map<string, FeeLine[]>()
+  for (const l of lines) {
+    const g = feeGroupOf(l.cat)
+    if (!groups.has(g.label)) groups.set(g.label, [])
+    groups.get(g.label)!.push(l)
+  }
+  const order = Array.from(groups.keys()).sort((a, b) => feeGroupOf(a).rank - feeGroupOf(b).rank)
+  const rows: string[][] = []
+  const rowSpans: number[][] = []
+  let sum = 0
+  for (const l of lines) if (!l.isSubtotal) sum += l.exact
+
+  for (const cat of order) {
+    const raw = groups.get(cat)!
+    const spec = feeGroupOf(cat)
+    // 大类小计 = **逐项 round2 后相加**（与列表大类汇总列同源）。
+    //
+    // 整表合计用的是「未取整原值累加后再 round2」（Excel 口径，见 sum），
+    // 两者在部分月份会差 1 分：2026-10 系统运行费用未取整累加 784.42、
+    // 逐项取整相加 784.43（列表与需求口径）；2026-09 政府性基金
+    // 未取整 6038.06、逐项取整 6038.07。小计必须对得上列表汇总列。
+    const detailSum = raw.filter((l) => !l.isSubtotal)
+      .reduce((s, l) => s + round2(l.exact), 0)
+    // 大类小计：只有该大类确实有多行明细时才有意义（单行大类不必重复出一行）
+    const withSubtotal = spec.subtotal && raw.filter((l) => !l.isSubtotal).length >= 2
+      ? [...raw, {
+        cat, name: spec.subtotal!, period: '—', qty: '—', rate: '—',
+        amount: money2(detailSum), exact: 0, isSubtotal: true,
+      } as FeeLine]
+      : raw
+    // 预计算「费用组成」列的跨行合并：连续 4 行同名且每个时段各一行。
+    const nameSpans = withSubtotal.map(() => 1)
+    for (let i = 0; i + 3 < withSubtotal.length; i++) {
+      const head = withSubtotal[i]
+      if (head.isSubtotal || !TIMED_LABELS.has(head.period)) continue
+      const run = withSubtotal.slice(i, i + 4)
+      if (run.some((x) => x.isSubtotal || x.name !== head.name || !TIMED_LABELS.has(x.period))) continue
+      if (new Set(run.map((x) => x.period)).size !== 4) continue
+      nameSpans[i] = 4
+      for (let k = 1; k < 4; k++) nameSpans[i + k] = 0
+      i += 3
+    }
+    withSubtotal.forEach((l, i) => {
+      rows.push([i === 0 ? cat : '', l.name, l.period, l.qty, l.rate, l.amount])
+      // 第 0 列：组首行 rowspan = 整组行数（含小计行），其余行为 0（被合并）
+      const catSpan = i === 0 ? withSubtotal.length : 0
+      rowSpans.push([catSpan, nameSpans[i], 1, 1, 1, 1])
+    })
+  }
+  return { rows, rowSpans, sum }
+}
+
+const TIMED_LABELS = new Set(['尖峰', '峰', '平', '谷'])
+
 /** 市电账单费用分项 → 细项表（租户视角按比例折算、且只列参与分摊的子项） */
 function feeTableOf(ctx: TenantStatementCtx, month: string, unitRatio: number, prefix: string): StatementTable {
   const bill = ctx.billOf(month)
   const items = (bill?.item?.fee_items || []) as any[]
-  const rows: string[][] = []
-  let sum = 0
-  const label = (cat: string, rawName: string) =>
-    // 提取出来的 name 通常已带「（1）市场化购电费.偏差电费」这类前缀，
-    // 再拼一次分类会变成「（1）市场化购电费｜（1）市场化购电费.偏差电费」。
-    (rawName && cat && !rawName.includes(cat) ? `${cat}｜${rawName}` : (rawName || cat))
+  const lines: FeeLine[] = []
+  const push = (cat: string, name: string, period: string, qty: string, rate: string, amount: string, exact: number, isSubtotal = false) => {
+    lines.push({ cat, name: cleanFeeName(cat, name), period, qty, rate, amount, exact, isSubtotal })
+  }
 
   if (ctx.ownerView) {
-    // 业主口径：账单 fee_items 全量 + 概况里的固定金额分项（基本电费/力调电费），
-    // 后者不是 fee_items 的行，必须单独补，否则全厂口径也会漏掉这两笔大额费用。
+    // 业主口径：账单 fee_items 全量 + 概况里的固定金额分项（基本电费/力调电费）。
     const map = new Map<string, any[]>()
     for (const it of items) {
       const cat = String(it.category || '其他费用')
       if (!map.has(cat)) map.set(cat, [])
       map.get(cat)!.push(it)
     }
-    const order = Array.from(map.keys()).sort((a, b) => {
-      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a.includes(c))
-      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b.includes(c))
-      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-    })
-    for (const cat of order) {
-      for (const it of map.get(cat)!) {
+    for (const [cat, list] of map) {
+      for (const it of list) {
         const exact = (Number(it.fee) || 0) * unitRatio
         const qty = (Number(it.qty) || 0) * unitRatio
-        sum += exact
-        rows.push([label(cat, String(it.name || '').trim()), it.period || '—', qty ? num2(qty) : '—', rateText(it.rate), money2(exact)])
+        push(cat, String(it.name || '').trim(), String(it.period || '—'),
+          qty ? num2(qty) : '—', rateText(it.rate), money2(exact), exact)
       }
     }
   } else {
-    // 租户口径：**只列该租户「参与分摊」的子项**。
-    // 未参与分摊的子项（用户在分摊子项里关掉的偏差电费、绿电交易电费等）
-    // 一律不打印 —— 旧实现直接铺账单 fee_items 全量，于是关掉开关的项
-    // 依然以 4 行 0.00 的形式出现在租户清单上（真机问题）。
-    // 必须带上已生成账单：分时核算的差额电量 ΔQ 优先取账单固化值
-    // （rec.line_loss），缺失时才按「星达分表 − 分表合计」现算。
-    // 不传 rec 会让打印口径与列表口径在个别月份分叉。
+    // 租户口径：只列该租户「参与分摊」的子项；分时核算的 ΔQ 优先取账单固化值。
     const rec = ctx.recordOf(month)
-    // 单行解析上下文（分时项 / 固定金额项 / 平段按度项的计算都靠它）
     const rowCtx = ctx.sourceCtxOf(month, bill, [], rec)
     for (const it of ctx.items) {
       const key = String(it?.source_key || it?.item_name || '').trim()
       if (!key) continue
       const cat = String(it.category || '其他费用')
-      // 固定金额分项（基本电费 / 力调电费）优先按概况字段出账：
-      // 账单里它们可能没有 fee_items 行（2026-09），也可能是一条全 0 的占位行
-      // （2026-08），按行打印会打出 0.00 的假明细。
+      // 固定金额分项（基本电费 / 力调电费）按概况字段精确除法折算
       const fixed = fixedBillFeeOf(rowCtx, key)
       if (fixed !== null) {
-        // 按「原金额 × 工业电量 ÷ 账单电量」折算，**不要** × 8 位 ratio：
-        // 44,000 × 0.21235625 = 9,343.675 → 9,343.68，而标准表是 9,343.67
-        // （精确除法 44,000 × 126,600 ÷ 596,168 = 9,343.6749）。
         const starQty = Number(rowCtx.starTotal) || 0
         const billQty = Number(rowCtx.bill?.item?.total_kwh) || 0
-        const exact = starQty > 0 && billQty > 0
-          ? (fixed * starQty) / billQty
-          : fixed * unitRatio
+        const exact = starQty > 0 && billQty > 0 ? (fixed * starQty) / billQty : fixed * unitRatio
         const v = round2(exact)
         if (!v) continue
-        // 累加**未取整**值：Excel 的合计是「各格原值相加后再四舍五入」，
-        // 逐项 round 再相加会让合计比列表的工业电费多 1 分。
-        sum += exact
-        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
+        push(cat, String(it.item_name || key).trim(), '—', '—', rateText(unitRatio), money2(v), exact)
         continue
       }
-      // 分时项（零售交易电费 / 零售输配电费…）：与列表**同一个**核算引擎
-      // （resolveTimedItemFee → 逐表逐时段基准电量 × 时段单价）。
-      // 旧实现对分时项也走「账单分时行 × 比例」，于是 PDF 打出的是
-      // 5228.63 / 2279.68 这类旧值，与列表的 5085.43 / 2217.25 对不上。
-      const timed = resolveTimedItemFee(rowCtx, key, String(it.category || ''))
+      // 「零售损益分摊电费」按 **账单原值 × 分摊比例**（第 39 轮口径）。
+      // 打印预览此前仍写「工业总电量 × 单价 = 4,501.52」，与列表 4,434.03
+      // 分叉；本轮一并对齐，分项合计也随之回到已锁定的 101,346.55。
+      if (key.includes('零售损益分摊')) {
+        const billRows = matchBillFeeItems(rowCtx, key, cat)
+        const raw = round2(billRows.reduce((acc: number, r: any) => acc + (Number(r?.fee) || Number(r?.fee_amount) || 0), 0))
+        if (!raw || unitRatio <= 0) continue
+        const exact = raw * unitRatio
+        push(cat, key, '—', num2(raw), `${(unitRatio * 100).toFixed(2)}%`, money2(exact), exact)
+        continue
+      }
+      // 分时项：与列表同一个核算引擎（逐表逐时段基准电量 × 时段单价）
+      const timed = resolveTimedItemFee(rowCtx, key, cat)
       if (timed) {
-        const name = label(cat, String(it.item_name || key).trim())
+        const name = String(it.item_name || key).trim()
         let subQty = 0
         let subFee = 0
         for (const p of timed.periods) {
-          sum += p.fee
           subQty += p.qty
           subFee += p.fee
-          rows.push([name, p.period, num2(p.qty), rateText(p.rate), money2(p.fee)])
+          push(cat, name, p.period, num2(p.qty), rateText(p.rate), money2(p.fee), p.fee)
         }
-        // 逐段之后补一行小计：分时项有 4 行明细，没有小计的话
-        // 「PDF 的 54422.79 与列表的 54422.79 一致」只能靠人脑加总验算。
-        rows.push([`${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee)])
+        push(cat, `${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee), 0, true)
         continue
       }
-      const billRows = matchBillFeeItems(rowCtx, key, String(it.category || ''))
+      const billRows = matchBillFeeItems(rowCtx, key, cat)
       if (billRows.length) {
-        // 平段按度计费（零售损益分摊 / 上网环节线损 / 系统运行费 / 政府性基金）：
-        //   **计费数量 = 工业总电量（126,600），金额 = 电量 × 账单该项单价**
-        //
-        // 旧实现在这里逐行写「账单金额 × 比例、账单数量 × 比例」，
-        // 打印出来是「124,701.81 度 / 4,434.02 元」，而 Excel 是
-        // 「126,600 度 / 4,501.52 元」—— 账单按度项的计费电量是 587,230
-        // （全厂 596,168 − 居民 8,938），比例法系统性少算。
+        // 平段按度计费：计费数量 = 工业总电量，金额 = 电量 × 账单该项单价
         const qty = Number(rowCtx.starTotal) || 0
         const unit = Number(billRows[0]?.rate) || 0
         if (qty > 0 && unit) {
-          // 累加未取整值（同固定金额分项）：政府性基金 5 项逐项 round 再相加
-          // 会得 6,038.07，而标准表与工业电费用的是 6,038.06。
-          sum += qty * unit
-          rows.push([label(cat, String(billRows[0].name || key).trim()), '—', num2(qty), rateText(unit), money2(qty * unit)])
+          push(cat, String(billRows[0].name || key).trim(), '—', num2(qty), rateText(unit), money2(qty * unit), qty * unit)
           continue
         }
         // 无单价可用（纯金额返还类）：退回逐行比例折算
         for (const br of billRows) {
           const exact = (Number(br.fee) || 0) * unitRatio
           const qty2 = (Number(br.qty) || 0) * unitRatio
-          sum += exact
-          rows.push([label(cat, String(br.name || key).trim()), br.period || '—', qty2 ? num2(qty2) : '—', rateText(br.rate), money2(exact)])
+          push(cat, String(br.name || key).trim(), String(br.period || '—'),
+            qty2 ? num2(qty2) : '—', rateText(br.rate), money2(exact), exact)
         }
       } else {
-        // 账单里查无此行：按比例折算概况字段，避免整行丢失
         const v = resolveTenantItemValue(it, rowCtx, unitRatio)
         if (!v) continue
-        sum += v
-        rows.push([label(cat, String(it.item_name || key).trim()), '—', '—', rateText(unitRatio), money2(v)])
+        push(cat, String(it.item_name || key).trim(), '—', '—', rateText(unitRatio), money2(v), v)
       }
     }
-    rows.sort((a, b) => {
-      const ia = FEE_CATEGORY_ORDER.findIndex((c) => a[0].includes(c))
-      const ib = FEE_CATEGORY_ORDER.findIndex((c) => b[0].includes(c))
-      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-    })
   }
+  const { rows, rowSpans, sum } = assembleFeeRows(lines)
   return {
     title: `${prefix}电费分项细项`,
     columns: [
-      { label: '费用组成', weight: 3.4 },
-      { label: '时段', weight: 1, align: 'center' },
-      { label: '计费数量', weight: 1.3, align: 'right' },
-      { label: '单价/标准', weight: 1.2, align: 'right' },
-      { label: '金额(元)', weight: 1.4, align: 'right' },
+      { label: '费用类别', weight: 1.7, align: 'center' },
+      { label: '费用组成', weight: 2.6 },
+      { label: '时段', weight: 0.8, align: 'center' },
+      { label: '计费数量', weight: 1.2, align: 'right' },
+      { label: '单价/标准', weight: 1.1, align: 'right' },
+      { label: '金额(元)', weight: 1.3, align: 'right' },
     ],
     rows,
-    total: ['合计', '', '', '', money2(sum)],
+    rowSpans,
+    total: ['合计', '', '', '', '', money2(sum)],
     empty: ctx.ownerView ? '当月无市电账单分项数据' : '当月无参与分摊的费用分项',
   }
 }

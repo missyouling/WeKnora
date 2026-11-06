@@ -2411,6 +2411,17 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := NewBillingHandler(h.db).BackfillRetailLossAllocation(ctx); err != nil {
 		logger.Warnf(ctx, "backfill retail loss allocation failed: %v", err)
 	}
+	// 第 40 轮（幂等）：
+	//   ① 分时明细行补齐「电表电量 / 差额电量 / 线损 / 加减电量 / 基准电量」
+	//      五列过程量（含历史记录）；
+	//   ② 系统运行费大类下单价为 0 的「辅助服务费用」必须按
+	//      「工业总电量 × 单价」生成 0 元明细行，不能掉进比例分摊分支。
+	if _, err := NewBillingHandler(h.db).BackfillSystemRunningAuxRow(ctx); err != nil {
+		logger.Warnf(ctx, "backfill system running aux row failed: %v", err)
+	}
+	if _, err := NewBillingHandler(h.db).BackfillBillingItemBreakdowns(ctx); err != nil {
+		logger.Warnf(ctx, "backfill billing item breakdowns failed: %v", err)
+	}
 	// 车队档案三表对齐（第 39 轮，幂等）：
 	//   ① 已提取完成的文件补齐 fleet_records（卡片/列表才查得到）；
 	//   ② 归一非法 sub_category（历史值「维修工单」不在分类里，任何卡片都装不下）；

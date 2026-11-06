@@ -59,19 +59,30 @@
         <template #expanded-row="{ row }">
           <div v-if="expandedGroupOfRow(row)" class="fee-group-panel"
             :style="groupPanelWidth ? { width: groupPanelWidth + 'px' } : undefined">
+            <div v-if="expandedGroupOfRow(row).breakdownHint" class="fg-breakdown-hint">
+              {{ expandedGroupOfRow(row).breakdownHint }}
+            </div>
             <table class="fee-group-table">
               <colgroup>
-                <col style="width: 26%" />
-                <col style="width: 8%" />
-                <col style="width: 15%" />
-                <col style="width: 14%" />
-                <col style="width: 21%" />
-                <col style="width: 16%" />
+                <col style="width: 18%" />
+                <col style="width: 6%" />
+                <col style="width: 9%" />
+                <col style="width: 9%" />
+                <col style="width: 9%" />
+                <col style="width: 9%" />
+                <col style="width: 11%" />
+                <col style="width: 9%" />
+                <col style="width: 11%" />
+                <col style="width: 9%" />
               </colgroup>
               <tbody>
                 <tr class="fg-head-row">
                   <td class="fg-cell">细项名称</td>
                   <td class="fg-cell">时段</td>
+                  <td class="fg-cell fg-num">电表电量</td>
+                  <td class="fg-cell fg-num">差额电量</td>
+                  <td class="fg-cell fg-num">线损</td>
+                  <td class="fg-cell fg-num">加减电量</td>
                   <td class="fg-cell fg-num">账单原值/计费数量</td>
                   <td class="fg-cell fg-num">单价/分摊比例</td>
                   <td class="fg-cell">计算方式</td>
@@ -80,13 +91,23 @@
                 <tr v-for="d in expandedGroupOfRow(row).rows" :key="d.key">
                   <td class="fg-cell">{{ d.label }}</td>
                   <td class="fg-cell">{{ d.period }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.meterQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.diffQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.lineLossQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.adjustQty) : '—' }}</td>
                   <td class="fg-cell fg-num">{{ d.qty != null ? fmtKwh(d.qty) : fmtMoney(d.raw) }}</td>
-                  <td class="fg-cell fg-num">{{ d.price != null ? d.price : fmtRatio(d.ratio) }}</td>
+                  <td class="fg-cell fg-num">{{ d.price != null ? d.price : (d.ratio != null ? fmtRatio(d.ratio) : '—') }}</td>
                   <td class="fg-cell">{{ d.method }}</td>
                   <td class="fg-cell fg-num">{{ fmtMoney(d.value) }}</td>
                 </tr>
                 <tr class="fg-total-row">
-                  <td class="fg-cell" colspan="5">合计</td>
+                  <td class="fg-cell" colspan="2">合计</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.meterQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.diffQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.lineLossQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.adjustQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.billingQty) : '—' }}</td>
+                  <td class="fg-cell fg-num" colspan="2"></td>
                   <td class="fg-cell fg-num">{{ fmtMoney(expandedGroupOfRow(row).total) }}</td>
                 </tr>
               </tbody>
@@ -166,7 +187,7 @@ import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type Catalog
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
 import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
-import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, type FieldSource, type SourceResolveContext } from './tenantBillingSources'
+import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, timedBreakdownOf, timedBreakdownTotalsOf, type FieldSource, type SourceResolveContext, type TimedAllocation } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
   TENANT_ELEC_TOTAL_FIELD,
@@ -1382,6 +1403,8 @@ const buildRows = () => {
       // 分时项的四段明细（尖峰/峰/平/谷）：展开大类时要逐段列出来，
       // 只给一个合计用户没法核对「54,422.79 是怎么来的」。
       const itemPeriods = new Map<string, Array<{ period: string; qty: number; rate: number; fee: number }>>()
+      // 第 40 轮：分时项的「逐表逐时段」分摊结果，展开明细的四段拆解列要靠它。
+      const itemAlloc = new Map<string, TimedAllocation>()
       for (const it of tenantItemsUnique.value) {
         const participating = it.enabled !== false
         const key = String(it?.source_key || it?.item_name || '').trim()
@@ -1397,6 +1420,7 @@ const buildRows = () => {
         itemValue.set(ckey, v)
         if (timed) {
           itemPeriods.set(ckey, timed.periods)
+          itemAlloc.set(ckey, timed.allocation)
           itemTips[tenantItemColKey(it)] = tenantTimedTip({
             itemName: String(it.item_name || key),
             sourceCategory: it.source_category || '市电账单',
@@ -1440,15 +1464,22 @@ const buildRows = () => {
         if (!c.feeGroup) continue
         const rows: any[] = []
         let sum = 0
+        // 第 40 轮：四段拆解的合计（电表/差额/线损/加减/基准电量）。
+        // 同一个大类下可能有多个分时子项（零售交易 + 零售输配），它们共用
+        // **同一套分时电量**，所以合计只取第一份 allocation，绝不逐项累加。
+        let firstAlloc: TimedAllocation | null = null
         for (const m of c.feeGroup.members) {
           const v = Number(itemValue.get(m.key)) || 0
           sum += v
           const periods = itemPeriods.get(m.key) || []
+          const alloc = itemAlloc.get(m.key) || null
           if (periods.length) {
+            if (!firstAlloc && alloc) firstAlloc = alloc
             // 分时项：尖峰 / 峰 / 平 / 谷 各一行（电量 × 单价 = 金额）。
             // 旧实现只给一行「分时：四段基准电量 × 时段单价」+ 合计，
             // 用户看不到每一段的电量与单价，等于没明细。
             for (const pd of periods) {
+              const bd = timedBreakdownOf(alloc, pd.period)
               rows.push({
                 key: `${m.key}#${pd.period}`,
                 label: m.label,
@@ -1457,6 +1488,8 @@ const buildRows = () => {
                 price: pd.rate,
                 ratio: null,
                 raw: null,
+                // 四分量：电表电量 / 差额电量 / 线损 / 加减电量
+                breakdown: bd,
                 method: '基准电量 × 时段单价',
                 value: Math.round(pd.fee * 100) / 100,
               })
@@ -1478,18 +1511,25 @@ const buildRows = () => {
             ? round2(matchBillFeeItems(ctx, plainKey, plainGroup)
               .reduce((acc: number, r: any) => acc + (Number(r?.fee) || Number(r?.fee_amount) || 0), 0))
             : 0
+          // 系统运行费大类（第 40 轮）：**100% 强制平段按度**，含单价为 0 的
+          // 「辅助服务费用」。旧实现 plainUnit=0 时 qty=null、method 掉进
+          // 「账单原值 × 分摊比例」，展示成 27.63% / 0（真机图）。
+          const isSystemRunning = plainGroup.includes('系统运行费')
           const plainUnit = isRetailLoss ? 0 : Number(matchBillFeeItems(ctx, plainKey, plainGroup)[0]?.rate) || 0
-          const plainQty = plainUnit ? Number(ctx.starTotal) || 0 : 0
+          const plainQty = isSystemRunning ? Number(ctx.starTotal) || 0 : (plainUnit ? Number(ctx.starTotal) || 0 : 0)
           rows.push({
             key: m.key,
             label: m.label,
             period: '—',
             qty: isRetailLoss ? null : (plainQty || null),
-            price: isRetailLoss ? null : (plainUnit || null),
+            price: isRetailLoss ? null : (isSystemRunning ? plainUnit : (plainUnit || null)),
             raw: isRetailLoss ? lossRaw : Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
-            ratio,
+            ratio: isSystemRunning ? null : ratio,
+            // 非分时行四列拆解显示「—」（没有时段口径）
+            breakdown: null,
             // 计算方式严格区分两种口径，与悬浮窗一致
-            method: isRetailLoss ? '账单原值 × 分摊比例' : (plainUnit ? '工业总电量 × 单价' : '账单原值 × 分摊比例'),
+            method: isSystemRunning ? '工业总电量 × 单价'
+              : (isRetailLoss ? '账单原值 × 分摊比例' : (plainUnit ? '工业总电量 × 单价' : '账单原值 × 分摊比例')),
             value: Math.round(v * 100) / 100,
           })
         }
@@ -1500,12 +1540,26 @@ const buildRows = () => {
           `合计 = ${fmtMoney(base[c.key])} 元`,
           '点单元格右侧 + 可展开明细（表头只留大类，细项配置在「设置 → 字段定义」）',
         ].join('\n')
+        const bdTotals = firstAlloc ? timedBreakdownTotalsOf(firstAlloc) : null
+        const starKwh = Number(ctx.starTotal) || 0
+        const subKwh = bdTotals?.meterQty || 0
+        // ΔQ 是名义差额（172,400 − 166,550 = 5,850）；四段分摊时逐表逐段
+        // round2 会留下 ≤0.01 尾差（2026-10 合计 5,849.99）。这里把两个数字
+        // 都写出来，避免用户看到「合计 5849.99」却以为算错；绝不反过去改
+        // 计费电量（那会动到已锁定的分时电费金额）。
+        const tail = bdTotals && Math.abs((starKwh - subKwh) - bdTotals.diffQty) >= 0.01
+          ? `；四段分摊逐段取整，合计 ${fmtKwh(bdTotals.diffQty)}` : ''
+        const deltaHint = bdTotals && starKwh > 0 && subKwh > 0
+          ? `差额电量（星达分表 ${fmtKwh(starKwh)} - 持睿分表 ${fmtKwh(subKwh)} = ${fmtKwh(starKwh - subKwh)}${tail}）`
+          : ''
         groupDetails[c.key] = {
           name: c.feeGroup.name,
           label: c.feeGroup.label,
           category: c.feeGroup.category,
           total: base[c.key],
           rows,
+          breakdownTotals: bdTotals,
+          breakdownHint: deltaHint,
         }
       }
       // 两条金额收口列（第 18 轮由「合计应付」拆出）：
@@ -2648,11 +2702,27 @@ const listViewClass = computed(() => flatClassOf(isTableFlat.value))
   left: 0;
   background: var(--td-bg-color-container-hover);
   border-bottom: 1px solid var(--td-component-stroke);
+  /* 10 列拆解表在窄视口下可横向滚动，绝不能把数字列裁掉 */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* 差额算式说明（第 40 轮）：贴在拆解表上方，让用户一眼看到
+   「星达分表 − 持睿分表 = 差额」而不是自己去减。 */
+.fg-breakdown-hint {
+  padding: 6px var(--td-comp-paddingLR-s);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border-bottom: 1px solid var(--td-component-stroke);
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fee-group-table {
-  width: 100%;
+  min-width: 980px;
   table-layout: fixed;
   border-collapse: collapse;
 

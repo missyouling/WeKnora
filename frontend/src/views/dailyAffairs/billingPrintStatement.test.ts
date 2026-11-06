@@ -93,7 +93,8 @@ test('打印细项表：分时子项走 resolveTimedItemFee（不再按账单行
   // 第 22 轮 P1-2：构造器已从 TenantBilling.vue 迁到 energyBillStatements.ts
   const statements = read('energyBillStatements.ts')
   const feeTable = statements.slice(statements.indexOf('function feeTableOf'), statements.indexOf('function elecTableOf'))
-  assert.match(feeTable, /resolveTimedItemFee\(rowCtx, key, String\(it\.category \|\| ''\)\)/,
+  // 第 40 轮：cat 已提前归一成局部变量（6 列重构），语义不变
+  assert.match(feeTable, /resolveTimedItemFee\(rowCtx, key, cat\)/,
     '打印细项必须复用分时核算引擎，且按分组圈定匹配范围')
   // 分时分支必须逐段出行（时段 / 基准电量 / 单价 / 金额）
   assert.match(feeTable, /for \(const p of timed\.periods\)/)

@@ -422,6 +422,30 @@ func buildFeeItems(
 					break
 				}
 			}
+			// 系统运行费大类：**100% 强制平段按度**（第 40 轮）。
+			//
+			// 「辅助服务费用」在 2026-10 账单上 rate=0 / fee=0（qty=614578），
+			// 旧实现 unitRate=0 → 跳过按度分支 → allZeroQty=false → rawTotal=0
+			// → 整行根本不生成；前端展开面板只能按「账单原值 × 分摊比例」补出
+			// 27.63% / 0 的假口径（真机图）。
+			//
+			// 现在系统运行费下所有子项（含单价 0 的）一律：
+			//   计费数量 = 工业总电量、单价 = 账单该行单价（可为 0）、
+			//   金额 = 数量 × 单价。
+			// 有单价的 7 项结果与旧实现逐字一致；新增的 0 元辅助服务费用行
+			// 对工业电费合计的贡献是 0，因此**不改变已锁定的总金额**。
+			if isSystemRunningFeeCategory(catName) && starTotal > 0 {
+				qty := round2(starTotal)
+				items = append(items, types.BillingRecordItem{
+					ID: uuid.NewString(), RecordID: recordID, Kind: "fee",
+					Category: catName, Name: sg.Name, Period: "",
+					Qty: qty, Rate: unitRate, Fee: round2(qty * unitRate),
+					Sort: sortNo, CreatedAt: now,
+				})
+				sortNo++
+				industrialFee += qty * unitRate
+				continue
+			}
 			if unitRate != 0 && starTotal > 0 {
 				qty := round2(starTotal)
 				items = append(items, types.BillingRecordItem{
@@ -568,6 +592,16 @@ func (h *BillingHandler) persistRecord(
 		for i := range items {
 			if err := tx.Create(&items[i]).Error; err != nil {
 				return err
+			}
+		}
+		// 第 40 轮：把分时四段「电表电量 / 差额电量 / 线损 / 加减电量 / 基准电量」
+		// 固化到明细行，供列表展开、打印与审计核对。
+		//
+		// **绝不让过程量写入失败拖垮账单生成**：列缺失（新环境尚未跑 DDL）或
+		// 权限不足时只告警，明细与合计照常落库；启动回填会再补一次。
+		if err := ensureBreakdownColumns(ctx, h.db); err == nil {
+			if err := writeBreakdowns(tx, items, meterRows); err != nil {
+				logger.Warnf(ctx, "write billing item breakdowns failed: %v", err)
 			}
 		}
 		for i := range meterRows {

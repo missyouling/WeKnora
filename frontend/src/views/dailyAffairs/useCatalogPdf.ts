@@ -272,6 +272,15 @@ export interface StatementTable {
   title: string
   columns: StatementColumn[]
   rows: string[][]
+  /**
+   * 单元格纵向合并（第 40 轮）：与 rows 等长，每格给 rowspan 数。
+   *   > 1 → 从本行起向下合并 n 行（文字只在首格绘制、垂直居中）
+   *   = 0 → 被上方合并区覆盖（不绘制文字，内部不画横线）
+   *   = 1 或缺省 → 普通单元格
+   *
+   * 打印清单的「费用类别 / 费用组成」用它与市电账单原件排版对齐。
+   */
+  rowSpans?: number[][]
   /** 合计行（整行加粗、灰底、顶部深色线） */
   total?: string[]
   /** 无数据时的占位文案 */
@@ -358,9 +367,13 @@ export function pruneEmptyTables(tables: StatementTable[]): StatementTable[] {
     // 本来就没有行（该月无水费 / 无某分项 / 无关口电量）→ 整表连同标题一起隐藏。
     // 保留的话会打出一行「当月无用水记录」占掉版面，与「紧凑只展示真实数据」相悖。
     if (!t.rows.length) continue
-    const kept = t.rows.filter((row) => !isEmptyDetailRow(t.columns, row))
+    // rowSpans 与 rows 是平行数组：裁剪行时必须同步裁剪，否则跨行合并会错位。
+    const keep = t.rows.map((row) => !isEmptyDetailRow(t.columns, row))
+    const kept = t.rows.filter((_, i) => keep[i])
     if (!kept.length) continue
-    out.push(kept.length === t.rows.length ? t : { ...t, rows: kept })
+    if (kept.length === t.rows.length) { out.push(t); continue }
+    const spans = t.rowSpans?.filter((_, i) => keep[i])
+    out.push({ ...t, rows: kept, ...(spans ? { rowSpans: spans } : {}) })
   }
   return out
 }
@@ -557,37 +570,80 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     surface.ensure(S_HEADER_H + S_ROW_MIN * 2)
     drawHead()
 
-    const drawRow = (cells: string[], rowOpts: { total?: boolean; zebra?: boolean } = {}) => {
+    // 第 40 轮：预计算行高，供跨行合并单元格算「合并总高」做垂直居中。
+    const measureRow = (cells: string[]) => {
       const wrapped = table.columns.map((c, i) =>
         wrapText(font, String(cells[i] ?? ''), widths[i] - S_CELL_PAD * 2, S_TD_SIZE))
       const lines = Math.max(...wrapped.map((w) => w.length))
-      const h = Math.max(S_ROW_MIN, lines * S_LINE_H + 8)
+      return { wrapped, h: Math.max(S_ROW_MIN, lines * S_LINE_H + 8) }
+    }
+    const measured = table.rows.map(measureRow)
+    const rowHeights = measured.map((m) => m.h)
+    const spansOf = (r: number): number[] | undefined => table.rowSpans?.[r]
+    /** 该行某列的有效合并行数（裁剪/跨页保护后至少 1）。 */
+    const spanOf = (r: number, c: number): number => {
+      const v = spansOf(r)?.[c] ?? 1
+      // 被上方合并区覆盖 → 0；起始行若超出剩余行数则收缩到可用范围
+      return v === 0 ? 0 : Math.max(1, Math.min(v, table.rows.length - r))
+    }
+
+    const drawRow = (cells: string[], r: number, rowOpts: { total?: boolean; zebra?: boolean } = {}) => {
+      const { wrapped, h } = rowOpts.total
+        ? measureRow(cells)
+        : (measured[r] || measureRow(cells))
       if (surface.y - h < S_MARGIN + 24) {
         surface.newPage()
         // 翻页后重画表头（列宽不变）
         drawHead()
       }
-      if (rowOpts.total) {
-        curPage().drawRectangle({
-          x: S_MARGIN, y: surface.y - h, width: avail, height: h, color: C_TOTAL_BG,
+      const bg = rowOpts.total ? C_TOTAL_BG : (rowOpts.zebra ? C_ZEBRA : null)
+      const spanRow = rowOpts.total ? undefined : spansOf(r)
+      // 合并区总高：只在**同一页放得下**时才做真正的跨行合并；
+      // 放不下就退化为单行（避免把文字画到下一页去）。
+      const mergedHeights = table.columns.map((_, c) => {
+        const n = spanOf(r, c)
+        if (n <= 1) return h
+        let total = 0
+        for (let k = 0; k < n; k++) total += rowHeights[r + k] ?? h
+        return total
+      })
+      const canMerge = (c: number) => spanOf(r, c) > 1 && surface.y - mergedHeights[c] >= S_MARGIN + 24
+
+      // 背景按列段绘制：被上方合并区覆盖的列跳过（否则会盖掉合并单元格文字）。
+      if (bg) {
+        table.columns.forEach((_c, i) => {
+          if (!rowOpts.total && spanRow?.[i] === 0) return
+          const hh = canMerge(i) ? mergedHeights[i] : h
+          curPage().drawRectangle({ x: xs[i], y: surface.y - hh, width: widths[i], height: hh, color: bg })
         })
-        hline(surface, S_MARGIN, S_MARGIN + avail, surface.y, C_RULE, 0.9)
-      } else if (rowOpts.zebra) {
-        curPage().drawRectangle({ x: S_MARGIN, y: surface.y - h, width: avail, height: h, color: C_ZEBRA })
       }
+      if (rowOpts.total) hline(surface, S_MARGIN, S_MARGIN + avail, surface.y, C_RULE, 0.9)
+
       table.columns.forEach((c, i) => {
-        // 单元格绘制复用共享实现；baselineShift=2.5 保留清单历史版式
-        // （行高 `lines*S_LINE_H + 8` 上下留白不对称，纯居中会整体偏上）。
+        // 被合并覆盖的单元格不绘制文字（文字只在合并区首格画一次）
+        if (!rowOpts.total && spanRow?.[i] === 0) {
+          if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
+          return
+        }
         drawWrappedCell(curPage(), {
-          lines: wrapped[i], x: xs[i], top: surface.y, height: h, size: S_TD_SIZE,
+          lines: wrapped[i], x: xs[i], top: surface.y,
+          height: canMerge(i) ? mergedHeights[i] : h,
+          size: S_TD_SIZE,
           lineHeight: S_LINE_H, padX: S_CELL_PAD, font, color: C_INK,
-          align: alignRight(c.align) ? 'right' : 'left',
+          align: alignRight(c.align) ? 'right' : (c.align === 'center' ? 'left' : 'left'),
           width: widths[i],
           baselineShift: 2.5,
         })
         if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
       })
-      if (!rowOpts.total) hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - h, C_RULE, 0.4)
+      // 横线按列段绘制：合并区内部的边界不画线，视觉上就是一格跨 N 行。
+      if (!rowOpts.total) {
+        const next = spansOf(r + 1)
+        table.columns.forEach((_c, i) => {
+          if (next?.[i] === 0) return
+          hline(surface, xs[i], xs[i] + widths[i], surface.y - h, C_RULE, 0.4)
+        })
+      }
       surface.y -= h
     }
 
@@ -597,9 +653,9 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
       hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - S_ROW_MIN, C_RULE, 0.4)
       surface.y -= S_ROW_MIN
     } else {
-      table.rows.forEach((row, idx) => drawRow(row, { zebra: idx % 2 === 1 }))
+      table.rows.forEach((row, idx) => drawRow(row, idx, { zebra: idx % 2 === 1 }))
     }
-    if (table.total?.length && table.rows.length) drawRow(table.total, { total: true })
+    if (table.total?.length && table.rows.length) drawRow(table.total, table.rows.length, { total: true })
     surface.y -= 10
   }
 

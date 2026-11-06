@@ -614,6 +614,74 @@ export function allocateTimedKwh(
   return out
 }
 
+/** 分时电量拆解（一个时段的四个分量 + 基准计费电量）。 */
+export interface TimedBreakdown {
+  meterQty: number
+  diffQty: number
+  lineLossQty: number
+  adjustQty: number
+  billingQty: number
+}
+
+const ZERO_BREAKDOWN: TimedBreakdown = {
+  meterQty: 0, diffQty: 0, lineLossQty: 0, adjustQty: 0, billingQty: 0,
+}
+
+/**
+ * 第 40 轮：把「基准电量」拆成 电表电量 + 差额电量 + 线损 + 加减电量。
+ *
+ * 展开「市场化购电费 / 零售输配电费」四段时，用户需要看到每个时段的
+ * 计费数量是怎么一步步加出来的。与 Go 侧 `timedBreakdownOf` 同源：
+ *
+ *   billingQty = meterQty + diffQty + lineLossQty + adjustQty
+ *
+ * 2026-10 尖峰：7800 + 170.13 + 4.97 − 387.67 = 7587.43。
+ * period 接受中文时段（尖峰/峰/平/谷）或英文键（deep/peak/flat/valley）。
+ */
+export function timedBreakdownOf(alloc: TimedAllocation | null | undefined, period: string): TimedBreakdown {
+  if (!alloc?.rows?.length) return { ...ZERO_BREAKDOWN }
+  const key = TIMED_PERIODS.find((p) => p === period || TIMED_PERIOD_LABELS[p] === period)
+  if (!key) return { ...ZERO_BREAKDOWN }
+  let meterQty = 0
+  let diffQty = 0
+  let lineLossQty = 0
+  let adjustQty = 0
+  for (const r of alloc.rows) {
+    if (r.period !== key) continue
+    meterQty += Number(r.usage) || 0
+    diffQty += Number(r.diffKwh) || 0
+    lineLossQty += Number(r.loss) || 0
+    adjustQty += Number(r.adjust) || 0
+  }
+  meterQty = round2(meterQty)
+  diffQty = round2(diffQty)
+  lineLossQty = round2(lineLossQty)
+  adjustQty = round2(adjustQty)
+  return {
+    meterQty, diffQty, lineLossQty, adjustQty,
+    billingQty: round2(meterQty + diffQty + lineLossQty + adjustQty),
+  }
+}
+
+/** 四段拆解的合计行（电表/差额/线损/加减/基准电量）。 */
+export function timedBreakdownTotalsOf(alloc: TimedAllocation | null | undefined): TimedBreakdown {
+  if (!alloc?.rows?.length) return { ...ZERO_BREAKDOWN }
+  const out = { ...ZERO_BREAKDOWN }
+  for (const p of TIMED_PERIODS) {
+    const b = timedBreakdownOf(alloc, p)
+    out.meterQty += b.meterQty
+    out.diffQty += b.diffQty
+    out.lineLossQty += b.lineLossQty
+    out.adjustQty += b.adjustQty
+    out.billingQty += b.billingQty
+  }
+  return {
+    meterQty: round2(out.meterQty), diffQty: round2(out.diffQty),
+    lineLossQty: round2(out.lineLossQty), adjustQty: round2(out.adjustQty),
+    billingQty: round2(out.billingQty),
+  }
+}
+
 /** 账单里该子项的分时段单价（尖峰/峰/平/谷）。 */
 export function periodRatesOf(ctx: SourceResolveContext, name: string, group?: string | null): Record<string, number> {
   const rates: Record<string, number> = {}

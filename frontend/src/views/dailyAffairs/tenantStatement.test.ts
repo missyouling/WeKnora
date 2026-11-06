@@ -126,11 +126,11 @@ function ctxOf(overrides: Partial<TenantStatementCtx> = {}): TenantStatementCtx 
 const findTable = (doc: any, keyword: string) =>
   doc.tables.find((t: any) => String(t.title).includes(keyword))
 
-test('打印清单：电费分项细项合计 = 工业电费 101414.04（与列表 / Excel 同源）', () => {
+test('打印清单：电费分项细项合计 = 工业电费 101346.55（与列表 / Excel 同源）', () => {
   const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
   const fee = findTable(doc, '电费分项细项')
   assert.ok(fee, '必须有「电费分项细项」区块')
-  assert.equal(fee.total[4], '101414.04', 'PDF 分项合计必须等于工业电费')
+  assert.equal(fee.total[5], '101346.55', 'PDF 分项合计必须等于工业电费')
 })
 
 test('打印清单：分时项逐段出行 + 小计行（不再按账单行 × 比例）', () => {
@@ -138,36 +138,36 @@ test('打印清单：分时项逐段出行 + 小计行（不再按账单行 × �
   const fee = findTable(doc, '电费分项细项')
   const rows: string[][] = fee.rows
 
-  // 表内名称形如「大类｜子项」，用 includes 匹配
-  const trade = rows.filter((r) => r[0].includes('零售交易电费') && !r[0].includes('小计'))
+  // 第 40 轮：6 列结构（费用类别 | 费用组成 | 时段 | 计费数量 | 单价/标准 | 金额）
+  const trade = rows.filter((r) => r[1].includes('零售交易电费') && !r[1].includes('小计'))
   assert.equal(trade.length, 4, '零售交易电费必须拆成尖/峰/平/谷四行')
   // 四段金额与标准表逐分一致
-  assert.deepEqual(trade.map((r) => r[4]), ['2190.59', '15541.36', '18153.06', '18513.56'])
+  assert.deepEqual(trade.map((r) => r[5]), ['2190.59', '15541.36', '18153.06', '18513.56'])
   // 四段之后必须有小计行（否则「PDF 与列表一致」只能靠人脑加总）
-  const subtotal = rows.find((r) => r[0].includes('零售交易电费（小计）'))
+  const subtotal = rows.find((r) => r[1].includes('零售交易电费（小计）'))
   assert.ok(subtotal, '分时项必须有（小计）行')
-  assert.equal(subtotal![4], '54398.57')
-  assert.equal(subtotal![2], '124767.36')
+  assert.equal(subtotal![5], '54398.57')
+  assert.equal(subtotal![3], '124767.36')
 })
 
-test('打印清单：平段按度项计费数量 = 工业总电量 126600', () => {
+test('打印清单：零售损益按 账单原值 × 分摊比例', () => {
   const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
   const fee = findTable(doc, '电费分项细项')
-  const market = fee.rows.find((r: string[]) => r[0].includes('零售损益分摊电费'))
+  const market = fee.rows.find((r: string[]) => r[1].includes('零售损益分摊电费'))
   assert.ok(market, '必须有零售损益分摊电费')
-  assert.equal(market![2], '126600', '计费数量必须是工业总电量')
-  assert.equal(market![3], '0.035557')
-  assert.equal(market![4], '4501.52')
+  assert.equal(market![3], '20880.13', '计费数量是账单原值（第 39 轮按比例分摊口径）')
+  assert.equal(market![4], '21.24%')
+  assert.equal(market![5], '4434.03')
 })
 
 test('打印清单：基本电费 / 力调电费按精确除法折算，单独成行', () => {
   const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
   const fee = findTable(doc, '电费分项细项')
-  const base = fee.rows.find((r: string[]) => r[0] === '基本电费')
-  const pf = fee.rows.find((r: string[]) => r[0].includes('功率因素调整电费'))
+  const base = fee.rows.find((r: string[]) => r[1] === '基本电费')
+  const pf = fee.rows.find((r: string[]) => r[1].includes('功率因素调整电费'))
   assert.ok(base && pf, '基本电费与力调电费都必须出账')
-  assert.equal(base![4], '9343.67')
-  assert.equal(pf![4], '-598.43')
+  assert.equal(base![5], '9343.67')
+  assert.equal(pf![5], '-598.43')
 })
 
 test('打印清单：概览指标按租户口径拆「工业 + 宿舍」', () => {
@@ -224,4 +224,87 @@ test('gasApplicableOf：有气表且气费列启用才并入气费', () => {
   )
   // 没有该单位的气表
   assert.equal(gasApplicableOf(gasRows, ['gas_fee'], '别的单位', [GOLDEN.month]), false)
+})
+
+
+// ---------------------------------------------------------------------------
+// 第 40 轮：打印预览「费用类别 + 费用组成」双列 + rowspan 跨行合并
+// ---------------------------------------------------------------------------
+//
+// 旧版每行第一列拼成「(1)市场化购电费 | 零售交易电费」，重复啰嗦且折行；
+// 更严重的是排序用拼接串 includes('上网环节线损') 匹配，把
+// 「(4)系统运行费 | 上网环节线损代理采购损益」吸到了 (2) 线损组里。
+
+test('打印预览：电费分项细项为 6 列，前两列是「费用类别」「费用组成」', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  assert.deepEqual(fee.columns.map((c: any) => c.label),
+    ['费用类别', '费用组成', '时段', '计费数量', '单价/标准', '金额(元)'])
+})
+
+test('打印预览：第 1 列只有简洁大类，绝不再出现「| / ｜」拼接符', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  for (const r of fee.rows as string[][]) {
+    assert.ok(!r[0].includes('|') && !r[0].includes('｜'), `费用类别含拼接符：${r[0]}`)
+    assert.ok(!r[1].includes('|') && !r[1].includes('｜'), `费用组成含拼接符：${r[1]}`)
+  }
+  assert.ok((fee.rows as string[][]).some((r) => r[0].includes('市场化购电费')))
+  assert.ok((fee.rows as string[][]).some((r) => r[0].includes('系统运行费用')))
+})
+
+test('打印预览：费用类别列用 rowspan 合并，同名分时项也 rowspan=4', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  assert.ok(Array.isArray(fee.rowSpans), 'StatementTable 必须带 rowSpans 元数据')
+  const spans: number[][] = fee.rowSpans
+  assert.equal(spans.length, fee.rows.length, 'rowSpans 与 rows 必须等长')
+  // 第 0 列至少有一个 >1 的合并（系统运行费 8 行）
+  const catSpans = spans.map((r) => r[0]).filter((v) => v > 1)
+  assert.ok(catSpans.length >= 4, `至少 4 个大类应跨行合并，got ${catSpans.length}`)
+  // 同名分时项（零售交易电费 4 行）第 1 列合并为 4
+  const rows = fee.rows as string[][]
+  const idx = rows.findIndex((r) => r[1] === '零售交易电费')
+  assert.ok(idx >= 0, '应有零售交易电费分时行')
+  assert.equal(spans[idx][1], 4, '零售交易电费四行的「费用组成」必须 rowspan=4')
+})
+
+test('打印预览：上网环节线损代理采购损益 严格归在 (4) 系统运行费用组内', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  const rows: string[][] = fee.rows
+  const spans: number[][] = fee.rowSpans
+  const idx = rows.findIndex((r) => r[1] === '上网环节线损代理采购损益')
+  assert.ok(idx >= 0, '代理采购损益必须在分项细项里')
+  // 向上找它所属的大类合并起点
+  let group = idx
+  while (group > 0 && spans[group][0] === 0) group -= 1
+  assert.match(rows[group][0], /系统运行费用/, `代理采购损益被放进了「${rows[group][0]}」组`)
+  // 并且它必须排在输配电量电费之后（原缺陷：夹在 (2) 与 (3) 之间）
+  const transIdx = rows.findIndex((r) => r[0].includes('输配电量电费'))
+  assert.ok(transIdx >= 0 && transIdx < idx, '系统运行费用组必须排在输配电量电费之后')
+})
+
+test('打印预览：系统运行费用 / 政府性基金及附加 末尾有小计行', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  const rows: string[][] = fee.rows
+  const sys = rows.find((r) => r[1] === '系统运行费用（小计）')
+  assert.ok(sys, '必须有「系统运行费用（小计）」行')
+  assert.equal(sys![3], '—', '小计行计费数量应为 —')
+  assert.equal(sys![4], '—', '小计行单价应为 —')
+  assert.equal(sys![5], '6949.58', '2026-09 系统运行费用小计')
+  const gov = rows.find((r) => r[1] === '政府性基金及附加（小计）')
+  assert.ok(gov, '必须有「政府性基金及附加（小计）」行')
+  assert.equal(gov![5], '6038.07', '2026-09 政府性基金小计（逐项取整相加）')
+  // 市场化购电费大类汇总
+  const market = rows.find((r) => r[1] === '市场化购电费（小计）')
+  assert.ok(market, '必须有「市场化购电费（小计）」行')
+  assert.equal(market![5], '58832.60', '2026-09 市场化购电费小计')
+})
+
+test('打印预览：小计行不重复计入合计（仍是工业电费 101346.55）', () => {
+  const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
+  const fee = findTable(doc, '电费分项细项')
+  assert.equal(fee.total[5], '101346.55')
 })
