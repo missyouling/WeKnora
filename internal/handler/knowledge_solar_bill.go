@@ -277,12 +277,13 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	}
 	extracted := merged
 	service.NormalizeSolarBillExtractionResult(extracted)
-	// 阶段 2 正则补洞：用户配置的字段级 regex 实时生效，LLM 漏掉的字段从原文补回。
-	if !usedFastPath {
-		for i := range extracted.Records {
-			if names := service.ApplySolarRegexPatch(extractCfg, &extracted.Records[i], canonicalText); len(names) > 0 {
-				logger.Infof(ctx, "Solar bill regex patch applied: %v knowledge=%s", names, knowledgeID)
-			}
+	// 阶段 2 正则补洞：用户配置的字段级 regex 实时生效，漏掉的字段从原文补回。
+	// 第 43 轮修正：快筛路径也必须执行。FastPathSolarBill 内部已对同一份原文
+	// 补过一次，这里再补是幂等的（已有值不覆盖），但绝不能因为 usedFastPath
+	// 就跳过——否则用户在「提取规则」里新增的字段在快筛路径上永远不生效。
+	for i := range extracted.Records {
+		if names := service.ApplySolarRegexPatch(extractCfg, &extracted.Records[i], canonicalText); len(names) > 0 {
+			logger.Infof(ctx, "Solar bill regex patch applied: %v knowledge=%s", names, knowledgeID)
 		}
 	}
 	// 通用质量闭环（非发票业务口径）：账单周期起止等标准日期字段归一化。

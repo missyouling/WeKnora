@@ -378,6 +378,305 @@ func canonicalNumberAfterLabel(text, userRegex string, labels []string) (float64
 	return 0, false
 }
 
+// solarHeaderField 光伏账单表头类字段（非数值），用「标签 → 短值」规则提取。
+//
+// 为什么单独列：这些字段在 OCR 文本里是「发电户号 户名 纳税人类型 并网电压等级」
+// 这类**标签与值被挤在同一行**的形态，且值可能紧贴下一个标签。确定性提取只
+// 认「标签后紧跟、到下一个标签/数字/表格竖线为止」的片段，取不到就留空交给 LLM。
+type solarHeaderField struct {
+	Key    string
+	Labels []string
+}
+
+var solarHeaderFields = []solarHeaderField{
+	{"account_no", []string{"发电户号", "用电户号", "户号"}},
+	{"account_name", []string{"户名", "客户名称", "账户名称"}},
+	{"taxpayer_type", []string{"纳税人类型", "纳税人性质"}},
+	{"voltage_level", []string{"并网电压等级", "并网电压"}},
+	{"supply_unit", []string{"服务单位", "供电单位"}},
+	{"address", []string{"发电地址", "用电地址", "地址"}},
+	{"consumption_mode", []string{"消纳方式", "消纳模式"}},
+	{"generation_mode", []string{"发电方式", "发电类型"}},
+}
+
+// solarHeaderRules 表头类字段的「形态正则」。
+//
+// 为什么不按标签位置配对：阶段 1 归一化会把中文之间的空格全部消掉（
+// 「发 电 量」→「发电量」），账单表头因此变成一整串
+//
+//	发电户号户名纳税人类型并网电压等级|电交流380V|费账 5000303216586 重庆星达铜业有限公司一般纳税人
+//
+// 标签与值都粘连，按 token 计数配对必然错位（实测把「户名」配成「纳税人类型」）。
+// 改为按字段的**枚举/形态特征**匹配：纳税人类型、消纳方式、发电方式本身就是
+// 封闭枚举；户名以「公司/厂/集团」结尾；服务单位以「供电服务中心/供电公司」
+// 结尾；户号是 10~16 位数字（电能表编号 20+ 位，天然排除）。
+var solarHeaderRules = map[string]*regexp.Regexp{
+	// 发电户号：10~16 位数字（20 位以上是电能表编号，必须排除）
+	"account_no": regexp.MustCompile(`(?:发电户号|用电户号|户号|费账|账)\s*([0-9]{10,16})(?:\s|$|[^0-9])`),
+	// 户名：以公司/厂/集团结尾，跳过「国网…电力公司」这类抬头
+	"account_name":     regexp.MustCompile(`([\p{Han}]{2,28}(?:有限公司|有限责任公司|股份有限公司|公司|厂|集团|合作社))`),
+	"taxpayer_type":    regexp.MustCompile(`(一般纳税人|小规模纳税人|非一般纳税人)`),
+	"voltage_level":    regexp.MustCompile(`(交流|直流)\s*([0-9]+(?:\.[0-9]+)?\s*(?:kV|KV|kv|V|伏|千伏))`),
+	"supply_unit":      regexp.MustCompile(`([\p{Han}]{2,14}(?:供电服务中心|供电服务公司|供电公司|供电所|电力公司))`),
+	"address":          regexp.MustCompile(`((?:北京|上海|天津|重庆|(?:[\p{Han}]{2,6}省))[\p{Han}0-9]{4,80}(?:号|路|街道|社区|村|镇|园区)[\p{Han}0-9]{0,20})`),
+	"consumption_mode": regexp.MustCompile(`(自发自用余电上网|全额上网|自发自用、余电上网|余电上网|自发自用)`),
+	"generation_mode":  regexp.MustCompile(`(光伏发电|风力发电|水力发电|生物质发电|燃气发电)`),
+}
+
+// solarHeaderValue 取表头类字段的值：形态正则优先，失败再退回「标签相邻」。
+// key 是字段名（account_no 等，即 solarHeaderRules 的键），labels 是票面标签。
+func solarHeaderValue(text, key string, labels []string) string {
+	if v := solarHeaderByRule(text, key); v != "" {
+		return v
+	}
+	if v, ok := solarHeaderAdjacent(text, labels); ok {
+		return v
+	}
+	return ""
+}
+
+// solarHeaderByRule 用字段形态正则取值。
+func solarHeaderByRule(text, key string) string {
+	if key == "" {
+		return ""
+	}
+	if re, ok := solarHeaderRules[key]; ok {
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			v := strings.TrimSpace(m[1])
+			// 电压等级有两个捕获组（交流/直流 + 数值单位），必须拼回完整值，
+			// 否则「交流380V」会被截成「交流」。
+			if key == "voltage_level" && len(m) >= 3 {
+				v = m[1] + strings.ReplaceAll(strings.TrimSpace(m[2]), " ", "")
+			}
+			if v == "" {
+				continue
+			}
+			// 抬头噪声：国网/电力公司 不是客户户名
+			if key == "account_name" && (strings.Contains(v, "国网") || strings.HasPrefix(v, "国") ||
+				strings.Contains(v, "供电")) {
+				continue
+			}
+			return v
+		}
+	}
+	return ""
+}
+
+// solarHeaderAdjacent 规则二：标签与值在同一格里相邻（规整文本）。
+func solarHeaderAdjacent(text string, labels []string) (string, bool) {
+	for _, label := range labels {
+		re, err := regexp.Compile(regexp.QuoteMeta(label) + `[：:]\s*([^|\n]{1,64})`)
+		if err != nil {
+			continue
+		}
+		m := re.FindStringSubmatch(text)
+		if len(m) < 2 {
+			continue
+		}
+		v := strings.TrimSpace(m[1])
+		if solarContainsOtherLabel(v, label) {
+			continue
+		}
+		v = strings.TrimSpace(strings.Trim(v, "|:： "))
+		if v == "" || isAllDigits(v) || solarIsLabelOnly(v) {
+			continue
+		}
+		return v, true
+	}
+	return "", false
+}
+
+// isAllDigits 判断字符串是否只由数字与小数点组成（用于过滤数值串）。
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// solarContainsOtherLabel 判断值里是否还含其他表头标签。
+func solarContainsOtherLabel(v, self string) bool {
+	for _, f := range solarHeaderFields {
+		for _, l := range f.Labels {
+			if l == self {
+				continue
+			}
+			if strings.Contains(v, l) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// solarIsLabelOnly 判断片段是否本身就是若干标签的拼接（不含真实值）。
+func solarIsLabelOnly(v string) bool {
+	rest := v
+	for _, f := range solarHeaderFields {
+		for _, l := range f.Labels {
+			rest = strings.ReplaceAll(rest, l, "")
+		}
+	}
+	return strings.TrimSpace(rest) == ""
+}
+
+// solarGatewayRe 切出「上网关口 / 发电关口」明细块起点。
+// 表号不在这里捕获：`[^\n]{0,80}` 是贪心的，把表号写进同一正则会被整段吃掉。
+var solarGatewayRe = regexp.MustCompile(`(上网关口|发电关口)`)
+
+// solarMeterNoRe 关口段内的电能表编号。
+var solarMeterNoRe = regexp.MustCompile(`电能表编号[：:]?\s*([0-9]{6,32})`)
+
+// solarReadingRowRe 电量明细表（示数类型/上期示数/本期示数/倍率/抄见电量/计费电量）。
+// 行尾常有 OCR 多出的空单元格（`|a|b|c|d|e|f||`），故用 `\|*` 收尾。
+var solarReadingRowRe = regexp.MustCompile(`(?m)^\|(反向有功[^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|*\s*$`)
+
+// solarFeeRowRe 电费明细表（类别/电量/电价/电费），同样容忍行尾多余空单元格。
+var solarFeeRowRe = regexp.MustCompile(`(?m)^\|([^|]+)\|([^|]*)\|([^|]*)\|([^|]*)\|*\s*$`)
+
+// solarGatewaySections 把归一化文本按关口切成段，供逐段取明细。
+func solarGatewaySections(text string) []struct {
+	Kind    string
+	MeterNo string
+	Body    string
+} {
+	locs := solarGatewayRe.FindAllStringSubmatchIndex(text, -1)
+	if len(locs) == 0 {
+		return nil
+	}
+	out := make([]struct {
+		Kind    string
+		MeterNo string
+		Body    string
+	}, 0, len(locs))
+	for i, loc := range locs {
+		end := len(text)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		kind := text[loc[2]:loc[3]]
+		body := text[loc[0]:end]
+		meter := ""
+		if m := solarMeterNoRe.FindStringSubmatch(body); len(m) > 1 {
+			meter = strings.TrimSpace(m[1])
+		}
+		out = append(out, struct {
+			Kind    string
+			MeterNo string
+			Body    string
+		}{Kind: kind, MeterNo: meter, Body: body})
+	}
+	return out
+}
+
+// buildSolarGateways 从分段文本里解析关口明细（电量行 + 电费行）。
+//
+// 这一步是本次修复的核心：旧版快筛只产出 4 个概览字段、从不构建 gateways，
+// 于是「上期示数/本期示数/倍率/抄见电量/计费电量」全部落 0（真机抽屉一屏
+// 「请输入」）。现在把账单原文里的明细表原样结构化，不再依赖模型。
+func buildSolarGateways(text string) []types.SolarGateway {
+	sections := solarGatewaySections(text)
+	if len(sections) == 0 {
+		return nil
+	}
+	gateways := make([]types.SolarGateway, 0, len(sections))
+	for _, sec := range sections {
+		g := types.SolarGateway{GatewayType: sec.Kind, MeterNo: sec.MeterNo}
+		// 项目名称：紧跟在「上网关口」段里的独立一行（如 1.4MW屋顶分布式光伏发电项目）
+		if m := regexp.MustCompile(`([0-9.]+MW[^|\n]{0,40}光伏[^|\n]{0,20})`).FindStringSubmatch(sec.Body); len(m) > 1 {
+			g.ProjectName = strings.TrimSpace(m[1])
+		}
+		for _, m := range solarReadingRowRe.FindAllStringSubmatch(sec.Body, -1) {
+			g.Readings = append(g.Readings, types.SolarReading{
+				MeterType:  strings.TrimSpace(m[1]),
+				Prev:       parseFlexibleNumber(m[2]),
+				Curr:       parseFlexibleNumber(m[3]),
+				Multiplier: parseFlexibleNumber(m[4]),
+				ReadingKwh: parseFlexibleNumber(m[5]),
+				BillKwh:    parseFlexibleNumber(m[6]),
+			})
+		}
+		// 电费行去重：OCR 会把同一张「本期电费明细」表复制两遍（真机发电关口
+		// 就出现两条完全相同的「分布式电源发电补助 19856 0 0」）。按
+		// 类别+电量+电价+电费 四元组去重，避免下游重复累计。
+		seenFee := make(map[string]bool, 4)
+		for _, m := range solarFeeRowRe.FindAllStringSubmatch(sec.Body, -1) {
+			cat := strings.TrimSpace(m[1])
+			// 表头行与分隔行跳过
+			if cat == "" || cat == "类别" || strings.HasPrefix(cat, "---") || strings.Contains(cat, "示数类型") {
+				continue
+			}
+			qty := parseFlexibleNumber(m[2])
+			rate := parseFlexibleNumber(m[3])
+			fee := parseFlexibleNumber(m[4])
+			if qty == 0 && rate == 0 && fee == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%s|%v|%v|%v", cat, qty, rate, fee)
+			if seenFee[key] {
+				continue
+			}
+			seenFee[key] = true
+			g.Fees = append(g.Fees, types.SolarFeeItem{Category: cat, Qty: qty, Rate: rate, Fee: fee})
+		}
+		if g.GatewayType == "" && g.MeterNo == "" && len(g.Readings) == 0 && len(g.Fees) == 0 {
+			continue
+		}
+		gateways = append(gateways, g)
+	}
+	return gateways
+}
+
+// parseFlexibleNumber 解析表格单元格里的数字（容忍空值、千分位、单位后缀）。
+func parseFlexibleNumber(raw string) float64 {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0
+	}
+	s = strings.ReplaceAll(s, ",", "")
+	re := regexp.MustCompile(`-?[0-9]+(?:\.[0-9]+)?`)
+	if m := re.FindString(s); m != "" {
+		v, err := strconv.ParseFloat(m, 64)
+		if err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+// solarCumulativeKwh 年累计上网电量。
+//
+// 不用 canonicalNumberAfterLabel：它要求标签前是行首/竖线/空白，而账单原文是
+// 「您的年累计上网电量为117960」——标签前是「的」，会被漏掉。
+func solarCumulativeKwh(text string) float64 {
+	re := regexp.MustCompile(`(?:年累计上网电量|年累计发电量|累计上网电量)[^0-9\n]{0,12}([0-9][0-9,]*(?:\.[0-9]+)?)`)
+	if m := re.FindStringSubmatch(text); len(m) >= 2 {
+		if v, err := strconv.ParseFloat(strings.ReplaceAll(m[1], ",", ""), 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+// solarMomChange 本期上网电量环比（原文形如「增长-83.08%」）。
+func solarMomChange(text string) string {
+	// 原文形如「较上期 上网关口 (电能表编号:...)重庆星达铜业有限公司增长-83.08%」，
+	// 「较上期」与百分比之间隔了整段关口信息，窗口必须放宽到 200 字符。
+	re := regexp.MustCompile(`(?:较上期|环比)[^\n%]{0,200}?(增长|下降|减少|上升)?\s*(-?[0-9.]+)%`)
+	if m := re.FindStringSubmatch(text); len(m) >= 3 {
+		return strings.TrimSpace(m[1]) + m[2] + "%"
+	}
+	return ""
+}
+
 // FastPathSolarBill 光伏账单确定性快筛。
 //
 // 只有「账单周期 + 光伏发电量 + 上网电量 + 结算金额」四个核心字段全部精确命中、
@@ -385,6 +684,11 @@ func canonicalNumberAfterLabel(text, userRegex string, labels []string) (float64
 // 调用方据此**完全跳过大模型**。任意一个没命中就回退到 LLM 管线，绝不产出全 0 记录。
 //
 // cfg 里的字段级 regex 与 required 实时生效：用户改了正则/规则立刻反映到结果。
+//
+// 第 43 轮补齐：命中后**同一份原文**继续做表头字段（发电户号/户名/纳税人类型/
+// 并网电压/消纳方式/发电方式/服务单位/发电地址）、年累计、环比与关口明细，
+// 并上提 meter_prev/curr/ratio/reading/bill 顶层镜像。旧版只产出 4 个概览字段，
+// 导致真机抽屉除发电量/上网电量/结算金额外全是「请输入」/0。
 func FastPathSolarBill(text, fileName string, cfg *types.KbExtractConfig) (*types.SolarBillExtractionItem, bool) {
 	canonical := CanonicalizeParsedDocument(text)
 	if CanonicalTextRunes(canonical) < 24 {
@@ -456,6 +760,85 @@ func FastPathSolarBill(text, fileName string, cfg *types.KbExtractConfig) (*type
 	if okPrice && unitPrice > 0 {
 		item.Fields["unit_price"] = unitPrice
 	}
+
+	// ---- 表头类字段（非数值）：确定性取「标签 → 短值」 ----
+	for _, f := range solarHeaderFields {
+		if v := solarHeaderValue(canonical, f.Key, f.Labels); v != "" {
+			switch f.Key {
+			case "account_no":
+				item.AccountNo = v
+			case "account_name":
+				item.AccountName = v
+			case "taxpayer_type":
+				item.TaxpayerType = v
+			case "voltage_level":
+				item.VoltageLevel = v
+			case "supply_unit":
+				item.SupplyUnit = v
+			case "address":
+				item.Address = v
+			case "consumption_mode":
+				item.ConsumptionMode = v
+			case "generation_mode":
+				item.GenerationMode = v
+			}
+			item.Fields[f.Key] = v
+		}
+	}
+	// 并网电压等级在 OCR 里常被拆成「电 交流380V」「费 账」等噪声前缀，
+	// 单独兜一次「交流/直流 + 电压」形态。
+	if item.VoltageLevel == "" {
+		if m := regexp.MustCompile(`(交流|直流)\s*([0-9]+(?:\.[0-9]+)?V)`).FindStringSubmatch(canonical); len(m) >= 3 {
+			item.VoltageLevel = m[1] + m[2]
+			item.Fields["voltage_level"] = item.VoltageLevel
+		}
+	}
+	// 发电户号：表头常被 OCR 打散成「费 账 5000303216586」，用长数字兜底。
+	if item.AccountNo == "" {
+		if m := regexp.MustCompile(`(?:发电户号|户号)[^0-9]{0,24}([0-9]{10,20})`).FindStringSubmatch(canonical); len(m) >= 2 {
+			item.AccountNo = m[1]
+			item.Fields["account_no"] = m[1]
+		}
+	}
+
+	// ---- 年累计 / 环比 ----
+	if v := solarCumulativeKwh(canonical); v > 0 {
+		item.CumulativeKwh = round2(v)
+		item.Fields["cumulative_kwh"] = item.CumulativeKwh
+	}
+	if v := solarMomChange(canonical); v != "" {
+		item.MomChange = v
+		item.Fields["mom_change"] = v
+	}
+
+	// ---- 关口明细（上网关口 + N 个发电关口） ----
+	if gateways := buildSolarGateways(canonical); len(gateways) > 0 {
+		item.Gateways = gateways
+		// 顶层镜像上期示数/本期示数/倍率/抄见电量/计费电量，
+		// 否则列表有值、抽屉一屏「请输入」（历史事故）。
+		upliftSolarMeterReading(item)
+		if item.MeterPrev != 0 {
+			item.Fields["meter_prev"] = item.MeterPrev
+		}
+		if item.MeterCurr != 0 {
+			item.Fields["meter_curr"] = item.MeterCurr
+		}
+		if item.MeterRatio != 0 {
+			item.Fields["meter_ratio"] = item.MeterRatio
+		}
+		if item.MeterReading != 0 {
+			item.Fields["meter_reading"] = item.MeterReading
+		}
+		if item.MeterBill != 0 {
+			item.Fields["meter_bill"] = item.MeterBill
+		}
+	}
+
+	// ---- 用户配置的其余字段：同一份原文正则补洞（快筛路径也必须执行） ----
+	// 旧版快筛命中后 handler 直接 break 并跳过 ApplySolarRegexPatch，
+	// 于是用户自定义字段在快筛路径上永久缺失。
+	ApplySolarRegexPatch(cfg, item, canonical)
+
 	return item, true
 }
 

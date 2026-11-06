@@ -185,3 +185,131 @@ func TestExtractAdaptiveTimeout(t *testing.T) {
 		t.Fatalf("unexpected deadline: %v", d)
 	}
 }
+
+// TestExtractFastPathSolarBillFullFields 第 43 轮回归：快筛命中后必须把
+// 表头字段 / 年累计 / 环比 / 关口明细 / 顶层示数镜像一并产出。
+//
+// 事故：2026.10光伏账单.pdf 只剩「账单周期/发电量/上网电量/结算金额」有值，
+// 发电户号、户名、纳税人类型、并网电压、消纳方式、发电方式、服务单位、
+// 发电地址、年累计、上期/本期示数、倍率、抄见/计费电量全是空或 0。
+// 根因是快筛只产出 4 个概览字段就短路，且 handler 在快筛路径跳过正则补洞。
+func TestExtractFastPathSolarBillFullFields(t *testing.T) {
+	raw := "|||国|网|重|庆 市|电 力 公|司||\n" +
+		"|---|---|---|---|---|---|---|---|---|\n" +
+		"||账单周期 2026-10-01 至 2026-10-31||发电户号 户名 纳税人类型 并网电压等级|电 交流380V|" +
+		"费 账 5000303216586 重庆星达铜业有限公司 一般纳税人|单|服务单位 发电地址 消纳方式 发电方式|" +
+		"璧城供电服务中心 重庆市璧山区青杠街道莲花社区居民委员会106号新立路106号 自发自用余电上网 光伏发电|\n\n" +
+		"发 电 量 66026 千瓦时 上 网 电 量 2970 千瓦时 结 算 金 额 1125.14元\n\n" +
+		"本期您的上网结算电量为2970,较上期 上网关口 (电能表编号:5030001221300052554525)重庆星达铜业有限公司增长-83.08%。\n" +
+		"本期电量明细截止本期,您的年累计上网电量为117960 。\n" +
+		"|示数类型|上期示数|本期示数|倍率|抄见电量|计费电量||\n|---|---|---|---|---|---|---|\n" +
+		"|反向有功(总)|38.36|39.35|3000|2970|2970||\n\n" +
+		"|类别|电量|电价|电费|\n|---|---|---|---|\n|分布式上网电费|2970|0.378834|1125.14|\n\n" +
+		"* 发电补助电费明细发电关口 (电能表编号:5030001221300051528459) 本期电量明细\n" +
+		"|示数类型|上期示数|本期示数|倍率|抄见电量|计费电量|\n|---|---|---|---|---|---|\n" +
+		"|反向有功(总)|3295.58|3461.05|120|19856|0|\n"
+
+	item, ok := FastPathSolarBill(raw, "2026.10光伏账单.pdf", nil)
+	if !ok || item == nil {
+		t.Fatalf("complete bill should hit fast-path, canonical:/n%s", CanonicalizeParsedDocument(raw))
+	}
+
+	// 概览四件套（原有契约，不得回退）
+	if item.BillPeriod != "2026-10" || item.GenerationKwh != 66026 ||
+		item.GridKwh != 2970 || item.SettlementAmount != 1125.14 {
+		t.Fatalf("overview fields regressed: %+v", item)
+	}
+
+	// 表头字段（本次事故的全部缺失项）
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"account_no", item.AccountNo, "5000303216586"},
+		{"account_name", item.AccountName, "重庆星达铜业有限公司"},
+		{"taxpayer_type", item.TaxpayerType, "一般纳税人"},
+		{"voltage_level", item.VoltageLevel, "交流380V"},
+		{"consumption_mode", item.ConsumptionMode, "自发自用余电上网"},
+		{"generation_mode", item.GenerationMode, "光伏发电"},
+		{"supply_unit", item.SupplyUnit, "璧城供电服务中心"},
+	} {
+		if tc.got == "" {
+			t.Errorf("%s missing (want %q), fields=%#v", tc.name, tc.want, item.Fields)
+			continue
+		}
+		if !strings.Contains(tc.got, strings.TrimSpace(tc.want)) && tc.name != "address" {
+			t.Errorf("%s = %q, want to contain %q", tc.name, tc.got, tc.want)
+		}
+	}
+	if item.Address == "" || !strings.Contains(item.Address, "重庆市璧山区") {
+		t.Errorf("address missing or wrong: %q", item.Address)
+	}
+
+	// 年累计 / 环比
+	if item.CumulativeKwh != 117960 {
+		t.Errorf("cumulative_kwh = %v, want 117960", item.CumulativeKwh)
+	}
+	if item.MomChange == "" || !strings.Contains(item.MomChange, "83.08") {
+		t.Errorf("mom_change = %q, want contains 83.08", item.MomChange)
+	}
+
+	// 关口明细 + 顶层示数镜像（旧版全 0，抽屉一屏「请输入」）
+	if len(item.Gateways) == 0 {
+		t.Fatal("gateways missing: 上网/发电关口明细必须结构化")
+	}
+	up := item.Gateways[0]
+	if up.GatewayType != "上网关口" {
+		t.Errorf("first gateway = %q, want 上网关口", up.GatewayType)
+	}
+	if up.MeterNo != "5030001221300052554525" {
+		t.Errorf("meter_no = %q", up.MeterNo)
+	}
+	if len(up.Readings) != 1 {
+		t.Fatalf("upstream gateway readings = %d, want 1", len(up.Readings))
+	}
+	rd := up.Readings[0]
+	if rd.Prev != 38.36 || rd.Curr != 39.35 || rd.Multiplier != 3000 ||
+		rd.ReadingKwh != 2970 || rd.BillKwh != 2970 {
+		t.Errorf("reading wrong: %+v", rd)
+	}
+	if len(up.Fees) != 1 || up.Fees[0].Category != "分布式上网电费" ||
+		up.Fees[0].Fee != 1125.14 || up.Fees[0].Rate != 0.378834 {
+		t.Errorf("upstream fees wrong: %+v", up.Fees)
+	}
+
+	if item.MeterPrev != 38.36 || item.MeterCurr != 39.35 || item.MeterRatio != 3000 ||
+		item.MeterReading != 2970 || item.MeterBill != 2970 {
+		t.Errorf("top-level meter mirror wrong: prev=%v curr=%v ratio=%v reading=%v bill=%v",
+			item.MeterPrev, item.MeterCurr, item.MeterRatio, item.MeterReading, item.MeterBill)
+	}
+
+	// 发电关口也必须结构化（N 个关口）
+	if len(item.Gateways) < 2 {
+		t.Errorf("generation gateways missing: got %d", len(item.Gateways))
+	}
+	if g := item.Gateways[1]; g.GatewayType != "发电关口" || g.MeterNo != "5030001221300051528459" {
+		t.Errorf("second gateway = %+v", g)
+	}
+}
+
+// TestExtractFastPathSolarBillUserFieldOnFastPath 快筛路径同样要应用用户配置正则。
+//
+// 事故：handler 用 `if !usedFastPath` 包住 ApplySolarRegexPatch，于是快筛命中
+// 的文件永远不会补用户新增字段（配置改了也没反应）。
+func TestExtractFastPathSolarBillUserFieldOnFastPath(t *testing.T) {
+	text := "账单周期 2026-10-01 至 2026-10-31\n发电量 66026 上网电量 2970 结算金额 1125.14\n" +
+		"发电户号 5000303216586 户名 重庆星达铜业有限公司\n" +
+		"自定义标记 光伏A类项目\n"
+	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{{
+		Name: "project_tag", Label: "项目标记",
+		Regex: `自定义标记[：:\s]*([^\n]+)`, Enabled: true,
+	}}}
+	item, ok := FastPathSolarBill(text, "2026.10光伏账单.pdf", cfg)
+	if !ok || item == nil {
+		t.Fatalf("fast-path should hit:/n%s", CanonicalizeParsedDocument(text))
+	}
+	if v, _ := item.Fields["project_tag"].(string); strings.TrimSpace(v) == "" {
+		t.Fatalf("user-configured field must be patched on fast-path too: %#v", item.Fields)
+	}
+}

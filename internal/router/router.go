@@ -186,8 +186,14 @@ func NewRouter(params RouterParams) *gin.Engine {
 		r.Use(embedFrameAncestorsMiddleware(params.EmbedChannelService))
 	}
 
-	// 前端静态文件（内嵌前端；web 目录不存在时 serveFrontendStatic 内部自动跳过）
-	serveFrontendStatic(r)
+	// 前端静态文件：lite 内嵌前端；standard 仅在显式配置 WEKNORA_WEB_DIR 时
+	// 才挂载（生产容器 `WEKNORA_WEB_DIR=/app/web/dist`）。
+	// [upstream-touch] 第 42 轮合并曾误删此门控改成无条件注册，导致 standard
+	// 且未配置 web 目录时也会把 `/` 等未匹配路径返回 SPA 而不是 401，
+	// 与上游 router_static_test.go 的 edition opt-in 契约冲突（CI 红）。
+	if handler.Edition == "lite" || strings.TrimSpace(os.Getenv("WEKNORA_WEB_DIR")) != "" {
+		serveFrontendStatic(r)
+	}
 
 	// IM 回调路由（在认证中间件之前注册，使用各平台自身的签名验证）
 	RegisterIMRoutes(r, params.IMHandler)
