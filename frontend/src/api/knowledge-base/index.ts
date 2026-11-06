@@ -1567,6 +1567,27 @@ export function generateBillingRecord(tenantId: string, payload: Record<string, 
   return post(`/api/v1/billing/tenants/${tenantId}/records`, payload, { timeout: 300000 });
 }
 
+/**
+ * 按月份批量重新核算（第 43 轮）。
+ *
+ * months 为空 → 重算该租户全部月份；非空 → 只重算所选月份。
+ * 后端从**上游源头**重取市电/光伏账单与电水气核算后覆写记录，
+ * 不复用 billing_records 旧缓存，因此能修回历史脏值（如 147.32 → 9821）。
+ */
+export function regenerateBillingRecords(tenantId: string, months: string[] = []) {
+  return post(`/api/v1/billing/tenants/${tenantId}/records/regenerate`, { months }, { timeout: 300000 });
+}
+
+/**
+ * 按账单周期重算**全部使用单位**（第 43 轮，业主视角用）。
+ *
+ * 重庆星达（业主）没有自己的 billing_records 行，费用清单由前端从市电账单现算；
+ * 但「重新核算」仍要真的从上游重取，故走这个跨租户入口。
+ */
+export function regenerateBillingByPeriod(months: string[] = []) {
+  return post(`/api/v1/billing/records/regenerate-by-period`, { months }, { timeout: 300000 });
+}
+
 
 export function getBillingRecord(id: string) {
   return get(`/api/v1/billing/records/${id}`);

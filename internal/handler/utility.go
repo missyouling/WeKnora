@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
-	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -436,6 +436,8 @@ func (h *UtilityHandler) CreateUtilityMeterRecord(c *gin.Context) {
 			return
 		}
 		existing.Items = merged
+		// 第 43 轮：核算记录变更 → 通知费用清单重算（前端监听事件后自动重载）
+		notifyBillingUpstreamChanged(ctx, "utility_record_create", req.Month)
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": existing})
 		return
 	}
@@ -741,6 +743,9 @@ func (h *UtilityHandler) DeleteUtilityMeterRecord(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenantID, _ := utilityTenantID(c)
 	id := secutils.SanitizeForLog(c.Param("id"))
+	// 先取月份：删除后记录不可读，事件需要带账单周期才能精准重算
+	var delRec types.UtilityMeterRecord
+	_ = h.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).First(&delRec).Error
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&types.UtilityMeterRecord{}).
 			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
@@ -758,6 +763,7 @@ func (h *UtilityHandler) DeleteUtilityMeterRecord(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("delete meter record failed"))
 		return
 	}
+	notifyBillingUpstreamChanged(ctx, "utility_record_delete", delRec.Month)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "记录已删除"})
 }
 

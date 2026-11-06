@@ -195,7 +195,13 @@ test('生成账单：勾选优先 + 气泡二次确认，且不得再有「数�
   // 主流程必须直奔生成，中间不得插入 return 阻断
   const fn = tenant.slice(tenant.indexOf('const handleGenerateAll'), tenant.indexOf('// 数据齐全时默认自动生成'))
   assert.ok(!/if \(issues\.length\)/.test(fn), '生成流程不得被校验中断')
-  assert.match(fn, /await generateBillingRecord\(activeTenantId\.value, \{ month: row\.month \}\)/, '必须逐月落库')
+  // 第 43 轮：改走批量重算接口（后端仍逐月 prepareBillingInputs → persistRecord 落库，
+  // 且支持勾选单条/多条精准重算）。断言新的契约而不是旧的单月循环。
+  assert.match(fn, /regenerateBillingRecords\(activeTenantId\.value/, '租户视角必须调批量重算接口')
+  assert.match(fn, /picked \? months : \[\]/, '勾选 → 传所选月份；未勾选 → 传空数组（后端取全部）')
+  assert.match(fn, /regenerateBillingByPeriod\(picked \? months : \[\]\)/, '业主视角必须走跨租户按周期重算')
+  assert.match(fn, /已重新核算选中的/, '勾选场景提示必须写「选中的 k 条」')
+  assert.match(fn, /已完成全部/, '全量场景提示必须写「全部 N 条」')
 })
 
 // ---- 第 13 轮：按「名称」精确匹配（同义词归一），绝不按数组下标 ----

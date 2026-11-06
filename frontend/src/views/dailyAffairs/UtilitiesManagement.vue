@@ -1351,6 +1351,26 @@ const displayRows = computed(() => {
   // 混进来会渲染出一条空壳行（真机：绿色进度条 + 首行「解析中」空白数据），
   // 还会被合计行与「共 N 条」算进去。状态只看工具栏下方的进度条。
   let all = [...rows.value]
+  /**
+   * 第 43 轮：账单周期严格倒序（YYYY-MM 字典序 = 时间序）。
+   *
+   * 后端已按账期 DESC 排序，这里再兜一次是因为分页是「逐页追加」的：
+   * 第 2 页数据到达时直接 `[...rows, ...fresh]`，若接口未升级或本地新增行
+   * （如刚上传的解析完成行）就会插到中间，列表月份照样穿插。
+   * 账期缺失的行排最后（解析中/待补录），同月内保持原有相对顺序。
+   */
+  const periodOf = (r: any) => String(r.bill_period || '').trim().slice(0, 7)
+  all = all
+    .map((r: any, i: number) => ({ r, i }))
+    .sort((a, b) => {
+      const pa = periodOf(a.r)
+      const pb = periodOf(b.r)
+      if (pa === pb) return a.i - b.i
+      if (!pa) return 1
+      if (!pb) return -1
+      return pa < pb ? 1 : -1
+    })
+    .map((x) => x.r)
   // 月份 = 账单账期（bill_period，YYYY-MM）；解析中的文件没有账期，按月筛选时不占位
   if (month) all = all.filter((r: any) => r.kind !== 'pending' && String(r.bill_period || '').startsWith(month))
   if (!kw) return all
@@ -2042,6 +2062,9 @@ const saveEditForm = async (opts: { closeDetail?: boolean } = {}) => {
       await loadEditForm(now)
       MessagePlugin.success('已保存')
     }
+    // 第 43 轮：账单明细保存后广播变更，费用清单监听后自动重算（切过去即最新）。
+    // 不广播的话用户必须回费用清单手点「重新核算」才能看到改后的数。
+    notifyEnergyDataChanged()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {

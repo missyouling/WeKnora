@@ -177,7 +177,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, getBillingTenant,
-  listBillingRecords, generateBillingRecord, deleteBillingRecord,
+  listBillingRecords, generateBillingRecord, regenerateBillingRecords, regenerateBillingByPeriod, deleteBillingRecord,
   listKnowledgeBases,
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
@@ -186,7 +186,7 @@ import { gasApplicableOf, buildTenantBillingStatementDoc, type TenantStatementCt
 import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
-import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
+import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged, ENERGY_DATA_CHANGED_EVENT } from './energyCounters'
 import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, timedBreakdownOf, timedBreakdownTotalsOf, type FieldSource, type SourceResolveContext, type TimedAllocation } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
@@ -1096,8 +1096,25 @@ const residentInfoOf = (bill: any) => {
     const ratio = Number(r?.ratio) || 0
     return ratio > 0 && ratio < 0.05 && String(r?.project || '').includes('定比')
   }) || rows[0]
-  // 计费电量优先取 bill_kwh（后端已算出）；缺失时按 kwh × ratio + adjust 反算
-  let kwh = Number(main?.bill_kwh) || 0
+  /**
+   * 第 43 轮：电量（定比）的唯一权威来源是**票面分项** `(5)目录电费` 的计费数量。
+   *
+   * `residential_readings[].bill_kwh` 只是派生缓存，历史管线在 17 个月里写坏了
+   * 11 个（2026-07 = 147.32 = 9821×0.015 乘了两次、2026-06/2026-04/2025-10 = 0、
+   * 2026-05 = 149.79 …），而票面 `(5)目录电费` 的 qty 全部正确（2026-10=9354 …
+   * 2025-06=14363）。旧实现优先读 bill_kwh，于是把脏值显示到费用清单。
+   *
+   * 优先级：票面目录电费 qty 之和 → 主行 bill_kwh → kwh×ratio+adjust 反算。
+   * 严禁把已算好的居民计费电量再乘一次 0.015。
+   */
+  const catalogKwh = (Array.isArray(item.fee_items) ? item.fee_items : [])
+    .filter((f: any) => {
+      const c = String(f?.category || '').trim()
+      return c.includes('目录电费') && !c.includes('工商业')
+    })
+    .reduce((s: number, f: any) => s + Math.abs(Number(f?.qty) || 0), 0)
+  let kwh = Math.round(catalogKwh * 100) / 100
+  if (!kwh) kwh = Math.abs(Number(main?.bill_kwh) || 0)
   if (!kwh) {
     const base = Number(main?.kwh) || 0
     const ratio = Number(main?.ratio) || 0
@@ -1691,40 +1708,61 @@ const generateConfirmText = computed(() => (selectedKeys.value.size
  * 结果里缺失的部分显示 0，用户补完数据再点一次「重新核算」即可。
  */
 
+/**
+ * 「重新核算」主流程（第 43 轮重构）。
+ *
+ * 三条产品要求：
+ *   1. 支持勾选单条 / 多条 / 不选则全量；
+ *   2. **真正从上游源头重取**：走 /records/regenerate，后端每月重新读
+ *      市电账单（目录电费计费数量 + 各分项电费）、光伏账单、电/水/气核算，
+ *      再覆写记录 —— 而不是只读费用清单旧缓存自循环（旧实现修不回 147.32）；
+ *   3. 业主视角（重庆星达）没有 billing_records 行，重算 = 重新拉取上游后
+ *      由前端 buildRows 现算，因此只需 loadAllData。
+ */
 const handleGenerateAll = async () => {
   const targets = generateTargets.value
   if (!targets.length) {
     MessagePlugin.warning('当前没有可生成的记录')
     return
   }
+  const picked = selectedKeys.value.size
+  const months = Array.from(new Set(targets.map((r: any) => String(r.month || '')).filter((m) => m.length === 7)))
 
-  if (isOwnerView.value) {
+  if (isOwnerView.value || !activeTenantId.value) {
+    // 业主视角：先真的从上游重取一次（跨租户按周期重算），再由前端 buildRows 现算
     generateBusy.value = true
     try {
+      await regenerateBillingByPeriod(picked ? months : [])
       await loadAllData()
-      MessagePlugin.success('已重新核算')
+      MessagePlugin.success(picked
+        ? `已重新核算选中的 ${picked} 条记录`
+        : `已完成全部 ${displayRows.value.length} 条记录重新核算`)
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '重新核算失败')
     } finally {
       generateBusy.value = false
     }
     return
   }
-  if (!activeTenantId.value) return
+
   generateBusy.value = true
   try {
-    const okMonths: string[] = []
-    const fail: string[] = []
-    for (const row of targets) {
-      try {
-        await generateBillingRecord(activeTenantId.value, { month: row.month })
-        okMonths.push(row.month)
-      } catch (e: any) {
-        fail.push(`${row.month}（${e?.message || '未知错误'}）`)
-      }
+    // 勾选 → 只重算所选月份；未勾选 → 传空数组由后端取该租户全部月份
+    const res: any = await regenerateBillingRecords(activeTenantId.value, picked ? months : [])
+    const okMonths: string[] = res?.data?.regenerated || []
+    const failed: any[] = res?.data?.failed || []
+    if (okMonths.length) {
+      MessagePlugin.success(picked
+        ? `已重新核算选中的 ${picked} 条记录：${okMonths.join('、')}`
+        : `已完成全部 ${okMonths.length} 条记录重新核算`)
     }
-    if (okMonths.length) MessagePlugin.success(`已生成 ${okMonths.length} 个月度账单：${okMonths.join('、')}`)
-    if (fail.length) MessagePlugin.warning(`以下月份生成失败：${fail.join('；')}`)
+    if (failed.length) {
+      MessagePlugin.warning(`以下月份重算失败：${failed.map((f: any) => `${f.month}（${f.error || '未知错误'}）`).join('；')}`)
+    }
     await loadAllData()
     notifyEnergyDataChanged()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '重新核算失败')
   } finally {
     generateBusy.value = false
   }
@@ -2055,6 +2093,9 @@ onMounted(() => {
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)
   window.addEventListener('resize', measureGroupPanel)
+  // 第 43 轮：上游数据源（市电/光伏账单、电/水/气核算）变更后自动重算并刷新，
+  // 用户切回「费用清单」页签即可看到最新结果，不必再手点「重新核算」。
+  window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onUpstreamDataChanged)
 })
 /**
  * 字段定义保存后的联动。
@@ -2075,9 +2116,32 @@ function onCategoriesChanged(ev?: Event) {
   }
   void loadCategorySubs()
 }
+/**
+ * 上游数据源变更后的自动重算（第 43 轮）。
+ *
+ * 触发源：市电账单 / 光伏账单 的保存与删除、电/水/气核算记录的增删改、
+ * 提取完成落库（它们各自 notifyEnergyDataChanged）。
+ *
+ * 只做「重新拉取 + 重建行」：费用清单的行是从上游数据**现算**出来的，
+ * 拉一次最新上游就等于重算，不需要再逐月调 generateBillingRecord。
+ * 正在重算/打印时跳过，避免与用户操作打架。
+ */
+let upstreamReloadTimer: ReturnType<typeof setTimeout> | null = null
+function onUpstreamDataChanged() {
+  if (generateBusy.value) return
+  // 合并抖动：一次保存可能连发多个事件（账单 + 核算 + 分类），200ms 内只重载一次
+  if (upstreamReloadTimer) clearTimeout(upstreamReloadTimer)
+  upstreamReloadTimer = setTimeout(() => {
+    upstreamReloadTimer = null
+    void loadAllData()
+  }, 200)
+}
+
 onBeforeUnmount(() => {
+  if (upstreamReloadTimer) { clearTimeout(upstreamReloadTimer); upstreamReloadTimer = null }
   window.removeEventListener('fleet-categories-changed', onCategoriesChanged)
   window.removeEventListener('resize', measureGroupPanel)
+  window.removeEventListener(ENERGY_DATA_CHANGED_EVENT, onUpstreamDataChanged)
 })
 
 // 列表空态/加载态禁止横向滚动条（第 37 轮）：loading 或 0 行时挂 is-table-flat，

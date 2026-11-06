@@ -145,6 +145,11 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			// 启动幂等修复（第 42 轮）：光伏账单概览字段缺失 / 提取状态僵尸在途。
 			// 用归一化 + 确定性快筛从已解析 chunks 直接补回，不调模型、不覆盖完整数据。
 			go business.RepairSolarBillOverviews(context.Background())
+			// 启动幂等修复（第 43 轮）：市电账单居民（定比）计费电量与票面对齐。
+			// 历史管线把 residential_readings[].bill_kwh 写成「本期电量 × 0.015」
+			// （甚至乘两次，2026-07 = 147.32），而票面 fee_items 的 (5)目录电费
+			// qty 全部正确。这里只改派生缓存，不动票面分项、不动已锁定的分摊金额。
+			go business.RepairResidentBillingKwh(context.Background())
 			// 启动幂等清理：分类已删除、配置仍残留的孤儿提取配置（软删归档）
 			business.CleanupOrphanExtractConfigs(context.Background())
 			// 启动幂等迁移：把存量已知长文本字段（备注/摘要/说明…）从 text 升级为
@@ -667,6 +672,10 @@ func RegisterBillingRoutes(r *gin.RouterGroup, handler *handler.BillingHandler, 
 		bl.PUT("/tenants/:id/refs", g.Contributor(), handler.SaveBillingTenantRefs)
 		bl.GET("/tenants/:id/records", g.Viewer(), handler.ListBillingRecords)
 		bl.POST("/tenants/:id/records", g.Contributor(), handler.GenerateBillingRecord)
+		// 第 43 轮：按月份批量重算（支持勾选单条/多条/全量），从上游源头重取
+		bl.POST("/tenants/:id/records/regenerate", g.Contributor(), handler.RegenerateBillingBatch)
+		// 业主视角没有自己的 billing_records 行：按周期跨全部使用单位重算
+		bl.POST("/records/regenerate-by-period", g.Contributor(), handler.RegenerateBillingByPeriodHandler)
 		bl.GET("/records/:id", g.Viewer(), handler.GetBillingRecord)
 		bl.PUT("/records/:id", g.Contributor(), handler.UpdateBillingRecord)
 		bl.DELETE("/records/:id", g.Contributor(), handler.DeleteBillingRecord)

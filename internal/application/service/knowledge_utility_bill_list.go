@@ -165,8 +165,13 @@ func (s *BusinessExtractService) ListUtilityBillRecords(ctx context.Context, kbI
 	}
 	records = kept
 
+	// 账单周期 DESC 为主键（第 43 轮）：旧实现只按 CreatedAt 排，
+	// 补传一份旧账单就会插到 2026-10 前面，列表月份穿插错乱。
 	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].CreatedAt.After(records[j].CreatedAt)
+		return billPeriodLess(
+			records[i].Item.BillPeriod, records[i].CreatedAt,
+			records[j].Item.BillPeriod, records[j].CreatedAt,
+		)
 	})
 
 	total := len(records)
@@ -305,8 +310,12 @@ func (s *BusinessExtractService) ListSolarBillRecords(ctx context.Context, kbID 
 	}
 	records = kept
 
+	// 光伏列表同口径：账期 DESC → 创建时间 DESC（第 43 轮）。
 	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].CreatedAt.After(records[j].CreatedAt)
+		return billPeriodLess(
+			records[i].Item.BillPeriod, records[i].CreatedAt,
+			records[j].Item.BillPeriod, records[j].CreatedAt,
+		)
 	})
 
 	total := len(records)

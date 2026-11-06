@@ -1176,38 +1176,12 @@ func (h *BillingHandler) GenerateBillingRecord(c *gin.Context) {
 		return
 	}
 
-	in, err := h.prepareBillingInputs(ctx, id, req.Month)
+	rec, items, err := h.regenerateRecord(ctx, id, req.Month)
 	if err != nil {
 		c.Error(err)
 		return
 	}
-
-	now := timeNowUTC()
-	recordID := uuid.NewString()
-	plan := allocateTimed(in, recordID, now)
-	fees := buildFeeItems(in, plan, recordID, now)
-
-	industrialFee := round2(fees.IndustrialFee)
-	totalFee := round2(industrialFee + in.DormFee + in.WaterFee)
-	rec := types.BillingRecord{
-		ID: recordID, BillingTenantID: id, Month: req.Month, Status: "generated",
-		TotalKwh: round2(in.StarTotal), LineLoss: in.LineLoss, Ratio: in.Ratio,
-		BillTotalAmount: in.Bill.TotalAmount,
-		DormKwh:         round2(in.DormKwh), DormFee: in.DormFee,
-		WaterUsage: round2(in.WaterUsage), WaterFee: in.WaterFee,
-		IndustrialFee: industrialFee, TotalFee: totalFee,
-		// 两个合计列（第 22 轮 P1-9）：口径写死在落库处，页面与报表不必再各自相加。
-		// 电费合计 = 工业电费 + 宿舍电费；水费合计 = 各水表之和（当前无工业/宿舍分档）。
-		ElecTotalFee:  round2(industrialFee + in.DormFee),
-		WaterTotalFee: in.WaterFee,
-		CreatedAt:     now, UpdatedAt: now,
-	}
-	if err := h.persistRecord(ctx, rec, fees.Items, plan.MeterRows, in.WaterRows); err != nil {
-		logger.Errorf(ctx, "generate billing record failed: %v", err)
-		c.Error(errors.NewInternalServerError("generate billing record failed"))
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": fees.Items}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"record": rec, "items": items}})
 }
 
 // ---------------------------------------------------------------------------
