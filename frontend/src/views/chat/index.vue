@@ -84,7 +84,7 @@
                                         </p>
                                     </div>
                                     <div class="suggested-questions-grid">
-                                        <div v-for="item in suggestedQuestions" :key="item.question"
+                                        <div v-for="(item, index) in suggestedQuestions" :key="item.question"
                                             class="suggested-question-card"
                                             @click="handleSuggestedQuestionClick(item)">
                                             <span class="suggested-question-text">{{ item.question }}</span>
@@ -112,7 +112,7 @@
                             <div v-if="session.role == 'user'" class="message-row"
                                 :data-message-id="session.id || undefined">
                                 <usermsg :content="session.content" :mentioned_items="session.mentioned_items"
-                                    :images="session.images" :attachments="session.attachments" :embedded-mode="embeddedMode"
+                                    :images="session.images" :attachments="session.attachments" :embeddedMode="embeddedMode"
                                     :session-id="session_id"
                                     :message-id="session.id"
                                     :created-at="session.created_at"
@@ -130,7 +130,7 @@
                                 :data-message-id="session.id || undefined">
                                 <botmsg :content="session.content" :session="session" :session-id="session_id"
                                     :user-query="getUserQuery(index)" @scroll-bottom="scrollToBottom"
-                                    :is-first-enter="isFirstEnter" :embedded-mode="embeddedMode"
+                                    :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode"
                                     :follow-up-loading="Boolean(session.suggestionLoading && !session.suggestionSet?.questions?.length)"
                                     :can-fork="!embeddedMode && forkAffordanceOf(session.id).canFork"
                                     :can-rewind="canRewindMessage(session.id)"
@@ -770,7 +770,7 @@ watch(historyLoading, (loading) => {
     if (loading) return
     applyForkLanding()
 }, { flush: 'post' })
-const fullContent = ref('')
+let fullContent = ref('')
 const scrollContainer = ref(null)
 const composerElement = ref(null)
 const composerHeight = ref(0)
@@ -1004,7 +1004,7 @@ watch([() => route.params], async (newvalue) => {
         useSettingsStoreInstance.restoreDefaultsIfSnapshotted();
 
         await loadSessionAndHydrate(session_id.value);
-        const data = {
+        let data = {
             session_id: session_id.value,
             created_at: '',
             limit: limit.value
@@ -1041,7 +1041,7 @@ const onChatScrollTop = () => {
     const { scrollTop, scrollHeight } = scrollContainer.value;
     isFirstEnter.value = false
     if (scrollTop <= 0) {
-        const data = {
+        let data = {
             session_id: session_id.value,
             created_at: created_at.value,
             limit: limit.value
@@ -1143,6 +1143,7 @@ const {
             // actually operate on.
             const resumeId = persistedAssistantId(lastMessage);
             currentAssistantMessageId.value = resumeId;
+            console.log('[Continue Stream] Set assistant message ID:', resumeId);
             // Only IM-originated replies (channel === 'im') get the quiet poll-to-recover
             // path: their answer is generated on the IM side and never streams through
             // this server, so continue-stream always 404s even though the reply *is*
@@ -1250,6 +1251,7 @@ const getmsgList = (data, isScrollType = false, scrollHeight) => {
 // 发送消息
 // 处理停止生成事件 - 立即清除 loading 状态
 const handleStopGeneration = () => {
+    console.log('[Stop Generation] Immediately clearing loading state');
     stopStream();
     loading.value = false;
     isReplying.value = false;
@@ -1574,8 +1576,8 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
     // the VLM) and are sent as attachment_ids. The inline base64 `images`
     // payload is kept only for the embedded/public API path. A base64 fallback
     // is used per-image if the async upload fails.
-    const imageAttachments = [];
-    const userImages = [];
+    let imageAttachments = [];
+    let userImages = [];
     const imageAttachmentIds = [];
     if (imageFiles && imageFiles.length > 0) {
         for (const file of imageFiles) {
@@ -1644,7 +1646,7 @@ const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = []
     const legacyAttachmentFiles = props.embeddedMode
         ? (attachmentFiles || []).filter(attachment => !attachment.documentId)
         : [];
-    const attachmentUploads = [];
+    let attachmentUploads = [];
     if (legacyAttachmentFiles.length > 0) {
         try {
             for (const attachment of legacyAttachmentFiles) {
@@ -1866,17 +1868,6 @@ watch(error, (newError) => {
         recoverIncompleteMessage();
         return;
     }
-    // continue-stream 404: the session was deleted or no longer belongs to this
-    // tenant. The page may still be polling a stale in-flight answer, so quietly
-    // restore the operable state instead of flashing an error toast (the network
-    // 404 is expected in this scenario, not a real failure).
-    if (String(newError).includes('404')) {
-        isReplying.value = false;
-        loading.value = false;
-        // 清空当前 assistant message ID
-        currentAssistantMessageId.value = '';
-        return;
-    }
     MessagePlugin.error(newError);
     isReplying.value = false;
     loading.value = false;
@@ -1970,7 +1961,7 @@ onMounted(async () => {
         scrollLock.value = false;
         hasMoreHistory.value = true;
         historyLoadingMore.value = false;
-        const data = {
+        let data = {
             session_id: session_id.value,
             created_at: '',
             limit: limit.value

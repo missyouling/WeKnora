@@ -184,6 +184,36 @@ export default defineConfig(
     },
   },
 
+  // ---- 上游 main 同步文件：存量 lint 噪音降级（第 42 轮合并零破坏）----
+  // origin/main 合入后这些文件与上游保持 100% 一致，二开不得改写其源码；
+  // 但它们在上游自带若干未使用变量 / 重复 key / 正则空格写法，按本项目
+  // 更严格的规则会报 error。这里只把「存量噪音」降级为 warn，其余缺陷规则
+  // （no-unreachable / vue/valid-* / no-dupe-args 等）仍保持 error。
+  {
+    files: [
+      'src/api/chat/streame.ts',
+      'src/components/AttachmentUpload.vue',
+      'src/components/Input-field.vue',
+      'src/components/ModelEditorDialog.vue',
+      'src/components/menu.vue',
+      'src/views/chat/components/AgentStreamDisplay.vue',
+      'src/views/chat/components/usermsg.vue',
+      'src/views/chat/index.vue',
+      'src/views/knowledge/settings/DataSourceTypeIcon.vue',
+      'src/views/knowledge/wiki/WikiBrowser.vue',
+      'src/views/organization/OrganizationList.vue',
+      'src/views/system/SystemSettings.vue',
+      'src/utils/markdownPreviewImages.test.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'warn',
+      'vue/no-unused-vars': 'warn',
+      'vue/no-dupe-keys': 'warn',
+      'no-dupe-keys': 'warn',
+      'no-regex-spaces': 'warn',
+    },
+  },
+
   // ---- CLI 工具脚本：console.log 就是它们的输出方式 ----
   // 这些由 npm scripts 直接执行（scan-i18n-gaps / regenerate-i18n-locales），
   // 打印到 stdout 是功能本身，不能当调试残留删掉（曾误删并恢复过一次）。

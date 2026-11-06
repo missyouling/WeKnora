@@ -28,24 +28,20 @@ test('气费汇总：必须按使用单位过滤（旧实现只按月 → 把全
   assert.match(src, /gasOf\(tenantName\)/, '租户视角按当前租户取气表')
 })
 
-test('打印清单：无气表/未启用气费时，既不出气费明细表也不出「气费」汇总行', () => {
+test('打印清单：无气表/未启用气费时不出气费明细表；应收汇总章节整体下线', () => {
   // 第 22 轮 P1-2：构造器迁到 energyBillStatements.ts，页面只传 includeGas
   const statements = read('energyBillStatements.ts')
   assert.match(statements, /export function gasApplicableOf\(/, '必须有「气费是否适用」判定')
-  const fn = statements.slice(statements.indexOf('export function gasApplicableOf'), statements.indexOf('function summaryTableOf'))
+  const fn = statements.slice(statements.indexOf('export function gasApplicableOf'), statements.indexOf('export function buildTenantBillingStatementDoc'))
   assert.match(fn, /hasMeter/, '必须检查该单位确有气表记录')
   assert.match(fn, /columnKeys\.includes\('gas_fee'\)/, '必须检查气费字段是否启用')
-
-  const sum = statements.slice(statements.indexOf('function summaryTableOf'), statements.indexOf('export function buildTenantBillingStatementDoc'))
-  assert.match(sum, /includeGas: boolean/, '应收汇总必须接收 includeGas')
-  assert.match(sum, /if \(includeGas\) body\.push\(\['气费'/, '气费行必须条件渲染')
-  assert.ok(!/rows: \[[\s\S]*?\['气费', unit, money2\(gas\)\][\s\S]*?\],\n\s*total:/.test(sum),
-    '气费行不得写死在 rows 字面量里')
 
   const build = statements.slice(statements.indexOf('export function buildTenantBillingStatementDoc'))
   assert.match(build, /const includeGas = ctx\.includeGas/, '整份清单统一判定气费适用性')
   assert.match(build, /if \(includeGas\) \{/, '气费明细表必须受 includeGas 控制')
-  assert.match(build, /summaryTableOf\(ctx, \[row\], unit, prefix, includeGas\)/, '汇总表必须传 includeGas')
+  // 第 42 轮：汇总表与底部说明全部删除（与第 1 页 4 张概览卡片重复，且撑出第 3 页）
+  assert.doesNotMatch(statements, /应收费用汇总|function summaryTableOf/, '应收汇总章节必须彻底移除')
+  assert.doesNotMatch(build, /footerNote/, '底部说明文字必须移除')
 
   // 页面侧：ctx 必须用「气表行 + 当前列 key」现算，不能写死 true
   const page = read('TenantBilling.vue')

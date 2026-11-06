@@ -100,20 +100,19 @@ test('市电/光伏上传走中台 FleetUploadDialog，原生 input 必须消失
   }
 })
 
-test('市电/光伏轮询双向隔离：任一光伏痕迹即让路，反之亦然', () => {
+test('第 42 轮：市电按 Tab 收口，光伏改走共享上传历史源', () => {
   assert.match(utilities, /function isElectricityBillFile/, '市电必须有分类判定')
   assert.match(utilities, /activeTab\.value === 'electricity' && isElectricityBillFile\(item\)/, '市电轮询必须按 Tab 收口')
-  assert.match(solar, /function isSolarBillFile/, '光伏必须有分类判定')
-  // 双向排除：任一光伏痕迹不让市电认领；任一电费痕迹不让光伏认领
-  assert.match(utilities, /meta\.fleet_cert_type === '光伏账单'\) return false/)
-  assert.match(utilities, /\/光伏\/\.test\(name\)\) return false/)
-  assert.match(solar, /meta\.fleet_cert_type === '市电账单'\) return false/)
+  assert.match(solar, /useUploadHistoryScope\('energy'/, '光伏必须绑定共享源')
+  assert.match(solar, /getUploadHistoryFiles\('energy'\)/, '自愈打标读共享快照')
+  // 光伏不再在轮询里自动调提取接口（根除刷新无限重提）
+  assert.doesNotMatch(solar, /pollOnce[\s\S]{0,1200}await extractSolarBill\(/)
 })
 
-test('提取全流程结束自动刷新列表与卡片（onSettled / 在途清零）', () => {
-  assert.match(polling, /onSettled\?:/, '轮询必须暴露 onSettled')
-  assert.match(polling, /prevPendingCount > 0 && visiblePend\.length === 0/, '必须识别「由有变无」')
+test('第 42 轮：在途清零由共享源 settled 回调刷新列表与卡片', () => {
+  assert.match(polling, /onSettled\?:/, '轮询仍暴露 onSettled')
+  assert.match(polling, /prevPendingCount > 0 && visiblePend\.length === 0/, '仍识别「由有变无」')
   assert.match(utilities, /onSettled: async \(\) => \{ await loadFiles\(true\)/, '市电必须接住 onSettled')
-  assert.match(solar, /if \(prevPending > 0 && pend\.length === 0\)/, '光伏必须识别整批完成')
-  assert.match(solar, /prevPending > 0 && pend\.length === 0\) \{[\s\S]{0,120}notifyEnergyDataChanged\(\)/, '光伏完成后必须刷新列表与卡片')
+  assert.match(solar, /uploadHistory\.onSettled\(/, '光伏订阅共享源在途清零事件')
+  assert.match(solar, /onSettled\([\s\S]{0,160}notifyEnergyDataChanged\(\)/, '完成后刷新列表与卡片')
 })

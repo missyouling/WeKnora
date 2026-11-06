@@ -2,7 +2,7 @@
 import { getDatasourceIconUrl, datasourceIconMap } from './datasourceIcons'
 import { useConnectorLabel } from '@/composables/useConnectorLabel'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   type: string
   size?: number
   /** inline: 类型选择等小尺寸场景；badge: 嵌入 ds-card__badge 等父级徽章容器 */

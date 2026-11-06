@@ -6231,6 +6231,7 @@ export default {
     }
   },
   embedPublish: {
+    dailyAffairs: '일상 업무',
     history: "대화 기록",
     historyHint: "최근 대화 30개가 이 브라우저에만 저장됩니다. 기록을 지워도 서버 메시지는 삭제되지 않습니다.",
     historyEmpty: "저장된 대화 없음",
@@ -8618,6 +8619,12 @@ export default {
     }
   },
   knowledgeBase: {
+    tagEditSearch: 'Search tags',
+    tagEditAvailableSection: 'Available tags',
+    tagEditNoSelected: 'No selected tags',
+    tagClearAction: 'Clear',
+    tagEditSelectedSection: 'Selected tags',
+    tagNewPlaceholder: 'Enter a new tag',
     tagAddAction: '태그 추가',
     documentCount: '문서 {count}개',
     filters: '필터',
@@ -9348,6 +9355,7 @@ export default {
     }
   },
   menu: {
+    dailyAffairs: '일상 업무',
     sessionInProgress: '대화 진행 중',
     sessionUnread: '새 답변',
     knowledgeBase: '지식베이스',

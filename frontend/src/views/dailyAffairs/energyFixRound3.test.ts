@@ -69,7 +69,7 @@ test('费用清单抽屉：只渲染字段，不得追加电量/费用/水费明
   assert.match(src, /readonly/, '详情抽屉必须只读')
 })
 
-test('费用清单打印：概览 + 分项细项 + 水电气分表 + 汇总', () => {
+test('费用清单打印：概览 + 分项细项 + 水电气分表（无应收汇总）', () => {
   // 构造器已迁到 energyBillStatements.ts（第 22 轮 P1-2）；版式引擎仍在 useCatalogPdf
   const page = read('TenantBilling.vue')
   assert.match(page, /generateStatementPdf\(\{\s*doc:/, '必须走结构化文档模型')
@@ -77,7 +77,10 @@ test('费用清单打印：概览 + 分项细项 + 水电气分表 + 汇总', ()
   assert.match(src, /function feeTableOf/)
   assert.match(src, /function elecTableOf/)
   assert.match(src, /function waterTableOf/)
-  assert.match(src, /function summaryTableOf/)
+  assert.doesNotMatch(src, /function summaryTableOf|应收费用汇总/, '第 42 轮：应收汇总章节已删除')
+  // 第 42 轮：只针对「费用清单」构造器；市电/光伏结论表仍保留各自说明
+  const billing = src.slice(src.indexOf('export function buildTenantBillingStatementDoc'))
+  assert.doesNotMatch(billing, /footerNote/, '第 42 轮：费用清单底部说明已删除')
   assert.match(src, /overviewTitle: '一、账单概览'/)
   // 水费与电费必须是两张表（函数级别分离），不能合成一张
   assert.ok(src.indexOf('function elecTableOf') < src.indexOf('function waterTableOf'))

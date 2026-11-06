@@ -53,7 +53,7 @@ func TestBusinessInvoiceListCategoryUsesAuthorityChain(t *testing.T) {
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
 			FileName:        "a.pdf",
-			CustomMetadata:  types.JSON(mustJSON(t, renameAwareMeta("能耗发票", "水电发票"))),
+			CustomMetadata:  types.JSON(mustBusinessJSON(t, renameAwareMeta("能耗发票", "水电发票"))),
 		},
 	}}
 	svc := &BusinessExtractService{repo: repo}
@@ -89,8 +89,8 @@ func TestBusinessInvoiceListCategoryFallsBackToLegacyAndLine(t *testing.T) {
 		},
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
-		{ID: "k_legacy", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustJSON(t, legacyOnly))},
-		{ID: "k_line", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustJSON(t, lineOnly))},
+		{ID: "k_legacy", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustBusinessJSON(t, legacyOnly))},
+		{ID: "k_line", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustBusinessJSON(t, lineOnly))},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 
@@ -114,7 +114,7 @@ func TestBusinessInvoiceOverviewCategoryAfterRename(t *testing.T) {
 		map[string]interface{}{"invoice_no": "INV-102", "invoice_type": "能耗发票", "category": "能耗发票", "total_amount": 20},
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
-		{ID: "k1", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustJSON(t, meta))},
+		{ID: "k1", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustBusinessJSON(t, meta))},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 

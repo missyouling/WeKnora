@@ -433,7 +433,6 @@ import {
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listKnowledgeBases,
-  listKnowledgeFiles,
   getKnowledgeDetails,
   updateKnowledgeMetadata,
   updateBusinessMetadata,
@@ -459,7 +458,9 @@ import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
 import { notifyEnergyDataChanged, rowFlattenText, matchAllTokens, billMonthOfItem } from './energyCounters'
-import { withTimeout } from '@/composables/useBusinessPolling'
+import {
+  useUploadHistoryScope, getUploadHistoryFiles,
+} from '@/composables/useUploadHistoryFiles'
 import { parseExtractQuality, EMPTY_QUALITY, type ExtractQuality } from './extractQuality'
 
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -502,6 +503,10 @@ const FALLBACK_COLUMNS: ColDef[] = [
 ]
 
 const kbId = ref('')
+// 第 42 轮：能耗模块（市电 + 光伏 + 核算 + 清单）共用一份上传历史快照，
+// 状态条全域感知，抽屉打开即 2.5s 自动刷新，页面不再各自轮询/补提。
+const uploadHistory = useUploadHistoryScope('energy', () => kbId.value)
+uploadHistory.onSettled(() => { void loadFiles(true); notifyEnergyDataChanged() })
 const loading = ref(true)
 const wizardVisible = ref(false)
 
@@ -623,7 +628,7 @@ interface Row {
   tags?: any[]
 }
 const rows = ref<Row[]>([])
-const pendingFiles = ref<any[]>([])
+const pendingFiles = computed<any[]>(() => uploadHistory.runningFiles.value as any[])
 const summary = ref<{ total: number; sumKwh: number; sumAmount: number }>({ total: 0, sumKwh: 0, sumAmount: 0 })
 const listLoading = ref(false)
 const loadingMore = ref(false)
@@ -645,8 +650,6 @@ const filterState = computed<FilterState>({
   },
 })
 const selectedRowKeys = ref<string[]>([])
-const extractInFlight = ref<Set<string>>(new Set())
-const taggingInFlight = ref<Set<string>>(new Set())
 const listScrollRef = ref<HTMLElement>()
 
 // 汇总口径 = 当前可见行（已按关键词 / 账期过滤）。
@@ -803,104 +806,33 @@ const statusOf = (row: Row) => {
 
 // ---- 轮询 ----
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let polling = false
 
-/**
- * 是否「本页该管」的光伏账单文件。
- *
- * 市电与光伏共用一个知识库，两边轮询都常驻，分类判定必须双向对称：
- * 本页只看光伏痕迹，任一带电费痕迹即让路；否则两边会互相抢文件
- * （真机事故：光伏文件被市电页提取成 kind=utility_bill，光伏列表里查不到）。
- */
-function isSolarBillFile(item: any): boolean {
-  const meta = item?.custom_metadata || {}
-  const name = String(item?.file_name || item?.title || '')
-  if (meta.kind === 'utility_bill' || meta.bill_kind === 'electricity' || meta.fleet_cert_type === '市电账单') return false
-  if (meta.bill_kind === 'solar' || meta.kind === 'solar_bill' || meta.fleet_cert_type === '光伏账单') return true
-  // 未打标：只认文件名明确的（上传弹窗会在上传时打标，这里只做兜底自愈）
-  return !meta.kind && !meta.bill_kind && !meta.fleet_cert_type && /光伏/.test(name)
-}
-
-/** 上一轮在途数量：识别「由有变无」的整批完成时刻 */
-let pendingCount = 0
-
-/**
- * 立即执行一轮扫描。
- *
- * 上传 / 重新提取后必须马上刷一次：只靠 3s 定时器的话，状态条最多晚 3s 才出现，
- * 长任务（几分钟）里用户会以为没反应。
- */
 const pollOnce = async () => {
-  if (!kbId.value || polling) return
-  polling = true
-  try {
-    // 同 useBusinessPolling：单次请求悬住会冻结整个轮询 → 状态条永不收起
-    const res: any = await withTimeout(listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 }))
-    const data = res?.data || res?.list || []
-    const arr: any[] = Array.isArray(data) ? data : []
-    // 在途文件（状态条数据源）：解析中、提取中都要算。
-    // 必须从**知识库原始文件列表**里筛，不能从已渲染的表格行里筛 ——
-    // 在途/失败行本来就不进主列表，从行里取永远是空数组（真机踩过）。
-    const pend = arr.filter((it: any) => {
-      if (!isSolarBillFile(it)) return false
-      const ps = it.parse_status
-      const meta = it.custom_metadata || {}
-      const es = meta.extract_status || it.extract_status
-      if (ps === 'parsing' || ps === 'pending' || ps === 'processing' || ps === 'finalizing') return true
-      if (ps === 'failed') return true
-      if (es === 'failed') return true
-      // 后端在途态有两种写法：extracting（旧）与 processing（asynq 队列）
-      if (es === 'extracting' || es === 'processing' || es === 'pending') return true
-      return es == null && ps === 'completed'
-    })
-    const prevPending = pendingCount
-    pendingCount = pend.length
-    pendingFiles.value = pend
-    // 整批完成（上一轮还有在途、这一轮清零）：立刻重载列表并同步卡片计数。
-    // 旧实现只在「自己触发提取」的分支里刷新 —— 从上传弹窗提取完成的文件，
-    // 列表永远看不到（真机：解析提取都完成，列表里没有新账单）。
-    if (prevPending > 0 && pend.length === 0) {
-      await loadFiles(true)
-      notifyEnergyDataChanged()
-    }
-    // 已解析完成且已打标 solar 但尚未提取的文件自动触发提取；
-    // 文件名含「光伏」但未打标未提取的自动补打标后提取（自愈，避免上传打标失败导致列表不可见）
-    for (const it of arr) {
-      if (!isSolarBillFile(it)) continue
-      const ps = it.parse_status
-      const meta = it.custom_metadata || {}
-      const isSolarName = /光伏/.test(it.file_name || '')
-      if (ps === 'completed' && isSolarName && !meta.kind && !meta.bill_kind && !meta.extract_status && !taggingInFlight.value.has(it.id)) {
-        taggingInFlight.value.add(it.id)
-        try {
-          await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar', fleet_cert_type: '光伏账单' } })
-        } catch { /* 打标失败下轮重试 */ } finally {
-          taggingInFlight.value.delete(it.id)
-        }
-      }
-      if (ps === 'completed' && meta.bill_kind === 'solar' && !meta.kind && !meta.extract_status && !extractInFlight.value.has(it.id)) {
-        extractInFlight.value.add(it.id)
-        try {
-          await extractSolarBill(kbId.value, it.id)
-          await loadFiles(true)
-          notifyEnergyDataChanged()
-        } catch { /* 失败下轮重试 */ } finally {
-          extractInFlight.value.delete(it.id)
-        }
-      }
-    }
-  } catch { /* 轮询失败静默 */ } finally {
-    polling = false
+  // 第 42 轮：文件列表由 useUploadHistoryFiles 统一 2.5s 拉取并写入共享源。
+  // 这里只做自愈打标（文件名含「光伏」但缺 bill_kind 的历史文件），
+  // 且每个文件本会话只尝试一次；**不再自动调用任何提取接口**。
+  if (!kbId.value) return
+  const arr = getUploadHistoryFiles('energy')
+  for (const it of arr) {
+    if (!/光伏/.test(it.file_name || '')) continue
+    const meta = it.custom_metadata || {}
+    if (it.parse_status !== 'completed' || meta.kind || meta.bill_kind || meta.extract_status) continue
+    if (taggedOnce.has(it.id)) continue
+    taggedOnce.add(it.id)
+    try {
+      await updateKnowledgeMetadata(it.id, { custom_metadata: { bill_kind: 'solar', fleet_cert_type: '光伏账单' } })
+    } catch { /* 打标失败不阻塞 */ }
   }
 }
+const taggedOnce = new Set<string>()
 
 /** 上传 / 重新提取 / 手动提取后主动刷一次在途状态（状态条立即出现）。 */
-const refreshPending = () => { void pollOnce() }
+const refreshPending = () => { void uploadHistory.refresh(); void pollOnce() }
 
 const startPolling = () => {
   stopPolling()
-  void pollOnce()
-  pollTimer = setInterval(() => { void pollOnce() }, 3000)
+  void refreshPending()
+  // 统一轮询由 useUploadHistoryFiles 负责（2.5s，抽屉打开或有在途任务时保持）。
 }
 const stopPolling = () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

@@ -1,7 +1,7 @@
 // @ts-nocheck
 <script setup lang="ts">
 import { indexEmbeddedSourceImages } from '@/utils/sourceImage';
-import { ref, shallowRef, watch, onMounted, onUnmounted, onErrorCaptured, nextTick, defineAsyncComponent } from 'vue';
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, onErrorCaptured, nextTick, defineAsyncComponent } from 'vue';
 import { getKnowledgeDetails, listKnowledgeFiles, previewKnowledgeFile } from '@/api/knowledge-base/index';
 import { previewTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { downloadArtifact } from '@/api/chat';
@@ -47,7 +47,6 @@ import {
   scrollRectIntoContainer,
 } from '@/utils/sourceLocatorDom';
 import { renderEpubPreview } from '@/utils/epubPreview';
-import { pageJumpZoom, withPageFragment } from '@/utils/pdfPageJump';
 
 
 const VueOfficePptx = defineAsyncComponent(() => import('@vue-office/pptx'));
@@ -66,13 +65,8 @@ const props = defineProps<{
   fileName: string;
   active: boolean;
   fillHeight?: boolean;
-  /**
-   * 多页文档（如同一 PDF 拆出的多张发票）中的目标页码（1-based）。
-   * 直连预览时合并为 `url#page=N&zoom=Z` 赋给 PDF iframe；zoom 由窗格尺寸换算，
-   * 否则浏览器内置阅读器在 fit-page 下会把末页页码夹紧到上一页。
-   * 同文件页码切换走浏览器 fragment 导航，不重新下载文件。
-   */
-  page?: number;
+  /** Place preview actions beside the host header's download button. */
+  toolbarTarget?: HTMLElement | null;
   /**
    * Source mode renders PDFs with pdf.js instead of the browser viewer so a
    * citation can be scrolled to and highlighted.
@@ -80,6 +74,11 @@ const props = defineProps<{
   sourceMode?: boolean;
   /** Where to scroll and what to highlight once the file is rendered. */
   locate?: SourceLocateRequest | null;
+  /**
+   * [upstream-touch] 二开：多页文档（同一 PDF 拆出的多张发票）的目标页码（1-based）。
+   * 预览 iframe 用 `#page=N` fragment 定位，同文件换页不重新下载。
+   */
+  page?: number;
 }>();
 
 export type SourceLocateResult = { found: boolean; precise: boolean; granularity?: string; reason?: string };
@@ -89,30 +88,6 @@ const emit = defineEmits<{
 }>();
 
 const loading = ref(false);
-/** 直连基础 URL 模块级缓存（knowledgeId -> {url, ts}）：
- *  跨抽屉打开/组件重建后复用同一预签名 URL，让浏览器 HTTP 缓存命中，
- *  避免每次打开详情都重新签名并整份下载大 PDF（表现为“加载两次/闪烁”）。
- *  预签名有效期为 1h，留 10 分钟余量后失效重取。 */
-const directBaseUrlCache = new Map<string, { url: string; ts: number }>();
-const DIRECT_URL_TTL_MS = 50 * 60 * 1000;
-const DIRECT_URL_CACHE_MAX = 20;
-
-function cachedDirectUrl(knowledgeId: string): string {
-  const hit = directBaseUrlCache.get(knowledgeId);
-  if (hit && Date.now() - hit.ts < DIRECT_URL_TTL_MS) return hit.url;
-  return '';
-}
-
-function setDirectUrlCache(knowledgeId: string, url: string) {
-  if (directBaseUrlCache.size >= DIRECT_URL_CACHE_MAX) {
-    const oldest = directBaseUrlCache.keys().next().value;
-    if (oldest !== undefined) directBaseUrlCache.delete(oldest);
-  }
-  directBaseUrlCache.set(knowledgeId, { url, ts: Date.now() });
-}
-
-/** 直连 PDF 已赋值 src、等待 iframe load 的遮罩期（防止切换文件时白屏/二次加载）。 */
-const iframePending = ref(false);
 const error = ref('');
 // Async renderer setup/mount failures do not emit the renderer's `error` event.
 // Surface them in the preview instead of leaving an empty document area.
@@ -124,14 +99,9 @@ onErrorCaptured((err) => {
 });
 const previewType = ref<FilePreviewKind>('unsupported');
 const blobUrl = ref('');
-/** 直连预览 URL（COS 预签名 / local /r/ 授权），浏览器原生支持 Range 渐进加载。 */
-const directUrl = ref('');
-/**
- * PDF iframe 的实际 src（含 `#page=N&zoom=Z`）。
- * 与 directUrl 分离的原因：iframe 必须在容器完成布局后才拿到 src，
- * 否则内置阅读器会用未定型的视口尺寸应用页码，末页被夹紧到错误页。
- */
-const pdfSrc = ref('');
+/** [upstream-touch] 二开：把目标页码拼进 PDF blob URL，供业务详情抽屉按物理页码定位。 */
+const pdfFrameSrc = computed(() =>
+  props.page && props.page >= 1 && blobUrl.value ? `${blobUrl.value}#page=${props.page}` : blobUrl.value);
 const textContent = ref('');
 const highlightedCode = ref('');
 const markdownHtml = ref('');
@@ -164,6 +134,7 @@ function revokeMarkdownImageUrls() {
   markdownImageUrls = [];
 }
 
+const isFullscreen = ref(false);
 const previewRoot = ref<HTMLElement | null>(null);
 const previewContent = ref<HTMLElement | null>(null);
 
@@ -177,7 +148,7 @@ function focusPreviewContent() {
 }
 
 watch(
-  () => [props.active, previewRoot.value, getPreviewSourceKey(), props.sourceBlob, htmlViewMode.value],
+  () => [props.active, previewRoot.value, getPreviewSourceKey(), props.sourceBlob, htmlViewMode.value, isFullscreen.value],
   async () => {
     if (!props.active) return;
     const previousFocus = document.activeElement;
@@ -200,22 +171,99 @@ watch(
 );
 
 function onPreviewFrameLoad() {
-  // 直连 PDF 首次/跨文件加载完成：撤掉遮罩层，避免 loading 状态长期盖住内容。
-  // 整个回调包 try/catch：iframe 的 load 是无主语原生事件，任何抛出都会升级成
-  // Vue errorHandler 的 "native event handler" 未处理异常（曾导致抽屉点击崩溃）。
-  try {
-    // 空 src（等待布局定型）也会触发 load，此时 PDF 尚未开始加载，不能撤遮罩。
-    if (previewType.value === 'pdf' && !pdfSrc.value) return;
-    if (iframePending.value) {
-      iframePending.value = false;
-    }
-    if (document.activeElement === previewContent.value || document.activeElement === previewRoot.value) {
-      focusPreviewContent();
-    }
-  } catch {
-    /* 预览加载回调异常不影响抽屉使用 */
+  if (document.activeElement === previewContent.value || document.activeElement === previewRoot.value) {
+    focusPreviewContent();
   }
 }
+
+function toggleFullscreen() {
+  if (isFullscreen.value) {
+    void exitPreviewFullscreen();
+  } else {
+    void enterPreviewFullscreen();
+  }
+}
+
+let fallbackOverflow: string | null = null;
+let fullscreenDisposed = false;
+
+async function enterPreviewFullscreen() {
+  const root = previewRoot.value;
+  if (!props.active || !root?.isConnected) return;
+  // Native fullscreen also handles Escape when focus is inside a PDF viewer
+  // or a sandboxed HTML iframe, whose keyboard events cannot bubble here.
+  if (root.requestFullscreen) {
+    try {
+      await root.requestFullscreen();
+      if (fullscreenDisposed || !props.active) {
+        if (document.fullscreenElement === root) await document.exitFullscreen();
+      } else {
+        syncFullscreen();
+      }
+      return;
+    } catch {
+      // Embedded hosts may disallow the Fullscreen API. Keep page fullscreen
+      // available there, with Escape handled in the parent document.
+    }
+  }
+  if (fullscreenDisposed || !props.active || !root.isConnected) return;
+  if (fallbackOverflow === null) fallbackOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  isFullscreen.value = true;
+}
+
+function clearFallbackFullscreen() {
+  if (fallbackOverflow !== null) {
+    document.body.style.overflow = fallbackOverflow;
+    fallbackOverflow = null;
+  }
+  isFullscreen.value = false;
+}
+
+async function exitPreviewFullscreen() {
+  if (previewRoot.value && document.fullscreenElement === previewRoot.value) {
+    try {
+      await document.exitFullscreen();
+    } catch {
+      // The browser may already have exited in response to Escape.
+    }
+    syncFullscreen();
+    return;
+  }
+  clearFallbackFullscreen();
+}
+
+function syncFullscreen() {
+  if (fallbackOverflow === null) {
+    isFullscreen.value = !!previewRoot.value && document.fullscreenElement === previewRoot.value;
+  }
+}
+
+function onFullscreenEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || event.isComposing || !isFullscreen.value || !props.active) return;
+  // Consume this Escape before a containing drawer can also close.
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  void exitPreviewFullscreen();
+}
+
+watch(() => props.active, (active) => {
+  if (!active) void exitPreviewFullscreen();
+});
+
+onMounted(() => {
+  document.addEventListener('fullscreenchange', syncFullscreen);
+  window.addEventListener('keydown', onFullscreenEscape, true);
+});
+
+onUnmounted(() => {
+  fullscreenDisposed = true;
+  document.removeEventListener('fullscreenchange', syncFullscreen);
+  window.removeEventListener('keydown', onFullscreenEscape, true);
+  void exitPreviewFullscreen();
+  clearFallbackFullscreen();
+});
+
 
 function ensureBlobType(blob: Blob, ft: string): Blob {
   const expected = getPreviewMimeType(ft);
@@ -380,9 +428,7 @@ function getPreviewSourceKey(): string {
   if (props.sourceBlob) {
     return `resource-blob:${props.fileName}:${props.fileType}:${props.sourceBlob.size}:${props.sourceBlob.type}`;
   }
-  // 同一 knowledge 文件的多页发票共享 knowledgeId：把页码纳入缓存键，
-  // 保证切换同文件不同页时能触发重定位，而不是命中缓存直接跳过。
-  if (props.knowledgeId) return `knowledge:${props.knowledgeId}${props.page ? `#p${props.page}` : ''}`;
+  if (props.knowledgeId) return `knowledge:${props.knowledgeId}`;
   if (props.sessionId && props.attachmentId) return `attachment:${props.sessionId}:${props.attachmentId}`;
   if (
     props.sessionId &&
@@ -393,25 +439,6 @@ function getPreviewSourceKey(): string {
     return `artifact:${props.sessionId}:${props.messageId}:${props.artifactIndex}`;
   }
   return '';
-}
-
-/** 将多页文档的目标页码（与可选缩放）合并进预览 URL。 */
-function withPageHash(url: string, zoom = 0): string {
-  return withPageFragment(url, props.page || 0, zoom);
-}
-
-/**
- * PDF iframe 的两段式 src 赋值：容器与空 src 的 iframe 先挂载并完成布局，
- * 下一帧量到窗格真实尺寸后再写入 `#page=N&zoom=Z`。
- * 页码定位依赖真实尺寸（见 utils/pdfPageJump）：src 与容器在同一帧创建时，
- * 内置阅读器会按未定型的视口应用页码，末页被滚动夹紧到错误页（6 页票据停在 3/6）。
- */
-async function applyPdfFrameSrc(baseUrl: string, sourceKey: string) {
-  await nextTick();
-  // 防串车：等待布局期间用户可能已切到其它文件。
-  if (getPreviewSourceKey() !== sourceKey) return;
-  const box = previewContent.value?.getBoundingClientRect();
-  pdfSrc.value = withPageHash(baseUrl, pageJumpZoom(box?.width || 0, box?.height || 0));
 }
 
 // Skill-generated HTML is often a self-contained chart that needs its own
@@ -454,7 +481,8 @@ async function renderMermaid(blob: Blob) {
 async function openMermaid() {
   const svg = mermaidSvg.value;
   if (!svg) return;
-  // The diagram viewer mounts on body, outside the preview element.
+  // The diagram viewer mounts on body, outside the native fullscreen element.
+  await exitPreviewFullscreen();
   if (props.active && previewRoot.value?.isConnected) openMermaidFullscreen(svg);
 }
 
@@ -462,111 +490,17 @@ async function loadPreview() {
   const sourceKey = getPreviewSourceKey();
   if (!sourceKey) return;
   if (loadedForId === sourceKey) return;
-  // 同一 sourceKey 正在加载中：等待已有的加载完成，而不是发起重复请求。
-  // 重复请求会拿到不同的签名 URL，导致 iframe src 被设置两次（闪烁）。
-  if (loadingForKey === sourceKey && loadingPromise) {
-    await loadingPromise;
-    return;
-  }
 
-  loadingForKey = sourceKey;
-  loadingPromise = doLoadPreview(sourceKey);
-  try {
-    await loadingPromise;
-  } catch (err: any) {
-    // 兜底：doLoadPreview 内部已捕获绝大多数异常，这里防线性拒绝逃逸成
-    // 未处理 Promise rejection（watcher/事件上下文里会被 Vue errorHandler
-    // 包装成 "native event handler" 崩溃）。
-    console.error('Document preview failed:', err);
-    error.value = err?.message || t('preview.loadFailed');
-  } finally {
-    if (loadingForKey === sourceKey) {
-      loadingForKey = '';
-      loadingPromise = null;
-    }
-  }
-}
-
-async function doLoadPreview(sourceKey: string) {
+  cleanup();
   loading.value = true;
   error.value = '';
   htmlViewMode.value = allowsHtmlScriptPreview() ? 'render' : 'source';
-
-  // 记录进入前的直连 PDF 状态：同文件页码切换走 fragment 导航（瞬间完成，无需遮罩），
-  // 跨文件/首次加载需要 iframePending 遮罩直到 iframe load，避免白屏闪烁。
-  // 注意：必须在 previewType 被新文件类型覆盖之前捕获旧状态。
-  const wasDirectPdf = previewType.value === 'pdf' && !!directUrl.value;
-  const prevKnowledgeId = props.knowledgeId;
 
   let ft = resolveFilePreviewExt(props.fileName, props.fileType);
   previewType.value = resolvePreviewKind(ft);
 
   try {
-    // 知识库源文件优先尝试直连预览 URL（COS 预签名 / local /r/ 授权）：
-    // PDF/图片/音视频交给浏览器原生加载（自动 Range 分块），几十页大 PDF 首屏秒开、不占 VPS 带宽。
-    // 注意顺序：先取到直连 URL、拼好最终形态，再清理旧内容并一次性赋值，
-    // 保证 iframe 节点从不被 loading 状态销毁重建（消除二次加载闪烁）。
-    let direct = '';
-    if (props.knowledgeId) {
-      // 优先复用模块级缓存的直连基础 URL：同文件（含跨抽屉打开）走同一预签名 URL，
-      // 让浏览器 HTTP 缓存命中，仅变更 #page hash 走同文档 fragment 导航。
-      // 若重新请求会拿到全新签名的 URL（query 串不同），浏览器会把 iframe 视为
-      // 全新文档而整份重新下载 PDF —— 这就是“加载两次”的根源。
-      direct = cachedDirectUrl(props.knowledgeId);
-      if (!direct) {
-        try {
-          const resp = await getKnowledgePreviewUrl(props.knowledgeId);
-          direct = resp?.data?.url || '';
-        } catch {
-          direct = '';
-        }
-        if (direct) setDirectUrlCache(props.knowledgeId, direct);
-      }
-    }
-    // 防串车：await 期间用户可能已切换到其它文件（快速连续点击两张票）。
-    // 过期加载必须立刻返回，绝不能继续执行下面的 cleanup()——那会把新文件的
-    // 已提交状态清空，再把旧 URL 赋进去（抽屉“闪回”上一张票）。
-    if (getPreviewSourceKey() !== sourceKey) return;
-    // /r/ 代理短链（本地存储或 COS 回退代理）先 HEAD 探活：
-    // 多环境共库不共盘时，本机没有文件字节，iframe 内的 404 错误页无法被外层
-    // 感知（iframe 不对外抛 error）。探到非 2xx 就丢弃直连，走下面的 Blob
-    // 回退路径——它会经请求拦截器产出明确的“预览失败”提示，而不是白屏。
-    if (direct.startsWith('/r/')) {
-      try {
-        const probe = await fetch(direct, { method: 'HEAD' });
-        if (!probe.ok) direct = '';
-      } catch {
-        direct = '';
-      }
-      if (getPreviewSourceKey() !== sourceKey) return;
-    }
-    const preliminaryKind = resolvePreviewKind(ft);
-    if (
-      direct &&
-      (preliminaryKind === 'pdf' || preliminaryKind === 'image' || preliminaryKind === 'audio' || preliminaryKind === 'video') &&
-      !(props.sourceMode && preliminaryKind === 'pdf')
-    ) {
-      // 直连分支分两步：非 PDF 仍一次性赋值（URL 与页码合并，Vue 同一帧只见最终 src）；
-      // PDF 先落基础 URL 让容器/iframe 完成布局，再由 applyPdfFrameSrc 补页码与缩放。
-      cleanup();
-      previewType.value = preliminaryKind;
-      previewExt = ft;
-      directUrl.value = preliminaryKind === 'pdf' ? direct : withPageHash(direct);
-      loadedForId = sourceKey;
-      const sameFilePageJump = preliminaryKind === 'pdf' && wasDirectPdf && prevKnowledgeId === props.knowledgeId;
-      iframePending.value = preliminaryKind === 'pdf' && !sameFilePageJump;
-      loading.value = false;
-      if (preliminaryKind === 'pdf') await applyPdfFrameSrc(direct, sourceKey);
-      else await nextTick();
-      scheduleLocate();
-      return;
-    }
-
-    // 直连不可用：回退 Blob 整包下载（此时才清理旧内容）。
-    cleanup();
     const rawBlob = await fetchPreviewBlob();
-    // 下载期间再次切换源：丢弃过期结果，避免把上一张票的内容写进新抽屉。
-    if (getPreviewSourceKey() !== sourceKey) return;
     let kind = resolvePreviewKind(ft);
     if (kind === 'unsupported') {
       const sample = new Uint8Array(await rawBlob.slice(0, FILE_PREVIEW_SNIFF_BYTES).arrayBuffer());
@@ -593,11 +527,7 @@ async function doLoadPreview(sourceKey: string) {
         if (props.sourceMode) {
           pdfData.value = await blob.arrayBuffer();
         } else {
-          // blobUrl 只做容器门禁（不带 hash），页码与缩放在布局完成后写入 pdfSrc。
-          const baseUrl = URL.createObjectURL(blob);
-          blobUrl.value = baseUrl;
-          if (getPreviewSourceKey() !== sourceKey) return;
-          await applyPdfFrameSrc(baseUrl, sourceKey);
+          blobUrl.value = URL.createObjectURL(blob);
         }
         break;
       }
@@ -667,12 +597,7 @@ function cleanup() {
   markdownImageGeneration += 1;
   revokeMarkdownImageUrls();
   if (blobUrl.value) {
-    // blobUrl 现在是基础 URL（页码/缩放写在 pdfSrc），仍按基础 URL 回收以兼容历史形态。
-    try {
-      URL.revokeObjectURL(blobUrl.value.split('#')[0]);
-    } catch {
-      /* URL 可能已被回收或非 blob: 协议，忽略 */
-    }
+    URL.revokeObjectURL(blobUrl.value);
     blobUrl.value = '';
   }
   textContent.value = '';
@@ -683,13 +608,7 @@ function cleanup() {
   htmlViewMode.value = 'render';
   pptxData.value = null;
   pdfData.value = null;
-  for (const url of epubObjectUrls) {
-    try {
-      URL.revokeObjectURL(url);
-    } catch {
-      /* 同上：回收失败不影响状态清理 */
-    }
-  }
+  for (const url of epubObjectUrls) URL.revokeObjectURL(url);
   epubObjectUrls = [];
   epubHtml.value = '';
   excelSheetNames = [];
@@ -1009,7 +928,7 @@ function applyLocate() {
 }
 
 watch(
-  () => [props.active, props.knowledgeId, props.sessionId, props.attachmentId, props.messageId, props.artifactIndex, props.sourceBlob, props.fileName, props.fileType, props.page],
+  () => [props.active, props.knowledgeId, props.sessionId, props.attachmentId, props.messageId, props.artifactIndex, props.sourceBlob, props.fileName, props.fileType],
   ([active]) => {
     if (active && getPreviewSourceKey()) {
       loadPreview();
@@ -1024,16 +943,39 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="previewRoot" tabindex="-1" :aria-label="fileName" class="document-preview" :class="{ 'fill-height': fillHeight }">
-    <!-- Loading：改为底部覆盖层（v-show 语义），不再与内容 v-if 互斥，
-         避免 iframe 因 loading 状态反复销毁重建引发二次加载闪烁。 -->
-    <div v-if="loading || iframePending" class="preview-loading preview-loading--overlay">
+  <div ref="previewRoot" tabindex="-1" :aria-label="fileName" class="document-preview" :class="{ 'is-fullscreen': isFullscreen, 'fill-height': fillHeight }">
+    <!-- Toolbar -->
+    <Teleport :to="toolbarTarget || 'body'" :disabled="isFullscreen || !toolbarTarget">
+      <div class="preview-toolbar" :class="{ 'is-inline': toolbarTarget && !isFullscreen }" v-if="isFullscreen || (!loading && !error && previewType !== 'unsupported')">
+        <span v-if="isFullscreen" class="preview-toolbar-title" :title="fileName">{{ fileName }}</span>
+        <div class="preview-toolbar-actions">
+          <t-button
+            v-if="previewType === 'html' && allowsHtmlScriptPreview()"
+            theme="default" variant="text" size="small" shape="square"
+            :title="htmlViewMode === 'render' ? $t('preview.htmlSource') : $t('preview.htmlRendered')"
+            :aria-label="htmlViewMode === 'render' ? $t('preview.htmlSource') : $t('preview.htmlRendered')"
+            @click="htmlViewMode = htmlViewMode === 'render' ? 'source' : 'render'"
+          >
+            <template #icon><t-icon :name="htmlViewMode === 'render' ? 'code' : 'browse'" /></template>
+          </t-button>
+          <t-button theme="default" variant="text" size="small" shape="square" :aria-pressed="isFullscreen"
+            :title="isFullscreen ? $t('preview.exitFullscreen') : $t('preview.fullscreen')"
+            :aria-label="isFullscreen ? $t('preview.exitFullscreen') : $t('preview.fullscreen')"
+            @click="toggleFullscreen">
+            <template #icon><t-icon :name="isFullscreen ? 'fullscreen-exit' : 'fullscreen'" /></template>
+          </t-button>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Loading -->
+    <div v-if="loading" class="preview-loading">
       <t-loading size="medium" />
       <span class="loading-text">{{ $t('preview.loading') }}</span>
     </div>
 
     <!-- Error -->
-    <div v-if="error" class="preview-error">
+    <div v-else-if="error" class="preview-error">
       <t-icon name="error-circle" size="48px" />
       <p>{{ error }}</p>
       <t-button theme="primary" size="small" @click="loadedForId = ''; loadPreview()">
@@ -1041,12 +983,8 @@ onUnmounted(() => {
       </t-button>
     </div>
 
-    <!-- Unsupported
-         [upstream-touch] 加载期间不得渲染本分支：loading 是 overlay（与下方 v-else-if
-         链并存），而 previewType 初值就是 'unsupported'，两者同时渲染会让
-         「正在加载文档预览」的转圈盖在「该文件类型暂不支持在线预览」空态上，
-         背景脏成两层（真机图 2）。只加一个加载期守卫，其余行为不变。 -->
-    <div v-else-if="previewType === 'unsupported' && !loading && !iframePending" class="preview-unsupported">
+    <!-- Unsupported -->
+    <div v-else-if="previewType === 'unsupported'" class="preview-unsupported">
       <t-icon name="file-unknown" size="48px" />
       <p>{{ $t('preview.unsupported') }}</p>
       <p class="unsupported-hint">{{ $t('preview.unsupportedHint') }}</p>
@@ -1056,8 +994,8 @@ onUnmounted(() => {
     <div v-else-if="previewType === 'pdf' && pdfData" class="preview-pdf preview-pdf--source">
       <PdfSourceViewer :data="pdfData" :file-name="fileName" :locate="locate" @located="(r) => emit('located', r)" />
     </div>
-    <div v-else-if="previewType === 'pdf' && (blobUrl || directUrl)" class="preview-pdf">
-      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="pdfSrc || undefined" class="pdf-iframe" @load="onPreviewFrameLoad" />
+    <div v-else-if="previewType === 'pdf' && blobUrl" class="preview-pdf">
+      <iframe ref="previewContent" tabindex="0" :title="fileName" :src="pdfFrameSrc" class="pdf-iframe" @load="onPreviewFrameLoad" />
     </div>
 
     <!-- HTML: artifacts render in a unique-origin iframe; other sources stay as source. -->
@@ -1077,10 +1015,10 @@ onUnmounted(() => {
     </div>
 
     <!-- Image -->
-    <div v-else-if="previewType === 'image' && (blobUrl || directUrl)" ref="previewContent" tabindex="0" :aria-label="fileName" class="preview-image">
+    <div v-else-if="previewType === 'image' && blobUrl" ref="previewContent" tabindex="0" :aria-label="fileName" class="preview-image">
       <div class="image-wrapper">
         <div class="image-frame">
-          <img :src="blobUrl || directUrl" :alt="fileName" @load="onImageLoad" />
+          <img :src="blobUrl" :alt="fileName" @load="onImageLoad" />
           <div
             v-for="(mark, i) in imageMarks"
             :key="i"
@@ -1131,11 +1069,11 @@ onUnmounted(() => {
     </div>
 
     <!-- Audio -->
-    <div v-else-if="previewType === 'audio' && (blobUrl || directUrl)" class="preview-audio">
+    <div v-else-if="previewType === 'audio' && blobUrl" class="preview-audio">
       <div class="audio-wrapper">
         <t-icon name="sound" size="48px" />
         <p class="audio-filename">{{ fileName }}</p>
-        <audio ref="previewContent" controls :src="blobUrl || directUrl" class="audio-element">
+        <audio ref="previewContent" controls :src="blobUrl" class="audio-element">
           {{ $t('preview.audioNotSupported') }}
         </audio>
         <div v-if="audioRange" class="audio-locate">
@@ -1146,12 +1084,13 @@ onUnmounted(() => {
     </div>
 
     <!-- Video -->
-    <div v-else-if="previewType === 'video' && (blobUrl || directUrl)" class="preview-video">
-      <video ref="previewContent" controls playsinline :src="blobUrl || directUrl" class="video-element">
+    <div v-else-if="previewType === 'video' && blobUrl" class="preview-video">
+      <video ref="previewContent" controls playsinline :src="blobUrl" class="video-element">
         {{ $t('preview.videoNotSupported') }}
       </video>
     </div>
-  </div></template>
+  </div>
+</template>
 
 <style scoped lang="less">
 // ── Design tokens ──
@@ -1192,7 +1131,8 @@ onUnmounted(() => {
   min-height: 200px;
   position: relative;
 
-  &.fill-height {
+  &.fill-height,
+  &.is-fullscreen {
     height: 100%;
     min-height: 0;
     display: flex;
@@ -1264,6 +1204,93 @@ onUnmounted(() => {
   }
 }
 
+.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2001;
+  background: var(--td-bg-color-container);
+  padding: 0;
+  overflow: hidden;
+
+  .preview-toolbar {
+    padding: 12px 16px;
+    margin-bottom: 0;
+  }
+
+  .preview-pptx {
+    height: auto;
+    min-height: 0;
+    overflow: auto;
+    border: none;
+
+    :deep(.pptx-preview-wrapper) {
+      height: auto !important;
+      overflow-y: visible !important;
+    }
+  }
+
+  .preview-image {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 8px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid @border-color;
+  background: @bg-white;
+}
+
+.preview-toolbar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: @text-primary;
+  font-size: var(--app-text-base);
+  font-weight: 500;
+}
+
+.preview-toolbar.is-inline {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.preview-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+
+  :deep(.t-button) {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    color: @text-secondary;
+  }
+
+  :deep(.t-button__icon) {
+    margin: 0;
+    font-size: var(--app-text-xl);
+  }
+}
+
 // ── States ──
 .preview-loading {
   display: flex;
@@ -1273,17 +1300,6 @@ onUnmounted(() => {
   padding: 60px 20px;
   gap: 16px;
   .loading-text { color: @text-tertiary; font-size: var(--app-text-base); }
-}
-
-// 覆盖层形态：盖在内容上方，而非与内容 v-if 互斥销毁（保护 iframe 不被重建）。
-.preview-loading--overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  padding: 24px 20px;
-  border-radius: @border-radius;
-  background: color-mix(in srgb, var(--td-bg-color-container) 82%, transparent);
-  backdrop-filter: blur(1px);
 }
 
 .preview-error {

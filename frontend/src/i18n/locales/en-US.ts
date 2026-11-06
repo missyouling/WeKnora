@@ -944,6 +944,12 @@ export default {
     sharedTooltip: 'Accessed from an external workspace via a shared space'
   },
   knowledgeBase: {
+    tagEditSearch: 'Search tags',
+    tagEditAvailableSection: 'Available tags',
+    tagEditNoSelected: 'No selected tags',
+    tagClearAction: 'Clear',
+    tagEditSelectedSection: 'Selected tags',
+    tagNewPlaceholder: 'Enter a new tag',
     tagAddAction: 'Add tags',
     documentCount: '{count} document | {count} documents',
     filters: 'Filters',

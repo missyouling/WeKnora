@@ -179,7 +179,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
-  listKnowledgeBases, createKnowledgeBase, listKnowledgeFiles, getFleetOverviewStats,
+  listKnowledgeBases, createKnowledgeBase, getFleetOverviewStats,
   reparseKnowledge, delKnowledgeDetails,
 } from '@/api/knowledge-base'
 import {
@@ -190,6 +190,9 @@ import { generateCatalogPdf } from './useCatalogPdf'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
 import { isExtractInProgress } from '@/composables/extractConflict'
+import {
+  useUploadHistoryScope, runningUploadHistoryFiles,
+} from '@/composables/useUploadHistoryFiles'
 import { selectInitialModelId } from '@/utils/modelDefaults'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
@@ -208,9 +211,7 @@ import { useTableHeaderFix } from './useTableHeaderFix'
 import { buildFootRow, footSpanOf, summaryScopeRows } from './listSummary'
 import './styles/list-summary-footer.css'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
-import {
-  fleetHistoryFilesOf, fleetRunningCountOf, isFleetFileRunning,
-} from './fleetHistoryStats'
+import { fleetHistoryFilesOf } from './fleetHistoryStats'
 import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
@@ -269,6 +270,11 @@ const recordType = computed(() => props.recordType)
 // ---------------------------------------------------------------------------
 const KB_NAME = '日常事务-车队'
 const kbId = ref('')
+// 第 42 轮：全模块共享上传历史数据源。状态条 / 历史卡 / 右侧抽屉读同一份数组，
+// 由统一 2.5s 轮询驱动；页面不再各自拉文件列表、不再各自定时提取。
+const uploadHistory = useUploadHistoryScope('fleet', () => kbId.value)
+// 在途全部落定的瞬间刷新主列表与 KPI 卡片（无需用户关开抽屉/刷新网页）
+uploadHistory.onSettled(() => { reloadList(); reloadStats() })
 const loading = ref(false)
 // 最近一次**成功渲染**的列表数据源 key（菜单+分类+筛选+分页）。
 // 用于判断 reloadList 是「换数据源」（需要清空旧行）还是「同源刷新」（不能清空）。
@@ -801,7 +807,7 @@ function onPageSizeChange(size: any) {
 //   · 在途门禁（在途文件对应的记录不进列表）。
 // 旧实现只取第一页 100 条、还按文件元数据里的 scope 过滤，历史文件缺 scope
 // 时被整批丢掉 —— 于是抽屉里 13 份、卡片 2 份、状态条永远不出现。
-const fleetFiles = ref<any[]>([])
+const fleetFiles = computed<any[]>(() => uploadHistory.uploadHistoryFiles.value as any[])
 
 // docTypeOptions 已随「证照类型」下拉一并移除（第 30 轮工具栏极简）
 const currentDocTypes = computed(() => new Set(menuCategories.value.map((c: any) => c.name)))
@@ -1068,14 +1074,14 @@ const historyFileRows = computed(() => fleetHistoryFilesOf(fleetFiles.value, cur
 /** 「历史记录」卡片数字 = 抽屉「全部文件」。 */
 const historyFileCount = computed(() => historyFileRows.value.length)
 /** 正在解析/提取的文件数（状态条/卡片副文案）。 */
-const runningCount = computed(() => fleetRunningCountOf(historyFileRows.value))
-/** 在途文件（门禁 + 状态条）。 */
-const pendingFiles = computed(() => historyFileRows.value.filter(isFleetFileRunning))
+// 全域感知：无论当前焦点在哪张卡片，只要有 1 份文件在途就显示绿色状态条。
+const runningCount = computed(() => uploadHistory.runningCount.value)
+/** 在途文件（门禁 + 状态条）——与抽屉同源，不按当前菜单过滤。 */
+const pendingFiles = computed(() => runningUploadHistoryFiles('fleet'))
 const uploadProgress = ref<{ name: string; stage: 'uploading' | 'parsing' | 'extracting'; percent: number }[]>([])
 const progressIndex = ref(0)
 let progressTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
-const extractingSet = new Set<string>()
 
 const displayProgress = computed(() => {
   if (uploadProgress.value.length) {
@@ -1102,19 +1108,6 @@ function onUploadProgress(items: { name: string; stage: 'uploading' | 'parsing' 
   }, 3000)
 }
 
-const pendingScopes = ref<Record<string, string | { s: string; t?: string }>>(loadPendingScopes())
-function loadPendingScopes(): Record<string, string | { s: string; t?: string }> {
-  try { return JSON.parse(sessionStorage.getItem('weknora-fleet-pending-scopes') || '{}') || {} } catch { return {} }
-}
-function savePendingScopes() {
-  try { sessionStorage.setItem('weknora-fleet-pending-scopes', JSON.stringify(pendingScopes.value)) } catch { /* ignore */ }
-}
-function pendingScopeOf(kid: string): { s: string; t?: string } {
-  const v = pendingScopes.value[kid]
-  if (typeof v === 'string') return { s: v }
-  return v || { s: '' }
-}
-
 async function extractFile(kid: string, scope: string, certType?: string) {
   const payload: any = { cert_type: certType || undefined }
   if (isArchive.value) payload.scope = scope
@@ -1122,60 +1115,22 @@ async function extractFile(kid: string, scope: string, certType?: string) {
   await extractFleetDocument(kbId.value, kid, payload)
 }
 
-const FILE_SNAPSHOT_CAP = 500
-
-/** 拉全量文件快照（分页，上限 500 份）。 */
-async function loadFileSnapshot(force = false): Promise<any[]> {
-  if (!kbId.value) return []
-  if (!force && fleetFiles.value.length) return fleetFiles.value
-  const collected: any[] = []
-  for (let page = 1; page <= Math.ceil(FILE_SNAPSHOT_CAP / 200); page++) {
-    const res: any = await listKnowledgeFiles(kbId.value, { page, page_size: 200 })
-    const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-    collected.push(...arr)
-    const total = Number(res?.total || 0)
-    if (!arr.length || collected.length >= total || collected.length >= FILE_SNAPSHOT_CAP) break
-  }
-  fleetFiles.value = collected
-  return collected
-}
-
 async function loadPending() {
   if (!kbId.value || !isArchive.value) return
-  pendingScopes.value = loadPendingScopes()
-  try {
-    await loadFileSnapshot(true)
-    // 解析完成但「从未提取」的文件：自动补提取（与在途门禁同一集合）
-    for (const it of historyFileRows.value) {
-      const ps = it.parse_status
-      const m = it.custom_metadata || {}
-      if (ps === 'completed' && !m.extract_status && !extractingSet.has(it.id)) {
-        extractingSet.add(it.id)
-        try {
-          const pv = pendingScopeOf(it.id)
-          await extractFile(it.id, uploadScope.value, pv.t || m.fleet_cert_type || '')
-          delete pendingScopes.value[it.id]
-          savePendingScopes()
-          reloadList()
-        } catch { /* 下轮重试 */ } finally {
-          extractingSet.delete(it.id)
-        }
-      }
-    }
-    // 在途清零 → 静默刷新列表与顶部卡片（状态条随之消失）
-    const nowRunning = runningCount.value
-    if (lastRunningCount > 0 && nowRunning === 0) {
-      reloadList()
-      reloadStats()
-    }
-    lastRunningCount = nowRunning
-  } catch { /* ignore */ }
+  // 第 42 轮：页面轮询不再自动补提。提取只由上传弹窗与「重新提取」按钮显式触发，
+  // 刷新页面 / 切换 Tab 绝不 POST 提取接口（根除无限重提死循环）。
+  const nowRunning = uploadHistory.runningCount.value
+  if (lastRunningCount > 0 && nowRunning === 0) {
+    reloadList()
+    reloadStats()
+  }
+  lastRunningCount = nowRunning
 }
 let lastRunningCount = 0
 
 function startPolling() {
   stopPolling()
-  pollTimer = setInterval(() => { void loadPending() }, 4000)
+  // 统一轮询由 useUploadHistoryFiles 负责；这里只保留上传进度轮播定时器。
 }
 function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

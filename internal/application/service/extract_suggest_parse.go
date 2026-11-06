@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
@@ -204,9 +205,9 @@ func applySuggestImageUnderstanding(
 		if !lowText || len(fileData) == 0 {
 			return ""
 		}
-		extracted = understandImagesWithVLMSvc(ctx, modelService, vlmModelID, [][]byte{fileData}, false, true)
+		extracted = suggestUnderstandImagesWithVLM(ctx, modelService, vlmModelID, [][]byte{fileData}, false, true)
 	case lowText && len(pageImages) > 0:
-		extracted = understandImagesWithVLMSvc(ctx, modelService, vlmModelID, pageImages, true, false)
+		extracted = suggestUnderstandImagesWithVLM(ctx, modelService, vlmModelID, pageImages, true, false)
 	default:
 		return ""
 	}
@@ -218,6 +219,73 @@ func applySuggestImageUnderstanding(
 		return extracted
 	}
 	return content + "\n\n" + extracted
+}
+
+// suggestUnderstandImagesWithVLM 是上游 (*temporaryDocumentService).understandImagesWithVLM
+// 的纯函数形态：只依赖 ModelService，不绑定临时文档实例。
+//
+// [merge-compat] 上游 main 把 VLM 级联逻辑内联进 temporary_document_parse.go 的
+// 方法后，旧版共用的 understandImagesWithVLMSvc 被移除；智能字段生成的样票解析
+// 没有临时文档实例，故在本二开文件内保留同口径实现，避免改动上游核心文件。
+func suggestUnderstandImagesWithVLM(
+	ctx context.Context, modelService interfaces.ModelService, vlmModelID string, images [][]byte, scanned, captionFallback bool,
+) string {
+	if modelService == nil {
+		return ""
+	}
+	model, err := modelService.GetVLMModel(ctx, vlmModelID)
+	if err != nil {
+		logger.Warnf(ctx, "extract suggest VLM model load failed: %v", err)
+		return ""
+	}
+	ocrPrompt := vlmOCRPrompt
+	if scanned {
+		ocrPrompt = vlmOCRScannedPDFPrompt
+	}
+
+	ocrResults := make([]string, len(images))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, temporaryDocumentOCRConcurrency())
+	for idx, img := range images {
+		if len(img) == 0 {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, img []byte) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			ocrText, ocrErr := model.Predict(ctx, [][]byte{img}, ocrPrompt)
+			if ocrErr != nil {
+				logger.Warnf(ctx, "extract suggest VLM OCR failed on image %d: %v", idx, ocrErr)
+				return
+			}
+			ocrResults[idx], ocrErr = validateOCRText(ocrText)
+			if ocrErr != nil {
+				logger.Warnf(ctx, "extract suggest VLM OCR rejected on image %d: %v", idx, ocrErr)
+			}
+		}(idx, img)
+	}
+	wg.Wait()
+
+	parts := make([]string, 0, len(images)+1)
+	ocrRunes := 0
+	for _, t := range ocrResults {
+		if t != "" {
+			parts = append(parts, t)
+			ocrRunes += len([]rune(t))
+		}
+	}
+	if captionFallback && len(images) > 0 && len(images[0]) > 0 &&
+		ocrRunes < temporaryDocumentOCRSufficientRunes {
+		c, capErr := model.Predict(ctx, [][]byte{images[0]}, buildVLMCaptionPrompt(ctx, types.VLMConfig{}))
+		if capErr != nil {
+			logger.Warnf(ctx, "extract suggest VLM caption failed: %v", capErr)
+		} else if caption := strings.TrimSpace(c); caption != "" {
+			parts = append([]string{caption}, parts...)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // normalizeSuggestText 行尾归一 + HTML 表格归一（与 parse() 同一层清洗）。

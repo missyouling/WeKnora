@@ -20,8 +20,7 @@ register(pathToFileURL(join(__dirname, 'test-loader.mjs')).href)
 const { useBusinessPolling, pollingBackoffDelay, POLLING_MAX_BACKOFF_MS } = await import('./useBusinessPolling.ts')
 const { ref } = await import('vue')
 
-test('failed extraction does not deadlock: extractInFlight cleared, retry allowed after cooldown', async (t) => {
-  // Setup: one file with parse completed, no extract_status
+test('第 42 轮：终态/已投递文件刷新不重提，失败不死锁也不自动重投', async () => {
   globalThis.__mockFiles = [{
     id: 'file-1',
     file_name: 'test.pdf',
@@ -31,38 +30,34 @@ test('failed extraction does not deadlock: extractInFlight cleared, retry allowe
 
   let extractCalls = 0
   const kbId = ref('kb-1')
-  
   const { extractInFlight, extractFailed, scanOnce } = useBusinessPolling({
     kbId,
-    extractFn: async (kid, fileId) => {
+    extractFn: async () => {
       extractCalls++
-      if (extractCalls === 1) {
-        throw new Error('simulated network timeout')
-      }
-      return { data: { success: true } }
+      throw new Error('simulated network timeout')
     },
   })
 
-  // First scan: extraction fails
+  // 首轮：待提取文件只自动投递一次
   await scanOnce()
-  
-  // After fix: extractInFlight must be empty (no deadlock)
-  assert.equal(extractInFlight.value.size, 0,
-    'extractInFlight should be empty after failed extraction (deadlock fix)')
-  assert.equal(extractFailed.value.has('file-1'), true,
-    'extractFailed should track the failure for backoff')
-  assert.equal(extractCalls, 1, 'extractFn should have been called once')
+  assert.equal(extractInFlight.value.size, 0, '失败后必须清 in-flight（不死锁）')
+  assert.equal(extractFailed.value.has('file-1'), true, '失败要进退避表')
+  assert.equal(extractCalls, 1, '只投递一次')
 
-  // Second scan (immediately): should NOT retry due to 5-min cooldown
+  // 第二 / 第三轮（含退避过期、跨刷新模拟）：绝不自动重提。
+  // 重提是用户在抽屉里点「重新提取」的显式通道。
   await scanOnce()
-  assert.equal(extractCalls, 1, 'should not retry immediately (5-min cooldown)')
-
-  // Simulate 6 minutes passing
   extractFailed.value.set('file-1', Date.now() - 6 * 60 * 1000)
   await scanOnce()
-  assert.equal(extractCalls, 2, 'should retry after cooldown expires')
-  assert.equal(extractInFlight.value.size, 0,
-    'extractInFlight should be empty after successful extraction')
+  assert.equal(extractCalls, 1, '刷新/切 Tab/退避过期都不得再自动 POST 提取接口')
+
+  // 后端落终态（成功/失败）后同样不重提
+  globalThis.__mockFiles = [{
+    id: 'file-1', file_name: 'test.pdf', parse_status: 'completed',
+    custom_metadata: { extract_status: 'failed' },
+  }]
+  await scanOnce()
+  assert.equal(extractCalls, 1, 'failed 终态严禁自动重提')
 })
 
 test('successful extraction clears extractInFlight', async () => {

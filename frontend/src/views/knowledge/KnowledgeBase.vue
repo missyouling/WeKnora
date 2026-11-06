@@ -378,7 +378,7 @@ const canDownloadKnowledge = computed(() => {
 });
 
 const knowledgeList = ref<Array<{ id: string; name: string; type?: string }>>([]);
-const { cardList, total, moreIndex, details, getKnowled, onVisibleChange: _onVisibleChange, getCardDetails, getfDetails } = useKnowledgeBase(kbId.value)
+let { cardList, total, moreIndex, details, getKnowled, onVisibleChange: _onVisibleChange, getCardDetails, getfDetails } = useKnowledgeBase(kbId.value)
 
 const showKbDetailContextualGuide = computed(() => {
   return Boolean(kbId.value)
@@ -940,7 +940,7 @@ const tagMap = computed<Record<string, any>>(() => {
 const getPageSize = () => {
   const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
   const itemHeight = 148;
-  const itemsInView = Math.floor(viewportHeight / itemHeight) * 5;
+  let itemsInView = Math.floor(viewportHeight / itemHeight) * 5;
   pageSize = Math.max(35, itemsInView);
 }
 getPageSize()
@@ -1311,12 +1311,14 @@ watch(selectedFolderPath, () => {
 // 监听文件上传事件
 const handleFileUploaded = (event: CustomEvent) => {
   const uploadedKbId = event.detail.kbId;
+  console.log('接收到文件上传事件，上传的知识库ID:', uploadedKbId, '当前知识库ID:', kbId.value);
   if (uploadedKbId && uploadedKbId === kbId.value && !isFAQ.value) {
     // Mid-batch refreshes (settled === false) only bring new rows and folders
     // in, and are skipped once the user scrolled past the first page because
     // reloading resets the list to it. The batch's final event refreshes fully.
     const midBatch = event.detail.settled === false;
     if (midBatch && page > 1) return;
+    console.log('匹配当前知识库，开始刷新文件列表');
     // 如果上传的文件属于当前知识库，使用 loadKnowledgeFiles 刷新文件列表
     resetPage(); // Reset page counter when reloading files after upload
     loadKnowledgeFiles(uploadedKbId);
@@ -1332,6 +1334,7 @@ const handleFileUploaded = (event: CustomEvent) => {
 // 监听从菜单触发的URL导入事件
 const handleOpenURLImportDialog = (event: CustomEvent) => {
   const eventKbId = event.detail.kbId;
+  console.log('接收到URL导入对话框打开事件，知识库ID:', eventKbId, '当前知识库ID:', kbId.value);
   if (eventKbId && eventKbId === kbId.value && !isFAQ.value) {
     if (ensureDocumentKbReady()) {
       uploadSourceRef.value?.openUrlDialog();
@@ -2108,7 +2111,7 @@ const handleScroll = () => {
   if (!currentKbId) return;
   const element = knowledgeScroll.value;
   if (element) {
-    const pageNum = Math.ceil(total.value / pageSize)
+    let pageNum = Math.ceil(total.value / pageSize)
     const { scrollTop, scrollHeight, clientHeight } = element;
     if (scrollTop + clientHeight >= scrollHeight - 10) {
       if (cardList.value.length < total.value && page < pageNum) {
@@ -2813,8 +2816,8 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
       </template>
 
       <!-- DocContent drawer (shared by documents tab and wiki source refs) -->
-      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details" :can-edit-k-b="canEdit"
-        :can-download-k-b="canDownloadKnowledge" :kb-id="kbId"
+      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details" :canEditKB="canEdit"
+        :canDownloadKB="canDownloadKnowledge" :kbId="kbId"
         @closeDoc="closeDoc" @getDoc="getDoc" @summaryStateChange="syncDocumentSummaryState">
       </DocContent>
     </div>

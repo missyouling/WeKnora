@@ -6232,6 +6232,7 @@ export default {
     }
   },
   embedPublish: {
+    dailyAffairs: '日常事務',
     history: "對話歷史",
     historyHint: "最近 30 個對話，僅儲存在此瀏覽器。清除紀錄不會刪除伺服器訊息。",
     historyEmpty: "暫無對話紀錄",
@@ -8619,6 +8620,12 @@ export default {
     }
   },
   knowledgeBase: {
+    tagEditSearch: '搜索标签',
+    tagEditAvailableSection: '可用标签',
+    tagEditNoSelected: '暂无已选标签',
+    tagClearAction: '清除',
+    tagEditSelectedSection: '已选标签',
+    tagNewPlaceholder: '请输入新标签',
     tagAddAction: '新增標籤',
     documentCount: '{count} 個文件',
     filters: '篩選',
@@ -9349,6 +9356,7 @@ export default {
     }
   },
   menu: {
+    dailyAffairs: '日常事務',
     sessionInProgress: '會話進行中',
     sessionUnread: '有新回覆',
     knowledgeBase: '知識庫',

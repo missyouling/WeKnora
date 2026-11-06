@@ -1192,38 +1192,6 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	return db, nil
 }
 
-// dbPoolSettings 解析应用侧连接池上限，支持环境变量覆盖。
-//
-// 默认 8/4 的选择依据：上游 Supabase session 模式 pooler 的 pool_size 为 15，
-// 必须留出余量给 psql 巡检、迁移工具与其它客户端；同时 8 条足以支撑日常
-// 事务页的读写（单查询 ~360ms 时约 20+ QPS）。
-//
-// getenv 以函数注入，便于单测不依赖进程环境。
-func dbPoolSettings(getenv func(string) string) (maxOpen, maxIdle int) {
-	const (
-		defMaxOpen = 8
-		defMaxIdle = 4
-	)
-	parse := func(key string, def int) int {
-		raw := strings.TrimSpace(getenv(key))
-		if raw == "" {
-			return def
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
-			// 非法值（含 0/-1）一律回落默认，绝不把池设成"无限"。
-			return def
-		}
-		return n
-	}
-	maxOpen = parse("DB_MAX_OPEN_CONNS", defMaxOpen)
-	maxIdle = parse("DB_MAX_IDLE_CONNS", defMaxIdle)
-	if maxIdle > maxOpen {
-		maxIdle = maxOpen
-	}
-	return maxOpen, maxIdle
-}
-
 // resolveStorageProviderPending replaces the "__pending_env__" sentinel in
 // knowledge_bases.storage_provider_config with the actual STORAGE_TYPE from the environment.
 // This runs once after SQL migrations to bind historical KBs to their real storage provider.

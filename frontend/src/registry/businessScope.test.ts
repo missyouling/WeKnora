@@ -34,7 +34,12 @@ test('正则补洞口径：合同/制度/公告/奖惩接入，车队与能耗�
   for (const s of ['contract', 'regulation', 'notice', 'award_punish']) {
     assert.equal(getScope(s)?.regexPatchable, true, `${s} 应接入正则补洞`)
   }
-  for (const s of ['vehicle', 'driver', 'maintain', 'utility', 'solar']) {
+  // 第 42 轮：车队档案类已有分类 subs 字段集，改为接入字段级正则补洞；
+  // 能耗账单（utility/solar）仍由账单专用规则驱动，不走通用正则补洞。
+  for (const s of ['vehicle', 'driver', 'maintain']) {
+    assert.equal(getScope(s)?.regexPatchable, true, `${s} 应接入字段级正则补洞`)
+  }
+  for (const s of ['utility', 'solar']) {
     assert.equal(getScope(s)?.regexPatchable, false, `${s} 不应接入`)
   }
 })

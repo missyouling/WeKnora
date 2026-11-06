@@ -196,8 +196,10 @@ test('复用单个 PDFWorker：第二次打开预览不再重启线程', () => {
   assert.match(loader, /if \(!workerPromise\)/)
   assert.match(loader, /export function warmupPdfJs/)
   const viewer = readFileSync(new URL('../../components/source-preview/PdfSourceViewer.vue', import.meta.url), 'utf8')
-  assert.match(viewer, /getDocument\(worker \? \{ data: new Uint8Array\(data\.slice\(0\)\), worker \}/,
+  assert.match(viewer, /getDocument\(worker\s*\?\s*\{\s*data: new Uint8Array\(data\.slice\(0\)\), worker\b/,
     'worker 必须显式传入，才能跨文档复用')
+  // 上游 main 另加了 wasmUrl（pdf.js 图像解码），二开合并后两者必须共存
+  assert.match(viewer, /wasmUrl: `\$\{import\.meta\.env\.BASE_URL\}pdfjs\/wasm\/`/)
 })
 
 // ---------------------------------------------------------------------------

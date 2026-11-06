@@ -22,7 +22,7 @@ func TestContractListExcludesFailedFileWithoutRecords(t *testing.T) {
 		KnowledgeBaseID: "kb1",
 		ParseStatus:     "completed",
 		FileName:        "限流失败.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind":           "contract",
 			"extract_status": "failed",
 			"extract_error":  "upstream 429",
@@ -35,7 +35,7 @@ func TestContractListExcludesFailedFileWithoutRecords(t *testing.T) {
 		KnowledgeBaseID: "kb1",
 		ParseStatus:     "completed",
 		FileName:        "空提取.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind":           "contract",
 			"extract_status": "failed",
 			"contracts":      []interface{}{map[string]interface{}{"contract_no": "", "contract_name": ""}},
@@ -47,7 +47,7 @@ func TestContractListExcludesFailedFileWithoutRecords(t *testing.T) {
 		KnowledgeBaseID: "kb1",
 		ParseStatus:     "completed",
 		FileName:        "部分成功.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind":           "contract",
 			"extract_status": "failed",
 			"contracts": []interface{}{

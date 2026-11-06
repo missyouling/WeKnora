@@ -6231,6 +6231,7 @@ export default {
     }
   },
   embedPublish: {
+    dailyAffairs: 'Повседневные дела',
     history: "История чатов",
     historyHint: "Последние 30 чатов сохраняются только в этом браузере. Очистка истории не удаляет сообщения на сервере.",
     historyEmpty: "Нет сохранённых чатов",
@@ -8618,6 +8619,12 @@ export default {
     }
   },
   knowledgeBase: {
+    tagEditSearch: 'Search tags',
+    tagEditAvailableSection: 'Available tags',
+    tagEditNoSelected: 'No selected tags',
+    tagClearAction: 'Clear',
+    tagEditSelectedSection: 'Selected tags',
+    tagNewPlaceholder: 'Enter a new tag',
     tagAddAction: 'Добавить теги',
     documentCount: 'Документов: {count}',
     filters: 'Фильтры',
@@ -9348,6 +9355,7 @@ export default {
     }
   },
   menu: {
+    dailyAffairs: 'Повседневные дела',
     sessionInProgress: 'Диалог выполняется',
     sessionUnread: 'Новый ответ',
     knowledgeBase: 'База знаний',

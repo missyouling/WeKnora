@@ -30,7 +30,7 @@ func (f *invoiceOverviewFakeRepo) ListPagedKnowledgeByKnowledgeBaseID(
 	return f.items[start:end], int64(len(f.items)), nil
 }
 
-func mustJSON(t *testing.T, v interface{}) []byte {
+func mustBusinessJSON(t *testing.T, v interface{}) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestInvoiceOverviewStats(t *testing.T) {
 			ID:              "k1",
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
 					map[string]interface{}{"invoice_no": "A001", "invoice_date": month + "-01", "invoice_type": "专用发票", "category": "专用发票", "amount": am, "total_amount": total},
@@ -75,7 +75,7 @@ func TestInvoiceOverviewStats(t *testing.T) {
 			ID:              "k3",
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
 					// A001 同号更晚版本（created_at 更新）→ 去重应保留它

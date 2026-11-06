@@ -9,6 +9,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import i18n from '@/i18n'
 import { normalizeSettingsSection } from '@/config/settingsRoute'
 import { isToolboxSection, toolboxLocation } from '@/config/toolbox'
+import { DEFAULT_HOME_PATH } from '@/config/defaultHome'
 
 /** Lite /妗岄潰 WebView 纭埛鏂版椂鍙兘鍙墦寮€ `/`锛岀敤 session 璁颁綇涓婃椤甸潰浠ヤ究鎭㈠ */
 const LITE_LAST_PATH_KEY = 'weknora_lite_last_path'
@@ -26,6 +27,9 @@ function isLiteSpaDefaultEntry(to: RouteLocationNormalized) {
   return (
     to.path === '/' ||
     to.path === '/platform' ||
+    to.path === DEFAULT_HOME_PATH ||
+    // /daily-affairs/energy 重定向后的实际落地路径
+    to.path === '/platform/daily-affairs/utilities' ||
     to.path === '/platform/knowledge-bases' ||
     to.name === 'knowledgeBaseList'
   )
@@ -45,8 +49,9 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      // 默认首屏：日常事务（知识库菜单入口保留，见 stores/menu.ts）
       path: "/",
-      redirect: "/platform/knowledge-bases",
+      redirect: DEFAULT_HOME_PATH,
     },
     {
       path: "/login",
@@ -94,7 +99,7 @@ const router = createRouter({
     {
       path: "/platform",
       name: "Platform",
-      redirect: "/platform/knowledge-bases",
+      redirect: DEFAULT_HOME_PATH,
       component: () => import("../views/platform/index.vue"),
       meta: { requiresInit: true, requiresAuth: true },
       children: [
@@ -381,7 +386,7 @@ router.beforeEach(async (to, from, next) => {
       }
     }
     if (authStore.hasValidTenant) {
-      next('/platform/knowledge-bases')
+      next(DEFAULT_HOME_PATH)
     } else {
       next()
     }
@@ -392,7 +397,7 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth === false || to.meta.requiresInit === false) {
     // 濡傛灉宸茬櫥褰曠敤鎴疯闂櫥褰曢〉闈紝閲嶅畾鍚戝埌鐭ヨ瘑搴撳垪琛ㄩ〉闈?
     if (to.path === '/login' && authStore.isLoggedIn) {
-      next(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+      next(authStore.hasValidTenant ? DEFAULT_HOME_PATH : '/onboarding/workspace')
       return
     }
     next()
@@ -444,7 +449,7 @@ router.beforeEach(async (to, from, next) => {
   const requiredCapability = to.meta.requiredCapability as DeploymentCapabilityKey | undefined
   if (requiredCapability && !deploymentCapabilities.isSupported(requiredCapability)) {
     MessagePlugin.warning(i18n.global.t('settings.capabilityUnavailable'))
-    next('/platform/knowledge-bases')
+    next(DEFAULT_HOME_PATH)
     return
   }
 
@@ -454,7 +459,7 @@ router.beforeEach(async (to, from, next) => {
   // the bounce. This is UI-only; the server enforces the real check.
   if (to.meta.requiresSystemAdmin === true) {
     if (!authStore.isSystemAdmin) {
-      next('/platform/knowledge-bases')
+      next(DEFAULT_HOME_PATH)
       return
     }
   }

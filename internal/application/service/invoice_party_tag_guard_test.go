@@ -141,7 +141,7 @@ func TestBusinessInvoiceSearchMatchesKnowledgeTagsAcrossPages(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		items = append(items, &types.Knowledge{
 			ID: "pad", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, map[string]interface{}{
+			CustomMetadata: types.JSON(mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{map[string]interface{}{
 					"invoice_no": "PAD-" + string(rune('A'+i)), "total_amount": 10,
@@ -152,7 +152,7 @@ func TestBusinessInvoiceSearchMatchesKnowledgeTagsAcrossPages(t *testing.T) {
 	}
 	items = append(items, &types.Knowledge{
 		ID: "k-tagged", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-		CustomMetadata: types.JSON(mustJSON(t, map[string]interface{}{
+		CustomMetadata: types.JSON(mustBusinessJSON(t, map[string]interface{}{
 			"kind": "invoice", "extract_status": "success",
 			"invoices": []interface{}{map[string]interface{}{
 				"invoice_no": "TAGGED-001", "total_amount": 20, "seller_name": "高速商户",
@@ -180,7 +180,7 @@ func TestBusinessInvoiceSearchMatchesKnowledgeTagsAcrossPages(t *testing.T) {
 func TestBusinessInvoiceSearchStillMatchesInvoiceNo(t *testing.T) {
 	items := []*types.Knowledge{{
 		ID: "k1", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-		CustomMetadata: types.JSON(mustJSON(t, map[string]interface{}{
+		CustomMetadata: types.JSON(mustBusinessJSON(t, map[string]interface{}{
 			"kind": "invoice", "extract_status": "success",
 			"invoices": []interface{}{map[string]interface{}{
 				"invoice_no": "26507000000067486566", "total_amount": 20, "seller_name": "京东创盟",

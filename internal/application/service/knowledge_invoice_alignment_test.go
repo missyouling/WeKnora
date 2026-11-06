@@ -74,7 +74,7 @@ func TestBusinessInvoiceKeywordPenetratesFieldsAndItemsExtra(t *testing.T) {
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
 			FileName:        "通行费电子票据汇总单(发票).pdf",
-			CustomMetadata:  mustJSON(t, tollFileMetadata()),
+			CustomMetadata:  mustBusinessJSON(t, tollFileMetadata()),
 		},
 	}}
 	svc := &BusinessExtractService{repo: repo}
@@ -111,7 +111,7 @@ func TestBusinessInvoiceKeywordPenetratesCustomFieldsValue(t *testing.T) {
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_num", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: mustJSON(t, meta)},
+			CustomMetadata: mustBusinessJSON(t, meta)},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
@@ -150,7 +150,7 @@ func TestBusinessInvoiceDateFilterStrictlyByInvoiceDate(t *testing.T) {
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_travel", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: mustJSON(t, meta)},
+			CustomMetadata: mustBusinessJSON(t, meta)},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
@@ -193,7 +193,7 @@ func TestBusinessInvoiceEmptyInvoicesRenderPlaceholderRow(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_orphan", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName:       "通行费电子票据汇总单(发票).pdf",
-			CustomMetadata: mustJSON(t, meta)},
+			CustomMetadata: mustBusinessJSON(t, meta)},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
@@ -214,7 +214,7 @@ func TestBusinessInvoicePlaceholderRowSearchableByFileName(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_orphan", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "通行费电子票据汇总单(发票).pdf",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success", "invoices": []interface{}{},
 			})},
 	}}
@@ -235,14 +235,14 @@ func TestBusinessInvoiceExtractFailedExcludedFromMainList(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_failed", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "通行费电子票据汇总单(发票).pdf",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "failed",
 				"extract_error": "API request failed with status 429", "invoices": []interface{}{},
 			})},
 		// 全空白提取（LLM 空对象）+ failed：同样属于"一张票都没提出来"
 		{ID: "k_failed_blank", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "空白提取.pdf",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "failed",
 				"invoices": []interface{}{map[string]interface{}{}},
 			})},
@@ -267,7 +267,7 @@ func TestBusinessInvoiceExtractFailedPartialStillVisible(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_partial", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "部分成功.pdf",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "failed",
 				"invoices": []interface{}{map[string]interface{}{
 					"invoice_no": "12345678", "invoice_date": "2025-02-08",
@@ -287,15 +287,15 @@ func TestBusinessInvoiceExtractFailedPartialStillVisible(t *testing.T) {
 func TestBusinessInvoiceOverviewCountsExtractFailedFiles(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_f1", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "failed", "invoices": []interface{}{},
 			})},
 		{ID: "k_f2", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "failed", "invoices": []interface{}{},
 			})},
 		{ID: "k_ok", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{map[string]interface{}{"invoice_no": "111", "invoice_type": "通行费发票"}},
 			})},
@@ -321,7 +321,7 @@ func TestBusinessInvoicePlaceholderForNonInvoiceKind(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_notinv", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName: "误传的合同.pdf",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "not_invoice", "extract_status": "success", "invoices": []interface{}{},
 			})},
 		{ID: "k_nometa", KnowledgeBaseID: "kb1", ParseStatus: "completed",
@@ -358,7 +358,7 @@ func TestBusinessInvoicePlaceholderNotDuplicatedForHealthyFiles(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{ID: "k_ok", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 			FileName:       "通行费电子票据汇总单(发票).pdf",
-			CustomMetadata: mustJSON(t, tollFileMetadata())},
+			CustomMetadata: mustBusinessJSON(t, tollFileMetadata())},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))

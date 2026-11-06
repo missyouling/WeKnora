@@ -54,14 +54,14 @@ test('withPageFragment 合并页码与缩放，无页码时原样返回', () => 
   assert.equal(withPageFragment('', 6, 73), '')
 })
 
-test('document-preview 的 PDF iframe 先完成布局再赋 src', () => {
+test('document-preview 的 PDF iframe 先完成布局再赋 src（第 42 轮：合并上游全屏预览）', () => {
   const source = readFileSync(new URL('../components/document-preview.vue', import.meta.url), 'utf8')
 
-  // iframe 的 src 必须来自独立状态（空值时不落到 about:blank 之外），
-  // 否则 src 会与容器同时创建，插件在布局稳定前就应用 #page，页码被夹紧。
-  assert.match(source, /const pdfSrc = ref\(''\)/)
-  assert.match(source, /:src="pdfSrc \|\| undefined"/)
-  // 缩放必须按 iframe 实测尺寸计算，不能在模板里写死
-  assert.match(source, /pageJumpZoom\(/)
-  assert.match(source, /from '@\/utils\/pdfPageJump'/)
+  // 上游 main 的预览组件按 blobUrl 条件渲染 iframe（容器先就位再赋 src），
+  // 二开只在其上补一个「目标页码」prop 与 pdfFrameSrc computed，不改上游主体。
+  assert.match(source, /previewType === 'pdf' && blobUrl/)
+  assert.match(source, /const pdfFrameSrc = computed\(/)
+  assert.match(source, /:src="pdfFrameSrc"/)
+  assert.match(source, /page\?: number/)
+  assert.match(source, /#page=\$\{props\.page\}/)
 })

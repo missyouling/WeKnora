@@ -1474,6 +1474,8 @@ const {
   start: startPolling, stop: stopPolling, scanOnce, setPollingInterval,
 } = useBusinessPolling({
   kbId,
+  // 第 42 轮：绑定共享上传历史数据源（状态条 / 历史卡 / 抽屉同源、全域感知）
+  scope: 'invoice',
   // 传入当前细分分类：自动提取（轮询）此前不带 cert_type，后端只能靠票面推断，
   // 推断结果不在启用列表时就降级成「其它票据」，覆盖了用户上传时选择的分类。
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'invoice', filterInvoiceType.value || undefined),

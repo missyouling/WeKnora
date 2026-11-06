@@ -93,10 +93,11 @@ async function openDocument(data: ArrayBuffer, seq: number) {
   const worker = await getPdfWorker().catch(() => undefined)
   if (disposed || seq !== loadSeq) return
   // pdf.js takes ownership of the buffer; keep the caller's copy intact.
-  const task = lib.getDocument({
-    data: new Uint8Array(data.slice(0)),
-    wasmUrl: `${import.meta.env.BASE_URL}pdfjs/wasm/`,
-  })
+  // 二开：复用模块级 PDFWorker（跨文档不重启线程）；上游 main 另需指定 wasm 目录。
+  // 两者可共存：pdf.js 显式 worker 优先，wasmUrl 供其内部的图像解码使用。
+  const task = lib.getDocument(worker
+    ? { data: new Uint8Array(data.slice(0)), worker, wasmUrl: `${import.meta.env.BASE_URL}pdfjs/wasm/` }
+    : { data: new Uint8Array(data.slice(0)) })
   loadingTask = task
   const doc = await task.promise
   // 旧任务被新的 src 顶掉：销毁自己，别把 pdf.value 指过去

@@ -21,7 +21,7 @@ func TestContractListResolvesCategoryFromFleetCertType(t *testing.T) {
 	stale := &types.Knowledge{
 		ID: "k_stale", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "改名残留.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind":            "contract",
 			"extract_status":  "success",
 			"fleet_cert_type": "商务合同", // 新名（启用）
@@ -72,7 +72,7 @@ func TestContractListExcludesInFlightAndBlankPlaceholders(t *testing.T) {
 	pendingExtract := &types.Knowledge{
 		ID: "k_pending", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "待提取.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "contract", "extract_status": "pending", "contracts": []interface{}{},
 		}),
 	}
@@ -80,7 +80,7 @@ func TestContractListExcludesInFlightAndBlankPlaceholders(t *testing.T) {
 	blankShell := &types.Knowledge{
 		ID: "k_blank", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "集体宿舍配租明细表（9间）.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "contract", "extract_status": "success", "contracts": []interface{}{},
 		}),
 	}
@@ -88,7 +88,7 @@ func TestContractListExcludesInFlightAndBlankPlaceholders(t *testing.T) {
 	restored := &types.Knowledge{
 		ID: "k_restored", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "恢复的合同.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "not_contract", "extract_status": "manual",
 			"auto_deleted_count": 1, "contracts": []interface{}{},
 		}),
@@ -96,7 +96,7 @@ func TestContractListExcludesInFlightAndBlankPlaceholders(t *testing.T) {
 	real := &types.Knowledge{
 		ID: "k_real", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "真实合同.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "contract", "extract_status": "success",
 			"contracts": []interface{}{
 				map[string]interface{}{"contract_no": "HT-9", "contract_name": "采购合同", "party_a": "甲公司"},
@@ -129,14 +129,14 @@ func TestRegulationAndNoticeListsExcludeInFlight(t *testing.T) {
 	regBlank := &types.Knowledge{
 		ID: "r_blank", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "空壳制度.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "regulation", "extract_status": "success", "regulations": []interface{}{},
 		}),
 	}
 	regReal := &types.Knowledge{
 		ID: "r_real", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "真实制度.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "regulation", "extract_status": "success",
 			"regulations": []interface{}{
 				map[string]interface{}{"reg_no": "ZD-1", "reg_title": "考勤制度", "reg_type": "行政管理"},
@@ -164,7 +164,7 @@ func TestRegulationAndNoticeListsExcludeInFlight(t *testing.T) {
 	noticeReal := &types.Knowledge{
 		ID: "n_real", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "真实公告.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "award_punish", "extract_status": "success",
 			"records": []interface{}{
 				map[string]interface{}{"ap_no": "TZ-1", "ap_title": "表彰通报", "ap_type": "通报"},
@@ -322,7 +322,7 @@ func TestContractListReturnsCustomFields(t *testing.T) {
 	k := &types.Knowledge{
 		ID: "k_bond", KnowledgeBaseID: "kb1", ParseStatus: "completed",
 		FileName: "员工宿舍租赁合同.pdf",
-		CustomMetadata: mustJSON(t, map[string]interface{}{
+		CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 			"kind": "contract", "extract_status": "success",
 			"contracts": []interface{}{
 				map[string]interface{}{

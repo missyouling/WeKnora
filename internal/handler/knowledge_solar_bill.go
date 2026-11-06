@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -114,6 +116,26 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 
 	// 开跑前先落库在途态
 	h.markSolarBillExtracting(effCtx, knowledgeID, curMeta)
+	// 第 42 轮：任何提前 return（模型缺失 / 解析失败 / 无文本 / 调用异常）
+	// 都必须把 extract_status 落到终态。此前这些分支直接返回，processing
+	// 永久残留 → 前端每次刷新都把它当"待提取"重新 POST，形成无限重提死循环。
+	extractFinished := false
+	defer func() {
+		if extractFinished {
+			return
+		}
+		fail := curMeta
+		fail.ExtractStatus = "failed"
+		fail.ExtractError = "提取未完成，已置终态（避免刷新后重复投递）"
+		if fail.Kind == "" {
+			fail.Kind = "solar_bill"
+		}
+		if b, jerr := json.Marshal(fail); jerr == nil {
+			if serr := h.kgService.SaveInvoiceCustomMetadata(effCtx, knowledgeID, types.JSON(b)); serr != nil {
+				logger.Warnf(ctx, "Failed to persist solar bill terminal state: %v", serr)
+			}
+		}
+	}()
 
 	modelID := strings.TrimSpace(kb.SummaryModelID)
 	if modelID == "" {
@@ -133,7 +155,37 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("list chunks failed: " + err.Error()))
 		return
 	}
+	// 阶段 1：完整聚合全部 Chunks（text / image_ocr / image_caption），
+	// 绝不只取第 1 个 chunk，也不截断表格；异构引擎输出统一归一。
+	canonicalText := service.AggregateChunksForExtraction(chunks)
 	batches := service.BuildSolarBillExtractionBatches(knowledge.FileName, knowledge.Description, chunks, 0)
+	if service.CanonicalTextRunes(canonicalText) < 24 {
+		// 解析引擎不可用 / 产出空文本：直接从原始 PDF/图片字节流抽文本兜底。
+		// 不落库、不投递任务，避免"扫描件 → 0 条记录 / 永远转圈"。
+		if rc, _, ferr := h.kgService.GetKnowledgeFile(effCtx, knowledgeID); ferr == nil {
+			defer rc.Close()
+			if data, rerr := io.ReadAll(io.LimitReader(rc, 32<<20)); rerr == nil {
+				fallback, perr := service.ParseOriginalFileToCanonicalText(effCtx,
+					service.ExtractSuggestParser{
+						Documents: h.documentReader,
+						Model:     h.modelService,
+						Tenant:    h.tenantService,
+					}, service.ExtractSuggestInput{
+						FileName:     knowledge.FileName,
+						Ext:          filepath.Ext(knowledge.FileName),
+						Data:         data,
+						ParserEngine: "builtin",
+						VLMModelID:   strings.TrimSpace(kb.SummaryModelID),
+					})
+				if perr == nil && service.CanonicalTextRunes(fallback) >= 24 {
+					canonicalText = fallback
+					batches = service.SplitCanonicalBatches(fallback, 0)
+					logger.Infof(ctx, "Solar bill extraction used raw-file fallback, knowledge=%s runes=%d",
+						knowledgeID, service.CanonicalTextRunes(fallback))
+				}
+			}
+		}
+	}
 	if !service.SolarBillBatchesHaveText(batches) {
 		noTextMeta, jerr := json.Marshal(solarBillCustomMetadata{
 			Kind:          "solar_bill",
@@ -145,6 +197,7 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 				logger.Warnf(ctx, "Failed to persist solar bill no-text state: %v", serr)
 			}
 		}
+		extractFinished = true
 		logger.Warnf(ctx, "Solar bill extraction skipped: no text layer for knowledge %s (scanned document), file kept", knowledgeID)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
@@ -157,13 +210,32 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 	merged := &service.SolarBillExtractionResult{Kind: "solar_bill"}
 	var extractErr error
 	sawBill := false
-	// 提取配置：与市电同构，解析不到返回 nil → 回退内置常量 Prompt。
+	// 提取配置：与市电同构，实时读取当前分类持久化的 fields（prompt/regex/required）。
 	extractCfg := h.resolveEnergyBillExtractConfig(effCtx, kbID, EnergyBillTypeSolar)
+
+	// 阶段 2：正则优先快筛。核心字段 100% 精确命中且通过数值校验时
+	// 直接毫秒级返回，跳过耗时且可能超时的大模型调用。
+	usedFastPath := false
+	if fast, ok := service.FastPathSolarBill(canonicalText, knowledge.FileName, extractCfg); ok {
+		merged.Records = append(merged.Records, *fast)
+		sawBill = true
+		usedFastPath = true
+		logger.Infof(ctx, "Solar bill fast-path hit (skip LLM), knowledge=%s period=%s gen=%.2f grid=%.2f amount=%.2f",
+			knowledgeID, fast.BillPeriod, fast.GenerationKwh, fast.GridKwh, fast.SettlementAmount)
+	}
+
+	// 单次结构化 LLM：25s 硬超时，杜绝"提取中"永久不落定。
+	llmCtx, cancelLLM := service.WithAdaptiveExtractTimeout(effCtx)
+	defer cancelLLM()
 	for i, batch := range batches {
+		// 仅「快筛命中」时跳过模型；正常多批次文档仍要逐批合并明细。
+		if usedFastPath {
+			break
+		}
 		if strings.TrimSpace(batch) == "" {
 			continue
 		}
-		batchRes, berr := service.ExtractSolarBillsFromContentWithConfig(effCtx, chatModel, batch, extractCfg)
+		batchRes, berr := service.ExtractSolarBillsFromContentWithConfig(llmCtx, chatModel, batch, extractCfg)
 		if berr != nil {
 			if i == 0 && len(merged.Records) == 0 {
 				extractErr = berr
@@ -198,12 +270,21 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 				logger.Warnf(ctx, "Failed to persist solar bill extraction failed-state: %v", serr)
 			}
 		}
+		extractFinished = true
 		logger.Error(ctx, "Solar bill extraction model call failed", extractErr)
 		c.Error(errors.NewInternalServerError("solar bill extraction failed: " + extractErr.Error()))
 		return
 	}
 	extracted := merged
 	service.NormalizeSolarBillExtractionResult(extracted)
+	// 阶段 2 正则补洞：用户配置的字段级 regex 实时生效，LLM 漏掉的字段从原文补回。
+	if !usedFastPath {
+		for i := range extracted.Records {
+			if names := service.ApplySolarRegexPatch(extractCfg, &extracted.Records[i], canonicalText); len(names) > 0 {
+				logger.Infof(ctx, "Solar bill regex patch applied: %v knowledge=%s", names, knowledgeID)
+			}
+		}
+	}
 	// 通用质量闭环（非发票业务口径）：账单周期起止等标准日期字段归一化。
 	// 光伏/电费账单没有字段级规则配置（无 scope），故 cfg 传 nil——只做日期归一化。
 	solarIssues, solarPatches := service.ValidateGenericExtraction(
@@ -242,6 +323,7 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 				logger.Warnf(ctx, "auto-delete non-solar-bill knowledge failed: %v", delErr)
 			} else {
 				logger.Infof(ctx, "auto-deleted non-solar-bill knowledge, ID: %s", knowledgeID)
+				extractFinished = true
 				c.JSON(http.StatusOK, gin.H{
 					"success": true,
 					"message": "非光伏账单文件已移至删除历史，可在删除历史中恢复",
@@ -263,6 +345,7 @@ func (h *BusinessExtractHandler) ExtractSolarBill(c *gin.Context) {
 		return
 	}
 
+	extractFinished = true
 	logger.Infof(ctx, "Solar bill extraction succeeded, knowledge ID: %s, kind: %s, records: %d",
 		knowledgeID, meta.Kind, len(meta.Records))
 	if meta.ExtractStatus == "failed" {

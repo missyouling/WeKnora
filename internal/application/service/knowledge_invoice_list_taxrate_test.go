@@ -49,7 +49,7 @@ func TestInvoiceListTaxRateItemsMatch(t *testing.T) {
 			ID:              "k_" + invNo,
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
 					map[string]interface{}{
@@ -98,7 +98,7 @@ func TestInvoiceListKeywordAndFilters(t *testing.T) {
 			ID:              "k_" + invNo,
 			KnowledgeBaseID: "kb1",
 			ParseStatus:     "completed",
-			CustomMetadata: mustJSON(t, map[string]interface{}{
+			CustomMetadata: mustBusinessJSON(t, map[string]interface{}{
 				"kind": "invoice", "extract_status": "success",
 				"invoices": []interface{}{
 					map[string]interface{}{

@@ -793,7 +793,7 @@ function gasTableOf(ctx: TenantStatementCtx, month: string, unit: string, prefix
  * 两道条件缺一不可（真机 2026-09 持睿汽车误出气费 1,188.20 的根因）：
  *   ① 该单位确有气表记录（当月、非公租房、使用单位精确匹配）；
  *   ② 当前视角的字段定义里「气费」列是启用的（用户可在设置里停用该字段）。
- * 任一不满足 → 既不出「气费核算明细」表，也不出「应收费用汇总」里的气费行。
+ * 任一不满足 → 不出「气费核算明细」表。
  */
 export function gasApplicableOf(
   gasRows: readonly any[],
@@ -809,40 +809,10 @@ export function gasApplicableOf(
   return columnKeys.includes('gas_fee')
 }
 
-/**
- * 应收汇总：工商业电费 / 居民宿舍电费 / 水费 →（适用时）气费 → 合计。
- *
- * `includeGas` 由 `gasApplicableOf` 决定：没有气表的单位连「气费 0.00」这一行
- * 都不该出现 —— 一行恒为 0 的费用项会让租户以为「有气表但没用气」。
- */
-function summaryTableOf(ctx: TenantStatementCtx, rows: any[], unit: string, prefix: string, includeGas: boolean): StatementTable {
-  let ind = 0; let dorm = 0; let water = 0; let gas = 0
-  for (const r of rows) {
-    ind += Number(r.ind_fee) || 0
-    dorm += (Number(r.dorm_fee) || 0) + (Number(r.res_fee) || 0)
-    water += (Number(r.water_ind_fee) || 0) + (Number(r.water_dorm_fee) || 0) + (Number(r.water_fire_fee) || 0)
-    gas += Number(r.gas_fee) || 0
-  }
-  const total = Math.round((ind + dorm + water + (includeGas ? gas : 0)) * 100) / 100
-  const body: string[][] = [
-    ['工商业电费（分摊后）', unit, money2(ind)],
-    ['居民 / 宿舍电费', unit, money2(dorm)],
-    ['水费（分表 + 宿舍）', unit, money2(water)],
-  ]
-  if (includeGas) body.push(['气费', unit, money2(gas)])
-  return {
-    title: `${prefix}应收费用汇总`,
-    columns: [
-      { label: '费用项目', weight: 3 },
-      { label: '使用单位', weight: 2 },
-      { label: '金额(元)', weight: 1.6, align: 'right' },
-    ],
-    rows: body,
-    total: ['应收合计', unit, money2(total)],
-    // 结论表：0 元也必须出现（租户要看到「本期应收多少」）
-    alwaysShow: true,
-  }
-}
+// 第 42 轮：删除末尾重复的汇总章节。
+// 工商业电费 / 居民宿舍电费 / 水费 / 应收合计已在第 1 页「账单概览」的
+// 4 张 KPI 卡片与元信息里完整给出，末尾再出一张汇总表既重复又会把 PDF 撑到第 3 页。
+// 文档固定为 2 页：第 1 页概览 + 分项细项全表，第 2 页电费/水费（含气费）核算明细。
 
 export function buildTenantBillingStatementDoc(ctx: TenantStatementCtx, rows: any[], unit: string): StatementDoc {
   const months = rows.map((r: any) => r.month).filter(Boolean)
@@ -866,7 +836,7 @@ export function buildTenantBillingStatementDoc(ctx: TenantStatementCtx, rows: an
       const gas = gasTableOf(ctx, month, unit, prefix)
       if (gas.rows.length) tables.push(gas)
     }
-    tables.push(summaryTableOf(ctx, [row], unit, prefix, includeGas))
+    // 不追加重复汇总表，也不追加底部说明：概览卡片已是唯一汇总口径。
   })
   return {
     title: `${unit} 费用清单`,
@@ -875,8 +845,5 @@ export function buildTenantBillingStatementDoc(ctx: TenantStatementCtx, rows: an
     meta: statementMeta(ctx, rows, unit, months, ratio, includeGas),
     kpis: statementKpis(ctx, rows, unit),
     tables,
-    footerNote: ctx.ownerView || ratio > 0
-      ? '说明：市电分项按账单费用组成逐项列示；租户视角下分项电量与金额均已按当月用电量分摊比例折算；水、电、气核算明细按使用单位直接归属，单独成表。'
-      : '说明：当月尚未生成该租户的分摊结果（无市电账单或缺少分时抄表），电费分项暂按 0 列示；水、电、气核算明细按使用单位直接归属。',
   }
 }

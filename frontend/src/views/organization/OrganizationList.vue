@@ -222,11 +222,11 @@
                 <div v-if="!invitePreviewLoading && !invitePreviewData"
                   class="invite-preview-body invite-preview-input">
                   <div class="join-mode-pills">
-                    <button type="button" class="join-mode-pill" :class="[{ active: joinStep === 'invite' }]"
+                    <button type="button" :class="['join-mode-pill', { active: joinStep === 'invite' }]"
                       @click="joinStep = 'invite'">
                       {{ $t('organization.join.byInviteCode') }}
                     </button>
-                    <button type="button" class="join-mode-pill" :class="[{ active: joinStep === 'search' }]"
+                    <button type="button" :class="['join-mode-pill', { active: joinStep === 'search' }]"
                       @click="handleSearchTabClick">
                       {{ $t('organization.join.searchSpaces') }}
                     </button>
@@ -954,7 +954,7 @@ async function doSearchSearchable() {
   searchLoading.value = true
   try {
     await orgStore.fetchSearchableOrganizations(currentQuery, { limit: 20 })
-  } catch (_e) {
+  } catch (e) {
     orgStore.clearSearchableOrganizations()
   } finally {
     searchLoading.value = false

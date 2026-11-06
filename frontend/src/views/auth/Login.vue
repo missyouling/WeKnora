@@ -341,6 +341,7 @@ import { ref, reactive, nextTick, onMounted, onBeforeUnmount, computed } from 'v
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useRoleLabel } from '@/composables/useRoleLabel'
+import { DEFAULT_HOME_PATH } from '@/config/defaultHome'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
 import { canRegister } from './registrationPolicy'
 import { newPasswordRules } from '@/utils/passwordPolicy'
@@ -594,7 +595,7 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
   await authStore.refreshFromAuthMe()
   await nextTick()
   if (skipRedirect) return
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+  router.replace(authStore.hasValidTenant ? DEFAULT_HOME_PATH : '/onboarding/workspace')
 }
 
 const getBackendOIDCRedirectURI = () => `${window.location.origin}${getApiBaseUrl()}/api/v1/auth/oidc/callback`
@@ -661,7 +662,7 @@ const acceptAndEnter = async (token: string) => {
   } finally {
     loading.value = false
     await nextTick()
-    router.replace('/platform/knowledge-bases')
+    router.replace(DEFAULT_HOME_PATH)
   }
 }
 
@@ -805,7 +806,7 @@ onMounted(async () => {
   }
 
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    router.replace(DEFAULT_HOME_PATH)
     return
   }
 

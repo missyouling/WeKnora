@@ -592,6 +592,7 @@ export default {
     }
   },
   menu: {
+    dailyAffairs: '日常業務',
     sessionInProgress: '会話中',
     sessionUnread: '新しい回答',
     knowledgeBase: 'ナレッジベース',
@@ -943,6 +944,12 @@ export default {
     sharedTooltip: '共有スペース経由で外部ワークスペースからアクセス'
   },
   knowledgeBase: {
+    tagEditSearch: 'Search tags',
+    tagEditAvailableSection: 'Available tags',
+    tagEditNoSelected: 'No selected tags',
+    tagClearAction: 'Clear',
+    tagEditSelectedSection: 'Selected tags',
+    tagNewPlaceholder: 'Enter a new tag',
     tagAddAction: 'タグを追加',
     documentCount: '{count} 件のドキュメント',
     filters: '絞り込み',
@@ -3556,6 +3563,7 @@ export default {
     },
   },
   embedPublish: {
+    dailyAffairs: '日常業務',
     history: "チャット履歴",
     historyHint: "最新 30 件をこのブラウザーに保存します。履歴を消去してもサーバーのメッセージは削除されません。",
     historyEmpty: "保存済みのチャットはありません",

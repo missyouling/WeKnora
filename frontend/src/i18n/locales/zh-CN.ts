@@ -6232,6 +6232,7 @@ export default {
     }
   },
   embedPublish: {
+    dailyAffairs: '日常事务',
     history: "对话历史",
     historyHint: "最近 30 个对话，仅保存在此浏览器。清除记录不会删除服务端消息。",
     historyEmpty: "暂无对话记录",

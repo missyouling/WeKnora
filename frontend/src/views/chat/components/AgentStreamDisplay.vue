@@ -892,7 +892,7 @@ import {
   ensureMermaidInitialized,
   enhanceMarkdownContainer,
 } from '@/utils/mermaidShared';
-import { refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
+import { attachMarkdownEnhancementListeners, refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
 import { useTypewriter } from '@/composables/useTypewriter';
 import { vStableHtml } from '@/directives/stableHtml';
 
@@ -1092,7 +1092,7 @@ const wikiDrawerContent = computed(() => {
   const content = wikiDrawerPage.value.content || '';
 
   // Pre-process wiki links [[slug|name]] to custom HTML tags for the drawer
-  const preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
+  let preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
     const pipeIdx = inner.indexOf('|');
     const slug = pipeIdx > 0 ? inner.substring(0, pipeIdx).trim() : inner.trim();
     let display = slug;
@@ -2987,8 +2987,22 @@ const renderAnswerContent = (content: unknown): string => {
 };
 
 // Legacy Markdown rendering function (kept for summaries)
+const renderMarkdown = (content: unknown): string => {
+  const contentStr = typeof content === 'string' ? content : String(content || '');
+  if (!contentStr.trim()) return '';
+
+  try {
+    return renderAgentMarkdown(content, (text) => text);
+  } catch (e) {
+    console.error('Markdown rendering error:', e, 'Content:', contentStr.substring(0, 100));
+    return contentStr.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+};
 
 // 渲染 Mermaid 图表的函数
+const renderMermaidDiagrams = async () => {
+  await enhanceMarkdownContainer(rootElement.value);
+};
 
 // Tool summary - extract key info to display externally
 const getToolSummary = (event: any): string => {
@@ -3089,6 +3103,14 @@ const getPlanStatusItems = (event: any) => {
 };
 
 // Get plan status summary for todo_write tool header (deprecated, use getPlanStatusParts instead)
+const getPlanStatusSummary = (event: any): string => {
+  const parts = getPlanStatusParts(event);
+  const textParts = [];
+  if (parts.inProgress > 0) textParts.push(`🚀 ${t('agentStream.plan.inProgress')} ${parts.inProgress}`);
+  if (parts.pending > 0) textParts.push(`📋 ${t('agentStream.plan.pending')} ${parts.pending}`);
+  if (parts.completed > 0) textParts.push(`✅ ${t('agentStream.plan.completed')} ${parts.completed}`);
+  return textParts.length > 0 ? textParts.join(' · ') : '';
+};
 
 /**
  * One-line caption for a compaction card. The token counts are the point: they
@@ -3132,6 +3154,14 @@ const getSearchResultsSummary = (event: any): string => {
 };
 
 // Get web search results summary text
+const getWebSearchResultsSummary = (toolData: any): string => {
+  if (!toolData) return '';
+
+  const count = Number(toolData.results?.length ?? toolData.count ?? 0) || 0;
+  if (count === 0) return '';
+
+  return t('agentStream.search.webResults', { count });
+};
 
 // Get results count (number only) for web search summary
 const getResultsCount = (toolData: any): number => {
@@ -3428,6 +3458,22 @@ const formatDuration = (ms?: number): string => {
   return `${minutes}m ${remainingSeconds}s`;
 };
 
+const formatJSON = (obj: any): string => {
+  try {
+    if (typeof obj === 'string') {
+      // Try to parse if it's a JSON string
+      try {
+        const parsed = JSON.parse(obj);
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return obj;
+      }
+    }
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
+};
 
 // Helper function to get actual content (from answer or last thinking).
 // Strips final-answer wrappers (e.g. <answer>…</answer>, "Final Answer:")

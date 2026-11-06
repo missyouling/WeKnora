@@ -883,6 +883,8 @@ const {
   start: startPolling, stop: stopPolling, scanOnce,
 } = useBusinessPolling({
   kbId,
+  // 第 42 轮：绑定共享上传历史数据源（状态条 / 历史卡 / 抽屉同源、全域感知）
+  scope: 'regulation',
   extractFn: (kid, fileId) => extractBusinessDocument(kid, fileId, 'regulation'),
   onPendingFiles: (files) => {
     // 状态条展示所有「进行中」文件：不仅新上传待解析/待提取的文件，也包括

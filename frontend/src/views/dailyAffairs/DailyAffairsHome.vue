@@ -242,7 +242,7 @@ const onPlaceholder = (name: string) => {
 
   &:hover {
     border-color: var(--td-brand-color);
-    box-shadow: 0 4px 12px rgba(7, 192, 95, 0.12);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--td-brand-color) 12%, transparent);
     transform: translateY(-2px);
   }
 

@@ -58,7 +58,7 @@ func TestBusinessInvoiceCategoryFirstHitUnifiesBucket(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{
 			ID: "k_split", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, splitCatMeta("INV-A", "水电发票", "通行费发票", "通行费发票"))),
+			CustomMetadata: types.JSON(mustBusinessJSON(t, splitCatMeta("INV-A", "水电发票", "通行费发票", "通行费发票"))),
 		},
 	}}
 	svc := &BusinessExtractService{repo: repo}
@@ -98,7 +98,7 @@ func TestBusinessInvoiceCategoryFileLevelStillWins(t *testing.T) {
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
 		{
 			ID: "k_file", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, splitCatMeta("INV-B", "能耗发票", "能耗发票", "通行费发票"))),
+			CustomMetadata: types.JSON(mustBusinessJSON(t, splitCatMeta("INV-B", "能耗发票", "能耗发票", "通行费发票"))),
 		},
 	}}
 	svc := &BusinessExtractService{repo: repo}
@@ -125,7 +125,7 @@ func TestBusinessInvoiceCategoryNoHitFallsBack(t *testing.T) {
 		},
 	}
 	repo := &taxRateFakeRepo{items: []*types.Knowledge{
-		{ID: "k_none", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustJSON(t, meta))},
+		{ID: "k_none", KnowledgeBaseID: "kb1", ParseStatus: "completed", CustomMetadata: types.JSON(mustBusinessJSON(t, meta))},
 	}}
 	svc := &BusinessExtractService{repo: repo}
 
@@ -157,11 +157,11 @@ func TestBusinessInvoiceCategoryNoHitFallsBack(t *testing.T) {
 func TestBusinessInvoiceOverviewCategoryMatchesList(t *testing.T) {
 	items := []*types.Knowledge{
 		{ID: "k1", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, splitCatMeta("INV-A", "水电发票", "通行费发票", "通行费发票")))},
+			CustomMetadata: types.JSON(mustBusinessJSON(t, splitCatMeta("INV-A", "水电发票", "通行费发票", "通行费发票")))},
 		{ID: "k2", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, splitCatMeta("INV-C", "通行费发票", "通行费发票", "通行费发票")))},
+			CustomMetadata: types.JSON(mustBusinessJSON(t, splitCatMeta("INV-C", "通行费发票", "通行费发票", "通行费发票")))},
 		{ID: "k3", KnowledgeBaseID: "kb1", ParseStatus: "completed",
-			CustomMetadata: types.JSON(mustJSON(t, splitCatMeta("INV-D", "能耗发票", "能耗发票", "能耗发票")))},
+			CustomMetadata: types.JSON(mustBusinessJSON(t, splitCatMeta("INV-D", "能耗发票", "能耗发票", "能耗发票")))},
 	}
 	svc := &BusinessExtractService{repo: &taxRateFakeRepo{items: items}}
 

@@ -22,7 +22,7 @@ import (
 // TestExtractMergePreservesUserCategoryWhenFreshOmitsIt 锁定核心不变量：
 // 提取结果不含分类键时，必须从库中现值保留，绝不能被整列覆盖冲掉。
 func TestExtractMergePreservesUserCategoryWhenFreshOmitsIt(t *testing.T) {
-	existing := mustJSON(t, map[string]interface{}{
+	existing := mustBusinessJSON(t, map[string]interface{}{
 		"kind":               "invoice",
 		"invoice_category":   "通行费发票",
 		"fleet_cert_type":    "通行费发票",
@@ -30,7 +30,7 @@ func TestExtractMergePreservesUserCategoryWhenFreshOmitsIt(t *testing.T) {
 		"auto_deleted_count": 1,
 	})
 	// 提取结果的真实形状：只有 kind/invoices/extract_status，没有分类键
-	fresh := mustJSON(t, map[string]interface{}{
+	fresh := mustBusinessJSON(t, map[string]interface{}{
 		"kind":           "invoice",
 		"extract_status": "success",
 		"invoices": []interface{}{
@@ -53,10 +53,10 @@ func TestExtractMergePreservesUserCategoryWhenFreshOmitsIt(t *testing.T) {
 // TestExtractMergeExplicitCategoryUpdateWins：用户显式改分类时，新值必须生效
 // （否则「其它票据 → 通行费发票」的人工纠正永远存不下来）。
 func TestExtractMergeExplicitCategoryUpdateWins(t *testing.T) {
-	existing := mustJSON(t, map[string]interface{}{
+	existing := mustBusinessJSON(t, map[string]interface{}{
 		"kind": "invoice", "invoice_category": "其它票据", "fleet_cert_type": "其它票据",
 	})
-	fresh := mustJSON(t, map[string]interface{}{
+	fresh := mustBusinessJSON(t, map[string]interface{}{
 		"kind": "invoice", "invoice_category": "通行费发票", "fleet_cert_type": "通行费发票",
 	})
 	merged := mergeInvoiceMetaPreservingUserKeys(existing, fresh)
@@ -69,7 +69,7 @@ func TestExtractMergeExplicitCategoryUpdateWins(t *testing.T) {
 // TestExtractMergeBrokenExistingFallsBackToFresh：库中 metadata 损坏时不得报错，
 // 直接用新值（宁可丢分类也不能让整次提取失败）。
 func TestExtractMergeBrokenExistingFallsBackToFresh(t *testing.T) {
-	fresh := mustJSON(t, map[string]interface{}{"kind": "invoice", "extract_status": "success"})
+	fresh := mustBusinessJSON(t, map[string]interface{}{"kind": "invoice", "extract_status": "success"})
 	merged := mergeInvoiceMetaPreservingUserKeys([]byte("{not json"), fresh)
 	assert.JSONEq(t, string(fresh), string(merged))
 }

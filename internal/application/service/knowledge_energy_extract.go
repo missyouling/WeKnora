@@ -156,7 +156,11 @@ func BuildEnergyExtractionBatches(name, summary string, chunks []*types.Chunk, b
 	content := joined + strings.Join(func() []string {
 		out := make([]string, 0, len(usable))
 		for _, c := range usable {
-			out = append(out, c.Content)
+			// 阶段 1：多解析引擎输出归一化（HTML 表格 / OCR 字间空格 /
+			// 全角字符 / 千分位 / 单位后缀），规则与 LLM 都吃同一份干净文本。
+			if t := CanonicalizeParsedDocument(c.Content); t != "" {
+				out = append(out, t)
+			}
 		}
 		return out
 	}(), "\n\n")

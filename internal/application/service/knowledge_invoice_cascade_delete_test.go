@@ -92,7 +92,7 @@ func alignRow(t *testing.T, id string, invoices []interface{}, extra map[string]
 		KnowledgeBaseID: "kb1",
 		ParseStatus:     "completed",
 		FileName:        "通行费电子票据汇总单(发票).pdf",
-		CustomMetadata:  mustJSON(t, meta),
+		CustomMetadata:  mustBusinessJSON(t, meta),
 	}
 }
 

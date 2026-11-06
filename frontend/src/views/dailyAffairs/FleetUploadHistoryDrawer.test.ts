@@ -101,13 +101,13 @@ test('历史记录：日期区间占位符用数组形式，避免「开始 - �
   assert.equal(/placeholder="上传开始日期 - 上传结束日期"/.test(src), false)
 })
 
-test('历史记录：「正在执行」与列表状态条共用一份判定（pending 也计入）', () => {
-  // 第 39 轮：抽屉、列表上方状态条、KPI 卡片共用 fleetHistoryStats 的判定，
-  // 不再各写一套（旧实现抽屉少了 parsing、状态条缺 scope 时整批丢失）。
-  assert.match(src, /import \{ fleetHistoryFilesOf, isFleetFileRunning \} from '\.\/fleetHistoryStats'/)
-  assert.match(src, /const isRowRunning = \(r: any\) => isFleetFileRunning\(r\)/)
-  // 「全部文件」与卡片同源
-  assert.match(src, /let arr = fleetHistoryFilesOf\(collected, props\.docTypes\)/)
+test('历史记录：第 42 轮与页面状态条共用同一份 uploadHistoryFiles 共享源', () => {
+  // 抽屉不再自建分页快照/轮询：统一 2.5s 轮询写回共享数组，标签自动从
+  // 「提取中」变「已完成」，顶部「正在执行」计数与页面绿色状态条同源。
+  assert.match(src, /getUploadHistoryFiles, refreshUploadHistory, registerUploadHistoryDrawer/)
+  assert.match(src, /fleetHistoryFilesOf\(getUploadHistoryFiles\(uploadScope\.value\) as any\[\], props\.docTypes\)/)
+  assert.match(src, /registerUploadHistoryDrawer\(uploadScope\.value\)/)
+  assert.match(src, /const isRowRunning = \(r: any\) => isFleetFileRunning\(r\)/, '在途判定仍走唯一口径')
 })
 
 test('历史记录：发票类型与关键词/日期/状态构成 AND 组合过滤', () => {

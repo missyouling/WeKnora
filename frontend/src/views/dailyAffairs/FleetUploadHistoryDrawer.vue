@@ -122,13 +122,16 @@
 import { ref, computed, watch, onBeforeUnmount, nextTick, h } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon, CloudUploadIcon, DownloadIcon, DeleteIcon } from 'tdesign-icons-vue-next'
-import { listKnowledgeFiles, delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
+import { delKnowledgeDetails, reparseKnowledge } from '@/api/knowledge-base'
 import { fleetHistoryFilesOf, isFleetFileRunning } from './fleetHistoryStats'
 import { extractFleetDocument, extractBusinessDocument } from '@/api/fleet'
 import { isExtractInProgress } from '@/composables/extractConflict'
 import { getScope } from '../../registry'
 import DocumentPreview from '@/components/document-preview.vue'
 import { formatExtractErrorMessage } from './extractErrorMessage'
+import {
+  getUploadHistoryFiles, refreshUploadHistory, registerUploadHistoryDrawer,
+} from '@/composables/useUploadHistoryFiles'
 
 const props = defineProps<{
   visible: boolean
@@ -144,12 +147,25 @@ const emit = defineEmits<{
   (e: 'changed', payload?: { deletedIds?: string[] }): void
 }>()
 
-// 全量快照：抽屉一次拉全（上限 SNAPSHOT_CAP），搜索/日期/状态三种过滤全部在本地做。
+// 全量快照来自共享数据源（统一轮询拉全），搜索/日期/状态三种过滤全部在本地做。
 // 为什么不做服务端分页：① 状态卡的计数必须是「全量口径」，分页数据算不准；
 // ② 即输即搜要求零网络等待；③ 历史记录是低频管理面板，单次拉全可接受。
-const SNAPSHOT_CAP = 2000
 const DEFAULT_PAGE_SIZE = 20
-const allRows = ref<any[]>([])
+// 第 42 轮：抽屉与页面状态条 / 历史卡读同一份 uploadHistoryFiles 共享快照。
+// 统一 2.5s 轮询写回状态，抽屉里的「提取中」会自动变「已完成」，无需关开抽屉。
+const UPLOAD_SCOPES = new Set(['energy', 'invoice', 'contract', 'regulation', 'award_punish'])
+const uploadScope = computed(() => UPLOAD_SCOPES.has(props.scope || '') ? String(props.scope) : 'fleet')
+const hiddenIds = ref<Set<string>>(new Set())
+const allRows = computed<any[]>(() => {
+  let arr = fleetHistoryFilesOf(getUploadHistoryFiles(uploadScope.value) as any[], props.docTypes)
+  const f = props.filter || 'all'
+  if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
+  else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
+  return arr
+    .filter((r: any) => !hiddenIds.value.has(r.id))
+    .map(normalize)
+    .sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
+})
 const loading = ref(false)
 // keywordInput 是用户正在输入的值；keyword 是 300ms 防抖后真正参与过滤的值
 const keywordInput = ref('')
@@ -276,8 +292,6 @@ const normalize = (r: any) => ({
   doc_type: invDocType(r) || energyCategoryOf(r.custom_metadata || {}),
 })
 
-const rowDocType = (r: any) => invDocType(r)
-
 // 状态归类（唯一口径）：解析中/提取中 → running；解析失败/提取失败 → abnormal。
 // 在途判定与列表上方状态条、KPI 卡片**共用一份实现**（第 39 轮）。
 // 旧实现三处各写一遍，判据略有差别（这里少了 parsing、那里多了 finalizing），
@@ -390,29 +404,12 @@ const filteredRows = computed(() => {
 const rows = computed(() => filteredRows.value.slice(0, visibleCount.value))
 const hasMore = computed(() => rows.value.length < filteredRows.value.length)
 
-// 拉全量快照（一次拉全，供计数与本地过滤）
+// 只请求共享源刷新一次；状态变化由统一轮询持续写回 allRows。
 const reload = async () => {
   if (!props.kbId) return
   loading.value = true
   try {
-    const collected: any[] = []
-    let p = 1
-    // 逐页拉全，直到拿满 total 或触到上限（防超大知识库拖垮抽屉）
-    for (;;) {
-      const res: any = await listKnowledgeFiles(props.kbId, { page: p, page_size: 200 })
-      const arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-      collected.push(...arr)
-      const totalCnt = Number(res?.total || 0)
-      if (arr.length === 0 || collected.length >= totalCnt || collected.length >= SNAPSHOT_CAP) break
-      p++
-    }
-    // 「全部文件」与列表卡片同源：fleetHistoryStats.fleetHistoryFilesOf
-    let arr = fleetHistoryFilesOf(collected, props.docTypes)
-    // 兼容父级传入的固定筛选（保留原有对接约定）
-    const f = props.filter || 'all'
-    if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
-    else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
-    allRows.value = arr.map(normalize).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))
+    await refreshUploadHistory(uploadScope.value)
     resetPaging()
     activeRow.value = null
   } catch (e: any) {
@@ -500,7 +497,7 @@ const reparseRow = async (row: any) => {
     // 后端 reparse 为异步任务：接口 200 只代表任务已提交，此时 parse_status 仍是旧值（如 failed）。
     // ① 乐观置为 pending（解析中），点击后立即反馈；
     // ② 不执行 reload(1)——整表刷新会拉回任务入队前的旧 failed 状态，覆盖乐观值导致"先失败后解析中"闪现；
-    //    抽屉轮询（silentSync）随后自动跟踪 pending → processing → completed/failed 真实状态。
+    //    共享轮询随后自动跟踪 pending → processing → completed/failed 真实状态。
     row.parse_status = 'pending'
     row.custom_metadata = { ...(row.custom_metadata || {}), parse_error: '' }
     MessagePlugin.success('已重新解析')
@@ -558,7 +555,7 @@ const onPopRemove = async () => {
 const removeOne = async (row: any) => {
   try {
     await delKnowledgeDetails(row.id)
-    allRows.value = allRows.value.filter((r) => r.id !== row.id)
+    hiddenIds.value = new Set([...hiddenIds.value, row.id])
     activeRow.value = null
     MessagePlugin.success("已删除")
     emit("changed", { deletedIds: [row.id] })
@@ -654,81 +651,18 @@ onBeforeUnmount(() => {
 
 const onClose = () => emit('update:visible', false)
 
-// 需求：解析/提取状态与上传时的真实处理状态实时同步。
-// 设计原则：抽屉打开后不做无条件高频整表轮询，避免列表不停闪烁/选中丢失/滚动跳顶。
-// 1) 按需启动：仅当存在「活跃任务」（解析/提取进行中，或解析完成提取待落定）才启动轮询；
-// 2) 静默增量：轮询时仅对已存在行 patch 状态字段（保持行引用/选中态/滚动位置），
-//    仅当发生行增删（id 集合变化）才回退整表刷新；
-// 3) 及时收敛：全部任务落定即停轮询；超过 2 分钟无任何状态变化也自动停止，杜绝后台空转。
-let pollTimer: ReturnType<typeof setInterval> | null = null
-let lastChangeTs = Date.now()
-const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
-
-// 是否存在需要持续关注的任务（任一命中即保持轮询）
-const hasActiveTasks = () => {
-  return allRows.value.some((r: any) => {
-    const p = r.parse_status || ''
-    const e = extractStatus(r)
-    if (p === 'pending' || p === 'processing' || p === 'finalizing') return true
-    if (e === 'pending' || e === 'processing') return true
-    if (p === 'completed' && !e) return true
-    return false
-  })
-}
-
-// 静默增量同步：拉取最新首页数据，仅更新已有行的状态字段；行增删时回退整表刷新
-const silentSync = async () => {
-  if (!props.kbId) return
-  try {
-    const res: any = await listKnowledgeFiles(props.kbId, { page: 1, page_size: DEFAULT_PAGE_SIZE })
-    let arr = Array.isArray(res?.data) ? res.data : Array.isArray(res?.list) ? res.list : []
-    arr = arr.filter((r: any) => !((r.custom_metadata || {}).fleet_history_hidden))
-    const dtSet = props.docTypes
-    if (dtSet && dtSet.size) arr = arr.filter((r: any) => { const dt = rowDocType(r); return dt ? dtSet.has(dt) : true })
-    const f = props.filter || 'all'
-    if (f === 'parse_failed') arr = arr.filter((r: any) => r.parse_status === 'failed')
-    else if (f === 'extract_failed') arr = arr.filter((r: any) => (r.custom_metadata || {}).extract_status === 'failed')
-    // 增删检测：当前首页 id 集合与 fresh 不一致说明发生了真实变化，回退整表刷新
-    const currentIds = allRows.value.slice(0, DEFAULT_PAGE_SIZE).map((r: any) => r.id).sort()
-    const freshIds = arr.map((r: any) => r.id).sort()
-    if (currentIds.length !== freshIds.length || currentIds.some((id, i) => id !== freshIds[i])) {
-      await reload()
-      return
-    }
-    // 仅增量 patch 已有行的状态字段（不替换数组、不重置选中/分页/滚动）
-    const map = new Map<string, any>(arr.map((r: any) => [r.id, r] as [string, any]))
-    let changed = false
-    for (const row of allRows.value) {
-      const fr = map.get(row.id)
-      if (!fr) continue
-      if (fr.parse_status !== row.parse_status) { row.parse_status = fr.parse_status; changed = true }
-      const fe = (fr.custom_metadata || {}).extract_status || ''
-      if (fe !== extractStatus(row)) {
-        row.custom_metadata = { ...(row.custom_metadata || {}), extract_status: fe }
-        changed = true
-      }
-      const dt = invDocType(fr)
-      if (dt !== row.doc_type) { row.doc_type = dt; changed = true }
-    }
-    if (changed) lastChangeTs = Date.now()
-  } catch { /* 静默轮询失败不打扰用户，下一轮重试 */ }
-}
-
+// 第 42 轮：抽屉不再自建轮询。注册到共享数据源后，统一 2.5s 轮询会持续
+// 刷新文件状态（标签从「提取中」自动变「已完成」）、顶部「正在执行」计数
+// 与页面绿色状态条；在途清零时由共享源的 settled 回调刷新主列表与 KPI。
+let unregisterDrawer: (() => void) | null = null
 watch(() => props.visible, (v) => {
-  stopPolling()
-  if (v) {
-    reload().then(() => {
-      if (!hasActiveTasks()) return
-      lastChangeTs = Date.now()
-      pollTimer = setInterval(async () => {
-        await silentSync()
-        // 全部任务落定，或长时间无状态变化（防后台空转），停止轮询
-        if (!hasActiveTasks() || Date.now() - lastChangeTs > 120000) stopPolling()
-      }, 3000)
-    })
-  }
+  unregisterDrawer?.()
+  unregisterDrawer = null
+  if (!v) return
+  unregisterDrawer = registerUploadHistoryDrawer(uploadScope.value)
+  void reload()
 }, { immediate: true })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => { unregisterDrawer?.(); unregisterDrawer = null })
 </script>
 
 <style scoped>

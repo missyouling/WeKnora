@@ -229,7 +229,7 @@
                the search snaps back to the bucketed view below. -->
           <template v-if="searchResults !== null">
             <div v-for="page in searchResults" :key="page.id"
-              class="wiki-page-item" :class="[{ active: selectedPage?.id === page.id }]" @click="selectPage(page)">
+              :class="['wiki-page-item', { active: selectedPage?.id === page.id }]" @click="selectPage(page)">
               <div class="wiki-page-item-title">{{ page.title }}</div>
               <div class="wiki-page-item-summary">{{ page.summary }}</div>
               <div class="wiki-page-item-meta">
@@ -245,7 +245,7 @@
             <!-- Index overview (pinned at top). Rendered lazily from a
                  structured API response — never loads the full directory
                  as markdown. -->
-            <div v-if="indexAvailable" class="wiki-nav-item" :class="[{ active: activeSystemView === 'index' }]"
+            <div v-if="indexAvailable" :class="['wiki-nav-item', { active: activeSystemView === 'index' }]"
               @click="openIndexView">
               <t-icon name="catalog" class="wiki-nav-icon" />
               <span class="wiki-nav-text">{{ $t('knowledgeEditor.wikiBrowser.indexTitle') }}</span>
@@ -259,7 +259,7 @@
               <div v-if="visibleTabs.length > 0" class="wiki-tab-bar">
                 <div class="wiki-tab-bar-scroll">
                   <div v-for="tab in visibleTabs" :key="tab.type"
-                    class="wiki-tab" :class="[{ active: activeTab === tab.type }]" @click="setActiveTab(tab.type)">
+                    :class="['wiki-tab', { active: activeTab === tab.type }]" @click="setActiveTab(tab.type)">
                     <span class="wiki-tab-label">{{ tab.label }}</span>
                     <span class="wiki-tab-count">{{ tab.total }}</span>
                   </div>
@@ -308,7 +308,7 @@
                    avoids inserting/removing a drop bar during the drag, which
                    was cancelling the native drag after the first success. -->
                 <div ref="treeListRef"
-                  class="wiki-tree-list" :class="[{ 'wiki-tree-list--root-drop': dropTargetKey === '__root__' }]"
+                  :class="['wiki-tree-list', { 'wiki-tree-list--root-drop': dropTargetKey === '__root__' }]"
                   @dragover.prevent="onRootDragOver" @dragleave="onDirectoryDragLeave('__root__')"
                   @drop.prevent="onDropOnDirectory($event, '', [])">
                   <div v-if="creatingRootFolder" class="wiki-directory-item wiki-directory-item--editing"
@@ -330,7 +330,7 @@
                   </div>
                   <template v-for="item in activeTreeRows" :key="item.rowKey">
                     <div v-if="item.kind === 'directory'"
-                      class="wiki-directory-item" :class="[{ 'wiki-directory-item--drop': dropTargetKey === item.pathKey }]"
+                      :class="['wiki-directory-item', { 'wiki-directory-item--drop': dropTargetKey === item.pathKey }]"
                       :style="{ '--wiki-tree-depth': item.depth }" :draggable="editingFolderId !== item.folderId"
                       @click="toggleDirectory(item.pathKey)"
                       @dragstart="onFolderDragStart($event, item.folderId, item.path)" @dragend="onPageDragEnd"
@@ -365,12 +365,12 @@
                       </template>
                     </div>
                     <div v-else
-                      class="wiki-page-item wiki-page-item--tree" :class="[{ active: selectedPage?.id === item.page.id }]"
+                      :class="['wiki-page-item', 'wiki-page-item--tree', { active: selectedPage?.id === item.page.id }]"
                       :style="{ '--wiki-tree-depth': item.depth }" :title="item.page.title" draggable="true"
                       @click="selectPage(item.page)" @dragstart="onPageDragStart($event, item.page)"
                       @dragend="onPageDragEnd">
                       <t-icon :name="getPageIcon(item.page)"
-                        class="wiki-page-file-icon" :class="[`wiki-page-file-icon--${item.page.page_type}`]" />
+                        :class="['wiki-page-file-icon', `wiki-page-file-icon--${item.page.page_type}`]" />
                       <span class="wiki-page-item-title">{{ item.page.title }}</span>
                     </div>
                   </template>
@@ -392,7 +392,7 @@
                 <RecycleScroller class="wiki-group-scroller" :items="activeFlatPages"
                   :item-size="WIKI_PAGE_ITEM_HEIGHT" key-field="id" :buffer="400" page-mode
                   v-slot="{ item }">
-                  <div class="wiki-page-item wiki-page-item--list" :class="[{ active: selectedPage?.id === item.id }]"
+                  <div :class="['wiki-page-item', 'wiki-page-item--list', { active: selectedPage?.id === item.id }]"
                     @click="selectPage(item)">
                     <div class="wiki-page-item-title">{{ item.title }}</div>
                     <div class="wiki-page-item-summary">{{ item.summary }}</div>
@@ -443,7 +443,7 @@
 
                       <t-popup v-if="pageIssues.length > 0" v-model="showIssuesBox" placement="bottom-left"
                         trigger="click"
-                        :overlay-inner-style="{ padding: 0, boxShadow: 'var(--td-shadow-3)', borderRadius: '8px', width: '560px', maxWidth: '90vw' }">
+                        :overlayInnerStyle="{ padding: 0, boxShadow: 'var(--td-shadow-3)', borderRadius: '8px', width: '560px', maxWidth: '90vw' }">
                         <span class="wiki-issue-trigger"
                           :title="$t('knowledgeEditor.wikiBrowser.issueTitle', { count: pageIssues.length })">
                           <t-icon name="error-circle-filled" style="color: var(--td-warning-color);" />
@@ -697,7 +697,7 @@
 
     <!-- Image Preview -->
     <Teleport to="body">
-      <picturePreview v-if="imagePreviewVisible" :review-img="imagePreviewVisible" :review-url="imagePreviewUrl"
+      <picturePreview v-if="imagePreviewVisible" :reviewImg="imagePreviewVisible" :reviewUrl="imagePreviewUrl"
         @closePreImg="closeImagePreview" />
     </Teleport>
 
@@ -868,6 +868,7 @@ import {
   type WikiIndexEntryDTO,
 } from '@/api/wiki'
 
+const router = useRouter()
 const route = useRoute()
 const assistant = useAssistantStore()
 const settingsStore = useSettingsStore()
@@ -1277,6 +1278,7 @@ const navFromSystemView = ref<'' | 'index'>('')
 // typeOrder drives the order of groups in the sidebar. Keep in sync
 // with WIKI_PAGE_TYPES on the backend; unknown types fall through to
 // the "other" bucket at the bottom of groupedPages.
+const typeOrder = ['summary', 'entity', 'concept', 'synthesis', 'comparison']
 
 // Entity and concept pages look and behave alike, so the sidebar merges all
 // non-summary content types under a single "knowledge" tab and distinguishes
@@ -1669,7 +1671,7 @@ watch(graphDrawerContent, async () => {
 
 function renderMarkdown(content: string): string {
   // Pre-process wiki links [[slug|name]] to custom HTML tags
-  const preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
+  let preprocessed = content.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
     const pipeIdx = inner.indexOf('|')
     const slug = pipeIdx > 0 ? inner.substring(0, pipeIdx).trim() : inner.trim()
     const display = pipeIdx > 0 ? inner.substring(pipeIdx + 1).trim() : slugDisplayName(slug)
@@ -3033,7 +3035,7 @@ async function loadStats() {
         loadGraph()
       }
     }
-  } catch (_e) { /* ignore */ }
+  } catch (e) { /* ignore */ }
 }
 
 // --- Manual page editing / version management ---------------------------
@@ -3252,6 +3254,18 @@ function editSourceIcon(source?: string): string {
   }
 }
 
+function editSourceTheme(source?: string): 'primary' | 'success' | 'warning' | 'default' {
+  switch (source) {
+    case 'user':
+      return 'success'
+    case 'agent':
+      return 'primary'
+    case 'revert':
+      return 'warning'
+    default:
+      return 'default'
+  }
+}
 
 // Refresh the currently selected page's content without touching navigation history
 async function refreshSelectedPage() {

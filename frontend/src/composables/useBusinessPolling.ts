@@ -1,6 +1,10 @@
 import { ref, onBeforeUnmount, type Ref } from 'vue'
 import { listKnowledgeFiles } from '@/api/knowledge-base'
 import { isExtractInProgress } from './extractConflict'
+import {
+  getUploadHistoryFiles, hasUploadHistoryScope, publishUploadHistoryFiles,
+  runningUploadHistoryFiles, isTerminalExtractStatus, bindUploadHistoryScope,
+} from './useUploadHistoryFiles'
 
 export interface BusinessFileItem {
   id: string
@@ -54,6 +58,53 @@ export function saveFlightSnapshot(): void {
 }
 
 loadFlightSnapshot()
+
+/**
+ * 第 42 轮：跨刷新「已自动投递过一次」快照。
+ *
+ * 死循环根因：某些失败路径（例如光伏账单字段不全）后端没有把 extract_status
+ * 写成终态，文件永远停在「解析完成 + 提取状态为空」。旧轮询每轮都把它当成
+ * "刚上传待提取" 重新 POST 一次，刷新页面/切 Tab 就再来一轮 → 无限重提。
+ *
+ * 现在后端终态（success/completed/failed/...）一律不自动重投；即便后端漏写终态，
+ * 前端也用 TTL 快照记住"本会话已投递过"，刷新页面不会重复提交。
+ * 用户点击「重新提取」是显式通道，不受此快照限制。
+ */
+const ATTEMPT_STORAGE_KEY = 'weknora-extract-attempted'
+const ATTEMPT_TTL_MS = 30 * 60 * 1000
+const attemptedAutoExtract = new Map<string, number>()
+
+function loadAttemptSnapshot(): void {
+  try {
+    const raw = sessionStorage.getItem(ATTEMPT_STORAGE_KEY)
+    if (!raw) return
+    const snap = JSON.parse(raw) as Record<string, number>
+    const now = Date.now()
+    for (const [id, at] of Object.entries(snap || {})) {
+      if (typeof at === 'number' && now - at < ATTEMPT_TTL_MS) attemptedAutoExtract.set(id, at)
+    }
+  } catch { /* 无痕/SSR 静默降级 */ }
+}
+
+export function markAutoExtractAttempted(id: string): void {
+  attemptedAutoExtract.set(id, Date.now())
+  try {
+    const snap: Record<string, number> = {}
+    for (const [k, v] of attemptedAutoExtract) snap[k] = v
+    sessionStorage.setItem(ATTEMPT_STORAGE_KEY, JSON.stringify(snap))
+  } catch { /* ignore */ }
+}
+
+export function canAutoExtract(id: string, es: unknown): boolean {
+  // 终态（完成/失败/人工/非本业务）严禁自动重提
+  if (isTerminalExtractStatus(es)) return false
+  // 已入队的过程态由后端处理，前端不代投
+  if (es) return false
+  const at = attemptedAutoExtract.get(id)
+  return !at || Date.now() - at > ATTEMPT_TTL_MS
+}
+
+loadAttemptSnapshot()
 
 /**
  * 轮询失败退避上限。后端 503（例如上游数据库连接池打满）时若仍按 3s 死循环
@@ -115,6 +166,8 @@ export interface UseBusinessPollingOptions {
   intervalMs?: number
   /** 文件过滤器：只处理匹配的文件（能耗模块按 bill_kind 区分电费/光伏） */
   filter?: (item: BusinessFileItem) => boolean
+  /** 第 42 轮：共享上传历史数据源的模块标识；传入后不再各自拉文件列表 */
+  scope?: string
 }
 
 /**
@@ -125,7 +178,14 @@ export interface UseBusinessPollingOptions {
  * 4) 把 pending 文件回调给业务层渲染状态行。
  */
 export function useBusinessPolling(opts: UseBusinessPollingOptions) {
-  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, onSettled, intervalMs = 3000, filter } = opts
+  const { kbId, extractFn, onPendingFiles, onRemoved, onTick, onSettled, intervalMs = 3000, filter, scope } = opts
+
+  // 绑定共享「已上传文件」数据源：主页面、状态条、历史抽屉读同一份数组。
+  // 解绑放到组件卸载，避免切换页面后后台继续为空 scope 发请求。
+  if (scope) {
+    const unbind = bindUploadHistoryScope(scope, () => kbId.value)
+    onBeforeUnmount(unbind)
+  }
 
   const extractInFlight = ref<Set<string>>(sharedExtractInFlight)
   // 失败记录：id -> 首次失败时间戳。5 分钟后允许重试，避免一次网络抖动永久拉黑
@@ -155,38 +215,47 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
     busy = true
     let ok = true
     try {
-      const res: any = await withTimeout(listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 }))
-      const data = res?.data || res?.list || []
-      const arr: BusinessFileItem[] = Array.isArray(data) ? data : []
+      // 第 42 轮：统一数据源。绑定了 scope 的模块直接读共享快照，不再各自
+      // 发一次 listKnowledgeFiles；共享轮询负责 2.5s 刷新全量文件列表。
+      let arr: BusinessFileItem[]
+      if (scope && hasUploadHistoryScope(scope)) {
+        arr = getUploadHistoryFiles(scope) as BusinessFileItem[]
+      } else {
+        const res: any = await withTimeout(listKnowledgeFiles(kbId.value, { page: 1, page_size: 100 }))
+        const data = res?.data || res?.list || []
+        arr = Array.isArray(data) ? data : []
+        if (scope) publishUploadHistoryFiles(scope, arr)
+      }
       const needExtract: BusinessFileItem[] = []
       const pend: BusinessFileItem[] = []
 
       for (const item of arr) {
         if (filter && !filter(item)) continue
-        const ps = item.parse_status
-        if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') {
-          pend.push(item)
-          continue
+        const es = item.custom_metadata?.extract_status
+        const failedAt = extractFailed.value.get(item.id)
+        const canRetry = !failedAt || Date.now() - failedAt > RETRY_AFTER_MS
+        // 只允许「待提取（extract_status 为空）」自动补投一次；
+        // success/completed/failed/manual/非本业务等终态一律不重提。
+        // canAutoExtract 还有跨刷新 TTL 快照，后端漏写终态也不会无限重提。
+        if (item.parse_status === 'completed' && canAutoExtract(item.id, es)
+          && !extractInFlight.value.has(item.id) && canRetry) {
+          needExtract.push(item)
         }
-        if (ps === 'completed') {
+        if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
+      }
+
+      // 状态条口径全域一致：不看当前 Tab / 当前菜单，只看模块内全部上传文件；
+      // 解析失败 / 提取失败不计入「正在执行」。
+      if (scope) {
+        pend.push(...(runningUploadHistoryFiles(scope) as BusinessFileItem[])
+          .filter((f) => !extractFailed.value.has(f.id)))
+      } else {
+        for (const item of arr) {
+          if (filter && !filter(item)) continue
+          const ps = item.parse_status
+          if (ps === 'pending' || ps === 'processing' || ps === 'finalizing') { pend.push(item); continue }
+          if (ps !== 'completed') continue
           const es = item.custom_metadata?.extract_status
-          const failedAt = extractFailed.value.get(item.id)
-          const canRetry = !failedAt || Date.now() - failedAt > RETRY_AFTER_MS
-          // 只对「从未提取（空）或已入队待处理（pending）」提交；
-          // es=processing 是后端 worker 正在提取的过程态（extractMu 已持锁），
-          // 前端再次提交必然 409——processing 只进下方 pend 状态条展示，等终态。
-          // 只对「从未提取」（extract_status 为空）的文件自动投递。
-          //
-          // 旧逻辑把 es='pending'（已入队、后端 worker 会处理）也算作待提取，
-          // 而 in-flight 集合是模块级内存状态、刷新页面即重置——于是每次刷新都会
-          // 对 pending 文件重新提交一次，用户观感是"刷新就重新提取、永远提取不完"。
-          // pending 的实际含义是"已入队"，前端不应替后端重投。
-          if (!es && !extractInFlight.value.has(item.id) && canRetry) {
-            needExtract.push(item)
-          }
-          if (es && es !== 'pending' && es !== 'processing') extractFailed.value.delete(item.id)
-          // 提取失败（前端本地 extractFailed 命中）的文件不进状态条：后端失败已落库
-          // failed 或仍在 processing 残留，状态条都不再显示「正在提取」，与状态列一致
           if ((!es || es === 'pending' || es === 'processing') && !extractFailed.value.has(item.id)) pend.push(item)
         }
       }
@@ -230,6 +299,7 @@ export function useBusinessPolling(opts: UseBusinessPollingOptions) {
       }
 
       for (const item of needExtract.slice(0, 5)) {
+        markAutoExtractAttempted(item.id)
         extractInFlight.value.add(item.id)
         let conflict = false
         let succeeded = false

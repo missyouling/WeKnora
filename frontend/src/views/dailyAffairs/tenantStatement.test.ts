@@ -186,14 +186,16 @@ test('打印清单：业主视角走全厂口径，不出租户两段拆分', ()
   assert.equal(kpi('本期总电量')?.hint, undefined, '业主视角不得出「工业 + 宿舍」构成说明')
 })
 
-test('打印清单：无气表单位不出「气费核算明细」表，也不出应收汇总的气费行', () => {
+test('打印清单：无气表单位不出气费明细表；应收汇总下线且为 2 页结构', () => {
   const doc = buildTenantBillingStatementDoc(ctxOf(), [ROW], GOLDEN.tenantName)
   assert.equal(findTable(doc, '气费核算明细'), undefined, '没有气表不得出气费表')
-  const summary = findTable(doc, '应收费用汇总')
-  assert.ok(summary)
-  assert.ok(!summary.rows.some((r: string[]) => r[0] === '气费'), '应收汇总不得出现气费行')
-  // 应收合计 = 工商业电费 + 宿舍电费 + 水费（不是「电费合计」，电费合计不含水费）
-  assert.equal(summary.total[2], GOLDEN.expected.summary.grandTotalFee.toFixed(2))
+  assert.equal(findTable(doc, '应收费用汇总'), undefined, '第 42 轮：应收汇总章节必须删除')
+  assert.equal((doc as any).footerNote, undefined, '底部说明文字必须删除')
+  // 单月固定 3 张表：分项细项（第 1 页，末尾强制分页）+ 电费/水费核算明细（第 2 页）
+  assert.equal(doc.tables.length, 3, '文档只保留分项细项 / 电费核算明细 / 水费核算明细 3 张表')
+  assert.equal(doc.tables[0].pageBreakAfter, true, '分项表后必须强制分页，整表落在第 1 页')
+  assert.ok(doc.tables[1].title.includes('电费核算明细'), '第 2 页从电费核算明细开始')
+  assert.ok(doc.tables[2].title.includes('水费核算明细'), '第 2 页含水费核算明细')
 })
 
 test('打印清单：水费单独成表，不与电费合表', () => {

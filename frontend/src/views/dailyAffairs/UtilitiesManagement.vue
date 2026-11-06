@@ -1459,6 +1459,8 @@ function isElectricityBillFile(item: any): boolean {
 
 const { extractInFlight, extractFailed, pendingFiles, scanOnce, start: startPolling, stop: stopPolling } = useBusinessPolling({
   kbId,
+  // 第 42 轮：绑定共享上传历史数据源（状态条 / 历史卡 / 抽屉同源、全域感知）
+  scope: 'energy',
   extractFn: (kid, fileId) => extractUtilityBill(kid, fileId),
   // 只在本 Tab 生效：切到光伏/核算/清单时本页不再扫描，从根上避免跨分类抢提
   filter: (item: any) => activeTab.value === 'electricity' && isElectricityBillFile(item),

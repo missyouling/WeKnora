@@ -76,7 +76,7 @@
             <t-tooltip :content="t('input.steerRetry')"><button type="button" :aria-label="t('input.steerRetry')" @click="emit('retry-steer')"><t-icon name="refresh" /></button></t-tooltip>
             <t-tooltip :content="t('common.remove')"><button type="button" :aria-label="t('common.remove')" @click="emit('remove-steer')"><t-icon name="close" /></button></t-tooltip>
         </div>
-        <picturePreview :review-img="reviewImg" :review-url="reviewUrl" @closePreImg="closePreImg" />
+        <picturePreview :reviewImg="reviewImg" :reviewUrl="reviewUrl" @closePreImg="closePreImg" />
     </div>
 </template>
 <script setup>
@@ -170,8 +170,19 @@ const rewindConfirmOpen = ref(false);
 
 const attachmentPreviewDrawer = useChatAttachmentPreviewDrawer();
 
+const channelLabelMap = {
+    web: () => t('chat.channelWeb'),
+    api: () => t('chat.channelApi'),
+    im: () => t('chat.channelIm'),
+};
 
+const channelLabel = computed(() => {
+    if (!props.channel) return '';
+    const label = channelLabelMap[props.channel];
+    return typeof label === 'function' ? label() : (label || props.channel);
+});
 
+const channelClass = computed(() => props.channel ? `channel-${props.channel}` : '');
 
 const containerRef = ref(null);
 const hasImages = computed(() => props.images && props.images.length > 0);

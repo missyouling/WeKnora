@@ -311,7 +311,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			params.KnowledgeService,
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
-		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, params.BusinessExtractHandler, rbacGuards)
+		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards, params.BusinessExtractHandler)
 		RegisterUtilityRoutes(v1, params.UtilityHandler, rbacGuards)
 		RegisterBillingRoutes(v1, params.BillingHandler, rbacGuards)
 		RegisterFleetRoutes(v1, params.FleetHandler, rbacGuards)

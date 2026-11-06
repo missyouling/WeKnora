@@ -10,6 +10,42 @@ import (
 	"github.com/Tencent/WeKnora/internal/middleware"
 )
 
+// businessExtractHandler 是 handler.BusinessExtractHandler 的包级别名。
+// RegisterKnowledgeRoutes 的形参名恰好叫 handler，会遮蔽 handler 包；
+// 可变参数放在形参表末尾时不能再写 *handler.BusinessExtractHandler，故用别名。
+type businessExtractHandler = handler.BusinessExtractHandler
+
+// knowledgeRouteArgs 解析 RegisterKnowledgeRoutes 的可选参数。
+//
+// 合并 origin/main 后出现两种调用形态，且都来自**上游测试 / 上游装配**，
+// 二开不应为了适配签名去改上游文件：
+//   - main:      (r, knowledgeHandler, guards)
+//   - 二开 v4:   (r, knowledgeHandler, business, guards)
+//   - 上游测试:  (r, knowledgeHandler, nil, guards)
+//   - 生产装配:  (r, knowledgeHandler, guards, business)
+//
+// 按实际类型归位而不是固定位置，四种形态全部兼容，且保持零值 guards 可用。
+func knowledgeRouteArgs(args []any) (*rbacGuards, *businessExtractHandler) {
+	var g *rbacGuards
+	var business *businessExtractHandler
+	for _, a := range args {
+		switch v := a.(type) {
+		case *rbacGuards:
+			if v != nil {
+				g = v
+			}
+		case *businessExtractHandler:
+			if v != nil {
+				business = v
+			}
+		}
+	}
+	if g == nil {
+		g = &rbacGuards{}
+	}
+	return g, business
+}
+
 // RegisterChunkerDebugRoutes wires the read-only chunker preview endpoint
 // used by the KB editor's debug panel. Stateless — uses no service deps.
 //
@@ -66,7 +102,11 @@ func RegisterChunkRoutes(r *gin.RouterGroup, handler *handler.ChunkHandler, g *r
 // reuse OwnedKBOrAdmin because the URL :id is the KB id directly.
 // Body-scoped batch operations have a Contributor route gate and resolve
 // their KB ownership plus Editor operation grant inside the handler.
-func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandler, business *handler.BusinessExtractHandler, g *rbacGuards) {
+// business 用可变参数收口：上游 main 的路由表（含 operations_test.go）以
+// (r, handler, guards) 三参调用；二开在生产装配时额外注入 BusinessExtractHandler。
+// 三参调用时 business 为 nil，下方 if 守卫会让所有沙盒路由跳过注册，保持上游行为一致。
+func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandler, args ...any) {
+	g, business := knowledgeRouteArgs(args)
 	// 知识库下的知识路由组（URL :id is the KB id）。Scoped API key 需要
 	// ingest 能力才能写内容，且仍受 KB 范围限制；清空 KB 只允许 full-access key。
 	kb := g.apiKeyGroup(r.Group("/knowledge-bases/:id/knowledge"), apiKeyIngest(apiKeyFullAccess()))
@@ -102,6 +142,9 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			// 只对元数据层面可疑的文件加载 chunks，按页重建明细并做四元数学强校验；
 			// 修好后 candidates 归零，后续启动不再写库。
 			go business.RepairInvoiceItemsAndFinancials(context.Background())
+			// 启动幂等修复（第 42 轮）：光伏账单概览字段缺失 / 提取状态僵尸在途。
+			// 用归一化 + 确定性快筛从已解析 chunks 直接补回，不调模型、不覆盖完整数据。
+			go business.RepairSolarBillOverviews(context.Background())
 			// 启动幂等清理：分类已删除、配置仍残留的孤儿提取配置（软删归档）
 			business.CleanupOrphanExtractConfigs(context.Background())
 			// 启动幂等迁移：把存量已知长文本字段（备注/摘要/说明…）从 text 升级为

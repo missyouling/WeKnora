@@ -18,7 +18,7 @@
         </template>
         {{ checking ? $t('model.editor.testing') : $t('model.editor.testConnection') }}
       </t-button>
-      <span v-if="remoteChecked" class="connection-status" :class="[remoteAvailable ? 'success' : 'error']">
+      <span v-if="remoteChecked" :class="['connection-status', remoteAvailable ? 'success' : 'error']">
         {{ remoteAvailable ? $t('model.editor.connectionSuccess') : $t('model.editor.connectionFailed') }}
       </span>
     </template>
@@ -619,7 +619,7 @@
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import {
-  checkRemoteModel, testEmbeddingModel, checkRerankModel, checkASRModel, listOllamaModels,
+  checkOllamaModels, checkRemoteModel, testEmbeddingModel, checkRerankModel, checkASRModel, listOllamaModels,
   downloadOllamaModel, getDownloadProgress, checkOllamaStatus, resolveModelCatalog,
   type OllamaModelInfo, type ModelProviderOption, type ModelProviderExtraField,
   type ModelProviderExtraFieldOption, type ModelCatalogEntry,
@@ -1426,10 +1426,12 @@ const getBaseUrlPlaceholder = () => {
 
 // 检查Ollama服务状态
 const checkOllamaServiceStatus = async () => {
+  console.log('开始检查Ollama服务状态...')
   checkingOllamaStatus.value = true
   try {
     const result = await checkOllamaStatus()
     ollamaServiceStatus.value = result.available
+    console.log('Ollama服务状态检查完成:', result.available)
   } catch (error) {
     console.error('检查Ollama服务状态失败:', error)
     ollamaServiceStatus.value = false
@@ -1445,6 +1447,7 @@ const checkOllamaServiceStatus = async () => {
 
 // 打开Ollama设置窗口
 const goToOllamaSettings = async () => {
+  console.log('点击跳转到Ollama设置按钮')
   // 关闭当前弹窗
   emit('update:visible', false)
 
@@ -1456,7 +1459,9 @@ const goToOllamaSettings = async () => {
   }
 
   // 打开设置窗口并直接跳转到Ollama设置
+  console.log('调用uiStore.openSettings')
   uiStore.openSettings('ollama')
+  console.log('uiStore.openSettings调用完成')
 }
 
 // 上一次打开时的 modelData id：用来判断切换模型/新增 vs. 同一次新增的连续打开
@@ -1788,6 +1793,22 @@ const formatModelSize = (bytes: number): string => {
 }
 
 // 检查模型状态（Ollama本地模型）
+const checkModelStatus = async () => {
+  if (!formData.value.modelName || formData.value.source !== 'local') {
+    return
+  }
+
+  try {
+    // 调用真实 Ollama API 检查模型是否存在
+    const result = await checkOllamaModels([formData.value.modelName])
+    modelChecked.value = true
+    modelAvailable.value = result.models[formData.value.modelName] || false
+  } catch (error) {
+    console.error('检查模型状态失败:', error)
+    modelChecked.value = false
+    modelAvailable.value = false
+  }
+}
 
 // 检查 Ollama 本地 Embedding 模型维度
 const checkOllamaDimension = async () => {
@@ -1818,6 +1839,9 @@ const checkOllamaDimension = async () => {
       dimensionMessage.value = t('model.editor.dimensionDetected', { value: result.dimension })
       MessagePlugin.success(dimensionMessage.value)
     } else {
+      if (result.message) {
+        console.debug('Backend dimension message:', result.message)
+      }
       dimensionMessage.value = t('model.editor.dimensionFailed')
       MessagePlugin.warning(dimensionMessage.value)
     }

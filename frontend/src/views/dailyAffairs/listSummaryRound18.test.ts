@@ -166,14 +166,14 @@ test('pruneEmptyTables：整表全 0 → 连标题一起隐藏；结论表 alway
     { title: '偏差电费', columns: FEE_COLS, rows: [['偏差电费', '尖峰', '0', '—', '0.00']] },
     { title: '零售交易电费', columns: FEE_COLS, rows: [['零售交易电费', '尖峰', '5085.43', '0.436', '2217.25']] },
     {
-      title: '应收费用汇总',
+      title: '账单合计',
       columns: SUM_COLS,
       rows: [['工商业电费（分摊后）', '持睿汽车', '0.00']],
       alwaysShow: true,
     },
   ]
   const out = pruneEmptyTables(tables)
-  assert.deepEqual(out.map((t) => t.title), ['零售交易电费', '应收费用汇总'])
+  assert.deepEqual(out.map((t) => t.title), ['零售交易电费', '账单合计'])
 })
 
 test('pruneEmptyTables：同一张表里 0 行被逐行剔除，非 0 行保留', () => {
@@ -201,16 +201,16 @@ test('没有金额/数量列的表一律保留（避免误删纯文本清单）'
   assert.equal(pruneEmptyTables([t]).length, 1)
 })
 
-test('打印链路接入：generateStatementPdf 排版前裁剪，费用清单/市电/光伏结论表标 alwaysShow', () => {
+test('打印链路接入：generateStatementPdf 排版前裁剪，市电/光伏结论表标 alwaysShow', () => {
   const pdf = read('useCatalogPdf.ts')
   assert.match(pdf, /export function pruneEmptyTables/)
   assert.match(pdf, /export function isEmptyDetailRow/)
   assert.match(pdf, /const doc: StatementDoc = \{ \.\.\.source, tables: pruneEmptyTables\(source\.tables\) \}/,
     '必须在排版前裁剪（排版中裁会留下空白页）')
-  // 应收汇总的 alwaysShow 在构造器里（第 22 轮 P1-2 迁出页面）
+  // 第 42 轮：费用清单的应收汇总表已整体下线（市电/光伏结论表仍标 alwaysShow）
   const statements = read('energyBillStatements.ts')
-  assert.match(statements, /alwaysShow: true/, '应收汇总必须保留')
-  // 只数「市电 / 光伏」两个构造器（同文件后面还有费用清单的应收汇总）
+  assert.doesNotMatch(statements, /应收费用汇总|function summaryTableOf/, '应收汇总章节必须下线')
+  // 只数「市电 / 光伏」两个构造器（费用清单已无结论表）
   const energy = read('energyBillStatements.ts')
   const utilitySolar = energy.slice(0, energy.indexOf('费用清单（租户）的打印清单构造器'))
   assert.equal((utilitySolar.match(/alwaysShow: true/g) || []).length, 2, '市电「账单合计」与光伏「结算汇总」都必须保留')
