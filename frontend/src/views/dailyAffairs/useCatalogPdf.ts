@@ -250,6 +250,10 @@ const S_LINE_H = 11
 const S_CELL_PAD = 5
 const S_ROW_MIN = 19
 const S_HEADER_H = 22
+// 第 41 轮：带 rowSpans 的「电费分项细项」用紧凑行高，让 24 行明细 +
+// 合计行完整落在第 1 页；其余明细表保持原行高，版式不受影响。
+const S_COMPACT_ROW_MIN = 18
+const S_COMPACT_LINE_H = 10.5
 
 const C_RULE = rgb(0.85, 0.87, 0.86)
 const C_HEAD_BG = rgb(0.945, 0.955, 0.95)
@@ -281,6 +285,14 @@ export interface StatementTable {
    * 打印清单的「费用类别 / 费用组成」用它与市电账单原件排版对齐。
    */
   rowSpans?: number[][]
+  /**
+   * 画完本表后强制翻页（第 41 轮）。
+   *
+   * 「电费分项细项」必须整表落在第 1 页，且第 2 页顶部从「电费核算明细」
+   * 章节标题开始。删掉 6 条小计行 + 紧凑化后表格本身就放得下，这里再加一道
+   * 显式分页，避免后续表格蹭到第 1 页剩余空白、把续页标题挤到页尾。
+   */
+  pageBreakAfter?: boolean
   /** 合计行（整行加粗、灰底、顶部深色线） */
   total?: string[]
   /** 无数据时的占位文案 */
@@ -304,6 +316,18 @@ export interface StatementDoc {
   kpis?: StatementKpi[]
   tables: StatementTable[]
   footerNote?: string
+}
+
+/**
+ * 第 41 轮：拆分「费用类别」合并单元格的双行文案。
+ *
+ * 业务侧写成 `大类\n（小计 XXX.XX）`，渲染时第 1 行用标准字号/主色、
+ * 第 2 行用小 0.8pt 的次要色，并整体在 rowspan 合并区内垂直居中。
+ * 没有 `\n` 时 `sub` 为空，走原来的单行绘制路径（其它表零影响）。
+ */
+export function splitCategoryLabel(raw: string): { main: string; sub: string } {
+  const parts = String(raw ?? '').split('\n')
+  return { main: parts[0] || '', sub: parts.slice(1).join(' ').trim() }
 }
 
 /**
@@ -456,16 +480,18 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
   }
 
   // ---- 页眉：主标题（居中）+ 副标题 + 分隔线 ----
+  // 第 41 轮紧凑化：标题/概览/KPI 合计省 ~20pt，把「电费分项细项」
+  // 连表头带合计行完整留在第 1 页。数值都是留白，字号与内容一律不动。
   const titleW = font.widthOfTextAtSize(doc.title, S_TITLE_SIZE)
   text(surface, doc.title, S_MARGIN + (avail - titleW) / 2, surface.y - S_TITLE_SIZE, S_TITLE_SIZE, C_BRAND)
-  surface.y -= S_TITLE_SIZE + 10
+  surface.y -= S_TITLE_SIZE + 6            // 原 +10 → 省 4
   if (doc.subtitle) {
     const subW = font.widthOfTextAtSize(doc.subtitle, S_SUBTITLE_SIZE)
     text(surface, doc.subtitle, S_MARGIN + (avail - subW) / 2, surface.y - S_SUBTITLE_SIZE, S_SUBTITLE_SIZE, C_MUTED)
-    surface.y -= S_SUBTITLE_SIZE + 10
+    surface.y -= S_SUBTITLE_SIZE + 6       // 原 +10 → 省 4
   }
   curPage().drawRectangle({ x: S_MARGIN, y: surface.y - 2, width: avail, height: 2, color: C_BRAND })
-  surface.y -= 16
+  surface.y -= 13                          // 原 16 → 省 3
 
   // ---- 概览：基本信息两列网格 ----
   if (doc.overviewTitle) drawSectionTitle(doc.overviewTitle)
@@ -482,9 +508,9 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
         text(surface, `${label}：`, x, surface.y - S_META_SIZE, S_META_SIZE, C_MUTED)
         text(surface, m.value || '—', x + labelW, surface.y - S_META_SIZE, S_META_SIZE, C_INK)
       })
-      surface.y -= S_META_SIZE + 11
+      surface.y -= S_META_SIZE + 8         // 原 +11 → 省 3 × 4 行 = 12
     }
-    surface.y -= 4
+    surface.y -= 2                         // 原 4 → 省 2
   }
 
   // ---- 概览指标卡：一行最多 4 张 ----
@@ -497,7 +523,7 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     const gap = 8
     const cardW = (avail - gap * (perRow - 1)) / perRow
     const hasHint = doc.kpis.some((k) => k.hint)
-    const cardH = hasHint ? 54 : 42
+    const cardH = hasHint ? 50 : 40          // 原 54 / 42 → 省 4 / 2
     for (let i = 0; i < doc.kpis.length; i += perRow) {
       surface.ensure(cardH + 10)
       const row = doc.kpis.slice(i, i + perRow)
@@ -534,13 +560,21 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
         const vw = font.widthOfTextAtSize(k.value, vSize)
         text(surface, k.value, x + cardW - 8 - vw, surface.y - cardH + 11, vSize, C_INK)
       })
-      surface.y -= cardH + 10
+      surface.y -= cardH + 7               // 原 +10 → 省 3
     }
   }
 
   // ---- 表格区 ----
-  for (const table of doc.tables) {
+  for (let tableIdx = 0; tableIdx < doc.tables.length; tableIdx++) {
+    const table = doc.tables[tableIdx]
     drawSectionTitle(table.title)
+
+    // 带 rowSpans 的表（电费分项细项）用紧凑行高：24 行明细 + 表头 + 合计
+    // 完整落在第 1 页。其它明细表沿用原行高，版式不受影响。
+    const compact = !!table.rowSpans?.length
+    const rowMin = compact ? S_COMPACT_ROW_MIN : S_ROW_MIN
+    const lineH = compact ? S_COMPACT_LINE_H : S_LINE_H
+    const headerH = compact ? 20 : S_HEADER_H
 
     const widths = columnWidths(table.columns, avail)
     const xs: number[] = []
@@ -549,10 +583,10 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
 
     const drawHead = () => {
       curPage().drawRectangle({
-        x: S_MARGIN, y: surface.y - S_HEADER_H, width: avail, height: S_HEADER_H, color: C_HEAD_BG,
+        x: S_MARGIN, y: surface.y - headerH, width: avail, height: headerH, color: C_HEAD_BG,
       })
       hline(surface, S_MARGIN, S_MARGIN + avail, surface.y, C_RULE, 0.8)
-      hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - S_HEADER_H, C_RULE, 0.8)
+      hline(surface, S_MARGIN, S_MARGIN + avail, surface.y - headerH, C_RULE, 0.8)
       table.columns.forEach((c, i) => {
         const label = c.label
         const tw = font.widthOfTextAtSize(label, S_TH_SIZE)
@@ -561,23 +595,33 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
           : c.align === 'center'
             ? xs[i] + (widths[i] - tw) / 2
             : xs[i] + S_CELL_PAD
-        text(surface, label, cx, surface.y - S_HEADER_H + 7, S_TH_SIZE, C_INK)
-        if (i > 0) vline(surface, xs[i], surface.y, surface.y - S_HEADER_H, C_RULE, 0.5)
+        text(surface, label, cx, surface.y - headerH + 7, S_TH_SIZE, C_INK)
+        if (i > 0) vline(surface, xs[i], surface.y, surface.y - headerH, C_RULE, 0.5)
       })
-      surface.y -= S_HEADER_H
+      surface.y -= headerH
     }
 
-    surface.ensure(S_HEADER_H + S_ROW_MIN * 2)
+    surface.ensure(headerH + rowMin * 2)
     drawHead()
 
     // 第 40 轮：预计算行高，供跨行合并单元格算「合并总高」做垂直居中。
+    // 第 41 轮：含 `\n` 的「费用类别」双行文案放在 rowspan 合并区里居中绘制，
+    // 因此**测高时按单行计**——否则每个大类首行都会被撑成 2 行高，24 行
+    // 反而更高，第一页依旧放不下。
     const measureRow = (cells: string[]) => {
       const wrapped = table.columns.map((c, i) =>
         wrapText(font, String(cells[i] ?? ''), widths[i] - S_CELL_PAD * 2, S_TD_SIZE))
       const lines = Math.max(...wrapped.map((w) => w.length))
-      return { wrapped, h: Math.max(S_ROW_MIN, lines * S_LINE_H + 8) }
+      return { wrapped, h: Math.max(rowMin, lines * lineH + 8) }
     }
-    const measured = table.rows.map(measureRow)
+    const measured = table.rows.map((row, ri) => {
+      const wrapped = table.columns.map((c, i) =>
+        wrapText(font, String(row[i] ?? ''), widths[i] - S_CELL_PAD * 2, S_TD_SIZE))
+      // 合并起始格的文本高度由整个 rowspan 区域承担，不参与本行行高计算。
+      const lines = Math.max(1, ...wrapped
+        .map((w, i) => ((table.rowSpans?.[ri]?.[i] ?? 1) > 1 ? 1 : w.length)))
+      return { wrapped, h: Math.max(rowMin, lines * lineH + 8) }
+    })
     const rowHeights = measured.map((m) => m.h)
     const spansOf = (r: number): number[] | undefined => table.rowSpans?.[r]
     /** 该行某列的有效合并行数（裁剪/跨页保护后至少 1）。 */
@@ -625,13 +669,40 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
           if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
           return
         }
+        const raw = String(cells[i] ?? '')
+        const cellH = canMerge(i) ? mergedHeights[i] : h
+        const centered = !alignRight(c.align) && c.align === 'center'
+        // 第 41 轮：大类合并格的「名称 + 小计」双行文本。
+        // 主行用标准字号/主色，小计行小 0.8pt + 次要色，两行整体垂直居中。
+        const two = !rowOpts.total && raw.includes('\n') ? splitCategoryLabel(raw) : null
+        if (two?.sub) {
+          const mainSize = S_TD_SIZE
+          const subSize = S_TD_SIZE - 0.8
+          const totalH = 2 * lineH
+          const startY = surface.y - cellH + (cellH - totalH) / 2
+          const drawLine = (s: string, size: number, baseline: number, color: typeof C_INK) => {
+            const tw = font.widthOfTextAtSize(s, size)
+            const cx = centered ? xs[i] + (widths[i] - tw) / 2 : xs[i] + S_CELL_PAD
+            text(surface, s, cx, baseline, size, color)
+          }
+          drawLine(two.main, mainSize, startY + lineH + 2.5, C_INK)
+          drawLine(two.sub, subSize, startY + 2.5, C_MUTED)
+          if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
+          return
+        }
+        // 普通单元格：文本列左对齐、时段列居中、数量/单价/金额右对齐。
+        // drawWrappedCell 只认 left/right，center 用「起始 x 偏移」实现。
+        const lineWidths = wrapped[i].map((l) => font.widthOfTextAtSize(l, S_TD_SIZE))
+        const centerShift = centered
+          ? (widths[i] - Math.max(0, ...lineWidths)) / 2 - S_CELL_PAD
+          : 0
         drawWrappedCell(curPage(), {
-          lines: wrapped[i], x: xs[i], top: surface.y,
-          height: canMerge(i) ? mergedHeights[i] : h,
+          lines: wrapped[i], x: xs[i] + centerShift, top: surface.y,
+          height: cellH,
           size: S_TD_SIZE,
-          lineHeight: S_LINE_H, padX: S_CELL_PAD, font, color: C_INK,
-          align: alignRight(c.align) ? 'right' : (c.align === 'center' ? 'left' : 'left'),
-          width: widths[i],
+          lineHeight: lineH, padX: S_CELL_PAD, font, color: C_INK,
+          align: alignRight(c.align) ? 'right' : 'left',
+          width: widths[i] - centerShift,
           baselineShift: 2.5,
         })
         if (i > 0) vline(surface, xs[i], surface.y, surface.y - h, C_RULE, 0.4)
@@ -657,6 +728,12 @@ export async function generateStatementPdf(opts: { doc: StatementDoc }): Promise
     }
     if (table.total?.length && table.rows.length) drawRow(table.total, table.rows.length, { total: true })
     surface.y -= 10
+    // 第 41 轮：分项细项表画完后强制翻页，第 2 页顶部从「电费核算明细」
+    // 开始。只在后面还有表时翻，避免末尾多出一张空白页。
+    if (table.pageBreakAfter && tableIdx < doc.tables.length - 1) {
+      surface.drawFooter()
+      surface.newPage()
+    }
   }
 
   // ---- 页脚备注 ----

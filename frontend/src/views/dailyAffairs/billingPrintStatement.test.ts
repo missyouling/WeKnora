@@ -157,7 +157,8 @@ test('概览元信息：租户视角展示「电水合计应收」', () => {
 
 test('PDF 卡片渲染：有 hint 时加高卡片，标题/构成/数值三行不重叠', () => {
   const pdf = read('useCatalogPdf.ts')
-  assert.match(pdf, /const cardH = hasHint \? 54 : 42/)
+  // 第 41 轮紧凑化：54/42 → 50/40，仍要求有 hint 的卡片更高（三行文字不重叠）
+  assert.match(pdf, /const cardH = hasHint \? 50 : 40/)
   assert.match(pdf, /if \(k\.hint\) \{/)
 })
 

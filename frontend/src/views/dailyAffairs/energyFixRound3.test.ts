@@ -89,8 +89,10 @@ test('清单 PDF 引擎：标题不重叠、支持概览指标与分区表格', 
   assert.match(src, /export interface StatementTable/)
   // 页标题与内容之间必须有明确下推：旧版 y -= 6 导致两个标题叠印。
   // 第 24 轮：游标统一走 PdfSurface（surface.y），断言跟随重构后的形态，
-  // 但**语义不变** —— 仍要求「标题后必须下推 S_TITLE_SIZE + 10」，且不得回到 y -= 6。
-  assert.match(src, /surface\.y -= S_TITLE_SIZE \+ 10/)
+  // 但**语义不变** —— 仍要求「标题后必须显式下推」，且不得回到 y -= 6。
+  // 第 41 轮紧凑化把留白由 +10 收到 +6（省 4pt，让分项表留在第 1 页），
+  // 下推本身绝不能去掉，否则标题与概览会叠印。
+  assert.match(src, /surface\.y -= S_TITLE_SIZE \+ 6/)
   assert.doesNotMatch(src, /y -= 6\b/)
   assert.match(src, /const pages = surface\.doc\.getPages\(\)/, '页脚页码需要总页数')
 })

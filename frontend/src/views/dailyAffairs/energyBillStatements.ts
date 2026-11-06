@@ -481,6 +481,9 @@ function statementMeta(ctx: TenantStatementCtx, rows: any[], unit: string, month
 
 /**
  * 第 40 轮：打印预览「费用类别 + 费用组成」双列 + 跨行合并。
+ * 第 41 轮：6 条独立小计行全部删除，大类小计内嵌到「费用类别」合并格
+ * 的第二行（`大类\n（小计 XXX.XX）`），行数由 30 缩减为 24，
+ * 让整张表连同底部合计行完整落在第 1 页。
  *
  * 旧实现每一行第 1 列都拼成「(1)市场化购电费 | 零售交易电费」，
  * 重复啰嗦、列宽被挤到折行；更严重的是排序用拼接串 `includes('上网环节线损')`
@@ -489,10 +492,10 @@ function statementMeta(ctx: TenantStatementCtx, rows: any[], unit: string, month
  *
  * 现在：
  *   · 先按**大类**分组（规范化成简洁名），排序只认大类、绝不认细项名；
- *   · 同一大类的所有明细行与小计行共用 1 个「费用类别」单元格（rowspan）；
+ *   · 同一大类的所有明细行共用 1 个「费用类别」单元格（rowspan）；
  *   · 同名分时项（尖/峰/平/谷 4 行）共用 1 个「费用组成」单元格（rowspan=4）；
- *   · 系统运行费用 / 政府性基金及附加 / 市场化购电费 / 输配电量电费
- *     在大类末尾补小计行。
+ *   · 大类小计不再单独占一行，而是写在「费用类别」合并格的**第二行**，
+ *     由版式引擎用更小字号/次要色渲染（见 useCatalogPdf 的 \n 双行处理）。
  */
 
 /** 分项行的中间结构（组装前按大类分组）。 */
@@ -503,20 +506,19 @@ interface FeeLine {
   qty: string
   rate: string
   amount: string
-  /** 未取整金额，用于大类小计与整表合计；小计行自身为 0（不重复累加） */
+  /** 未取整金额，用于大类小计（逐项取整相加）与整表合计（未取整累加） */
   exact: number
-  isSubtotal?: boolean
 }
 
 /** 大类规范化 + 排序权重（严格按账单分类，不用细项名做子串匹配）。 */
-const FEE_GROUPS: Array<{ match: RegExp; label: string; rank: number; subtotal?: string }> = [
-  { match: /市场化购电费/, label: '(1) 市场化购电费', rank: 1, subtotal: '市场化购电费（小计）' },
+const FEE_GROUPS: Array<{ match: RegExp; label: string; rank: number; inlineSubtotal?: boolean }> = [
+  { match: /市场化购电费/, label: '(1) 市场化购电费', rank: 1, inlineSubtotal: true },
   { match: /上网环节线损费/, label: '(2) 上网环节线损费', rank: 2 },
-  { match: /输配电量电费|输配电费/, label: '(3) 输配电量电费', rank: 3, subtotal: '输配电量电费（小计）' },
+  { match: /输配电量电费|输配电费/, label: '(3) 输配电量电费', rank: 3, inlineSubtotal: true },
   // 系统运行费排在线损之后判，但**分类取的是 cat（大类）**，细项名里的
   // 「上网环节线损代理采购损益」不会参与匹配 —— 这正是旧实现的 bug。
-  { match: /系统运行/, label: '(4) 系统运行费用', rank: 4, subtotal: '系统运行费用（小计）' },
-  { match: /政府性基金/, label: '(6) 政府性基金及附加', rank: 5, subtotal: '政府性基金及附加（小计）' },
+  { match: /系统运行/, label: '(4) 系统运行费用', rank: 4, inlineSubtotal: true },
+  { match: /政府性基金/, label: '(6) 政府性基金及附加', rank: 5, inlineSubtotal: true },
   { match: /居民/, label: '居民电费', rank: 6 },
   { match: /基本电费/, label: '基本电费', rank: 7 },
   { match: /功率因(?:素|数)调整|力调/, label: '功率因素调整电费', rank: 8 },
@@ -526,7 +528,7 @@ const FEE_GROUPS: Array<{ match: RegExp; label: string; rank: number; subtotal?:
 function feeGroupOf(cat: string) {
   const s = String(cat || '').trim()
   const hit = FEE_GROUPS.find((g) => g.match.test(s))
-  return hit || { label: s || '其他费用', rank: 99, subtotal: undefined as string | undefined }
+  return hit || { label: s || '其他费用', rank: 99, inlineSubtotal: undefined as boolean | undefined }
 }
 
 /** 细项名去大类前缀：账单里有些 name 自带「（1）市场化购电费.偏差电费」。 */
@@ -554,10 +556,10 @@ function assembleFeeRows(lines: FeeLine[]): { rows: string[][]; rowSpans: number
   const rows: string[][] = []
   const rowSpans: number[][] = []
   let sum = 0
-  for (const l of lines) if (!l.isSubtotal) sum += l.exact
+  for (const l of lines) sum += l.exact
 
   for (const cat of order) {
-    const raw = groups.get(cat)!
+    const list = groups.get(cat)!
     const spec = feeGroupOf(cat)
     // 大类小计 = **逐项 round2 后相加**（与列表大类汇总列同源）。
     //
@@ -565,32 +567,29 @@ function assembleFeeRows(lines: FeeLine[]): { rows: string[][]; rowSpans: number
     // 两者在部分月份会差 1 分：2026-10 系统运行费用未取整累加 784.42、
     // 逐项取整相加 784.43（列表与需求口径）；2026-09 政府性基金
     // 未取整 6038.06、逐项取整 6038.07。小计必须对得上列表汇总列。
-    const detailSum = raw.filter((l) => !l.isSubtotal)
-      .reduce((s, l) => s + round2(l.exact), 0)
-    // 大类小计：只有该大类确实有多行明细时才有意义（单行大类不必重复出一行）
-    const withSubtotal = spec.subtotal && raw.filter((l) => !l.isSubtotal).length >= 2
-      ? [...raw, {
-        cat, name: spec.subtotal!, period: '—', qty: '—', rate: '—',
-        amount: money2(detailSum), exact: 0, isSubtotal: true,
-      } as FeeLine]
-      : raw
+    const detailSum = list.reduce((s, l) => s + round2(l.exact), 0)
+    // 第 41 轮：小计不再独占一行，而是以 `\n` 第二行内嵌在「费用类别」
+    // 合并格里。只有确实包含多个子项的大类才需要（单行类别右侧金额列
+    // 已直接显示该金额，再写一遍纯属重复）。
+    const catLabel = spec.inlineSubtotal && list.length >= 2
+      ? `${cat}\n（小计 ${money2(detailSum)}）`
+      : cat
     // 预计算「费用组成」列的跨行合并：连续 4 行同名且每个时段各一行。
-    const nameSpans = withSubtotal.map(() => 1)
-    for (let i = 0; i + 3 < withSubtotal.length; i++) {
-      const head = withSubtotal[i]
-      if (head.isSubtotal || !TIMED_LABELS.has(head.period)) continue
-      const run = withSubtotal.slice(i, i + 4)
-      if (run.some((x) => x.isSubtotal || x.name !== head.name || !TIMED_LABELS.has(x.period))) continue
+    const nameSpans = list.map(() => 1)
+    for (let i = 0; i + 3 < list.length; i++) {
+      const head = list[i]
+      if (!TIMED_LABELS.has(head.period)) continue
+      const run = list.slice(i, i + 4)
+      if (run.some((x) => x.name !== head.name || !TIMED_LABELS.has(x.period))) continue
       if (new Set(run.map((x) => x.period)).size !== 4) continue
       nameSpans[i] = 4
       for (let k = 1; k < 4; k++) nameSpans[i + k] = 0
       i += 3
     }
-    withSubtotal.forEach((l, i) => {
-      rows.push([i === 0 ? cat : '', l.name, l.period, l.qty, l.rate, l.amount])
-      // 第 0 列：组首行 rowspan = 整组行数（含小计行），其余行为 0（被合并）
-      const catSpan = i === 0 ? withSubtotal.length : 0
-      rowSpans.push([catSpan, nameSpans[i], 1, 1, 1, 1])
+    list.forEach((l, i) => {
+      rows.push([i === 0 ? catLabel : '', l.name, l.period, l.qty, l.rate, l.amount])
+      // 第 0 列：组首行 rowspan = 整组行数，其余行为 0（被合并）
+      rowSpans.push([i === 0 ? list.length : 0, nameSpans[i], 1, 1, 1, 1])
     })
   }
   return { rows, rowSpans, sum }
@@ -603,8 +602,8 @@ function feeTableOf(ctx: TenantStatementCtx, month: string, unitRatio: number, p
   const bill = ctx.billOf(month)
   const items = (bill?.item?.fee_items || []) as any[]
   const lines: FeeLine[] = []
-  const push = (cat: string, name: string, period: string, qty: string, rate: string, amount: string, exact: number, isSubtotal = false) => {
-    lines.push({ cat, name: cleanFeeName(cat, name), period, qty, rate, amount, exact, isSubtotal })
+  const push = (cat: string, name: string, period: string, qty: string, rate: string, amount: string, exact: number) => {
+    lines.push({ cat, name: cleanFeeName(cat, name), period, qty, rate, amount, exact })
   }
 
   if (ctx.ownerView) {
@@ -657,14 +656,10 @@ function feeTableOf(ctx: TenantStatementCtx, month: string, unitRatio: number, p
       const timed = resolveTimedItemFee(rowCtx, key, cat)
       if (timed) {
         const name = String(it.item_name || key).trim()
-        let subQty = 0
-        let subFee = 0
         for (const p of timed.periods) {
-          subQty += p.qty
-          subFee += p.fee
           push(cat, name, p.period, num2(p.qty), rateText(p.rate), money2(p.fee), p.fee)
         }
-        push(cat, `${name}（小计）`, '四段合计', num2(subQty), '—', money2(subFee), 0, true)
+        // 第 41 轮：四段小计行删除，大类汇总已内嵌在「费用类别」第二行
         continue
       }
       const billRows = matchBillFeeItems(rowCtx, key, cat)
@@ -703,6 +698,8 @@ function feeTableOf(ctx: TenantStatementCtx, month: string, unitRatio: number, p
     ],
     rows,
     rowSpans,
+    // 分项表画完后强制翻页：第 2 页顶部从「电费核算明细」整齐开始
+    pageBreakAfter: true,
     total: ['合计', '', '', '', '', money2(sum)],
     empty: ctx.ownerView ? '当月无市电账单分项数据' : '当月无参与分摊的费用分项',
   }

@@ -9,6 +9,7 @@
 //   ② 纯函数的输入不被改动（清单构造器会复用同一份 rows）。
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { isEmptyDetailRow, pruneEmptyTables, type StatementTable } from './useCatalogPdf'
 
 const COLS = [
@@ -70,4 +71,28 @@ test('StatementTable.rowSpans 是可选字段：不带合并元数据的表照�
   const out = pruneEmptyTables([t])
   assert.equal(out[0].rows.length, 1)
   assert.equal(out[0].rowSpans, undefined)
+})
+
+// ---------------------------------------------------------------------------
+// 第 41 轮：大类小计内嵌「费用类别」列（\n 双行）+ 强制分页
+// ---------------------------------------------------------------------------
+import { splitCategoryLabel } from './useCatalogPdf'
+
+test('splitCategoryLabel：大类 + 小计拆成两行，单行类别不产生副行', () => {
+  assert.deepEqual(splitCategoryLabel('(1) 市场化购电费\n（小计 88278.66）'), {
+    main: '(1) 市场化购电费', sub: '（小计 88278.66）',
+  })
+  assert.deepEqual(splitCategoryLabel('(2) 上网环节线损费'), {
+    main: '(2) 上网环节线损费', sub: '',
+  })
+  assert.deepEqual(splitCategoryLabel(''), { main: '', sub: '' })
+})
+
+test('第 41 轮：PDF 渲染器支持紧凑行高与分项表后强制分页', () => {
+  const src = readFileSync(new URL('./useCatalogPdf.ts', import.meta.url), 'utf8')
+  assert.match(src, /S_COMPACT_ROW_MIN = 18/, '分项表必须用紧凑行高')
+  assert.match(src, /const compact = !!table\.rowSpans\?\.length/, '紧凑行高只对带 rowSpans 的表生效')
+  assert.match(src, /if \(table\.pageBreakAfter && tableIdx < doc\.tables\.length - 1\)/,
+    '分项表后必须强制分页（且末尾不产生空白页）')
+  assert.match(src, /drawLine\(two\.sub, subSize/, '小计行必须用更小字号绘制')
 })
