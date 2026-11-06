@@ -63,6 +63,14 @@ const props = withDefaults(defineProps<{
   extraTabLabel?: string
   /** 业务专属设置 Tab 的 value，默认 extra。 */
   extraTabValue?: string
+  /**
+   * 是否展示「提取规则」Tab（默认展示）。
+   *
+   * 第 44 轮：纯手工录入模块（轮胎/年检/成本 7 项）根本没有上传解析链路，
+   * 露出的规则页只能配出一堆永远不会被消费的 Prompt。给它们传 false 即可。
+   * 与 ruleCategories 是「与」关系：两者都允许才显示。
+   */
+  showRules?: boolean
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -72,6 +80,7 @@ const props = withDefaults(defineProps<{
   storageKey: 'weknora-invoice-settings-drawer-width',
   extraTabLabel: '',
   extraTabValue: 'extra',
+  showRules: true,
 })
 
 const emit = defineEmits<{
@@ -93,8 +102,10 @@ const currentCategory = ref('')
 watch(() => props.initialCategory, (v) => { currentCategory.value = String(v || '') }, { immediate: true })
 function onCategoryChange(name: string) { currentCategory.value = String(name || '') }
 
-// 提取规则 Tab 是否可见：白名单为空 = 全部可见（发票/合同等不受影响）
+// 提取规则 Tab 是否可见：先看业务开关（纯手工模块关掉），再看分类白名单
+// （白名单为空 = 全部可见，发票/合同等不受影响）
 const showRulesTab = computed(() => {
+  if (!props.showRules) return false
   const allow = props.ruleCategories || []
   if (!allow.length) return true
   const cur = currentCategory.value.trim()

@@ -92,6 +92,13 @@ export interface EditableField {
   /** 系统内置字段：禁止删除。 */
   builtin?: boolean
   /**
+   * 只在设置面板呈现、不写入 subs（第 44 轮）。
+   *
+   * 用于「列表状态列不由 subs 驱动」的模块（市电/光伏账单的「状态」是文件级固定列）：
+   * 落库只会让别的视图按 subs 再生成一条重复列，所以补齐时只做展示。
+   */
+  virtual?: boolean
+  /**
    * 跨分类字段引用（仅「费用清单」）。
    * 有 source = 引用其它分类的字段（取值走 tenantBillingSources）；
    * 无 source = 内置派生列。
@@ -374,6 +381,9 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
   for (const f of fields) {
     const name = String(f.name ?? '').trim()
     if (!name) continue
+    // 仅展示的补齐字段（virtual）不落库：它的列表列由页面固定生成，
+    // 写进 subs 会让别的视图按 subs 再派生一条重复列。
+    if (f.virtual) continue
     const dataType = f.dataType || 'text'
     const width = Number(f.width)
     const payload: SubPayload = {
@@ -475,34 +485,40 @@ export function subsPayloadFromNames(names: readonly string[]): SubPayload[] {
     }))
 }
 // ---------------------------------------------------------------------------
-// 默认列宽（第 32 轮）
+// 默认列宽（第 44 轮：默认值统一为 0 = 按内容自适应）
 //
-// 背景：width = 0 的语义是「按内容自适应」，但设置面板的列宽输入框会直接
-// 显示 `0`，用户读成「这列没有宽度」；而且 0 在保存后不落库，列表宽度完全
-// 依赖内容估算，同一字段在不同数据量下宽度会跳。
+// 历史事故：第 32 轮为了「不让输入框显示 0」，按数据类型给了 160/120/260 的
+// 初始值，并在**每次打开设置面板**时用 withDefaultFieldWidths 把 0 覆盖成默认值。
+// 结果是用户在面板里把列宽改成 0（自适应）保存 → 再打开/刷新又跳回 160，
+// 「0 永远存不下来」。而 0 恰恰是合法且首选的配置值（列宽跟内容走）。
 //
-// 现在按数据类型给一个可用的初始值（用户仍可改），新建/复制字段也带默认宽度，
-// 保证界面上永远是正整数。
+// 现在：0 是唯一默认值，只在 width 为 undefined/null 时兜底；>0 才是固定宽度。
+// 与发票 / 能耗的 width=0 自适应语义 100% 一致。
 // ---------------------------------------------------------------------------
 export const DEFAULT_FIELD_WIDTH: Record<string, number> = {
-  text: 160,
-  textarea: 260,
-  number: 120,
-  date: 120,
-  array: 160,
-  items: 160,
+  text: 0,
+  textarea: 0,
+  number: 0,
+  date: 0,
+  array: 0,
+  items: 0,
 }
 
-/** 字段数据类型的默认列宽（px）。未知类型按单行文本处理。 */
-export function defaultFieldWidth(dataType?: string): number {
-  const dt = String(dataType || 'text').trim()
-  return DEFAULT_FIELD_WIDTH[dt] ?? DEFAULT_FIELD_WIDTH.text
+/** 字段数据类型的默认列宽（px）：一律 0（按内容自适应）。 */
+export function defaultFieldWidth(_dataType?: string): number {
+  return 0
 }
 
-/** 给「未配置宽度」的字段补默认列宽（就地修改并返回同一数组）。 */
+/**
+ * 给「完全没有宽度键」的字段补 0（就地修改并返回同一数组）。
+ *
+ * **绝不能**把 0 当成「未配置」再赋默认值 —— 0 就是用户选择的自适应。
+ * 只处理 undefined/null（老数据结构里根本没有这个键）。
+ */
 export function withDefaultFieldWidths(fields: EditableField[]): EditableField[] {
   for (const f of fields) {
-    if (!(Number(f.width) > 0)) f.width = defaultFieldWidth(f.dataType)
+    const raw = (f as { width?: unknown }).width
+    if (raw === undefined || raw === null || raw === '') f.width = 0
   }
   return fields
 }

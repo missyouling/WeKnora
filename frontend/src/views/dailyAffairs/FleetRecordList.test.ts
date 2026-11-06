@@ -3,6 +3,9 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 const list = readFileSync(new URL('./FleetRecordList.vue', import.meta.url), 'utf8')
+// 第 44 轮：两个状态派生列的定义搬到 fleetColumns.buildArchiveColumns（可单测），
+// 页面只消费。列宽断言因此改为读纯函数源文件。
+const cols = readFileSync(new URL('./fleetColumns.ts', import.meta.url), 'utf8')
 const bar = readFileSync(new URL('../../components/business/BusinessParseStatusBar.vue', import.meta.url), 'utf8')
 
 // 第 28 轮：三段式重构后，进度横幅改由中台 BusinessParseStatusBar 承载，
@@ -149,7 +152,7 @@ test('证照状态：列表渲染三色 Tag（模板插槽，非 cell 函数）'
   assert.match(slot, /certThemeOf\(row\)/, '主题必须走 certThemeOf（三态映射）')
   assert.match(slot, /variant="light"/, '浅底深字（light 变体）')
   // 三态映射函数本体
-  const fn = src.slice(src.indexOf('const certThemeOf'), src.indexOf('const SYSTEM_STATUS_FIELD_NAMES'))
+  const fn = src.slice(src.indexOf('const certThemeOf'), src.indexOf('const columnDefs'))
   assert.match(fn, /'success'/, '生效中 → success（绿）')
   assert.match(fn, /'warning'/, '即将到期 → warning（橙）')
   assert.match(fn, /'danger'/, '已过期 → danger（红）')
@@ -159,7 +162,7 @@ test('证照状态：列表渲染三色 Tag（模板插槽，非 cell 函数）'
 })
 
 test('证照状态 / 提取状态列宽 ≥ 100px，表头不被截断', () => {
-  const src = list
+  const src = cols
   for (const key of ['CERT_STATUS_KEY', 'EXTRACT_STATUS_KEY']) {
     const i = src.indexOf(`key: ${key}`)
     assert.ok(i > 0, `缺少 ${key} 列定义`)

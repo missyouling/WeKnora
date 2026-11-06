@@ -4,7 +4,7 @@
 // 为什么需要这份数据（第 34 轮）：
 //   分类原先只能通过 `/fleet/categories` 异步拉取。首屏第 1 帧 `menuCategories`
 //   是空数组 → `activeSubs` 为空 → 表头只剩复选框与两个系统保留列、KPI 卡片只剩
-//   「已收录 / 历史记录」两张，接口回来后才「蹦」出其余卡片与业务列
+//   「历史记录」一张，接口回来后才「蹦」出其余卡片与业务列
 //   （真机：先 2 张卡停顿一下再出全部、表头先只有 2 列）。
 //
 // 有了同步种子，第 1 帧就能算出完整卡片组与完整表头；接口返回后用服务端数据
@@ -36,6 +36,9 @@ function f(name: string, opts: FieldOpts = {}): FleetCategorySub {
     data_type: opts.dataType || 'text',
     is_default: opts.def === true,
     filterable: opts.filt === true,
+    // 列宽默认 0 = 按内容自适应（第 44 轮统一口径，与发票/能耗一致）。
+    // 显式写出来，避免又有人在中间层「补一个看起来更好看的默认宽度」。
+    width: 0,
   }
 }
 

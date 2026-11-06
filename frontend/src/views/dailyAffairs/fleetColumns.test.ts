@@ -7,15 +7,19 @@ import {
   buildFleetFieldFiltersParam,
   filterableOf,
   buildFleetSummaryViewColumns,
+  buildArchiveColumns,
   amountFromForm,
   resolveDefaultCategoryName,
   certStatusOf,
   normalizeFieldWidth,
   buildFleetKpiCards,
   fleetEmptyState,
+  fleetKnowledgeIdOf,
   dataTypeOfSub,
   subCategoryAliasesOf,
   subCategoryMatches,
+  CERT_STATUS_KEY,
+  EXTRACT_STATUS_KEY,
 } from './fleetColumns'
 
 const plateMap = new Map<string, string>([['v1', '渝C81022']])
@@ -232,7 +236,7 @@ test('resolveDefaultCategoryName：取第 1 个启用分类，跳过停用与空
   assert.equal(resolveDefaultCategoryName([{ name: 'A', enabled: false }]), '')
 })
 
-test('buildFleetKpiCards：第1张为纯统计卡（不可点、无副文本），分类卡无占比副文本', () => {
+test('buildFleetKpiCards：不再产出「已收录」汇总卡，首张即分类卡', () => {
   const cards = buildFleetKpiCards({
     isArchive: true,
     total: 2,
@@ -243,12 +247,13 @@ test('buildFleetKpiCards：第1张为纯统计卡（不可点、无副文本）�
     parseFailed: 0,
     extractFailed: 0,
   })
-  // 第 1 张：纯统计，不可点击，无「当前菜单全部证照」之类口水话
-  assert.equal(cards[0].action, 'stat')
-  assert.equal(cards[0].static, true)
-  assert.equal(cards[0].sub, '')
-  assert.equal(cards[0].label, '已收录证照')
-  assert.equal(cards[0].value, '2')
+  // 第 44 轮（图 1）：第 1 张「已收录证照 / 已收录记录」彻底弃用
+  assert.ok(!cards.some((c) => /已收录/.test(c.label)), 'KPI 组不得再有「已收录」卡')
+  assert.ok(!cards.some((c) => c.action === 'stat'), '不得再有纯统计卡')
+  // 卡片组从第 1 个分类卡开始（默认激活焦点就是它）
+  assert.equal(cards[0].label, '道路运输经营许可证')
+  assert.equal(cards[0].action, 'type')
+  assert.equal(cards[0].typeValue, 'cat-道路运输经营许可证')
   // 分类卡：只有数字，sub 必须为空串（不得出现「占 50%」）
   const catCards = cards.filter((c) => c.action === 'type')
   assert.equal(catCards.length, 2)
@@ -270,15 +275,16 @@ test('buildFleetKpiCards：有解析/提取失败时历史卡显示 N 份异常'
   assert.equal(history.sub, '3 份异常')
 })
 
-test('buildFleetKpiCards：手工录入类无历史卡，且第1张卡为纯统计', () => {
+test('buildFleetKpiCards：手工录入类无历史卡，且首张为分类卡', () => {
   const cards = buildFleetKpiCards({
     isArchive: false, total: 1, categories: [{ name: '加油充电' }],
     subCounts: { '加油充电': 1 }, subAmounts: { '加油充电': 177 },
     singleCategory: '加油充电', parseFailed: 0, extractFailed: 0,
   })
   assert.equal(cards.some((c) => c.action === 'history'), false)
-  assert.equal(cards[0].action, 'stat')
-  assert.equal(cards[0].label, '已收录记录')
+  assert.equal(cards.length, 1)
+  assert.equal(cards[0].label, '加油充电')
+  assert.equal(cards[0].action, 'type')
 })
 
 test('fleetEmptyState：主文案统一「暂无数据」，副文案按录入模式区分', () => {
@@ -361,4 +367,74 @@ test('subCategoryAliasesOf：返回同组全部写法，且不含自身', () => 
   assert.ok(list.includes('driving_license'))
   assert.ok(!list.includes('驾驶证'), '别名列表不应包含自身')
   assert.deepEqual(subCategoryAliasesOf(''), [])
+})
+
+// ---------------------------------------------------------------------------
+// 第 44 轮：台账行 → 源文件 ID（浮动栏「重新解析/重新提取」的入参）
+// ---------------------------------------------------------------------------
+
+test('fleetKnowledgeIdOf：兼容四种历史写法，空白串一律视为无关联', () => {
+  assert.equal(fleetKnowledgeIdOf({ doc_knowledge_id: 'k1' }), 'k1')
+  assert.equal(fleetKnowledgeIdOf({ knowledge_id: 'k2' }), 'k2')
+  assert.equal(fleetKnowledgeIdOf({ source_knowledge_id: 'k3' }), 'k3')
+  assert.equal(fleetKnowledgeIdOf({ data: { _knowledge_id: 'k4' } }), 'k4')
+  assert.equal(fleetKnowledgeIdOf({ data: { 源文件ID: 'k5' } }), 'k5')
+  // 优先级：正式列优先于 JSONB 副本
+  assert.equal(fleetKnowledgeIdOf({ doc_knowledge_id: 'a', data: { 源文件ID: 'b' } }), 'a')
+  // 空值/空白/缺失 → 空串（打接口只会 500）
+  assert.equal(fleetKnowledgeIdOf({ doc_knowledge_id: '  ' }), '')
+  assert.equal(fleetKnowledgeIdOf({ knowledge_id: '' }), '')
+  assert.equal(fleetKnowledgeIdOf(null), '')
+  assert.equal(fleetKnowledgeIdOf(undefined), '')
+  assert.equal(fleetKnowledgeIdOf({}), '')
+})
+
+test('fleetKnowledgeIdOf：有 ID 的行提取状态即为「提取成功」', () => {
+  assert.equal(fleetKnowledgeIdOf({ data: {} }).length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// 第 44 轮：档案类列定义 —— 状态派生列按「字段定义」里的顺序落位
+// ---------------------------------------------------------------------------
+
+test('buildArchiveColumns：无状态字段时追加在末尾', () => {
+  const cols = buildArchiveColumns(
+    [
+      { name: '车牌号', enabled: true, is_default: true, data_type: 'text' },
+      { name: '业户名称', enabled: true, is_default: true, data_type: 'text' },
+    ],
+    plateMap,
+    '2026-11-06',
+  )
+  assert.deepEqual(cols.map((c) => c.key), ['车牌号', '业户名称', CERT_STATUS_KEY, EXTRACT_STATUS_KEY])
+})
+
+test('buildArchiveColumns：派生列位置跟随 subs（拖到第 2 位就排第 2）', () => {
+  const cols = buildArchiveColumns(
+    [
+      { name: '车牌号', enabled: true, is_default: true, data_type: 'text' },
+      { name: '提取状态', enabled: true, is_default: true, data_type: 'text' },
+      { name: '业户名称', enabled: true, is_default: true, data_type: 'text' },
+      { name: '证照状态', enabled: true, is_default: true, data_type: 'text' },
+    ],
+    plateMap,
+    '2026-11-06',
+  )
+  assert.deepEqual(cols.map((c) => c.key), ['车牌号', EXTRACT_STATUS_KEY, '业户名称', CERT_STATUS_KEY])
+})
+
+test('buildArchiveColumns：多个证照状态别名只出一列（取第一次出现的位置）', () => {
+  const cols = buildArchiveColumns(
+    [
+      { name: '驾驶证状态', enabled: true, is_default: true, data_type: 'text' },
+      { name: '车牌号', enabled: true, is_default: true, data_type: 'text' },
+      { name: '保单状态', enabled: true, is_default: true, data_type: 'text' },
+    ],
+    plateMap,
+    '2026-11-06',
+  )
+  assert.equal(cols.filter((c) => c.key === CERT_STATUS_KEY).length, 1)
+  assert.equal(cols[0].key, CERT_STATUS_KEY)
+  // 历史状态文本列不得作为普通业务列再出现
+  assert.ok(!cols.some((c) => c.key === '驾驶证状态' || c.key === '保单状态'))
 })

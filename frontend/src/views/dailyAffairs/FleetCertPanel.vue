@@ -183,11 +183,18 @@
                     <!-- 阻止冒泡只挂在外层 div（原生元素）。绝不能写在 t-input 上：
                          t-input 的 click 首参是 { e } 上下文对象而非原生 MouseEvent，
                          Vue 的 .stop 会调 e.stopPropagation() 直接抛 TypeError（真机控制台）。 -->
-                    <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(row.fd) }"
+                    <div v-else class="fc-name-wrap" :class="{ 'has-child': !!childGroupOf(row.fd), 'is-locked': isLockedStatus(row.fd) }"
                       @click.stop="toggleChildGroup(row.fd)">
                       <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="字段名" class="fc-name"
+                        :disabled="isLockedStatus(row.fd)"
+                        :title="isLockedStatus(row.fd) ? '系统内置字段：名称与数据类型由系统维护，可拖动排序、可调列宽' : ''"
                         :ref="(el: any) => setFieldInputRef(row.fd.name, el)"
                         @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
+                      <!-- 系统内置状态字段：字段名右侧挂锁（第 44 轮）。
+                           锁只锁「身份」（名称/类型/启用/删除），不锁列宽、默认表头与拖拽顺序。 -->
+                      <span v-if="isLockedStatus(row.fd)" class="fc-name-lock" title="系统内置字段">
+                        <t-icon name="lock-on" size="14px" />
+                      </span>
                       <!-- 细项展开徽标：绝对定位在输入框右内边距上，不占列宽、不挤字段名。
                            旧版在这里塞了实心绿底按钮，把 160px 的字段名压到约 80px。 -->
                       <span v-if="childGroupOf(row.fd)" class="fc-child-badge"
@@ -197,7 +204,8 @@
                         <t-icon name="chevron-right" size="12px" class="fc-child-caret" />
                       </span>
                     </div>
-                    <t-select v-model="row.fd.dataType" size="small" class="fc-type" :options="dataTypeOptions" />
+                    <t-select v-model="row.fd.dataType" size="small" class="fc-type" :options="dataTypeOptions"
+                      :disabled="isLockedStatus(row.fd)" />
                     <t-tooltip v-if="showWidthCol" content="0=按内容自适应，填写像素可固定列宽" placement="top">
                       <t-input-number v-model="row.fd.width" size="small" class="fc-width"
                         :min="0" :max="600" :step="10" :decimal-places="0" placeholder="0=自适应"
@@ -208,8 +216,10 @@
                     <t-tooltip v-else content="默认字段：重置字段筛选器时自动勾选" placement="top">
                       <t-switch :model-value="!!row.fd.isDefault" size="small" @update:model-value="(v: any) => (row.fd.isDefault = !!v)" />
                     </t-tooltip>
-                    <t-switch :model-value="!!row.fd.enabled" size="small" @update:model-value="(v: any) => (row.fd.enabled = !!v)" />
-                    <template v-if="isBuiltinField(row.fd)">
+                    <t-switch :model-value="isLockedStatus(row.fd) ? true : !!row.fd.enabled" size="small"
+                      :disabled="isLockedStatus(row.fd)"
+                      @update:model-value="(v: any) => { if (!isLockedStatus(row.fd)) row.fd.enabled = !!v }" />
+                    <template v-if="isBuiltinField(row.fd) || isLockedStatus(row.fd)">
                       <t-tooltip content="系统内置字段，不可删除" placement="top">
                         <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
                       </t-tooltip>
@@ -424,6 +434,7 @@ import {
 } from './fleetCategorySubs'
 import { listSubGroups } from './sixWaySync'
 import { sourcePathText } from './tenantBillingSources'
+import { statusFieldSpecsOf, ensureStatusFields, isLockedStatusField } from './statusFields'
 import {
   COST_LIST_CATEGORY,
   DEFAULT_GROUP_KEY,
@@ -992,7 +1003,8 @@ const subGroupTabs = computed(() => {
 const fieldsVisible = computed(() => {
   const want = tabGroupKey(activeSubGroup.value)
   const list = activeSubGroup.value
-    ? fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want)
+    // 状态字段不属于任何费用分组（它是文件级状态），任何分组页签下都要可见
+    ? fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want || isLockedStatus(f))
     : fieldsEditable.value
   return collapseFeeGroups(list as any[]).map((row: any) => {
     if (row.kind !== 'group') return row.sub
@@ -1371,6 +1383,17 @@ function isBuiltinField(fd: EditableField) {
   return isBuiltinFieldOf(group.value.scope, String(fd.name || ''))
 }
 
+/**
+ * 字段身份是否被系统锁定（第 44 轮）。
+ *
+ * 锁的是「身份」四项：字段名 / 数据类型 / 启用字段 / 删除。
+ * 不锁：左侧拖拽排序、列宽、默认表头 —— 状态列放第几列、多宽是用户正当的排版诉求。
+ * 判定收口在 statusFields.ts，页面不再自己比较中文字段名。
+ */
+function isLockedStatus(fd: EditableField) {
+  return isLockedStatusField(group.value.scope, editForm.name, String(fd?.name || ''))
+}
+
 /** 新增子项：只填中文名，key 由系统按中文名映射或递增生成。 */
 function addSubField(fd: EditableField) {
   const label = newSubFieldLabel.value.trim()
@@ -1439,6 +1462,13 @@ function toggleEdit(item: any) {
   if (FLEET_SCOPES.has(String(group.value.scope || ''))) {
     withDefaultFieldWidths(fieldsEditable.value)
   }
+  // 系统内置状态字段补齐（第 44 轮）：证照状态 / 提取状态必须永远出现在字段定义里。
+  // 缺失则补一条（车队档案与发票/合同落库，市电/光伏账单只做展示，见 statusFields.ts）；
+  // 已存在（含「证件状态」这类历史别名）则强制启用 + 内置，但不动名称/顺序/列宽。
+  ensureStatusFields(
+    fieldsEditable.value,
+    statusFieldSpecsOf(String(group.value.scope || ''), editForm.name),
+  )
   // 费用清单：先把存量 subs 归一到「默认分组」（历史 group='cols'）。
   // 注意判定用 isCostListFor(item) 而不是 isCostList —— 后者要等 editingId 赋值后才准。
   const costList = isCostListFor(item)
@@ -2195,6 +2225,11 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 
     .fc-name { flex: 1 1 auto; min-width: 0; }
 
+    /* 锁定状态字段：右侧留出锁标位，长字段名不会压到图标上 */
+    &.is-locked {
+      .fc-name :deep(.t-input) { padding-right: 30px; }
+    }
+
     /* 有细项的字段：整块可点，右侧留出徽标位（靠内边距让位，不压缩输入框宽度） */
     &.has-child {
       cursor: pointer;
@@ -2202,6 +2237,20 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       .fc-name :deep(.t-input) { padding-right: 46px; }
       .fc-name :deep(input) { cursor: pointer; }
     }
+  }
+
+  /* 系统内置状态字段的锁标（第 44 轮）：绝对定位在输入框右侧内边距上，
+     不占列宽、不压缩字段名；禁用态输入框的灰底本身就是「不可编辑」的视觉，
+     锁标再明确一层「这是系统维护的身份」。 */
+  .fc-name-lock {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    color: var(--td-text-color-placeholder);
+    pointer-events: none;
   }
 
   /* 细项数量徽标：绝对定位在输入框右内边距上 —— 不占列宽，字段名输入框

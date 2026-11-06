@@ -57,6 +57,12 @@ func (h *FleetHandler) StartFleetBackfillTasks(ctx context.Context) {
 		h.backfillFleetRecordSubCategory(ctx)
 		// 筛选栏收敛：给存量分类补 filterable 标记（否则 29 个字段平铺 4 行）
 		h.backfillFleetCategoryFilterable(ctx)
+		// 源文件关联（第 44 轮）：台账行缺 doc_knowledge_id 时按同租户唯一文件名补回，
+		// 否则勾选记录后「重新解析 / 重新提取」拿不到文件 ID（按钮恒禁用）。
+		h.backfillFleetRecordKnowledgeIDs(ctx)
+		// 列宽修正（第 44 轮）：0 是合法配置（自适应），把被历史默认值覆盖的列宽清回 0，
+		// 否则设置面板一打开满屏 160，「改成 0 保存又跳回 160」的观感无法根除。
+		h.NormalizeFleetSubWidths(ctx)
 		// 注：**不再**从发票库派生台账（第 29 轮明确取消跨库同步）。
 		// 加油充电 / 路桥费是独立手工台账，数据由用户录入或上传票据提取。
 	}()
@@ -1215,7 +1221,10 @@ func sanitizeFleetSubs(subs []types.FleetCategorySub) ([]types.FleetCategorySub,
 			t = "text"
 		}
 		sub.DataType = t
-		if sub.Width < 0 || sub.Width > 400 {
+		// 列宽：0 是合法值（按内容自适应），必须原样保存；只有越界值才归一。
+		// 上限与设置面板输入框（0~600）对齐：此前夹到 400，用户填 500 会被静默改成 0
+		// ——「界面能填、保存无效」（第 44 轮）。
+		if sub.Width < 0 || sub.Width > 600 {
 			sub.Width = 0
 		}
 		out = append(out, sub)

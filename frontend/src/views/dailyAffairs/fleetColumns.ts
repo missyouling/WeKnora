@@ -12,6 +12,7 @@ import type { FilterFieldSpec } from './businessFilter'
 import type { SummaryColumn } from './listSummary'
 import type { CatalogColumn } from './useCatalogPdf'
 import { grouped, num2 } from './formatNumber'
+import { isCertStatusName, isExtractStatusName, isStatusFieldName } from './statusFields'
 
 /** 后端分类 subs 的最小子集（只取派生需要的键）。 */
 export interface FleetSub {
@@ -34,6 +35,11 @@ export interface FleetColumn {
   default: boolean
   /** 固定宽度（subs.width > 0） */
   width?: number
+  /**
+   * 列宽下限（仅派生列使用，如三色 Tag 状态列需要 100px）。
+   * 用户配置了固定宽度时以 width 为准，否则按内容估算后再用 minWidth 兜住。
+   */
+  minWidth?: number
   /** 是否出现在筛选栏（由 subs.filterable 派生） */
   filterable?: boolean
   /** 取值：默认 data[name]，车牌号走 vehicle 映射 */
@@ -424,14 +430,23 @@ export function subCategoryMatches(recordSub: string, categoryName: string): boo
 /**
  * 构造车队 KPI 卡片（纯函数，便于单测）。
  *
- * 文案口径对齐发票管理：
- *   · 第 1 张「已收录…」只给数字，不给「当前菜单全部证照」这类口水话；
- *   · 子分类卡只给标题 + 数量，**不显示占比**（旧版 `占 50%` 已移除）；
- *   · 历史记录卡副文案与发票一致：`无异常文件` / `N 份异常`。
+ * 第 44 轮（需求图 1）：**删掉第 1 张「已收录证照 / 已收录记录」汇总卡**。
+ * 这张卡只有总数，点不动、也没有筛选语义（与发票「已收录发票 = 全部」不同：
+ * 车队列表本来就没有「全部」视图，默认焦点永远落在第一个具体分类上），
+ * 三个菜单里它纯粹占掉一个卡片位，把真正的分类卡挤到右边。
+ *
+ * 现在：
+ *   · 卡片组从第 1 个分类卡开始（如 车辆档案：道路运输经营许可证 / 道路运输证 / …）；
+ *   · 档案类最右侧保留「历史记录」卡（上传历史抽屉的入口）；
+ *   · 手工录入类（轮胎/年检/成本 7 项）没有上传链路 → 只有分类卡，没有历史卡。
+ *
+ * 文案口径对齐发票管理：子分类卡只给标题 + 数量，不显示占比；
+ * 历史记录卡副文案 `无异常文件` / `N 份异常` / `正在执行 N`。
  */
 export function buildFleetKpiCards(args: {
   isArchive: boolean
-  total: number
+  /** 该菜单的记录总数。第 44 轮起不再产出汇总卡，保留参数仅为调用方兼容。 */
+  total?: number
   categories: readonly any[]
   subCounts: Record<string, number>
   subAmounts: Record<string, number>
@@ -449,19 +464,9 @@ export function buildFleetKpiCards(args: {
   /** 正在解析/提取的文件数：>0 时副文案改为「正在执行 N」。 */
   running?: number
 }): FleetKpiCard[] {
-  const { isArchive, total, categories, subCounts, singleCategory } = args
+  const { isArchive, categories, subCounts, singleCategory } = args
   const unit = isArchive ? '份' : '条'
-  const cards: FleetKpiCard[] = [{
-    key: 'all',
-    label: isArchive ? '已收录证照' : '已收录记录',
-    icon: 'file-copy',
-    value: String(total),
-    unit,
-    sub: '',
-    theme: 'brand',
-    action: 'stat',
-    static: true,
-  }]
+  const cards: FleetKpiCard[] = []
   for (const c of Array.isArray(categories) ? categories : []) {
     const name = String(c?.name || '').trim()
     if (!name) continue
@@ -481,7 +486,9 @@ export function buildFleetKpiCards(args: {
     const failed = Number(args.parseFailed || 0) + Number(args.extractFailed || 0)
     const running = Number(args.running || 0)
     // 历史记录 = 已上传文件数（与抽屉「全部文件」同一集合），不是台账行数
-    const historyCount = args.historyCount === undefined ? total : Number(args.historyCount) || 0
+    const historyCount = args.historyCount === undefined
+      ? Number(args.total || 0)
+      : Number(args.historyCount) || 0
     // 副文案优先级：在途 > 异常 > 正常（与抽屉顶部三个计数同序）
     const sub = running > 0 ? `正在执行 ${running}` : failed > 0 ? `${failed} 份异常` : '无异常文件'
     cards.push({
@@ -619,11 +626,118 @@ export function normalizeFieldWidth(v: unknown): number {
   return Math.min(600, Math.max(60, Math.round(n)))
 }
 
+/** 证照状态派生列的 key（列表用模板插槽 #__cert_status 渲染三色 Tag）。 */
+export const CERT_STATUS_KEY = '__cert_status'
+/** 提取状态派生列的 key（模板插槽 #__extract_status）。 */
+export const EXTRACT_STATUS_KEY = '__extract_status'
+
+/** 证照状态派生列（三色 Tag 走模板插槽）。 */
+export function certStatusColumn(today: string): FleetColumn {
+  return {
+    key: CERT_STATUS_KEY,
+    label: '证照状态',
+    dataType: 'text',
+    default: true,
+    value: (row: any) => certStatusOf(row?.data, today).label || '—',
+    raw: () => 0,
+    // 需求图 5：表头曾被截断成「证照状」—— 三色 Tag 比纯文本更宽，
+    // 必须给足 100px（Tag 四周 padding + 4 个汉字）。
+    minWidth: 100,
+  }
+}
+
+/** 提取状态派生列（模板插槽 #__extract_status）。 */
+export function extractStatusColumn(): FleetColumn {
+  return {
+    key: EXTRACT_STATUS_KEY,
+    label: '提取状态',
+    dataType: 'text',
+    default: true,
+    value: (row: any) => extractStatusOf(row).label,
+    raw: () => 0,
+    minWidth: 100,
+  }
+}
+
+/**
+ * 档案类列表的列定义：业务列（subs 派生） + 两个系统状态列。
+ *
+ * 第 44 轮：状态字段在「字段定义」里可拖动排序（名称/类型/删除锁死，顺序不锁），
+ * 所以派生列的位置必须**跟着 subs 走** —— 用户把「提取状态」拖到第 2 位，
+ * 表头第 2 列就该是它。旧实现是「过滤掉 + 永远追加在末尾」，拖了等于没拖。
+ *
+ * 同一语义可能存在多个历史别名（证照状态 / 证件状态 / 保单状态 / 驾驶证状态），
+ * 只取第一次出现的位置，避免同一列渲染两遍；subs 里完全没有时追加在末尾，
+ * 保证任何分类都看得到状态列。
+ */
+export function buildArchiveColumns(
+  subs: readonly any[],
+  vehicleMap: Map<string, string>,
+  today: string,
+): FleetColumn[] {
+  const all = buildFleetColumns(subs, vehicleMap)
+  const out: FleetColumn[] = []
+  const used = new Set<string>()
+  let certAdded = false
+  let extractAdded = false
+  const pushCert = (): void => { if (!certAdded) { out.push(certStatusColumn(today)); certAdded = true } }
+  const pushExtract = (): void => { if (!extractAdded) { out.push(extractStatusColumn()); extractAdded = true } }
+  const byKey = new Map(all.map((c) => [c.key, c]))
+  for (const s of Array.isArray(subs) ? subs : []) {
+    const name = String(s?.name || '')
+    if (isCertStatusName(name)) { pushCert(); continue }
+    if (isExtractStatusName(name)) { pushExtract(); continue }
+    const col = byKey.get(name)
+    if (col && !used.has(name)) { used.add(name); out.push(col) }
+  }
+  // subs 顺序之外合成的列（buildFleetColumns 兜底产出的）按原顺序补在末尾
+  for (const c of all) {
+    if (used.has(c.key) || isStatusFieldName(c.key)) continue
+    used.add(c.key)
+    out.push(c)
+  }
+  if (!certAdded) pushCert()
+  if (!extractAdded) pushExtract()
+  return out
+}
+
 /** 提取状态（归档类）：记录能落库即代表提取成功。 */
 export function extractStatusOf(row: any): { label: string; theme: 'success' | 'default' } {
   const hasData = !!(row && row.data && Object.keys(row.data).length > 0)
-  const hasKid = !!(row && (row.doc_knowledge_id || row.docKnowledgeId))
+  const hasKid = !!fleetKnowledgeIdOf(row)
   return hasData || hasKid
     ? { label: '提取成功', theme: 'success' }
     : { label: '未提取', theme: 'default' }
+}
+
+/**
+ * 台账记录 → 源文件（knowledge）ID（第 44 轮）。
+ *
+ * 档案类的列表读 `fleet_records`（台账），而「重新解析 / 重新提取」要的是
+ * **知识库文件 ID**。两个 ID 不同、字段也不同名，历史上有过四种写法：
+ *   · `doc_knowledge_id`：提取落库时写入的正式关联列（现网全部有值）；
+ *   · `knowledge_id` / `source_knowledge_id`：外部导入与早期接口的写法；
+ *   · `data._knowledge_id` / `data['源文件ID']`：第 39 轮回填时写进 JSONB 的副本。
+ *
+ * 旧实现只认 `row.__file`（文件行专用标记），台账行永远没有它 →
+ * 勾选后「重新解析/重新提取」恒为禁用（真机图 2）。这里按候选链统一取，
+ * 并过滤空白串（空 ID 打接口只会 500）。
+ */
+export function fleetKnowledgeIdOf(row: any): string {
+  if (!row || typeof row !== 'object') return ''
+  const candidates = [
+    row.doc_knowledge_id,
+    row.docKnowledgeId,
+    row.knowledge_id,
+    row.source_knowledge_id,
+    row.knowledgeId,
+    row.data?._knowledge_id,
+    row.data?.knowledge_id,
+    row.data?.['源文件ID'],
+  ]
+  for (const c of candidates) {
+    const v = String(c ?? '').trim()
+    if (v) return v
+  }
+  return ''
 }

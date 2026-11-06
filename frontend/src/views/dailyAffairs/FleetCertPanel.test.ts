@@ -166,7 +166,8 @@ test('内置字段：发票 3 个；车队档案「证照状态/提取状态」�
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceType'), true)
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceNo'), false)
   assert.equal(isBuiltinFieldOf('vehicle', 'invoiceType'), false)
-  assert.match(panel, /<template v-if="isBuiltinField\(row\.fd\)">[\s\S]{0,200}lock-on/)
+  // 第 44 轮：锁定判定扩到 isLockedStatus（状态字段即使没有 builtin 标记也锁身份）
+  assert.match(panel, /<template v-if="isBuiltinField\(row\.fd\) \|\| isLockedStatus\(row\.fd\)">[\s\S]{0,200}lock-on/)
   assert.match(panel, /系统内置字段，不可删除/)
   // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除
   assert.doesNotMatch(panel, /系统内置子项，不可删除/)
@@ -348,36 +349,37 @@ test('toSubsPayload：列宽 60~600 持久化，0=自适应，越界夹紧（第
 })
 
 // ---------------------------------------------------------------------------
-// 默认列宽（第 32 轮）
+// 默认列宽（第 44 轮：默认值统一为 0 = 自适应）
 //
-// 设置面板的列宽输入框此前对未配置字段显示 `0`，用户读成「这列没有宽度」，
-// 也让「保存后列表宽度仍随内容跳」成为常态。现在按数据类型给初始值。
+// 第 32 轮曾按数据类型给 160/120/260 的初始值，并在每次打开设置面板时把 0
+// 覆盖成默认值 —— 用户把列宽改成 0 保存后，重开/刷新又跳回 160
+// （真机图 3）。0 是合法配置（按内容自适应），必须是唯一默认值。
 // ---------------------------------------------------------------------------
 
-test('defaultFieldWidth：按数据类型给默认列宽，未知类型按单行文本', () => {
-  assert.equal(defaultFieldWidth('text'), 160)
-  assert.equal(defaultFieldWidth('textarea'), 260)
-  assert.equal(defaultFieldWidth('number'), 120)
-  assert.equal(defaultFieldWidth('date'), 120)
-  assert.equal(defaultFieldWidth('items'), 160)
-  // 未知/空类型兜底 160，不能返回 0（0 会让输入框又显示 0）
-  assert.equal(defaultFieldWidth(''), 160)
-  assert.equal(defaultFieldWidth(undefined), 160)
-  assert.equal(defaultFieldWidth('weird'), 160)
+test('defaultFieldWidth：任何数据类型默认都是 0（按内容自适应）', () => {
+  assert.equal(defaultFieldWidth('text'), 0)
+  assert.equal(defaultFieldWidth('textarea'), 0)
+  assert.equal(defaultFieldWidth('number'), 0)
+  assert.equal(defaultFieldWidth('date'), 0)
+  assert.equal(defaultFieldWidth('items'), 0)
+  assert.equal(defaultFieldWidth(''), 0)
+  assert.equal(defaultFieldWidth(undefined), 0)
+  assert.equal(defaultFieldWidth('weird'), 0)
 })
 
-test('withDefaultFieldWidths：只补 0/空，已配置的宽度原样保留', () => {
+test('withDefaultFieldWidths：0 视为已配置，只给缺失键补 0', () => {
   const fields = [
     { name: '车牌号', enabled: true, isDefault: true, dataType: 'text', width: 0 },
     { name: '业户名称', enabled: true, isDefault: true, dataType: 'text', width: 220 },
     { name: '有效期止', enabled: true, isDefault: true, dataType: 'date', width: 0 },
-    { name: '备注', enabled: true, isDefault: true, dataType: 'textarea', width: 0 },
+    { name: '备注', enabled: true, isDefault: true, dataType: 'textarea' } as unknown as EditableField,
   ] as EditableField[]
   const out = withDefaultFieldWidths(fields)
-  assert.equal(out[0].width, 160)
+  // 0 绝不能被改写（第 44 轮的核心 Bug）
+  assert.equal(out[0].width, 0)
   assert.equal(out[1].width, 220) // 用户配置不被覆盖
-  assert.equal(out[2].width, 120)
-  assert.equal(out[3].width, 260)
+  assert.equal(out[2].width, 0)
+  assert.equal(out[3].width, 0) // 完全缺键 → 补 0
   // 原地修改：调用方拿到的是同一份数组，保存链路无需额外搬运
   assert.equal(out, fields)
 })

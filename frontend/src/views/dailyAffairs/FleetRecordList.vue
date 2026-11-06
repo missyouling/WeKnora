@@ -129,10 +129,10 @@
     <FleetUploadHistoryDrawer v-if="canUpload" v-model:visible="historyVisible" :kb-id="kbId" :scope="uploadScope"
       :filter="historyFilter" :doc-types="currentDocTypes" @changed="onHistoryChanged" />
 
-    <!-- 设置抽屉（字段定义 + 提取规则 + 基础配置扩展页签） -->
+    <!-- 设置抽屉（字段定义 + 提取规则；纯手工录入类隐藏提取规则，第 44 轮） -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId" :scope="settingsScope"
       :initial-category="activeCategoryName" :title="`${menuLabel}设置`" storage-key="weknora-fleet-settings-width"
-      :extra-tab-label="extraTabLabel" @saved="onSettingsSaved">
+      :show-rules="isArchive" :extra-tab-label="extraTabLabel" @saved="onSettingsSaved">
       <template #extra-tab>
         <OilCardPanel v-if="extraTabKind === 'oilcard'" />
         <EtcPanel v-else-if="extraTabKind === 'etc'" />
@@ -213,11 +213,13 @@ import './styles/list-summary-footer.css'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
 import { fleetHistoryFilesOf } from './fleetHistoryStats'
 import {
-  buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns,
+  buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns, buildArchiveColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
-  certStatusOf, certStatusOptions, extractStatusOf, subCategoryMatches,
+  certStatusOf, certStatusOptions, extractStatusOf, subCategoryMatches, fleetKnowledgeIdOf,
+  CERT_STATUS_KEY, EXTRACT_STATUS_KEY,
   type FleetColumn,
 } from './fleetColumns'
+import { isStatusFieldName } from './statusFields'
 import { fleetCategorySeedsOf } from './fleetCategorySeed'
 import type { FilterFieldSpec } from './businessFilter'
 
@@ -294,7 +296,7 @@ const vehicleOptions = computed(() => vehicles.value.map((v: any) => ({ label: v
 // 当前菜单的分类列表（六同步数据源）。
 //
 // **第 1 帧就必须完整**（第 34 轮）：分类原先只能异步拉取，首屏 `menuCategories`
-// 是空数组 → KPI 卡片只剩「已收录 / 历史记录」两张、`activeSubs` 为空 →
+// 是空数组 → KPI 卡片只剩「历史记录」一张、`activeSubs` 为空 →
 // 表头只剩复选框与两个系统列，接口回来后才「蹦」出其余卡片与业务列
 // （真机：先 2 张卡停顿一下、表头先只有 2 列）。
 //
@@ -354,7 +356,8 @@ const recordSubAmount = ref<Record<string, number>>({})
 // records?record_type=..&sub_category=..，条件逐字相同。
 //
 // 第 30 轮：卡片结构/文案抽到 fleetColumns.buildFleetKpiCards（纯函数、有单测），
-// 页面只负责喂数据。第 1 张「已收录」改为纯统计卡（action=stat，不可点击）。
+// 页面只负责喂数据。第 44 轮起卡片组只有「子分类卡（默认焦点在第 1 张）+ 历史记录卡」，
+// 第 1 张「已收录证照 / 已收录记录」汇总卡已按需求彻底移除。
 const kpiCards = computed(() => buildFleetKpiCards({
   isArchive: isArchive.value,
   total: Number(recordStats.value[recordType.value] || 0),
@@ -375,8 +378,7 @@ function onKpiCardClick(card: any) {
     historyVisible.value = true
     return
   }
-  // 「已收录…」是纯统计卡（action=stat），组件层已吞掉点击事件；
-  // 这里再兜一层：任何非 type 卡都不切换列表、不发请求。
+  // 第 44 轮起卡片组只有「分类卡 + 历史卡」；任何非 type 卡都不切换列表。
   if (card.action !== 'type' || !card.typeValue) return
   if (activeType.value === card.typeValue) return
   activeType.value = card.typeValue
@@ -406,16 +408,48 @@ const selectedRowKeys = computed(() => Array.from(selectedKeys.value))
 const rowKey = (r: any) => String(r?.id || '')
 
 const selectedRows = computed(() => rows.value.filter((r) => selectedKeys.value.has(rowKey(r))))
-const selectedFileRows = computed(() => selectedRows.value.filter((r) => r.__file))
+// 「重新解析 / 重新提取」的入参：台账行 → 源文件 ID（第 44 轮修复）。
+//
+// 旧实现是 `selectedRows.filter(r => r.__file)` —— 档案类列表读 `fleet_records`
+// 台账行，永远没有 `__file`（那是文件行专用标记），于是勾选后两个按钮恒禁用。
+// 现在统一走 fleetKnowledgeIdOf（doc_knowledge_id / knowledge_id / data.源文件ID…），
+// 并对缺 ID 的历史行用「文件名 → 上传文件」兜底匹配一次。
+const fileIdByName = computed(() => {
+  const m = new Map<string, string>()
+  for (const f of fleetFiles.value as any[]) {
+    const name = String(f?.fileName || f?.file_name || '').trim()
+    const id = String(f?.id || '').trim()
+    if (name && id && !m.has(name)) m.set(name, id)
+  }
+  return m
+})
+const selectedFileRows = computed(() => {
+  if (!isArchive.value) return []
+  const out: Array<{ id: string; doc_type: string; file_name: string }> = []
+  const seen = new Set<string>()
+  for (const r of selectedRows.value) {
+    const kid = fleetKnowledgeIdOf(r)
+      || fileIdByName.value.get(String(r?.file_name || '').trim())
+      || ''
+    if (!kid || seen.has(kid)) continue
+    seen.add(kid)
+    out.push({
+      id: kid,
+      doc_type: String(r?.sub_category || r?.doc_type || activeCategoryName.value || ''),
+      file_name: String(r?.file_name || ''),
+    })
+  }
+  return out
+})
 
-// 汇总视图：档案类菜单点「全部 / 已收录证照」卡片时（activeType 为空）。
-// 此时没有「当前分类」，用跨子分类通用的核心语义列；选中具体分类后
-// 严格由该分类 subs 派生。手工录入类永远有单一分类，不会进汇总视图。
+// 汇总视图：仅当 activeType 为空（分类接口尚未回来 / 全部分类被停用）时的兜底。
+//
+// 第 44 轮移除了「已收录」汇总卡后，用户已无法主动进入「全部」视图；
+// 这里保留是为了首屏兜底：宁可给出跨分类通用列，也不能渲染成一张只有复选框的空表。
 const isSummaryView = computed(() => isArchive.value && !activeType.value)
 
-// 归档类固定追加的两列（不进 subs：它们是派生值，用户不可编辑）
-const CERT_STATUS_KEY = '__cert_status'
-const EXTRACT_STATUS_KEY = '__extract_status'
+// 归档类派生列的两个 key（CERT_STATUS_KEY / EXTRACT_STATUS_KEY）由 fleetColumns 提供，
+// 模板插槽名与它们逐字一致（#__cert_status / #__extract_status）。
 // 当天日期（会话内固定）：证照状态按它算剩余天数。用本地日期而非 toISOString，
 // 否则东八区 08:00 前会被算成昨天，把「今天到期」误判成「已过期」。
 const todayStr = (() => {
@@ -430,40 +464,15 @@ const certThemeOf = (row: any): 'success' | 'warning' | 'danger' => {
   return st.theme === 'success' ? 'success' : st.theme === 'warning' ? 'warning' : 'danger'
 }
 
-// 系统保留列名：这些字段在 subs 里是**历史遗留的可编辑文本列**（旧种子把它们
-// 当普通字段录入），现在统一由系统按有效期派生，必须从业务列里剔除，
-// 否则真机上会同时出现「驾驶证状态」与「证照状态」两列（需求图 15）。
-const SYSTEM_STATUS_FIELD_NAMES = new Set(['证照状态', '证件状态', '驾驶证状态', '保单状态', '证书状态'])
-
+// 系统状态列在 subs 里是**历史遗留的可编辑文本列**（旧种子把它们当普通字段录入），
+// 现在统一由系统派生（证照状态按有效期算、提取状态按源文件算），必须从业务列里
+// 剔除，否则真机上会同时出现「驾驶证状态」与「证照状态」两列（需求图 15）。
+// 判定与排序都收口在 fleetColumns.buildArchiveColumns（含全部历史别名，
+// 且派生列位置跟随「字段定义」里拖出来的顺序 —— 第 44 轮）。
 const columnDefs = computed<FleetColumn[]>(() => {
-  const base = isSummaryView.value
-    ? buildFleetSummaryViewColumns(vehicleMap.value)
-    : buildFleetColumns(activeSubs.value, vehicleMap.value)
-  if (!isArchive.value) return base
-  return [
-    // 归档类：剔除 subs 里的历史状态文本列（系统统一派生「证照状态」）
-    ...base.filter((c) => !SYSTEM_STATUS_FIELD_NAMES.has(c.key)),
-    {
-      key: CERT_STATUS_KEY,
-      label: '证照状态',
-      dataType: 'text',
-      default: true,
-      value: (row: any) => certStatusOf(row?.data, todayStr).label || '—',
-      raw: () => 0,
-      // 需求图 5：表头曾被截断成「证照状」—— 三色 Tag 比纯文本更宽，
-      // 必须给足 100px（Tag 四周 padding + 4 个汉字）。
-      minWidth: 100,
-    },
-    {
-      key: EXTRACT_STATUS_KEY,
-      label: '提取状态',
-      dataType: 'text',
-      default: true,
-      value: (row: any) => extractStatusOf(row).label,
-      raw: () => 0,
-      minWidth: 100,
-    },
-  ]
+  if (isSummaryView.value) return buildFleetSummaryViewColumns(vehicleMap.value)
+  if (!isArchive.value) return buildFleetColumns(activeSubs.value, vehicleMap.value)
+  return buildArchiveColumns(activeSubs.value, vehicleMap.value, todayStr)
 })
 const columnDefsForFilter = computed(() => columnDefs.value.map((c) => ({ key: c.key, label: c.label })))
 
@@ -838,8 +847,8 @@ const detailTitle = computed(() => `${menuLabel.value}详情${detailRow.value?.f
 const drawerFields = computed(() => {
   const base = (activeSubs.value || [])
     .filter((s: any) => s && s.enabled !== false)
-    // 归档类：剔除历史状态文本列（列表已由系统派生的「证照状态」取代）
-    .filter((s: any) => !(isArchive.value && SYSTEM_STATUS_FIELD_NAMES.has(String(s.name))))
+    // 归档类：剔除历史状态文本列（列表已由系统派生的「证照状态 / 提取状态」取代）
+    .filter((s: any) => !(isArchive.value && isStatusFieldName(String(s.name))))
     .map((s: any) => ({ name: String(s.name), label: String(s.label || s.name), dataType: String(s.data_type || 'text') }))
   if (!isArchive.value) return base
   // 两个系统派生值都以**只读 Tag** 展示（模板 #field-__cert_status / #field-__extract_status）。
