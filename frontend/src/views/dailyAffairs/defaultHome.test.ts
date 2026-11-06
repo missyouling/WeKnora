@@ -14,8 +14,14 @@ const login = read('../auth/Login.vue')
 const onboarding = read('../auth/WorkspaceOnboarding.vue')
 const menuStore = read('../../stores/menu.ts')
 
-test('默认首页常量指向日常事务入口', () => {
-  assert.match(constant, /export const DEFAULT_HOME_PATH = '\/platform\/daily-affairs\/energy'/)
+test('默认首页常量指向日常事务入口页', () => {
+  assert.match(constant, /export const DEFAULT_HOME_PATH = '\/platform\/daily-affairs'/)
+  assert.doesNotMatch(constant, /daily-affairs\/(energy|utilities|invoices|fleet)/,
+    '默认首页必须落在入口页，不得绑到某个子模块')
+})
+
+test('默认首页指向已注册的入口路由', () => {
+  assert.match(router, /path: "daily-affairs",\s*\r?\n\s*name: "dailyAffairs"/)
 })
 
 test('根路径 / 与 /platform 都重定向到默认首页', () => {

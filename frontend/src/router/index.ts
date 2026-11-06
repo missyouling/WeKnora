@@ -28,7 +28,7 @@ function isLiteSpaDefaultEntry(to: RouteLocationNormalized) {
     to.path === '/' ||
     to.path === '/platform' ||
     to.path === DEFAULT_HOME_PATH ||
-    // /daily-affairs/energy 重定向后的实际落地路径
+    // 能耗等子视图的实际落地路径（lite SPA 入口判定需一并放行）
     to.path === '/platform/daily-affairs/utilities' ||
     to.path === '/platform/knowledge-bases' ||
     to.name === 'knowledgeBaseList'

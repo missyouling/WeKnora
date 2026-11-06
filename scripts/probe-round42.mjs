@@ -72,9 +72,9 @@ const bodyText = () => page.evaluate(() => document.body.innerText || '')
 for (const path of ['/', '/platform']) {
   await gotoRetry(`${ORIGIN}${path}`)
   // 首屏要拉 KB / 分类 / 统计，真机实测 12~20s 才完成路由重定向与菜单渲染
-  await waitFor(() => /daily-affairs/.test(location.href), 60, 500)
+  await waitFor(() => /\/platform\/daily-affairs(\/|$)/.test(location.href), 60, 500)
   const url = page.url()
-  const ok = /daily-affairs/.test(url) && !/\/knowledge-bases($|\?)/.test(url)
+  const ok = /\/platform\/daily-affairs(\/|$)/.test(url) && !/\/knowledge-bases($|\?)/.test(url)
   check(`断言1 根路径 ${path} 落地日常事务`, ok, `url=${url}`)
   if (path === '/') {
     await waitFor(() => (document.body.innerText || '').includes('知识库'), 30, 500)
