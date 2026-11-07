@@ -282,6 +282,12 @@ const router = createRouter({
           name: "fleetManagement",
           component: () => import("../views/dailyAffairs/FleetManagement.vue"),
           meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
+          path: "daily-affairs/hr",
+          name: "hrManagement",
+          component: () => import("../views/dailyAffairs/HrManagement.vue"),
+          meta: { requiresInit: true, requiresAuth: true }
         }
       ],
     },

@@ -131,7 +131,7 @@
                     <span class="fc-origin-hint">{{ row.hint }}</span>
                   </div>
                   <div v-else class="field-config-row"
-                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === row.fd.name }]"
+                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === row.fd.name }, { 'is-locked': isLockedStatus(row.fd) }]"
                     draggable="true" @dragstart="onFieldDragStart(row.fd)" @dragover.prevent
                     @drop.prevent="onFieldDrop(row.fd)" @dragend="onFieldDragEnd">
                     <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
@@ -457,7 +457,7 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-social' | 'hr-fund' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
 // 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
@@ -491,15 +491,37 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   tire: [{ key: 'tire', label: '轮胎', scope: 'tire', groupId: '' }],
   inspection: [{ key: 'inspection', label: '年检', scope: 'inspection', groupId: '' }],
   'fleet-cost': [{ key: 'fleet-cost', label: '成本项', scope: 'fleet-cost', groupId: '' }],
+  // 人事管理（第 45 轮）：每个 scope 一个单分类，标签是台账字段集，不是证照。
+  'hr-roster': [{ key: 'hr-roster', label: '花名册字段', scope: 'hr-roster', groupId: '' }],
+  'hr-social': [{ key: 'hr-social', label: '社保账期字段', scope: 'hr-social', groupId: '' }],
+  'hr-fund': [{ key: 'hr-fund', label: '公积金台账字段', scope: 'hr-fund', groupId: '' }],
 }
 
 // 分类名称列文案：统一走 BusinessScopeRegistry（新增业务只改 registry/<scope>.ts）
-function scopeName(scope: string) {
-  return getScope(scope)?.categoryLabel || '证照名称'
+//
+// 人事三个 scope 未在 registry 注册（registry 属上游禁改范围），这里做局部兜底，
+// 否则会 fallback 成「证照名称」—— 花名册/社保/公积金是台账字段，不是证照。
+const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
+  'hr-roster': '花名册字段',
+  'hr-social': '社保账期字段',
+  'hr-fund': '公积金台账字段',
 }
-const emptyTextOf = (scope: string) => getScope(scope)?.emptyText || '暂无证照类型'
-const namePlaceholderOf = (scope: string) => getScope(scope)?.namePlaceholder || '请输入证照名称'
-const categoryNounOf = (scope: string) => getScope(scope)?.categoryNoun || '证照类型'
+// HR scope 未注册进 registry，四个 helper 全部局部兜底，
+// 彻底避免设置抽屉里 fallback 出「证照名称 / 证照类型 / 暂无证照类型」等字样。
+const HR_SCOPE_NOUN: Record<string, string> = {
+  'hr-roster': '花名册字段集',
+  'hr-social': '社保账期字段集',
+  'hr-fund': '公积金台账字段集',
+}
+function scopeName(scope: string) {
+  return HR_SCOPE_CATEGORY_LABEL[scope] || getScope(scope)?.categoryLabel || '证照名称'
+}
+const emptyTextOf = (scope: string) =>
+  HR_SCOPE_NOUN[scope] ? `暂无${HR_SCOPE_NOUN[scope]}` : (getScope(scope)?.emptyText || '暂无证照类型')
+const namePlaceholderOf = (scope: string) =>
+  HR_SCOPE_NOUN[scope] ? `请输入${HR_SCOPE_NOUN[scope]}名称` : (getScope(scope)?.namePlaceholder || '请输入证照名称')
+const categoryNounOf = (scope: string) =>
+  HR_SCOPE_NOUN[scope] || getScope(scope)?.categoryNoun || '证照类型'
 const customGroups = ref<any[]>([])
 async function loadCustomGroups() {
   try {

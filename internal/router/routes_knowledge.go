@@ -596,6 +596,10 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 	// 测试写事务抢 sqlite 表锁。启动时跑一次即可，用户也可点「同步发票」重跑。
 	handler.StartFleetBackfillTasks(context.Background())
 	fl := g.apiKeyGroup(r.Group("/fleet"), apiKeyRetrieve(apiKeyFullAccess()))
+	// [upstream-touch] 第 45 轮：人事三模块（花名册/社保/公积金）最小挂载点。
+	// 全部业务逻辑在 internal/handler/hr_*.go，此处只做一次路由绑定，沿用 fl 组的
+	// API-key 与 RBAC 门控，不新增 RouterParams 字段、不改 container 装配。
+	handler.BindHRRoutes(fl)
 	{
 		fl.GET("/vehicles", g.Viewer(), handler.ListFleetVehicles)
 		fl.POST("/vehicles", g.Contributor(), handler.CreateFleetVehicle)

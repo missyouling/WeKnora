@@ -116,6 +116,23 @@
           </div>
         </div>
 
+        <!-- 人事管理（已实现） -->
+        <div class="da-card da-card--enabled" @click="goHr">
+          <div class="da-card-icon da-card-icon--fleet">
+            <t-icon name="usergroup" size="24px" />
+          </div>
+          <div class="da-card-body">
+            <div class="da-card-title">
+              <span>人事管理</span>
+            </div>
+            <p class="da-card-desc">花名册、社保与公积金台账统一管理</p>
+            <div class="da-card-footer">
+              <span class="da-card-link">进入管理</span>
+              <t-icon name="chevron-right" size="16px" />
+            </div>
+          </div>
+        </div>
+
         <!-- 食堂管理（占位） -->
         <div class="da-card da-card--placeholder" @click="onPlaceholder('食堂管理')">
           <div class="da-card-icon da-card-icon--canteen">
@@ -182,6 +199,10 @@ const goUtilities = () => {
 
 const goFleet = () => {
   router.push('/platform/daily-affairs/fleet')
+}
+
+const goHr = () => {
+  router.push('/platform/daily-affairs/hr')
 }
 
 const onPlaceholder = (name: string) => {

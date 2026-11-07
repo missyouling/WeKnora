@@ -40,6 +40,8 @@ const CERT_STATUS_NAMES = [
 const EXTRACT_STATUS_NAMES = ['提取状态', 'extractStatus', 'extract_status']
 /** 账单类「状态 / 对比状态」（市电 / 光伏）。 */
 const BILL_STATUS_NAMES = ['状态', '对比状态']
+/** 人事管理四个系统状态（第 45 轮）：花名册 / 社保 / 公积金共用一份名单。 */
+const HR_STATUS_NAMES = ['在职状态', '账期状态', '参保状态', '缴存状态']
 
 const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase()
 const isOneOf = (name: unknown, list: readonly string[]): boolean => {
@@ -63,6 +65,11 @@ export function isBillStatusName(name: unknown): boolean {
   return isOneOf(name, BILL_STATUS_NAMES)
 }
 
+/** 是否人事系统状态（在职 / 账期 / 参保 / 缴存）。 */
+export function isHrStatusName(name: unknown): boolean {
+  return isOneOf(name, HR_STATUS_NAMES)
+}
+
 /** 是否任一系统状态列（列表派生列替换/去重时用）。 */
 export function isStatusFieldName(name: unknown): boolean {
   return isCertStatusName(name) || isExtractStatusName(name)
@@ -70,6 +77,8 @@ export function isStatusFieldName(name: unknown): boolean {
 
 /** 车队三个「上传→解析→提取」档案 scope。 */
 const FLEET_ARCHIVE_SCOPES = new Set(['vehicle', 'driver', 'maintain'])
+/** 人事管理三个 scope（第 45 轮）。 */
+const HR_SCOPES = new Set(['hr-roster', 'hr-social', 'hr-fund'])
 /** 账单类分类名（只有这两类有文件级状态列）。 */
 const BILL_CATEGORIES = new Set(['市电账单', '光伏账单'])
 
@@ -94,6 +103,16 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
     // 提取状态是这些模块的 subs 契约字段（extractStatus），缺失时补回并落库。
     return [{ name: 'extractStatus', label: '提取状态', dataType: 'text' }]
   }
+  if (HR_SCOPES.has(s)) {
+    // 人事：每个 scope 只注入自己相关的状态列，避免花名册凭空多出账期/缴存状态。
+    // 这些是真正的业务数据列（不是列表派生列），故 virtual=false、会落库。
+    if (s === 'hr-roster') return [{ name: '在职状态', label: '在职状态', dataType: 'text' }]
+    if (s === 'hr-social') return [
+      { name: '账期状态', label: '账期状态', dataType: 'text' },
+      { name: '参保状态', label: '参保状态', dataType: 'text' },
+    ]
+    return [{ name: '缴存状态', label: '缴存状态', dataType: 'text' }]
+  }
   return []
 }
 
@@ -108,6 +127,9 @@ export function isLockedStatusField(scope: string, categoryName: string | undefi
   if (isExtractStatusName(name)) return true
   if (FLEET_ARCHIVE_SCOPES.has(s) && isCertStatusName(name)) return true
   if (s === 'energy' && BILL_CATEGORIES.has(String(categoryName || '').trim()) && isBillStatusName(name)) return true
+  // 人事：四个状态字段在 HR scope 下锁死名称/类型/启用/删除；列宽与拖拽排序仍可用
+  // （与本函数只判身份、不触碰 width/order 的既有口径一致）。
+  if (HR_SCOPES.has(s) && isHrStatusName(name)) return true
   return false
 }
 
