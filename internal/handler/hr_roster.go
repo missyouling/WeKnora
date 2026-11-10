@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -400,16 +401,20 @@ var hrEmployeeUpdateColumns = []string{
 }
 
 // ListEmployees 分页/搜索/状态过滤。
+//
+// 默认 page_size 提升到 hrRosterMaxPageSize（10000）：花名册是「全量档案列表」，
+// 20 条截断会让卡片显示 92 条、表格只有 20 条（第 47 轮真机缺陷）。
+// 前端仍可不传 page_size 直接拿全量；显式传小值时按传值分页。
 func (h *HRHandler) ListEmployees(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(hrRosterMaxPageSize)))
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 200 {
-		pageSize = 20
+	if pageSize < 1 || pageSize > hrRosterMaxPageSize {
+		pageSize = hrRosterMaxPageSize
 	}
 	q := h.db.WithContext(ctx).Model(&HREmployee{}).Where("tenant_id = ?", tid)
 	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
@@ -426,12 +431,98 @@ func (h *HRHandler) ListEmployees(c *gin.Context) {
 		return
 	}
 	var items []HREmployee
-	if err := q.Order("created_at DESC, id ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+	// 排序：工号自然升序（字母+数字按数值比较，C020300008 < C02050011），
+	// 空工号排末尾。SQL 里只做粗排，真正的自然序由 hrSortEmployeesByEmployeeID 在内存里完成。
+	if err := q.Order("employee_id ASC, created_at ASC, id ASC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		hrFail(c, "查询花名册失败: "+err.Error())
 		return
 	}
+	hrSortEmployeesByEmployeeID(items)
+	hrAttachEmployeeDerived(ctx, h.db, tid, items)
 	hrOK(c, gin.H{"items": items, "total": total})
 }
+
+// hrAttachEmployeeDerived 给列表补三样派生信息（第 47 轮）：
+//
+//	· 合同状态（正常/即将到期/到期）—— 由现合同结束日期 + 现合同类型算出；
+//	· 个人社保账号 / 个人公积金账号 —— 花名册自身没有时，按身份证号从
+//	  社保原始记录（人员编号）与公积金台账（personal_account）回填；
+//	  两处都没有就保持空，前端显示 —，绝不造假数据。
+func hrAttachEmployeeDerived(ctx context.Context, db *gorm.DB, tid int64, items []HREmployee) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(items))
+	for _, e := range items {
+		if k := normalizeIDNumber(e.IDNumber); k != "" {
+			ids = append(ids, k)
+		}
+	}
+	siMap := map[string]string{}
+	pfMap := map[string]string{}
+	if len(ids) > 0 {
+		var siRows []HRSIRawRecord
+		if err := db.WithContext(ctx).Select("id_number, person_code").
+			Where("tenant_id = ? AND id_number IN ? AND person_code <> ''", tid, ids).
+			Find(&siRows).Error; err == nil {
+			for _, r := range siRows {
+				k := normalizeIDNumber(r.IDNumber)
+				if k == "" || r.PersonCode == "" {
+					continue
+				}
+				// 同一人多个险种可能带 JM 前缀差异，取最短的那个（纯数字优先）
+				if cur, ok := siMap[k]; !ok || len(r.PersonCode) < len(cur) {
+					siMap[k] = r.PersonCode
+				}
+			}
+		}
+		var pfRows []HRPFRecord
+		if err := db.WithContext(ctx).Select("identity_number, personal_account").
+			Where("tenant_id = ? AND identity_number IN ? AND personal_account <> ''", tid, ids).
+			Find(&pfRows).Error; err == nil {
+			for _, r := range pfRows {
+				if k := normalizeIDNumber(r.IdentityNumber); k != "" && r.PersonalAccount != "" {
+					pfMap[k] = r.PersonalAccount
+				}
+			}
+		}
+	}
+	now := time.Now()
+	for i := range items {
+		e := &items[i]
+		if e.CustomData == nil {
+			e.CustomData = map[string]any{}
+		}
+		// 年龄统一按 1 位小数重算（第 47 轮）：库里存量是整数，
+		// 只在响应层重算，不回写库（避免每次读都写库）。
+		if age := hrAgeDecimalOf(e, now); age != "" {
+			e.Age = age
+			e.CustomData["年龄"] = age
+		}
+		// 合同状态：写进 custom_data 供前端 pickRaw 取值
+		e.CustomData["合同状态"] = hrEmployeeContractStatus(*e)
+		key := normalizeIDNumber(e.IDNumber)
+		if key == "" {
+			continue
+		}
+		if strings.TrimSpace(e.SocialInsuranceNumber) == "" {
+			if v, ok := siMap[key]; ok {
+				e.SocialInsuranceNumber = v
+				e.CustomData["个人社保账号"] = v
+			}
+		}
+		if strings.TrimSpace(e.ProvidentFundNumber) == "" {
+			if v, ok := pfMap[key]; ok {
+				e.ProvidentFundNumber = v
+				e.CustomData["个人公积金账号"] = v
+			}
+		}
+	}
+}
+
+// hrRosterMaxPageSize 花名册单次返回上限（等于「全量」语义）。
+const hrRosterMaxPageSize = 10000
 
 func (h *HRHandler) CreateEmployee(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -650,6 +741,32 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 		data[r.Status] = r.Count
 		data["total"] = data["total"].(int64) + r.Count
 	}
+	// 四卡口径（第 47 轮）：花名册 / 劳动合同 / 社保管理 / 公积金管理。
+	// 劳动合同卡 = 有合同结束日期或有合同类型的员工数（无合同的员工不计入）。
+	var contractCount int64
+	var emps []HREmployee
+	if err := h.db.WithContext(ctx).Select("id_number, custom_data").
+		Where("tenant_id = ?", tid).Find(&emps).Error; err == nil {
+		for _, e := range emps {
+			if e.CustomData == nil {
+				continue
+			}
+			end := strings.TrimSpace(toStringValue(e.CustomData["现合同结束日期"]))
+			ctype := strings.TrimSpace(toStringValue(e.CustomData["现合同类型"]))
+			if end != "" || ctype != "" {
+				contractCount++
+			}
+		}
+	}
+	var socialCount int64
+	h.db.WithContext(ctx).Model(&HRSIPeriod{}).Where("tenant_id = ?", tid).Count(&socialCount)
+	var fundCount int64
+	h.db.WithContext(ctx).Model(&HRPFRecord{}).Where("tenant_id = ?", tid).Count(&fundCount)
+
+	data["roster"] = data["total"]
+	data["contract"] = contractCount
+	data["social"] = socialCount
+	data["fund"] = fundCount
 	hrOK(c, data)
 }
 

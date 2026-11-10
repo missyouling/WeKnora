@@ -22,9 +22,10 @@ import (
 // HR 三个分类 scope；init 里扩展同包 fleetCategoryScopes，零修改既有文件即可
 // 复用 /api/v1/fleet/categories 的「字段定义 / 列表列 / 筛选器 / 抽屉字段 / 提取规则」五同步。
 const (
-	hrScopeRoster = "hr-roster"
-	hrScopeSocial = "hr-social"
-	hrScopeFund   = "hr-fund"
+	hrScopeRoster   = "hr-roster"
+	hrScopeContract = "hr-contract"
+	hrScopeSocial   = "hr-social"
+	hrScopeFund     = "hr-fund"
 )
 
 // 单位公积金默认配置（源项目 api/provident.go:18-20）。
@@ -37,6 +38,7 @@ const (
 // init 扩展分类 scope 白名单（HR 走租户隔离，不动 isBusinessCategoryScope）。
 func init() {
 	fleetCategoryScopes[hrScopeRoster] = true
+	fleetCategoryScopes[hrScopeContract] = true
 	fleetCategoryScopes[hrScopeSocial] = true
 	fleetCategoryScopes[hrScopeFund] = true
 }
@@ -55,6 +57,8 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate HR tables failed: %v", err)
 	}
+	// 第 47 轮：组织机构三表
+	hrOrgAutoMigrate(db)
 	ctx := context.Background()
 	h.seedHRCategories(ctx)
 	h.seedHRPFSettings(ctx)
@@ -143,12 +147,40 @@ func hrRosterSeedSubs() []types.FleetCategorySub {
 	return out
 }
 
-// hrCategorySeeds 三个 scope 各 1 个分类。
+// hrContractSeedSubs 劳动合同视图的默认字段（第 47 轮）。
+// 与花名册合同信息同源：数据都来自 hr_employees 的 custom_data，只是换个投影。
+func hrContractSeedSubs() []types.FleetCategorySub {
+	names := []string{
+		"工号", "姓名", "部门", "职务", "岗位", "证件号码", "入职日期",
+		"合同签约公司", "现合同编号", "现合同类型", "现合同开始日期",
+		"现合同结束日期", "现合同期限", "现合同签订日期", "合同状态",
+	}
+	out := make([]types.FleetCategorySub, 0, len(names))
+	for _, name := range names {
+		s := types.FleetCategorySub{Name: name, Enabled: true, Width: 0}
+		switch {
+		case hrIsRosterDateField(name):
+			s.DataType = "date"
+		default:
+			s.DataType = "text"
+		}
+		// 合同状态是系统内置字段：不可删、不可改名与类型，但可拖动排序。
+		s.Builtin = name == "合同状态"
+		out = append(out, s)
+	}
+	return out
+}
+
+// hrCategorySeeds 四个 scope 各 1 个分类。
 func hrCategorySeeds() []hrCategorySeed {
 	return []hrCategorySeed{
 		{
 			Scope: hrScopeRoster, Name: "花名册", BuiltinKey: "hr-roster", SortOrder: 1,
 			Subs: hrRosterSeedSubs(),
+		},
+		{
+			Scope: hrScopeContract, Name: "劳动合同", BuiltinKey: "hr-contract", SortOrder: 2,
+			Subs: hrContractSeedSubs(),
 		},
 		{
 			Scope: hrScopeSocial, Name: "社保管理", BuiltinKey: "hr-social", SortOrder: 1,
@@ -295,6 +327,11 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/social/periods", h.CreatePeriod)
 	r.DELETE("/hr/social/periods/:id", h.DeletePeriod)
 	r.POST("/hr/social/periods/:id/import", h.ImportSocialFile)
+	// 第 47 轮：多文件自适应导入 + 原始/汇总双视图
+	r.POST("/hr/social/import", h.ImportSocialBatch)
+	r.GET("/hr/social/raw", h.ListSIRawRecords)
+	r.POST("/hr/social/summary", h.GenerateSISummary)
+	r.GET("/hr/social/periods/:id/detail", h.GetSIPeriodDetail)
 	r.POST("/hr/social/periods/:id/process", h.ProcessPeriod)
 	r.POST("/hr/social/periods/:id/process-adjustments", h.ProcessAdjustments)
 	r.GET("/hr/social/periods/:id/charges", h.ListCharges)
@@ -319,4 +356,9 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/fund/bills", h.CreatePFBill)
 	r.GET("/hr/fund/bills/:id", h.GetPFBill)
 	r.DELETE("/hr/fund/bills/:id", h.DeletePFBill)
+
+	// 第 47 轮：劳动合同视图 + 组织机构设置
+	r.GET("/hr/contracts", h.ListContracts)
+	r.GET("/hr/org", h.GetOrganization)
+	r.PUT("/hr/org", h.SaveOrganization)
 }

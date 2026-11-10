@@ -23,7 +23,7 @@ import {
 // Tab / scope
 // ---------------------------------------------------------------------------
 
-export type HrTab = 'hr-roster' | 'hr-social' | 'hr-fund'
+export type HrTab = 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund'
 
 export interface HrTabDef {
   key: HrTab
@@ -33,15 +33,17 @@ export interface HrTabDef {
 }
 
 /**
- * 三个一级 Tab 的唯一配置表。
+ * 四个一级 Tab 的唯一配置表（第 47 轮新增「劳动合同」）。
  * key 同时作为字段配置 scope（`hrScopeOf` 返回它），KPI 卡的 `typeValue` 也用它。
+ * 顺序严格：花名册 → 劳动合同 → 社保管理 → 公积金管理。
  */
 export const HR_TABS: readonly HrTabDef[] = [
-  { key: 'hr-roster', label: '花名册', icon: 'usergroup', sub: '在职员工档案统一管理' },
+  { key: 'hr-roster', label: '花名册', icon: 'usergroup', sub: '' },
+  { key: 'hr-contract', label: '劳动合同', icon: 'file-paste', sub: '' },
   // tdesign-icons-vue-next 0.4.4 的 manifest 里没有 `shield`（只有 shield-error），
   // 传无效名会让 <use href="#t-icon-shield"> 解析失败 → 图标框空白。secured 已核验有效。
-  { key: 'hr-social', label: '社保管理', icon: 'secured', sub: '五险账期与扣款明细' },
-  { key: 'hr-fund', label: '公积金管理', icon: 'wallet', sub: '缴存台账与月度账单' },
+  { key: 'hr-social', label: '社保管理', icon: 'secured', sub: '' },
+  { key: 'hr-fund', label: '公积金管理', icon: 'wallet', sub: '' },
 ]
 
 /** 字段配置 scope：tab 值本身即 scope；未知值兜底到花名册。 */
@@ -51,7 +53,7 @@ export function hrScopeOf(tab: string): HrTab {
 }
 
 /**
- * 恰好 3 张 KPI 卡（花名册 / 社保管理 / 公积金管理）。
+ * 恰好 4 张 KPI 卡（花名册 / 劳动合同 / 社保管理 / 公积金管理）。
  *
  * 铁律：**绝不产出「已收录记录」「历史记录」之类的汇总卡 / 统计卡** ——
  * 第 44 轮已把车队的两张汇总卡彻底移除，人事页从第一天起就不引入。
@@ -216,12 +218,82 @@ const FUND_BILL_COLS: HrColumn[] = [
   col('生成时间', ['生成时间', 'created_at', 'create_time']),
 ]
 
+// ---------------------------------------------------------------------------
+// 劳动合同（第 47 轮）：数据与花名册合同字段同源
+// ---------------------------------------------------------------------------
+
+/** 劳动合同视图默认列（任务 §6 精确清单），末列是三色「合同状态」。 */
+const CONTRACT_COLS: HrColumn[] = [
+  col('工号', ['工号', 'employee_id']),
+  col('姓名', ['姓名', 'name']),
+  col('部门', ['部门', 'department']),
+  col('职务', ['职务', 'position']),
+  col('岗位', ['岗位', 'position']),
+  col('证件号码', ['证件号码', 'id_number']),
+  col('入职日期', ['入职日期', 'hire_date'], { dataType: 'date' }),
+  col('合同签约公司', ['合同签约公司', 'contract_company']),
+  col('现合同编号', ['现合同编号', 'contract_no']),
+  col('现合同类型', ['现合同类型', 'contract_type']),
+  col('现合同开始日期', ['现合同开始日期', 'contract_start_date'], { dataType: 'date' }),
+  col('现合同结束日期', ['现合同结束日期', 'contract_end_date'], { dataType: 'date' }),
+  col('现合同期限', ['现合同期限', 'contract_term']),
+  col('现合同签订日期', ['现合同签订日期', 'contract_sign_date'], { dataType: 'date' }),
+  col('合同状态', ['合同状态', 'contract_status'], { slot: true }),
+]
+
+// ---------------------------------------------------------------------------
+// 社保原始记录 / 汇总记录（第 47 轮双视图）
+// ---------------------------------------------------------------------------
+
+/** 原始记录列：一行 = 某人某险种的明细。 */
+const SI_RAW_COLS: HrColumn[] = [
+  col('账期', ['账期', 'year_month'], { slot: true }),
+  col('记录性质', ['记录性质', 'file_type'], { slot: true }),
+  col('险种', ['险种', 'scheme']),
+  col('缴费类型', ['缴费类型', 'part']),
+  col('个人社保编号', ['个人社保编号', 'person_code', 'personCode']),
+  col('姓名', ['姓名', 'name']),
+  col('证件号码', ['证件号码', 'id_number']),
+  col('部门', ['部门', 'department']),
+  col('缴费基数', ['缴费基数', 'pay_base'], { dataType: 'number', money: true }),
+  col('费率', ['费率', 'rate_text', 'rate']),
+  col('单位应缴', ['单位应缴', 'unit_amount'], { dataType: 'number', money: true }),
+  col('个人应缴', ['个人应缴', 'personal_amount'], { dataType: 'number', money: true }),
+  col('合计金额', ['合计金额', 'amount_due'], { dataType: 'number', money: true }),
+  col('补退金额', ['补退金额', 'adjust_amount'], { dataType: 'number', money: true }),
+]
+
+/** 汇总记录列：一行 = 一个账期的全员合计。 */
+const SI_SUMMARY_COLS: HrColumn[] = [
+  col('账期', ['账期', 'year_month'], { slot: true }),
+  col('参保人数', ['参保人数', 'headcount', 'record_count'], { dataType: 'number' }),
+  col('养老单位', ['养老单位', 'pension_unit'], { dataType: 'number', money: true }),
+  col('养老个人', ['养老个人', 'pension_personal'], { dataType: 'number', money: true }),
+  col('医疗单位', ['医疗单位', 'medical_unit'], { dataType: 'number', money: true }),
+  col('医疗个人', ['医疗个人', 'medical_personal'], { dataType: 'number', money: true }),
+  col('大病', ['大病', 'serious_illness'], { dataType: 'number', money: true }),
+  col('失业单位', ['失业单位', 'unemploy_unit'], { dataType: 'number', money: true }),
+  col('失业个人', ['失业个人', 'unemploy_personal'], { dataType: 'number', money: true }),
+  col('工伤单位', ['工伤单位', 'injury_unit'], { dataType: 'number', money: true }),
+  col('补退金额', ['补退金额', 'adjust_amount'], { dataType: 'number', money: true }),
+  col('单位合计', ['单位合计', 'unit_total'], { dataType: 'number', money: true }),
+  col('个人合计', ['个人合计', 'personal_total'], { dataType: 'number', money: true }),
+  col('应缴总计', ['应缴总计', 'grand_total'], { dataType: 'number', money: true }),
+  col('状态', ['状态', 'status'], { slot: true }),
+]
+
 function colsOf(tab: string): HrColumn[] {
   switch (hrScopeOf(tab)) {
+    case 'hr-contract': return CONTRACT_COLS
     case 'hr-social': return SOCIAL_COLS
     case 'hr-fund': return FUND_LEDGER_COLS
     default: return ROSTER_COLS
   }
+}
+
+/** 社保双视图列集合（原始 / 汇总）。 */
+export function hrSocialColumns(view: 'raw' | 'summary'): HrColumn[] {
+  return [SELECT_COL, ...(view === 'raw' ? SI_RAW_COLS : SI_SUMMARY_COLS)]
 }
 
 /**
@@ -262,6 +334,30 @@ const ROSTER_KEY_ALIASES: Record<string, string[]> = {
   '个人邮箱': ['email'], '备注': ['remarks'], '档案编号': ['archive_no'],
 }
 
+/**
+ * 号码 / 编码类字段（第 47 轮铁律）：一律纯字符串。
+ *
+ * 这些值**绝不允许**走数字千分位格式化，也**绝不参与合计行求和** ——
+ * 工资卡卡号 6217003760153xxxxx 一旦被 Number() 化，既会被加逗号、
+ * 又会因超过 16 位有效数字丢精度（末位变 000），合计行更是会算出
+ * 118,179,260,221,922,000 这种荒谬数字。
+ */
+export const ROSTER_TEXT_CODE_FIELDS: readonly string[] = [
+  '工资卡卡号', '个人社保账号', '个人公积金账号', '证件号码', '手机号码', '工号',
+  '考勤编号', '档案编号', '现合同编号', 'QQ号', '分机号', '紧急联系人电话',
+  '工作电话', '职级编号', '个人账号', '社保编号', '公积金编号', '银行名称',
+]
+
+const CODE_FIELD_RE = /卡号|账号|帐号|证件号|手机号|工号|编号|QQ号|分机号|电话/
+
+/** 该列是否为号码/编码类（必须按字符串渲染且不参与合计）。 */
+export function isRosterCodeField(name: unknown): boolean {
+  const n = String(name ?? '').trim()
+  if (!n) return false
+  if (ROSTER_TEXT_CODE_FIELDS.includes(n)) return true
+  return CODE_FIELD_RE.test(n)
+}
+
 /** 单条花名册字段 → 列定义；列宽恒为 0（自适应），无 fixed、无操作列。 */
 function rosterColumnOf(name: string): HrColumn {
   const keys = [name, ...(ROSTER_KEY_ALIASES[name] || [])]
@@ -269,7 +365,9 @@ function rosterColumnOf(name: string): HrColumn {
   const isDate = /日期|时间|有效期/.test(name)
   // 「离职证明」需要可点击的预览/下载链接，交给页面具名插槽渲染。
   const isProof = name === '离职证明'
-  const isMoney = /金额|工资卡卡号|基数/.test(name)
+  // 号码/编码类优先判字符串，避免被下面的金额规则吞掉（第 47 轮修复）。
+  const isCode = isRosterCodeField(name)
+  const isMoney = !isCode && /金额|基数/.test(name)
   return {
     colKey: name,
     title: name,
@@ -281,9 +379,15 @@ function rosterColumnOf(name: string): HrColumn {
       ? (row: any) => normalizeStatus(pick(row, keys))
       : isDate
         ? (row: any) => formatCellDateTime(name, pickRaw(row, keys)) || '—'
-        : isMoney
-          ? (row: any) => money(row, keys)
-          : (row: any) => pick(row, keys),
+        : isCode
+          // 原样字符串，不做任何数字处理（含前导零与超长数字都不丢）
+          ? (row: any) => {
+            const v = pickRaw(row, keys)
+            return v === undefined ? '—' : String(v)
+          }
+          : isMoney
+            ? (row: any) => money(row, keys)
+            : (row: any) => pick(row, keys),
   }
 }
 
@@ -409,4 +513,46 @@ export function hrRowKey(row: any): string {
   return String(
     row?.id ?? row?._id ?? row?.employee_id ?? row?.year_month ?? row?.month_label ?? '',
   )
+}
+
+// ---------------------------------------------------------------------------
+// 合同状态三态判定（第 47 轮）
+// ---------------------------------------------------------------------------
+
+export type ContractStatus = '正常' | '即将到期' | '到期' | ''
+
+export const CONTRACT_STATUS_OPTIONS = [
+  { label: '全部', value: '全部' },
+  { label: '正常', value: '正常' },
+  { label: '即将到期', value: '即将到期' },
+  { label: '到期', value: '到期' },
+] as const
+
+/** 三色主题：正常=success(绿) / 即将到期=warning(橙) / 到期=danger(红)。 */
+export function contractStatusTheme(v: unknown): 'success' | 'warning' | 'danger' | 'default' {
+  const s = String(v ?? '').trim()
+  if (s === '正常') return 'success'
+  if (s === '即将到期') return 'warning'
+  if (s === '到期') return 'danger'
+  return 'default'
+}
+
+/**
+ * 合同状态判定（与后端 hrContractStatusOf 同口径）：
+ *   · 现合同类型含「无固定期限」→ 正常
+ *   · 剩余天数 > 30 → 正常；0~30 → 即将到期；< 0 → 到期
+ *   · 未填结束日期且非无固定期限 → 空串（显示 —）
+ */
+export function contractStatusOf(endDate: unknown, contractType: unknown, today = new Date()): ContractStatus {
+  if (String(contractType ?? '').includes('无固定期限')) return '正常'
+  const raw = String(endDate ?? '').trim()
+  if (!raw) return ''
+  const m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(raw)
+  if (!m) return ''
+  const end = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  const now = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+  const days = Math.floor((end - now) / 86400000)
+  if (days < 0) return '到期'
+  if (days <= 30) return '即将到期'
+  return '正常'
 }

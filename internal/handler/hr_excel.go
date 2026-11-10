@@ -274,7 +274,49 @@ func hrIDCardAgeAt(id string, now time.Time) int {
 	return age
 }
 
+// hrIDCardAge 周岁（整数串，仅用于兼容旧数据；列表/详情展示用 hrIDCardAgeDecimal）。
 func hrIDCardAge(id string) string { return strconv.Itoa(hrIDCardAgeAt(id, time.Now())) }
+
+// hrIDCardBirthDate 从 18 位身份证取出生日期 YYYY-MM-DD。
+func hrIDCardBirthDate(id string) string {
+	if len(id) != 18 {
+		return ""
+	}
+	return normalizeHRDateValue(id[6:10] + "-" + id[10:12] + "-" + id[12:14])
+}
+
+// hrAgeDecimalAt 精确年龄，保留 1 位小数。
+// 公式与任务一致：((today - birthDate) / (365.2425 * 86400000)).toFixed(1)。
+func hrAgeDecimalAt(birthDate string, now time.Time) string {
+	bd, err := time.Parse("2006-01-02", normalizeHRDateValue(birthDate))
+	if err != nil {
+		return ""
+	}
+	days := now.Sub(bd).Hours() / 24
+	if days < 0 {
+		return ""
+	}
+	age := days / 365.2425
+	return strconv.FormatFloat(age, 'f', 1, 64)
+}
+
+// hrAgeDecimalOf 优先用出生日期，缺失时回落到身份证。
+func hrAgeDecimalOf(e *HREmployee, now time.Time) string {
+	birth := strings.TrimSpace(e.BirthMonth)
+	// 出生月份可能是 YYYY-MM（旧数据），补齐成 YYYY-MM-DD 参与计算
+	if len(birth) == 7 {
+		birth += "-01"
+	}
+	if birth == "" || len(birth) < 10 {
+		if bd := hrIDCardBirthDate(normalizeIDNumber(e.IDNumber)); bd != "" {
+			birth = bd
+		}
+	}
+	if len(birth) < 10 {
+		return ""
+	}
+	return hrAgeDecimalAt(birth, now)
+}
 
 // hrWorkYearsAt 入职日期算工龄，返回 "X年Y个月"。
 func hrWorkYearsAt(hireDate string, now time.Time) string {
@@ -302,11 +344,15 @@ func hrEnrichEmployee(e *HREmployee) {
 		if e.Gender == "" {
 			e.Gender = hrIDCardGender(id)
 		}
-		if e.BirthMonth == "" {
-			e.BirthMonth = hrIDCardBirthMonth(id)
+		if bd := hrIDCardBirthDate(id); bd != "" {
+			// 出生日期是主口径；出生月份（YYYY-MM）作为兼容字段同步
+			if e.BirthMonth == "" || len(e.BirthMonth) < 10 {
+				e.BirthMonth = bd
+			}
 		}
-		if e.Age == "" {
-			e.Age = hrIDCardAge(id)
+		// 年龄统一按 1 位小数重算（第 47 轮），不再沿用整数旧值
+		if age := hrAgeDecimalOf(e, time.Now()); age != "" {
+			e.Age = age
 		}
 	}
 	if e.WorkYears == "" && strings.TrimSpace(e.HireDate) != "" {

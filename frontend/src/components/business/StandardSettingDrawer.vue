@@ -45,7 +45,7 @@ import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 const props = withDefaults(defineProps<{
   visible: boolean
   kbId?: string
-  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-social' | 'hr-fund'
+  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund'
   /** 打开时自动展开的分类名（能耗：当前卡片对应的分类）。 */
   initialCategory?: string
   /**

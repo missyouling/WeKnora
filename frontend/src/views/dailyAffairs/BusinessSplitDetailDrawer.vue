@@ -59,6 +59,9 @@
                      buildDetailPayload 里每个数值都过 toNumber()，脏字符本来就会被
                      收敛成数字；而在输入过程中过滤反而会挡住负数、小数点的中间态
                      （"−1" 输入第一个字符就被吃掉）。 -->
+                <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，
+                     不参与手填（第 47 轮）。 -->
+                <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
                      支持换行与自动折行，长内容完整录入与展示不截断。

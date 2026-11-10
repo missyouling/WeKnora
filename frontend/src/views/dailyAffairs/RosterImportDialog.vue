@@ -1,12 +1,12 @@
 <template>
-  <t-dialog :visible="visible" header="导入花名册" width="640px" :footer="false" placement="center"
+  <t-dialog :visible="visible" header="导入" width="640px" :footer="false" placement="center"
     class="roster-import-dialog" @close="close" @update:visible="(v: boolean) => { if (!v) close() }">
     <div class="ri-body">
       <!-- 模板下载栏：醒目入口，后端 excelize 生成 3 个 Sheet -->
       <div class="ri-template-row">
         <div class="ri-template-tip">
           <t-icon name="info-circle" size="16px" />
-          <span>首次导入请先下载标准模板（76 个字段 / 3 个工作表），按表头填写后再上传</span>
+          <span>下载标准模板</span>
         </div>
         <t-button theme="primary" variant="outline" size="small" :loading="downloading" @click="downloadTemplate">
           <template #icon><t-icon name="download" size="14px" /></template>
@@ -22,7 +22,6 @@
           <t-radio-button value="insert">仅新增</t-radio-button>
           <t-radio-button value="update">仅更新</t-radio-button>
         </t-radio-group>
-        <span class="ri-mode-tip">{{ modeTip }}</span>
       </div>
 
       <!-- 拖拽 / 点击上传区：视觉对齐发票管理上传弹窗 -->
@@ -30,7 +29,7 @@
         @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="onDrop">
         <t-icon name="upload" size="28px" class="ri-drop-icon" />
         <div class="ri-drop-title">点击选择或拖拽 Excel 文件到此处</div>
-        <div class="ri-drop-sub">支持 .xlsx / .xls，模板自带示例行会自动跳过</div>
+        <div class="ri-drop-sub">支持 .xlsx / .xls 格式</div>
         <input ref="fileInputRef" type="file" accept=".xlsx,.xls" hidden @change="onInputChange" />
       </div>
 
@@ -46,7 +45,6 @@
 
       <!-- 底部操作 -->
       <div class="ri-footer">
-        <span class="ri-footer-tip">按「证件号码 / 手机号」匹配已有员工</span>
         <t-button variant="outline" size="small" @click="close">取消</t-button>
         <t-button theme="primary" size="small" :disabled="!file" :loading="importing" @click="doImport">
           开始导入
@@ -57,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import * as hrApi from './hrApi'
 
@@ -68,11 +66,6 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<'merge' | 'insert' | 'update'>('merge')
-const modeTip = computed(() => ({
-  merge: '按证件号码/手机号匹配更新，不存在则新增',
-  insert: '忽略已存在员工，只导入新记录',
-  update: '只更新已存在员工，跳过新记录',
-}[mode.value]))
 
 const file = ref<File | null>(null)
 const dragOver = ref(false)

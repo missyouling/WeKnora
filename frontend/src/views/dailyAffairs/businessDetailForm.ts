@@ -31,6 +31,11 @@ export interface DetailFieldMeta {
   dataType?: string
   /** 备注片段字段名（有值表示数据存 remark 片段里） */
   remarkPart?: string
+  /**
+   * 只读字段（第 47 轮）：派生值（年龄/工龄）与系统状态列不可编辑。
+   * 抽屉里渲染为 disabled 输入框，保存时原样带回。
+   */
+  readonly?: boolean
 }
 
 /** 详情表单三个核心字段：永远排在最顶部且完整可见 */

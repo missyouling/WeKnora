@@ -457,7 +457,7 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-social' | 'hr-fund' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
+const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
 // 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
@@ -493,6 +493,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   'fleet-cost': [{ key: 'fleet-cost', label: '成本项', scope: 'fleet-cost', groupId: '' }],
   // 人事管理（第 45 轮）：每个 scope 一个单分类，标签是台账字段集，不是证照。
   'hr-roster': [{ key: 'hr-roster', label: '花名册字段', scope: 'hr-roster', groupId: '' }],
+  'hr-contract': [{ key: 'hr-contract', label: '劳动合同字段', scope: 'hr-contract', groupId: '' }],
   'hr-social': [{ key: 'hr-social', label: '社保账期字段', scope: 'hr-social', groupId: '' }],
   'hr-fund': [{ key: 'hr-fund', label: '公积金台账字段', scope: 'hr-fund', groupId: '' }],
 }
@@ -503,6 +504,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
 // 否则会 fallback 成「证照名称」—— 花名册/社保/公积金是台账字段，不是证照。
 const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
   'hr-roster': '花名册字段',
+  'hr-contract': '劳动合同字段',
   'hr-social': '社保账期字段',
   'hr-fund': '公积金台账字段',
 }
@@ -510,6 +512,7 @@ const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
 // 彻底避免设置抽屉里 fallback 出「证照名称 / 证照类型 / 暂无证照类型」等字样。
 const HR_SCOPE_NOUN: Record<string, string> = {
   'hr-roster': '花名册字段集',
+  'hr-contract': '劳动合同字段集',
   'hr-social': '社保账期字段集',
   'hr-fund': '公积金台账字段集',
 }

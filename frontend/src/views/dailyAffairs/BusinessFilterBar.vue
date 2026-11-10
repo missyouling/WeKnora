@@ -83,6 +83,8 @@
         <template #icon><t-icon name="setting" size="14px" /></template>
         {{ settingsText }}
       </t-button>
+      <!-- 设置与主操作之间的补充按钮（第 47 轮：人事「导入」固定排在这里） -->
+      <slot name="after-settings" />
       <t-button v-if="primaryAction" theme="primary" size="small" @click="emit('primary')">
         <template #icon><t-icon :name="primaryAction.icon || 'add'" size="14px" /></template>
         {{ primaryAction.text }}

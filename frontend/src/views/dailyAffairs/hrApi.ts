@@ -224,3 +224,41 @@ export function getFundBill(id: string | number): Promise<any> {
 export function removeFundBill(id: string | number): Promise<any> {
   return del(`${BASE}/fund/bills/${encodeURIComponent(String(id))}`) as Promise<any>
 }
+
+// ---------------------------------------------------------------------------
+// 第 47 轮：社保双视图 / 劳动合同 / 组织机构
+// ---------------------------------------------------------------------------
+
+/** 社保原始记录（一行 = 某人某险种明细）。 */
+export function listSocialRaw(params: { q?: string; year_month?: string; scheme?: string } = {}): Promise<any> {
+  return get(`${BASE}/social/raw${qs(params)}`) as Promise<any>
+}
+
+/** 多文件自适应批量导入社保（正常 + 异常一起传）。 */
+export function importSocialBatch(formData: FormData): Promise<any> {
+  return postUpload(`${BASE}/social/import`, formData) as Promise<any>
+}
+
+/** 勾选原始记录后按账期生成月度汇总（每月 1 条）。 */
+export function generateSocialSummary(payload: { year_month?: string; ids?: Array<string | number> }): Promise<any> {
+  return post(`${BASE}/social/summary`, payload) as Promise<any>
+}
+
+/** 月度费用清单抽屉数据（全员各险种明细 + 部门筛选项）。 */
+export function getSocialPeriodDetail(id: string | number): Promise<any> {
+  return get(`${BASE}/social/periods/${encodeURIComponent(String(id))}/detail`) as Promise<any>
+}
+
+/** 劳动合同视图（数据与花名册合同字段同源）。 */
+export function listContracts(params: { q?: string; contract_status?: string } = {}): Promise<any> {
+  return get(`${BASE}/contracts${qs(params)}`) as Promise<any>
+}
+
+/** 组织机构（公司 / 部门 / 岗位）。 */
+export function getOrganization(): Promise<any> {
+  return get(`${BASE}/org`) as Promise<any>
+}
+
+export function saveOrganization(payload: Record<string, any>): Promise<any> {
+  return put(`${BASE}/org`, payload) as Promise<any>
+}

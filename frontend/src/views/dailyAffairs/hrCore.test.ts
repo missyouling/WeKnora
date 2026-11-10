@@ -25,25 +25,30 @@ import {
   hrRowKey,
   hrRosterStatusColumns,
   hrRosterAllColumns,
+  isRosterCodeField,
+  hrSocialColumns,
+  contractStatusOf,
+  contractStatusTheme,
 } from './hrCore'
+import { buildFootRow, type SummaryColumn } from './listSummary'
 import { isLockedStatusField, statusFieldSpecsOf, isHrStatusName } from './statusFields'
 
-const ALL_TABS = ['hr-roster', 'hr-social', 'hr-fund'] as const
+const ALL_TABS = ['hr-roster', 'hr-contract', 'hr-social', 'hr-fund'] as const
 
-test('KPI：恰好 3 张卡，且绝不出现「已收录记录」/「历史记录」汇总卡', () => {
-  const cards = buildHrKpiCards({ 'hr-roster': 12, 'hr-social': 9, 'hr-fund': 6 })
-  assert.equal(cards.length, 3)
-  assert.deepEqual(cards.map((c) => c.label), ['花名册', '社保管理', '公积金管理'])
+test('KPI：恰好 4 张卡，且绝不出现「已收录记录」/「历史记录」汇总卡', () => {
+  const cards = buildHrKpiCards({ 'hr-roster': 12, 'hr-contract': 5, 'hr-social': 9, 'hr-fund': 6 })
+  assert.equal(cards.length, 4)
+  assert.deepEqual(cards.map((c) => c.label), ['花名册', '劳动合同', '社保管理', '公积金管理'])
   // 卡里任何字段都不许带上被移除的两张汇总卡文案
   const text = JSON.stringify(cards)
   assert.equal(text.includes('已收录'), false)
   assert.equal(text.includes('历史记录'), false)
-  // 空 counts 也仍是 3 张、数值 0
-  assert.equal(buildHrKpiCards().length, 3)
-  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0'])
+  // 空 counts 也仍是 4 张、数值 0
+  assert.equal(buildHrKpiCards().length, 4)
+  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0', '0'])
 })
 
-test('KPI：三张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
+test('KPI：四张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
   const cards = buildHrKpiCards()
   for (const c of cards) {
     assert.equal(c.action, 'type')
@@ -51,12 +56,13 @@ test('KPI：三张卡都是 action=type + typeValue，才能被 DashboardKpiGrou
     assert.notEqual((c as { static?: boolean }).static, true)
   }
   assert.deepEqual(cards.map((c) => c.typeValue), [...ALL_TABS])
-  assert.equal(HR_TABS.length, 3)
+  assert.equal(HR_TABS.length, 4)
 })
 
-test('hrScopeOf：三个 HR scope 恒等映射，未知值兜底花名册', () => {
+test('hrScopeOf：四个 HR scope 恒等映射，未知值兜底花名册', () => {
   assert.equal(hrScopeOf('hr-roster'), 'hr-roster')
   assert.equal(hrScopeOf('hr-social'), 'hr-social')
+  assert.equal(hrScopeOf('hr-contract'), 'hr-contract')
   assert.equal(hrScopeOf('hr-fund'), 'hr-fund')
   assert.equal(hrScopeOf('unknown'), 'hr-roster')
   assert.equal(hrScopeOf(''), 'hr-roster')
@@ -235,4 +241,88 @@ test('第46轮：字段全集覆盖 76 表头 + 派生 + 离职扩展，且无�
   assert.ok(keys.length >= 78)
   assert.ok(keys.includes('工号') && keys.includes('现合同签订日期'))
   assert.ok(keys.includes('离职证明') && keys.includes('离职备注') && keys.includes('在职状态'))
+})
+
+// ---------------------------------------------------------------------------
+// 第 47 轮
+// ---------------------------------------------------------------------------
+
+test('第47轮：卡号/账号/证件号一律字符串，绝不千分位、绝不参与合计', () => {
+  for (const name of ['工资卡卡号', '个人社保账号', '个人公积金账号', '证件号码', '手机号码', '工号',
+    '考勤编号', '档案编号', '现合同编号', 'QQ号', '分机号', '紧急联系人电话']) {
+    assert.equal(isRosterCodeField(name), true, `${name} 应判为号码类`)
+    const cols = hrRosterAllColumns()
+    const hit = cols.find((c) => c.colKey === name)
+    if (!hit) continue
+    // dataType 不能是 number（否则会被合计行求和）
+    assert.notEqual(hit.dataType, 'number', `${name} 不能是 number 类型`)
+    const long = '6217003760153123456'
+    const out = hit.value?.({ [name]: long, custom_data: { [name]: long } }) ?? ''
+    assert.equal(out, long, `${name} 必须原样输出`)
+    assert.ok(!out.includes(','), `${name} 不能有千分位`)
+  }
+})
+
+test('第47轮：合计行对号码列留空，不对卡号求和', () => {
+  // 用字段全集（含工资卡卡号）构造合计列，等价于用户在「字段」里勾上该列的场景
+  const allCols = hrRosterAllColumns().filter((c) => c.colKey !== 'row-select')
+  const cols: SummaryColumn[] = allCols.map((c) => ({
+    key: c.colKey,
+    label: c.title,
+    fieldType: c.dataType === 'number' ? 'number' : 'text',
+    value: (row: any) => c.value?.(row) ?? '',
+  }))
+  const card = cols.find((c) => c.key === '工资卡卡号')
+  assert.ok(card, '合计列应包含工资卡卡号（但不可加）')
+  const row = buildFootRow(cols, [
+    { 工资卡卡号: '6217003760153123456' },
+    { 工资卡卡号: '6217003760153999888' },
+  ], { selectKey: 'row-select' })
+  assert.equal(String(row['工资卡卡号'] ?? ''), '', '合计行卡号必须为空串')
+  assert.ok(!JSON.stringify(row).includes('118179'), '绝不能出现求和后的荒谬数字')
+})
+
+test('第47轮：合同状态三态判定', () => {
+  const today = new Date('2026-11-10T00:00:00Z')
+  // 无固定期限恒正常
+  assert.equal(contractStatusOf('', '无固定期限劳动合同', today), '正常')
+  assert.equal(contractStatusOf('2020-01-01', '无固定期限劳动合同', today), '正常')
+  // 剩余 > 30 天
+  assert.equal(contractStatusOf('2027-06-30', '固定期限劳动合同', today), '正常')
+  // 0~30 天
+  assert.equal(contractStatusOf('2026-11-20', '固定期限劳动合同', today), '即将到期')
+  assert.equal(contractStatusOf('2026-11-10', '固定期限劳动合同', today), '即将到期')
+  // 已过期
+  assert.equal(contractStatusOf('2026-10-01', '固定期限劳动合同', today), '到期')
+  // 未填且非无固定期限
+  assert.equal(contractStatusOf('', '固定期限劳动合同', today), '')
+  // 三色主题
+  assert.equal(contractStatusTheme('正常'), 'success')
+  assert.equal(contractStatusTheme('即将到期'), 'warning')
+  assert.equal(contractStatusTheme('到期'), 'danger')
+  assert.equal(contractStatusTheme(''), 'default')
+})
+
+test('第47轮：社保原始/汇总双视图列集合', () => {
+  const raw = hrSocialColumns('raw').map((c) => c.colKey)
+  for (const h of ['账期', '记录性质', '险种', '个人社保编号', '单位应缴', '个人应缴', '补退金额']) {
+    assert.ok(raw.includes(h), `原始记录缺少 ${h}`)
+  }
+  const sum = hrSocialColumns('summary').map((c) => c.colKey)
+  for (const h of ['账期', '参保人数', '养老单位', '医疗个人', '大病', '工伤单位', '应缴总计', '状态']) {
+    assert.ok(sum.includes(h), `汇总记录缺少 ${h}`)
+  }
+  // 两套列都不带 fixed、无操作列
+  for (const cols of [hrSocialColumns('raw'), hrSocialColumns('summary')]) {
+    assert.ok(cols.every((c) => !('fixed' in c)))
+    assert.ok(!cols.some((c) => c.colKey === 'operations'))
+  }
+})
+
+test('第47轮：劳动合同列含三色合同状态且默认按工号排序键', () => {
+  const cols = hrColumnDefs('hr-contract').map((c) => c.colKey)
+  for (const h of ['工号', '姓名', '部门', '合同签约公司', '现合同编号', '现合同类型',
+    '现合同开始日期', '现合同结束日期', '现合同期限', '现合同签订日期', '合同状态']) {
+    assert.ok(cols.includes(h), `劳动合同缺少 ${h}`)
+  }
 })

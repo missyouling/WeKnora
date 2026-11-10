@@ -76,15 +76,17 @@ func TestHRIDCardDerivation(t *testing.T) {
 	id := "500106199003072316"
 	require.Len(t, id, 18)
 	assert.Equal(t, "男", hrIDCardGender(id))
-	assert.Equal(t, "1990-03", hrIDCardBirthMonth(id))
+	// 第 47 轮：出生字段升级为完整日期（原 YYYY-MM 只够算年龄，不够展示）
+	assert.Equal(t, "1990-03-07", hrIDCardBirthDate(id))
 	assert.Equal(t, 36, hrIDCardAgeAt(id, time.Date(2026, 3, 8, 0, 0, 0, 0, time.UTC)))
 	assert.Equal(t, "3年6个月", hrWorkYearsAt("2020-01-01", time.Date(2023, 7, 1, 0, 0, 0, 0, time.UTC)))
 
 	e := &HREmployee{IDNumber: id, HireDate: "2020-01-01"}
 	hrEnrichEmployee(e)
 	assert.Equal(t, "男", e.Gender)
-	assert.Equal(t, "1990-03", e.BirthMonth)
-	assert.NotEmpty(t, e.Age)
+	assert.Equal(t, "1990-03-07", e.BirthMonth)
+	// 年龄保留 1 位小数（任务 §2.3）
+	assert.Regexp(t, `^\d+\.\d$`, e.Age)
 	assert.Contains(t, e.WorkYears, "年")
 }
 
