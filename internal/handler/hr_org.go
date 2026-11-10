@@ -11,6 +11,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -68,9 +69,53 @@ func hrOrgAutoMigrate(db *gorm.DB) {
 	}
 }
 
+// hrOrgCompanyDefaultCode 公司默认编码（任务指定 02）。
+const hrOrgCompanyDefaultCode = "02"
+
 // hrOrgDefaultCode 生成默认编码：D01 / P01（两位数，超出则自然增长）。
 func hrOrgDefaultCode(prefix string, index int) string {
 	return fmt.Sprintf("%s%02d", prefix, index)
+}
+
+// hrDeptCodeMap 从存量工号反推「部门 → 5 位编码」。
+//
+// 工号结构是 [职级]+[5位部门码]+[4位序号]，因此同一部门的工号第 2~6 位一致；
+// 取该部门出现次数最多的 5 位码作为其编码（兼容少量脏工号）。
+func hrDeptCodeMap(rows []struct {
+	Department string
+	EmployeeID string
+}) map[string]string {
+	counts := map[string]map[string]int{}
+	for _, r := range rows {
+		dept := strings.TrimSpace(r.Department)
+		if i := strings.LastIndex(dept, "/"); i >= 0 {
+			dept = dept[i+1:]
+		}
+		if dept == "" {
+			continue
+		}
+		code := hrDeptCodeFromEmployeeID(r.EmployeeID)
+		if code == "" {
+			continue
+		}
+		if counts[dept] == nil {
+			counts[dept] = map[string]int{}
+		}
+		counts[dept][code]++
+	}
+	out := map[string]string{}
+	for dept, m := range counts {
+		best, bestN := "", 0
+		for code, n := range m {
+			if n > bestN || (n == bestN && code < best) {
+				best, bestN = code, n
+			}
+		}
+		if best != "" {
+			out[dept] = best
+		}
+	}
+	return out
 }
 
 // hrCollectOrgFromRoster 从花名册去重提取公司 / 部门 / 岗位。
@@ -142,58 +187,118 @@ func (h *HRHandler) hrEnsureOrgDefaults(ctx context.Context, tid int64) {
 	if cnt > 0 && deptCnt > 0 {
 		return
 	}
-	company, depts, positions := h.hrCollectOrgFromRoster(ctx, tid)
+	company, depts, _ := h.hrCollectOrgFromRoster(ctx, tid)
 	if cnt == 0 {
 		if company == "" {
 			company = "重庆星达铜业有限公司"
 		}
 		_ = h.db.WithContext(ctx).Create(&HRCompany{
 			ID: uuid.New().String(), TenantID: tid, Name: company,
-			Code: hrOrgDefaultCode("C", 1),
+			Code: hrOrgCompanyDefaultCode,
 		}).Error
 	}
 	if deptCnt == 0 && len(depts) > 0 {
+		// 部门编码优先从存量工号第 2~6 位提取（C020610012 → 02061），
+		// 提取不到的部门按序补 02080/02090…
+		var idRows []struct {
+			Department string
+			EmployeeID string
+		}
+		_ = h.db.WithContext(ctx).Model(&HREmployee{}).
+			Select("department, employee_id").
+			Where("tenant_id = ?", tid).Scan(&idRows).Error
+		codes := hrDeptCodeMap(idRows)
+		used := map[string]bool{}
+		for _, c := range codes {
+			used[c] = true
+		}
+		nextSeq := 80
 		rows := make([]HRDepartment, 0, len(depts))
 		for i, d := range depts {
+			code := codes[d]
+			if code == "" {
+				for used[fmt.Sprintf("02%03d", nextSeq)] {
+					nextSeq += 10
+				}
+				code = fmt.Sprintf("02%03d", nextSeq)
+				used[code] = true
+				nextSeq += 10
+			}
 			rows = append(rows, HRDepartment{
 				ID: uuid.New().String(), TenantID: tid, Name: d,
-				Code: hrOrgDefaultCode("D", i+1), SortOrder: i + 1,
-			})
-		}
-		_ = h.db.WithContext(ctx).Create(&rows).Error
-	}
-	var posCnt int64
-	h.db.WithContext(ctx).Model(&HRPosition{}).Where("tenant_id = ?", tid).Count(&posCnt)
-	if posCnt == 0 && len(positions) > 0 {
-		// 岗位默认挂在「与员工同部门」上：这里只按名称生成，部门留空待用户指派
-		rows := make([]HRPosition, 0, len(positions))
-		for i, p := range positions {
-			rows = append(rows, HRPosition{
-				ID: uuid.New().String(), TenantID: tid, Name: p,
-				Code: hrOrgDefaultCode("P", i+1), SortOrder: i + 1,
+				Code: code, SortOrder: i + 1,
 			})
 		}
 		_ = h.db.WithContext(ctx).Create(&rows).Error
 	}
 }
 
-// GetOrganization GET /org —— 公司 + 部门 + 岗位（首次访问自动生成默认值）。
+// hrMigrateOrgCodes 把第 47 轮的占位编码迁移成正式编码（幂等）：
+// 公司 C01 → 02；部门 D01/D02… → 从存量工号提取的 5 位部门码。
+//
+// 只迁移「形如 C0x / D0x」的占位值，用户手改过的编码不动。
+func (h *HRHandler) hrMigrateOrgCodes(ctx context.Context, tid int64) {
+	var company HRCompany
+	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).First(&company).Error; err == nil {
+		code := strings.TrimSpace(company.Code)
+		if code == "" || regexp.MustCompile(`^C0\d+$`).MatchString(code) {
+			company.Code = hrOrgCompanyDefaultCode
+			_ = h.db.WithContext(ctx).Save(&company).Error
+		}
+	}
+	var depts []HRDepartment
+	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).Find(&depts).Error; err != nil || len(depts) == 0 {
+		return
+	}
+	var idRows []struct {
+		Department string
+		EmployeeID string
+	}
+	_ = h.db.WithContext(ctx).Model(&HREmployee{}).
+		Select("department, employee_id").Where("tenant_id = ?", tid).Scan(&idRows).Error
+	codes := hrDeptCodeMap(idRows)
+	placeholder := regexp.MustCompile(`^D0\d+$`)
+	// 已占用的 5 位码，避免新分配的撞车
+	used := map[string]bool{}
+	for _, c := range codes {
+		used[c] = true
+	}
+	for i := range depts {
+		if !placeholder.MatchString(strings.TrimSpace(depts[i].Code)) {
+			continue
+		}
+		if code, ok := codes[strings.TrimSpace(depts[i].Name)]; ok && len(code) == 5 {
+			depts[i].Code = code
+			_ = h.db.WithContext(ctx).Save(&depts[i]).Error
+			continue
+		}
+		// 存量里没有该部门的工号（如「质量部」）：按序补 02xxx
+		seq := 80
+		for used[fmt.Sprintf("02%03d", seq)] {
+			seq += 10
+		}
+		code := fmt.Sprintf("02%03d", seq)
+		used[code] = true
+		depts[i].Code = code
+		_ = h.db.WithContext(ctx).Save(&depts[i]).Error
+	}
+}
+
+// GetOrganization GET /org —— 公司 + 部门（第 48 轮起不含岗位）。
 func (h *HRHandler) GetOrganization(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
 	h.hrEnsureOrgDefaults(ctx, tid)
+	h.hrMigrateOrgCodes(ctx, tid)
 
 	var company HRCompany
 	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).First(&company).Error; err != nil {
-		company = HRCompany{TenantID: tid, Name: "重庆星达铜业有限公司", Code: "C01"}
+		company = HRCompany{TenantID: tid, Name: "重庆星达铜业有限公司", Code: hrOrgCompanyDefaultCode}
 	}
 	var depts []HRDepartment
 	_ = h.db.WithContext(ctx).Where("tenant_id = ?", tid).
 		Order("sort_order ASC, code ASC").Find(&depts).Error
-	var positions []HRPosition
-	_ = h.db.WithContext(ctx).Where("tenant_id = ?", tid).
-		Order("sort_order ASC, code ASC").Find(&positions).Error
-	hrOK(c, gin.H{"company": company, "departments": depts, "positions": positions})
+	hrOK(c, gin.H{"company": company, "departments": depts})
 }
 
 // SaveOrganization PUT /org —— 整表覆盖保存（手存语义）。
@@ -203,7 +308,6 @@ func (h *HRHandler) SaveOrganization(c *gin.Context) {
 	var req struct {
 		Company     HRCompany      `json:"company"`
 		Departments []HRDepartment `json:"departments"`
-		Positions   []HRPosition   `json:"positions"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		hrFail(c, "invalid request body: "+err.Error())
@@ -251,42 +355,6 @@ func (h *HRHandler) SaveOrganization(c *gin.Context) {
 				}
 				rows = append(rows, HRDepartment{
 					ID: id, TenantID: tid, Name: n, Code: code, SortOrder: sortOrder,
-				})
-			}
-			if len(rows) > 0 {
-				if err := tx.Create(&rows).Error; err != nil {
-					return err
-				}
-			}
-		}
-		// 岗位：整表替换
-		if req.Positions != nil {
-			if err := tx.Where("tenant_id = ?", tid).Delete(&HRPosition{}).Error; err != nil {
-				return err
-			}
-			rows := make([]HRPosition, 0, len(req.Positions))
-			for i, p := range req.Positions {
-				n := strings.TrimSpace(p.Name)
-				if n == "" {
-					continue
-				}
-				id := strings.TrimSpace(p.ID)
-				if id == "" {
-					id = uuid.New().String()
-				}
-				sortOrder := p.SortOrder
-				if sortOrder <= 0 {
-					sortOrder = i + 1
-				}
-				code := strings.TrimSpace(p.Code)
-				if code == "" {
-					code = hrOrgDefaultCode("P", i+1)
-				}
-				rows = append(rows, HRPosition{
-					ID: id, TenantID: tid, Name: n, Code: code,
-					DepartmentID: strings.TrimSpace(p.DepartmentID),
-					Department:   strings.TrimSpace(p.Department),
-					SortOrder:    sortOrder,
 				})
 			}
 			if len(rows) > 0 {

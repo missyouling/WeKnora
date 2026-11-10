@@ -18,6 +18,7 @@ import {
   ROSTER_TEMPLATE_HEADERS, ROSTER_DERIVED_FIELDS, EXTRA_RESIGN_FIELDS,
   ROSTER_STATUS_COLUMNS, type RosterStatusView,
 } from './hrRosterFields'
+import { allRosterFields } from './hrRosterGroups'
 
 // ---------------------------------------------------------------------------
 // Tab / scope
@@ -555,4 +556,83 @@ export function contractStatusOf(endDate: unknown, contractType: unknown, today 
   if (days < 0) return '到期'
   if (days <= 30) return '即将到期'
   return '正常'
+}
+
+// ---------------------------------------------------------------------------
+// 工号自动编码（第 48 轮）—— 与后端 hr_employee_id.go 同口径
+// ---------------------------------------------------------------------------
+
+/** 工号结构：[1位职级] + [5位部门码] + [4位序号]。 */
+export type HrRank = 'A' | 'B' | 'C'
+
+const RANK_A_KEYWORDS = ['总经理', '副总经理', '总裁', '董事长']
+const RANK_B_KEYWORDS = ['主管', '经理', '主任', '部长', '科长', '组长']
+const EMPLOYEE_ID_DEPT_RE = /^[A-Za-z](\d{5})\d{4}$/
+const EMPLOYEE_ID_TAIL_RE = /(\d{4})$/
+
+/** 按职务判定职级前缀。 */
+export function hrRankOfTitle(title: unknown): HrRank {
+  const t = String(title ?? '').trim()
+  if (RANK_A_KEYWORDS.some((k) => t.includes(k))) return 'A'
+  if (RANK_B_KEYWORDS.some((k) => t.includes(k))) return 'B'
+  return 'C'
+}
+
+/** 从存量工号提取 5 位部门码。 */
+export function hrDeptCodeFromEmployeeID(employeeID: unknown): string {
+  const m = EMPLOYEE_ID_DEPT_RE.exec(String(employeeID ?? '').trim())
+  return m ? m[1] : ''
+}
+
+/** 取工号末尾 4 位序号。 */
+export function hrSeqFromEmployeeID(employeeID: unknown): number {
+  const m = EMPLOYEE_ID_TAIL_RE.exec(String(employeeID ?? '').trim())
+  if (!m) return 0
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * 计算下一个工号：扫描同部门码的存量工号取最大序号 +1。
+ * 存量工号本身**绝不改写**，这里只产出建议值。
+ */
+export function hrNextEmployeeID(deptCode: unknown, title: unknown, existing: readonly string[]): string {
+  const rank = hrRankOfTitle(title)
+  let code = String(deptCode ?? '').trim()
+  if (!/^\d{5}$/.test(code)) {
+    // 兜底：取存量里出现最多的 5 位码
+    const counts = new Map<string, number>()
+    for (const id of existing) {
+      const c = hrDeptCodeFromEmployeeID(id)
+      if (c) counts.set(c, (counts.get(c) || 0) + 1)
+    }
+    let best = ''
+    let bestN = 0
+    for (const [c, n] of counts) {
+      if (n > bestN || (n === bestN && c < best)) { best = c; bestN = n }
+    }
+    code = best || '02000'
+  }
+  let maxSeq = 0
+  for (const id of existing) {
+    if (hrDeptCodeFromEmployeeID(id) !== code) continue
+    const seq = hrSeqFromEmployeeID(id)
+    if (seq > maxSeq) maxSeq = seq
+  }
+  return `${rank}${code}${String(maxSeq + 1).padStart(4, '0')}`
+}
+
+// ---------------------------------------------------------------------------
+// 11 分组字段全集列定义（第 48 轮）
+// ---------------------------------------------------------------------------
+
+/**
+ * 按 11 分组契约产出花名册全部列（不区分显隐）。
+ * 显隐由页面的 `visibleColKeys`（字段设置保存值）过滤，实现六同步。
+ */
+export function hrRosterGroupColumns(): HrColumn[] {
+  const names = allRosterFields()
+  const cols: HrColumn[] = [SELECT_COL]
+  for (const name of names) cols.push(rosterColumnOf(name))
+  return cols
 }

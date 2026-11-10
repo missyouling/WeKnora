@@ -5,7 +5,6 @@
       <t-tabs v-model="tab" size="small">
         <t-tab-panel value="company" label="公司" />
         <t-tab-panel value="department" label="部门" />
-        <t-tab-panel value="position" label="岗位" />
       </t-tabs>
 
       <!-- 内容用 v-if 自绘：TDesign 的 tab-panel 内容默认懒渲染且只保留当前面板，
@@ -17,11 +16,11 @@
         </div>
         <div class="org-row">
           <span class="org-label">公司编码</span>
-          <t-input v-model="company.code" placeholder="公司编码" class="org-control" />
+          <t-input v-model="company.code" placeholder="公司编码（默认 02）" class="org-control" />
         </div>
       </div>
 
-      <div v-else-if="tab === 'department'" class="org-pane">
+      <div v-else class="org-pane">
         <div class="org-toolbar">
           <span class="org-tip">已按花名册自动生成，可改名 / 编码 / 排序 / 删除</span>
           <t-button variant="outline" size="small" @click="addDept">
@@ -46,35 +45,6 @@
         </div>
       </div>
 
-      <div v-else class="org-pane">
-        <div class="org-toolbar">
-          <span class="org-tip">已按花名册自动生成，可改名 / 编码 / 归属部门 / 排序 / 删除</span>
-          <t-button variant="outline" size="small" @click="addPos">
-            <template #icon><t-icon name="add" size="14px" /></template>
-            新增岗位
-          </t-button>
-        </div>
-        <div class="org-list">
-          <div class="org-head org-head--pos">
-            <span>岗位名称</span>
-            <span>岗位编码</span>
-            <span>所属部门</span>
-            <span>排序</span>
-            <span>操作</span>
-          </div>
-          <div v-for="(p, i) in positions" :key="p.id || i" class="org-item org-item--pos">
-            <t-input v-model="p.name" size="small" placeholder="岗位名称" />
-            <t-input v-model="p.code" size="small" placeholder="编码" />
-            <t-select v-model="p.department" size="small" placeholder="所属部门" clearable>
-              <t-option v-for="d in departments" :key="d.name" :label="d.name" :value="d.name" />
-            </t-select>
-            <t-input-number v-model="p.sort_order" size="small" :min="1" theme="normal" />
-            <t-button variant="text" size="small" theme="danger" @click="positions.splice(i, 1)">删除</t-button>
-          </div>
-          <div v-if="!positions.length" class="org-empty">暂无岗位</div>
-        </div>
-      </div>
-
       <div class="org-footer">
         <t-button variant="outline" size="small" @click="close">取消</t-button>
         <t-button theme="primary" size="small" :loading="saving" @click="save">保存</t-button>
@@ -94,11 +64,10 @@ const emit = defineEmits<{
   (e: 'saved'): void
 }>()
 
-const tab = ref<'company' | 'department' | 'position'>('company')
+const tab = ref<'company' | 'department'>('company')
 const saving = ref(false)
 const company = ref<Record<string, any>>({ name: '', code: '' })
 const departments = ref<any[]>([])
-const positions = ref<any[]>([])
 
 async function load() {
   try {
@@ -106,7 +75,6 @@ async function load() {
     const d = res?.data || res || {}
     company.value = d.company ? { ...d.company } : { name: '', code: '' }
     departments.value = Array.isArray(d.departments) ? d.departments.map((x: any) => ({ ...x })) : []
-    positions.value = Array.isArray(d.positions) ? d.positions.map((x: any) => ({ ...x })) : []
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载组织机构失败')
   }
@@ -118,10 +86,6 @@ function addDept() {
   const n = departments.value.length + 1
   departments.value.push({ name: '', code: `D${String(n).padStart(2, '0')}`, sort_order: n })
 }
-function addPos() {
-  const n = positions.value.length + 1
-  positions.value.push({ name: '', code: `P${String(n).padStart(2, '0')}`, sort_order: n, department: '' })
-}
 
 async function save() {
   saving.value = true
@@ -129,7 +93,6 @@ async function save() {
     await hrApi.saveOrganization({
       company: company.value,
       departments: departments.value.filter((d) => String(d.name || '').trim()),
-      positions: positions.value.filter((p) => String(p.name || '').trim()),
     })
     MessagePlugin.success('组织机构已保存')
     emit('saved')
@@ -162,8 +125,6 @@ function close() { emit('update:visible', false) }
   padding: 4px 0;
 }
 .org-head { color: var(--td-text-color-placeholder); border-bottom: 1px solid var(--td-component-border); }
-.org-head--pos,
-.org-item--pos { grid-template-columns: 1.2fr 0.9fr 1.1fr 0.6fr 0.6fr; }
 .org-item :deep(.t-input-number) { width: 100%; }
 .org-empty { padding: 16px; text-align: center; color: var(--td-text-color-placeholder); }
 .org-footer {

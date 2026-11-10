@@ -34,7 +34,40 @@
     <div class="bsd-body">
       <ExtractQualityPanel v-if="quality" :quality="quality" :label-of="labelOf" compact />
 
-      <section class="bsd-block">
+      <!-- 第 48 轮：有 groups 时按 11 分组分块渲染（空组已在父级过滤） -->
+      <template v-if="groups && groups.length">
+        <section v-for="g in groups" :key="g.key" class="bsd-block bsd-group">
+          <div class="bsd-block-title">{{ g.label }}</div>
+          <div class="bsd-fields">
+            <template v-for="f in g.fields" :key="f.name">
+              <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
+                <slot :name="`field-${f.name}`" :field="f" :form="form">
+                  <div v-if="readonly" class="bsd-readonly-value" :class="{ 'is-long': isLongType(f) }">
+                    {{ displayValueOf(f) }}
+                  </div>
+                  <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
+                  <t-textarea v-else-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
+                    :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
+                  <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
+                  <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
+                    format="YYYY-MM-DD" clearable allow-input />
+                  <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
+                  <t-textarea v-else-if="f.dataType === 'textarea'" v-model="form.data[f.name]"
+                    :autosize="{ minRows: 2, maxRows: 6 }" />
+                  <t-textarea v-else-if="isLongTextField(f)" v-model="form.data[f.name]"
+                    :autosize="{ minRows: 2, maxRows: 5 }" />
+                  <t-tag-input v-else-if="f.dataType === 'array'" :value="arrayValueOf(f.name)"
+                    @change="(v: any) => (form.data[f.name] = normalizeArrayValue(v))"
+                    placeholder="输入后回车添加" clearable />
+                  <t-input v-else v-model="form.data[f.name]" />
+                </slot>
+              </t-form-item>
+            </template>
+          </div>
+        </section>
+      </template>
+
+      <section v-else class="bsd-block">
         <div class="bsd-block-title">{{ blockTitle }}</div>
         <div class="bsd-fields">
           <template v-for="f in formFields" :key="f.name">
@@ -162,6 +195,8 @@ const props = withDefaults(defineProps<{
   /** 当前行（提供 knowledgeId / fileName / fileType 供预览） */
   row?: any
   /** 物理页码（预览跳转用；缺省回退 1） */
+  /** 第 48 轮：按分组渲染（花名册 11 分组），为空时退回单块渲染 */
+  groups?: { key: string; label: string; fields: any[] }[]
   pageNo?: number
   /** 表单状态（父级持有，组件只绑定） */
   form: any

@@ -41,6 +41,10 @@
         <!-- 搜索框正后方的「在职状态」筛选：BusinessListToolbar 的 #type-extra
              插槽紧跟 .doc-search-field 渲染，BusinessFilterBar 已原样转发。 -->
         <template #type-extra>
+          <!-- 第 48 轮：部门筛选（搜索框后、在职状态前） -->
+          <t-select v-if="activeTab === 'hr-roster'" v-model="rosterDeptFilter"
+            :options="rosterDeptSelectOptions" placeholder="部门" clearable
+            class="hr-status-select" @change="onRosterDeptChange" />
           <t-select v-if="activeTab === 'hr-roster'" v-model="rosterStatusView"
             :options="ROSTER_STATUS_OPTIONS" placeholder="在职状态" clearable
             class="hr-status-select" @change="onRosterStatusChange" />
@@ -236,13 +240,29 @@
 
     <!-- 详情抽屉：深拷贝草稿 + 脏检查只标脏不自动保存，必须点「保存」才调 API -->
     <BusinessSplitDetailDrawer v-model:visible="detailVisible" :title="detailTitle" :row="detailRow"
-      :page-no="0" :form="editForm" :fields="drawerFields" :sub-fields="[]"
+      :page-no="0" :form="editForm" :fields="drawerFields"
+      :groups="activeTab === 'hr-roster' ? drawerGroups : undefined" :sub-fields="[]"
       :supports-sub-fields="false" :dirty="detailDirty" :saving="saving"
       storage-key="weknora-hr-detail-width" :show-preview="false"
-      @save="saveDetail" @delete="onDetailDelete" />
+      @save="saveDetail" @delete="onDetailDelete">
+      <!-- 第 48 轮：部门 / 职务变更后重算工号建议值（用户手改过则不覆盖） -->
+      <template #field-部门>
+        <t-select v-model="editForm.data['部门']" clearable filterable placeholder="选择部门"
+          @change="onDeptOrTitleChange">
+          <t-option v-for="d in rosterDeptOptions" :key="d" :label="d" :value="d" />
+        </t-select>
+      </template>
+      <template #field-职务>
+        <t-input v-model="editForm.data['职务']" placeholder="职务" @change="onDeptOrTitleChange" />
+      </template>
+    </BusinessSplitDetailDrawer>
 
     <!-- 设置抽屉：纯手工模块，显式关掉「提取规则」Tab -->
-    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
+    <!-- 第 48 轮：设置抽屉双 Tab（字段设置 11 分组 / 组织机构 公司+部门） -->
+    <HrSettingsDrawer v-if="activeTab === 'hr-roster'" v-model:visible="settingsVisible"
+      :title="settingsTitle" :visible-fields="visibleColKeys"
+      @save-fields="onSaveFields" @saved-org="onOrgSaved" />
+    <StandardSettingDrawer v-else v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
       :initial-category="initialCategory" :title="settingsTitle"
       storage-key="weknora-hr-settings-drawer-width" :show-rules="false" @saved="onSettingsSaved" />
 
@@ -322,16 +342,20 @@ import { grouped } from './formatNumber'
 import {
   HR_TABS, buildHrKpiCards, hrScopeOf, hrColumnDefs, hrBillColumnDefs,
   sortMonthsDesc, isHrMonth, hrFieldSeeds, hrRowKey,
-  hrRosterStatusColumns,
+  hrRosterGroupColumns,
   hrSocialColumns,
   contractStatusOf,
   contractStatusTheme,
   CONTRACT_STATUS_OPTIONS,
 } from './hrCore'
 import type { HrTab, HrColumn } from './hrCore'
-import { ROSTER_STATUS_OPTIONS, type RosterStatusView } from './hrRosterFields'
+import {
+  ROSTER_STATUS_OPTIONS, drawerGroupsFor, visibleFieldsFor,
+  type RosterStatusFilter,
+} from './hrRosterGroups'
 import RosterImportDialog from './RosterImportDialog.vue'
 import HrOrganizationDialog from './HrOrganizationDialog.vue'
+import HrSettingsDrawer from './HrSettingsDrawer.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
 import type { FilterFieldSpec } from './businessFilter'
@@ -352,10 +376,13 @@ const kpiCounts = ref<Record<string, number>>({})
 const fundSettings = ref<any>(null)
 const fieldConfig = ref<Record<string, any[]>>({})
 /** 第 46 轮：花名册在职状态四态筛选（默认在职）。 */
-const rosterStatusView = ref<RosterStatusView>('在职')
+const rosterStatusView = ref<RosterStatusFilter>('在职')
 /** 第 47 轮：社保记录类型（原始记录 / 汇总记录）与劳动合同状态筛选。 */
 const siRecordView = ref<'raw' | 'summary'>('raw')
 const contractStatusView = ref<string>('全部')
+/** 第 48 轮：花名册部门筛选（空 = 全部部门）。 */
+const rosterDeptFilter = ref<string>('')
+const rosterDeptOptions = ref<string[]>([])
 const siMonthFilter = ref<string>('')
 /** 社保月度费用清单抽屉（点汇总行打开）。 */
 const siDetailVisible = ref(false)
@@ -438,8 +465,8 @@ const kpiCards = computed(() => buildHrKpiCards(kpiCounts.value))
 // 列定义 / 列显隐
 // ---------------------------------------------------------------------------
 const currentColumns = computed<HrColumn[]>(() => {
-  // 花名册按「在职状态」切换专属列集合（第 46 轮）。
-  if (activeTab.value === 'hr-roster') return hrRosterStatusColumns(rosterStatusView.value)
+  // 花名册：列全集来自 11 分组契约，显隐由 visibleColKeys（字段设置）决定。
+  if (activeTab.value === 'hr-roster') return hrRosterGroupColumns()
   // 社保按「记录类型」切换原始 / 汇总列集合（第 47 轮）。
   if (activeTab.value === 'hr-social') return hrSocialColumns(siRecordView.value)
   if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') return hrBillColumnDefs()
@@ -463,13 +490,28 @@ function persistColumns() {
   try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
 }
 function resetColumns() {
-  visibleColKeys.value = businessColumns.value.map((c) => c.colKey)
+  visibleColKeys.value = activeTab.value === 'hr-roster'
+    ? visibleFieldsFor(rosterStatusView.value)
+    : businessColumns.value.map((c) => c.colKey)
   persistColumns()
 }
 function selectAllColumns() { resetColumns() }
 function onColumnsChange(keys: string[]) { visibleColKeys.value = keys; persistColumns() }
 function initColumns() {
   const allKeys = businessColumns.value.map((c) => c.colKey)
+  // 第 48 轮：花名册以「11 分组默认勾选」为基线，只有用户显式保存过的才覆盖。
+  if (activeTab.value === 'hr-roster') {
+    const saved = localStorage.getItem(STORAGE_KEY.value)
+    if (saved) {
+      try {
+        const arr = JSON.parse(saved)
+        const matched = allKeys.filter((k) => Array.isArray(arr) && arr.includes(k))
+        if (matched.length) { visibleColKeys.value = matched; return }
+      } catch { /* ignore */ }
+    }
+    visibleColKeys.value = visibleFieldsFor(rosterStatusView.value)
+    return
+  }
   const saved = localStorage.getItem(STORAGE_KEY.value)
   if (saved) {
     try {
@@ -605,6 +647,7 @@ async function loadList(tab: HrTab) {
       // 第 47 轮：不传 page_size，后端默认全量（10000），卡片与表格行数一致
       const res: any = await hrApi.listRosterEmployees({
         q: kw,
+        department: rosterDeptFilter.value || undefined,
         status: rosterStatusView.value === '全部' ? undefined : rosterStatusView.value,
       })
       items = extractItems(res)
@@ -631,7 +674,10 @@ async function loadList(tab: HrTab) {
     // string id；万一某视图缺 id，用 hrRowKey(row) 补一个，保证 TDesign 的选中键、
     // selectedKeys 与合计行的 hrRowKey 三者口径统一（都等于该行 id）。
     rows.value = items.map((r: any) => ({ ...(r || {}), id: r?.id ?? hrRowKey(r) }))
-    kpiCounts.value = { ...kpiCounts.value, [tab]: items.length }
+    // 第 48 轮：花名册卡片恒为模块总人数，不随搜索/部门/状态筛选变化。
+    if (tab !== 'hr-roster') {
+      kpiCounts.value = { ...kpiCounts.value, [tab]: items.length }
+    }
   } catch (e: any) {
     rows.value = []
     MessagePlugin.error(e?.message || '加载失败')
@@ -837,7 +883,7 @@ async function openSiDetail(row: any) {
 }
 
 async function onRosterStatusChange(v: any) {
-  rosterStatusView.value = (v as RosterStatusView) || '全部'
+  rosterStatusView.value = (v as RosterStatusFilter) || '在职'
   if (activeTab.value !== 'hr-roster') return
   headerReady.value = false
   selectedKeys.value = new Set()
@@ -886,17 +932,63 @@ const detailDirty = ref(false)
 const saving = ref(false)
 const editForm = ref<any>({ data: {}, remarkParts: {}, items: [] })
 const editBaseline = ref('')
+/** 部门下拉选项（全部部门 + 组织机构部门名）。 */
+const rosterDeptSelectOptions = computed(() => [
+  { label: '全部部门', value: '' },
+  ...rosterDeptOptions.value.map((d) => ({ label: d, value: d })),
+])
+
+async function loadRosterDepts() {
+  try {
+    const res: any = await hrApi.getOrganization()
+    const d = res?.data || res || {}
+    rosterDeptOptions.value = (Array.isArray(d.departments) ? d.departments : [])
+      .map((x: any) => String(x.name || '').trim())
+      .filter(Boolean)
+  } catch {
+    rosterDeptOptions.value = []
+  }
+}
+
+async function onRosterDeptChange() {
+  headerReady.value = false
+  selectedKeys.value = new Set()
+  rows.value = []
+  initColumns()
+  await loadList('hr-roster')
+  headerReady.value = true
+}
+
+/** 第 48 轮：字段设置保存 → 六同步（表头 / 字段筛选 / 抽屉 / 导出打印同源）。 */
+function onSaveFields(fields: string[]) {
+  visibleColKeys.value = fields.slice()
+  persistColumns()
+}
+
 /** 派生/系统字段：详情抽屉里只读（第 47 轮）。 */
 const READONLY_DETAIL_FIELDS = new Set([
   '年龄', '工龄', '在职状态', '员工状态', '合同状态', '账期状态', '参保状态', '缴存状态', '状态',
 ])
 
-const drawerFields = computed(() => businessColumns.value.map((c) => ({
-  name: c.colKey,
-  label: c.title,
-  dataType: c.dataType || 'text',
-  readonly: READONLY_DETAIL_FIELDS.has(c.colKey),
-})))
+/** 第 48 轮：抽屉按 11 分组渲染，空组自动隐藏，在职隐藏离职信息组。 */
+const drawerGroups = computed(() =>
+  drawerGroupsFor(rosterStatusView.value, new Set(visibleColKeys.value))
+    .map((g) => ({
+      key: g.key,
+      label: g.label,
+      fields: g.fields.map((name) => {
+        const c = businessColumns.value.find((x) => x.colKey === name)
+        return {
+          name,
+          label: c?.title || name,
+          dataType: c?.dataType || 'text',
+          readonly: READONLY_DETAIL_FIELDS.has(name),
+        }
+      }),
+    })),
+)
+
+const drawerFields = computed(() => drawerGroups.value.flatMap((g) => g.fields))
 
 function openDetail(row: any) {
   // 社保汇总记录点行 → 打开月度费用清单抽屉（第 47 轮）
@@ -1010,6 +1102,46 @@ function onSettingsSaved() { void loadFieldConfig(activeTab.value) }
 function onPrimaryAction() {
   if (activeTab.value === 'hr-social') { void handleAddPeriod(); return }
   openDetail(null)
+  if (activeTab.value === 'hr-roster') void autoFillEmployeeId()
+}
+
+/**
+ * 第 48 轮：新增员工时按「部门 + 职务」自动生成工号建议值。
+ * 只填空白工号，用户手改过（非空）绝不覆盖；存量工号不受影响。
+ */
+async function autoFillEmployeeId() {
+  const dept = String(editForm.value?.data?.['部门'] || '').trim()
+  const title = String(editForm.value?.data?.['职务'] || editForm.value?.data?.['岗位'] || '').trim()
+  try {
+    const res: any = await hrApi.nextEmployeeId({ department: dept, title })
+    const d = res?.data || res || {}
+    const next = String(d.employee_id || '').trim()
+    if (!next) return
+    if (!String(editForm.value?.data?.['工号'] || '').trim()) {
+      editForm.value.data['工号'] = next
+      editForm.value.data['employee_id'] = next
+    }
+  } catch { /* 编码建议失败不阻断新增 */ }
+}
+
+/** 部门/职务变化后重算工号（仅当工号还是自动生成值时才覆盖）。 */
+let lastAutoEmployeeId = ''
+async function onDeptOrTitleChange() {
+  if (activeTab.value !== 'hr-roster') return
+  const cur = String(editForm.value?.data?.['工号'] || '').trim()
+  // 用户手改过就不动
+  if (cur && cur !== lastAutoEmployeeId) return
+  const dept = String(editForm.value?.data?.['部门'] || '').trim()
+  const title = String(editForm.value?.data?.['职务'] || editForm.value?.data?.['岗位'] || '').trim()
+  try {
+    const res: any = await hrApi.nextEmployeeId({ department: dept, title })
+    const d = res?.data || res || {}
+    const next = String(d.employee_id || '').trim()
+    if (!next) return
+    editForm.value.data['工号'] = next
+    editForm.value.data['employee_id'] = next
+    lastAutoEmployeeId = next
+  } catch { /* ignore */ }
 }
 async function handleAddPeriod() {
   const d = new Date()
@@ -1178,6 +1310,7 @@ async function handleGenerateBill() {
 // 生命周期
 // ---------------------------------------------------------------------------
 onMounted(async () => {
+  void loadRosterDepts()
   initColumns()
   await switchTab('hr-roster')
   await reloadStats()

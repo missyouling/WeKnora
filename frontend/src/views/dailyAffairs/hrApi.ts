@@ -29,6 +29,7 @@ function qs(params: Record<string, any> = {}): string {
 export function listRosterEmployees(params: {
   q?: string
   status?: string
+  department?: string
   page?: number
   page_size?: number
 } = {}): Promise<any> {
@@ -261,4 +262,9 @@ export function getOrganization(): Promise<any> {
 
 export function saveOrganization(payload: Record<string, any>): Promise<any> {
   return put(`${BASE}/org`, payload) as Promise<any>
+}
+
+/** 第 48 轮：新增员工时的工号自动编码建议（A/B/C + 5 位部门码 + 4 位序号）。 */
+export function nextEmployeeId(params: { department?: string; title?: string } = {}): Promise<any> {
+  return get(`${BASE}/roster/next-employee-id${qs(params)}`) as Promise<any>
 }

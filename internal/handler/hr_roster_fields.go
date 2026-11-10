@@ -619,7 +619,12 @@ func hrIsRosterDateField(name string) bool {
 func hrStatusDBValues(status string) []string {
 	switch strings.TrimSpace(status) {
 	case hrRosterStatusActive:
-		return []string{hrRosterStatusActive, "active", "正式"}
+		// 第 48 轮：前端在职状态只留「全部 / 在职 / 离职」三项，
+		// 「在职」需把试用期与退休返聘一并纳入（任务 §3.2）。
+		return []string{
+			hrRosterStatusActive, hrRosterStatusProbation, hrRosterStatusReemployed,
+			"active", "正式", "试用", "probation",
+		}
 	case hrRosterStatusProbation:
 		return []string{hrRosterStatusProbation, "试用", "probation"}
 	case hrRosterStatusReemployed:

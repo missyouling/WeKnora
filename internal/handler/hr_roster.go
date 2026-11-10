@@ -418,8 +418,17 @@ func (h *HRHandler) ListEmployees(c *gin.Context) {
 	}
 	q := h.db.WithContext(ctx).Model(&HREmployee{}).Where("tenant_id = ?", tid)
 	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
+		// 第 48 轮：全字段深度搜索。岗位（过磅员等）多数只存在 custom_data["岗位"]，
+		// 主列 position 是「普工/操作员」，只查主列会漏匹配（真机搜「过磅」曾 0 条）。
 		like := "%" + kw + "%"
-		q = q.Where("name LIKE ? OR id_number LIKE ? OR employee_id LIKE ? OR department LIKE ?", like, like, like, like)
+		q = q.Where(
+			"name ILIKE ? OR id_number ILIKE ? OR employee_id ILIKE ? OR department ILIKE ?"+
+				" OR position ILIKE ? OR phone ILIKE ? OR COALESCE(custom_data::text, '') ILIKE ?",
+			like, like, like, like, like, like, like,
+		)
+	}
+	if dept := strings.TrimSpace(c.Query("department")); dept != "" && dept != "全部" && dept != "all" {
+		q = q.Where("department = ?", dept)
 	}
 	if status := strings.TrimSpace(c.Query("status")); status != "" && status != "all" && status != "全部" {
 		// 四态筛选需兼容第 45 轮存量英文值与模板导入值（正式/试用/已离职）。

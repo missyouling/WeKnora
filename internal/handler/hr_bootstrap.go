@@ -357,6 +357,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/fund/bills/:id", h.GetPFBill)
 	r.DELETE("/hr/fund/bills/:id", h.DeletePFBill)
 
+	// 第 48 轮：新增员工时的工号自动编码建议
+	r.GET("/hr/roster/next-employee-id", h.NextEmployeeID)
 	// 第 47 轮：劳动合同视图 + 组织机构设置
 	r.GET("/hr/contracts", h.ListContracts)
 	r.GET("/hr/org", h.GetOrganization)

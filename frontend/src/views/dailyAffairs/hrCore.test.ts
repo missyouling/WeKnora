@@ -29,6 +29,10 @@ import {
   hrSocialColumns,
   contractStatusOf,
   contractStatusTheme,
+  hrRankOfTitle,
+  hrDeptCodeFromEmployeeID,
+  hrSeqFromEmployeeID,
+  hrNextEmployeeID,
 } from './hrCore'
 import { buildFootRow, type SummaryColumn } from './listSummary'
 import { isLockedStatusField, statusFieldSpecsOf, isHrStatusName } from './statusFields'
@@ -325,4 +329,43 @@ test('第47轮：劳动合同列含三色合同状态且默认按工号排序键
     '现合同开始日期', '现合同结束日期', '现合同期限', '现合同签订日期', '合同状态']) {
     assert.ok(cols.includes(h), `劳动合同缺少 ${h}`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// 第 48 轮：工号自动编码
+// ---------------------------------------------------------------------------
+
+test('第48轮：职级前缀判定（A 高管 / B 主管级 / C 普通）', () => {
+  for (const t of ['总经理', '副总经理', '董事长']) assert.equal(hrRankOfTitle(t), 'A', t)
+  for (const t of ['主管', '行政部主管', '经理', '主任', '部长', '科长', '组长']) assert.equal(hrRankOfTitle(t), 'B', t)
+  for (const t of ['普工', '操作员', '文员', '驾驶员', '检验员', '过磅员', '保安', '保洁', '']) {
+    assert.equal(hrRankOfTitle(t), 'C', t)
+  }
+})
+
+test('第48轮：从存量工号提取部门码与序号', () => {
+  assert.equal(hrDeptCodeFromEmployeeID('C020300005'), '02030')
+  assert.equal(hrDeptCodeFromEmployeeID('A020100001'), '02010')
+  assert.equal(hrDeptCodeFromEmployeeID('C020610012'), '02061')
+  // C010300019 也是 10 位合法结构（部门码 01030，历史遗留段）
+  assert.equal(hrDeptCodeFromEmployeeID('C010300019'), '01030')
+  // 非 10 位结构返回空
+  assert.equal(hrDeptCodeFromEmployeeID('E001'), '')
+  assert.equal(hrDeptCodeFromEmployeeID(''), '')
+  assert.equal(hrSeqFromEmployeeID('C020300005'), 5)
+  assert.equal(hrSeqFromEmployeeID('C020500135'), 135)
+})
+
+test('第48轮：工号自动递增（销售部 02030 最大 0005 → 0006）', () => {
+  const existing = ['C020300001', 'C020300002', 'C020300005', 'C020300006', 'C020300008', 'A020100001']
+  assert.equal(hrNextEmployeeID('02030', '普工', existing), 'C020300009')
+  assert.equal(hrNextEmployeeID('02030', '主管', existing), 'B020300009')
+  assert.equal(hrNextEmployeeID('02030', '总经理', existing), 'A020300009')
+  // 空部门 → 无存量 → 0001
+  assert.equal(hrNextEmployeeID('02080', '普工', existing), 'C020800001')
+})
+
+test('第48轮：部门码缺省时从存量反推', () => {
+  const existing = ['C020500135', 'C020500136', 'C020500137']
+  assert.equal(hrNextEmployeeID('', '普工', existing), 'C020500138')
 })
