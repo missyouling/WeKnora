@@ -27,46 +27,49 @@ const (
 
 // HREmployee 花名册。
 type HREmployee struct {
-	ID                    string         `gorm:"primaryKey" json:"id"`
-	TenantID              int64          `gorm:"index;uniqueIndex:uk_hr_employee_tenant_id_number" json:"tenant_id"`
-	EmployeeID            string         `json:"employee_id"`
-	Name                  string         `gorm:"index" json:"name"`
-	Department            string         `json:"department"`
-	Position              string         `json:"position"`
-	Gender                string         `json:"gender"`
-	HireDate              string         `json:"hire_date"`
-	Age                   string         `json:"age"`
-	WorkYears             string         `json:"work_years"`
-	BirthMonth            string         `json:"birth_month"`
-	Education             string         `json:"education"`
-	PoliticalStatus       string         `json:"political_status"`
-	WorkClothingSize      string         `json:"work_clothing_size"`
-	SafetyShoeSize        string         `json:"safety_shoe_size"`
-	HouseholdType         string         `json:"household_type"`
-	Ethnicity             string         `json:"ethnicity"`
-	NativePlace           string         `json:"native_place"`
-	IDAddress             string         `json:"id_address"`
-	IDNumber              string         `gorm:"uniqueIndex:uk_hr_employee_tenant_id_number" json:"id_number"`
-	MaritalStatus         string         `json:"marital_status"`
-	SocialInsurance       string         `json:"social_insurance"`
-	HasBirth              string         `json:"has_birth"`
-	Phone                 string         `json:"phone"`
-	SocialInsuranceNumber string         `json:"social_insurance_number"`
-	ProvidentFundNumber   string         `json:"provident_fund_number"`
-	EmergencyContact      string         `json:"emergency_contact"`
-	EmergencyPhone        string         `json:"emergency_phone"`
-	CurrentAddress        string         `json:"current_address"`
-	GraduateSchool        string         `json:"graduate_school"`
-	Major                 string         `json:"major"`
-	GraduationTime        string         `json:"graduation_time"`
-	Email                 string         `json:"email"`
-	Remarks               string         `gorm:"type:text" json:"remarks"`
-	Status                string         `gorm:"default:active" json:"status"`
-	ResignDate            string         `json:"resign_date"`
-	ResignReasons         string         `gorm:"type:text" json:"resign_reasons"`
-	CustomData            map[string]any `gorm:"type:jsonb;serializer:json" json:"custom_data"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
+	ID                    string `gorm:"primaryKey" json:"id"`
+	TenantID              int64  `gorm:"index;uniqueIndex:uk_hr_employee_tenant_id_number" json:"tenant_id"`
+	EmployeeID            string `json:"employee_id"`
+	Name                  string `gorm:"index" json:"name"`
+	Department            string `json:"department"`
+	Position              string `json:"position"`
+	Gender                string `json:"gender"`
+	HireDate              string `json:"hire_date"`
+	Age                   string `json:"age"`
+	WorkYears             string `json:"work_years"`
+	BirthMonth            string `json:"birth_month"`
+	Education             string `json:"education"`
+	PoliticalStatus       string `json:"political_status"`
+	WorkClothingSize      string `json:"work_clothing_size"`
+	SafetyShoeSize        string `json:"safety_shoe_size"`
+	HouseholdType         string `json:"household_type"`
+	Ethnicity             string `json:"ethnicity"`
+	NativePlace           string `json:"native_place"`
+	IDAddress             string `json:"id_address"`
+	IDNumber              string `gorm:"uniqueIndex:uk_hr_employee_tenant_id_number" json:"id_number"`
+	MaritalStatus         string `json:"marital_status"`
+	SocialInsurance       string `json:"social_insurance"`
+	HasBirth              string `json:"has_birth"`
+	Phone                 string `json:"phone"`
+	SocialInsuranceNumber string `json:"social_insurance_number"`
+	ProvidentFundNumber   string `json:"provident_fund_number"`
+	EmergencyContact      string `json:"emergency_contact"`
+	EmergencyPhone        string `json:"emergency_phone"`
+	CurrentAddress        string `json:"current_address"`
+	GraduateSchool        string `json:"graduate_school"`
+	Major                 string `json:"major"`
+	GraduationTime        string `json:"graduation_time"`
+	Email                 string `json:"email"`
+	Remarks               string `gorm:"type:text" json:"remarks"`
+	Status                string `gorm:"default:active" json:"status"`
+	ResignDate            string `json:"resign_date"`
+	ResignReasons         string `gorm:"type:text" json:"resign_reasons"`
+	// 第 46 轮：办理离职弹窗的证明附件路径与备注说明。
+	ResignProofPath string         `json:"resign_proof_path"`
+	ResignRemark    string         `gorm:"type:text" json:"resign_remark"`
+	CustomData      map[string]any `gorm:"type:jsonb;serializer:json" json:"custom_data"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 func (HREmployee) TableName() string { return "hr_employees" }

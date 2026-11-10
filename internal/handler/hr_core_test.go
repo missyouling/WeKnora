@@ -396,3 +396,145 @@ func TestHRBootstrapIdempotent(t *testing.T) {
 	assert.True(t, fleetCategoryScopes[hrScopeSocial])
 	assert.True(t, fleetCategoryScopes[hrScopeFund])
 }
+
+// ---------------------------------------------------------------------------
+// 第 46 轮：76 字段标准模板 / 四态 / 日期清洗 / 导入模板下载
+// ---------------------------------------------------------------------------
+
+func TestHRRosterTemplateHeaders(t *testing.T) {
+	require.Len(t, hrRosterHeaders, 76)
+	assert.Equal(t, "工号", hrRosterHeaders[0])
+	assert.Equal(t, "姓名", hrRosterHeaders[1])
+	assert.Equal(t, "现合同签订日期", hrRosterHeaders[75])
+	seen := map[string]bool{}
+	for _, h := range hrRosterHeaders {
+		assert.False(t, seen[h], "重复表头 "+h)
+		seen[h] = true
+	}
+	// 76 个表头自身 + 常见别名都能归一到标准名
+	for _, h := range hrRosterHeaders {
+		assert.Equal(t, h, hrRosterHeaderKey(h), "表头自身未命中: "+h)
+	}
+	for alias, want := range map[string]string{
+		"身份证号码": "证件号码", "身份证号": "证件号码", "联系电话": "手机号码",
+		"上家工作单位名称": "上家工作单位", "上家工作单位职务": "上家工作职务",
+		"合同编号": "现合同编号", "合同类型": "现合同类型",
+	} {
+		assert.Equal(t, want, hrRosterHeaderKey(alias), alias)
+	}
+	assert.Len(t, hrRosterEnumGroups, 20)
+	assert.Len(t, hrRosterEnumGroups["离职原因"], 42)
+	assert.Equal(t, 11, len(hrRosterFieldGroups))
+}
+
+func TestHRRosterDateNormalize(t *testing.T) {
+	for in, want := range map[string]string{
+		"2018-07-01 00:00:00":             "2018-07-01",
+		"2018/7/1 0:00":                   "2018-07-01",
+		"2018-07-01T00:00:00+08:00":       "2018-07-01",
+		"2026-11-07T20:12:33.37663+08:00": "2026-11-07",
+		"2018-07-01":                      "2018-07-01",
+	} {
+		assert.Equal(t, want, normalizeHRDateValue(in), in)
+	}
+	assert.Equal(t, "", normalizeHRDateValue("   "))
+	assert.True(t, hrIsRosterDateField("入职日期"))
+	assert.True(t, hrIsRosterDateField("身份证有效期"))
+	assert.False(t, hrIsRosterDateField("工号"))
+}
+
+func TestHRRosterStatusNormalize(t *testing.T) {
+	for in, want := range map[string]string{
+		"正式": hrRosterStatusActive, "在职": hrRosterStatusActive, "active": hrRosterStatusActive,
+		"试用": hrRosterStatusProbation, "试用期": hrRosterStatusProbation,
+		"已离职": hrRosterStatusResigned, "待离职": hrRosterStatusResigned, "resigned": hrRosterStatusResigned,
+		"": hrRosterStatusActive,
+	} {
+		assert.Equal(t, want, normalizeHREmployeeStatus(in, "全职"), in)
+	}
+	assert.Equal(t, hrRosterStatusReemployed, normalizeHREmployeeStatus("正式", "退休返聘"))
+	assert.Contains(t, hrStatusDBValues(hrRosterStatusResigned), "resigned")
+	assert.Contains(t, hrStatusDBValues(hrRosterStatusActive), "active")
+}
+
+func TestHRRosterImportSkipsSampleAndKeepsAllFields(t *testing.T) {
+	// 模板首行 + 示例行 + 一行真实数据
+	header := append([]string{}, hrRosterHeaders...)
+	sample := append([]string{}, hrRosterTemplateSample...)
+	real := make([]string, len(hrRosterHeaders))
+	for i := range real {
+		real[i] = ""
+	}
+	set := func(name, value string) {
+		for i, h := range hrRosterHeaders {
+			if h == name {
+				real[i] = value
+				return
+			}
+		}
+	}
+	set("工号", "E001")
+	set("姓名", "测试员工")
+	set("证件号码", "110101199003072316")
+	set("部门", "生产部")
+	set("员工状态", "试用")
+	set("工作性质", "全职")
+	set("入职日期", "2018-07-01 00:00:00")
+	rows := [][]string{header, sample, real}
+
+	plan, err := hrPlanEmployeeImport(rows, nil, hrEmployeeImportOptions{Mode: "merge"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, plan.Skipped, "示例行应被跳过")
+	require.Len(t, plan.Inserted, 1)
+	emp := plan.Inserted[0]
+	assert.Equal(t, "测试员工", emp.Name)
+	assert.Equal(t, "生产部", emp.Department)
+	assert.Equal(t, hrRosterStatusProbation, emp.Status)
+	assert.Equal(t, "2018-07-01", emp.HireDate)
+	assert.Equal(t, "男", emp.Gender)
+	// 76 个标准字段全部落进 custom_data（无损）
+	for _, h := range hrRosterHeaders {
+		_, ok := emp.CustomData[h]
+		assert.True(t, ok, "custom_data 缺少字段 "+h)
+	}
+	assert.Equal(t, "2018-07-01", emp.CustomData["入职日期"])
+	assert.Equal(t, hrRosterStatusProbation, emp.CustomData["在职状态"])
+}
+
+func TestHRRosterTemplateDownload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &HRHandler{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	h.DownloadRosterTemplate(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	f, err := excelize.OpenReader(bytes.NewReader(w.Body.Bytes()))
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	assert.Equal(t, []string{"导入数据", "说明", "枚举字段"}, f.GetSheetList())
+	dataRows, err := f.GetRows("导入数据")
+	require.NoError(t, err)
+	require.NotEmpty(t, dataRows)
+	assert.Len(t, dataRows[0], 76)
+	assert.Equal(t, "工号", dataRows[0][0])
+	assert.Equal(t, "现合同签订日期", dataRows[0][75])
+	require.Len(t, dataRows, 2)
+	assert.Equal(t, "000001", dataRows[1][0])
+	assert.Equal(t, "示例员工", dataRows[1][1])
+	enumRows, err := f.GetRows("枚举字段")
+	require.NoError(t, err)
+	assert.Len(t, enumRows, 20)
+}
+
+func TestHRResignProofIDWhitelist(t *testing.T) {
+	valid := uuid.New().String() + ".pdf"
+	assert.True(t, hrResignProofIDRe.MatchString(valid))
+	for _, bad := range []string{
+		"../../etc/passwd", "..\\secret.png", "abc.pdf", valid + "/x",
+		uuid.New().String() + ".exe", "a/b/c.png",
+	} {
+		assert.False(t, hrResignProofIDRe.MatchString(bad), bad)
+	}
+	assert.Contains(t, hrResignProofURL(valid), "/roster/resign-proof/")
+	assert.Equal(t, "", hrResignProofURL("../../etc/passwd"))
+}

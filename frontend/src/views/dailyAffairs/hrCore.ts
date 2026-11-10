@@ -13,6 +13,11 @@
 
 import { buildFootRow, type SummaryColumn } from './listSummary'
 import { grouped } from './formatNumber'
+import { formatCellDateTime } from './formatDateTime'
+import {
+  ROSTER_TEMPLATE_HEADERS, ROSTER_DERIVED_FIELDS, EXTRA_RESIGN_FIELDS,
+  ROSTER_STATUS_COLUMNS, type RosterStatusView,
+} from './hrRosterFields'
 
 // ---------------------------------------------------------------------------
 // Tab / scope
@@ -33,7 +38,9 @@ export interface HrTabDef {
  */
 export const HR_TABS: readonly HrTabDef[] = [
   { key: 'hr-roster', label: '花名册', icon: 'usergroup', sub: '在职员工档案统一管理' },
-  { key: 'hr-social', label: '社保管理', icon: 'shield', sub: '五险账期与扣款明细' },
+  // tdesign-icons-vue-next 0.4.4 的 manifest 里没有 `shield`（只有 shield-error），
+  // 传无效名会让 <use href="#t-icon-shield"> 解析失败 → 图标框空白。secured 已核验有效。
+  { key: 'hr-social', label: '社保管理', icon: 'secured', sub: '五险账期与扣款明细' },
   { key: 'hr-fund', label: '公积金管理', icon: 'wallet', sub: '缴存台账与月度账单' },
 ]
 
@@ -130,18 +137,23 @@ function normalizeStatus(v: string): string {
 
 function col(colKey: string, keys: readonly string[], opts: ColOpts = {}): HrColumn {
   const isStatus = STATUS_COLS.has(colKey)
+  // 时间/日期列统一走格式化出口：后端 ISO8601 原串（带 T、微秒、+08:00）
+  // 绝不能直接上屏。这一层同时覆盖列表 cell、合计行与详情抽屉的灌入值。
+  const isDate = opts.dataType === 'date' || /时间|日期|有效期/.test(colKey)
   return {
     colKey,
     title: colKey,
     width: 0,
-    dataType: opts.dataType || 'text',
+    dataType: opts.dataType || (isDate ? 'date' : 'text'),
     default: true,
     slot: !!opts.slot || isStatus,
     value: opts.money
       ? (row: any) => money(row, keys)
       : isStatus
         ? (row: any) => normalizeStatus(pick(row, keys))
-        : (row: any) => pick(row, keys),
+        : isDate
+          ? (row: any) => formatCellDateTime(colKey, pickRaw(row, keys)) || '—'
+          : (row: any) => pick(row, keys),
   }
 }
 
@@ -223,6 +235,78 @@ export function hrColumnDefs(tab: string): HrColumn[] {
 /** 公积金「月度账单」子视图列（二级切换用）。 */
 export function hrBillColumnDefs(): HrColumn[] {
   return [SELECT_COL, ...FUND_BILL_COLS]
+}
+
+// ---------------------------------------------------------------------------
+// 花名册 76 字段模板（第 46 轮）与四态动态列
+// ---------------------------------------------------------------------------
+
+/**
+ * 76 表头 → 后端主列英文键。后端把 76 个字段全量写进 `custom_data`（中文键），
+ * `pickRaw` 已能命中；这里额外补主列别名，兼容第 45 轮存量数据（只有主列、无 custom_data）。
+ */
+const ROSTER_KEY_ALIASES: Record<string, string[]> = {
+  '工号': ['employee_id'], '姓名': ['name'], '部门': ['department'],
+  '岗位': ['position'], '职务': ['position'], '性别': ['gender'],
+  '年龄': ['age'], '工龄': ['work_years'], '出生日期': ['birth_date'],
+  '入职日期': ['hire_date'], '离职日期': ['resign_date'],
+  '离职原因': ['resign_reasons'], '离职证明': ['resign_proof_path'],
+  '离职备注': ['resign_remark'], '手机号码': ['phone'],
+  '证件号码': ['id_number'], '证件类型': ['id_type'],
+  '员工状态': ['status', 'employ_status'], '在职状态': ['员工状态', 'status', 'employ_status'],
+  '个人社保账号': ['social_insurance_number'], '个人公积金账号': ['provident_fund_number'],
+  '紧急联系人姓名': ['emergency_contact'], '紧急联系人电话': ['emergency_phone'],
+  '最高学历': ['education'], '政治面貌': ['political_status'],
+  '籍贯': ['native_place'], '民族': ['ethnicity'],
+  '户口性质': ['household_type'], '户籍地址': ['id_address'],
+  '个人邮箱': ['email'], '备注': ['remarks'], '档案编号': ['archive_no'],
+}
+
+/** 单条花名册字段 → 列定义；列宽恒为 0（自适应），无 fixed、无操作列。 */
+function rosterColumnOf(name: string): HrColumn {
+  const keys = [name, ...(ROSTER_KEY_ALIASES[name] || [])]
+  const isStatus = STATUS_COLS.has(name)
+  const isDate = /日期|时间|有效期/.test(name)
+  // 「离职证明」需要可点击的预览/下载链接，交给页面具名插槽渲染。
+  const isProof = name === '离职证明'
+  const isMoney = /金额|工资卡卡号|基数/.test(name)
+  return {
+    colKey: name,
+    title: name,
+    width: 0,
+    dataType: isDate ? 'date' : isMoney ? 'number' : 'text',
+    default: true,
+    slot: isStatus || isProof,
+    value: isStatus
+      ? (row: any) => normalizeStatus(pick(row, keys))
+      : isDate
+        ? (row: any) => formatCellDateTime(name, pickRaw(row, keys)) || '—'
+        : isMoney
+          ? (row: any) => money(row, keys)
+          : (row: any) => pick(row, keys),
+  }
+}
+
+/**
+ * 按「在职状态」返回该视图的默认列集合（任务 §3.2 四态动态表头）。
+ * 第一列仍是勾选列；用户仍可通过「字段 / 设置」对显隐做微调。
+ */
+export function hrRosterStatusColumns(view: RosterStatusView): HrColumn[] {
+  const key = view === '全部' ? '在职' : view
+  return [SELECT_COL, ...ROSTER_STATUS_COLUMNS[key].map(rosterColumnOf)]
+}
+
+/** 76 标准表头 + 派生字段 + 离职扩展字段的全集（字段按钮 / 设置抽屉用）。 */
+export function hrRosterAllColumns(): HrColumn[] {
+  const names = [...ROSTER_TEMPLATE_HEADERS, ...ROSTER_DERIVED_FIELDS, ...EXTRA_RESIGN_FIELDS]
+  const seen = new Set<string>()
+  const cols: HrColumn[] = [SELECT_COL]
+  for (const name of names) {
+    if (seen.has(name)) continue
+    seen.add(name)
+    cols.push(rosterColumnOf(name))
+  }
+  return cols
 }
 
 /** 合计列：与列定义同源，可累加列才给 number/amount 类型。 */

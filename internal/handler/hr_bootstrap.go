@@ -8,6 +8,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -96,17 +97,58 @@ func hrSub(s types.FleetCategorySub) types.FleetCategorySub {
 	return s
 }
 
+// hrRosterSeedSubs 是第 46 轮花名册字段种子：76 个标准模板字段（按「说明」Sheet
+// 11 大分组顺序）+ 派生字段 + 2 个离职扩展字段。
+//
+// 故意**不写 Group**：FleetCertPanel 会按 group 分页签过滤字段行，HR 走平铺更安全
+// （第 45 轮市电账单踩过「状态字段无 group 被过滤掉」的坑）。分组信息保留在
+// hrRosterFieldGroups 里，用于导入模板的「说明」Sheet。
+func hrRosterSeedSubs() []types.FleetCategorySub {
+	out := make([]types.FleetCategorySub, 0, 82)
+	seen := make(map[string]bool, 82)
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		s := types.FleetCategorySub{
+			Name:      name,
+			Enabled:   true,
+			IsDefault: false, // 列显隐由四态视图决定，默认不把 78 列全塞进列表
+			Width:     0,     // 0 = 自适应，禁止回跳 160
+		}
+		switch {
+		case hrIsRosterDateField(name):
+			s.DataType = "date"
+		case strings.Contains(name, "金额") || strings.Contains(name, "基数") || strings.Contains(name, "卡号"):
+			s.DataType = "number"
+		default:
+			s.DataType = "text"
+		}
+		// 只有系统状态类字段锁死（禁止删除/改名），业务字段允许用户在设置里微调。
+		s.Builtin = name == "员工状态" || name == "在职状态" || name == "缴存状态" || name == "账期状态"
+		out = append(out, s)
+	}
+	for _, g := range hrRosterFieldGroups {
+		for _, name := range g.Fields {
+			add(name)
+		}
+	}
+	for _, name := range hrRosterDerivedFields {
+		add(name)
+	}
+	for _, name := range hrRosterExtraResignFields {
+		add(name)
+	}
+	return out
+}
+
 // hrCategorySeeds 三个 scope 各 1 个分类。
 func hrCategorySeeds() []hrCategorySeed {
 	return []hrCategorySeed{
 		{
 			Scope: hrScopeRoster, Name: "花名册", BuiltinKey: "hr-roster", SortOrder: 1,
-			Subs: []types.FleetCategorySub{
-				hrSub(txt("工号")), hrSub(txt("姓名")), hrSub(txt("部门")), hrSub(txt("岗位")),
-				hrSub(txt("性别")), hrSub(txt("身份证号码")), hrSub(dt("入职日期")), hrSub(txt("年龄")),
-				hrSub(txt("工龄")), hrSub(txt("出生月份")), hrSub(txt("联系电话")), hrSub(txt("在职状态")),
-				hrSub(dt("离职日期")), hrSub(area("备注")),
-			},
+			Subs: hrRosterSeedSubs(),
 		},
 		{
 			Scope: hrScopeSocial, Name: "社保管理", BuiltinKey: "hr-social", SortOrder: 1,
@@ -243,6 +285,10 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/roster/import", h.ImportRoster)
 	r.GET("/hr/roster/export", h.ExportRoster)
 	r.GET("/hr/roster/stats", h.RosterStats)
+	// 第 46 轮：导入模板下载、离职证明上传与在线预览
+	r.GET("/hr/roster/template", h.DownloadRosterTemplate)
+	r.POST("/hr/roster/resign-proof", h.UploadResignProof)
+	r.GET("/hr/roster/resign-proof/:id", h.GetResignProof)
 
 	// 社保
 	r.GET("/hr/social/periods", h.ListPeriods)

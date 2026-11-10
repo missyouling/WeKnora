@@ -345,6 +345,7 @@ import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
+import { formatCellDateTime } from './formatDateTime'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
@@ -751,6 +752,15 @@ const tableColumns = computed(() => {
       // TDesign 默认只读 row[colKey] 不查 fields，导致这类列长期渲染为空。
       // 内置契约键列（invoiceNo/sellerTaxNo/items…）走 #colKey 具名插槽，不在此列。
       base.cell = (_h: any, { row }: any) => invoiceColValue(row, c.key)
+    }
+    // 第 46 轮：时间/日期列统一格式化，覆盖上面的默认 cell，
+    // 禁止 2026-11-07T20:12:33.37663+08:00 这类 ISO 原串出现在列表里。
+    const colLabel = String(c.label || (c as any).title || c.key || '')
+    if (/时间|日期/.test(colLabel) || /^(created_at|updated_at)$|_at$|_date$|_time$/.test(String(c.key || ''))) {
+      base.cell = (_h: any, { row }: any) => {
+        const v = invoiceColValue(row, c.key)
+        return v === '-' ? '-' : (formatCellDateTime(colLabel, v) || '-')
+      }
     }
     cols.push(base)
   })

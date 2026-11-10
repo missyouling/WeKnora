@@ -51,12 +51,23 @@ export function batchDeleteRosterEmployees(ids: Array<string | number>): Promise
   return post(`${BASE}/roster/employees/batch-delete`, { ids }) as Promise<any>
 }
 
+/**
+ * 办理离职（第 46 轮扩展）：前 3 个参数保持第 45 轮兼容，
+ * 新增离职证明路径与备注说明，后端会同步写 custom_data.离职证明 / 离职备注。
+ */
 export function resignRosterEmployees(
   ids: Array<string | number>,
   resign_date?: string,
   reason?: string,
+  proof_path?: string,
+  remark?: string,
 ): Promise<any> {
-  return post(`${BASE}/roster/employees/resign`, { ids, resign_date, reason }) as Promise<any>
+  const body: Record<string, any> = { ids }
+  if (resign_date) body.resign_date = resign_date
+  if (reason) body.reason = reason
+  if (proof_path) body.proof_path = proof_path
+  if (remark) body.remark = remark
+  return post(`${BASE}/roster/employees/resign`, body) as Promise<any>
 }
 
 export function restoreRosterEmployees(ids: Array<string | number>): Promise<any> {
@@ -66,6 +77,21 @@ export function restoreRosterEmployees(ids: Array<string | number>): Promise<any
 /** 花名册导入：multipart(file, mode, default_status, force_transition) → 409 {conflicts}。 */
 export function importEmployees(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/roster/import`, formData) as Promise<any>
+}
+
+/** 第 46 轮：下载《导入花名册模板.xlsx》（后端 excelize 生成 3 个 Sheet）。 */
+export function getRosterTemplate(): Promise<any> {
+  return getDown(`${BASE}/roster/template`) as Promise<any>
+}
+
+/** 第 46 轮：上传离职证明，返回 {id, name, path}。 */
+export function uploadResignProof(formData: FormData): Promise<any> {
+  return postUpload(`${BASE}/roster/resign-proof`, formData) as Promise<any>
+}
+
+/** 第 46 轮：在线预览 / 下载离职证明（走 blob，保留 token）。 */
+export function getResignProof(id: string): Promise<any> {
+  return getDown(`${BASE}/roster/resign-proof/${encodeURIComponent(id)}`) as Promise<any>
 }
 
 export function exportEmployees(ids?: Array<string | number>): Promise<any> {

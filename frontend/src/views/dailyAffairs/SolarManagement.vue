@@ -423,6 +423,7 @@
 
 <script setup lang="ts">
 import { grouped } from './formatNumber'
+import { formatCellDateTime } from './formatDateTime'
 import {
   ref,
   computed,
@@ -579,7 +580,16 @@ const tableColumns = computed(() => {
   ]
   for (const c of visibleColDefs.value) {
     // subs.width>0 精确固定（clamp 60~400）；0/未配置走内容自适应（与发票同一套 colWidthOf）
-    cols.push({ colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType, width: colWidthOf(c.width, c.label, displayRows.value.map((r: any) => r[c.key])) })
+    const base: any = {
+      colKey: c.key, title: c.label, ellipsis: true, fieldType: c.fieldType,
+      width: colWidthOf(c.width, c.label, displayRows.value.map((r: any) => r[c.key])),
+    }
+    // 第 46 轮：时间/日期列补 cell，避免 TDesign 默认上屏 ISO8601 原串。
+    const colLabel = String(c.label || c.key || '')
+    if (/时间|日期/.test(colLabel) || /_at$|_date$|_time$/.test(String(c.key || ''))) {
+      base.cell = (_h: any, { row }: any) => formatCellDateTime(colLabel, row?.[c.key]) || '-'
+    }
+    cols.push(base)
   }
   cols.push({ colKey: 'extractStatus', title: '状态', width: 120 })
   cols.push({ colKey: 'tags', title: '标签', width: 140 })

@@ -151,6 +151,7 @@ import ExtractQualityPanel from './ExtractQualityPanel.vue'
 import { formatItemCell, itemCellClass } from './businessFormat'
 import { hasSumColumn, totalRowTexts } from './itemTotals'
 import { normalizeArrayValue, type DetailFieldMeta } from './businessDetailForm'
+import { formatCellDateTime } from './formatDateTime'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -235,6 +236,11 @@ function displayValueOf(f: any): string {
   if (v === null || v === undefined || v === '') return '—'
   if (Array.isArray(v)) return v.length ? v.join('、') : '—'
   if (typeof v === 'object') return JSON.stringify(v)
+  // 时间/日期字段统一格式化：不允许 ISO8601 原串（T + 微秒 + +08:00）出现在详情里。
+  const label = String(f?.label || f?.name || '')
+  if (f?.dataType === 'date' || /时间|日期/.test(label)) {
+    return formatCellDateTime(label, v) || '—'
+  }
   return String(v)
 }
 

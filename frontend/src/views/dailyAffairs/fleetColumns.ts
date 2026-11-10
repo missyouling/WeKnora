@@ -12,6 +12,7 @@ import type { FilterFieldSpec } from './businessFilter'
 import type { SummaryColumn } from './listSummary'
 import type { CatalogColumn } from './useCatalogPdf'
 import { grouped, num2 } from './formatNumber'
+import { formatCellDateTime } from './formatDateTime'
 import { isCertStatusName, isExtractStatusName, isStatusFieldName } from './statusFields'
 
 /** 后端分类 subs 的最小子集（只取派生需要的键）。 */
@@ -159,7 +160,9 @@ export function buildFleetColumns(
           // 记录型统一空值文案：'—'（与列表其他模块一致，不显示 "undefined"）
           return '—'
         }
-        if (dataType === 'date') return String(v).replace('T', ' ').slice(0, 10)
+        // 第 46 轮：统一格式化出口，「时间」列保留时分秒、「日期」列只到日，
+        // 绝不上屏 2026-11-07T20:12:33.37663+08:00 这类原串。
+        if (dataType === 'date') return formatCellDateTime(label, v) || '—'
         if (dataType === 'number') {
           // 金额语义：千分位 + 两位小数（列表金额必须带千分位，52,015.90 才读得出来）；
           // 其余数量原值，纯整数不补 .00

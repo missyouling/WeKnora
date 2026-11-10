@@ -23,6 +23,8 @@ import {
   hrFieldSeeds,
   hrFootRowOf,
   hrRowKey,
+  hrRosterStatusColumns,
+  hrRosterAllColumns,
 } from './hrCore'
 import { isLockedStatusField, statusFieldSpecsOf, isHrStatusName } from './statusFields'
 
@@ -180,4 +182,57 @@ test('hrRowKey：id 优先并回退业务唯一键', () => {
   assert.equal(hrRowKey({ employee_id: 'E002' }), 'E002')
   assert.equal(hrRowKey({ year_month: '2026-10' }), '2026-10')
   assert.equal(hrRowKey(null), '')
+})
+
+// ---------------------------------------------------------------------------
+// 第 46 轮
+// ---------------------------------------------------------------------------
+
+test('第46轮：社保卡片图标是有效名 secured，不再是无效的 shield', () => {
+  const social = HR_TABS.find((t) => t.key === 'hr-social')
+  assert.equal(social?.icon, 'secured')
+  assert.notEqual(social?.icon, 'shield')
+  assert.equal(HR_TABS.find((t) => t.key === 'hr-roster')?.icon, 'usergroup')
+  assert.equal(HR_TABS.find((t) => t.key === 'hr-fund')?.icon, 'wallet')
+})
+
+test('第46轮：列工厂对时间/日期列做格式化，ISO 原串不上屏', () => {
+  const iso = '2026-11-07T20:12:33.37663+08:00'
+  const social = hrColumnDefs('hr-social')
+  const created = social.find((c) => c.colKey === '创建时间')
+  assert.ok(created)
+  const out = created!.value?.({ created_at: iso }) ?? ''
+  assert.equal(out, '2026-11-07 20:12:33')
+  assert.ok(!out.includes('T') && !out.includes('+08:00') && !out.includes('.37663'))
+
+  const roster = hrColumnDefs('hr-roster')
+  const hire = roster.find((c) => c.colKey === '入职日期')
+  assert.equal(hire?.value?.({ hire_date: '2018-07-01 00:00:00' }), '2018-07-01')
+})
+
+test('第46轮：四态动态列——试用期/离职各自专属字段', () => {
+  const trial = hrRosterStatusColumns('试用期').map((c) => c.colKey)
+  assert.ok(trial.includes('试用期') && trial.includes('转正日期'))
+  assert.ok(!trial.includes('离职日期'))
+  const left = hrRosterStatusColumns('离职').map((c) => c.colKey)
+  for (const h of ['离职日期', '离职原因', '离职证明', '离职备注']) {
+    assert.ok(left.includes(h), `离职视图缺少 ${h}`)
+  }
+  assert.ok(!left.includes('试用期') && !left.includes('个人社保账号'))
+  for (const view of ['在职', '试用期', '退休返聘', '离职'] as const) {
+    const cols = hrRosterStatusColumns(view)
+    assert.equal(cols[0].colKey, 'row-select')
+    assert.ok(cols.every((c) => !('fixed' in c)))
+    // 勾选列固定 44px（中台统一），业务字段列宽一律 0 = 自适应。
+    assert.ok(cols.slice(1).every((c) => c.width === 0))
+  }
+})
+
+test('第46轮：字段全集覆盖 76 表头 + 派生 + 离职扩展，且无重复 colKey', () => {
+  const cols = hrRosterAllColumns()
+  const keys = cols.map((c) => c.colKey)
+  assert.equal(new Set(keys).size, keys.length)
+  assert.ok(keys.length >= 78)
+  assert.ok(keys.includes('工号') && keys.includes('现合同签订日期'))
+  assert.ok(keys.includes('离职证明') && keys.includes('离职备注') && keys.includes('在职状态'))
 })

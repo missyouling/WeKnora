@@ -12,6 +12,8 @@
 //   · 列宽优先 subs.width（clamp 60~400），再回落内置 w，最后自适应；
 //   · 金额列必须走 fmtAmount 渲染（TDesign 默认会把浮点残留直接上屏）。
 
+import { formatDate, formatDateTime } from './formatDateTime'
+
 /** 列表列定义（页面与「字段配置」同源）。 */
 export interface ColDef {
   key: string
@@ -82,12 +84,18 @@ export function makeAmountCell(
   c: ColDef,
   fmtAmount: (v: any) => string,
 ): ((_h: any, ctx: any) => any) | undefined {
-  if (c.fieldType !== 'amount') return undefined
+  const label = String(c?.label || c?.key || '')
+  const key = String(c?.key || '')
+  // 第 46 轮：时间戳列也要有 cell，否则 TDesign 默认把 ISO8601 原串直接上屏。
+  const isDate = c.fieldType === 'date' || /时间|日期/.test(label)
+    || /^(created_at|updated_at|sealed_at|unsealed_at)$|_at$|_date$|_time$/.test(key)
+  if (!isDate && c.fieldType !== 'amount') return undefined
   return (_h: any, { row }: any) => {
-    const v = row?.[c.key]
+    const v = row?.[key]
     // 空值直接给空串：`fmtAmount` 的 fallback 是 ''，但先判一次可以避免
     // 把 `0` 与 `undefined` 交给同一个分支（0 必须上屏，缺值必须留白）。
     if (v === undefined || v === null || v === '') return ''
+    if (isDate) return (/日期/.test(label) ? formatDate(v) : formatDateTime(v)) || ''
     return fmtAmount(v)
   }
 }
