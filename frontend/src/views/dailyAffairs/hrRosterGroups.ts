@@ -1,11 +1,12 @@
 /**
- * 花名册 11 大分组字段矩阵（第 48 轮）。
+ * 花名册 11 大分组字段矩阵（第 48 轮建立，第 50 轮调序）。
  *
  * 唯一数据源：字段设置面板、列表表头、`[☰ 字段]` 筛选器、编辑抽屉、
  * 导出/打印清单全部从这里派生 —— 改一处即六同步。
  *
- * `checked` 是**默认显示**状态（对应设计稿的 ☑ / ☐），用户在设置里改动后
- * 存 localStorage，不回写本文件。
+ * `checked` 是**字段启用 + 默认勾选**状态（对应设计稿的 ☑ / ☐）；
+ * 用户在设置里改动后由后端 subs 的 `enabled` / `is_default` 落库，
+ * 本文件只在配置未加载时兜底。
  */
 
 export interface RosterFieldDef {
@@ -23,8 +24,16 @@ export interface RosterFieldGroupDef {
   fields: RosterFieldDef[]
 }
 
-/** 离职信息分组的 key —— 在职视图要隐藏整组。 */
+/** 离职信息分组的 key —— 在职视图要隐藏整组，非在职态追加到表头末尾。 */
 export const LEAVING_GROUP_KEY = '离职信息'
+
+/**
+ * 默认表头只取这两组（第 50 轮）。
+ *
+ * 其余分组的字段 `enabled=true`（详情抽屉按分组展示），但默认表头关闭，
+ * 否则首屏 50+ 列既慢又淹没锚点。
+ */
+export const DEFAULT_HEADER_GROUPS: readonly string[] = ['在职信息', '基本信息']
 
 /** 三个筛选态（第 48 轮精简为 全部 / 在职 / 离职）。 */
 export type RosterStatusFilter = '全部' | '在职' | '离职'
@@ -37,35 +46,41 @@ export const ROSTER_STATUS_OPTIONS: readonly { label: string; value: RosterStatu
 
 const f = (name: string, checked: boolean, locked = false): RosterFieldDef => ({ name, checked, locked })
 
-/** 11 大分组，顺序与默认勾选严格按设计稿。 */
+/**
+ * 11 大分组。
+ *
+ * 第 50 轮调序：**在职信息第 1、基本信息第 2**。
+ * 工号/姓名/部门/岗位是定位行的锚点，排在「参加工作时间/健康状况」后面会让
+ * 表格第一屏全是基本信息的边缘字段。离职信息仍在第 3 位（胶囊顺序），
+ * 但列表列顺序里它排最后（见 `columnGroupOrder`）。
+ */
 export const ROSTER_FIELD_GROUPS: readonly RosterFieldGroupDef[] = [
-  {
-    key: '基本信息',
-    label: '基本信息',
-    fields: [
-      f('姓名', true, true),
-      f('证件类型', true), f('证件号码', true), f('身份证有效期', true),
-      f('性别', true), f('出生日期', true), f('年龄', true),
-      f('是否已婚', true), f('是否已育', true), f('民族', true), f('政治面貌', true),
-      f('籍贯', true), f('户口性质', true), f('户籍地址', true), f('参加工作时间', true),
-      f('司龄', true), f('血型', true), f('服装尺寸', true), f('健康状况', true),
-      f('健康证有效期', true),
-      f('曾用名', false), f('英文名', false), f('是否农历生日', false), f('国家地区', false),
-      f('籍贯(省)', false), f('籍贯(市)', false), f('户籍城市', false),
-      f('户籍城市(省)', false), f('户籍城市(市)', false),
-    ],
-  },
   {
     key: '在职信息',
     label: '在职信息',
     fields: [
-      f('工号', true), f('部门', true), f('职务', true), f('岗位', true), f('合同公司', true),
-      f('招聘渠道', true), f('员工状态', true), f('入职日期', true), f('试用期', true),
-      f('转正日期', true),
+      f('工号', true), f('姓名', true, true), f('部门', true), f('职务', true), f('岗位', true),
+      f('合同公司', true), f('招聘渠道', true), f('员工状态', true),
+      f('入职日期', true), f('试用期', true), f('转正日期', true), f('司龄', true),
       f('多级部门名称', false), f('岗位类别', false), f('汇报上级', false), f('职等', false),
       f('职级编号', false), f('职级名称', false), f('工作城市', false), f('工作地点', false),
       f('考勤编号', false), f('工时制度', false), f('工作性质', false),
       f('档案编号', false), f('档案备注', false), f('OA编码', false),
+    ],
+  },
+  {
+    key: '基本信息',
+    label: '基本信息',
+    fields: [
+      f('证件类型', true), f('证件号码', true), f('身份证有效期', true),
+      f('性别', true), f('出生日期', true), f('年龄', true),
+      f('是否已婚', true), f('是否已育', true), f('民族', true), f('政治面貌', true),
+      f('籍贯', true), f('户口性质', true), f('户籍地址', true), f('参加工作时间', true),
+      f('血型', true), f('服装尺寸', true), f('健康状况', true),
+      f('健康证有效期', true),
+      f('曾用名', false), f('英文名', false), f('是否农历生日', false), f('国家地区', false),
+      f('籍贯(省)', false), f('籍贯(市)', false), f('户籍城市', false),
+      f('户籍城市(省)', false), f('户籍城市(市)', false),
     ],
   },
   {
@@ -145,11 +160,24 @@ export const ROSTER_FIELD_GROUPS: readonly RosterFieldGroupDef[] = [
   },
 ]
 
-/** 全部字段名（按分组顺序，已去重）。 */
+/**
+ * 列表列顺序：离职信息整组挪到最后。
+ *
+ * 胶囊栏（设置面板/抽屉）仍按 `ROSTER_FIELD_GROUPS` 的自然顺序，
+ * 但表头不能把「离职日期」插在「岗位」后面 —— 在职态看不到它，
+ * 离职态也应该追加在末尾而不是打断在职字段的连续性。
+ */
+export function columnGroupOrder(): RosterFieldGroupDef[] {
+  const normal = ROSTER_FIELD_GROUPS.filter((g) => g.key !== LEAVING_GROUP_KEY)
+  const leaving = ROSTER_FIELD_GROUPS.filter((g) => g.key === LEAVING_GROUP_KEY)
+  return [...normal, ...leaving]
+}
+
+/** 全部字段名（按列顺序，已去重）。 */
 export function allRosterFields(): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const g of ROSTER_FIELD_GROUPS) {
+  for (const g of columnGroupOrder()) {
     for (const fd of g.fields) {
       if (seen.has(fd.name)) continue
       seen.add(fd.name)
@@ -163,24 +191,58 @@ export function allRosterFields(): string[] {
 export const ROSTER_ANCHOR_FIELDS: readonly string[] = ['工号', '姓名', '部门', '岗位']
 
 /**
- * 默认可见字段（第 49 轮）：**只开基本信息组 + 核心锚点**。
+ * 静态兜底：默认表头 = 在职信息 + 基本信息里勾选的字段。
  *
- * 之前把 50+ 个 `checked=true` 的字段全部塞进列表，首屏列过多、渲染慢。
- * 现在 `checked` 仍表示「字段定义里的默认勾选」，但列表首屏只取基本信息组
- * 与锚点；其余字段在字段配置里默认表头关闭，用户按需打开。
+ * 第 50 轮起真实来源是后端 subs 的 `enabled && is_default`（见
+ * `defaultVisibleKeysFromConfig`），这里只负责配置未加载时的首帧兜底。
  */
 export function defaultVisibleFields(): string[] {
-  const basic = new Set<string>(ROSTER_ANCHOR_FIELDS)
-  for (const fd of ROSTER_FIELD_GROUPS[0].fields) {
-    if (fd.checked) basic.add(fd.name)
-  }
   const out: string[] = []
-  for (const g of ROSTER_FIELD_GROUPS) {
+  for (const g of columnGroupOrder()) {
+    if (!DEFAULT_HEADER_GROUPS.includes(g.key)) continue
     for (const fd of g.fields) {
-      if (basic.has(fd.name)) out.push(fd.name)
+      if (fd.checked) out.push(fd.name)
     }
   }
   return out
+}
+
+/**
+ * 从后端分类配置派生「默认表头集合」。
+ *
+ * 契约：`enabled !== false && is_default === true`，顺序 = subs 数组顺序
+ * （后端已按 11 组设计顺序重排）。配置为空时回落到静态默认。
+ */
+export function defaultVisibleKeysFromConfig(categories: readonly any[] | null | undefined): string[] {
+  const list = Array.isArray(categories) ? categories : []
+  const cat = list.find((c: any) => String(c?.builtin_key ?? '') === 'hr-roster') || list[0]
+  const subs = Array.isArray(cat?.subs) ? cat.subs : []
+  const out: string[] = []
+  for (const s of subs) {
+    if (!s || s.enabled === false) continue
+    if (s.is_default !== true) continue
+    const name = String(s.name ?? '').trim()
+    if (name) out.push(name)
+  }
+  return out.length ? out : defaultVisibleFields()
+}
+
+/**
+ * 从后端分类配置派生「可选全集」（`[☰ 字段]` 里能勾的字段）。
+ *
+ * 契约：`enabled !== false`。配置为空时回落到全部字段。
+ */
+export function enabledFieldKeysFromConfig(categories: readonly any[] | null | undefined): string[] {
+  const list = Array.isArray(categories) ? categories : []
+  const cat = list.find((c: any) => String(c?.builtin_key ?? '') === 'hr-roster') || list[0]
+  const subs = Array.isArray(cat?.subs) ? cat.subs : []
+  const out: string[] = []
+  for (const s of subs) {
+    if (!s || s.enabled === false) continue
+    const name = String(s.name ?? '').trim()
+    if (name) out.push(name)
+  }
+  return out.length ? out : allRosterFields()
 }
 
 /** 必选字段（不可取消勾选）。 */
@@ -195,17 +257,19 @@ export function lockedRosterFields(): string[] {
 }
 
 /**
- * 按筛选态返回可见字段：
+ * 按筛选态返回可见字段（列顺序 = `columnGroupOrder`）。
+ *
  *   · 在职：排除「离职信息」整组
- *   · 离职 / 全部：包含离职信息
- * `overrides` 是用户在字段设置里保存的显隐（未提供的字段回落到默认值）。
+ *   · 离职 / 全部：非离职字段在前，离职信息**追加在末尾**
+ *
+ * `overrides` 是用户在字段设置里保存的显隐（后端 is_default 派生）；
+ * 未提供时回落到静态默认。
  */
 export function visibleFieldsFor(
   status: RosterStatusFilter,
   overrides?: ReadonlySet<string> | null,
 ): string[] {
   const hideLeaving = status === '在职'
-  // 无 override 时：在职 = 基本信息 + 锚点；离职/全部 = 基本信息 + 锚点 + 离职信息
   const base = new Set(defaultVisibleFields())
   if (!hideLeaving) {
     for (const fd of ROSTER_FIELD_GROUPS.find((g) => g.key === LEAVING_GROUP_KEY)?.fields || []) {
@@ -213,7 +277,8 @@ export function visibleFieldsFor(
     }
   }
   const out: string[] = []
-  for (const g of ROSTER_FIELD_GROUPS) {
+  // columnGroupOrder 已把离职信息放到最后 → 追加语义天然成立
+  for (const g of columnGroupOrder()) {
     if (hideLeaving && g.key === LEAVING_GROUP_KEY) continue
     for (const fd of g.fields) {
       const visible = overrides ? (fd.locked || overrides.has(fd.name)) : base.has(fd.name)

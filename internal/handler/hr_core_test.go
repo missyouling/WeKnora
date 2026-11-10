@@ -566,8 +566,9 @@ func TestHRRosterGroupDictCovers11Groups(t *testing.T) {
 	for _, g := range hrRosterGroupDict {
 		keys = append(keys, g.Key)
 	}
+	// 第 50 轮：在职信息提到第 1 位（工号/姓名/部门/岗位是定位行锚点）
 	assert.Equal(t, []string{
-		"基本信息", "在职信息", "离职信息", "联系信息", "紧急联系人情况",
+		"在职信息", "基本信息", "离职信息", "联系信息", "紧急联系人情况",
 		"家庭情况", "教育情况", "工作经历情况", "合同签订情况", "工资社保信息", "个税申报信息",
 	}, keys)
 
@@ -619,8 +620,9 @@ func TestHRBackfillRosterGroups(t *testing.T) {
 	}
 	changed := hrBackfillRosterGroups([]*types.FleetCategory{cat})
 	assert.True(t, changed)
-	assert.Equal(t, "基本信息", cat.Subs[0].Group)
-	assert.Equal(t, "基本信息", cat.Subs[0].GroupLabel)
+	// 第 50 轮：姓名归在职信息组（该组已提到第 1 位）
+	assert.Equal(t, "在职信息", cat.Subs[0].Group)
+	assert.Equal(t, "在职信息", cat.Subs[0].GroupLabel)
 	assert.True(t, cat.Subs[0].IsDefault)
 	assert.Equal(t, "离职信息", cat.Subs[1].Group)
 	assert.False(t, cat.Subs[1].IsDefault, "离开信息组默认关表头")
@@ -650,4 +652,110 @@ func TestHRAttachContractParty(t *testing.T) {
 	// 无匹配单位 → 空串，不造假
 	assert.Equal(t, "", items[2].CustomData["统一社会信用代码"])
 	assert.Equal(t, "13800000003", items[2].CustomData["联系电话"])
+}
+
+// ---------------------------------------------------------------------------
+// 第 50 轮：分组调序 / 默认表头 / 改名级联
+// ---------------------------------------------------------------------------
+
+func TestHRRosterDefaultHeaderRound50(t *testing.T) {
+	// 在职信息 12 项在前：工号打头、姓名第二、司龄在组末
+	first := hrRosterGroupDict[0]
+	assert.Equal(t, "在职信息", first.Key)
+	assert.Equal(t, "工号", first.Fields[0])
+	assert.Equal(t, "姓名", first.Fields[1])
+	assert.Contains(t, first.Fields, "司龄", "司龄应归在职信息")
+
+	// 基本信息不再含 司龄
+	second := hrRosterGroupDict[1]
+	assert.Equal(t, "基本信息", second.Key)
+	assert.NotContains(t, second.Fields, "司龄")
+
+	// 默认表头 = 30 列（12 + 18）
+	assert.Len(t, hrRosterDefaultHeaderFields, 30)
+	for _, f := range []string{
+		"工号", "姓名", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态",
+		"入职日期", "试用期", "转正日期", "司龄",
+		"证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
+		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
+		"参加工作时间", "血型", "服装尺寸", "健康状况", "健康证有效期",
+	} {
+		assert.True(t, hrRosterDefaultHeaderFields[f], f+" 应默认开表头")
+	}
+	// 离职字段绝不进默认表头
+	for _, f := range []string{"离职日期", "离职原因", "离职证明"} {
+		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
+	}
+}
+
+func TestHRDeptRenamePairs(t *testing.T) {
+	oldRows := []HRDepartment{
+		{ID: "d1", Name: "仓库", Code: "02061"},
+		{ID: "d2", Name: "生产部", Code: "02050"},
+		{ID: "d3", Name: "销售部", Code: "02030"},
+	}
+	newRows := []HRDepartment{
+		{ID: "d1", Name: "仓储物流部", Code: "02061"}, // 按 id 命中改名
+		{ID: "d2", Name: "生产部", Code: "02050"},   // 没变
+		{ID: "", Name: "新部门", Code: "02090"},     // 新增，不参与
+	}
+	pairs := hrDeptRenamePairs(oldRows, newRows)
+	assert.Len(t, pairs, 1)
+	assert.Equal(t, "仓库", pairs[0].Old)
+	assert.Equal(t, "仓储物流部", pairs[0].New)
+
+	// 只有 code 时按 code 比对
+	byCode := hrDeptRenamePairs(
+		[]HRDepartment{{Name: "仓库", Code: "02061"}},
+		[]HRDepartment{{Name: "仓储部", Code: "02061"}},
+	)
+	assert.Len(t, byCode, 1)
+	assert.Equal(t, "仓储部", byCode[0].New)
+
+	// 值没变 → 空（幂等，重复保存不产生写放大）
+	assert.Empty(t, hrDeptRenamePairs(oldRows, oldRows))
+}
+
+func TestHRUnitRenamePairs(t *testing.T) {
+	oldRows := []HROrgUnit{
+		{ID: "u1", Name: "重庆星达铜业有限公司", Code: "02"},
+		{ID: "u2", Name: "重庆持睿汽车配件有限公司", Code: "03"},
+	}
+	newRows := []HROrgUnit{
+		{ID: "u1", Name: "重庆星达铜业股份有限公司", Code: "02"},
+		{ID: "u2", Name: "重庆持睿汽车配件有限公司", Code: "03"},
+	}
+	pairs := hrUnitRenamePairs(oldRows, newRows)
+	assert.Len(t, pairs, 1)
+	assert.Equal(t, "重庆星达铜业有限公司", pairs[0].Old)
+	assert.Equal(t, "重庆星达铜业股份有限公司", pairs[0].New)
+	assert.Empty(t, hrUnitRenamePairs(oldRows, oldRows))
+}
+
+func TestHRBestDeptMatch(t *testing.T) {
+	official := []string{"销售部", "生产部", "机电部", "技术质量部", "仓库", "人事行政部"}
+	// 质量部 ⊂ 技术质量部 → 归并到更具体的那个
+	assert.Equal(t, "技术质量部", hrBestDeptMatch("质量部", official))
+	// 官方名自己 → 不匹配（返回空，表示无需改）
+	assert.Equal(t, "", hrBestDeptMatch("生产部", official))
+	// 完全不沾边 → 不动
+	assert.Equal(t, "", hrBestDeptMatch("外部顾问组", official))
+	assert.Equal(t, "", hrBestDeptMatch("", official))
+	// 多个候选时取最长（最具体）
+	assert.Equal(t, "人事行政部", hrBestDeptMatch("行政", []string{"行政部", "人事行政部"}))
+}
+
+const LEAVING_GROUP_KEY_GO = "离职信息"
+
+func TestHRRosterColumnGroupOrder(t *testing.T) {
+	// 后端 subs 已按 11 组顺序排；前端列顺序把离职信息挪到最后。
+	// 这里锁住后端顺序本身：离职信息在第 3 位（胶囊栏顺序），前端负责追加。
+	idx := -1
+	for i, g := range hrRosterGroupDict {
+		if g.Key == LEAVING_GROUP_KEY_GO {
+			idx = i
+			break
+		}
+	}
+	assert.Equal(t, 2, idx, "离职信息在胶囊栏仍是第 3 个分组")
 }

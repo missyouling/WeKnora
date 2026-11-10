@@ -348,7 +348,8 @@ import {
 } from './hrCore'
 import type { HrTab, HrColumn } from './hrCore'
 import {
-  ROSTER_STATUS_OPTIONS, drawerGroupsFor, visibleFieldsFor,
+  ROSTER_STATUS_OPTIONS, drawerGroupsFor, ROSTER_FIELD_GROUPS, LEAVING_GROUP_KEY,
+  defaultVisibleKeysFromConfig, enabledFieldKeysFromConfig,
   type RosterStatusFilter,
 } from './hrRosterGroups'
 import RosterImportDialog from './RosterImportDialog.vue'
@@ -469,7 +470,18 @@ const currentColumns = computed<HrColumn[]>(() => {
   return hrColumnDefs(activeTab.value)
 })
 const businessColumns = computed(() => currentColumns.value.filter((c) => c.colKey !== 'row-select'))
-const columnDefsForFilter = computed(() => businessColumns.value.map((c) => ({ key: c.colKey, label: c.title })))
+/**
+ * `[☰ 字段]` 可选全集（第 50 轮）。
+ *
+ * 花名册只能勾「启用字段」（后端 `enabled !== false`）——禁用字段连出现在
+ * 筛选器里都不应该，否则用户勾了也看不到列。
+ */
+const columnDefsForFilter = computed(() => {
+  const enabled = activeTab.value === 'hr-roster' ? new Set(rosterEnabledKeys.value) : null
+  return businessColumns.value
+    .filter((c) => !enabled || enabled.has(c.colKey))
+    .map((c) => ({ key: c.colKey, label: c.title }))
+})
 
 // 四态视图各自保存列显隐，切换状态时互不污染。
 const STORAGE_KEY = computed(() => {
@@ -485,9 +497,15 @@ const visibleCols = computed(() => businessColumns.value.filter((c) => visibleCo
 function persistColumns() {
   try { localStorage.setItem(STORAGE_KEY.value, JSON.stringify(visibleColKeys.value)) } catch { /* ignore */ }
 }
+/**
+ * `[☰ 字段]` 的「重置」= 精确回到**后端** `defaultHeader` 字段集合。
+ *
+ * 严禁回全选或前端静态数组：用户可能刚在设置里关掉了几个默认表头，
+ * 重置却把它们全勾回来，等于把上一次保存冲掉。
+ */
 function resetColumns() {
   visibleColKeys.value = activeTab.value === 'hr-roster'
-    ? visibleFieldsFor(rosterStatusView.value)
+    ? rosterVisibleKeysFor(rosterStatusView.value)
     : businessColumns.value.map((c) => c.colKey)
   persistColumns()
 }
@@ -495,7 +513,7 @@ function selectAllColumns() { resetColumns() }
 function onColumnsChange(keys: string[]) { visibleColKeys.value = keys; persistColumns() }
 function initColumns() {
   const allKeys = businessColumns.value.map((c) => c.colKey)
-  // 第 48 轮：花名册以「11 分组默认勾选」为基线，只有用户显式保存过的才覆盖。
+  // 第 50 轮：花名册基线 = 后端 subs 的 defaultHeader（不是前端静态数组）。
   if (activeTab.value === 'hr-roster') {
     const saved = localStorage.getItem(STORAGE_KEY.value)
     if (saved) {
@@ -505,7 +523,7 @@ function initColumns() {
         if (matched.length) { visibleColKeys.value = matched; return }
       } catch { /* ignore */ }
     }
-    visibleColKeys.value = visibleFieldsFor(rosterStatusView.value)
+    visibleColKeys.value = rosterVisibleKeysFor(rosterStatusView.value)
     return
   }
   const saved = localStorage.getItem(STORAGE_KEY.value)
@@ -941,19 +959,69 @@ const detailDirty = ref(false)
 const saving = ref(false)
 const editForm = ref<any>({ data: {}, remarkParts: {}, items: [] })
 const editBaseline = ref('')
+/**
+ * 六同步的唯一派生源（第 50 轮）。
+ *
+ * `defaultVisibleKeys` = 后端 subs 里 `enabled !== false && is_default === true`，
+ * 顺序即 subs 数组顺序（后端按 11 组设计顺序重排）。
+ * 之前列表显隐只读 localStorage + 前端静态数组，所以设置里改「默认表头」
+ * 保存后表头毫无变化 —— 那正是本次要修的死点。
+ */
+const rosterDefaultKeys = computed<string[]>(() =>
+  defaultVisibleKeysFromConfig(fieldConfig.value['hr-roster']),
+)
+const rosterEnabledKeys = computed<string[]>(() =>
+  enabledFieldKeysFromConfig(fieldConfig.value['hr-roster']),
+)
+
+/**
+ * 按筛选态产出可见列：默认表头在前，离职信息在末尾追加。
+ *
+ * 在职 → 严格不含任何离职字段；离职/全部 → 30 列默认 + 离职信息整组追加，
+ * 绝不会把「离职日期」插到「岗位」后面。
+ */
+function rosterVisibleKeysFor(status: RosterStatusFilter): string[] {
+  const out = rosterDefaultKeys.value.slice()
+  if (status === '在职') return out
+  const enabled = new Set(rosterEnabledKeys.value)
+  const leaving = ROSTER_FIELD_GROUPS.find((g) => g.key === LEAVING_GROUP_KEY)
+  for (const fd of leaving?.fields || []) {
+    if (fd.locked || enabled.has(fd.name)) {
+      if (!out.includes(fd.name)) out.push(fd.name)
+    }
+  }
+  return out
+}
+
 /** 部门下拉选项（全部部门 + 组织机构部门名）。 */
 const rosterDeptSelectOptions = computed(() => [
   { label: '全部部门', value: '' },
   ...rosterDeptOptions.value.map((d) => ({ label: d, value: d })),
 ])
 
+/**
+ * 部门下拉选项 = 组织机构里单位的部门拍平（第 50 轮）。
+ *
+ * 必须走 `/org/units` 而不是旧的 `/org`：旧接口是单公司视角，
+ * 多单位场景下会漏挂单位、顺序也与组织机构面板不一致。
+ * 顺序严格按「单位顺序 → 单位内部门顺序」，与设置里的拖拽结果一致。
+ */
 async function loadRosterDepts() {
   try {
-    const res: any = await hrApi.getOrganization()
+    const res: any = await hrApi.getOrgUnits()
     const d = res?.data || res || {}
-    rosterDeptOptions.value = (Array.isArray(d.departments) ? d.departments : [])
-      .map((x: any) => String(x.name || '').trim())
-      .filter(Boolean)
+    const units = Array.isArray(d.units) ? d.units : []
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const u of units) {
+      for (const dept of Array.isArray(u?.departments) ? u.departments : []) {
+        const name = String(dept?.name || '').trim()
+        if (!name || seen.has(name)) continue
+        seen.add(name)
+        out.push(name)
+      }
+    }
+    rosterDeptOptions.value = out
   } catch {
     rosterDeptOptions.value = []
   }
@@ -974,8 +1042,10 @@ const READONLY_DETAIL_FIELDS = new Set([
 ])
 
 /** 第 48 轮：抽屉按 11 分组渲染，空组自动隐藏，在职隐藏离职信息组。 */
+// 抽屉看「启用字段」(enabled)，与列表「默认表头」(is_default) 是两套开关：
+// 关掉某个默认表头只影响列表列，不应该让详情抽屉里少一个可编辑字段。
 const drawerGroups = computed(() =>
-  drawerGroupsFor(rosterStatusView.value, new Set(visibleColKeys.value))
+  drawerGroupsFor(rosterStatusView.value, new Set(rosterEnabledKeys.value))
     .map((g) => ({
       key: g.key,
       label: g.label,
@@ -1100,7 +1170,22 @@ async function openPeriodDetail(row: any) {
 // 设置 / 新增 / 打印
 // ---------------------------------------------------------------------------
 const settingsVisible = ref(false)
-function onSettingsSaved() { void loadFieldConfig(activeTab.value) }
+/**
+ * 设置抽屉保存后的六同步入口（第 50 轮）。
+ *
+ * 顺序不能反：先 `loadFieldConfig` 把后端最新 subs 拉回来，
+ * 再据 `is_default` 重算列显隐，最后覆盖 localStorage。
+ * 之前的实现只做了第一步，所以「取消默认表头」保存后列表毫无变化。
+ */
+async function onSettingsSaved() {
+  await loadFieldConfig(activeTab.value)
+  if (activeTab.value === 'hr-roster') {
+    // 后端已落库 → 立即以最新 defaultHeader 覆盖当前列表与缓存
+    visibleColKeys.value = rosterVisibleKeysFor(rosterStatusView.value)
+    persistColumns()
+    await loadList('hr-roster')
+  }
+}
 
 function onPrimaryAction() {
   if (activeTab.value === 'hr-social') { void handleAddPeriod(); return }
@@ -1233,8 +1318,19 @@ function handleResign() {
   resignVisible.value = true
 }
 
-function onOrgSaved() {
-  void loadFieldConfig(activeTab.value)
+/**
+ * 组织机构保存后：部门可能改名 → 存量员工已被后端级联更新，
+ * 必须重拉部门下拉、列表与卡片，否则界面还停在旧部门名上。
+ */
+async function onOrgSaved() {
+  await loadRosterDepts()
+  // 部门被删/改名后当前筛选可能指向不存在的部门 → 复位到全部
+  if (rosterDeptFilter.value && !rosterDeptOptions.value.includes(rosterDeptFilter.value)) {
+    rosterDeptFilter.value = ''
+  }
+  await loadFieldConfig(activeTab.value)
+  await loadList(activeTab.value)
+  await reloadStats()
 }
 
 async function onRosterImported() {

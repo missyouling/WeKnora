@@ -189,6 +189,9 @@ func (h *HRHandler) GetOrgUnits(c *gin.Context) {
 }
 
 // SaveOrgUnits PUT /org/units —— 整表替换保存（手存语义）。
+//
+// 第 50 轮：整表替换前先读旧值，重建后按 id / code 比对改名并级联更新
+// 存量员工（部门改名 → 员工 department；单位改名 → 合同甲方两个键）。
 func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
@@ -199,13 +202,27 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 		hrFail(c, "invalid request body: "+err.Error())
 		return
 	}
+	var affected int64
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1) 先读旧值 —— 删表重建之后就查不到改名前的名字了
+		var oldUnits []HROrgUnit
+		if err := tx.Where("tenant_id = ?", tid).Find(&oldUnits).Error; err != nil {
+			return err
+		}
+		var oldDepts []HRDepartment
+		if err := tx.Where("tenant_id = ?", tid).Find(&oldDepts).Error; err != nil {
+			return err
+		}
+
+		// 2) 删表重建
 		if err := tx.Where("tenant_id = ?", tid).Delete(&HROrgUnit{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("tenant_id = ?", tid).Delete(&HRDepartment{}).Error; err != nil {
 			return err
 		}
+		newUnits := make([]HROrgUnit, 0, len(req.Units))
+		newDepts := make([]HRDepartment, 0, len(req.Units)*4)
 		for ui, u := range req.Units {
 			name := strings.TrimSpace(u.Name)
 			if name == "" {
@@ -229,6 +246,7 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 			if err := tx.Create(&unit).Error; err != nil {
 				return err
 			}
+			newUnits = append(newUnits, unit)
 			// 部门顺序 = 数组下标（拖拽排序的直接结果），不再用数字输入框
 			rows := make([]HRDepartment, 0, len(u.Departments))
 			for di, d := range u.Departments {
@@ -253,15 +271,22 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 				if err := tx.Create(&rows).Error; err != nil {
 					return err
 				}
+				newDepts = append(newDepts, rows...)
 			}
 		}
-		return nil
+
+		// 3) 改名级联（同一事务，失败整体回滚）
+		n, err := hrRunOrgCascade(tx, tid, oldUnits, newUnits, oldDepts, newDepts)
+		affected = n
+		return err
 	})
 	if err != nil {
 		hrFail(c, "保存组织机构失败: "+err.Error())
 		return
 	}
-	hrOK(c, gin.H{"saved": true})
+	// 4) 事务外归并存量旧部门名（质量部 → 技术质量部），保证下拉与机构 1:1
+	merged, _ := h.hrRefreshOrgDepartments(ctx, tid)
+	hrOK(c, gin.H{"saved": true, "cascaded": affected, "merged": merged})
 }
 
 // hrUnitByName 按单位名精确匹配（合同甲方派生用）。

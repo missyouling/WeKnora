@@ -4,14 +4,26 @@ import {
   ROSTER_FIELD_GROUPS, LEAVING_GROUP_KEY, ROSTER_STATUS_OPTIONS,
   allRosterFields, defaultVisibleFields, lockedRosterFields,
   visibleFieldsFor, drawerGroupsFor, groupLabelOf, groupCheckState,
+  defaultVisibleKeysFromConfig, enabledFieldKeysFromConfig,
 } from './hrRosterGroups'
 
-test('11 大分组，顺序与设计稿一致', () => {
+test('11 大分组，顺序与设计稿一致（第 50 轮：在职信息在前）', () => {
   assert.equal(ROSTER_FIELD_GROUPS.length, 11)
   assert.deepEqual(ROSTER_FIELD_GROUPS.map((g) => g.key), [
-    '基本信息', '在职信息', '离职信息', '联系信息', '紧急联系人情况',
+    '在职信息', '基本信息', '离职信息', '联系信息', '紧急联系人情况',
     '家庭情况', '教育情况', '工作经历情况', '合同签订情况', '工资社保信息', '个税申报信息',
   ])
+})
+
+test('列顺序：离职信息整组排最后（不插在岗位后面）', () => {
+  const all = allRosterFields()
+  const idxLeaving = all.indexOf('离职日期')
+  // 除了离职信息组自己的字段，其余全部排在离职日期之前
+  for (const k of ['工号', '姓名', '部门', '岗位', '证件号码', '个人股本(投资)额']) {
+    assert.ok(all.indexOf(k) < idxLeaving, `${k} 应排在离职日期之前`)
+  }
+  // 离职信息组内字段连续且都在末尾
+  assert.equal(all.slice(idxLeaving).every((n) => all.indexOf(n) >= idxLeaving), true)
 })
 
 test('姓名必选锁定，且是唯一 locked 字段', () => {
@@ -63,15 +75,24 @@ test('在职状态只剩 全部 / 在职 / 离职 三项', () => {
   assert.deepEqual(ROSTER_STATUS_OPTIONS.map((o) => o.value), ['全部', '在职', '离职'])
 })
 
-test('列表默认表头只有基本信息组 + 核心锚点（第 49 轮）', () => {
-  const vis = new Set(defaultVisibleFields())
-  for (const k of ['工号', '姓名', '部门', '岗位']) assert.ok(vis.has(k), k)
-  for (const k of ['证件号码', '性别', '出生日期', '年龄', '司龄']) assert.ok(vis.has(k), k)
+test('默认表头 = 在职信息 12 + 基本信息 18（第 50 轮）', () => {
+  const vis = defaultVisibleFields()
+  const set = new Set(vis)
+  // 在职信息组打头，工号第一、姓名第二
+  assert.equal(vis[0], '工号')
+  assert.equal(vis[1], '姓名')
+  for (const k of ['工号', '姓名', '部门', '职务', '岗位', '合同公司', '招聘渠道',
+    '员工状态', '入职日期', '试用期', '转正日期', '司龄']) {
+    assert.ok(set.has(k), `在职信息缺少 ${k}`)
+  }
+  for (const k of ['证件类型', '证件号码', '性别', '出生日期', '年龄', '健康证有效期']) {
+    assert.ok(set.has(k), `基本信息缺少 ${k}`)
+  }
   // 其余分组默认不进表头
   for (const k of ['离职日期', '现合同编号', '工资卡卡号', '是否烈属', '毕业院校', '紧急联系人姓名']) {
-    assert.ok(!vis.has(k), `${k} 不应默认进表头`)
+    assert.ok(!set.has(k), `${k} 不应默认进表头`)
   }
-  assert.ok(vis.size <= 25, `默认列数应 <= 25，实际 ${vis.size}`)
+  assert.equal(vis.length, 30, `默认列数应为 30，实际 ${vis.length}`)
 })
 
 test('visibleFieldsFor：在职隐藏离职信息组，离职/全部包含', () => {
@@ -112,4 +133,60 @@ test('groupLabelOf：字段归属分组', () => {
   assert.equal(groupLabelOf('离职日期'), '离职信息')
   assert.equal(groupLabelOf('工资卡卡号'), '工资社保信息')
   assert.equal(groupLabelOf('不存在的字段'), '')
+})
+
+// ---------------------------------------------------------------------------
+// 第 50 轮：六同步契约（后端 subs → 默认表头 / 可选全集）
+// ---------------------------------------------------------------------------
+
+test('第50轮：defaultVisibleKeysFromConfig 只取 enabled && is_default', () => {
+  const config = [{
+    builtin_key: 'hr-roster',
+    subs: [
+      { name: '工号', enabled: true, is_default: true, group: '在职信息' },
+      { name: '姓名', enabled: true, is_default: true, group: '在职信息' },
+      { name: '招聘渠道', enabled: true, is_default: false, group: '在职信息' },
+      { name: '离职日期', enabled: true, is_default: false, group: '离职信息' },
+      { name: '曾用名', enabled: false, is_default: true, group: '基本信息' },
+    ],
+  }]
+  assert.deepEqual(defaultVisibleKeysFromConfig(config), ['工号', '姓名'])
+  // 禁用的字段即便 is_default=true 也不能进表头
+  assert.ok(!defaultVisibleKeysFromConfig(config).includes('曾用名'))
+  // 顺序 = subs 数组顺序（后端已按分组重排）
+  assert.equal(defaultVisibleKeysFromConfig(config)[0], '工号')
+})
+
+test('第50轮：enabledFieldKeysFromConfig 取全部启用字段（含默认表头关闭的）', () => {
+  const config = [{
+    builtin_key: 'hr-roster',
+    subs: [
+      { name: '工号', enabled: true, is_default: true },
+      { name: '招聘渠道', enabled: true, is_default: false },
+      { name: '曾用名', enabled: false, is_default: true },
+    ],
+  }]
+  assert.deepEqual(enabledFieldKeysFromConfig(config), ['工号', '招聘渠道'])
+})
+
+test('第50轮：配置缺失时回落到静态默认，绝不给空表头', () => {
+  for (const bad of [null, undefined, [], [{}], [{ subs: null }]]) {
+    const keys = defaultVisibleKeysFromConfig(bad as any)
+    assert.ok(keys.length >= 28, `配置 ${JSON.stringify(bad)} 时应有兜底列`)
+    assert.ok(keys.includes('工号'))
+  }
+})
+
+test('第50轮：在职态严格无离职字段，离职态末尾追加', () => {
+  const active = visibleFieldsFor('在职')
+  const left = visibleFieldsFor('离职')
+  for (const k of ['离职日期', '离职原因', '离职备注', '离职证明']) {
+    assert.ok(!active.includes(k), `在职态不应有 ${k}`)
+  }
+  // 离职态：默认在职字段原样在前，离职字段全部在末尾
+  const firstLeaving = left.findIndex((n) => n === '离职日期')
+  assert.ok(firstLeaving > 0)
+  for (const k of ['工号', '姓名', '部门', '岗位', '证件号码']) {
+    assert.ok(left.indexOf(k) < firstLeaving, `${k} 应在离职字段之前`)
+  }
 })

@@ -63,7 +63,30 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	ctx := context.Background()
 	h.seedHRCategories(ctx)
 	h.seedHRPFSettings(ctx)
+	// 第 50 轮：启动时归并存量旧部门名（质量部 → 技术质量部 等）。
+	// 幂等且失败只告警：宁可留脏数据，也不能让服务起不来。
+	if err := h.hrNormalizeAllDepartments(ctx); err != nil {
+		logger.Warnf(ctx, "normalize HR departments failed: %v", err)
+	}
 	return h
+}
+
+// hrNormalizeAllDepartments 对每个租户跑一次部门名归并（启动钩子用）。
+func (h *HRHandler) hrNormalizeAllDepartments(ctx context.Context) error {
+	var tids []int64
+	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
+		Distinct().Pluck("tenant_id", &tids).Error; err != nil {
+		return err
+	}
+	for _, tid := range tids {
+		h.hrEnsureOrgDefaults(ctx, tid)
+		h.hrEnsureOrgUnits(ctx, tid)
+		h.hrMigrateOrgCodes(ctx, tid)
+		if _, err := h.hrRefreshOrgDepartments(ctx, tid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // hrTenantID 统一取租户 ID（int64，与 types.FleetCategory.TenantID 同口径）。
@@ -117,20 +140,24 @@ var hrRosterGroupDict = []struct {
 	Key    string
 	Fields []string
 }{
-	{"基本信息", []string{
-		"姓名", "证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
-		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
-		"参加工作时间", "司龄", "血型", "服装尺寸", "健康状况", "健康证有效期",
-		"曾用名", "英文名", "是否农历生日", "国家地区", "籍贯(省)", "籍贯(市)",
-		"户籍城市", "户籍城市(省)", "户籍城市(市)",
-	}},
+	// 第 50 轮：在职信息提到第 1 位、基本信息第 2 位。
+	//
+	// 原因：工号/姓名/部门/岗位是定位行的核心锚点，排在「参加工作时间/健康状况」
+	// 后面会让表格第一屏全是基本信息的边缘字段。
 	{"在职信息", []string{
-		"工号", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态",
-		"入职日期", "试用期", "转正日期",
+		"工号", "姓名", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态", "在职状态",
+		"入职日期", "试用期", "转正日期", "司龄",
 		"汇报上级类型", "汇报上级姓名", "备注",
 		"多级部门名称", "岗位类别", "汇报上级", "职等", "职级编号", "职级名称",
 		"工作城市", "工作地点", "考勤编号", "工时制度", "工作性质",
 		"档案编号", "档案备注", "OA编码",
+	}},
+	{"基本信息", []string{
+		"证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
+		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
+		"参加工作时间", "血型", "服装尺寸", "健康状况", "健康证有效期",
+		"曾用名", "英文名", "是否农历生日", "国家地区", "籍贯(省)", "籍贯(市)",
+		"户籍城市", "户籍城市(省)", "户籍城市(市)",
 	}},
 	{"离职信息", []string{
 		"离职日期", "离职申请日期", "薪资结算日", "离职类型", "离职原因",
@@ -167,15 +194,22 @@ var hrRosterGroupDict = []struct {
 
 // hrRosterDefaultHeaderFields 是「默认表头」开启的字段。
 //
-// 第 49 轮：在职列表首屏只渲染基本信息组 + 核心锚点，避免 50+ 列拖慢加载。
-// 其余字段 Enabled=true（详情抽屉按分组正常显示），但默认表头关闭。
+// 第 50 轮：在职信息在前（12 项，工号打头）、基本信息在后（18 项），共 30 列。
+// 其余字段 Enabled=true（详情抽屉按分组正常展示），但默认表头关闭。
 var hrRosterDefaultHeaderFields = func() map[string]bool {
-	m := map[string]bool{"工号": true, "姓名": true, "部门": true, "岗位": true}
-	// 基本信息组里设计稿打勾的 21 项（未打勾的曾用名/英文名/国家地区等不进表头）
+	m := make(map[string]bool, 30)
+	// 在职信息 12 项（顺序即表头顺序）
 	for _, f := range []string{
-		"姓名", "证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
+		"工号", "姓名", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态",
+		"入职日期", "试用期", "转正日期", "司龄",
+	} {
+		m[f] = true
+	}
+	// 基本信息 18 项（未打勾的曾用名/英文名/国家地区等不进表头）
+	for _, f := range []string{
+		"证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
 		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
-		"参加工作时间", "司龄", "血型", "服装尺寸", "健康状况", "健康证有效期",
+		"参加工作时间", "血型", "服装尺寸", "健康状况", "健康证有效期",
 	} {
 		m[f] = true
 	}
@@ -184,6 +218,12 @@ var hrRosterDefaultHeaderFields = func() map[string]bool {
 
 // hrRosterRetiredFields 是被合并 / 下线的历史字段（第 49 轮）：
 // 生日 → 出生日期；工龄 / 司龄开始日期 / 司龄(天数) → 司龄。
+// hrRosterSystemStatusFields 是系统注入的状态字段：只归组，不参与
+// 「默认表头」重写（该开关由前端 statusFields.ts 维护）。
+var hrRosterSystemStatusFields = map[string]bool{
+	"在职状态": true, "证件状态": true, "证照状态": true, "提取状态": true,
+}
+
 var hrRosterRetiredFields = map[string]bool{
 	// 合并：生日 → 出生日期；工龄/司龄开始日期/司龄(天数) → 司龄
 	"生日": true, "工龄": true, "司龄开始日期": true, "司龄(天数)": true,
@@ -322,10 +362,12 @@ func hrBackfillRosterGroups(cats []*types.FleetCategory) bool {
 					changed = true
 				}
 			}
-			want := hrRosterDefaultHeaderFields[name]
-			if subs[i].IsDefault != want {
-				subs[i].IsDefault = want
-				changed = true
+			if !hrRosterSystemStatusFields[name] {
+				want := hrRosterDefaultHeaderFields[name]
+				if subs[i].IsDefault != want {
+					subs[i].IsDefault = want
+					changed = true
+				}
 			}
 			if !subs[i].Enabled {
 				subs[i].Enabled = true
@@ -337,24 +379,42 @@ func hrBackfillRosterGroups(cats []*types.FleetCategory) bool {
 			}
 			kept = append(kept, subs[i])
 		}
-		// 按 11 组设计顺序重排（胶囊栏顺序 = subs 数组顺序）。
-		// 组内保持原顺序（用户拖拽结果不被覆盖）。
-		order := map[string]int{}
+		// 按 11 组设计顺序重排（胶囊栏顺序 = subs 数组顺序）；
+		// 组内再按 `hrRosterGroupDict` 的字段顺序重排 —— 第 50 轮要求表头
+		// 严格是 工号 → 姓名 → 部门 → …，只排组会让「姓名」一直卡在「工号」前面。
+		// 未收录进 dict 的历史字段（备注/汇报上级类型 等）保持相对顺序、排组末。
+		groupRank := map[string]int{}
 		for i, g := range hrRosterGroupDict {
-			order[g.Key] = i
+			groupRank[g.Key] = i
+		}
+		fieldRank := map[string]int{}
+		for _, g := range hrRosterGroupDict {
+			for i, name := range g.Fields {
+				if _, ok := fieldRank[name]; !ok {
+					fieldRank[name] = i
+				}
+			}
+		}
+		rankOf := func(s types.FleetCategorySub) (int, int) {
+			g, ok := groupRank[s.Group]
+			if !ok {
+				g = len(groupRank)
+			}
+			f, ok := fieldRank[s.Name]
+			if !ok {
+				f = len(fieldRank)
+			}
+			return g, f
 		}
 		sortedSubs := make([]types.FleetCategorySub, len(kept))
 		copy(sortedSubs, kept)
 		sort.SliceStable(sortedSubs, func(a, b int) bool {
-			ga, oka := order[sortedSubs[a].Group]
-			gb, okb := order[sortedSubs[b].Group]
-			if !oka {
-				ga = len(order)
+			ga, fa := rankOf(sortedSubs[a])
+			gb, fb := rankOf(sortedSubs[b])
+			if ga != gb {
+				return ga < gb
 			}
-			if !okb {
-				gb = len(order)
-			}
-			return ga < gb
+			return fa < fb
 		})
 		for i := range sortedSubs {
 			if sortedSubs[i].Name != kept[i].Name {

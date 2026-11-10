@@ -8,24 +8,34 @@
       </t-button>
     </div>
 
-    <!-- 单位列表：拖拽排序 + 选中编辑 -->
+    <!-- 单位列表：拖拽排序 + 点击折叠/展开（与字段设置的分类行同一交互） -->
     <div class="org-units__list">
       <div v-for="(u, i) in units" :key="u.id || `new-${i}`" class="org-unit"
         :class="{ 'is-active': activeIndex === i }" draggable="true"
         @dragstart="onUnitDragStart(i)" @dragover.prevent @drop.prevent="onUnitDrop(i)"
-        @dragend="dragIndex = -1" @click="activeIndex = i">
-        <span class="org-unit__drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
+        @dragend="dragIndex = -1" @click="toggleUnit(i)">
+        <span class="org-unit__drag" title="拖动排序" @click.stop>
+          <t-icon name="move" size="14px" />
+        </span>
+        <span class="org-unit__chevron">
+          <t-icon :name="activeIndex === i ? 'chevron-down' : 'chevron-right'" size="14px" />
+        </span>
         <span class="org-unit__name">{{ u.name || '未命名单位' }}</span>
         <span class="org-unit__code">{{ u.code }}</span>
         <span class="org-unit__depts">{{ (u.departments || []).length }} 个部门</span>
-        <t-popconfirm theme="warning" content="确定删除该单位及其下属部门吗？" @confirm="removeUnit(i)">
-          <t-button variant="text" size="small" theme="danger" @click.stop>删除</t-button>
-        </t-popconfirm>
+        <span class="org-unit__ops" @click.stop>
+          <t-popconfirm theme="warning" :content="`确定删除单位「${u.name || '未命名单位'}」吗？`"
+            @confirm="removeUnit(i)">
+            <t-button variant="text" shape="square" size="small" title="删除">
+              <DeleteIcon />
+            </t-button>
+          </t-popconfirm>
+        </span>
       </div>
       <div v-if="!units.length" class="org-units__empty">暂无单位</div>
     </div>
 
-    <!-- 选中单位的明细表单 -->
+    <!-- 选中单位的明细表单（再次点击单位行可折叠） -->
     <template v-if="activeUnit">
       <div class="org-units__title org-units__title--form">单位信息</div>
       <div class="org-form">
@@ -71,9 +81,12 @@
           <span class="org-depts__drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
           <t-input v-model="d.name" size="small" placeholder="部门名称" />
           <t-input v-model="d.code" size="small" placeholder="5 位编码" :maxlength="5" />
-          <t-button variant="text" size="small" theme="danger" @click="(activeUnit!.departments || []).splice(i, 1)">
-            删除
-          </t-button>
+          <t-popconfirm theme="warning" :content="`确定删除部门「${d.name || '未命名部门'}」吗？`"
+            @confirm="removeDept(i)">
+            <t-button variant="text" shape="square" size="small" title="删除">
+              <DeleteIcon />
+            </t-button>
+          </t-popconfirm>
         </div>
         <div v-if="!(activeUnit.departments || []).length" class="org-depts__empty">
           暂无下属部门（单位可单独保存）
@@ -92,6 +105,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { DeleteIcon } from 'tdesign-icons-vue-next'
 import * as hrApi from './hrApi'
 
 const props = withDefaults(defineProps<{ visible: boolean }>(), { visible: false })
@@ -127,6 +141,16 @@ async function load() {
   }
 }
 
+/**
+ * 点击单位行切换折叠/展开（第 50 轮）。
+ *
+ * 与「字段设置」的分类行一致：点已选中的行就收起，再点展开。
+ * 收起时 activeUnit 变 null，下方「单位信息 + 下属部门」整块隐藏。
+ */
+function toggleUnit(i: number) {
+  activeIndex.value = activeIndex.value === i ? -1 : i
+}
+
 function addUnit() {
   units.value.push({
     name: '', code: String(units.value.length + 1).padStart(2, '0'),
@@ -144,6 +168,12 @@ function addDept() {
   if (!activeUnit.value) return
   if (!activeUnit.value.departments) activeUnit.value.departments = []
   activeUnit.value.departments.push({ name: '', code: '' })
+}
+
+function removeDept(i: number) {
+  const u = activeUnit.value
+  if (!u) return
+  ;(u.departments || []).splice(i, 1)
 }
 
 // ---- 单位拖拽排序 ----
@@ -217,7 +247,7 @@ async function save() {
 
 .org-unit {
   display: grid;
-  grid-template-columns: 24px 1fr 80px 90px 64px;
+  grid-template-columns: 20px 18px 1fr 80px 90px 56px;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -237,9 +267,19 @@ async function save() {
   align-items: center;
 }
 
+.org-unit__chevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--td-text-color-secondary);
+}
+
 .org-unit__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .org-unit__code,
 .org-unit__depts { color: var(--td-text-color-secondary); }
+.org-unit__ops { display: inline-flex; justify-content: flex-end; }
+.org-unit__ops :deep(.t-button) { color: var(--td-text-color-placeholder); }
+.org-unit__ops :deep(.t-button:hover) { color: var(--td-error-color); }
+
 .org-units__empty,
 .org-depts__empty { padding: 16px; text-align: center; color: var(--td-text-color-placeholder); }
 
@@ -262,7 +302,7 @@ async function save() {
 .org-depts__head,
 .org-dept {
   display: grid;
-  grid-template-columns: 24px 1fr 140px 64px;
+  grid-template-columns: 24px 1fr 140px 56px;
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
@@ -276,6 +316,8 @@ async function save() {
 
 .org-dept { border-bottom: 1px solid var(--td-component-border); }
 .org-dept:last-child { border-bottom: none; }
+.org-dept :deep(.t-button) { color: var(--td-text-color-placeholder); }
+.org-dept :deep(.t-button:hover) { color: var(--td-error-color); }
 
 .org-units__footer {
   display: flex;

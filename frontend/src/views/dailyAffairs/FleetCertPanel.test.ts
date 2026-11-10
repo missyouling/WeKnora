@@ -383,3 +383,17 @@ test('withDefaultFieldWidths：0 视为已配置，只给缺失键补 0', () => 
   // 原地修改：调用方拿到的是同一份数组，保存链路无需额外搬运
   assert.equal(out, fields)
 })
+
+test('第50轮：group/group_label 必须随 subs 落库（否则胶囊分组塌陷）', () => {
+  const raw = [
+    { name: '工号', enabled: true, is_default: true, data_type: 'text', width: 0,
+      group: '在职信息', group_label: '在职信息' },
+    { name: '证件号码', enabled: true, is_default: true, data_type: 'text', width: 0,
+      group: '基本信息', group_label: '基本信息' },
+  ]
+  const round = toSubsPayload(fromSubsPayload(raw)) as any[]
+  assert.deepEqual(round, raw, 'group / group_label 必须在往返中保留')
+  // 无 group 的旧分类序列化结果不许多出字段
+  const legacy = toSubsPayload(fromSubsPayload([{ name: 'x', enabled: true }])) as any[]
+  assert.equal('group' in legacy[0], false)
+})
