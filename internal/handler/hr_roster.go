@@ -452,6 +452,64 @@ func (h *HRHandler) ListEmployees(c *gin.Context) {
 	hrOK(c, gin.H{"items": items, "total": total})
 }
 
+// hrAttachContractParty 给劳动合同补甲方（单位）与乙方（员工）关联字段（第 49 轮）。
+//
+// 甲方按员工「现合同签约公司 / 合同公司」匹配组织机构里的单位，
+// 取该单位的统一社会信用代码 / 住所 / 法定代表人；乙方联系电话取手机号。
+// 单位信息改了以后合同列表自动跟随（每次读取现算，不落库冗余）。
+func hrAttachContractParty(units []hrOrgUnitWithDepts, items []HREmployee) {
+	if len(items) == 0 {
+		return
+	}
+	byName := map[string]hrOrgUnitWithDepts{}
+	for _, u := range units {
+		if n := strings.TrimSpace(u.Name); n != "" {
+			byName[n] = u
+		}
+	}
+	find := func(name string) (hrOrgUnitWithDepts, bool) {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			return hrOrgUnitWithDepts{}, false
+		}
+		if u, ok := byName[n]; ok {
+			return u, true
+		}
+		for k, u := range byName {
+			if strings.Contains(n, k) || strings.Contains(k, n) {
+				return u, true
+			}
+		}
+		return hrOrgUnitWithDepts{}, false
+	}
+	for i := range items {
+		e := &items[i]
+		if e.CustomData == nil {
+			e.CustomData = map[string]any{}
+		}
+		partyA := strings.TrimSpace(toStringValue(e.CustomData["现合同签约公司"]))
+		if partyA == "" {
+			partyA = strings.TrimSpace(toStringValue(e.CustomData["合同公司"]))
+		}
+		e.CustomData["现合同签约公司"] = partyA
+		if u, ok := find(partyA); ok {
+			e.CustomData["统一社会信用代码"] = u.CreditCode
+			e.CustomData["住所"] = u.Address
+			e.CustomData["法定代表人"] = u.LegalPerson
+		} else {
+			e.CustomData["统一社会信用代码"] = ""
+			e.CustomData["住所"] = ""
+			e.CustomData["法定代表人"] = ""
+		}
+		// 乙方：联系电话取花名册手机号；户籍地址 / 现居住地保持原值
+		e.CustomData["联系电话"] = strings.TrimSpace(e.Phone)
+		// 司龄（第 49 轮唯一口径）
+		if v := hrSeniorityOf(e, time.Now()); v != "" {
+			e.CustomData["司龄"] = v
+		}
+	}
+}
+
 // hrAttachEmployeeDerived 给列表补三样派生信息（第 47 轮）：
 //
 //	· 合同状态（正常/即将到期/到期）—— 由现合同结束日期 + 现合同类型算出；
@@ -772,6 +830,21 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 	var fundCount int64
 	h.db.WithContext(ctx).Model(&HRPFRecord{}).Where("tenant_id = ?", tid).Count(&fundCount)
 
+	// 第 49 轮：合同异常预警（到期 / 即将到期），供 KPI 卡副文案。
+	var expiring, expired int64
+	for _, e := range emps {
+		if e.CustomData == nil {
+			continue
+		}
+		switch hrEmployeeContractStatus(e) {
+		case hrContractStatusExpired:
+			expired++
+		case hrContractStatusExpiring:
+			expiring++
+		}
+	}
+	data["contract_expiring"] = expiring
+	data["contract_expired"] = expired
 	data["roster"] = data["total"]
 	data["contract"] = contractCount
 	data["social"] = socialCount

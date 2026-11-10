@@ -9,7 +9,7 @@
     class="standard-settings-drawer"
   >
     <t-tabs v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
-      <t-tab-panel value="fields" label="字段定义">
+      <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
       </t-tab-panel>
@@ -59,6 +59,8 @@ const props = withDefaults(defineProps<{
   kbName?: string
   title?: string
   storageKey?: string
+  /** 「字段定义」Tab 的标题（人事模块叫「字段设置」，默认仍是「字段定义」）。 */
+  fieldsTabLabel?: string
   /** 业务专属设置 Tab 的标题（空 = 不渲染该 Tab，如能耗的「光伏设置 / 表计设置 / 清单设置」）。 */
   extraTabLabel?: string
   /** 业务专属设置 Tab 的 value，默认 extra。 */
@@ -77,6 +79,7 @@ const props = withDefaults(defineProps<{
   ruleCategories: () => [],
   kbName: '日常事务-发票',
   title: '发票设置',
+  fieldsTabLabel: '字段定义',
   storageKey: 'weknora-invoice-settings-drawer-width',
   extraTabLabel: '',
   extraTabValue: 'extra',

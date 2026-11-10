@@ -251,7 +251,7 @@ export function getSocialPeriodDetail(id: string | number): Promise<any> {
 }
 
 /** 劳动合同视图（数据与花名册合同字段同源）。 */
-export function listContracts(params: { q?: string; contract_status?: string } = {}): Promise<any> {
+export function listContracts(params: { q?: string; contract_status?: string; department?: string } = {}): Promise<any> {
   return get(`${BASE}/contracts${qs(params)}`) as Promise<any>
 }
 
@@ -267,4 +267,13 @@ export function saveOrganization(payload: Record<string, any>): Promise<any> {
 /** 第 48 轮：新增员工时的工号自动编码建议（A/B/C + 5 位部门码 + 4 位序号）。 */
 export function nextEmployeeId(params: { department?: string; title?: string } = {}): Promise<any> {
   return get(`${BASE}/roster/next-employee-id${qs(params)}`) as Promise<any>
+}
+
+/** 第 49 轮：多单位组织机构（单位可无下属部门）。 */
+export function getOrgUnits(): Promise<any> {
+  return get(`${BASE}/org/units`) as Promise<any>
+}
+
+export function saveOrgUnits(payload: { units: any[] }): Promise<any> {
+  return put(`${BASE}/org/units`, payload) as Promise<any>
 }

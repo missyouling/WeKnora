@@ -45,10 +45,10 @@ export const ROSTER_FIELD_GROUPS: readonly RosterFieldGroupDef[] = [
     fields: [
       f('姓名', true, true),
       f('证件类型', true), f('证件号码', true), f('身份证有效期', true),
-      f('性别', true), f('生日', true), f('出生日期', true), f('年龄', true),
+      f('性别', true), f('出生日期', true), f('年龄', true),
       f('是否已婚', true), f('是否已育', true), f('民族', true), f('政治面貌', true),
       f('籍贯', true), f('户口性质', true), f('户籍地址', true), f('参加工作时间', true),
-      f('工龄', true), f('血型', true), f('服装尺寸', true), f('健康状况', true),
+      f('司龄', true), f('血型', true), f('服装尺寸', true), f('健康状况', true),
       f('健康证有效期', true),
       f('曾用名', false), f('英文名', false), f('是否农历生日', false), f('国家地区', false),
       f('籍贯(省)', false), f('籍贯(市)', false), f('户籍城市', false),
@@ -61,10 +61,10 @@ export const ROSTER_FIELD_GROUPS: readonly RosterFieldGroupDef[] = [
     fields: [
       f('工号', true), f('部门', true), f('职务', true), f('岗位', true), f('合同公司', true),
       f('招聘渠道', true), f('员工状态', true), f('入职日期', true), f('试用期', true),
-      f('转正日期', true), f('司龄开始日期', true), f('司龄', true),
+      f('转正日期', true),
       f('多级部门名称', false), f('岗位类别', false), f('汇报上级', false), f('职等', false),
       f('职级编号', false), f('职级名称', false), f('工作城市', false), f('工作地点', false),
-      f('考勤编号', false), f('工时制度', false), f('工作性质', false), f('司龄(天数)', false),
+      f('考勤编号', false), f('工时制度', false), f('工作性质', false),
       f('档案编号', false), f('档案备注', false), f('OA编码', false),
     ],
   },
@@ -159,12 +159,25 @@ export function allRosterFields(): string[] {
   return out
 }
 
-/** 默认可见字段（按分组顺序）。 */
+/** 核心锚点字段：任何视图都必须出现（定位行用）。 */
+export const ROSTER_ANCHOR_FIELDS: readonly string[] = ['工号', '姓名', '部门', '岗位']
+
+/**
+ * 默认可见字段（第 49 轮）：**只开基本信息组 + 核心锚点**。
+ *
+ * 之前把 50+ 个 `checked=true` 的字段全部塞进列表，首屏列过多、渲染慢。
+ * 现在 `checked` 仍表示「字段定义里的默认勾选」，但列表首屏只取基本信息组
+ * 与锚点；其余字段在字段配置里默认表头关闭，用户按需打开。
+ */
 export function defaultVisibleFields(): string[] {
+  const basic = new Set<string>(ROSTER_ANCHOR_FIELDS)
+  for (const fd of ROSTER_FIELD_GROUPS[0].fields) {
+    if (fd.checked) basic.add(fd.name)
+  }
   const out: string[] = []
   for (const g of ROSTER_FIELD_GROUPS) {
     for (const fd of g.fields) {
-      if (fd.checked) out.push(fd.name)
+      if (basic.has(fd.name)) out.push(fd.name)
     }
   }
   return out
@@ -192,11 +205,18 @@ export function visibleFieldsFor(
   overrides?: ReadonlySet<string> | null,
 ): string[] {
   const hideLeaving = status === '在职'
+  // 无 override 时：在职 = 基本信息 + 锚点；离职/全部 = 基本信息 + 锚点 + 离职信息
+  const base = new Set(defaultVisibleFields())
+  if (!hideLeaving) {
+    for (const fd of ROSTER_FIELD_GROUPS.find((g) => g.key === LEAVING_GROUP_KEY)?.fields || []) {
+      if (fd.checked || fd.locked) base.add(fd.name)
+    }
+  }
   const out: string[] = []
   for (const g of ROSTER_FIELD_GROUPS) {
     if (hideLeaving && g.key === LEAVING_GROUP_KEY) continue
     for (const fd of g.fields) {
-      const visible = overrides ? (fd.locked || overrides.has(fd.name)) : fd.checked
+      const visible = overrides ? (fd.locked || overrides.has(fd.name)) : base.has(fd.name)
       if (visible) out.push(fd.name)
     }
   }
@@ -212,9 +232,13 @@ export function drawerGroupsFor(
   const out: { key: string; label: string; fields: string[] }[] = []
   for (const g of ROSTER_FIELD_GROUPS) {
     if (hideLeaving && g.key === LEAVING_GROUP_KEY) continue
+    // 抽屉看「字段定义里的默认勾选」，与列表默认表头是两套开关（六同步的「启用字段」）
+    const overridesSet = overrides && overrides.size > 0 ? overrides : null
     const fields: string[] = []
     for (const fd of g.fields) {
-      const visible = overrides ? (fd.locked || overrides.has(fd.name)) : fd.checked
+      const visible = overridesSet
+        ? (fd.locked || overridesSet.has(fd.name) || fd.checked)
+        : fd.checked
       if (visible) fields.push(fd.name)
     }
     if (fields.length) out.push({ key: g.key, label: g.label, fields })

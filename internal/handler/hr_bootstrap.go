@@ -8,6 +8,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -107,6 +108,101 @@ func hrSub(s types.FleetCategorySub) types.FleetCategorySub {
 // 故意**不写 Group**：FleetCertPanel 会按 group 分页签过滤字段行，HR 走平铺更安全
 // （第 45 轮市电账单踩过「状态字段无 group 被过滤掉」的坑）。分组信息保留在
 // hrRosterFieldGroups 里，用于导入模板的「说明」Sheet。
+// hrRosterGroupDict 是 11 大分组 → 字段名清单（第 49 轮）。
+//
+// 与前端 hrRosterGroups.ts 同源同序：Group/GroupLabel 写进 subs 后，
+// FleetCertPanel 的 fc-group-tabs 会自动渲染成绿色的胶囊分组栏
+// （与「设置·能耗」的市电账单完全同款），无需任何新组件。
+var hrRosterGroupDict = []struct {
+	Key    string
+	Fields []string
+}{
+	{"基本信息", []string{
+		"姓名", "证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
+		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
+		"参加工作时间", "司龄", "血型", "服装尺寸", "健康状况", "健康证有效期",
+		"曾用名", "英文名", "是否农历生日", "国家地区", "籍贯(省)", "籍贯(市)",
+		"户籍城市", "户籍城市(省)", "户籍城市(市)",
+	}},
+	{"在职信息", []string{
+		"工号", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态",
+		"入职日期", "试用期", "转正日期",
+		"汇报上级类型", "汇报上级姓名", "备注",
+		"多级部门名称", "岗位类别", "汇报上级", "职等", "职级编号", "职级名称",
+		"工作城市", "工作地点", "考勤编号", "工时制度", "工作性质",
+		"档案编号", "档案备注", "OA编码",
+	}},
+	{"离职信息", []string{
+		"离职日期", "离职申请日期", "薪资结算日", "离职类型", "离职原因",
+		"离职原因说明", "离职备注", "离职去向", "是否试用期内离职", "离职证明",
+	}},
+	{"联系信息", []string{
+		"手机号码", "现居住地", "个人邮箱", "工作邮箱", "工作电话", "分机号",
+		"QQ号", "微信号", "企业微信账号",
+	}},
+	{"紧急联系人情况", []string{
+		"紧急联系人姓名", "紧急联系人电话", "紧急联系人关系", "紧急联系人地址",
+	}},
+	{"家庭情况", []string{
+		"婚姻状况", "结婚时间", "子女数", "配偶姓名", "配偶户籍城市", "配偶文化程度",
+	}},
+	{"教育情况", []string{
+		"最高学历", "毕业院校", "毕业专业", "教育开始时间", "教育结束时间",
+		"毕业时间", "学习形式", "学位类型",
+	}},
+	{"工作经历情况", []string{"上家工作单位", "上家工作职务"}},
+	{"合同签订情况", []string{
+		"现合同编号", "现合同类型", "现合同开始日期", "现合同结束日期", "现合同期限",
+		"现合同签约公司", "合同签约公司", "现合同签订日期", "合同签订次数", "合同状态",
+	}},
+	{"工资社保信息", []string{
+		"工资卡卡号", "工资卡开户行", "个人社保账号", "个人公积金账号",
+		"工资卡开户城市", "银行名称", "是否本地首次缴纳社保", "是否本地首次缴纳公积金",
+	}},
+	{"个税申报信息", []string{
+		"是否烈属", "烈属证号", "是否孤老", "是否特定行业",
+		"是否股东/投资者", "个人股本(投资)额",
+	}},
+}
+
+// hrRosterDefaultHeaderFields 是「默认表头」开启的字段。
+//
+// 第 49 轮：在职列表首屏只渲染基本信息组 + 核心锚点，避免 50+ 列拖慢加载。
+// 其余字段 Enabled=true（详情抽屉按分组正常显示），但默认表头关闭。
+var hrRosterDefaultHeaderFields = func() map[string]bool {
+	m := map[string]bool{"工号": true, "姓名": true, "部门": true, "岗位": true}
+	// 基本信息组里设计稿打勾的 21 项（未打勾的曾用名/英文名/国家地区等不进表头）
+	for _, f := range []string{
+		"姓名", "证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
+		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
+		"参加工作时间", "司龄", "血型", "服装尺寸", "健康状况", "健康证有效期",
+	} {
+		m[f] = true
+	}
+	return m
+}()
+
+// hrRosterRetiredFields 是被合并 / 下线的历史字段（第 49 轮）：
+// 生日 → 出生日期；工龄 / 司龄开始日期 / 司龄(天数) → 司龄。
+var hrRosterRetiredFields = map[string]bool{
+	// 合并：生日 → 出生日期；工龄/司龄开始日期/司龄(天数) → 司龄
+	"生日": true, "工龄": true, "司龄开始日期": true, "司龄(天数)": true,
+	// 历史重复列（第 46 轮导入别名遗留）：统一到标准表头
+	"身份证号码": true, "出生月份": true, "联系电话": true, "在职状态": true,
+}
+
+// hrRosterGroupOf 字段 → 所属分组 key（未收录时归「基本信息」以外的兜底组）。
+func hrRosterGroupOf(name string) (string, bool) {
+	for _, g := range hrRosterGroupDict {
+		for _, f := range g.Fields {
+			if f == name {
+				return g.Key, true
+			}
+		}
+	}
+	return "", false
+}
+
 func hrRosterSeedSubs() []types.FleetCategorySub {
 	out := make([]types.FleetCategorySub, 0, 82)
 	seen := make(map[string]bool, 82)
@@ -118,13 +214,22 @@ func hrRosterSeedSubs() []types.FleetCategorySub {
 		s := types.FleetCategorySub{
 			Name:      name,
 			Enabled:   true,
-			IsDefault: false, // 列显隐由四态视图决定，默认不把 78 列全塞进列表
-			Width:     0,     // 0 = 自适应，禁止回跳 160
+			IsDefault: hrRosterDefaultHeaderFields[name],
+			Width:     0, // 0 = 自适应，禁止回跳 160
+		}
+		if g, ok := hrRosterGroupOf(name); ok {
+			s.Group = g
+			s.GroupLabel = g
 		}
 		switch {
 		case hrIsRosterDateField(name):
 			s.DataType = "date"
-		case strings.Contains(name, "金额") || strings.Contains(name, "基数") || strings.Contains(name, "卡号"):
+		case strings.Contains(name, "卡号") || strings.Contains(name, "账号") ||
+			strings.Contains(name, "证件号") || strings.Contains(name, "手机号") ||
+			strings.Contains(name, "编号") || strings.Contains(name, "电话"):
+			// 号码/编码类一律文本（第 47 轮：卡号被当金额求和成 118,179,260,221,922,000）
+			s.DataType = "text"
+		case strings.Contains(name, "金额") || strings.Contains(name, "基数"):
 			s.DataType = "number"
 		default:
 			s.DataType = "text"
@@ -143,6 +248,16 @@ func hrRosterSeedSubs() []types.FleetCategorySub {
 	}
 	for _, name := range hrRosterExtraResignFields {
 		add(name)
+	}
+	// 第 49 轮：11 分组里的全部字段都要有 subs（否则「家庭情况 / 个税申报信息」
+	// 等组在字段配置里是空组，胶囊点进去看不到任何行）
+	for _, g := range hrRosterGroupDict {
+		for _, name := range g.Fields {
+			if hrRosterRetiredFields[name] {
+				continue
+			}
+			add(name)
+		}
 	}
 	return out
 }
@@ -169,6 +284,87 @@ func hrContractSeedSubs() []types.FleetCategorySub {
 		out = append(out, s)
 	}
 	return out
+}
+
+// hrBackfillRosterGroups 把存量的花名册 subs 重写成 11 分组口径（幂等）。
+//
+// seedHRCategories 只在「分类缺失」时新增，已存在的分类不会补 group；
+// 第 48 轮之前建的租户因此看不到胶囊分组。这里按字段名逐个回填：
+//
+//	· Group/GroupLabel = 11 组之一
+//	· IsDefault = 基本信息组 + 核心锚点（工号/姓名/部门/岗位）
+//	· Enabled 保持 true（详情抽屉按分组展示）
+func hrBackfillRosterGroups(cats []*types.FleetCategory) bool {
+	changed := false
+	for _, c := range cats {
+		if c == nil || c.BuiltinKey != "hr-roster" {
+			continue
+		}
+		subs := c.Subs
+		kept := make([]types.FleetCategorySub, 0, len(subs))
+		for i := range subs {
+			name := strings.TrimSpace(subs[i].Name)
+			if name == "" {
+				continue
+			}
+			// 合并下线字段直接剔除（生日/工龄/司龄开始日期/司龄(天数)）
+			if hrRosterRetiredFields[name] {
+				changed = true
+				continue
+			}
+			if g, ok := hrRosterGroupOf(name); ok {
+				if subs[i].Group != g {
+					subs[i].Group = g
+					changed = true
+				}
+				if subs[i].GroupLabel != g {
+					subs[i].GroupLabel = g
+					changed = true
+				}
+			}
+			want := hrRosterDefaultHeaderFields[name]
+			if subs[i].IsDefault != want {
+				subs[i].IsDefault = want
+				changed = true
+			}
+			if !subs[i].Enabled {
+				subs[i].Enabled = true
+				changed = true
+			}
+			if subs[i].Width != 0 {
+				subs[i].Width = 0
+				changed = true
+			}
+			kept = append(kept, subs[i])
+		}
+		// 按 11 组设计顺序重排（胶囊栏顺序 = subs 数组顺序）。
+		// 组内保持原顺序（用户拖拽结果不被覆盖）。
+		order := map[string]int{}
+		for i, g := range hrRosterGroupDict {
+			order[g.Key] = i
+		}
+		sortedSubs := make([]types.FleetCategorySub, len(kept))
+		copy(sortedSubs, kept)
+		sort.SliceStable(sortedSubs, func(a, b int) bool {
+			ga, oka := order[sortedSubs[a].Group]
+			gb, okb := order[sortedSubs[b].Group]
+			if !oka {
+				ga = len(order)
+			}
+			if !okb {
+				gb = len(order)
+			}
+			return ga < gb
+		})
+		for i := range sortedSubs {
+			if sortedSubs[i].Name != kept[i].Name {
+				changed = true
+				break
+			}
+		}
+		c.Subs = sortedSubs
+	}
+	return changed
 }
 
 // hrCategorySeeds 四个 scope 各 1 个分类。
@@ -245,11 +441,13 @@ func (h *HRHandler) seedHRCategories(ctx context.Context) {
 			}
 			for i := range rows {
 				merged, added := mergeCategorySubs(rows[i].Subs, seed.Subs)
-				if added == 0 {
+				rows[i].Subs = merged
+				// 第 49 轮：按字段名回填 11 分组 / 默认表头 / 列宽（幂等）。
+				patched := hrBackfillRosterGroups([]*types.FleetCategory{&rows[i]})
+				if added == 0 && !patched {
 					continue
 				}
 				// 结构体 Save 走 JSON 序列化；Update("subs", 切片) 在 PG 会报 42804。
-				rows[i].Subs = merged
 				if uerr := h.db.WithContext(ctx).Save(&rows[i]).Error; uerr != nil {
 					logger.Warnf(ctx, "seed HR category %s/%s: backfill failed: %v", seed.Scope, seed.Name, uerr)
 				}
@@ -363,4 +561,7 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/contracts", h.ListContracts)
 	r.GET("/hr/org", h.GetOrganization)
 	r.PUT("/hr/org", h.SaveOrganization)
+	// 第 49 轮：多单位组织机构（单位可无下属部门）
+	r.GET("/hr/org/units", h.GetOrgUnits)
+	r.PUT("/hr/org/units", h.SaveOrgUnits)
 }

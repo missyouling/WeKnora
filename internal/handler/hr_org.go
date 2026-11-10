@@ -35,8 +35,10 @@ func (HRCompany) TableName() string { return "hr_company" }
 
 // HRDepartment 部门。
 type HRDepartment struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	TenantID  int64     `gorm:"index" json:"tenant_id"`
+	ID       string `gorm:"primaryKey" json:"id"`
+	TenantID int64  `gorm:"index" json:"tenant_id"`
+	// UnitID 所属单位（第 49 轮多单位）；空 = 历史数据，读取时归入首个单位。
+	UnitID    string    `gorm:"index" json:"unit_id"`
 	Name      string    `gorm:"index" json:"name"`
 	Code      string    `json:"code"`
 	SortOrder int       `json:"sort_order"`
@@ -63,6 +65,7 @@ func (HRPosition) TableName() string { return "hr_positions" }
 
 // hrOrgAutoMigrate 建 3 张组织机构表（best-effort）。
 func hrOrgAutoMigrate(db *gorm.DB) {
+	hrOrgUnitsAutoMigrate(db)
 	if err := db.AutoMigrate(&HRCompany{}, &HRDepartment{}, &HRPosition{}); err != nil {
 		// 与其它 HR 表同口径：失败只告警，不阻断服务
 		_ = err
@@ -379,8 +382,16 @@ func (h *HRHandler) ListContracts(c *gin.Context) {
 	pageSize := hrRosterMaxPageSize
 	q := h.db.WithContext(ctx).Model(&HREmployee{}).Where("tenant_id = ?", tid)
 	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
+		// 第 49 轮：与花名册同口径的全字段深度搜索（含 custom_data）
 		like := "%" + kw + "%"
-		q = q.Where("name LIKE ? OR id_number LIKE ? OR employee_id LIKE ? OR department LIKE ?", like, like, like, like)
+		q = q.Where(
+			"name ILIKE ? OR id_number ILIKE ? OR employee_id ILIKE ? OR department ILIKE ?"+
+				" OR position ILIKE ? OR phone ILIKE ? OR COALESCE(custom_data::text, '') ILIKE ?",
+			like, like, like, like, like, like, like,
+		)
+	}
+	if dept := strings.TrimSpace(c.Query("department")); dept != "" && dept != "全部" && dept != "all" {
+		q = q.Where("department = ?", dept)
 	}
 	var items []HREmployee
 	if err := q.Order("employee_id ASC").Limit(pageSize).Find(&items).Error; err != nil {
@@ -402,6 +413,8 @@ func (h *HRHandler) ListContracts(c *gin.Context) {
 	}
 	hrSortEmployeesByEmployeeID(filtered)
 	hrAttachEmployeeDerived(ctx, h.db, tid, filtered)
+	// 第 49 轮：甲方（单位信用代码/住所/法人）+ 乙方（联系电话）派生
+	hrAttachContractParty(h.hrOrgUnitsFor(ctx, tid), filtered)
 
 	// 合同状态筛选（全部 / 正常 / 即将到期 / 到期）
 	if st := strings.TrimSpace(c.Query("contract_status")); st != "" && st != "全部" && st != "all" {

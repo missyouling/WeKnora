@@ -55,7 +55,10 @@
             <t-date-picker v-model="siMonthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
               placeholder="账期" clearable class="hr-month-picker" @change="onSiMonthChange" />
           </template>
-          <!-- 第 47 轮：劳动合同状态筛选 -->
+          <!-- 第 49 轮：劳动合同先部门、后合同状态 -->
+          <t-select v-if="activeTab === 'hr-contract'" v-model="rosterDeptFilter"
+            :options="rosterDeptSelectOptions" placeholder="部门" clearable
+            class="hr-status-select" @change="onContractFilterChange" />
           <t-select v-if="activeTab === 'hr-contract'" v-model="contractStatusView"
             :options="CONTRACT_STATUS_OPTIONS" placeholder="合同状态" class="hr-status-select"
             @change="onContractStatusChange" />
@@ -126,12 +129,6 @@
 
         <!-- 业务专属按钮：#right-extra（不进批量浮条，常驻工具栏右侧） -->
         <template #right-extra>
-          <!-- 第 47 轮：组织机构设置入口（花名册 / 劳动合同视图） -->
-          <t-button v-if="activeTab === 'hr-roster' || activeTab === 'hr-contract'"
-            theme="default" variant="outline" size="small" @click="orgVisible = true">
-            <template #icon><t-icon name="organization" size="14px" /></template>
-            组织机构
-          </t-button>
           <template v-if="activeTab === 'hr-social'">
             <t-button theme="default" variant="outline" size="small" @click="handleExportExcel">
               <template #icon><t-icon name="download" size="14px" /></template>
@@ -257,17 +254,18 @@
       </template>
     </BusinessSplitDetailDrawer>
 
-    <!-- 设置抽屉：纯手工模块，显式关掉「提取规则」Tab -->
-    <!-- 第 48 轮：设置抽屉双 Tab（字段设置 11 分组 / 组织机构 公司+部门） -->
-    <HrSettingsDrawer v-if="activeTab === 'hr-roster'" v-model:visible="settingsVisible"
-      :title="settingsTitle" :visible-fields="visibleColKeys"
-      @save-fields="onSaveFields" @saved-org="onOrgSaved" />
-    <StandardSettingDrawer v-else v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
+    <!-- 第 49 轮：100% 复用中台 StandardSettingDrawer + FleetCertPanel。
+         字段配置走胶囊分组（subs.group 驱动），组织机构走 extra-tab 插槽。 -->
+    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
       :initial-category="initialCategory" :title="settingsTitle"
-      storage-key="weknora-hr-settings-drawer-width" :show-rules="false" @saved="onSettingsSaved" />
-
-    <!-- 第 47 轮：组织机构设置（公司 / 部门 / 岗位，按花名册自动生成默认值） -->
-    <HrOrganizationDialog v-model:visible="orgVisible" @saved="onOrgSaved" />
+      fields-tab-label="字段设置"
+      extra-tab-label="组织机构" extra-tab-value="org"
+      storage-key="weknora-hr-settings-drawer-width" :show-rules="false"
+      @saved="onSettingsSaved">
+      <template #extra-tab>
+        <HrOrgPanel :visible="settingsVisible" @saved="onOrgSaved" />
+      </template>
+    </StandardSettingDrawer>
 
     <!-- 社保账期：个人 / 单位扣款明细（点行打开） -->
     <t-drawer v-if="periodDetailVisible" :visible="true"
@@ -354,8 +352,7 @@ import {
   type RosterStatusFilter,
 } from './hrRosterGroups'
 import RosterImportDialog from './RosterImportDialog.vue'
-import HrOrganizationDialog from './HrOrganizationDialog.vue'
-import HrSettingsDrawer from './HrSettingsDrawer.vue'
+import HrOrgPanel from './HrOrgPanel.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
 import type { FilterFieldSpec } from './businessFilter'
@@ -437,7 +434,6 @@ const siDetailFiltered = computed(() => {
   })
 })
 const rosterImportVisible = ref(false)
-const orgVisible = ref(false)
 const resignVisible = ref(false)
 
 const tabLabel = computed(() => HR_TABS.find((t) => t.key === activeTab.value)?.label || '人事管理')
@@ -654,6 +650,7 @@ async function loadList(tab: HrTab) {
     } else if (tab === 'hr-contract') {
       const res: any = await hrApi.listContracts({
         q: kw,
+        department: rosterDeptFilter.value || undefined,
         contract_status: contractStatusView.value === '全部' ? undefined : contractStatusView.value,
       })
       items = extractItems(res)
@@ -702,6 +699,9 @@ async function reloadStats() {
       'hr-contract': Number(d.contract ?? kpiCounts.value['hr-contract'] ?? 0) || 0,
       'hr-social': Number(d.social ?? d.periods ?? kpiCounts.value['hr-social'] ?? 0) || 0,
       'hr-fund': Number(d.fund ?? d.records ?? kpiCounts.value['hr-fund'] ?? 0) || 0,
+      // 第 49 轮：合同异常计数（供卡副文案）
+      contract_expiring: Number(d.contract_expiring ?? 0) || 0,
+      contract_expired: Number(d.contract_expired ?? 0) || 0,
     }
   } catch { /* 统计失败不阻塞列表 */ }
 }
@@ -715,6 +715,7 @@ async function switchTab(tab: HrTab) {
   activeTab.value = tab
   fundSubView.value = 'ledger'
   selectedKeys.value = new Set()
+  rosterDeptFilter.value = ''
   filterState.value = { keyword: '' }
   rows.value = []
   initColumns()
@@ -755,6 +756,14 @@ async function onSiRecordViewChange(v: any) {
 
 async function onSiMonthChange() {
   await loadList('hr-social')
+}
+
+async function onContractFilterChange() {
+  headerReady.value = false
+  selectedKeys.value = new Set()
+  rows.value = []
+  await loadList('hr-contract')
+  headerReady.value = true
 }
 
 async function onContractStatusChange() {
@@ -959,12 +968,6 @@ async function onRosterDeptChange() {
   headerReady.value = true
 }
 
-/** 第 48 轮：字段设置保存 → 六同步（表头 / 字段筛选 / 抽屉 / 导出打印同源）。 */
-function onSaveFields(fields: string[]) {
-  visibleColKeys.value = fields.slice()
-  persistColumns()
-}
-
 /** 派生/系统字段：详情抽屉里只读（第 47 轮）。 */
 const READONLY_DETAIL_FIELDS = new Set([
   '年龄', '工龄', '在职状态', '员工状态', '合同状态', '账期状态', '参保状态', '缴存状态', '状态',
@@ -1061,7 +1064,7 @@ function chargeVal(row: any, keys: string[]): string {
     const v = row?.[k]
     if (v !== undefined && v !== null && v !== '') return String(v)
   }
-  return '—'
+  return ''
 }
 // 列键对齐后端 HRSICharge：name / id_number / department / base / subtotal
 const chargeColumns = [
@@ -1070,11 +1073,11 @@ const chargeColumns = [
   { colKey: 'department', title: '部门', cell: (_h: any, { row }: any) => chargeVal(row, ['department', '部门']) },
   {
     colKey: 'base', title: '缴费基数',
-    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['base', '缴费基数', 'base_amount', 'personal_base']), { fixed: true, fallback: '—', blankWhenEmpty: true }),
+    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['base', '缴费基数', 'base_amount', 'personal_base']), { fixed: true, fallback: '', blankWhenEmpty: true }),
   },
   {
     colKey: 'subtotal', title: '小计',
-    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['subtotal', 'amount', '小计', '金额']), { fixed: true, fallback: '—', blankWhenEmpty: true }),
+    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['subtotal', 'amount', '小计', '金额']), { fixed: true, fallback: '', blankWhenEmpty: true }),
   },
 ]
 async function openPeriodDetail(row: any) {

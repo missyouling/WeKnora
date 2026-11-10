@@ -540,3 +540,114 @@ func TestHRResignProofIDWhitelist(t *testing.T) {
 	assert.Contains(t, hrResignProofURL(valid), "/roster/resign-proof/")
 	assert.Equal(t, "", hrResignProofURL("../../etc/passwd"))
 }
+
+// ---------------------------------------------------------------------------
+// 第 49 轮：司龄 / 11 分组回填 / 合同甲方派生
+// ---------------------------------------------------------------------------
+
+func TestHRSeniorityFromHireDate(t *testing.T) {
+	now := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	// 在职：截至今天
+	e := &HREmployee{HireDate: "2024-06-01"}
+	assert.Equal(t, "2年5个月", hrSeniorityOf(e, now))
+	// 离职：截至离职日期
+	e2 := &HREmployee{HireDate: "2020-03-15", ResignDate: "2022-05-20"}
+	assert.Equal(t, "2年2个月", hrSeniorityOf(e2, now))
+	// 无入职日期 → 空
+	assert.Equal(t, "", hrSeniorityOf(&HREmployee{}, now))
+	// 入职日期晚于离职日期 → 0
+	e3 := &HREmployee{HireDate: "2023-01-01", ResignDate: "2022-01-01"}
+	assert.Equal(t, "0年0个月", hrSeniorityOf(e3, now))
+}
+
+func TestHRRosterGroupDictCovers11Groups(t *testing.T) {
+	assert.Len(t, hrRosterGroupDict, 11)
+	keys := make([]string, 0, 11)
+	for _, g := range hrRosterGroupDict {
+		keys = append(keys, g.Key)
+	}
+	assert.Equal(t, []string{
+		"基本信息", "在职信息", "离职信息", "联系信息", "紧急联系人情况",
+		"家庭情况", "教育情况", "工作经历情况", "合同签订情况", "工资社保信息", "个税申报信息",
+	}, keys)
+
+	// 生日 / 工龄已下线，出生日期 / 司龄保留
+	assert.False(t, hrRosterGroupOf2("生日"), "生日 应已合并到 出生日期")
+	assert.False(t, hrRosterGroupOf2("工龄"), "工龄 应已合并到 司龄")
+	assert.False(t, hrRosterGroupOf2("司龄开始日期"))
+	assert.True(t, hrRosterGroupOf2("出生日期"))
+	assert.True(t, hrRosterGroupOf2("司龄"))
+	assert.True(t, hrRosterGroupOf2("健康状况"))
+	assert.True(t, hrRosterGroupOf2("是否试用期内离职"))
+}
+
+// hrRosterGroupOf2 测试用：字段是否被任一分组收录。
+func hrRosterGroupOf2(name string) bool {
+	_, ok := hrRosterGroupOf(name)
+	return ok
+}
+
+func TestHRRosterDefaultHeaderOnlyBasic(t *testing.T) {
+	// 基本信息组里设计稿打勾的字段默认开表头
+	for _, f := range []string{
+		"证件类型", "证件号码", "性别", "出生日期", "年龄", "司龄", "健康状况", "健康证有效期",
+	} {
+		assert.True(t, hrRosterDefaultHeaderFields[f], f+" 应默认开表头")
+	}
+	// 基本信息组里未打勾的不进表头
+	for _, f := range []string{"曾用名", "英文名", "是否农历生日", "国家地区", "户籍城市"} {
+		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
+	}
+	// 核心锚点必开
+	for _, f := range []string{"工号", "姓名", "部门", "岗位"} {
+		assert.True(t, hrRosterDefaultHeaderFields[f], f)
+	}
+	// 其余组默认关（离职/合同/工资社保/个税/家庭）
+	for _, f := range []string{"离职日期", "现合同编号", "工资卡卡号", "是否烈属", "毕业院校", "配偶姓名"} {
+		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
+	}
+}
+
+func TestHRBackfillRosterGroups(t *testing.T) {
+	cat := &types.FleetCategory{
+		BuiltinKey: "hr-roster",
+		Subs: []types.FleetCategorySub{
+			{Name: "姓名", Enabled: true},
+			{Name: "离职日期", Enabled: true, IsDefault: true},
+			{Name: "工资卡卡号", Enabled: true, IsDefault: true, Width: 160},
+		},
+	}
+	changed := hrBackfillRosterGroups([]*types.FleetCategory{cat})
+	assert.True(t, changed)
+	assert.Equal(t, "基本信息", cat.Subs[0].Group)
+	assert.Equal(t, "基本信息", cat.Subs[0].GroupLabel)
+	assert.True(t, cat.Subs[0].IsDefault)
+	assert.Equal(t, "离职信息", cat.Subs[1].Group)
+	assert.False(t, cat.Subs[1].IsDefault, "离开信息组默认关表头")
+	assert.Equal(t, 0, cat.Subs[2].Width)
+	// 幂等：再跑一次不再变更
+	assert.False(t, hrBackfillRosterGroups([]*types.FleetCategory{cat}))
+}
+
+func TestHRAttachContractParty(t *testing.T) {
+	units := []hrOrgUnitWithDepts{
+		{HROrgUnit: HROrgUnit{Name: "重庆星达铜业有限公司", CreditCode: "91500227MA5U54AJ0A", Address: "重庆市璧山区青杠街道", LegalPerson: "张三"}},
+		{HROrgUnit: HROrgUnit{Name: "重庆持睿汽车配件有限公司", CreditCode: "91500227XXXXXXXXXX", Address: "重庆市璧山区", LegalPerson: "李四"}},
+	}
+	items := []HREmployee{
+		{Phone: "13800000001", CustomData: map[string]any{"现合同签约公司": "重庆星达铜业有限公司"}},
+		{Phone: "13800000002", CustomData: map[string]any{"合同公司": "重庆持睿汽车配件有限公司"}},
+		{Phone: "13800000003", CustomData: map[string]any{}},
+	}
+	hrAttachContractParty(units, items)
+	assert.Equal(t, "91500227MA5U54AJ0A", items[0].CustomData["统一社会信用代码"])
+	assert.Equal(t, "重庆市璧山区青杠街道", items[0].CustomData["住所"])
+	assert.Equal(t, "张三", items[0].CustomData["法定代表人"])
+	assert.Equal(t, "13800000001", items[0].CustomData["联系电话"])
+	// 兜底从 合同公司 取甲方
+	assert.Equal(t, "91500227XXXXXXXXXX", items[1].CustomData["统一社会信用代码"])
+	assert.Equal(t, "重庆持睿汽车配件有限公司", items[1].CustomData["现合同签约公司"])
+	// 无匹配单位 → 空串，不造假
+	assert.Equal(t, "", items[2].CustomData["统一社会信用代码"])
+	assert.Equal(t, "13800000003", items[2].CustomData["联系电话"])
+}

@@ -992,6 +992,9 @@ const subGroupTabs = computed(() => {
   const raw = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
     // -rows / -periods 是细项集合，挂在「费用组成 / 分时时段」下展开，不单独出胶囊
     .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
+    // 空键分组（未命名）会渲染成一个只剩计数的空胶囊（如只有一个「1」），
+    // 对任何 scope 都是噪音：没有标签就无法表达"这是哪一组"。
+    .filter((g) => String(g.key || '').trim() !== '')
   if (!isCostList.value) return raw
   // 费用清单：先按归一后的键合并（cols 与 default 是同一个「默认分组」），
   // 分组名以租户档案为准（租户改名后胶囊立即跟随），默认分组恒定排第一。

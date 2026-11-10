@@ -337,6 +337,27 @@ func hrWorkYearsAt(hireDate string, now time.Time) string {
 
 func hrWorkYears(hireDate string) string { return hrWorkYearsAt(hireDate, time.Now()) }
 
+// hrSeniorityOf 计算「司龄」：从入职日期起算，离职者截至离职日期（第 49 轮）。
+//
+// 与工龄的唯一区别就是截止日：工龄恒算到今天，司龄按在职状态取离职日。
+// 前端展示统一叫「司龄」，工龄字段已下线。
+func hrSeniorityOf(e *HREmployee, now time.Time) string {
+	if e == nil {
+		return ""
+	}
+	hire := strings.TrimSpace(e.HireDate)
+	if hire == "" {
+		return ""
+	}
+	end := now
+	if resign := strings.TrimSpace(e.ResignDate); resign != "" {
+		if t, err := time.Parse("2006-01-02", normalizeHRDateValue(resign)); err == nil {
+			end = t
+		}
+	}
+	return hrWorkYearsAt(hire, end)
+}
+
 // hrEnrichEmployee 用身份证自动补性别/出生月份/年龄，用入职日期补工龄（仅补空值，不覆盖手填）。
 func hrEnrichEmployee(e *HREmployee) {
 	id := normalizeIDNumber(e.IDNumber)
@@ -357,6 +378,13 @@ func hrEnrichEmployee(e *HREmployee) {
 	}
 	if e.WorkYears == "" && strings.TrimSpace(e.HireDate) != "" {
 		e.WorkYears = hrWorkYears(e.HireDate)
+	}
+	// 第 49 轮：司龄是唯一对外口径（工龄字段已下线），随入职/离职日期重算。
+	if seniority := hrSeniorityOf(e, time.Now()); seniority != "" {
+		if e.CustomData == nil {
+			e.CustomData = map[string]any{}
+		}
+		e.CustomData["司龄"] = seniority
 	}
 }
 

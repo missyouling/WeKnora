@@ -27,10 +27,13 @@ test('全部字段去重', () => {
   assert.ok(all.includes('工号') && all.includes('离职证明') && all.includes('个人股本(投资)额'))
 })
 
-test('默认勾选：各组关键字段为 ☑，未勾选字段为 ☐', () => {
-  const on = new Set(defaultVisibleFields())
+test('字段定义默认勾选：各组关键字段为 ☑，未勾选字段为 ☐', () => {
+  // checked = 字段定义里的默认勾选（控制详情抽屉展示），不是列表默认表头
+  const on = new Set(ROSTER_FIELD_GROUPS.flatMap((g) => g.fields.filter((f) => f.checked).map((f) => f.name)))
   // 基本信息
-  for (const k of ['姓名', '证件号码', '性别', '年龄', '工龄', '健康证有效期']) assert.ok(on.has(k), k)
+  for (const k of ['姓名', '证件号码', '性别', '年龄', '司龄', '健康证有效期']) assert.ok(on.has(k), k)
+  // 生日 / 工龄 已合并下线
+  assert.ok(!on.has('生日') && !on.has('工龄') && !on.has('司龄开始日期') && !on.has('司龄(天数)'))
   for (const k of ['曾用名', '英文名', '国家地区', '户籍城市(省)']) assert.ok(!on.has(k), k)
   // 在职信息
   for (const k of ['工号', '部门', '职务', '岗位', '入职日期', '试用期', '转正日期']) assert.ok(on.has(k), k)
@@ -58,6 +61,17 @@ test('默认勾选：各组关键字段为 ☑，未勾选字段为 ☐', () => 
 
 test('在职状态只剩 全部 / 在职 / 离职 三项', () => {
   assert.deepEqual(ROSTER_STATUS_OPTIONS.map((o) => o.value), ['全部', '在职', '离职'])
+})
+
+test('列表默认表头只有基本信息组 + 核心锚点（第 49 轮）', () => {
+  const vis = new Set(defaultVisibleFields())
+  for (const k of ['工号', '姓名', '部门', '岗位']) assert.ok(vis.has(k), k)
+  for (const k of ['证件号码', '性别', '出生日期', '年龄', '司龄']) assert.ok(vis.has(k), k)
+  // 其余分组默认不进表头
+  for (const k of ['离职日期', '现合同编号', '工资卡卡号', '是否烈属', '毕业院校', '紧急联系人姓名']) {
+    assert.ok(!vis.has(k), `${k} 不应默认进表头`)
+  }
+  assert.ok(vis.size <= 25, `默认列数应 <= 25，实际 ${vis.size}`)
 })
 
 test('visibleFieldsFor：在职隐藏离职信息组，离职/全部包含', () => {

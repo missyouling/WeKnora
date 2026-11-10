@@ -22,7 +22,7 @@
           <div class="dash-kpi-card__num">
             {{ card.value }}<span v-if="card.unit">{{ card.unit }}</span>
           </div>
-          <div v-if="card.sub" class="dash-kpi-card__sub">{{ card.sub }}</div>
+          <div v-if="card.sub" class="dash-kpi-card__sub" :class="card.subCls">{{ card.sub }}</div>
         </div>
       </div>
     </div>
@@ -67,6 +67,8 @@ export interface KpiCard {
   value: string
   unit?: string
   sub?: string
+  /** 副文案附加类（is-warning = 预警色，用于合同到期/即将到期提示）。 */
+  subCls?: string
   cls?: string
   numCls?: string
   theme?: 'brand' | 'success' | 'warning' | 'neutral'
@@ -368,6 +370,11 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-secondary);
   margin-left: 2px;
 }
+.dash-kpi-card__sub.is-warning {
+  color: var(--td-warning-color);
+  font-weight: 600;
+}
+
 .dash-kpi-card__sub {
   font-size: 12px;
   /* 行高压到 16px 且不占额外外边距：卡片高度写死 96px 后，

@@ -61,17 +61,36 @@ export function hrScopeOf(tab: string): HrTab {
  * 三张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
  */
 export function buildHrKpiCards(counts: Record<string, number> = {}) {
-  return HR_TABS.map((t) => ({
-    key: t.key,
-    label: t.label,
-    icon: t.icon,
-    value: String(Math.max(0, Number(counts[t.key] || 0) || 0)),
-    unit: '条',
-    sub: t.sub,
-    cls: '',
-    action: 'type',
-    typeValue: t.key,
-  }))
+  const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
+  const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
+  return HR_TABS.map((t) => {
+    // 第 49 轮：劳动合同卡副文案体现异常预警（到期 / 即将到期）
+    let sub = t.sub
+    let subCls = ''
+    if (t.key === 'hr-contract') {
+      const parts: string[] = []
+      if (expired > 0) parts.push(`${expired} 份已到期`)
+      if (expiring > 0) parts.push(`${expiring} 份即将到期`)
+      if (parts.length) {
+        sub = parts.join(' / ')
+        subCls = 'is-warning'
+      } else {
+        sub = '无异常合同'
+      }
+    }
+    return {
+      key: t.key,
+      label: t.label,
+      icon: t.icon,
+      value: String(Math.max(0, Number(counts[t.key] || 0) || 0)),
+      unit: '条',
+      sub,
+      subCls,
+      cls: '',
+      action: 'type',
+      typeValue: t.key,
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -112,15 +131,16 @@ function pickRaw(row: any, keys: readonly string[]): any {
 }
 function pick(row: any, keys: readonly string[]): string {
   const v = pickRaw(row, keys)
-  return v === undefined ? '—' : String(v)
+  // 第 49 轮：人事列表空值一律留白（不渲染横线 —）
+  return v === undefined ? '' : String(v)
 }
 
 /** 金额列统一走 formatNumber.grouped（不自己 toFixed）。 */
 function money(row: any, keys: readonly string[]): string {
   const v = pickRaw(row, keys)
   return v === undefined
-    ? '—'
-    : grouped(v, { fixed: true, fallback: '—', blankWhenEmpty: true })
+    ? ''
+    : grouped(v, { fixed: true, fallback: '', blankWhenEmpty: true })
 }
 
 type ColOpts = { dataType?: string; slot?: boolean; money?: boolean }
@@ -155,7 +175,7 @@ function col(colKey: string, keys: readonly string[], opts: ColOpts = {}): HrCol
       : isStatus
         ? (row: any) => normalizeStatus(pick(row, keys))
         : isDate
-          ? (row: any) => formatCellDateTime(colKey, pickRaw(row, keys)) || '—'
+          ? (row: any) => formatCellDateTime(colKey, pickRaw(row, keys)) || ''
           : (row: any) => pick(row, keys),
   }
 }
@@ -233,6 +253,11 @@ const CONTRACT_COLS: HrColumn[] = [
   col('证件号码', ['证件号码', 'id_number']),
   col('入职日期', ['入职日期', 'hire_date'], { dataType: 'date' }),
   col('合同签约公司', ['合同签约公司', 'contract_company']),
+  // 第 49 轮：甲方（单位）派生字段 + 乙方联系电话
+  col('统一社会信用代码', ['统一社会信用代码', 'credit_code']),
+  col('住所', ['住所', 'address']),
+  col('法定代表人', ['法定代表人', 'legal_person']),
+  col('联系电话', ['联系电话', 'phone']),
   col('现合同编号', ['现合同编号', 'contract_no']),
   col('现合同类型', ['现合同类型', 'contract_type']),
   col('现合同开始日期', ['现合同开始日期', 'contract_start_date'], { dataType: 'date' }),
@@ -321,7 +346,7 @@ export function hrBillColumnDefs(): HrColumn[] {
 const ROSTER_KEY_ALIASES: Record<string, string[]> = {
   '工号': ['employee_id'], '姓名': ['name'], '部门': ['department'],
   '岗位': ['position'], '职务': ['position'], '性别': ['gender'],
-  '年龄': ['age'], '工龄': ['work_years'], '出生日期': ['birth_date'],
+  '年龄': ['age'], '司龄': ['work_years', '司龄'], '出生日期': ['birth_date', 'birth_month'],
   '入职日期': ['hire_date'], '离职日期': ['resign_date'],
   '离职原因': ['resign_reasons'], '离职证明': ['resign_proof_path'],
   '离职备注': ['resign_remark'], '手机号码': ['phone'],
@@ -379,12 +404,13 @@ function rosterColumnOf(name: string): HrColumn {
     value: isStatus
       ? (row: any) => normalizeStatus(pick(row, keys))
       : isDate
-        ? (row: any) => formatCellDateTime(name, pickRaw(row, keys)) || '—'
+        ? (row: any) => formatCellDateTime(name, pickRaw(row, keys)) || ''
         : isCode
           // 原样字符串，不做任何数字处理（含前导零与超长数字都不丢）
           ? (row: any) => {
             const v = pickRaw(row, keys)
-            return v === undefined ? '—' : String(v)
+            // 第 49 轮：人事列表空值一律留白（不渲染横线 —）
+  return v === undefined ? '' : String(v)
           }
           : isMoney
             ? (row: any) => money(row, keys)
