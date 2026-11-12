@@ -61,12 +61,37 @@ export async function loadEnergyCategories(): Promise<any[]> {
 
 /** 取某个分类的 subs；分类不存在或未配置字段时返回空数组。 */
 export async function loadEnergyCategorySubs(categoryName: string): Promise<EnergySub[]> {
+  return loadCategorySubsInScope('energy', categoryName)
+}
+
+/**
+ * 泛化的「按 scope + 分类名取 subs」（第 52 轮）。
+ *
+ * 跨模块字段引用原先被硬编码成 energy scope 的 5 个分类；人事模块的
+ * 「离职管理 / 劳动合同」需要检索花名册（hr-roster）字段，复用同一套
+ * `SourceFieldPicker` 机制即可，不需要新造选择器。
+ */
+export async function loadCategorySubsInScope(scope: string, categoryName: string): Promise<EnergySub[]> {
   const want = String(categoryName || '').trim()
   if (!want) return []
-  const list = await loadEnergyCategories()
-  const cat = list.find((c: any) => String(c?.name || '').trim() === want && !c?.deleted_at)
+  const { listFleetCategories } = await import('@/api/fleet')
+  const res: any = await listFleetCategories({ scope })
+  const list = Array.isArray(res) ? res : res?.data
+  const cats = Array.isArray(list) ? list : []
+  const cat = cats.find((c: any) => String(c?.name || '').trim() === want && !c?.deleted_at)
   const subs = Array.isArray(cat?.subs) ? cat!.subs : []
   return subs.filter((s: any) => s && String(s.name || '').trim())
+}
+
+/** 列出某个 scope 下的分类名（候选分类未显式指定时使用）。 */
+export async function listCategoryNamesInScope(scope: string): Promise<string[]> {
+  const { listFleetCategories } = await import('@/api/fleet')
+  const res: any = await listFleetCategories({ scope })
+  const list = Array.isArray(res) ? res : res?.data
+  return (Array.isArray(list) ? list : [])
+    .filter((c: any) => c && !c?.deleted_at)
+    .map((c: any) => String(c?.name || '').trim())
+    .filter(Boolean)
 }
 
 /** subs 是否真的能派生列（空数组 = 该分类还没配字段，调用方回退静态列）。 */

@@ -19,12 +19,16 @@ import {
   ROSTER_STATUS_COLUMNS, type RosterStatusView,
 } from './hrRosterFields'
 import { allRosterFields } from './hrRosterGroups'
+import {
+  HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, hrValueKeys, hrIsDateField,
+} from './hrFieldSchema'
+import type { HrFieldDef } from './hrFieldSchema'
 
 // ---------------------------------------------------------------------------
 // Tab / scope
 // ---------------------------------------------------------------------------
 
-export type HrTab = 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund'
+export type HrTab = 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund'
 
 export interface HrTabDef {
   key: HrTab
@@ -34,12 +38,13 @@ export interface HrTabDef {
 }
 
 /**
- * 四个一级 Tab 的唯一配置表（第 47 轮新增「劳动合同」）。
+ * 五个一级 Tab 的唯一配置表（第 52 轮新增「离职管理」）。
  * key 同时作为字段配置 scope（`hrScopeOf` 返回它），KPI 卡的 `typeValue` 也用它。
- * 顺序严格：花名册 → 劳动合同 → 社保管理 → 公积金管理。
+ * 顺序严格：花名册 → 离职管理 → 劳动合同 → 社保管理 → 公积金管理。
  */
 export const HR_TABS: readonly HrTabDef[] = [
   { key: 'hr-roster', label: '花名册', icon: 'usergroup', sub: '' },
+  { key: 'hr-resign', label: '离职管理', icon: 'logout', sub: '' },
   { key: 'hr-contract', label: '劳动合同', icon: 'file-paste', sub: '' },
   // tdesign-icons-vue-next 0.4.4 的 manifest 里没有 `shield`（只有 shield-error），
   // 传无效名会让 <use href="#t-icon-shield"> 解析失败 → 图标框空白。secured 已核验有效。
@@ -54,11 +59,11 @@ export function hrScopeOf(tab: string): HrTab {
 }
 
 /**
- * 恰好 4 张 KPI 卡（花名册 / 劳动合同 / 社保管理 / 公积金管理）。
+ * 恰好 5 张 KPI 卡（花名册 / 离职管理 / 劳动合同 / 社保管理 / 公积金管理）。
  *
  * 铁律：**绝不产出「已收录记录」「历史记录」之类的汇总卡 / 统计卡** ——
  * 第 44 轮已把车队的两张汇总卡彻底移除，人事页从第一天起就不引入。
- * 三张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
+ * 五张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
  */
 export function buildHrKpiCards(counts: Record<string, number> = {}) {
   const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
@@ -243,29 +248,8 @@ const FUND_BILL_COLS: HrColumn[] = [
 // 劳动合同（第 47 轮）：数据与花名册合同字段同源
 // ---------------------------------------------------------------------------
 
-/** 劳动合同视图默认列（任务 §6 精确清单），末列是三色「合同状态」。 */
-const CONTRACT_COLS: HrColumn[] = [
-  col('工号', ['工号', 'employee_id']),
-  col('姓名', ['姓名', 'name']),
-  col('部门', ['部门', 'department']),
-  col('职务', ['职务', 'position']),
-  col('岗位', ['岗位', 'position']),
-  col('证件号码', ['证件号码', 'id_number']),
-  col('入职日期', ['入职日期', 'hire_date'], { dataType: 'date' }),
-  col('合同签约公司', ['合同签约公司', 'contract_company']),
-  // 第 49 轮：甲方（单位）派生字段 + 乙方联系电话
-  col('统一社会信用代码', ['统一社会信用代码', 'credit_code']),
-  col('住所', ['住所', 'address']),
-  col('法定代表人', ['法定代表人', 'legal_person']),
-  col('联系电话', ['联系电话', 'phone']),
-  col('现合同编号', ['现合同编号', 'contract_no']),
-  col('现合同类型', ['现合同类型', 'contract_type']),
-  col('现合同开始日期', ['现合同开始日期', 'contract_start_date'], { dataType: 'date' }),
-  col('现合同结束日期', ['现合同结束日期', 'contract_end_date'], { dataType: 'date' }),
-  col('现合同期限', ['现合同期限', 'contract_term']),
-  col('现合同签订日期', ['现合同签订日期', 'contract_sign_date'], { dataType: 'date' }),
-  col('合同状态', ['合同状态', 'contract_status'], { slot: true }),
-]
+// 第 52 轮：劳动合同列全集改由 `hrContractColumns()` 从字段契约派生
+// （见文末「离职管理 / 劳动合同」段），此处不再维护第二份硬编码清单。
 
 // ---------------------------------------------------------------------------
 // 社保原始记录 / 汇总记录（第 47 轮双视图）
@@ -310,7 +294,10 @@ const SI_SUMMARY_COLS: HrColumn[] = [
 
 function colsOf(tab: string): HrColumn[] {
   switch (hrScopeOf(tab)) {
-    case 'hr-contract': return CONTRACT_COLS
+    // 第 52 轮：离职管理 / 劳动合同的列全集改由字段契约派生，
+    // 与「设置 → 字段设置」的 subs 同源（六同步），不再维护第二份硬编码列。
+    case 'hr-resign': return hrResignColumns().filter((c) => c.colKey !== 'row-select')
+    case 'hr-contract': return hrContractColumns().filter((c) => c.colKey !== 'row-select')
     case 'hr-social': return SOCIAL_COLS
     case 'hr-fund': return FUND_LEDGER_COLS
     default: return ROSTER_COLS
@@ -358,6 +345,19 @@ const ROSTER_KEY_ALIASES: Record<string, string[]> = {
   '籍贯': ['native_place'], '民族': ['ethnicity'],
   '户口性质': ['household_type'], '户籍地址': ['id_address'],
   '个人邮箱': ['email'], '备注': ['remarks'], '档案编号': ['archive_no'],
+  // 第 52 轮：劳动合同 / 离职管理新字段名 → 存量 custom_data 键（读取双向兼容）
+  '合同编号': ['现合同编号', 'contract_no'],
+  '合同类型': ['现合同类型', 'contract_type'],
+  '合同开始日期': ['现合同开始日期', 'contract_start_date'],
+  '合同结束日期': ['现合同结束日期', 'contract_end_date'],
+  '合同期限': ['现合同期限', 'contract_term'],
+  '签约公司': ['现合同签约公司', '合同签约公司', 'contract_company'],
+  '签订日期': ['现合同签订日期', 'contract_sign_date'],
+  '联系电话': ['手机号码', 'phone'],
+  '统一社会信用代码': ['credit_code'], '住所': ['address'], '法定代表人': ['legal_person'],
+  '离职申请日期': ['resign_apply_date'], '离职类型': ['resign_type'],
+  '离职原因说明': ['离职备注', 'resign_remark'], '离职去向': ['resign_destination'],
+  '是否试用期内离职': ['probation_resign'], '薪资结算日': ['salary_settlement_date'],
 }
 
 /**
@@ -661,4 +661,98 @@ export function hrRosterGroupColumns(): HrColumn[] {
   const cols: HrColumn[] = [SELECT_COL]
   for (const name of names) cols.push(rosterColumnOf(name))
   return cols
+}
+
+// ---------------------------------------------------------------------------
+// 离职管理 / 劳动合同：字段契约派生列（第 52 轮）
+// ---------------------------------------------------------------------------
+
+/**
+ * 模块字段 → 列定义。引用字段（source）按**来源字段名**取值，
+ * 显示名仍用本模块字段名（如「联系电话」取花名册「手机号码」的值）。
+ */
+function moduleColumnOf(d: HrFieldDef): HrColumn {
+  const name = String(d.label || d.name)
+  const keys = d.source ? hrValueKeys(d.source.field) : hrValueKeys(d.name)
+  const isDate = d.type === 'date' || hrIsDateField(d.name)
+  const isProof = d.name === '离职证明'
+  const isStatusTag = d.name === '合同状态'
+  const isCode = isRosterCodeField(d.name)
+  const isMoney = !isCode && d.type === 'number'
+  return {
+    colKey: name,
+    title: name,
+    width: 0,
+    dataType: isDate ? 'date' : isMoney ? 'number' : 'text',
+    default: true,
+    slot: isProof || isStatusTag,
+    value: isDate
+      ? (row: any) => formatCellDateTime(name, pickRaw(row, keys)) || ''
+      : isCode
+        ? (row: any) => {
+          const v = pickRaw(row, keys)
+          return v === undefined ? '' : String(v)
+        }
+        : isMoney
+          ? (row: any) => money(row, keys)
+          : (row: any) => pick(row, keys),
+  }
+}
+
+function columnsOfFields(fields: readonly HrFieldDef[]): HrColumn[] {
+  const cols: HrColumn[] = [SELECT_COL]
+  const seen = new Set<string>(['row-select'])
+  for (const d of fields) {
+    const name = String(d.label || d.name)
+    if (seen.has(name)) continue
+    seen.add(name)
+    cols.push(moduleColumnOf(d))
+  }
+  return cols
+}
+
+/** 离职管理列全集：5 个花名册引用 + 9 个离职字段。 */
+export function hrResignColumns(): HrColumn[] {
+  return columnsOfFields(HR_RESIGN_FIELDS)
+}
+
+/** 劳动合同列全集：乙方 6 + 甲方 3 + 合同 8。 */
+export function hrContractColumns(): HrColumn[] {
+  return columnsOfFields(HR_CONTRACT_FIELDS)
+}
+
+/**
+ * 六同步列全集：以「设置 → 字段设置」保存的 subs 为唯一权威。
+ *
+ * 引用字段（`subs[].source.field`）按来源字段取值，但表头显示本模块字段名，
+ * 这正是离职管理 / 劳动合同「搜索引用花名册字段」后能立刻在列表看到数据的关键。
+ * subs 为空（接口未就绪）时回退到字段契约派生的静态列，保证首帧不空表。
+ */
+export function hrColumnsFromSubs(subs: readonly any[] | null | undefined, fallback: HrColumn[]): HrColumn[] {
+  const list = Array.isArray(subs) ? subs : []
+  if (!list.length) return fallback
+  const cols: HrColumn[] = [SELECT_COL]
+  const seen = new Set<string>(['row-select'])
+  for (const s of list) {
+    if (!s || s.enabled === false) continue
+    const label = String(s.label || s.name || '').trim()
+    if (!label || seen.has(label)) continue
+    seen.add(label)
+    const sourceField = String(s?.source?.field || '').trim()
+    const def: HrFieldDef = {
+      name: label,
+      type: s.data_type === 'date' ? 'date' : s.data_type === 'number' ? 'number' : 'text',
+      ...(sourceField ? { source: { category: String(s?.source?.category || '花名册'), field: sourceField } } : {}),
+    }
+    cols.push(moduleColumnOf(def))
+  }
+  return cols.length > 1 ? cols : fallback
+}
+
+/** 模块 → 抽屉只读派生字段（身份证联动 / 系统状态）。 */
+export function hrDerivedFieldNames(tab: string): ReadonlySet<string> {
+  if (hrScopeOf(tab) === 'hr-roster') {
+    return new Set(['年龄', '出生日期', '性别', '司龄'])
+  }
+  return new Set(['合同状态'])
 }

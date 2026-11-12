@@ -11,6 +11,7 @@
     <t-tabs v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+          :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
@@ -45,7 +46,7 @@ import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 const props = withDefaults(defineProps<{
   visible: boolean
   kbId?: string
-  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund'
+  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund'
   /** 打开时自动展开的分类名（能耗：当前卡片对应的分类）。 */
   initialCategory?: string
   /**
@@ -73,6 +74,15 @@ const props = withDefaults(defineProps<{
    * 与 ruleCategories 是「与」关系：两者都允许才显示。
    */
   showRules?: boolean
+  /**
+   * 第 52 轮：花名册字段配置取消胶囊分组，字段按 group 顺序合并为单一连续列表。
+   * 底层 group 属性仍保留，供编辑抽屉按 6 组分块展示。
+   */
+  hideGroupTabs?: boolean
+  /** 跨模块引用候选来源的 scope（如离职/合同引用花名册时传 'hr-roster'）。 */
+  refSourceScope?: string
+  /** 跨模块引用候选分类名；为空时用来源 scope 下的全部分类。 */
+  refCategories?: string[]
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -84,6 +94,9 @@ const props = withDefaults(defineProps<{
   extraTabLabel: '',
   extraTabValue: 'extra',
   showRules: true,
+  hideGroupTabs: false,
+  refSourceScope: '',
+  refCategories: () => [],
 })
 
 const emit = defineEmits<{

@@ -36,6 +36,11 @@ export interface DetailFieldMeta {
    * 抽屉里渲染为 disabled 输入框，保存时原样带回。
    */
   readonly?: boolean
+  /**
+   * 枚举下拉选项（第 52 轮）：有值时抽屉渲染 `t-select filterable`
+   * 替代普通文本框，选项由业务字段契约（hrFieldSchema）注入。
+   */
+  options?: readonly string[]
 }
 
 /** 详情表单三个核心字段：永远排在最顶部且完整可见 */

@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,16 +100,12 @@ func hrContractStatusOf(endDate, contractType string, now time.Time) string {
 
 // hrEmployeeContractStatus 从员工记录（主列 + custom_data）取合同字段并判定。
 func hrEmployeeContractStatus(e HREmployee) string {
-	endDate := ""
-	contractType := ""
-	if e.CustomData != nil {
-		if v, ok := e.CustomData["现合同结束日期"]; ok {
-			endDate = strings.TrimSpace(toStringValue(v))
-		}
-		if v, ok := e.CustomData["现合同类型"]; ok {
-			contractType = strings.TrimSpace(toStringValue(v))
-		}
+	if e.CustomData == nil {
+		return ""
 	}
+	// 第 52 轮：新字段名优先，兼容存量「现合同…」键。
+	endDate := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同结束日期", "现合同结束日期")))
+	contractType := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同类型", "现合同类型")))
 	return hrContractStatusOf(endDate, contractType, time.Now())
 }
 

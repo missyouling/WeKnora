@@ -85,6 +85,24 @@ export function getRosterTemplate(): Promise<any> {
   return getDown(`${BASE}/roster/template`) as Promise<any>
 }
 
+/**
+ * 第 52 轮：三套独立 Excel 导入模板（花名册 / 离职管理 / 劳动合同）。
+ * 每个模板都含「导入数据 / 说明 / 枚举字段」3 个 Sheet，枚举列配 Excel 数据验证。
+ */
+export type HrImportModule = 'roster' | 'resign' | 'contract'
+
+export function getHrTemplate(module: HrImportModule): Promise<any> {
+  return getDown(`${BASE}/roster/template${qs({ module })}`) as Promise<any>
+}
+
+/** 按模块导入：花名册走 /roster/import，离职/合同走各自的专用解析器。 */
+export function importHrModule(module: HrImportModule, formData: FormData): Promise<any> {
+  const path = module === 'resign' ? `${BASE}/resign/import`
+    : module === 'contract' ? `${BASE}/contract/import`
+      : `${BASE}/roster/import`
+  return postUpload(path, formData) as Promise<any>
+}
+
 /** 第 46 轮：上传离职证明，返回 {id, name, path}。 */
 export function uploadResignProof(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/roster/resign-proof`, formData) as Promise<any>

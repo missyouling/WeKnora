@@ -104,9 +104,10 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
     return [{ name: 'extractStatus', label: '提取状态', dataType: 'text' }]
   }
   if (HR_SCOPES.has(s)) {
-    // 人事：每个 scope 只注入自己相关的状态列，避免花名册凭空多出账期/缴存状态。
-    // 这些是真正的业务数据列（不是列表派生列），故 virtual=false、会落库。
-    if (s === 'hr-roster') return [{ name: '在职状态', label: '在职状态', dataType: 'text' }]
+    // 第 52 轮：花名册「在职状态 / 人员状态」字段彻底删除 —— 列表固定只查在职人员，
+    // 不再需要状态列，字段设置里也不能再自动补一条锁定的「在职状态」。
+    // 社保 / 公积金仍有各自的账期 / 缴存状态列，口径不变。
+    if (s === 'hr-roster') return []
     if (s === 'hr-social') return [
       { name: '账期状态', label: '账期状态', dataType: 'text' },
       { name: '参保状态', label: '参保状态', dataType: 'text' },

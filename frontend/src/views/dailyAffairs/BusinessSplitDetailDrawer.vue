@@ -51,6 +51,11 @@
                   <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                   <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
                     format="YYYY-MM-DD" clearable allow-input />
+                  <!-- 第 52 轮：内置枚举字段统一走可搜索下拉（选项由业务字段契约注入） -->
+                  <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
+                    clearable filterable placeholder="请选择">
+                    <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
+                  </t-select>
                   <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                   <t-textarea v-else-if="f.dataType === 'textarea'" v-model="form.data[f.name]"
                     :autosize="{ minRows: 2, maxRows: 6 }" />
@@ -85,6 +90,11 @@
                 <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                 <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
                   format="YYYY-MM-DD" clearable allow-input />
+                <!-- 第 52 轮：内置枚举字段统一走可搜索下拉 -->
+                <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
+                  clearable filterable placeholder="请选择">
+                  <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
+                </t-select>
                 <!-- 数值字段：**只做双向绑定，输入时不过滤**（第 23 轮 issue 4）。
                      旧实现在 @input 里跑 sanitizeNum，把值改写成过滤后的字符串，
                      与 v-model 的内部赋值形成「写—回写」竞争，真机表现为

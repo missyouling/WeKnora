@@ -37,22 +37,25 @@ import {
 import { buildFootRow, type SummaryColumn } from './listSummary'
 import { isLockedStatusField, statusFieldSpecsOf, isHrStatusName } from './statusFields'
 
-const ALL_TABS = ['hr-roster', 'hr-contract', 'hr-social', 'hr-fund'] as const
+const ALL_TABS = ['hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund'] as const
 
-test('KPI：恰好 4 张卡，且绝不出现「已收录记录」/「历史记录」汇总卡', () => {
-  const cards = buildHrKpiCards({ 'hr-roster': 12, 'hr-contract': 5, 'hr-social': 9, 'hr-fund': 6 })
-  assert.equal(cards.length, 4)
-  assert.deepEqual(cards.map((c) => c.label), ['花名册', '劳动合同', '社保管理', '公积金管理'])
+test('KPI：第 52 轮恰好 5 张卡，顺序为 花名册→离职管理→劳动合同→社保管理→公积金管理', () => {
+  const cards = buildHrKpiCards({
+    'hr-roster': 12, 'hr-resign': 3, 'hr-contract': 5, 'hr-social': 9, 'hr-fund': 6,
+  })
+  assert.equal(cards.length, 5)
+  assert.deepEqual(cards.map((c) => c.label),
+    ['花名册', '离职管理', '劳动合同', '社保管理', '公积金管理'])
   // 卡里任何字段都不许带上被移除的两张汇总卡文案
   const text = JSON.stringify(cards)
   assert.equal(text.includes('已收录'), false)
   assert.equal(text.includes('历史记录'), false)
-  // 空 counts 也仍是 4 张、数值 0
-  assert.equal(buildHrKpiCards().length, 4)
-  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0', '0'])
+  // 空 counts 也仍是 5 张、数值 0
+  assert.equal(buildHrKpiCards().length, 5)
+  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0', '0', '0'])
 })
 
-test('KPI：四张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
+test('KPI：五张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
   const cards = buildHrKpiCards()
   for (const c of cards) {
     assert.equal(c.action, 'type')
@@ -60,11 +63,12 @@ test('KPI：四张卡都是 action=type + typeValue，才能被 DashboardKpiGrou
     assert.notEqual((c as { static?: boolean }).static, true)
   }
   assert.deepEqual(cards.map((c) => c.typeValue), [...ALL_TABS])
-  assert.equal(HR_TABS.length, 4)
+  assert.equal(HR_TABS.length, 5)
 })
 
-test('hrScopeOf：四个 HR scope 恒等映射，未知值兜底花名册', () => {
+test('hrScopeOf：五个 HR scope 恒等映射，未知值兜底花名册', () => {
   assert.equal(hrScopeOf('hr-roster'), 'hr-roster')
+  assert.equal(hrScopeOf('hr-resign'), 'hr-resign')
   assert.equal(hrScopeOf('hr-social'), 'hr-social')
   assert.equal(hrScopeOf('hr-contract'), 'hr-contract')
   assert.equal(hrScopeOf('hr-fund'), 'hr-fund')
@@ -181,8 +185,8 @@ test('状态字段在 HR scope 下被锁定，且既有 scope 行为不被破坏
   // 既有 scope 契约不变
   assert.equal(isLockedStatusField('tire', '轮胎管理', '状态'), false)
   assert.equal(isLockedStatusField('vehicle', '道路运输证', '证照状态'), true)
-  // 三个 HR scope 各自注入对应状态字段
-  assert.deepEqual(statusFieldSpecsOf('hr-roster').map((s) => s.name), ['在职状态'])
+  // 第 52 轮：花名册不再注入「在职状态」；社保 / 公积金口径不变
+  assert.deepEqual(statusFieldSpecsOf('hr-roster').map((s) => s.name), [])
   assert.deepEqual(statusFieldSpecsOf('hr-social').map((s) => s.name), ['账期状态', '参保状态'])
   assert.deepEqual(statusFieldSpecsOf('hr-fund').map((s) => s.name), ['缴存状态'])
 })
@@ -323,12 +327,19 @@ test('第47轮：社保原始/汇总双视图列集合', () => {
   }
 })
 
-test('第47轮：劳动合同列含三色合同状态且默认按工号排序键', () => {
+test('第52轮：劳动合同列 = 乙方 6 + 甲方 3 + 合同 8，含三色合同状态', () => {
   const cols = hrColumnDefs('hr-contract').map((c) => c.colKey)
-  for (const h of ['工号', '姓名', '部门', '合同签约公司', '现合同编号', '现合同类型',
-    '现合同开始日期', '现合同结束日期', '现合同期限', '现合同签订日期', '合同状态']) {
+  for (const h of ['工号', '姓名', '部门', '岗位', '证件号码', '联系电话',
+    '统一社会信用代码', '住所', '法定代表人',
+    '合同编号', '合同类型', '合同开始日期', '合同结束日期', '合同期限',
+    '签约公司', '签订日期', '合同状态']) {
     assert.ok(cols.includes(h), `劳动合同缺少 ${h}`)
   }
+  // 已剥离的旧「现合同…」字段名不再出现在劳动合同列表
+  for (const h of ['现合同编号', '现合同类型', '现合同结束日期', '职务']) {
+    assert.ok(!cols.includes(h), `劳动合同不应再有旧字段 ${h}`)
+  }
+  assert.ok(cols.every((c) => c !== 'row-select' || cols[0] === 'row-select'))
 })
 
 // ---------------------------------------------------------------------------

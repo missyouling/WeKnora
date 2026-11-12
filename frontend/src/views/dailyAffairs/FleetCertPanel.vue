@@ -101,7 +101,7 @@
               </div>
               <!-- 业务分组切换（仅带 group 的分类显示，如市电账单的 12 个费用分项）。
                    没有 group 的分类（发票/合同/制度/公告）不渲染，视觉与改造前一致。 -->
-              <div v-if="subGroupTabs.length > 1" class="fc-group-tabs">
+              <div v-if="!props.hideGroupTabs && subGroupTabs.length > 1" class="fc-group-tabs">
                 <span v-for="g in subGroupTabs" :key="g.key" class="fc-group-tab"
                   :class="{ active: activeSubGroup === g.key }" @click="switchSubGroup(g.key)">
                   {{ g.label }}
@@ -369,7 +369,16 @@
                 <!-- 费用清单是综合汇总列表，字段全部来自其它分类：
                      这里只允许「检索并引用」，不提供自由输入新建（禁止无源字段）。 -->
                 <div v-if="isRefCategory" class="field-config-add">
-                  <SourceFieldPicker class="fc-add-input" :exclude="refFieldKeys" @select="addRefField" />
+                  <SourceFieldPicker class="fc-add-input" :exclude="refFieldKeys"
+                    :source-scope="props.refSourceScope || undefined" :categories="props.refCategories"
+                    :placeholder="props.refSourceScope ? '搜索并引用花名册字段（如 姓名、手机号码、司龄）' : undefined"
+                    @select="addRefField" />
+                  <!-- 人事模块既支持引用花名册字段，也保留自由新增自定义字段 -->
+                  <template v-if="props.refSourceScope">
+                    <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
+                      @enter="addField" />
+                    <t-button variant="outline" size="small" @click="addField">添加</t-button>
+                  </template>
                 </div>
                 <div v-else class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
@@ -457,7 +466,17 @@ import AiSparkIcon from './AiSparkIcon.vue'
 import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
-const props = withDefaults(defineProps<{ scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-contract' | 'hr-social' | 'hr-fund' | ''; kbId?: string; initialCategory?: string }>(), { scope: 'vehicle', kbId: '', initialCategory: '' })
+const props = withDefaults(defineProps<{
+  scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | ''
+  kbId?: string
+  initialCategory?: string
+  /** 第 52 轮：花名册字段配置取消胶囊分组（字段仍按 group 顺序连续展示）。 */
+  hideGroupTabs?: boolean
+  /** 跨模块引用候选来源 scope（离职/合同 → 'hr-roster'）。 */
+  refSourceScope?: string
+  /** 跨模块引用候选分类名。 */
+  refCategories?: string[]
+}>(), { scope: 'vehicle', kbId: '', initialCategory: '', hideGroupTabs: false, refSourceScope: '', refCategories: () => [] })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
 // 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
@@ -493,6 +512,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   'fleet-cost': [{ key: 'fleet-cost', label: '成本项', scope: 'fleet-cost', groupId: '' }],
   // 人事管理（第 45 轮）：每个 scope 一个单分类，标签是台账字段集，不是证照。
   'hr-roster': [{ key: 'hr-roster', label: '花名册字段', scope: 'hr-roster', groupId: '' }],
+  'hr-resign': [{ key: 'hr-resign', label: '离职管理字段', scope: 'hr-resign', groupId: '' }],
   'hr-contract': [{ key: 'hr-contract', label: '劳动合同字段', scope: 'hr-contract', groupId: '' }],
   'hr-social': [{ key: 'hr-social', label: '社保账期字段', scope: 'hr-social', groupId: '' }],
   'hr-fund': [{ key: 'hr-fund', label: '公积金台账字段', scope: 'hr-fund', groupId: '' }],
@@ -504,6 +524,7 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
 // 否则会 fallback 成「证照名称」—— 花名册/社保/公积金是台账字段，不是证照。
 const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
   'hr-roster': '花名册字段',
+  'hr-resign': '离职管理字段',
   'hr-contract': '劳动合同字段',
   'hr-social': '社保账期字段',
   'hr-fund': '公积金台账字段',
@@ -512,6 +533,7 @@ const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
 // 彻底避免设置抽屉里 fallback 出「证照名称 / 证照类型 / 暂无证照类型」等字样。
 const HR_SCOPE_NOUN: Record<string, string> = {
   'hr-roster': '花名册字段集',
+  'hr-resign': '离职管理字段集',
   'hr-contract': '劳动合同字段集',
   'hr-social': '社保账期字段集',
   'hr-fund': '公积金台账字段集',
@@ -737,7 +759,12 @@ const editingItem = computed(() => groupItems.value.find((it: any) => it.id === 
  * 费用清单没有自己的存储：一行 = 一个账期，一列 = 某个来源分类的字段。
  * 因此它的字段定义不允许手输新建，只能从市电账单/光伏账单/电水气核算检索引用。
  */
-const isRefCategory = computed(() => props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单')
+const isRefCategory = computed(() => {
+  if (props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单') return true
+  // 第 52 轮：离职管理 / 劳动合同复用同一套「跨表字段搜索引用」机制，
+  // 候选来自花名册（hr-roster）字段，添加后带「花名册」来源徽标。
+  return !!props.refSourceScope && (props.scope === 'hr-resign' || props.scope === 'hr-contract')
+})
 /** 已添加的引用 key（`分类__字段`），传给选择器过滤候选。 */
 const refFieldKeys = computed(() =>
   // 排除键必须与 SourceFieldPicker 的候选 key 同构（含来源分组）：
@@ -1029,8 +1056,12 @@ const subGroupTabs = computed(() => {
  * 这样字段配置的行数、顺序与列表表头严格一致（六同步）。
  */
 const fieldsVisible = computed(() => {
+  // 第 52 轮：花名册字段配置取消胶囊分组后，字段必须按 6 组顺序合并成
+  // 单一连续列表 —— 此时 activeSubGroup 强制为空，绝不能再按 group 过滤
+  // （否则只显示「字段最多」的那一组，其余 5 组全部消失）。
+  const grouped = !props.hideGroupTabs && !!activeSubGroup.value
   const want = tabGroupKey(activeSubGroup.value)
-  const list = activeSubGroup.value
+  const list = grouped
     // 状态字段不属于任何费用分组（它是文件级状态），任何分组页签下都要可见
     ? fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want || isLockedStatus(f))
     : fieldsEditable.value
@@ -1135,6 +1166,14 @@ function subGroupLabelOf(key: string): string {
  * 用户看到一屏滚动条却找不到重点；而胶囊条又没有"全部"项，等于停在非法态。
  */
 function resetSubGroupSelection() {
+  // 第 52 轮：花名册（hideGroupTabs）没有胶囊条，必须停留在「全部」态，
+  // 否则 6 组字段只显示字段最多的那一组（真机会表现为字段大面积缺失）。
+  if (props.hideGroupTabs) {
+    activeSubGroup.value = ''
+    openChildGroup.value = ''
+    openSubFieldName.value = ''
+    return
+  }
   // 直接用胶囊条的口径（费用清单已按归一键合并、默认分组在前），
   // 避免这里再算一遍 listSubGroups 造成「胶囊键与选中键不是同一个」。
   const groups = subGroupTabs.value

@@ -359,8 +359,22 @@ func hrSeniorityOf(e *HREmployee, now time.Time) string {
 }
 
 // hrEnrichEmployee 用身份证自动补性别/出生月份/年龄，用入职日期补工龄（仅补空值，不覆盖手填）。
+//
+// 第 52 轮追加：① 录入/导入时统一清洗号码类字段；② 身份证联动写入
+// custom_data 的出生日期/性别/年龄；③ 旧全量模板带合同信息时自动同步写入
+// 劳动合同台账并重算三态合同状态。
 func hrEnrichEmployee(e *HREmployee) {
 	id := normalizeIDNumber(e.IDNumber)
+	e.IDNumber = hrCleanImportValue("证件号码", id)
+	if e.CustomData == nil {
+		e.CustomData = map[string]any{}
+	}
+	custom := e.CustomData
+	for _, key := range []string{"证件号码", "手机号码", "工资卡卡号", "紧急联系人电话", "工作电话"} {
+		if v, ok := custom[key]; ok && v != nil {
+			custom[key] = hrCleanImportValue(key, fmt.Sprint(v))
+		}
+	}
 	if len(id) == 18 {
 		if e.Gender == "" {
 			e.Gender = hrIDCardGender(id)
@@ -381,10 +395,23 @@ func hrEnrichEmployee(e *HREmployee) {
 	}
 	// 第 49 轮：司龄是唯一对外口径（工龄字段已下线），随入职/离职日期重算。
 	if seniority := hrSeniorityOf(e, time.Now()); seniority != "" {
-		if e.CustomData == nil {
-			e.CustomData = map[string]any{}
+		custom["司龄"] = seniority
+	}
+	// 第 52 轮：身份证自动推导（出生日期 / 性别 / 年龄），与前端抽屉同口径。
+	if len(id) == 18 {
+		if bd := hrIDCardBirthDate(id); bd != "" {
+			custom["出生日期"] = bd
+			custom["性别"] = hrIDCardGender(id)
 		}
-		e.CustomData["司龄"] = seniority
+		if age := hrAgeDecimalOf(e, time.Now()); age != "" {
+			custom["年龄"] = age
+		}
+	}
+	// 旧全量花名册模板带「现合同…」列时，自动同步到劳动合同台账并重算合同状态。
+	end := fmt.Sprint(customValueOrEmpty(custom, "合同结束日期", "现合同结束日期"))
+	typ := fmt.Sprint(customValueOrEmpty(custom, "合同类型", "现合同类型"))
+	if end != "" || typ != "" {
+		custom["合同状态"] = hrContractStatusOf(end, typ, time.Now())
 	}
 }
 

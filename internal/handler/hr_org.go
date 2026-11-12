@@ -404,8 +404,8 @@ func (h *HRHandler) ListContracts(c *gin.Context) {
 		if e.CustomData == nil {
 			continue
 		}
-		end := strings.TrimSpace(toStringValue(e.CustomData["现合同结束日期"]))
-		ctype := strings.TrimSpace(toStringValue(e.CustomData["现合同类型"]))
+		end := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同结束日期", "现合同结束日期")))
+		ctype := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同类型", "现合同类型")))
 		if end == "" && ctype == "" {
 			continue
 		}

@@ -39,15 +39,32 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { loadEnergyCategorySubs, type EnergySub } from './energyViewColumns'
+import {
+  loadCategorySubsInScope, listCategoryNamesInScope, type EnergySub,
+} from './energyViewColumns'
 import { SOURCE_CATEGORIES, type FieldSource } from './tenantBillingSources'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 已添加的字段 key（`分类__分组__字段`），用于过滤候选项 */
   exclude?: string[]
-  /** 只在这些分类里检索（不传 = 全部五个来源分类） */
+  /** 只在这些分类里检索（不传 = 全部来源分类） */
   onlyCategories?: string[]
-}>()
+  /**
+   * 第 52 轮：候选字段所在 scope。不传 = 沿用能耗的 energy；
+   * 人事模块离职管理 / 劳动合同传 'hr-roster' 即可检索花名册字段。
+   */
+  sourceScope?: string
+  /** 候选分类名（配合 sourceScope）；不传时取该 scope 下全部分类。 */
+  categories?: string[]
+  /** 输入框占位文案。 */
+  placeholder?: string
+}>(), {
+  exclude: () => [],
+  onlyCategories: () => [],
+  sourceScope: '',
+  categories: () => [],
+  placeholder: '搜索并添加其它分类的字段（支持「分组 字段」组合，如「市场化 计费电量」）',
+})
 const emit = defineEmits<{
   (e: 'select', payload: { key: string; label: string; dataType: string; source: FieldSource }): void
 }>()
@@ -72,8 +89,9 @@ const keyword = ref('')
 const open = ref(false)
 const activeIndex = ref(0)
 const rootRef = ref<HTMLElement | null>(null)
-const placeholder = '搜索并添加其它分类的字段（支持「分组 字段」组合，如「市场化 计费电量」）'
 const byCategory = ref<Record<string, EnergySub[]>>({})
+/** 当前实际参与检索的分类名（人事场景由 props.categories 指定）。 */
+const categoryNames = ref<string[]>([])
 
 /** 分组键 → 中文名（同一分组在不同 subs 条目上可能只有一处带 group_label）。 */
 function labelOfGroup(subs: EnergySub[]): Map<string, string> {
@@ -91,7 +109,7 @@ const allOptions = computed<Option[]>(() => {
   const out: Option[] = []
   const excluded = new Set((props.exclude || []).map(String))
   const allow = props.onlyCategories && props.onlyCategories.length ? new Set(props.onlyCategories) : null
-  for (const cat of SOURCE_CATEGORIES) {
+  for (const cat of categoryNames.value) {
     if (allow && !allow.has(cat)) continue
     const subs = byCategory.value[cat] || []
     const groupLabels = labelOfGroup(subs)
@@ -169,11 +187,23 @@ onMounted(async () => {
   document.addEventListener('mousedown', onDocClick)
   loading.value = true
   try {
-    const cats = props.onlyCategories && props.onlyCategories.length ? props.onlyCategories : SOURCE_CATEGORIES
+    const scope = String(props.sourceScope || 'energy')
+    let cats: string[] = []
+    if (props.onlyCategories.length) {
+      cats = props.onlyCategories.map(String)
+    } else if (props.categories.length) {
+      cats = props.categories.map(String)
+    } else if (props.sourceScope) {
+      // 人事模块：scope 下所有分类都是候选（当前为单分类「花名册」）
+      try { cats = await listCategoryNamesInScope(scope) } catch { cats = [] }
+    } else {
+      cats = [...SOURCE_CATEGORIES]
+    }
+    categoryNames.value = cats
     const entries = await Promise.all(
       cats.map(async (cat) => {
         try {
-          return [cat, await loadEnergyCategorySubs(cat)] as const
+          return [cat, await loadCategorySubsInScope(scope, cat)] as const
         } catch {
           return [cat, [] as EnergySub[]] as const
         }

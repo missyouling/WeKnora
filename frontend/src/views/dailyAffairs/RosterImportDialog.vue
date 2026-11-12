@@ -2,11 +2,11 @@
   <t-dialog :visible="visible" header="导入" width="640px" :footer="false" placement="center"
     class="roster-import-dialog" @close="close" @update:visible="(v: boolean) => { if (!v) close() }">
     <div class="ri-body">
-      <!-- 模板下载栏：醒目入口，后端 excelize 生成 3 个 Sheet -->
+      <!-- 模板下载栏：第 52 轮按模块生成各自专属的 3-Sheet 标准模板 -->
       <div class="ri-template-row">
         <div class="ri-template-tip">
           <t-icon name="info-circle" size="16px" />
-          <span>下载标准模板</span>
+          <span>下载{{ moduleLabel }}标准模板</span>
         </div>
         <t-button theme="primary" variant="outline" size="small" :loading="downloading" @click="downloadTemplate">
           <template #icon><t-icon name="download" size="14px" /></template>
@@ -55,11 +55,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import * as hrApi from './hrApi'
+import { HR_TEMPLATE_NAMES, type HrModule } from './hrFieldSchema'
 
-withDefaults(defineProps<{ visible: boolean }>(), { visible: false })
+const props = withDefaults(defineProps<{
+  visible: boolean
+  /** 第 52 轮：三套独立模板（花名册 / 离职管理 / 劳动合同）。 */
+  module?: HrModule
+}>(), { visible: false, module: 'roster' })
+
+const templateName = computed(() => HR_TEMPLATE_NAMES[props.module] || HR_TEMPLATE_NAMES.roster)
+const moduleLabel = computed(() => ({ roster: '花名册', resign: '离职管理', contract: '劳动合同' })[props.module] || '花名册')
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'imported', count: number): void
@@ -119,8 +127,8 @@ function downloadBlob(blob: any, name: string) {
 async function downloadTemplate() {
   downloading.value = true
   try {
-    const blob = await hrApi.getRosterTemplate()
-    downloadBlob(blob, '导入花名册模板.xlsx')
+    const blob = await hrApi.getHrTemplate(props.module)
+    downloadBlob(blob, templateName.value)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '模板下载失败')
   } finally {
@@ -136,10 +144,10 @@ async function doImport() {
     fd.append('file', file.value)
     fd.append('mode', mode.value)
     fd.append('default_status', '在职')
-    const res: any = await hrApi.importEmployees(fd)
+    const res: any = await hrApi.importHrModule(props.module, fd)
     const data = res?.data || res || {}
     const count = Number(data.inserted || 0) + Number(data.updated || 0)
-    MessagePlugin.success(`成功导入 ${count} 条员工记录`)
+    MessagePlugin.success(`成功导入 ${count} 条${moduleLabel.value}记录`)
     emit('imported', count)
     close()
   } catch (e: any) {

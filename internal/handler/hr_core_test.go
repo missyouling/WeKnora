@@ -383,7 +383,8 @@ func TestHRBootstrapIdempotent(t *testing.T) {
 	} {
 		assert.True(t, db.Migrator().HasTable(m), "%T", m)
 	}
-	for _, scope := range []string{hrScopeRoster, hrScopeSocial, hrScopeFund} {
+	// 第 52 轮：五个 scope（新增离职管理）各 1 个分类
+	for _, scope := range []string{hrScopeRoster, hrScopeResign, hrScopeContract, hrScopeSocial, hrScopeFund} {
 		var n int64
 		require.NoError(t, db.Model(&types.FleetCategory{}).
 			Where("tenant_id = 0 AND scope = ?", scope).Count(&n).Error)
@@ -517,15 +518,24 @@ func TestHRRosterTemplateDownload(t *testing.T) {
 	dataRows, err := f.GetRows("导入数据")
 	require.NoError(t, err)
 	require.NotEmpty(t, dataRows)
-	assert.Len(t, dataRows[0], 76)
+	// 第 52 轮：花名册模板表头 = 精简后的 48 个在职字段
+	want := hrTemplateHeaders(hrModuleRoster)
+	assert.Len(t, dataRows[0], len(want))
 	assert.Equal(t, "工号", dataRows[0][0])
-	assert.Equal(t, "现合同签订日期", dataRows[0][75])
+	assert.Equal(t, "是否本地首次缴纳公积金", dataRows[0][len(want)-1])
+	for _, removed := range []string{"在职状态", "家庭情况", "现合同编号", "离职日期", "是否烈属"} {
+		assert.NotContains(t, dataRows[0], removed)
+	}
 	require.Len(t, dataRows, 2)
 	assert.Equal(t, "000001", dataRows[1][0])
 	assert.Equal(t, "示例员工", dataRows[1][1])
 	enumRows, err := f.GetRows("枚举字段")
 	require.NoError(t, err)
-	assert.Len(t, enumRows, 20)
+	assert.Len(t, enumRows, len(hrTemplateSpecOf(hrModuleRoster).EnumGroups))
+	// 枚举列配了 Excel 下拉数据验证
+	dvs, err := f.GetDataValidations("导入数据")
+	require.NoError(t, err)
+	assert.NotEmpty(t, dvs, "枚举列必须配置 Excel 数据验证")
 }
 
 func TestHRResignProofIDWhitelist(t *testing.T) {
@@ -560,26 +570,34 @@ func TestHRSeniorityFromHireDate(t *testing.T) {
 	assert.Equal(t, "0年0个月", hrSeniorityOf(e3, now))
 }
 
-func TestHRRosterGroupDictCovers11Groups(t *testing.T) {
-	assert.Len(t, hrRosterGroupDict, 11)
-	keys := make([]string, 0, 11)
+func TestHRRosterGroupDictCovers6Groups(t *testing.T) {
+	// 第 52 轮：11 组 → 6 组；删除 3 组、剥离 2 组
+	assert.Len(t, hrRosterGroupDict, 6)
+	keys := make([]string, 0, 6)
 	for _, g := range hrRosterGroupDict {
 		keys = append(keys, g.Key)
 	}
-	// 第 50 轮：在职信息提到第 1 位（工号/姓名/部门/岗位是定位行锚点）
 	assert.Equal(t, []string{
-		"在职信息", "基本信息", "离职信息", "联系信息", "紧急联系人情况",
-		"家庭情况", "教育情况", "工作经历情况", "合同签订情况", "工资社保信息", "个税申报信息",
+		"在职信息", "基本信息", "联系信息", "紧急联系人情况", "教育情况", "工资社保信息",
 	}, keys)
+	// 字段总数 10 + 13 + 9 + 4 + 4 + 8 = 48
+	total := 0
+	for _, g := range hrRosterGroupDict {
+		total += len(g.Fields)
+	}
+	assert.Equal(t, 48, total)
 
-	// 生日 / 工龄已下线，出生日期 / 司龄保留
-	assert.False(t, hrRosterGroupOf2("生日"), "生日 应已合并到 出生日期")
-	assert.False(t, hrRosterGroupOf2("工龄"), "工龄 应已合并到 司龄")
-	assert.False(t, hrRosterGroupOf2("司龄开始日期"))
+	// 删除 / 剥离的字段不再属于任何分组
+	for _, name := range []string{
+		"生日", "工龄", "司龄开始日期", "健康状况", "是否已育", "员工状态", "在职状态",
+		"婚姻状况", "配偶姓名", "上家工作单位", "是否烈属", "个人股本(投资)额",
+		"现合同编号", "合同状态", "离职日期", "离职证明", "是否试用期内离职",
+	} {
+		assert.False(t, hrRosterGroupOf2(name), name+" 应已从花名册移除")
+	}
 	assert.True(t, hrRosterGroupOf2("出生日期"))
 	assert.True(t, hrRosterGroupOf2("司龄"))
-	assert.True(t, hrRosterGroupOf2("健康状况"))
-	assert.True(t, hrRosterGroupOf2("是否试用期内离职"))
+	assert.True(t, hrRosterGroupOf2("工资卡卡号"))
 }
 
 // hrRosterGroupOf2 测试用：字段是否被任一分组收录。
@@ -589,23 +607,19 @@ func hrRosterGroupOf2(name string) bool {
 }
 
 func TestHRRosterDefaultHeaderOnlyBasic(t *testing.T) {
-	// 基本信息组里设计稿打勾的字段默认开表头
+	// 第 52 轮：默认表头 = 字段契约里 defaultHeader=true 的 15 列
 	for _, f := range []string{
-		"证件类型", "证件号码", "性别", "出生日期", "年龄", "司龄", "健康状况", "健康证有效期",
+		"工号", "姓名", "部门", "岗位", "入职日期", "司龄",
+		"证件号码", "性别", "出生日期", "年龄", "是否已婚", "籍贯", "户口性质",
+		"手机号码", "最高学历",
 	} {
 		assert.True(t, hrRosterDefaultHeaderFields[f], f+" 应默认开表头")
 	}
-	// 基本信息组里未打勾的不进表头
-	for _, f := range []string{"曾用名", "英文名", "是否农历生日", "国家地区", "户籍城市"} {
-		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
-	}
-	// 核心锚点必开
-	for _, f := range []string{"工号", "姓名", "部门", "岗位"} {
-		assert.True(t, hrRosterDefaultHeaderFields[f], f)
-	}
-	// 其余组默认关（离职/合同/工资社保/个税/家庭）
-	for _, f := range []string{"离职日期", "现合同编号", "工资卡卡号", "是否烈属", "毕业院校", "配偶姓名"} {
-		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
+	for _, f := range []string{
+		"合同公司", "招聘渠道", "试用期", "转正日期", "证件类型", "身份证有效期",
+		"民族", "政治面貌", "户籍地址", "服装尺寸", "银行名称", "毕业院校",
+	} {
+		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 默认表头应为关")
 	}
 }
 
@@ -614,19 +628,25 @@ func TestHRBackfillRosterGroups(t *testing.T) {
 		BuiltinKey: "hr-roster",
 		Subs: []types.FleetCategorySub{
 			{Name: "姓名", Enabled: true},
-			{Name: "离职日期", Enabled: true, IsDefault: true},
+			{Name: "离职日期", Enabled: true, IsDefault: true}, // 已剥离 → 剔除
+			{Name: "现合同编号", Enabled: true},                 // 已剥离 → 剔除
 			{Name: "工资卡卡号", Enabled: true, IsDefault: true, Width: 160},
+			{Name: "自定义备注", Enabled: true}, // 用户自定义字段必须保留
 		},
 	}
 	changed := hrBackfillRosterGroups([]*types.FleetCategory{cat})
 	assert.True(t, changed)
-	// 第 50 轮：姓名归在职信息组（该组已提到第 1 位）
+	names := make([]string, 0, len(cat.Subs))
+	for _, s := range cat.Subs {
+		names = append(names, s.Name)
+	}
+	assert.Equal(t, []string{"姓名", "工资卡卡号", "自定义备注"}, names)
 	assert.Equal(t, "在职信息", cat.Subs[0].Group)
 	assert.Equal(t, "在职信息", cat.Subs[0].GroupLabel)
 	assert.True(t, cat.Subs[0].IsDefault)
-	assert.Equal(t, "离职信息", cat.Subs[1].Group)
-	assert.False(t, cat.Subs[1].IsDefault, "离开信息组默认关表头")
-	assert.Equal(t, 0, cat.Subs[2].Width)
+	assert.Equal(t, "工资社保信息", cat.Subs[1].Group)
+	assert.False(t, cat.Subs[1].IsDefault, "工资卡卡号默认表头应为关")
+	assert.Equal(t, 0, cat.Subs[1].Width)
 	// 幂等：再跑一次不再变更
 	assert.False(t, hrBackfillRosterGroups([]*types.FleetCategory{cat}))
 }
@@ -658,32 +678,31 @@ func TestHRAttachContractParty(t *testing.T) {
 // 第 50 轮：分组调序 / 默认表头 / 改名级联
 // ---------------------------------------------------------------------------
 
-func TestHRRosterDefaultHeaderRound50(t *testing.T) {
-	// 在职信息 12 项在前：工号打头、姓名第二、司龄在组末
+func TestHRRosterDefaultHeaderRound52(t *testing.T) {
+	// 6 大分组，在职信息 10 项：工号打头、姓名第二、司龄在组末
 	first := hrRosterGroupDict[0]
 	assert.Equal(t, "在职信息", first.Key)
+	assert.Len(t, first.Fields, 10)
 	assert.Equal(t, "工号", first.Fields[0])
 	assert.Equal(t, "姓名", first.Fields[1])
-	assert.Contains(t, first.Fields, "司龄", "司龄应归在职信息")
+	assert.Equal(t, "司龄", first.Fields[len(first.Fields)-1])
 
-	// 基本信息不再含 司龄
 	second := hrRosterGroupDict[1]
 	assert.Equal(t, "基本信息", second.Key)
+	assert.Len(t, second.Fields, 13)
 	assert.NotContains(t, second.Fields, "司龄")
 
-	// 默认表头 = 30 列（12 + 18）
-	assert.Len(t, hrRosterDefaultHeaderFields, 30)
+	// 默认表头 = 15 列（与前端 HR_ROSTER_DEFAULT_HEADERS 同源）
+	assert.Len(t, hrRosterDefaultHeaderFields, 15)
 	for _, f := range []string{
-		"工号", "姓名", "部门", "职务", "岗位", "合同公司", "招聘渠道", "员工状态",
-		"入职日期", "试用期", "转正日期", "司龄",
-		"证件类型", "证件号码", "身份证有效期", "性别", "出生日期", "年龄",
-		"是否已婚", "是否已育", "民族", "政治面貌", "籍贯", "户口性质", "户籍地址",
-		"参加工作时间", "血型", "服装尺寸", "健康状况", "健康证有效期",
+		"工号", "姓名", "部门", "岗位", "入职日期", "司龄",
+		"证件号码", "性别", "出生日期", "年龄", "是否已婚", "籍贯", "户口性质",
+		"手机号码", "最高学历",
 	} {
 		assert.True(t, hrRosterDefaultHeaderFields[f], f+" 应默认开表头")
 	}
-	// 离职字段绝不进默认表头
-	for _, f := range []string{"离职日期", "离职原因", "离职证明"} {
+	// 已删除 / 已剥离字段绝不进默认表头
+	for _, f := range []string{"离职日期", "离职原因", "离职证明", "现合同编号", "在职状态", "健康证有效期"} {
 		assert.False(t, hrRosterDefaultHeaderFields[f], f+" 不应默认开表头")
 	}
 }
@@ -745,17 +764,20 @@ func TestHRBestDeptMatch(t *testing.T) {
 	assert.Equal(t, "人事行政部", hrBestDeptMatch("行政", []string{"行政部", "人事行政部"}))
 }
 
-const LEAVING_GROUP_KEY_GO = "离职信息"
-
 func TestHRRosterColumnGroupOrder(t *testing.T) {
-	// 后端 subs 已按 11 组顺序排；前端列顺序把离职信息挪到最后。
-	// 这里锁住后端顺序本身：离职信息在第 3 位（胶囊栏顺序），前端负责追加。
-	idx := -1
-	for i, g := range hrRosterGroupDict {
-		if g.Key == LEAVING_GROUP_KEY_GO {
-			idx = i
-			break
-		}
+	// 第 52 轮：花名册字段配置取消胶囊分组，subs 顺序 = 6 大分组的单一连续列表。
+	// 离职信息已剥离到独立模块，花名册分组里不得再出现。
+	for _, g := range hrRosterGroupDict {
+		assert.NotEqual(t, "离职信息", g.Key)
+		assert.NotEqual(t, "合同签订情况", g.Key)
+		assert.NotEqual(t, "家庭情况", g.Key)
 	}
-	assert.Equal(t, 2, idx, "离职信息在胶囊栏仍是第 3 个分组")
+	assert.Equal(t, "在职信息", hrRosterGroupDict[0].Key)
+	assert.Equal(t, "工资社保信息", hrRosterGroupDict[len(hrRosterGroupDict)-1].Key)
+	// subs 顺序严格等于分组顺序（字段设置单一连续列表的权威）
+	subs := hrRosterSeedSubs()
+	assert.Len(t, subs, 48)
+	assert.Equal(t, "工号", subs[0].Name)
+	assert.Equal(t, "在职信息", subs[0].Group)
+	assert.Equal(t, "date", subs[6].DataType, "入职日期必须是 date 类型")
 }

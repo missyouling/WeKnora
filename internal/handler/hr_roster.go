@@ -487,11 +487,11 @@ func hrAttachContractParty(units []hrOrgUnitWithDepts, items []HREmployee) {
 		if e.CustomData == nil {
 			e.CustomData = map[string]any{}
 		}
-		partyA := strings.TrimSpace(toStringValue(e.CustomData["现合同签约公司"]))
-		if partyA == "" {
-			partyA = strings.TrimSpace(toStringValue(e.CustomData["合同公司"]))
+		// 第 52 轮：新「签约公司」优先，兼容存量「现合同签约公司 / 合同公司」。
+		partyA := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "签约公司", "现合同签约公司", "合同公司")))
+		for _, key := range hrFieldPersistKeys("签约公司") {
+			e.CustomData[key] = partyA
 		}
-		e.CustomData["现合同签约公司"] = partyA
 		if u, ok := find(partyA); ok {
 			e.CustomData["统一社会信用代码"] = u.CreditCode
 			e.CustomData["住所"] = u.Address
@@ -805,10 +805,16 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 	}
 	data := gin.H{"total": int64(0), "active": int64(0), "resigned": int64(0)}
 	for _, r := range rows {
-		data[r.Status] = r.Count
 		data["total"] = data["total"].(int64) + r.Count
+		// 第 52 轮：五卡口径，离职管理卡 = 离职员工数（兼容 active/resigned/中文状态）。
+		switch normalizeEmployeeStatus(r.Status) {
+		case "active":
+			data["active"] = data["active"].(int64) + r.Count
+		case "resigned":
+			data["resigned"] = data["resigned"].(int64) + r.Count
+		}
 	}
-	// 四卡口径（第 47 轮）：花名册 / 劳动合同 / 社保管理 / 公积金管理。
+	// 五卡口径：花名册 / 离职管理 / 劳动合同 / 社保管理 / 公积金管理。
 	// 劳动合同卡 = 有合同结束日期或有合同类型的员工数（无合同的员工不计入）。
 	var contractCount int64
 	var emps []HREmployee
@@ -818,8 +824,8 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 			if e.CustomData == nil {
 				continue
 			}
-			end := strings.TrimSpace(toStringValue(e.CustomData["现合同结束日期"]))
-			ctype := strings.TrimSpace(toStringValue(e.CustomData["现合同类型"]))
+			end := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同结束日期", "现合同结束日期")))
+			ctype := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同类型", "现合同类型")))
 			if end != "" || ctype != "" {
 				contractCount++
 			}

@@ -68,11 +68,15 @@ func hrApplyRosterRaw(req *HREmployee, raw map[string]any, existing *HREmployee)
 		if std == "" {
 			std = strings.TrimSpace(k)
 		}
-		value := fmt.Sprint(v)
+		// 第 52 轮：保存统一清洗（trim / 去不可见字符 / 号码去空格横杠 / x→X）
+		value := hrCleanImportValue(std, fmt.Sprint(v))
 		if value != "" && hrIsRosterDateField(std) {
 			value = normalizeHRDateValue(value)
 		}
-		custom[std] = value
+		// 新字段名与存量别名双写：花名册、离职管理、劳动合同三种读法都能命中。
+		for _, key := range hrFieldPersistKeys(std) {
+			custom[key] = value
+		}
 	}
 	// 派生/扩展字段即使不在 76 表头里也要能收下
 	for _, k := range append(append([]string{}, hrRosterDerivedFields...), hrRosterExtraResignFields...) {
