@@ -2377,6 +2377,11 @@ func (h *FleetHandler) seedBusinessCategories() {
 	if _, err := uh.EnsureCostListDefaultGroup(ctx); err != nil {
 		logger.Warnf(ctx, "ensure cost list default group failed: %v", err)
 	}
+	// 第 51 轮：本期水量/本期水费字段规范化（复制字段的副本 name → 固定契约键），
+	// 并钉在「本期电费」之后、「光伏发电量」之前。必须在默认分组重建之后跑。
+	if _, err := uh.EnsureCostListWaterFields(ctx); err != nil {
+		logger.Warnf(ctx, "ensure cost list water fields failed: %v", err)
+	}
 	// 费用清单：剔除租户分组里的跨分组污染字段（幂等，只删不补）
 	if _, err := uh.SanitizeTenantGroupFields(ctx); err != nil {
 		logger.Warnf(ctx, "sanitize tenant group fields failed: %v", err)

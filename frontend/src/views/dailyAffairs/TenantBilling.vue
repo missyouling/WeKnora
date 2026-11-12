@@ -206,6 +206,7 @@ import EmptyState from '@/components/EmptyState.vue'
 // ---- 使用单位(房东/租户) ----
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { loadEnergyCategorySubs, type EnergySub } from './energyViewColumns'
+import { dynamicColTypeOf, rowValueOf, waterPeriodTotals } from './energyDynamicColumns'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import BillingCellTip from './BillingCellTip.vue'
@@ -233,6 +234,11 @@ interface ColDef {
   default: boolean
   w: string
   tip?: string
+  /**
+   * 第 51 轮：设置面板新增/复制出来的字段，既不在静态 COL_DEFS_* 里、
+   * 也没有跨分类 source。这类列由 subs 直接构造，取值走 rowValueOf 兜底。
+   */
+  dynamic?: boolean
   /** 精确列宽（px）；0/未配置走表格自适应 */
   width?: number
   /** 跨分类引用字段的来源（仅「字段定义」里添加的字段有值） */
@@ -257,6 +263,9 @@ const COL_DEFS_OWNER: ColDef[] = [
   { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
   { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr', tip: '市电账单本期电量(提取)' },
   { key: 'total_fee', label: '总电费', default: false, w: '1fr', tip: '市电账单本期电费(提取)' },
+  // 第 51 轮：本期水量/水费 = 水费核算「自来水总表 + 消防总表」
+  { key: 'current_water_usage', label: '本期水量', default: true, w: '0.9fr', tip: '数据来源：水费核算「自来水总表 + 消防总表」' },
+  { key: 'current_water_fee', label: '本期水费', default: true, w: '0.9fr', tip: '数据来源：水费核算「自来水总表 + 消防总表」' },
   { key: 'solar_gen', label: '光伏发电量', default: true, w: '0.9fr', tip: '光伏账单发电量(提取)' },
   { key: 'solar_grid', label: '上网电量', default: true, w: '0.9fr', tip: '光伏账单上网电量(提取)' },
   { key: 'solar_amount', label: '结算金额', default: true, w: '0.9fr', tip: '光伏账单结算金额(提取)' },
@@ -282,6 +291,9 @@ const COL_DEFS_TENANT: ColDef[] = [
   { key: 'unit', label: '使用单位', default: true, w: '0.9fr', tip: '当前核算单位' },
   { key: 'total_kwh', label: '总电量', default: false, w: '0.9fr', tip: '市电账单本期电量(提取)' },
   { key: 'total_fee', label: '总电费', default: false, w: '1fr', tip: '市电账单本期电费(提取)' },
+  // 第 51 轮：本期水量/水费 = 水费核算「自来水总表 + 消防总表」
+  { key: 'current_water_usage', label: '本期水量', default: true, w: '0.9fr', tip: '数据来源：水费核算「自来水总表 + 消防总表」' },
+  { key: 'current_water_fee', label: '本期水费', default: true, w: '0.9fr', tip: '数据来源：水费核算「自来水总表 + 消防总表」' },
   { key: 'ratio', label: '分摊比例', default: true, w: '0.9fr', tip: '星达分表总电量 ÷ 市电账单本期电量' },
   { key: 'ind_kwh', label: '用电量（工业）', default: true, w: '0.9fr', tip: '持睿工业分表总电量(星达分表)' },
   { key: 'ind_fee', label: '电费（工业）', default: true, w: '1fr', tip: '市电子项按分摊比例折算汇总' },
@@ -470,8 +482,24 @@ const activeColDefs = computed<ColDef[]>(() => {
     }
     const src = parseFieldSource(sub)
     const hit = src ? null : byKey.get(key)
-    if (!src && !hit) continue
+    // 第 51 轮：设置面板新增/复制的字段既不在静态 COL_DEFS_* 里、也没有
+    // 跨分类 source。旧实现在这里 `continue` 整条丢弃 —— 于是「字段定义里
+    // 配了本期水量/本期水费、两个开关全开，表头却完全不渲染」。
+    // 现在改为构造通用动态列；取值由 cellText → rowValueOf 多级兜底，
+    // 列宽/默认表头/启用/顺序仍严格来自 subs，六同步不再被静态表截断。
     seen.add(key)
+    if (!src && !hit) {
+      out.push({
+        key,
+        label: label || key,
+        default: sub.is_default !== false,
+        w: '1fr',
+        width: width || undefined,
+        tip: String(sub.tip || '').trim() || '自定义字段',
+        dynamic: true,
+      })
+      continue
+    }
     if (src) {
       out.push({
         key,
@@ -633,8 +661,13 @@ const persistColumns = () => {
 }
 const syncColumnKeys = () => {
   visibleKeys.value = loadStoredKeys()
-  // 顺手把 known 记下来：否则「用户取消勾选的默认列」每次加载都会被当成新列复活。
-  persistColumns()
+  // 第 51 轮：字段定义还没拉到时，activeColDefs 回落静态列，那一版的 default
+  // 口径是错的（本期电量/本期电费默认 false、本期水量/水费默认 true）。
+  // 若此时就 persistColumns()，known 会把所有列标成「见过」，
+  // 等真正的 subs 加载完，is_default=true 的列永远补不回来 ——
+  // 表现为清缓存后首屏缺「本期电量/本期电费」。
+  // 因此只在 subs 到位后才落盘；loadCategorySubs 完成后会再调一次本函数。
+  if (categorySubs.value.length > 0) persistColumns()
 }
 syncColumnKeys()
 watch(useUnit, syncColumnKeys)
@@ -664,6 +697,10 @@ const AMOUNT_KEYS = new Set([
 function colTypeOf(c: ColDef): string {
   const key = String(c.key || '')
   const label = String(c.label || '')
+  // 第 51 轮：动态列只能按 label 判口径。它的 key 可能是「总电费_副本」
+  // 这类复制字段的历史名，拼进 key+label 会误命中「电费」，
+  // 把「本期水量」错判成金额列（合计行口径全乱）。
+  if (c.dynamic) return dynamicColTypeOf(label)
   // ① 点位值优先判死：哪怕键名像金额（如 ind_price 含 _price）也不加
   if (NON_SUM_LABEL.test(label) || /_price$|^ratio$|^avg_price$/.test(key)) return 'text'
   // ② 大类汇总列与分摊子项列都是**金额**：子项 key 形如
@@ -1321,6 +1358,9 @@ const buildRows = () => {
       const wIndUsage = Math.round((totalMain.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
       // 星达工业水费 = 工业用水量 × 星达自来水总表单价
       const wIndFee = Math.round((wIndUsage * (totalMain.price || 0)) * 100) / 100
+      // 第 51 轮：本期水量/水费（总表 + 消防总表）。总表水量此前未单列，
+      // 工业用水量因基数缺失出现 -238 之类的负数，这里给出权威基数。
+      const { usage: currWaterUsage, fee: currWaterFee } = waterPeriodTotals(totalMain, wFire)
       Object.assign(base, {
         total_kwh: totalKwh,
         total_fee: totalFee,
@@ -1339,6 +1379,14 @@ const buildRows = () => {
         water_fire_usage: wFire.usage, water_fire_fee: wFire.fee,
         gas_usage: sumBy(gas, 'usage'),
         gas_fee: sumBy(gas, 'amount'),
+        // 第 51 轮：本期水量/水费派生值，同时写中文/英文别名以兼容
+        // 设置面板里复制字段留下的历史 name（rowValueOf 会按 label 兜底）。
+        current_water_usage: currWaterUsage,
+        current_water_fee: currWaterFee,
+        total_water_usage: currWaterUsage,
+        total_water_fee: currWaterFee,
+        '本期水量': currWaterUsage,
+        '本期水费': currWaterFee,
       })
       // 跨分类引用字段（费用清单「字段定义」里检索添加的列）+ 悬浮说明
       const ctx = sourceCtxOf(month, bill, solarArr)
@@ -2069,12 +2117,28 @@ const fmtRatio = (v: any): string => {
 }
 const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee', 'solar_amount']
 const KWH_KEYS = ['total_kwh', 'ind_kwh', 'res_kwh', 'dorm_kwh', 'water_ind_usage', 'water_dorm_usage', 'water_fire_usage', 'gas_usage', 'solar_gen', 'solar_grid']
+/**
+ * 第 51 轮：动态列的多级取值。
+ *
+ * 用户在设置面板复制字段时只改了 label、name 仍是「总电费_副本」这类历史名，
+ * row 里自然没有这个键。依次尝试：英文 key → 中文 label → row.data[key] →
+ * row.data[label]，保证内置列与新增派生列都能取到值。
+ */
 const cellText = (key: string, row: any): string => {
   if (key === 'ratio') return fmtRatio(row.ratio)
   if (key === 'ind_price') return fmtPrice(row.ind_price)
-  if (MONEY_KEYS.includes(key)) return fmtMoney(row[key])
-  if (KWH_KEYS.includes(key)) return fmtKwh(row[key])
-  const v = row[key]
+  const col = activeColDefs.value.find(c => c.key === key)
+  const v = rowValueOf(key, row, col?.label)
+  if (col?.dynamic) {
+    if (v === 0) return '0'
+    if (v === null || v === undefined || v === '') return ''
+    const l = String(col.label || '')
+    if (/费|金额|税额|结算/.test(l)) return fmtMoney(v)
+    if (/量|度数/.test(l)) return fmtKwh(v)
+    return String(v)
+  }
+  if (MONEY_KEYS.includes(key)) return fmtMoney(v)
+  if (KWH_KEYS.includes(key)) return fmtKwh(v)
   // 0 是有效值（如「参与分摊关闭」的分项、当月用量为 0），不能当空值吞掉
   if (v === 0) return '0'
   return v === null || v === undefined ? '' : String(v)
@@ -2110,6 +2174,11 @@ function onCategoriesChanged(ev?: Event) {
   const name = String(detail?.name || '').trim()
   if (Array.isArray(detail?.subs) && (!name || name === CATEGORY_NAME)) {
     categorySubs.value = detail!.subs as EnergySub[]
+    // 第 51 轮：字段定义保存后旧的「用户勾选」存档必须失效。
+    // loadStoredKeys 的 known/visible 机制会把上一次的勾选原样带回来，
+    // 表现为「关掉默认表头并保存，表头纹丝不动」（六同步断点）。
+    // 清掉存档后 syncColumnKeys 走无存档分支，直接取新的 default 集合。
+    try { localStorage.removeItem(colStorageKey.value) } catch { /* ignore */ }
     syncColumnKeys()
     if (dataReady.value) buildRows()
     return

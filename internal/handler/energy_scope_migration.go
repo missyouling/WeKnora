@@ -681,6 +681,10 @@ var energyBillingFields = []energyViewField{
 	{"unit", "使用单位", true, 0, "text", "cols", ""},
 	{"total_kwh", "总电量", false, 0, "number", "cols", ""},
 	{"total_fee", "总电费", false, 0, "amount", "cols", ""},
+	// 第 51 轮：本期水量/本期水费，紧跟本期电费之后、光伏发电量之前。
+	// 数据源是水费核算的「自来水总表 + 消防总表」，列宽 0 = 自适应。
+	{"current_water_usage", "本期水量", true, 0, "number", "cols", ""},
+	{"current_water_fee", "本期水费", true, 0, "amount", "cols", ""},
 	{"solar_gen", "光伏发电量", true, 0, "number", "cols", ""},
 	{"solar_grid", "上网电量", true, 0, "number", "cols", ""},
 	{"solar_amount", "结算金额", true, 0, "amount", "cols", ""},
