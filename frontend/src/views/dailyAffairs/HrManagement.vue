@@ -268,14 +268,9 @@
       :initial-category="initialCategory" :title="settingsTitle"
       fields-tab-label="字段设置"
       :hide-group-tabs="activeTab === 'hr-roster'"
-      :ref-source-scope="isRefModule ? 'hr-roster' : ''" :ref-categories="['花名册']"
-      extra-tab-label="组织机构" extra-tab-value="org"
+      :ref-sources="refSources"
       storage-key="weknora-hr-settings-drawer-width" :show-rules="false"
-      @saved="onSettingsSaved">
-      <template #extra-tab>
-        <HrOrgPanel :visible="settingsVisible" @saved="onOrgSaved" />
-      </template>
-    </StandardSettingDrawer>
+      @saved="onSettingsSaved" />
 
     <!-- 社保账期：个人 / 单位扣款明细（点行打开） -->
     <t-drawer v-if="periodDetailVisible" :visible="true"
@@ -331,7 +326,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
@@ -365,7 +360,6 @@ import {
   type HrModule,
 } from './hrFieldSchema'
 import RosterImportDialog from './RosterImportDialog.vue'
-import HrOrgPanel from './HrOrgPanel.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
 import type { FilterFieldSpec } from './businessFilter'
@@ -391,8 +385,21 @@ const fieldConfig = ref<Record<string, any[]>>({})
  */
 const rosterStatusView = ref<RosterStatusFilter>('在职')
 
-/** 是否是需要「跨模块搜索引用花名册字段」的模块。 */
-const isRefModule = computed(() => activeTab.value === 'hr-resign' || activeTab.value === 'hr-contract')
+/**
+ * 人事 5 个列表的分类名 + scope（第 53 轮：互相引用时的候选目录）。
+ * 与后端 hrCategorySeeds 的分类名严格一致，否则 SourceFieldPicker 取不到 subs。
+ */
+const HR_REF_CATALOG: readonly { scope: string; category: string }[] = [
+  { scope: 'hr-roster', category: '花名册' },
+  { scope: 'hr-resign', category: '离职管理' },
+  { scope: 'hr-contract', category: '劳动合同' },
+  { scope: 'hr-social', category: '社保管理' },
+  { scope: 'hr-fund', category: '公积金管理' },
+]
+/** 当前 Tab 的候选引用源：除自己之外的人事分类（避免把本表明字段再引一遍）。 */
+const refSources = computed(() =>
+  HR_REF_CATALOG.filter((s) => s.scope !== hrScopeOf(activeTab.value)),
+)
 
 /** 当前导入弹窗对应的模板模块（社保走多文件自适应，不走本弹窗）。 */
 const importModule = computed<HrModule>(() =>
@@ -522,10 +529,31 @@ const currentColumns = computed<HrColumn[]>(() => {
     return hrColumnsFromSubs(subsOfTab('hr-contract'), hrContractColumns())
   }
   // 社保按「记录类型」切换原始 / 汇总列集合（第 47 轮）。
-  if (activeTab.value === 'hr-social') return hrSocialColumns(siRecordView.value)
+  // 第 53 轮：原始记录 / 公积金台账是「人级行」，在固定列后追加用户在字段
+  // 设置里新增或跨模块引用的字段；汇总/账单是账期聚合，追加人员字段只会空白。
+  if (activeTab.value === 'hr-social') {
+    const cols = hrSocialColumns(siRecordView.value)
+    return siRecordView.value === 'raw' ? withExtraSubs(cols, subsOfTab('hr-social')) : cols
+  }
   if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') return hrBillColumnDefs()
+  if (activeTab.value === 'hr-fund') return withExtraSubs(hrColumnDefs('hr-fund'), subsOfTab('hr-fund'))
   return hrColumnDefs(activeTab.value)
 })
+
+/**
+ * 固定列 + subs 里「固定列之外」的新增/引用字段。
+ *
+ * 社保与公积金的列表骨架是代码固定的（账期/险种/缴存基数…），不能整体改成
+ * subs 派生（会把业务必需列冲掉）；但用户在字段设置里主动添加的字段必须
+ * 能出列（六同步）。这里只追加差集，顺序排在固定列之后。
+ */
+function withExtraSubs(fixed: HrColumn[], subs: readonly any[]): HrColumn[] {
+  const fixedNames = new Set(fixed.map((c) => c.colKey))
+  const extra = hrColumnsFromSubs(subs, []).filter(
+    (c) => c.colKey !== 'row-select' && !fixedNames.has(c.colKey),
+  )
+  return extra.length ? [...fixed, ...extra] : fixed
+}
 const businessColumns = computed(() => currentColumns.value.filter((c) => c.colKey !== 'row-select'))
 /**
  * `[☰ 字段]` 可选全集：三个 HR 模块只能勾「启用字段」（后端 `enabled !== false`）。
@@ -540,7 +568,8 @@ const configKeys = computed(() => {
   }
 })
 const columnDefsForFilter = computed(() => {
-  const isHrCfg = ['hr-roster', 'hr-resign', 'hr-contract'].includes(activeTab.value)
+  // 第 53 轮：5 个 HR 列表都能在「字段」筛选器里勾选新增/引用字段
+  const isHrCfg = ['hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund'].includes(activeTab.value)
   const enabled = isHrCfg && configKeys.value.enabled.length
     ? new Set(configKeys.value.enabled) : null
   return businessColumns.value
@@ -620,18 +649,26 @@ const tableColumns = computed(() => {
       cols.push({ colKey: 'row-select', type: 'multiple', width: 44 })
       return
     }
-    const values = rows.value.slice(0, 30).map((r) => c.value?.(r))
-    const w = Math.max(colWidthOf(c.width, c.title, values, c.dataType), Number((c as any).minWidth) || 0)
-    const base: any = {
-      colKey: c.colKey,
-      title: c.title,
-      ellipsis: ellipsisOf(c),
-      // 状态 / 月份列走具名插槽；其余用 cell 返回字符串（TDesign 1.19 不注入 h）
-      cell: c.slot ? undefined : (_h: any, params: any) => c.value?.(params?.row) ?? '',
-      dataType: c.dataType,
-    }
-    if (i === vis.length - 1) base.minWidth = w
-    else base.width = w
+      const values = rows.value.slice(0, 30).map((r) => c.value?.(r))
+      const cfgWidth = Number(c.width) || 0
+      const w = Math.max(colWidthOf(cfgWidth, c.title, values, c.dataType), Number(c.minWidth) || 0)
+      const base: any = {
+        colKey: c.colKey,
+        title: c.title,
+        // 用户显式配了列宽（>0）时关闭省略号：18 位身份证/19 位卡号要在 250px 里
+        // 完整显示，不能再被 TEllipsis 截成 `5101111969122542...`。
+        ellipsis: cfgWidth > 0 ? false : ellipsisOf(c),
+        // 状态 / 月份列走具名插槽；其余用 cell 返回字符串（TDesign 1.19 不注入 h）
+        cell: c.slot ? undefined : (_h: any, params: any) => c.value?.(params?.row) ?? '',
+        dataType: c.dataType,
+      }
+      if (cfgWidth > 0) {
+        // 第 53 轮硬性要求：配置了列宽就 width 与 minWidth 同时钉死，
+        // 既不被自适应覆盖，也不被「最后一列拉伸」吃掉。
+        base.width = cfgWidth
+        base.minWidth = cfgWidth
+      } else if (i === vis.length - 1) base.minWidth = w
+      else base.width = w
     const cls = cellClassOf(c)
     if (cls) base.className = cls
     cols.push(base)
@@ -1023,6 +1060,13 @@ const detailRow = ref<any>(null)
 const detailDirty = ref(false)
 const saving = ref(false)
 const editForm = ref<any>({ data: {}, remarkParts: {}, items: [] })
+/**
+ * 最近一次由系统自动生成的工号。
+ *
+ * 用于区分「用户手改」与「系统建议值」：两者相等才允许随部门重算。
+ * 每次打开抽屉必须重置（否则上一个员工的建议值会残留在下一个新增会话里）。
+ */
+let lastAutoEmployeeId = ''
 const editBaseline = ref('')
 /** 部门下拉选项（全部部门 + 组织机构部门名）。 */
 const rosterDeptSelectOptions = computed(() => [
@@ -1181,12 +1225,27 @@ function openDetail(row: any) {
   if (activeTab.value === 'hr-social' && siRecordView.value === 'summary') { void openSiDetail(row); return }
   if (activeTab.value === 'hr-social') { void openPeriodDetail(row); return }
   detailRow.value = row
+  // 第 53 轮：按**抽屉字段全集**灌值，而不是可见列（businessColumns）。
+  // 用户把「部门」「职务」从表头隐藏后，旧实现草稿里没有这两个键，
+  // 打开已有员工时部门显示为空、工号也无法随部门重算。
   const data: Record<string, any> = {}
-  for (const c of businessColumns.value) {
-    const v = c.value?.(row) ?? ''
-    data[c.colKey] = v === '—' ? '' : v
+  const fields = drawerFields.value.length ? drawerFields.value : businessColumns.value
+  for (const f of fields) {
+    const name = String((f as any).name || '')
+    if (!name) continue
+    const c = businessColumns.value.find((x) => x.colKey === name)
+    const raw = c?.value?.(row)
+      ?? row?.[name]
+      ?? row?.custom_data?.[name]
+      ?? row?.data?.[name]
+      ?? ''
+    const v = raw === '—' ? '' : raw
+    data[name] = typeof v === 'string' ? v : String(v ?? '')
   }
   editForm.value = { data, remarkParts: {}, items: [] }
+  // 新会话：清掉上一轮的系统建议值，否则「用户手改过」判定会把新员工的
+  // 空工号当成手改值，选部门后不再自动生成。
+  lastAutoEmployeeId = ''
   // 打开抽屉时先跑一次派生（幂等），再取基线 —— 避免 watch 在基线之后触发
   // 把刚打开的抽屉误标为「已修改」。
   if (activeModule.value === 'roster') {
@@ -1305,60 +1364,80 @@ const settingsVisible = ref(false)
  */
 async function onSettingsSaved() {
   await loadFieldConfig(activeTab.value)
-  const isHrCfg = ['hr-roster', 'hr-resign', 'hr-contract'].includes(activeTab.value)
-  if (isHrCfg) {
+  const allKeys = businessColumns.value.map((c) => c.colKey)
+  const isRosterLike = ['hr-roster', 'hr-resign', 'hr-contract'].includes(activeTab.value)
+  if (isRosterLike) {
     // 后端已落库 → 立即以最新 defaultHeader 覆盖当前列表与缓存。
-    // 三个模块共用一条同步链：字段设置保存后，列表/筛选器/抽屉立即跟随。
-    const allKeys = businessColumns.value.map((c) => c.colKey)
     visibleColKeys.value = configKeys.value.defaults.filter((k) => allKeys.includes(k))
-    persistColumns()
-    await loadList(activeTab.value)
+  } else {
+    // 社保 / 公积金：固定列不能按 subs 的 is_default 重算（会冲掉业务必需列），
+    // 保存后直接把当前列全集（固定列 + 新增/引用字段）全部可见 ——
+    // 用户刚在设置里添加字段，就是要立刻在表头看到它。
+    visibleColKeys.value = allKeys
   }
+  persistColumns()
+  await loadList(activeTab.value)
 }
 
 function onPrimaryAction() {
   if (activeTab.value === 'hr-social') { void handleAddPeriod(); return }
+  // 第 53 轮：新增时**不预生成工号**。部门还没选，任何编码都是猜的；
+  // 工号由 #field-部门 的 change 事件在选定部门后生成（用户可再手改）。
   openDetail(null)
-  if (activeTab.value === 'hr-roster') void autoFillEmployeeId()
 }
 
 /**
  * 第 48 轮：新增员工时按「部门 + 职务」自动生成工号建议值。
  * 只填空白工号，用户手改过（非空）绝不覆盖；存量工号不受影响。
  */
+/**
+ * 按「部门 + 职务」生成工号建议值（第 53 轮重写）。
+ *
+ * 铁律：**部门为空时绝不生成** —— 工号里的 5 位部门码没有来源，
+ * 生成出来必然是错的（旧实现落到 `C020000001` 这种兜底码）。
+ * 生成后写 `lastAutoEmployeeId`，供「用户手改过就不覆盖」判定。
+ */
 async function autoFillEmployeeId() {
-  const dept = String(editForm.value?.data?.['部门'] || '').trim()
-  const title = String(editForm.value?.data?.['职务'] || editForm.value?.data?.['岗位'] || '').trim()
-  try {
-    const res: any = await hrApi.nextEmployeeId({ department: dept, title })
-    const d = res?.data || res || {}
-    const next = String(d.employee_id || '').trim()
-    if (!next) return
-    if (!String(editForm.value?.data?.['工号'] || '').trim()) {
-      editForm.value.data['工号'] = next
-      editForm.value.data['employee_id'] = next
-    }
-  } catch { /* 编码建议失败不阻断新增 */ }
-}
-
-/** 部门/职务变化后重算工号（仅当工号还是自动生成值时才覆盖）。 */
-let lastAutoEmployeeId = ''
-async function onDeptOrTitleChange() {
   if (activeTab.value !== 'hr-roster') return
-  const cur = String(editForm.value?.data?.['工号'] || '').trim()
-  // 用户手改过就不动
-  if (cur && cur !== lastAutoEmployeeId) return
   const dept = String(editForm.value?.data?.['部门'] || '').trim()
+  if (!dept) {
+    // 未选部门：工号保持空（新增场景）；已有员工的历史工号不动
+    if (!detailRow.value) {
+      editForm.value.data['工号'] = ''
+      editForm.value.data['employee_id'] = ''
+      lastAutoEmployeeId = ''
+    }
+    return
+  }
   const title = String(editForm.value?.data?.['职务'] || editForm.value?.data?.['岗位'] || '').trim()
   try {
     const res: any = await hrApi.nextEmployeeId({ department: dept, title })
     const d = res?.data || res || {}
     const next = String(d.employee_id || '').trim()
     if (!next) return
+    const cur = String(editForm.value?.data?.['工号'] || '').trim()
+    // 已有工号且不是上次系统建议值 → 用户手改过，不覆盖
+    if (cur && cur !== lastAutoEmployeeId) return
     editForm.value.data['工号'] = next
     editForm.value.data['employee_id'] = next
     lastAutoEmployeeId = next
-  } catch { /* ignore */ }
+  } catch { /* 编码建议失败不阻断新增 */ }
+}
+
+/** 部门 / 职务变化后重算工号（部门清空时把自动生成的工号一并清空）。 */
+async function onDeptOrTitleChange() {
+  if (activeTab.value !== 'hr-roster') return
+  const dept = String(editForm.value?.data?.['部门'] || '').trim()
+  if (!dept) {
+    const cur = String(editForm.value?.data?.['工号'] || '').trim()
+    if (!cur || cur === lastAutoEmployeeId) {
+      editForm.value.data['工号'] = ''
+      editForm.value.data['employee_id'] = ''
+      lastAutoEmployeeId = ''
+    }
+    return
+  }
+  await autoFillEmployeeId()
 }
 async function handleAddPeriod() {
   const d = new Date()
@@ -1448,10 +1527,13 @@ function handleResign() {
 }
 
 /**
- * 组织机构保存后：部门可能改名 → 存量员工已被后端级联更新，
- * 必须重拉部门下拉、列表与卡片，否则界面还停在旧部门名上。
+ * 公司设置（左下角用户菜单弹窗）保存后：部门可能改名 → 存量员工已被后端级联更新，
+ * 必须重拉部门/单位下拉、列表与卡片，否则界面还停在旧部门名上。
+ *
+ * 第 53 轮：组织机构从「设置抽屉」迁移到全局「公司设置」弹窗，
+ * 用 window 事件跨组件通知（弹窗可能在任何页面打开）。
  */
-async function onOrgSaved() {
+async function onOrgChanged() {
   await loadRosterDepts()
   // 部门被删/改名后当前筛选可能指向不存在的部门 → 复位到全部
   if (rosterDeptFilter.value && !rosterDeptOptions.value.includes(rosterDeptFilter.value)) {
@@ -1574,12 +1656,16 @@ async function handleGenerateBill() {
 // 生命周期
 // ---------------------------------------------------------------------------
 onMounted(async () => {
+  // 第 53 轮：公司设置弹窗（左下角用户菜单）保存后广播事件，
+  // 人事页据此重拉部门/单位下拉、列表与卡片。
+  window.addEventListener('hr-org-changed', onOrgChanged)
   void loadRosterDepts()
   initColumns()
   await switchTab('hr-roster')
   await reloadStats()
   filterWatchReady = true
 })
+onUnmounted(() => window.removeEventListener('hr-org-changed', onOrgChanged))
 </script>
 
 <style lang="less" scoped>

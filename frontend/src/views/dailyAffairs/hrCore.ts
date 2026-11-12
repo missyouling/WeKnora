@@ -109,6 +109,8 @@ export interface HrColumn {
   /** 勾选列专用：type='multiple'。 */
   type?: string
   width: number
+  /** 用户显式配置列宽时的最小宽度（= width，禁止被末列拉伸/自适应覆盖）。 */
+  minWidth?: number
   dataType: string
   default: boolean
   /** 走具名插槽渲染（状态 Tag / 月份单元格），页面据此不设 cell。 */
@@ -671,7 +673,7 @@ export function hrRosterGroupColumns(): HrColumn[] {
  * 模块字段 → 列定义。引用字段（source）按**来源字段名**取值，
  * 显示名仍用本模块字段名（如「联系电话」取花名册「手机号码」的值）。
  */
-function moduleColumnOf(d: HrFieldDef): HrColumn {
+function moduleColumnOf(d: HrFieldDef, configuredWidth = 0): HrColumn {
   const name = String(d.label || d.name)
   const keys = d.source ? hrValueKeys(d.source.field) : hrValueKeys(d.name)
   const isDate = d.type === 'date' || hrIsDateField(d.name)
@@ -679,10 +681,14 @@ function moduleColumnOf(d: HrFieldDef): HrColumn {
   const isStatusTag = d.name === '合同状态'
   const isCode = isRosterCodeField(d.name)
   const isMoney = !isCode && d.type === 'number'
+  const width = Number(configuredWidth) > 0 ? Math.round(Number(configuredWidth)) : 0
   return {
     colKey: name,
     title: name,
-    width: 0,
+    // 第 53 轮：字段设置里配置的列宽必须进入列定义，否则 HrManagement 的
+    // colWidthOf(c.width) 永远拿到 0，用户填 250 保存后列表纹丝不动。
+    width,
+    ...(width > 0 ? { minWidth: width } : {}),
     dataType: isDate ? 'date' : isMoney ? 'number' : 'text',
     default: true,
     slot: isProof || isStatusTag,
@@ -744,7 +750,8 @@ export function hrColumnsFromSubs(subs: readonly any[] | null | undefined, fallb
       type: s.data_type === 'date' ? 'date' : s.data_type === 'number' ? 'number' : 'text',
       ...(sourceField ? { source: { category: String(s?.source?.category || '花名册'), field: sourceField } } : {}),
     }
-    cols.push(moduleColumnOf(def))
+    // 第 53 轮：subs.width 必须透传给列定义（0 = 自适应，>0 = 用户固定列宽）。
+    cols.push(moduleColumnOf(def, Number(s.width) || 0))
   }
   return cols.length > 1 ? cols : fallback
 }

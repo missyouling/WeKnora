@@ -214,7 +214,9 @@ async function save() {
           departments: (u.departments || []).filter((d) => String(d.name || '').trim()),
         })),
     })
-    MessagePlugin.success('组织机构已保存')
+    // 第 53 轮：面板从「设置抽屉 → 组织机构」迁到左下角「公司设置」弹窗，
+    // 提示文案同步成用户可见的入口名，避免出现已经不存在的位置描述。
+    MessagePlugin.success('单位与部门已保存')
     emit('saved')
     await load()
   } catch (e: any) {

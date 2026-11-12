@@ -44,11 +44,13 @@ test('用电量（工业）核减用的是修正后的定比电量', () => {
   assert.match(line, /Math\.round\(.*100\) \/ 100/, '必须按分取整')
 })
 
-test('均价（工业）按 round4(电费 ÷ 工业电量)', () => {
-  const idx = src.indexOf('星达工业均价')
-  assert.ok(idx > 0)
-  // 窗口要覆盖到 indPrice 那一行（中间隔了 priceDenom / priceExact 两行）
-  const line = src.slice(idx, idx + 420)
-  assert.match(line, /priceDenom/, '必须有分母保护')
-  assert.match(line, /indPrice = Math\.round\(priceExact \* 10000\) \/ 10000/, '均价保留 4 位小数')
+test('均价（工业）按 round4(工业电费 ÷ 工业电量)', () => {
+  const idx = src.indexOf('工业均价 = round4(工业电费 ÷ 工业电量)')
+  assert.ok(idx > 0, '必须存在新的均价口径注释')
+  const line = src.slice(idx, idx + 600)
+  // 第 53 轮：分子分母必须同源于本行两列，不得再用宿舍电量/宿舍电费做扣减
+  assert.match(line, /indPrice = indKwh > 0 \? Math\.round\(\(indFee \/ indKwh\) \* 10000\) \/ 10000/,
+    '均价 = round4(工业电费 ÷ 工业电量)')
+  assert.ok(!/tenantDormKwh/.test(line), '分母不得再用持睿宿舍电量（会产生 450,846）')
+  assert.ok(!/tenantDormFee/.test(line), '分子不得再用持睿宿舍电费')
 })

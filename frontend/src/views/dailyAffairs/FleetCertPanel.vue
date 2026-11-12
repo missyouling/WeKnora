@@ -371,10 +371,11 @@
                 <div v-if="isRefCategory" class="field-config-add">
                   <SourceFieldPicker class="fc-add-input" :exclude="refFieldKeys"
                     :source-scope="props.refSourceScope || undefined" :categories="props.refCategories"
-                    :placeholder="props.refSourceScope ? '搜索并引用花名册字段（如 姓名、手机号码、司龄）' : undefined"
+                    :sources="props.refSources"
+                    :placeholder="(props.refSources.length || props.refSourceScope) ? '搜索并引用人事模块其它列表字段（如 合同状态、手机号码、司龄）' : undefined"
                     @select="addRefField" />
-                  <!-- 人事模块既支持引用花名册字段，也保留自由新增自定义字段 -->
-                  <template v-if="props.refSourceScope">
+                  <!-- 人事模块既支持引用其它列表字段，也保留自由新增自定义字段 -->
+                  <template v-if="props.refSources.length || props.refSourceScope">
                     <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                       @enter="addField" />
                     <t-button variant="outline" size="small" @click="addField">添加</t-button>
@@ -476,7 +477,21 @@ const props = withDefaults(defineProps<{
   refSourceScope?: string
   /** 跨模块引用候选分类名。 */
   refCategories?: string[]
-}>(), { scope: 'vehicle', kbId: '', initialCategory: '', hideGroupTabs: false, refSourceScope: '', refCategories: () => [] })
+  /**
+   * 第 53 轮：多 scope 候选源。人事 5 个列表分属 5 个 scope，
+   * 需要互相引用时必须传 `{ scope, category }[]`（单 scope 的
+   * `refSourceScope` 只能覆盖花名册一个分类）。
+   */
+  refSources?: Array<{ scope: string; category: string }>
+}>(), {
+  scope: 'vehicle',
+  kbId: '',
+  initialCategory: '',
+  hideGroupTabs: false,
+  refSourceScope: '',
+  refCategories: () => [],
+  refSources: () => [],
+})
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
 // 旧实现显式排除 vehicle/driver/maintain，导致归档类「字段配置」比发票少一列，
@@ -759,11 +774,14 @@ const editingItem = computed(() => groupItems.value.find((it: any) => it.id === 
  * 费用清单没有自己的存储：一行 = 一个账期，一列 = 某个来源分类的字段。
  * 因此它的字段定义不允许手输新建，只能从市电账单/光伏账单/电水气核算检索引用。
  */
+const HR_REF_SCOPES = new Set(['hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund'])
 const isRefCategory = computed(() => {
   if (props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单') return true
-  // 第 52 轮：离职管理 / 劳动合同复用同一套「跨表字段搜索引用」机制，
-  // 候选来自花名册（hr-roster）字段，添加后带「花名册」来源徽标。
-  return !!props.refSourceScope && (props.scope === 'hr-resign' || props.scope === 'hr-contract')
+  // 第 52 轮：离职管理 / 劳动合同复用同一套「跨表字段搜索引用」机制。
+  // 第 53 轮：扩到人事全部 5 个列表（花名册/离职/劳动合同/社保/公积金），
+  // 且候选取「人事模块其它分类」（多 scope），添加后带来源分类徽标。
+  const hasRef = props.refSources.length > 0 || !!props.refSourceScope
+  return hasRef && HR_REF_SCOPES.has(String(props.scope || ''))
 })
 /** 已添加的引用 key（`分类__字段`），传给选择器过滤候选。 */
 const refFieldKeys = computed(() =>

@@ -12,6 +12,7 @@
       <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
+          :ref-sources="refSources"
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
@@ -83,6 +84,8 @@ const props = withDefaults(defineProps<{
   refSourceScope?: string
   /** 跨模块引用候选分类名；为空时用来源 scope 下的全部分类。 */
   refCategories?: string[]
+  /** 第 53 轮：多 scope 候选源（人事 5 个列表互引）。 */
+  refSources?: Array<{ scope: string; category: string }>
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -97,6 +100,7 @@ const props = withDefaults(defineProps<{
   hideGroupTabs: false,
   refSourceScope: '',
   refCategories: () => [],
+  refSources: () => [],
 })
 
 const emit = defineEmits<{

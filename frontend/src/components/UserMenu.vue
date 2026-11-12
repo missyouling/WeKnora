@@ -96,6 +96,13 @@
           <t-icon name="user" class="menu-icon" />
           <span>{{ $t('general.personalSettings') }}</span>
         </div>
+        <!-- [upstream-touch] 二开（第 53 轮）：公司设置入口。
+             逻辑全部在 components/business/CompanySettingsModal.vue，
+             这里只加一个菜单项 + 打开状态，不改动原设置弹窗链路。 -->
+        <div class="menu-item" @click="openCompanySettings">
+          <t-icon name="building" class="menu-icon" />
+          <span>公司设置</span>
+        </div>
         <div v-if="!authStore.isLiteMode" class="menu-item" @click="handleQuickNav('tenant')">
           <t-icon name="user-circle" class="menu-icon" />
           <span>{{ $t('settings.workspaceSettings') }}</span>
@@ -211,6 +218,8 @@
 
     <!-- 创建工作区弹窗 -->
     <CreateTenantDialog v-model:visible="createTenantDialogVisible" @created="onTenantCreated" />
+    <!-- [upstream-touch] 二开（第 53 轮）：公司设置弹窗（多单位与部门配置） -->
+    <CompanySettingsModal v-model:visible="companySettingsVisible" />
   </div>
 </template>
 
@@ -223,6 +232,8 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { logout as logoutApi } from '@/api/auth'
 import { useI18n } from 'vue-i18n'
 import CreateTenantDialog from '@/components/CreateTenantDialog.vue'
+// [upstream-touch] 二开（第 53 轮）：公司设置弹窗，逻辑在独立组件内
+import CompanySettingsModal from '@/components/business/CompanySettingsModal.vue'
 import GlobalInvitationBell from '@/components/GlobalInvitationBell.vue'
 import {
   navigateAfterTenantSwitch,
@@ -340,6 +351,14 @@ const closeAll = () => {
 // 同款的 setSelectedTenant + navigateAfterTenantSwitch 链路，避免 token
 // 依然指向旧空间带来的 SSE / store 不一致。
 const createTenantDialogVisible = ref(false)
+
+// ---------- [upstream-touch] 二开：公司设置（第 53 轮） ----------
+// 只加一个可见性状态与打开函数；弹窗本体在独立组件里，不碰原设置链路。
+const companySettingsVisible = ref(false)
+const openCompanySettings = () => {
+  closeAll()
+  companySettingsVisible.value = true
+}
 
 const openCreateTenantDialog = () => {
   closeAll()

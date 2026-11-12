@@ -7,9 +7,11 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -70,7 +72,50 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrNormalizeAllDepartments(ctx); err != nil {
 		logger.Warnf(ctx, "normalize HR departments failed: %v", err)
 	}
+	// 第 53 轮：存量员工司龄批量回填（幂等，只在值变化时写库）。
+	// 列表响应层也会实时重算，这里落库是为了导出/详情等离线读取也有值。
+	if err := h.hrBackfillSeniority(ctx); err != nil {
+		logger.Warnf(ctx, "backfill HR seniority failed: %v", err)
+	}
 	return h
+}
+
+// hrBackfillSeniority 批量回填存量员工 custom_data["司龄"]（幂等）。
+//
+// 规则与 hrSeniorityOf 完全一致：从入职日期起算，离职者截至离职日期，
+// 格式 X年Y个月；没有入职日期的行跳过（不造假值）。
+func (h *HRHandler) hrBackfillSeniority(ctx context.Context) error {
+	var tids []int64
+	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
+		Distinct().Pluck("tenant_id", &tids).Error; err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, tid := range tids {
+		var rows []HREmployee
+		if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).Find(&rows).Error; err != nil {
+			continue
+		}
+		for i := range rows {
+			want := hrSeniorityOf(&rows[i], now)
+			if want == "" {
+				continue
+			}
+			if rows[i].CustomData == nil {
+				rows[i].CustomData = map[string]any{}
+			}
+			if strings.TrimSpace(fmt.Sprint(rows[i].CustomData["司龄"])) == want {
+				continue
+			}
+			rows[i].CustomData["司龄"] = want
+			// custom_data 是 serializer:json 的 JSONB，必须走结构体 Save
+			// （Updates(map) 在 PG 会报 42804）。
+			if err := h.db.WithContext(ctx).Save(&rows[i]).Error; err != nil {
+				continue
+			}
+		}
+	}
+	return nil
 }
 
 // hrNormalizeAllDepartments 对每个租户跑一次部门名归并（启动钩子用）。

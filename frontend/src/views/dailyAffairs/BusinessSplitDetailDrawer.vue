@@ -367,10 +367,25 @@ function close() {
 }
 .detail-title-main { font-weight: 600; }
 .bsd-block-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--td-text-color-primary);
   margin-bottom: var(--td-comp-margin-s);
+
+  /* 第 53 轮：分组标题前的绿色竖条（4×14、圆角 2px）。
+     与能耗打印预览/原项目小节标题同一视觉语言，颜色走设计令牌，
+     不新增硬编码主题色（fallback 与 .bsd-page-badge 保持一致）。 */
+  &::before {
+    content: '';
+    flex: none;
+    width: 4px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--td-success-color, #00a870);
+  }
 }
 .bsd-fields {
   display: grid;

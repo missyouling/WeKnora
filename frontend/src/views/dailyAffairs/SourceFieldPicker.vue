@@ -44,18 +44,30 @@ import {
 } from './energyViewColumns'
 import { SOURCE_CATEGORIES, type FieldSource } from './tenantBillingSources'
 
+/** 一个候选来源：分类名 + 它所属的 scope（HR 的 5 个分类分属 5 个 scope）。 */
+export interface RefSource {
+  scope: string
+  category: string
+}
+
 const props = withDefaults(defineProps<{
   /** 已添加的字段 key（`分类__分组__字段`），用于过滤候选项 */
   exclude?: string[]
   /** 只在这些分类里检索（不传 = 全部来源分类） */
   onlyCategories?: string[]
   /**
-   * 第 52 轮：候选字段所在 scope。不传 = 沿用能耗的 energy；
-   * 人事模块离职管理 / 劳动合同传 'hr-roster' 即可检索花名册字段。
+   * 第 52 轮：候选字段所在 scope。不传 = 沿用能耗的 energy。
+   * 第 53 轮起人事模块改用 `sources`（多 scope），本字段仅保留兼容。
    */
   sourceScope?: string
   /** 候选分类名（配合 sourceScope）；不传时取该 scope 下全部分类。 */
   categories?: string[]
+  /**
+   * 第 53 轮：多 scope 候选源。HR 5 个列表分布在 5 个 scope
+   * （hr-roster / hr-resign / hr-contract / hr-social / hr-fund），
+   * 必须逐 scope 取 subs，不能共用一个 scope。
+   */
+  sources?: RefSource[]
   /** 输入框占位文案。 */
   placeholder?: string
 }>(), {
@@ -63,6 +75,7 @@ const props = withDefaults(defineProps<{
   onlyCategories: () => [],
   sourceScope: '',
   categories: () => [],
+  sources: () => [],
   placeholder: '搜索并添加其它分类的字段（支持「分组 字段」组合，如「市场化 计费电量」）',
 })
 const emit = defineEmits<{
@@ -89,9 +102,14 @@ const keyword = ref('')
 const open = ref(false)
 const activeIndex = ref(0)
 const rootRef = ref<HTMLElement | null>(null)
-const byCategory = ref<Record<string, EnergySub[]>>({})
-/** 当前实际参与检索的分类名（人事场景由 props.categories 指定）。 */
-const categoryNames = ref<string[]>([])
+/** 复合键 `scope\u0000分类名` → subs（HR 多 scope 下分类名可能重复）。 */
+const bySource = ref<Record<string, EnergySub[]>>({})
+/** 当前实际参与检索的候选源（scope + 分类名）。 */
+const sourceList = ref<RefSource[]>([])
+
+function sourceKey(scope: string, category: string): string {
+  return `${scope}\u0000${category}`
+}
 
 /** 分组键 → 中文名（同一分组在不同 subs 条目上可能只有一处带 group_label）。 */
 function labelOfGroup(subs: EnergySub[]): Map<string, string> {
@@ -109,9 +127,10 @@ const allOptions = computed<Option[]>(() => {
   const out: Option[] = []
   const excluded = new Set((props.exclude || []).map(String))
   const allow = props.onlyCategories && props.onlyCategories.length ? new Set(props.onlyCategories) : null
-  for (const cat of categoryNames.value) {
+  for (const src of sourceList.value) {
+    const cat = src.category
     if (allow && !allow.has(cat)) continue
-    const subs = byCategory.value[cat] || []
+    const subs = bySource.value[sourceKey(src.scope, cat)] || []
     const groupLabels = labelOfGroup(subs)
     for (const sub of subs) {
       if (sub.enabled === false) continue
@@ -188,30 +207,37 @@ onMounted(async () => {
   loading.value = true
   try {
     const scope = String(props.sourceScope || 'energy')
-    let cats: string[] = []
-    if (props.onlyCategories.length) {
-      cats = props.onlyCategories.map(String)
+    let sources: RefSource[] = []
+    if (props.sources.length) {
+      // 第 53 轮：多 scope 候选（人事 5 个列表互引）
+      sources = props.sources
+        .map((s) => ({ scope: String(s.scope || ''), category: String(s.category || '') }))
+        .filter((s) => s.scope && s.category)
+    } else if (props.onlyCategories.length) {
+      sources = props.onlyCategories.map((c) => ({ scope, category: String(c) }))
     } else if (props.categories.length) {
-      cats = props.categories.map(String)
+      sources = props.categories.map((c) => ({ scope, category: String(c) }))
     } else if (props.sourceScope) {
-      // 人事模块：scope 下所有分类都是候选（当前为单分类「花名册」）
+      let cats: string[] = []
       try { cats = await listCategoryNamesInScope(scope) } catch { cats = [] }
+      sources = cats.map((c) => ({ scope, category: c }))
     } else {
-      cats = [...SOURCE_CATEGORIES]
+      sources = SOURCE_CATEGORIES.map((c) => ({ scope: 'energy', category: c }))
     }
-    categoryNames.value = cats
+    sourceList.value = sources
     const entries = await Promise.all(
-      cats.map(async (cat) => {
+      sources.map(async (s) => {
+        const key = sourceKey(s.scope, s.category)
         try {
-          return [cat, await loadCategorySubsInScope(scope, cat)] as const
+          return [key, await loadCategorySubsInScope(s.scope, s.category)] as const
         } catch {
-          return [cat, [] as EnergySub[]] as const
+          return [key, [] as EnergySub[]] as const
         }
       }),
     )
     const map: Record<string, EnergySub[]> = {}
-    for (const [cat, subs] of entries) map[cat] = subs || []
-    byCategory.value = map
+    for (const [key, subs] of entries) map[key] = subs || []
+    bySource.value = map
   } finally {
     loading.value = false
   }

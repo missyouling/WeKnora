@@ -76,13 +76,17 @@ function builtinTips(f: RowFacts): Record<string, string> {
       '计算方式：市电总电量 − 定比电量 − 租户工业分表电量',
       `= ${n2(f.totalKwh)} − ${n2(f.resKwh)} − ${n2(f.recKwh)} = ${n2(f.indKwh)}`,
     ].join('\n')
-    const priceDenom = f.totalKwh - f.tenantDormKwh - f.recKwh
+    // 第 53 轮：均价口径与「工业电量」对齐 —— 分子分母都取本行两列，
+    // 不再用「总电费 − 宿舍电费 − 租户电费」÷「总电量 − 宿舍电量 − 租户电量」，
+    // 那套口径的分母比工业电量多算 8,668 度（定比 9,354 − 宿舍 686）。
     t.ind_price = [
-      '计算方式：工商业总电费 ÷ 工商业总电量',
-      `= (${n2(f.totalFee)} − ${n2(f.tenantDormFee)} − ${n2(f.recFee)}) ÷ ${n2(priceDenom)}`,
+      '计算方式：工业电费 ÷ 工业电量',
+      `= ${n2(f.indFee)} ÷ ${n2(f.indKwh)}`,
       `= ${Number(f.indPrice) || 0} 元/kWh`,
     ].join('\n')
-    t.ind_fee = `计算方式：用电量（工业）× 均价（工业）\n= ${n2(f.indKwh)} × ${Number(f.indPrice) || 0} = ${n2(f.indFee)} 元`
+    // 工业电费由未取整单价反推，与均价（round4 后）会有 ≤0.01 的尾差，
+    // 这里只展示电费本身的核算口径，不再和均价混写。
+    t.ind_fee = `计算方式：工业电量 × 未取整工业单价（内部核算口径）\n= ${n2(f.indKwh)} × 未取整单价 = ${n2(f.indFee)} 元`
     t.dorm_kwh = `数据来源：电费核算「用途=宿舍」电表当月用电量汇总 = ${n2(f.dormKwh)} 千瓦时`
     t.dorm_fee = `计算方式：各宿舍表「用电量 × 单价」求和 = ${n2(f.dormFee)} 元`
     t.water_ind_usage = [

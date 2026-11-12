@@ -1048,7 +1048,43 @@ var tenantDerivedFieldNames = map[string]bool{
 	// 收口列（电费合计 / 水费合计）
 	"elec_total_fee": true, "water_total_fee": true,
 	// 大类汇总列（分摊子项折叠后的汇总，语义上属于租户分组）
-	"grp_market": true, "grp_system": true, "grp_gov": true,
+	// 第 53 轮：补 grp_trans（零售输配电费）—— 漏了它会让启动清理每次重启
+	// 都删掉这张卡片，表现为「零售输配电费」列隔三差五消失。
+	"grp_market": true, "grp_system": true, "grp_gov": true, "grp_trans": true,
+}
+
+// tenantDerivedFieldDefs 租户分组派生字段的规范定义（与前端
+// billingFieldGroups.TENANT_DERIVED_FIELDS 一一对应，label/is_default 必须同源）。
+//
+// 用途：RepairTenantGroupFields 按它补全被误删的字段；顺序即字段定义里的行顺序。
+var tenantDerivedFieldDefs = []struct {
+	Name      string
+	Label     string
+	DataType  string
+	IsDefault bool
+}{
+	{"month", "账单周期", "text", true},
+	{"unit", "使用单位", "text", true},
+	{"ratio", "分摊比例", "number", true},
+	{"ind_kwh", "工业电量", "number", true},
+	{"ind_fee", "工业电费", "number", true},
+	{"ind_price", "工业均价", "number", true},
+	{"dorm_kwh", "宿舍电量", "number", true},
+	{"dorm_fee", "宿舍电费", "number", true},
+	{"water_ind_usage", "工业用水量", "number", true},
+	{"water_ind_fee", "工业水费", "number", true},
+	{"water_dorm_usage", "宿舍水量", "number", true},
+	{"water_dorm_fee", "宿舍水费", "number", true},
+	{"gas_usage", "用气量", "number", false},
+	{"gas_fee", "气费", "number", false},
+	{"remark", "备注", "text", false},
+	{"elec_total_fee", "电费合计", "number", true},
+	{"water_total_fee", "水费合计", "number", true},
+	// 大类汇总列（成员是分摊子项，折叠后仍以 subs 身份存在）
+	{"grp_market", "市场化购电费", "number", true},
+	{"grp_system", "系统运行费用", "number", true},
+	{"grp_gov", "政府性基金及附加", "number", true},
+	{"grp_trans", "零售输配电费", "number", true},
 }
 
 // tenantFieldAllowed 判断某个字段名是否属于「租户分组」的合法成员。
@@ -1065,7 +1101,147 @@ func tenantFieldAllowed(name string) bool {
 	if strings.HasPrefix(n, "item_") {
 		return true
 	}
+	// 第 53 轮：跨分类引用字段（src_ 前缀）是用户主动检索添加的合法列，
+	// 清理逻辑不能把它当污染删掉（否则「加了字段、重启就没了」）。
+	if strings.HasPrefix(n, "src_") {
+		return true
+	}
 	return tenantDerivedFieldNames[n]
+}
+
+// RepairTenantGroupFields 补全租户分组里缺失的派生字段（幂等，只补不删）。
+//
+// 背景（第 53 轮）：保存 fleet_categories 时 sanitizeFleetSubs 曾按 name 全局去重，
+// 把租户分组里与「默认分组」同名的 17 个派生字段全部删掉；于是「费用清单」
+// 切到持睿汽车后 activeColDefs 几乎全空，只剩电费合计/水费合计两列。
+// 这里按 tenantDerivedFieldDefs 的规范定义补回缺失项（保留已有字段的名称、
+// 宽度、顺序与启用状态），保证任何存量租户重启后都能恢复完整表头。
+func (h *UtilityHandler) RepairTenantGroupFields(ctx context.Context) (int, error) {
+	if h.db == nil {
+		return 0, nil
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = 0 AND scope = ? AND name = ? AND deleted_at IS NULL", EnergyScope, "费用清单").
+		Find(&cats).Error; err != nil {
+		return 0, nil
+	}
+	repaired := 0
+	for i := range cats {
+		subs := cats[i].Subs
+		// 找出该分类里出现的所有 tenant: 分组（通常只有一家租户，但允许多家）
+		groups := make([]string, 0, 2)
+		seenGroup := map[string]bool{}
+		for _, s := range subs {
+			g := strings.TrimSpace(s.Group)
+			if strings.HasPrefix(g, "tenant:") && !seenGroup[g] {
+				seenGroup[g] = true
+				groups = append(groups, g)
+			}
+		}
+		if len(groups) == 0 {
+			continue
+		}
+		changed := false
+		for _, g := range groups {
+			existing := map[string]bool{}
+			for _, s := range subs {
+				if strings.TrimSpace(s.Group) == g {
+					existing[strings.TrimSpace(s.Name)] = true
+				}
+			}
+			// 缺失字段按规范顺序插到该分组末尾（收口列自然排在最后）
+			for _, d := range tenantDerivedFieldDefs {
+				if existing[d.Name] {
+					continue
+				}
+				subs = append(subs, types.FleetCategorySub{
+					Name:       d.Name,
+					Label:      d.Label,
+					Enabled:    true,
+					IsDefault:  d.IsDefault,
+					DataType:   d.DataType,
+					Width:      0,
+					Group:      g,
+					GroupLabel: tenantGroupLabelOf(subs, g),
+				})
+				existing[d.Name] = true
+				changed = true
+			}
+		}
+		// 锚点前置：账单周期 / 使用单位 / 分摊比例必须是租户视角表头前三列。
+		// 存量被误删后补回的字段追加在末尾，不重排会让「账单周期」落到大类之后。
+		for _, g := range groups {
+			next := hrMoveTenantAnchorsFirst(subs, g)
+			if len(next) != len(subs) {
+				continue
+			}
+			for j := range next {
+				if next[j].Name != subs[j].Name || next[j].Group != subs[j].Group {
+					changed = true
+					break
+				}
+			}
+			subs = next
+		}
+		if !changed {
+			continue
+		}
+		cats[i].Subs = subs
+		cats[i].UpdatedAt = timeNowUTC()
+		if err := h.db.WithContext(ctx).Save(&cats[i]).Error; err != nil {
+			return repaired, err
+		}
+		repaired++
+		logger.Infof(ctx, "费用清单租户分组补全缺失派生字段：%d 组", len(groups))
+	}
+	return repaired, nil
+}
+
+// hrMoveTenantAnchorsFirst 把某租户分组的 month / unit / ratio 三个锚点
+// 移到该分组最前（其余字段相对顺序不变）。
+func hrMoveTenantAnchorsFirst(subs []types.FleetCategorySub, group string) []types.FleetCategorySub {
+	anchor := map[string]bool{"month": true, "unit": true, "ratio": true}
+	anchors := make([]types.FleetCategorySub, 0, 3)
+	rest := make([]types.FleetCategorySub, 0, len(subs))
+	for _, s := range subs {
+		if strings.TrimSpace(s.Group) == group && anchor[strings.TrimSpace(s.Name)] {
+			anchors = append(anchors, s)
+			continue
+		}
+		rest = append(rest, s)
+	}
+	if len(anchors) == 0 {
+		return subs
+	}
+	// 该分组第一项在 rest 中的下标（锚点已剔除，所以不能拿锚点自己的位置）
+	groupStart := -1
+	for idx, s := range rest {
+		if strings.TrimSpace(s.Group) == group {
+			groupStart = idx
+			break
+		}
+	}
+	if groupStart < 0 {
+		groupStart = len(rest)
+	}
+	out := make([]types.FleetCategorySub, 0, len(subs))
+	out = append(out, rest[:groupStart]...)
+	out = append(out, anchors...)
+	out = append(out, rest[groupStart:]...)
+	return out
+}
+
+// tenantGroupLabelOf 取分组的展示名（同组任一条目的 GroupLabel 非空即用）。
+func tenantGroupLabelOf(subs []types.FleetCategorySub, group string) string {
+	for _, s := range subs {
+		if strings.TrimSpace(s.Group) == group {
+			if l := strings.TrimSpace(s.GroupLabel); l != "" {
+				return l
+			}
+		}
+	}
+	return "持睿汽车"
 }
 
 // SanitizeTenantGroupFields 剔除租户分组里的跨分组污染字段（幂等）。

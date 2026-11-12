@@ -569,6 +569,12 @@ func hrAttachEmployeeDerived(ctx context.Context, db *gorm.DB, tid int64, items 
 		}
 		// 合同状态：写进 custom_data 供前端 pickRaw 取值
 		e.CustomData["合同状态"] = hrEmployeeContractStatus(*e)
+		// 第 53 轮：司龄按入职日期（离职者截至离职日期）实时重算并写响应层。
+		// 存量员工的 custom_data 大多是空的（只有入库/导入时才算过一次），
+		// 于是列表除第一行外整列空白 —— 这里保证「有入职日期就一定有司龄」。
+		if seniority := hrSeniorityOf(e, now); seniority != "" {
+			e.CustomData["司龄"] = seniority
+		}
 		key := normalizeIDNumber(e.IDNumber)
 		if key == "" {
 			continue

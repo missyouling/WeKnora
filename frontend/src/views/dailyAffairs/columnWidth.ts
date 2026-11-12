@@ -5,20 +5,35 @@ export const MIN_COL_WIDTH = 60
 // 上限 600：与设置面板的列宽输入框（60~600）保持一致。
 // 此前是 400，用户在界面上填 500 会被静默截成 400 —— 「界面能填、保存无效」。
 export const MAX_COL_WIDTH = 600
-export const AUTO_COL_CAP = 150 // 内容自适应封顶：防长文本列（发票号码/购买方等）撑爆表格
+export const AUTO_COL_CAP = 150 // 内容自适应封顶：防长文本列（购买方等中文长文本）撑爆表格
+/**
+ * 长号码列（18 位身份证 / 19 位工资卡号 / 20 位发票号）的自适应上限。
+ *
+ * 第 53 轮：AUTO_COL_CAP=150 会把 18 位身份证（18×8+24=168px）也截到 150，
+ * 用户看到的是 `5101111969122542...` ——「字段设置里填 250 也没用」的另一半原因。
+ * 命中连续 12 位以上 ASCII 号码串时放宽到 240，保证完整显示且不出现省略号。
+ */
+export const AUTO_CODE_COL_CAP = 240
+// 必须**整段值就是一个纯 ASCII 号码串**：身份证 / 银行卡 / 发票号。
+// 不能写 /[A-Za-z0-9]{12,}/ —— 长文本里夹一个流水号也会被放宽到 240，
+// 备注列会莫名变宽（textareaField 回归用例）。
+const LONG_CODE_RE = /^[A-Za-z0-9]{12,}$/
 
-// 内容自适应估算：max(表头宽度, 当前页数据最长内容)，中文 15px/字、ASCII 8px/字，+24 padding，封顶 150
+// 内容自适应估算：max(表头宽度, 当前页数据最长内容)，中文 15px/字、ASCII 8px/字，+24 padding。
+// 普通文本封顶 150；含长号码串时封顶 240（见 AUTO_CODE_COL_CAP）。
 export function estimateColWidth(label: string, values: Array<string | number | null | undefined>): number {
   let maxW = (String(label || '').length + 2) * 15
+  let hasLongCode = false
   for (const v of values) {
     if (v == null || v === '') continue
     const s = String(v)
+    if (!hasLongCode && LONG_CODE_RE.test(s)) hasLongCode = true
     let len = 0
     for (const ch of s) len += ch.charCodeAt(0) > 255 ? 15 : 8
     const w = len + 24
     if (w > maxW) maxW = w
   }
-  return Math.min(Math.ceil(maxW), AUTO_COL_CAP)
+  return Math.min(Math.ceil(maxW), hasLongCode ? AUTO_CODE_COL_CAP : AUTO_COL_CAP)
 }
 
 // 多行文本列宽度：长内容需要折行空间。内容自适应估算基于「最长单行文本」，

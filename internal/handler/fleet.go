@@ -1199,15 +1199,22 @@ var fleetSubDataTypes = map[string]bool{
 // 返回修正后的列表与被丢弃的条数（供调用方记一条 warn）。
 func sanitizeFleetSubs(subs []types.FleetCategorySub) ([]types.FleetCategorySub, int) {
 	out := make([]types.FleetCategorySub, 0, len(subs))
+	// 第 53 轮：去重键必须带分组。费用清单的「默认分组」与「持睿汽车分组」
+	// 本来就会各存一份 month/unit/ind_kwh…（两个视角各自的列定义），
+	// 只按 name 去重会把租户分组那 17 个派生字段全部删掉 ——
+	// 切到持睿汽车时表头只剩两条收口列（真机 P0）。
+	// 同组内重名仍然拦截，跨组同名放行。
 	seen := make(map[string]bool, len(subs))
 	dropped := 0
 	for _, sub := range subs {
 		name := strings.TrimSpace(sub.Name)
-		if name == "" || seen[name] {
+		group := strings.TrimSpace(sub.Group)
+		dedupKey := group + "\x00" + name
+		if name == "" || seen[dedupKey] {
 			dropped++
 			continue
 		}
-		seen[name] = true
+		seen[dedupKey] = true
 		sub.Name = name
 		sub.Label = strings.TrimSpace(sub.Label)
 		if len([]rune(sub.Label)) > 40 {
@@ -2385,6 +2392,11 @@ func (h *FleetHandler) seedBusinessCategories() {
 	// 费用清单：剔除租户分组里的跨分组污染字段（幂等，只删不补）
 	if _, err := uh.SanitizeTenantGroupFields(ctx); err != nil {
 		logger.Warnf(ctx, "sanitize tenant group fields failed: %v", err)
+	}
+	// 第 53 轮：补全被 sanitizeFleetSubs 全局去重误删的租户派生字段（幂等）。
+	// 必须在 sanitize 之后跑：先清污染，再按规范定义补回缺失列。
+	if _, err := uh.RepairTenantGroupFields(ctx); err != nil {
+		logger.Warnf(ctx, "repair tenant group fields failed: %v", err)
 	}
 	// 账单表：ratio 精度 18,6 → 18,10；补 elec_total_fee / water_total_fee 两列并回填（幂等）
 	bh := NewBillingHandler(h.db)

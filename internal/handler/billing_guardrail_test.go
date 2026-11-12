@@ -15,22 +15,29 @@ import (
 
 func TestSanitizeFleetSubs(t *testing.T) {
 	in := []types.FleetCategorySub{
-		{Name: "month", Label: " 账单周期 ", DataType: "text", Width: 120},
+		{Name: "month", Label: " 账单周期 ", DataType: "text", Width: 120, Group: "default"},
 		{Name: "   "}, // 空名 → 丢
-		{Name: "month", Label: "重复的账单周期"},                       // 重名 → 丢
+		{Name: "month", Label: "重复的账单周期", Group: "default"},     // 同组重名 → 丢
 		{Name: "total_kwh", Label: "总电量", DataType: "NUMBER"},   // 大写 → number
 		{Name: "items_field", Label: "明细", DataType: "array[]"}, // 非法 → text
 		{Name: "remark", Label: "备注", DataType: "", Width: -5},  // 空类型 → text；负宽 → 0
 		{Name: "wide", Label: "超宽", DataType: "text", Width: 9999},
 		{Name: "long_label", Label: "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二"},
+		// 第 53 轮：跨分组同名必须保留 —— 费用清单「默认分组」与「持睿汽车分组」
+		// 各存一份 month/unit/ind_kwh 是设计使然，按 name 全局去重会把租户分组
+		// 17 个派生字段删光（真机只剩 2 列）。
+		{Name: "month", Label: "租户账单周期", Group: "tenant:abc"},
 	}
 	out, dropped := sanitizeFleetSubs(in)
 
 	if dropped != 2 {
-		t.Fatalf("应丢弃 2 条（空名 + 重名），实际 %d", dropped)
+		t.Fatalf("应丢弃 2 条（空名 + 同组重名），实际 %d", dropped)
 	}
-	if len(out) != 6 {
-		t.Fatalf("保留 6 条，实际 %d", len(out))
+	if len(out) != 7 {
+		t.Fatalf("保留 7 条（含跨组同名 1 条），实际 %d", len(out))
+	}
+	if out[6].Name != "month" || out[6].Group != "tenant:abc" {
+		t.Fatalf("跨分组同名字段必须保留，实际 %q/%q", out[6].Name, out[6].Group)
 	}
 	// 顺序保持（拖拽顺序即表头顺序，不得重排）
 	if out[0].Name != "month" || out[1].Name != "total_kwh" {

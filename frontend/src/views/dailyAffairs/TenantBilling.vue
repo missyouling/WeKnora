@@ -549,6 +549,22 @@ const activeColDefs = computed<ColDef[]>(() => {
     if (!hit) continue
     out.push({ ...hit, default: true })
   }
+  // 第 53 轮兜底：分组 subs 存在、但一条列都派生不出来（存量 subs 被全局
+  // 去重误删 / 分摊子项接口失败导致 item_ 与 grp_ 全被跳过）时，旧实现只会
+  // 走上面的收口列补齐，结果表头只剩「电费合计 / 水费合计」两列（真机 P0）。
+  // 这里回落静态列 + 当前子项，保证任何情况下都有完整表头。
+  if (out.length <= TENANT_TOTAL_FIELDS.length) {
+    const items = tenantItemsUnique.value.map((it: any) => ({
+      key: tenantItemColKey(it),
+      label: String(it.item_name || it.itemName || it.source_key || '分摊项'),
+      default: true,
+      w: '1fr',
+      width: Number(it.width) || undefined,
+      tip: it.source_category ? `来源：${it.source_category}` : '市电账单费用分项',
+      item: it,
+    })) as ColDef[]
+    return [...base, ...items]
+  }
   return out
 })
 
@@ -1348,12 +1364,20 @@ const buildRows = () => {
       const gas = gasOf(OWNER_UNIT)
       // 星达工业用电量 = 总电量 - 星达居民电量 - 持睿工业电量(星达分表总电量)
       const indKwh = Math.round((totalKwh - res.kwh - (Number(rec?.total_kwh) || 0)) * 100) / 100
-      // 星达工业均价 = (总电费 - 持睿居民电费 - 持睿工业电费) ÷ (总电量 - 持睿居民电量 - 持睿工业电量)
+      // 未取整的工业单价：仅用于反推「工业电费」，保证该列与历史口径一致
+      // （分子扣持睿宿舍电费 + 持睿工业电费，分母扣持睿宿舍电量 + 持睿工业电量）。
+      // 注意：这条单价**不再直接作为均价列**，均价按下面 round4(电费÷电量) 计算。
       const priceDenom = totalKwh - tenantDorm.kwh - (Number(rec?.total_kwh) || 0)
       const priceExact = priceDenom > 0 ? (totalFee - tenantDorm.fee - (Number(rec?.industrial_fee) || 0)) / priceDenom : 0
-      const indPrice = Math.round(priceExact * 10000) / 10000
-      // 星达工业电费 = 用电量(工业) × 均价(工业)（用未取整均价计算,列表自洽）
+      // 星达工业电费 = 用电量(工业) × 未取整单价
       const indFee = Math.round(indKwh * priceExact * 100) / 100
+      // 第 53 轮：工业均价 = round4(工业电费 ÷ 工业电量)。
+      // 旧实现直接把 priceExact 当均价，其分母含 8,668 度本属于定比居民的电量
+      // （450,846 而不是 442,178），Tooltip 显示成
+      // `(481,647.91 − 686 − 136,521.1) ÷ 450,846`。现在分子分母严格取本行
+      // 「工业电费 / 工业电量」两列（337,818.56 ÷ 442,178 = 0.764），
+      // 与租户视角同口径，且工具提示与列表数值自洽。
+      const indPrice = indKwh > 0 ? Math.round((indFee / indKwh) * 10000) / 10000 : 0
       // 星达工业用水量 = 自来水总表 − 星达宿舍 − 持睿宿舍 − 持睿工业
       const wIndUsage = Math.round((totalMain.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
       // 星达工业水费 = 工业用水量 × 星达自来水总表单价
@@ -1720,6 +1744,14 @@ const loadRecords = async () => {
 
 const onUseUnitChange = () => {
   clearSelection()
+  // 第 53 轮：切使用单位必须同步 activeTenantId。
+  // 列分组（`tenant:<id>`）、分摊子项（loadTenantItems）与 tenantName 都按它取数；
+  // 不同步会「切到持睿汽车却仍读第一家租户的 items / 分组」，
+  // 表现为表头只剩电费合计 / 水费合计两列（真机 P0）。
+  const picked = tenants.value.find(
+    (t: any) => String(t.name || '').trim() === String(useUnit.value || '').trim(),
+  )
+  activeTenantId.value = picked?.id || ''
   syncColumnKeys()
   // 切到租户视角要按该租户的分摊子项重建列（异步，buildRows 在拿到后重跑）
   void loadTenantItems().then(() => buildRows())
