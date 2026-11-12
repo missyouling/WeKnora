@@ -112,7 +112,9 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
       { name: '账期状态', label: '账期状态', dataType: 'text' },
       { name: '参保状态', label: '参保状态', dataType: 'text' },
     ]
-    return [{ name: '缴存状态', label: '缴存状态', dataType: 'text' }]
+    // 第 54 轮：公积金状态列已内建为「账户状态」（正常 / 封存 / 提取销户），
+    // 再补一条「缴存状态」会让字段配置变成 19 项、列表出现两条重复状态列。
+    return []
   }
   return []
 }

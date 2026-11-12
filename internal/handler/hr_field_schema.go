@@ -14,11 +14,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// 三个可导入模块（同时是模板 module 查询参数）。
+// 四个可导入模块（同时是模板 module 查询参数）。
 const (
 	hrModuleRoster   = "roster"
 	hrModuleResign   = "resign"
 	hrModuleContract = "contract"
+	hrModuleFund     = "fund"
 )
 
 // hrFieldDef 字段契约：与前端 HrFieldDef 一一对应。
@@ -129,8 +130,10 @@ func hrRosterFieldDefs() []hrFieldDef {
 		hrF("银行名称", "enum", hrGroup("工资社保信息"), hrEnum("银行名称")),
 		hrF("工资卡开户行", "text", hrGroup("工资社保信息")),
 		hrF("工资卡开户城市", "text", hrGroup("工资社保信息")),
-		hrF("个人社保账号", "text", hrGroup("工资社保信息")),
-		hrF("个人公积金账号", "text", hrGroup("工资社保信息")),
+		// 第 54 轮：这两个字段是**只读跨模块引用**（值来自社保管理 / 公积金管理），
+		// 花名册自身不存储、不可导入、不可在抽屉里编辑。
+		hrF("个人社保账号", "readonly", hrGroup("工资社保信息"), hrHeader(), hrRef("社保管理", "个人社保账号")),
+		hrF("个人公积金账号", "readonly", hrGroup("工资社保信息"), hrHeader(), hrRef("公积金管理", "职工账号")),
 		hrF("是否本地首次缴纳社保", "enum", hrGroup("工资社保信息"), hrEnum("是否本地首次缴纳社保")),
 		hrF("是否本地首次缴纳公积金", "enum", hrGroup("工资社保信息"), hrEnum("是否本地首次缴纳公积金")),
 	}
@@ -179,12 +182,42 @@ func hrContractFieldDefs() []hrFieldDef {
 	}
 }
 
+// hrFundFieldDefs 公积金管理：严格对齐《单位职工明细-网厅.xls》的 18 个原生字段。
+//
+// 职工账号 是跨模块唯一键：导入后按证件号码回写花名册的「个人公积金账号」。
+// 18 个字段全部来自网厅导出，不含任何跨表引用（跨表字段只能由用户在字段设置里
+// 主动搜索添加，且永远不会进导入模板）。
+func hrFundFieldDefs() []hrFieldDef {
+	return []hrFieldDef{
+		hrF("职工账号", "text", hrHeader(), hrBuiltin()),
+		hrF("职工姓名", "text", hrHeader(), hrBuiltin()),
+		hrF("证件号码", "text", hrHeader()),
+		hrF("账户状态", "system", hrHeader(), hrBuiltin(), hrEnum("账户状态")),
+		hrF("缴存基数(元)", "number", hrHeader()),
+		hrF("月缴存额(元)", "number", hrHeader()),
+		hrF("单位月缴存额(元)", "number", hrHeader()),
+		hrF("个人月缴存额(元)", "number", hrHeader()),
+		hrF("账户余额(元)", "number", hrHeader()),
+		hrF("单位缴存比例(%)", "number", hrHeader(), hrDefault("5")),
+		hrF("职工缴存比例(%)", "number", hrHeader(), hrDefault("5")),
+		hrF("联名卡银行", "enum", hrHeader(), hrEnum("联名卡银行")),
+		hrF("联名卡号", "text", hrHeader()),
+		hrF("绑定手机", "text", hrHeader()),
+		hrF("是否公贷", "enum", hrEnum("是否公贷")),
+		hrF("是否冻结", "enum", hrEnum("是否冻结")),
+		hrF("是否可在线提取公贷", "enum", hrEnum("是否可在线提取公贷")),
+		hrF("是否可在线提取商贷", "enum", hrEnum("是否可在线提取商贷")),
+	}
+}
+
 func hrModuleFieldDefs(module string) []hrFieldDef {
 	switch module {
 	case hrModuleResign:
 		return hrResignFieldDefs()
 	case hrModuleContract:
 		return hrContractFieldDefs()
+	case hrModuleFund:
+		return hrFundFieldDefs()
 	default:
 		return hrRosterFieldDefs()
 	}
@@ -212,7 +245,15 @@ var hrExtraEnums = map[string][]string{
 	"是否试用期内离职":    hrYesNo,
 	"合同类型":        {"固定期限劳动合同", "无固定期限劳动合同", "以完成一定工作任务为期限的劳动合同", "实习协议", "劳务合同", "返聘协议", "劳务派遣合同", "借调合同", "其他"},
 	"合同期限":        {"1年", "2年", "3年", "4年", "5年", "6年", "7年", "8年", "9年", "10年", "无固定期限"},
-	"合同状态":        {"正常", "即将到期", "到期"},
+	// 第 54 轮：合同状态扩到 5 态。已解除 = 员工已离职；未签订 = 在职但没填合同起始/结束日期。
+	"合同状态": {"正常", "未签订", "即将到期", "到期", "已解除"},
+	"账户状态": {"正常", "封存", "提取销户"},
+	"联名卡银行": {"中国建设银行", "中国银行", "中国工商银行", "中国农业银行",
+		"招商银行", "交通银行", "农村商业银行", "其他"},
+	"是否公贷":      hrYesNo,
+	"是否冻结":      hrYesNo,
+	"是否可在线提取公贷": hrYesNo,
+	"是否可在线提取商贷": hrYesNo,
 }
 
 // hrEnumOptions 字段 → 枚举选项；extra 优先覆盖同名的旧字典。
@@ -288,6 +329,9 @@ func hrResignSeedSubs() []types.FleetCategorySub {
 }
 func hrContractSeedSubs52() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrContractFieldDefs())
+}
+func hrFundSeedSubs() []types.FleetCategorySub {
+	return hrSubsOfDefs(hrFundFieldDefs())
 }
 
 // hrRosterGroupDict52 6 大分组 → 字段名（供回填与排序）。
@@ -384,10 +428,22 @@ func hrTemplateHeaders(module string) []string {
 	case hrModuleContract:
 		return append(append([]string{}, hrTemplateMatchKeys...),
 			"合同编号", "合同类型", "合同开始日期", "合同结束日期", "合同期限", "签约公司", "签订日期")
+	case hrModuleFund:
+		defs := hrFundFieldDefs()
+		out := make([]string, 0, len(defs))
+		for _, d := range defs {
+			out = append(out, d.Name)
+		}
+		return out
 	default:
+		// 第 54 轮铁律：跨模块引用字段（个人社保账号 / 个人公积金账号）只读联动，
+		// 绝不进导入模板、也不参与导入解析 —— 否则用户一份表就能把源表数据改坏。
 		defs := hrRosterFieldDefs()
 		out := make([]string, 0, len(defs))
 		for _, d := range defs {
+			if d.Source != nil {
+				continue
+			}
 			out = append(out, d.Name)
 		}
 		return out
@@ -411,11 +467,17 @@ func hrTemplateNotes(module string) []string {
 	if module == hrModuleContract {
 		base = append(base, "8. 导入后自动按证件号码 / 工号匹配员工，更新劳动合同台账并重算合同状态")
 	}
+	if module == hrModuleFund {
+		base = append(base,
+			"8. 支持直接上传公积金网厅导出的《单位职工明细》：自动跳过标题行与末行验证码",
+			"9. 职工账号为纯文本，请勿加千分位逗号；导入后自动回显到花名册「个人公积金账号」",
+		)
+	}
 	return base
 }
 
 func hrTemplateSpecOf(module string) hrTemplateSpec {
-	if module != hrModuleResign && module != hrModuleContract {
+	if module != hrModuleResign && module != hrModuleContract && module != hrModuleFund {
 		module = hrModuleRoster
 	}
 	headers := hrTemplateHeaders(module)
@@ -428,15 +490,26 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 	// 分组清单（「说明」Sheet）
 	if module == hrModuleRoster {
 		for _, g := range hrRosterGroupDict52() {
+			fields := make([]string, 0, len(g.Fields))
+			for _, name := range g.Fields {
+				// 与表头一致：引用字段不进模板说明
+				if hrFieldIsRef("roster", name) {
+					continue
+				}
+				fields = append(fields, name)
+			}
 			spec.Groups = append(spec.Groups, struct {
 				Key    string
 				Fields []string
-			}{g.Key, g.Fields})
+			}{g.Key, fields})
 		}
 	} else {
 		groupName := "离职信息"
 		if module == hrModuleContract {
 			groupName = "合同信息"
+		}
+		if module == hrModuleFund {
+			groupName = "公积金信息"
 		}
 		spec.Groups = append(spec.Groups, struct {
 			Key    string
@@ -453,6 +526,8 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 		"户口性质", "服装尺寸", "紧急联系人关系", "最高学历", "银行名称",
 		"是否本地首次缴纳社保", "是否本地首次缴纳公积金",
 		"离职类型", "离职原因", "是否试用期内离职", "合同类型", "合同期限", "合同状态",
+		"账户状态", "联名卡银行", "是否公贷", "是否冻结",
+		"是否可在线提取公贷", "是否可在线提取商贷",
 	}
 	for _, key := range order {
 		if inHeader[key] && len(hrEnumOptions(key)) > 0 {
@@ -462,12 +537,24 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 	return spec
 }
 
+// hrFieldIsRef 字段是否跨模块引用（引用字段不进导入模板）。
+func hrFieldIsRef(module, name string) bool {
+	for _, d := range hrModuleFieldDefs(module) {
+		if d.Name == name {
+			return d.Source != nil
+		}
+	}
+	return false
+}
+
 func hrTemplateFileName(module string) string {
 	switch module {
 	case hrModuleResign:
 		return "离职管理导入模板.xlsx"
 	case hrModuleContract:
 		return "劳动合同导入模板.xlsx"
+	case hrModuleFund:
+		return "公积金管理导入模板.xlsx"
 	default:
 		return "花名册导入模板.xlsx"
 	}
@@ -485,6 +572,13 @@ func hrTemplateSample(module string, headers []string) []string {
 		"是否试用期内离职": "否", "薪资结算日": "2026-11-10",
 		"合同类型": "固定期限劳动合同", "合同开始日期": "2024-01-01",
 		"合同结束日期": "2027-12-31", "合同期限": "3年", "签订日期": "2023-12-20",
+		"职工账号": "801504241502", "职工姓名": "示例员工", "账户状态": "正常",
+		"缴存基数(元)": "6000", "月缴存额(元)": "600", "单位月缴存额(元)": "300",
+		"个人月缴存额(元)": "300", "账户余额(元)": "18600",
+		"单位缴存比例(%)": "5", "职工缴存比例(%)": "5",
+		"联名卡银行": "中国建设银行", "联名卡号": "6217003760153123456",
+		"绑定手机": "13800138000", "是否公贷": "否", "是否冻结": "否",
+		"是否可在线提取公贷": "是", "是否可在线提取商贷": "否",
 	}
 	out := make([]string, 0, len(headers))
 	for _, h := range headers {

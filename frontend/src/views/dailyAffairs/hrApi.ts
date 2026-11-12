@@ -89,7 +89,7 @@ export function getRosterTemplate(): Promise<any> {
  * 第 52 轮：三套独立 Excel 导入模板（花名册 / 离职管理 / 劳动合同）。
  * 每个模板都含「导入数据 / 说明 / 枚举字段」3 个 Sheet，枚举列配 Excel 数据验证。
  */
-export type HrImportModule = 'roster' | 'resign' | 'contract'
+export type HrImportModule = 'roster' | 'resign' | 'contract' | 'fund'
 
 export function getHrTemplate(module: HrImportModule): Promise<any> {
   return getDown(`${BASE}/roster/template${qs({ module })}`) as Promise<any>
@@ -99,7 +99,9 @@ export function getHrTemplate(module: HrImportModule): Promise<any> {
 export function importHrModule(module: HrImportModule, formData: FormData): Promise<any> {
   const path = module === 'resign' ? `${BASE}/resign/import`
     : module === 'contract' ? `${BASE}/contract/import`
-      : `${BASE}/roster/import`
+      // 第 54 轮：公积金走网厅解析器（支持 .xls / .xlsx，自动跳标题与验证码行）
+      : module === 'fund' ? `${BASE}/fund/import`
+        : `${BASE}/roster/import`
   return postUpload(path, formData) as Promise<any>
 }
 
@@ -195,8 +197,10 @@ export function updateFundSettings(payload: Record<string, any>): Promise<any> {
   return put(`${BASE}/fund/settings`, payload) as Promise<any>
 }
 
-export function listFundRecords(): Promise<any> {
-  return get(`${BASE}/fund/records`) as Promise<any>
+/** 公积金台账：status 支持中文（正常 / 封存 / 提取销户），空 = 全部。 */
+export function listFundRecords(status?: string): Promise<any> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+  return get(`${BASE}/fund/records${qs}`) as Promise<any>
 }
 
 export function createFundRecord(payload: Record<string, any>): Promise<any> {

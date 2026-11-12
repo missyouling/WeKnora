@@ -20,7 +20,7 @@ import {
 } from './hrRosterFields'
 import { allRosterFields } from './hrRosterGroups'
 import {
-  HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, hrValueKeys, hrIsDateField,
+  HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, HR_FUND_FIELDS, hrValueKeys, hrIsDateField,
 } from './hrFieldSchema'
 import type { HrFieldDef } from './hrFieldSchema'
 
@@ -66,6 +66,7 @@ export function hrScopeOf(tab: string): HrTab {
  * 五张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
  */
 export function buildHrKpiCards(counts: Record<string, number> = {}) {
+  const unsigned = Math.max(0, Number(counts.contract_unsigned || 0) || 0)
   const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
   const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
   return HR_TABS.map((t) => {
@@ -73,14 +74,16 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
     let sub = t.sub
     let subCls = ''
     if (t.key === 'hr-contract') {
+      // 第 54 轮：未签订是最高优先级异常（新员工入职后最容易漏），排在最前。
       const parts: string[] = []
-      if (expired > 0) parts.push(`${expired} 份已到期`)
+      if (unsigned > 0) parts.push(`${unsigned} 份未签订`)
       if (expiring > 0) parts.push(`${expiring} 份即将到期`)
+      if (expired > 0) parts.push(`${expired} 份已到期`)
       if (parts.length) {
-        sub = parts.join(' / ')
+        sub = parts.join(' · ')
         subCls = 'is-warning'
       } else {
-        sub = '无异常合同'
+        sub = '合同均已签订'
       }
     }
     return {
@@ -117,6 +120,8 @@ export interface HrColumn {
   slot?: boolean
   /** 单元格取值（兼容扁平 snake_case 行与 data/custom_data 包裹行）。 */
   value?: (row: any) => string
+  /** 合计行是否累加：比例类列（缴存比例）标 false，避免把 5% 加成 60%。 */
+  noSum?: boolean
 }
 
 const STATUS_COLS = new Set(['在职状态', '账期状态', '参保状态', '缴存状态'])
@@ -548,19 +553,25 @@ export function hrRowKey(row: any): string {
 // 合同状态三态判定（第 47 轮）
 // ---------------------------------------------------------------------------
 
-export type ContractStatus = '正常' | '即将到期' | '到期' | ''
+export type ContractStatus = '正常' | '未签订' | '即将到期' | '到期' | '已解除' | ''
 
 export const CONTRACT_STATUS_OPTIONS = [
   { label: '全部', value: '全部' },
   { label: '正常', value: '正常' },
+  { label: '未签订', value: '未签订' },
   { label: '即将到期', value: '即将到期' },
   { label: '到期', value: '到期' },
+  { label: '已解除', value: '已解除' },
 ] as const
 
-/** 三色主题：正常=success(绿) / 即将到期=warning(橙) / 到期=danger(红)。 */
+/**
+ * 状态主题：正常=success(绿) / 未签订=warning(橙) / 即将到期=warning(橙) /
+ * 到期=danger(红) / 已解除=default(灰)。
+ */
 export function contractStatusTheme(v: unknown): 'success' | 'warning' | 'danger' | 'default' {
   const s = String(v ?? '').trim()
   if (s === '正常') return 'success'
+  if (s === '未签订') return 'warning'
   if (s === '即将到期') return 'warning'
   if (s === '到期') return 'danger'
   return 'default'
@@ -570,14 +581,16 @@ export function contractStatusTheme(v: unknown): 'success' | 'warning' | 'danger
  * 合同状态判定（与后端 hrContractStatusOf 同口径）：
  *   · 现合同类型含「无固定期限」→ 正常
  *   · 剩余天数 > 30 → 正常；0~30 → 即将到期；< 0 → 到期
- *   · 未填结束日期且非无固定期限 → 空串（显示 —）
+ *   · 未填结束日期且非无固定期限 → 未签订
+ *
+ * 「已解除」依赖员工的在职状态，由后端 hrEmployeeContractStatus 前置判定。
  */
 export function contractStatusOf(endDate: unknown, contractType: unknown, today = new Date()): ContractStatus {
   if (String(contractType ?? '').includes('无固定期限')) return '正常'
   const raw = String(endDate ?? '').trim()
-  if (!raw) return ''
+  if (!raw) return '未签订'
   const m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(raw)
-  if (!m) return ''
+  if (!m) return '未签订'
   const end = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   const now = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
   const days = Math.floor((end - now) / 86400000)
@@ -675,7 +688,10 @@ export function hrRosterGroupColumns(): HrColumn[] {
  */
 function moduleColumnOf(d: HrFieldDef, configuredWidth = 0): HrColumn {
   const name = String(d.label || d.name)
-  const keys = d.source ? hrValueKeys(d.source.field) : hrValueKeys(d.name)
+  // 引用字段的取值：来源字段优先，再回退本表字段名。
+  // 例：花名册「个人公积金账号」来源是公积金管理的「职工账号」，但后端派生值
+  // 写在 custom_data["个人公积金账号"]，只查来源键会整列空白。
+  const keys = d.source ? [...hrValueKeys(d.source.field), ...hrValueKeys(d.name)] : hrValueKeys(d.name)
   const isDate = d.type === 'date' || hrIsDateField(d.name)
   const isProof = d.name === '离职证明'
   const isStatusTag = d.name === '合同状态'
@@ -725,6 +741,24 @@ export function hrResignColumns(): HrColumn[] {
 /** 劳动合同列全集：乙方 6 + 甲方 3 + 合同 8。 */
 export function hrContractColumns(): HrColumn[] {
   return columnsOfFields(HR_CONTRACT_FIELDS)
+}
+
+/**
+ * 公积金列全集（第 54 轮）：18 个网厅原生字段。
+ *
+ * 口径铁律：
+ *   · 职工账号 / 联名卡号 / 绑定手机 / 证件号码 —— 纯文本，绝不加千分位、绝不累加；
+ *   · 缴存基数 / 月缴存额 / 单位 / 个人 / 账户余额 —— 金额（2 位小数、可累加）；
+ *   · 单位缴存比例 / 职工缴存比例 —— 百分比，右侧对齐但不进合计行；
+ *   · 账户状态 —— 三色 Tag（正常绿 / 封存橙 / 提取销户灰）。
+ */
+export function hrFundColumns(): HrColumn[] {
+  const cols = columnsOfFields(HR_FUND_FIELDS)
+  return cols.map((c) => {
+    if (c.colKey === '账户状态') return { ...c, slot: true }
+    if (/比例/.test(c.colKey)) return { ...c, noSum: true }
+    return c
+  })
 }
 
 /**

@@ -398,25 +398,16 @@ func (h *HRHandler) ListContracts(c *gin.Context) {
 		hrFail(c, "查询劳动合同失败: "+err.Error())
 		return
 	}
-	// 只保留有合同信息的人
-	filtered := make([]HREmployee, 0, len(items))
-	for _, e := range items {
-		if e.CustomData == nil {
-			continue
-		}
-		end := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同结束日期", "现合同结束日期")))
-		ctype := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同类型", "现合同类型")))
-		if end == "" && ctype == "" {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
+	// 第 54 轮：劳动合同与员工 1:1 绑定 —— 在职 + 离职全员都在合同列表里。
+	// 旧实现只保留「有合同结束日期或有合同类型」的人，新员工入职后合同看不见，
+	// 也就永远填不上合同信息（六同步第一环就断了）。
+	filtered := items
 	hrSortEmployeesByEmployeeID(filtered)
 	hrAttachEmployeeDerived(ctx, h.db, tid, filtered)
 	// 第 49 轮：甲方（单位信用代码/住所/法人）+ 乙方（联系电话）派生
 	hrAttachContractParty(h.hrOrgUnitsFor(ctx, tid), filtered)
 
-	// 合同状态筛选（全部 / 正常 / 即将到期 / 到期）
+	// 合同状态筛选（全部 / 正常 / 未签订 / 即将到期 / 到期 / 已解除）
 	if st := strings.TrimSpace(c.Query("contract_status")); st != "" && st != "全部" && st != "all" {
 		keep := make([]HREmployee, 0, len(filtered))
 		for _, e := range filtered {

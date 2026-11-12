@@ -692,12 +692,13 @@ func TestHRRosterDefaultHeaderRound52(t *testing.T) {
 	assert.Len(t, second.Fields, 13)
 	assert.NotContains(t, second.Fields, "司龄")
 
-	// 默认表头 = 15 列（与前端 HR_ROSTER_DEFAULT_HEADERS 同源）
-	assert.Len(t, hrRosterDefaultHeaderFields, 15)
+	// 第 54 轮：默认表头 = 17 列（15 原有 + 个人社保账号 + 个人公积金账号，
+	// 二者是只读跨模块引用，必须在花名册列表可见才能验证实时联动）
+	assert.Len(t, hrRosterDefaultHeaderFields, 17)
 	for _, f := range []string{
 		"工号", "姓名", "部门", "岗位", "入职日期", "司龄",
 		"证件号码", "性别", "出生日期", "年龄", "是否已婚", "籍贯", "户口性质",
-		"手机号码", "最高学历",
+		"手机号码", "最高学历", "个人社保账号", "个人公积金账号",
 	} {
 		assert.True(t, hrRosterDefaultHeaderFields[f], f+" 应默认开表头")
 	}

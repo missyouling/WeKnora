@@ -29,6 +29,7 @@ import {
   hrSocialColumns,
   contractStatusOf,
   contractStatusTheme,
+  CONTRACT_STATUS_OPTIONS,
   hrRankOfTitle,
   hrDeptCodeFromEmployeeID,
   hrSeqFromEmployeeID,
@@ -174,7 +175,6 @@ test('状态字段在 HR scope 下被锁定，且既有 scope 行为不被破坏
     ['hr-roster', '在职状态'],
     ['hr-social', '账期状态'],
     ['hr-social', '参保状态'],
-    ['hr-fund', '缴存状态'],
   ]) {
     assert.equal(isLockedStatusField(scope, '', name), true, `${scope}/${name} 必须被锁定`)
   }
@@ -188,7 +188,8 @@ test('状态字段在 HR scope 下被锁定，且既有 scope 行为不被破坏
   // 第 52 轮：花名册不再注入「在职状态」；社保 / 公积金口径不变
   assert.deepEqual(statusFieldSpecsOf('hr-roster').map((s) => s.name), [])
   assert.deepEqual(statusFieldSpecsOf('hr-social').map((s) => s.name), ['账期状态', '参保状态'])
-  assert.deepEqual(statusFieldSpecsOf('hr-fund').map((s) => s.name), ['缴存状态'])
+  // 第 54 轮：公积金状态列已内建为「账户状态」，不再额外注入「缴存状态」
+  assert.deepEqual(statusFieldSpecsOf('hr-fund').map((s) => s.name), [])
 })
 
 test('hrRowKey：id 优先并回退业务唯一键', () => {
@@ -290,7 +291,7 @@ test('第47轮：合计行对号码列留空，不对卡号求和', () => {
   assert.ok(!JSON.stringify(row).includes('118179'), '绝不能出现求和后的荒谬数字')
 })
 
-test('第47轮：合同状态三态判定', () => {
+test('第54轮：合同状态五态判定（未签订 / 已解除 补齐）', () => {
   const today = new Date('2026-11-10T00:00:00Z')
   // 无固定期限恒正常
   assert.equal(contractStatusOf('', '无固定期限劳动合同', today), '正常')
@@ -302,13 +303,18 @@ test('第47轮：合同状态三态判定', () => {
   assert.equal(contractStatusOf('2026-11-10', '固定期限劳动合同', today), '即将到期')
   // 已过期
   assert.equal(contractStatusOf('2026-10-01', '固定期限劳动合同', today), '到期')
-  // 未填且非无固定期限
-  assert.equal(contractStatusOf('', '固定期限劳动合同', today), '')
-  // 三色主题
+  // 未填且非无固定期限 → 未签订
+  assert.equal(contractStatusOf('', '固定期限劳动合同', today), '未签订')
+  // 五态主题
   assert.equal(contractStatusTheme('正常'), 'success')
+  assert.equal(contractStatusTheme('未签订'), 'warning')
   assert.equal(contractStatusTheme('即将到期'), 'warning')
   assert.equal(contractStatusTheme('到期'), 'danger')
+  assert.equal(contractStatusTheme('已解除'), 'default')
   assert.equal(contractStatusTheme(''), 'default')
+  // 下拉 6 项（全部 + 5 态）
+  assert.deepEqual(CONTRACT_STATUS_OPTIONS.map((o) => o.value),
+    ['全部', '正常', '未签订', '即将到期', '到期', '已解除'])
 })
 
 test('第47轮：社保原始/汇总双视图列集合', () => {

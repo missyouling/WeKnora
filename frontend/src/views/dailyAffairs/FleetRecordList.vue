@@ -132,7 +132,7 @@
     <!-- 设置抽屉（字段定义 + 提取规则；纯手工录入类隐藏提取规则，第 44 轮） -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId" :scope="settingsScope"
       :initial-category="activeCategoryName" :title="`${menuLabel}设置`" storage-key="weknora-fleet-settings-width"
-      :show-rules="isArchive" :extra-tab-label="extraTabLabel" @saved="onSettingsSaved">
+      :show-rules="isArchive" :direct="!isArchive" :extra-tab-label="extraTabLabel" @saved="onSettingsSaved">
       <template #extra-tab>
         <OilCardPanel v-if="extraTabKind === 'oilcard'" />
         <EtcPanel v-else-if="extraTabKind === 'etc'" />

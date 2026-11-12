@@ -579,16 +579,22 @@ func hrAttachEmployeeDerived(ctx context.Context, db *gorm.DB, tid int64, items 
 		if key == "" {
 			continue
 		}
-		if strings.TrimSpace(e.SocialInsuranceNumber) == "" {
-			if v, ok := siMap[key]; ok {
+		// 第 54 轮：这两个字段是**只读跨模块引用**（值以源表为准），
+		// 源表有记录就实时覆盖，源表没有才保留花名册里的历史值。
+		if v, ok := siMap[key]; ok && v != "" {
+			e.SocialInsuranceNumber = v
+			e.CustomData["个人社保账号"] = v
+		} else if strings.TrimSpace(e.SocialInsuranceNumber) == "" {
+			if v := strings.TrimSpace(toStringValue(e.CustomData["个人社保账号"])); v != "" {
 				e.SocialInsuranceNumber = v
-				e.CustomData["个人社保账号"] = v
 			}
 		}
-		if strings.TrimSpace(e.ProvidentFundNumber) == "" {
-			if v, ok := pfMap[key]; ok {
+		if v, ok := pfMap[key]; ok && v != "" {
+			e.ProvidentFundNumber = v
+			e.CustomData["个人公积金账号"] = v
+		} else if strings.TrimSpace(e.ProvidentFundNumber) == "" {
+			if v := strings.TrimSpace(toStringValue(e.CustomData["个人公积金账号"])); v != "" {
 				e.ProvidentFundNumber = v
-				e.CustomData["个人公积金账号"] = v
 			}
 		}
 	}
@@ -821,43 +827,39 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 		}
 	}
 	// 五卡口径：花名册 / 离职管理 / 劳动合同 / 社保管理 / 公积金管理。
-	// 劳动合同卡 = 有合同结束日期或有合同类型的员工数（无合同的员工不计入）。
-	var contractCount int64
+	// 第 54 轮：劳动合同与员工 1:1 绑定（在职 + 离职全员），卡数 = 员工总数。
 	var emps []HREmployee
-	if err := h.db.WithContext(ctx).Select("id_number, custom_data").
-		Where("tenant_id = ?", tid).Find(&emps).Error; err == nil {
-		for _, e := range emps {
-			if e.CustomData == nil {
-				continue
-			}
-			end := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同结束日期", "现合同结束日期")))
-			ctype := strings.TrimSpace(fmt.Sprint(customValueOrEmpty(e.CustomData, "合同类型", "现合同类型")))
-			if end != "" || ctype != "" {
-				contractCount++
-			}
-		}
+	if err := h.db.WithContext(ctx).Select("id, name, status, id_number, custom_data").
+		Where("tenant_id = ?", tid).Find(&emps).Error; err != nil {
+		hrFail(c, "统计失败: "+err.Error())
+		return
 	}
+	contractCount := int64(len(emps))
 	var socialCount int64
 	h.db.WithContext(ctx).Model(&HRSIPeriod{}).Where("tenant_id = ?", tid).Count(&socialCount)
 	var fundCount int64
 	h.db.WithContext(ctx).Model(&HRPFRecord{}).Where("tenant_id = ?", tid).Count(&fundCount)
 
-	// 第 49 轮：合同异常预警（到期 / 即将到期），供 KPI 卡副文案。
-	var expiring, expired int64
+	// 第 54 轮：合同异常预警扩到 4 类（未签订 / 即将到期 / 到期 / 已解除）。
+	var unsigned, expiring, expired, terminated int64
 	for _, e := range emps {
-		if e.CustomData == nil {
-			continue
-		}
 		switch hrEmployeeContractStatus(e) {
-		case hrContractStatusExpired:
-			expired++
+		case hrContractStatusUnsigned:
+			unsigned++
 		case hrContractStatusExpiring:
 			expiring++
+		case hrContractStatusExpired:
+			expired++
+		case hrContractStatusTerminated:
+			terminated++
 		}
 	}
+	data["contract_unsigned"] = unsigned
 	data["contract_expiring"] = expiring
 	data["contract_expired"] = expired
-	data["roster"] = data["total"]
+	data["contract_terminated"] = terminated
+	// 花名册卡 = 在职人数（列表固定只查在职）；合同卡才是全员（在职 + 离职）。
+	data["roster"] = data["active"]
 	data["contract"] = contractCount
 	data["social"] = socialCount
 	data["fund"] = fundCount

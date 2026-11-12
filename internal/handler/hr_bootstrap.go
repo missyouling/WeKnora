@@ -67,6 +67,14 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	ctx := context.Background()
 	h.seedHRCategories(ctx)
 	h.seedHRPFSettings(ctx)
+	// 第 54 轮：公积金字段配置重建为网厅 18 字段（幂等；旧 10 字段 merge 后会残留）
+	if err := h.hrMigrateFundSubs(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR fund subs failed: %v", err)
+	}
+	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
+	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR roster ref subs failed: %v", err)
+	}
 	// 第 50 轮：启动时归并存量旧部门名（质量部 → 技术质量部 等）。
 	// 幂等且失败只告警：宁可留脏数据，也不能让服务起不来。
 	if err := h.hrNormalizeAllDepartments(ctx); err != nil {
@@ -76,6 +84,16 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 列表响应层也会实时重算，这里落库是为了导出/详情等离线读取也有值。
 	if err := h.hrBackfillSeniority(ctx); err != nil {
 		logger.Warnf(ctx, "backfill HR seniority failed: %v", err)
+	}
+	// 第 54 轮：离职样例 + 公积金网厅 87 条（均幂等，失败只告警不阻断启动）。
+	if err := h.hrSeedResignSamples(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR resign samples failed: %v", err)
+	}
+	if err := h.hrSeedNewHireSamples(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR new hire samples failed: %v", err)
+	}
+	if err := h.hrSeedFundRecords(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR fund records failed: %v", err)
 	}
 	return h
 }
@@ -368,11 +386,7 @@ func hrCategorySeeds() []hrCategorySeed {
 		},
 		{
 			Scope: hrScopeFund, Name: "公积金管理", BuiltinKey: "hr-fund", SortOrder: 1,
-			Subs: []types.FleetCategorySub{
-				hrSub(txt("个人账号")), hrSub(txt("姓名")), hrSub(txt("身份证号码")), hrSub(num("缴存基数")),
-				hrSub(num("缴存比例")), hrSub(num("个人金额")), hrSub(num("单位金额")), hrSub(num("合计")),
-				hrSub(txt("缴存状态")), hrSub(area("备注")),
-			},
+			Subs: hrFundSeedSubs(),
 		},
 	}
 }

@@ -20,7 +20,7 @@ import { ROSTER_ENUM_GROUPS, RESIGN_REASONS } from './hrRosterFields'
 // 模块与字段类型
 // ---------------------------------------------------------------------------
 
-export type HrModule = 'roster' | 'resign' | 'contract'
+export type HrModule = 'roster' | 'resign' | 'contract' | 'fund'
 
 export type HrFieldType = 'text' | 'date' | 'number' | 'enum' | 'readonly' | 'attachment' | 'system'
 
@@ -85,7 +85,15 @@ export const HR_ENUMS: Record<string, readonly string[]> = {
   合同类型: ['固定期限劳动合同', '无固定期限劳动合同', '以完成一定工作任务为期限的劳动合同',
     '实习协议', '劳务合同', '返聘协议', '劳务派遣合同', '借调合同', '其他'],
   合同期限: ['1年', '2年', '3年', '4年', '5年', '6年', '7年', '8年', '9年', '10年', '无固定期限'],
-  合同状态: ['正常', '即将到期', '到期'],
+  合同状态: ['正常', '未签订', '即将到期', '到期', '已解除'],
+  // 第 54 轮：公积金 18 字段（对齐《单位职工明细-网厅.xls》）
+  账户状态: ['正常', '封存', '提取销户'],
+  联名卡银行: ['中国建设银行', '中国银行', '中国工商银行', '中国农业银行',
+    '招商银行', '交通银行', '农村商业银行', '其他'],
+  是否公贷: YES_NO,
+  是否冻结: YES_NO,
+  是否可在线提取公贷: YES_NO,
+  是否可在线提取商贷: YES_NO,
 }
 
 /** 字段 → 枚举字典；动态字典返回空数组（由页面注入组织机构选项）。 */
@@ -102,6 +110,11 @@ const f = (
   type: HrFieldType = 'text',
   extra: Partial<HrFieldDef> = {},
 ): HrFieldDef => ({ name, type, ...extra })
+
+/** 跨模块只读引用字段：值取自其它列表（花名册 / 社保 / 公积金 / 组织机构）。 */
+const ref = (name: string, source: HrFieldSource, extra: Partial<HrFieldDef> = {}): HrFieldDef => ({
+  name, type: 'readonly', source, defaultHeader: true, ...extra,
+})
 
 const G = {
   active: '在职信息',
@@ -179,8 +192,9 @@ export const HR_ROSTER_GROUPS: readonly HrFieldGroupDef[] = [
       f('银行名称', 'enum', { group: G.payroll, options: HR_ENUMS['银行名称'] }),
       f('工资卡开户行', 'text', { group: G.payroll }),
       f('工资卡开户城市', 'text', { group: G.payroll }),
-      f('个人社保账号', 'text', { group: G.payroll }),
-      f('个人公积金账号', 'text', { group: G.payroll }),
+      // 第 54 轮：只读跨模块引用（值来自社保管理 / 公积金管理，花名册不存储）
+      ref('个人社保账号', { category: '社保管理', field: '个人社保账号' }, { group: G.payroll, defaultHeader: true }),
+      ref('个人公积金账号', { category: '公积金管理', field: '职工账号' }, { group: G.payroll, defaultHeader: true }),
       f('是否本地首次缴纳社保', 'enum', { group: G.payroll, options: YES_NO }),
       f('是否本地首次缴纳公积金', 'enum', { group: G.payroll, options: YES_NO }),
     ],
@@ -203,9 +217,6 @@ export const HR_REMOVED_FIELDS: readonly string[] = ['在职状态', '人员状�
 // 离职管理：5 个花名册引用 + 9 个核心离职字段
 // ---------------------------------------------------------------------------
 
-const ref = (name: string, source: HrFieldSource, extra: Partial<HrFieldDef> = {}): HrFieldDef => ({
-  name, type: 'readonly', source, defaultHeader: true, ...extra,
-})
 
 export const HR_RESIGN_FIELDS: readonly HrFieldDef[] = [
   ref('工号', { category: '花名册', field: '工号' }),
@@ -257,14 +268,65 @@ export const HR_CONTRACT_FIELDS: readonly HrFieldDef[] = [
 export const HR_CONTRACT_DEFAULT_HEADERS: readonly string[] =
   HR_CONTRACT_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name)
 
+// ---------------------------------------------------------------------------
+// 公积金管理：对齐《单位职工明细-网厅.xls》的 18 个原生字段
+// ---------------------------------------------------------------------------
+
+const F = {
+  account: '账户信息',
+  amount: '缴存信息',
+  extra: '联名卡与提取',
+} as const
+
+export const HR_FUND_GROUPS: readonly HrFieldGroupDef[] = [
+  {
+    key: F.account, label: F.account, fields: [
+      f('职工账号', 'text', { group: F.account, defaultHeader: true, builtin: true }),
+      f('职工姓名', 'text', { group: F.account, defaultHeader: true, builtin: true }),
+      f('证件号码', 'text', { group: F.account, defaultHeader: true }),
+      f('账户状态', 'system', {
+        group: F.account, defaultHeader: true, builtin: true, options: HR_ENUMS['账户状态'],
+      }),
+    ],
+  },
+  {
+    key: F.amount, label: F.amount, fields: [
+      f('缴存基数(元)', 'number', { group: F.amount, defaultHeader: true }),
+      f('月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
+      f('单位月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
+      f('个人月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
+      f('账户余额(元)', 'number', { group: F.amount, defaultHeader: true }),
+      f('单位缴存比例(%)', 'number', { group: F.amount, defaultHeader: true, defaultValue: '5' }),
+      f('职工缴存比例(%)', 'number', { group: F.amount, defaultHeader: true, defaultValue: '5' }),
+    ],
+  },
+  {
+    key: F.extra, label: F.extra, fields: [
+      f('联名卡银行', 'enum', { group: F.extra, defaultHeader: true, options: HR_ENUMS['联名卡银行'] }),
+      f('联名卡号', 'text', { group: F.extra, defaultHeader: true }),
+      f('绑定手机', 'text', { group: F.extra, defaultHeader: true }),
+      f('是否公贷', 'enum', { group: F.extra, options: YES_NO }),
+      f('是否冻结', 'enum', { group: F.extra, options: YES_NO }),
+      f('是否可在线提取公贷', 'enum', { group: F.extra, options: YES_NO }),
+      f('是否可在线提取商贷', 'enum', { group: F.extra, options: YES_NO }),
+    ],
+  },
+]
+
+export const HR_FUND_FIELDS: readonly HrFieldDef[] = HR_FUND_GROUPS.flatMap((g) => g.fields)
+export const HR_FUND_DEFAULT_HEADERS: readonly string[] =
+  HR_FUND_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name)
+
 /** 模块 → 字段清单（设置面板、导入模板、抽屉共用）。 */
 export function hrModuleFields(module: HrModule): readonly HrFieldDef[] {
   if (module === 'resign') return HR_RESIGN_FIELDS
   if (module === 'contract') return HR_CONTRACT_FIELDS
+  if (module === 'fund') return HR_FUND_FIELDS
   return HR_ROSTER_FIELDS
 }
 
 export function hrModuleGroups(module: HrModule): readonly HrFieldGroupDef[] {
+  if (module === 'fund') return HR_FUND_GROUPS
   if (module !== 'roster') {
     return [{ key: module, label: module === 'resign' ? '离职信息' : '合同信息', fields: hrModuleFields(module) }]
   }
@@ -478,8 +540,9 @@ export function hrCleanForm(data: Record<string, any>): Record<string, any> {
 
 export const HR_TEMPLATE_MATCH_KEYS: readonly string[] = ['工号', '姓名', '证件号码']
 
-/** 花名册模板表头 = 精简后的 48 个在职字段（不含离职/合同/已删分组）。 */
-export const HR_ROSTER_TEMPLATE_HEADERS: readonly string[] = HR_ROSTER_FIELDS.map((d) => d.name)
+/** 花名册模板表头 = 本页原生字段（**排除跨模块只读引用字段**）。 */
+export const HR_ROSTER_TEMPLATE_HEADERS: readonly string[] =
+  HR_ROSTER_FIELDS.filter((d) => !d.source).map((d) => d.name)
 
 /** 离职管理模板 = 匹配键 + 8 个可导入离职字段（离职证明为附件不进模板）。 */
 export const HR_RESIGN_TEMPLATE_HEADERS: readonly string[] = [
@@ -494,9 +557,13 @@ export const HR_CONTRACT_TEMPLATE_HEADERS: readonly string[] = [
   '合同编号', '合同类型', '合同开始日期', '合同结束日期', '合同期限', '签约公司', '签订日期',
 ]
 
+/** 公积金模板 = 18 个原生字段（账户状态也导入，网厅文件里带这一列）。 */
+export const HR_FUND_TEMPLATE_HEADERS: readonly string[] = HR_FUND_FIELDS.map((d) => d.name)
+
 export function hrTemplateHeaders(module: HrModule): readonly string[] {
   if (module === 'resign') return HR_RESIGN_TEMPLATE_HEADERS
   if (module === 'contract') return HR_CONTRACT_TEMPLATE_HEADERS
+  if (module === 'fund') return HR_FUND_TEMPLATE_HEADERS
   return HR_ROSTER_TEMPLATE_HEADERS
 }
 
@@ -504,6 +571,7 @@ export const HR_TEMPLATE_NAMES: Record<HrModule, string> = {
   roster: '花名册导入模板.xlsx',
   resign: '离职管理导入模板.xlsx',
   contract: '劳动合同导入模板.xlsx',
+  fund: '公积金管理导入模板.xlsx',
 }
 
 /**
@@ -515,6 +583,7 @@ const HR_TEMPLATE_ENUM_ORDER: readonly string[] = [
   '户口性质', '服装尺寸', '紧急联系人关系', '最高学历', '银行名称',
   '是否本地首次缴纳社保', '是否本地首次缴纳公积金',
   '离职类型', '离职原因', '是否试用期内离职', '合同类型', '合同期限', '合同状态',
+  '账户状态', '联名卡银行', '是否公贷', '是否冻结', '是否可在线提取公贷', '是否可在线提取商贷',
 ]
 
 export function hrTemplateEnumGroups(module: HrModule): { group: string; options: readonly string[] }[] {

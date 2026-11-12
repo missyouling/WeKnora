@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   HR_ENUMS, hrEnumsOf, HR_DATE_FIELDS, hrIsDateField, hrDataTypeOf,
-  HR_ROSTER_FIELDS, HR_ROSTER_GROUPS, HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS,
+  HR_ROSTER_FIELDS, HR_ROSTER_GROUPS, HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, HR_FUND_FIELDS,
   hrModuleGroups, hrTemplateHeaders, hrTemplateEnumGroups, HR_TEMPLATE_NAMES,
   HR_TEMPLATE_MATCH_KEYS,
   ID_CARD_RE, hrIsValidIdCard, hrIsStrictIdCard, hrParseIdCard, hrAgeOf, hrSeniorityOf,
@@ -141,21 +141,32 @@ test('整表清洗：字符串 trim + 号码去空格横杠，卡号绝不转数
 // 三套 Excel 导入模板
 // ---------------------------------------------------------------------------
 
-test('三套模板文件名各不相同', () => {
-  assert.equal(new Set(Object.values(HR_TEMPLATE_NAMES)).size, 3)
+test('四套模板文件名各不相同', () => {
+  assert.equal(new Set(Object.values(HR_TEMPLATE_NAMES)).size, 4)
   assert.equal(HR_TEMPLATE_NAMES.roster, '花名册导入模板.xlsx')
   assert.equal(HR_TEMPLATE_NAMES.resign, '离职管理导入模板.xlsx')
   assert.equal(HR_TEMPLATE_NAMES.contract, '劳动合同导入模板.xlsx')
+  assert.equal(HR_TEMPLATE_NAMES.fund, '公积金管理导入模板.xlsx')
 })
 
-test('花名册模板表头 = 精简后 48 字段，不含删除/剥离字段', () => {
+test('花名册模板表头 = 46 个原生字段（跨模块引用字段一律不进模板）', () => {
   const headers = [...hrTemplateHeaders('roster')]
-  assert.equal(headers.length, 48)
-  assert.deepEqual(headers, HR_ROSTER_FIELDS.map((d) => d.name))
-  for (const removed of ['在职状态', '人员状态', '婚姻状况', '配偶姓名', '上家工作单位',
-    '是否烈属', '现合同编号', '合同状态', '离职日期', '离职证明']) {
-    assert.ok(!headers.includes(removed), `${removed} 不应出现在花名册模板`)
+  // 48 - 个人社保账号 - 个人公积金账号 = 46
+  assert.equal(headers.length, 46)
+  assert.deepEqual(headers, HR_ROSTER_FIELDS.filter((d) => !d.source).map((d) => d.name))
+  for (const banned of ['个人社保账号', '个人公积金账号', '合同状态',
+    '在职状态', '人员状态', '离职日期', '离职证明']) {
+    assert.ok(!headers.includes(banned), `${banned} 不应出现在花名册模板`)
   }
+})
+
+test('公积金模板 = 18 个网厅原生字段（无任何跨页引用）', () => {
+  const headers = [...hrTemplateHeaders('fund')]
+  assert.equal(headers.length, 18)
+  assert.equal(headers[0], '职工账号')
+  assert.equal(headers[3], '账户状态')
+  assert.deepEqual(headers, HR_FUND_FIELDS.map((d) => d.name))
+  assert.equal(HR_FUND_FIELDS.filter((d) => d.source).length, 0)
 })
 
 test('离职管理模板 = 3 匹配键 + 8 离职字段（附件不进模板）', () => {

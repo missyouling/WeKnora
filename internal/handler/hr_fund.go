@@ -26,10 +26,13 @@ func hrNormalizePFRecord(r *HRPFRecord, defaultRatio float64) {
 		r.PersonalAmount = amt
 		r.CompanyAmount = amt
 	}
-	r.TotalAmount = round2(r.PersonalAmount + r.CompanyAmount)
-	if r.Status == "" {
-		r.Status = "active"
+	if r.TotalAmount == 0 {
+		r.TotalAmount = round2(r.PersonalAmount + r.CompanyAmount)
 	}
+	if r.Status == "" {
+		r.Status = hrFundStatusActive
+	}
+	r.Status = hrFundStatusOf(r.Status)
 }
 
 // hrPFRatio 取租户默认比例，未配置回落 6。
@@ -116,19 +119,45 @@ func (h *HRHandler) ListPFRecords(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
 	q := h.db.WithContext(ctx).Model(&HRPFRecord{}).Where("tenant_id = ?", tid)
-	if status := strings.TrimSpace(c.Query("status")); status != "" && status != "all" {
-		q = q.Where("status = ?", status)
+	// 第 54 轮：账户状态筛选收中文（全部 / 正常 / 封存 / 提取销户）。
+	if status := strings.TrimSpace(c.Query("status")); status != "" && status != "all" && status != "全部" {
+		q = q.Where("status = ?", hrFundStatusOf(status))
 	}
 	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
 		like := "%" + kw + "%"
 		q = q.Where("name LIKE ? OR personal_account LIKE ? OR identity_number LIKE ?", like, like, like)
 	}
 	var items []HRPFRecord
-	if err := q.Order("created_at DESC, id ASC").Find(&items).Error; err != nil {
+	if err := q.Order("personal_account ASC, id ASC").Find(&items).Error; err != nil {
 		hrFail(c, "查询公积金台账失败: "+err.Error())
 		return
 	}
-	hrOK(c, gin.H{"items": items, "total": len(items)})
+	// 列表按 18 字段读 custom_data：账号 / 姓名 / 状态等中文键在这里一次性补齐。
+	for i := range items {
+		hrFundSyncCustom(&items[i])
+	}
+	hrOK(c, gin.H{
+		"items": items, "total": len(items),
+		"status_counts": h.hrFundStatusCounts(ctx, tid),
+	})
+}
+
+// hrFundStatusCounts 账户状态分布（工具栏筛选下拉的角标 / 真机断言用）。
+func (h *HRHandler) hrFundStatusCounts(ctx context.Context, tid int64) map[string]int64 {
+	out := map[string]int64{"正常": 0, "封存": 0, "提取销户": 0}
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	if err := h.db.WithContext(ctx).Model(&HRPFRecord{}).
+		Select("status, count(*) as count").Where("tenant_id = ?", tid).
+		Group("status").Scan(&rows).Error; err != nil {
+		return out
+	}
+	for _, r := range rows {
+		out[hrFundStatusCN(r.Status)] += r.Count
+	}
+	return out
 }
 
 func (h *HRHandler) CreatePFRecord(c *gin.Context) {
@@ -155,6 +184,7 @@ func (h *HRHandler) CreatePFRecord(c *gin.Context) {
 	req.ID = uuid.New().String()
 	req.TenantID = tid
 	hrNormalizePFRecord(&req, h.hrPFRatio(ctx, tid))
+	hrFundSyncCustom(&req)
 	if err := h.db.WithContext(ctx).Create(&req).Error; err != nil {
 		hrFail(c, "创建公积金记录失败: "+err.Error())
 		return
@@ -202,6 +232,7 @@ func (h *HRHandler) UpdatePFRecord(c *gin.Context) {
 		req.Status = existing.Status // 不因 PUT 缺省 status 意外解封
 	}
 	hrNormalizePFRecord(&req, h.hrPFRatio(ctx, tid))
+	hrFundSyncCustom(&req)
 	if err := h.db.WithContext(ctx).Save(&req).Error; err != nil {
 		hrFail(c, "更新公积金记录失败: "+err.Error())
 		return
@@ -315,10 +346,21 @@ var hrPFHeaderMap = map[string]string{
 	"备注":    "notes",
 }
 
+// 第 54 轮：导出列 = 网厅 18 原生字段（账号/卡号是纯文本，绝不带千分位）。
 var hrPFExportHeaders = []string{
-	"个人账号", "姓名", "身份证号码", "部门", "缴存基数", "缴存比例", "个人金额", "单位金额", "合计", "状态", "备注",
+	"职工账号", "职工姓名", "证件号码", "账户状态", "缴存基数(元)", "月缴存额(元)",
+	"单位月缴存额(元)", "个人月缴存额(元)", "账户余额(元)", "单位缴存比例(%)", "职工缴存比例(%)",
+	"联名卡银行", "联名卡号", "绑定手机", "是否公贷", "是否冻结",
+	"是否可在线提取公贷", "是否可在线提取商贷",
 }
 
+// ImportPFRecords 支持两种文件：
+//
+//	① 本系统标准模板（首行列头）；
+//	② 公积金网厅《单位职工明细》：自动跳过标题 / 单位信息行与末行验证码，
+//	   自动跳过合并单元格留下的空列，按 18 原生字段全量入库。
+//
+// 两种格式共用 hrFundApplyRows，只有读取器不同（xlsx / xls）。
 func (h *HRHandler) ImportPFRecords(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
@@ -333,7 +375,7 @@ func (h *HRHandler) ImportPFRecords(c *gin.Context) {
 		return
 	}
 	defer func() { _ = src.Close() }()
-	rows, err := hrReadExcelRows(src)
+	rows, err := hrReadFundSheet(src)
 	if err != nil {
 		hrFail(c, "解析 Excel 失败: "+err.Error())
 		return
@@ -342,64 +384,16 @@ func (h *HRHandler) ImportPFRecords(c *gin.Context) {
 		hrFail(c, "Excel 中没有数据行")
 		return
 	}
-	normalized := make(map[string]string, len(hrPFHeaderMap))
-	for k, v := range hrPFHeaderMap {
-		normalized[normalizeEmployeeHeader(k)] = v
+	stats, err := h.hrFundApplyRows(ctx, tid, rows)
+	if err != nil {
+		hrFail(c, err.Error())
+		return
 	}
-	indexMap := map[string]int{}
-	for idx, cell := range rows[0] {
-		if field, ok := normalized[normalizeEmployeeHeader(cell)]; ok {
-			indexMap[field] = idx
-		}
-	}
-	ratio := h.hrPFRatio(ctx, tid)
-	inserted, updated := 0, 0
-	for _, row := range rows[1:] {
-		if len(row) == 0 {
-			continue
-		}
-		get := func(key string) string { return hrCell(row, indexMap, key) }
-		rec := HRPFRecord{
-			PersonalAccount:   strings.TrimSpace(get("personal_account")),
-			Name:              strings.TrimSpace(get("name")),
-			IdentityNumber:    normalizeIDNumber(get("identity_number")),
-			Department:        strings.TrimSpace(get("department")),
-			PersonalBase:      toFloat(get("personal_base")),
-			ContributionRatio: toFloat(get("contribution_ratio")),
-			PersonalAmount:    toFloat(get("personal_amount")),
-			CompanyAmount:     toFloat(get("company_amount")),
-			Notes:             strings.TrimSpace(get("notes")),
-			Status:            normalizeEmployeeStatus(get("status")),
-		}
-		if rec.IdentityNumber == "" || rec.PersonalAccount == "" {
-			continue
-		}
-		hrNormalizePFRecord(&rec, ratio)
-		var existing HRPFRecord
-		findErr := h.db.WithContext(ctx).
-			Where("tenant_id = ? AND identity_number = ?", tid, rec.IdentityNumber).First(&existing).Error
-		if findErr == nil {
-			rec.ID = existing.ID
-			rec.TenantID = tid
-			rec.CreatedAt = existing.CreatedAt
-			rec.SealedAt = existing.SealedAt
-			rec.UnsealedAt = existing.UnsealedAt
-			if err := h.db.WithContext(ctx).Save(&rec).Error; err != nil {
-				hrFail(c, "导入公积金记录失败: "+err.Error())
-				return
-			}
-			updated++
-		} else {
-			rec.ID = uuid.New().String()
-			rec.TenantID = tid
-			if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
-				hrFail(c, "导入公积金记录失败: "+err.Error())
-				return
-			}
-			inserted++
-		}
-	}
-	hrOK(c, gin.H{"inserted": inserted, "updated": updated})
+	hrOK(c, gin.H{
+		"inserted": stats["inserted"], "updated": stats["updated"],
+		"skipped": stats["skipped"], "total": stats["inserted"] + stats["updated"],
+		"status_counts": h.hrFundStatusCounts(ctx, tid),
+	})
 }
 
 func (h *HRHandler) ExportPFRecords(c *gin.Context) {
@@ -412,11 +406,19 @@ func (h *HRHandler) ExportPFRecords(c *gin.Context) {
 		return
 	}
 	rows := make([][]string, 0, len(items))
-	for _, r := range items {
+	for i := range items {
+		hrFundSyncCustom(&items[i])
+		r := items[i]
+		c := r.CustomData
 		rows = append(rows, []string{
-			r.PersonalAccount, r.Name, r.IdentityNumber, r.Department, hrFloatStr(r.PersonalBase),
-			hrFloatStr(r.ContributionRatio), hrFloatStr(r.PersonalAmount), hrFloatStr(r.CompanyAmount),
-			hrFloatStr(r.TotalAmount), r.Status, r.Notes,
+			r.PersonalAccount, r.Name, r.IdentityNumber, hrFundStatusCN(r.Status),
+			hrFloatStr(r.PersonalBase), hrFloatStr(r.TotalAmount),
+			hrFloatStr(r.CompanyAmount), hrFloatStr(r.PersonalAmount),
+			hrFloatStr(toFloat(toStringValue(c["账户余额(元)"]))),
+			hrFloatStr(r.ContributionRatio), hrFloatStr(toFloat(toStringValue(c["职工缴存比例(%)"]))),
+			toStringValue(c["联名卡银行"]), toStringValue(c["联名卡号"]), toStringValue(c["绑定手机"]),
+			toStringValue(c["是否公贷"]), toStringValue(c["是否冻结"]),
+			toStringValue(c["是否可在线提取公贷"]), toStringValue(c["是否可在线提取商贷"]),
 		})
 	}
 	hrExcelDownload(c, "hr_pf_records.xlsx", hrPFExportHeaders, rows)

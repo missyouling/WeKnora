@@ -8,7 +8,16 @@
     hide-footer
     class="standard-settings-drawer"
   >
-    <t-tabs v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
+    <!-- 第 54 轮：单分类直出。只有一个分类时不再套 Tab 骨架 ——
+         打开设置要直接看到「字段名 | 数据类型 | 列宽 | 默认表头 | 启用 | 操作」，
+         而不是先看到一枚孤零零的「字段设置」Tab。 -->
+    <div v-if="direct" class="standard-settings-direct">
+      <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+        direct hide-group-tabs :ref-source-scope="refSourceScope" :ref-categories="refCategories"
+        :ref-sources="refSources"
+        @ai-guide="onAiGuide" @category-change="onCategoryChange" />
+    </div>
+    <t-tabs v-else v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
@@ -86,6 +95,11 @@ const props = withDefaults(defineProps<{
   refCategories?: string[]
   /** 第 53 轮：多 scope 候选源（人事 5 个列表互引）。 */
   refSources?: Array<{ scope: string; category: string }>
+  /**
+   * 第 54 轮：单分类页面直出字段列表（隐藏 Tab 骨架、分类表格与新增按钮）。
+   * 适用：人事 5 个列表、轮胎 / 年检 / 成本管理等只有 1 个分类的 scope。
+   */
+  direct?: boolean
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -101,6 +115,7 @@ const props = withDefaults(defineProps<{
   refSourceScope: '',
   refCategories: () => [],
   refSources: () => [],
+  direct: false,
 })
 
 const emit = defineEmits<{
@@ -176,6 +191,11 @@ onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCateg
 </script>
 
 <style lang="less" scoped>
+.standard-settings-direct {
+  height: 100%;
+  overflow: auto;
+  padding-top: 4px;
+}
 .standard-settings-tabs {
   height: 100%;
   display: flex;

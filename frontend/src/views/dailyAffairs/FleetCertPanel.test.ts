@@ -167,8 +167,14 @@ test('内置字段：发票 3 个；车队档案「证照状态/提取状态」�
   assert.equal(isBuiltinFieldOf('invoice', 'invoiceNo'), false)
   assert.equal(isBuiltinFieldOf('vehicle', 'invoiceType'), false)
   // 第 44 轮：锁定判定扩到 isLockedStatus（状态字段即使没有 builtin 标记也锁身份）
-  assert.match(panel, /<template v-if="isBuiltinField\(row\.fd\) \|\| isLockedStatus\(row\.fd\)">[\s\S]{0,200}lock-on/)
-  assert.match(panel, /系统内置字段，不可删除/)
+  // 第 54 轮：锁标记改成 tooltip 提示（⋮ 菜单始终可用，内置字段可复制不可删）
+  assert.match(panel, /v-if="isBuiltinField\(row\.fd\) \|\| isLockedStatus\(row\.fd\)"[\s\S]{0,200}lock-on/)
+  assert.match(panel, /系统内置字段，不可删除（可复制）/)
+  assert.match(panel, /const deletable = !isBuiltinField\(fd\) && !isLockedStatus\(fd\)/)
+  // 底部引用分类块内不再有自由输入框（自定义字段走「操作 → 复制」）
+  const refBlock = panel.slice(panel.indexOf('v-if="isRefCategory"'), panel.indexOf('v-else-if="!directMode"'))
+  assert.ok(refBlock.length > 0)
+  assert.doesNotMatch(refBlock, /新增字段名/)
   // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除
   assert.doesNotMatch(panel, /系统内置子项，不可删除/)
   assert.match(panel, /class="field-config-row sub-row"/)

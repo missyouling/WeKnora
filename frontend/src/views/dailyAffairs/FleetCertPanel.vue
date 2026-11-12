@@ -1,7 +1,9 @@
 <template>
   <div class="meter-settings-body" v-if="ready">
-    <!-- 分组标题（公司证照在上、司机证照在下，带数量） -->
-    <div class="group-headers">
+    <!-- 分组标题（公司证照在上、司机证照在下，带数量）。
+         第 54 轮：单分类直出模式（direct）下整块隐藏 —— 只有一个分类时，
+         分组胶囊与「XX字段 1 +」标题全是噪音。 -->
+    <div v-if="!directMode" class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
         <span v-if="renamingKey === g.key" class="group-header__rename-wrap">
           <t-input v-model="renameValue" size="small" @enter="confirmRename(g)" @blur="confirmRename(g)" autofocus />
@@ -28,6 +30,7 @@
     <!-- 证照类型表格（复刻电表配置表格，支持拖拽排序） -->
     <div class="meter-table-wrap">
       <div class="meter-table">
+        <template v-if="!directMode">
         <div class="meter-table-head">
           <span class="th-drag"></span>
           <span class="th-name">{{ scopeName(group.scope) }}</span>
@@ -64,12 +67,13 @@
             </span>
           </div>
         </template>
+        </template>
 
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
           <div v-if="editingId && editingItem" class="meter-form meter-form--inline"
             :class="{ 'is-fleet': isFleetScope }">
-            <div class="meter-form-title">编辑{{ group.label }}</div>
-            <div class="form-grid">
+            <div v-if="!directMode" class="meter-form-title">编辑{{ group.label }}</div>
+            <div v-if="!directMode" class="form-grid">
               <div class="form-item">
                 <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
                 <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
@@ -95,7 +99,7 @@
             />
             <!-- 字段配置：增删改 + 启用/禁用（同步字段筛选器） -->
             <div class="field-config">
-              <div class="field-config-head">
+              <div v-if="!directMode" class="field-config-head">
                 <span class="field-config-title">字段配置</span>
                 <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
@@ -219,17 +223,15 @@
                     <t-switch :model-value="isLockedStatus(row.fd) ? true : !!row.fd.enabled" size="small"
                       :disabled="isLockedStatus(row.fd)"
                       @update:model-value="(v: any) => { if (!isLockedStatus(row.fd)) row.fd.enabled = !!v }" />
-                    <template v-if="isBuiltinField(row.fd) || isLockedStatus(row.fd)">
-                      <t-tooltip content="系统内置字段，不可删除" placement="top">
-                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                      </t-tooltip>
-                    </template>
-                    <template v-else-if="usedFields.has(row.fd.name)">
-                      <t-tooltip :content="`该字段已被证照记录引用，不能删除`" placement="top">
-                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                      </t-tooltip>
-                    </template>
-                    <t-popconfirm v-else theme="warning" :visible="fieldDelPop?.name === row.fd.name" placement="left"
+                    <!-- 第 54 轮：锁标记只做「不可删除」提示，⋮ 菜单始终可用 ——
+                         系统内置字段也必须能「复制」出自定义字段。 -->
+                    <t-tooltip v-if="isBuiltinField(row.fd) || isLockedStatus(row.fd)" content="系统内置字段，不可删除（可复制）" placement="top">
+                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                    </t-tooltip>
+                    <t-tooltip v-else-if="usedFields.has(row.fd.name)" content="该字段已被证照记录引用，不能删除（可复制）" placement="top">
+                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                    </t-tooltip>
+                    <t-popconfirm theme="warning" :visible="fieldDelPop?.name === row.fd.name" placement="left"
                       :content="`确定删除字段「${fieldLabelOf(row.fd)}」吗？该字段将不可恢复。`"
                       :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
                       @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
@@ -368,20 +370,17 @@
                 </template>
                 <!-- 费用清单是综合汇总列表，字段全部来自其它分类：
                      这里只允许「检索并引用」，不提供自由输入新建（禁止无源字段）。 -->
+                <!-- 第 54 轮：底部只保留 1 个搜索引用框。
+                     本页自定义字段改由「操作 → 复制」新增（在源行下方插入），
+                     不再提供自由输入框 —— 手输字段名会造出没有数据来源的空列。 -->
                 <div v-if="isRefCategory" class="field-config-add">
                   <SourceFieldPicker class="fc-add-input" :exclude="refFieldKeys"
                     :source-scope="props.refSourceScope || undefined" :categories="props.refCategories"
                     :sources="props.refSources"
-                    :placeholder="(props.refSources.length || props.refSourceScope) ? '搜索并引用人事模块其它列表字段（如 合同状态、手机号码、司龄）' : undefined"
+                    placeholder="搜索并引用模块内其它列表字段（如 合同状态、手机号码、司龄）"
                     @select="addRefField" />
-                  <!-- 人事模块既支持引用其它列表字段，也保留自由新增自定义字段 -->
-                  <template v-if="props.refSources.length || props.refSourceScope">
-                    <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
-                      @enter="addField" />
-                    <t-button variant="outline" size="small" @click="addField">添加</t-button>
-                  </template>
                 </div>
-                <div v-else class="field-config-add">
+                <div v-else-if="!directMode" class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                     @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
@@ -396,13 +395,13 @@
           </div>
 
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
-        <div v-if="!groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
+        <div v-if="!directMode && !groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
           <span class="panel-empty-text">{{ emptyTextOf(group.scope) }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
-        <div v-if="addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
+        <div v-if="!directMode && addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
           <span class="cert-add-gap"></span>
           <span class="cert-add-input">
             <t-input ref="addInputRef" v-model="addForm.name" size="small" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
@@ -412,7 +411,7 @@
             <t-button theme="primary" size="small" :loading="saving" @click="commitAdd">添加</t-button>
           </span>
         </div>
-        <div v-else class="cert-add-row" @click="startAdd">
+        <div v-else-if="!directMode" class="cert-add-row" @click="startAdd">
           <span class="cert-add-gap"></span>
           <span class="cert-add-name"><t-icon name="add" size="14px" /><span>{{ addRowLabel }}</span></span>
         </div>
@@ -483,6 +482,14 @@ const props = withDefaults(defineProps<{
    * `refSourceScope` 只能覆盖花名册一个分类）。
    */
   refSources?: Array<{ scope: string; category: string }>
+  /**
+   * 第 54 轮：单分类直出模式。
+   *
+   * 人事 5 个列表 / 轮胎 / 年检 / 成本管理都只有一个分类，旧界面却要先在
+   * 「分类表格」点一行才展开字段 —— 打开设置看到的是 1 行表格而不是字段列表。
+   * 打开后直接进入该分类的字段配置，隐藏分组胶囊、分类表格与「编辑XX字段」标题。
+   */
+  direct?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -491,6 +498,7 @@ const props = withDefaults(defineProps<{
   refSourceScope: '',
   refCategories: () => [],
   refSources: () => [],
+  direct: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -768,6 +776,12 @@ const groupItems = computed(() => buildItems(group.value))
  * （真机截图踩过）。统一按「分类表 → 编辑分类 → 字段配置」三段式排列。
  */
 const editingItem = computed(() => groupItems.value.find((it: any) => it.id === editingId.value) || null)
+
+/**
+ * 单分类直出：只在「显式开启 direct」且该分组下恰好 1 个分类时生效。
+ * 多分类（市电账单 / 光伏 / 费用清单…）与自定义分组仍走原来的表格 + 点击展开。
+ */
+const directMode = computed(() => !!props.direct && groupItems.value.length === 1)
 /**
  * 是否「只允许引用其它分类字段」的分类（当前仅费用清单）。
  *
@@ -916,6 +930,8 @@ async function load() {
       usedFields.value = new Set()
     })
     autoOpenInitialCategory()
+    // 直出模式：分类加载完直接展开唯一分类，用户看到的第一屏就是字段列表。
+    if (directMode.value) openCategory(groupItems.value[0])
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
   }
@@ -945,6 +961,10 @@ function autoOpenInitialCategory() {
 
 // 分类变化（例如抽屉复用、或子组件改请求打开另一个分类）时重新定位
 watch(() => props.initialCategory, () => { autoOpenInitialCategory() })
+// 分类数据异步到位 / 从多分类切回单分类时，直出模式要补开唯一分类
+watch(() => groupItems.value.length, () => {
+  if (directMode.value) openCategory(groupItems.value[0])
+})
 
 // ---- 字段引用判断：删除字段前检查是否已被证照记录引用 ----
 const RECORD_TYPE_MAP: Record<string, string> = {
@@ -1529,6 +1549,16 @@ function toggleEdit(item: any) {
     emit('category-change', '')
     return
   }
+  startEdit(item)
+}
+
+/** 打开指定分类的字段配置（幂等：已在该分类则什么都不做）。 */
+function openCategory(item: any) {
+  if (!item || editingId.value === item.id) return
+  startEdit(item)
+}
+
+function startEdit(item: any) {
   editForm.name = item.name
   newFieldName.value = ''
   newSubFieldLabel.value = ''
@@ -1599,13 +1629,29 @@ function setFieldInputRef(name: string, el: any) {
   if (el) fieldInputRefs.set(name, el)
   else fieldInputRefs.delete(name)
 }
-const fieldMenuOptions = (_fd: any) => [
-  { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
-  { content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) },
-]
+/**
+ * 字段行 ⋮ 菜单：复制恒可用；删除只对「非内置且未被引用」的字段出现。
+ * 系统内置 / 已引用字段只读身份，但仍可复制出自定义字段。
+ */
+const fieldMenuOptions = (fd: any) => {
+  const opts: any[] = [
+    { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
+  ]
+  const deletable = !isBuiltinField(fd) && !isLockedStatus(fd) && !usedFields.value.has(fd?.name)
+  if (deletable) {
+    opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
+  }
+  return opts
+}
 function onFieldMenu(fd: any, value: string) {
   if (value === 'copy') void duplicateField(fd)
-  else if (value === 'delete') fieldDelPop.value = fd
+  else if (value === 'delete') {
+    if (isBuiltinField(fd) || isLockedStatus(fd) || usedFields.value.has(fd?.name)) {
+      MessagePlugin.warning('系统内置或已被引用的字段不可删除，可复制后修改副本')
+      return
+    }
+    fieldDelPop.value = fd
+  }
 }
 const onFieldPopRemove = async () => {
   const fd = fieldDelPop.value
@@ -1618,7 +1664,7 @@ const onFieldPopRemove = async () => {
 async function duplicateField(fd: any) {
   const taken = fieldsEditable.value.flatMap((f: any) => [f.name, f.label || ''])
   const nm = copyFieldUniqueName(fieldLabelOf(fd), taken)
-  fieldsEditable.value.push({
+  const draft: any = {
     name: nm,
     enabled: !!fd.enabled,
     isDefault: !!fd.isDefault,
@@ -1630,8 +1676,13 @@ async function duplicateField(fd: any) {
     groupLabel: (fd as any).groupLabel,
     // 子列一并复制，否则复制出的 items 字段会是个空壳
     subFields: Array.isArray(fd.subFields) ? fd.subFields.map((s: EditableSubField) => ({ ...s })) : undefined,
-  })
-  MessagePlugin.success('已复制字段')
+  }
+  // 第 54 轮：复制出的字段必须紧跟在源行**下方**（原来一律 append 到末尾，
+  // 用户复制完还得自己拖回来，等于白点）。
+  const at = fieldsEditable.value.findIndex((f: any) => f.name === fd.name)
+  if (at >= 0) fieldsEditable.value.splice(at + 1, 0, draft)
+  else fieldsEditable.value.push(draft)
+  MessagePlugin.success('已复制字段，可直接改名')
   // 新行刚挂载，等一拍再聚焦（TInput 暴露 focus()）
   await nextTick()
   const el: any = fieldInputRefs.get(nm)

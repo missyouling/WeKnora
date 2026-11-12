@@ -58,6 +58,10 @@
           <t-select v-if="activeTab === 'hr-contract'" v-model="contractStatusView"
             :options="CONTRACT_STATUS_OPTIONS" placeholder="合同状态" class="hr-status-select"
             @change="onContractStatusChange" />
+          <!-- 第 54 轮：公积金账户状态（全部 / 正常 / 封存 / 提取销户） -->
+          <t-select v-if="activeTab === 'hr-fund' && fundSubView === 'ledger'" v-model="fundStatusView"
+            :options="FUND_STATUS_OPTIONS" placeholder="账户状态" class="hr-status-select"
+            @change="onFundStatusChange" />
         </template>
         <template #batch-actions>
           <!-- display:contents 让按钮仍是 .batch-bar-actions 的直接 flex 项，不额外产生布局层 -->
@@ -83,19 +87,19 @@
                 启封
               </t-button>
             </template>
-            <!-- 花名册：办理离职 / 恢复在职；离职管理：恢复在职 -->
-            <template v-if="activeTab === 'hr-roster' || activeTab === 'hr-resign'">
-              <t-button v-if="activeTab === 'hr-roster'" theme="default" variant="outline" size="small"
-                :disabled="!selectedRowKeys.length" @click="handleResign">
-                <template #icon><t-icon name="logout" size="14px" /></template>
-                办理离职
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :disabled="!selectedRowKeys.length"
-                @click="handleRestore">
-                <template #icon><t-icon name="rollback" size="14px" /></template>
-                恢复在职
-              </t-button>
-            </template>
+            <!-- 第 54 轮职责边界：
+                 花名册 = 在职池 → 只能「办理离职」（彻底移除「恢复在职」）；
+                 离职管理 = 离职池 → 只能「恢复在职」（不显示「办理离职」）。 -->
+            <t-button v-if="activeTab === 'hr-roster'" theme="default" variant="outline" size="small"
+              :disabled="!selectedRowKeys.length" @click="handleResign">
+              <template #icon><t-icon name="logout" size="14px" /></template>
+              办理离职
+            </t-button>
+            <t-button v-if="activeTab === 'hr-resign'" theme="default" variant="outline" size="small"
+              :disabled="!selectedRowKeys.length" @click="handleRestore">
+              <template #icon><t-icon name="rollback" size="14px" /></template>
+              恢复在职
+            </t-button>
             <!-- 第 47 轮：社保原始记录 → 按账期生成月度汇总 -->
             <t-button v-if="activeTab === 'hr-social' && siRecordView === 'raw'"
               theme="primary" variant="outline" size="small" @click="handleGenerateSummary">
@@ -116,8 +120,7 @@
         <!-- 第 47 轮：右侧固定 4 按钮 = 字段 | 设置 | 导入 | 新增。
              「导入」必须排在「设置」之后，故走 BusinessFilterBar 的 after-settings 插槽。 -->
         <template #after-settings>
-          <t-button v-if="activeTab !== 'hr-fund'" theme="default" variant="outline" size="small"
-            @click="onImportClick">
+          <t-button theme="default" variant="outline" size="small" @click="onImportClick">
             <template #icon><t-icon name="upload" size="14px" /></template>
             导入
           </t-button>
@@ -213,6 +216,15 @@
               </t-tag>
               <span v-else>—</span>
             </template>
+            <!-- 第 54 轮：公积金账户状态三色 Tag（正常绿 / 封存橙 / 提取销户灰） -->
+            <template #账户状态="{ row }: any">
+              <span v-if="isHeaderContext(row)">账户状态</span>
+              <t-tag v-else-if="colValue(row, '账户状态')" :theme="fundStatusTheme(colValue(row, '账户状态'))"
+                variant="light" size="small">
+                {{ colValue(row, '账户状态') }}
+              </t-tag>
+              <span v-else>—</span>
+            </template>
             <!-- 社保原始记录：记录性质 Tag（正常 / 异常补退） -->
             <template #记录性质="{ row }: any">
               <span v-if="isHeaderContext(row)">记录性质</span>
@@ -267,7 +279,7 @@
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
       :initial-category="initialCategory" :title="settingsTitle"
       fields-tab-label="字段设置"
-      :hide-group-tabs="activeTab === 'hr-roster'"
+      :hide-group-tabs="true" direct
       :ref-sources="refSources"
       storage-key="weknora-hr-settings-drawer-width" :show-rules="false"
       @saved="onSettingsSaved" />
@@ -346,7 +358,7 @@ import {
   HR_TABS, buildHrKpiCards, hrScopeOf, hrColumnDefs, hrBillColumnDefs,
   sortMonthsDesc, isHrMonth, hrFieldSeeds, hrRowKey,
   hrRosterGroupColumns, hrResignColumns, hrContractColumns, hrColumnsFromSubs,
-  hrSocialColumns,
+  hrSocialColumns, hrFundColumns,
   contractStatusOf,
   contractStatusTheme,
   CONTRACT_STATUS_OPTIONS,
@@ -404,13 +416,22 @@ const refSources = computed(() =>
 /** 当前导入弹窗对应的模板模块（社保走多文件自适应，不走本弹窗）。 */
 const importModule = computed<HrModule>(() =>
   activeTab.value === 'hr-resign' ? 'resign'
-    : activeTab.value === 'hr-contract' ? 'contract' : 'roster')
+    : activeTab.value === 'hr-contract' ? 'contract'
+      : activeTab.value === 'hr-fund' ? 'fund' : 'roster')
 
 /** 组织机构单位名（合同公司 / 签约公司下拉数据源）。 */
 const rosterUnitOptions = ref<string[]>([])
 /** 第 47 轮：社保记录类型（原始记录 / 汇总记录）与劳动合同状态筛选。 */
 const siRecordView = ref<'raw' | 'summary'>('raw')
 const contractStatusView = ref<string>('全部')
+/** 第 54 轮：公积金账户状态筛选（全部 / 正常 / 封存 / 提取销户）。 */
+const fundStatusView = ref<string>('全部')
+const FUND_STATUS_OPTIONS = [
+  { label: '全部', value: '全部' },
+  { label: '正常', value: '正常' },
+  { label: '封存', value: '封存' },
+  { label: '提取销户', value: '提取销户' },
+]
 /** 第 48 轮：花名册部门筛选（空 = 全部部门）。 */
 const rosterDeptFilter = ref<string>('')
 const rosterDeptOptions = ref<string[]>([])
@@ -492,11 +513,17 @@ const detailTitle = computed(() => {
 })
 const printTitle = computed(() => `${tabLabel.value}清单`)
 
+/**
+ * 工具栏「新增」按钮（第 54 轮）。
+ *
+ * 只有花名册（新增员工）与社保（新增账期）需要它：
+ * 离职记录由花名册转移 / 导入产生，合同记录随员工 1:1 自动生成，
+ * 公积金记录来自网厅导入 —— 三者给「新增」按钮只会造出无主数据。
+ */
 const primaryAction = computed(() => {
-  // 文案统一精简为「新增」；劳动合同视图的「新增」跳回花名册新增员工（合同随人走）
+  if (activeTab.value === 'hr-roster') return { text: '新增', icon: 'add' }
   if (activeTab.value === 'hr-social') return { text: '新增', icon: 'add' }
-  if (activeTab.value === 'hr-fund') return { text: '新增', icon: 'add' }
-  return { text: '新增', icon: 'add' }
+  return undefined
 })
 
 const kpiCards = computed(() => buildHrKpiCards(kpiCounts.value))
@@ -536,7 +563,10 @@ const currentColumns = computed<HrColumn[]>(() => {
     return siRecordView.value === 'raw' ? withExtraSubs(cols, subsOfTab('hr-social')) : cols
   }
   if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') return hrBillColumnDefs()
-  if (activeTab.value === 'hr-fund') return withExtraSubs(hrColumnDefs('hr-fund'), subsOfTab('hr-fund'))
+  if (activeTab.value === 'hr-fund') {
+    // 第 54 轮：18 个网厅原生字段为骨架，字段设置里新增/引用的字段追加在后。
+    return withExtraSubs(hrFundColumns(), subsOfTab('hr-fund'))
+  }
   return hrColumnDefs(activeTab.value)
 })
 
@@ -688,7 +718,8 @@ const summaryCols = computed<SummaryColumn[]>(() =>
     .map((c) => ({
       key: c.colKey,
       label: c.title,
-      fieldType: c.dataType === 'number' ? 'number' : 'text',
+      // 比例列（noSum）不进合计：5% × N 人加成 60% 是脏数据
+      fieldType: c.dataType === 'number' && !c.noSum ? 'number' : 'text',
       value: (row: any) => c.value?.(row) ?? '',
     })),
 )
@@ -721,6 +752,14 @@ function colValue(row: any, colKey: string): string {
   if (!c) return '—'
   if (isHeaderContext(row)) return c.title
   return c.value?.(row) ?? '—'
+}
+/** 公积金账户状态：正常=success / 封存=warning / 提取销户=default（灰）。 */
+function fundStatusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
+  const s = String(v ?? '').trim()
+  if (s === '正常') return 'success'
+  if (s === '封存') return 'warning'
+  if (s === '提取销户') return 'default'
+  return 'default'
 }
 function statusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
   const s = String(v ?? '')
@@ -795,7 +834,9 @@ async function loadList(tab: HrTab) {
     } else if (fundSubView.value === 'bills') {
       items = sortMonthsDesc(extractItems(await hrApi.listFundBills()), 'month_label')
     } else {
-      items = extractItems(await hrApi.listFundRecords())
+      items = extractItems(await hrApi.listFundRecords(
+        fundStatusView.value === '全部' ? undefined : fundStatusView.value,
+      ))
     }
     // TDesign 的 row-key="id" 是列名，要求每行都有 id 字段。后端三个模块主键都是
     // string id；万一某视图缺 id，用 hrRowKey(row) 补一个，保证 TDesign 的选中键、
@@ -825,12 +866,14 @@ async function reloadStats() {
     const res: any = await hrApi.getRosterStats()
     const d = res?.data || {}
     kpiCounts.value = {
-      'hr-roster': Number(d.total ?? d.roster ?? d.employees ?? kpiCounts.value['hr-roster'] ?? 0) || 0,
+      // 花名册卡 = 在职人数（d.roster）；d.total 是全员（含离职），不能拿来当花名册数
+      'hr-roster': Number(d.roster ?? d.active ?? d.total ?? kpiCounts.value['hr-roster'] ?? 0) || 0,
       'hr-resign': Number(d.resigned ?? d.resign ?? kpiCounts.value['hr-resign'] ?? 0) || 0,
       'hr-contract': Number(d.contract ?? kpiCounts.value['hr-contract'] ?? 0) || 0,
       'hr-social': Number(d.social ?? d.periods ?? kpiCounts.value['hr-social'] ?? 0) || 0,
       'hr-fund': Number(d.fund ?? d.records ?? kpiCounts.value['hr-fund'] ?? 0) || 0,
-      // 第 49 轮：合同异常计数（供卡副文案）
+      // 第 54 轮：合同异常计数（未签订 / 即将到期 / 到期）供卡副文案
+      contract_unsigned: Number(d.contract_unsigned ?? 0) || 0,
       contract_expiring: Number(d.contract_expiring ?? 0) || 0,
       contract_expired: Number(d.contract_expired ?? 0) || 0,
     }
@@ -894,6 +937,15 @@ async function onContractFilterChange() {
   selectedKeys.value = new Set()
   rows.value = []
   await loadList('hr-contract')
+  headerReady.value = true
+}
+
+/** 公积金账户状态切换：先撤表头再换行集，避免首帧半套列。 */
+async function onFundStatusChange() {
+  headerReady.value = false
+  selectedKeys.value = new Set()
+  rows.value = []
+  await loadList('hr-fund')
   headerReady.value = true
 }
 
@@ -1120,6 +1172,8 @@ async function onRosterDeptChange() {
 const READONLY_DETAIL_FIELDS = new Set([
   ...HR_DERIVED_FIELDS,
   '在职状态', '员工状态', '账期状态', '参保状态', '缴存状态', '状态',
+  // 第 54 轮：跨模块只读引用（值以源表为准，抽屉里只展示不可改）
+  '个人社保账号', '个人公积金账号', '账户状态',
 ])
 
 /** 当前抽屉对应的字段契约模块（社保/公积金没有 HR 字段契约，走单块渲染）。 */
@@ -1281,8 +1335,24 @@ async function saveDetail() {
     } else if (fundSubView.value === 'bills') {
       MessagePlugin.info('月度账单由系统生成，不支持手工编辑')
     } else {
-      if (id) await hrApi.updateFundRecord(id, payload)
-      else await hrApi.createFundRecord(payload)
+      // 第 54 轮：公积金抽屉按 18 个原生字段编辑 —— 中文键落 custom_data，
+      // 同时映射回模型列（账号 / 姓名 / 证件号 / 基数 / 三方金额），
+      // 否则「改了缴存基数」只写进 JSON，月度账单仍按旧列汇总。
+      const fd: any = { ...(row || {}) }
+      const num = (k: string) => Number(String(form[k] ?? '').replace(/[,，\s]/g, '')) || 0
+      fd.personal_account = form['职工账号'] ?? fd.personal_account ?? ''
+      fd.name = form['职工姓名'] ?? fd.name ?? ''
+      fd.identity_number = form['证件号码'] ?? fd.identity_number ?? ''
+      fd.status = form['账户状态'] === '封存' ? 'sealed'
+        : form['账户状态'] === '提取销户' ? 'extracted' : 'active'
+      fd.personal_base = num('缴存基数(元)')
+      fd.total_amount = num('月缴存额(元)')
+      fd.company_amount = num('单位月缴存额(元)')
+      fd.personal_amount = num('个人月缴存额(元)')
+      fd.contribution_ratio = num('职工缴存比例(%)') || 5
+      fd.custom_data = { ...(row?.custom_data || {}), ...form }
+      if (id) await hrApi.updateFundRecord(id, fd)
+      else await hrApi.createFundRecord(fd)
     }
     MessagePlugin.success('已保存')
     detailVisible.value = false

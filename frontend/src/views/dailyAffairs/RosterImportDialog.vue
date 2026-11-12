@@ -14,8 +14,8 @@
         </t-button>
       </div>
 
-      <!-- 导入模式 -->
-      <div class="ri-mode-row">
+      <!-- 导入模式（公积金是纯 upsert，没有合并/新增/更新之分，隐藏该行） -->
+      <div v-if="module !== 'fund'" class="ri-mode-row">
         <span class="ri-label">导入模式</span>
         <t-radio-group v-model="mode" size="small">
           <t-radio-button value="merge">合并更新</t-radio-button>
@@ -67,7 +67,7 @@ const props = withDefaults(defineProps<{
 }>(), { visible: false, module: 'roster' })
 
 const templateName = computed(() => HR_TEMPLATE_NAMES[props.module] || HR_TEMPLATE_NAMES.roster)
-const moduleLabel = computed(() => ({ roster: '花名册', resign: '离职管理', contract: '劳动合同' })[props.module] || '花名册')
+const moduleLabel = computed(() => ({ roster: '花名册', resign: '离职管理', contract: '劳动合同', fund: '公积金' }[props.module] || '花名册'))
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'imported', count: number): void
