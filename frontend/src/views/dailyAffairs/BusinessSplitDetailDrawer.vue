@@ -34,68 +34,36 @@
     <div class="bsd-body">
       <ExtractQualityPanel v-if="quality" :quality="quality" :label-of="labelOf" compact />
 
-      <!-- 第 48 轮：有 groups 时按 11 分组分块渲染（空组已在父级过滤） -->
-      <template v-if="groups && groups.length">
-        <section v-for="g in groups" :key="g.key" class="bsd-block bsd-group">
-          <div class="bsd-block-title">{{ g.label }}</div>
-          <div class="bsd-fields">
-            <template v-for="f in g.fields" :key="f.name">
-              <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
-                <slot :name="`field-${f.name}`" :field="f" :form="form">
-                  <div v-if="readonly" class="bsd-readonly-value" :class="{ 'is-long': isLongType(f) }">
-                    {{ displayValueOf(f) }}
-                  </div>
-                  <!-- 第 55 轮：状态类字段直接渲染彩色徽标，不再是灰底禁用输入框 -->
-                  <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
-                    variant="light" size="small" class="bsd-status-tag">
-                    {{ form.data[f.name] || '—' }}
-                  </t-tag>
-                  <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
-                  <t-textarea v-else-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
-                    :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
-                  <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
-                  <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
-                    format="YYYY-MM-DD" clearable allow-input />
-                  <!-- 第 52 轮：内置枚举字段统一走可搜索下拉（选项由业务字段契约注入） -->
-                  <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
-                    clearable filterable placeholder="请选择">
-                    <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
-                  </t-select>
-                  <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
-                  <t-textarea v-else-if="f.dataType === 'textarea'" v-model="form.data[f.name]"
-                    :autosize="{ minRows: 2, maxRows: 6 }" />
-                  <t-textarea v-else-if="isLongTextField(f)" v-model="form.data[f.name]"
-                    :autosize="{ minRows: 2, maxRows: 5 }" />
-                  <t-tag-input v-else-if="f.dataType === 'array'" :value="arrayValueOf(f.name)"
-                    @change="(v: any) => (form.data[f.name] = normalizeArrayValue(v))"
-                    placeholder="输入后回车添加" clearable />
-                  <t-input v-else v-model="form.data[f.name]" />
-                </slot>
-              </t-form-item>
-            </template>
-          </div>
-        </section>
-      </template>
-
-      <section v-else class="bsd-block">
-        <div class="bsd-block-title">{{ blockTitle }}</div>
+      <!-- 第 58 轮：有 groups / 无 groups 归一化为**同一条**渲染链。
+           `normalizedSections` 把「无分组」的 fields 包装成单组，
+           表单网格与全部控件分支因此只维护一份 —— 此前 v-if / v-else 两套模板
+           近乎逐行重复（约 90 行），改一处漏一处，是六同步漂移的温床。 -->
+      <section v-for="sec in normalizedSections" :key="sec.key" class="bsd-block">
+        <div class="bsd-block-title">{{ sec.label }}</div>
         <div class="bsd-fields">
-          <template v-for="f in formFields" :key="f.name">
+          <template v-for="f in sec.fields" :key="f.name">
             <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
                 <!-- 只读模式（费用清单等「查看型」抽屉）：所有字段只展示不可改，
                      也不出现保存按钮。费用清单的值是核算结果，编辑只能走「生成/重算」，
-                     在查看抽屉里改等于绕过口径。 -->
+                     在查看抽屉里改等于绕过核算口径。 -->
                 <div v-if="readonly" class="bsd-readonly-value" :class="{ 'is-long': isLongType(f) }">
                   {{ displayValueOf(f) }}
                 </div>
+                <!-- 第 55 轮：状态类字段直接渲染彩色徽标，不再是灰底禁用输入框 -->
+                <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
+                  variant="light" size="small" class="bsd-status-tag">
+                  {{ form.data[f.name] || '—' }}
+                </t-tag>
+                <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，不参与手填 -->
+                <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                 <!-- 备注片段字段：无标准存储位，值存 remark 的「字段名：值」片段 -->
                 <t-textarea v-else-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
                   :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
                 <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                 <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
                   format="YYYY-MM-DD" clearable allow-input />
-                <!-- 第 52 轮：内置枚举字段统一走可搜索下拉 -->
+                <!-- 第 52 轮：内置枚举字段统一走可搜索下拉（选项由业务字段契约注入） -->
                 <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
                   clearable filterable placeholder="请选择">
                   <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
@@ -107,14 +75,6 @@
                      buildDetailPayload 里每个数值都过 toNumber()，脏字符本来就会被
                      收敛成数字；而在输入过程中过滤反而会挡住负数、小数点的中间态
                      （"−1" 输入第一个字符就被吃掉）。 -->
-                <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，
-                     不参与手填（第 47 轮）。 -->
-                <!-- 第 55 轮：状态类字段彩色 Tag（无分组视图） -->
-                <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
-                  variant="light" size="small" class="bsd-status-tag">
-                  {{ form.data[f.name] || '—' }}
-                </t-tag>
-                <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
                      支持换行与自动折行，长内容完整录入与展示不截断。
@@ -319,6 +279,24 @@ const totalRow = computed(() => totalRowTexts(itemRows.value, itemCols.value))
 const formFields = computed<DetailFieldMeta[]>(
   () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
 )
+
+/**
+ * 第 58 轮：模板归一化的唯一数据源。
+ *
+ * - 有 groups：按分组分块渲染（花名册 11 分组 / 社保多胶囊）；
+ * - 无 groups：把 fields 包装成「单组」，label 用 blockTitle（默认「记录信息」），
+ *   与旧单块模板的视觉完全一致，但不再复制一整套控件分支。
+ */
+const normalizedSections = computed<{ key: string; label: string; fields: DetailFieldMeta[] }[]>(() => {
+  if (props.groups && props.groups.length) {
+    return props.groups.map((g, i) => ({
+      key: String(g.key || `group-${i}`),
+      label: String(g.label || ''),
+      fields: (g.fields || []) as DetailFieldMeta[],
+    }))
+  }
+  return [{ key: 'single', label: props.blockTitle, fields: formFields.value }]
+})
 const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
 
 /** 第 55 轮：状态类字段（只读 + 名单命中）用彩色 Tag，不渲染 disabled 输入框。 */

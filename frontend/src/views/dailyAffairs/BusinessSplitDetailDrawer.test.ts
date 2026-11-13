@@ -31,8 +31,10 @@ test('单栏抽屉：不再随预览加宽（无 1180px 分屏逻辑）', () => 
 
 test('单栏抽屉：质量溯源 / 动态字段 / 明细 / 扩展插槽齐全', () => {
   assert.match(src, /<ExtractQualityPanel v-if="quality"/)
-  // 主表单只渲染 formFields（已剔除 items 占位行）
-  assert.match(src, /v-for="f in formFields"/)
+  // 主表单只渲染 formFields（已剔除 items 占位行）；
+  // 第 58 轮起经 normalizedSections 归一化（有 groups 分块 / 无 groups 包成单组）
+  assert.match(src, /v-for="f in sec\.fields"/)
+  assert.match(src, /fields: formFields\.value/)
   assert.match(src, /:name="`field-\$\{f\.name\}`"/)
   assert.match(src, /v-if="supportsSubFields && itemRows\.length"/)
   assert.match(src, /slot name="extra"/)

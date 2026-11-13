@@ -286,6 +286,8 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 	}
 	// 4) 事务外归并存量旧部门名（质量部 → 技术质量部），保证下拉与机构 1:1
 	merged, _ := h.hrRefreshOrgDepartments(ctx, tid)
+	// 5) 第 58 轮：改名 / 归并结果写回社保与公积金五张表（幂等）
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, gin.H{"saved": true, "cascaded": affected, "merged": merged})
 }
 

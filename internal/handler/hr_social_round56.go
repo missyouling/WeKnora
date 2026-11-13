@@ -894,6 +894,8 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 		hrFail(c, "生成账单失败: "+err.Error())
 		return
 	}
+	// 第 58 轮：生成账单后把权威部门写回（含历史月份账单明细的存量对齐）
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, hrSIBillView(next))
 }
 
@@ -1044,6 +1046,8 @@ func (h *HRHandler) ImportSIReceipts(c *gin.Context) {
 		return
 	}
 	h.hrSyncSocialAccountFromReceipts(ctx, tid)
+	// 第 58 轮：导入时按身份证（回退姓名）把权威部门写回主列 + custom_data.部门
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, gin.H{"rows": len(items)})
 }
 
@@ -1163,6 +1167,8 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		hrFail(c, "导入社保记录失败: "+err.Error())
 		return
 	}
+	// 第 58 轮：部门权威落库（姓名回退命中的行也一并补齐）
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed})
 }
 

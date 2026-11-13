@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import PdfSourceViewer from '@/components/source-preview/PdfSourceViewer.vue'
 import { warmupPdfJs } from '@/components/source-preview/pdfjsLoader'
 
@@ -104,6 +104,23 @@ function close() {
   emit('update:visible', false)
   emit('close')
 }
+
+/**
+ * 第 58 轮：键盘可访问性 —— 打开时按 Esc 关闭。
+ *
+ * 必须挂在 **window 捕获阶段**并 stopPropagation：
+ * 预览常叠在账单弹窗 / 抽屉之上，若让事件继续冒泡到 document，
+ * TDesign 的 Esc 监听会顺带把底下一层也关掉（一次 Esc 关两层）。
+ */
+function onKeydown(e: KeyboardEvent) {
+  if (!props.visible) return
+  if (e.key !== 'Escape' && e.key !== 'Esc') return
+  e.preventDefault()
+  e.stopPropagation()
+  close()
+}
+onMounted(() => window.addEventListener('keydown', onKeydown, true))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 
 function doPrint() {
   if (!props.url) return

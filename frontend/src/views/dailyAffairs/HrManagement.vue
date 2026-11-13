@@ -91,7 +91,8 @@
         <template #batch-actions>
           <!-- display:contents 让按钮仍是 .batch-bar-actions 的直接 flex 项，不额外产生布局层 -->
           <div class="hr-batch-actions" data-hr-batch-bar>
-            <t-button theme="default" variant="outline" size="small" @click="handleExportExcel">
+            <t-button theme="default" variant="outline" size="small" :loading="exporting"
+              data-hr-export @click="handleExportExcel">
               <template #icon><t-icon name="download" size="14px" /></template>
               导出 Excel
             </t-button>
@@ -150,17 +151,15 @@
 
         <!-- 第 57 轮：导入 / 生成账单严格按标签显隐。
              回盘表 / 正常记录 / 异常记录 / 职工明细 → 只导入不生成；
-             社保月度账单 / 公积金月度账单 → 只生成不导入。 -->
+             社保月度账单 / 公积金月度账单 → 只生成不导入。
+             第 58 轮：两者都排在「设置」之后（after-settings 插槽），
+             右侧顺序恒为 [☰ 字段] + [⚙ 设置] + [导入 | 生成账单]。 -->
         <template #after-settings>
           <t-button v-if="toolbarShowImport" theme="default" variant="outline" size="small"
             data-hr-import @click="onImportClick">
             <template #icon><t-icon name="upload" size="14px" /></template>
             导入
           </t-button>
-        </template>
-
-        <!-- 右侧常驻业务按钮只剩「生成账单」（仅账单标签显示） -->
-        <template #right-extra>
           <t-button v-if="toolbarShowGenerateBill"
             theme="default" variant="outline" size="small" data-hr-generate-bill
             @click="handleGenerateBill">
@@ -263,7 +262,7 @@
               <span v-else></span>
             </template>
             <!-- 第 57 轮：回盘表五险参保状态改为**三色字体**（不是 Tag）：
-                 参保缴费 #00a870 绿 / 终止缴费 #ed7b2f 橙 / 暂停缴费 #1d2129 深灰。 -->
+                 参保缴费 #00a870 绿 / 终止缴费 #ed7b2f 橙 / 暂停缴费走 --td-text-color-primary 令牌。 -->
             <template #养老参保状态="{ row }: any">
               <span v-if="isHeaderContext(row)">养老参保状态</span>
               <span v-else :class="siStatusTextClass(colValue(row, '养老参保状态'))">{{ colValue(row, '养老参保状态') }}</span>
@@ -355,63 +354,27 @@
       storage-key="weknora-hr-settings-drawer-width" :show-rules="false"
       @saved="onSettingsSaved" />
 
-    <!-- 社保账期：个人 / 单位扣款明细（点行打开） -->
-    <t-drawer v-if="periodDetailVisible" :visible="true"
-      :header="`账期 ${periodDetail?.year_month || ''} 扣款明细`" size="720px" :footer="false"
-      @close="periodDetailVisible = false">
-      <div class="hr-charge-group">
-        <div class="hr-charge-title">个人扣款明细</div>
-        <t-table :data="personalCharges" :columns="chargeColumns" row-key="id" size="small" bordered
-          :empty="'暂无个人扣款明细'" />
-      </div>
-      <div class="hr-charge-group">
-        <div class="hr-charge-title">单位扣款明细</div>
-        <t-table :data="unitCharges" :columns="chargeColumns" row-key="id" size="small" bordered
-          :empty="'暂无单位扣款明细'" />
-      </div>
-    </t-drawer>
-
     <!-- 打印预览（统一中台组件） -->
     <PrintPreviewDialog v-model:visible="printVisible" :title="printTitle" :url="printUrl" :data="printData"
       :download-name="`${printTitle}.pdf`" @close="closePrint" />
     <!-- 第 55 轮：月度账单详情抽屉的独立打印预览 -->
     <PrintPreviewDialog v-model:visible="billPrintVisible" :title="billPrintTitle" :url="billPrintUrl"
-      :data="billPrintData" :download-name="`${billPrintTitle}.pdf`" />
+      :data="billPrintData" :download-name="`${billPrintTitle}.pdf`" @close="closeBillPrint" />
 
     <!-- 第 47 轮：社保多文件自适应导入（正常 + 异常一起选） -->
     <input ref="siFileInputRef" type="file" multiple accept=".xlsx,.xls,.csv" class="hr-file-input"
       @change="onSiFilesChange" />
-
-    <!-- 第 47 轮：社保月度费用清单抽屉 -->
-    <t-drawer v-model:visible="siDetailVisible" :header="siDetailTitle" size="90%" placement="right"
-      :footer="false" class="hr-si-detail-drawer">
-      <div class="hr-si-detail">
-        <div class="hr-si-filters">
-          <t-input v-model="siDetailKeyword" placeholder="搜索姓名 / 身份证 / 工号" clearable
-            class="hr-si-search">
-            <template #prefixIcon><t-icon name="search" size="16px" /></template>
-          </t-input>
-          <t-select v-model="siDetailDept" placeholder="全部部门" clearable class="hr-si-dept">
-            <t-option v-for="d in siDetailDepts" :key="d" :label="d" :value="d" />
-          </t-select>
-          <t-select v-model="siDetailScheme" :options="SI_SCHEME_OPTIONS" placeholder="全部险种"
-            class="hr-si-scheme" />
-          <span class="hr-si-count">共 {{ siDetailFiltered.length }} 人</span>
-        </div>
-        <t-table :data="siDetailFiltered" :columns="siDetailColumns" row-key="id" size="small"
-          :loading="siDetailLoading" :max-height="'100%'" :foot-data="siDetailFoot"
-          :rowspan-and-colspan-in-footer="siDetailFootSpan" class="hr-si-table" />
-      </div>
-    </t-drawer>
 
     <!-- 第 52 轮：三套独立 Excel 导入模板（花名册 / 离职管理 / 劳动合同）共用弹窗 -->
     <RosterImportDialog v-model:visible="rosterImportVisible" :module="importModule" @imported="onRosterImported" />
     <ResignEmployeeDialog v-model:visible="resignVisible" :ids="selectedRowKeys"
       :employee-name="resignTargetName" @done="onResignDone" />
 
-    <!-- 第 55 轮：页内附件预览器（严禁 window.open） -->
-    <FilePreviewDialog v-model:visible="previewVisible" :src="previewSrc"
-      :file-name="previewName" :file-type="previewType" title="离职证明预览" />
+    <!-- 第 55 轮：页内附件预览器（严禁 window.open）
+         第 58 轮：关闭即 revokeObjectURL，blob 不常驻到页面卸载。 -->
+    <FilePreviewDialog :visible="previewVisible" :src="previewSrc"
+      :file-name="previewName" :file-type="previewType" title="离职证明预览"
+      @update:visible="onPreviewVisibleChange" />
 
     <!-- 第 55 轮：生成账单月份选择 + 重复月份二次确认 -->
     <t-dialog :visible="billMonthVisible" header="生成月度账单" width="420px" placement="center"
@@ -438,7 +401,7 @@
     <!-- 第 57 轮：月度账单由抽屉改为**大尺寸居中弹窗**（社保 / 公积金统一设计），
          顶部三标签「个人明细 | 单位明细 | 汇总数据」，标签下方标准工具栏
          （左侧搜索/部门/条件险种，右侧打印 + 导出 Excel），表格合计行恒贴底。 -->
-    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="1200px"
+    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(1200px, 94vw)"
       placement="center" :footer="false" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
       <div class="hr-bill-detail">
         <div class="hr-bill-tabs">
@@ -477,7 +440,8 @@
             <template #icon><t-icon name="print" size="14px" /></template>
             打印
           </t-button>
-          <t-button theme="default" variant="outline" size="small" @click="exportBillExcel">
+          <t-button theme="default" variant="outline" size="small" :loading="exporting"
+            data-hr-bill-export @click="exportBillExcel">
             <template #icon><t-icon name="download" size="14px" /></template>
             导出 Excel
           </t-button>
@@ -538,6 +502,8 @@ import {
 import RosterImportDialog from './RosterImportDialog.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
+// 第 58 轮：账单人数 / 行序号口径抽成纯函数（可单测，打印导出处共用同一套）
+import { billPeopleCountOf, isAdjustmentRow, siBillPeopleOf } from './hrBill'
 import type { FilterFieldSpec } from './businessFilter'
 
 // ---------------------------------------------------------------------------
@@ -636,26 +602,6 @@ const SI_INSURANCE_OPTIONS = [
   { label: '工伤保险', value: '工伤保险' },
   { label: '失业保险', value: '失业保险' },
 ]
-/** 社保月度费用清单抽屉（第 47 轮遗留，页面已改账单抽屉）。 */
-const siDetailVisible = ref(false)
-const siDetailLoading = ref(false)
-const siDetailItems = ref<any[]>([])
-const siDetailDepts = ref<string[]>([])
-const siDetailTitle = ref('')
-const siDetailKeyword = ref('')
-const siDetailDept = ref('')
-const siDetailScheme = ref('全部')
-
-/** 险种筛选项（第 47 轮遗留明细抽屉内）。 */
-const SI_SCHEME_OPTIONS = [
-  { label: '全部险种', value: '全部' },
-  { label: '养老', value: '养老' },
-  { label: '医疗', value: '医疗' },
-  { label: '大病', value: '大病' },
-  { label: '失业', value: '失业' },
-  { label: '工伤', value: '工伤' },
-]
-
 /** 合同状态：优先取后端派生的 custom_data.合同状态，否则前端现算。 */
 function contractStatusOfRow(row: any): string {
   const v = row?.合同状态 ?? row?.custom_data?.['合同状态'] ?? row?.contract_status
@@ -674,23 +620,6 @@ function contractStatusOfRow(row: any): string {
   )
 }
 
-/** 抽屉明细按搜索 / 部门 / 险种过滤。 */
-const siDetailFiltered = computed(() => {
-  const kw = siDetailKeyword.value.trim().toLowerCase()
-  return siDetailItems.value.filter((r) => {
-    if (siDetailDept.value && String(r['部门'] || '') !== siDetailDept.value) return false
-    if (siDetailScheme.value !== '全部') {
-      const scheme = String(siDetailScheme.value)
-      // 险种筛选：该险种单位/个人任一非 0 即保留
-      const key = { 养老: ['养老单位', '养老个人'], 医疗: ['医疗单位', '医疗个人'], 大病: ['大病'],
-        失业: ['失业单位', '失业个人'], 工伤: ['工伤单位'] }[scheme] || []
-      if (!key.some((k) => Number(r[k] || 0) !== 0)) return false
-    }
-    if (!kw) return true
-    return [r['姓名'], r['证件号码'], r['工号'], r['个人社保编号']]
-      .some((v) => String(v || '').toLowerCase().includes(kw))
-  })
-})
 const rosterImportVisible = ref(false)
 const resignVisible = ref(false)
 /** 单选办理离职时传入弹窗，用于顶部「正在为「XXX」办理离职」提示。 */
@@ -1095,7 +1024,7 @@ function fundStatusTheme(v: string): 'success' | 'warning' | 'danger' | 'default
 }
 /**
  * 第 57 轮：回盘表五险参保状态用**三色字体**（不是 Tag，避免状态列被 Tag 撑宽）：
- * 参保缴费 #00a870 绿 / 终止缴费 #ed7b2f 橙 / 暂停缴费 #1d2129 深灰。
+ * 参保缴费 #00a870 绿 / 终止缴费 #ed7b2f 橙 / 暂停缴费走 --td-text-color-primary 令牌。
  */
 function siStatusTextClass(v: string): string {
   const s = String(v ?? '').trim()
@@ -1392,49 +1321,6 @@ async function onSiFilesChange(e: Event) {
     loading.value = false
   }
 }
-
-/** 月度费用清单抽屉列（一行 = 一名员工的各险种合计）。 */
-const siDetailColumns = [
-  { colKey: '工号', title: '工号', width: 120, ellipsis: true },
-  { colKey: '姓名', title: '姓名', width: 90 },
-  { colKey: '部门', title: '部门', width: 110, ellipsis: true },
-  { colKey: '缴费基数', title: '缴费基数', width: 100, align: 'right' as const },
-  { colKey: '养老单位', title: '养老单位', width: 100, align: 'right' as const },
-  { colKey: '养老个人', title: '养老个人', width: 100, align: 'right' as const },
-  { colKey: '医疗单位', title: '医疗单位', width: 100, align: 'right' as const },
-  { colKey: '医疗个人', title: '医疗个人', width: 100, align: 'right' as const },
-  { colKey: '大病', title: '大病', width: 80, align: 'right' as const },
-  { colKey: '失业单位', title: '失业单位', width: 100, align: 'right' as const },
-  { colKey: '失业个人', title: '失业个人', width: 100, align: 'right' as const },
-  { colKey: '工伤单位', title: '工伤单位', width: 100, align: 'right' as const },
-  { colKey: '补退金额', title: '补退', width: 90, align: 'right' as const },
-  { colKey: '个人小计', title: '个人小计', width: 100, align: 'right' as const },
-  { colKey: '单位小计', title: '单位小计', width: 100, align: 'right' as const },
-  { colKey: '总计', title: '总计', width: 100, align: 'right' as const },
-]
-
-/** 抽屉合计行跨列：首列跨满，其余返回空（与中台 footSpanOf 同口径）。 */
-const siDetailFootSpan = (data: any) => {
-  if (!data) return {}
-  return { 工号: [1, siDetailColumns.length] }
-}
-
-/** 抽屉底部合计行（金额按分累加，避免浮点残留）。 */
-const siDetailFoot = computed(() => {
-  const rows = siDetailFiltered.value
-  if (!rows.length) return []
-  const money = (k: string) => {
-    let cents = 0
-    for (const r of rows) cents += Math.round(Number(r[k] || 0) * 100)
-    return grouped(cents / 100, { fixed: true, fallback: '0.00' })
-  }
-  const foot: Record<string, string> = { 工号: `合计（${rows.length} 人）`, 姓名: '', 部门: '', 缴费基数: '' }
-  for (const c of siDetailColumns) {
-    if (['工号', '姓名', '部门', '缴费基数'].includes(c.colKey)) continue
-    foot[c.colKey] = money(c.colKey)
-  }
-  return [foot]
-})
 
 /** 公积金二级切换同样走门禁，避免列集换了一半先渲染一帧。 */
 async function onFundSubViewChange() {
@@ -1812,32 +1698,6 @@ async function onDetailDelete() {
   }
 }
 
-// 社保账期：个人 / 单位扣款明细
-const periodDetailVisible = ref(false)
-const periodDetail = ref<any>(null)
-const personalCharges = ref<any[]>([])
-const unitCharges = ref<any[]>([])
-function chargeVal(row: any, keys: string[]): string {
-  for (const k of keys) {
-    const v = row?.[k]
-    if (v !== undefined && v !== null && v !== '') return String(v)
-  }
-  return ''
-}
-// 列键对齐后端 HRSICharge：name / id_number / department / base / subtotal
-const chargeColumns = [
-  { colKey: 'name', title: '姓名', cell: (_h: any, { row }: any) => chargeVal(row, ['name', '姓名', 'employee_name']) },
-  { colKey: 'id_number', title: '证件号', cell: (_h: any, { row }: any) => chargeVal(row, ['id_number', 'identity_number', '证件号', 'person_code']) },
-  { colKey: 'department', title: '部门', cell: (_h: any, { row }: any) => chargeVal(row, ['department', '部门']) },
-  {
-    colKey: 'base', title: '缴费基数',
-    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['base', '缴费基数', 'base_amount', 'personal_base']), { fixed: true, fallback: '', blankWhenEmpty: true }),
-  },
-  {
-    colKey: 'subtotal', title: '小计',
-    cell: (_h: any, { row }: any) => grouped(chargeVal(row, ['subtotal', 'amount', '小计', '金额']), { fixed: true, fallback: '', blankWhenEmpty: true }),
-  },
-]
 // ---------------------------------------------------------------------------
 // 设置 / 新增 / 打印
 // ---------------------------------------------------------------------------
@@ -1938,6 +1798,9 @@ const printVisible = ref(false)
 const printData = ref<Uint8Array | null>(null)
 const printUrl = ref('')
 const printBusy = ref(false)
+/** 第 58 轮：导出 Excel 的 loading 态 —— 首次点击要动态 import xlsx（~490KB），
+    没有反馈时用户会连点，重复生成工作簿。 */
+const exporting = ref(false)
 async function handlePrint() {
   const list = selectedRows.value.length ? selectedRows.value : rows.value
   if (!list.length) { MessagePlugin.warning('当前无数据可打印'); return }
@@ -1993,6 +1856,8 @@ async function handleExportExcel() {
     MessagePlugin.info('社保清单请使用「打印清单」或账单抽屉的「打印预览」导出')
     return
   }
+  if (exporting.value) return
+  exporting.value = true
   try {
     let blob: any
     if (activeModule.value) {
@@ -2003,6 +1868,7 @@ async function handleExportExcel() {
     downloadBlob(blob, `${printTitle.value}.xlsx`)
     MessagePlugin.success('已导出')
   } catch (e: any) { MessagePlugin.error(e?.message || '导出失败') }
+  finally { exporting.value = false }
 }
 
 async function handleSeal(seal: boolean) {
@@ -2103,13 +1969,35 @@ async function previewProof(row: any) {
   try {
     const blob: any = await hrApi.getResignProof(id)
     // 第 55 轮：页内预览器，严禁 window.open / target="_blank"
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    releasePreviewUrl()
     previewUrl = URL.createObjectURL(blob instanceof Blob ? blob : new Blob([blob]))
     previewSrc.value = previewUrl
     previewName.value = raw.split('/').pop() || '离职证明'
     previewType.value = /\.pdf(\?|$)/i.test(raw) ? 'application/pdf' : 'image'
     previewVisible.value = true
   } catch (e: any) { MessagePlugin.error(e?.message || '附件预览失败') }
+}
+
+/**
+ * 第 58 轮：附件预览 blob URL 生命周期收口。
+ * 关闭预览 / 换文件 / 页面卸载三处都 revoke，避免 blob 占内存到会话结束。
+ */
+function releasePreviewUrl() {
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl)
+    previewUrl = ''
+  }
+  previewSrc.value = ''
+}
+function onPreviewVisibleChange(v: boolean) {
+  previewVisible.value = v
+  if (!v) releasePreviewUrl()
+}
+/** 第 58 轮：账单打印预览关闭时同样释放 blob（原先只在重新生成时 revoke）。 */
+function closeBillPrint() {
+  billPrintVisible.value = false
+  billPrintData.value = null
+  if (billPrintUrl.value) { URL.revokeObjectURL(billPrintUrl.value); billPrintUrl.value = '' }
 }
 /**
  * 第 57 轮：恢复在职（已在模板里二次确认）。
@@ -2355,14 +2243,9 @@ const billSubjectColumns = computed(() => {
 const billSummaryColumns = computed(() => BILL_SUMMARY_COLUMNS)
 
 /** 社保人数口径：补缴行只追加金额，不额外计一个人（恒 75 人）。 */
-const siBillPeople = computed(() => new Set(
-  billFiltered.value.filter((r) => !r.是否补缴)
-    .map((r) => String(r.证件号码 || r.姓名 || '')),
-).size)
+const siBillPeople = computed(() => siBillPeopleOf(billFiltered.value))
 /** 公积金属地人数：按证件号码去重。 */
-const billPeopleCount = computed(() => new Set(
-  billFiltered.value.map((r) => String(r.证件号码 || r.姓名 || '')),
-).size)
+const billPeopleCount = computed(() => billPeopleCountOf(billFiltered.value))
 
 /** 个人明细 / 单位明细：一人多条记录逐行独立展示（陈刚正常行 + 补缴行 = 2 行）。 */
 const billSubjectRows = computed(() => {
@@ -2404,7 +2287,7 @@ const billSummaryRows = computed(() => {
   for (const r of billFiltered.value) {
     const d = String(r.部门 || '未分配部门').trim() || '未分配部门'
     const e = m.get(d) || { 部门: d, 人数: 0, p: 0, u: 0 }
-    if (!r.是否补缴) e.人数++
+    if (!isAdjustmentRow(r)) e.人数++
     if (isSocial) {
       e.p += siCents(r.个人小计)
       e.u += siCents(r.单位小计)
@@ -2505,6 +2388,8 @@ async function exportBillExcel() {
   const activeRows = isSummary ? billSummaryRows.value : billSubjectRows.value
   const footRows = isSummary ? billSummaryFoot.value : billSubjectFoot.value
   if (!activeRows.length) { MessagePlugin.warning('当前无数据可导出'); return }
+  if (exporting.value) return
+  exporting.value = true
   try {
     const XLSX = await import('xlsx')
     const header = activeColumns.map((c) => c.title)
@@ -2517,6 +2402,7 @@ async function exportBillExcel() {
     XLSX.writeFile(wb, `${billDetailTitle.value}.xlsx`)
     MessagePlugin.success('已导出 Excel')
   } catch (e: any) { MessagePlugin.error(e?.message || '导出 Excel 失败') }
+  finally { exporting.value = false }
 }
 
 // ---------------------------------------------------------------------------
@@ -2532,7 +2418,14 @@ onMounted(async () => {
   await reloadStats()
   filterWatchReady = true
 })
-onUnmounted(() => window.removeEventListener('hr-org-changed', onOrgChanged))
+onUnmounted(() => {
+  window.removeEventListener('hr-org-changed', onOrgChanged)
+  // 第 58 轮：页面卸载时释放全部 blob URL（附件预览 / 清单 PDF / 账单 PDF）
+  releasePreviewUrl()
+  if (printUrl.value) { URL.revokeObjectURL(printUrl.value); printUrl.value = '' }
+  if (billPrintUrl.value) { URL.revokeObjectURL(billPrintUrl.value); billPrintUrl.value = '' }
+  if (filterTimer) clearTimeout(filterTimer)
+})
 </script>
 
 <style lang="less" scoped>
@@ -2576,13 +2469,6 @@ onUnmounted(() => window.removeEventListener('hr-org-changed', onOrgChanged))
 /* 搜索框正后方的在职状态筛选（第 46 轮） */
 .hr-status-select { width: 140px; flex-shrink: 0; }
 .hr-month-picker { width: 130px; flex-shrink: 0; }
-.hr-si-detail { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
-.hr-si-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.hr-si-search { width: 260px; }
-.hr-si-dept { width: 160px; }
-.hr-si-scheme { width: 140px; }
-.hr-si-count { color: var(--td-text-color-secondary); }
-.hr-si-table { flex: 1; min-height: 0; }
 /* 第 57 轮：离职证明附件控制条 —— 状态标签 + 查看 + 重新上传/上传附件，
    所有按钮强制 nowrap，绝不竖排折行；附件路径不再出现在界面上。 */
 .hr-proof-field {
@@ -2603,11 +2489,12 @@ onUnmounted(() => window.removeEventListener('hr-org-changed', onOrgChanged))
 }
 .hr-proof-field .hr-proof-btn { flex: 0 0 auto; white-space: nowrap; }
 
-/* 回盘表五险参保状态三色字体（第 57 轮） */
+/* 回盘表五险参保状态三色字体（第 57 轮；第 58 轮「暂停缴费」改走设计令牌，
+   深色主题下不再是一块看不见的 #1d2129） */
 .hr-si-status { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hr-si-status--active { color: #00a870; }
 .hr-si-status--ended { color: #ed7b2f; }
-.hr-si-status--paused { color: #1d2129; }
+.hr-si-status--paused { color: var(--td-text-color-primary, #1d2129); }
 
 /* 第 57 轮：账单三标签弹窗 */
 .hr-bill-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
@@ -2615,13 +2502,6 @@ onUnmounted(() => window.removeEventListener('hr-org-changed', onOrgChanged))
 .hr-bill-filters { margin-bottom: 14px; }
 .hr-bill-table-wrap { height: 560px; min-height: 0; display: flex; flex-direction: column; }
 .hr-bill-table-wrap :deep(.hr-bill-item-table) { flex: 1; min-height: 0; }
-.hr-charge-group { margin-bottom: 20px; }
-.hr-charge-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
-  margin-bottom: 8px;
-}
 </style>
 
 <style>

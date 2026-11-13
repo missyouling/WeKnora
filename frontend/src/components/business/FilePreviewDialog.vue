@@ -27,11 +27,12 @@
       <t-button variant="outline" size="small" @click="printFile">
         <template #icon><t-icon name="print" size="15px" /></template>打印
       </t-button>
-  <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
-    <template #icon><t-icon name="download" size="15px" /></template>下载
-  </t-button>
-  <!-- 第 57 轮：工具栏不再重复渲染「关闭」按钮 —— 关闭入口只保留标题栏右上角的 ×。 -->
-</div>
+      <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
+        <template #icon><t-icon name="download" size="15px" /></template>下载
+      </t-button>
+      <!-- 第 57 轮：工具栏不再重复渲染「关闭」按钮 —— 关闭入口只保留标题栏右上角的 ×。
+           第 58 轮：补 Esc 关闭（键盘可访问性）。 -->
+    </div>
 
     <div class="fpd-stage" :class="{ 'is-image': kind === 'image' }"
       @wheel.prevent="onWheel" @mousedown="onDragStart" @mousemove="onDragMove"
@@ -46,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -141,6 +142,21 @@ function downloadFile() {
   a.remove()
 }
 function close() { emit('update:visible', false) }
+
+/**
+ * 第 58 轮：Esc 关闭。
+ * 与 PrintPreviewDialog 同款：window 捕获阶段 + stopPropagation，
+ * 避免一次 Esc 把下面的详情抽屉一起关掉。
+ */
+function onKeydown(e: KeyboardEvent) {
+  if (!props.visible) return
+  if (e.key !== 'Escape' && e.key !== 'Esc') return
+  e.preventDefault()
+  e.stopPropagation()
+  close()
+}
+onMounted(() => window.addEventListener('keydown', onKeydown, true))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 
 // 每次打开重置视图，避免上一次的缩放/旋转残留
 watch(() => props.visible, (v) => { if (v) resetView() })

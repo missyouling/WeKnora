@@ -372,6 +372,8 @@ func (h *HRHandler) SaveOrganization(c *gin.Context) {
 		hrFail(c, "保存组织机构失败: "+err.Error())
 		return
 	}
+	// 第 58 轮：部门改名后把权威部门写回社保/公积金（部门名调整自动同步到全部明细）
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, gin.H{"saved": true})
 }
 

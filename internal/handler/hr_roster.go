@@ -670,6 +670,11 @@ func (h *HRHandler) UpdateEmployee(c *gin.Context) {
 		hrFail(c, "更新员工失败: "+err.Error())
 		return
 	}
+	// 第 58 轮：部门变更 → 社保/公积金五张表的该员工部门立即对齐（幂等）。
+	// 只在真改了部门时触发，普通字段编辑不扫表。
+	if strings.TrimSpace(req.Department) != strings.TrimSpace(existing.Department) {
+		h.hrPersistDeptAuthorityQuiet(ctx, tid)
+	}
 	hrOK(c, req)
 }
 

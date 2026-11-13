@@ -529,6 +529,8 @@ func (h *HRHandler) ImportPFRecords(c *gin.Context) {
 		hrFail(c, err.Error())
 		return
 	}
+	// 第 58 轮：导入后按身份证（回退姓名）把部门权威值落库
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, gin.H{
 		"inserted": stats["inserted"], "updated": stats["updated"],
 		"skipped": stats["skipped"], "total": stats["inserted"] + stats["updated"],
@@ -689,6 +691,8 @@ func (h *HRHandler) CreatePFBill(c *gin.Context) {
 		hrFail(c, "生成账单失败: "+err.Error())
 		return
 	}
+	// 第 58 轮：生成账单后落库部门权威值（历史账单明细同步对齐）
+	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	hrOK(c, hrBillWithItems{HRPFBill: bill, Items: items})
 }
 

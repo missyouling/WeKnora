@@ -113,6 +113,13 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrSeedSocialRound56(ctx); err != nil {
 		logger.Warnf(ctx, "seed HR social round56 failed: %v", err)
 	}
+	// 第 58 轮：把花名册权威部门写回社保/公积金五张落库表（幂等，只在值变化时 UPDATE）。
+	// 必须放在全部种子之后：种子里的部门是导入文件原值，要以花名册为准覆盖一次。
+	if n, err := h.hrPersistDeptAuthorityAllTenants(ctx); err != nil {
+		logger.Warnf(ctx, "persist HR dept authority failed: %v", err)
+	} else if n > 0 {
+		logger.Infof(ctx, "HR dept authority persisted on boot: %d rows", n)
+	}
 	return h
 }
 
