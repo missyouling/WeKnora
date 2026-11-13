@@ -45,6 +45,11 @@
                   <div v-if="readonly" class="bsd-readonly-value" :class="{ 'is-long': isLongType(f) }">
                     {{ displayValueOf(f) }}
                   </div>
+                  <!-- 第 55 轮：状态类字段直接渲染彩色徽标，不再是灰底禁用输入框 -->
+                  <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
+                    variant="light" size="small" class="bsd-status-tag">
+                    {{ form.data[f.name] || '—' }}
+                  </t-tag>
                   <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                   <t-textarea v-else-if="f.remarkPart && isLongType(f)" v-model="form.remarkParts[f.remarkPart]"
                     :autosize="{ minRows: 2, maxRows: 5 }" placeholder="每行一条" />
@@ -104,6 +109,11 @@
                      （"−1" 输入第一个字符就被吃掉）。 -->
                 <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，
                      不参与手填（第 47 轮）。 -->
+                <!-- 第 55 轮：状态类字段彩色 Tag（无分组视图） -->
+                <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
+                  variant="light" size="small" class="bsd-status-tag">
+                  {{ form.data[f.name] || '—' }}
+                </t-tag>
                 <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                 <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
@@ -310,6 +320,24 @@ const formFields = computed<DetailFieldMeta[]>(
   () => (props.fields || []).filter((f) => f.dataType !== 'items' && f.name !== 'items' && f.label !== '项目明细'),
 )
 const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
+
+/** 第 55 轮：状态类字段（只读 + 名单命中）用彩色 Tag，不渲染 disabled 输入框。 */
+const BSD_STATUS_FIELDS = new Set([
+  '合同状态', '账户状态', '账单状态', '提取状态', '证照状态', '证件状态',
+  '在职状态', '账期状态', '参保状态', '缴存状态', '记录性质',
+])
+function isStatusField(f: DetailFieldMeta): boolean {
+  return BSD_STATUS_FIELDS.has(String(f.name || '').trim())
+}
+/** 状态配色：正常绿 / 未签订·即将到期·封存·待补录 橙 / 到期 红 / 已解除·销户 灰。 */
+function statusTagTheme(v: unknown): 'success' | 'warning' | 'danger' | 'default' {
+  const s = String(v ?? '').trim()
+  if (!s || /已解除|提取销户|销户|作废|待补录/.test(s)) return 'default'
+  if (/正常|已汇缴|已完成|在职/.test(s)) return 'success'
+  if (/到期$/.test(s) && !/即将/.test(s)) return 'danger'
+  if (/未签订|即将到期|封存|待|异常|过期/.test(s)) return 'warning'
+  return 'default'
+}
 // 摘要 / 多行长文本字段：与知识库文档摘要 100% 同源同形（段落文本域）。
 // 按字段名与中文名双路判定，不受 data_type 残留值影响。
 const LONG_TEXT_FIELD_KEYS = new Set(['summary', 'abstract', 'description'])
@@ -366,6 +394,11 @@ function close() {
   vertical-align: middle;
 }
 .detail-title-main { font-weight: 600; }
+.bsd-status-tag {
+  border: 0;
+  background: transparent;
+  font-weight: 500;
+}
 .bsd-block-title {
   display: flex;
   align-items: center;

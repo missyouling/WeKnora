@@ -272,48 +272,58 @@ export const HR_CONTRACT_DEFAULT_HEADERS: readonly string[] =
 // 公积金管理：对齐《单位职工明细-网厅.xls》的 18 个原生字段
 // ---------------------------------------------------------------------------
 
-const F = {
-  account: '账户信息',
-  amount: '缴存信息',
-  extra: '联名卡与提取',
-} as const
+/** 公积金双胶囊分组键（第 55 轮）。 */
+export const HR_FUND_BILL_GROUP = '月度账单'
+export const HR_FUND_DETAIL_GROUP = '职工明细'
 
-export const HR_FUND_GROUPS: readonly HrFieldGroupDef[] = [
-  {
-    key: F.account, label: F.account, fields: [
-      f('职工账号', 'text', { group: F.account, defaultHeader: true, builtin: true }),
-      f('职工姓名', 'text', { group: F.account, defaultHeader: true, builtin: true }),
-      f('证件号码', 'text', { group: F.account, defaultHeader: true }),
-      f('账户状态', 'system', {
-        group: F.account, defaultHeader: true, builtin: true, options: HR_ENUMS['账户状态'],
-      }),
-    ],
-  },
-  {
-    key: F.amount, label: F.amount, fields: [
-      f('缴存基数(元)', 'number', { group: F.amount, defaultHeader: true }),
-      f('月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
-      f('单位月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
-      f('个人月缴存额(元)', 'number', { group: F.amount, defaultHeader: true }),
-      f('账户余额(元)', 'number', { group: F.amount, defaultHeader: true }),
-      f('单位缴存比例(%)', 'number', { group: F.amount, defaultHeader: true, defaultValue: '5' }),
-      f('职工缴存比例(%)', 'number', { group: F.amount, defaultHeader: true, defaultValue: '5' }),
-    ],
-  },
-  {
-    key: F.extra, label: F.extra, fields: [
-      f('联名卡银行', 'enum', { group: F.extra, defaultHeader: true, options: HR_ENUMS['联名卡银行'] }),
-      f('联名卡号', 'text', { group: F.extra, defaultHeader: true }),
-      f('绑定手机', 'text', { group: F.extra, defaultHeader: true }),
-      f('是否公贷', 'enum', { group: F.extra, options: YES_NO }),
-      f('是否冻结', 'enum', { group: F.extra, options: YES_NO }),
-      f('是否可在线提取公贷', 'enum', { group: F.extra, options: YES_NO }),
-      f('是否可在线提取商贷', 'enum', { group: F.extra, options: YES_NO }),
-    ],
-  },
+/** 常用缴存比例（5~12%），下拉选择，不允许随手填。 */
+export const HR_FUND_RATIOS: readonly string[] = ['5', '6', '7', '8', '9', '10', '11', '12']
+
+/** 月度账单 8 字段（系统内置状态字段加锁）。 */
+export const HR_FUND_BILL_FIELDS: readonly HrFieldDef[] = [
+  f('账单周期', 'text', { group: HR_FUND_BILL_GROUP, defaultHeader: true, builtin: true }),
+  f('汇缴人数', 'number', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
+  f('缴存基数合计(元)', 'number', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
+  f('单位缴存额(元)', 'number', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
+  f('个人缴存额(元)', 'number', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
+  f('月缴存总额(元)', 'number', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
+  f('账单状态', 'system', {
+    group: HR_FUND_BILL_GROUP, defaultHeader: true, builtin: true, options: ['已汇缴', '待汇缴', '已作废'],
+  }),
+  f('生成时间', 'date', { group: HR_FUND_BILL_GROUP, defaultHeader: true }),
 ]
 
-export const HR_FUND_FIELDS: readonly HrFieldDef[] = HR_FUND_GROUPS.flatMap((g) => g.fields)
+/** 职工明细 18 字段（严格对齐网厅）。四个「是否」默认表头关闭。 */
+export const HR_FUND_FIELDS: readonly HrFieldDef[] = [
+  f('职工账号', 'text', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true, builtin: true }),
+  f('职工姓名', 'text', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true, builtin: true }),
+  f('证件号码', 'text', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('账户状态', 'system', {
+    group: HR_FUND_DETAIL_GROUP, defaultHeader: true, builtin: true,
+    options: HR_ENUMS['账户状态'],
+  }),
+  f('缴存基数(元)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('月缴存额(元)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('单位月缴存额(元)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('个人月缴存额(元)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('账户余额(元)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('单位缴存比例(%)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true, defaultValue: '5', options: HR_FUND_RATIOS }),
+  f('职工缴存比例(%)', 'number', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true, defaultValue: '5', options: HR_FUND_RATIOS }),
+  f('联名卡银行', 'enum', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true, options: HR_ENUMS['联名卡银行'] }),
+  f('联名卡号', 'text', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('绑定手机', 'text', { group: HR_FUND_DETAIL_GROUP, defaultHeader: true }),
+  f('是否公贷', 'enum', { group: HR_FUND_DETAIL_GROUP, options: YES_NO }),
+  f('是否冻结', 'enum', { group: HR_FUND_DETAIL_GROUP, options: YES_NO }),
+  f('是否可在线提取公贷', 'enum', { group: HR_FUND_DETAIL_GROUP, options: YES_NO }),
+  f('是否可在线提取商贷', 'enum', { group: HR_FUND_DETAIL_GROUP, options: YES_NO }),
+]
+
+/** 设置抽屉双胶囊：月度账单在前、职工明细在后。 */
+export const HR_FUND_GROUPS: readonly HrFieldGroupDef[] = [
+  { key: HR_FUND_BILL_GROUP, label: HR_FUND_BILL_GROUP, fields: HR_FUND_BILL_FIELDS },
+  { key: HR_FUND_DETAIL_GROUP, label: HR_FUND_DETAIL_GROUP, fields: HR_FUND_FIELDS },
+]
+
 export const HR_FUND_DEFAULT_HEADERS: readonly string[] =
   HR_FUND_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name)
 

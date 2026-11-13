@@ -119,8 +119,8 @@ func (h *HRHandler) ListPFRecords(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
 	q := h.db.WithContext(ctx).Model(&HRPFRecord{}).Where("tenant_id = ?", tid)
-	// 第 54 轮：账户状态筛选收中文（全部 / 正常 / 封存 / 提取销户）。
-	if status := strings.TrimSpace(c.Query("status")); status != "" && status != "all" && status != "全部" {
+	// 第 55 轮：账户状态筛选收中文（全部状态 / 正常 / 封存 / 提取销户）。
+	if status := strings.TrimSpace(c.Query("status")); status != "" && status != "all" && status != "全部" && status != "全部状态" {
 		q = q.Where("status = ?", hrFundStatusOf(status))
 	}
 	if kw := strings.TrimSpace(c.Query("q")); kw != "" {
@@ -136,10 +136,144 @@ func (h *HRHandler) ListPFRecords(c *gin.Context) {
 	for i := range items {
 		hrFundSyncCustom(&items[i])
 	}
+	// 第 55 轮：花名册在职但没录公积金的员工 → 以「待补录」虚拟行出现在职工明细。
+	// 只在「全部状态」下追加，避免筛选时冒出无关行。
+	status := strings.TrimSpace(c.Query("status"))
+	filtered := status != "" && status != "all" && status != "全部" && status != "全部状态"
+	pending := h.hrFundPendingEmployees(ctx, tid)
+	if !filtered {
+		for _, e := range pending {
+			items = append(items, hrFundPendingRecord(e, tid))
+		}
+		for _, e := range h.hrFundToSealEmployees(ctx, tid) {
+			items = append(items, hrFundToSealRecord(e, tid))
+		}
+	}
+	alerts := h.hrFundAlerts(ctx, tid)
 	hrOK(c, gin.H{
 		"items": items, "total": len(items),
 		"status_counts": h.hrFundStatusCounts(ctx, tid),
+		"pending_count": alerts.pending,
+		"to_seal_count": alerts.toSeal,
 	})
+}
+
+// hrFundAlerts 全员联动提醒计数：待补录（在职无账号/基数 <= 0）、待封存（已离职但仍正常）。
+type hrFundAlertCounts struct {
+	pending int
+	toSeal  int
+}
+
+func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCounts {
+	var out hrFundAlertCounts
+	var employees []HREmployee
+	if err := h.db.WithContext(ctx).Select("id, name, status, id_number, department, position").
+		Where("tenant_id = ?", tid).Find(&employees).Error; err != nil {
+		return out
+	}
+	var records []HRPFRecord
+	_ = h.db.WithContext(ctx).Select("identity_number, personal_account, personal_base, status").
+		Where("tenant_id = ?", tid).Find(&records).Error
+	byID := map[string]HRPFRecord{}
+	for _, r := range records {
+		byID[normalizeIDNumber(r.IdentityNumber)] = r
+	}
+	for _, e := range employees {
+		r, ok := byID[normalizeIDNumber(e.IDNumber)]
+		if normalizeEmployeeStatus(e.Status) == "active" {
+			if !ok || strings.TrimSpace(r.PersonalAccount) == "" || r.PersonalBase <= 0 {
+				out.pending++
+			}
+			continue
+		}
+		// 已离职但职工明细仍是「正常」（或压根没建账户）→ 待封存
+		if !ok || hrFundStatusOf(r.Status) == hrFundStatusActive {
+			out.toSeal++
+		}
+	}
+	return out
+}
+
+// hrFundPendingEmployees 在职但尚未录入公积金信息的员工。
+func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HREmployee {
+	var employees []HREmployee
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ?", tid).Order("employee_id ASC").Find(&employees).Error; err != nil {
+		return nil
+	}
+	var records []HRPFRecord
+	_ = h.db.WithContext(ctx).Select("identity_number, personal_account, personal_base").
+		Where("tenant_id = ?", tid).Find(&records).Error
+	byID := map[string]HRPFRecord{}
+	for _, r := range records {
+		byID[normalizeIDNumber(r.IdentityNumber)] = r
+	}
+	out := make([]HREmployee, 0)
+	for _, e := range employees {
+		if normalizeEmployeeStatus(e.Status) != "active" {
+			continue
+		}
+		r, ok := byID[normalizeIDNumber(e.IDNumber)]
+		if ok && strings.TrimSpace(r.PersonalAccount) != "" && r.PersonalBase > 0 {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// hrFundToSealEmployees 已离职但公积金账户仍「正常」（或尚未建户）的员工。
+func (h *HRHandler) hrFundToSealEmployees(ctx context.Context, tid int64) []HREmployee {
+	var employees []HREmployee
+	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
+		Order("employee_id ASC").Find(&employees).Error; err != nil {
+		return nil
+	}
+	var records []HRPFRecord
+	_ = h.db.WithContext(ctx).Select("identity_number, status").
+		Where("tenant_id = ?", tid).Find(&records).Error
+	byID := map[string]string{}
+	for _, r := range records {
+		byID[normalizeIDNumber(r.IdentityNumber)] = r.Status
+	}
+	out := make([]HREmployee, 0)
+	for _, e := range employees {
+		if normalizeEmployeeStatus(e.Status) != "resigned" {
+			continue
+		}
+		st, ok := byID[normalizeIDNumber(e.IDNumber)]
+		if ok && hrFundStatusOf(st) != hrFundStatusActive {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// hrFundToSealRecord 待封存虚拟行（状态仍为「正常」，提醒用户去封存）。
+func hrFundToSealRecord(e HREmployee, tid int64) HRPFRecord {
+	return HRPFRecord{
+		ID: "seal-" + e.ID, TenantID: tid,
+		Name: e.Name, IdentityNumber: e.IDNumber, Department: e.Department,
+		Status: hrFundStatusActive, CustomData: map[string]any{
+			"工号": e.EmployeeID, "部门": e.Department, "岗位": e.Position,
+			"职工账号": "", "职工姓名": e.Name, "证件号码": e.IDNumber,
+			"账户状态": "正常", "待封存": true,
+		},
+	}
+}
+
+// hrFundPendingRecord 待补录虚拟行（不落库，仅响应层展示）。
+func hrFundPendingRecord(e HREmployee, tid int64) HRPFRecord {
+	return HRPFRecord{
+		ID: "pending-" + e.ID, TenantID: tid,
+		Name: e.Name, IdentityNumber: e.IDNumber, Department: e.Department,
+		Status: "pending", CustomData: map[string]any{
+			"工号": e.EmployeeID, "部门": e.Department, "岗位": e.Position,
+			"职工账号": "", "职工姓名": e.Name, "证件号码": e.IDNumber,
+			"账户状态": "待补录", "待补录": true,
+		},
+	}
 }
 
 // hrFundStatusCounts 账户状态分布（工具栏筛选下拉的角标 / 真机断言用）。
@@ -513,21 +647,25 @@ func (h *HRHandler) CreatePFBill(c *gin.Context) {
 	}
 	bill := HRPFBill{
 		ID: uuid.New().String(), TenantID: tid, MonthLabel: monthLabel, RecordCount: len(records),
+		BillStatus: "已汇缴",
 	}
 	items := make([]HRPFBillItem, 0, len(records))
 	for _, r := range records {
 		bill.PersonalAmountTotal += r.PersonalAmount
 		bill.CompanyAmountTotal += r.CompanyAmount
 		bill.CombinedAmountTotal += r.TotalAmount
+		bill.BaseAmountTotal += r.PersonalBase
 		items = append(items, HRPFBillItem{
 			ID: uuid.New().String(), TenantID: tid, BillID: bill.ID, RecordID: r.ID,
 			PersonalAccount: r.PersonalAccount, Name: r.Name, IdentityNumber: r.IdentityNumber,
+			Department: r.Department, PersonalBase: r.PersonalBase,
 			PersonalAmount: r.PersonalAmount, CompanyAmount: r.CompanyAmount, TotalAmount: r.TotalAmount,
 		})
 	}
 	bill.PersonalAmountTotal = round2(bill.PersonalAmountTotal)
 	bill.CompanyAmountTotal = round2(bill.CompanyAmountTotal)
 	bill.CombinedAmountTotal = round2(bill.CombinedAmountTotal)
+	bill.BaseAmountTotal = round2(bill.BaseAmountTotal)
 	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&bill).Error; err != nil {
 			return err

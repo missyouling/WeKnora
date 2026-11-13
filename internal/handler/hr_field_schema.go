@@ -188,25 +188,40 @@ func hrContractFieldDefs() []hrFieldDef {
 // 18 个字段全部来自网厅导出，不含任何跨表引用（跨表字段只能由用户在字段设置里
 // 主动搜索添加，且永远不会进导入模板）。
 func hrFundFieldDefs() []hrFieldDef {
+	const g = "职工明细"
 	return []hrFieldDef{
-		hrF("职工账号", "text", hrHeader(), hrBuiltin()),
-		hrF("职工姓名", "text", hrHeader(), hrBuiltin()),
-		hrF("证件号码", "text", hrHeader()),
-		hrF("账户状态", "system", hrHeader(), hrBuiltin(), hrEnum("账户状态")),
-		hrF("缴存基数(元)", "number", hrHeader()),
-		hrF("月缴存额(元)", "number", hrHeader()),
-		hrF("单位月缴存额(元)", "number", hrHeader()),
-		hrF("个人月缴存额(元)", "number", hrHeader()),
-		hrF("账户余额(元)", "number", hrHeader()),
-		hrF("单位缴存比例(%)", "number", hrHeader(), hrDefault("5")),
-		hrF("职工缴存比例(%)", "number", hrHeader(), hrDefault("5")),
-		hrF("联名卡银行", "enum", hrHeader(), hrEnum("联名卡银行")),
-		hrF("联名卡号", "text", hrHeader()),
-		hrF("绑定手机", "text", hrHeader()),
-		hrF("是否公贷", "enum", hrEnum("是否公贷")),
-		hrF("是否冻结", "enum", hrEnum("是否冻结")),
-		hrF("是否可在线提取公贷", "enum", hrEnum("是否可在线提取公贷")),
-		hrF("是否可在线提取商贷", "enum", hrEnum("是否可在线提取商贷")),
+		hrF("职工账号", "text", hrHeader(), hrBuiltin(), hrGroup(g)),
+		hrF("职工姓名", "text", hrHeader(), hrBuiltin(), hrGroup(g)),
+		hrF("证件号码", "text", hrHeader(), hrGroup(g)),
+		hrF("账户状态", "system", hrHeader(), hrBuiltin(), hrEnum("账户状态"), hrGroup(g)),
+		hrF("缴存基数(元)", "number", hrHeader(), hrGroup(g)),
+		hrF("月缴存额(元)", "number", hrHeader(), hrGroup(g)),
+		hrF("单位月缴存额(元)", "number", hrHeader(), hrGroup(g)),
+		hrF("个人月缴存额(元)", "number", hrHeader(), hrGroup(g)),
+		hrF("账户余额(元)", "number", hrHeader(), hrGroup(g)),
+		hrF("单位缴存比例(%)", "number", hrHeader(), hrDefault("5"), hrGroup(g)),
+		hrF("职工缴存比例(%)", "number", hrHeader(), hrDefault("5"), hrGroup(g)),
+		hrF("联名卡银行", "enum", hrHeader(), hrEnum("联名卡银行"), hrGroup(g)),
+		hrF("联名卡号", "text", hrHeader(), hrGroup(g)),
+		hrF("绑定手机", "text", hrHeader(), hrGroup(g)),
+		hrF("是否公贷", "enum", hrEnum("是否公贷"), hrGroup(g)),
+		hrF("是否冻结", "enum", hrEnum("是否冻结"), hrGroup(g)),
+		hrF("是否可在线提取公贷", "enum", hrEnum("是否可在线提取公贷"), hrGroup(g)),
+		hrF("是否可在线提取商贷", "enum", hrEnum("是否可在线提取商贷"), hrGroup(g)),
+	}
+}
+
+// hrFundBillFieldDefs 月度账单 8 字段（第 55 轮，与职工明细分属两个胶囊分组）。
+func hrFundBillFieldDefs() []hrFieldDef {
+	return []hrFieldDef{
+		hrF("账单周期", "text", hrHeader(), hrBuiltin(), hrGroup("月度账单")),
+		hrF("汇缴人数", "number", hrHeader(), hrGroup("月度账单")),
+		hrF("缴存基数合计(元)", "number", hrHeader(), hrGroup("月度账单")),
+		hrF("单位缴存额(元)", "number", hrHeader(), hrGroup("月度账单")),
+		hrF("个人缴存额(元)", "number", hrHeader(), hrGroup("月度账单")),
+		hrF("月缴存总额(元)", "number", hrHeader(), hrGroup("月度账单")),
+		hrF("账单状态", "system", hrHeader(), hrBuiltin(), hrEnum("账单状态"), hrGroup("月度账单")),
+		hrF("生成时间", "date", hrHeader(), hrGroup("月度账单")),
 	}
 }
 
@@ -248,6 +263,7 @@ var hrExtraEnums = map[string][]string{
 	// 第 54 轮：合同状态扩到 5 态。已解除 = 员工已离职；未签订 = 在职但没填合同起始/结束日期。
 	"合同状态": {"正常", "未签订", "即将到期", "到期", "已解除"},
 	"账户状态": {"正常", "封存", "提取销户"},
+	"账单状态": {"已汇缴", "待汇缴", "已作废"},
 	"联名卡银行": {"中国建设银行", "中国银行", "中国工商银行", "中国农业银行",
 		"招商银行", "交通银行", "农村商业银行", "其他"},
 	"是否公贷":      hrYesNo,
@@ -331,7 +347,8 @@ func hrContractSeedSubs52() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrContractFieldDefs())
 }
 func hrFundSeedSubs() []types.FleetCategorySub {
-	return hrSubsOfDefs(hrFundFieldDefs())
+	defs := append(append([]hrFieldDef{}, hrFundBillFieldDefs()...), hrFundFieldDefs()...)
+	return hrSubsOfDefs(defs)
 }
 
 // hrRosterGroupDict52 6 大分组 → 字段名（供回填与排序）。

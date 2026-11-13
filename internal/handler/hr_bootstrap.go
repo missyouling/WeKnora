@@ -95,6 +95,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrSeedFundRecords(ctx); err != nil {
 		logger.Warnf(ctx, "seed HR fund records failed: %v", err)
 	}
+	// 第 55 轮：真实网厅附件的月度账单（2025-05 汇缴清册回单）
+	if err := h.hrSeedFundBills(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR fund bills failed: %v", err)
+	}
 	return h
 }
 

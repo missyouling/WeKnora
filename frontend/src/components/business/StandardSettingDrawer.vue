@@ -13,7 +13,7 @@
          而不是先看到一枚孤零零的「字段设置」Tab。 -->
     <div v-if="direct" class="standard-settings-direct">
       <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
-        direct hide-group-tabs :ref-source-scope="refSourceScope" :ref-categories="refCategories"
+        direct :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
         :ref-sources="refSources"
         @ai-guide="onAiGuide" @category-change="onCategoryChange" />
     </div>

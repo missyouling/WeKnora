@@ -1,5 +1,5 @@
 <template>
-  <div class="meter-settings-body" v-if="ready">
+  <div class="meter-settings-body" :class="{ 'is-direct': directMode }" v-if="ready">
     <!-- 分组标题（公司证照在上、司机证照在下，带数量）。
          第 54 轮：单分类直出模式（direct）下整块隐藏 —— 只有一个分类时，
          分组胶囊与「XX字段 1 +」标题全是噪音。 -->
@@ -1748,6 +1748,14 @@ async function commitEdit() {
       void syncFieldsToTenantItems(item, fieldsEditable.value)
     }
     editingId.value = ''
+    // 第 55 轮：单分类直出模式保存后必须立即重新展开字段列表。
+    // 旧实现清空 editingId 后没有任何补开链路（分类数不变 → length watch 不触发），
+    // 抽屉就变成一片空白（图 5）。用保存后的最新 subs 重新 startEdit。
+    if (directMode.value) {
+      await nextTick()
+      const only = groupItems.value[0]
+      if (only) startEdit(only)
+    }
     // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
     if (aiContext) {
       goRulesAfterAiSave(name, aiContext)
@@ -2842,4 +2850,82 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 <style>
 /* 删除图标统一口径（16px 灰→红悬停 + 浅红底 + .15s），全系统共用一份 */
 @import './styles/business-delete-btn.css';
+</style>
+
+<style>
+/* 第 55 轮：单分类直出设置面板的中台统一视觉（非 scoped —— 需命中 TDesign 内部节点）。
+   去掉外层灰框与顶部虚线，表头浅灰吸顶，字段行白底柔边框 + 悬停浅绿，
+   搜索引用栏与「取消 / 保存」吸底栏对齐。 */
+.meter-settings-body.is-direct .meter-table {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.meter-settings-body.is-direct .meter-form.meter-form--inline {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+.meter-settings-body.is-direct .field-config {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+.meter-settings-body.is-direct .field-config-list {
+  gap: 6px;
+  padding-bottom: 10px;
+}
+.meter-settings-body.is-direct .field-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #e7e7e7;
+  border-radius: 6px;
+  background: #f5f7fa;
+  color: var(--td-text-color-primary);
+  font-weight: 600;
+}
+.meter-settings-body.is-direct .field-config-row {
+  background: #fff;
+  border: 1px solid #e7e7e7;
+  border-radius: 6px;
+  padding: 6px 10px;
+  transition: background .15s, border-color .15s;
+}
+.meter-settings-body.is-direct .field-config-row:hover {
+  background: var(--td-brand-color-1);
+  border-color: var(--td-brand-color-3);
+}
+.meter-settings-body.is-direct .fc-ref-badge {
+  min-width: 76px;
+  max-width: 96px;
+  text-align: center;
+  justify-content: center;
+}
+.meter-settings-body.is-direct .field-config-add {
+  position: sticky;
+  bottom: 46px;
+  z-index: 5;
+  padding: 8px 10px;
+  border: 1px solid #e7e7e7;
+  border-radius: 6px;
+  background: #fff;
+}
+.meter-settings-body.is-direct .meter-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid #e7e7e7;
+  border-radius: 0 0 6px 6px;
+  background: #fff;
+}
+.meter-settings-body.is-direct .fc-group-tabs {
+  margin: 4px 0 10px;
+}
 </style>

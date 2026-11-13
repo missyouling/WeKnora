@@ -69,21 +69,32 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
   const unsigned = Math.max(0, Number(counts.contract_unsigned || 0) || 0)
   const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
   const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
+  const fundPending = Math.max(0, Number(counts.fund_pending || 0) || 0)
+  const fundToSeal = Math.max(0, Number(counts.fund_to_seal || 0) || 0)
   return HR_TABS.map((t) => {
     // 第 49 轮：劳动合同卡副文案体现异常预警（到期 / 即将到期）
     let sub = t.sub
     let subCls = ''
     if (t.key === 'hr-contract') {
-      // 第 54 轮：未签订是最高优先级异常（新员工入职后最容易漏），排在最前。
+      // 第 55 轮：异常 = 未签订 + 即将到期 + 已到期，副文案只报总数（单一异常带类型后缀）。
+      const kinds = [unsigned > 0 ? '未签订' : '', expiring > 0 ? '即将到期' : '',
+        expired > 0 ? '到期' : ''].filter(Boolean)
+      const total = unsigned + expiring + expired
+      if (total > 0) {
+        sub = `${total} 份状态异常${kinds.length === 1 ? ` · ${kinds[0]}` : ''}`
+        subCls = 'is-warning'
+      } else {
+        sub = '无状态异常'
+      }
+    }
+    if (t.key === 'hr-fund') {
+      // 第 55 轮：全员联动预警（待补录 / 待封存）
       const parts: string[] = []
-      if (unsigned > 0) parts.push(`${unsigned} 份未签订`)
-      if (expiring > 0) parts.push(`${expiring} 份即将到期`)
-      if (expired > 0) parts.push(`${expired} 份已到期`)
+      if (fundPending > 0) parts.push(`${fundPending} 人待补录`)
+      if (fundToSeal > 0) parts.push(`${fundToSeal} 人待封存`)
       if (parts.length) {
         sub = parts.join(' · ')
         subCls = 'is-warning'
-      } else {
-        sub = '合同均已签订'
       }
     }
     return {
@@ -241,16 +252,6 @@ const FUND_LEDGER_COLS: HrColumn[] = [
   col('缴存状态', ['缴存状态', 'status', 'fund_status'], { slot: true }),
 ]
 
-/** 公积金月度账单列（hr_pf_bills）；月份严格倒序。 */
-const FUND_BILL_COLS: HrColumn[] = [
-  col('月份', ['月份', 'month_label', 'month'], { slot: true }),
-  col('缴存人数', ['缴存人数', 'headcount', 'employee_count', 'record_count'], { dataType: 'number' }),
-  col('个人合计', ['个人合计', 'personal_total', 'personal_sum', 'personal_amount_total'], { dataType: 'number', money: true }),
-  col('单位合计', ['单位合计', 'company_total', 'company_sum', 'company_amount_total'], { dataType: 'number', money: true }),
-  col('合计金额', ['合计金额', 'total', 'total_amount', 'amount', 'combined_amount_total'], { dataType: 'number', money: true }),
-  col('生成时间', ['生成时间', 'created_at', 'create_time']),
-]
-
 // ---------------------------------------------------------------------------
 // 劳动合同（第 47 轮）：数据与花名册合同字段同源
 // ---------------------------------------------------------------------------
@@ -324,9 +325,18 @@ export function hrColumnDefs(tab: string): HrColumn[] {
   return [SELECT_COL, ...colsOf(tab)]
 }
 
-/** 公积金「月度账单」子视图列（二级切换用）。 */
+/** 公积金「月度账单」子视图列（第 55 轮：8 个原生字段，严格对齐设置分组）。 */
 export function hrBillColumnDefs(): HrColumn[] {
-  return [SELECT_COL, ...FUND_BILL_COLS]
+  return [SELECT_COL,
+    col('账单周期', ['账单周期', 'month_label', 'month']),
+    col('汇缴人数', ['汇缴人数', 'record_count', 'headcount'], { dataType: 'number' }),
+    col('缴存基数合计(元)', ['缴存基数合计(元)', 'base_amount_total'], { dataType: 'number', money: true }),
+    col('单位缴存额(元)', ['单位缴存额(元)', 'company_amount_total'], { dataType: 'number', money: true }),
+    col('个人缴存额(元)', ['个人缴存额(元)', 'personal_amount_total'], { dataType: 'number', money: true }),
+    col('月缴存总额(元)', ['月缴存总额(元)', 'combined_amount_total'], { dataType: 'number', money: true }),
+    col('账单状态', ['账单状态', 'bill_status', 'status'], { slot: true }),
+    col('生成时间', ['生成时间', 'created_at', 'create_time'], { dataType: 'date' }),
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +566,7 @@ export function hrRowKey(row: any): string {
 export type ContractStatus = '正常' | '未签订' | '即将到期' | '到期' | '已解除' | ''
 
 export const CONTRACT_STATUS_OPTIONS = [
-  { label: '全部', value: '全部' },
+  { label: '全部状态', value: '全部状态' },
   { label: '正常', value: '正常' },
   { label: '未签订', value: '未签订' },
   { label: '即将到期', value: '即将到期' },

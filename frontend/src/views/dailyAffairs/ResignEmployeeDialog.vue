@@ -2,7 +2,9 @@
   <t-dialog :visible="visible" header="办理离职" width="560px" :footer="false" placement="center"
     class="resign-employee-dialog" @close="close" @update:visible="(v: boolean) => { if (!v) close() }">
     <div class="rd-body">
-      <div class="rd-summary">将为已选的 {{ ids.length }} 名员工办理离职，状态变更为「离职」。</div>
+      <!-- 第 55 轮：单条办理时明确提示对象姓名 -->
+      <div v-if="employeeName" class="rd-summary">正在为「{{ employeeName }}」办理离职，状态变更为「离职」。</div>
+      <div v-else class="rd-summary">将为已选的 {{ ids.length }} 名员工办理离职，状态变更为「离职」。</div>
 
       <div class="rd-field">
         <label class="rd-label"><span class="rd-required">*</span>离职时间</label>
@@ -59,7 +61,9 @@ const props = withDefaults(defineProps<{
   visible: boolean
   ids: Array<string | number>
   defaultReason?: string
-}>(), { visible: false, ids: () => [], defaultReason: '' })
+  /** 第 55 轮：单选办理时显示员工姓名。 */
+  employeeName?: string
+}>(), { visible: false, ids: () => [], defaultReason: '', employeeName: '' })
 
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void

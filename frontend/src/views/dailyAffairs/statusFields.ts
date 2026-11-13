@@ -41,7 +41,11 @@ const EXTRACT_STATUS_NAMES = ['提取状态', 'extractStatus', 'extract_status']
 /** 账单类「状态 / 对比状态」（市电 / 光伏）。 */
 const BILL_STATUS_NAMES = ['状态', '对比状态']
 /** 人事管理四个系统状态（第 45 轮）：花名册 / 社保 / 公积金共用一份名单。 */
-const HR_STATUS_NAMES = ['在职状态', '账期状态', '参保状态', '缴存状态']
+const HR_STATUS_NAMES = [
+  '在职状态', '账期状态', '参保状态', '缴存状态',
+  // 第 55 轮：合同 / 公积金 / 月度账单的状态列同样系统内置加锁
+  '合同状态', '账户状态', '账单状态',
+]
 
 const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase()
 const isOneOf = (name: unknown, list: readonly string[]): boolean => {
@@ -78,7 +82,7 @@ export function isStatusFieldName(name: unknown): boolean {
 /** 车队三个「上传→解析→提取」档案 scope。 */
 const FLEET_ARCHIVE_SCOPES = new Set(['vehicle', 'driver', 'maintain'])
 /** 人事管理三个 scope（第 45 轮）。 */
-const HR_SCOPES = new Set(['hr-roster', 'hr-social', 'hr-fund'])
+const HR_SCOPES = new Set(['hr-roster', 'hr-social', 'hr-fund', 'hr-contract'])
 /** 账单类分类名（只有这两类有文件级状态列）。 */
 const BILL_CATEGORIES = new Set(['市电账单', '光伏账单'])
 
@@ -112,8 +116,8 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
       { name: '账期状态', label: '账期状态', dataType: 'text' },
       { name: '参保状态', label: '参保状态', dataType: 'text' },
     ]
-    // 第 54 轮：公积金状态列已内建为「账户状态」（正常 / 封存 / 提取销户），
-    // 再补一条「缴存状态」会让字段配置变成 19 项、列表出现两条重复状态列。
+    // 第 54/55 轮：公积金状态列已内建为「账户状态」，合同列内建为「合同状态」，
+    // 不再自动补「缴存状态」；锁身份由 isHrStatusName 统一判定。
     return []
   }
   return []

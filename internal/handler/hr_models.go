@@ -200,6 +200,8 @@ type HRPFBill struct {
 	TenantID            int64     `gorm:"index" json:"tenant_id"`
 	MonthLabel          string    `gorm:"index" json:"month_label"`
 	RecordCount         int       `json:"record_count"`
+	BaseAmountTotal     float64   `json:"base_amount_total"`
+	BillStatus          string    `json:"bill_status"`
 	PersonalAmountTotal float64   `json:"personal_amount_total"`
 	CompanyAmountTotal  float64   `json:"company_amount_total"`
 	CombinedAmountTotal float64   `json:"combined_amount_total"`
@@ -218,6 +220,8 @@ type HRPFBillItem struct {
 	PersonalAccount string    `json:"personal_account"`
 	Name            string    `json:"name"`
 	IdentityNumber  string    `json:"identity_number"`
+	Department      string    `json:"department"`
+	PersonalBase    float64   `json:"personal_base"`
 	PersonalAmount  float64   `json:"personal_amount"`
 	CompanyAmount   float64   `json:"company_amount"`
 	TotalAmount     float64   `json:"total_amount"`

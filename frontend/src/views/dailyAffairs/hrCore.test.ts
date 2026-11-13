@@ -314,7 +314,7 @@ test('第54轮：合同状态五态判定（未签订 / 已解除 补齐）', ()
   assert.equal(contractStatusTheme(''), 'default')
   // 下拉 6 项（全部 + 5 态）
   assert.deepEqual(CONTRACT_STATUS_OPTIONS.map((o) => o.value),
-    ['全部', '正常', '未签订', '即将到期', '到期', '已解除'])
+    ['全部状态', '正常', '未签订', '即将到期', '到期', '已解除'])
 })
 
 test('第47轮：社保原始/汇总双视图列集合', () => {

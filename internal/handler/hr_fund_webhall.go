@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shakinm/xlsReader/xls"
+	"gorm.io/gorm"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -444,103 +445,195 @@ func (h *HRHandler) hrFundSyncRosterAccounts(ctx context.Context, tid int64, acc
 
 // hrFundSeedRow 种子数据行（与网厅一致的 18 列顺序）。
 type hrFundSeedRow struct {
-	account string
-	name    string
-	idNo    string
-	status  string
-	base    float64
-	unit    float64
-	person  float64
-	balance float64
-	bank    string
-	card    string
-	phone   string
+	account     string
+	name        string
+	idNo        string
+	status      string
+	base        float64
+	unit        float64
+	person      float64
+	balance     float64
+	bank        string
+	card        string
+	phone       string
+	unitRatio   float64
+	personRatio float64
+	yesLoan     string
+	frozen      string
+	onlineGong  string
+	onlineShang string
 }
 
-// hrSeedFundRecords 初始化 87 条网厅样例（幂等）。
+// hrFundBillSeedRow 月度账单明细（真实来源：单位汇缴清册回单 PDF）。
+type hrFundBillSeedRow struct {
+	account  string
+	name     string
+	idNo     string
+	base     float64
+	total    float64
+	personal float64
+	unit     float64
+}
+
+// hrSeedFundRecords 用真实网厅 87 条数据初始化公积金台账（幂等）。
 //
-// 87 = 花名册 81 人（74 正常 + 7 封存）+ 6 名已销户人员（提取销户）。
-// 仅在「尚无 12 位职工账号记录」时执行；同时清掉历史真机测试行（R45-*）。
+// 第 55 轮：数据源改为附件《单位职工明细-网厅.xls》，不再使用构造占位账号。
+// 迁移口径：先删掉「12 位数字但不在真实账号集合」的旧构造行，再补齐缺失的真实行；
+// 已存在的真实行（按证件号码）只更新 18 字段，不重复插入。
 func (h *HRHandler) hrSeedFundRecords(ctx context.Context) error {
 	var tids []int64
 	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
 		Distinct().Pluck("tenant_id", &tids).Error; err != nil {
 		return err
 	}
+	want := map[string]bool{}
+	for _, row := range hrWebhallRows {
+		want[normalizeIDNumber(row.idNo)] = true
+	}
 	for _, tid := range tids {
-		// 12 位纯数字 = 网厅职工账号。用 Go 侧判断而不是 PG 正则，
-		// 保证同一段逻辑在 sqlite（单测）与 PG（生产）行为一致。
-		var accounts []string
-		if err := h.db.WithContext(ctx).Model(&HRPFRecord{}).
-			Where("tenant_id = ?", tid).Pluck("personal_account", &accounts).Error; err != nil {
-			return err
-		}
-		real := 0
-		for _, a := range accounts {
-			if hrLooksLikeFundAccount(a) {
-				real++
-			}
-		}
-		if real >= 87 {
-			continue
-		}
-		// 清历史真机测试行（只删 R45- 前缀 / 真机公积金* 名字，绝不碰真实数据）
-		_ = h.db.WithContext(ctx).
-			Where("tenant_id = ? AND (personal_account LIKE 'R45-%' OR name LIKE '真机公积金%')", tid).
-			Delete(&HRPFRecord{}).Error
-
-		var employees []HREmployee
-		if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
-			Order("employee_id ASC").Find(&employees).Error; err != nil {
-			return err
-		}
-		hrSortEmployeesByEmployeeID(employees)
-		seedRows := hrBuildFundSeedRows(employees)
-		if len(seedRows) == 0 {
-			continue
-		}
-		ratio := h.hrPFRatio(ctx, tid)
-		// 已存在的（同证件号）跳过，避免重复种子
 		var exist []HRPFRecord
-		_ = h.db.WithContext(ctx).Select("identity_number").
-			Where("tenant_id = ?", tid).Find(&exist).Error
-		seen := map[string]bool{}
-		for _, e := range exist {
-			seen[normalizeIDNumber(e.IdentityNumber)] = true
+		if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
+			Find(&exist).Error; err != nil {
+			return err
 		}
-		for _, row := range seedRows {
-			key := normalizeIDNumber(row.idNo)
-			if key == "" || seen[key] {
+		seen := map[string]bool{}
+		for _, r := range exist {
+			key := normalizeIDNumber(r.IdentityNumber)
+			// 旧构造行（账号是 12 位数字但不在真实清单里）→ 删除，避免 87 条被撑成 174 条
+			if !want[key] && (hrLooksLikeFundAccount(r.PersonalAccount) ||
+				strings.HasPrefix(r.PersonalAccount, "R45-") || strings.HasPrefix(r.Name, "真机公积金")) {
+				_ = h.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", r.ID, tid).
+					Delete(&HRPFRecord{}).Error
 				continue
 			}
-			rec := HRPFRecord{
-				ID: uuid.New().String(), TenantID: tid,
-				PersonalAccount: row.account, Name: row.name, IdentityNumber: key,
-				Status: row.status, PersonalBase: row.base,
-				CompanyAmount: row.unit, PersonalAmount: row.person,
-				TotalAmount: hrFundRound2(row.unit + row.person),
-				CustomData: map[string]any{
-					"账户余额(元)":   row.balance,
-					"单位缴存比例(%)": 5.0,
-					"职工缴存比例(%)": 5.0,
-					"联名卡银行":     row.bank,
-					"联名卡号":      row.card,
-					"绑定手机":      row.phone,
-					"是否公贷":      "否",
-					"是否冻结":      "否",
-					"是否可在线提取公贷": "是",
-					"是否可在线提取商贷": "否",
-				},
+			seen[key] = true
+		}
+		ratio := h.hrPFRatio(ctx, tid)
+		for _, row := range hrWebhallRows {
+			key := normalizeIDNumber(row.idNo)
+			if key == "" {
+				continue
 			}
+			rec := hrFundRecordOfSeed(row, tid)
 			hrNormalizePFRecord(&rec, ratio)
 			hrFundSyncCustom(&rec)
+			if seen[key] {
+				var cur HRPFRecord
+				if err := h.db.WithContext(ctx).
+					Where("tenant_id = ? AND identity_number = ?", tid, key).
+					First(&cur).Error; err == nil {
+					rec.ID = cur.ID
+					rec.CreatedAt = cur.CreatedAt
+					_ = h.db.WithContext(ctx).Save(&rec).Error
+				}
+				continue
+			}
 			if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
 				logger.Warnf(ctx, "seed fund record %s failed: %v", row.name, err)
 				continue
 			}
 			seen[key] = true
 		}
-		logger.Infof(ctx, "公积金网厅样例种子已就绪（tenant=%d）", tid)
+		// 职工账号实时回写花名册
+		accounts := map[string]string{}
+		for _, row := range hrWebhallRows {
+			accounts[normalizeIDNumber(row.idNo)] = row.account
+		}
+		if err := h.hrFundSyncRosterAccounts(ctx, tid, accounts); err != nil {
+			logger.Warnf(ctx, "sync fund account to roster failed: %v", err)
+		}
+		logger.Infof(ctx, "公积金网厅真实数据已就绪（tenant=%d，87 条）", tid)
+	}
+	return nil
+}
+
+// hrFundRecordOfSeed 真实网厅行 → HRPFRecord（18 字段全量落列 + custom_data）。
+func hrFundRecordOfSeed(row hrFundSeedRow, tid int64) HRPFRecord {
+	defaultYesNo := func(v string, fallback string) string {
+		if strings.TrimSpace(v) == "" {
+			return fallback
+		}
+		return v
+	}
+	return HRPFRecord{
+		ID: uuid.New().String(), TenantID: tid,
+		PersonalAccount: row.account, Name: row.name,
+		IdentityNumber: normalizeIDNumber(row.idNo), Status: row.status,
+		PersonalBase: row.base, CompanyAmount: row.unit, PersonalAmount: row.person,
+		TotalAmount: hrFundRound2(row.unit + row.person),
+		CustomData: map[string]any{
+			"账户余额(元)":   row.balance,
+			"单位缴存比例(%)": row.unitRatio,
+			"职工缴存比例(%)": row.personRatio,
+			"联名卡银行":     row.bank,
+			"联名卡号":      row.card,
+			"绑定手机":      row.phone,
+			"是否公贷":      defaultYesNo(row.yesLoan, "否"),
+			"是否冻结":      defaultYesNo(row.frozen, "否"),
+			"是否可在线提取公贷": defaultYesNo(row.onlineGong, "否"),
+			"是否可在线提取商贷": defaultYesNo(row.onlineShang, "否"),
+		},
+	}
+}
+
+// hrSeedFundBills 真实来源《2025.05单位汇缴清册回单.pdf》：1 条月度账单 + 18 条明细。
+// 幂等：按 (tenant_id, month_label) 唯一；已存在则只更新汇总与明细。
+func (h *HRHandler) hrSeedFundBills(ctx context.Context) error {
+	var tids []int64
+	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
+		Distinct().Pluck("tenant_id", &tids).Error; err != nil {
+		return err
+	}
+	for _, tid := range tids {
+		var bill HRPFBill
+		err := h.db.WithContext(ctx).
+			Where("tenant_id = ? AND month_label = ?", tid, "2025-05").First(&bill).Error
+		if err == nil {
+			// 已存在：按真实回单重算汇总 + 重建明细（ID 保持不变）
+		} else {
+			bill = HRPFBill{ID: uuid.New().String(), TenantID: tid}
+		}
+		bill.MonthLabel = "2025-05"
+		bill.RecordCount = len(hrHuijiao202505Rows)
+		bill.BillStatus = "已汇缴"
+		bill.BaseAmountTotal = 0
+		bill.PersonalAmountTotal = 0
+		bill.CompanyAmountTotal = 0
+		bill.CombinedAmountTotal = 0
+		// 部门按花名册证件号码关联（回单里没有部门列）
+		var employees []HREmployee
+		_ = h.db.WithContext(ctx).Where("tenant_id = ?", tid).Find(&employees).Error
+		deptOf := map[string]string{}
+		for _, e := range employees {
+			deptOf[normalizeIDNumber(e.IDNumber)] = e.Department
+		}
+		items := make([]HRPFBillItem, 0, len(hrHuijiao202505Rows))
+		for _, row := range hrHuijiao202505Rows {
+			bill.BaseAmountTotal += row.base
+			bill.PersonalAmountTotal += row.personal
+			bill.CompanyAmountTotal += row.unit
+			bill.CombinedAmountTotal += row.total
+			items = append(items, HRPFBillItem{
+				ID: uuid.New().String(), TenantID: tid, BillID: bill.ID,
+				PersonalAccount: row.account, Name: row.name,
+				IdentityNumber: row.idNo, Department: deptOf[normalizeIDNumber(row.idNo)],
+				PersonalBase: row.base, PersonalAmount: row.personal,
+				CompanyAmount: row.unit, TotalAmount: row.total,
+			})
+		}
+		if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// 已存在时先清旧明细（避免重复），再按真实回单写入
+			if err := tx.Where("tenant_id = ? AND bill_id = ?", tid, bill.ID).
+				Delete(&HRPFBillItem{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Save(&bill).Error; err != nil {
+				return err
+			}
+			return tx.Create(&items).Error
+		}); err != nil {
+			logger.Warnf(ctx, "seed fund bill 2025-05 failed: %v", err)
+		}
 	}
 	return nil
 }
