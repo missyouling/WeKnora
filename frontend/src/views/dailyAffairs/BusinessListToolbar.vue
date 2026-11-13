@@ -2,6 +2,8 @@
 interface Props {
   keyword: string
   searchPlaceholder?: string
+  /** 第 57 轮：隐藏搜索框（月度账单标签用月份选择器替代关键词搜索）。 */
+  hideSearch?: boolean
   typeOptions?: { label: string; value: string }[]
   typeValue?: string
   typeClearable?: boolean
@@ -13,6 +15,7 @@ interface Props {
 }
 const props = withDefaults(defineProps<Props>(), {
   searchPlaceholder: '请输入关键词',
+  hideSearch: false,
   typeOptions: () => [],
   typeValue: '',
   typeClearable: true,
@@ -35,7 +38,7 @@ const emit = defineEmits<{
 <template>
   <div class="doc-toolbar">
     <div class="doc-toolbar__leading">
-      <div class="doc-filter-field doc-search-field">
+      <div v-if="!props.hideSearch" class="doc-filter-field doc-search-field">
         <t-input :value="props.keyword" :placeholder="props.searchPlaceholder" clearable
           @update:value="(v: string) => emit('update:keyword', v)">
           <template #prefixIcon><t-icon name="search" size="16px" /></template>

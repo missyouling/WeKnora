@@ -101,17 +101,17 @@ test('四标签列全集：无冻结列、无操作列，状态列走具名插�
   assert.equal(receipt.find((c) => c.colKey === '身份证号')!.dataType, 'text')
 })
 
-test('社保卡片主数字=月度账单条数，副文案「X 人待补录社保 · Y 人离职待减员」', () => {
+test('社保卡片主数字=月度账单条数，副文案统一「X 人状态异常」', () => {
   const cards = buildHrKpiCards({
     'hr-social': 1, social_pending: 6, social_to_seal: 3,
   })
   const c = cards.find((x) => x.key === 'hr-social')!
   assert.equal(c!.value, '1')
   assert.equal(c!.unit, '条')
-  assert.equal(c!.sub, '6 人待补录社保 · 3 人离职待减员')
+  assert.equal(c!.sub, '9 人状态异常')
   assert.equal(c!.subCls, 'is-warning')
   const only = buildHrKpiCards({ 'hr-social': 2, social_to_seal: 2 }).find((x) => x.key === 'hr-social')!
-  assert.equal(only!.sub, '2 人离职待减员')
+  assert.equal(only!.sub, '2 人状态异常')
   const none = buildHrKpiCards({ 'hr-social': 0 }).find((x) => x.key === 'hr-social')!
   assert.equal(none!.sub, '')
 })

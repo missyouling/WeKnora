@@ -172,7 +172,9 @@ test('内置字段：发票 3 个；车队档案「证照状态/提取状态」�
   assert.match(panel, /系统内置字段，不可删除（可复制）/)
   assert.match(panel, /const deletable = !isBuiltinField\(fd\) && !isLockedStatus\(fd\)/)
   // 底部引用分类块内不再有自由输入框（自定义字段走「操作 → 复制」）
-  const refBlock = panel.slice(panel.indexOf('v-if="isRefCategory"'), panel.indexOf('v-else-if="!directMode"'))
+  // 第 57 轮：自由新增输入的条件加了 singleCategory 判定，结束标记同步更新
+  const refBlock = panel.slice(panel.indexOf('v-if="isRefCategory"'),
+    panel.indexOf('v-else-if="!directMode && !props.singleCategory"'))
   assert.ok(refBlock.length > 0)
   assert.doesNotMatch(refBlock, /新增字段名/)
   // 2026-10-18 终轮：明细子项全部放开（含标准子项）——锁定逻辑已整体移除

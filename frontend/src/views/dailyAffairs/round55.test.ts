@@ -28,14 +28,16 @@ test('合同卡片异常文案精简为「X 份状态异常」，单一异常带
   assert.equal(none!.sub, '无状态异常')
 })
 
-test('公积金卡片主数字=账单条数，副文案「X 人待补录 · Y 人待封存」', () => {
+test('公积金卡片主数字=账单条数，副文案统一「X 人状态异常」', () => {
   const cards = buildHrKpiCards({ 'hr-fund': 3, fund_pending: 6, fund_to_seal: 3 })
   const c = cards.find((x) => x.key === 'hr-fund')!
   assert.equal(c!.value, '3')
-  assert.equal(c!.sub, '6 人待补录 · 3 人待封存')
+  assert.equal(c!.sub, '9 人状态异常')
   assert.equal(c!.subCls, 'is-warning')
   const only = buildHrKpiCards({ 'hr-fund': 1, fund_pending: 2 }).find((x) => x.key === 'hr-fund')!
-  assert.equal(only!.sub, '2 人待补录')
+  assert.equal(only!.sub, '2 人状态异常')
+  const none = buildHrKpiCards({ 'hr-fund': 0 }).find((x) => x.key === 'hr-fund')!
+  assert.equal(none!.sub, '')
 })
 
 test('合同状态下拉首项统一为「全部状态」', () => {

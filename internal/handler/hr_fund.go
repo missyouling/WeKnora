@@ -133,8 +133,14 @@ func (h *HRHandler) ListPFRecords(c *gin.Context) {
 		return
 	}
 	// 列表按 18 字段读 custom_data：账号 / 姓名 / 状态等中文键在这里一次性补齐。
+	// 第 57 轮：部门以花名册为权威（身份证优先/姓名回退），导入文件里的旧部门不采用。
+	auth := h.hrSIDeptAuthority(ctx, tid)
 	for i := range items {
 		hrFundSyncCustom(&items[i])
+		if d := auth.deptOf(items[i].IdentityNumber, items[i].Name); d != "" {
+			items[i].Department = d
+			items[i].CustomData["部门"] = d
+		}
 	}
 	// 第 55 轮：花名册在职但没录公积金的员工 → 以「待补录」虚拟行出现在职工明细。
 	// 只在「全部状态」下追加，避免筛选时冒出无关行。
@@ -649,8 +655,13 @@ func (h *HRHandler) CreatePFBill(c *gin.Context) {
 		ID: uuid.New().String(), TenantID: tid, MonthLabel: monthLabel, RecordCount: len(records),
 		BillStatus: "已汇缴",
 	}
+	auth := h.hrSIDeptAuthority(ctx, tid)
 	items := make([]HRPFBillItem, 0, len(records))
 	for _, r := range records {
+		dept := r.Department
+		if d := auth.deptOf(r.IdentityNumber, r.Name); d != "" {
+			dept = d
+		}
 		bill.PersonalAmountTotal += r.PersonalAmount
 		bill.CompanyAmountTotal += r.CompanyAmount
 		bill.CombinedAmountTotal += r.TotalAmount
@@ -658,7 +669,7 @@ func (h *HRHandler) CreatePFBill(c *gin.Context) {
 		items = append(items, HRPFBillItem{
 			ID: uuid.New().String(), TenantID: tid, BillID: bill.ID, RecordID: r.ID,
 			PersonalAccount: r.PersonalAccount, Name: r.Name, IdentityNumber: r.IdentityNumber,
-			Department: r.Department, PersonalBase: r.PersonalBase,
+			Department: dept, PersonalBase: r.PersonalBase,
 			PersonalAmount: r.PersonalAmount, CompanyAmount: r.CompanyAmount, TotalAmount: r.TotalAmount,
 		})
 	}
@@ -694,6 +705,13 @@ func (h *HRHandler) GetPFBill(c *gin.Context) {
 		Order("id ASC").Find(&items).Error; err != nil {
 		hrFail(c, "查询账单明细失败: "+err.Error())
 		return
+	}
+	// 第 57 轮：明细部门以花名册为权威（身份证优先/姓名回退）
+	auth := h.hrSIDeptAuthority(ctx, tid)
+	for i := range items {
+		if d := auth.deptOf(items[i].IdentityNumber, items[i].Name); d != "" {
+			items[i].Department = d
+		}
 	}
 	hrOK(c, hrBillWithItems{HRPFBill: bill, Items: items})
 }

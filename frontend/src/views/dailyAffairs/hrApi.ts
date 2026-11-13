@@ -298,7 +298,7 @@ export function nextEmployeeId(params: { department?: string; title?: string } =
 // ---------------------------------------------------------------------------
 
 export function listSocialReceipts(params: {
-  q?: string; department?: string; month?: string
+  q?: string; department?: string; month?: string; pension_status?: string
 } = {}): Promise<any> {
   return get(`${BASE}/social/receipts${qs(params)}`) as Promise<any>
 }

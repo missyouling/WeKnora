@@ -152,11 +152,12 @@ func hrResignFieldDefs() []hrFieldDef {
 		hrF("离职日期", "date", hrHeader()),
 		hrF("离职类型", "enum", hrHeader(), hrEnum("离职类型")),
 		hrF("离职原因", "enum", hrHeader(), hrEnum("离职原因")),
-		hrF("离职原因说明", "text", hrHeader()),
 		hrF("离职去向", "text", hrHeader()),
 		hrF("是否试用期内离职", "enum", hrHeader(), hrEnum("是否试用期内离职")),
 		hrF("薪资结算日", "date", hrHeader()),
 		hrF("离职证明", "attachment", hrHeader()),
+		// 第 57 轮：说明类字段改为多行文本并固定在最后一行（抽屉里独占整行宽）。
+		hrF("离职原因说明", "textarea", hrHeader()),
 	}
 }
 
@@ -409,6 +410,12 @@ func hrDataTypeOfDef(d hrFieldDef) string {
 		return "date"
 	case "number":
 		return "number"
+	case "textarea":
+		// 第 57 轮：说明类字段保留多行语义，前端设置面板与编辑抽屉都按 textarea 渲染。
+		return "textarea"
+	case "attachment":
+		// 附件字段在抽屉里走业务插槽（附件控制条），列定义仍按文本存路径。
+		return "attachment"
 	default:
 		return "text"
 	}
@@ -464,6 +471,32 @@ func hrSubsOfDefsByGroup(defs []hrFieldDef, byGroup bool) []types.FleetCategoryS
 
 func hrRosterSeedSubs52() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrRosterFieldDefs())
+}
+
+// 花名册设置抽屉的两个胶囊分组（第 57 轮）。
+const (
+	hrRosterGroupActive   = "在职管理"
+	hrRosterGroupResigned = "离职管理"
+)
+
+// hrRosterSeedSubs57 花名册分类 = 在职 48 字段 + 离职 14 字段，两个胶囊分组。
+//
+// 为什么合并进同一个分类：顶部「离职管理」卡片已并入花名册（在职/离职双标签），
+// 离职管理不再有独立设置入口；离职字段必须挂在花名册分类下，用户切到离职标签
+// 仍能通过同一个「花名册设置」抽屉维护表头与默认表头。
+//
+// 分组键用 Group（字段配置胶囊按 group 聚合），花名册自己的 6 个业务分组仍由
+// 前端 hrRosterGroups 的静态结构驱动编辑抽屉分块，两者互不冲突。
+func hrRosterSeedSubs57() []types.FleetCategorySub {
+	active := hrRosterFieldDefs()
+	for i := range active {
+		active[i].Group = hrRosterGroupActive
+	}
+	resigned := hrResignFieldDefs()
+	for i := range resigned {
+		resigned[i].Group = hrRosterGroupResigned
+	}
+	return hrSubsOfDefsByGroup(append(active, resigned...), true)
 }
 func hrResignSeedSubs() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrResignFieldDefs())

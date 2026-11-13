@@ -2,8 +2,9 @@
   <div class="meter-settings-body" :class="{ 'is-direct': directMode }" v-if="ready">
     <!-- 分组标题（公司证照在上、司机证照在下，带数量）。
          第 54 轮：单分类直出模式（direct）下整块隐藏 —— 只有一个分类时，
-         分组胶囊与「XX字段 1 +」标题全是噪音。 -->
-    <div v-if="!directMode" class="group-headers">
+         分组胶囊与「XX字段 1 +」标题全是噪音。
+         第 57 轮：singleCategory 同样隐藏整块（人事只有一个分类，分组恒为「默认分组」）。 -->
+    <div v-if="!directMode && !props.singleCategory" class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
         <span v-if="renamingKey === g.key" class="group-header__rename-wrap">
           <t-input v-model="renameValue" size="small" @enter="confirmRename(g)" @blur="confirmRename(g)" autofocus />
@@ -30,7 +31,7 @@
     <!-- 证照类型表格（复刻电表配置表格，支持拖拽排序） -->
     <div class="meter-table-wrap">
       <div class="meter-table">
-        <template v-if="!directMode">
+        <template v-if="!directMode && !props.singleCategory">
         <div class="meter-table-head">
           <span class="th-drag"></span>
           <span class="th-name">{{ scopeName(group.scope) }}</span>
@@ -72,8 +73,8 @@
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
           <div v-if="editingId && editingItem" class="meter-form meter-form--inline"
             :class="{ 'is-fleet': isFleetScope }">
-            <div v-if="!directMode" class="meter-form-title">编辑{{ group.label }}</div>
-            <div v-if="!directMode" class="form-grid">
+            <div v-if="!directMode && !props.singleCategory" class="meter-form-title">编辑{{ group.label }}</div>
+            <div v-if="!directMode && !props.singleCategory" class="form-grid">
               <div class="form-item">
                 <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
                 <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
@@ -224,25 +225,31 @@
                       :disabled="isLockedStatus(row.fd)"
                       @update:model-value="(v: any) => { if (!isLockedStatus(row.fd)) row.fd.enabled = !!v }" />
                     <!-- 第 54 轮：锁标记只做「不可删除」提示，⋮ 菜单始终可用 ——
-                         系统内置字段也必须能「复制」出自定义字段。 -->
-                    <t-tooltip v-if="isBuiltinField(row.fd) || isLockedStatus(row.fd)" content="系统内置字段，不可删除（可复制）" placement="top">
-                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                    </t-tooltip>
-                    <t-tooltip v-else-if="usedFields.has(row.fd.name)" content="该字段已被证照记录引用，不能删除（可复制）" placement="top">
-                      <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
-                    </t-tooltip>
-                    <t-popconfirm theme="warning" :visible="fieldDelPop?.name === row.fd.name" placement="left"
-                      :content="`确定删除字段「${fieldLabelOf(row.fd)}」吗？该字段将不可恢复。`"
-                      :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
-                      @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
-                      @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
-                      <t-dropdown :options="fieldMenuOptions(row.fd)" placement="bottom-right" min-column-width="110px"
-                        @click="(ctx: any) => onFieldMenu(row.fd, ctx.value)">
-                        <t-button variant="text" size="small" shape="square">
-                          <template #icon><t-icon name="more" size="15px" /></template>
-                        </t-button>
-                      </t-dropdown>
-                    </t-popconfirm>
+                         系统内置字段也必须能「复制」出自定义字段。
+                         第 57 轮：锁标记与 ⋮ 必须包进**同一个** .fc-op 单元格。
+                         .field-config-row 是与 .field-colhead 严格同构的 CSS Grid（7 列），
+                         两者作为并列子节点会变成 8 个子项 → ⋮ 被自动排到隐式第二行左侧、
+                         行高翻倍（真机图 7）。合并成一个节点后锁标 + ⋮ 单行居中。 -->
+                    <div class="fc-op">
+                      <t-tooltip v-if="isBuiltinField(row.fd) || isLockedStatus(row.fd)" content="系统内置字段，不可删除（可复制）" placement="top">
+                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                      </t-tooltip>
+                      <t-tooltip v-else-if="usedFields.has(row.fd.name)" content="该字段已被证照记录引用，不能删除（可复制）" placement="top">
+                        <span class="fc-used"><t-icon name="lock-on" size="15px" /></span>
+                      </t-tooltip>
+                      <t-popconfirm theme="warning" :visible="fieldDelPop?.name === row.fd.name" placement="left"
+                        :content="`确定删除字段「${fieldLabelOf(row.fd)}」吗？该字段将不可恢复。`"
+                        :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }"
+                        @confirm="onFieldPopRemove" @cancel="fieldDelPop = null"
+                        @visible-change="(v: boolean) => { if (!v) fieldDelPop = null }">
+                        <t-dropdown :options="fieldMenuOptions(row.fd)" placement="bottom-right" min-column-width="110px"
+                          @click="(ctx: any) => onFieldMenu(row.fd, ctx.value)">
+                          <t-button variant="text" size="small" shape="square">
+                            <template #icon><t-icon name="more" size="15px" /></template>
+                          </t-button>
+                        </t-dropdown>
+                      </t-popconfirm>
+                    </div>
                   </div>
 
                   <!-- 大类下属细项：只读展示 + 可改名/可关「启用字段」。
@@ -380,7 +387,9 @@
                     placeholder="搜索并引用模块内其它列表字段（如 合同状态、手机号码、司龄）"
                     @select="addRefField" />
                 </div>
-                <div v-else-if="!directMode" class="field-config-add">
+                <!-- 第 57 轮：singleCategory 下只保留「搜索并引用」，不再给自由新增字段入口
+                     （手输字段名会造出没有数据来源的空列）。 -->
+                <div v-else-if="!directMode && !props.singleCategory" class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                     @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
@@ -395,13 +404,13 @@
           </div>
 
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
-        <div v-if="!directMode && !groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
+        <div v-if="!directMode && !props.singleCategory && !groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
           <span class="panel-empty-text">{{ emptyTextOf(group.scope) }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
-        <div v-if="!directMode && addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
+        <div v-if="!directMode && !props.singleCategory && addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
           <span class="cert-add-gap"></span>
           <span class="cert-add-input">
             <t-input ref="addInputRef" v-model="addForm.name" size="small" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
@@ -411,7 +420,7 @@
             <t-button theme="primary" size="small" :loading="saving" @click="commitAdd">添加</t-button>
           </span>
         </div>
-        <div v-else-if="!directMode" class="cert-add-row" @click="startAdd">
+        <div v-else-if="!directMode && !props.singleCategory" class="cert-add-row" @click="startAdd">
           <span class="cert-add-gap"></span>
           <span class="cert-add-name"><t-icon name="add" size="14px" /><span>{{ addRowLabel }}</span></span>
         </div>
@@ -490,6 +499,15 @@ const props = withDefaults(defineProps<{
    * 打开后直接进入该分类的字段配置，隐藏分组胶囊、分类表格与「编辑XX字段」标题。
    */
   direct?: boolean
+  /**
+   * 第 57 轮：单分类精简模式（人事专用）。
+   *
+   * 保留与「设置·能耗」完全同款的分组胶囊 / 字段配置头 / 字段行样式，
+   * 仅隐藏多分类表、`+` 新增分组、分类名输入与自由新增字段输入。
+   * 与 `direct` 的区别：`direct` 连字段配置头一起隐藏并叠加一套白底紧凑覆盖样式；
+   * `singleCategory` 走常规样式，只做减法。
+   */
+  singleCategory?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -499,6 +517,7 @@ const props = withDefaults(defineProps<{
   refCategories: () => [],
   refSources: () => [],
   direct: false,
+  singleCategory: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -930,8 +949,9 @@ async function load() {
       usedFields.value = new Set()
     })
     autoOpenInitialCategory()
-    // 直出模式：分类加载完直接展开唯一分类，用户看到的第一屏就是字段列表。
-    if (directMode.value) openCategory(groupItems.value[0])
+    // 直出 / 单分类精简模式：分类加载完直接展开唯一分类，
+    // 用户看到的第一屏就是字段列表（第 57 轮 singleCategory 同样适用）。
+    if (directMode.value || props.singleCategory) openCategory(groupItems.value[0])
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
   }
@@ -963,7 +983,7 @@ function autoOpenInitialCategory() {
 watch(() => props.initialCategory, () => { autoOpenInitialCategory() })
 // 分类数据异步到位 / 从多分类切回单分类时，直出模式要补开唯一分类
 watch(() => groupItems.value.length, () => {
-  if (directMode.value) openCategory(groupItems.value[0])
+  if (directMode.value || props.singleCategory) openCategory(groupItems.value[0])
 })
 
 // ---- 字段引用判断：删除字段前检查是否已被证照记录引用 ----
@@ -2010,7 +2030,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
 <style lang="less" scoped>
 /* 复刻电表配置抽屉样式（UtilityMeterTab） */
 .meter-settings-body {
-  padding: 4px 0 24px;
+  // 第 57 轮：底部留 88px —— 抽屉 body 是唯一滚动口，滚到底时最后一个字段行
+  // 与「搜索并引用模块内其它列表字段」输入框必须完整露出，绝不被抽屉底部遮住。
+  padding: 4px 0 88px;
 }
 
 .meter-table-wrap {
@@ -2570,15 +2592,15 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
      只作用于车队：能耗「费用清单」的引用字段需要 ≥140px 输入框 + 130px 来源徽标，
      压到 200px 会把「账...」截断，因此其它 scope 保持弹性列。 */
   .field-config-list.is-compact {
-    min-width: 600px;
+    min-width: 640px;
 
     .field-colhead {
-      grid-template-columns: 24px 200px 120px 64px 64px 48px;
-      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 48px; }
+      grid-template-columns: 24px 200px 120px 64px 64px 76px;
+      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 76px; }
     }
     .field-config-row {
-      grid-template-columns: 24px 200px 120px 64px 64px 48px;
-      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 48px; }
+      grid-template-columns: 24px 200px 120px 64px 64px 76px;
+      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 76px; }
     }
   }
 
@@ -2587,8 +2609,8 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     // 字段名列 `minmax(280px, 1fr)`：固定的 160px 会把引用字段的输入框挤成
     // 「账...」「计」这种只剩一个字的状态（真机截图）。源徽标最多 130px，
     // 余下 ≥140px 全部留给输入框；抽屉拉宽时这一列继续吃满剩余空间。
-    // 末列「操作」只有一个 ⋮ 按钮，92px 是纯浪费，收紧到 48px。
-    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 48px;
+    // 末列「操作」：锁标(15px) + ⋮(32px) 必须并排放下，48px 会换行 → 76px。
+    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 76px;
     align-items: center;
     gap: 8px;
     padding: 0 8px;
@@ -2597,7 +2619,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 48px;
+      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 76px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -2649,14 +2671,16 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   .field-config-row {
     display: grid;
     // 与 .field-colhead 严格同构（列宽错一格整行就错位）
-    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 48px;
+    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 76px;
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
+    // 第 57 轮：每行严格 40px 单行高度，加锁行绝不允许因图标换行撑高。
+    min-height: 40px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 48px;
+      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 76px;
     }
     .fc-width {
       width: 100%;
@@ -2694,6 +2718,18 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     > *:nth-child(6) { justify-self: center; }
     &.has-width > *:nth-child(4) { justify-self: stretch; }
     &.has-width > *:nth-child(7) { justify-self: center; }
+
+  // 第 57 轮：操作列单元格。锁标与 ⋮ 是同一格里的两个并排元素，
+  // 绝不换行（否则整行被撑到两倍高，真机图 7）。
+  .fc-op {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
 
   .fc-used {
       display: inline-flex;
@@ -2894,6 +2930,7 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   border: 1px solid #e7e7e7;
   border-radius: 6px;
   padding: 6px 10px;
+  min-height: 40px;
   transition: background .15s, border-color .15s;
 }
 .meter-settings-body.is-direct .field-config-row:hover {

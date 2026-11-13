@@ -40,13 +40,12 @@ export interface HrTabDef {
 }
 
 /**
- * 五个一级 Tab 的唯一配置表（第 52 轮新增「离职管理」）。
+ * 四个一级 Tab 的唯一配置表（第 57 轮：离职管理并入花名册双标签）。
  * key 同时作为字段配置 scope（`hrScopeOf` 返回它），KPI 卡的 `typeValue` 也用它。
- * 顺序严格：花名册 → 离职管理 → 劳动合同 → 社保管理 → 公积金管理。
+ * 顺序严格：花名册 → 劳动合同 → 社保管理 → 公积金管理。
  */
 export const HR_TABS: readonly HrTabDef[] = [
   { key: 'hr-roster', label: '花名册', icon: 'usergroup', sub: '' },
-  { key: 'hr-resign', label: '离职管理', icon: 'logout', sub: '' },
   { key: 'hr-contract', label: '劳动合同', icon: 'file-paste', sub: '' },
   // tdesign-icons-vue-next 0.4.4 的 manifest 里没有 `shield`（只有 shield-error），
   // 传无效名会让 <use href="#t-icon-shield"> 解析失败 → 图标框空白。secured 已核验有效。
@@ -54,20 +53,21 @@ export const HR_TABS: readonly HrTabDef[] = [
   { key: 'hr-fund', label: '公积金管理', icon: 'wallet', sub: '' },
 ]
 
-/** 字段配置 scope：tab 值本身即 scope；未知值兜底到花名册。 */
+/** 字段配置 scope：tab 值本身即 scope；离职子视图与未知值都归到花名册。 */
 export function hrScopeOf(tab: string): HrTab {
   const hit = HR_TABS.find((t) => t.key === tab)
   return hit ? hit.key : 'hr-roster'
 }
 
 /**
- * 恰好 5 张 KPI 卡（花名册 / 离职管理 / 劳动合同 / 社保管理 / 公积金管理）。
+ * 恰好 4 张 KPI 卡（花名册 / 劳动合同 / 社保管理 / 公积金管理）。
  *
  * 铁律：**绝不产出「已收录记录」「历史记录」之类的汇总卡 / 统计卡** ——
  * 第 44 轮已把车队的两张汇总卡彻底移除，人事页从第一天起就不引入。
- * 五张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
+ * 四张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
  */
 export function buildHrKpiCards(counts: Record<string, number> = {}) {
+  const resigned = Math.max(0, Number(counts.resigned || 0) || 0)
   const unsigned = Math.max(0, Number(counts.contract_unsigned || 0) || 0)
   const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
   const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
@@ -76,9 +76,12 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
   const socialPending = Math.max(0, Number(counts.social_pending || 0) || 0)
   const socialToSeal = Math.max(0, Number(counts.social_to_seal || 0) || 0)
   return HR_TABS.map((t) => {
-    // 第 49 轮：劳动合同卡副文案体现异常预警（到期 / 即将到期）
     let sub = t.sub
     let subCls = ''
+    if (t.key === 'hr-roster') {
+      // 第 57 轮：离职管理并入花名册，副文案直接给离职人数
+      if (resigned > 0) sub = `离职 ${resigned} 人`
+    }
     if (t.key === 'hr-contract') {
       // 第 55 轮：异常 = 未签订 + 即将到期 + 已到期，副文案只报总数（单一异常带类型后缀）。
       const kinds = [unsigned > 0 ? '未签订' : '', expiring > 0 ? '即将到期' : '',
@@ -92,22 +95,18 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
       }
     }
     if (t.key === 'hr-fund') {
-      // 第 55 轮：全员联动预警（待补录 / 待封存）
-      const parts: string[] = []
-      if (fundPending > 0) parts.push(`${fundPending} 人待补录`)
-      if (fundToSeal > 0) parts.push(`${fundToSeal} 人待封存`)
-      if (parts.length) {
-        sub = parts.join(' · ')
+      // 第 57 轮：与劳动合同统一口径，只报「X 人状态异常」（待补录 + 待封存合计）
+      const total = fundPending + fundToSeal
+      if (total > 0) {
+        sub = `${total} 人状态异常`
         subCls = 'is-warning'
       }
     }
     if (t.key === 'hr-social') {
-      // 第 56 轮：卡片主数字恒为月度账单条数，底部提醒待补录社保 / 离职待减员
-      const parts: string[] = []
-      if (socialPending > 0) parts.push(`${socialPending} 人待补录社保`)
-      if (socialToSeal > 0) parts.push(`${socialToSeal} 人离职待减员`)
-      if (parts.length) {
-        sub = parts.join(' · ')
+      // 第 57 轮：与劳动合同统一口径，只报「X 人状态异常」（待补录 + 待减员合计）
+      const total = socialPending + socialToSeal
+      if (total > 0) {
+        sub = `${total} 人状态异常`
         subCls = 'is-warning'
       }
     }

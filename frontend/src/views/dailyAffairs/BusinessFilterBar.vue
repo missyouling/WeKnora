@@ -17,6 +17,7 @@
 -->
 <template>
   <BusinessListToolbar :keyword="keywordValue" :search-placeholder="searchPlaceholder"
+    :hide-search="hideSearch"
     :selected-count="selectedCount" :hide-batch-bar="hideBatchBar" :show-refresh="showRefresh"
     @update:keyword="v => patch(keywordSpec, v)" @refresh="emit('filter-change')"
     @clear-selection="emit('clear-selection')">
@@ -115,6 +116,8 @@ const props = withDefaults(defineProps<{
   modelValue: FilterState
   fields?: FilterFieldSpec[]
   searchPlaceholder?: string
+  /** 第 57 轮：隐藏搜索框（月度账单标签用月份选择器替代关键词搜索）。 */
+  hideSearch?: boolean
   /** 列定义（传了才渲染列显隐） */
   columns?: Array<{ key: string; label: string }>
   visibleKeys?: string[]
@@ -128,6 +131,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   fields: () => [],
   searchPlaceholder: '请输入关键词',
+  hideSearch: false,
   columns: () => [],
   visibleKeys: () => [],
   selectedCount: 0,

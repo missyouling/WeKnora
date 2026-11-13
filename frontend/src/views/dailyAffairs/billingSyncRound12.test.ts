@@ -121,8 +121,10 @@ test('别名表必须覆盖市电账单全部业务分组', () => {
 
 test('字段名所在列必须弹性加宽，且输入框保底 140px', () => {
   const src = read('FleetCertPanel.vue')
-  assert.match(src, /grid-template-columns: 24px minmax\(280px, 1fr\) 90px 64px 64px 48px/)
-  assert.match(src, /grid-template-columns: 24px minmax\(280px, 1fr\) 90px 70px 64px 64px 48px/)
+  // 第 57 轮：末列由 48px 加宽到 76px —— 锁标(15px) + ⋮(32px) 必须并排单行，
+  // 否则加锁字段会多出第 8 个网格子项，⋮ 掉到第二行把行高撑爆一倍。
+  assert.match(src, /grid-template-columns: 24px minmax\(280px, 1fr\) 90px 64px 64px 76px/)
+  assert.match(src, /grid-template-columns: 24px minmax\(280px, 1fr\) 90px 70px 64px 64px 76px/)
   assert.ok(!/24px 160px 90px/.test(src), '160px 固定列会把字段名压成「账...」')
   assert.match(src, /\.fc-name--ref \{ flex: 1 1 auto; min-width: 140px; \}/)
   assert.match(src, /max-width: 130px;/, '来源徽标要有上限，给输入框留出 140px')

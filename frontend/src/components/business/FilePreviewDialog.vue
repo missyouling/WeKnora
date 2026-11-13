@@ -27,13 +27,11 @@
       <t-button variant="outline" size="small" @click="printFile">
         <template #icon><t-icon name="print" size="15px" /></template>打印
       </t-button>
-      <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
-        <template #icon><t-icon name="download" size="15px" /></template>下载
-      </t-button>
-      <t-button theme="default" variant="outline" size="small" @click="close">
-        <template #icon><t-icon name="close" size="15px" /></template>关闭
-      </t-button>
-    </div>
+  <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
+    <template #icon><t-icon name="download" size="15px" /></template>下载
+  </t-button>
+  <!-- 第 57 轮：工具栏不再重复渲染「关闭」按钮 —— 关闭入口只保留标题栏右上角的 ×。 -->
+</div>
 
     <div class="fpd-stage" :class="{ 'is-image': kind === 'image' }"
       @wheel.prevent="onWheel" @mousedown="onDragStart" @mousemove="onDragMove"

@@ -354,8 +354,9 @@ const isLongTextField = (f: DetailFieldMeta): boolean => {
  */
 const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
 const fieldClassOf = (f: DetailFieldMeta) => ({
-  // 多行文本 / 数组 / 长文本字段占满整行（单行字段才两列并排）
-  'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || isLongTextField(f) || f.name === 'fileName',
+  // 多行文本 / 数组 / 长文本 / 附件字段占满整行（单行字段才两列并排）
+  'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || f.dataType === 'attachment'
+    || isLongTextField(f) || f.name === 'fileName',
 })
 function close() {
   emit('cancel')

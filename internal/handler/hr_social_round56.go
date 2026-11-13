@@ -198,6 +198,46 @@ func hrSIBillItemView(it HRSIBillItem) map[string]any {
 	}
 }
 
+// hrSIDeptAuthority 部门权威表（第 57 轮）：身份证优先、姓名回退，值来自花名册。
+//
+// 外部导入的社保/公积金文件可能没有部门列，或带的是旧部门名；用户要求所有
+// 人员部门必须实时以花名册为准，因此查询与生成账单时统一用这张表覆盖，
+// 花名册调部门后所有视图立刻跟随。
+type hrSIDeptAuthority struct {
+	byID   map[string]string
+	byName map[string]string
+}
+
+func (h *HRHandler) hrSIDeptAuthority(ctx context.Context, tid int64) hrSIDeptAuthority {
+	out := hrSIDeptAuthority{byID: map[string]string{}, byName: map[string]string{}}
+	var emps []HREmployee
+	if err := h.db.WithContext(ctx).Select("name, id_number, department").
+		Where("tenant_id = ?", tid).Find(&emps).Error; err != nil {
+		return out
+	}
+	for _, e := range emps {
+		d := strings.TrimSpace(e.Department)
+		if d == "" {
+			continue
+		}
+		if id := normalizeIDNumber(e.IDNumber); id != "" {
+			out.byID[id] = d
+		}
+		if n := strings.TrimSpace(e.Name); n != "" {
+			out.byName[n] = d
+		}
+	}
+	return out
+}
+
+// deptOf 身份证命中优先；没有身份证或命中不到时回退姓名匹配。
+func (a hrSIDeptAuthority) deptOf(idNumber, name string) string {
+	if d := a.byID[normalizeIDNumber(idNumber)]; d != "" {
+		return d
+	}
+	return a.byName[strings.TrimSpace(name)]
+}
+
 // hrSIDeptLabel 部门汇总专用展示名（对齐《2026.11社保扣款明细.xlsx》图 2 口径）。
 func hrSIDeptLabel(dept string) string {
 	switch strings.TrimSpace(dept) {
@@ -613,8 +653,9 @@ func (h *HRHandler) ListSIReceipts(c *gin.Context) {
 		like := "%" + kw + "%"
 		q = q.Where("name LIKE ? OR person_code LIKE ? OR id_number LIKE ?", like, like, like)
 	}
-	if dept := strings.TrimSpace(c.Query("department")); dept != "" {
-		q = q.Where("department = ?", dept)
+	// 第 57 轮：五险参保状态筛选（前端默认「参保缴费」，以养老参保状态为准）
+	if st := strings.TrimSpace(c.Query("pension_status")); st != "" && st != "全部状态" && st != "全部" {
+		q = q.Where("pension_status = ?", st)
 	}
 	if err := q.Order("id ASC").Find(&items).Error; err != nil {
 		hrFail(c, "查询回盘表失败: "+err.Error())
@@ -623,13 +664,26 @@ func (h *HRHandler) ListSIReceipts(c *gin.Context) {
 	sort.SliceStable(items, func(i, j int) bool {
 		return hrSISeqNum(items[i].Sequence) < hrSISeqNum(items[j].Sequence)
 	})
+	// 部门以花名册为权威（身份证优先/姓名回退），故不在 SQL 层过滤 department。
+	wantDept := strings.TrimSpace(c.Query("department"))
+	auth := h.hrSIDeptAuthority(ctx, tid)
 	out := make([]map[string]any, 0, len(items))
 	depts := map[string]bool{}
-	for _, r := range items {
-		out = append(out, hrSIReceiptView(r))
-		if r.Department != "" {
-			depts[r.Department] = true
+	for i := range items {
+		if d := auth.deptOf(items[i].IDNumber, items[i].Name); d != "" {
+			items[i].Department = d
 		}
+		if items[i].CustomData == nil {
+			items[i].CustomData = map[string]any{}
+		}
+		if items[i].Department != "" {
+			items[i].CustomData["部门"] = items[i].Department
+			depts[items[i].Department] = true
+		}
+		if wantDept != "" && items[i].Department != wantDept {
+			continue
+		}
+		out = append(out, hrSIReceiptView(items[i]))
 	}
 	hrOK(c, gin.H{"items": out, "total": len(out), "departments": sortedKeys(depts)})
 }
@@ -645,9 +699,6 @@ func (h *HRHandler) ListSIRecords(c *gin.Context) {
 	if month := strings.TrimSpace(c.Query("month")); month != "" {
 		q = q.Where("bill_month = ?", month)
 	}
-	if dept := strings.TrimSpace(c.Query("department")); dept != "" {
-		q = q.Where("department = ?", dept)
-	}
 	if scheme := strings.TrimSpace(c.Query("scheme")); scheme != "" && scheme != "全部险种" && scheme != "全部" {
 		q = q.Where("scheme = ?", scheme)
 	}
@@ -660,13 +711,26 @@ func (h *HRHandler) ListSIRecords(c *gin.Context) {
 		hrFail(c, "查询社保记录失败: "+err.Error())
 		return
 	}
+	// 部门以花名册为权威（身份证优先/姓名回退），故不在 SQL 层过滤 department。
+	wantDept := strings.TrimSpace(c.Query("department"))
+	auth := h.hrSIDeptAuthority(ctx, tid)
 	out := make([]map[string]any, 0, len(items))
 	depts := map[string]bool{}
-	for _, r := range items {
-		out = append(out, hrSIRecordView(r))
-		if r.Department != "" {
-			depts[r.Department] = true
+	for i := range items {
+		if d := auth.deptOf(items[i].IDNumber, items[i].Name); d != "" {
+			items[i].Department = d
 		}
+		if items[i].CustomData == nil {
+			items[i].CustomData = map[string]any{}
+		}
+		if items[i].Department != "" {
+			items[i].CustomData["部门"] = items[i].Department
+			depts[items[i].Department] = true
+		}
+		if wantDept != "" && items[i].Department != wantDept {
+			continue
+		}
+		out = append(out, hrSIRecordView(items[i]))
 	}
 	hrOK(c, gin.H{"items": out, "total": len(out), "departments": sortedKeys(depts)})
 }
@@ -709,6 +773,13 @@ func (h *HRHandler) GetSIBill(c *gin.Context) {
 		}
 		return hrSISeqNum(items[i].Sequence) < hrSISeqNum(items[j].Sequence)
 	})
+	// 第 57 轮：明细部门同样以花名册为权威，部门汇总必须基于覆盖后的部门聚合。
+	auth := h.hrSIDeptAuthority(ctx, tid)
+	for i := range items {
+		if d := auth.deptOf(items[i].IDNumber, items[i].Name); d != "" {
+			items[i].Department = hrSIDeptLabel(d)
+		}
+	}
 	out := make([]map[string]any, 0, len(items))
 	depts := map[string]bool{}
 	for _, it := range items {
@@ -829,11 +900,15 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 // hrSIBillItemsForMonth 生成账单明细快照：2026-11 直接复用真实扣款明细；
 // 其它月份按 (人, 正常/补缴) 从 hr_si_records 聚合。
 func (h *HRHandler) hrSIBillItemsForMonth(ctx context.Context, tid int64, month, billID string) []HRSIBillItem {
+	auth := h.hrSIDeptAuthority(ctx, tid)
 	if month == hrSIBillSeedValue.MonthLabel {
 		out := make([]HRSIBillItem, 0, len(hrSIBillItemSeedRows))
 		for _, d := range hrSIBillItemSeedRows {
 			it := hrSIBillItemRowToModel(tid, billID, d)
 			it.Source = "generated"
+			if dd := auth.deptOf(it.IDNumber, it.Name); dd != "" {
+				it.Department = hrSIDeptLabel(dd)
+			}
 			out = append(out, it)
 		}
 		return out
@@ -855,6 +930,9 @@ func (h *HRHandler) hrSIBillItemsForMonth(ctx context.Context, tid int64, month,
 			}
 			by[k] = it
 			order = append(order, k)
+		}
+		if dd := auth.deptOf(r.IDNumber, r.Name); dd != "" {
+			it.Department = hrSIDeptLabel(dd)
 		}
 		switch r.Scheme {
 		case "养老保险":

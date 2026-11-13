@@ -40,36 +40,40 @@ import { isLockedStatusField, statusFieldSpecsOf, isHrStatusName } from './statu
 
 const ALL_TABS = ['hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund'] as const
 
-test('KPI：第 52 轮恰好 5 张卡，顺序为 花名册→离职管理→劳动合同→社保管理→公积金管理', () => {
+test('KPI：第 57 轮恰好 4 张卡，顺序为 花名册→劳动合同→社保管理→公积金管理', () => {
   const cards = buildHrKpiCards({
-    'hr-roster': 12, 'hr-resign': 3, 'hr-contract': 5, 'hr-social': 9, 'hr-fund': 6,
+    'hr-roster': 12, resigned: 3, 'hr-contract': 5, 'hr-social': 9, 'hr-fund': 6,
   })
-  assert.equal(cards.length, 5)
+  assert.equal(cards.length, 4)
   assert.deepEqual(cards.map((c) => c.label),
-    ['花名册', '离职管理', '劳动合同', '社保管理', '公积金管理'])
+    ['花名册', '劳动合同', '社保管理', '公积金管理'])
+  // 花名册卡副文案体现离职人数（离职管理不再是独立卡片）
+  assert.equal(cards[0].sub, '离职 3 人')
   // 卡里任何字段都不许带上被移除的两张汇总卡文案
   const text = JSON.stringify(cards)
   assert.equal(text.includes('已收录'), false)
   assert.equal(text.includes('历史记录'), false)
-  // 空 counts 也仍是 5 张、数值 0
-  assert.equal(buildHrKpiCards().length, 5)
-  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0', '0', '0'])
+  // 空 counts 也仍是 4 张、数值 0
+  assert.equal(buildHrKpiCards().length, 4)
+  assert.deepEqual(buildHrKpiCards().map((c) => c.value), ['0', '0', '0', '0'])
 })
 
-test('KPI：五张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
+test('KPI：四张卡都是 action=type + typeValue，才能被 DashboardKpiGroup 高亮', () => {
   const cards = buildHrKpiCards()
   for (const c of cards) {
     assert.equal(c.action, 'type')
     assert.ok(c.typeValue, `${c.key} 必须有 typeValue`)
     assert.notEqual((c as { static?: boolean }).static, true)
   }
-  assert.deepEqual(cards.map((c) => c.typeValue), [...ALL_TABS])
-  assert.equal(HR_TABS.length, 5)
+  assert.deepEqual(cards.map((c) => c.typeValue),
+    ['hr-roster', 'hr-contract', 'hr-social', 'hr-fund'])
+  assert.equal(HR_TABS.length, 4)
 })
 
-test('hrScopeOf：五个 HR scope 恒等映射，未知值兜底花名册', () => {
+test('hrScopeOf：四个 HR scope 恒等映射，离职子视图与未知值兜底花名册', () => {
   assert.equal(hrScopeOf('hr-roster'), 'hr-roster')
-  assert.equal(hrScopeOf('hr-resign'), 'hr-resign')
+  // 第 57 轮：离职管理并入花名册双标签，hr-resign 不再是独立 tab
+  assert.equal(hrScopeOf('hr-resign'), 'hr-roster')
   assert.equal(hrScopeOf('hr-social'), 'hr-social')
   assert.equal(hrScopeOf('hr-contract'), 'hr-contract')
   assert.equal(hrScopeOf('hr-fund'), 'hr-fund')

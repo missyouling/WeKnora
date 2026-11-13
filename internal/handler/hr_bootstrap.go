@@ -77,6 +77,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrMigrateSocialSubs(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR social subs failed: %v", err)
 	}
+	// 第 57 轮：花名册字段配置扩展为「在职管理 / 离职管理」双胶囊（幂等，只做一次）
+	if err := h.hrMigrateRosterSubs57(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR roster subs failed: %v", err)
+	}
 	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
 	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR roster ref subs failed: %v", err)
@@ -380,7 +384,8 @@ func hrCategorySeeds() []hrCategorySeed {
 	return []hrCategorySeed{
 		{
 			Scope: hrScopeRoster, Name: "花名册", BuiltinKey: "hr-roster", SortOrder: 1,
-			Subs: hrRosterSeedSubs(),
+			// 第 57 轮：在职管理 48 + 离职管理 14，两个胶囊分组
+			Subs: hrRosterSeedSubs57(),
 		},
 		{
 			Scope: hrScopeResign, Name: "离职管理", BuiltinKey: "hr-resign", SortOrder: 2,
@@ -400,6 +405,69 @@ func hrCategorySeeds() []hrCategorySeed {
 			Subs: hrFundSeedSubs(),
 		},
 	}
+}
+
+// hrMigrateRosterSubs57 把花名册分类的 subs 扩展为「在职管理 + 离职管理」双胶囊。
+//
+// 只在存量分类还没有任何「离职管理」分组时执行一次：之后用户的列宽/默认表头/
+// 拖拽顺序/自定义复制字段一律保留，绝不被启动重建覆盖。
+func (h *HRHandler) hrMigrateRosterSubs57(ctx context.Context) error {
+	want := hrRosterSeedSubs57()
+	wantNames := make(map[string]bool, len(want))
+	for _, s := range want {
+		wantNames[s.Name] = true
+	}
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("scope = ? AND name = ? AND deleted_at IS NULL", hrScopeRoster, "花名册").
+		Find(&cats).Error; err != nil {
+		return err
+	}
+	for i := range cats {
+		changed := false
+		hasResigned := false
+		for _, s := range cats[i].Subs {
+			if strings.TrimSpace(s.Group) == hrRosterGroupResigned {
+				hasResigned = true
+				break
+			}
+		}
+		if !hasResigned {
+			next := append([]types.FleetCategorySub{}, want...)
+			for _, sub := range cats[i].Subs {
+				// 契约内字段以新定义为准；第 52 轮废弃字段直接丢弃；
+				// 其余（用户复制出来的自定义字段、src_ 跨表引用）原样保留在末尾。
+				if wantNames[sub.Name] || hrLegacyRosterFields[sub.Name] {
+					continue
+				}
+				next = append(next, sub)
+			}
+			cats[i].Subs = next
+			changed = true
+		}
+		// 兜底归一：花名册只有「在职管理 / 离职管理」两个胶囊，
+		// 历史自定义字段（group 还是「在职信息」等）必须归到在职管理，
+		// 否则设置抽屉会冒出第三个胶囊。
+		for j := range cats[i].Subs {
+			g := strings.TrimSpace(cats[i].Subs[j].Group)
+			if g == hrRosterGroupActive || g == hrRosterGroupResigned {
+				continue
+			}
+			cats[i].Subs[j].Group = hrRosterGroupActive
+			cats[i].Subs[j].GroupLabel = hrRosterGroupActive
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		cats[i].UpdatedAt = time.Now()
+		// 结构体 Save 走 JSON 序列化；Update("subs", 切片) 在 PG 会报 42804。
+		if err := h.db.WithContext(ctx).Save(&cats[i]).Error; err != nil {
+			return err
+		}
+		logger.Infof(ctx, "花名册字段配置已归一为在职/离职双胶囊（tenant=%d）", cats[i].TenantID)
+	}
+	return nil
 }
 
 // hrSeedTenantIDs = {0} + 已有分类的租户（与 fleet_record_category_seed.go 同口径）。

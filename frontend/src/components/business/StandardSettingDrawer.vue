@@ -10,10 +10,13 @@
   >
     <!-- 第 54 轮：单分类直出。只有一个分类时不再套 Tab 骨架 ——
          打开设置要直接看到「字段名 | 数据类型 | 列宽 | 默认表头 | 启用 | 操作」，
-         而不是先看到一枚孤零零的「字段设置」Tab。 -->
-    <div v-if="direct" class="standard-settings-direct">
+         而不是先看到一枚孤零零的「字段设置」Tab。
+         第 57 轮：singleCategory 走同一容器，但用常规（能耗同款）样式，
+         只隐藏分类表 / 新增分组，不再叠加 direct 的白底紧凑覆盖。 -->
+    <div v-if="direct || singleCategory" :class="direct ? 'standard-settings-direct' : 'standard-settings-single'">
       <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
-        direct :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
+        :direct="direct" :single-category="singleCategory"
+        :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
         :ref-sources="refSources"
         @ai-guide="onAiGuide" @category-change="onCategoryChange" />
     </div>
@@ -100,6 +103,13 @@ const props = withDefaults(defineProps<{
    * 适用：人事 5 个列表、轮胎 / 年检 / 成本管理等只有 1 个分类的 scope。
    */
   direct?: boolean
+  /**
+   * 第 57 轮：单分类精简模式（人事专用）。
+   *
+   * 与 direct 一样不套 Tab 骨架，但保留「设置·能耗」同款的分组胶囊、字段配置头
+   * 与字段行样式，只隐藏多分类表与 `+` 新增分组。
+   */
+  singleCategory?: boolean
 }>(), {
   scope: 'invoice',
   initialCategory: '',
@@ -116,6 +126,7 @@ const props = withDefaults(defineProps<{
   refCategories: () => [],
   refSources: () => [],
   direct: false,
+  singleCategory: false,
 })
 
 const emit = defineEmits<{
@@ -194,6 +205,12 @@ onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCateg
 .standard-settings-direct {
   height: 100%;
   overflow: auto;
+  padding-top: 4px;
+}
+/* 第 57 轮：单分类精简模式。绝不再叠 height:100% + overflow:auto
+   （高度解析成 auto 后滚动无效，sticky 也会以抽屉 body 为 scrollport），
+   纵向滚动统一交给 SettingDrawer 的 .t-drawer__body。 */
+.standard-settings-single {
   padding-top: 4px;
 }
 .standard-settings-tabs {

@@ -22,7 +22,7 @@ import { ROSTER_ENUM_GROUPS, RESIGN_REASONS } from './hrRosterFields'
 
 export type HrModule = 'roster' | 'resign' | 'contract' | 'social' | 'fund'
 
-export type HrFieldType = 'text' | 'date' | 'number' | 'enum' | 'readonly' | 'attachment' | 'system'
+export type HrFieldType = 'text' | 'textarea' | 'date' | 'number' | 'enum' | 'readonly' | 'attachment' | 'system'
 
 /** 跨模块引用：值取自花名册（category='花名册'）或组织机构。 */
 export interface HrFieldSource {
@@ -236,11 +236,12 @@ export const HR_RESIGN_FIELDS: readonly HrFieldDef[] = [
   f('离职日期', 'date', { defaultHeader: true }),
   f('离职类型', 'enum', { options: HR_ENUMS['离职类型'], defaultHeader: true }),
   f('离职原因', 'enum', { options: HR_ENUMS['离职原因'], defaultHeader: true }),
-  f('离职原因说明', 'text', { defaultHeader: true }),
   f('离职去向', 'text', { defaultHeader: true }),
   f('是否试用期内离职', 'enum', { options: YES_NO, defaultHeader: true }),
   f('薪资结算日', 'date', { defaultHeader: true }),
   f('离职证明', 'attachment', { defaultHeader: true }),
+  // 第 57 轮：说明类字段改为多行文本并固定在最后一行（抽屉里独占整行宽）。
+  f('离职原因说明', 'textarea', { defaultHeader: true }),
 ]
 
 export const HR_RESIGN_DEFAULT_HEADERS: readonly string[] =
@@ -482,9 +483,17 @@ export function hrModuleGroups(module: HrModule): readonly HrFieldGroupDef[] {
   return HR_ROSTER_GROUPS
 }
 
-/** 字段类型 → 后端 subs 的 data_type（枚举仍是文本值，只是前端渲染下拉）。 */
-export function hrDataTypeOf(d: HrFieldDef): 'date' | 'number' | 'text' {
-  return d.type === 'date' ? 'date' : d.type === 'number' ? 'number' : 'text'
+/**
+ * 字段类型 → 抽屉 dataType（枚举仍是文本值，只是前端渲染下拉）。
+ * 第 57 轮：textarea / attachment 不再降级成 text，抽屉据此渲染多行文本框与附件控制条，
+ * 并让两者在双列网格里独占整行（BusinessSplitDetailDrawer.fieldClassOf）。
+ */
+export function hrDataTypeOf(d: HrFieldDef): 'date' | 'number' | 'text' | 'textarea' | 'attachment' {
+  if (d.type === 'date') return 'date'
+  if (d.type === 'number') return 'number'
+  if (d.type === 'textarea') return 'textarea'
+  if (d.type === 'attachment') return 'attachment'
+  return 'text'
 }
 
 /** 日期字段全集（第 52 轮要求统一 t-date-picker）。 */
