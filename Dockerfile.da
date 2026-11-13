@@ -14,7 +14,11 @@ ARG VITE_FRONTEND_COMMIT=sandbox
 RUN npm run build
 
 # ---------- Stage 2: 后端构建 ----------
-FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS builder-go
+# 固定到 1.26.9：Go 1.26.10+ 的链接器新增 LTO 段校验，会拒绝 anydoc 的 Rust
+# 静态库（`disallowed LTO section ".llvmbc" in #cgo LDFLAGS: libanydoc_go.a`），
+# 导致 build-push 阶段直接失败。1.26.9 是 VM 上已验证可链接该归档的版本；
+# 升级 Go 前必须同步确认 anydoc 侧已用 `-C embed-bitcode=no` 重建。
+FROM --platform=$TARGETPLATFORM golang:1.26.9-bookworm AS builder-go
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential libsqlite3-dev curl && rm -rf /var/lib/apt/lists/*
