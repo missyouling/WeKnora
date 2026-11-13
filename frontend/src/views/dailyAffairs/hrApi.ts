@@ -89,7 +89,7 @@ export function getRosterTemplate(): Promise<any> {
  * 第 52 轮：三套独立 Excel 导入模板（花名册 / 离职管理 / 劳动合同）。
  * 每个模板都含「导入数据 / 说明 / 枚举字段」3 个 Sheet，枚举列配 Excel 数据验证。
  */
-export type HrImportModule = 'roster' | 'resign' | 'contract' | 'fund'
+export type HrImportModule = 'roster' | 'resign' | 'contract' | 'social' | 'fund'
 
 export function getHrTemplate(module: HrImportModule): Promise<any> {
   return getDown(`${BASE}/roster/template${qs({ module })}`) as Promise<any>
@@ -101,7 +101,9 @@ export function importHrModule(module: HrImportModule, formData: FormData): Prom
     : module === 'contract' ? `${BASE}/contract/import`
       // 第 54 轮：公积金走网厅解析器（支持 .xls / .xlsx，自动跳标题与验证码行）
       : module === 'fund' ? `${BASE}/fund/import`
-        : `${BASE}/roster/import`
+        // 第 56 轮：社保回盘表走专用解析器（27 列，自动跳首行空行）
+        : module === 'social' ? `${BASE}/social/receipts/import`
+          : `${BASE}/roster/import`
   return postUpload(path, formData) as Promise<any>
 }
 
@@ -289,6 +291,46 @@ export function saveOrganization(payload: Record<string, any>): Promise<any> {
 /** 第 48 轮：新增员工时的工号自动编码建议（A/B/C + 5 位部门码 + 4 位序号）。 */
 export function nextEmployeeId(params: { department?: string; title?: string } = {}): Promise<any> {
   return get(`${BASE}/roster/next-employee-id${qs(params)}`) as Promise<any>
+}
+
+// ---------------------------------------------------------------------------
+// 第 56 轮：社保四标签列表 / 账单 / 导入
+// ---------------------------------------------------------------------------
+
+export function listSocialReceipts(params: {
+  q?: string; department?: string; month?: string
+} = {}): Promise<any> {
+  return get(`${BASE}/social/receipts${qs(params)}`) as Promise<any>
+}
+
+export function importSocialReceipts(formData: FormData): Promise<any> {
+  return postUpload(`${BASE}/social/receipts/import`, formData) as Promise<any>
+}
+
+export function listSocialRecords(params: {
+  record_type?: 'normal' | 'abnormal'; q?: string; department?: string; scheme?: string; month?: string
+} = {}): Promise<any> {
+  return get(`${BASE}/social/records${qs(params)}`) as Promise<any>
+}
+
+export function importSocialRecords(formData: FormData): Promise<any> {
+  return postUpload(`${BASE}/social/records/import`, formData) as Promise<any>
+}
+
+export function listSocialBills(): Promise<any> {
+  return get(`${BASE}/social/bills`) as Promise<any>
+}
+
+export function createSocialBill(payload: { month_label: string; overwrite?: boolean }): Promise<any> {
+  return post(`${BASE}/social/bills`, payload) as Promise<any>
+}
+
+export function getSocialBill(id: string | number): Promise<any> {
+  return get(`${BASE}/social/bills/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
+export function removeSocialBill(id: string | number): Promise<any> {
+  return del(`${BASE}/social/bills/${encodeURIComponent(String(id))}`) as Promise<any>
 }
 
 /** 第 49 轮：多单位组织机构（单位可无下属部门）。 */

@@ -45,6 +45,8 @@ const HR_STATUS_NAMES = [
   '在职状态', '账期状态', '参保状态', '缴存状态',
   // 第 55 轮：合同 / 公积金 / 月度账单的状态列同样系统内置加锁
   '合同状态', '账户状态', '账单状态',
+  // 第 56 轮：回盘表五险参保状态（三色 Tag）系统内置加锁
+  '养老参保状态', '失业参保状态', '医疗参保状态', '工伤参保状态', '生育参保状态',
 ]
 
 const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase()
@@ -112,12 +114,9 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
     // 不再需要状态列，字段设置里也不能再自动补一条锁定的「在职状态」。
     // 社保 / 公积金仍有各自的账期 / 缴存状态列，口径不变。
     if (s === 'hr-roster') return []
-    if (s === 'hr-social') return [
-      { name: '账期状态', label: '账期状态', dataType: 'text' },
-      { name: '参保状态', label: '参保状态', dataType: 'text' },
-    ]
-    // 第 54/55 轮：公积金状态列已内建为「账户状态」，合同列内建为「合同状态」，
-    // 不再自动补「缴存状态」；锁身份由 isHrStatusName 统一判定。
+    // 第 56 轮：社保改为四胶囊契约（回盘表 / 正常记录 / 异常记录 / 月度账单），
+    // 五险参保状态与账单状态都由契约内置，不再补第 45 轮的两个旧状态列 ——
+    // 否则「设置」里会多出两条锁死却永远取不到值的幽灵字段。
     return []
   }
   return []

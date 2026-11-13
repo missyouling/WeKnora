@@ -59,6 +59,8 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := db.AutoMigrate(
 		&HREmployee{}, &HRSIPeriod{}, &HRSIRawRecord{}, &HRSICharge{}, &HRSIChange{},
 		&HRPFSettings{}, &HRPFRecord{}, &HRPFBill{}, &HRPFBillItem{},
+		// 第 56 轮：社保四视图（回盘表 / 正常记录 / 异常记录 / 月度账单）
+		&HRSIReceipt{}, &HRSIRecord{}, &HRSIBill{}, &HRSIBillItem{},
 	); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate HR tables failed: %v", err)
 	}
@@ -70,6 +72,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 54 轮：公积金字段配置重建为网厅 18 字段（幂等；旧 10 字段 merge 后会残留）
 	if err := h.hrMigrateFundSubs(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR fund subs failed: %v", err)
+	}
+	// 第 56 轮：社保字段配置重建为四胶囊 76 字段（旧 12 个静态 subs 会被清掉）
+	if err := h.hrMigrateSocialSubs(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR social subs failed: %v", err)
 	}
 	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
 	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
@@ -98,6 +104,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 55 轮：真实网厅附件的月度账单（2025-05 汇缴清册回单）
 	if err := h.hrSeedFundBills(ctx); err != nil {
 		logger.Warnf(ctx, "seed HR fund bills failed: %v", err)
+	}
+	// 第 56 轮：242 条回盘 + 375 正常 + 3 异常 + 75 人扣款明细 + 2026-11 账单
+	if err := h.hrSeedSocialRound56(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR social round56 failed: %v", err)
 	}
 	return h
 }
@@ -382,11 +392,8 @@ func hrCategorySeeds() []hrCategorySeed {
 		},
 		{
 			Scope: hrScopeSocial, Name: "社保管理", BuiltinKey: "hr-social", SortOrder: 1,
-			Subs: []types.FleetCategorySub{
-				hrSub(txt("账期")), hrSub(txt("姓名")), hrSub(txt("身份证号码")), hrSub(txt("部门")),
-				hrSub(num("缴费基数")), hrSub(num("养老")), hrSub(num("医疗")), hrSub(num("大病")),
-				hrSub(num("失业")), hrSub(num("工伤")), hrSub(num("小计")), hrSub(txt("参保状态")),
-			},
+			// 第 56 轮：四胶囊字段契约（回盘表 28 / 正常 16 / 异常 16 / 月度账单 16）
+			Subs: hrSocialSeedSubs(),
 		},
 		{
 			Scope: hrScopeFund, Name: "公积金管理", BuiltinKey: "hr-fund", SortOrder: 1,
@@ -540,6 +547,15 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/social/periods/:id/changes", h.CreateChange)
 	r.PUT("/hr/social/periods/:id/changes/:changeId", h.UpdateChange)
 	r.DELETE("/hr/social/periods/:id/changes/:changeId", h.DeleteChange)
+	// 第 56 轮：四标签列表（回盘表 / 正常记录 / 异常记录 / 月度账单）+ 账单明细
+	r.GET("/hr/social/receipts", h.ListSIReceipts)
+	r.POST("/hr/social/receipts/import", h.ImportSIReceipts)
+	r.GET("/hr/social/records", h.ListSIRecords)
+	r.POST("/hr/social/records/import", h.ImportSIRecords)
+	r.GET("/hr/social/bills", h.ListSIBills)
+	r.POST("/hr/social/bills", h.CreateSIBill)
+	r.GET("/hr/social/bills/:id", h.GetSIBill)
+	r.DELETE("/hr/social/bills/:id", h.DeleteSIBill)
 
 	// 公积金
 	r.GET("/hr/fund/settings", h.GetPFSettings)

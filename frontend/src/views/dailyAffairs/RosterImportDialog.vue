@@ -67,7 +67,7 @@ const props = withDefaults(defineProps<{
 }>(), { visible: false, module: 'roster' })
 
 const templateName = computed(() => HR_TEMPLATE_NAMES[props.module] || HR_TEMPLATE_NAMES.roster)
-const moduleLabel = computed(() => ({ roster: '花名册', resign: '离职管理', contract: '劳动合同', fund: '公积金' }[props.module] || '花名册'))
+const moduleLabel = computed(() => ({ roster: '花名册', resign: '离职管理', contract: '劳动合同', fund: '公积金', social: '社保回盘' }[props.module] || '花名册'))
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'imported', count: number): void

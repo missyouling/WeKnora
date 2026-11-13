@@ -20,7 +20,7 @@ import { ROSTER_ENUM_GROUPS, RESIGN_REASONS } from './hrRosterFields'
 // 模块与字段类型
 // ---------------------------------------------------------------------------
 
-export type HrModule = 'roster' | 'resign' | 'contract' | 'fund'
+export type HrModule = 'roster' | 'resign' | 'contract' | 'social' | 'fund'
 
 export type HrFieldType = 'text' | 'date' | 'number' | 'enum' | 'readonly' | 'attachment' | 'system'
 
@@ -94,6 +94,14 @@ export const HR_ENUMS: Record<string, readonly string[]> = {
   是否冻结: YES_NO,
   是否可在线提取公贷: YES_NO,
   是否可在线提取商贷: YES_NO,
+  // 第 56 轮：社保管理四胶囊枚举字典（与花名册字典严格隔离，避免互相污染）
+  社保户口性质: ['本省农村', '本省城镇', '外省农村', '外省城镇'],
+  个人身份: ['工人', '农民', '职员', '其他'],
+  证件种类: ['01-居民身份证', '02-港澳居民来往内地通行证', '03-护照', '99-其他'],
+  参保状态: ['参保缴费', '暂停缴费', '终止缴费'],
+  险种类型: ['养老保险', '医疗保险', '生育保险', '大额医疗', '工伤保险', '失业保险'],
+  补退类型: ['正常', '补缴', '退费'],
+  社保账单状态: ['已申报', '待申报', '已作废'],
 }
 
 /** 字段 → 枚举字典；动态字典返回空数组（由页面注入组织机构选项）。 */
@@ -327,16 +335,147 @@ export const HR_FUND_GROUPS: readonly HrFieldGroupDef[] = [
 export const HR_FUND_DEFAULT_HEADERS: readonly string[] =
   HR_FUND_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name)
 
+// ---------------------------------------------------------------------------
+// 社保管理：四个胶囊分组（第 56 轮）
+//
+// 与页面上方四个标签 1:1 对应：回盘表 / 正常记录 / 异常记录 / 月度账单。
+// 「回盘表」28 字段严格对齐《人员增减申请回盘表.xlsx》Sheet「单位回盘信息」
+// 第 2 行表头（27 个业务字段）+ 跨表引用「部门」。个人编号即员工唯一社保账号，
+// 身份证号是关联花名册的唯一键；两者都是纯文本，绝不加千分位、绝不进合计行。
+// ---------------------------------------------------------------------------
+
+export const HR_SOCI_RECEIPT_GROUP = '回盘表'
+export const HR_SOCI_NORMAL_GROUP = '正常记录'
+export const HR_SOCI_ABNORMAL_GROUP = '异常记录'
+export const HR_SOCI_BILL_GROUP = '月度账单'
+
+/** 五个险种参保状态：系统内置状态 Tag 🔒（绿 / 橙 / 灰）。 */
+const SI_STATUS = (name: string): HrFieldDef => f(name, 'system', {
+  group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, builtin: true,
+  options: HR_ENUMS['参保状态'],
+})
+
+/** 回盘表 28 字段。 */
+export const HR_SOCI_RECEIPT_FIELDS: readonly HrFieldDef[] = [
+  f('个人编号', 'text', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, builtin: true }),
+  f('姓名', 'text', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, builtin: true }),
+  f('身份证号', 'text', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true }),
+  ref('部门', { category: '花名册', field: '部门' }, { group: HR_SOCI_RECEIPT_GROUP }),
+  f('证件种类', 'enum', { group: HR_SOCI_RECEIPT_GROUP, options: HR_ENUMS['证件种类'] }),
+  f('性别', 'enum', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, options: HR_ENUMS['性别'] }),
+  f('民族', 'enum', { group: HR_SOCI_RECEIPT_GROUP, options: ['汉族', '壮族', '回族', '苗族', '土家族', '其他'] }),
+  f('户口性质', 'enum', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, options: HR_ENUMS['社保户口性质'] }),
+  f('出生日期', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('工作日期', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  SI_STATUS('养老参保状态'),
+  f('养老缴费基数', 'number', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true }),
+  f('养老参保时间', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  SI_STATUS('失业参保状态'),
+  f('失业缴费基数', 'number', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('失业参保时间', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  SI_STATUS('医疗参保状态'),
+  f('医疗缴费基数', 'number', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('医疗参保时间', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  SI_STATUS('工伤参保状态'),
+  f('工伤缴费基数', 'number', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('工伤参保时间', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  SI_STATUS('生育参保状态'),
+  f('生育缴费基数', 'number', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('生育参保时间', 'date', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('工资', 'number', { group: HR_SOCI_RECEIPT_GROUP }),
+  f('个人身份', 'enum', { group: HR_SOCI_RECEIPT_GROUP, defaultHeader: true, options: HR_ENUMS['个人身份'] }),
+  f('备注', 'text', { group: HR_SOCI_RECEIPT_GROUP }),
+]
+
+/**
+ * 正常 / 异常记录共用 16 字段，靠 group 分成两个胶囊。
+ * 两个分组字段名完全一致，后端 subs 按 (group, name) 复合键去重。
+ */
+function socialRecordFields(group: string): readonly HrFieldDef[] {
+  return [
+    f('账单月份', 'text', { group, defaultHeader: true, builtin: true }),
+    f('费款所属期', 'text', { group, defaultHeader: true }),
+    f('个人编号', 'text', { group, defaultHeader: true }),
+    f('姓名', 'text', { group, defaultHeader: true, builtin: true }),
+    f('身份证号', 'text', { group, defaultHeader: true }),
+    ref('部门', { category: '花名册', field: '部门' }, { group }),
+    f('险种类型', 'enum', { group, defaultHeader: true, options: HR_ENUMS['险种类型'] }),
+    f('缴费基数', 'number', { group, defaultHeader: true }),
+    f('单位缴费比例', 'text', { group }),
+    f('单位应缴金额', 'number', { group, defaultHeader: true }),
+    f('个人缴费比例', 'text', { group }),
+    f('个人应缴金额', 'number', { group, defaultHeader: true }),
+    f('应缴合计', 'number', { group, defaultHeader: true }),
+    f('补退类型', 'enum', { group, defaultHeader: true, options: HR_ENUMS['补退类型'] }),
+    f('记录类型', 'text', { group }),
+    f('源文件', 'text', { group }),
+  ]
+}
+
+export const HR_SOCI_NORMAL_FIELDS: readonly HrFieldDef[] = socialRecordFields(HR_SOCI_NORMAL_GROUP)
+export const HR_SOCI_ABNORMAL_FIELDS: readonly HrFieldDef[] = socialRecordFields(HR_SOCI_ABNORMAL_GROUP)
+
+/** 月度账单 16 字段（金额口径见《2026.11社保扣款明细.xlsx》）。 */
+export const HR_SOCI_BILL_FIELDS: readonly HrFieldDef[] = [
+  f('账单周期', 'text', { group: HR_SOCI_BILL_GROUP, defaultHeader: true, builtin: true }),
+  f('参保人数', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('缴费基数合计', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('单位养老', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('单位医疗+生育', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('单位工伤', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('单位失业', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('社保单位金额', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('个人养老', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('个人医疗', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('个人大额医疗', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('个人失业', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('社保个人金额', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('应缴总计', 'number', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+  f('账单状态', 'system', {
+    group: HR_SOCI_BILL_GROUP, defaultHeader: true, builtin: true, options: HR_ENUMS['社保账单状态'],
+  }),
+  f('生成时间', 'date', { group: HR_SOCI_BILL_GROUP, defaultHeader: true }),
+]
+
+/** 设置抽屉四胶囊：顺序与页面四标签严格 1:1。 */
+export const HR_SOCI_GROUPS: readonly HrFieldGroupDef[] = [
+  { key: HR_SOCI_RECEIPT_GROUP, label: HR_SOCI_RECEIPT_GROUP, fields: HR_SOCI_RECEIPT_FIELDS },
+  { key: HR_SOCI_NORMAL_GROUP, label: HR_SOCI_NORMAL_GROUP, fields: HR_SOCI_NORMAL_FIELDS },
+  { key: HR_SOCI_ABNORMAL_GROUP, label: HR_SOCI_ABNORMAL_GROUP, fields: HR_SOCI_ABNORMAL_FIELDS },
+  { key: HR_SOCI_BILL_GROUP, label: HR_SOCI_BILL_GROUP, fields: HR_SOCI_BILL_FIELDS },
+]
+
+/** 子视图 → 胶囊分组名（六同步唯一映射，页面 / 后端 seed / 测试共用）。 */
+export const HR_SOCI_VIEW_GROUPS: readonly string[] = HR_SOCI_GROUPS.map((g) => g.key)
+export function hrSocialGroupOf(view: string): string {
+  const map: Record<string, string> = {
+    receipt: HR_SOCI_RECEIPT_GROUP,
+    normal: HR_SOCI_NORMAL_GROUP,
+    abnormal: HR_SOCI_ABNORMAL_GROUP,
+    bills: HR_SOCI_BILL_GROUP,
+  }
+  return map[String(view || '')] || HR_SOCI_BILL_GROUP
+}
+
+export const HR_SOCI_DEFAULT_HEADERS: Record<string, readonly string[]> = {
+  [HR_SOCI_RECEIPT_GROUP]: HR_SOCI_RECEIPT_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name),
+  [HR_SOCI_NORMAL_GROUP]: HR_SOCI_NORMAL_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name),
+  [HR_SOCI_ABNORMAL_GROUP]: HR_SOCI_ABNORMAL_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name),
+  [HR_SOCI_BILL_GROUP]: HR_SOCI_BILL_FIELDS.filter((d) => d.defaultHeader).map((d) => d.name),
+}
+
 /** 模块 → 字段清单（设置面板、导入模板、抽屉共用）。 */
 export function hrModuleFields(module: HrModule): readonly HrFieldDef[] {
   if (module === 'resign') return HR_RESIGN_FIELDS
   if (module === 'contract') return HR_CONTRACT_FIELDS
   if (module === 'fund') return HR_FUND_FIELDS
+  if (module === 'social') return HR_SOCI_GROUPS.flatMap((g) => g.fields)
   return HR_ROSTER_FIELDS
 }
 
 export function hrModuleGroups(module: HrModule): readonly HrFieldGroupDef[] {
   if (module === 'fund') return HR_FUND_GROUPS
+  if (module === 'social') return HR_SOCI_GROUPS
   if (module !== 'roster') {
     return [{ key: module, label: module === 'resign' ? '离职信息' : '合同信息', fields: hrModuleFields(module) }]
   }
@@ -570,10 +709,15 @@ export const HR_CONTRACT_TEMPLATE_HEADERS: readonly string[] = [
 /** 公积金模板 = 18 个原生字段（账户状态也导入，网厅文件里带这一列）。 */
 export const HR_FUND_TEMPLATE_HEADERS: readonly string[] = HR_FUND_FIELDS.map((d) => d.name)
 
+/** 社保回盘表模板 = 27 个源表原生字段（部门是跨表引用，不进导入模板）。 */
+export const HR_SOCI_TEMPLATE_HEADERS: readonly string[] =
+  HR_SOCI_RECEIPT_FIELDS.filter((d) => !d.source).map((d) => d.name)
+
 export function hrTemplateHeaders(module: HrModule): readonly string[] {
   if (module === 'resign') return HR_RESIGN_TEMPLATE_HEADERS
   if (module === 'contract') return HR_CONTRACT_TEMPLATE_HEADERS
   if (module === 'fund') return HR_FUND_TEMPLATE_HEADERS
+  if (module === 'social') return HR_SOCI_TEMPLATE_HEADERS
   return HR_ROSTER_TEMPLATE_HEADERS
 }
 
@@ -581,6 +725,7 @@ export const HR_TEMPLATE_NAMES: Record<HrModule, string> = {
   roster: '花名册导入模板.xlsx',
   resign: '离职管理导入模板.xlsx',
   contract: '劳动合同导入模板.xlsx',
+  social: '社保回盘表导入模板.xlsx',
   fund: '公积金管理导入模板.xlsx',
 }
 

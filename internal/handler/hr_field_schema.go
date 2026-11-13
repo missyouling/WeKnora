@@ -19,6 +19,7 @@ const (
 	hrModuleRoster   = "roster"
 	hrModuleResign   = "resign"
 	hrModuleContract = "contract"
+	hrModuleSocial   = "social"
 	hrModuleFund     = "fund"
 )
 
@@ -225,6 +226,103 @@ func hrFundBillFieldDefs() []hrFieldDef {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 社保管理四胶囊字段契约（第 56 轮）
+//
+// 与前端 hrFieldSchema.ts 的 HR_SOCI_GROUPS 一一对应：
+// 回盘表 28 字段 / 正常记录 16 / 异常记录 16 / 月度账单 16。
+// 正常与异常记录字段名完全相同，靠 Group 区分；hrSocialSeedSubs 用
+// (group, name) 复合键去重，避免第二组的 16 个字段被吞掉。
+// ---------------------------------------------------------------------------
+
+const (
+	hrSocReceiptGroup  = "回盘表"
+	hrSocNormalGroup   = "正常记录"
+	hrSocAbnormalGroup = "异常记录"
+	hrSocBillGroup     = "月度账单"
+)
+
+func hrSocialReceiptFieldDefs() []hrFieldDef {
+	const g = hrSocReceiptGroup
+	status := func(name string) hrFieldDef {
+		return hrF(name, "system", hrHeader(), hrBuiltin(), hrEnum("参保状态"), hrGroup(g))
+	}
+	return []hrFieldDef{
+		hrF("个人编号", "text", hrHeader(), hrBuiltin(), hrGroup(g)),
+		hrF("姓名", "text", hrHeader(), hrBuiltin(), hrGroup(g)),
+		hrF("身份证号", "text", hrHeader(), hrGroup(g)),
+		// 部门是跨表引用：值来自花名册，导入模板里不存在这一列。
+		hrF("部门", "readonly", hrHeader(), hrRef("花名册", "部门"), hrGroup(g)),
+		hrF("证件种类", "enum", hrEnum("证件种类"), hrGroup(g)),
+		hrF("性别", "enum", hrHeader(), hrEnum("性别"), hrGroup(g)),
+		hrF("民族", "enum", hrEnum("民族"), hrGroup(g)),
+		hrF("户口性质", "enum", hrHeader(), hrEnum("社保户口性质"), hrGroup(g)),
+		hrF("出生日期", "date", hrGroup(g)),
+		hrF("工作日期", "date", hrGroup(g)),
+		status("养老参保状态"),
+		hrF("养老缴费基数", "number", hrHeader(), hrGroup(g)),
+		hrF("养老参保时间", "date", hrGroup(g)),
+		status("失业参保状态"),
+		hrF("失业缴费基数", "number", hrGroup(g)),
+		hrF("失业参保时间", "date", hrGroup(g)),
+		status("医疗参保状态"),
+		hrF("医疗缴费基数", "number", hrGroup(g)),
+		hrF("医疗参保时间", "date", hrGroup(g)),
+		status("工伤参保状态"),
+		hrF("工伤缴费基数", "number", hrGroup(g)),
+		hrF("工伤参保时间", "date", hrGroup(g)),
+		status("生育参保状态"),
+		hrF("生育缴费基数", "number", hrGroup(g)),
+		hrF("生育参保时间", "date", hrGroup(g)),
+		hrF("工资", "number", hrGroup(g)),
+		hrF("个人身份", "enum", hrHeader(), hrEnum("个人身份"), hrGroup(g)),
+		hrF("备注", "text", hrGroup(g)),
+	}
+}
+
+func hrSocialRecordFieldDefs(group string) []hrFieldDef {
+	return []hrFieldDef{
+		hrF("账单月份", "text", hrHeader(), hrBuiltin(), hrGroup(group)),
+		hrF("费款所属期", "text", hrHeader(), hrGroup(group)),
+		hrF("个人编号", "text", hrHeader(), hrGroup(group)),
+		hrF("姓名", "text", hrHeader(), hrBuiltin(), hrGroup(group)),
+		hrF("身份证号", "text", hrHeader(), hrGroup(group)),
+		hrF("部门", "readonly", hrHeader(), hrRef("花名册", "部门"), hrGroup(group)),
+		hrF("险种类型", "enum", hrHeader(), hrEnum("险种类型"), hrGroup(group)),
+		hrF("缴费基数", "number", hrHeader(), hrGroup(group)),
+		hrF("单位缴费比例", "text", hrGroup(group)),
+		hrF("单位应缴金额", "number", hrHeader(), hrGroup(group)),
+		hrF("个人缴费比例", "text", hrGroup(group)),
+		hrF("个人应缴金额", "number", hrHeader(), hrGroup(group)),
+		hrF("应缴合计", "number", hrHeader(), hrGroup(group)),
+		hrF("补退类型", "enum", hrHeader(), hrEnum("补退类型"), hrGroup(group)),
+		hrF("记录类型", "text", hrGroup(group)),
+		hrF("源文件", "text", hrGroup(group)),
+	}
+}
+
+func hrSocialBillFieldDefs() []hrFieldDef {
+	const g = hrSocBillGroup
+	return []hrFieldDef{
+		hrF("账单周期", "text", hrHeader(), hrBuiltin(), hrGroup(g)),
+		hrF("参保人数", "number", hrHeader(), hrGroup(g)),
+		hrF("缴费基数合计", "number", hrHeader(), hrGroup(g)),
+		hrF("单位养老", "number", hrHeader(), hrGroup(g)),
+		hrF("单位医疗+生育", "number", hrHeader(), hrGroup(g)),
+		hrF("单位工伤", "number", hrHeader(), hrGroup(g)),
+		hrF("单位失业", "number", hrHeader(), hrGroup(g)),
+		hrF("社保单位金额", "number", hrHeader(), hrGroup(g)),
+		hrF("个人养老", "number", hrHeader(), hrGroup(g)),
+		hrF("个人医疗", "number", hrHeader(), hrGroup(g)),
+		hrF("个人大额医疗", "number", hrHeader(), hrGroup(g)),
+		hrF("个人失业", "number", hrHeader(), hrGroup(g)),
+		hrF("社保个人金额", "number", hrHeader(), hrGroup(g)),
+		hrF("应缴总计", "number", hrHeader(), hrGroup(g)),
+		hrF("账单状态", "system", hrHeader(), hrBuiltin(), hrEnum("社保账单状态"), hrGroup(g)),
+		hrF("生成时间", "date", hrHeader(), hrGroup(g)),
+	}
+}
+
 func hrModuleFieldDefs(module string) []hrFieldDef {
 	switch module {
 	case hrModuleResign:
@@ -233,6 +331,12 @@ func hrModuleFieldDefs(module string) []hrFieldDef {
 		return hrContractFieldDefs()
 	case hrModuleFund:
 		return hrFundFieldDefs()
+	case hrModuleSocial:
+		out := hrSocialReceiptFieldDefs()
+		out = append(out, hrSocialRecordFieldDefs(hrSocNormalGroup)...)
+		out = append(out, hrSocialRecordFieldDefs(hrSocAbnormalGroup)...)
+		out = append(out, hrSocialBillFieldDefs()...)
+		return out
 	default:
 		return hrRosterFieldDefs()
 	}
@@ -270,6 +374,14 @@ var hrExtraEnums = map[string][]string{
 	"是否冻结":      hrYesNo,
 	"是否可在线提取公贷": hrYesNo,
 	"是否可在线提取商贷": hrYesNo,
+	// 第 56 轮：社保四胶囊枚举（与花名册「户口性质」字典严格隔离）
+	"社保户口性质": {"本省农村", "本省城镇", "外省农村", "外省城镇"},
+	"个人身份":   {"工人", "农民", "职员", "其他"},
+	"证件种类":   {"01-居民身份证", "02-港澳居民来往内地通行证", "03-护照", "99-其他"},
+	"参保状态":   {"参保缴费", "暂停缴费", "终止缴费"},
+	"险种类型":   {"养老保险", "医疗保险", "生育保险", "大额医疗", "工伤保险", "失业保险"},
+	"补退类型":   {"正常", "补缴", "退费"},
+	"社保账单状态": {"已申报", "待申报", "已作废"},
 }
 
 // hrEnumOptions 字段 → 枚举选项；extra 优先覆盖同名的旧字典。
@@ -325,13 +437,26 @@ func hrSubOfDef(d hrFieldDef) types.FleetCategorySub {
 }
 
 func hrSubsOfDefs(defs []hrFieldDef) []types.FleetCategorySub {
+	// 社保四胶囊里「正常记录」与「异常记录」字段名完全相同，必须按
+	// (group, name) 复合键去重，否则后 16 个字段会被 seen[name] 吞掉。
+	return hrSubsOfDefsByGroup(defs, true)
+}
+
+func hrSubsOfDefsByGroup(defs []hrFieldDef, byGroup bool) []types.FleetCategorySub {
 	out := make([]types.FleetCategorySub, 0, len(defs))
 	seen := make(map[string]bool, len(defs))
 	for _, d := range defs {
-		if d.Name == "" || seen[d.Name] {
+		if d.Name == "" {
 			continue
 		}
-		seen[d.Name] = true
+		key := d.Name
+		if byGroup {
+			key = d.Group + "\x00" + d.Name
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		out = append(out, hrSubOfDef(d))
 	}
 	return out
@@ -349,6 +474,15 @@ func hrContractSeedSubs52() []types.FleetCategorySub {
 func hrFundSeedSubs() []types.FleetCategorySub {
 	defs := append(append([]hrFieldDef{}, hrFundBillFieldDefs()...), hrFundFieldDefs()...)
 	return hrSubsOfDefs(defs)
+}
+
+// hrSocialSeedSubs 四胶囊顺序 = 页面四标签顺序（回盘表 / 正常 / 异常 / 月度账单）。
+func hrSocialSeedSubs() []types.FleetCategorySub {
+	defs := hrSocialReceiptFieldDefs()
+	defs = append(defs, hrSocialRecordFieldDefs(hrSocNormalGroup)...)
+	defs = append(defs, hrSocialRecordFieldDefs(hrSocAbnormalGroup)...)
+	defs = append(defs, hrSocialBillFieldDefs()...)
+	return hrSubsOfDefsByGroup(defs, true)
 }
 
 // hrRosterGroupDict52 6 大分组 → 字段名（供回填与排序）。
@@ -452,6 +586,17 @@ func hrTemplateHeaders(module string) []string {
 			out = append(out, d.Name)
 		}
 		return out
+	case hrModuleSocial:
+		// 回盘表模板 = 27 个源表原生字段（部门是跨表引用，不进模板）
+		defs := hrSocialReceiptFieldDefs()
+		out := make([]string, 0, len(defs))
+		for _, d := range defs {
+			if d.Source != nil {
+				continue
+			}
+			out = append(out, d.Name)
+		}
+		return out
 	default:
 		// 第 54 轮铁律：跨模块引用字段（个人社保账号 / 个人公积金账号）只读联动，
 		// 绝不进导入模板、也不参与导入解析 —— 否则用户一份表就能把源表数据改坏。
@@ -494,7 +639,7 @@ func hrTemplateNotes(module string) []string {
 }
 
 func hrTemplateSpecOf(module string) hrTemplateSpec {
-	if module != hrModuleResign && module != hrModuleContract && module != hrModuleFund {
+	if module != hrModuleResign && module != hrModuleContract && module != hrModuleFund && module != hrModuleSocial {
 		module = hrModuleRoster
 	}
 	headers := hrTemplateHeaders(module)
@@ -527,6 +672,9 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 		}
 		if module == hrModuleFund {
 			groupName = "公积金信息"
+		}
+		if module == hrModuleSocial {
+			groupName = "社保回盘信息"
 		}
 		spec.Groups = append(spec.Groups, struct {
 			Key    string
@@ -572,6 +720,8 @@ func hrTemplateFileName(module string) string {
 		return "劳动合同导入模板.xlsx"
 	case hrModuleFund:
 		return "公积金管理导入模板.xlsx"
+	case hrModuleSocial:
+		return "社保回盘表导入模板.xlsx"
 	default:
 		return "花名册导入模板.xlsx"
 	}

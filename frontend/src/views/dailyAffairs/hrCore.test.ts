@@ -185,9 +185,10 @@ test('状态字段在 HR scope 下被锁定，且既有 scope 行为不被破坏
   // 既有 scope 契约不变
   assert.equal(isLockedStatusField('tire', '轮胎管理', '状态'), false)
   assert.equal(isLockedStatusField('vehicle', '道路运输证', '证照状态'), true)
-  // 第 52 轮：花名册不再注入「在职状态」；社保 / 公积金口径不变
+  // 第 52 轮：花名册不再注入「在职状态」；公积金口径不变
   assert.deepEqual(statusFieldSpecsOf('hr-roster').map((s) => s.name), [])
-  assert.deepEqual(statusFieldSpecsOf('hr-social').map((s) => s.name), ['账期状态', '参保状态'])
+  // 第 56 轮：社保四胶囊契约内置五险参保状态 + 账单状态，旧的两个幽灵状态列不再注入
+  assert.deepEqual(statusFieldSpecsOf('hr-social').map((s) => s.name), [])
   // 第 54 轮：公积金状态列已内建为「账户状态」，不再额外注入「缴存状态」
   assert.deepEqual(statusFieldSpecsOf('hr-fund').map((s) => s.name), [])
 })

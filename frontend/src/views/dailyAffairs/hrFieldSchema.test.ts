@@ -138,15 +138,16 @@ test('整表清洗：字符串 trim + 号码去空格横杠，卡号绝不转数
 })
 
 // ---------------------------------------------------------------------------
-// 三套 Excel 导入模板
+// 五套 Excel 导入模板（第 56 轮新增社保回盘表）
 // ---------------------------------------------------------------------------
 
-test('四套模板文件名各不相同', () => {
-  assert.equal(new Set(Object.values(HR_TEMPLATE_NAMES)).size, 4)
+test('五套模板文件名各不相同', () => {
+  assert.equal(new Set(Object.values(HR_TEMPLATE_NAMES)).size, 5)
   assert.equal(HR_TEMPLATE_NAMES.roster, '花名册导入模板.xlsx')
   assert.equal(HR_TEMPLATE_NAMES.resign, '离职管理导入模板.xlsx')
   assert.equal(HR_TEMPLATE_NAMES.contract, '劳动合同导入模板.xlsx')
   assert.equal(HR_TEMPLATE_NAMES.fund, '公积金管理导入模板.xlsx')
+  assert.equal(HR_TEMPLATE_NAMES.social, '社保回盘表导入模板.xlsx')
 })
 
 test('花名册模板表头 = 46 个原生字段（跨模块引用字段一律不进模板）', () => {

@@ -836,12 +836,14 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 	}
 	contractCount := int64(len(emps))
 	var socialCount int64
-	h.db.WithContext(ctx).Model(&HRSIPeriod{}).Where("tenant_id = ?", tid).Count(&socialCount)
+	h.db.WithContext(ctx).Model(&HRSIBill{}).Where("tenant_id = ?", tid).Count(&socialCount)
 	// 第 55 轮：公积金卡主数字 = 月度账单条数（不再是职工明细 87 条）
 	var fundCount int64
 	h.db.WithContext(ctx).Model(&HRPFBill{}).Where("tenant_id = ?", tid).Count(&fundCount)
 	// 全员联动提醒：待补录（在职无账号/基数<=0）、待封存（已离职但账户仍正常）
 	alerts := h.hrFundAlerts(ctx, tid)
+	// 第 56 轮：社保卡片副文案 = 待补录社保 / 离职待减员
+	socialAlerts := h.hrSocialAlerts(ctx, tid)
 
 	// 第 54 轮：合同异常预警扩到 4 类（未签订 / 即将到期 / 到期 / 已解除）。
 	var unsigned, expiring, expired, terminated int64
@@ -868,6 +870,8 @@ func (h *HRHandler) RosterStats(c *gin.Context) {
 	data["fund"] = fundCount
 	data["fund_pending"] = alerts.pending
 	data["fund_to_seal"] = alerts.toSeal
+	data["social_pending"] = socialAlerts.pending
+	data["social_to_seal"] = socialAlerts.toSeal
 	hrOK(c, data)
 }
 

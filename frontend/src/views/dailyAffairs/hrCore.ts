@@ -20,7 +20,9 @@ import {
 } from './hrRosterFields'
 import { allRosterFields } from './hrRosterGroups'
 import {
-  HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, HR_FUND_FIELDS, hrValueKeys, hrIsDateField,
+  HR_RESIGN_FIELDS, HR_CONTRACT_FIELDS, HR_FUND_FIELDS,
+  HR_SOCI_RECEIPT_FIELDS, HR_SOCI_NORMAL_FIELDS, HR_SOCI_ABNORMAL_FIELDS, HR_SOCI_BILL_FIELDS,
+  hrValueKeys, hrIsDateField,
 } from './hrFieldSchema'
 import type { HrFieldDef } from './hrFieldSchema'
 
@@ -71,6 +73,8 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
   const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
   const fundPending = Math.max(0, Number(counts.fund_pending || 0) || 0)
   const fundToSeal = Math.max(0, Number(counts.fund_to_seal || 0) || 0)
+  const socialPending = Math.max(0, Number(counts.social_pending || 0) || 0)
+  const socialToSeal = Math.max(0, Number(counts.social_to_seal || 0) || 0)
   return HR_TABS.map((t) => {
     // 第 49 轮：劳动合同卡副文案体现异常预警（到期 / 即将到期）
     let sub = t.sub
@@ -92,6 +96,16 @@ export function buildHrKpiCards(counts: Record<string, number> = {}) {
       const parts: string[] = []
       if (fundPending > 0) parts.push(`${fundPending} 人待补录`)
       if (fundToSeal > 0) parts.push(`${fundToSeal} 人待封存`)
+      if (parts.length) {
+        sub = parts.join(' · ')
+        subCls = 'is-warning'
+      }
+    }
+    if (t.key === 'hr-social') {
+      // 第 56 轮：卡片主数字恒为月度账单条数，底部提醒待补录社保 / 离职待减员
+      const parts: string[] = []
+      if (socialPending > 0) parts.push(`${socialPending} 人待补录社保`)
+      if (socialToSeal > 0) parts.push(`${socialToSeal} 人离职待减员`)
       if (parts.length) {
         sub = parts.join(' · ')
         subCls = 'is-warning'
@@ -312,9 +326,43 @@ function colsOf(tab: string): HrColumn[] {
   }
 }
 
-/** 社保双视图列集合（原始 / 汇总）。 */
+/** 社保双视图列集合（原始 / 汇总，第 47 轮遗留，仅用于旧回归测试）。 */
 export function hrSocialColumns(view: 'raw' | 'summary'): HrColumn[] {
   return [SELECT_COL, ...(view === 'raw' ? SI_RAW_COLS : SI_SUMMARY_COLS)]
+}
+
+/**
+ * 第 56 轮：社保四标签各自的列全集，严格由四胶囊字段契约派生（六同步）。
+ *
+ * 口径铁律：
+ *   · 个人编号 / 身份证号 / 个人社保编号 —— 纯文本，绝不加千分位、绝不进合计行；
+ *   · 五险参保状态 / 账单状态 —— 只读彩色 Tag（具名插槽）；
+ *   · 缴费比例 —— 文本百分比（如 16%），不参与合计行求和；
+ *   · 其余金额列 —— grouped 格式化 + 合计行按分累加。
+ */
+export function hrSocialColumnsOf(view: string): HrColumn[] {
+  const fields = view === 'receipt' ? HR_SOCI_RECEIPT_FIELDS
+    : view === 'normal' ? HR_SOCI_NORMAL_FIELDS
+      : view === 'abnormal' ? HR_SOCI_ABNORMAL_FIELDS
+        : HR_SOCI_BILL_FIELDS
+  const cols = columnsOfFields(fields)
+  return cols.map((c) => {
+    // 人数是整数计数，不能走金额格式化出口变成「75.00」。
+    if (c.colKey === '参保人数') {
+      return {
+        ...c,
+        value: (row: any) => {
+          const v = pickRaw(row, ['参保人数', 'headcount', 'record_count', '人数'])
+          if (v === undefined || v === null || v === '') return ''
+          const n = Number(String(v).replace(/[,，\s]/g, ''))
+          return Number.isFinite(n) ? String(Math.round(n)) : String(v)
+        },
+      }
+    }
+    if (/参保状态|账单状态/.test(c.colKey)) return { ...c, slot: true }
+    if (/比例/.test(c.colKey)) return { ...c, noSum: true }
+    return c
+  })
 }
 
 /**
