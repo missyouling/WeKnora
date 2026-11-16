@@ -1,0 +1,60 @@
+name: HR UI E2E
+
+# 人事管理 UI 回归（第 58 轮起的长期门禁）。
+#
+# 为什么用自托管 runner：断言需要「真实种子数据 + 已登录会话 + 前端 dev server」，
+# 云端 runner 既连不到内网 5173/8080，也不方便复用演示库；VM 上这些都已常驻。
+# 脚本本身只读（唯一写操作是动态模板用例的字段增删，脚本内 finally 还原）。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [daily-affairs-v4]
+    paths:
+      - 'frontend/src/views/dailyAffairs/**'
+      - 'frontend/src/components/business/**'
+      - 'internal/handler/hr_*.go'
+      - 'tests/e2e/**'
+      - '.github/workflows/hr-ui-e2e.yml'
+
+concurrency:
+  group: hr-ui-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ui-regression:
+    name: 人事 UI 断言
+    runs-on: [self-hosted, linux, weknora-vm]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 健康检查（前端 / 后端）
+        run: |
+          set -e
+          curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null
+          curl -fsS --max-time 5 http://127.0.0.1:5173/ >/dev/null
+
+      - name: 铸造登录 token
+        run: bash /opt/pw-run/mint-token.sh
+
+      - name: 运行 UI 断言
+        run: |
+          set -e
+          export PATH=/usr/local/node22/bin:$PATH
+          export CI_SHOTS_DIR="$PWD/artifacts/hr-ui"
+          mkdir -p "$CI_SHOTS_DIR"
+          # 脚本以裸包名 import "playwright"，必须在装有该依赖的目录执行
+          cp tests/e2e/hr-ui.mjs /opt/pw-run/hr-ui.mjs
+          cd /opt/pw-run && node hr-ui.mjs
+
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hr-ui-shots
+          path: artifacts/hr-ui
+          if-no-files-found: ignore
