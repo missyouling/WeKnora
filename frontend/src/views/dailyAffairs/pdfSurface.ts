@@ -147,7 +147,9 @@ export async function createPdfSurface(opts: PdfSurfaceOptions): Promise<PdfSurf
 
   surface.drawFooter = () => {
     if (!opts.footerText) return
-    page.drawText(opts.footerText(pageNo), {
+    // 必须读 surface.page / surface.pageNo：调用方翻页后只更新 surface，
+    // 闭包里的 page/pageNo 停在首页（旧实现因此把第 2 页起的页脚全画到第 1 页）。
+    surface.page.drawText(opts.footerText(surface.pageNo), {
       x: geom.margin, y: geom.margin - 8, size: footerSize, color: footerColor, font,
     })
   }
@@ -161,7 +163,12 @@ export async function createPdfSurface(opts: PdfSurfaceOptions): Promise<PdfSurf
   }
 
   surface.ensure = (need: number) => {
-    if (y - need < geom.margin + bottomReserve) {
+    // **判定必须用 surface.y**，不能用闭包 y：
+    // 调用方（generateCatalogPdf / generateStatementPdf）的画法是
+    // `surface.ensure(rh)` 后自己 `surface.y -= rh`，闭包 y 只在 newPage 时同步，
+    // 于是永远停留在页顶 —— 76 行只画出 21 行、其余全部溢出纸外，
+    // 页脚又被画进溢出区域，真机表现为「第 21 行单元格里叠着页脚文字」（第 58 轮图 8）。
+    if (surface.y - need < geom.margin + bottomReserve) {
       surface.drawFooter()
       surface.newPage()
     }

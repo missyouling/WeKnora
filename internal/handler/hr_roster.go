@@ -675,6 +675,11 @@ func (h *HRHandler) UpdateEmployee(c *gin.Context) {
 	if strings.TrimSpace(req.Department) != strings.TrimSpace(existing.Department) {
 		h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	}
+	// 第 58 轮：合同类型变成 / 变回劳务类时，劳务人员身份随之变化，
+	// 需要重新清一遍社保公积金的空占位（改成劳动后新产生的空行也在这里收口）。
+	if hrEmployeeContractType(req) != hrEmployeeContractType(existing) {
+		h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
+	}
 	hrOK(c, req)
 }
 

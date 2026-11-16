@@ -359,6 +359,8 @@ export function hrSocialColumnsOf(view: string): HrColumn[] {
       }
     }
     if (/参保状态|账单状态/.test(c.colKey)) return { ...c, slot: true }
+    // 第 58 轮：补退类型 / 记录类型要用红绿字体渲染，必须走命名插槽。
+    if (c.colKey === '补退类型' || c.colKey === '记录类型') return { ...c, slot: true }
     if (/比例/.test(c.colKey)) return { ...c, noSum: true }
     return c
   })
@@ -853,4 +855,21 @@ export function hrDerivedFieldNames(tab: string): ReadonlySet<string> {
     return new Set(['年龄', '出生日期', '性别', '司龄'])
   }
   return new Set(['合同状态'])
+}
+
+/**
+ * 劳动合同 / 劳务合同分流（第 58 轮）。
+ *
+ * 与后端 `HrContractKindOf` 同一口径：关键字包含匹配，
+ * 劳务 / 返聘 / 实习 / 借调 → service；其余（含未签合同）→ labor。
+ * 前端只在本地做视图过滤，权威判定仍在后端（模板、社保/公积金豁免）。
+ */
+const SERVICE_CONTRACT_HINTS = /劳务|返聘|实习|借调/
+
+export function contractKindOf(row: any): 'labor' | 'service' {
+  const t = String(
+    row?.['合同类型'] ?? row?.custom_data?.['合同类型'] ?? row?.['现合同类型']
+      ?? row?.custom_data?.['现合同类型'] ?? row?.contract_type ?? '',
+  ).trim()
+  return SERVICE_CONTRACT_HINTS.test(t) ? 'service' : 'labor'
 }

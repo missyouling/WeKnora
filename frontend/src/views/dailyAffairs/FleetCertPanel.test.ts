@@ -405,3 +405,15 @@ test('第50轮：group/group_label 必须随 subs 落库（否则胶囊分组塌
   const legacy = toSubsPayload(fromSubsPayload([{ name: 'x', enabled: true }])) as any[]
   assert.equal('group' in legacy[0], false)
 })
+
+// ---------------------------------------------------------------------------
+// 第 58 轮：单分类模式保存后绝不折叠成空白（真机图 4）
+// ---------------------------------------------------------------------------
+test('singleCategory 保存后必须补开字段列表，且 editingId 失效时回退第一个分类', () => {
+  const src = readFileSync(new URL('./FleetCertPanel.vue', import.meta.url), 'utf8')
+    .replace(/\r\n/g, '\n')
+  // 保存分支：direct 与 singleCategory 走同一条补开链路
+  assert.match(src, /if \(directMode\.value \|\| props\.singleCategory\) \{\n\s+await nextTick\(\)/)
+  // 常驻守卫：分类列表更新后 editingId 为空/失配就重新 startEdit
+  assert.match(src, /watch\(groupItems, \(list\) => \{[\s\S]*?startEdit\(first\)/)
+})

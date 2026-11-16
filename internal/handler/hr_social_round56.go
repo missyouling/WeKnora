@@ -619,11 +619,17 @@ func (h *HRHandler) hrSocialAlerts(ctx context.Context, tid int64) hrSocialAlert
 		Where("tenant_id = ?", tid).Find(&employees).Error; err != nil {
 		return out
 	}
+	// 第 58 轮：劳务人员（劳务合同 / 返聘 / 实习 / 借调）不缴社保，
+	// 既不提示「待补录」也不提示「待减员」。
+	laborByID, laborByName, _ := h.hrLaborServiceIdentities(ctx, tid)
 	var receipts []HRSIReceipt
 	_ = h.db.WithContext(ctx).Select("id_number, person_code, pension_status").
 		Where("tenant_id = ?", tid).Find(&receipts).Error
 	byID := hrSIReceiptByID(receipts)
 	for _, e := range employees {
+		if hrLaborServiceHit(laborByID, laborByName, e.IDNumber, e.Name) {
+			continue
+		}
 		r, ok := byID[normalizeIDNumber(e.IDNumber)]
 		if normalizeEmployeeStatus(e.Status) == "active" {
 			// 在职但回盘表没有参保记录 / 没带出个人编号 → 待补录（待增员）
@@ -965,6 +971,88 @@ func (h *HRHandler) hrSIBillItemsForMonth(ctx context.Context, tid int64, month,
 	return out
 }
 
+// UpdateSIRecord PUT /social/records/:id —— 正常 / 异常记录的抽屉编辑保存。
+//
+// 这批记录来自申报文件，但「正常/异常」两个视图允许人工修正金额与比例
+// （申报回盘与实扣常有 1~2 分差异），因此提供受控更新：只接受展示层可编辑的
+// 几个字段，姓名 / 身份证 / 险种 / 账单月份属于身份维度，一律不接受改写。
+func (h *HRHandler) UpdateSIRecord(c *gin.Context) {
+	ctx := c.Request.Context()
+	tid := hrTenantID(c)
+	var row HRSIRecord
+	if err := h.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tid, c.Param("id")).
+		First(&row).Error; err != nil {
+		hrFail(c, "社保记录不存在")
+		return
+	}
+	var req map[string]any
+	if err := c.ShouldBindJSON(&req); err != nil {
+		hrFail(c, "invalid request body: "+err.Error())
+		return
+	}
+	str := func(k string) (string, bool) {
+		v, ok := req[k]
+		if !ok {
+			return "", false
+		}
+		return strings.TrimSpace(toStringValue(v)), true
+	}
+	num := func(k string) (float64, bool) {
+		v, ok := req[k]
+		if !ok {
+			return 0, false
+		}
+		s := strings.ReplaceAll(strings.TrimSpace(toStringValue(v)), ",", "")
+		if s == "" {
+			return 0, true
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	}
+	if v, ok := str("费款所属期"); ok {
+		row.Period = v
+	}
+	if v, ok := str("单位缴费比例"); ok {
+		row.UnitRate = v
+	}
+	if v, ok := str("个人缴费比例"); ok {
+		row.PersonalRate = v
+	}
+	if v, ok := num("缴费基数"); ok {
+		row.Base = v
+	}
+	if v, ok := num("单位应缴金额"); ok {
+		row.UnitAmount = round2(v)
+	}
+	if v, ok := num("个人应缴金额"); ok {
+		row.PersonalAmount = round2(v)
+	}
+	if v, ok := str("补退类型"); ok && v != "" {
+		row.AdjustType = v
+	}
+	// 应缴合计永远由分项重算，禁止前端直改（避免三处金额互相对不上）。
+	row.TotalAmount = round2(row.UnitAmount + row.PersonalAmount)
+	if row.CustomData == nil {
+		row.CustomData = map[string]any{}
+	}
+	row.CustomData["费款所属期"] = row.Period
+	row.CustomData["缴费基数"] = row.Base
+	row.CustomData["单位缴费比例"] = row.UnitRate
+	row.CustomData["单位应缴金额"] = row.UnitAmount
+	row.CustomData["个人缴费比例"] = row.PersonalRate
+	row.CustomData["个人应缴金额"] = row.PersonalAmount
+	row.CustomData["应缴合计"] = row.TotalAmount
+	row.CustomData["补退类型"] = row.AdjustType
+	if err := h.db.WithContext(ctx).Save(&row).Error; err != nil {
+		hrFail(c, "保存社保记录失败: "+err.Error())
+		return
+	}
+	hrOK(c, hrSIRecordView(row))
+}
+
 func (h *HRHandler) DeleteSIBill(c *gin.Context) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
@@ -1048,6 +1136,8 @@ func (h *HRHandler) ImportSIReceipts(c *gin.Context) {
 	h.hrSyncSocialAccountFromReceipts(ctx, tid)
 	// 第 58 轮：导入时按身份证（回退姓名）把权威部门写回主列 + custom_data.部门
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
+	// 第 58 轮：劳务人员不缴社保，本轮导入出的空占位（0 基数 0 金额）随手清掉
+	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
 	hrOK(c, gin.H{"rows": len(items)})
 }
 
@@ -1169,6 +1259,8 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 	}
 	// 第 58 轮：部门权威落库（姓名回退命中的行也一并补齐）
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
+	// 第 58 轮：劳务人员的空占位记录同步清理
+	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
 	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed})
 }
 

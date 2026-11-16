@@ -83,6 +83,40 @@ func hrModuleCell(row []string, idx map[string]int, name string) string {
 	return hrCleanImportValue(name, getCell(row, i))
 }
 
+// hrModuleMatchKeys 员工匹配键：由匹配逻辑单独消费，不写进 custom_data。
+var hrModuleMatchKeys = map[string]bool{"工号": true, "姓名": true, "证件号码": true}
+
+// hrImportFieldSpecs 导入解析的字段清单（第 58 轮：按当前已保存的 subs 生成）。
+//
+//	· 有分类：顺序与表头文案都跟字段设置一致（label 优先），新增的自定义字段也能落库；
+//	· 没分类：回退字段契约（老租户 / 单测 / 动态表头读不到时的兜底）。
+//
+// 跨表引用 / system / readonly 一律不参与解析（它们只能由源模块联动）。
+func (h *HRHandler) hrImportFieldSpecs(ctx context.Context, tid int64, module string) []hrTemplateField {
+	scope, group := hrTemplateScopeGroup(module)
+	if fields, ok := hrTemplateFieldsFor(ctx, h.db, tid, scope, group); ok {
+		return fields
+	}
+	defs := hrModuleFieldDefs(module)
+	out := make([]hrTemplateField, 0, len(defs))
+	for _, d := range defs {
+		if d.Source != nil || d.Type == "system" || d.Type == "readonly" {
+			continue
+		}
+		out = append(out, hrTemplateField{Name: d.Name, Header: d.Name})
+	}
+	return out
+}
+
+// hrImportColumn 表头定位：先按表头文案（label），再按契约字段名兜底。
+func hrImportColumn(idx map[string]int, f hrTemplateField) (int, bool) {
+	if i, ok := idx[normalizeEmployeeHeader(f.Header)]; ok {
+		return i, true
+	}
+	i, ok := idx[normalizeEmployeeHeader(f.Name)]
+	return i, ok
+}
+
 // hrIsValidIDCardImport 18 位身份证格式 + 出生日期合法性 + 校验码。
 func hrIsValidIDCardImport(s string) bool {
 	if len(s) != 18 {
@@ -135,10 +169,27 @@ func (h *HRHandler) applyHRModuleRows(ctx context.Context, tenantID int64, modul
 		return stats, fmt.Errorf("文件中没有数据行，请检查模板内容")
 	}
 	idx := hrModuleHeaderIndex(rows[0])
+	specs := h.hrImportFieldSpecs(ctx, tenantID, module)
+	// 匹配键允许被改名（用户把「工号」文案改成别的），按 subs 的 label 定位。
+	colOf := func(field string) (int, bool) {
+		for _, sp := range specs {
+			if sp.Name == field {
+				return hrImportColumn(idx, sp)
+			}
+		}
+		i, ok := idx[normalizeEmployeeHeader(field)]
+		return i, ok
+	}
 	for _, key := range []string{"工号", "姓名", "证件号码"} {
-		if _, ok := idx[normalizeEmployeeHeader(key)]; !ok {
+		if _, ok := colOf(key); !ok {
 			return stats, fmt.Errorf("导入文件缺少必需列：%s", key)
 		}
+	}
+	cellAt := func(row []string, i int) string {
+		if i < 0 || i >= len(row) {
+			return ""
+		}
+		return getCell(row, i)
 	}
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Find(&employees).Error; err != nil {
@@ -156,14 +207,22 @@ func (h *HRHandler) applyHRModuleRows(ctx context.Context, tenantID int64, modul
 	}
 
 	defs := hrModuleFieldDefs(module)
-	headers := hrTemplateHeaders(module)
+	// 契约里已登记的字段名：这类字段只按契约名落库，
+	// 自定义字段才额外按用户改过的表头文案落一份。
+	known := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		known[d.Name] = true
+	}
+	empCol, _ := colOf("工号")
+	nameCol, _ := colOf("姓名")
+	idCol, _ := colOf("证件号码")
 	for _, row := range rows[1:] {
 		if len(row) == 0 {
 			continue
 		}
-		empNo := hrModuleCell(row, idx, "工号")
-		name := hrModuleCell(row, idx, "姓名")
-		idNo := hrModuleCell(row, idx, "证件号码")
+		empNo := hrCleanImportValue("工号", cellAt(row, empCol))
+		name := hrCleanImportValue("姓名", cellAt(row, nameCol))
+		idNo := hrCleanImportValue("证件号码", cellAt(row, idCol))
 		if empNo == "000001" && strings.Contains(name, "示例员工") {
 			stats.Skipped++
 			continue
@@ -186,17 +245,26 @@ func (h *HRHandler) applyHRModuleRows(ctx context.Context, tenantID int64, modul
 			emp.CustomData = map[string]any{}
 		}
 		custom := hrMergeEmployeeCustomData(emp.CustomData, nil)
-		for _, header := range headers {
-			if header == "工号" || header == "姓名" || header == "证件号码" {
+		// 按上传文件表头名逐个匹配已保存的字段：未知列直接忽略（不猜测、不报错），
+		// 已知列（含用户新增的自定义字段）按 label / name 落到 custom_data。
+		for _, sp := range specs {
+			if hrModuleMatchKeys[sp.Name] {
 				continue
 			}
-			v := hrModuleFieldValue(header, hrModuleCell(row, idx, header), defs)
+			col, ok := hrImportColumn(idx, sp)
+			if !ok {
+				continue
+			}
+			v := hrModuleFieldValue(sp.Name, cellAt(row, col), defs)
 			if v == "" {
 				continue
 			}
 			// 新字段名与存量别名双写，保证新旧两种读法都能命中
-			for _, key := range hrFieldPersistKeys(header) {
+			for _, key := range hrFieldPersistKeys(sp.Name) {
 				custom[key] = v
+			}
+			if !known[sp.Name] && sp.Header != "" && sp.Header != sp.Name {
+				custom[sp.Header] = v
 			}
 		}
 		if name != "" {

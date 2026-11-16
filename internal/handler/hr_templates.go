@@ -17,8 +17,18 @@ import (
 )
 
 // hrWriteTemplate 把指定模块的模板写入工作簿（Sheet1 已存在）。
+//
+// 表头取静态字段契约（老租户 / 单测 / 兜底路径）。
 func hrWriteTemplate(f *excelize.File, module string) error {
-	spec := hrTemplateSpecOf(module)
+	return hrWriteTemplateWithHeaders(f, module, hrTemplateHeaders(module))
+}
+
+// hrWriteTemplateWithHeaders 用外部表头写模板（第 58 轮：动态表头入口）。
+//
+// 除表头外一切沿用原逻辑：示例行按表头生成、枚举列能对上就给下拉（对不上就不给），
+// 说明 / 枚举字段两个 Sheet 的结构与顺序不变。
+func hrWriteTemplateWithHeaders(f *excelize.File, module string, headers []string) error {
+	spec := hrTemplateSpecOfWithHeaders(module, headers)
 	const dataSheet = "导入数据"
 	if err := f.SetSheetName("Sheet1", dataSheet); err != nil {
 		return err

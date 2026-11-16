@@ -22,12 +22,18 @@
       <!-- 第 57 轮：花名册合并「在职管理 / 离职管理」双标签；
            公积金标签顺序调整为「职工明细」在前、「月度账单」在后；
            社保四标签与设置抽屉四胶囊严格 1:1。 -->
-      <div v-if="activeTab === 'hr-roster' || activeTab === 'hr-fund' || activeTab === 'hr-social'"
+      <div v-if="activeTab === 'hr-roster' || activeTab === 'hr-fund' || activeTab === 'hr-social'
+        || activeTab === 'hr-contract'"
         class="hr-subview-bar" data-hr-subview-bar>
         <t-radio-group v-if="activeTab === 'hr-roster'" v-model="rosterStatusView" size="small"
           @change="onRosterViewChange">
           <t-radio-button value="在职">在职管理</t-radio-button>
           <t-radio-button value="离职">离职管理</t-radio-button>
+        </t-radio-group>
+        <t-radio-group v-else-if="activeTab === 'hr-contract'" v-model="contractSubView" size="small"
+          @change="onContractSubViewChange">
+          <t-radio-button value="labor">劳动合同</t-radio-button>
+          <t-radio-button value="service">劳务合同</t-radio-button>
         </t-radio-group>
         <t-radio-group v-else-if="activeTab === 'hr-fund'" v-model="fundSubView" size="small"
           @change="onFundSubViewChange">
@@ -70,7 +76,9 @@
               v-model="siBillMonthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
               placeholder="账单月份" :clearable="false" allow-input class="hr-month-picker"
               @change="applyFilter" />
-            <t-date-picker v-else
+            <!-- 第 58 轮：回盘表是「人员增减申请」全量回盘，没有账期维度，
+                 工具栏只留 搜索 + 参保状态 + 部门 + 刷新（图 5 要求删除月份框）。 -->
+            <t-date-picker v-else-if="socialSubView === 'normal' || socialSubView === 'abnormal'"
               v-model="siMonthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
               placeholder="账单月份" :clearable="false" allow-input class="hr-month-picker"
               @change="applyFilter" />
@@ -291,6 +299,15 @@
                 {{ colValue(row, '记录性质') }}
               </t-tag>
             </template>
+            <!-- 第 58 轮：正常 / 异常记录的 补退类型、记录类型 用红绿字体（不是 Tag） -->
+            <template #补退类型="{ row }: any">
+              <span v-if="isHeaderContext(row)">补退类型</span>
+              <span v-else :class="siAdjustTextClass(colValue(row, '补退类型'))">{{ colValue(row, '补退类型') }}</span>
+            </template>
+            <template #记录类型="{ row }: any">
+              <span v-if="isHeaderContext(row)">记录类型</span>
+              <span v-else :class="siAdjustTextClass(colValue(row, '记录类型'))">{{ colValue(row, '记录类型') }}</span>
+            </template>
             <template #empty>
               <BusinessEmptyState v-if="!tableLoading" compact :icon="emptyIcon"
                 :description="emptyText" :hint="emptyHint" />
@@ -320,9 +337,9 @@
         <t-input v-model="editForm.data['职务']" placeholder="职务" @change="onDeptOrTitleChange" />
       </template>
       <!-- 第 57 轮：离职证明附件控制条。
-           严禁把 /api/v1/fleet/... 这类后端内部路径暴露在输入框里；
-           已上传显示绿色状态标签 + 查看 + 重新上传，未上传显示灰色提示 + 上传附件。
-           所有按钮强制 nowrap，绝不竖排折行。 -->
+           严禁把 /api/v1/fleet/... 这类后端内部路径暴露在输入框里。
+           第 58 轮：抽屉内**删除「查看」**（预览只在列表「离职证明」列的查看入口），
+           已上传时点「上传」先弹覆盖二次确认。 -->
       <template #field-离职证明>
         <div class="hr-proof-field">
           <t-tag v-if="proofPathOf(editForm.data)" theme="success" variant="light" size="small"
@@ -331,11 +348,10 @@
             已上传离职证明
           </t-tag>
           <span v-else class="hr-proof-empty">未上传</span>
-          <t-button v-if="proofPathOf(editForm.data)" variant="outline" size="small"
-            class="hr-proof-btn" @click.stop="previewProof(editForm.data)">查看</t-button>
           <t-button variant="outline" size="small" class="hr-proof-btn" :loading="proofUploading"
-            @click.stop="pickProof">
-            {{ proofPathOf(editForm.data) ? '重新上传' : '上传附件' }}
+            @click.stop="onProofUploadClick">
+            <template #icon><t-icon name="upload" size="14px" /></template>
+            上传
           </t-button>
           <input ref="proofInputRef" type="file" hidden accept=".pdf,.jpg,.jpeg,.png"
             @change="onProofFileChange" />
@@ -367,8 +383,25 @@
 
     <!-- 第 52 轮：三套独立 Excel 导入模板（花名册 / 离职管理 / 劳动合同）共用弹窗 -->
     <RosterImportDialog v-model:visible="rosterImportVisible" :module="importModule" @imported="onRosterImported" />
+    <!-- 第 58 轮：社保三类导入统一复用中台 StandardImportDialog（回盘表固定覆盖更新） -->
+    <StandardImportDialog :visible="socialImportVisible" :title="`导入${socialImportLabel}`"
+      :module-label="socialImportLabel" :show-template="socialImportKind === 'receipt'"
+      template-hint="下载社保回盘表标准模板" :multiple="socialImportKind !== 'receipt'"
+      :modes="[{ label: '覆盖更新', value: 'overwrite' }]" default-mode="overwrite"
+      :on-download="downloadSocialTemplate" :on-import="runSocialImport"
+      @update:visible="(v: boolean) => socialImportVisible = v" @imported="onSocialImported" />
     <ResignEmployeeDialog v-model:visible="resignVisible" :ids="selectedRowKeys"
       :employee-name="resignTargetName" @done="onResignDone" />
+
+    <!-- 第 58 轮：离职证明重新上传前的覆盖二次确认 -->
+    <t-dialog :visible="proofOverwriteVisible" header="覆盖离职证明" width="460px" placement="center"
+      data-hr-proof-confirm @close="proofOverwriteVisible = false">
+      <div class="hr-bill-confirm">该员工已上传离职证明，重新上传后原来的图片将会被覆盖，是否继续？</div>
+      <template #footer>
+        <t-button variant="outline" size="small" @click="proofOverwriteVisible = false">取消</t-button>
+        <t-button theme="primary" size="small" @click="confirmProofOverwrite">确定</t-button>
+      </template>
+    </t-dialog>
 
     <!-- 第 55 轮：页内附件预览器（严禁 window.open）
          第 58 轮：关闭即 revokeObjectURL，blob 不常驻到页面卸载。 -->
@@ -402,7 +435,7 @@
          顶部三标签「个人明细 | 单位明细 | 汇总数据」，标签下方标准工具栏
          （左侧搜索/部门/条件险种，右侧打印 + 导出 Excel），表格合计行恒贴底。 -->
     <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(1200px, 94vw)"
-      placement="center" :footer="false" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
+      placement="center" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
       <div class="hr-bill-detail">
         <div class="hr-bill-tabs">
           <t-radio-group v-model="billDetailTab" size="small" @change="onBillDetailTabChange">
@@ -414,8 +447,7 @@
         <div class="hr-bill-filters">
           <!-- 个人 / 单位明细：搜索 + 部门 + 险种（无细分险种列的宽表自动隐藏险种筛选） -->
           <template v-if="billDetailTab !== 'summary'">
-            <t-input v-model="billKeyword"
-              :placeholder="billDetailKind === 'social' ? '搜索姓名 / 工号 / 社保号' : '搜索姓名 / 工号 / 账号'"
+            <t-input v-model="billKeyword" placeholder="搜索姓名 / 部门"
               clearable class="hr-bill-search" data-hr-bill-search>
               <template #prefixIcon><t-icon name="search" size="16px" /></template>
             </t-input>
@@ -436,26 +468,36 @@
             <span class="hr-bill-count">共 {{ billSummaryRows.length }} 个部门</span>
           </template>
           <span class="hr-bill-spacer" />
-          <t-button theme="primary" variant="outline" size="small" @click="printBillDetail">
-            <template #icon><t-icon name="print" size="14px" /></template>
-            打印
-          </t-button>
+        </div>
+        <!-- 第 58 轮：表头固定（sticky-header）、合计行粘底；
+             滚动条留在 gutter 里，不再贯穿表头与合计行。 -->
+        <div class="hr-bill-table-wrap">
+          <t-table v-if="billDetailTab === 'summary'" :data="billSummaryRows"
+            :columns="billSummaryColumns" row-key="id" size="small" bordered sticky-header
+            :max-height="'100%'" :foot-data="billSummaryFoot" class="hr-bill-item-table"
+            data-hr-bill-summary-table />
+          <t-table v-else :data="billSubjectRows" :columns="billSubjectColumns" row-key="id"
+            size="small" bordered sticky-header :max-height="'100%'" :foot-data="billSubjectFoot"
+            class="hr-bill-item-table" data-hr-bill-subject-table />
+        </div>
+      </div>
+      <!-- 右下角操作栏：导出 Excel → 打印 → 关闭（与能耗打印预览同款） -->
+      <template #footer>
+        <div class="hr-bill-footer">
           <t-button theme="default" variant="outline" size="small" :loading="exporting"
             data-hr-bill-export @click="exportBillExcel">
             <template #icon><t-icon name="download" size="14px" /></template>
             导出 Excel
           </t-button>
+          <t-button theme="default" variant="outline" size="small" @click="printBillDetail">
+            <template #icon><t-icon name="print" size="14px" /></template>
+            打印
+          </t-button>
+          <t-button theme="primary" size="small" data-hr-bill-close @click="billDetailVisible = false">
+            关闭
+          </t-button>
         </div>
-        <div class="hr-bill-table-wrap">
-          <t-table v-if="billDetailTab === 'summary'" :data="billSummaryRows"
-            :columns="billSummaryColumns" row-key="id" size="small" bordered
-            :max-height="'100%'" :foot-data="billSummaryFoot" class="hr-bill-item-table"
-            data-hr-bill-summary-table />
-          <t-table v-else :data="billSubjectRows" :columns="billSubjectColumns" row-key="id"
-            size="small" bordered :max-height="'100%'" :foot-data="billSubjectFoot"
-            class="hr-bill-item-table" data-hr-bill-subject-table />
-        </div>
-      </div>
+      </template>
     </t-dialog>
 
   </div>
@@ -471,6 +513,7 @@ import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FilePreviewDialog from '@/components/business/FilePreviewDialog.vue'
+import StandardImportDialog from '@/components/business/StandardImportDialog.vue'
 import { listFleetCategories } from '@/api/fleet'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -483,7 +526,7 @@ import {
   HR_TABS, buildHrKpiCards, hrScopeOf, hrColumnDefs, hrBillColumnDefs,
   sortMonthsDesc, isHrMonth, hrFieldSeeds, hrRowKey,
   hrRosterGroupColumns, hrResignColumns, hrContractColumns, hrColumnsFromSubs,
-  hrSocialColumnsOf, hrFundColumns,
+  hrSocialColumnsOf, hrFundColumns, contractKindOf,
   contractStatusOf,
   contractStatusTheme,
 } from './hrCore'
@@ -530,6 +573,8 @@ const fieldConfig = ref<Record<string, any[]>>({})
  * 保留该状态仅为兼容既有列显隐/抽屉派生函数，恒为「在职」且不再对外暴露修改入口。
  */
 const rosterStatusView = ref<RosterStatusFilter>('在职')
+/** 第 58 轮：劳动合同 / 劳务合同双标签（按合同类型关键字分流）。 */
+const contractSubView = ref<'labor' | 'service'>('labor')
 
 /**
  * 人事 5 个列表的分类名 + scope（第 53 轮：互相引用时的候选目录）。
@@ -683,9 +728,13 @@ const initialCategory = computed(() => tabLabel.value)
 // 且 BusinessSplitDetailDrawer 已不再渲染 [P1] 页码徽标（人事模块无 PDF 分页）。
 const detailTitle = computed(() => {
   const name = String(detailRow.value?.姓名 || detailRow.value?.name || '').trim()
+  // 第 58 轮：社保正常 / 异常记录抽屉有独立标题（图 6 要求「社保记录详情 · XXX」）
+  const socialRecord = activeTab.value === 'hr-social'
+    && (socialSubView.value === 'normal' || socialSubView.value === 'abnormal')
   const base = !detailRow.value ? '新增员工'
-    : activeTab.value === 'hr-contract' ? '合同详情'
-      : rosterStatusView.value === '离职' ? '离职详情' : '员工详情'
+    : socialRecord ? '社保记录详情'
+      : activeTab.value === 'hr-contract' ? '合同详情'
+        : rosterStatusView.value === '离职' ? '离职详情' : '员工详情'
   return name ? `${base} · ${name}` : base
 })
 
@@ -1033,6 +1082,15 @@ function siStatusTextClass(v: string): string {
   if (s === '暂停缴费') return 'hr-si-status hr-si-status--paused'
   return 'hr-si-status'
 }
+/**
+ * 第 58 轮：补退类型 / 记录类型统一红绿字（不是 Tag）。
+ * 正常类 → 绿 #00a870；补缴 / 退费 / 调基 / 异常 → 红 #e34d59。
+ */
+function siAdjustTextClass(v: string): string {
+  const s = String(v ?? '').trim()
+  if (!s) return ''
+  return /正常/.test(s) ? 'hr-si-adjust hr-si-adjust--ok' : 'hr-si-adjust hr-si-adjust--bad'
+}
 /** 月度账单状态：已申报/已汇缴 = 绿，待申报/待汇缴 = 橙，作废 = 灰。 */
 function billStatusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
   const s = String(v ?? '').trim()
@@ -1103,7 +1161,8 @@ async function loadList(tab: HrTab) {
         department: rosterDeptFilter.value || undefined,
         contract_status: contractStatusView.value === '全部状态' ? undefined : contractStatusView.value,
       })
-      items = extractItems(res)
+      // 第 58 轮：劳务人员（劳务/返聘/实习/借调）单独成页，互不混排。
+      items = extractItems(res).filter((r: any) => contractKindOf(r) === contractSubView.value)
     } else if (tab === 'hr-social') {
       // 第 56 轮：四标签各自独立列表，全部走新的社保四视图 API
       const v = socialSubView.value
@@ -1222,9 +1281,18 @@ function onCardClick(card: any) {
  * 并按状态重新拉列表（后端 status 过滤）。保证表头第 1 帧一次成型。
  */
 /** 第 47 轮：统一「导入」入口（花名册 / 劳动合同走花名册模板，社保走多文件自适应）。 */
+/** 第 58 轮：社保三类导入统一走中台 StandardImportDialog（回盘表固定覆盖）。 */
+const socialImportVisible = ref(false)
+const socialImportKind = ref<'receipt' | 'normal' | 'abnormal'>('receipt')
+
 function onImportClick() {
   if (activeTab.value === 'hr-social') {
-    siFileInputRef.value?.click()
+    if (socialSubView.value === 'bills') {
+      MessagePlugin.info('月度账单由系统生成，请切换到回盘表 / 正常记录 / 异常记录后导入')
+      return
+    }
+    socialImportKind.value = socialSubView.value as 'receipt' | 'normal' | 'abnormal'
+    socialImportVisible.value = true
     return
   }
   if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') {
@@ -1234,7 +1302,52 @@ function onImportClick() {
   rosterImportVisible.value = true
 }
 
+/** 社保导入弹窗文案 / 模板 / 执行。 */
+const socialImportLabel = computed(() => ({
+  receipt: '社保回盘表', normal: '社保正常记录', abnormal: '社保异常记录',
+}[socialImportKind.value]))
+
+async function downloadSocialTemplate(): Promise<Blob> {
+  const blob = await hrApi.getHrTemplate('social')
+  return new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
+async function runSocialImport(files: File[], _mode: string): Promise<number> {
+  const fd = new FormData()
+  if (socialImportKind.value === 'receipt') {
+    fd.append('file', files[0])
+    const res: any = await hrApi.importSocialReceipts(fd)
+    const d = res?.data || res || {}
+    await onSocialImported()
+    return Number(d.rows || 0)
+  }
+  for (const f of files) fd.append('files', f)
+  fd.append('record_type', socialImportKind.value)
+  if (siMonthFilter.value) fd.append('month', siMonthFilter.value)
+  const res: any = await hrApi.importSocialRecords(fd)
+  const d = res?.data || res || {}
+  await onSocialImported()
+  return Number(d.rows || 0)
+}
+
+/** 导入完成后重拉列表与卡片，保持与既有导入路径一致。 */
+async function onSocialImported() {
+  await Promise.all([loadList('hr-social'), reloadStats()])
+}
+
 /** 第 57 轮：花名册在职 / 离职双标签切换（同 scope，不同 status 与列集合）。 */
+/** 第 58 轮：劳动合同 / 劳务合同切换（同样走首帧一次成型门禁）。 */
+async function onContractSubViewChange() {
+  headerReady.value = false
+  selectedKeys.value = new Set()
+  rows.value = []
+  rosterDeptFilter.value = ''
+  filterState.value = { keyword: '' }
+  initColumns()
+  await Promise.all([loadFieldConfig('hr-contract'), loadList('hr-contract')])
+  headerReady.value = true
+}
+
 async function onRosterViewChange() {
   headerReady.value = false
   selectedKeys.value = new Set()
@@ -1427,9 +1540,18 @@ const READONLY_DETAIL_FIELDS = new Set([
   '统一社会信用代码', '住所', '法定代表人',
 ])
 
+/**
+ * 社保正常 / 异常记录抽屉里仍只读的字段（第 58 轮）。
+ *
+ * 身份维度（月份 / 个人编号 / 姓名 / 身份证 / 险种）与系统派生的应缴合计不可改；
+ * 缴费基数、单位/个人比例与金额、补退类型允许人工修正（与申报回盘常有分差）。
+ */
+const HR_SOCIAL_RECORD_LOCKED = new Set([
+  '账单月份', '个人编号', '姓名', '身份证号', '险种类型', '记录类型', '源文件', '应缴合计',
+])
+
 /** 非花名册模块里来自花名册的引用字段（一律只读）。 */
-const HR_REF_ONLY_FIELDS = new Set([
-  '工号', '姓名', '部门', '岗位', '证件号码', '联系电话', '入职日期',
+const HR_REF_ONLY_FIELDS = new Set([  '工号', '姓名', '部门', '岗位', '证件号码', '联系电话', '入职日期',
   '统一社会信用代码', '住所', '法定代表人',
 ])
 
@@ -1471,6 +1593,28 @@ const orderedSubPairs = computed(() => {
  */
 const drawerGroups = computed(() => {
   const mod = activeModule.value
+  // 第 58 轮：社保「正常记录 / 异常记录」抽屉按当前胶囊的 16 字段契约渲染。
+  // 之前 activeModule 为 null → 抽屉退回 businessColumns 且 data 全空（真机图 6）。
+  if (!mod && activeTab.value === 'hr-social'
+    && (socialSubView.value === 'normal' || socialSubView.value === 'abnormal')) {
+    const fields = socialSubView.value === 'normal' ? HR_SOCI_NORMAL_FIELDS : HR_SOCI_ABNORMAL_FIELDS
+    const enabled = new Set(configKeys.value.enabled)
+    const list = fields
+      .filter((f) => enabled.size === 0 || enabled.has(f.name))
+      .map((f) => {
+        const title = businessColumns.value.find((c) => c.colKey === f.name)?.title || f.name
+        return {
+          name: f.name,
+          label: title,
+          dataType: hrDataTypeOf(f),
+          // 身份维度（姓名 / 身份证 / 险种 / 账单月份）与跨表部门只读，
+          // 金额 / 比例 / 补退类型可编辑（保存走 PUT /social/records/:id）。
+          readonly: !!f.source || HR_SOCIAL_RECORD_LOCKED.has(f.name),
+          ...(f.options?.length ? { options: f.options } : {}),
+        }
+      })
+    return [{ key: 'record', label: '社保记录', fields: list }]
+  }
   if (!mod) return undefined
   const defs = mod === 'roster'
     ? HR_ROSTER_GROUPS.flatMap((g) => g.fields)
@@ -1581,10 +1725,26 @@ function openDetail(row: any) {
     void openSIBillDetail(row)
     return
   }
-  // 社保回盘表 / 正常 / 异常记录：只读详情（数据来自申报文件，禁止手改）
+  // 社保回盘表 / 正常 / 异常记录：回盘表只读；正常与异常记录允许受控编辑并保存
   if (activeTab.value === 'hr-social') {
+    const data: Record<string, any> = {}
+    for (const c of businessColumns.value) {
+      const key = String(c.colKey || '')
+      if (!key) continue
+      const raw = c.value?.(row) ?? row?.[key] ?? row?.custom_data?.[key] ?? ''
+      data[key] = raw === '—' || raw === null || raw === undefined ? '' : String(raw)
+    }
+    // 兜底：数据库里可能还有值但不在当前可见列里（用户隐藏了列），仍灌进草稿
+    for (const [k, v] of Object.entries(row || {})) {
+      if (k === 'custom_data' || k === 'id') continue
+      if (data[k] === undefined && (typeof v === 'string' || typeof v === 'number')) {
+        data[k] = String(v)
+      }
+    }
     detailRow.value = row
-    editForm.value = { data: {}, remarkParts: {}, items: [] }
+    editForm.value = { data, remarkParts: {}, items: [] }
+    editBaseline.value = JSON.stringify(editForm.value)
+    detailDirty.value = false
     detailVisible.value = true
     return
   }
@@ -1627,11 +1787,37 @@ watch(editForm, () => {
 }, { deep: true })
 
 async function saveDetail() {
-  // 第 56 轮：社保四视图全部是申报回盘 / 扣款明细的只读投影，
-  // 绝不把行数据误写到花名册或旧社保账期表。
+  // 第 56 轮：社保回盘表与月度账单是申报 / 扣款快照，只读；
+  // 第 58 轮：正常 / 异常记录允许受控编辑（金额、比例、补退类型），保存走专用接口，
+  // 应缴合计由后端按分项重算，绝不把行数据误写到花名册。
   if (activeTab.value === 'hr-social') {
-    MessagePlugin.info('社保记录来自申报回盘与扣款明细，为只读数据')
-    detailVisible.value = false
+    if (socialSubView.value !== 'normal' && socialSubView.value !== 'abnormal') {
+      MessagePlugin.info('社保回盘表与月度账单为只读数据')
+      detailVisible.value = false
+      return
+    }
+    const id = detailRow.value?.id
+    if (!id) { MessagePlugin.warning('记录不存在'); return }
+    const d = editForm.value.data || {}
+    saving.value = true
+    try {
+      await hrApi.updateSocialRecord(String(id), {
+        费款所属期: d['费款所属期'],
+        缴费基数: d['缴费基数'],
+        单位缴费比例: d['单位缴费比例'],
+        单位应缴金额: d['单位应缴金额'],
+        个人缴费比例: d['个人缴费比例'],
+        个人应缴金额: d['个人应缴金额'],
+        补退类型: d['补退类型'],
+      })
+      MessagePlugin.success('已保存')
+      detailVisible.value = false
+      await Promise.all([loadList('hr-social'), reloadStats()])
+    } catch (e: any) {
+      MessagePlugin.error(e?.message || '保存失败')
+    } finally {
+      saving.value = false
+    }
     return
   }
   const row = detailRow.value
@@ -1923,7 +2109,21 @@ async function onResignDone() {
 /** 第 52 轮：离职证明上传（只回填草稿路径，绝不自动保存员工记录）。 */
 const proofInputRef = ref<HTMLInputElement | null>(null)
 const proofUploading = ref(false)
+/** 第 58 轮：已上传时再次点「上传」的覆盖二次确认。 */
+const proofOverwriteVisible = ref(false)
 function pickProof() { proofInputRef.value?.click() }
+/** 已有旧附件 → 先确认覆盖；没有 → 直接唤起文件选择器。 */
+function onProofUploadClick() {
+  if (proofPathOf(editForm.value.data)) {
+    proofOverwriteVisible.value = true
+    return
+  }
+  pickProof()
+}
+function confirmProofOverwrite() {
+  proofOverwriteVisible.value = false
+  pickProof()
+}
 async function onProofFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const f = input.files?.[0]
@@ -2186,48 +2386,48 @@ const BILL_SI_PERSONAL_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '姓名', title: '姓名', width: 110 },
   { colKey: '部门', title: '部门', width: 120 },
-  { colKey: '基数', title: '基数', width: 110, align: 'right' as const },
-  { colKey: '养老个人', title: '养老个人', width: 120, align: 'right' as const },
-  { colKey: '医疗个人', title: '医疗个人', width: 120, align: 'right' as const },
-  { colKey: '大额医疗', title: '大额医疗', width: 120, align: 'right' as const },
-  { colKey: '失业个人', title: '失业个人', width: 120, align: 'right' as const },
-  { colKey: '个人小计', title: '个人小计', width: 130, align: 'right' as const },
+  { colKey: '基数', title: '基数', width: 110 },
+  { colKey: '养老个人', title: '养老个人', width: 120 },
+  { colKey: '医疗个人', title: '医疗个人', width: 120 },
+  { colKey: '大额医疗', title: '大额医疗', width: 120 },
+  { colKey: '失业个人', title: '失业个人', width: 120 },
+  { colKey: '个人小计', title: '个人小计', width: 130 },
 ]
 const BILL_SI_UNIT_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '姓名', title: '姓名', width: 110 },
   { colKey: '部门', title: '部门', width: 120 },
-  { colKey: '基数', title: '基数', width: 110, align: 'right' as const },
-  { colKey: '养老单位', title: '养老单位', width: 120, align: 'right' as const },
-  { colKey: '医疗+生育单位', title: '医疗+生育单位', width: 150, align: 'right' as const },
-  { colKey: '工伤单位', title: '工伤单位', width: 120, align: 'right' as const },
-  { colKey: '失业单位', title: '失业单位', width: 120, align: 'right' as const },
-  { colKey: '单位小计', title: '单位小计', width: 130, align: 'right' as const },
+  { colKey: '基数', title: '基数', width: 110 },
+  { colKey: '养老单位', title: '养老单位', width: 120 },
+  { colKey: '医疗+生育单位', title: '医疗+生育单位', width: 150 },
+  { colKey: '工伤单位', title: '工伤单位', width: 120 },
+  { colKey: '失业单位', title: '失业单位', width: 120 },
+  { colKey: '单位小计', title: '单位小计', width: 130 },
 ]
 const BILL_PF_PERSONAL_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '账号', title: '个人账号', width: 150 },
   { colKey: '姓名', title: '姓名', width: 110 },
   { colKey: '部门', title: '部门', width: 130 },
-  { colKey: '缴存基数', title: '缴存基数(元)', width: 140, align: 'right' as const },
-  { colKey: '个人缴存', title: '个人缴存额(元)', width: 150, align: 'right' as const },
+  { colKey: '缴存基数', title: '缴存基数(元)', width: 140 },
+  { colKey: '个人缴存', title: '个人缴存额(元)', width: 150 },
 ]
 const BILL_PF_UNIT_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '账号', title: '个人账号', width: 150 },
   { colKey: '姓名', title: '姓名', width: 110 },
   { colKey: '部门', title: '部门', width: 130 },
-  { colKey: '缴存基数', title: '缴存基数(元)', width: 140, align: 'right' as const },
-  { colKey: '单位缴存', title: '单位缴存额(元)', width: 150, align: 'right' as const },
+  { colKey: '缴存基数', title: '缴存基数(元)', width: 140 },
+  { colKey: '单位缴存', title: '单位缴存额(元)', width: 150 },
 ]
 /** 汇总数据：人数 / 个人 / 单位 / 合计（社保与公积金同构）。 */
 const BILL_SUMMARY_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '部门', title: '部门', width: 180 },
-  { colKey: '人数', title: '人数', width: 100, align: 'right' as const },
-  { colKey: '个人金额', title: '个人金额', width: 170, align: 'right' as const },
-  { colKey: '单位金额', title: '单位金额', width: 170, align: 'right' as const },
-  { colKey: '合计', title: '合计', width: 150, align: 'right' as const },
+  { colKey: '人数', title: '人数', width: 100 },
+  { colKey: '个人金额', title: '个人金额', width: 170 },
+  { colKey: '单位金额', title: '单位金额', width: 170 },
+  { colKey: '合计', title: '合计', width: 150 },
 ]
 const SI_PERSONAL_MONEY = ['养老个人', '医疗个人', '大额医疗', '失业个人', '个人小计']
 const SI_UNIT_MONEY = ['养老单位', '医疗+生育单位', '工伤单位', '失业单位', '单位小计']
@@ -2317,7 +2517,7 @@ const billSummaryRows = computed(() => {
 const billSubjectFoot = computed(() => {
   if (!billSubjectRows.value.length) return []
   const people = billDetailKind.value === 'social' ? siBillPeople.value : billPeopleCount.value
-  const label = `合计（${people} 人 · ${billSubjectRows.value.length} 条）`
+  const label = `合计 ${people} 人`
   if (billDetailKind.value === 'fund') {
     const isUnit = billDetailTab.value === 'unit'
     const key = isUnit ? '单位缴存' : '个人缴存'
@@ -2343,7 +2543,7 @@ const billSummaryFoot = computed(() => {
   const p = rows.reduce((n, r) => n + siCents(r.个人金额), 0)
   const u = rows.reduce((n, r) => n + siCents(r.单位金额), 0)
   const people = rows.reduce((n, r) => n + (Number(r.人数) || 0), 0)
-  return [{ id: 'foot', 序号: '合计', 部门: '', 人数: people,
+  return [{ id: 'foot', 序号: `合计 ${people} 人`, 部门: '', 人数: people,
     个人金额: siFmt(p), 单位金额: siFmt(u), 合计: siFmt(p + u) }]
 })
 
@@ -2495,6 +2695,10 @@ onUnmounted(() => {
 .hr-si-status--active { color: #00a870; }
 .hr-si-status--ended { color: #ed7b2f; }
 .hr-si-status--paused { color: var(--td-text-color-primary, #1d2129); }
+/* 补退类型 / 记录类型：正常绿、补缴/退费/调基/异常红（第 58 轮） */
+.hr-si-adjust { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hr-si-adjust--ok { color: #00a870; }
+.hr-si-adjust--bad { color: #e34d59; }
 
 /* 第 57 轮：账单三标签弹窗 */
 .hr-bill-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
@@ -2525,6 +2729,13 @@ onUnmounted(() => {
 }
 .hr-bill-summary-table, .hr-bill-item-table { flex: 0 0 auto; }
 .hr-bill-item-table { flex: 1; min-height: 0; }
+/* 第 58 轮：滚动条只占右侧 gutter，绝不覆盖表头/合计行的文字；
+   表头 sticky（由 sticky-header 提供），合计行粘底。 */
+.hr-bill-table-wrap .t-table__content { scrollbar-gutter: stable; }
+.hr-bill-table-wrap .t-table__content::-webkit-scrollbar { width: 8px; height: 8px; }
+.hr-bill-table-wrap tfoot { position: sticky; bottom: 0; z-index: 2; }
+.hr-bill-table-wrap tfoot td { background: var(--td-bg-color-secondarycontainer); }
+.hr-bill-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .hr-bill-month-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
 .hr-bill-confirm { padding: 8px 0; line-height: 1.7; color: var(--td-text-color-primary); }
 </style>

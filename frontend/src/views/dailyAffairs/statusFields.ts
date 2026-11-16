@@ -76,6 +76,17 @@ export function isHrStatusName(name: unknown): boolean {
   return isOneOf(name, HR_STATUS_NAMES)
 }
 
+/**
+ * 人事模块里「可自由配置」的状态字段（第 58 轮）。
+ *
+ * 补退类型 / 记录类型由申报文件写入，但用户有权改名、改类型、停用与删除；
+ * 加锁只保留给真正的系统列（在职状态 / 参保状态 / 账单状态等）。
+ */
+const HR_EDITABLE_STATUS_NAMES = ['补退类型', '记录类型']
+export function isHrEditableStatusName(name: unknown): boolean {
+  return isOneOf(name, HR_EDITABLE_STATUS_NAMES)
+}
+
 /** 是否任一系统状态列（列表派生列替换/去重时用）。 */
 export function isStatusFieldName(name: unknown): boolean {
   return isCertStatusName(name) || isExtractStatusName(name)
@@ -130,6 +141,9 @@ export function statusFieldSpecsOf(scope: string, categoryName?: string): Status
  */
 export function isLockedStatusField(scope: string, categoryName: string | undefined, name: unknown): boolean {
   const s = String(scope || '').trim()
+  // 第 58 轮：社保「补退类型 / 记录类型」是普通状态字段，允许用户改名/改类型/停用/删除，
+  // 即使未来它们被并入某个状态名单，也必须显式豁免（图 5 要求去掉 🔒）。
+  if (HR_SCOPES.has(s) && isHrEditableStatusName(name)) return false
   if (isExtractStatusName(name)) return true
   if (FLEET_ARCHIVE_SCOPES.has(s) && isCertStatusName(name)) return true
   if (s === 'energy' && BILL_CATEGORIES.has(String(categoryName || '').trim()) && isBillStatusName(name)) return true

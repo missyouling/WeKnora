@@ -317,6 +317,11 @@ export function importSocialRecords(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/social/records/import`, formData) as Promise<any>
 }
 
+/** 第 58 轮：正常 / 异常记录抽屉保存（金额与比例受控更新，合计由后端重算）。 */
+export function updateSocialRecord(id: string, payload: Record<string, any>): Promise<any> {
+  return put(`${BASE}/social/records/${encodeURIComponent(String(id))}`, payload) as Promise<any>
+}
+
 export function listSocialBills(): Promise<any> {
   return get(`${BASE}/social/bills`) as Promise<any>
 }

@@ -81,6 +81,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrMigrateRosterSubs57(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR roster subs failed: %v", err)
 	}
+	// 第 58 轮：劳动合同字段配置拆成「劳动合同 / 劳务合同」双胶囊（幂等）
+	if err := h.hrMigrateContractSubs58(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR contract subs failed: %v", err)
+	}
 	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
 	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR roster ref subs failed: %v", err)
@@ -119,6 +123,13 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 		logger.Warnf(ctx, "persist HR dept authority failed: %v", err)
 	} else if n > 0 {
 		logger.Infof(ctx, "HR dept authority persisted on boot: %d rows", n)
+	}
+	// 第 58 轮：劳务人员不缴社保公积金，清掉系统自动生成的空占位（幂等，失败只告警）。
+	// 必须放在全部种子之后：种子会补真实金额行，先清理反而白跑一次。
+	if n, err := h.hrPurgeLaborServicePlaceholdersAllTenants(ctx); err != nil {
+		logger.Warnf(ctx, "purge HR labor-service placeholders failed: %v", err)
+	} else if n > 0 {
+		logger.Infof(ctx, "purged HR labor-service placeholders on boot: %d rows", n)
 	}
 	return h
 }
@@ -270,9 +281,9 @@ func hrRosterSeedSubs() []types.FleetCategorySub {
 	return hrRosterSeedSubs52()
 }
 
-// hrContractSeedSubs 第 52 轮：劳动合同 8 核心字段 + 6 乙方引用 + 3 甲方引用。
+// hrContractSeedSubs 第 58 轮：劳动合同 / 劳务合同双胶囊，公共字段两组各一份。
 func hrContractSeedSubs() []types.FleetCategorySub {
-	return hrContractSeedSubs52()
+	return hrContractSeedSubs58()
 }
 
 // hrResignSubs 第 52 轮：离职管理 9 核心字段 + 5 花名册引用字段。
@@ -302,15 +313,24 @@ func hrBackfillRosterGroups(cats []*types.FleetCategory) bool {
 		case "hr-resign":
 			seed = hrResignSeedSubs()
 		case "hr-contract":
-			legacy, seed = hrLegacyContractFields, hrContractSeedSubs52()
+			// 第 58 轮：合同分类拆成「劳动合同 / 劳务合同」双胶囊，按 (group,name) 回填。
+			legacy, seed = hrLegacyContractFields, hrContractSeedSubs58()
 		default:
 			continue
 		}
 		byName := make(map[string]types.FleetCategorySub, len(seed))
+		byKey := make(map[string]types.FleetCategorySub, len(seed))
 		rank := make(map[string]int, len(seed))
 		for i, s := range seed {
-			byName[s.Name] = s
-			rank[s.Name] = i
+			// 合同双胶囊下两组字段同名，byName 只作为「没有 group 时的兜底」，
+			// 首次出现即劳动合同组，符合存量单胶囊配置的默认归属。
+			if _, ok := byName[s.Name]; !ok {
+				byName[s.Name] = s
+			}
+			byKey[s.Group+"\x00"+s.Name] = s
+			if _, ok := rank[s.Name]; !ok {
+				rank[s.Name] = i
+			}
 		}
 		subs := c.Subs
 		kept := make([]types.FleetCategorySub, 0, len(subs))
@@ -326,7 +346,13 @@ func hrBackfillRosterGroups(cats []*types.FleetCategory) bool {
 				changed = true
 				continue
 			}
-			if want, ok := byName[name]; ok {
+			// 双胶囊分类（花名册在职/离职、合同劳动/劳务）字段会重名，
+			// 必须 (group,name) 命中优先；group 为空或旧分组名时退回 byName。
+			want, ok := byKey[subs[i].Group+"\x00"+name]
+			if !ok {
+				want, ok = byName[name]
+			}
+			if ok {
 				// 按字段契约回填 group / 类型 / 默认表头 / 内置锁 / 引用来源。
 				// 用户自改的显示名（label）、启用状态与顺序不覆盖。
 				if subs[i].Group != want.Group || subs[i].GroupLabel != want.GroupLabel {
@@ -626,6 +652,7 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/social/receipts", h.ListSIReceipts)
 	r.POST("/hr/social/receipts/import", h.ImportSIReceipts)
 	r.GET("/hr/social/records", h.ListSIRecords)
+	r.PUT("/hr/social/records/:id", h.UpdateSIRecord)
 	r.POST("/hr/social/records/import", h.ImportSIRecords)
 	r.GET("/hr/social/bills", h.ListSIBills)
 	r.POST("/hr/social/bills", h.CreateSIBill)

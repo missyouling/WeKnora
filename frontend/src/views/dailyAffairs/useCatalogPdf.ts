@@ -106,6 +106,9 @@ export async function generateCatalogPdf(opts: {
   const surface = await createPdfSurface({
     geom: { width: PAGE_W, height: PAGE_H, margin: MARGIN },
     startY: PAGE_H - MARGIN - TITLE_SIZE - 4,
+    // 第 58 轮：底部安全区从 22pt 提到 44pt —— 清单 76/242 行必须分页，
+    // 且任何数据行都不允许侵入页脚（页脚画在 margin 下方 8pt 处）。
+    bottomReserve: 44,
     footerText: (n) => `${title} · 第 ${n} 页`,
     onNewPage: (s) => {
       s.y = PAGE_H - MARGIN - HEADER_HEIGHT

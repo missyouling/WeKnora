@@ -109,6 +109,29 @@ test('onNewPage 钩子在翻页后执行，能改写续页游标', async () => {
   assert.equal(s.y, 842 - 40 - 50)
 })
 
+test('ensure 必须读 surface.y：调用方直接下移游标时也要翻页（第 58 轮）', async () => {
+  // 真实调用方（generateCatalogPdf）的画法是 `surface.ensure(rh)` 后 `surface.y -= rh`，
+  // 而 ensure 之前读的是闭包里的 y —— 只在 newPage 时同步，于是永远以为还在页顶，
+  // 76 行只渲染出 21 行、页脚被画进第 21 行单元格（真机图 8）。
+  const s = await makeSurface({ startY: 500 })
+  let pages = 1
+  for (let i = 0; i < 40; i++) {
+    s.ensure(22)
+    s.y -= 22
+    pages = Math.max(pages, s.pageNo)
+  }
+  assert.ok(pages > 1, `游标下移后必须翻页，实际只有 ${pages} 页`)
+  assert.ok(s.y > 0, '翻页后游标不应掉到页面外')
+})
+
+test('ensure 翻页后 finish 时 drawFooter 落在新页（页码跟着走）', async () => {
+  const s = await makeSurface({ startY: 80, footerText: (n: number) => `p${n}` })
+  s.ensure(100)          // 翻到第 2 页
+  s.y -= 30
+  s.drawFooter()
+  assert.ok(fakePages(s.doc)[1].ops.some((o: string) => o === 'text:p2'), '页脚必须画在第 2 页且页码为 2')
+})
+
 test('fitHeaderFontSize：超宽表头逐档缩小且不丢字', async () => {
   const measure = (t: string, sz: number) => t.length * sz * 0.55
   // 10 个字 × 10pt × 0.55 = 55pt < 60pt 放得下；要真正超宽必须把宽度压到 30pt

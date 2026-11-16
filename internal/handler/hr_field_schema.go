@@ -672,15 +672,25 @@ func hrTemplateNotes(module string) []string {
 }
 
 func hrTemplateSpecOf(module string) hrTemplateSpec {
+	return hrTemplateSpecOfWithHeaders(module, hrTemplateHeaders(module))
+}
+
+// hrTemplateSpecOfWithHeaders 用外部表头生成模板描述（第 58 轮：动态表头入口）。
+//
+// 说明 Sheet 的分组清单按实际表头过滤：用户停用 / 删除的字段不会再出现在说明里。
+func hrTemplateSpecOfWithHeaders(module string, headers []string) hrTemplateSpec {
 	if module != hrModuleResign && module != hrModuleContract && module != hrModuleFund && module != hrModuleSocial {
 		module = hrModuleRoster
 	}
-	headers := hrTemplateHeaders(module)
 	spec := hrTemplateSpec{
 		Module:  module,
 		Name:    hrTemplateFileName(module),
 		Headers: headers,
 		Notes:   hrTemplateNotes(module),
+	}
+	inHeader := map[string]bool{}
+	for _, h := range headers {
+		inHeader[h] = true
 	}
 	// 分组清单（「说明」Sheet）
 	if module == hrModuleRoster {
@@ -689,6 +699,9 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 			for _, name := range g.Fields {
 				// 与表头一致：引用字段不进模板说明
 				if hrFieldIsRef("roster", name) {
+					continue
+				}
+				if !inHeader[name] {
 					continue
 				}
 				fields = append(fields, name)
@@ -715,10 +728,6 @@ func hrTemplateSpecOf(module string) hrTemplateSpec {
 		}{groupName, headers})
 	}
 	// 枚举列（只列出该模板表头里真实存在的枚举字段）
-	inHeader := map[string]bool{}
-	for _, h := range headers {
-		inHeader[h] = true
-	}
 	order := []string{
 		"招聘渠道", "试用期", "证件类型", "性别", "是否已婚", "民族", "政治面貌",
 		"户口性质", "服装尺寸", "紧急联系人关系", "最高学历", "银行名称",

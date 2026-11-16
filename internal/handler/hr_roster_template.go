@@ -11,6 +11,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"github.com/xuri/excelize/v2"
 
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // hrRosterTemplateNotes 保留历史填写说明文案常量（兼容既有单测与文档）。
@@ -55,14 +57,27 @@ var hrRosterTemplateSample = []string{
 
 // DownloadRosterTemplate 按 module 返回对应模块的专属 Excel 模板。
 // 不传 module 时保持历史行为（花名册），确保旧链接不 404。
+//
+// 第 58 轮：表头改为「当前租户已保存的字段配置」动态生成，用户在字段设置里
+// 新增 / 改名 / 停用一列，下载下来的模板立刻跟着变；读不到分类时回退静态契约。
 func (h *HRHandler) DownloadRosterTemplate(c *gin.Context) {
 	module := strings.TrimSpace(c.Query("module"))
 	if module == "" {
 		module = hrModuleRoster
 	}
+	// 单测 / 无租户上下文时取 0，动态表头会因查不到分类而回退静态契约。
+	tid := int64(0)
+	ctx := context.Background()
+	if c.Request != nil {
+		ctx = c.Request.Context()
+		if v, ok := types.TenantIDFromContext(ctx); ok {
+			tid = int64(v)
+		}
+	}
+	headers := h.hrTemplateHeadersForModule(ctx, tid, module)
 	f := excelize.NewFile()
 	defer func() { _ = f.Close() }()
-	if err := hrWriteTemplate(f, module); err != nil {
+	if err := hrWriteTemplateWithHeaders(f, module, headers); err != nil {
 		c.Error(errors.NewInternalServerError("生成模板失败: " + err.Error()))
 		return
 	}

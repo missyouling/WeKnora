@@ -61,8 +61,18 @@ export function formatDate(v: unknown): string {
  * 按列名分派的单元格格式化：含「时间」输出到秒，含「日期」只输出年月日，
  * 其余原样返回（调用方负责 `—` 占位）。
  */
+/**
+ * 「带时间字样但语义是纯日期」的列：五险参保时间 / 出生日期 / 工作日期等。
+ *
+ * 这些值来自社保回盘 Excel（`2022-10-17 00:00:00`），直接走 formatDateTime
+ * 会在列表里拖一条 `00:00:00` 尾巴（第 58 轮图 5）。它们本质是日期，
+ * 统一只输出 `YYYY-MM-DD`。
+ */
+const DATE_ONLY_COL = /参保时间|出生日期|工作日期|参保日期|缴费起止|缴费起始|缴费终止/
+
 export function formatCellDateTime(colKey: string, v: unknown): string {
   const key = String(colKey || '')
+  if (DATE_ONLY_COL.test(key)) return formatDate(v)
   if (/时间/.test(key)) return formatDateTime(v)
   if (/日期/.test(key)) return formatDate(v)
   return v === null || v === undefined ? '' : String(v)

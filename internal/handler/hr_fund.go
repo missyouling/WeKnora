@@ -177,6 +177,8 @@ func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCoun
 		Where("tenant_id = ?", tid).Find(&employees).Error; err != nil {
 		return out
 	}
+	// 第 58 轮：劳务人员不缴公积金，待补录 / 待封存都不计数。
+	laborByID, laborByName, _ := h.hrLaborServiceIdentities(ctx, tid)
 	var records []HRPFRecord
 	_ = h.db.WithContext(ctx).Select("identity_number, personal_account, personal_base, status").
 		Where("tenant_id = ?", tid).Find(&records).Error
@@ -185,6 +187,9 @@ func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCoun
 		byID[normalizeIDNumber(r.IdentityNumber)] = r
 	}
 	for _, e := range employees {
+		if hrLaborServiceHit(laborByID, laborByName, e.IDNumber, e.Name) {
+			continue
+		}
 		r, ok := byID[normalizeIDNumber(e.IDNumber)]
 		if normalizeEmployeeStatus(e.Status) == "active" {
 			if !ok || strings.TrimSpace(r.PersonalAccount) == "" || r.PersonalBase <= 0 {
@@ -201,12 +206,16 @@ func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCoun
 }
 
 // hrFundPendingEmployees 在职但尚未录入公积金信息的员工。
+//
+// 第 58 轮：劳务人员不缴公积金，直接从「待补录」名单剔除 —— 列表的待补录虚拟行
+// 只由本函数产生（ListPFRecords 依赖它，不再二次过滤）。
 func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HREmployee {
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ?", tid).Order("employee_id ASC").Find(&employees).Error; err != nil {
 		return nil
 	}
+	laborByID, laborByName, _ := h.hrLaborServiceIdentities(ctx, tid)
 	var records []HRPFRecord
 	_ = h.db.WithContext(ctx).Select("identity_number, personal_account, personal_base").
 		Where("tenant_id = ?", tid).Find(&records).Error
@@ -219,6 +228,9 @@ func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HRE
 		if normalizeEmployeeStatus(e.Status) != "active" {
 			continue
 		}
+		if hrLaborServiceHit(laborByID, laborByName, e.IDNumber, e.Name) {
+			continue
+		}
 		r, ok := byID[normalizeIDNumber(e.IDNumber)]
 		if ok && strings.TrimSpace(r.PersonalAccount) != "" && r.PersonalBase > 0 {
 			continue
@@ -229,12 +241,15 @@ func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HRE
 }
 
 // hrFundToSealEmployees 已离职但公积金账户仍「正常」（或尚未建户）的员工。
+//
+// 第 58 轮：劳务人员同样不产生「待封存」虚拟行（ListPFRecords 依赖本函数）。
 func (h *HRHandler) hrFundToSealEmployees(ctx context.Context, tid int64) []HREmployee {
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
 		Order("employee_id ASC").Find(&employees).Error; err != nil {
 		return nil
 	}
+	laborByID, laborByName, _ := h.hrLaborServiceIdentities(ctx, tid)
 	var records []HRPFRecord
 	_ = h.db.WithContext(ctx).Select("identity_number, status").
 		Where("tenant_id = ?", tid).Find(&records).Error
@@ -245,6 +260,9 @@ func (h *HRHandler) hrFundToSealEmployees(ctx context.Context, tid int64) []HREm
 	out := make([]HREmployee, 0)
 	for _, e := range employees {
 		if normalizeEmployeeStatus(e.Status) != "resigned" {
+			continue
+		}
+		if hrLaborServiceHit(laborByID, laborByName, e.IDNumber, e.Name) {
 			continue
 		}
 		st, ok := byID[normalizeIDNumber(e.IDNumber)]
@@ -531,6 +549,8 @@ func (h *HRHandler) ImportPFRecords(c *gin.Context) {
 	}
 	// 第 58 轮：导入后按身份证（回退姓名）把部门权威值落库
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
+	// 第 58 轮：劳务人员的空占位（无基数无金额）在本轮导入后一并清掉
+	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
 	hrOK(c, gin.H{
 		"inserted": stats["inserted"], "updated": stats["updated"],
 		"skipped": stats["skipped"], "total": stats["inserted"] + stats["updated"],

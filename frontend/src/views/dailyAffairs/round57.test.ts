@@ -31,7 +31,7 @@ test('singleCategory：FleetCertPanel 声明 prop 且在分类到位后自动展
   assert.match(panel, /singleCategory\?: boolean/)
   // 直出模式与单分类模式必须走同一个展开分支，否则设置抽屉首屏是空白
   const hits = panel.match(/directMode\.value \|\| props\.singleCategory/g) || []
-  assert.equal(hits.length, 2, 'onMounted 与 watch 两处都要覆盖 singleCategory')
+  assert.ok(hits.length >= 2, 'onMounted 与 watch 两处都要覆盖 singleCategory')
 })
 
 test('singleCategory：StandardSettingDrawer 透传，人事页按 true 启用', () => {

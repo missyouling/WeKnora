@@ -23,15 +23,8 @@
         <template #icon><t-icon name="refresh" size="15px" /></template>旋转
       </t-button>
       <span class="fpd-zoom">{{ Math.round(scale * 100) }}%</span>
-      <span class="fpd-spacer" />
-      <t-button variant="outline" size="small" @click="printFile">
-        <template #icon><t-icon name="print" size="15px" /></template>打印
-      </t-button>
-      <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
-        <template #icon><t-icon name="download" size="15px" /></template>下载
-      </t-button>
-      <!-- 第 57 轮：工具栏不再重复渲染「关闭」按钮 —— 关闭入口只保留标题栏右上角的 ×。
-           第 58 轮：补 Esc 关闭（键盘可访问性）。 -->
+      <!-- 第 58 轮：打印 / 下载 从顶部移到右下角 Footer，与能耗打印预览
+           （PrintPreviewDialog）保持同一套操作栏顺序与位置。 -->
     </div>
 
     <div class="fpd-stage" :class="{ 'is-image': kind === 'image' }"
@@ -42,6 +35,17 @@
       <iframe v-else-if="kind === 'pdf' && src" ref="pdfFrame" :src="src" class="fpd-pdf"
         :title="fileName" />
       <div v-else class="fpd-empty">暂无可预览的附件</div>
+    </div>
+
+    <!-- 底部操作栏：右下角 下载 → 打印 → 关闭（关闭为绿色主按钮） -->
+    <div class="fpd-footer">
+      <t-button variant="outline" size="small" :disabled="!src" @click="downloadFile">
+        <template #icon><t-icon name="download" size="15px" /></template>下载
+      </t-button>
+      <t-button variant="outline" size="small" :disabled="!src" @click="printFile">
+        <template #icon><t-icon name="print" size="15px" /></template>打印
+      </t-button>
+      <t-button theme="primary" size="small" @click="close">关闭</t-button>
     </div>
   </t-dialog>
 </template>
@@ -178,6 +182,16 @@ watch(() => props.visible, (v) => { if (v) resetView() })
   font-variant-numeric: tabular-nums;
 }
 .fpd-spacer { flex: 1; }
+/* 底部操作栏：与能耗打印预览同款（右下角、细上边框、8px 间距） */
+.fpd-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--td-component-stroke);
+}
 .fpd-stage {
   position: relative;
   display: flex;

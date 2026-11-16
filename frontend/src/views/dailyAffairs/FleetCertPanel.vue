@@ -985,6 +985,24 @@ watch(() => props.initialCategory, () => { autoOpenInitialCategory() })
 watch(() => groupItems.value.length, () => {
   if (directMode.value || props.singleCategory) openCategory(groupItems.value[0])
 })
+/**
+ * 第 58 轮：单分类模式（无顶部分类表）**常驻展开守卫**。
+ *
+ * 此前 commitEdit 保存后把 editingId 清空，只给 directMode 补开；
+ * 人事/社保/公积金改走 singleCategory 后没有补开链路，分类数量又没变
+ * （length watch 不触发），抽屉直接变成一片空白 —— 真机图 4。
+ *
+ * 这里做成「兜底闸门」：只要处于单分类模式，editingId 为空或在最新 subs 里
+ * 找不到对应分类，就立刻回退绑定到第一个分类。保存 / 取消 / 胶囊切换 /
+ * categories prop 更新（本地回写、父级重拉）都走同一条保护。
+ */
+watch(groupItems, (list) => {
+  if (!props.singleCategory) return
+  const first = list[0]
+  if (!first) return
+  if (editingId.value && list.some((it: any) => it.id === editingId.value)) return
+  startEdit(first)
+})
 
 // ---- 字段引用判断：删除字段前检查是否已被证照记录引用 ----
 const RECORD_TYPE_MAP: Record<string, string> = {
@@ -1771,10 +1789,12 @@ async function commitEdit() {
     // 第 55 轮：单分类直出模式保存后必须立即重新展开字段列表。
     // 旧实现清空 editingId 后没有任何补开链路（分类数不变 → length watch 不触发），
     // 抽屉就变成一片空白（图 5）。用保存后的最新 subs 重新 startEdit。
-    if (directMode.value) {
+    // 第 58 轮：singleCategory（人事/社保/公积金）与 direct 一样必须补开，
+    // 且优先按 id 命中刚保存的分类，命中不到再回退第一个。
+    if (directMode.value || props.singleCategory) {
       await nextTick()
-      const only = groupItems.value[0]
-      if (only) startEdit(only)
+      const target = groupItems.value.find((it: any) => it.id === item.id) || groupItems.value[0]
+      if (target) startEdit(target)
     }
     // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
     if (aiContext) {
