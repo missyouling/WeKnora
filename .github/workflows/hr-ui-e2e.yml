@@ -53,6 +53,8 @@ jobs:
 
       - name: 上传截图
         if: always()
+        # 自托管 runner 偶发到 GitHub 的 TLS 抖动，截图上传失败不应把门禁判红
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: hr-ui-shots

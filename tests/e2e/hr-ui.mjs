@@ -176,13 +176,13 @@ try {
   ok("3.4 公积金 pending_count 可读且已排除劳务", Number(fundData.pending_count) >= 0, String(fundData.pending_count));
 
   // 社保异常人数（KPI 卡片副文案「X 人状态异常」）
-  const kpi = await p.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll(".dash-kpi-card"));
-    const c = cards.find((x) => (x.innerText || "").includes("社保管理"));
-    const m = (c?.innerText || "").match(/(\d+)\s*人状态异常/);
-    return m ? Number(m[1]) : -1;
+  // 第 59 轮：卡片已弃用异常副文案，改为断言「只有条数、无异常字样」
+  const kpiCard = await p.evaluate(() => {
+    const c = Array.from(document.querySelectorAll(".dash-kpi-card"))
+      .find((x) => (x.innerText || "").includes("社保管理"));
+    return (c?.innerText || "").replace(/\s+/g, " ").trim();
   });
-  ok("3.5 社保异常人数可读（口径未被劳务污染）", kpi >= 0, String(kpi));
+  ok("3.5 社保卡片只有条数、无异常副文案", /\d+\s*条/.test(kpiCard) && !/状态异常/.test(kpiCard), kpiCard);
   await shot("d58c_06_contract_service");
 
   // ================= #8 动态导入模板 =================
