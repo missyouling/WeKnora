@@ -347,7 +347,7 @@ export const HR_FUND_DEFAULT_HEADERS: readonly string[] =
 
 export const HR_SOCI_RECEIPT_GROUP = '回盘表'
 export const HR_SOCI_NORMAL_GROUP = '正常记录'
-export const HR_SOCI_ABNORMAL_GROUP = '异常记录'
+export const HR_SOCI_ABNORMAL_GROUP = '补退记录'
 export const HR_SOCI_BILL_GROUP = '月度账单'
 
 /** 五个险种参保状态：系统内置状态 Tag 🔒（绿 / 橙 / 灰）。 */

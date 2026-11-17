@@ -48,7 +48,7 @@ test('KPI：第 57 轮恰好 4 张卡，顺序为 花名册→劳动合同→社
   assert.deepEqual(cards.map((c) => c.label),
     ['花名册', '劳动合同', '社保管理', '公积金管理'])
   // 花名册卡副文案体现离职人数（离职管理不再是独立卡片）
-  assert.equal(cards[0].sub, '离职 3 人')
+  assert.equal(cards[0].sub, '')
   // 卡里任何字段都不许带上被移除的两张汇总卡文案
   const text = JSON.stringify(cards)
   assert.equal(text.includes('已收录'), false)

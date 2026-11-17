@@ -12,8 +12,8 @@ import {
 } from './hrFieldSchema'
 import { statusFieldSpecsOf, isHrStatusName, isLockedStatusField } from './statusFields'
 
-test('四胶囊分组顺序 = 页面四标签顺序（回盘表 / 正常记录 / 异常记录 / 月度账单）', () => {
-  assert.deepEqual(HR_SOCI_VIEW_GROUPS, ['回盘表', '正常记录', '异常记录', '月度账单'])
+test('四胶囊分组顺序 = 页面四标签顺序（回盘表 / 正常记录 / 补退记录 / 月度账单）', () => {
+  assert.deepEqual(HR_SOCI_VIEW_GROUPS, ['回盘表', '正常记录', '补退记录', '月度账单'])
   assert.deepEqual(HR_SOCI_GROUPS.map((g) => g.key), HR_SOCI_VIEW_GROUPS)
   assert.deepEqual(HR_SOCI_GROUPS.map((g) => g.label), HR_SOCI_VIEW_GROUPS)
   assert.deepEqual(hrModuleGroups('social').map((g) => g.key), HR_SOCI_VIEW_GROUPS)
@@ -101,17 +101,17 @@ test('四标签列全集：无冻结列、无操作列，状态列走具名插�
   assert.equal(receipt.find((c) => c.colKey === '身份证号')!.dataType, 'text')
 })
 
-test('社保卡片主数字=月度账单条数，副文案统一「X 人状态异常」', () => {
+test('第 59 轮：社保卡片只有条数，不再有异常副文案', () => {
   const cards = buildHrKpiCards({
     'hr-social': 1, social_pending: 6, social_to_seal: 3,
   })
   const c = cards.find((x) => x.key === 'hr-social')!
   assert.equal(c!.value, '1')
   assert.equal(c!.unit, '条')
-  assert.equal(c!.sub, '9 人状态异常')
-  assert.equal(c!.subCls, 'is-warning')
+  assert.equal(c!.sub, '')
+  assert.equal(c!.subCls, '')
   const only = buildHrKpiCards({ 'hr-social': 2, social_to_seal: 2 }).find((x) => x.key === 'hr-social')!
-  assert.equal(only!.sub, '2 人状态异常')
+  assert.equal(only!.sub, '')
   const none = buildHrKpiCards({ 'hr-social': 0 }).find((x) => x.key === 'hr-social')!
   assert.equal(none!.sub, '')
 })

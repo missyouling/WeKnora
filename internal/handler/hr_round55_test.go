@@ -86,6 +86,12 @@ func TestRound55FundAlerts(t *testing.T) {
 	ctx := context.Background()
 	const tid = int64(0)
 
+	// 第 59 轮：预警默认关闭（虚拟待补录行也不追加）。本用例验证的是口径本身，
+	// 打开开关跑完再还原，避免影响其它用例。
+	prev := hrAlertsEnabled
+	hrAlertsEnabled = true
+	defer func() { hrAlertsEnabled = prev }()
+
 	// 1 在职有账号+基数（正常）；1 在职无账号（待补录）；1 在职有账号但基数 0（待补录）
 	require.NoError(t, db.Create(&HREmployee{
 		ID: "a1", TenantID: tid, Name: "在职甲", IDNumber: "510232198001010011", Status: "在职",

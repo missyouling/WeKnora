@@ -71,10 +71,36 @@ func hrContractFieldDefsOfGroup(group string) []hrFieldDef {
 }
 
 // hrContractSeedSubs58 劳动合同分类 = 劳动合同 17 字段 + 劳务合同 17 字段。
+//
+// 第 59 轮：每组「合同状态」必须恰好一个（builtin）。两组的公共字段各一份，
+// 若将来有人往公共字段里再加一个「合同状态」，这里按 (group, name) 去重兜底。
 func hrContractSeedSubs58() []types.FleetCategorySub {
 	defs := hrContractFieldDefsOfGroup(hrContractGroupLabor)
 	defs = append(defs, hrContractFieldDefsOfGroup(hrContractGroupService)...)
-	return hrSubsOfDefsByGroup(defs, true)
+	return hrDedupeContractStatus(hrSubsOfDefsByGroup(defs, true))
+}
+
+// hrDedupeContractStatus 同一胶囊内重复的「合同状态」只保留第一条（并锁定为内置）。
+//
+// 合同状态是系统派生字段（正常 / 未签订 / 即将到期 / 到期 / 已解除），
+// 同一胶囊里出现两份会让字段设置与列表表头各显示一次，且保存顺序不确定。
+func hrDedupeContractStatus(subs []types.FleetCategorySub) []types.FleetCategorySub {
+	out := make([]types.FleetCategorySub, 0, len(subs))
+	seen := make(map[string]bool, 2)
+	for _, s := range subs {
+		if strings.TrimSpace(s.Name) != "合同状态" {
+			out = append(out, s)
+			continue
+		}
+		key := strings.TrimSpace(s.Group)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		s.Builtin = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // hrMigrateContractSubs58 把劳动合同分类的 subs 扩展为「劳动合同 / 劳务合同」双胶囊。
@@ -157,6 +183,8 @@ func (h *HRHandler) hrMigrateContractSubs58(ctx context.Context) error {
 			}
 			next = append(next, sub)
 		}
+		// 第 59 轮：同一胶囊只留一个「合同状态」。
+		next = hrDedupeContractStatus(next)
 		if reflect.DeepEqual(cats[i].Subs, next) {
 			continue
 		}

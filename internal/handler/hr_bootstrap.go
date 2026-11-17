@@ -67,25 +67,61 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 47 轮：组织机构三表
 	hrOrgAutoMigrate(db)
 	ctx := context.Background()
-	h.seedHRCategories(ctx)
+	// 第 59 轮：标记存放于 system_settings（迁移 000053）。单测的内存库没有跑迁移，
+	// 只在缺表时补建，绝不对既有表做结构变更。
+	if !db.Migrator().HasTable(&types.SystemSetting{}) {
+		if err := db.AutoMigrate(&types.SystemSetting{}); err != nil {
+			logger.Warnf(ctx, "AutoMigrate system_settings failed: %v", err)
+		}
+	}
+	// 第 59 轮：首次初始化完成标记。缺失 = 首次启动，跑完整迁移 + 业务种子；
+	// 存在 = 用户已经在用，只做幂等修复，绝不把删掉的字段 / 记录加回来。
+	seeded := h.hrInitialSeeded(ctx)
+	// 第 59 轮：旧胶囊名 → 新胶囊名（本身就是修复，不受首次初始化门禁限制）。
+	// 放在全部迁移之前：存量分类改名后，迁移函数里的「离职人员」判定才能命中旧配置。
+	if err := h.hrRenameGroups59(ctx); err != nil {
+		logger.Warnf(ctx, "rename HR field groups failed: %v", err)
+	}
+	h.seedHRCategories(ctx, !seeded)
 	h.seedHRPFSettings(ctx)
-	// 第 54 轮：公积金字段配置重建为网厅 18 字段（幂等；旧 10 字段 merge 后会残留）
-	if err := h.hrMigrateFundSubs(ctx); err != nil {
-		logger.Warnf(ctx, "migrate HR fund subs failed: %v", err)
-	}
-	// 第 56 轮：社保字段配置重建为四胶囊 76 字段（旧 12 个静态 subs 会被清掉）
-	if err := h.hrMigrateSocialSubs(ctx); err != nil {
-		logger.Warnf(ctx, "migrate HR social subs failed: %v", err)
-	}
-	// 第 57 轮：花名册字段配置扩展为「在职管理 / 离职管理」双胶囊（幂等，只做一次）
-	if err := h.hrMigrateRosterSubs57(ctx); err != nil {
-		logger.Warnf(ctx, "migrate HR roster subs failed: %v", err)
-	}
-	// 第 58 轮：劳动合同字段配置拆成「劳动合同 / 劳务合同」双胶囊（幂等）
-	if err := h.hrMigrateContractSubs58(ctx); err != nil {
-		logger.Warnf(ctx, "migrate HR contract subs failed: %v", err)
+	if seeded {
+		// 第 59 轮：安全修复 —— 清重复「合同状态」与串入正常/补退胶囊的参保状态字段。
+		if err := h.hrRepair58Once(ctx); err != nil {
+			logger.Warnf(ctx, "repair HR field config failed: %v", err)
+		}
+	} else {
+		initOK := true
+		step := func(err error, msg string) {
+			if err != nil {
+				logger.Warnf(ctx, msg, err)
+				initOK = false
+			}
+		}
+		// 第 54 轮：公积金字段配置重建为网厅 18 字段（幂等；旧 10 字段 merge 后会残留）
+		step(h.hrMigrateFundSubs(ctx), "migrate HR fund subs failed: %v")
+		// 第 56 轮：社保字段配置重建为四胶囊 76 字段（旧 12 个静态 subs 会被清掉）
+		step(h.hrMigrateSocialSubs(ctx), "migrate HR social subs failed: %v")
+		// 第 57 轮：花名册字段配置扩展为「在职人员 / 离职人员」双胶囊（幂等，只做一次）
+		step(h.hrMigrateRosterSubs57(ctx), "migrate HR roster subs failed: %v")
+		// 第 58 轮：劳动合同字段配置拆成「劳动合同 / 劳务合同」双胶囊（幂等）
+		step(h.hrMigrateContractSubs58(ctx), "migrate HR contract subs failed: %v")
+		// 第 54 轮：离职样例 + 公积金网厅 87 条（均幂等，失败只告警不阻断启动）。
+		step(h.hrSeedResignSamples(ctx), "seed HR resign samples failed: %v")
+		step(h.hrSeedNewHireSamples(ctx), "seed HR new hire samples failed: %v")
+		step(h.hrSeedFundRecords(ctx), "seed HR fund records failed: %v")
+		// 第 55 轮：真实网厅附件的月度账单（2025-05 汇缴清册回单）
+		step(h.hrSeedFundBills(ctx), "seed HR fund bills failed: %v")
+		// 第 56 轮：242 条回盘 + 375 正常 + 3 异常 + 75 人扣款明细 + 2026-11 账单
+		step(h.hrSeedSocialRound56(ctx), "seed HR social round56 failed: %v")
+		// 第 59 轮：首次初始化成功才置位；任一步失败则下次启动重试，不会被永久跳过。
+		if initOK {
+			if err := h.hrMarkInitialSeeded(ctx); err != nil {
+				logger.Warnf(ctx, "mark HR initial seed failed: %v", err)
+			}
+		}
 	}
 	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
+	// （只补既有字段的 source / 默认表头，不会新增字段）
 	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR roster ref subs failed: %v", err)
 	}
@@ -98,24 +134,6 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 列表响应层也会实时重算，这里落库是为了导出/详情等离线读取也有值。
 	if err := h.hrBackfillSeniority(ctx); err != nil {
 		logger.Warnf(ctx, "backfill HR seniority failed: %v", err)
-	}
-	// 第 54 轮：离职样例 + 公积金网厅 87 条（均幂等，失败只告警不阻断启动）。
-	if err := h.hrSeedResignSamples(ctx); err != nil {
-		logger.Warnf(ctx, "seed HR resign samples failed: %v", err)
-	}
-	if err := h.hrSeedNewHireSamples(ctx); err != nil {
-		logger.Warnf(ctx, "seed HR new hire samples failed: %v", err)
-	}
-	if err := h.hrSeedFundRecords(ctx); err != nil {
-		logger.Warnf(ctx, "seed HR fund records failed: %v", err)
-	}
-	// 第 55 轮：真实网厅附件的月度账单（2025-05 汇缴清册回单）
-	if err := h.hrSeedFundBills(ctx); err != nil {
-		logger.Warnf(ctx, "seed HR fund bills failed: %v", err)
-	}
-	// 第 56 轮：242 条回盘 + 375 正常 + 3 异常 + 75 人扣款明细 + 2026-11 账单
-	if err := h.hrSeedSocialRound56(ctx); err != nil {
-		logger.Warnf(ctx, "seed HR social round56 failed: %v", err)
 	}
 	// 第 58 轮：把花名册权威部门写回社保/公积金五张落库表（幂等，只在值变化时 UPDATE）。
 	// 必须放在全部种子之后：种子里的部门是导入文件原值，要以花名册为准覆盖一次。
@@ -515,9 +533,12 @@ func hrSeedTenantIDs(ctx context.Context, db *gorm.DB) []int64 {
 	return tenantIDs
 }
 
-// seedHRCategories 幂等写 3 个分类：按 (tenant_id, scope, name) 查，存在则只
+// seedHRCategories 幂等写 5 个分类：按 (tenant_id, scope, name) 查，存在则只
 // mergeCategorySubs 补缺失字段并 Save(&row)，绝不覆盖用户顺序/宽度/启停。
-func (h *HRHandler) seedHRCategories(ctx context.Context) {
+//
+// merge=false（第 59 轮：hr_initial_seeded 已置位）时，已存在的分类一律不动：
+// mergeCategorySubs 会按字段名补回用户删掉的字段，正是「删了又复活」的根源。
+func (h *HRHandler) seedHRCategories(ctx context.Context, merge bool) {
 	for _, tenantID := range hrSeedTenantIDs(ctx, h.db) {
 		for _, seed := range hrCategorySeeds() {
 			var rows []types.FleetCategory
@@ -543,6 +564,9 @@ func (h *HRHandler) seedHRCategories(ctx context.Context) {
 				if cerr := h.db.WithContext(ctx).Create(&cat).Error; cerr != nil {
 					logger.Warnf(ctx, "seed HR category %s/%s: create failed: %v", seed.Scope, seed.Name, cerr)
 				}
+				continue
+			}
+			if !merge {
 				continue
 			}
 			for i := range rows {

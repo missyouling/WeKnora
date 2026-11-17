@@ -164,6 +164,13 @@ func (h *HRHandler) ListPFRecords(c *gin.Context) {
 	})
 }
 
+// hrAlertsEnabled 第 59 轮：全员联动「异常统计 + 待补录/待封存虚拟行」总开关。
+//
+// 默认关闭：列表只展示真实落库数据，不再追加「待补录 / 待封存」虚拟行，
+// 各卡片与 stats 里的 pending / to_seal 计数恒为 0。函数本身保留：
+// 打开开关（单测或后续产品决策）即可恢复原有口径，不删表、不删数据。
+var hrAlertsEnabled = false
+
 // hrFundAlerts 全员联动提醒计数：待补录（在职无账号/基数 <= 0）、待封存（已离职但仍正常）。
 type hrFundAlertCounts struct {
 	pending int
@@ -172,6 +179,9 @@ type hrFundAlertCounts struct {
 
 func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCounts {
 	var out hrFundAlertCounts
+	if !hrAlertsEnabled {
+		return out
+	}
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).Select("id, name, status, id_number, department, position").
 		Where("tenant_id = ?", tid).Find(&employees).Error; err != nil {
@@ -209,7 +219,11 @@ func (h *HRHandler) hrFundAlerts(ctx context.Context, tid int64) hrFundAlertCoun
 //
 // 第 58 轮：劳务人员不缴公积金，直接从「待补录」名单剔除 —— 列表的待补录虚拟行
 // 只由本函数产生（ListPFRecords 依赖它，不再二次过滤）。
+// 第 59 轮：hrAlertsEnabled=false（默认）时返回空 —— ListPFRecords 不再追加虚拟行。
 func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HREmployee {
+	if !hrAlertsEnabled {
+		return nil
+	}
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ?", tid).Order("employee_id ASC").Find(&employees).Error; err != nil {
@@ -243,7 +257,11 @@ func (h *HRHandler) hrFundPendingEmployees(ctx context.Context, tid int64) []HRE
 // hrFundToSealEmployees 已离职但公积金账户仍「正常」（或尚未建户）的员工。
 //
 // 第 58 轮：劳务人员同样不产生「待封存」虚拟行（ListPFRecords 依赖本函数）。
+// 第 59 轮：hrAlertsEnabled=false（默认）时返回空。
 func (h *HRHandler) hrFundToSealEmployees(ctx context.Context, tid int64) []HREmployee {
+	if !hrAlertsEnabled {
+		return nil
+	}
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
 		Order("employee_id ASC").Find(&employees).Error; err != nil {

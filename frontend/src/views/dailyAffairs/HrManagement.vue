@@ -27,8 +27,8 @@
         class="hr-subview-bar" data-hr-subview-bar>
         <t-radio-group v-if="activeTab === 'hr-roster'" v-model="rosterStatusView" size="small"
           @change="onRosterViewChange">
-          <t-radio-button value="在职">在职管理</t-radio-button>
-          <t-radio-button value="离职">离职管理</t-radio-button>
+          <t-radio-button value="在职">在职人员</t-radio-button>
+          <t-radio-button value="离职">离职人员</t-radio-button>
         </t-radio-group>
         <t-radio-group v-else-if="activeTab === 'hr-contract'" v-model="contractSubView" size="small"
           @change="onContractSubViewChange">
@@ -43,7 +43,7 @@
         <t-radio-group v-else v-model="socialSubView" size="small" @change="onSocialSubViewChange">
           <t-radio-button value="receipt">回盘表</t-radio-button>
           <t-radio-button value="normal">正常记录</t-radio-button>
-          <t-radio-button value="abnormal">异常记录</t-radio-button>
+          <t-radio-button value="abnormal">补退记录</t-radio-button>
           <t-radio-button value="bills">月度账单</t-radio-button>
         </t-radio-group>
       </div>
@@ -87,6 +87,10 @@
           <t-select v-if="activeTab === 'hr-contract'" v-model="rosterDeptFilter"
             :options="rosterDeptSelectOptions" placeholder="部门" :clearable="false"
             class="hr-status-select" @change="onContractFilterChange" />
+          <!-- 第 59 轮：合同状态筛选（劳动合同默认「正常」，劳务合同默认「全部状态」） -->
+          <t-select v-if="activeTab === 'hr-contract'" v-model="contractStatusView"
+            :options="CONTRACT_STATUS_OPTIONS" placeholder="合同状态" :clearable="false"
+            class="hr-status-select" data-hr-contract-status @change="applyFilter" />
           <!-- 公积金：职工明细给账户状态；月度账单只留月份选择器 -->
           <t-select v-if="activeTab === 'hr-fund' && fundSubView === 'ledger'" v-model="fundStatusView"
             :options="FUND_STATUS_OPTIONS" placeholder="账户状态" :clearable="false"
@@ -108,18 +112,26 @@
               <template #icon><t-icon name="print" size="14px" /></template>
               打印清单
             </t-button>
-            <!-- 公积金：封存 / 启封 -->
+            <!-- 公积金：封存 / 启封（第 59 轮：按选中记录状态互斥显示 + 二次确认气泡） -->
             <template v-if="activeTab === 'hr-fund' && fundSubView === 'ledger'">
-              <t-button theme="default" variant="outline" size="small" :disabled="!selectedRowKeys.length"
-                @click="handleSeal(true)">
-                <template #icon><t-icon name="lock-on" size="14px" /></template>
-                封存
-              </t-button>
-              <t-button theme="default" variant="outline" size="small" :disabled="!selectedRowKeys.length"
-                @click="handleSeal(false)">
-                <template #icon><t-icon name="lock-off" size="14px" /></template>
-                启封
-              </t-button>
+              <t-popconfirm v-if="fundSealMode === 'seal'" theme="warning"
+                :content="`确定要封存选中的 ${selectedRowKeys.length} 名职工公积金账户吗？`"
+                @confirm="handleSeal(true)">
+                <t-button theme="default" variant="outline" size="small"
+                  :disabled="!selectedRowKeys.length" data-hr-fund-seal>
+                  <template #icon><t-icon name="lock-on" size="14px" /></template>
+                  封存
+                </t-button>
+              </t-popconfirm>
+              <t-popconfirm v-else-if="fundSealMode === 'unseal'" theme="warning"
+                :content="`确定要启封选中的 ${selectedRowKeys.length} 名职工公积金账户吗？`"
+                @confirm="handleSeal(false)">
+                <t-button theme="default" variant="outline" size="small"
+                  :disabled="!selectedRowKeys.length" data-hr-fund-unseal>
+                  <template #icon><t-icon name="lock-off" size="14px" /></template>
+                  启封
+                </t-button>
+              </t-popconfirm>
             </template>
             <!-- 第 57 轮职责边界（合并进花名册双标签）：
                  在职管理 = 在职池 → 只能「办理离职」；
@@ -600,9 +612,30 @@ const importModule = computed<HrModule>(() =>
 
 /** 组织机构单位名（合同公司 / 签约公司下拉数据源）。 */
 const rosterUnitOptions = ref<string[]>([])
-const contractStatusView = ref<string>('全部状态')
+const contractStatusView = ref<string>('正常')
+/** 第 59 轮：合同状态筛选项（劳动合同默认「正常」，劳务合同默认「全部状态」）。 */
+const CONTRACT_STATUS_OPTIONS = [
+  { label: '全部状态', value: '全部状态' }, { label: '正常', value: '正常' },
+  { label: '未签订', value: '未签订' }, { label: '即将到期', value: '即将到期' },
+  { label: '到期', value: '到期' }, { label: '已解除', value: '已解除' },
+]
 /** 第 54 轮：公积金账户状态筛选（全部 / 正常 / 封存 / 提取销户）。 */
-const fundStatusView = ref<string>('全部状态')
+const fundStatusView = ref<string>('正常')
+/**
+ * 第 59 轮：封存 / 启封互斥。
+ * 选中记录全是「正常」→ 只给封存；全是「封存」→ 只给启封；混合或其它状态都不给。
+ */
+const fundSealMode = computed<'seal' | 'unseal' | ''>(() => {
+  if (activeTab.value !== 'hr-fund' || fundSubView.value !== 'ledger') return ''
+  const picked = rows.value.filter((r) => selectedRowKeys.value.includes(String(r?.id ?? '')))
+  if (!picked.length) return ''
+  const statuses = new Set(picked.map((r) => String(r['账户状态'] ?? r.status ?? '').trim()))
+  if (statuses.size !== 1) return ''
+  const st = [...statuses][0]
+  if (st === '正常' || st === 'active') return 'seal'
+  if (st === '封存' || st === 'sealed') return 'unseal'
+  return ''
+})
 const FUND_STATUS_OPTIONS = [
   { label: '全部状态', value: '全部状态' },
   { label: '正常', value: '正常' },
@@ -743,20 +776,23 @@ const detailTitle = computed(() => {
  * 同时作为 PDF 页眉大标题与下载文件名。
  */
 const printTitle = computed(() => {
+  // 第 59 轮：统一清单标题口径（弹窗标题 / PDF 页眉 / 页脚 / 文件名同源）
   if (activeTab.value === 'hr-roster') {
-    return rosterStatusView.value === '离职' ? '离职员工管理清单' : '在职员工花名册清单'
+    return rosterStatusView.value === '离职' ? '花名册离职人员清单' : '花名册在职人员清单'
   }
-  if (activeTab.value === 'hr-contract') return '员工劳动合同清单'
+  if (activeTab.value === 'hr-contract') {
+    return contractSubView.value === 'service' ? '员工劳务合同清单' : '员工劳动合同清单'
+  }
   if (activeTab.value === 'hr-social') {
     return {
-      receipt: '社保人员增减申请回盘表清单',
+      receipt: '社保缴费回盘表清单',
       normal: '社保缴费正常记录清单',
-      abnormal: '社保缴费异常记录清单',
-      bills: '社保月度账单汇总清单',
-    }[socialSubView.value] || '社保管理清单'
+      abnormal: '社保缴费补退记录清单',
+      bills: '社保缴费月度账单清单',
+    }[socialSubView.value] || '社保缴费清单'
   }
   if (activeTab.value === 'hr-fund') {
-    return fundSubView.value === 'bills' ? '公积金月度账单汇总清单' : '公积金职工缴存明细清单'
+    return fundSubView.value === 'bills' ? '公积金缴存月度账单清单' : '公积金缴存职工明细清单'
   }
   return '人事管理清单'
 })
@@ -815,7 +851,7 @@ function subsOfTab(tab: HrTab): any[] {
   // 第 57 轮：花名册分类含「在职管理 48 + 离职管理 14」两个胶囊，
   // 当前子视图必须各取自己的 subs，否则在职表头会混进 14 个离职字段。
   if (tab === 'hr-roster') {
-    const group = rosterStatusView.value === '离职' ? '离职管理' : '在职管理'
+    const group = rosterStatusView.value === '离职' ? '离职人员' : '在职人员'
     const scoped = subs.filter((x: any) => String(x?.group || '') === group)
     if (scoped.length) return scoped
     // 兜底（后端 subs 未带 group 或加载失败）：按字段契约名单过滤
@@ -1252,9 +1288,10 @@ async function reloadStats() {
 async function switchTab(tab: HrTab) {
   headerReady.value = false
   activeTab.value = tab
-  // 第 57 轮：公积金默认「职工明细」（标签第一位），社保默认「月度账单」，
-  // 花名册默认「在职管理」。
-  fundSubView.value = 'ledger'
+  // 第 59 轮：公积金默认「月度账单」（标签第一位），社保默认「月度账单」，
+  // 花名册默认「在职人员」。
+  fundSubView.value = 'bills'
+  fundStatusView.value = '正常'
   socialSubView.value = 'bills'
   rosterStatusView.value = '在职'
   siDeptFilter.value = ''
@@ -1343,6 +1380,8 @@ async function onContractSubViewChange() {
   rows.value = []
   rosterDeptFilter.value = ''
   filterState.value = { keyword: '' }
+  // 劳动合同默认只看「正常」，劳务合同默认看全部状态（第 59 轮）
+  contractStatusView.value = contractSubView.value === 'service' ? '全部状态' : '正常'
   initColumns()
   await Promise.all([loadFieldConfig('hr-contract'), loadList('hr-contract')])
   headerReady.value = true
@@ -1579,6 +1618,8 @@ const orderedSubPairs = computed(() => {
     .map((s: any) => ({
       label: String(s.label || s.name || '').trim(),
       key: String(s.name || '').trim(),
+      // 第 59 轮：把胶囊 group 带上，抽屉才能只取当前标签的字段（图 3 字段重复根因）
+      group: String(s.group || '').trim(),
     }))
     .filter((p) => !!p.label)
 })
@@ -1623,8 +1664,24 @@ const drawerGroups = computed(() => {
     defs.find((d) => d.name === p.key) || defs.find((d) => d.name === p.label)
   let pairs = orderedSubPairs.value.filter((p) => !!defOf(p))
   // subs 未就绪（首帧 / 接口失败）时回退字段契约顺序，绝不让抽屉空掉
-  if (!pairs.length) pairs = defs.map((d) => ({ label: d.name, key: d.name }))
+  if (!pairs.length) pairs = defs.map((d) => ({ label: d.name, key: d.name, group: '' }))
   if (mod !== 'roster') pairs = pairs.filter((p) => !!defOf(p))
+  // 第 59 轮：抽屉只取「当前激活胶囊」的字段，并按键名去重。
+  // 劳动合同 / 劳务合同两组字段同名，旧实现把两组拼在一起 → 图 3 整套字段重复一遍。
+  const wantGroup = mod === 'contract'
+    ? (contractSubView.value === 'service' ? '劳务合同' : '劳动合同')
+    : mod === 'fund' ? (fundSubView.value === 'bills' ? HR_FUND_BILL_GROUP : HR_FUND_DETAIL_GROUP) : ''
+  if (wantGroup) {
+    const scoped = pairs.filter((p) => !p.group || p.group === wantGroup)
+    if (scoped.length) pairs = scoped
+  }
+  const seenPair = new Set<string>()
+  pairs = pairs.filter((p) => {
+    const k = p.label
+    if (seenPair.has(k)) return false
+    seenPair.add(k)
+    return true
+  })
 
   const groups: { key: string; label: string; fields: string[] }[] = []
   if (mod === 'roster') {
@@ -1990,18 +2047,8 @@ const exporting = ref(false)
 async function handlePrint() {
   const list = selectedRows.value.length ? selectedRows.value : rows.value
   if (!list.length) { MessagePlugin.warning('当前无数据可打印'); return }
-  // 第 57 轮：勾选月度账单行 → 打开三标签弹窗并打印当前标签页；
-  // 其它列表一律只打印**当前所选记录行**（绝不跑去打印某月账单的内部人员明细）。
-  if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') {
-    await openBillDetail(list[0])
-    await printBillDetail()
-    return
-  }
-  if (activeTab.value === 'hr-social' && socialSubView.value === 'bills') {
-    await openSIBillDetail(list[0])
-    await printBillDetail()
-    return
-  }
+  // 第 59 轮：列表批量栏的「打印清单」**只打印当前所选记录行 + 当前可见列**。
+  // 月度账单不再跳去打印内部人员明细 —— 那只能由弹窗内的「打印」触发（真机图 7）。
   printBusy.value = true
   try {
     const cols = visibleCols.value.map((c) => ({ key: c.colKey, label: c.title, value: (r: any) => c.value?.(r) ?? '' }))
@@ -2566,7 +2613,11 @@ async function printBillDetail() {
       value: (r: any) => String((r as any)[c.colKey] ?? ''),
     }))
     const rows = [...activeRows, ...footRows]
-    const title = `${billDetailTitle.value} · ${isSummary ? '汇总数据' : billDetailTab.value === 'unit' ? '单位明细' : '个人明细'}`
+    // 第 59 轮：账单打印标题带年月 ——「社保缴费2026年11月账单」/「公积金缴存2026年11月账单」
+    const ym = /(\d{4})-(\d{2})/.exec(String(billDetailTitle.value)) || []
+    const monthLabel = ym[1] ? `${ym[1]}年${Number(ym[2])}月账单` : '月度账单'
+    const billPrefix = billDetailKind.value === 'social' ? '社保缴费' : '公积金缴存'
+    const title = `${billPrefix}${monthLabel} · ${isSummary ? '汇总数据' : billDetailTab.value === 'unit' ? '单位明细' : '个人明细'}`
     billPrintData.value = await generateCatalogPdf({ title, columns, rows })
     if (billPrintUrl.value) URL.revokeObjectURL(billPrintUrl.value)
     billPrintUrl.value = URL.createObjectURL(

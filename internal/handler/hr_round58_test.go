@@ -108,6 +108,10 @@ func TestRound58ContractSubsMigration(t *testing.T) {
 func TestRound58LaborServiceExcludedFromAlerts(t *testing.T) {
 	db := hrRound58DB(t)
 	ctx := context.Background()
+	// 第 59 轮：预警默认关闭，本用例验证劳务人员豁免口径，先打开开关。
+	prev := hrAlertsEnabled
+	hrAlertsEnabled = true
+	defer func() { hrAlertsEnabled = prev }()
 	// e1 / e2 劳务，e3 劳动
 	require.NoError(t, db.Create(&HREmployee{
 		ID: "e1", TenantID: 1, Name: "张三", EmployeeID: "0001", Status: "active",

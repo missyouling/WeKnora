@@ -2303,11 +2303,9 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   &.cert-add-row--editing:hover { color: var(--td-text-color-secondary); background: var(--td-brand-color-light); }
 }
 
-/* 字段配置区 */
+/* 字段配置区：标题上方不再画横贯虚线（父块已有间距），只留 10px 呼吸位 */
 .field-config {
-  margin-top: 14px;
-  border-top: 1px dashed var(--td-component-stroke);
-  padding-top: 12px;
+  margin-top: 10px;
 
   .field-config-head {
     display: flex;

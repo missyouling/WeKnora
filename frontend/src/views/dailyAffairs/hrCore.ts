@@ -67,62 +67,21 @@ export function hrScopeOf(tab: string): HrTab {
  * 四张卡都是 `action:'type'` + `typeValue`，只有它们能高亮（`DashboardKpiGroup.isActive`）。
  */
 export function buildHrKpiCards(counts: Record<string, number> = {}) {
-  const resigned = Math.max(0, Number(counts.resigned || 0) || 0)
-  const unsigned = Math.max(0, Number(counts.contract_unsigned || 0) || 0)
-  const expiring = Math.max(0, Number(counts.contract_expiring || 0) || 0)
-  const expired = Math.max(0, Number(counts.contract_expired || 0) || 0)
-  const fundPending = Math.max(0, Number(counts.fund_pending || 0) || 0)
-  const fundToSeal = Math.max(0, Number(counts.fund_to_seal || 0) || 0)
-  const socialPending = Math.max(0, Number(counts.social_pending || 0) || 0)
-  const socialToSeal = Math.max(0, Number(counts.social_to_seal || 0) || 0)
-  return HR_TABS.map((t) => {
-    let sub = t.sub
-    let subCls = ''
-    if (t.key === 'hr-roster') {
-      // 第 57 轮：离职管理并入花名册，副文案直接给离职人数
-      if (resigned > 0) sub = `离职 ${resigned} 人`
-    }
-    if (t.key === 'hr-contract') {
-      // 第 55 轮：异常 = 未签订 + 即将到期 + 已到期，副文案只报总数（单一异常带类型后缀）。
-      const kinds = [unsigned > 0 ? '未签订' : '', expiring > 0 ? '即将到期' : '',
-        expired > 0 ? '到期' : ''].filter(Boolean)
-      const total = unsigned + expiring + expired
-      if (total > 0) {
-        sub = `${total} 份状态异常${kinds.length === 1 ? ` · ${kinds[0]}` : ''}`
-        subCls = 'is-warning'
-      } else {
-        sub = '无状态异常'
-      }
-    }
-    if (t.key === 'hr-fund') {
-      // 第 57 轮：与劳动合同统一口径，只报「X 人状态异常」（待补录 + 待封存合计）
-      const total = fundPending + fundToSeal
-      if (total > 0) {
-        sub = `${total} 人状态异常`
-        subCls = 'is-warning'
-      }
-    }
-    if (t.key === 'hr-social') {
-      // 第 57 轮：与劳动合同统一口径，只报「X 人状态异常」（待补录 + 待减员合计）
-      const total = socialPending + socialToSeal
-      if (total > 0) {
-        sub = `${total} 人状态异常`
-        subCls = 'is-warning'
-      }
-    }
-    return {
-      key: t.key,
-      label: t.label,
-      icon: t.icon,
-      value: String(Math.max(0, Number(counts[t.key] || 0) || 0)),
-      unit: '条',
-      sub,
-      subCls,
-      cls: '',
-      action: 'type',
-      typeValue: t.key,
-    }
-  })
+  // 第 59 轮：卡片只显示「名称 + 图标 + 记录条数」。
+  // 弃用全部异常副文案（离职 X 人 / X 份状态异常 / X 人状态异常）：
+  // 异常口径本身已停用（后端不再统计、不再塞待补录空行），副文案只会误导。
+  return HR_TABS.map((t) => ({
+    key: t.key,
+    label: t.label,
+    icon: t.icon,
+    value: String(Math.max(0, Number(counts[t.key] || 0) || 0)),
+    unit: '条',
+    sub: '',
+    subCls: '',
+    cls: '',
+    action: 'type' as const,
+    typeValue: t.key,
+  }))
 }
 
 // ---------------------------------------------------------------------------

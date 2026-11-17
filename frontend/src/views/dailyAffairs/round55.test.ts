@@ -13,29 +13,29 @@ import {
 } from './hrFieldSchema'
 import { statusFieldSpecsOf, isHrStatusName, isLockedStatusField } from './statusFields'
 
-test('合同卡片异常文案精简为「X 份状态异常」，单一异常带类型后缀', () => {
+test('第 59 轮：合同卡片只有条数（异常副文案已弃用）', () => {
   const cards = buildHrKpiCards({
     contract_unsigned: 2, contract_expiring: 1, contract_expired: 1,
   })
   const c = cards.find((x) => x.key === 'hr-contract')!
-  assert.equal(c!.sub, '4 份状态异常')
-  assert.equal(c!.subCls, 'is-warning')
+  assert.equal(c!.sub, '')
+  assert.equal(c!.subCls, '')
 
   const single = buildHrKpiCards({ contract_unsigned: 2 }).find((x) => x.key === 'hr-contract')!
-  assert.equal(single!.sub, '2 份状态异常 · 未签订')
+  assert.equal(single!.sub, '')
 
   const none = buildHrKpiCards({}).find((x) => x.key === 'hr-contract')!
-  assert.equal(none!.sub, '无状态异常')
+  assert.equal(none!.sub, '')
 })
 
-test('公积金卡片主数字=账单条数，副文案统一「X 人状态异常」', () => {
+test('第 59 轮：公积金卡片只有条数（异常副文案已弃用）', () => {
   const cards = buildHrKpiCards({ 'hr-fund': 3, fund_pending: 6, fund_to_seal: 3 })
   const c = cards.find((x) => x.key === 'hr-fund')!
   assert.equal(c!.value, '3')
-  assert.equal(c!.sub, '9 人状态异常')
-  assert.equal(c!.subCls, 'is-warning')
+  assert.equal(c!.sub, '')
+  assert.equal(c!.subCls, '')
   const only = buildHrKpiCards({ 'hr-fund': 1, fund_pending: 2 }).find((x) => x.key === 'hr-fund')!
-  assert.equal(only!.sub, '2 人状态异常')
+  assert.equal(only!.sub, '')
   const none = buildHrKpiCards({ 'hr-fund': 0 }).find((x) => x.key === 'hr-fund')!
   assert.equal(none!.sub, '')
 })

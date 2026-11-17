@@ -611,8 +611,14 @@ type hrSocialAlertCounts struct {
 	toSeal  int
 }
 
+// hrSocialAlerts 全员联动预警计数。
+//
+// 第 59 轮：hrAlertsEnabled=false（默认）时返回空 —— stats 里相关计数恒为 0。
 func (h *HRHandler) hrSocialAlerts(ctx context.Context, tid int64) hrSocialAlertCounts {
 	var out hrSocialAlertCounts
+	if !hrAlertsEnabled {
+		return out
+	}
 	var employees []HREmployee
 	if err := h.db.WithContext(ctx).
 		Select("id, name, status, id_number, social_insurance_number").

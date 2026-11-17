@@ -231,15 +231,18 @@ func hrFundBillFieldDefs() []hrFieldDef {
 // 社保管理四胶囊字段契约（第 56 轮）
 //
 // 与前端 hrFieldSchema.ts 的 HR_SOCI_GROUPS 一一对应：
-// 回盘表 28 字段 / 正常记录 16 / 异常记录 16 / 月度账单 16。
-// 正常与异常记录字段名完全相同，靠 Group 区分；hrSocialSeedSubs 用
+// 回盘表 28 字段 / 正常记录 16 / 补退记录 16 / 月度账单 16。
+// 正常与补退记录字段名完全相同，靠 Group 区分；hrSocialSeedSubs 用
 // (group, name) 复合键去重，避免第二组的 16 个字段被吞掉。
+//
+// 第 59 轮胶囊隔离：五险参保状态字段只属于「回盘表」，正常 / 补退记录胶囊
+// 由 hrSocialRecordFieldDefs 派生，永远不会包含这 5 个字段（见 hrIsSIStatusField）。
 // ---------------------------------------------------------------------------
 
 const (
 	hrSocReceiptGroup  = "回盘表"
 	hrSocNormalGroup   = "正常记录"
-	hrSocAbnormalGroup = "异常记录"
+	hrSocAbnormalGroup = "补退记录"
 	hrSocBillGroup     = "月度账单"
 )
 
@@ -282,7 +285,7 @@ func hrSocialReceiptFieldDefs() []hrFieldDef {
 }
 
 func hrSocialRecordFieldDefs(group string) []hrFieldDef {
-	return []hrFieldDef{
+	defs := []hrFieldDef{
 		hrF("账单月份", "text", hrHeader(), hrBuiltin(), hrGroup(group)),
 		hrF("费款所属期", "text", hrHeader(), hrGroup(group)),
 		hrF("个人编号", "text", hrHeader(), hrGroup(group)),
@@ -300,6 +303,16 @@ func hrSocialRecordFieldDefs(group string) []hrFieldDef {
 		hrF("记录类型", "text", hrGroup(group)),
 		hrF("源文件", "text", hrGroup(group)),
 	}
+	// 第 59 轮胶囊隔离：正常 / 补退记录只记录应缴金额，不承载参保状态。
+	// 这里再过滤一次，任何人往上面加参保状态字段都不会漏到这两个胶囊里。
+	out := make([]hrFieldDef, 0, len(defs))
+	for _, d := range defs {
+		if hrIsSIStatusField(d.Name) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func hrSocialBillFieldDefs() []hrFieldDef {
@@ -473,10 +486,10 @@ func hrRosterSeedSubs52() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrRosterFieldDefs())
 }
 
-// 花名册设置抽屉的两个胶囊分组（第 57 轮）。
+// 花名册设置抽屉的两个胶囊分组（第 57 轮，第 59 轮更名）。
 const (
-	hrRosterGroupActive   = "在职管理"
-	hrRosterGroupResigned = "离职管理"
+	hrRosterGroupActive   = "在职人员"
+	hrRosterGroupResigned = "离职人员"
 )
 
 // hrRosterSeedSubs57 花名册分类 = 在职 48 字段 + 离职 14 字段，两个胶囊分组。

@@ -45,7 +45,7 @@ const tab = (l) => p.evaluate((x) => {
 try {
   // ================= #1/#2 附件预览 + 离职证明上传确认 =================
   await card("花名册"); await p.waitForTimeout(5000);
-  await tab("离职管理"); await p.waitForTimeout(6500);
+  await tab("离职人员"); await p.waitForTimeout(6500);
   // 找到带「查看」的离职证明行，点行打开抽屉
   const proofRow = p.locator(".doc-list-scroll tbody tr").filter({ has: p.locator("a", { hasText: "查看" }) }).first();
   const hasProofRow = await proofRow.count();
@@ -216,7 +216,7 @@ try {
 
       const withField = [...origSubs, {
         name: TEST_FIELD, label: TEST_FIELD, enabled: true, is_default: true,
-        data_type: "text", width: 0, group: "在职管理", group_label: "在职管理",
+        data_type: "text", width: 0, group: "在职人员", group_label: "在职人员",
       }];
       const st1 = await put(withField);
       await p.waitForTimeout(800);

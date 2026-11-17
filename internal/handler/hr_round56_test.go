@@ -99,7 +99,7 @@ func TestRound56DeptSummaryMatchesFigure2(t *testing.T) {
 func TestRound56SocialFourGroupSubs(t *testing.T) {
 	subs := hrSocialSeedSubs()
 	require.Len(t, subs, 76, "28 + 16 + 16 + 16")
-	want := []string{"回盘表", "正常记录", "异常记录", "月度账单"}
+	want := []string{"回盘表", "正常记录", "补退记录", "月度账单"}
 	got := []string{}
 	for _, s := range subs {
 		if len(got) == 0 || got[len(got)-1] != s.GroupLabel {

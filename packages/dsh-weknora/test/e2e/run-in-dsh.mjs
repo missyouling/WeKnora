@@ -23,12 +23,24 @@
  *   DSH_PACKAGE_SPEC  npm spec for the harness (default `@deepseek-ai/dsh@latest`)
  *   DSH_INSTALL_DIR   where to keep that install (default `<tmp>/dsh-e2e-install`)
  *   DSH_E2E_KEEP_HOME keep the throwaway `DSH_HOME` for inspection
+ *
+ * Harness variance: pinned dsh releases (0.1.0-rc.x) create the Cordis HMR
+ * service on the fly so they can watch the user patch layer, while newer
+ * releases stopped watching it entirely. Because the HMR plugin's `^1.0.16`
+ * range floats to releases that no longer expose `registerConfig` (which the
+ * pinned boot requires), the watcher would fail the run with
+ * "user patch-layer watching requires the Cordis HMR service". A headless
+ * one-shot has nothing to watch, so for harnesses that do watch we insert a
+ * no-op `hmr` service into the profile patch: the boot finds it, skips its own
+ * HMR load, and `watchUserPatches` becomes a no-op. Nothing outside this
+ * throwaway profile is touched.
  */
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -85,6 +97,56 @@ async function resolveDsh() {
   return binary
 }
 
+/**
+ * Whether this harness watches the user patch layer, and therefore has to be
+ * given a Cordis `hmr` service before it boots. Pinned releases depend on
+ * `@deepseek-ai/cordis-plugin-hmr` for exactly that; newer releases ship no
+ * such dependency and never watch the profile patch file.
+ *
+ * The probe is a capability check, not a version check: it follows the dsh
+ * package's own resolution so it works for both npm's flat and pnpm's nested
+ * node_modules layouts.
+ */
+function harnessWatchesUserPatches() {
+  const probes = [join(installDir, 'package.json')]
+  if (process.env.DSH_BIN !== undefined) {
+    probes.push(join(dirname(process.env.DSH_BIN), '..', 'package.json'))
+  }
+  for (const from of probes) {
+    try {
+      const rootRequire = createRequire(from)
+      const dshRequire = createRequire(rootRequire.resolve('@deepseek-ai/dsh/package.json'))
+      dshRequire.resolve('@deepseek-ai/cordis-plugin-hmr')
+      return true
+    } catch {
+      // try the next probe
+    }
+  }
+  return false
+}
+
+/** File name (in the profile dir) and profile-relative specifier of the shim. */
+const HMR_SHIM_FILE = 'dsh-e2e-hmr-shim.mjs'
+const HMR_SHIM_NAME = `./${HMR_SHIM_FILE}`
+
+/**
+ * A Cordis plugin that provides the `hmr` service without watching anything.
+ *
+ * The pinned boot only uses it to watch the user patch layer; a headless
+ * one-shot has no such need, and the shipped HMR plugin's floating minor range
+ * no longer implements the `registerConfig` API that boot calls. Providing this
+ * service makes the boot skip its own HMR load and makes the watcher a no-op.
+ */
+const HMR_SHIM = `// Written by test/e2e/run-in-dsh.mjs: no-op Cordis HMR service for headless runs.
+export function apply(ctx) {
+  ctx.provide('hmr', {
+    registerConfig() {
+      return async () => {}
+    },
+  })
+}
+`
+
 /** The two rows that make dsh talk to the fake model instead of DeepSeek. */
 function modelPatchRows(modelUrl) {
   return [
@@ -120,13 +182,15 @@ function modelPatchRows(modelUrl) {
  * model, and the printed answer is grounded in them.
  */
 async function scenario(options) {
-  const { label, dsh, home, env, patch, prefix, weknora, autoScope = false } = options
+  const { label, dsh, home, env, patch, prefix, weknora, autoScope = false, hmrShim = false } = options
   const model = await startFakeModel({ searchTool: `${prefix}_search`, readTool: `${prefix}_read_document` })
   const requestsBefore = weknora.requests.length
   try {
+    const rows = [...patch, ...modelPatchRows(model.url)]
+    if (hmrShim) rows.unshift({ insert: [{ id: 'hmr', name: HMR_SHIM_NAME }] })
     await writeFile(
       join(home, 'profiles', 'headless', 'cordis.patch.yml'),
-      JSON.stringify([...patch, ...modelPatchRows(model.url)], null, 2),
+      JSON.stringify(rows, null, 2),
     )
 
     const dump = await run(dsh, ['--profile', 'headless', '--dump-config'], { env })
@@ -218,8 +282,19 @@ async function main() {
       'the bundle must join the profile layer list',
     )
 
+    // Pinned harnesses watch the user patch layer and need an HMR service;
+    // a headless run has nothing to watch, so hand them a no-op one.
+    const hmrShim = harnessWatchesUserPatches()
+    if (hmrShim) {
+      await writeFile(join(home, 'profiles', 'headless', HMR_SHIM_FILE), HMR_SHIM)
+      log('# harness watches user patches: injected a no-op hmr service')
+    }
+
     // A. The shipped bundle patch, configured only by environment variables.
-    await scenario({ label: 'A · shipped bundle defaults from env', dsh, home, env, weknora, patch: [], prefix: 'weknora' })
+    await scenario({
+      label: 'A · shipped bundle defaults from env',
+      dsh, home, env, weknora, patch: [], prefix: 'weknora', hmrShim,
+    })
 
     // B. A profile override, which also renames the tools.
     await scenario({
@@ -229,6 +304,7 @@ async function main() {
       env,
       weknora,
       prefix: 'kb',
+      hmrShim,
       patch: [{
         id: 'weknora',
         config: {
@@ -252,6 +328,7 @@ async function main() {
       weknora,
       prefix: 'weknora',
       autoScope: true,
+      hmrShim,
       patch: [{
         id: 'weknora',
         config: { baseUrl: weknora.url, apiKey: API_KEY },
