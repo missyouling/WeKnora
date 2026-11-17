@@ -46,6 +46,8 @@ func init() {
 	fleetCategoryScopes[hrScopeContract] = true
 	fleetCategoryScopes[hrScopeSocial] = true
 	fleetCategoryScopes[hrScopeFund] = true
+	// 第 61 轮：宿舍管理（五胶囊）
+	fleetCategoryScopes[hrScopeDorm] = true
 }
 
 // HRHandler 人事三模块处理器。
@@ -61,9 +63,13 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 		&HRPFSettings{}, &HRPFRecord{}, &HRPFBill{}, &HRPFBillItem{},
 		// 第 56 轮：社保四视图（回盘表 / 正常记录 / 异常记录 / 月度账单）
 		&HRSIReceipt{}, &HRSIRecord{}, &HRSIBill{}, &HRSIBillItem{},
+		// 第 61 轮：离职证明二进制入库（生产容器重建后仍可预览）
+		&HRResignProofFile{},
 	); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate HR tables failed: %v", err)
 	}
+	// 第 61 轮：宿舍管理四表（记录 / 账单 / 明细 / 表计读数）
+	hrDormAutoMigrate(db)
 	// 第 47 轮：组织机构三表
 	hrOrgAutoMigrate(db)
 	ctx := context.Background()
@@ -113,12 +119,19 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 		step(h.hrSeedFundBills(ctx), "seed HR fund bills failed: %v")
 		// 第 56 轮：242 条回盘 + 375 正常 + 3 异常 + 75 人扣款明细 + 2026-11 账单
 		step(h.hrSeedSocialRound56(ctx), "seed HR social round56 failed: %v")
+		// 第 61 轮：宿舍五标签样例（18 间宿舍 + 10 套公租房 + 住宿/资产/读数 + 2026-10 账单）
+		step(h.hrSeedDormIfNeeded(ctx), "seed HR dorm data failed: %v")
 		// 第 59 轮：首次初始化成功才置位；任一步失败则下次启动重试，不会被永久跳过。
 		if initOK {
 			if err := h.hrMarkInitialSeeded(ctx); err != nil {
 				logger.Warnf(ctx, "mark HR initial seed failed: %v", err)
 			}
 		}
+	}
+	// 第 61 轮：宿舍样例数据（18 间宿舍 + 10 套公租房 + 住宿/资产/读数 + 首月账单）。
+	// 独立于首次初始化门禁：老库升级后也要一次性补齐（内部按「已有记录即跳过」幂等）。
+	if err := h.hrSeedDormIfNeeded(ctx); err != nil {
+		logger.Warnf(ctx, "seed HR dorm data failed: %v", err)
 	}
 	// 第 60 轮：清理 subs 里「串组加锁状态字段」（劳动合同 2 个合同状态、
 	// 正常/补退记录里的五险参保状态与账单状态）。每次启动都跑，幂等且只删不增。
@@ -460,6 +473,11 @@ func hrCategorySeeds() []hrCategorySeed {
 			Scope: hrScopeFund, Name: "公积金管理", BuiltinKey: "hr-fund", SortOrder: 1,
 			Subs: hrFundSeedSubs(),
 		},
+		{
+			// 第 61 轮：宿舍管理五胶囊（宿舍档案 / 公租房档案 / 住宿记录 / 资产档案 / 费用信息）
+			Scope: hrScopeDorm, Name: "宿舍管理", BuiltinKey: "hr-dorm", SortOrder: 1,
+			Subs: hrDormSeedSubs(),
+		},
 	}
 }
 
@@ -655,6 +673,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/roster/template", h.DownloadRosterTemplate)
 	r.POST("/hr/roster/resign-proof", h.UploadResignProof)
 	r.GET("/hr/roster/resign-proof/:id", h.GetResignProof)
+	// 第 61 轮：无后缀预览路由（Nginx 静态正则不会劫持），前端统一走它
+	r.GET("/hr/roster/resign-proof-view", h.ViewResignProof)
 	// 第 52 轮：离职管理 / 劳动合同独立导入解析器
 	r.POST("/hr/resign/import", h.ImportResignModule)
 	r.POST("/hr/contract/import", h.ImportContractModule)
@@ -689,6 +709,21 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/social/bills", h.CreateSIBill)
 	r.GET("/hr/social/bills/:id", h.GetSIBill)
 	r.DELETE("/hr/social/bills/:id", h.DeleteSIBill)
+
+	// 宿舍管理（第 61 轮：五标签）
+	r.GET("/hr/dorm/records", h.ListDormRecords)
+	r.POST("/hr/dorm/records", h.CreateDormRecord)
+	r.PUT("/hr/dorm/records/:id", h.UpdateDormRecord)
+	r.DELETE("/hr/dorm/records/:id", h.DeleteDormRecord)
+	r.POST("/hr/dorm/records/import", h.ImportDormRecords)
+	r.GET("/hr/dorm/template", h.DormTemplate)
+	r.GET("/hr/dorm/stats", h.DormStats)
+	r.POST("/hr/dorm/stays/transfer", h.TransferDormStays)
+	r.POST("/hr/dorm/stays/checkout", h.CheckoutDormStays)
+	r.GET("/hr/dorm/bills", h.ListDormBills)
+	r.POST("/hr/dorm/bills", h.CreateDormBill)
+	r.GET("/hr/dorm/bills/:id", h.GetDormBill)
+	r.DELETE("/hr/dorm/bills/:id", h.DeleteDormBill)
 
 	// 公积金
 	r.GET("/hr/fund/settings", h.GetPFSettings)

@@ -477,9 +477,11 @@ import { mergeAiFieldSuggestions } from './aiFieldMerge'
 import { cacheSampleText } from './sampleTextCache'
 
 const props = withDefaults(defineProps<{
-  scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | ''
+  scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | 'hr-dorm' | ''
   kbId?: string
   initialCategory?: string
+  /** 第 61 轮：打开时优先选中的胶囊分组（宿舍五标签与设置抽屉六同步用）。 */
+  initialGroup?: string
   /** 第 52 轮：花名册字段配置取消胶囊分组（字段仍按 group 顺序连续展示）。 */
   hideGroupTabs?: boolean
   /** 跨模块引用候选来源 scope（离职/合同 → 'hr-roster'）。 */
@@ -559,6 +561,8 @@ const GROUPS: Record<string, { key: string; label: string; scope: string; groupI
   'hr-contract': [{ key: 'hr-contract', label: '劳动合同字段', scope: 'hr-contract', groupId: '' }],
   'hr-social': [{ key: 'hr-social', label: '社保账期字段', scope: 'hr-social', groupId: '' }],
   'hr-fund': [{ key: 'hr-fund', label: '公积金台账字段', scope: 'hr-fund', groupId: '' }],
+  // 第 61 轮：宿舍管理五胶囊（宿舍档案 / 公租房档案 / 住宿记录 / 资产档案 / 费用信息）
+  'hr-dorm': [{ key: 'hr-dorm', label: '宿舍管理字段', scope: 'hr-dorm', groupId: '' }],
 }
 
 // 分类名称列文案：统一走 BusinessScopeRegistry（新增业务只改 registry/<scope>.ts）
@@ -571,6 +575,7 @@ const HR_SCOPE_CATEGORY_LABEL: Record<string, string> = {
   'hr-contract': '劳动合同字段',
   'hr-social': '社保账期字段',
   'hr-fund': '公积金台账字段',
+  'hr-dorm': '宿舍管理字段',
 }
 // HR scope 未注册进 registry，四个 helper 全部局部兜底，
 // 彻底避免设置抽屉里 fallback 出「证照名称 / 证照类型 / 暂无证照类型」等字样。
@@ -580,6 +585,7 @@ const HR_SCOPE_NOUN: Record<string, string> = {
   'hr-contract': '劳动合同字段集',
   'hr-social': '社保账期字段集',
   'hr-fund': '公积金台账字段集',
+  'hr-dorm': '宿舍管理字段集',
 }
 function scopeName(scope: string) {
   return HR_SCOPE_CATEGORY_LABEL[scope] || getScope(scope)?.categoryLabel || '证照名称'
@@ -953,6 +959,8 @@ async function load() {
     // 直出 / 单分类精简模式：分类加载完直接展开唯一分类，
     // 用户看到的第一屏就是字段列表（第 57 轮 singleCategory 同样适用）。
     if (directMode.value || props.singleCategory) openCategory(groupItems.value[0])
+    // 第 61 轮：打开设置时优先停在调用方指定的胶囊（宿舍五标签六同步）
+    if (String(props.initialGroup || '').trim()) switchSubGroup(String(props.initialGroup).trim())
   } catch (e: any) {
     MessagePlugin.error(e?.message || '证照类型加载失败')
   }
@@ -1278,6 +1286,14 @@ function resetSubGroupSelection() {
   //
   // 真机踩过：光伏账单的 subs 第一条是「账单周期」（派生字段），于是默认胶囊落在
   // 「派生字段（不可提取）」上，20 个字段只露出 6 个示数列，用户以为账单概况丢了。
+  // 第 61 轮：带 initialGroup 时优先落到该胶囊（宿舍五标签从哪个标签打开设置就停在哪个胶囊）
+  const prefer = String(props.initialGroup || '').trim()
+  if (prefer && groups.some((g) => g.key === prefer)) {
+    activeSubGroup.value = prefer
+    openChildGroup.value = ''
+    openSubFieldName.value = ''
+    return
+  }
   activeSubGroup.value = groups.length
     ? [...groups].sort((a, b) => b.count - a.count)[0].key
     : ''

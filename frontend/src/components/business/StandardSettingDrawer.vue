@@ -15,6 +15,7 @@
          只隐藏分类表 / 新增分组，不再叠加 direct 的白底紧凑覆盖。 -->
     <div v-if="direct || singleCategory" :class="direct ? 'standard-settings-direct' : 'standard-settings-single'">
       <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+      :initial-group="initialGroup"
         :direct="direct" :single-category="singleCategory"
         :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
         :ref-sources="refSources"
@@ -23,6 +24,7 @@
     <t-tabs v-else v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+      :initial-group="initialGroup"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
           :ref-sources="refSources"
           @ai-guide="onAiGuide" @category-change="onCategoryChange" />
@@ -59,9 +61,11 @@ import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 const props = withDefaults(defineProps<{
   visible: boolean
   kbId?: string
-  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund'
+  scope?: '' | 'vehicle' | 'invoice' | 'driver' | 'maintain' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | 'hr-dorm'
   /** 打开时自动展开的分类名（能耗：当前卡片对应的分类）。 */
   initialCategory?: string
+  /** 第 61 轮：透传给 FleetCertPanel 的默认胶囊分组。 */
+  initialGroup?: string
   /**
    * 允许配置「提取规则」的分类白名单（空 = 全部允许）。
    *

@@ -353,6 +353,67 @@ try {
       ok("8.4 字段配置已还原", restored === 200, String(restored));
     }
   }
+
+  // ================= 第 61 轮：明细三段表 / 离职证明无后缀 / 宿舍五标签 =================
+  // 61.1 离职证明无后缀路由（历史种子文件动态生成 PNG，永不 404）
+  const legacyName = "daaf5f1e-0a4c-497f-a103-e15f8d20ff6d.png";
+  const proofRes = await c.request.get(`${API}/api/v1/fleet/hr/roster/resign-proof-view?id=${legacyName}`, { headers: HDR });
+  const proofBytes = await proofRes.body();
+  ok("61.1 无后缀离职证明接口 200 image/png",
+    proofRes.status() === 200 && /image\/png/.test(proofRes.headers()["content-type"] || "") && proofBytes.length > 1000,
+    JSON.stringify({ status: proofRes.status(), ct: proofRes.headers()["content-type"], size: proofBytes.length }));
+
+  // 61.2 社保月度账单明细：三段分离表，只有数据区可滚动
+  await card("社保管理"); await p.waitForTimeout(6000);
+  await tab("月度账单"); await p.waitForTimeout(6000);
+  const billRow2 = p.locator(".doc-list-scroll tbody tr").filter({ hasText: "2026-11" }).first();
+  if (await billRow2.count()) {
+    await billRow2.locator("td").nth(1).click();
+    await p.waitForTimeout(4200);
+    const table61 = await p.evaluate(() => {
+      const dlg = Array.from(document.querySelectorAll(".t-dialog")).filter((d) => d.offsetParent !== null)
+        .find((d) => d.querySelector(".detail-table"));
+      if (!dlg) return null;
+      const head = dlg.querySelector(".detail-table-head");
+      const body = dlg.querySelector(".detail-table-body");
+      const foot = dlg.querySelector(".detail-table-foot");
+      const cs = (el) => (el ? getComputedStyle(el) : null);
+      const ths = Array.from(dlg.querySelectorAll(".detail-table-head th")).map((x) => Math.round(x.getBoundingClientRect().width));
+      const tds = Array.from(dlg.querySelectorAll(".detail-table-body tbody tr:first-child td")).map((x) => Math.round(x.getBoundingClientRect().width));
+      return {
+        has: !!head && !!body && !!foot,
+        head: cs(head)?.overflowY, body: cs(body)?.overflowY, foot: cs(foot)?.overflowY,
+        max: cs(body)?.maxHeight, scroll: body.scrollHeight > body.clientHeight + 2,
+        aligned: ths.length === tds.length && ths.every((w, i) => Math.abs(w - tds[i]) <= 1),
+      };
+    });
+    R.table61 = table61;
+    ok("61.2 明细弹窗仅数据区滚动且列宽对齐",
+      !!table61 && table61.has && table61.head === "hidden" && table61.foot === "hidden"
+      && table61.body === "auto" && table61.max === "380px" && table61.scroll && table61.aligned,
+      JSON.stringify(table61));
+    await p.locator(".hr-bill-footer button", { hasText: "关闭" }).first().click();
+    await p.waitForTimeout(1200);
+  } else {
+    ok("61.2 明细弹窗仅数据区滚动且列宽对齐", false, "未找到 2026-11 账单行");
+  }
+
+  // 61.3 宿舍管理五标签 + 公租房合计
+  await card("宿舍管理"); await p.waitForTimeout(6500);
+  const dormTabs = await p.evaluate(() => Array.from(document.querySelectorAll(".hr-subview-bar .t-radio-button"))
+    .map((e) => (e.innerText || "").trim()));
+  ok("61.3 宿舍管理五标签", dormTabs.join("/") === "宿舍档案/公租房档案/住宿记录/资产档案/费用信息", dormTabs.join("/"));
+  await tab("公租房档案"); await p.waitForTimeout(5500);
+  const pub61 = await p.evaluate(() => ({
+    rows: Array.from(document.querySelectorAll(".doc-list-scroll tbody tr")).filter((r) => r.querySelectorAll("td").length > 3).length,
+    foot: (document.querySelector(".doc-list-scroll tfoot")?.innerText || "").replace(/\s+/g, " ").trim(),
+  }));
+  R.pub61 = pub61;
+  ok("61.4 公租房 10 套且合计 3,401 / 485.55 / 2,915 / 486 / 10,203",
+    pub61.rows === 10 && /3,401/.test(pub61.foot) && /485\.55/.test(pub61.foot)
+    && /2,915/.test(pub61.foot) && /486/.test(pub61.foot) && /10,203/.test(pub61.foot),
+    JSON.stringify(pub61));
+  await shot("d61_ci_dorm_public");
 } catch (e) { R.error = String(e).slice(0, 600); }
 
 const pass = R.checks.filter((x) => x.pass).length;

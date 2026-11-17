@@ -5,7 +5,6 @@
 package handler
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/logger"
 )
 
 const (
@@ -68,28 +68,18 @@ func (h *HRHandler) UploadResignProof(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("保存附件失败: " + err.Error()))
 		return
 	}
+	// 第 61 轮：磁盘 + PostgreSQL 双写。容器重建 / 换机后仍能预览，
+	// 不再出现「文件只在开发机、生产 404」。
+	if data, rerr := os.ReadFile(dst); rerr == nil {
+		if e := h.hrSaveProofFile(c.Request.Context(), id, hrResignProofContentType(ext), data); e != nil {
+			logger.Warnf(c.Request.Context(), "save resign proof to db failed: %v", e)
+		}
+	}
 	hrOK(c, gin.H{
 		"id":   id,
 		"name": fh.Filename,
 		"path": "/api/v1/fleet/hr/roster/resign-proof/" + id,
 	})
-}
-
-// GetResignProof GET /roster/resign-proof/:id —— 在线预览 / 下载附件。
-func (h *HRHandler) GetResignProof(c *gin.Context) {
-	id := c.Param("id")
-	if !hrResignProofIDRe.MatchString(id) {
-		c.Error(errors.NewBadRequestError("附件编号不合法"))
-		return
-	}
-	path := filepath.Join(hrResignProofDir, id)
-	if _, err := os.Stat(path); err != nil {
-		c.Error(errors.NewNotFoundError("附件不存在"))
-		return
-	}
-	c.Header("Content-Type", hrResignProofContentType(filepath.Ext(id)))
-	c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, id))
-	c.File(path)
 }
 
 // hrResignProofURL 把已存的 id 还原成可访问路径（供列表/详情使用）。

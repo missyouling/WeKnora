@@ -150,22 +150,7 @@
           </div>
         </div>
 
-        <!-- 宿舍管理（占位） -->
-        <div class="da-card da-card--placeholder" @click="onPlaceholder('宿舍管理')">
-          <div class="da-card-icon da-card-icon--dorm">
-            <t-icon name="home" size="24px" />
-          </div>
-          <div class="da-card-body">
-            <div class="da-card-title">
-              <span>宿舍管理</span>
-            </div>
-            <p class="da-card-desc">宿舍分配、入住退宿与设施报修管理</p>
-            <div class="da-card-footer">
-              <span class="da-card-link">敬请期待</span>
-              <t-icon name="chevron-right" size="16px" />
-            </div>
-          </div>
-        </div>
+        <!-- 第 61 轮：宿舍管理已并入「人事管理」第 5 张卡片，日常事务不再保留独立入口 -->
       </div>
     </div>
   </div>

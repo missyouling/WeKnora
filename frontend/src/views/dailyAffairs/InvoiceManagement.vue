@@ -305,16 +305,17 @@
             </div>
           </div>
           <div class="invoice-print-footer">
-            <t-button variant="outline" size="small" @click="printVisible = false">关闭</t-button>
+            <!-- 第 61 轮：底部只允许 1 个实心绿底主按钮 —— 关闭为主操作，下载/打印一律白底描边 -->
             <t-button v-if="printMode === 'catalog'" variant="outline" size="small" :disabled="!printUrl"
               @click="downloadCatalogPdf">
               <template #icon><t-icon name="download" size="14px" /></template>
               下载
             </t-button>
-            <t-button theme="primary" size="small" :loading="printBusy" :disabled="!printUrl" @click="doPrint">
+            <t-button variant="outline" size="small" :loading="printBusy" :disabled="!printUrl" @click="doPrint">
               <template #icon><t-icon name="print" size="14px" /></template>
               打印
             </t-button>
+            <t-button theme="primary" size="small" @click="printVisible = false">关闭</t-button>
           </div>
         </div>
       </div>

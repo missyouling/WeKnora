@@ -112,9 +112,13 @@ export function uploadResignProof(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/roster/resign-proof`, formData) as Promise<any>
 }
 
-/** 第 46 轮：在线预览 / 下载离职证明（走 blob，保留 token）。 */
+/**
+ * 第 46 轮：在线预览 / 下载离职证明（走 blob，保留 token）。
+ * 第 61 轮：改走**无后缀**路由 `resign-proof-view?id=...` —— 生产 Nginx 的
+ * 静态图片正则（\.png|\.jpg|\.pdf$）会把带扩展名的 API 路径当静态资源拦掉（404）。
+ */
 export function getResignProof(id: string): Promise<any> {
-  return getDown(`${BASE}/roster/resign-proof/${encodeURIComponent(id)}`) as Promise<any>
+  return getDown(`${BASE}/roster/resign-proof-view${qs({ id })}`) as Promise<any>
 }
 
 export function exportEmployees(ids?: Array<string | number>): Promise<any> {
@@ -356,4 +360,62 @@ export function getOrgUnits(): Promise<any> {
 
 export function saveOrgUnits(payload: { units: any[] }): Promise<any> {
   return put(`${BASE}/org/units`, payload) as Promise<any>
+}
+
+// ---------------------------------------------------------------------------
+// 第 61 轮：宿舍管理（五标签）
+// ---------------------------------------------------------------------------
+
+/** 宿舍记录：module = dorm / public / stay / asset。 */
+export function listDormRecords(params: { module: string; q?: string }): Promise<any> {
+  return get(`${BASE}/dorm/records${qs(params)}`) as Promise<any>
+}
+
+export function createDormRecord(module: string, data: Record<string, any>): Promise<any> {
+  return post(`${BASE}/dorm/records`, { module, data }) as Promise<any>
+}
+
+export function updateDormRecord(id: string | number, data: Record<string, any>): Promise<any> {
+  return put(`${BASE}/dorm/records/${encodeURIComponent(String(id))}`, { data }) as Promise<any>
+}
+
+export function removeDormRecord(id: string | number): Promise<any> {
+  return del(`${BASE}/dorm/records/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
+export function importDormRecords(module: string, formData: FormData): Promise<any> {
+  return postUpload(`${BASE}/dorm/records/import?module=${encodeURIComponent(module)}`, formData) as Promise<any>
+}
+
+export function getDormTemplate(module: string): Promise<any> {
+  return getDown(`${BASE}/dorm/template?module=${encodeURIComponent(module)}`) as Promise<any>
+}
+
+export function getDormStats(): Promise<any> {
+  return get(`${BASE}/dorm/stats`) as Promise<any>
+}
+
+/** 住宿办理：调宿 / 退宿（批量）。 */
+export function transferDormStays(payload: { ids: Array<string | number>; room: string; bed?: string }): Promise<any> {
+  return post(`${BASE}/dorm/stays/transfer`, payload) as Promise<any>
+}
+
+export function checkoutDormStays(payload: { ids: Array<string | number>; date?: string; reason?: string }): Promise<any> {
+  return post(`${BASE}/dorm/stays/checkout`, payload) as Promise<any>
+}
+
+export function listDormBills(): Promise<any> {
+  return get(`${BASE}/dorm/bills`) as Promise<any>
+}
+
+export function createDormBill(payload: { month_label: string; overwrite?: boolean }): Promise<any> {
+  return post(`${BASE}/dorm/bills`, payload) as Promise<any>
+}
+
+export function getDormBill(id: string | number): Promise<any> {
+  return get(`${BASE}/dorm/bills/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
+export function removeDormBill(id: string | number): Promise<any> {
+  return del(`${BASE}/dorm/bills/${encodeURIComponent(String(id))}`) as Promise<any>
 }

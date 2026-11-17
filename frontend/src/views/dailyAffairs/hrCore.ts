@@ -30,7 +30,7 @@ import type { HrFieldDef } from './hrFieldSchema'
 // Tab / scope
 // ---------------------------------------------------------------------------
 
-export type HrTab = 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund'
+export type HrTab = 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | 'hr-dorm'
 
 export interface HrTabDef {
   key: HrTab
@@ -51,6 +51,8 @@ export const HR_TABS: readonly HrTabDef[] = [
   // 传无效名会让 <use href="#t-icon-shield"> 解析失败 → 图标框空白。secured 已核验有效。
   { key: 'hr-social', label: '社保管理', icon: 'secured', sub: '' },
   { key: 'hr-fund', label: '公积金管理', icon: 'wallet', sub: '' },
+  // 第 61 轮：宿舍管理（五标签），卡片只显示房源总条数
+  { key: 'hr-dorm', label: '宿舍管理', icon: 'home', sub: '' },
 ]
 
 /** 字段配置 scope：tab 值本身即 scope；离职子视图与未知值都归到花名册。 */

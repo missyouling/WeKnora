@@ -42,6 +42,12 @@ var hrGroupStatusFields60 = map[string][]string{
 	"职工明细": {"账户状态"},
 	"在职人员": {},
 	"离职人员": {},
+	// 第 61 轮：宿舍五胶囊
+	"宿舍档案": {"宿舍状态"},
+	"公租房档案": {"宿舍状态"},
+	"住宿记录": {"住宿状态"},
+	"资产档案": {"资产状态"},
+	"费用信息": {"账单状态"},
 }
 
 // hrStatusNames60 人事模块所有「系统内置加锁状态字段」的字段名。
@@ -52,6 +58,8 @@ var hrStatusNames60 = []string{
 	"在职状态", "账期状态", "参保状态", "缴存状态",
 	"合同状态", "账户状态", "账单状态",
 	"养老参保状态", "失业参保状态", "医疗参保状态", "工伤参保状态", "生育参保状态",
+	// 第 61 轮：宿舍模块三个状态列（账单状态复用上面的名单）
+	"宿舍状态", "住宿状态", "资产状态",
 }
 
 // hrSIBillNoRecordMsg 生成账单被前置校验拦截时的统一文案（前端 Toast 同文案）。
@@ -86,7 +94,7 @@ func (h *HRHandler) hrRepair60Once(ctx context.Context) error {
 	var cats []types.FleetCategory
 	if err := h.db.WithContext(ctx).
 		Where("deleted_at IS NULL AND scope IN ?", []string{
-			hrScopeRoster, hrScopeResign, hrScopeContract, hrScopeSocial, hrScopeFund,
+			hrScopeRoster, hrScopeResign, hrScopeContract, hrScopeSocial, hrScopeFund, hrScopeDorm,
 		}).
 		Find(&cats).Error; err != nil {
 		return err

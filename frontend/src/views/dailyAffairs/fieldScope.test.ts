@@ -48,6 +48,14 @@ test('白名单：公积金两胶囊各自唯一', () => {
   assert.deepEqual(hrGroupStatusFieldsOf('月度账单'), ['账单状态'])
 })
 
+test('白名单：宿舍五胶囊各自唯一的加锁状态字段', () => {
+  assert.deepEqual(hrGroupStatusFieldsOf('宿舍档案'), ['宿舍状态'])
+  assert.deepEqual(hrGroupStatusFieldsOf('公租房档案'), ['宿舍状态'])
+  assert.deepEqual(hrGroupStatusFieldsOf('住宿记录'), ['住宿状态'])
+  assert.deepEqual(hrGroupStatusFieldsOf('资产档案'), ['资产状态'])
+  assert.deepEqual(hrGroupStatusFieldsOf('费用信息'), ['账单状态'])
+})
+
 test('白名单：非人事胶囊返回 null（不参与严格隔离）', () => {
   assert.equal(hrGroupStatusFieldsOf('电费核算'), null)
   assert.equal(hrGroupStatusFieldsOf(''), null)

@@ -47,6 +47,8 @@ const HR_STATUS_NAMES = [
   '合同状态', '账户状态', '账单状态',
   // 第 56 轮：回盘表五险参保状态（三色 Tag）系统内置加锁
   '养老参保状态', '失业参保状态', '医疗参保状态', '工伤参保状态', '生育参保状态',
+  // 第 61 轮：宿舍三态（宿舍 / 住宿 / 资产）
+  '宿舍状态', '住宿状态', '资产状态',
 ]
 
 const norm = (v: unknown): string => String(v ?? '').trim().toLowerCase()
@@ -95,7 +97,7 @@ export function isStatusFieldName(name: unknown): boolean {
 /** 车队三个「上传→解析→提取」档案 scope。 */
 const FLEET_ARCHIVE_SCOPES = new Set(['vehicle', 'driver', 'maintain'])
 /** 人事管理三个 scope（第 45 轮）。 */
-const HR_SCOPES = new Set(['hr-roster', 'hr-social', 'hr-fund', 'hr-contract'])
+const HR_SCOPES = new Set(['hr-roster', 'hr-social', 'hr-fund', 'hr-contract', 'hr-dorm'])
 /** 账单类分类名（只有这两类有文件级状态列）。 */
 const BILL_CATEGORIES = new Set(['市电账单', '光伏账单'])
 
