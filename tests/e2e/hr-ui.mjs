@@ -117,10 +117,16 @@ try {
         }
       } catch { /* 下载失败时退回占位图，仍能验证上传链路 */ }
       await fc.setFiles(proofFile);
-      // 上传 + 局部 PUT 两次往返（跨区 pooler ~700ms/次），留足 6.5s 再读 Toast
-      await p.waitForTimeout(6500);
-      const toast = await p.evaluate(() => Array.from(document.querySelectorAll(".t-message"))
-        .map((e) => (e.innerText || "").trim()).filter(Boolean).join(" | "));
+      // Toast 只存活 3s：上传 + 局部 PUT 的耗时在本地与 CI 差异很大，
+      // 固定 sleep 必然偶发漏读。改为「轮询到出现或超时」。
+      let toast = "";
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline) {
+        toast = await p.evaluate(() => Array.from(document.querySelectorAll(".t-message"))
+          .map((e) => (e.innerText || "").trim()).filter(Boolean).join(" | "));
+        if (/离职证明已更新|同步失败|附件上传失败/.test(toast)) break;
+        await p.waitForTimeout(250);
+      }
       R.proofToast = toast;
       ok("1.3d 上传完成并提示离职证明已更新", /离职证明已更新/.test(toast), toast.slice(0, 120));
     } else {
