@@ -805,7 +805,20 @@ export function hrColumnsFromSubs(subs: readonly any[] | null | undefined, fallb
       ...(sourceField ? { source: { category: String(s?.source?.category || '花名册'), field: sourceField } } : {}),
     }
     // 第 53 轮：subs.width 必须透传给列定义（0 = 自适应，>0 = 用户固定列宽）。
-    cols.push(moduleColumnOf(def, Number(s.width) || 0))
+    const col = moduleColumnOf(def, Number(s.width) || 0)
+    // 第 61 轮：显示名（label）与数据身份（name）可以不同 —— 用户在设置里把
+    // 「建筑面积(㎡)」改成「建筑面积」后，列键跟着显示名走，但取值必须仍按
+    // 原始 name 从 custom_data 读，否则整列空白、合计行为 0（真机踩过）。
+    const dataName = String(s.name || '').trim()
+    if (dataName && dataName !== label) {
+      const baseValue = col.value
+      col.value = (row: any) => {
+        const raw = row?.[dataName] ?? row?.custom_data?.[dataName] ?? row?.data?.[dataName]
+        if (raw !== undefined && raw !== null && String(raw).trim() !== '') return raw
+        return baseValue?.(row)
+      }
+    }
+    cols.push(col)
   }
   return cols.length > 1 ? cols : fallback
 }

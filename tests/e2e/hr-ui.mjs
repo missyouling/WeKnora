@@ -117,7 +117,8 @@ try {
         }
       } catch { /* 下载失败时退回占位图，仍能验证上传链路 */ }
       await fc.setFiles(proofFile);
-      await p.waitForTimeout(4000);
+      // 上传 + 局部 PUT 两次往返（跨区 pooler ~700ms/次），留足 6.5s 再读 Toast
+      await p.waitForTimeout(6500);
       const toast = await p.evaluate(() => Array.from(document.querySelectorAll(".t-message"))
         .map((e) => (e.innerText || "").trim()).filter(Boolean).join(" | "));
       R.proofToast = toast;
