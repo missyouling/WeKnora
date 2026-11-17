@@ -330,6 +330,17 @@ export function createSocialBill(payload: { month_label: string; overwrite?: boo
   return post(`${BASE}/social/bills`, payload) as Promise<any>
 }
 
+/**
+ * 第 60 轮：生成社保月度账单的前置校验（只读）。
+ *
+ * 返回 { normal_record_count, adjust_record_count, bill_exists }：
+ * 正常记录为 0 时前端必须先 Toast 拦截（后端同样会拒绝），
+ * bill_exists 为 true 时走覆盖二次确认。
+ */
+export function precheckSocialBill(month: string): Promise<any> {
+  return get(`${BASE}/social/bills/precheck${qs({ month })}`) as Promise<any>
+}
+
 export function getSocialBill(id: string | number): Promise<any> {
   return get(`${BASE}/social/bills/${encodeURIComponent(String(id))}`) as Promise<any>
 }

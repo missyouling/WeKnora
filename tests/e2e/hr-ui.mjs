@@ -51,6 +51,12 @@ try {
   const hasProofRow = await proofRow.count();
   ok("1.1 离职列表存在带离职证明的行", hasProofRow > 0, String(hasProofRow));
   if (hasProofRow) {
+    const nameIdx = await p.evaluate(() => {
+      const ths = Array.from(document.querySelectorAll(".doc-list-scroll thead th")).map((e) => (e.innerText || "").trim());
+      const i = ths.indexOf("姓名");
+      return i >= 0 ? i : 1;
+    });
+    const rowName = ((await proofRow.locator("td").nth(nameIdx).innerText()) || "").trim();
     await proofRow.locator("td").nth(1).click();
     await p.waitForTimeout(2600);
     const proofField = await p.evaluate(() => {
@@ -68,15 +74,58 @@ try {
 
     await p.locator(".hr-proof-field button", { hasText: "上传" }).first().click();
     await p.waitForTimeout(1200);
+    // 第 60 轮：覆盖确认从模态框改为 t-popconfirm 气泡（模态框确认会丢 user activation，
+    // 点「确定」后无法唤起系统文件选择框）。
     const confirm = await p.evaluate(() => {
-      const d = document.querySelector("[data-hr-proof-confirm]");
+      const els = Array.from(document.querySelectorAll(".t-popconfirm"))
+        .filter((el) => el.offsetParent !== null);
+      const d = els.find((el) => (el.innerText || "").includes("原来的图片将会被覆盖"));
       return d ? (d.innerText || "").replace(/\s+/g, " ").trim() : "";
     });
     R.confirm = confirm;
-    ok("1.3 已上传时点「上传」弹出覆盖二次确认", /原来的图片将会被覆盖/.test(confirm), confirm.slice(0, 120));
+    ok("1.3 已上传时点「上传」弹出气泡覆盖确认（非模态框）", /原来的图片将会被覆盖/.test(confirm), confirm.slice(0, 120));
+    ok("1.3b 覆盖确认不是 t-dialog 模态框",
+      await p.evaluate(() => !document.querySelector("[data-hr-proof-confirm]")));
     await shot("d58c_02_proof_confirm");
-    await p.getByRole("button", { name: "取消", exact: true }).last().click();
-    await p.waitForTimeout(800);
+    // 点气泡「确定」必须 100% 唤起文件选择框（同步 click，不丢 user activation）
+    const chooser = p.waitForEvent("filechooser", { timeout: 8000 }).catch(() => null);
+    await p.locator(".t-popconfirm button", { hasText: "确定" }).last().click();
+    const fc = await chooser;
+    ok("1.3c 气泡确定后成功唤起文件选择框", !!fc);
+    if (fc) {
+      // 用该员工**原有的离职证明**做替换上传：内容不变（只是存储路径换新），
+      // 避免把演示库里的真实附件替换成占位图。
+      let proofFile = `${SHOTS}/proof-upload.png`;
+      try {
+        const lr = await c.request.get(`${API}/api/v1/fleet/hr/roster/employees?status=${encodeURIComponent("离职")}&page_size=200`, { headers: HDR });
+        const lj = await lr.json();
+        const items = lj?.data?.items || lj?.items || [];
+        const me = items.find((it) => String(it.name || it["姓名"] || "").trim() === rowName)
+          || items.find((it) => String(it.resign_proof_path || "").trim());
+        const pid = String(me?.resign_proof_path || "").split("/").filter(Boolean).pop();
+        if (pid) {
+          const fr = await c.request.get(`${API}/api/v1/fleet/hr/roster/resign-proof/${pid}`, { headers: HDR });
+          const buf = await fr.body();
+          const ext = /\.pdf/i.test(String(me.resign_proof_path)) ? "pdf" : "png";
+          proofFile = `${SHOTS}/proof-upload.${ext}`;
+          fs.writeFileSync(proofFile, buf);
+        } else {
+          fs.writeFileSync(proofFile, Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+            "base64",
+          ));
+        }
+      } catch { /* 下载失败时退回占位图，仍能验证上传链路 */ }
+      await fc.setFiles(proofFile);
+      await p.waitForTimeout(4000);
+      const toast = await p.evaluate(() => Array.from(document.querySelectorAll(".t-message"))
+        .map((e) => (e.innerText || "").trim()).filter(Boolean).join(" | "));
+      R.proofToast = toast;
+      ok("1.3d 上传完成并提示离职证明已更新", /离职证明已更新/.test(toast), toast.slice(0, 120));
+    } else {
+      await p.keyboard.press("Escape");
+    }
+    await p.waitForTimeout(600);
     await p.keyboard.press("Escape"); await p.waitForTimeout(1000);
 
     // 列表「查看」→ FilePreviewDialog
@@ -99,6 +148,75 @@ try {
     await p.locator(".fpd-footer button", { hasText: "关闭" }).first().click();
     await p.waitForTimeout(1000);
   }
+
+  // ================= 第 60 轮：字段设置胶囊隔离（DOM 实渲染行） =================
+  const openSettings = async () => {
+    await p.keyboard.press("Escape"); await p.waitForTimeout(500);
+    await p.getByRole("button", { name: "设置", exact: true }).first().click();
+    await p.waitForTimeout(2400);
+    return p.evaluate(() => !!document.querySelector(".field-config-row"));
+  };
+  const fieldRowNames = () => p.evaluate(() => Array.from(document.querySelectorAll(".field-config-row")).map((r) => ({
+    name: String(r.querySelector(".fc-name-wrap input")?.value || "").trim(),
+    locked: r.classList.contains("is-locked"),
+  })));
+  const clickCapsule = async (label) => {
+    const hit = await p.evaluate((x) => {
+      const el = Array.from(document.querySelectorAll(".fc-group-tab"))
+        .find((e) => ((e.innerText || "").replace(/\s+/g, " ").trim()).startsWith(x));
+      if (el) { el.click(); return true; }
+      return false;
+    }, label);
+    await p.waitForTimeout(1300);
+    return hit;
+  };
+  const closeSettings = async () => {
+    await p.keyboard.press("Escape"); await p.waitForTimeout(700);
+    const btn = p.locator(".t-drawer__close-btn:visible").first();
+    if (await btn.count()) await btn.click().catch(() => {});
+    await p.waitForTimeout(1300);
+  };
+
+  await card("劳动合同"); await p.waitForTimeout(6000);
+  const cOpened = await openSettings();
+  const cLabor = await fieldRowNames();
+  ok("10.1 劳动合同胶囊恰有 1 个合同状态",
+    cOpened && cLabor.filter((x) => x.name === "合同状态").length === 1,
+    JSON.stringify({ n: cLabor.length, status: cLabor.filter((x) => x.name === "合同状态").length }));
+  const cSwitched = await clickCapsule("劳务合同");
+  const cService = await fieldRowNames();
+  ok("10.2 劳务合同胶囊恰有 1 个合同状态",
+    cSwitched && cService.filter((x) => x.name === "合同状态").length === 1,
+    JSON.stringify({ n: cService.length, status: cService.filter((x) => x.name === "合同状态").length }));
+  await shot("d60_11_contract_capsules");
+  await closeSettings();
+
+  await card("社保管理"); await p.waitForTimeout(6000);
+  const sOpened = await openSettings();
+  const SI_STATUS = ["养老参保状态", "失业参保状态", "医疗参保状态", "工伤参保状态", "生育参保状态"];
+  const capsule60 = {};
+  for (const [label, want] of [["正常记录", 0], ["补退记录", 0], ["月度账单", 1]]) {
+    const hit = await clickCapsule(label);
+    const rows = await fieldRowNames();
+    capsule60[label] = { hit, n: rows.length, locked: rows.filter((x) => x.locked).map((x) => x.name) };
+    ok(`10.3 社保「${label}」16 行且无串组加锁字段`,
+      sOpened && hit && rows.length === 16
+      && rows.filter((x) => SI_STATUS.includes(x.name)).length === 0
+      && rows.filter((x) => x.name === "账单状态").length === want,
+      JSON.stringify(capsule60[label]));
+  }
+  await shot("d60_12_social_capsules");
+  await closeSettings();
+
+  // 第 60 轮：生成账单前置校验（只读接口，不生成任何账单）
+  const preEmpty = await (await c.request.get(`${API}/api/v1/fleet/hr/social/bills/precheck?month=2026-12`, { headers: HDR })).json();
+  const preExists = await (await c.request.get(`${API}/api/v1/fleet/hr/social/bills/precheck?month=2026-11`, { headers: HDR })).json();
+  const e6 = preEmpty?.data || preEmpty || {};
+  const x6 = preExists?.data || preExists || {};
+  ok("10.4 空月份 precheck 返回 0 条正常记录",
+    Number(e6.normal_record_count) === 0 && e6.bill_exists === false, JSON.stringify(e6));
+  ok("10.5 已有月份 precheck 返回正常记录数与账单存在",
+    Number(x6.normal_record_count) > 0 && x6.bill_exists === true, JSON.stringify({ n: x6.normal_record_count, bill: x6.bill_exists }));
 
   // ================= #9 统一导入弹窗 =================
   const openImport = async () => {

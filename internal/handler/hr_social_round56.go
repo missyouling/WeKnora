@@ -871,6 +871,18 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 		hrFail(c, "账单月份必须为 YYYY-MM")
 		return
 	}
+	// 第 60 轮：账单只允许由「正常记录」聚合而来 —— 该月一条正常记录都没有时，
+	// 生成出来的只会是一张 0 人 0 元的空账单，必须先让用户上传社保系统导出数据。
+	// 补退记录是选传：有就并入，没有不影响生成（adjustRecordCount >= 0）。
+	normalCount, _, err := h.hrSIRecordCountsOf(ctx, tid, month)
+	if err != nil {
+		hrFail(c, "检查社保记录失败: "+err.Error())
+		return
+	}
+	if normalCount == 0 {
+		hrFail(c, hrSIBillNoRecordMsg)
+		return
+	}
 	var existing []HRSIBill
 	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ? AND month_label = ?", tid, month).Find(&existing).Error; err != nil {
@@ -882,7 +894,7 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 		return
 	}
 	next := h.hrSIBillTotalsOf(ctx, tid, month)
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, old := range existing {
 			if e := tx.Where("bill_id = ?", old.ID).Delete(&HRSIBillItem{}).Error; e != nil {
 				return e

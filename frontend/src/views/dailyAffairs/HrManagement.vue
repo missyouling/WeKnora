@@ -350,8 +350,10 @@
       </template>
       <!-- 第 57 轮：离职证明附件控制条。
            严禁把 /api/v1/fleet/... 这类后端内部路径暴露在输入框里。
-           第 58 轮：抽屉内**删除「查看」**（预览只在列表「离职证明」列的查看入口），
-           已上传时点「上传」先弹覆盖二次确认。 -->
+           第 58 轮：抽屉内**删除「查看」**（预览只在列表「离职证明」列的查看入口）。
+           第 60 轮：已上传时改用 t-popconfirm 气泡确认（图 1 的模态框已删除）。
+           气泡的 @confirm 是**同步**回调，内部直接 click 隐藏 input，浏览器保留
+           user activation；包进 setTimeout / await 会让文件选择框被静默拦截。 -->
       <template #field-离职证明>
         <div class="hr-proof-field">
           <t-tag v-if="proofPathOf(editForm.data)" theme="success" variant="light" size="small"
@@ -360,8 +362,18 @@
             已上传离职证明
           </t-tag>
           <span v-else class="hr-proof-empty">未上传</span>
-          <t-button variant="outline" size="small" class="hr-proof-btn" :loading="proofUploading"
-            @click.stop="onProofUploadClick">
+          <t-popconfirm v-if="proofPathOf(editForm.data)" theme="warning" placement="left"
+            content="该员工已上传离职证明，重新上传后原来的图片将会被覆盖，是否继续？"
+            :confirm-btn="{ content: '确定', theme: 'primary' }" :cancel-btn="{ content: '取消' }"
+            data-hr-proof-pop @confirm="pickProof">
+            <t-button variant="outline" size="small" class="hr-proof-btn" :loading="proofUploading"
+              data-hr-proof-upload @click.stop>
+              <template #icon><t-icon name="upload" size="14px" /></template>
+              上传
+            </t-button>
+          </t-popconfirm>
+          <t-button v-else variant="outline" size="small" class="hr-proof-btn" :loading="proofUploading"
+            data-hr-proof-upload @click.stop="pickProof">
             <template #icon><t-icon name="upload" size="14px" /></template>
             上传
           </t-button>
@@ -404,16 +416,6 @@
       @update:visible="(v: boolean) => socialImportVisible = v" @imported="onSocialImported" />
     <ResignEmployeeDialog v-model:visible="resignVisible" :ids="selectedRowKeys"
       :employee-name="resignTargetName" @done="onResignDone" />
-
-    <!-- 第 58 轮：离职证明重新上传前的覆盖二次确认 -->
-    <t-dialog :visible="proofOverwriteVisible" header="覆盖离职证明" width="460px" placement="center"
-      data-hr-proof-confirm @close="proofOverwriteVisible = false">
-      <div class="hr-bill-confirm">该员工已上传离职证明，重新上传后原来的图片将会被覆盖，是否继续？</div>
-      <template #footer>
-        <t-button variant="outline" size="small" @click="proofOverwriteVisible = false">取消</t-button>
-        <t-button theme="primary" size="small" @click="confirmProofOverwrite">确定</t-button>
-      </template>
-    </t-dialog>
 
     <!-- 第 55 轮：页内附件预览器（严禁 window.open）
          第 58 轮：关闭即 revokeObjectURL，blob 不常驻到页面卸载。 -->
@@ -2153,24 +2155,21 @@ async function onResignDone() {
   await reloadStats()
 }
 
-/** 第 52 轮：离职证明上传（只回填草稿路径，绝不自动保存员工记录）。 */
+/**
+ * 第 52 轮：离职证明上传（附件与路径都是**独立即时生效**的，不随抽屉保存）。
+ * 第 60 轮：上传成功后同步草稿 + 列表行，并只把 `resign_proof_path` 一个字段落库
+ * （局部 PUT，不会把抽屉里其它未保存的编辑一起提交）。
+ */
 const proofInputRef = ref<HTMLInputElement | null>(null)
 const proofUploading = ref(false)
-/** 第 58 轮：已上传时再次点「上传」的覆盖二次确认。 */
-const proofOverwriteVisible = ref(false)
+/**
+ * 第 60 轮：直接同步点开隐藏的 file input。
+ *
+ * 浏览器的 user activation 只在本轮事件回调里有效 —— 任何 `setTimeout` / `await`
+ * 之后再 click() 都会被静默拦截（真机表现：点了确定毫无反应）。因此这个函数
+ * 必须由按钮 / t-popconfirm @confirm **同步**调用，内部只做 `.click()`。
+ */
 function pickProof() { proofInputRef.value?.click() }
-/** 已有旧附件 → 先确认覆盖；没有 → 直接唤起文件选择器。 */
-function onProofUploadClick() {
-  if (proofPathOf(editForm.value.data)) {
-    proofOverwriteVisible.value = true
-    return
-  }
-  pickProof()
-}
-function confirmProofOverwrite() {
-  proofOverwriteVisible.value = false
-  pickProof()
-}
 async function onProofFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const f = input.files?.[0]
@@ -2192,14 +2191,39 @@ async function onProofFileChange(e: Event) {
     const data = res?.data || res || {}
     const path = String(data.path || '')
     if (!path) { MessagePlugin.error('附件上传失败'); return }
+    // 1) 抽屉草稿
     editForm.value.data['离职证明'] = path
     editForm.value.data['resign_proof_path'] = path
-    MessagePlugin.success('已上传，保存后生效')
+    // 2) 列表记录（detailRow 与 rows 里是同一个对象引用，原地改即刷新「离职证明」列）
+    applyProofPathToRow(detailRow.value, path)
+    // 3) 落库：只写离职证明这一个字段（局部 PUT 会合并存量 custom_data，
+    //    不会把抽屉里其它未保存的编辑一起提交，仍遵守「手存生效」铁律）
+    const id = String(detailRow.value?.id || '')
+    if (id) {
+      try {
+        await hrApi.updateRosterEmployee(id, { resign_proof_path: path, 离职证明: path })
+      } catch (err: any) {
+        MessagePlugin.warning(err?.message || '附件已上传，但员工记录同步失败，请点保存重试')
+        return
+      }
+    }
+    MessagePlugin.success('离职证明已更新')
   } catch (err: any) {
     MessagePlugin.error(err?.message || '附件上传失败')
   } finally {
     proofUploading.value = false
   }
+}
+
+/** 把离职证明路径就地写回列表行（主列 + custom_data 双写，各种读法都能命中）。 */
+function applyProofPathToRow(row: any, path: string) {
+  if (!row || typeof row !== 'object') return
+  row['离职证明'] = path
+  row.resign_proof_path = path
+  const cd = row.custom_data && typeof row.custom_data === 'object' ? row.custom_data : {}
+  cd['离职证明'] = path
+  cd.resign_proof_path = path
+  row.custom_data = cd
 }
 
 /** 离职证明路径：主列优先，兼容 custom_data / data 包裹。 */
@@ -2293,19 +2317,44 @@ function handleGenerateBill() {
   billMonthVisible.value = true
 }
 
-/** 选好月份后查重：同月已存在账单 → 二次确认覆盖。 */
+/**
+ * 选好月份后先做前置校验（第 60 轮），再决定发不发写请求：
+ *
+ *   社保：① 该月「正常记录」必须 > 0（补退记录选传）—— 0 条直接 Toast 拦截，
+ *            绝不允许生成一张 0 人 0 元的空账单；
+ *         ② 已存在同月账单 → 二次确认覆盖。
+ *   公积金：保持原有的「同月已有账单 → 二次确认」。
+ *
+ * 后端 CreateSIBill 同样校验（defense in depth），前端这层只为把错误翻译成
+ * 用户能直接照做的提示，不用等一次 400。
+ */
 async function confirmGenerateBill() {
   const month = String(billMonth.value || '').trim()
   if (!month) { MessagePlugin.warning('请先选择账单月份'); return }
   const isSocial = activeTab.value === 'hr-social'
   try {
-    const res: any = isSocial ? await hrApi.listSocialBills() : await hrApi.listFundBills()
+    if (isSocial) {
+      const r: any = await hrApi.precheckSocialBill(month)
+      const pre = r?.data || r || {}
+      if (Number(pre.normal_record_count || 0) <= 0) {
+        billMonthVisible.value = false
+        MessagePlugin.warning('该月份暂无正常社保记录，请先上传社保系统导出的记录数据')
+        return
+      }
+      if (pre.bill_exists) {
+        billOverwriteText.value = `「${month}」月度账单已存在，重新生成将覆盖原有账单数据，是否继续？`
+        billMonthVisible.value = false
+        billOverwriteVisible.value = true
+        return
+      }
+      await doGenerateBill(false)
+      return
+    }
+    const res: any = await hrApi.listFundBills()
     const list = extractItems(res)
     const dup = list.some((r: any) => String(r.month_label || r.账单周期 || r.月份 || '') === month)
     if (dup) {
-      billOverwriteText.value = isSocial
-        ? `「${month}」已存在社保月度账单，是否覆盖？`
-        : `「${month}」已存在月度账单记录，每个月度只能生成一条账单，是否覆盖？`
+      billOverwriteText.value = `「${month}」已存在月度账单记录，每个月度只能生成一条账单，是否覆盖？`
       billMonthVisible.value = false
       billOverwriteVisible.value = true
       return

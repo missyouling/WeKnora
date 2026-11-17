@@ -120,6 +120,11 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 			}
 		}
 	}
+	// 第 60 轮：清理 subs 里「串组加锁状态字段」（劳动合同 2 个合同状态、
+	// 正常/补退记录里的五险参保状态与账单状态）。每次启动都跑，幂等且只删不增。
+	if err := h.hrRepair60Once(ctx); err != nil {
+		logger.Warnf(ctx, "repair HR capsule status fields failed: %v", err)
+	}
 	// 第 54 轮：花名册「个人社保账号 / 个人公积金账号」升级为只读跨模块引用
 	// （只补既有字段的 source / 默认表头，不会新增字段）
 	if err := h.hrMigrateRosterRefSubs(ctx); err != nil {
@@ -679,6 +684,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.PUT("/hr/social/records/:id", h.UpdateSIRecord)
 	r.POST("/hr/social/records/import", h.ImportSIRecords)
 	r.GET("/hr/social/bills", h.ListSIBills)
+	// 第 60 轮：生成账单前置校验（该月正常记录条数 / 是否已有账单），只读
+	r.GET("/hr/social/bills/precheck", h.PrecheckSIBill)
 	r.POST("/hr/social/bills", h.CreateSIBill)
 	r.GET("/hr/social/bills/:id", h.GetSIBill)
 	r.DELETE("/hr/social/bills/:id", h.DeleteSIBill)

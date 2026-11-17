@@ -136,7 +136,7 @@
                     <span class="fc-origin-hint">{{ row.hint }}</span>
                   </div>
                   <div v-else class="field-config-row"
-                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === row.fd.name }, { 'is-locked': isLockedStatus(row.fd) }]"
+                    :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === fieldIdentityOf(row.fd) }, { 'is-locked': isLockedStatus(row.fd) }]"
                     draggable="true" @dragstart="onFieldDragStart(row.fd)" @dragover.prevent
                     @drop.prevent="onFieldDrop(row.fd)" @dragend="onFieldDragEnd">
                     <span class="fc-drag" title="拖动排序"><t-icon name="move" size="14px" /></span>
@@ -453,6 +453,7 @@ import {
 import { listSubGroups } from './sixWaySync'
 import { sourcePathText } from './tenantBillingSources'
 import { statusFieldSpecsOf, ensureStatusFields, isLockedStatusField } from './statusFields'
+import { fieldIdentityOf, moveFieldWithinGroup, visibleGroupFields } from './fieldScope'
 import {
   COST_LIST_CATEGORY,
   DEFAULT_GROUP_KEY,
@@ -900,26 +901,26 @@ async function onDrop(i: number) {
 }
 
 // ---- 字段级拖拽排序（仅调整编辑态 fieldsEditable 顺序，保存时随 subs 持久化）----
-// 字段拖拽排序：按**字段身份**定位，不按下标。
+// 第 60 轮：按 **胶囊 + 字段名** 的身份定位，不再按 name、更不按下标。
 //
-// 为什么不能用下标：分组过滤后模板里的 i 是「当前分组内的序号」，
-// 而真实顺序在扁平化的 fieldsEditable 里。用下标会把字段挪到别的分组去，
-// 表现为「拖一下顺序，字段跑到隔壁分组了」。按 name 定位可避免。
+// 为什么不能用 name：劳动合同与劳务合同同名字段极多（工号 / 姓名 / 部门 / 岗位…），
+// `findIndex(name)` 永远命中第一组 —— 用户拖「劳务合同」的行，动的却是「劳动合同」，
+// 视觉表现就是「非首胶囊拖不动」。身份键把 group 一并纳入后，跨组同名互不干扰。
+// 为什么不按下标：分组过滤后模板里的下标是「当前胶囊内的序号」，
+// 直接拿去索引扁平数组会把字段挪进别的胶囊（真机表现为「拖一下字段跑到隔壁组」）。
 const fieldDragName = ref('')
-function onFieldDragStart(fd: any) { fieldDragName.value = String(fd?.name || '') }
+function onFieldDragStart(fd: any) { fieldDragName.value = fieldIdentityOf(fd) }
 function onFieldDragEnd() { fieldDragName.value = '' }
 function onFieldDrop(target: any) {
-  const fromName = fieldDragName.value
+  const fromKey = fieldDragName.value
   fieldDragName.value = ''
-  const toName = String(target?.name || '')
-  if (!fromName || !toName || fromName === toName) return
-  const list = [...fieldsEditable.value]
-  const from = list.findIndex((f: any) => f.name === fromName)
-  const to = list.findIndex((f: any) => f.name === toName)
-  if (from < 0 || to < 0) return
-  const [moved] = list.splice(from, 1)
-  list.splice(to, 0, moved)
-  fieldsEditable.value = list
+  const toKey = fieldIdentityOf(target)
+  const { fields: next, moved } = moveFieldWithinGroup(
+    fieldsEditable.value as any[],
+    fromKey,
+    toKey,
+  )
+  if (moved) fieldsEditable.value = next as EditableField[]
 }
 
 // 分类变更后通知列表页刷新证照类型选项（上传弹窗 / 筛选框依赖 categories）
@@ -1137,9 +1138,18 @@ const fieldsVisible = computed(() => {
   // （否则只显示「字段最多」的那一组，其余 5 组全部消失）。
   const grouped = !props.hideGroupTabs && !!activeSubGroup.value
   const want = tabGroupKey(activeSubGroup.value)
+  // 第 60 轮：胶囊隔离铁律。
+  // 旧实现 `tabGroupKey(f.group) === want || isLockedStatus(f)` 让**所有加锁状态字段**
+  // 穿透到每个胶囊：劳动合同胶囊里出现 2 个「合同状态」（劳动合同 + 劳务合同各一），
+  // 社保「正常记录 / 补退记录」里冒出回盘表的 5 个五险参保状态 + 月度账单的账单状态（图 2 / 图 3）。
+  // 人事 scope 改为「本胶囊白名单」精确绑定（normal / abnormal 白名单为空 = 0 个加锁字段）；
+  // 车队 / 能耗保留「文件级状态列每个胶囊都可见」的历史行为。
+  const strictStatus = /^hr-/.test(String(group.value.scope || '').trim())
   const list = grouped
-    // 状态字段不属于任何费用分组（它是文件级状态），任何分组页签下都要可见
-    ? fieldsEditable.value.filter((f: any) => tabGroupKey(f.group) === want || isLockedStatus(f))
+    ? visibleGroupFields(fieldsEditable.value as any[], want, {
+      strictStatus,
+      isLocked: (f: any) => isLockedStatus(f),
+    }) as EditableField[]
     : fieldsEditable.value
   return collapseFeeGroups(list as any[]).map((row: any) => {
     if (row.kind !== 'group') return row.sub
