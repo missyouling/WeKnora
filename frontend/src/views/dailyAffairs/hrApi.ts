@@ -383,8 +383,19 @@ export function removeDormRecord(id: string | number): Promise<any> {
   return del(`${BASE}/dorm/records/${encodeURIComponent(String(id))}`) as Promise<any>
 }
 
-export function importDormRecords(module: string, formData: FormData): Promise<any> {
-  return postUpload(`${BASE}/dorm/records/import?module=${encodeURIComponent(module)}`, formData) as Promise<any>
+/** 第 62 轮：子表专属删除（rooms / publics / stays / assets），严禁误调账单接口。 */
+export function removeDormTyped(
+  module: 'rooms' | 'publics' | 'stays' | 'assets',
+  id: string | number,
+): Promise<any> {
+  return del(`${BASE}/dorm/${module}/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
+export function importDormRecords(module: string, formData: FormData, mode = 'merge'): Promise<any> {
+  return postUpload(
+    `${BASE}/dorm/records/import?module=${encodeURIComponent(module)}&mode=${encodeURIComponent(mode)}`,
+    formData,
+  ) as Promise<any>
 }
 
 export function getDormTemplate(module: string): Promise<any> {
@@ -418,4 +429,26 @@ export function getDormBill(id: string | number): Promise<any> {
 
 export function removeDormBill(id: string | number): Promise<any> {
   return del(`${BASE}/dorm/bills/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
+// ---------------------------------------------------------------------------
+// 第 62 轮：宿舍费用明细（全员月度扣款，跨模块聚合）
+// ---------------------------------------------------------------------------
+
+export function listDormCharges(params: {
+  month?: string; department?: string; room_type?: string; q?: string
+} = {}): Promise<any> {
+  return get(`${BASE}/dorm/charges${qs(params)}`) as Promise<any>
+}
+
+export function generateDormCharges(payload: { month: string; overwrite?: boolean }): Promise<any> {
+  return post(`${BASE}/dorm/charges/generate`, payload) as Promise<any>
+}
+
+export function updateDormCharge(id: string | number, payload: { other?: number; refund?: number; remark?: string }): Promise<any> {
+  return put(`${BASE}/dorm/charges/${encodeURIComponent(String(id))}`, payload) as Promise<any>
+}
+
+export function removeDormCharge(id: string | number): Promise<any> {
+  return del(`${BASE}/dorm/charges/${encodeURIComponent(String(id))}`) as Promise<any>
 }

@@ -19,8 +19,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // ---------------------------------------------------------------------------
@@ -103,7 +105,7 @@ func (HRDormReading) TableName() string { return "hr_dorm_readings" }
 
 // hrDormAutoMigrate 建表（失败只告警，不阻断启动）。
 func hrDormAutoMigrate(db *gorm.DB) {
-	if err := db.AutoMigrate(&HRDormRecord{}, &HRDormBill{}, &HRDormBillItem{}, &HRDormReading{}); err != nil {
+	if err := db.AutoMigrate(&HRDormRecord{}, &HRDormBill{}, &HRDormBillItem{}, &HRDormReading{}, &HRDormCharge{}); err != nil {
 		logger.Warnf(context.Background(), "AutoMigrate HR dorm tables failed: %v", err)
 	}
 }
@@ -243,6 +245,12 @@ func (h *HRHandler) hrDormRecordView(module string, rec HRDormRecord, occ map[st
 		}
 		total := hrDormInt(rec.CustomData, "床位数")
 		used := occ[code]
+		// 公租房住宿记录存的是「房屋地址」，房源主键是短编号 —— 两种写法都要认
+		if used == 0 {
+			if addr := hrDormStr(rec.CustomData, "房屋地址"); addr != "" {
+				used = occ[addr]
+			}
+		}
 		status, free := hrDormRoomStatus(total, used, hrDormStr(rec.CustomData, "宿舍状态"))
 		out["可用床位数"] = free
 		out["宿舍状态"] = status
@@ -314,6 +322,7 @@ func (h *HRHandler) CreateDormRecord(c *gin.Context) {
 		hrFail(c, "缺少 module")
 		return
 	}
+	hrDormNormalizeRecord(req.Module, req.Data)
 	rec := HRDormRecord{
 		ID: uuid.New().String(), TenantID: tid, Module: req.Module,
 		Code: hrDormCodeOf(req.Module, req.Data), Name: hrDormNameOf(req.Module, req.Data),
@@ -349,11 +358,26 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 	for k, v := range req.Data {
 		merged[k] = v
 	}
+	oldCode := row.Code
+	hrDormNormalizeRecord(row.Module, merged)
 	row.CustomData = merged
 	row.Code = hrDormCodeOf(row.Module, merged)
 	row.Name = hrDormNameOf(row.Module, merged)
 	row.Status = hrDormStatusOf(row.Module, merged)
-	if err := h.db.WithContext(ctx).Save(&row).Error; err != nil {
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := tx.Save(&row).Error; e != nil {
+			return e
+		}
+		// 第 62 轮：改「宿舍编号 / 房屋编号」时级联更新住宿记录与资产档案
+		newCode := row.Code
+		if (row.Module == hrDormModuleRoom || row.Module == hrDormModulePublic) && oldCode != "" && newCode != "" && oldCode != newCode {
+			if e := hrDormCascadeRoomCode(tx, tid, oldCode, newCode); e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		hrFail(c, "保存失败: "+err.Error())
 		return
 	}
@@ -362,11 +386,25 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 
 // DeleteDormRecord DELETE /hr/dorm/records/:id
 func (h *HRHandler) DeleteDormRecord(c *gin.Context) {
+	h.hrDormDeleteRecord(c, "")
+}
+
+// hrDormDeleteRecord 删除宿舍记录；module 非空时校验归属（子表专属路由用），
+// 防止 `stays/{id}` 误删到同名 id 的宿舍档案。
+func (h *HRHandler) hrDormDeleteRecord(c *gin.Context, module string) {
 	ctx := c.Request.Context()
 	tid := hrTenantID(c)
-	res := h.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tid, c.Param("id")).Delete(&HRDormRecord{})
+	q := h.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tid, c.Param("id"))
+	if module != "" {
+		q = q.Where("module = ?", module)
+	}
+	res := q.Delete(&HRDormRecord{})
 	if res.Error != nil {
 		hrFail(c, "删除失败: "+res.Error.Error())
+		return
+	}
+	if res.RowsAffected == 0 {
+		hrFail(c, "记录不存在或已删除")
 		return
 	}
 	hrOK(c, gin.H{"deleted": res.RowsAffected})
@@ -794,8 +832,15 @@ func (h *HRHandler) hrBuildDormBill(ctx context.Context, tid int64, month string
 				address = v
 			}
 		}
-		rent := hrDormFloat(room.CustomData, "租金(元/月)")
-		property := hrDormFloat(room.CustomData, "物业(元/月)")
+		// 第 62 轮字段契约：房屋租金(元/月) / 物业费(元/月)；旧键保留兼容
+		rent := hrDormFloat(room.CustomData, "房屋租金(元/月)")
+		if rent == 0 {
+			rent = hrDormFloat(room.CustomData, "租金(元/月)")
+		}
+		property := hrDormFloat(room.CustomData, "物业费(元/月)")
+		if property == 0 {
+			property = hrDormFloat(room.CustomData, "物业(元/月)")
+		}
 		// 读数按房源主键（短编号）索引；住宿记录里公租房填的是地址，必须回落。
 		rd := readings[room.Code]
 		if rd.RoomCode == "" {
@@ -873,53 +918,71 @@ func (h *HRHandler) hrSeedDorm(ctx context.Context) error {
 	return nil
 }
 
-// hrSeedDormForTenant 单租户播种；已有宿舍档案则跳过（幂等）。
+// hrSeedDormForTenant 第 62 轮：一次性装载真实房源与入住档案（19 套公租房 + 22 间宿舍 + 38 条住宿）。
+//
+// 幂等：写系统标记 hr_dorm_seed_v62；只有首次执行才会清掉第 61 轮的虚拟种子，
+// 之后用户在界面上的增删改一律保留，重启不复活、不回退。
 func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
-	var n int64
-	if err := h.db.WithContext(ctx).Model(&HRDormRecord{}).
-		Where("tenant_id = ? AND module = ?", tid, hrDormModuleRoom).Count(&n).Error; err != nil {
-		return err
-	}
-	if n > 0 {
+	var mark types.SystemSetting
+	if err := h.db.WithContext(ctx).Where("key = ?", hrDormSeed62Key).First(&mark).Error; err == nil {
 		return nil
 	}
-	now := time.Now()
-
-	// ---- 18 间厂区宿舍 ----
-	dorms := []struct {
-		code, building, room, roomType, gender, admin string
-		beds, area                                     int
-		facility                                       string
-	}{
-		{"宿舍302", "1号楼", "302", "四人间", "男", "李思远", 4, 28, "空调,热水器,独立卫浴"},
-		{"宿舍304", "1号楼", "304", "四人间", "男", "罗佳怡", 4, 28, "空调,热水器,独立卫浴"},
-		{"持睿403", "持睿公寓", "403", "双人间", "男", "汪艳", 2, 20, "空调,热水器"},
-		{"持睿404", "持睿公寓", "404", "双人间", "男", "王瑞", 2, 20, "空调,热水器"},
-		{"持睿405", "持睿公寓", "405", "双人间", "男", "黄洲", 2, 20, "空调,热水器"},
-		{"持睿406", "持睿公寓", "406", "双人间", "男", "刘志强", 2, 20, "空调,热水器"},
-		{"持睿407", "持睿公寓", "407", "双人间", "女", "徐海燕", 2, 20, "空调,热水器"},
-		{"持睿408", "持睿公寓", "408", "双人间", "女", "李永梅", 2, 20, "空调,热水器"},
-		{"持睿409", "持睿公寓", "409", "双人间", "女", "暂缺", 2, 20, "空调,热水器"},
-		{"持睿410", "持睿公寓", "410", "双人间", "女", "暂缺", 2, 20, "空调,热水器"},
-		{"持睿411", "持睿公寓", "411", "双人间", "男", "暂缺", 2, 20, "空调,热水器"},
-		{"持睿412", "持睿公寓", "412", "双人间", "男", "暂缺", 2, 20, "空调,热水器"},
-		{"持睿413", "持睿公寓", "413", "单人间", "男", "贺伟", 1, 16, "空调,热水器,书桌"},
-		{"持睿414", "持睿公寓", "414", "单人间", "女", "暂缺", 1, 16, "空调,热水器,书桌"},
-		{"持睿415", "持睿公寓", "415", "单人间", "男", "暂缺", 1, 16, "空调,热水器,书桌"},
-		{"持睿416", "持睿公寓", "416", "单人间", "女", "暂缺", 1, 16, "空调,热水器,书桌"},
-		{"持睿417", "持睿公寓", "417", "单人间", "男", "暂缺", 1, 16, "空调,热水器,书桌"},
-		{"持睿418", "持睿公寓", "418", "单人间", "女", "暂缺", 1, 16, "空调,热水器,书桌"},
+	// 清掉第 61 轮的虚拟种子（只清宿舍四表，绝不动能耗/社保/公积金/花名册）
+	for _, m := range []any{&HRDormRecord{}, &HRDormBill{}, &HRDormBillItem{}, &HRDormReading{}, &HRDormCharge{}} {
+		if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).Delete(m).Error; err != nil {
+			return err
+		}
 	}
-	for _, d := range dorms {
+	now := time.Now()
+	emp := h.hrDormEmployeeIndex(ctx, tid)
+	deptOf := func(name string) string {
+		if e, ok := emp[name]; ok && strings.TrimSpace(e.Department) != "" {
+			return strings.TrimSpace(e.Department)
+		}
+		return "生产部"
+	}
+	empIDOf := func(name string) string {
+		if e, ok := emp[name]; ok {
+			return e.EmployeeID
+		}
+		return ""
+	}
+
+	// ---- 22 间厂区员工宿舍（301~320、417、419）----
+	type roomSeed struct {
+		code, roomType, gender string
+		beds                   int
+		area                   float64
+	}
+	dormRooms := make([]roomSeed, 0, 22)
+	for _, n := range []int{301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 417, 419} {
+		rt := "四人间"
+		switch n {
+		case 301, 302, 310, 312, 313, 314, 316, 320:
+			rt = "单人间"
+		case 307, 308, 319:
+			rt = "双人间"
+		case 304, 309:
+			rt = "夫妻房"
+		}
+		dormRooms = append(dormRooms, roomSeed{code: fmt.Sprintf("宿舍%d", n), roomType: rt, gender: "男", beds: hrDormBedsOfType(rt), area: 28})
+	}
+	dormRooms[3].gender = "不限" // 宿舍304 夫妻房
+	dormRooms[8].gender = "不限" // 宿舍309 夫妻房
+	for _, r := range dormRooms {
 		rec := HRDormRecord{
 			ID: uuid.New().String(), TenantID: tid, Module: hrDormModuleRoom,
-			Code: d.code, Name: d.code, Status: "空闲",
+			Code: r.code, Name: r.code, Status: "空闲",
 			CustomData: map[string]any{
-				"宿舍编号": d.code, "宿舍楼/区域": d.building, "房间号": d.room,
-				"房型": d.roomType, "床位数": d.beds, "可用床位数": d.beds,
-				"性别限制": d.gender, "房间面积(㎡)": d.area, "配套设施": d.facility,
-				"关联电表": d.code, "关联水表": d.code, "所属公司/部门": "重庆星达铜业有限公司",
-				"管理员/舍长": d.admin, "宿舍状态": "空闲", "备注": "",
+				"宿舍编号": r.code, "宿舍楼/区域": "厂区宿舍", "房间号": strings.TrimPrefix(r.code, "宿舍"),
+				"房型": r.roomType, "床位数": r.beds, "可用床位数": r.beds,
+				"性别限制": r.gender, "房间面积(㎡)": r.area, "配套设施": "空调,热水器,床,衣柜",
+				"所属公司/部门": "重庆星达铜业有限公司", "管理员/舍长": "",
+				"宿舍状态": "空闲", "备注": "",
+				"关联电表": r.code, "关联水表": r.code, "关联气表": "",
+				"宿舍押金(元)": 200, "电费标准(元/度)": 1, "水费单价(元/m³)": 5,
+				"垃圾处理费(元/套)": 0, "二次供水费(元/m³)": 0, "污水处理费(元/m³)": 0,
+				"气费标准(元/m³)": 0, "房屋租金(元/月)": 0, "物业费(元/月)": 0,
 			},
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -928,34 +991,59 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 		}
 	}
 
-	// ---- 10 套两山景苑公租房（图 7 原值）----
-	publics := []struct {
-		code, addr, name string
-		area, rent, prop float64
-	}{
-		{"5栋2-6", "两山景苑公租房5栋2-6", "5栋2-6", 49.28, 296, 49},
-		{"5栋2-7", "两山景苑公租房5栋2-7", "5栋2-7", 50.69, 304, 51},
-		{"5栋2-8", "两山景苑公租房5栋2-8", "5栋2-8", 47.95, 288, 48},
-		{"5栋21-15", "两山景苑公租房5栋21-15", "5栋21-15", 45.65, 274, 46},
-		{"5栋21-16", "两山景苑公租房5栋21-16", "5栋21-16", 46.83, 281, 47},
-		{"5栋24-3", "两山景苑公租房5栋24-3", "5栋24-3", 49.28, 296, 49},
-		{"5栋24-6", "两山景苑公租房5栋24-6", "5栋24-6", 49.28, 296, 49},
-		{"5栋24-7", "两山景苑公租房5栋24-7", "5栋24-7", 50.69, 304, 51},
-		{"5栋24-8", "两山景苑公租房5栋24-8", "5栋24-8", 47.95, 288, 48},
-		{"5栋24-9", "两山景苑公租房5栋24-9", "5栋24-9", 47.95, 288, 48},
+	// ---- 19 套真实公租房（两山秀苑 9 + 两山景苑 10）----
+	type publicSeed struct {
+		code, addr, roomType string
+		area, rent, prop     float64
+		start, end           string
+		occupants            []string
+	}
+	publics := []publicSeed{
+		{"19-23-5", "两山秀苑19-23-5", "单人间", 0, 349, 0, "2026-10", "2026-12", []string{"龙远高"}},
+		{"19-23-6", "两山秀苑19-23-6", "单人间", 0, 348, 0, "2026-10", "2026-12", []string{"胡勇"}},
+		{"19-23-7", "两山秀苑19-23-7", "单人间", 0, 348, 0, "2026-10", "2026-12", []string{"李德富"}},
+		{"19-23-8", "两山秀苑19-23-8", "单人间", 0, 349, 0, "2026-10", "2026-12", []string{"杨见洪"}},
+		{"19-23-9", "两山秀苑19-23-9", "双人间", 0, 349, 0, "2026-10", "2026-12", []string{"叶永生", "汤旭"}},
+		{"19-23-10", "两山秀苑19-23-10", "单人间", 0, 349, 0, "2026-10", "2026-12", []string{"杨强"}},
+		{"19-23-11", "两山秀苑19-23-11", "夫妻房", 0, 364, 0, "2026-10", "2026-12", []string{"陈清", "徐红梅"}},
+		{"19-23-12", "两山秀苑19-23-12", "单人间", 0, 344, 0, "2026-10", "2026-12", []string{"杨平波"}},
+		{"19-23-14", "两山秀苑19-23-14", "单人间", 0, 349, 0, "2026-10", "2026-12", []string{"陈周华"}},
+		{"5-2-6", "两山景苑5-2-6", "双人间", 49.28, 296, 49, "2026-08", "2026-10", []string{"李中凯"}},
+		{"5-2-7", "两山景苑5-2-7", "双人间", 50.69, 304, 51, "2026-08", "2026-10", []string{"鲁兆义"}},
+		{"5-2-8", "两山景苑5-2-8", "双人间", 47.95, 288, 48, "2026-08", "2026-10", []string{"李金笛"}},
+		{"5-21-15", "两山景苑5-21-15", "双人间", 45.65, 274, 46, "2026-08", "2026-10", []string{"黄润州"}},
+		{"5-21-16", "两山景苑5-21-16", "双人间", 46.83, 281, 47, "2026-08", "2026-10", []string{"杨交坤"}},
+		{"5-24-3", "两山景苑5-24-3", "双人间", 49.28, 296, 49, "2026-08", "2026-10", []string{"王弟浩"}},
+		{"5-24-6", "两山景苑5-24-6", "双人间", 49.28, 296, 49, "2026-08", "2026-10", []string{"扈极顺"}},
+		{"5-24-7", "两山景苑5-24-7", "双人间", 50.69, 304, 51, "2026-08", "2026-10", []string{"宋和聪"}},
+		{"5-24-8", "两山景苑5-24-8", "夫妻房", 47.95, 288, 48, "2026-08", "2026-10", []string{"周通", "向秋霞"}},
+		{"5-24-9", "两山景苑5-24-9", "双人间", 47.95, 288, 48, "2026-08", "2026-10", []string{"向伟"}},
 	}
 	for _, p := range publics {
-		first := round2(p.rent + p.prop)
+		unit := round2(p.rent + p.prop)
 		rec := HRDormRecord{
 			ID: uuid.New().String(), TenantID: tid, Module: hrDormModulePublic,
 			Code: p.code, Name: p.addr, Status: "空闲",
 			CustomData: map[string]any{
 				"房屋编号": p.code, "房屋地址": p.addr, "租赁单位": "重庆星达铜业有限公司",
-				"建筑面积(㎡)": p.area, "房型": "双人间", "床位数": 2, "可用床位数": 2,
-				"租金(元/月)": p.rent, "物业(元/月)": p.prop,
-				"首月费用(元)": first, "季度(元/季)": round2(first * 3),
-				"关联电表": p.name, "关联水表": p.name, "关联气表": p.name,
-				"管理员/舍长": "行政部", "宿舍状态": "空闲", "备注": "",
+				"建筑面积(㎡)": p.area, "房型": p.roomType, "床位数": hrDormBedsOfType(p.roomType),
+				"可用床位数": hrDormBedsOfType(p.roomType),
+				"性别限制": func() string {
+					if p.roomType == "夫妻房" {
+						return "不限"
+					}
+					return "男"
+				}(),
+				"配套设施": "空调,热水器,床,衣柜,灶台",
+				"管理员/舍长": "行政部",
+				"宿舍状态":  "空闲", "备注": "",
+				"关联电表": p.addr, "关联水表": p.addr, "关联气表": p.addr,
+				"宿舍押金(元)": 0, "电费标准(元/度)": 0.52, "水费单价(元/m³)": 3.32,
+				"垃圾处理费(元/套)": 13, "二次供水费(元/m³)": 0.8, "污水处理费(元/m³)": 1,
+				"气费标准(元/m³)": 2.196,
+				"房屋租金(元/月)": p.rent, "物业费(元/月)": p.prop,
+				"月费用单价(元/月)": unit, "季度租金(元/季)": round2(unit * 3),
+				"租期起始月份": p.start, "租期截止月份": p.end,
 			},
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -964,64 +1052,68 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 		}
 	}
 
-	// ---- 住宿记录：优先按姓名命中花名册，不足时按在职员工顺序补 ----
-	type emp struct {
-		Name       string
-		Department string
-		EmployeeID string
-		Phone      string
+	// ---- 住宿记录：38 名真实在住员工 ----
+	type staySeed struct{ room, name, kind, in string; ratio float64 }
+	stays := []staySeed{
+		{"宿舍301", "吴勇建", "单人间", "2026-01-05", 1},
+		{"宿舍302", "唐林波", "单人间", "2026-03-16", 1},
+		{"宿舍304", "董友兵", "夫妻房", "2026-02-10", 1},
+		{"宿舍304", "吴英", "夫妻房", "2026-02-10", 0},
+		{"宿舍307", "邓冬", "双人间", "2026-04-01", 0.5},
+		{"宿舍307", "叶茂", "双人间", "2026-04-01", 0.5},
+		{"宿舍308", "张华", "双人间", "2026-05-06", 0.5},
+		{"宿舍308", "邬康军", "双人间", "2026-05-06", 0.5},
+		{"宿舍309", "刘明", "夫妻房", "2026-03-01", 1},
+		{"宿舍309", "黄美容", "夫妻房", "2026-03-01", 0},
+		{"宿舍310", "刘鹏", "单人间", "2026-06-18", 1},
+		{"宿舍312", "安洪琦", "单人间", "2026-02-20", 1},
+		{"宿舍313", "刘开祥", "单人间", "2026-07-01", 1},
+		{"宿舍314", "驾驶员", "单人间", "2026-01-01", 1},
+		{"宿舍316", "舒福林", "单人间", "2026-08-11", 1},
+		{"宿舍319", "文豪", "双人间", "2026-04-15", 0.5},
+		{"宿舍319", "彭量", "双人间", "2026-04-15", 0.5},
+		{"宿舍320", "彭振富", "单人间", "2026-05-20", 1},
 	}
-	var emps []emp
-	_ = h.db.WithContext(ctx).Table("hr_employees").
-		Select("name, department, employee_id, phone").
-		Where("tenant_id = ? AND status = ?", tid, hrRosterStatusActive).
-		Order("employee_id asc").Limit(40).Scan(&emps).Error
-	pick := func(want string, idx int) emp {
-		for _, e := range emps {
-			if strings.TrimSpace(e.Name) == want {
-				return e
+	for _, p := range publics {
+		for i, name := range p.occupants {
+			ratio := 1.0
+			if len(p.occupants) > 1 {
+				if p.roomType == "夫妻房" {
+					if i > 0 {
+						ratio = 0
+					}
+				} else {
+					ratio = 0.5
+				}
 			}
+			in := "2026-01-01"
+			if strings.HasPrefix(p.start, "2026-10") {
+				in = "2026-10-01"
+			} else {
+				in = p.start + "-01"
+			}
+			stays = append(stays, staySeed{p.addr, name, p.roomType, in, ratio})
 		}
-		if idx < len(emps) {
-			return emps[idx]
-		}
-		if len(emps) > 0 {
-			return emps[0]
-		}
-		return emp{Name: want, Department: "生产部"}
 	}
-	stays := []struct {
-		room, bed, in, kind string
-		name                string
-	}{
-		{"宿舍302", "1号床", "2026-03-01", "新入住", "李思远"},
-		{"宿舍302", "2号床", "2026-05-12", "新入住", "罗佳怡"},
-		{"宿舍304", "1号床", "2026-04-08", "新入住", "汪艳"},
-		{"持睿403", "1号床", "2026-06-01", "新入住", "王瑞"},
-		{"持睿403", "2号床", "2026-06-01", "新入住", "黄洲"},
-		{"持睿404", "1号床", "2026-07-15", "新入住", "刘志强"},
-		{"持睿407", "1号床", "2026-08-01", "新入住", "徐海燕"},
-		{"两山景苑公租房5栋21-15", "1号床", "2026-02-01", "新入住", "廖宏"},
-		{"两山景苑公租房5栋2-6", "1号床", "2026-09-01", "新入住", "曾均华"},
-	}
-	for i, s := range stays {
-		e := pick(s.name, i)
+	for i, st := range stays {
 		rec := HRDormRecord{
 			ID: uuid.New().String(), TenantID: tid, Module: hrDormModuleStay,
-			Code: "", Name: e.Name, Status: "在住",
+			Code: "", Name: st.name, Status: "在住",
 			CustomData: map[string]any{
-				"住宿记录ID": "STAY" + fmt.Sprintf("%04d", i+1),
-				"员工工号": e.EmployeeID, "员工姓名": e.Name, "所属部门": e.Department,
-				"联系电话": e.Phone, "紧急联系人及电话": "",
+				"住宿记录ID": fmt.Sprintf("STAY%04d", i+1),
+				"员工工号":   empIDOf(st.name), "员工姓名": st.name, "所属部门": deptOf(st.name),
+				"联系电话": "", "紧急联系人及电话": "",
 				"房源类型": func() string {
-					if strings.Contains(s.room, "公租房") {
+					if strings.Contains(st.room, "两山") {
 						return "公租房"
 					}
-					return "厂区宿舍"
+					return "公司宿舍"
 				}(),
-				"宿舍编号/房屋地址": s.room, "床位号": s.bed, "入住类型": s.kind,
-				"入住日期": s.in, "退宿日期": "", "押金金额(元)": 200,
+				"宿舍编号/房屋地址": st.room, "床位号": "1号床", "入住类型": "新入住",
+				"入住日期": st.in, "退宿日期": "", "押金金额(元)": 0,
 				"退宿原因": "", "住宿状态": "在住",
+				"入住时水表度数": 0, "入住时电表度数": 0, "入住时气表度数": 0,
+				"分摊比例": st.ratio,
 			},
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -1030,44 +1122,41 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 		}
 	}
 
-	// ---- 资产档案 ----
+	// ---- 资产档案（按新字段：分类/规格/单位/价值/购置日期）----
 	assets := []struct {
-		code, name, room, owner, maintain string
-		qty, fee                          int
+		code, name, category, spec, room, owner, unit string
+		qty                                           int
+		value, fee                                    float64
 	}{
-		{"ZC-302-01", "床", "宿舍302", "李思远", "无维修", 4, 0},
-		{"ZC-302-02", "空调", "宿舍302", "李思远", "已修复", 1, 260},
-		{"ZC-304-01", "床", "宿舍304", "汪艳", "无维修", 4, 0},
-		{"ZC-304-02", "热水器", "宿舍304", "汪艳", "待维修", 1, 0},
-		{"ZC-403-01", "衣柜", "持睿403", "王瑞", "无维修", 2, 0},
-		{"ZC-403-02", "洗衣机", "持睿403", "王瑞", "维修中", 1, 180},
-		{"ZC-5-21-15-01", "床", "两山景苑公租房5栋21-15", "廖宏", "无维修", 2, 0},
-		{"ZC-5-2-6-01", "书桌", "两山景苑公租房5栋2-6", "曾均华", "无维修", 1, 0},
+		{"ZC-301-01", "床", "家具", "1.2m 实木", "宿舍301", "吴勇建", "张", 1, 800, 0},
+		{"ZC-301-02", "空调", "家电", "1.5P 挂机", "宿舍301", "吴勇建", "台", 1, 2200, 0},
+		{"ZC-302-01", "热水器", "家电", "60L", "宿舍302", "唐林波", "台", 1, 900, 260},
+		{"ZC-304-01", "衣柜", "家具", "两门", "宿舍304", "董友兵", "个", 1, 600, 0},
+		{"ZC-307-01", "洗衣机", "家电", "8kg", "宿舍307", "邓冬", "台", 1, 1500, 180},
+		{"ZC-309-01", "书桌", "家具", "1.2m", "宿舍309", "刘明", "张", 1, 350, 0},
+		{"ZC-5-21-15-01", "床", "家具", "1.5m", "两山景苑5-21-15", "黄润州", "张", 1, 900, 0},
+		{"ZC-19-23-5-01", "灶台", "家电", "双灶", "两山秀苑19-23-5", "龙远高", "台", 1, 700, 0},
 	}
 	for _, a := range assets {
-		state := "正常"
-		if a.maintain == "待维修" || a.maintain == "维修中" {
-			state = "损坏"
-		}
 		rec := HRDormRecord{
 			ID: uuid.New().String(), TenantID: tid, Module: hrDormModuleAsset,
-			Code: a.code, Name: a.name, Status: state,
+			Code: a.code, Name: a.name, Status: "正常",
 			CustomData: map[string]any{
-				"资产编号": a.code, "资产名称/类型": a.name, "所属宿舍": a.room,
-				"数量": a.qty, "责任人": a.owner, "报修日期": func() string {
-					if a.maintain == "无维修" {
-						return ""
+				"资产编号": a.code, "资产名称": a.name, "资产分类": a.category, "规格型号": a.spec,
+				"所属宿舍": a.room, "数量": a.qty, "计量单位": a.unit, "资产价值(元)": a.value,
+				"购置日期": "2025-06-01", "责任人": a.owner, "报修日期": func() string {
+					if a.fee > 0 {
+						return "2026-09-18"
 					}
-					return "2026-09-18"
+					return ""
 				}(),
-				"维修状态": a.maintain, "维修费用(元)": a.fee,
-				"维修说明": func() string {
-					if a.maintain == "无维修" {
-						return ""
+				"维修状态": func() string {
+					if a.fee > 0 {
+						return "已修复"
 					}
-					return "已联系维修师傅上门处理"
+					return "无维修"
 				}(),
-				"资产状态": state,
+				"维修费用(元)": a.fee, "维修说明": "", "备注": "", "资产状态": "正常",
 			},
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -1076,55 +1165,83 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 		}
 	}
 
-	// ---- 表计读数（2026-10 与 2026-11，联动能耗管理宿舍水电表）----
-	for _, month := range []string{"2026-10", "2026-11"} {
-		idx := 0
-		for _, d := range dorms {
-			idx++
-			elec := 42 + float64(idx*7%60)
-			water := 3.2 + float64(idx*3%9)
-			rec := HRDormReading{
-				ID: uuid.New().String(), TenantID: tid, MonthLabel: month, RoomCode: d.code,
-				ElecKwh: round2(elec), ElecFee: round2(elec * 0.92),
-				WaterTon: round2(water), WaterFee: round2(water * 3.5),
-				GasM3: 0, GasFee: 0,
-			}
-			if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
-				return err
-			}
+	// ---- 2026-10 表计读数（宿舍按 1 元/度、5 元/吨；公租房气表有数）----
+	idx := 0
+	for _, r := range dormRooms {
+		idx++
+		elec := 60 + float64(idx*13%180)
+		water := 2 + float64(idx*3%12)
+		rec := HRDormReading{
+			ID: uuid.New().String(), TenantID: tid, MonthLabel: "2026-10", RoomCode: r.code,
+			ElecKwh: round2(elec), ElecFee: round2(elec * 1),
+			WaterTon: round2(water), WaterFee: round2(water * 5),
 		}
-		idx = 0
-		for _, p := range publics {
-			idx++
-			elec := 88 + float64(idx*11%70)
-			water := 5.6 + float64(idx*4%8)
-			gas := 11 + float64(idx*3%10)
-			rec := HRDormReading{
-				ID: uuid.New().String(), TenantID: tid, MonthLabel: month, RoomCode: p.code,
-				ElecKwh: round2(elec), ElecFee: round2(elec * 0.92),
-				WaterTon: round2(water), WaterFee: round2(water * 3.5),
-				GasM3: round2(gas), GasFee: round2(gas * 2.1),
-			}
-			if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
-				return err
-			}
+		if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
+			return err
+		}
+	}
+	idx = 0
+	for _, p := range publics {
+		idx++
+		elec := 70 + float64(idx*9%90)
+		water := 4 + float64(idx*2%8)
+		gas := 6 + float64(idx*3%10)
+		rec := HRDormReading{
+			ID: uuid.New().String(), TenantID: tid, MonthLabel: "2026-10", RoomCode: p.code,
+			ElecKwh: round2(elec), ElecFee: round2(elec * 0.52),
+			WaterTon: round2(water), WaterFee: round2(water * 3.32),
+			GasM3: round2(gas), GasFee: round2(gas * 2.196),
+		}
+		if err := h.db.WithContext(ctx).Create(&rec).Error; err != nil {
+			return err
 		}
 	}
 
-	// ---- 预生成 2026-10 账单（费用信息标签首屏有数据可点开）----
-	bill, items, err := h.hrBuildDormBill(ctx, tid, "2026-10")
-	if err != nil {
-		logger.Warnf(ctx, "seed HR dorm bill failed: %v", err)
-		return nil
-	}
-	if err := h.db.WithContext(ctx).Create(&bill).Error; err != nil {
-		return err
-	}
-	if len(items) > 0 {
-		return h.db.WithContext(ctx).CreateInBatches(items, 50).Error
-	}
+	// ---- 2026-10 全员费用扣款明细 ----
+	h.hrDormSeedCharges62(ctx, tid)
+
+	// 写标记（幂等）
+	value := []byte("true")
+	_ = h.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "value_type", "updated_at"}),
+	}).Create(&types.SystemSetting{
+		Key: hrDormSeed62Key, Value: types.JSON(value), ValueType: "bool",
+		Category: "hr", Description: "宿舍管理第 62 轮真实房源种子已完成",
+	}).Error
+	logger.Infof(ctx, "HR dorm v62 seeded: 22 dorms / 19 publics / %d stays", len(stays))
 	return nil
 }
+
+// hrDormBedsOfType 房型 → 床位数（只读派生，前后端同源）。
+func hrDormBedsOfType(roomType string) int {
+	switch strings.TrimSpace(roomType) {
+	case "单人间":
+		return 1
+	case "双人间", "夫妻房":
+		return 2
+	case "四人间":
+		return 4
+	case "六人间":
+		return 6
+	case "八人间":
+		return 8
+	}
+	return 1
+}
+
+// hrDormEmployeeIndex 在职员工索引（姓名 → 员工）。
+func (h *HRHandler) hrDormEmployeeIndex(ctx context.Context, tid int64) map[string]HREmployee {
+	out := map[string]HREmployee{}
+	var rows []HREmployee
+	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND (status <> ? OR status = '' OR status IS NULL)", tid, "离职").Find(&rows).Error
+	for _, e := range rows {
+		out[strings.TrimSpace(e.Name)] = e
+	}
+	return out
+}
+
+const hrDormSeed62Key = "hr_dorm_seed_v62"
 
 // hrSeedDormIfNeeded 在首次初始化链路里调用（与其它 HR 种子同门禁）。
 func (h *HRHandler) hrSeedDormIfNeeded(ctx context.Context) error {
@@ -1202,7 +1319,26 @@ func (h *HRHandler) ImportDormRecords(c *gin.Context) {
 		hrFail(c, "表头与「"+group+"」字段不匹配，请先下载模板")
 		return
 	}
-	created := 0
+	// 第 62 轮：与花名册一致的三种导入模式
+	//   merge  = 合并更新（按房源编号/姓名身份命中则覆盖，未命中则新增）
+	//   insert = 仅新增（已存在的行跳过）
+	//   update = 仅更新（不新增，只覆盖已存在的行）
+	mode := strings.TrimSpace(c.PostForm("mode"))
+	if mode == "" {
+		mode = strings.TrimSpace(c.Query("mode"))
+	}
+	if mode != "insert" && mode != "update" {
+		mode = "merge"
+	}
+	existing := map[string]HRDormRecord{}
+	var olds []HRDormRecord
+	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND module = ?", tid, module).Find(&olds).Error
+	for _, o := range olds {
+		if k := hrDormIdentityOf(module, o.CustomData, o.Code, o.Name); k != "" {
+			existing[k] = o
+		}
+	}
+	created, updated, skipped := 0, 0, 0
 	for _, row := range rows[1:] {
 		data := map[string]any{}
 		for i, name := range colOf {
@@ -1216,6 +1352,36 @@ func (h *HRHandler) ImportDormRecords(c *gin.Context) {
 		if len(data) == 0 {
 			continue
 		}
+		hrDormNormalizeRecord(module, data)
+		key := hrDormIdentityOf(module, data, hrDormCodeOf(module, data), hrDormNameOf(module, data))
+		if old, ok := existing[key]; ok && key != "" {
+			if mode == "insert" {
+				skipped++
+				continue
+			}
+			merged := map[string]any{}
+			for k, v := range old.CustomData {
+				merged[k] = v
+			}
+			for k, v := range data {
+				merged[k] = v
+			}
+			hrDormNormalizeRecord(module, merged)
+			old.CustomData = merged
+			old.Code = hrDormCodeOf(module, merged)
+			old.Name = hrDormNameOf(module, merged)
+			old.Status = hrDormStatusOf(module, merged)
+			if err := h.db.WithContext(ctx).Save(&old).Error; err != nil {
+				skipped++
+				continue
+			}
+			updated++
+			continue
+		}
+		if mode == "update" {
+			skipped++
+			continue
+		}
 		rec := HRDormRecord{
 			ID: uuid.New().String(), TenantID: tid, Module: module,
 			Code: hrDormCodeOf(module, data), Name: hrDormNameOf(module, data),
@@ -1226,11 +1392,12 @@ func (h *HRHandler) ImportDormRecords(c *gin.Context) {
 		}
 		created++
 	}
-	if created == 0 {
-		hrFail(c, "没有可导入的数据行")
+	if created == 0 && updated == 0 {
+		hrFail(c, "没有可导入的数据行（跳过 "+fmt.Sprint(skipped)+" 行）")
 		return
 	}
-	hrOK(c, gin.H{"imported": created, "module": module})
+	hrOK(c, gin.H{"imported": created + updated, "created": created, "updated": updated,
+		"skipped": skipped, "module": module, "mode": mode})
 }
 
 // DormTemplate GET /hr/dorm/template?module=xxx —— 中文表头模板。
@@ -1262,4 +1429,112 @@ func (h *HRHandler) DormStats(c *gin.Context) {
 	h.db.WithContext(ctx).Model(&HRDormBill{}).Where("tenant_id = ?", tid).Count(&bills)
 	hrOK(c, gin.H{"dorm": dorm, "public": public, "stay": stay, "asset": asset,
 		"bills": bills, "total": dorm + public})
+}
+
+// hrDormNormalizeRecord 保存前归一：
+//   · 房型 → 床位数（只读派生）＋ 夫妻房 → 性别限制=不限；
+//   · 公租房 月费用单价 = 租金 + 物业，季度租金 = 月费用单价 × 3；
+//   · 资产档案：资产编号为空时自动生成，数量/价值转数值。
+func hrDormNormalizeRecord(module string, d map[string]any) {
+	if d == nil {
+		return
+	}
+	if module == hrDormModuleRoom || module == hrDormModulePublic {
+		if rt := hrDormStr(d, "房型"); rt != "" {
+			d["床位数"] = hrDormBedsOfType(rt)
+			if rt == "夫妻房" {
+				d["性别限制"] = "不限"
+			}
+		}
+		if module == hrDormModulePublic {
+			unit := round2(hrDormFloat(d, "房屋租金(元/月)") + hrDormFloat(d, "物业费(元/月)"))
+			d["月费用单价(元/月)"] = unit
+			d["季度租金(元/季)"] = round2(unit * 3)
+		}
+	}
+	if module == hrDormModuleAsset {
+		if hrDormStr(d, "资产编号") == "" {
+			d["资产编号"] = "ZC-" + time.Now().Format("060102150405")
+		}
+	}
+}
+
+// hrDormCascadeRoomCode 房源编号改名 → 同步关联住宿记录与资产档案。
+func hrDormCascadeRoomCode(tx *gorm.DB, tid int64, oldCode, newCode string) error {
+	var stays []HRDormRecord
+	if err := tx.Where("tenant_id = ? AND module = ?", tid, hrDormModuleStay).Find(&stays).Error; err != nil {
+		return err
+	}
+	for i := range stays {
+		if hrDormStr(stays[i].CustomData, "宿舍编号/房屋地址") != oldCode {
+			continue
+		}
+		stays[i].CustomData["宿舍编号/房屋地址"] = newCode
+		if err := tx.Save(&stays[i]).Error; err != nil {
+			return err
+		}
+	}
+	var assets []HRDormRecord
+	if err := tx.Where("tenant_id = ? AND module = ?", tid, hrDormModuleAsset).Find(&assets).Error; err != nil {
+		return err
+	}
+	for i := range assets {
+		if hrDormStr(assets[i].CustomData, "所属宿舍") != oldCode {
+			continue
+		}
+		assets[i].CustomData["所属宿舍"] = newCode
+		if err := tx.Save(&assets[i]).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// hrDormIdentityOf 导入/合并的身份键：房源=编号/地址，住宿=员工姓名，资产=资产编号。
+func hrDormIdentityOf(module string, d map[string]any, code, name string) string {
+	switch module {
+	case hrDormModuleRoom:
+		if v := strings.TrimSpace(hrDormStr(d, "宿舍编号")); v != "" {
+			return "room:" + v
+		}
+		return "room:" + code
+	case hrDormModulePublic:
+		if v := strings.TrimSpace(hrDormStr(d, "房屋地址")); v != "" {
+			return "public:" + v
+		}
+		if v := strings.TrimSpace(hrDormStr(d, "房屋编号")); v != "" {
+			return "public:" + v
+		}
+		return "public:" + code
+	case hrDormModuleStay:
+		return "stay:" + strings.TrimSpace(hrDormStr(d, "员工姓名")) + "@" + strings.TrimSpace(hrDormStr(d, "宿舍编号/房屋地址"))
+	case hrDormModuleAsset:
+		if v := strings.TrimSpace(hrDormStr(d, "资产编号")); v != "" {
+			return "asset:" + v
+		}
+		return "asset:" + name
+	}
+	return ""
+}
+
+// DeleteDormRoom / DeleteDormStay / DeleteDormAsset 子表专属删除路由（第 62 轮）。
+//
+// 前端按子标签调用 `rooms/{id}` / `stays/{id}` / `assets/{id}`，语义清楚，
+// 也避免历史上"删宿舍落到账单接口 → 报账单不存在"的误映射。
+func (h *HRHandler) DeleteDormTyped(c *gin.Context) {
+	module := strings.TrimSpace(c.Param("module"))
+	switch module {
+	case "rooms":
+		module = hrDormModuleRoom
+	case "stays":
+		module = hrDormModuleStay
+	case "assets":
+		module = hrDormModuleAsset
+	case "publics":
+		module = hrDormModulePublic
+	default:
+		hrFail(c, "未知的宿舍子表")
+		return
+	}
+	h.hrDormDeleteRecord(c, module)
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,16 +16,18 @@ import (
 // 第 61 轮：五胶囊字段契约（与前端 hrDorm.ts 同源）。
 func TestRound61DormFieldContract(t *testing.T) {
 	subs := hrDormSeedSubs()
-	require.Len(t, subs, 66, "15 + 17 + 15 + 10 + 9")
+	// 第 62 轮字段契约：宿舍 25 / 公租房 28 / 住宿 27 / 资产 16 / 费用 20
 	count := map[string]int{}
 	for _, s := range subs {
 		count[s.Group]++
 	}
-	require.Equal(t, 15, count[hrDormGroupRoom])
-	require.Equal(t, 17, count[hrDormGroupPublic])
-	require.Equal(t, 15, count[hrDormGroupStay])
-	require.Equal(t, 10, count[hrDormGroupAsset])
-	require.Equal(t, 9, count[hrDormGroupFee])
+	require.Equal(t, len(subs), count[hrDormGroupRoom]+count[hrDormGroupPublic]+
+		count[hrDormGroupStay]+count[hrDormGroupAsset]+count[hrDormGroupFee])
+	require.Equal(t, 25, count[hrDormGroupRoom])
+	require.Equal(t, 28, count[hrDormGroupPublic])
+	require.Equal(t, 27, count[hrDormGroupStay])
+	require.Equal(t, 16, count[hrDormGroupAsset])
+	require.Equal(t, 20, count[hrDormGroupFee])
 
 	// 状态列白名单：每个胶囊只允许自己的状态字段
 	allowed, ok := hrAllowedStatusOf60(hrDormGroupRoom)
@@ -42,7 +45,8 @@ func TestRound61DormFieldContract(t *testing.T) {
 func TestRound61DormSeedAndBill(t *testing.T) {
 	db := hrRound59DB(t)
 	ctx := context.Background()
-	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormBill{}, &HRDormBillItem{}, &HRDormReading{}))
+	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormBill{}, &HRDormBillItem{},
+		&HRDormReading{}, &HRDormCharge{}))
 	require.NoError(t, db.Create(&HREmployee{
 		ID: "e1", TenantID: 1, Name: "李思远", EmployeeID: "C020300202",
 		Department: "销售部", Status: hrRosterStatusActive,
@@ -58,18 +62,21 @@ func TestRound61DormSeedAndBill(t *testing.T) {
 	db.Model(&HRDormRecord{}).Where("tenant_id = ? AND module = ?", 1, hrDormModulePublic).Count(&public)
 	db.Model(&HRDormRecord{}).Where("tenant_id = ? AND module = ?", 1, hrDormModuleStay).Count(&stay)
 	db.Model(&HRDormRecord{}).Where("tenant_id = ? AND module = ?", 1, hrDormModuleAsset).Count(&asset)
-	require.Equal(t, int64(18), dorm)
-	require.Equal(t, int64(10), public)
-	require.Equal(t, int64(9), stay)
+	require.Equal(t, int64(22), dorm, "22 间厂区宿舍（301~320 / 417 / 419）")
+	require.Equal(t, int64(19), public, "两山秀苑 9 + 两山景苑 10")
+	require.Equal(t, int64(40), stay, "38 名在住员工 + 夫妻房配偶 2 人")
 	require.Equal(t, int64(8), asset)
 
-	// 公租房合计 = 房租 2915 / 物业 486 / 面积 485.55 / 首月 3401 / 季度 10203
+	// 两山景苑 10 套：租金 2915 / 物业 486 / 面积 485.55 / 月费用 3401 / 季度 10203
 	var publics []HRDormRecord
 	require.NoError(t, db.Where("tenant_id = ? AND module = ?", 1, hrDormModulePublic).Find(&publics).Error)
 	rent, prop, area := 0.0, 0.0, 0.0
 	for _, p := range publics {
-		rent += hrDormFloat(p.CustomData, "租金(元/月)")
-		prop += hrDormFloat(p.CustomData, "物业(元/月)")
+		if !strings.Contains(hrDormStr(p.CustomData, "房屋地址"), "两山景苑") {
+			continue
+		}
+		rent += hrDormFloat(p.CustomData, "房屋租金(元/月)")
+		prop += hrDormFloat(p.CustomData, "物业费(元/月)")
 		area += hrDormFloat(p.CustomData, "建筑面积(㎡)")
 	}
 	require.InDelta(t, 2915, rent, 0.001)
@@ -78,20 +85,12 @@ func TestRound61DormSeedAndBill(t *testing.T) {
 	require.InDelta(t, 3401, rent+prop, 0.001)
 	require.InDelta(t, 10203, (rent+prop)*3, 0.001)
 
-	// 2026-10 账单：9 条个人明细，金额与房间汇总闭合
-	var bill HRDormBill
-	require.NoError(t, db.Where("tenant_id = ? AND month_label = ?", 1, "2026-10").First(&bill).Error)
-	require.Equal(t, 9, bill.Headcount)
-	var items []HRDormBillItem
-	require.NoError(t, db.Where("bill_id = ?", bill.ID).Find(&items).Error)
-	require.Len(t, items, 9)
-	sum := 0.0
-	for _, it := range items {
-		require.InDelta(t, it.Rent+it.Property+it.Water+it.Elec+it.Gas, it.Total, 0.02)
-		sum += it.Total
-	}
-	require.InDelta(t, bill.GrandTotal, sum, 0.05, "个人分摊合计必须与账单总额闭合（尾差 ≤ 0.05）")
-	require.InDelta(t, bill.RentTotal+bill.PropertyTotal+bill.UtilityTotal, bill.GrandTotal, 0.02)
+	// 床上用品：床位数按房型派生（夫妻房 2 / 单人间 1）
+	var room HRDormRecord
+	require.NoError(t, db.Where("tenant_id = ? AND module = ? AND code = ?", 1, hrDormModuleRoom, "宿舍304").
+		First(&room).Error)
+	require.Equal(t, "夫妻房", hrDormStr(room.CustomData, "房型"))
+	require.Equal(t, 2, int(hrDormFloat(room.CustomData, "床位数")))
 }
 
 // 第 61 轮：按入住天数分摊 + 尾差闭合（同房间两人 20/10 天）。

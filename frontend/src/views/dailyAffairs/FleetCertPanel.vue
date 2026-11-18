@@ -1775,7 +1775,14 @@ function removeField(fd: any) {
 }
 
 async function commitEdit() {
-  const item = groupItems.value.find((it: any) => it.id === editingId.value)
+  let item = groupItems.value.find((it: any) => it.id === editingId.value)
+  // 第 62 轮：单分类直出模式下，分类数据还在路上时用户就点了「保存」——
+  // 旧实现 editingId 为空直接 return，表现为「点保存毫无反应、抽屉不关」。
+  // 这里兜底取第一个分类并补开编辑态，保证保存一定落到真实分类上。
+  if (!item && (directMode.value || props.singleCategory) && groupItems.value.length) {
+    item = groupItems.value[0]
+    editingId.value = item.id
+  }
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }

@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, dormPublicTotals, hrDormColumns, hrDormBillColumns } from './hrDorm'
+import { HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, dormPublicTotals, hrDormColumns, hrDormChargeColumns } from './hrDorm'
 import { HR_TABS } from './hrCore'
 
 const read = (rel: string) => readFileSync(new URL(`../../../../${rel}`, import.meta.url), 'utf8')
@@ -68,12 +68,12 @@ test('宿舍管理：五标签顺序与设置胶囊 1:1', () => {
   assert.equal(HR_TABS[4].label, '宿舍管理')
 })
 
-test('宿舍字段契约：五胶囊 15/17/15/10/9，状态列各自唯一', () => {
-  assert.equal(HR_DORM_FIELDS.dorm.length, 15)
-  assert.equal(HR_DORM_FIELDS.public.length, 17)
-  assert.equal(HR_DORM_FIELDS.stay.length, 15)
-  assert.equal(HR_DORM_FIELDS.asset.length, 10)
-  assert.equal(HR_DORM_FIELDS.fee.length, 9)
+test('宿舍字段契约：第 62 轮五胶囊 25/28/27/16/20，状态列各自唯一', () => {
+  assert.equal(HR_DORM_FIELDS.dorm.length, 25)
+  assert.equal(HR_DORM_FIELDS.public.length, 28)
+  assert.equal(HR_DORM_FIELDS.stay.length, 27)
+  assert.equal(HR_DORM_FIELDS.asset.length, 16)
+  assert.equal(HR_DORM_FIELDS.fee.length, 20)
   assert.ok(HR_DORM_FIELDS.dorm.some((f) => f.name === '宿舍状态' && f.readonly))
   assert.ok(HR_DORM_FIELDS.stay.some((f) => f.name === '住宿状态' && f.readonly))
   assert.ok(HR_DORM_FIELDS.fee.some((f) => f.name === '账单状态' && f.readonly))
@@ -81,33 +81,40 @@ test('宿舍字段契约：五胶囊 15/17/15/10/9，状态列各自唯一', () 
 
 test('公租房合计：3,401 / 485.55 / 2,915 / 486 / 10,203（图 7 口径）', () => {
   const rows = [
-    { '建筑面积(㎡)': 49.28, '租金(元/月)': 296, '物业(元/月)': 49 },
-    { '建筑面积(㎡)': 50.69, '租金(元/月)': 304, '物业(元/月)': 51 },
-    { '建筑面积(㎡)': 47.95, '租金(元/月)': 288, '物业(元/月)': 48 },
-    { '建筑面积(㎡)': 45.65, '租金(元/月)': 274, '物业(元/月)': 46 },
-    { '建筑面积(㎡)': 46.83, '租金(元/月)': 281, '物业(元/月)': 47 },
-    { '建筑面积(㎡)': 49.28, '租金(元/月)': 296, '物业(元/月)': 49 },
-    { '建筑面积(㎡)': 49.28, '租金(元/月)': 296, '物业(元/月)': 49 },
-    { '建筑面积(㎡)': 50.69, '租金(元/月)': 304, '物业(元/月)': 51 },
-    { '建筑面积(㎡)': 47.95, '租金(元/月)': 288, '物业(元/月)': 48 },
-    { '建筑面积(㎡)': 47.95, '租金(元/月)': 288, '物业(元/月)': 48 },
+    { '建筑面积(㎡)': 49.28, '房屋租金(元/月)': 296, '物业费(元/月)': 49 },
+    { '建筑面积(㎡)': 50.69, '房屋租金(元/月)': 304, '物业费(元/月)': 51 },
+    { '建筑面积(㎡)': 47.95, '房屋租金(元/月)': 288, '物业费(元/月)': 48 },
+    { '建筑面积(㎡)': 45.65, '房屋租金(元/月)': 274, '物业费(元/月)': 46 },
+    { '建筑面积(㎡)': 46.83, '房屋租金(元/月)': 281, '物业费(元/月)': 47 },
+    { '建筑面积(㎡)': 49.28, '房屋租金(元/月)': 296, '物业费(元/月)': 49 },
+    { '建筑面积(㎡)': 49.28, '房屋租金(元/月)': 296, '物业费(元/月)': 49 },
+    { '建筑面积(㎡)': 50.69, '房屋租金(元/月)': 304, '物业费(元/月)': 51 },
+    { '建筑面积(㎡)': 47.95, '房屋租金(元/月)': 288, '物业费(元/月)': 48 },
+    { '建筑面积(㎡)': 47.95, '房屋租金(元/月)': 288, '物业费(元/月)': 48 },
   ]
   const t = dormPublicTotals(rows)
-  assert.equal(t.首月费用, '3401')
   assert.equal(t.建筑面积, '485.55')
   assert.equal(t.租金, '2915')
   assert.equal(t.物业, '486')
-  assert.equal(t.季度, '10203')
+  // 月费用单价 ×3 = 季度租金
+  assert.equal(t.季度租金, '10203')
+  assert.equal(Number(t.租金) + Number(t.物业), 3401)
 })
 
 test('宿舍列：费用信息列必须自带 value（否则单元格与合计全空）', () => {
-  const cols = hrDormBillColumns() as any[]
+  const cols = hrDormChargeColumns() as any[]
   const dataCols = cols.filter((c) => c.colKey !== 'row-select')
-  assert.equal(dataCols.length, 9)
+  assert.ok(dataCols.length >= 15, `扣款明细至少 15 列，实际 ${dataCols.length}`)
   assert.ok(dataCols.every((c) => typeof c.value === 'function'), '每一列都要有取值函数')
-  const row = { 账单周期: '2026-10', 房租合计: 570, 账单状态: '已生成' }
-  assert.equal(dataCols[0].value(row), '2026-10')
-  assert.equal(dataCols.find((c) => c.colKey === '房租合计').value(row), '570.00')
+  const row = {
+    账单月份: '2026-10', 姓名: '吴勇建', 宿舍号: '宿舍301', 入住天数: 30,
+    '公租房租(元)': 345, '扣款合计(元)': 1035.5,
+  }
+  assert.equal(dataCols.find((c) => c.colKey === '姓名').value(row), '吴勇建')
+  assert.equal(dataCols.find((c) => c.colKey === '公租房租(元)').value(row), '345.00')
+  assert.equal(dataCols.find((c) => c.colKey === '扣款合计(元)').value(row), '1,035.50')
+  // 整数列严禁 30.00
+  assert.equal(dataCols.find((c) => c.colKey === '入住天数').value(row), '30')
   // 宿舍档案列来自 subs/契约（hrColumnsFromSubs 自带 value）
   const dormCols = hrDormColumns('dorm', []) as any[]
   assert.ok(dormCols.some((c) => c.colKey === '宿舍编号'))

@@ -788,6 +788,11 @@ export function hrFundColumns(): HrColumn[] {
  * 这正是离职管理 / 劳动合同「搜索引用花名册字段」后能立刻在列表看到数据的关键。
  * subs 为空（接口未就绪）时回退到字段契约派生的静态列，保证首帧不空表。
  */
+/** 整数列白名单：列表里一律取整显示（0 位小数）。 */
+const HR_INTEGER_FIELD_NAMES: ReadonlySet<string> = new Set([
+  '床位数', '可用床位数', '数量', '入住天数', '人数', '总人数', '参保人数',
+])
+
 export function hrColumnsFromSubs(subs: readonly any[] | null | undefined, fallback: HrColumn[]): HrColumn[] {
   const list = Array.isArray(subs) ? subs : []
   if (!list.length) return fallback
@@ -816,6 +821,16 @@ export function hrColumnsFromSubs(subs: readonly any[] | null | undefined, fallb
         const raw = row?.[dataName] ?? row?.custom_data?.[dataName] ?? row?.data?.[dataName]
         if (raw !== undefined && raw !== null && String(raw).trim() !== '') return raw
         return baseValue?.(row)
+      }
+    }
+    // 第 62 轮：整数列（床位数 / 可用床位数 / 数量 / 入住天数）严禁渲染成 4.00。
+    if (HR_INTEGER_FIELD_NAMES.has(dataName) || HR_INTEGER_FIELD_NAMES.has(label)) {
+      const baseValue = col.value
+      col.dataType = 'text'
+      col.value = (row: any) => {
+        const raw = baseValue?.(row)
+        const n = Number(String(raw ?? '').replace(/,/g, ''))
+        return Number.isFinite(n) && String(raw ?? '').trim() !== '' ? String(Math.round(n)) : ''
       }
     }
     cols.push(col)

@@ -128,6 +128,13 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 			}
 		}
 	}
+	// 第 62 轮：宿舍字段契约 v2 + 真实房源种子 + 劳动合同签约公司归一
+	if err := h.hrMigrateDormSubs62(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR dorm subs v62 failed: %v", err)
+	}
+	if err := h.hrFixContractCompany62(ctx); err != nil {
+		logger.Warnf(ctx, "normalize HR contract company failed: %v", err)
+	}
 	// 第 61 轮：宿舍样例数据（18 间宿舍 + 10 套公租房 + 住宿/资产/读数 + 首月账单）。
 	// 独立于首次初始化门禁：老库升级后也要一次性补齐（内部按「已有记录即跳过」幂等）。
 	if err := h.hrSeedDormIfNeeded(ctx); err != nil {
@@ -715,6 +722,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/dorm/records", h.CreateDormRecord)
 	r.PUT("/hr/dorm/records/:id", h.UpdateDormRecord)
 	r.DELETE("/hr/dorm/records/:id", h.DeleteDormRecord)
+	// 第 62 轮：子表专属删除路由（前端按标签调用，避免误映射到账单接口）
+	r.DELETE("/hr/dorm/:module/:id", h.DeleteDormTyped)
 	r.POST("/hr/dorm/records/import", h.ImportDormRecords)
 	r.GET("/hr/dorm/template", h.DormTemplate)
 	r.GET("/hr/dorm/stats", h.DormStats)
@@ -724,6 +733,12 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/dorm/bills", h.CreateDormBill)
 	r.GET("/hr/dorm/bills/:id", h.GetDormBill)
 	r.DELETE("/hr/dorm/bills/:id", h.DeleteDormBill)
+	// 第 62 轮：费用信息 = 全员月度扣款明细（跨模块聚合）
+	r.GET("/hr/dorm/charges", h.ListDormCharges)
+	r.GET("/hr/dorm/charges/summary", h.hrDormChargeSummary)
+	r.POST("/hr/dorm/charges/generate", h.GenerateDormCharges)
+	r.PUT("/hr/dorm/charges/:id", h.UpdateDormCharge)
+	r.DELETE("/hr/dorm/charges/:id", h.DeleteDormCharge)
 
 	// 公积金
 	r.GET("/hr/fund/settings", h.GetPFSettings)
