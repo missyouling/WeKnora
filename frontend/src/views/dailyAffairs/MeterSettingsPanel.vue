@@ -54,7 +54,8 @@
           </div>
           <div class="form-item">
             <label>归属单位</label>
-            <t-input v-model="meterForm.owner_unit" placeholder="选填" />
+            <t-select v-model="meterForm.owner_unit" :options="companyOptions" filterable clearable
+              placeholder="选择单位设置中的公司" />
           </div>
           <div class="form-item">
             <label>倍率</label>
@@ -66,7 +67,8 @@
           </div>
           <div class="form-item">
             <label>使用单位</label>
-            <t-input v-model="meterForm.use_unit" placeholder="选填" />
+            <t-select v-model="meterForm.use_unit" :options="companyOptions" filterable clearable
+              placeholder="选择单位设置中的公司" />
           </div>
           <div class="form-item">
             <label>管理人员</label>
@@ -119,7 +121,7 @@
             <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
             <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
             <span class="mtr-mono">{{ fmtUnitPrice(m.default_unit_price) }} 元/{{ unitLabel }}</span>
-            <span class="mtr-owner">{{ m.owner_unit || '—' }}</span>
+            <span class="mtr-owner">{{ normalizeCompanyName(m.owner_unit, companyNames) || '—' }}</span>
             <span class="mtr-switch" @click.stop>
               <t-switch :model-value="!!m.enabled" size="small" @update:model-value="(v: any) => toggleEnabled(m, !!v)" />
             </span>
@@ -155,7 +157,8 @@
               </div>
               <div class="form-item">
                 <label>归属单位</label>
-                <t-input v-model="meterForm.owner_unit" placeholder="选填" />
+                <t-select v-model="meterForm.owner_unit" :options="companyOptions" filterable clearable
+                  placeholder="选择单位设置中的公司" />
               </div>
               <div class="form-item">
                 <label>倍率</label>
@@ -167,7 +170,8 @@
               </div>
               <div class="form-item">
                 <label>使用单位</label>
-                <t-input v-model="meterForm.use_unit" placeholder="选填" />
+                <t-select v-model="meterForm.use_unit" :options="companyOptions" filterable clearable
+                  placeholder="选择单位设置中的公司" />
               </div>
               <div class="form-item">
                 <label>管理人员</label>
@@ -255,6 +259,8 @@ import {
   updateUtilityKind,
   deleteUtilityKind,
 } from '@/api/knowledge-base'
+import { getOrgUnits } from './hrApi'
+import { companyNamesOf, normalizeCompanyName } from './companyScope'
 
 type MeterCategory = 'electricity' | 'water' | 'gas'
 const props = defineProps<{ category: MeterCategory }>()
@@ -279,6 +285,18 @@ const savingMeter = ref(false)
 const meterFormVisible = ref(false)
 const kindManageVisible = ref(false)
 const meterForm = ref<any>({})
+// 第 63 轮：归属 / 使用单位改为「单位设置」下拉（不再自由文本），存量简称归一
+const orgUnits = ref<any[]>([])
+const companyNames = computed(() => companyNamesOf(orgUnits.value))
+const companyOptions = computed(() => companyNames.value.map((v) => ({ label: v, value: v })))
+async function loadCompanyOptions() {
+  try {
+    const res: any = await getOrgUnits()
+    const d = res?.data ?? res
+    const list = Array.isArray(d) ? d : (Array.isArray(d?.units) ? d.units : [])
+    orgUnits.value = list
+  } catch { /* 单位接口失败时下拉为空，不阻断表计维护 */ }
+}
 
 // 计量层级按类别: 电表 普通/分时; 水表 总表/分表/消防; 气表 普通
 const meterTypeOptions = computed(() => {
@@ -445,10 +463,11 @@ const openMeterForm = (m: any) => {
     meter_type: props.category === 'water' && !['total', 'sub', 'fire'].includes(m.meter_type)
       ? '' : (m.meter_type || ''),
     meter_kind: m.meter_kind || defaultKind,
-    owner_unit: m.owner_unit || '',
+    // 存量简称（重庆星达 / 持睿汽车）回显为全称，保存后彻底对齐
+    owner_unit: normalizeCompanyName(m.owner_unit, companyNames.value),
     rate: Number(m.rate) > 0 ? m.rate : 1,
     default_unit_price: Number(m.default_unit_price) || 0,
-    use_unit: m.use_unit || '',
+    use_unit: normalizeCompanyName(m.use_unit, companyNames.value),
     manager: m.manager || '',
     contact: m.contact || '',
     meter_mode: m.meter_mode || 'manual',
@@ -485,10 +504,10 @@ const saveMeter = async () => {
       meter_no: meterForm.value.meter_no || '',
       meter_type: meterForm.value.meter_type || '',
       meter_kind: meterForm.value.meter_kind || 'dorm',
-      owner_unit: meterForm.value.owner_unit || '',
+      owner_unit: normalizeCompanyName(meterForm.value.owner_unit, companyNames.value),
       rate: Number(meterForm.value.rate) > 0 ? Number(meterForm.value.rate) : 1,
       default_unit_price: Number(meterForm.value.default_unit_price) || 0,
-      use_unit: meterForm.value.use_unit || '',
+      use_unit: normalizeCompanyName(meterForm.value.use_unit, companyNames.value),
       manager: meterForm.value.manager || '',
       contact: meterForm.value.contact || '',
       meter_mode: meterForm.value.meter_mode || 'manual',
@@ -610,8 +629,7 @@ watch([activeMeterGroup, () => activeGroupItems.value], async () => {
 })
 
 onMounted(async () => {
-  await loadMetersOnly()
-  await loadKinds()
+  await Promise.all([loadMetersOnly(), loadKinds(), loadCompanyOptions()])
   await nextTick()
   setTimeout(initMeterSortable, 200)
 })

@@ -73,7 +73,7 @@ func TestHRRound52ThreeTemplates(t *testing.T) {
 
 func TestHRRound52FieldSchema(t *testing.T) {
 	assert.Len(t, hrRosterFieldDefs(), 48)
-	assert.Len(t, hrResignFieldDefs(), 14)
+	assert.Len(t, hrResignFieldDefs(), 15)
 	assert.Len(t, hrContractFieldDefs(), 17)
 	assert.Len(t, hrRosterGroupDict52(), 6)
 
@@ -104,7 +104,7 @@ func TestHRRound52FieldSchema(t *testing.T) {
 			assert.Equal(t, "花名册", d.Source.Category)
 		}
 	}
-	assert.Equal(t, 5, refs)
+	assert.Equal(t, 6, refs)
 	partyA := 0
 	for _, d := range hrContractFieldDefs() {
 		if d.Source != nil && d.Source.Category == "组织机构" {
@@ -120,7 +120,7 @@ func TestHRRound52SeedSubsAndBackfill(t *testing.T) {
 	assert.Equal(t, "工号", subs[0].Name)
 	assert.Equal(t, "在职信息", subs[0].Group)
 	assert.Equal(t, "date", subs[6].DataType)
-	assert.Len(t, hrResignSeedSubs(), 14)
+	assert.Len(t, hrResignSeedSubs(), 15)
 	assert.Len(t, hrContractSeedSubs52(), 17)
 	// 引用来源写进 subs.Source
 	found := false

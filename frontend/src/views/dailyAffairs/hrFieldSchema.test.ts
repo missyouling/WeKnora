@@ -45,10 +45,10 @@ test('内置枚举字段全部有下拉选项（t-select filterable）', () => {
   assert.deepEqual(hrEnumsOf('不存在的字段'), [])
 })
 
-test('动态枚举：部门 / 合同公司 / 签约公司标记 dynamic', () => {
+test('动态枚举：部门 / 签约公司标记 dynamic', () => {
   const all = [...HR_ROSTER_FIELDS, ...HR_CONTRACT_FIELDS]
   assert.equal(all.find((d) => d.name === '部门')?.dynamic, 'department')
-  assert.equal(all.find((d) => d.name === '合同公司')?.dynamic, 'unit')
+  assert.equal(all.find((d) => d.name === '签约公司')?.dynamic, 'unit')
   assert.equal(all.find((d) => d.name === '签约公司')?.dynamic, 'unit')
 })
 

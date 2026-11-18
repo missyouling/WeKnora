@@ -31,7 +31,7 @@ var hrRosterHeaders = []string{
 	"转正日期",
 	"工作城市",
 	"工作地点",
-	"合同公司",
+	"签约公司",
 	"考勤编号",
 	"招聘渠道",
 	"离职日期",
@@ -107,6 +107,7 @@ var hrRosterExtraResignFields = []string{
 var hrRosterAliases = map[string]string{
 	"上家工作单位名称": "上家工作单位",
 	"上家工作单位职务": "上家工作职务",
+	"合同公司":     "签约公司",
 	"合同类型":     "现合同类型",
 	"合同编号":     "现合同编号",
 	"员工状态":     "员工状态",
@@ -423,7 +424,7 @@ type hrRosterFieldGroup struct {
 var hrRosterFieldGroups = []hrRosterFieldGroup{
 	{Group: "在职信息", Fields: []string{
 		"工号",
-		"合同公司",
+		"签约公司",
 		"部门",
 		"汇报上级类型",
 		"汇报上级姓名",

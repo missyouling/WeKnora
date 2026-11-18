@@ -159,7 +159,7 @@ func (h *HRHandler) hrCollectOrgFromRoster(ctx context.Context, tid int64) (stri
 		addDept(d)
 		addPos(e.Position)
 		if company == "" && e.CustomData != nil {
-			if v := strings.TrimSpace(toStringValue(e.CustomData["合同公司"])); v != "" {
+			if v := strings.TrimSpace(toStringValue(e.CustomData["签约公司"])); v != "" {
 				company = v
 			}
 			if v := strings.TrimSpace(toStringValue(e.CustomData["合同签约公司"])); v != "" && company == "" {

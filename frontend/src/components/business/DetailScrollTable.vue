@@ -18,7 +18,7 @@
     <div class="detail-table-head" :style="sideStyle">
       <table :style="tableStyle">
         <colgroup>
-          <col v-for="c in cols" :key="`h-${c.colKey}`" :style="{ width: `${c.width}px` }" />
+          <col v-for="c in cols" :key="`h-${c.colKey}`" :style="{ width: pctOf(c) }" />
         </colgroup>
         <thead>
           <tr>
@@ -33,7 +33,7 @@
     <div ref="bodyRef" class="detail-table-body" :style="bodyStyle" @scroll="onScroll">
       <table :style="tableStyle">
         <colgroup>
-          <col v-for="c in cols" :key="`b-${c.colKey}`" :style="{ width: `${c.width}px` }" />
+          <col v-for="c in cols" :key="`b-${c.colKey}`" :style="{ width: pctOf(c) }" />
         </colgroup>
         <tbody>
           <tr v-for="(row, i) in rows" :key="row[rowKey] ?? i">
@@ -52,7 +52,7 @@
     <div v-if="footRows.length" class="detail-table-foot" :style="sideStyle">
       <table :style="tableStyle">
         <colgroup>
-          <col v-for="c in cols" :key="`f-${c.colKey}`" :style="{ width: `${c.width}px` }" />
+          <col v-for="c in cols" :key="`f-${c.colKey}`" :style="{ width: pctOf(c) }" />
         </colgroup>
         <tfoot>
           <tr v-for="(row, i) in footRows" :key="`foot-${i}`">
@@ -97,11 +97,22 @@ let observer: ResizeObserver | null = null
 
 const cols = computed(() => props.columns.map((c) => ({ ...c, width: Number(c.width) || DEFAULT_WIDTH })))
 const totalWidth = computed(() => cols.value.reduce((n, c) => n + c.width, 0))
+/**
+ * 第 63 轮：列宽改「百分比同源」。
+ *
+ * 旧实现按 px 写 colgroup + `minWidth:100%`：当列宽之和大于弹窗内容区时，
+ * 表头/合计行被 overflow:hidden 裁掉，数据区出现横向滚动条（社保/公积金
+ * 账单明细弹窗真机复现）。改成占比后表格恒等于容器宽度，三段仍共用同一份
+ * 百分比，列分割线像素级对齐，且任何视口都不会出横向滚动条。
+ */
 const tableStyle = computed(() => ({
-  width: `${totalWidth.value}px`,
-  minWidth: '100%',
+  width: '100%',
   tableLayout: 'fixed' as const,
 }))
+function pctOf(c: { width: number }): string {
+  const total = totalWidth.value || 1
+  return `${(c.width / total) * 100}%`
+}
 const bodyStyle = computed(() => ({ maxHeight: `${props.maxBodyHeight}px` }))
 /** 表头 / 合计行用 padding 让出滚动条宽度（不用 margin，避免表格错位）。 */
 const sideStyle = computed(() => ({ paddingRight: scrollbarWidth.value ? `${scrollbarWidth.value}px` : '0' }))
@@ -169,7 +180,7 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
 .detail-table th,
 .detail-table td {
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 0 8px;
   height: 36px;
   line-height: 20px;
   white-space: nowrap;

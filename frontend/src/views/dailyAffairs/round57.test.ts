@@ -135,9 +135,10 @@ test('工具栏顺序：导入与生成账单都在 after-settings，右侧恒�
   assert.ok(trailing.indexOf('{{ settingsText }}') < trailing.indexOf('<slot name="after-settings" />'))
 })
 
-test('账单明细弹窗宽度 min(1200px, 94vw)，1366 屏不溢出', () => {
+test('账单明细弹窗宽度 min(96vw, 1480px)，1366 屏不溢出且无横向滚动条', () => {
   const src = read('HrManagement.vue')
-  assert.match(src, /width="min\(1200px, 94vw\)"/)
+  // 第 63 轮：宽度上调到 1480px（仍受 96vw 约束），配合三段表百分比列宽
+  assert.match(src, /width="min\(96vw, 1480px\)"/)
   assert.equal(/width="1200px"/.test(src), false, '固定 1200px 会在 1366 屏横向溢出')
 })
 

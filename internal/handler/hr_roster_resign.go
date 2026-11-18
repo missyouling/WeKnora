@@ -18,9 +18,11 @@ import (
 )
 
 const (
-	hrResignProofDir     = "data/hr_resign_proofs"
 	hrResignProofMaxSize = 10 << 20 // 10MB
 )
+
+// hrResignProofDir 用 var 而非 const：测试需要切到 t.TempDir() 隔离磁盘副本。
+var hrResignProofDir = "data/hr_resign_proofs"
 
 var hrResignProofExts = map[string]bool{
 	".pdf": true, ".jpg": true, ".jpeg": true, ".png": true,

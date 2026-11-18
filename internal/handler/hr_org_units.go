@@ -72,6 +72,7 @@ func (h *HRHandler) hrCollectUnitNamesFromRoster(ctx context.Context, tid int64)
 		if e.CustomData == nil {
 			continue
 		}
+		add(toStringValue(e.CustomData["签约公司"]))
 		add(toStringValue(e.CustomData["合同签约公司"]))
 		add(toStringValue(e.CustomData["合同公司"]))
 	}

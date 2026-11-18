@@ -157,7 +157,7 @@ func hrCascadeUnitRename(tx *gorm.DB, tid int64, oldName, newName string) (int64
 		return 0, nil
 	}
 	var affected int64
-	for _, key := range []string{"现合同签约公司", "合同公司"} {
+	for _, key := range []string{"签约公司", "现合同签约公司", "合同公司"} {
 		q := tx.Model(&HREmployee{}).
 			Where("tenant_id = ? AND btrim(custom_data->>?) = ?", tid, key, oldName)
 		if hrIsPostgres(tx) {

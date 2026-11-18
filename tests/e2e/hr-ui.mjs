@@ -30,6 +30,12 @@ let newPages = 0; c.on("page", () => { newPages++ });
 await p.goto(`${APP}/platform/daily-affairs/hr`, { waitUntil: "domcontentloaded", timeout: 90000 });
 await p.waitForTimeout(28000);
 await p.evaluate(() => document.querySelectorAll(".guide").forEach((e) => e.remove()));
+// 第 63 轮：KPI 卡片由 4 路 bootstrap 并行拉取，跨区库慢时要等齐 5 张再点
+for (let i = 0; i < 20; i++) {
+  const n = await p.evaluate(() => document.querySelectorAll(".dash-kpi-card").length);
+  if (n >= 5) break;
+  await p.waitForTimeout(1500);
+}
 const R = { checks: [] };
 const ok = (n, cond, d) => R.checks.push({ n, pass: !!cond, d: String(d ?? "").slice(0, 300) });
 const shot = (n) => p.screenshot({ path: `${SHOTS}/${n}.png` });
@@ -45,7 +51,15 @@ const tab = (l) => p.evaluate((x) => {
 try {
   // ================= #1/#2 附件预览 + 离职证明上传确认 =================
   await card("花名册"); await p.waitForTimeout(5000);
-  await tab("离职人员"); await p.waitForTimeout(6500);
+  await tab("离职人员");
+  // 第 63 轮：跨区 pooler 慢响应时列表可能还没回来，先等行（最多 20s）
+  for (let i = 0; i < 13; i++) {
+    const n = await p.evaluate(() => Array.from(document.querySelectorAll(".doc-list-scroll tbody tr"))
+      .filter((r) => r.querySelectorAll("td").length > 3).length);
+    if (n > 0) break;
+    await p.waitForTimeout(1500);
+  }
+  await p.waitForTimeout(1500);
   // 找到带「查看」的离职证明行，点行打开抽屉
   const proofRow = p.locator(".doc-list-scroll tbody tr").filter({ has: p.locator("a", { hasText: "查看" }) }).first();
   const hasProofRow = await proofRow.count();
@@ -152,7 +166,8 @@ try {
     ok("1.5 顶部工具栏不再有 打印/下载",
       !!fpd && !fpd.toolbar.includes("打印") && !fpd.toolbar.includes("下载"), JSON.stringify(fpd.toolbar));
     await shot("d58c_03_file_preview");
-    await p.locator(".fpd-footer button", { hasText: "关闭" }).first().click();
+    // 第 63 轮：预览弹窗关闭后 DOM 仍保留，`.first()` 会点到隐藏实例 → 只点可见的那个
+    await p.locator(".fpd-footer button:visible", { hasText: "关闭" }).last().click();
     await p.waitForTimeout(1000);
   }
 
@@ -277,7 +292,15 @@ try {
   // ================= #4 劳务合同分流 + 社保/公积金豁免（只读，不改业务数据） =================
   // 口径：劳务人员（返聘/实习/劳务/借调）不得出现在公积金待补录与社保异常统计里。
   await card("劳动合同"); await p.waitForTimeout(6000);
-  await tab("劳务合同"); await p.waitForTimeout(4500);
+  await tab("劳务合同");
+  // 第 63 轮：跨区 pooler 偶发慢响应，列表空了就再等（最多 18s），避免误判“无独立人员”
+  for (let i = 0; i < 12; i++) {
+    const n = await p.evaluate(() => Array.from(document.querySelectorAll(".doc-list-scroll tbody tr"))
+      .filter((r) => r.querySelectorAll("td").length > 3).length);
+    if (n > 0) break;
+    await p.waitForTimeout(1500);
+  }
+  await p.waitForTimeout(1200);
   const svc = await p.evaluate(() => {
     const ths = Array.from(document.querySelectorAll("th")).map((e) => (e.innerText || "").trim());
     const iName = ths.indexOf("姓名");

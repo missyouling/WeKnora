@@ -86,7 +86,7 @@ func hrRosterFieldDefs() []hrFieldDef {
 		hrF("姓名", "text", hrGroup("在职信息"), hrHeader(), hrBuiltin()),
 		hrF("部门", "enum", hrGroup("在职信息"), hrHeader(), hrDynamic("department")),
 		hrF("岗位", "text", hrGroup("在职信息"), hrHeader()),
-		hrF("合同公司", "enum", hrGroup("在职信息"), hrDynamic("unit")),
+		hrF("签约公司", "enum", hrHeader(), hrGroup("在职信息"), hrDynamic("unit")),
 		hrF("招聘渠道", "enum", hrGroup("在职信息"), hrEnum("招聘渠道")),
 		hrF("入职日期", "date", hrGroup("在职信息"), hrHeader()),
 		hrF("试用期", "enum", hrGroup("在职信息"), hrEnum("试用期")),
@@ -140,13 +140,15 @@ func hrRosterFieldDefs() []hrFieldDef {
 	}
 }
 
-// hrResignFieldDefs 离职管理：5 个花名册引用 + 9 个核心离职字段。
+// hrResignFieldDefs 离职管理：6 个花名册引用 + 9 个核心离职字段。
 func hrResignFieldDefs() []hrFieldDef {
 	return []hrFieldDef{
 		hrF("工号", "readonly", hrRef("花名册", "工号"), hrHeader()),
 		hrF("姓名", "readonly", hrRef("花名册", "姓名"), hrHeader()),
 		hrF("部门", "readonly", hrRef("花名册", "部门"), hrHeader()),
 		hrF("岗位", "readonly", hrRef("花名册", "岗位"), hrHeader()),
+		// 第 63 轮：离职列表也要能直接看到签约公司（与在职同一口径）
+		hrF("签约公司", "readonly", hrRef("花名册", "签约公司"), hrHeader()),
 		hrF("入职日期", "date", hrRef("花名册", "入职日期"), hrHeader()),
 		hrF("离职申请日期", "date"),
 		hrF("离职日期", "date", hrHeader()),
@@ -492,7 +494,7 @@ const (
 	hrRosterGroupResigned = "离职人员"
 )
 
-// hrRosterSeedSubs57 花名册分类 = 在职 48 字段 + 离职 14 字段，两个胶囊分组。
+// hrRosterSeedSubs57 花名册分类 = 在职 48 字段 + 离职 15 字段，两个胶囊分组。
 //
 // 为什么合并进同一个分类：顶部「离职管理」卡片已并入花名册（在职/离职双标签），
 // 离职管理不再有独立设置入口；离职字段必须挂在花名册分类下，用户切到离职标签
@@ -572,7 +574,7 @@ var hrContractAliasToLegacy = map[string][]string{
 	"合同开始日期": {"现合同开始日期"},
 	"合同结束日期": {"现合同结束日期"},
 	"合同期限":   {"现合同期限"},
-	"签约公司":   {"现合同签约公司", "合同签约公司"},
+	"签约公司":   {"现合同签约公司", "合同签约公司", "合同公司"},
 	"签订日期":   {"现合同签订日期"},
 	"联系电话":   {"手机号码"},
 }

@@ -31,7 +31,7 @@ export const ROSTER_TEMPLATE_HEADERS: readonly string[] = [
   "转正日期",
   "工作城市",
   "工作地点",
-  "合同公司",
+  "签约公司",
   "考勤编号",
   "招聘渠道",
   "离职日期",
@@ -108,7 +108,7 @@ export interface RosterFieldGroup { group: string; fields: string[] }
 export const ROSTER_FIELD_GROUPS: readonly RosterFieldGroup[] = [
   { group: "在职信息", fields: [
     "工号",
-    "合同公司",
+    "签约公司",
     "部门",
     "汇报上级类型",
     "汇报上级姓名",

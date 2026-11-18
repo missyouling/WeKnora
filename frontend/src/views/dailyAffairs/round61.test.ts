@@ -69,8 +69,8 @@ test('宿舍管理：五标签顺序与设置胶囊 1:1', () => {
 })
 
 test('宿舍字段契约：第 62 轮五胶囊 25/28/27/16/20，状态列各自唯一', () => {
-  assert.equal(HR_DORM_FIELDS.dorm.length, 25)
-  assert.equal(HR_DORM_FIELDS.public.length, 28)
+  assert.equal(HR_DORM_FIELDS.dorm.length, 26)
+  assert.equal(HR_DORM_FIELDS.public.length, 30)
   assert.equal(HR_DORM_FIELDS.stay.length, 27)
   assert.equal(HR_DORM_FIELDS.asset.length, 16)
   assert.equal(HR_DORM_FIELDS.fee.length, 20)

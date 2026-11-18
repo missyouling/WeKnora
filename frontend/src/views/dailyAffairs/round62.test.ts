@@ -17,8 +17,8 @@ import { hrColumnsFromSubs } from './hrCore'
 const readLocal = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
 
 test('字段契约：五胶囊列数与第 62 轮需求一致', () => {
-  assert.equal(HR_DORM_FIELDS.dorm.length, 25)
-  assert.equal(HR_DORM_FIELDS.public.length, 28)
+  assert.equal(HR_DORM_FIELDS.dorm.length, 26)
+  assert.equal(HR_DORM_FIELDS.public.length, 30)
   assert.equal(HR_DORM_FIELDS.stay.length, 27)
   assert.equal(HR_DORM_FIELDS.asset.length, 16)
   assert.equal(HR_DORM_FIELDS.fee.length, 20)
@@ -35,7 +35,8 @@ test('字段契约：公租房含租期与自动派生，宿舍含房间面积',
   }
   const dorm = HR_DORM_FIELDS.dorm.map((f) => f.name)
   assert.ok(dorm.includes('房间面积(㎡)'))
-  assert.ok(dorm.includes('所属公司/部门'))
+  assert.ok(dorm.includes('所属公司'))
+  assert.ok(dorm.includes('所属部门'))
   assert.equal(HR_DORM_FIELDS.dorm.find((f) => f.name === '房型')?.options?.join(','),
     '单人间,双人间,夫妻房,四人间,六人间,八人间')
   assert.equal(HR_DORM_FIELDS.asset.find((f) => f.name === '资产价值(元)')?.type, 'number')

@@ -68,11 +68,11 @@ test('第52轮：默认表头 = 契约里 defaultHeader 的字段，工号打头
   assert.deepEqual(vis, [...HR_ROSTER_DEFAULT_HEADERS])
   assert.equal(vis[0], '工号')
   assert.equal(vis[1], '姓名')
-  for (const k of ['部门', '岗位', '入职日期', '司龄', '证件号码', '性别', '出生日期',
+  for (const k of ['部门', '岗位', '签约公司', '入职日期', '司龄', '证件号码', '性别', '出生日期',
     '年龄', '是否已婚', '籍贯', '户口性质', '手机号码', '最高学历']) {
     assert.ok(vis.includes(k), `默认表头缺少 ${k}`)
   }
-  for (const k of ['合同公司', '招聘渠道', '试用期', '转正日期', '证件类型', '民族',
+  for (const k of ['招聘渠道', '试用期', '转正日期', '证件类型', '民族',
     '政治面貌', '服装尺寸', '工资卡卡号', '银行名称', '毕业院校']) {
     assert.ok(!vis.includes(k), `${k} 默认表头应为关`)
   }
@@ -127,11 +127,12 @@ test('groupLabelOf：字段归属 6 大分组', () => {
 // ---------------------------------------------------------------------------
 
 test('第52轮：离职管理 = 5 花名册引用 + 9 离职字段，引用带来源徽标', () => {
-  assert.equal(HR_RESIGN_FIELDS.length, 14)
+  // 第 63 轮：补 1 个花名册引用「签约公司」→ 15 字段 / 6 引用
+  assert.equal(HR_RESIGN_FIELDS.length, 15)
   const refs = HR_RESIGN_FIELDS.filter((d) => d.source)
-  assert.equal(refs.length, 5)
+  assert.equal(refs.length, 6)
   assert.ok(refs.every((d) => d.source?.category === '花名册'))
-  assert.deepEqual(refs.map((d) => d.name), ['工号', '姓名', '部门', '岗位', '入职日期'])
+  assert.deepEqual(refs.map((d) => d.name), ['工号', '姓名', '部门', '岗位', '签约公司', '入职日期'])
   for (const k of ['离职申请日期', '离职日期', '离职类型', '离职原因', '离职原因说明',
     '离职去向', '是否试用期内离职', '薪资结算日', '离职证明']) {
     assert.ok(HR_RESIGN_FIELDS.some((d) => d.name === k), `离职管理缺少 ${k}`)

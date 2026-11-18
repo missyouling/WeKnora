@@ -1440,6 +1440,13 @@ func hrDormNormalizeRecord(module string, d map[string]any) {
 		return
 	}
 	if module == hrDormModuleRoom || module == hrDormModulePublic {
+		// 第 63 轮：新增宿舍默认「1号楼 / 双人间」，缺值才补，不改用户已填内容
+		if module == hrDormModuleRoom && hrDormStr(d, "宿舍楼/区域") == "" {
+			d["宿舍楼/区域"] = "1号楼"
+		}
+		if hrDormStr(d, "房型") == "" && module == hrDormModuleRoom {
+			d["房型"] = "双人间"
+		}
 		if rt := hrDormStr(d, "房型"); rt != "" {
 			d["床位数"] = hrDormBedsOfType(rt)
 			if rt == "夫妻房" {

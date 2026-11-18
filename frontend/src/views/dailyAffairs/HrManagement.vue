@@ -554,7 +554,8 @@
     <!-- 第 57 轮：月度账单由抽屉改为**大尺寸居中弹窗**（社保 / 公积金统一设计），
          顶部三标签「个人明细 | 单位明细 | 汇总数据」，标签下方标准工具栏
          （左侧搜索/部门/条件险种，右侧打印 + 导出 Excel），表格合计行恒贴底。 -->
-    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(1200px, 94vw)"
+    <!-- 第 63 轮：账单明细弹窗加宽到 1480px，配合三段表百分比列宽彻底消除横向滚动条 -->
+    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(96vw, 1480px)"
       placement="center" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
       <div class="hr-bill-detail">
         <div class="hr-bill-tabs">
@@ -620,7 +621,7 @@
     </t-dialog>
 
     <!-- 第 61 轮：宿舍费用分摊明细（个人 / 房间 / 部门三标签，三段分离表格） -->
-    <t-dialog v-model:visible="dormBillVisible" :header="dormBillTitle" width="min(1360px, 96vw)"
+    <t-dialog v-model:visible="dormBillVisible" :header="dormBillTitle" width="min(96vw, 1480px)"
       placement="center" destroy-on-close data-hr-dorm-bill-dialog>
       <div class="hr-bill-detail">
         <div class="hr-bill-tabs">
@@ -742,6 +743,10 @@ import {
 import RosterImportDialog from './RosterImportDialog.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
+import {
+  normalizeCompanyName, companyNamesOf, departmentsOf, filterMetersByScopeAndCompany,
+} from './companyScope'
+import { listUtilityMeters, listUtilityKinds } from '@/api/knowledge-base'
 // 第 58 轮：账单人数 / 行序号口径抽成纯函数（可单测，打印导出处共用同一套）
 import { billPeopleCountOf, isAdjustmentRow, siBillPeopleOf } from './hrBill'
 import type { FilterFieldSpec } from './businessFilter'
@@ -1054,6 +1059,16 @@ const kpiCards = computed(() => buildHrKpiCards(kpiCounts.value))
 // ---------------------------------------------------------------------------
 // 列定义 / 列显隐
 // ---------------------------------------------------------------------------
+/** 花名册两个胶囊的原始 subs（在职 48 + 离职 14），离职抽屉要合并渲染。 */
+function rosterAllSubs(): any[] {
+  const cats = fieldConfig.value['hr-roster']
+  const cat = Array.isArray(cats)
+    ? (cats.find((c: any) => String(c?.builtin_key ?? '') === 'hr-roster') || cats[0])
+    : null
+  const subs = Array.isArray(cat?.subs) ? cat.subs : []
+  return subs.length ? subs : (hrFieldSeeds('hr-roster') as any[])
+}
+
 /** 当前 Tab 的字段配置 subs（六同步唯一权威源）。 */
 function subsOfTab(tab: HrTab): any[] {
   const cats = fieldConfig.value[tab]
@@ -1062,7 +1077,7 @@ function subsOfTab(tab: HrTab): any[] {
     : null
   const subs = Array.isArray(cat?.subs) ? cat.subs : []
   // 第 57 轮：花名册分类含「在职管理 48 + 离职管理 14」两个胶囊，
-  // 当前子视图必须各取自己的 subs，否则在职表头会混进 14 个离职字段。
+  // 当前子视图必须各取自己的 subs，否则在职表头会混进 15 个离职字段。
   if (tab === 'hr-roster') {
     const group = rosterStatusView.value === '离职' ? '离职人员' : '在职人员'
     const scoped = subs.filter((x: any) => String(x?.group || '') === group)
@@ -1281,13 +1296,20 @@ function resetColumns() {
 }
 function selectAllColumns() { resetColumns() }
 function onColumnsChange(keys: string[]) { visibleColKeys.value = keys; persistColumns() }
+/** 第 63 轮：存量列配置里的旧字段名 → 新字段名（改名不丢列显隐）。 */
+const LEGACY_COLUMN_ALIAS: Record<string, string> = {
+  合同公司: '签约公司',
+  '所属公司/部门': '所属公司',
+}
+
 function initColumns() {
   const allKeys = businessColumns.value.map((c) => c.colKey)
   const isHrCfg = ['hr-roster', 'hr-contract', 'hr-social', 'hr-fund', 'hr-dorm'].includes(activeTab.value)
   const saved = localStorage.getItem(STORAGE_KEY.value)
   if (saved) {
     try {
-      const arr = JSON.parse(saved)
+      const arr = (JSON.parse(saved) as string[] | null || [])
+        .map((k) => LEGACY_COLUMN_ALIAS[String(k)] || String(k))
       const matched = allKeys.filter((k) => Array.isArray(arr) && arr.includes(k))
       // 第 52 轮：旧存档可能含已删除分组/字段，只保留当前列全集里仍存在的键，
       // 且存档若已空（字段精简后全被过滤）就回落到后端默认表头。
@@ -1301,6 +1323,11 @@ function initColumns() {
   resetColumns()
 }
 watch(STORAGE_KEY, () => { initColumns() })
+
+/** 需要彩色 Tag 具名插槽的状态列（colKey 与模板 #<colKey> 一致）。 */
+const STATUS_SLOT_COLUMNS = new Set([
+  '宿舍状态', '住宿状态', '资产状态', '维修状态', '房源类型', '账单状态',
+])
 
 const tableColumns = computed(() => {
   const cols: any[] = []
@@ -1323,7 +1350,12 @@ const tableColumns = computed(() => {
         // 完整显示，不能再被 TEllipsis 截成 `5101111969122542...`。
         ellipsis: cfgWidth > 0 ? false : ellipsisOf(c),
         // 状态 / 月份列走具名插槽；其余用 cell 返回字符串（TDesign 1.19 不注入 h）
-        cell: c.slot ? undefined : (_h: any, params: any) => c.value?.(params?.row) ?? '',
+        // 第 63 轮：宿舍/住宿/资产/维修/房源/账单状态必须 slot=true，否则是纯文本，
+        // 列表里看不到彩色 Tag（真机「宿舍状态黑框」的另一半原因）。
+        slot: c.slot || STATUS_SLOT_COLUMNS.has(c.colKey),
+        cell: (c.slot || STATUS_SLOT_COLUMNS.has(c.colKey))
+          ? undefined
+          : (_h: any, params: any) => c.value?.(params?.row) ?? '',
         dataType: c.dataType,
       }
       if (cfgWidth > 0) {
@@ -1737,6 +1769,8 @@ async function onRosterViewChange() {
   filterState.value = { keyword: '' }
   initColumns()
   await Promise.all([loadFieldConfig('hr-roster'), loadList('hr-roster')])
+  // 第 63 轮：subs 到位后重算，否则离职胶囊新增的「签约公司」默认列会被漏掉
+  initColumns()
   headerReady.value = true
 }
 
@@ -1996,13 +2030,17 @@ const drawerGroups = computed(() => {
           // 具名插槽（Vue 模板禁止 attr 名带「/」），改为在这里注入动态 options，
           // 由抽屉内置的可搜索下拉渲染；房型/床位号等静态枚举同样走 options。
           const dynOptions: Record<string, string[]> = {
-            '所属公司/部门': dormUnitOptions.map((o) => o.value),
-            '租赁单位': dormUnitOptions.map((o) => o.value),
+            '所属公司': dormCompanyNames.value,
+            '租赁单位': dormCompanyNames.value,
+            '所属部门': dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value),
             '管理员/舍长': dormEmployeeNameOptions.value.map((o) => o.value),
             '员工姓名': dormEmployeeNameOptions.value.map((o) => o.value),
             '宿舍编号/房屋地址': dormAvailableRoomOptions.value.map((o) => o.value),
             '所属宿舍': dormRoomSelectOptions.value.map((o) => o.value),
             '责任人': dormEmployeeNameOptions.value.map((o) => o.value),
+            '关联电表': dormMeterOptionsOf('electricity'),
+            '关联水表': dormMeterOptionsOf('water'),
+            '关联气表': dormMeterOptionsOf('gas'),
           }
           const opts = dynOptions[f.name] || f.options
           return {
@@ -2020,6 +2058,49 @@ const drawerGroups = computed(() => {
         })
         .sort((a, b) => (rank.get(a.name) ?? 999) - (rank.get(b.name) ?? 999)),
     }))
+  }
+  // 第 63 轮：离职人员抽屉必须渲染**全部分组**（基础/组织/教育/联系/薪酬 + 离职信息），
+  // 旧实现 activeModule='resign' 只取 15 个离职字段 → 抽屉只剩「离职信息」一组。
+  if (activeTab.value === 'hr-roster' && rosterStatusView.value === '离职') {
+    // 注意：configKeys.enabled 只包含「离职人员」胶囊的 15 个字段，
+    // 用它过滤会把 48 个基础字段全部挡掉（真机只剩离职信息一组）。
+    const subs = rosterAllSubs().filter((x: any) => x && x.enabled !== false)
+    const resignNames = new Set(HR_RESIGN_FIELDS.map((d) => d.name))
+    const groupOfName = new Map<string, string>()
+    for (const g of HR_ROSTER_GROUPS) for (const d of g.fields) groupOfName.set(d.name, g.label)
+    const defOfName = new Map<string, any>()
+    for (const d of HR_ROSTER_GROUPS.flatMap((g) => g.fields)) defOfName.set(d.name, d)
+    for (const d of HR_RESIGN_FIELDS) defOfName.set(d.name, d)
+    const groups: { key: string; label: string; fields: string[] }[] = []
+    const seen = new Set<string>()
+    for (const sub of subs) {
+      const name = String(sub?.name || '').trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      const label = resignNames.has(name) ? '离职信息' : (groupOfName.get(name) || '在职信息')
+      let g = groups.find((x) => x.key === label)
+      if (!g) { g = { key: label, label, fields: [] }; groups.push(g) }
+      g.fields.push(name)
+    }
+    return groups.filter((g) => g.fields.length).map((g) => ({
+      key: g.key,
+      label: g.label,
+      fields: g.fields.map((name) => {
+        const def = defOfName.get(name)
+        const col = businessColumns.value.find((x) => x.colKey === name)
+        const staticOptions = hrEnumsOf(name)
+        const options = def?.dynamic === 'department' ? rosterDeptOptions.value
+          : def?.dynamic === 'unit' ? rosterUnitOptions.value
+            : (staticOptions.length ? staticOptions : (def?.options || []))
+        return {
+          name,
+          label: col?.title || name,
+          dataType: def ? hrDataTypeOf(def) : 'text',
+          readonly: READONLY_DETAIL_FIELDS.has(name) || !!def?.source || def?.type === 'system',
+          ...(options.length ? { options } : {}),
+        }
+      }),
+    })) as any
   }
   const mod = activeModule.value
   // 第 58 轮：社保「正常记录 / 异常记录」抽屉按当前胶囊的 16 字段契约渲染。
@@ -2113,7 +2194,7 @@ const drawerGroups = computed(() => {
 })
 
 const drawerFields = computed(() => {
-  if (drawerGroups.value?.length) return drawerGroups.value.flatMap((g) => g.fields)
+  if (drawerGroups.value?.length) return drawerGroups.value.flatMap((g: any) => g.fields)
   return businessColumns.value.map((c) => ({
     name: c.colKey,
     label: c.title,
@@ -2160,8 +2241,9 @@ watch(
 )
 
 async function openDetail(row: any) {
-  // 第 62 轮：宿舍抽屉依赖员工/房源/资产下拉，打开前确保已加载
-  if (activeTab.value === 'hr-dorm') await loadDormHelpers()
+  // 第 63 轮：宿舍抽屉立即打开，下拉数据后台加载（await 会被 11 个跨模块请求拖住，
+  // 网络抖动时用户点了行要等十几秒才出现抽屉）。
+  if (activeTab.value === 'hr-dorm') void loadDormHelpers()
   // 费用信息行 → 四标签扣款明细弹窗（全员 / 宿舍水电 / 公租房 / 部门）
   if (activeTab.value === 'hr-dorm' && dormSubView.value === 'fee') {
     void openDormBill(row)
@@ -2217,6 +2299,17 @@ async function openDetail(row: any) {
       ?? ''
     const v = raw === '—' ? '' : raw
     data[name] = typeof v === 'string' ? v : String(v ?? '')
+  }
+  // 第 63 轮：新增宿舍默认「1号楼 / 双人间 / 2 床」；公租房默认星达
+  if (activeTab.value === 'hr-dorm' && !row) {
+    if (dormSubView.value === 'dorm') {
+      data['宿舍楼/区域'] = data['宿舍楼/区域'] || '1号楼'
+      data['房型'] = data['房型'] || '双人间'
+      data['床位数'] = data['床位数'] || '2'
+    } else if (dormSubView.value === 'public') {
+      data['所属公司'] = data['所属公司'] || '重庆星达铜业有限公司'
+      data['租赁单位'] = data['租赁单位'] || '重庆星达铜业有限公司'
+    }
   }
   editForm.value = { data, remarkParts: {}, items: [] }
   // 新会话：清掉上一轮的系统建议值，否则「用户手改过」判定会把新员工的
@@ -3463,8 +3556,26 @@ async function printDormBill() {
 const dormEmployeeNameOptions = computed(() => dormEmployeeList.value.map((e) => ({
   label: String(e.name || e['姓名'] || ''), value: String(e.name || e['姓名'] || ''),
 })))
-const dormUnitOptions = ['重庆星达铜业有限公司', '生产部', '技术质量部', '财务部', '行政部', '销售部']
-  .map((v) => ({ label: v, value: v }))
+// 第 63 轮：所属公司/部门全部来自「单位设置（组织机构）」，不再硬编码
+const dormOrgUnits = ref<any[]>([])
+const dormCompanyNames = computed(() => companyNamesOf(dormOrgUnits.value))
+const dormDeptOptionsOf = (company: string) =>
+  departmentsOf(dormOrgUnits.value, company).map((v) => ({ label: v, value: v }))
+// 关联表计：电 / 水 / 气 三套表计 + 用途字典（用途标签决定「宿舍 / 公租房」）
+const dormMeters = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ electricity: [], water: [], gas: [] })
+const dormMeterKinds = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ electricity: [], water: [], gas: [] })
+const dormCurrentCompany = computed(() => {
+  const d = editForm.value?.data || {}
+  return normalizeCompanyName(d['所属公司'] || d['所属公司/部门'] || '', dormCompanyNames.value)
+})
+/** 当前档案类型下的表计候选：用途（宿舍/公租房）+ 使用单位双重过滤。 */
+function dormMeterOptionsOf(category: 'electricity' | 'water' | 'gas') {
+  const scope = dormSubView.value === 'public' ? 'public' : (dormSubView.value === 'dorm' ? 'dorm' : '')
+  return filterMetersByScopeAndCompany(
+    dormMeters.value[category], dormMeterKinds.value[category], scope,
+    dormCurrentCompany.value, dormCompanyNames.value,
+  ).map((m: any) => String(m.alias || '').trim()).filter(Boolean)
+}
 const dormEmployeeOptions = computed(() => dormEmployeeList.value.map((e) => ({
   label: `${e.name || e['姓名']}（${e.employee_id || e['工号'] || ''}）`,
   value: e.name || e['姓名'],
@@ -3504,14 +3615,46 @@ const dormAvailableRoomOptions = computed(() => {
 })
 
 async function loadDormHelpers() {
-  if (dormRoomList.value.length && dormEmployeeList.value.length) return
+  if (dormRoomList.value.length && dormEmployeeList.value.length && dormOrgUnits.value.length) return
   try {
-    const [d, p, a, roster] = await Promise.all([
+    const [d, p, a, roster, org, elec, water, gas,
+      kElec, kWater, kGas] = await Promise.all([
       hrApi.listDormRecords({ module: 'dorm' }),
       hrApi.listDormRecords({ module: 'public' }),
       hrApi.listDormRecords({ module: 'asset' }),
       hrApi.listRosterEmployees({ status: '在职', page_size: 500 }),
+      // 第 63 轮：单位设置（多组织）与能耗表计——所属公司/部门、关联水电表真源
+      hrApi.getOrgUnits().catch(() => null),
+      listUtilityMeters({ category: 'electricity' }).catch(() => null),
+      listUtilityMeters({ category: 'water' }).catch(() => null),
+      listUtilityMeters({ category: 'gas' }).catch(() => null),
+      listUtilityKinds('electricity').catch(() => null),
+      listUtilityKinds('water').catch(() => null),
+      listUtilityKinds('gas').catch(() => null),
     ])
+    const orgData: any = org
+    const units = Array.isArray(orgData?.data) ? orgData.data
+      : Array.isArray(orgData?.data?.units) ? orgData.data.units
+        : Array.isArray(orgData?.units) ? orgData.units : []
+    dormOrgUnits.value = units
+    const arrOf = (res: any) => {
+      const v = res?.data ?? res
+      return Array.isArray(v) ? v : []
+    }
+    dormMeters.value = {
+      electricity: arrOf(elec), water: arrOf(water), gas: arrOf(gas),
+    }
+    // 内置用途（宿舍 / 工商业）由前端常量提供，自定义用途（公租房）来自接口
+    const builtin: Record<string, any[]> = {
+      electricity: [{ value: 'dorm', label: '宿舍' }, { value: 'production', label: '工商业' }],
+      water: [{ value: 'dorm', label: '宿舍' }, { value: 'production', label: '工商业' }],
+      gas: [{ value: 'dorm', label: '宿舍' }, { value: 'production', label: '工商业' }],
+    }
+    dormMeterKinds.value = {
+      electricity: [...builtin.electricity, ...arrOf(kElec)],
+      water: [...builtin.water, ...arrOf(kWater)],
+      gas: [...builtin.gas, ...arrOf(kGas)],
+    }
     dormRoomList.value = [...extractItems(d), ...extractItems(p)]
     const names = new Set<string>()
     for (const it of extractItems(a)) {
@@ -3570,6 +3713,21 @@ function onStayRoomChange(v: any) {
 
 // 第 62 轮：住宿抽屉里「宿舍编号/房屋地址」用抽屉内置下拉（含斜杠不能开插槽），
 // 这里监听草稿值变化，自动带出房源类型 / 空闲床位 / 费用项目。
+// 第 63 轮：切换所属公司 → 复核「所属部门 / 关联电表 / 关联水表 / 关联气表」是否仍在候选内
+watch(
+  () => editForm.value?.data?.['所属公司'],
+  () => {
+    if (activeTab.value !== 'hr-dorm') return
+    const d = editForm.value?.data || {}
+    const depts = dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value)
+    if (d['所属部门'] && !depts.includes(String(d['所属部门']))) d['所属部门'] = ''
+    for (const [key, cat] of [['关联电表', 'electricity'], ['关联水表', 'water'], ['关联气表', 'gas']] as const) {
+      const opts = dormMeterOptionsOf(cat)
+      if (d[key] && !opts.includes(String(d[key]))) d[key] = ''
+    }
+  },
+)
+
 watch(
   () => editForm.value?.data?.['宿舍编号/房屋地址'],
   (v, old) => {
@@ -3716,6 +3874,14 @@ onUnmounted(() => {
 
 /* 第 57 轮：账单三标签弹窗 */
 .hr-bill-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+/* 第 63 轮：弹窗正文禁止横向滚动（三段表按百分比贴合容器，边框不掉到滚动区外） */
+.hr-bill-dialog :deep(.t-dialog__body) {
+  overflow-x: hidden;
+}
+/* 第 63 轮：列表状态 Tag 一律无黑框（浅色底 + 语义色文字） */
+.hr-table :deep(.t-tag) {
+  border: 0 !important;
+}
 .hr-bill-tabs { display: flex; align-items: center; flex: 0 0 auto; margin-bottom: 2px; }
 .hr-bill-filters { margin-bottom: 14px; }
 .hr-bill-table-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

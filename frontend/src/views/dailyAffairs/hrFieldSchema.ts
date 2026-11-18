@@ -140,7 +140,7 @@ export const HR_ROSTER_GROUPS: readonly HrFieldGroupDef[] = [
       f('姓名', 'text', { group: G.active, defaultHeader: true, builtin: true }),
       f('部门', 'enum', { group: G.active, defaultHeader: true, dynamic: 'department' }),
       f('岗位', 'text', { group: G.active, defaultHeader: true }),
-      f('合同公司', 'enum', { group: G.active, dynamic: 'unit' }),
+      f('签约公司', 'enum', { group: G.active, defaultHeader: true, dynamic: 'unit' }),
       f('招聘渠道', 'enum', { group: G.active, options: HR_ENUMS['招聘渠道'] }),
       f('入职日期', 'date', { group: G.active, defaultHeader: true }),
       f('试用期', 'enum', { group: G.active, options: HR_ENUMS['试用期'] }),
@@ -222,7 +222,7 @@ export const HR_REMOVED_GROUPS: readonly string[] =
 export const HR_REMOVED_FIELDS: readonly string[] = ['在职状态', '人员状态']
 
 // ---------------------------------------------------------------------------
-// 离职管理：5 个花名册引用 + 9 个核心离职字段
+// 离职管理：6 个花名册引用 + 9 个核心离职字段
 // ---------------------------------------------------------------------------
 
 
@@ -231,6 +231,8 @@ export const HR_RESIGN_FIELDS: readonly HrFieldDef[] = [
   ref('姓名', { category: '花名册', field: '姓名' }),
   ref('部门', { category: '花名册', field: '部门' }),
   ref('岗位', { category: '花名册', field: '岗位' }),
+  // 第 63 轮：离职列表也要能直接看到签约公司（与在职同一口径）
+  ref('签约公司', { category: '花名册', field: '签约公司' }),
   ref('入职日期', { category: '花名册', field: '入职日期' }, { type: 'date' }),
   f('离职申请日期', 'date'),
   f('离职日期', 'date', { defaultHeader: true }),

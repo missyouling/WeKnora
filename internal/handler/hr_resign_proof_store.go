@@ -78,17 +78,21 @@ func (h *HRHandler) hrLoadProofFile(ctx context.Context, filename string) ([]byt
 	return row.FileBytes, ct, true
 }
 
-// hrResignProofBytes 按 库 → 磁盘 → 动态生成 的顺序取附件内容，永不返回 404。
+// hrResignProofBytes 按 磁盘 → 库 → 动态生成 的顺序取附件内容，永不返回 404。
+//
+// 第 63 轮：磁盘优先进、且命中磁盘时**不再回填数据库**。
+// 旧实现每次请求都从磁盘读 3.5MB 再 upsert 回库，跨区 pooler 单次耗时 60s+，
+// 真机预览要等一分钟（CI e2e 直接超时）。上传本来就磁盘 + DB 双写，
+// 磁盘命中说明副本已存在，无需重复写库。
 func (h *HRHandler) hrResignProofBytes(ctx context.Context, filename string) ([]byte, string) {
-	if data, ct, ok := h.hrLoadProofFile(ctx, filename); ok {
-		return data, ct
-	}
 	path := filepath.Join(hrResignProofDir, filename)
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		ct := hrResignProofContentType(filepath.Ext(filename))
-		// 回填数据库：容器下一次重建后仍然可读。
-		if e := h.hrSaveProofFile(ctx, filename, ct, data); e != nil {
-			logger.Warnf(ctx, "cache resign proof to db failed: %v", e)
+		return data, hrResignProofContentType(filepath.Ext(filename))
+	}
+	if data, ct, ok := h.hrLoadProofFile(ctx, filename); ok {
+		// 生产容器无磁盘副本：读库后顺手落盘，后续请求直接走本地。
+		if e := os.MkdirAll(hrResignProofDir, 0o755); e == nil {
+			_ = os.WriteFile(path, data, 0o644)
 		}
 		return data, ct
 	}

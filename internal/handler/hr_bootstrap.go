@@ -128,6 +128,16 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 			}
 		}
 	}
+	// 第 63 轮：花名册「合同公司 → 签约公司」归一、宿舍楼/房型修正、宿舍契约 v3
+	if err := h.hrFixRosterContractCompany63(ctx); err != nil {
+		logger.Warnf(ctx, "normalize roster contract company failed: %v", err)
+	}
+	if err := h.hrMigrateDormSubs63(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR dorm subs v63 failed: %v", err)
+	}
+	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
+		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
+	}
 	// 第 62 轮：宿舍字段契约 v2 + 真实房源种子 + 劳动合同签约公司归一
 	if err := h.hrMigrateDormSubs62(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR dorm subs v62 failed: %v", err)

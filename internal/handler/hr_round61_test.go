@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,15 +18,15 @@ import (
 // 第 61 轮：五胶囊字段契约（与前端 hrDorm.ts 同源）。
 func TestRound61DormFieldContract(t *testing.T) {
 	subs := hrDormSeedSubs()
-	// 第 62 轮字段契约：宿舍 25 / 公租房 28 / 住宿 27 / 资产 16 / 费用 20
+	// 第 63 轮字段契约：宿舍 26 / 公租房 30 / 住宿 27 / 资产 16 / 费用 20
 	count := map[string]int{}
 	for _, s := range subs {
 		count[s.Group]++
 	}
 	require.Equal(t, len(subs), count[hrDormGroupRoom]+count[hrDormGroupPublic]+
 		count[hrDormGroupStay]+count[hrDormGroupAsset]+count[hrDormGroupFee])
-	require.Equal(t, 25, count[hrDormGroupRoom])
-	require.Equal(t, 28, count[hrDormGroupPublic])
+	require.Equal(t, 26, count[hrDormGroupRoom])
+	require.Equal(t, 30, count[hrDormGroupPublic])
 	require.Equal(t, 27, count[hrDormGroupStay])
 	require.Equal(t, 16, count[hrDormGroupAsset])
 	require.Equal(t, 20, count[hrDormGroupFee])
@@ -160,11 +162,18 @@ func TestRound61DormBillRequiresStay(t *testing.T) {
 }
 
 // 第 61 轮：离职证明 → 库 / 磁盘 / 动态生成 PNG 三级兜底 + 无后缀路由 200。
+//
+// 第 63 轮变更：磁盘优先且**命中磁盘不回写库**（原来每次读 3.5MB 再跨区 upsert，预览 60s+）。
+// 因此这里把附件目录切到临时目录，按「生成 → 库回退落盘 → 磁盘命中只读」三段验证。
 func TestRound61ResignProofFallback(t *testing.T) {
 	db := hrRound59DB(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&HRResignProofFile{}))
 	h := &HRHandler{db: db}
+
+	originDir := hrResignProofDir
+	hrResignProofDir = t.TempDir()
+	t.Cleanup(func() { hrResignProofDir = originDir })
 
 	name := "daaf5f1e-0a4c-497f-a103-e15f8d20ff6d.png"
 	data, ct := h.hrResignProofBytes(ctx, name)
@@ -172,14 +181,27 @@ func TestRound61ResignProofFallback(t *testing.T) {
 	require.True(t, len(data) > 2000, "必须生成一张可读的 PNG")
 	require.Equal(t, []byte{0x89, 'P', 'N', 'G'}, data[:4], "PNG 魔术字节")
 
-	// 已入库存：第二次直接从库里取同一份字节
-	again, ct2 := h.hrResignProofBytes(ctx, name)
-	require.Equal(t, "image/png", ct2)
-	require.True(t, bytes.Equal(data, again))
-
+	// 首次：磁盘与库都没有 → 现场生成并入库
 	var n int64
 	require.NoError(t, db.Model(&HRResignProofFile{}).Where("filename = ?", name).Count(&n).Error)
 	require.Equal(t, int64(1), n)
+
+	// 第二次：库里命中 → 同一份字节，同时补一份磁盘副本
+	again, ct2 := h.hrResignProofBytes(ctx, name)
+	require.Equal(t, "image/png", ct2)
+	require.True(t, bytes.Equal(data, again))
+	_, statErr := os.Stat(filepath.Join(hrResignProofDir, name))
+	require.NoError(t, statErr, "读库命中后应补落磁盘")
+
+	// 第三次：删掉库记录，磁盘仍能独立供数，且不得反向写库（第 63 轮性能契约）
+	require.NoError(t, db.Where("filename = ?", name).Delete(&HRResignProofFile{}).Error)
+	fromDisk, ct3 := h.hrResignProofBytes(ctx, name)
+	require.Equal(t, "image/png", ct3)
+	require.True(t, bytes.Equal(data, fromDisk), "磁盘副本应与库内字节一致")
+	n = 0
+	require.NoError(t, db.Model(&HRResignProofFile{}).Where("filename = ?", name).Count(&n).Error)
+	require.Equal(t, int64(0), n, "磁盘命中不得回写数据库")
+	require.NoError(t, h.hrSaveProofFile(ctx, name, "image/png", data))
 
 	// 无后缀路由：路径里没有 .png，返回 200 + image/png
 	r := hrRound60Router(t, h)

@@ -42,7 +42,7 @@
         <div class="bsd-block-title">{{ sec.label }}</div>
         <div class="bsd-fields">
           <template v-for="f in sec.fields" :key="f.name">
-            <t-form-item :label="f.label" label-width="110px" :class="fieldClassOf(f)">
+            <t-form-item :label="f.label" :label-width="`${labelWidth}px`" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
                 <!-- 只读模式（费用清单等「查看型」抽屉）：所有字段只展示不可改，
                      也不出现保存按钮。费用清单的值是核算结果，编辑只能走「生成/重算」，
@@ -331,10 +331,25 @@ const isLongTextField = (f: DetailFieldMeta): boolean => {
  * （t-tag-input 的 :value 每次重渲染都会取最新值）。
  */
 const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
+/**
+ * 第 63 轮：字段 Label 宽度按「最长标签」自适应（110~168px）。
+ *
+ * 旧实现固定 110px，宿舍费用项目的「污水处理费(元/m³)」「月费用单价(元/月)」
+ * 会被截成省略号。这里按半角宽度估算（CJK 记 2），并给足右侧间距。
+ */
+const labelWidth = computed(() => {
+  const halfWidth = (t: string) => Array.from(String(t || ''))
+    .reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 1 : 2), 0)
+  const fields = normalizedSections.value.flatMap((s: any) => s.fields || [])
+  const longest = fields.reduce((n: number, f: any) => Math.max(n, halfWidth(f?.label)), 4)
+  return Math.min(168, Math.max(110, Math.round(longest * 7.2) + 22))
+})
+
 const fieldClassOf = (f: DetailFieldMeta) => ({
-  // 多行文本 / 数组 / 长文本 / 附件字段占满整行（单行字段才两列并排）
+  // 第 63 轮：配套设施（multi）独占整行，标签展开不拥挤
   'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || f.dataType === 'attachment'
-    || isLongTextField(f) || f.name === 'fileName',
+    || isLongTextField(f) || f.name === 'fileName'
+    || f.name === '配套设施' || (f as any).dataType === 'multi',
 })
 function close() {
   emit('cancel')
@@ -374,9 +389,17 @@ function close() {
 }
 .detail-title-main { font-weight: 600; }
 .bsd-status-tag {
-  border: 0;
-  background: transparent;
+  border: 0 !important;
   font-weight: 500;
+}
+/* 第 63 轮：状态 Tag 一律无黑框，浅色底由 TDesign theme=light 提供 */
+.bsd-fields :deep(.t-tag) {
+  border: 0 !important;
+}
+.bsd-fields :deep(.t-form__label) {
+  white-space: nowrap;
+  padding-right: 8px;
+  overflow: visible;
 }
 .bsd-block-title {
   display: flex;
