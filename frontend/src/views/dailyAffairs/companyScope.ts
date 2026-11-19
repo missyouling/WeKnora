@@ -93,6 +93,34 @@ export function departmentsOf(
   return matched.length ? [...new Set(matched)] : all
 }
 
+/**
+ * 第 64 轮：严格版部门取值 —— 该公司没配置部门就返回空数组。
+ *
+ * 为什么不再回退全部部门：宿舍/公租房档案的「所属部门」必须与「所属公司」同源，
+ * 选「重庆持睿汽车部件有限公司」却还能挑到星达的人事行政部，属于跨公司串台。
+ */
+export function departmentsOfStrict(
+  units: readonly OrgUnitLike[] | null | undefined,
+  company: string,
+): string[] {
+  const list = units || []
+  const names = companyNamesOf(list)
+  if (!company) return []
+  for (const u of rnUnits(list)) {
+    if (!sameCompany(u?.name, company, names)) continue
+    return (u?.departments || [])
+      .map((d) => (typeof d === 'string' ? d : String(d?.name ?? '')))
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean)
+  }
+  return []
+}
+
+/** 内部：把 units 归一为数组（容忍 null / 非数组）。 */
+function rnUnits(units: readonly OrgUnitLike[] | null | undefined): OrgUnitLike[] {
+  return Array.isArray(units) ? [...units] : []
+}
+
 export type MeterScope = 'dorm' | 'public' | ''
 
 /** 用途标签 → 归属场景：宿舍 / 公租房 / 其它（工商业等）。 */
@@ -106,9 +134,13 @@ export function meterKindScope(label: unknown): MeterScope {
 
 export interface MeterLike {
   meter_kind?: string
+  /** 第 64 轮：过滤一律比「使用单位」，绝不比「归属单位」（owner_unit）。 */
   use_unit?: string
+  usage_unit?: string
+  owner_unit?: string
   enabled?: boolean
   alias?: string
+  name?: string
 }
 
 export interface KindLike {
@@ -143,6 +175,15 @@ export function filterMetersByScopeAndCompany(
     if (!m || m.enabled === false) return false
     if (!wanted.has(String(m.meter_kind ?? '').trim())) return false
     if (!company) return true
-    return sameCompany(m.use_unit, company, names)
+    // 第 64 轮：只认使用单位。表计的「归属单位」是资产归属（持睿403 的归属单位是星达），
+    // 错比 owner_unit 会把持睿宿舍表挂到星达档案上，反之亦然。
+    const useUnit = String(m.use_unit ?? m.usage_unit ?? '').trim()
+    if (!useUnit) return false
+    return sameCompany(useUnit, company, names)
   })
+}
+
+/** 表计展示名：优先 alias，其次 name。 */
+export function meterLabelOf(m: MeterLike | null | undefined): string {
+  return String(m?.alias ?? m?.name ?? '').trim()
 }

@@ -40,7 +40,7 @@
            近乎逐行重复（约 90 行），改一处漏一处，是六同步漂移的温床。 -->
       <section v-for="sec in normalizedSections" :key="sec.key" class="bsd-block">
         <div class="bsd-block-title">{{ sec.label }}</div>
-        <div class="bsd-fields">
+        <div class="bsd-fields" :class="fieldsClass">
           <template v-for="f in sec.fields" :key="f.name">
             <t-form-item :label="f.label" :label-width="`${labelWidth}px`" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
@@ -51,10 +51,12 @@
                   {{ displayValueOf(f) }}
                 </div>
                 <!-- 第 55 轮：状态类字段直接渲染彩色徽标，不再是灰底禁用输入框 -->
-                <t-tag v-else-if="isStatusField(f)" :theme="statusTagTheme(form.data[f.name])"
-                  variant="light" size="small" class="bsd-status-tag">
+                <!-- 第 64 轮：宿舍/住宿/资产/账单/维修状态改**纯带色文字**（无 Tag 外框），
+                     抽屉里绝不能出现输入框或描边方框（线上「黑框」问题）。 -->
+                <span v-else-if="isStatusField(f)" class="bsd-status-text"
+                  :class="statusTextClass(form.data[f.name])">
                   {{ form.data[f.name] || '—' }}
-                </t-tag>
+                </span>
                 <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，不参与手填 -->
                 <t-input v-else-if="f.readonly" :value="String(form.data[f.name] ?? '')" disabled />
                 <!-- 备注片段字段：无标准存储位，值存 remark 的「字段名：值」片段 -->
@@ -206,6 +208,16 @@ const props = withDefaults(defineProps<{
    * 费用清单/核算表是**计算行**，没有源文件可预览，硬留一个空折叠条会让人点了没反应。
    */
   showPreview?: boolean
+  /**
+   * 第 64 轮：固定两列网格。
+   *
+   * 默认仍是 `auto-fit minmax(200px,1fr)`（发票/合同等窄抽屉自适应）；
+   * 人事全模块抽屉统一 820px 后必须固定两列 —— auto-fit 在 820px 下会落成 3 列，
+   * 每列输入控件只剩 150px 左右，18 位身份证号与公司全称被截断（线上问题 1 的根因）。
+   */
+  twoColumn?: boolean
+  /** 第 64 轮：Label 固定宽度（px）；0 = 按最长标签自适应。 */
+  labelWidthPx?: number
 }>(), {
   title: '',
   row: null,
@@ -225,6 +237,8 @@ const props = withDefaults(defineProps<{
   showPreview: true,
   readonly: false,
   showReExtract: false,
+  twoColumn: false,
+  labelWidthPx: 0,
 })
 
 const emit = defineEmits<{
@@ -303,18 +317,23 @@ const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
 const BSD_STATUS_FIELDS = new Set([
   '合同状态', '账户状态', '账单状态', '提取状态', '证照状态', '证件状态',
   '在职状态', '账期状态', '参保状态', '缴存状态', '记录性质',
+  // 第 64 轮：宿舍五标签的状态列
+  '宿舍状态', '住宿状态', '资产状态', '维修状态', '房源类型',
 ])
 function isStatusField(f: DetailFieldMeta): boolean {
   return BSD_STATUS_FIELDS.has(String(f.name || '').trim())
 }
-/** 状态配色：正常绿 / 未签订·即将到期·封存·待补录 橙 / 到期 红 / 已解除·销户 灰。 */
-function statusTagTheme(v: unknown): 'success' | 'warning' | 'danger' | 'default' {
+/**
+ * 第 64 轮：状态纯文字配色类（无边框、无底色）。
+ * 绿 = 空闲/在住/正常，橙 = 部分入住/待入住/待维修/满员前的中间态，灰 = 已退宿/停用。
+ */
+function statusTextClass(v: unknown): string {
   const s = String(v ?? '').trim()
-  if (!s || /已解除|提取销户|销户|作废|待补录/.test(s)) return 'default'
-  if (/正常|已汇缴|已完成|在职/.test(s)) return 'success'
-  if (/到期$/.test(s) && !/即将/.test(s)) return 'danger'
-  if (/未签订|即将到期|封存|待|异常|过期/.test(s)) return 'warning'
-  return 'default'
+  if (!s) return 'is-muted'
+  if (/空闲|在住|正常|已生成|已修复|无维修|公司宿舍/.test(s)) return 'is-ok'
+  if (/部分入住|待入住|待维修|维修中|损坏|公租房|待/.test(s)) return 'is-warn'
+  if (/满员|已退宿|报废|作废|停用/.test(s)) return 'is-off'
+  return 'is-muted'
 }
 // 摘要 / 多行长文本字段：与知识库文档摘要 100% 同源同形（段落文本域）。
 // 按字段名与中文名双路判定，不受 data_type 残留值影响。
@@ -338,19 +357,41 @@ const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.
  * 会被截成省略号。这里按半角宽度估算（CJK 记 2），并给足右侧间距。
  */
 const labelWidth = computed(() => {
+  if (props.labelWidthPx > 0) {
+    // 第 64 轮：两列布局下标签仍可能超宽（如「是否本地首次缴纳公积金」= 22 半角），
+    // 按最长标签再抬一次，上限放宽到 168px，绝不截断。
+    const halfWidth = (t: string) => Array.from(String(t || ''))
+      .reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 1 : 2), 0)
+    const fields = normalizedSections.value.flatMap((s: any) => s.fields || [])
+    const longest = fields.reduce((n: number, f: any) => Math.max(n, halfWidth(f?.label)), 4)
+    const needed = Math.round(longest * 7.2) + 22
+    // 两列布局：Label 上限 158px。最长标签「是否本地首次缴纳公积金」(22 半角)
+    // 实测需 ~155px 才不折行；860px 抽屉单列 388px，158 + 24 间距仍留 206px 给控件。
+    return Math.max(props.labelWidthPx, Math.min(props.twoColumn ? 158 : 168, needed))
+  }
   const halfWidth = (t: string) => Array.from(String(t || ''))
     .reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 1 : 2), 0)
   const fields = normalizedSections.value.flatMap((s: any) => s.fields || [])
   const longest = fields.reduce((n: number, f: any) => Math.max(n, halfWidth(f?.label)), 4)
-  return Math.min(168, Math.max(110, Math.round(longest * 7.2) + 22))
+  // 两列布局下 Label 只占半列，上限收到 126px，避免挤压输入控件
+  const cap = props.twoColumn ? 126 : 168
+  return Math.min(cap, Math.max(110, Math.round(longest * 7.2) + 22))
 })
 
+/** 第 64 轮：长字段/多选/附件/状态说明类一律独占整行。 */
+const FULL_WIDTH_FIELDS = new Set([
+  '配套设施', '备注', '户籍地址', '现居住地', '退宿原因', '地址', '详细地址',
+  '离职原因说明', '维修说明', '紧急联系人地址', '工作邮箱', '现居住地址',
+  '关联电表', '关联水表', '关联气表',
+])
 const fieldClassOf = (f: DetailFieldMeta) => ({
-  // 第 63 轮：配套设施（multi）独占整行，标签展开不拥挤
   'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || f.dataType === 'attachment'
     || isLongTextField(f) || f.name === 'fileName'
-    || f.name === '配套设施' || (f as any).dataType === 'multi',
+    || FULL_WIDTH_FIELDS.has(String(f.name || ''))
+    || (f as any).dataType === 'multi',
 })
+/** 第 64 轮：两列布局的网格类（CSS 侧只做列定义切换，行距同源）。 */
+const fieldsClass = computed(() => ({ 'bsd-fields--two': props.twoColumn }))
 function close() {
   emit('cancel')
   innerVisible.value = false
@@ -392,6 +433,22 @@ function close() {
   border: 0 !important;
   font-weight: 500;
 }
+/* 第 64 轮：状态纯带色文字 —— 无边框、无背景，绝不再出现「黑框」 */
+.bsd-status-text {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--td-font-size-body-medium);
+  font-weight: 500;
+  border: 0 !important;
+  background: transparent !important;
+  white-space: nowrap;
+
+  &.is-ok { color: var(--td-success-color); }
+  &.is-warn { color: var(--td-warning-color); }
+  &.is-off { color: var(--td-text-color-placeholder); }
+  &.is-muted { color: var(--td-text-color-secondary); }
+}
 /* 第 63 轮：状态 Tag 一律无黑框，浅色底由 TDesign theme=light 提供 */
 .bsd-fields :deep(.t-tag) {
   border: 0 !important;
@@ -428,6 +485,15 @@ function close() {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 0 var(--td-comp-margin-m);
 }
+/* 第 64 轮：固定两列（人事全模块 820px 抽屉）。
+   minmax(0,1fr) 而不是 1fr —— 后者最小宽度是 auto，长 Label 会把列撑破。 */
+.bsd-fields--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  row-gap: 14px;
+}
+/* 两列布局下每个表单项允许收缩，控件才有 >=230px 的展示宽度 */
+.bsd-fields--two :deep(.t-form__item) { min-width: 0; }
 /* 对齐红线：左/右两列所有输入控件的左、右边缘必须垂直方向 100% 对齐。
    TDesign 的 t-date-picker / t-select 等带有自身固有宽度（min-width 内联样式），
    在栅格里会撑破列宽，导致「开票日期」比下方的「税率/价税合计」更宽 ——

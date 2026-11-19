@@ -138,6 +138,14 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}
+	// 第 64 轮：费用信息胶囊重建为「月度账单汇总」15 列（幂等）
+	if err := h.hrMigrateDormFeeSubs64(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR dorm fee subs v64 failed: %v", err)
+	}
+	// 第 64 轮：补齐宿舍/公租房缺失的「所属部门」（幂等）
+	if err := h.hrEnsureDormDeptSub64(ctx); err != nil {
+		logger.Warnf(ctx, "ensure HR dorm dept sub failed: %v", err)
+	}
 	// 第 62 轮：宿舍字段契约 v2 + 真实房源种子 + 劳动合同签约公司归一
 	if err := h.hrMigrateDormSubs62(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR dorm subs v62 failed: %v", err)
@@ -739,6 +747,9 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/dorm/stats", h.DormStats)
 	r.POST("/hr/dorm/stays/transfer", h.TransferDormStays)
 	r.POST("/hr/dorm/stays/checkout", h.CheckoutDormStays)
+	// 第 64 轮：退宿可逆（恢复住宿，重新校验床位与性别）
+	r.POST("/hr/dorm/stays/restore", h.RestoreDormStays)
+	r.POST("/hr/dorm/stays/:id/restore", h.RestoreDormStay)
 	r.GET("/hr/dorm/bills", h.ListDormBills)
 	r.POST("/hr/dorm/bills", h.CreateDormBill)
 	r.GET("/hr/dorm/bills/:id", h.GetDormBill)
@@ -746,6 +757,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	// 第 62 轮：费用信息 = 全员月度扣款明细（跨模块聚合）
 	r.GET("/hr/dorm/charges", h.ListDormCharges)
 	r.GET("/hr/dorm/charges/summary", h.hrDormChargeSummary)
+	// 第 64 轮：费用信息月度账单汇总（1 月 1 行，供主列表使用）
+	r.GET("/hr/dorm/charge-bills", h.ListDormChargeBills)
 	r.POST("/hr/dorm/charges/generate", h.GenerateDormCharges)
 	r.PUT("/hr/dorm/charges/:id", h.UpdateDormCharge)
 	r.DELETE("/hr/dorm/charges/:id", h.DeleteDormCharge)

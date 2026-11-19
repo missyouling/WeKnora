@@ -1193,12 +1193,27 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 	if kind != "abnormal" {
 		kind = "normal"
 	}
-	month := strings.TrimSpace(c.PostForm("month"))
+	// 第 64 轮：账单月份优先级 = 显式 bill_month > 旧参数 month > 文件名「YYYY-MM」> 空。
+	// 旧实现把工具栏月份筛选当导入月份透传，用户选 2026-11 时整批明细被写成 2026-11，
+	// 与文件名里的费款所属期 2026-10 不一致（线上「导入月份被覆写」的根因）。
+	explicitMonth := strings.TrimSpace(c.PostForm("bill_month"))
+	if explicitMonth == "" {
+		explicitMonth = strings.TrimSpace(c.PostForm("month"))
+	}
+	if explicitMonth != "" {
+		ym, e := hrNormalizeMonthLabel(explicitMonth)
+		if e != nil {
+			hrFail(c, "账单月份必须为 YYYY-MM")
+			return
+		}
+		explicitMonth = ym
+	}
 	deptByID := h.hrEmployeeDeptMap(ctx, tid)
 	type aggKey struct{ id, scheme string }
 	by := map[aggKey]*HRSIRecord{}
 	order := []aggKey{}
 	parsed := 0
+	resolvedMonth := explicitMonth
 	for _, fh := range files {
 		payloads, perr := hrParseSocialUpload(fh)
 		if perr != nil || len(payloads) == 0 {
@@ -1206,11 +1221,13 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		}
 		meta := hrSIParseFileName(fh.Filename)
 		scheme := hrSISchemeOfFile(fh.Filename)
-		billMonth := month
-		if billMonth == "" {
-			billMonth = meta.YearMonth
+		billMonth := hrResolveImportMonth(explicitMonth, meta.YearMonth, time.Now())
+		if resolvedMonth == "" {
+			resolvedMonth = billMonth
 		}
-		period := meta.YearMonth
+		// 费款所属期与账单月份必须同源：旧实现 period 只取文件名月份，
+		// bill_month 却取请求参数，两个字段指向不同月份。
+		period := billMonth
 		for _, p := range payloads {
 			k := aggKey{normalizeIDNumber(p.IDNumber), scheme}
 			r := by[k]
@@ -1279,7 +1296,8 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	// 第 58 轮：劳务人员的空占位记录同步清理
 	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
-	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed})
+	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed,
+		"bill_month": resolvedMonth})
 }
 
 // hrSISeqNum 序号列在 PG 里是字符串，SQL 层 CAST(... AS INTEGER) 遇到

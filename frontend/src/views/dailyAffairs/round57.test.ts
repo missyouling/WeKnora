@@ -53,7 +53,7 @@ test('加锁行不换行：🔒 与 ⋮ 同处 .fc-op，行高恒 40px，末列 
   // 容器自身禁止折行，且行高与末列宽度锁死
   assert.match(panel, /\.fc-op \{[\s\S]*?flex-wrap: nowrap;[\s\S]*?\}/)
   assert.match(panel,
-    /\.field-config-row \{[\s\S]*?grid-template-columns: 24px minmax\(280px, 1fr\) 90px 64px 64px 76px;[\s\S]*?min-height: 40px;/)
+    /\.field-config-row \{[\s\S]*?grid-template-columns: 24px minmax\(160px, 1fr\) 84px 56px 60px 68px;[\s\S]*?min-height: 40px;/)
 })
 
 // ---------------------------------------------------------------------------

@@ -415,6 +415,20 @@ export function checkoutDormStays(payload: { ids: Array<string | number>; date?:
   return post(`${BASE}/dorm/stays/checkout`, payload) as Promise<any>
 }
 
+/** 第 64 轮：恢复住宿（退宿可逆，后端重新校验床位与性别）。 */
+export function restoreDormStay(id: string): Promise<any> {
+  return post(`${BASE}/dorm/stays/${encodeURIComponent(String(id))}/restore`, {}) as Promise<any>
+}
+
+export function restoreDormStays(payload: { ids: Array<string | number> }): Promise<any> {
+  return post(`${BASE}/dorm/stays/restore`, payload) as Promise<any>
+}
+
+/** 第 64 轮：费用信息月度账单汇总（每月 1 行）。 */
+export function listDormChargeBills(): Promise<any> {
+  return get(`${BASE}/dorm/charge-bills`) as Promise<any>
+}
+
 export function listDormBills(): Promise<any> {
   return get(`${BASE}/dorm/bills`) as Promise<any>
 }

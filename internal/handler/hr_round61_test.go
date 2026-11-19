@@ -18,7 +18,7 @@ import (
 // 第 61 轮：五胶囊字段契约（与前端 hrDorm.ts 同源）。
 func TestRound61DormFieldContract(t *testing.T) {
 	subs := hrDormSeedSubs()
-	// 第 63 轮字段契约：宿舍 26 / 公租房 30 / 住宿 27 / 资产 16 / 费用 20
+	// 第 64 轮字段契约：宿舍 26 / 公租房 30 / 住宿 27 / 资产 16 / 费用 15（月度账单汇总）
 	count := map[string]int{}
 	for _, s := range subs {
 		count[s.Group]++
@@ -29,7 +29,7 @@ func TestRound61DormFieldContract(t *testing.T) {
 	require.Equal(t, 30, count[hrDormGroupPublic])
 	require.Equal(t, 27, count[hrDormGroupStay])
 	require.Equal(t, 16, count[hrDormGroupAsset])
-	require.Equal(t, 20, count[hrDormGroupFee])
+	require.Equal(t, 15, count[hrDormGroupFee])
 
 	// 状态列白名单：每个胶囊只允许自己的状态字段
 	allowed, ok := hrAllowedStatusOf60(hrDormGroupRoom)

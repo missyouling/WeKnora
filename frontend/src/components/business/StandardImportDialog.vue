@@ -28,7 +28,17 @@
         </t-button>
       </div>
 
-      <!-- ② 导入模式 -->
+      <!-- ② 账单月份（第 64 轮）：按月归属的业务导入必须让用户显式确认月份，
+           否则文件名解析失败或与工具栏筛选不一致时会被写成系统当前月。 -->
+      <div v-if="monthRequired" class="si-mode-row" data-std-import-month-row>
+        <span class="si-label">账单月份</span>
+        <t-date-picker :model-value="month" mode="month" format="YYYY-MM" value-type="YYYY-MM"
+          placeholder="选择账单月份" clearable allow-input class="si-month-picker"
+          data-std-import-month @update:model-value="onMonthChange" />
+        <span class="si-month-hint">入库按此月份落库；文件名中的所属期仅作预填</span>
+      </div>
+
+      <!-- ③ 导入模式 -->
       <div v-if="modeOptions.length > 1" class="si-mode-row">
         <span class="si-label">导入模式</span>
         <t-radio-group v-model="mode" size="small">
@@ -95,6 +105,13 @@ const props = withDefaults(defineProps<{
   onDownload?: () => Promise<any>
   /** 执行导入，返回提示条数；抛错时由组件统一提示。 */
   onImport?: (files: File[], mode: string) => Promise<number>
+  /**
+   * 第 64 轮：是否要求手选「账单月份」（社保正常/补退记录、公积金按月导入）。
+   * 开启后：月份为必填；拖入文件时从文件名 `YYYY-MM` 自动预填；导入前校验。
+   */
+  monthRequired?: boolean
+  /** 初始月份（默认当前自然月）。 */
+  defaultMonth?: string
 }>(), {
   title: '导入',
   moduleLabel: '',
@@ -111,11 +128,15 @@ const props = withDefaults(defineProps<{
   acceptHint: '支持 .xlsx / .xls 格式',
   onDownload: undefined,
   onImport: undefined,
+  monthRequired: false,
+  defaultMonth: '',
 })
 
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'imported', count: number): void
+  /** 第 64 轮：月份变化（父级据此构造 bill_month 参数）。 */
+  (e: 'update:month', v: string): void
 }>()
 
 const mode = ref(props.defaultMode)
@@ -125,6 +146,30 @@ const downloading = ref(false)
 const importing = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const modeOptions = computed(() => props.modes || [])
+
+/** 第 64 轮：当前账单月份（默认当前自然月，可由文件名预填、用户随时改）。 */
+const month = ref('')
+const currentMonth = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+watch(() => props.visible, (v) => {
+  if (v) {
+    files.value = []
+    dragOver.value = false
+    mode.value = props.defaultMode
+    month.value = props.defaultMonth || currentMonth()
+  }
+})
+function onMonthChange(v: any) {
+  month.value = String(v ?? '').trim()
+  emit('update:month', month.value)
+}
+/** 从文件名提取 YYYY-MM（如「工伤保险_2026-10至2026-10_未申报信息明细.xlsx」）。 */
+function monthFromFileName(name: string): string {
+  const m = String(name || '').match(/((?:19|20)\d{2})[-_.年/]?(0[1-9]|1[0-2])/)
+  return m ? `${m[1]}-${m[2]}` : ''
+}
 
 watch(() => props.visible, (v) => {
   if (v) { files.value = []; dragOver.value = false; mode.value = props.defaultMode }
@@ -141,6 +186,11 @@ function addFiles(list: File[]) {
   const ok = list.filter((f) => isExcel(f.name))
   if (!ok.length) { MessagePlugin.warning('请选择 .xlsx 或 .xls 文件'); return }
   files.value = props.multiple ? [...files.value, ...ok] : [ok[0]]
+  // 第 64 轮：文件名里的费款所属期自动预填月份（用户仍可手改）
+  if (props.monthRequired && !month.value) {
+    const guess = monthFromFileName(files.value[0]?.name || '')
+    if (guess) month.value = guess
+  }
 }
 function pickFile() { fileInputRef.value?.click() }
 function onInputChange(e: Event) {
@@ -180,8 +230,13 @@ async function onDownloadClick() {
 
 async function doImport() {
   if (!files.value.length || !props.onImport) return
+  if (props.monthRequired && !/^\d{4}-\d{2}$/.test(month.value)) {
+    MessagePlugin.warning('请选择账单月份（YYYY-MM）')
+    return
+  }
   importing.value = true
   try {
+    emit('update:month', month.value)
     const count = await props.onImport(files.value, mode.value)
     MessagePlugin.success(`成功导入 ${count} 条 ${props.moduleLabel}记录`)
     emit('imported', count)
@@ -221,6 +276,9 @@ function close() {
 }
 .si-mode-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .si-label { color: var(--td-text-color-secondary); }
+/* 第 64 轮：账单月份行 */
+.si-month-picker { width: 160px; }
+.si-month-hint { color: var(--td-text-color-placeholder); font-size: 12px; }
 .si-dropzone {
   display: flex;
   flex-direction: column;

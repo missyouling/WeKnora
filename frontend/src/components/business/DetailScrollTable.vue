@@ -152,35 +152,48 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  /* 第 64 轮：容器自身永不出现横向滚动条（三段表已按百分比收口） */
+  overflow-x: hidden;
   background: var(--td-bg-color-container);
   border: 1px solid var(--td-component-stroke);
   border-radius: var(--td-radius-default);
   overflow: hidden;
+  /* 第 64 轮：边框计入宽度 —— 否则 width:100% + 1px 边框 = 容器外溢 2px，
+     真机上表现为「弹窗内 2px 横向滚动」（sw 1318 / cw 1316）。 */
+  box-sizing: border-box;
 }
-/* 表头与合计行绝不滚动 */
+/* 表头与合计行绝不滚动；第 64 轮起同步预留滚动条槽位，
+   与数据区的 scrollbar-gutter 同宽，三段列竖线才能像素级对齐 */
 .detail-table-head,
 .detail-table-foot {
   flex: 0 0 auto;
   overflow: hidden !important;
+  overflow-x: hidden !important;
+  scrollbar-gutter: stable;
   background: var(--td-bg-color-secondarycontainer);
 }
 .detail-table-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  /* 第 64 轮：横向溢出必须被吞掉（外层容器也设 hidden），否则底部出现横滚轨道 */
+  overflow-x: hidden !important;
   /* 滚动条常驻槽位；真实宽度仍以 JS 实测值补 padding（Firefox/Safari 宽度不同） */
   scrollbar-gutter: stable;
   background: var(--td-bg-color-container);
 }
+/* 第 64 轮：表格恒等于容器宽度，任何视口都不产生横向滚动 */
 .detail-table table {
   border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
   font-size: var(--td-font-size-body-small);
 }
 .detail-table th,
 .detail-table td {
   box-sizing: border-box;
-  padding: 0 8px;
+  padding: 6px 8px;
   height: 36px;
   line-height: 20px;
   white-space: nowrap;

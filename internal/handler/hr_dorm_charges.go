@@ -14,6 +14,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -546,6 +547,106 @@ func (h *HRHandler) hrDormChargeSummary(c *gin.Context) {
 		items = append(items, hrDormChargeView(r))
 	}
 	hrOK(c, gin.H{"month": month, "items": items, "dept_summary": deptRows})
+}
+
+// hrDormMoneyCents 金额转分，避免逐行浮点累加出现 0.01 漂移。
+func hrDormMoneyCents(v float64) int64 { return int64(math.Round(v * 100)) }
+
+// ListDormChargeBills GET /hr/dorm/charge-bills —— 费用信息月度账单汇总（1 月 1 行）。
+//
+// 第 64 轮：主列表从「一人一行」改为与社保/公积金完全一致的月度账单形态。
+// 数据源仍是 hr_dorm_charges（跨模块聚合结果），只是按 month_label 汇总；
+// 金额按「分」累加后一次性 round2，与明细弹窗的合计口径严格一致。
+func (h *HRHandler) ListDormChargeBills(c *gin.Context) {
+	ctx := c.Request.Context()
+	tid := hrTenantID(c)
+	var rows []HRDormCharge
+	if err := h.db.WithContext(ctx).Where("tenant_id = ?", tid).
+		Order("month_label desc").Find(&rows).Error; err != nil {
+		hrFail(c, "加载账单失败: "+err.Error())
+		return
+	}
+	bills := hrAggregateDormChargeBills(rows)
+	hrOK(c, gin.H{"items": bills, "total": len(bills),
+		"months": h.hrDormChargeMonths(ctx, tid), "latest_month": h.hrDormLatestMonth(ctx, tid)})
+}
+
+// hrAggregateDormChargeBills 把「一人一行」的扣款明细按月汇总成账单行（纯函数，便于单测）。
+func hrAggregateDormChargeBills(rows []HRDormCharge) []map[string]any {
+	type agg struct {
+		month     string
+		people    int
+		residents int
+		deposit   int64
+		rent      int64
+		water     int64
+		elec      int64
+		gas       int64
+		social    int64
+		fund      int64
+		other     int64
+		total     int64
+		refund    int64
+		subsidy   int64
+		status    string
+	}
+	order := []string{}
+	byMonth := map[string]*agg{}
+	seenPerson := map[string]map[string]bool{}
+	for _, r := range rows {
+		a := byMonth[r.MonthLabel]
+		if a == nil {
+			a = &agg{month: r.MonthLabel, status: r.BillStatus}
+			byMonth[r.MonthLabel] = a
+			order = append(order, r.MonthLabel)
+			seenPerson[r.MonthLabel] = map[string]bool{}
+		}
+		key := strings.TrimSpace(r.EmployeeID)
+		if key == "" {
+			key = strings.TrimSpace(r.Name)
+		}
+		if !seenPerson[r.MonthLabel][key] {
+			seenPerson[r.MonthLabel][key] = true
+			a.people++
+			if strings.TrimSpace(r.RoomNo) != "" {
+				a.residents++
+			}
+		}
+		a.deposit += hrDormMoneyCents(r.Deposit)
+		a.rent += hrDormMoneyCents(r.Rent)
+		a.water += hrDormMoneyCents(r.Water)
+		a.elec += hrDormMoneyCents(r.Elec)
+		a.gas += hrDormMoneyCents(r.Gas)
+		a.social += hrDormMoneyCents(r.Social)
+		a.fund += hrDormMoneyCents(r.Fund)
+		a.other += hrDormMoneyCents(r.Other)
+		a.total += hrDormMoneyCents(r.Total)
+		a.refund += hrDormMoneyCents(r.Refund)
+		a.subsidy += hrDormMoneyCents(r.Subsidy)
+	}
+	sort.SliceStable(order, func(i, j int) bool { return order[i] > order[j] })
+	items := make([]map[string]any, 0, len(order))
+	for _, m := range order {
+		a := byMonth[m]
+		items = append(items, map[string]any{
+			"id": m, "month_label": m, "账单月份": m,
+			"headcount": a.people, "总人数": a.people,
+			"resident_count": a.residents, "住宿人数": a.residents,
+			"deposit_total":      round2(float64(a.deposit) / 100), "押金合计": round2(float64(a.deposit) / 100),
+			"rent_total":         round2(float64(a.rent) / 100), "房租合计": round2(float64(a.rent) / 100),
+			"water_total":        round2(float64(a.water) / 100), "水费合计": round2(float64(a.water) / 100),
+			"elec_total":         round2(float64(a.elec) / 100), "电费合计": round2(float64(a.elec) / 100),
+			"gas_total":          round2(float64(a.gas) / 100), "气费合计": round2(float64(a.gas) / 100),
+			"social_total":       round2(float64(a.social) / 100), "社保个人合计": round2(float64(a.social) / 100),
+			"fund_total":         round2(float64(a.fund) / 100), "公积金个人合计": round2(float64(a.fund) / 100),
+			"other_total":        round2(float64(a.other) / 100), "其它扣款合计": round2(float64(a.other) / 100),
+			"total_deduction":    round2(float64(a.total) / 100), "扣款总计": round2(float64(a.total) / 100),
+			"refund_total":       round2(float64(a.refund) / 100), "退款合计": round2(float64(a.refund) / 100),
+			"subsidy_total":      round2(float64(a.subsidy) / 100), "补贴合计": round2(float64(a.subsidy) / 100),
+			"bill_status": a.status, "账单状态": a.status,
+		})
+	}
+	return items
 }
 
 // hrDormSeedCharges62 为 2026-10 预生成一份全员扣款明细（仅首次）。

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,6 +44,30 @@ var hrSIYearMonthRe = regexp.MustCompile(`((?:19|20)\d{2})[-_.]?(0[1-9]|1[0-2])`
 //
 // 判定顺序很关键：「大额医疗互助」必须先于「医疗」，
 // 否则「职工大额医疗互助保险」会被吸到 medical。
+// hrResolveImportMonth 账单月份三级优先级（第 64 轮）：
+// 显式传入（弹窗手选）> 文件名/表内费款所属期 > 当前自然月。
+//
+// 旧实现的病根是把「工具栏月份筛选」当导入月份透传，用户停在 2026-11 时
+// 导 2026-10 的明细会被写成 2026-11；现在手选月份是唯一显式口径。
+func hrResolveImportMonth(explicit, filenameMonth string, now time.Time) string {
+	for _, cand := range []string{explicit, filenameMonth} {
+		// 前端 t-date-picker 可能回传 2026/10、2026.10，用户手输也可能带空格；
+		// 先把分隔符统一成「-」再走严格校验。
+		v := strings.TrimSpace(cand)
+		norm := strings.NewReplacer("/", "-", ".", "-", "年", "-", "月", "").Replace(v)
+		if ym, err := hrNormalizeMonthLabel(norm); err == nil && ym != "" {
+			return ym
+		}
+		// 兜底：形如「2026-10至2026-10」的费款所属期，取第一段
+		if m := hrSIYearMonthRe.FindStringSubmatch(norm); len(m) == 3 {
+			if ym, err := hrNormalizeMonthLabel(m[1] + "-" + m[2]); err == nil && ym != "" {
+				return ym
+			}
+		}
+	}
+	return now.Format("2006-01")
+}
+
 func hrSIParseFileName(name string) hrSIFileMeta {
 	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 	meta := hrSIFileMeta{FileType: HRFileTypeNormal}
@@ -155,8 +180,21 @@ func (h *HRHandler) ImportSocialBatch(c *gin.Context) {
 		hrFail(c, "请至少选择一个社保文件")
 		return
 	}
-	// 允许前端显式指定所属期（文件名解析失败时兜底）
-	forcedMonth := strings.TrimSpace(c.PostForm("year_month"))
+	// 允许前端显式指定所属期（文件名解析失败时兜底）。
+	// 第 64 轮：bill_month 为最高优先级 —— 用户在导入弹窗手选的月份必须压过文件名，
+	// 否则「工伤_2026-10至2026-10」被解析成别的月份时无法纠正。
+	forcedMonth := strings.TrimSpace(c.PostForm("bill_month"))
+	if forcedMonth == "" {
+		forcedMonth = strings.TrimSpace(c.PostForm("year_month"))
+	}
+	if forcedMonth != "" {
+		ym, e := hrNormalizeMonthLabel(forcedMonth)
+		if e != nil {
+			hrFail(c, "账单月份必须为 YYYY-MM")
+			return
+		}
+		forcedMonth = ym
+	}
 
 	type fileResult struct {
 		File      string `json:"file"`
@@ -177,9 +215,11 @@ func (h *HRHandler) ImportSocialBatch(c *gin.Context) {
 		meta := hrSIParseFileName(fh.Filename)
 		res.Scheme, res.Part, res.FileType = meta.Scheme, meta.Part, meta.FileType
 		res.YearMonth = meta.YearMonth
-		if res.YearMonth == "" {
+		// 手选月份压倒文件名：用户显式指定即视为权威口径
+		if forcedMonth != "" {
 			res.YearMonth = forcedMonth
 		}
+		meta.YearMonth = res.YearMonth
 		if res.Scheme == "" || res.Part == "" {
 			res.Status = "skipped"
 			res.Message = "文件名无法识别险种或单位/个人"
@@ -230,7 +270,7 @@ func (h *HRHandler) ImportSocialBatch(c *gin.Context) {
 
 	hrOK(c, gin.H{
 		"files": results, "rows": importedRows, "synced": synced,
-		"periods": len(touchedPeriods),
+		"periods": len(touchedPeriods), "bill_month": forcedMonth,
 	})
 }
 

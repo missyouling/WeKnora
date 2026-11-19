@@ -124,9 +124,11 @@ test('抽屉：Label 宽度自适应且配套设施独占整行', () => {
   const src = readLocal('BusinessSplitDetailDrawer.vue')
   assert.match(src, /const labelWidth = computed/)
   assert.match(src, /:label-width="`\$\{labelWidth\}px`"/)
-  assert.match(src, /f\.name === '配套设施'/)
+  // 第 64 轮：长字段白名单化（配套设施仍在其中，且扩展了备注/地址等）
+  assert.match(src, /const FULL_WIDTH_FIELDS = new Set\(\[[\s\S]{0,400}'配套设施'/)
   assert.match(src, /t-form__label[\s\S]{0,120}white-space: nowrap/)
-  assert.match(src, /\.bsd-status-tag \{[\s\S]{0,80}border: 0 !important/)
+  // 第 64 轮：状态字段由 Tag 改为纯带色文字，但仍必须无边框
+  assert.match(src, /\.bsd-status-text \{[\s\S]{0,200}border: 0 !important/)
 })
 
 test('表计设置：归属/使用单位改下拉并做名称归一', () => {

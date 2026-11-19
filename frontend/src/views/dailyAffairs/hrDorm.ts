@@ -106,7 +106,7 @@ const STAY_FEE_FIELDS: readonly HrDormField[] = [
   { name: '气费标准', type: 'number', readonly: true, subGroup: '费用项目' },
 ]
 
-/** 五胶囊字段契约（顺序 = 表头顺序）。 */
+/** 五标签字段契约（顺序 = 表头顺序）。 */
 export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
   dorm: [
     { name: '宿舍编号', type: 'text', width: 110 },
@@ -228,8 +228,7 @@ export function hrDormBedsOfType(roomType: string): number {
 }
 
 /** 编辑抽屉分组：档案 + 费用项目。 */
-export function hrDormDrawerGroups(view: HrDormView): Array<{ key: string; label: string; fields: HrDormField[] }> {
-  const all = HR_DORM_FIELDS[view] || []
+export function hrDormDrawerGroups(view: HrDormView): Array<{ key: string; label: string; fields: HrDormField[] }> {  const all = HR_DORM_FIELDS[view] || []
   if (view === 'asset' || view === 'fee') {
     return [{ key: view, label: HR_DORM_GROUP_OF[view], fields: [...all] }]
   }
@@ -240,6 +239,11 @@ export function hrDormDrawerGroups(view: HrDormView): Array<{ key: string; label
   ]
   if (fee.length) out.push({ key: 'fee', label: '费用项目', fields: fee })
   return out
+}
+
+/** 第 64 轮：字段契约（供「重置」在 subs 未就绪时兜底）。 */
+export function hrDormFieldsOf(view: HrDormView): readonly HrDormField[] {
+  return HR_DORM_FIELDS[view] || []
 }
 
 /** 状态 Tag 主题。 */
@@ -258,6 +262,21 @@ export function hrDormStatusTheme(v: string): 'success' | 'warning' | 'danger' |
   if (/部分入住|待入住|待维修|维修中|损坏|待/.test(s)) return 'warning'
   if (/满员|已退宿|报废|作废/.test(s)) return 'danger'
   return 'default'
+}
+
+/**
+ * 第 64 轮：宿舍/住宿/资产状态的纯文字配色类（列表与抽屉同源）。
+ *
+ * 为什么不再用 Tag：真机上 Tag 的描边被 TDesign 主题渲染成深色方框，
+ * 用户反馈「宿舍状态有黑框」。这里统一走文字色，视觉与「参保状态」一致。
+ */
+export function hrDormStatusTextClass(v: unknown): string {
+  const s = String(v ?? '').trim()
+  if (!s) return 'is-muted'
+  if (/空闲|在住|正常|已生成|已修复|无维修|公司宿舍/.test(s)) return 'is-ok'
+  if (/部分入住|待入住|待维修|维修中|损坏|公租房|待/.test(s)) return 'is-warn'
+  if (/满员|已退宿|报废|作废|停用/.test(s)) return 'is-off'
+  return 'is-muted'
 }
 
 export function hrDormRoomTypeTheme(v: string): 'success' | 'warning' | 'default' {
@@ -319,9 +338,61 @@ export function hrDormChargeColumns(): HrColumn[] {
   ] as unknown as HrColumn[]
 }
 
+/** 第 64 轮：费用信息月度账单汇总列（每月 1 行，与社保/公积金月度账单同形）。 */
+export const HR_DORM_CHARGE_BILL_FIELDS: readonly HrDormField[] = [
+  { name: '账单月份', type: 'text', width: 100 },
+  { name: '总人数', type: 'number', integer: true, width: 90 },
+  { name: '住宿人数', type: 'number', integer: true, width: 100 },
+  { name: '押金合计', type: 'number', width: 110 },
+  { name: '房租合计', type: 'number', width: 110 },
+  { name: '水费合计', type: 'number', width: 100 },
+  { name: '电费合计', type: 'number', width: 100 },
+  { name: '气费合计', type: 'number', width: 100 },
+  { name: '社保个人合计', type: 'number', width: 130 },
+  { name: '公积金个人合计', type: 'number', width: 140 },
+  { name: '其它扣款合计', type: 'number', width: 120 },
+  { name: '扣款总计', type: 'number', width: 120 },
+  { name: '退款合计', type: 'number', width: 110 },
+  { name: '补贴合计', type: 'number', width: 110 },
+  { name: '账单状态', type: 'system', options: ['已生成', '已作废'], readonly: true, width: 90 },
+]
+
+/** 费用信息月度账单列（必须自带 value；合计列走千分位）。 */
+export function hrDormChargeBillColumns(): HrColumn[] {
+  return [
+    { colKey: 'row-select', title: '', width: 44 },
+    ...HR_DORM_CHARGE_BILL_FIELDS.map((f) => ({
+      colKey: f.name,
+      title: f.name,
+      width: f.width || 110,
+      dataType: f.type === 'number' ? 'number' : undefined,
+      ...(f.type === 'system' ? { slot: true } : {}),
+      value: (row: any) => {
+        const v = row?.[f.name] ?? row?.custom_data?.[f.name]
+        if (v === undefined || v === null || v === '') return ''
+        if (f.integer) return String(Math.round(Number(v) || 0))
+        if (f.type === 'number') return money(v)
+        return String(v)
+      },
+    })),
+  ] as unknown as HrColumn[]
+}
+
+/** 费用信息月度账单合计行（金额按分累加，与后端口径一致）。 */
+export function dormChargeBillTotals(rows: any[]): Record<string, string> {
+  const cents = (v: any) => Math.round(Number(String(v ?? '').replace(/,/g, '')) * 100) || 0
+  const out: Record<string, string> = { 账单月份: '合计' }
+  for (const f of HR_DORM_CHARGE_BILL_FIELDS) {
+    if (f.type !== 'number') continue
+    const sum = rows.reduce((n, r) => n + cents(r?.[f.name]), 0)
+    out[f.name] = f.integer ? String(Math.round(sum / 100)) : money(sum / 100)
+  }
+  return out
+}
+
 /** 五标签列：优先 subs（六同步），缺失时用契约兜底。 */
 export function hrDormColumns(view: HrDormView, subs: readonly any[] | null | undefined): HrColumn[] {
-  if (view === 'fee') return hrDormChargeColumns()
+  if (view === 'fee') return hrDormChargeBillColumns()
   const group = HR_DORM_GROUP_OF[view]
   const mock = HR_DORM_FIELDS[view].map((f) => ({
     name: f.name,

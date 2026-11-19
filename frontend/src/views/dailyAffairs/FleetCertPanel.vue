@@ -814,7 +814,11 @@ const directMode = computed(() => !!props.direct && groupItems.value.length === 
  * 费用清单没有自己的存储：一行 = 一个账期，一列 = 某个来源分类的字段。
  * 因此它的字段定义不允许手输新建，只能从市电账单/光伏账单/电水气核算检索引用。
  */
-const HR_REF_SCOPES = new Set(['hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund'])
+const HR_REF_SCOPES = new Set([
+  'hr-roster', 'hr-resign', 'hr-contract', 'hr-social', 'hr-fund',
+  // 第 64 轮：宿舍管理五胶囊同样支持跨模块引用（花名册/社保/公积金字段）
+  'hr-dorm',
+])
 const isRefCategory = computed(() => {
   if (props.scope === 'energy' && String(editingItem.value?.name || '') === '费用清单') return true
   // 第 52 轮：离职管理 / 劳动合同复用同一套「跨表字段搜索引用」机制。
@@ -2625,8 +2629,10 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   }
 
   .field-config-list {
-    min-width: 510px;
-    overflow-x: auto;
+    /* 第 64 轮：容器绝不出现横向滚动条。
+       旧实现 min-width:510px + overflow-x:auto，在 820px 以下抽屉里必然出横滚轨道。 */
+    min-width: 0;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -2643,15 +2649,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
      只作用于车队：能耗「费用清单」的引用字段需要 ≥140px 输入框 + 130px 来源徽标，
      压到 200px 会把「账...」截断，因此其它 scope 保持弹性列。 */
   .field-config-list.is-compact {
-    min-width: 640px;
+    /* 第 64 轮：紧凑模式同样不许撑破抽屉（原 640px 固定最小宽会在窄抽屉里出横滚） */
+    min-width: 0;
 
     .field-colhead {
-      grid-template-columns: 24px 200px 120px 64px 64px 76px;
-      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 76px; }
+      grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 60px 76px;
+      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 56px 60px 76px; }
     }
     .field-config-row {
-      grid-template-columns: 24px 200px 120px 64px 64px 76px;
-      &.has-width { grid-template-columns: 24px 200px 120px 88px 64px 64px 76px; }
+      /* 第 64 轮：名称列弹性收缩（min-width 110px），其余列固定，抽屉再窄也不溢出 */
+      grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 60px 76px;
+      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 56px 60px 76px; }
     }
   }
 
@@ -2661,16 +2669,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     // 「账...」「计」这种只剩一个字的状态（真机截图）。源徽标最多 130px，
     // 余下 ≥140px 全部留给输入框；抽屉拉宽时这一列继续吃满剩余空间。
     // 末列「操作」：锁标(15px) + ⋮(32px) 必须并排放下，48px 会换行 → 76px。
-    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 76px;
+    // 第 64 轮：末列收到 68px、类型列 84px，总宽再降 14px，保证窄抽屉也不溢出。
+    grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 60px 68px;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 0 8px;
     box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 76px;
+      grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 52px 60px 68px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -2722,16 +2731,17 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   .field-config-row {
     display: grid;
     // 与 .field-colhead 严格同构（列宽错一格整行就错位）
-    grid-template-columns: 24px minmax(280px, 1fr) 90px 64px 64px 76px;
+    // 第 64 轮：与列头同步收窄（84/56/60/68 + gap 6px），任何抽屉宽度都零横向溢出
+    grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 60px 68px;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 4px 8px;
     // 第 57 轮：每行严格 40px 单行高度，加锁行绝不允许因图标换行撑高。
     min-height: 40px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 24px minmax(280px, 1fr) 90px 70px 64px 64px 76px;
+      grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 52px 60px 68px;
     }
     .fc-width {
       width: 100%;

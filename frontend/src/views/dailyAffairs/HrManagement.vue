@@ -87,7 +87,7 @@
             <t-date-picker v-else-if="socialSubView === 'normal' || socialSubView === 'abnormal'"
               v-model="siMonthFilter" mode="month" format="YYYY-MM" value-type="YYYY-MM"
               placeholder="账单月份" :clearable="false" allow-input class="hr-month-picker"
-              @change="applyFilter" />
+              data-hr-si-month @change="applyFilter" />
           </template>
           <!-- 劳动合同：只保留部门筛选（第 57 轮删除合同状态下拉） -->
           <t-select v-if="activeTab === 'hr-contract'" v-model="rosterDeptFilter"
@@ -107,10 +107,10 @@
             @change="onFundBillMonthChange" />
           <!-- 第 61 轮：宿舍费用信息 = 月份 + 房源类型；住宿记录 = 房源类型 -->
           <template v-if="activeTab === 'hr-dorm'">
-            <t-date-picker v-if="dormSubView === 'fee'" v-model="dormMonthFilter"
-              mode="month" format="YYYY-MM" value-type="YYYY-MM" placeholder="账单月份"
-              clearable allow-input class="hr-month-picker" data-hr-dorm-month
-              @change="applyFilter" />
+            <!-- 第 64 轮：费用信息 = 月度账单，月份改为可切换已生成月份的下拉 -->
+            <t-select v-if="dormSubView === 'fee'" v-model="dormMonthFilter"
+              :options="dormChargeMonthOptions" placeholder="账单月份" clearable
+              class="hr-month-picker" data-hr-dorm-month @change="applyFilter" />
             <t-select v-if="dormSubView === 'stay'" v-model="dormRoomTypeFilter"
               :options="DORM_ROOM_TYPE_OPTIONS" placeholder="全部房源" :clearable="false"
               class="hr-status-select" data-hr-dorm-room-type @change="applyFilter" />
@@ -120,13 +120,8 @@
             <t-select v-if="dormSubView === 'asset'" v-model="assetStatusFilter"
               :options="ASSET_STATUS_FILTER_OPTIONS" placeholder="全部状态" :clearable="false"
               class="hr-status-select" data-hr-dorm-asset-status @change="applyFilter" />
-            <template v-if="dormSubView === 'fee'">
-              <t-select v-model="dormDeptFilter" :options="siDeptOptions" placeholder="全部部门"
-                :clearable="false" class="hr-status-select" data-hr-dorm-dept @change="applyFilter" />
-              <t-select v-model="dormRoomTypeFilterFee" :options="ROOM_TYPE_FEE_OPTIONS"
-                placeholder="全部房源" :clearable="false" class="hr-status-select"
-                data-hr-dorm-room-type-fee @change="applyFilter" />
-            </template>
+            <!-- 第 64 轮：费用信息主列表已按月汇总，部门/房源类型筛选属于明细维度，
+                 不再放在主列表工具栏（进弹窗后可按需搜索） -->
           </template>
         </template>
         <template #batch-actions>
@@ -176,6 +171,16 @@
                 <template #icon><t-icon name="logout" size="14px" /></template>
                 办理退宿
               </t-button>
+              <!-- 第 64 轮：退宿可逆 —— 选中已退宿记录可一键恢复住宿 -->
+              <t-popconfirm v-if="dormRestorableCount > 0" theme="warning"
+                :content="`确定恢复所选 ${dormRestorableCount} 条已退宿记录吗？将重新校验床位与性别。`"
+                :confirm-btn="{ content: '恢复住宿', theme: 'primary' }" :cancel-btn="{ content: '取消' }"
+                placement="top" @confirm="handleRestoreStay">
+                <t-button theme="default" variant="outline" size="small" data-hr-dorm-restore @click.stop>
+                  <template #icon><t-icon name="rollback" size="14px" /></template>
+                  恢复住宿
+                </t-button>
+              </t-popconfirm>
             </template>
             <!-- 第 57 轮职责边界（合并进花名册双标签）：
                  在职管理 = 在职池 → 只能「办理离职」；
@@ -226,10 +231,11 @@
             导入
           </t-button>
           <!-- 第 61 轮：没有任何新增/导入时，生成账单就是本页唯一实心绿底主按钮 -->
+          <!-- 第 64 轮：费用信息主列表已按月汇总，「生成账单」同时承担重新核算 -->
           <t-button v-if="toolbarShowGenerateBill" theme="primary" size="small"
             data-hr-generate-bill @click="handleGenerateBill">
             <template #icon><t-icon name="file-add" size="14px" /></template>
-            {{ activeTab === 'hr-dorm' ? '生成费用明细' : '生成账单' }}
+            {{ activeTab === 'hr-dorm' ? (dormSubView === 'fee' ? '生成账单 / 重新核算' : '生成费用明细') : '生成账单' }}
           </t-button>
         </template>
       </BusinessFilterBar>
@@ -320,24 +326,30 @@
             <!-- 第 55 轮：月度账单状态 Tag（公积金 / 社保共用，已申报 = 绿） -->
             <template #宿舍状态="{ row }: any">
               <span v-if="isHeaderContext(row)">宿舍状态</span>
-              <t-tag v-else-if="colValue(row, '宿舍状态')" :theme="hrDormStatusTheme(colValue(row, '宿舍状态'))"
-                variant="light" size="small">
+              <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
+              <span v-else-if="colValue(row, '宿舍状态')"
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '宿舍状态'))">
                 {{ colValue(row, '宿舍状态') }}
-              </t-tag>
+              </span>
+              <span v-else></span>
             </template>
             <template #住宿状态="{ row }: any">
               <span v-if="isHeaderContext(row)">住宿状态</span>
-              <t-tag v-else-if="colValue(row, '住宿状态')" :theme="hrDormStatusTheme(colValue(row, '住宿状态'))"
-                variant="light" size="small">
+              <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
+              <span v-else-if="colValue(row, '住宿状态')"
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '住宿状态'))">
                 {{ colValue(row, '住宿状态') }}
-              </t-tag>
+              </span>
+              <span v-else></span>
             </template>
             <template #资产状态="{ row }: any">
               <span v-if="isHeaderContext(row)">资产状态</span>
-              <t-tag v-else-if="colValue(row, '资产状态')" :theme="hrDormStatusTheme(colValue(row, '资产状态'))"
-                variant="light" size="small">
+              <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
+              <span v-else-if="colValue(row, '资产状态')"
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '资产状态'))">
                 {{ colValue(row, '资产状态') }}
-              </t-tag>
+              </span>
+              <span v-else></span>
             </template>
             <template #维修状态="{ row }: any">
               <span v-if="isHeaderContext(row)">维修状态</span>
@@ -415,7 +427,12 @@
       :page-no="0" :form="editForm" :fields="drawerFields"
       :groups="drawerGroups" :sub-fields="[]"
       :supports-sub-fields="false" :dirty="detailDirty" :saving="saving"
-      storage-key="weknora-hr-detail-width" :show-preview="false"
+      width="860px" :two-column="true" :label-width-px="hrDrawerLabelWidth"
+      :data-hr-dorm-company="activeTab === 'hr-dorm' ? dormCurrentCompany : undefined"
+      :data-hr-dorm-dept-count="activeTab === 'hr-dorm' ? dormDeptOptionsOf(dormCurrentCompany).length : undefined"
+      :data-hr-dorm-meter-count="activeTab === 'hr-dorm' ? dormMeterOptionsOf('electricity').length : undefined"
+      :data-hr-dorm-meter-debug="activeTab === 'hr-dorm' ? dormMeterDebugText : undefined"
+      storage-key="weknora-hr-detail-width-v64" :show-preview="false"
       @save="saveDetail" @delete="onDetailDelete">
       <!-- 第 48 轮：部门 / 职务变更后重算工号建议值（用户手改过则不覆盖） -->
       <template #field-部门>
@@ -509,8 +526,11 @@
     <StandardImportDialog :visible="socialImportVisible" :title="`导入${socialImportLabel}`"
       :module-label="socialImportLabel" :show-template="socialImportKind === 'receipt'"
       template-hint="下载社保回盘表标准模板" :multiple="socialImportKind !== 'receipt'"
+      :month-required="socialImportKind !== 'receipt'"
+      :default-month="socialImportMonth || undefined"
       :modes="[{ label: '覆盖更新', value: 'overwrite' }]" default-mode="overwrite"
       :on-download="downloadSocialTemplate" :on-import="runSocialImport"
+      @update:month="(v: string) => socialImportMonth = v"
       @update:visible="(v: boolean) => socialImportVisible = v" @imported="onSocialImported" />
     <!-- 第 61 轮：宿舍档案四类导入（中文表头模板 + 拖拽上传） -->
     <StandardImportDialog :visible="dormImportVisible"
@@ -707,8 +727,9 @@ import FilePreviewDialog from '@/components/business/FilePreviewDialog.vue'
 import DetailScrollTable from '@/components/business/DetailScrollTable.vue'
 import {
   HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, hrDormColumns, hrDormModuleOf,
-  hrDormStatusTheme, hrDormRoomTypeTheme, hrDormRepairTheme, hrDormDrawerGroups, hrDormBedsOfType,
-  HR_DORM_INTEGER_FIELDS, hrDormChargeColumns,
+  hrDormStatusTextClass, hrDormRoomTypeTheme, hrDormRepairTheme,
+  hrDormDrawerGroups, hrDormBedsOfType, hrDormFieldsOf,
+  HR_DORM_INTEGER_FIELDS, hrDormChargeColumns, HR_DORM_CHARGE_BILL_FIELDS,
 } from './hrDorm'
 import type { HrDormView } from './hrDorm'
 import StandardImportDialog from '@/components/business/StandardImportDialog.vue'
@@ -744,7 +765,8 @@ import RosterImportDialog from './RosterImportDialog.vue'
 import ResignEmployeeDialog from './ResignEmployeeDialog.vue'
 import * as hrApi from './hrApi'
 import {
-  normalizeCompanyName, companyNamesOf, departmentsOf, filterMetersByScopeAndCompany,
+  normalizeCompanyName, companyNamesOf, departmentsOfStrict, sameCompany,
+  filterMetersByScopeAndCompany,
 } from './companyScope'
 import { listUtilityMeters, listUtilityKinds } from '@/api/knowledge-base'
 // 第 58 轮：账单人数 / 行序号口径抽成纯函数（可单测，打印导出处共用同一套）
@@ -788,6 +810,8 @@ const HR_REF_CATALOG: readonly { scope: string; category: string }[] = [
   { scope: 'hr-contract', category: '劳动合同' },
   { scope: 'hr-social', category: '社保管理' },
   { scope: 'hr-fund', category: '公积金管理' },
+  // 第 64 轮：宿舍管理也进候选池（宿舍/社保互引：住宿记录引工号、花名册引宿舍号）
+  { scope: 'hr-dorm', category: '宿舍管理' },
 ]
 /** 当前 Tab 的候选引用源：除自己之外的人事分类（避免把本表明字段再引一遍）。 */
 const refSources = computed(() =>
@@ -1115,6 +1139,11 @@ function subsOfTab(tab: HrTab): any[] {
 // ---------------------------------------------------------------------------
 const dormSubView = ref<HrDormView>('dorm')
 const dormMonthFilter = ref('')
+/** 第 64 轮：费用信息月度账单可选月份（后端 /dorm/charge-bills 返回）。 */
+const dormChargeMonths = ref<string[]>([])
+/** 第 64 轮：费用信息月度账单可选月份（下拉展示，倒序）。 */
+const dormChargeMonthOptions = computed(() =>
+  dormChargeMonths.value.map((m) => ({ label: m, value: m })))
 const dormRoomTypeFilter = ref('')
 const DORM_ROOM_TYPE_OPTIONS = [
   { label: '全部房源', value: '' },
@@ -1132,15 +1161,10 @@ const dormBillTab = ref<'personal' | 'dorm' | 'public' | 'dept'>('personal')
 const dormBillItems = ref<any[]>([])
 
 // 办理调宿 / 退宿
-// 第 62 轮：费用信息筛选 + 住宿联动下拉
+// 第 62 轮：住宿联动下拉
+// 第 64 轮：费用信息主列表已按月汇总，部门/房源类型筛选下移到明细弹窗，这里只保留状态复位
 const dormDeptFilter = ref('')
 const dormRoomTypeFilterFee = ref('')
-const ROOM_TYPE_FEE_OPTIONS = [
-  { label: '全部房源', value: '' },
-  { label: '公租房', value: '公租房' },
-  { label: '员工宿舍', value: '员工宿舍' },
-  { label: '未住宿', value: '未住宿' },
-]
 const DORM_STATUS_FILTER_OPTIONS = [
   { label: '全部状态', value: '' },
   { label: '空闲', value: '空闲' },
@@ -1226,11 +1250,23 @@ const businessColumns = computed(() => currentColumns.value.filter((c) => c.colK
  * 引用字段的 subs.name 是 `src_…`，列 colKey 是 label，故键集合以 label 优先。
  */
 const configKeys = computed(() => {
-  const subs = subsOfTab(activeTab.value)
+  let subs = subsOfTab(activeTab.value)
+  /**
+   * 第 64 轮：宿舍五胶囊共用同一个 scope，必须按当前子视图过滤。
+   *
+   * 旧实现直接吃全量 subs：公租房/住宿记录里也有「所属部门」，其 is_default=true
+   * 会把宿舍档案里刚被取消的 false 覆盖回来 —— 真机上「取消默认表头 → 重置」
+   * 该字段又出现，就是这里串味。
+   */
+  if (activeTab.value === 'hr-dorm') {
+    const group = HR_DORM_GROUP_OF[dormSubView.value]
+    const scoped = subs.filter((s: any) => String(s?.group || '') === group)
+    if (scoped.length) subs = scoped
+  }
   const nameOf = (s: any) => String(s?.label || s?.name || '').trim()
   return {
-    defaults: subs.filter((s) => s && s.enabled !== false && s.is_default === true).map(nameOf).filter(Boolean),
-    enabled: subs.filter((s) => s && s.enabled !== false).map(nameOf).filter(Boolean),
+    defaults: subs.filter((s: any) => s && s.enabled !== false && s.is_default === true).map(nameOf).filter(Boolean),
+    enabled: subs.filter((s: any) => s && s.enabled !== false).map(nameOf).filter(Boolean),
   }
 })
 const columnDefsForFilter = computed(() => {
@@ -1252,7 +1288,10 @@ const STORAGE_KEY = computed(() => {
       : activeTab.value === 'hr-contract' ? contractStatusView.value
         : activeTab.value === 'hr-dorm' ? dormSubView.value
           : 'all'
-  const version = activeTab.value === 'hr-social' || activeTab.value === 'hr-roster' ? 'v4' : 'v3'
+  // 第 64 轮：费用信息列契约从「一人一行明细」改成「月度账单汇总」→ 版本升 v4，
+  // 否则旧存档（19 列明细）会与新的 15 列汇总键全不匹配，被过滤成空表。
+  const version = (activeTab.value === 'hr-social' || activeTab.value === 'hr-roster'
+    || (activeTab.value === 'hr-dorm' && view === 'fee')) ? 'v4' : 'v3'
   return `weknora-hr-${activeTab.value}-${fundSubView.value}-${socialSubView.value}-${view}-cols-${version}`
 })
 const visibleColKeys = ref<string[]>([])
@@ -1271,8 +1310,14 @@ function resetColumns() {
   // 第 57 轮：花名册（在职/离职）与社保四视图也严格按各自胶囊的 defaultHeader 重置
   const isHrCfg = ['hr-roster', 'hr-contract', 'hr-social', 'hr-fund', 'hr-dorm'].includes(activeTab.value)
   if (isHrCfg) {
-    // 后端 subs 尚未加载时也不能回退成「全列」：字段契约里带 defaultHeader
-    // 的字段就是静态默认表头，与后端 seed 同源（六同步首帧不闪全表）。
+    /**
+     * 第 64 轮：重置基准唯一来源 = 当前视图**已落库**的 subs 中
+     * `is_default === true && enabled !== false` 的字段（按 subs 顺序）。
+     *
+     * 静态契约只在「后端还没回来」时兜底，且必须同样按 defaultHeader 过滤 ——
+     * 旧实现把宿舍交给 else 分支（全列），用户在设置里取消「所属部门」的默认表头
+     * 后点重置，它又回来了。
+     */
     const staticDefs = activeTab.value === 'hr-fund'
       ? (fundSubView.value === 'bills' ? HR_FUND_BILL_FIELDS : HR_FUND_FIELDS)
       : activeTab.value === 'hr-social'
@@ -1280,14 +1325,16 @@ function resetColumns() {
           : socialSubView.value === 'normal' ? HR_SOCI_NORMAL_FIELDS
             : socialSubView.value === 'abnormal' ? HR_SOCI_ABNORMAL_FIELDS
               : HR_SOCI_BILL_FIELDS)
-        : activeTab.value === 'hr-roster' && rosterStatusView.value === '离职'
-          ? HR_RESIGN_FIELDS
-          : hrModuleFields('roster')
+        : activeTab.value === 'hr-dorm'
+          ? (dormSubView.value === 'fee' ? HR_DORM_CHARGE_BILL_FIELDS : hrDormFieldsOf(dormSubView.value))
+          : activeTab.value === 'hr-roster' && rosterStatusView.value === '离职'
+            ? HR_RESIGN_FIELDS
+            : hrModuleFields('roster')
     const defaults = configKeys.value.defaults.length
       ? configKeys.value.defaults
       : activeTab.value === 'hr-social'
         ? HR_SOCI_DEFAULT_HEADERS[hrSocialGroupOf(socialSubView.value)]
-        : staticDefs.filter((d) => d.defaultHeader).map((d) => d.name)
+        : staticDefs.filter((d: any) => d.defaultHeader).map((d: any) => d.name)
     visibleColKeys.value = defaults.filter((k) => businessColumns.value.some((c) => c.colKey === k))
   } else {
     visibleColKeys.value = businessColumns.value.map((c) => c.colKey)
@@ -1544,16 +1591,19 @@ async function loadList(tab: HrTab) {
     } else if (tab === 'hr-dorm') {
       // 第 61 轮：费用信息 = 月度账单；其余四个档案页 = 通用宿舍记录表。
       if (dormSubView.value === 'fee') {
-        // 第 62 轮：费用信息 = 全员月度扣款明细（跨模块聚合）
-        const res: any = await hrApi.listDormCharges({
-          month: dormMonthFilter.value || undefined,
-          department: dormDeptFilter.value || undefined,
-          room_type: dormRoomTypeFilterFee.value || undefined,
-          q: kw,
-        })
-        items = extractItems(res)
+        /**
+         * 第 64 轮：费用信息主列表 = **月度账单汇总**（每月 1 行），
+         * 与社保/公积金月度账单完全同形。明细仍走 /dorm/charges（点行开弹窗）。
+         */
+        const res: any = await hrApi.listDormChargeBills()
+        items = sortMonthsDesc(extractItems(res), '账单月份')
         const d = res?.data || res || {}
-        if (!dormMonthFilter.value && d.month) dormMonthFilter.value = d.month
+        const months = Array.isArray(d.months) ? d.months : []
+        dormChargeMonths.value = months.length ? months : items.map((r: any) => String(r['账单月份'] || ''))
+        if (kw) {
+          items = items.filter((r: any) => String(r['账单月份'] || '').includes(kw))
+        }
+        if (!dormMonthFilter.value && d.latest_month) dormMonthFilter.value = String(d.latest_month)
       } else {
         items = extractItems(await hrApi.listDormRecords({
           module: hrDormModuleOf(dormSubView.value),
@@ -1686,6 +1736,8 @@ function onCardClick(card: any) {
 /** 第 58 轮：社保三类导入统一走中台 StandardImportDialog（回盘表固定覆盖）。 */
 const socialImportVisible = ref(false)
 const socialImportKind = ref<'receipt' | 'normal' | 'abnormal'>('receipt')
+/** 第 64 轮：导入弹窗里手选的账单月份（normal/abnormal 必填，receipt 不需要）。 */
+const socialImportMonth = ref<string>('')
 
 function onImportClick() {
   // 第 61 轮：宿舍四个档案页各有一套中文表头模板
@@ -1703,6 +1755,8 @@ function onImportClick() {
       return
     }
     socialImportKind.value = socialSubView.value as 'receipt' | 'normal' | 'abnormal'
+    // 第 64 轮：正常/补退记录默认预填「当前查看的月份」，用户可改成文件所属期
+    socialImportMonth.value = siMonthFilter.value || currentMonth()
     socialImportVisible.value = true
     return
   }
@@ -1734,9 +1788,15 @@ async function runSocialImport(files: File[], _mode: string): Promise<number> {
   }
   for (const f of files) fd.append('files', f)
   fd.append('record_type', socialImportKind.value)
-  if (siMonthFilter.value) fd.append('month', siMonthFilter.value)
+  // 第 64 轮：bill_month 是导入弹窗里**手选**的月份（最高优先级）；
+  // 不再透传工具栏筛选值 —— 那会把「看 2026-11」误当成「导入到 2026-11」。
+  const picked = String(socialImportMonth.value || '').trim()
+  if (picked) fd.append('bill_month', picked)
   const res: any = await hrApi.importSocialRecords(fd)
   const d = res?.data || res || {}
+  // 导入成功后切到实际落库月份，用户立刻能看到结果
+  const written = String(d.bill_month || picked || '').trim()
+  if (written) siMonthFilter.value = written
   await onSocialImported()
   return Number(d.rows || 0)
 }
@@ -1781,6 +1841,10 @@ async function onSocialSubViewChange() {
   rows.value = []
   siDeptFilter.value = ''
   siSchemeFilter.value = ''
+  // 第 64 轮：正常/补退记录的「账单月份」默认回到当前自然月（用户随后可切历史月）
+  if (socialSubView.value === 'normal' || socialSubView.value === 'abnormal') {
+    siMonthFilter.value = currentMonth()
+  }
   initColumns()
   await Promise.all([loadFieldConfig(activeTab.value), loadList(activeTab.value)])
   headerReady.value = true
@@ -1888,6 +1952,14 @@ const detailRow = ref<any>(null)
 const detailDirty = ref(false)
 const saving = ref(false)
 const editForm = ref<any>({ data: {}, remarkParts: {}, items: [] })
+/**
+ * 第 64 轮：抽屉 Label 宽度。
+ *
+ * 普通人事抽屉 104px；宿舍/公租房/住宿的「费用项目」分组里有
+ * 「污水处理费(元/m³)」「二次供水费(元/m³)」这类长标签，需要 126px 才不折行。
+ * 两列布局下每列约 340px，126px Label + 24px 间距仍给输入控件留出 ~190px 以上。
+ */
+const hrDrawerLabelWidth = computed(() => (activeTab.value === 'hr-dorm' ? 126 : 104))
 /**
  * 最近一次由系统自动生成的工号。
  *
@@ -2011,53 +2083,67 @@ const orderedSubPairs = computed(() => {
 const drawerGroups = computed(() => {
   // 第 61 轮：宿舍编辑抽屉按当前标签的胶囊字段渲染（枚举/文本域/只读派生列）
   if (activeTab.value === 'hr-dorm' && dormSubView.value !== 'fee') {
-    // 第 62 轮：编辑抽屉两分组（档案 / 费用项目），字段顺序跟 settings subs 一致
-    const enabled = new Set(configKeys.value.enabled)
-    const subs = subsOfTab('hr-dorm').filter((x: any) => String(x?.group || '') === HR_DORM_GROUP_OF[dormSubView.value])
-    const rank = new Map<string, number>()
-    subs.forEach((x: any, i: number) => rank.set(String(x?.name || ''), i))
+    /**
+     * 第 64 轮：**严格按落库 subs 渲染**，不再遍历静态契约。
+     *
+     * 旧实现以 hrDormDrawerGroups（前端写死的契约数组）为骨架，只用 enabled 做过滤，
+     * 导致两个线上问题：
+     *   ① 在字段设置里删掉「所属公司 / 所属部门」后，抽屉仍按契约把它们画出来；
+     *   ② 用户在设置里调顺序，抽屉顺序只按 rank 局部排序，跨分组仍是契约顺序。
+     * 现在骨架 = 后端 subs（已启用、已排序），字段定义只用来补类型与枚举。
+     */
+    const group = HR_DORM_GROUP_OF[dormSubView.value]
+    const subs = subsOfTab('hr-dorm')
+      .filter((x: any) => String(x?.group || '') === group && x?.enabled !== false)
+    const defs = hrDormDrawerGroups(dormSubView.value)
+    const defOf = new Map<string, any>()
+    for (const g of defs) for (const f of g.fields) defOf.set(f.name, f)
     const adding = !detailRow.value
-    return hrDormDrawerGroups(dormSubView.value).map((g) => ({
-      key: g.key,
-      label: g.label,
-      fields: g.fields
-        .filter((f) => enabled.size === 0 || enabled.has(f.name))
-        // 第 62 轮：安排入住时不显示「退宿日期 / 退宿原因」（退宿走办理退宿弹窗）
-        .filter((f) => !(adding && dormSubView.value === 'stay'
-          && (f.name === '退宿日期' || f.name === '退宿原因')))
-        .map((f) => {
-          // 第 62 轮：斜杠字段（宿舍编号/房屋地址、所属公司/部门、管理员/舍长）不能做
-          // 具名插槽（Vue 模板禁止 attr 名带「/」），改为在这里注入动态 options，
-          // 由抽屉内置的可搜索下拉渲染；房型/床位号等静态枚举同样走 options。
-          const dynOptions: Record<string, string[]> = {
-            '所属公司': dormCompanyNames.value,
-            '租赁单位': dormCompanyNames.value,
-            '所属部门': dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value),
-            '管理员/舍长': dormEmployeeNameOptions.value.map((o) => o.value),
-            '员工姓名': dormEmployeeNameOptions.value.map((o) => o.value),
-            '宿舍编号/房屋地址': dormAvailableRoomOptions.value.map((o) => o.value),
-            '所属宿舍': dormRoomSelectOptions.value.map((o) => o.value),
-            '责任人': dormEmployeeNameOptions.value.map((o) => o.value),
-            '关联电表': dormMeterOptionsOf('electricity'),
-            '关联水表': dormMeterOptionsOf('water'),
-            '关联气表': dormMeterOptionsOf('gas'),
-          }
-          const opts = dynOptions[f.name] || f.options
-          return {
-            name: f.name,
-            label: (() => {
-              const sub = subs.find((x: any) => String(x?.name || '') === f.name)
-              const lb = String(sub?.label || '').trim()
-              return lb || businessColumns.value.find((c) => c.colKey === f.name)?.title || f.name
-            })(),
-            dataType: f.type === 'textarea' ? 'textarea' : f.type === 'number' ? 'number'
-              : f.type === 'date' ? 'date' : 'text',
-            readonly: !!f.readonly,
-            ...(opts?.length ? { options: opts } : {}),
-          }
-        })
-        .sort((a, b) => (rank.get(a.name) ?? 999) - (rank.get(b.name) ?? 999)),
-    }))
+    const sections: { key: string; label: string; fields: any[] }[] = [
+      { key: 'main', label: group, fields: [] },
+      { key: 'fee', label: '费用项目', fields: [] },
+    ]
+    const dynOptions: Record<string, string[]> = {
+      '所属公司': dormCompanyNames.value,
+      '租赁单位': dormCompanyNames.value,
+      '所属部门': dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value),
+      '管理员/舍长': dormEmployeeNameOptions.value.map((o) => o.value),
+      '员工姓名': dormEmployeeNameOptions.value.map((o) => o.value),
+      '宿舍编号/房屋地址': dormAvailableRoomOptions.value.map((o) => o.value),
+      '所属宿舍': dormRoomSelectOptions.value.map((o) => o.value),
+      '责任人': dormEmployeeNameOptions.value.map((o) => o.value),
+      '关联电表': dormMeterOptionsOf('electricity'),
+      '关联水表': dormMeterOptionsOf('water'),
+      '关联气表': dormMeterOptionsOf('gas'),
+    }
+    const seen = new Set<string>()
+    for (const sub of subs) {
+      const name = String(sub?.name || '').trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      // 第 62 轮：安排入住时不显示「退宿日期 / 退宿原因」（退宿走办理退宿弹窗）
+      if (adding && dormSubView.value === 'stay' && (name === '退宿日期' || name === '退宿原因')) continue
+      const def = defOf.get(name)
+      // 契约外的字段（跨模块引用 / 用户自建）：按 subs 的 data_type 兜底渲染
+      const dataType = def
+        ? (def.type === 'textarea' ? 'textarea' : def.type === 'number' ? 'number'
+          : def.type === 'date' ? 'date' : 'text')
+        : (String(sub?.data_type || 'text') === 'textarea' ? 'textarea'
+          : String(sub?.data_type || 'text') === 'number' ? 'number'
+            : String(sub?.data_type || 'text') === 'date' ? 'date' : 'text')
+      const options = dynOptions[name] || def?.options || []
+      const field = {
+        name,
+        label: String(sub?.label || '').trim() || name,
+        dataType,
+        readonly: !!def?.readonly,
+        ...(options.length ? { options } : {}),
+      }
+      // 归属分组：契约里标了 subGroup='费用项目' 的进第二组，其余进第一组
+      const target = def?.subGroup === '费用项目' ? sections[1] : sections[0]
+      target.fields.push(field)
+    }
+    return sections.filter((s) => s.fields.length)
   }
   // 第 63 轮：离职人员抽屉必须渲染**全部分组**（基础/组织/教育/联系/薪酬 + 离职信息），
   // 旧实现 activeModule='resign' 只取 15 个离职字段 → 抽屉只剩「离职信息」一组。
@@ -3553,20 +3639,47 @@ async function printDormBill() {
 }
 
 // ---- 住宿联动：员工 / 房源 / 床位 / 费用项目自动带出 ----
-const dormEmployeeNameOptions = computed(() => dormEmployeeList.value.map((e) => ({
-  label: String(e.name || e['姓名'] || ''), value: String(e.name || e['姓名'] || ''),
-})))
+// 第 64 轮：管理员/舍长必须按「所属公司」过滤花名册在职人员（签约公司匹配），
+// 不能把所有在职人员都列出来 —— 否则选持睿公司时还能挑到星达的人。
+const dormEmployeeNameOptions = computed(() => {
+  const company = dormCurrentCompany.value
+  const names = dormCompanyNames.value
+  const matched = dormEmployeeList.value.filter((e) => {
+    if (!company) return true
+    const sign = String(e['签约公司'] || e.contract_company || e.custom_data?.['签约公司'] || '').trim()
+    if (!sign) return false
+    return sameCompany(sign, company, names)
+  })
+  return matched.map((e) => ({
+    label: String(e.name || e['姓名'] || ''), value: String(e.name || e['姓名'] || ''),
+  }))
+})
 // 第 63 轮：所属公司/部门全部来自「单位设置（组织机构）」，不再硬编码
 const dormOrgUnits = ref<any[]>([])
 const dormCompanyNames = computed(() => companyNamesOf(dormOrgUnits.value))
+/**
+ * 第 64 轮：所属部门 100% 取自「单位设置」当前公司节点下的部门。
+ *
+ * 旧实现在该公司没有配置部门时回退到「全部部门」，真机上选持睿仍能选到星达的
+ * 人事行政部 / 机电部 —— 这正是本轮要根治的串台。
+ */
 const dormDeptOptionsOf = (company: string) =>
-  departmentsOf(dormOrgUnits.value, company).map((v) => ({ label: v, value: v }))
+  departmentsOfStrict(dormOrgUnits.value, company).map((v) => ({ label: v, value: v }))
 // 关联表计：电 / 水 / 气 三套表计 + 用途字典（用途标签决定「宿舍 / 公租房」）
 const dormMeters = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ electricity: [], water: [], gas: [] })
 const dormMeterKinds = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ electricity: [], water: [], gas: [] })
 const dormCurrentCompany = computed(() => {
   const d = editForm.value?.data || {}
   return normalizeCompanyName(d['所属公司'] || d['所属公司/部门'] || '', dormCompanyNames.value)
+})
+/** 第 64 轮：表计过滤的自检串（真机断言与排障共用，不进 UI）。 */
+const dormMeterDebugText = computed(() => {
+  const list = dormMeters.value.electricity || []
+  const scope = dormSubView.value === 'public' ? 'public' : (dormSubView.value === 'dorm' ? 'dorm' : '')
+  const hit = filterMetersByScopeAndCompany(list, dormMeterKinds.value.electricity, scope,
+    dormCurrentCompany.value, dormCompanyNames.value)
+  return `total=${list.length};hit=${hit.length};company=${dormCurrentCompany.value};` +
+    `sample=${list.slice(0, 3).map((m: any) => `${m.alias}|${m.meter_kind}|${m.use_unit}`).join(',')}`
 })
 /** 当前档案类型下的表计候选：用途（宿舍/公租房）+ 使用单位双重过滤。 */
 function dormMeterOptionsOf(category: 'electricity' | 'water' | 'gas') {
@@ -3637,8 +3750,21 @@ async function loadDormHelpers() {
       : Array.isArray(orgData?.data?.units) ? orgData.data.units
         : Array.isArray(orgData?.units) ? orgData.units : []
     dormOrgUnits.value = units
+    /**
+     * 第 64 轮：接口响应是 `{ data: { data: [...] } }` 双层包裹。
+     *
+     * 旧实现只解一层（`res.data`），拿到的是 `{data:[...]}` 对象而不是数组，
+     * 于是 dormMeters 全为空 → 表计下拉只剩「用途兜底」，持睿/星达过滤形同虚设。
+     * 这里逐层下钻，直到拿到数组为止（同时兼容后端直接返回数组的形态）。
+     */
     const arrOf = (res: any) => {
-      const v = res?.data ?? res
+      let v = res
+      for (let i = 0; i < 4; i++) {
+        if (Array.isArray(v)) return v
+        if (v && typeof v === 'object' && 'data' in v) { v = (v as any).data; continue }
+        if (v && typeof v === 'object' && 'items' in v) { v = (v as any).items; continue }
+        break
+      }
       return Array.isArray(v) ? v : []
     }
     dormMeters.value = {
@@ -3714,6 +3840,7 @@ function onStayRoomChange(v: any) {
 // 第 62 轮：住宿抽屉里「宿舍编号/房屋地址」用抽屉内置下拉（含斜杠不能开插槽），
 // 这里监听草稿值变化，自动带出房源类型 / 空闲床位 / 费用项目。
 // 第 63 轮：切换所属公司 → 复核「所属部门 / 关联电表 / 关联水表 / 关联气表」是否仍在候选内
+// 第 64 轮：管理员/舍长也纳入清空范围（管理员按签约公司过滤，换公司后原值必然失效）
 watch(
   () => editForm.value?.data?.['所属公司'],
   () => {
@@ -3721,6 +3848,10 @@ watch(
     const d = editForm.value?.data || {}
     const depts = dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value)
     if (d['所属部门'] && !depts.includes(String(d['所属部门']))) d['所属部门'] = ''
+    const adminOpts = dormEmployeeNameOptions.value.map((o) => o.value)
+    for (const key of ['管理员/舍长', '责任人']) {
+      if (d[key] && !adminOpts.includes(String(d[key]))) d[key] = ''
+    }
     for (const [key, cat] of [['关联电表', 'electricity'], ['关联水表', 'water'], ['关联气表', 'gas']] as const) {
       const opts = dormMeterOptionsOf(cat)
       if (d[key] && !opts.includes(String(d[key]))) d[key] = ''
@@ -3775,6 +3906,34 @@ async function confirmDormCheckout() {
     clearSelection()
     await loadList('hr-dorm')
   } catch (e: any) { MessagePlugin.error(e?.message || '办理退宿失败') }
+}
+
+/**
+ * 第 64 轮：恢复住宿。
+ *
+ * 只处理选中的「已退宿」记录 —— 后端会重新校验房源容量与性别，
+ * 满员或性别不符时给出中文原因，这里原样透出，不吞错误。
+ */
+const dormRestorableCount = computed(() => {
+  const picked = rows.value.filter((r: any) => selectedRowKeys.value.includes(r.id))
+  return picked.filter((r: any) => String(r['住宿状态'] || r.status || '').trim() === '已退宿').length
+})
+async function handleRestoreStay() {
+  const ids = rows.value
+    .filter((r: any) => selectedRowKeys.value.includes(r.id))
+    .filter((r: any) => String(r['住宿状态'] || r.status || '').trim() === '已退宿')
+    .map((r: any) => r.id)
+  if (!ids.length) { MessagePlugin.warning('请勾选「已退宿」的住宿记录'); return }
+  try {
+    const res: any = await hrApi.restoreDormStays({ ids })
+    const d = res?.data || res || {}
+    const restored = Number(d.restored || 0)
+    const failed = Array.isArray(d.failed) ? d.failed : []
+    if (restored > 0) MessagePlugin.success(`已恢复 ${restored} 条住宿记录`)
+    if (failed.length) MessagePlugin.warning(failed[0]?.message || '部分记录恢复失败')
+    clearSelection()
+    await loadList('hr-dorm')
+  } catch (e: any) { MessagePlugin.error(e?.message || '恢复住宿失败') }
 }
 
 // ---------------------------------------------------------------------------
@@ -3867,6 +4026,17 @@ onUnmounted(() => {
 .hr-si-status--active { color: #00a870; }
 .hr-si-status--ended { color: #ed7b2f; }
 .hr-si-status--paused { color: var(--td-text-color-primary, #1d2129); }
+/* 第 64 轮：宿舍/住宿/资产状态 —— 无边框纯带色文字（去掉 Tag 的黑框） */
+.hr-plain-status {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  border: 0;
+  background: transparent;
+}
+.hr-plain-status.is-ok { color: var(--td-success-color); }
+.hr-plain-status.is-warn { color: var(--td-warning-color); }
+.hr-plain-status.is-off { color: var(--td-text-color-placeholder); }
+.hr-plain-status.is-muted { color: var(--td-text-color-secondary); }
 /* 补退类型 / 记录类型：正常绿、补缴/退费/调基/异常红（第 58 轮） */
 .hr-si-adjust { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hr-si-adjust--ok { color: #00a870; }
@@ -3876,6 +4046,12 @@ onUnmounted(() => {
 .hr-bill-detail { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 /* 第 63 轮：弹窗正文禁止横向滚动（三段表按百分比贴合容器，边框不掉到滚动区外） */
 .hr-bill-dialog :deep(.t-dialog__body) {
+  overflow-x: hidden;
+}
+/* 第 64 轮：明细弹窗内所有包裹层都不得横向溢出（三段表自身已 box-sizing 收口） */
+.hr-bill-detail,
+.hr-bill-table-wrap {
+  max-width: 100%;
   overflow-x: hidden;
 }
 /* 第 63 轮：列表状态 Tag 一律无黑框（浅色底 + 语义色文字） */

@@ -222,27 +222,23 @@ func hrDormFieldDefs() []hrFieldDef {
 		hrF("备注", "textarea", hrGroup(assetG)),
 		sys("资产状态", assetG, "资产状态"),
 
-		// ---- 费用信息（全员月度扣款明细，19 列）----
+		// ---- 费用信息（第 64 轮：月度账单汇总，每月 1 行，15 列）----
+		// 与社保/公积金「月度账单」完全同形：主列表只放汇总口径，
+		// 一人一行的明细走「查看明细」弹窗（数据源仍是 hr_dorm_charges）。
 		hrF("账单月份", "text", hrHeader(), hrBuiltin(), hrGroup(feeG)),
-		hrF("员工工号", "text", hrHeader(), hrGroup(feeG)),
-		hrF("姓名", "text", hrHeader(), hrBuiltin(), hrGroup(feeG)),
-		hrF("所属部门", "text", hrHeader(), hrGroup(feeG)),
-		hrF("宿舍号", "text", hrHeader(), hrGroup(feeG)),
-		// 金额列默认进表头：扣款明细的合计行要能直接看到各项累加（其余列可在字段筛选器开启）
-		hrF("入住天数", "number", hrHeader(), hrGroup(feeG)),
-		num("分摊比例", feeG),
-		num("宿舍押金(元)", feeG),
-		hrF("公租房租(元)", "number", hrHeader(), hrGroup(feeG)),
-		hrF("水费(元)", "number", hrHeader(), hrGroup(feeG)),
-		hrF("电费(元)", "number", hrHeader(), hrGroup(feeG)),
-		hrF("天然气费(元)", "number", hrHeader(), hrGroup(feeG)),
-		hrF("社保个人扣款(元)", "number", hrHeader(), hrGroup(feeG)),
-		hrF("公积金个人扣款(元)", "number", hrHeader(), hrGroup(feeG)),
-		num("其它扣款(元)", feeG),
-		hrF("扣款合计(元)", "number", hrHeader(), hrGroup(feeG)),
-		num("退款(元)", feeG),
-		num("补贴合计(元)", feeG),
-		hrF("备注", "textarea", hrGroup(feeG)),
+		hrF("总人数", "number", hrHeader(), hrGroup(feeG)),
+		hrF("住宿人数", "number", hrHeader(), hrGroup(feeG)),
+		hrF("押金合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("房租合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("水费合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("电费合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("气费合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("社保个人合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("公积金个人合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("其它扣款合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("扣款总计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("退款合计", "number", hrHeader(), hrGroup(feeG)),
+		hrF("补贴合计", "number", hrHeader(), hrGroup(feeG)),
 		sys("账单状态", feeG, "账单状态"),
 	}
 	return defs
