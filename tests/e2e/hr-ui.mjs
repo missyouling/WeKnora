@@ -455,9 +455,11 @@ try {
     foot: (document.querySelector(".doc-list-scroll tfoot")?.innerText || "").replace(/\s+/g, " ").trim(),
   }));
   R.pub61 = pub61;
-  // 第 62 轮：公租房扩到 19 套（两山秀苑 9 + 两山景苑 10），面积合计仍为 485.55
-  ok("61.4 公租房 19 套且建筑面积合计 485.55",
-    pub61.rows === 19 && /485\.55/.test(pub61.foot), JSON.stringify(pub61));
+  // 第 65 轮：公租房档案合计行改为「仅首列显示 合计（共 N 条）」，其余列一律留空
+  // （建筑面积等数值汇总按需求移除），故不再断言 485.55。
+  ok("61.4 公租房 19 套且合计行仅首列有文案",
+    pub61.rows === 19 && /合计（共 19 条）/.test(pub61.foot) && !/485\.55/.test(pub61.foot),
+    JSON.stringify(pub61));
   await shot("d61_ci_dorm_public");
 } catch (e) { R.error = String(e).slice(0, 600); }
 
