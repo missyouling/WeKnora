@@ -169,7 +169,9 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   flex: 0 0 auto;
   overflow: hidden !important;
   overflow-x: hidden !important;
-  scrollbar-gutter: stable;
+  /* 第 64 轮：这里**不能**加 scrollbar-gutter —— 表头/合计行本身不滚动，
+     预留槽位会让它们的可用宽度比数据区少一个滚动条宽，列竖线错位。
+     滚动条宽度已由 JS 实测后通过 paddingRight 精确补偿（sideStyle）。 */
   background: var(--td-bg-color-secondarycontainer);
 }
 .detail-table-body {
@@ -193,7 +195,9 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
 .detail-table th,
 .detail-table td {
   box-sizing: border-box;
-  padding: 6px 8px;
+  /* 第 64 轮：垂直 padding 保持 0 —— 表头/合计行靠 height 定高，
+     加 padding 会让三段的行高不一致，列宽实测出现 1px+ 偏差（61.2 对齐断言）。 */
+  padding: 0 8px;
   height: 36px;
   line-height: 20px;
   white-space: nowrap;

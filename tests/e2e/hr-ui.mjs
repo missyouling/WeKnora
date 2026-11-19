@@ -27,15 +27,29 @@ await c.addInitScript((t) => {
 const p = await c.newPage(); p.setDefaultTimeout(30000);
 const errs = []; p.on("console", (m) => { if (m.type() === "error") errs.push(m.text().slice(0, 160)) });
 let newPages = 0; c.on("page", () => { newPages++ });
-await p.goto(`${APP}/platform/daily-affairs/hr`, { waitUntil: "domcontentloaded", timeout: 90000 });
-await p.waitForTimeout(28000);
-await p.evaluate(() => document.querySelectorAll(".guide").forEach((e) => e.remove()));
-// 第 63 轮：KPI 卡片由 4 路 bootstrap 并行拉取，跨区库慢时要等齐 5 张再点
-for (let i = 0; i < 20; i++) {
-  const n = await p.evaluate(() => document.querySelectorAll(".dash-kpi-card").length);
-  if (n >= 5) break;
-  await p.waitForTimeout(1500);
-}
+/**
+ * 第 64 轮：首屏就绪守卫。
+ *
+ * Vite 开发服务器偶发模块图失效（`Failed to fetch dynamically imported module`），
+ * 表现为整页白屏、KPI 卡片 0 张 —— 后续所有 locator 都会超时。这里自动重载
+ * 最多 4 轮，直到 5 张卡片渲染出来，再继续断言。
+ */
+const ensureApp = async () => {
+  for (let round = 0; round < 4; round++) {
+    await p.goto(`${APP}/platform/daily-affairs/hr`, { waitUntil: "domcontentloaded", timeout: 90000 });
+    await p.waitForTimeout(round === 0 ? 28000 : 15000);
+    for (let i = 0; i < 24; i++) {
+      const n = await p.evaluate(() => document.querySelectorAll(".dash-kpi-card").length);
+      if (n >= 5) {
+        await p.evaluate(() => document.querySelectorAll(".guide").forEach((e) => e.remove()));
+        return true;
+      }
+      await p.waitForTimeout(1500);
+    }
+    console.log(`WARN 首屏未就绪，重载第 ${round + 1} 轮`);
+  }
+  return false;
+};
 const R = { checks: [] };
 const ok = (n, cond, d) => R.checks.push({ n, pass: !!cond, d: String(d ?? "").slice(0, 300) });
 const shot = (n) => p.screenshot({ path: `${SHOTS}/${n}.png` });
@@ -49,6 +63,8 @@ const tab = (l) => p.evaluate((x) => {
 }, l);
 
 try {
+  const ready = await ensureApp();
+  if (!ready) throw new Error("首屏 bootstrap 未就绪（KPI 卡片未渲染）");
   // ================= #1/#2 附件预览 + 离职证明上传确认 =================
   await card("花名册"); await p.waitForTimeout(5000);
   await tab("离职人员");
