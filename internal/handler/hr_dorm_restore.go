@@ -104,6 +104,10 @@ func (h *HRHandler) hrRestoreStay(ctx context.Context, tid int64, id string) (st
 	if strings.TrimSpace(roomKey) == "" {
 		return "", fmt.Errorf("住宿记录缺少宿舍编号/房屋地址，无法恢复")
 	}
+	// 第 65 轮：恢复住宿同样受入住准入约束（满员 / 维修中 拒绝，排除自身占位）
+	if err := h.hrDormAdmitCheck(ctx, tid, roomKey, row.ID); err != nil {
+		return "", err
+	}
 	room, ok := h.hrDormFindRoom(ctx, tid, roomKey)
 	if !ok {
 		return "", fmt.Errorf("找不到房源「%s」，请先在宿舍档案中补建", roomKey)

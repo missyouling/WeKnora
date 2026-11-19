@@ -311,6 +311,16 @@ export function importSocialReceipts(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/social/receipts/import`, formData) as Promise<any>
 }
 
+/** 第 65 轮：社保正常/补退记录批量删除（单次请求 + 单条汇总提示）。 */
+export function batchDeleteSocialRecords(ids: string[]): Promise<any> {
+  return post(`${BASE}/social/records/batch-delete`, { ids }) as Promise<any>
+}
+
+/** 第 65 轮：社保记录单条删除。 */
+export function removeSocialRecord(id: string): Promise<any> {
+  return del(`${BASE}/social/records/${encodeURIComponent(String(id))}`) as Promise<any>
+}
+
 export function listSocialRecords(params: {
   record_type?: 'normal' | 'abnormal'; q?: string; department?: string; scheme?: string; month?: string
 } = {}): Promise<any> {

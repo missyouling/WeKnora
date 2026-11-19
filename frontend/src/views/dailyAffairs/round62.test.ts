@@ -16,11 +16,14 @@ import { hrColumnsFromSubs } from './hrCore'
 
 const readLocal = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
 
-test('字段契约：五胶囊列数与第 62 轮需求一致', () => {
+test('字段契约：五胶囊列数与第 65 轮需求一致（26/30/27/12/20）', () => {
   assert.equal(HR_DORM_FIELDS.dorm.length, 26)
   assert.equal(HR_DORM_FIELDS.public.length, 30)
   assert.equal(HR_DORM_FIELDS.stay.length, 27)
-  assert.equal(HR_DORM_FIELDS.asset.length, 16)
+  // 第 65 轮：资产删维修 4 字段 → 13；费用改月度汇总 15 列
+  // 第 65 轮：资产删维修 4 字段 → 12；fee 契约仍是弹窗明细 20 列
+  // （主列表月度汇总是独立的 HR_DORM_CHARGE_BILL_FIELDS，15 列）
+  assert.equal(HR_DORM_FIELDS.asset.length, 12)
   assert.equal(HR_DORM_FIELDS.fee.length, 20)
   assert.equal(HR_DORM_GROUP_OF.fee, '费用信息')
 })
@@ -104,10 +107,12 @@ test('维修状态三色（无维修灰 / 待维修橙 / 已修复绿）', () =>
   assert.equal(hrDormRepairTheme('已修复'), 'success')
 })
 
-test('费用信息列：19 列全带 value，金额两位小数、天数为整数', () => {
+test('扣款明细列：第 65 轮去员工工号 → 19 列全带 value，金额两位小数、天数为整数', () => {
   const cols = hrDormChargeColumns() as any[]
   const dataCols = cols.filter((c) => c.colKey !== 'row-select')
-  assert.equal(dataCols.length, 20)
+  // 第 65 轮：原 20 列去掉「员工工号」= 19 列
+  assert.equal(dataCols.length, 19)
+  assert.ok(!dataCols.some((c) => c.colKey === '员工工号'), '扣款明细不得有员工工号')
   assert.ok(dataCols.every((c) => typeof c.value === 'function'))
   const row = { 入住天数: 31, '扣款合计(元)': 1304.122, 分摊比例: 1 }
   assert.equal(dataCols.find((c) => c.colKey === '入住天数').value(row), '31')

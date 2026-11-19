@@ -203,12 +203,34 @@ func (h *HRHandler) UpdateDormCharge(c *gin.Context) {
 		row.Remark = strings.TrimSpace(*req.Remark)
 	}
 	row.Subsidy = row.Refund
+	// 第 65 轮：扣款合计公式与前端行内编辑严格一致
 	row.Total = round2(row.Deposit + row.Rent + row.Water + row.Elec + row.Gas + row.Social + row.Fund + row.Other)
 	if err := h.db.WithContext(ctx).Save(&row).Error; err != nil {
 		hrFail(c, "保存失败: "+err.Error())
 		return
 	}
-	hrOK(c, hrDormChargeView(row))
+	// 第 65 轮：同步回传当月月度汇总，前端据此实时刷新主列表行与合计
+	bill := hrDormChargeBillOf(ctx, h, tid, row.MonthLabel)
+	hrOK(c, gin.H{"item": hrDormChargeView(row), "bill": bill})
+}
+
+// hrDormChargeBillOf 单月账单汇总（行内编辑后回传，避免前端二次请求）。
+func hrDormChargeBillOf(ctx context.Context, h *HRHandler, tid int64, month string) map[string]any {
+	var rows []HRDormCharge
+	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND month_label = ?", tid, month).Find(&rows).Error
+	for _, b := range hrAggregateDormChargeBills(rows) {
+		if fmt.Sprint(b["month_label"]) == month {
+			return b
+		}
+	}
+	return nil
+}
+
+// PatchDormChargeItem PATCH /hr/dorm/charges/item/:id —— 行内编辑（其它扣款/退款/备注）。
+//
+// 与 PUT 同源实现：行内编辑只允许改这三个人工项，其余金额一律由生成链路决定。
+func (h *HRHandler) PatchDormChargeItem(c *gin.Context) {
+	h.UpdateDormCharge(c)
 }
 
 // DeleteDormCharge DELETE /hr/dorm/charges/:id

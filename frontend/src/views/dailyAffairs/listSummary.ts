@@ -171,7 +171,19 @@ export function footSpanOf(columns: SummaryColumn[]) {
 export function buildFootRow(
   columns: SummaryColumn[],
   rows: any[],
-  opts: { selectKey?: string; rowKey?: string; selectedCount?: number } = {},
+  opts: {
+    selectKey?: string
+    rowKey?: string
+    selectedCount?: number
+    /**
+     * 第 65 轮：仅首列显示「合计（共 N 条）」，其余列一律留空。
+     *
+     * 宿舍管理四个档案页（宿舍/公租房/住宿/资产）用它 —— 建筑面积、资产价值、
+     * 房间面积、床位数这些列的汇总没有业务意义，加出来只是噪音。
+     * 费用信息的月度账单**不传**该开关，仍保留金额/人数汇总。
+     */
+    onlyLabel?: boolean
+  } = {},
 ): Record<string, string> {
   const selectKey = opts.selectKey || 'row-select'
   const row: Record<string, string> = { id: '__summary__' }
@@ -182,7 +194,7 @@ export function buildFootRow(
   // 传给汇总），列循环会用它算出一个空串并把文案覆盖掉 —— 合计行首列变成空白。
   // 首列文案是这一行的语义锚点，必须最后写、且优先级最高。
   for (const col of columns) {
-    row[col.key] = summaryCellOf(col, rows)
+    row[col.key] = opts.onlyLabel ? '' : summaryCellOf(col, rows)
   }
   row[selectKey] = summaryLabelOf(rows.length, opts.selectedCount || 0)
   return row

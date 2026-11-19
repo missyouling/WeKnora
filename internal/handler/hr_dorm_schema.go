@@ -31,7 +31,8 @@ func hrDormStatusGroupFields61() map[string][]string {
 		hrDormGroupRoom:   {"宿舍状态"},
 		hrDormGroupPublic: {"宿舍状态"},
 		hrDormGroupStay:   {"住宿状态"},
-		hrDormGroupAsset:  {"资产状态"},
+		// 第 65 轮：「资产状态」改为可编辑 enum（正常/损坏/报废），不再加锁
+		hrDormGroupAsset:  {},
 		hrDormGroupFee:    {"账单状态"},
 	}
 }
@@ -215,12 +216,10 @@ func hrDormFieldDefs() []hrFieldDef {
 		num("资产价值(元)", assetG),
 		hrF("购置日期", "date", hrGroup(assetG)),
 		hrF("责任人", "text", hrGroup(assetG)),
-		hrF("报修日期", "date", hrGroup(assetG)),
-		enum("维修状态", assetG),
-		num("维修费用(元)", assetG),
-		hrF("维修说明", "textarea", hrGroup(assetG)),
 		hrF("备注", "textarea", hrGroup(assetG)),
-		sys("资产状态", assetG, "资产状态"),
+		// 第 65 轮：资产档案彻底删除维修 4 字段（报修日期/维修状态/维修费用/维修说明），
+		// 「资产状态」由只读 system 改为可编辑 enum（正常/损坏/报废），新增默认「正常」。
+		hrF("资产状态", "enum", hrHeader(), hrEnum("资产状态"), hrDefault("正常"), hrGroup(assetG)),
 
 		// ---- 费用信息（第 64 轮：月度账单汇总，每月 1 行，15 列）----
 		// 与社保/公积金「月度账单」完全同形：主列表只放汇总口径，

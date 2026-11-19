@@ -25,8 +25,9 @@ test('明细表：三段容器，仅数据区可滚动（表头/合计行 overfl
   assert.match(css, /\.detail-table-body\s*\{[^}]*overflow-y:\s*auto/)
   assert.match(src, /maxHeight:\s*\$\{props\.maxBodyHeight\}px|max-height: 380px/)
   // 列宽同源：三段各有一份 colgroup
-  const tpl = src.slice(src.indexOf('<template>'), src.indexOf('</template>'))
-  assert.equal((tpl.match(/<colgroup>/g) || []).length, 3)
+  // 第 65 轮：数据区新增行内编辑 input，内层 </template> 会提前截断切片；
+  // 同时文件头注释里也有 <colgroup> 字样 → 只数真正的开标签行
+  assert.equal((src.match(/^\s*<colgroup>$/gm) || []).length, 3)
   // 出现滚动条时给表头/合计行补 padding-right
   assert.match(src, /scrollbarWidth/, '必须实测滚动条宽度并补 padding')
 })
@@ -68,11 +69,14 @@ test('宿舍管理：五标签顺序与设置胶囊 1:1', () => {
   assert.equal(HR_TABS[4].label, '宿舍管理')
 })
 
-test('宿舍字段契约：第 62 轮五胶囊 25/28/27/16/20，状态列各自唯一', () => {
+test('宿舍字段契约：第 65 轮五胶囊 26/30/27/12/20，状态列各自唯一', () => {
   assert.equal(HR_DORM_FIELDS.dorm.length, 26)
   assert.equal(HR_DORM_FIELDS.public.length, 30)
   assert.equal(HR_DORM_FIELDS.stay.length, 27)
-  assert.equal(HR_DORM_FIELDS.asset.length, 16)
+  // 第 65 轮：资产删维修 4 字段 → 16-4+1（资产状态保留）=13；费用改月度汇总 15 列
+  // 第 65 轮：资产删维修 4 字段 → 12；fee 契约仍是弹窗明细 20 列
+  // （主列表月度汇总是独立的 HR_DORM_CHARGE_BILL_FIELDS，15 列）
+  assert.equal(HR_DORM_FIELDS.asset.length, 12)
   assert.equal(HR_DORM_FIELDS.fee.length, 20)
   assert.ok(HR_DORM_FIELDS.dorm.some((f) => f.name === '宿舍状态' && f.readonly))
   assert.ok(HR_DORM_FIELDS.stay.some((f) => f.name === '住宿状态' && f.readonly))

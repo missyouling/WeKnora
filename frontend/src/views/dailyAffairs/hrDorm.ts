@@ -42,7 +42,7 @@ export function hrDormModuleOf(view: HrDormView): string {
 
 export interface HrDormField {
   name: string
-  type: 'text' | 'number' | 'date' | 'enum' | 'textarea' | 'system' | 'multi'
+  type: 'text' | 'number' | 'date' | 'month' | 'enum' | 'textarea' | 'system' | 'multi'
   /** 编辑抽屉分组：'费用项目' 表示第二分组，缺省为第一分组 */
   subGroup?: string
   options?: string[]
@@ -87,8 +87,9 @@ const FEE_FIELDS: readonly HrDormField[] = [
 const PUBLIC_ONLY_PRICING: readonly HrDormField[] = [
   { name: '月费用单价(元/月)', type: 'number', readonly: true, subGroup: '费用项目' },
   { name: '季度租金(元/季)', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '租期起始月份', type: 'text', subGroup: '费用项目' },
-  { name: '租期截止月份', type: 'text', subGroup: '费用项目' },
+  // 第 65 轮：月份型字段强制月份选择器（禁止手输 53q）
+  { name: '租期起始月份', type: 'month', subGroup: '费用项目' },
+  { name: '租期截止月份', type: 'month', subGroup: '费用项目' },
 ]
 
 const STAY_FEE_FIELDS: readonly HrDormField[] = [
@@ -172,12 +173,10 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
     { name: '资产价值(元)', type: 'number', width: 110 },
     { name: '购置日期', type: 'date', width: 110 },
     { name: '责任人', type: 'text', width: 90 },
-    { name: '报修日期', type: 'date', width: 110 },
-    { name: '维修状态', type: 'enum', options: ['无维修', '待维修', '维修中', '已修复'], width: 100 },
-    { name: '维修费用(元)', type: 'number', width: 110 },
-    { name: '维修说明', type: 'textarea', width: 150 },
+    // 第 65 轮：资产档案彻底删除维修 4 字段（报修日期/维修状态/维修费用/维修说明）；
+    // 「资产状态」由只读 system 改为可编辑 enum，新增默认「正常」。
     { name: '备注', type: 'textarea', width: 120 },
-    { name: '资产状态', type: 'system', options: ['正常', '损坏', '报废'], readonly: true, width: 90 },
+    { name: '资产状态', type: 'enum', options: ['正常', '损坏', '报废'], width: 90 },
   ],
   fee: [
     { name: '账单月份', type: 'text', width: 100 },
@@ -273,9 +272,16 @@ export function hrDormStatusTheme(v: string): 'success' | 'warning' | 'danger' |
 export function hrDormStatusTextClass(v: unknown): string {
   const s = String(v ?? '').trim()
   if (!s) return 'is-muted'
-  if (/空闲|在住|正常|已生成|已修复|无维修|公司宿舍/.test(s)) return 'is-ok'
-  if (/部分入住|待入住|待维修|维修中|损坏|公租房|待/.test(s)) return 'is-warn'
-  if (/满员|已退宿|报废|作废|停用/.test(s)) return 'is-off'
+  // 第 65 轮 4 色语义（列表与抽屉统一）：
+  //   满员 → 红 / 部分入住 → 橙 / 空闲 → 绿 / 维修中 → 灰
+  if (/^满员$/.test(s)) return 'is-danger'
+  if (/^维修中$/.test(s)) return 'is-off'
+  if (/^空闲$/.test(s)) return 'is-ok'
+  if (/^部分入住$/.test(s)) return 'is-warn'
+  // 其余（在住/正常/已生成/公司宿舍/公租房等）沿用既有语义
+  if (/在住|正常|已生成|公司宿舍/.test(s)) return 'is-ok'
+  if (/待|损坏|公租房/.test(s)) return 'is-warn'
+  if (/已退宿|报废|作废|停用/.test(s)) return 'is-off'
   return 'is-muted'
 }
 
@@ -317,14 +323,30 @@ const money = (v: any) => {
     : ''
 }
 
-/** 费用信息列（19 列，必须自带 value）。 */
+/**
+ * 扣款明细列（必须自带 value）。
+ *
+ * 第 65 轮：**删除「员工工号」列**（弹窗里姓名已足够定位，工号挤占金额列宽）；
+ * 金额列宽度按「1,214.60 / 2,806.00 / 48,254.78 / 88,147.20」实测给足，
+ * 杜绝任何金额被省略号截断。
+ */
+export const DORM_CHARGE_WIDTH_OVERRIDE: Record<string, number> = {
+  姓名: 130, 所属部门: 120, 宿舍号: 110,
+  入住天数: 96, 分摊比例: 96,
+  '宿舍押金(元)': 118, '公租房租(元)': 118,
+  '水费(元)': 110, '电费(元)': 110, '天然气费(元)': 120,
+  '社保个人扣款(元)': 140, '公积金个人扣款(元)': 150,
+  '其它扣款(元)': 120, '扣款合计(元)': 130,
+  '退款(元)': 110, '补贴合计(元)': 120,
+  备注: 160,
+}
 export function hrDormChargeColumns(): HrColumn[] {
   return [
     { colKey: 'row-select', title: '', width: 44 },
-    ...HR_DORM_FIELDS.fee.map((f) => ({
+    ...HR_DORM_FIELDS.fee.filter((f) => f.name !== '员工工号').map((f) => ({
       colKey: f.name,
       title: f.name,
-      width: f.width || 110,
+      width: DORM_CHARGE_WIDTH_OVERRIDE[f.name] || f.width || 110,
       dataType: f.type === 'number' ? 'number' : undefined,
       ...(f.type === 'system' ? { slot: true } : {}),
       value: (row: any) => {
@@ -397,7 +419,8 @@ export function hrDormColumns(view: HrDormView, subs: readonly any[] | null | un
   const mock = HR_DORM_FIELDS[view].map((f) => ({
     name: f.name,
     label: f.name,
-    data_type: f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text',
+    data_type: f.type === 'number' ? 'number' : f.type === 'date' ? 'date'
+      : f.type === 'month' ? 'month' : 'text',
     enabled: true,
     is_default: true,
     width: f.width || 0,

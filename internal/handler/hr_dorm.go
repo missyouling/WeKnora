@@ -323,6 +323,18 @@ func (h *HRHandler) CreateDormRecord(c *gin.Context) {
 		return
 	}
 	hrDormNormalizeRecord(req.Module, req.Data)
+	// 第 65 轮：保存前强类型校验（金额/整数/月份），脏值一律 400
+	if msg := hrValidateDormData65(req.Data); msg != "" {
+		hrFail(c, msg)
+		return
+	}
+	// 第 65 轮：安排入住（新增住宿记录）必须先过准入校验 —— 满员 / 维修中 一律拒绝
+	if req.Module == hrDormModuleStay {
+		if err := h.hrDormAdmitCheck(ctx, tid, hrDormStr(req.Data, "宿舍编号/房屋地址"), ""); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+	}
 	rec := HRDormRecord{
 		ID: uuid.New().String(), TenantID: tid, Module: req.Module,
 		Code: hrDormCodeOf(req.Module, req.Data), Name: hrDormNameOf(req.Module, req.Data),
@@ -360,6 +372,23 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 	}
 	oldCode := row.Code
 	hrDormNormalizeRecord(row.Module, merged)
+	// 第 65 轮：保存前强类型校验（金额/整数/月份），脏值一律 400
+	if msg := hrValidateDormData65(merged); msg != "" {
+		hrFail(c, msg)
+		return
+	}
+	// 第 65 轮：住宿记录改房源时同样校验准入（排除自身，避免原房重存误判满员）
+	if row.Module == hrDormModuleStay {
+		newRoom := hrDormStr(merged, "宿舍编号/房屋地址")
+		oldRoom := hrDormStr(row.CustomData, "宿舍编号/房屋地址")
+		status := hrDormStr(merged, "住宿状态")
+		if newRoom != "" && newRoom != oldRoom && status != "已退宿" {
+			if err := h.hrDormAdmitCheck(ctx, tid, newRoom, row.ID); err != nil {
+				hrFail(c, err.Error())
+				return
+			}
+		}
+	}
 	row.CustomData = merged
 	row.Code = hrDormCodeOf(row.Module, merged)
 	row.Name = hrDormNameOf(row.Module, merged)
@@ -474,6 +503,11 @@ func (h *HRHandler) TransferDormStays(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 || strings.TrimSpace(req.Room) == "" {
 		hrFail(c, "请选择记录并填写目标房源")
+		return
+	}
+	// 第 65 轮：调宿目标必须是可住状态（满员 / 维修中 一律拒绝）
+	if err := h.hrDormAdmitCheck(ctx, tid, req.Room, ""); err != nil {
+		hrFail(c, err.Error())
 		return
 	}
 	done := 0
@@ -1123,19 +1157,20 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 	}
 
 	// ---- 资产档案（按新字段：分类/规格/单位/价值/购置日期）----
+	// 第 65 轮：资产档案不再有维修字段，种子结构去掉 fee 列
 	assets := []struct {
 		code, name, category, spec, room, owner, unit string
 		qty                                           int
-		value, fee                                    float64
+		value                                         float64
 	}{
-		{"ZC-301-01", "床", "家具", "1.2m 实木", "宿舍301", "吴勇建", "张", 1, 800, 0},
-		{"ZC-301-02", "空调", "家电", "1.5P 挂机", "宿舍301", "吴勇建", "台", 1, 2200, 0},
-		{"ZC-302-01", "热水器", "家电", "60L", "宿舍302", "唐林波", "台", 1, 900, 260},
-		{"ZC-304-01", "衣柜", "家具", "两门", "宿舍304", "董友兵", "个", 1, 600, 0},
-		{"ZC-307-01", "洗衣机", "家电", "8kg", "宿舍307", "邓冬", "台", 1, 1500, 180},
-		{"ZC-309-01", "书桌", "家具", "1.2m", "宿舍309", "刘明", "张", 1, 350, 0},
-		{"ZC-5-21-15-01", "床", "家具", "1.5m", "两山景苑5-21-15", "黄润州", "张", 1, 900, 0},
-		{"ZC-19-23-5-01", "灶台", "家电", "双灶", "两山秀苑19-23-5", "龙远高", "台", 1, 700, 0},
+		{"ZC-301-01", "床", "家具", "1.2m 实木", "宿舍301", "吴勇建", "张", 1, 800},
+		{"ZC-301-02", "空调", "家电", "1.5P 挂机", "宿舍301", "吴勇建", "台", 1, 2200},
+		{"ZC-302-01", "热水器", "家电", "60L", "宿舍302", "唐林波", "台", 1, 900},
+		{"ZC-304-01", "衣柜", "家具", "两门", "宿舍304", "董友兵", "个", 1, 600},
+		{"ZC-307-01", "洗衣机", "家电", "8kg", "宿舍307", "邓冬", "台", 1, 1500},
+		{"ZC-309-01", "书桌", "家具", "1.2m", "宿舍309", "刘明", "张", 1, 350},
+		{"ZC-5-21-15-01", "床", "家具", "1.5m", "两山景苑5-21-15", "黄润州", "张", 1, 900},
+		{"ZC-19-23-5-01", "灶台", "家电", "双灶", "两山秀苑19-23-5", "龙远高", "台", 1, 700},
 	}
 	for _, a := range assets {
 		rec := HRDormRecord{
@@ -1144,19 +1179,9 @@ func (h *HRHandler) hrSeedDormForTenant(ctx context.Context, tid int64) error {
 			CustomData: map[string]any{
 				"资产编号": a.code, "资产名称": a.name, "资产分类": a.category, "规格型号": a.spec,
 				"所属宿舍": a.room, "数量": a.qty, "计量单位": a.unit, "资产价值(元)": a.value,
-				"购置日期": "2025-06-01", "责任人": a.owner, "报修日期": func() string {
-					if a.fee > 0 {
-						return "2026-09-18"
-					}
-					return ""
-				}(),
-				"维修状态": func() string {
-					if a.fee > 0 {
-						return "已修复"
-					}
-					return "无维修"
-				}(),
-				"维修费用(元)": a.fee, "维修说明": "", "备注": "", "资产状态": "正常",
+				"购置日期": "2025-06-01", "责任人": a.owner,
+				// 第 65 轮：资产档案不再有维修字段，种子只写业务字段
+				"备注": "", "资产状态": "正常",
 			},
 			CreatedAt: now, UpdatedAt: now,
 		}

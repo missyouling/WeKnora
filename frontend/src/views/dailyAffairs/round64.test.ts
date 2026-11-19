@@ -122,7 +122,9 @@ test('第64轮：宿舍状态纯文字配色（无框）', () => {
   assert.equal(hrDormStatusTextClass('空闲'), 'is-ok')
   assert.equal(hrDormStatusTextClass('在住'), 'is-ok')
   assert.equal(hrDormStatusTextClass('部分入住'), 'is-warn')
-  assert.equal(hrDormStatusTextClass('满员'), 'is-off')
+  // 第 65 轮：满员改红（is-danger），维修中改灰（is-off）
+  assert.equal(hrDormStatusTextClass('满员'), 'is-danger')
+  assert.equal(hrDormStatusTextClass('维修中'), 'is-off')
   assert.equal(hrDormStatusTextClass('已退宿'), 'is-off')
   assert.equal(hrDormStatusTextClass(''), 'is-muted')
 })

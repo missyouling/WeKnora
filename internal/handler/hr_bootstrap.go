@@ -146,6 +146,10 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrEnsureDormDeptSub64(ctx); err != nil {
 		logger.Warnf(ctx, "ensure HR dorm dept sub failed: %v", err)
 	}
+	// 第 65 轮：资产档案去维修 4 字段 + 资产状态改可编辑 enum（幂等）
+	if err := h.hrMigrateAssetFields65(ctx); err != nil {
+		logger.Warnf(ctx, "migrate HR asset fields v65 failed: %v", err)
+	}
 	// 第 62 轮：宿舍字段契约 v2 + 真实房源种子 + 劳动合同签约公司归一
 	if err := h.hrMigrateDormSubs62(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR dorm subs v62 failed: %v", err)
@@ -673,6 +677,8 @@ type hrRouteRegistrar interface {
 	GET(string, ...gin.HandlerFunc) gin.IRoutes
 	POST(string, ...gin.HandlerFunc) gin.IRoutes
 	PUT(string, ...gin.HandlerFunc) gin.IRoutes
+	// 第 65 轮：费用明细行内编辑走 PATCH
+	PATCH(string, ...gin.HandlerFunc) gin.IRoutes
 	DELETE(string, ...gin.HandlerFunc) gin.IRoutes
 }
 
@@ -727,6 +733,9 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.POST("/hr/social/receipts/import", h.ImportSIReceipts)
 	r.GET("/hr/social/records", h.ListSIRecords)
 	r.PUT("/hr/social/records/:id", h.UpdateSIRecord)
+	// 第 65 轮：正常记录 / 补退记录支持真实删除（回盘表仍不可删）
+	r.DELETE("/hr/social/records/:id", h.DeleteSIRecord)
+	r.POST("/hr/social/records/batch-delete", h.DeleteSIRecordsBatch)
 	r.POST("/hr/social/records/import", h.ImportSIRecords)
 	r.GET("/hr/social/bills", h.ListSIBills)
 	// 第 60 轮：生成账单前置校验（该月正常记录条数 / 是否已有账单），只读
@@ -761,6 +770,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.GET("/hr/dorm/charge-bills", h.ListDormChargeBills)
 	r.POST("/hr/dorm/charges/generate", h.GenerateDormCharges)
 	r.PUT("/hr/dorm/charges/:id", h.UpdateDormCharge)
+	// 第 65 轮：费用明细行内编辑（其它扣款 / 退款 / 备注），失焦即存
+	r.PATCH("/hr/dorm/charges/item/:id", h.PatchDormChargeItem)
 	r.DELETE("/hr/dorm/charges/:id", h.DeleteDormCharge)
 
 	// 公积金

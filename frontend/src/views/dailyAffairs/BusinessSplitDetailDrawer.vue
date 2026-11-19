@@ -65,19 +65,22 @@
                 <t-input v-else-if="f.remarkPart" v-model="form.remarkParts[f.remarkPart]" />
                 <t-date-picker v-else-if="f.dataType === 'date'" v-model="form.data[f.name]" value-type="YYYY-MM-DD"
                   format="YYYY-MM-DD" clearable allow-input />
+                <!-- 第 65 轮：月份型字段强制月份选择器，禁止手输 53q / 5353 -->
+                <t-date-picker v-else-if="f.dataType === 'month'" v-model="form.data[f.name]"
+                  mode="month" value-type="YYYY-MM" format="YYYY-MM" :allow-input="false" clearable />
+                <!-- 第 65 轮：整数型字段（床位数 / 数量 / 入住天数）只允许非负整数 -->
+                <t-input-number v-else-if="f.dataType === 'integer'" v-model="form.data[f.name]"
+                  :min="0" :decimal-places="0" :allow-input="false" theme="normal" />
+                <!-- 第 65 轮：金额 / 小数型字段（押金 / 单价 / 面积 / 资产价值）
+                     受控数字控件：只接受数字与小数点，非负、最多 4 位小数。
+                     t-input-number 自带非法字符拦截，用户无法输入中文/字母/符号。 -->
+                <t-input-number v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
+                  :min="0" :decimal-places="4" :allow-input="false" theme="normal" />
                 <!-- 第 52 轮：内置枚举字段统一走可搜索下拉（选项由业务字段契约注入） -->
                 <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
                   clearable filterable placeholder="请选择">
                   <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
                 </t-select>
-                <!-- 数值字段：**只做双向绑定，输入时不过滤**（第 23 轮 issue 4）。
-                     旧实现在 @input 里跑 sanitizeNum，把值改写成过滤后的字符串，
-                     与 v-model 的内部赋值形成「写—回写」竞争，真机表现为
-                     「金额/税额怎么敲都变成空」。过滤没有任何收益：保存路径
-                     buildDetailPayload 里每个数值都过 toNumber()，脏字符本来就会被
-                     收敛成数字；而在输入过程中过滤反而会挡住负数、小数点的中间态
-                     （"−1" 输入第一个字符就被吃掉）。 -->
-                <t-input v-else-if="f.dataType === 'number'" v-model="form.data[f.name]" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
                      支持换行与自动折行，长内容完整录入与展示不截断。
                      用户显式选择的类型优先于下方的字段名兜底。 -->
@@ -318,7 +321,9 @@ const BSD_STATUS_FIELDS = new Set([
   '合同状态', '账户状态', '账单状态', '提取状态', '证照状态', '证件状态',
   '在职状态', '账期状态', '参保状态', '缴存状态', '记录性质',
   // 第 64 轮：宿舍五标签的状态列
-  '宿舍状态', '住宿状态', '资产状态', '维修状态', '房源类型',
+  // 第 65 轮：「资产状态」已改为**可编辑 enum**（正常/损坏/报废），必须从只读状态名单移除，
+  // 否则抽屉会把它渲染成纯文字而不是下拉（真机 7.2 失败的真因）。
+  '宿舍状态', '住宿状态', '房源类型',
 ])
 function isStatusField(f: DetailFieldMeta): boolean {
   return BSD_STATUS_FIELDS.has(String(f.name || '').trim())
@@ -445,6 +450,7 @@ function close() {
   white-space: nowrap;
 
   &.is-ok { color: var(--td-success-color); }
+  &.is-danger { color: var(--td-error-color); }
   &.is-warn { color: var(--td-warning-color); }
   &.is-off { color: var(--td-text-color-placeholder); }
   &.is-muted { color: var(--td-text-color-secondary); }

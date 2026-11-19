@@ -39,7 +39,16 @@
           <tr v-for="(row, i) in rows" :key="row[rowKey] ?? i">
             <td v-for="c in cols" :key="`td-${c.colKey}`" :style="{ textAlign: c.align || 'left' }"
               :title="cellText(row, c)">
-              {{ cellText(row, c) }}
+              <!-- 第 65 轮：行内编辑（opt-in）。失焦 / 回车提交，值未变不发请求。 -->
+              <input v-if="isEditable(c)" class="detail-cell-input"
+                :data-cell-input="`${c.colKey}`"
+                :value="draftOf(row, c)"
+                :inputmode="c.colKey === '备注' ? 'text' : 'decimal'"
+                @input="(e: any) => onCellInput(row, c, e.target.value)"
+                @focus="(e: any) => onCellFocus(row, c, e.target)"
+                @blur="(e: any) => onCellCommit(row, c, e.target.value)"
+                @keyup.enter="(e: any) => e.target.blur()" />
+              <template v-else>{{ cellText(row, c) }}</template>
             </td>
           </tr>
           <tr v-if="!rows.length">
@@ -81,13 +90,60 @@ const props = withDefaults(defineProps<{
   maxBodyHeight?: number
   emptyText?: string
   name?: string
+  /**
+   * 第 65 轮：行内编辑（opt-in）。只有 `editableCols` 命中的列会渲染输入框，
+   * 提交时 emit `cell-commit`（row / colKey / value），由父级决定调哪个接口。
+   */
+  editableCols?: string[]
+  /** 行内编辑的语义标识（父级用来区分不同表格的提交来源）。 */
+  editableKey?: string
 }>(), {
   foot: () => [],
   rowKey: 'id',
   maxBodyHeight: 380,
   emptyText: '暂无数据',
   name: 'detail',
+  editableCols: () => [],
+  editableKey: '',
 })
+
+const emit = defineEmits<{
+  (e: 'cell-commit', payload: { key: string; row: Record<string, any>; colKey: string; value: string }): void
+}>()
+
+/** 行内编辑草稿（按 `${rowKey}|${colKey}` 存，避免直接改 props.rows）。 */
+const drafts = ref<Record<string, string>>({})
+const editableSet = computed(() => new Set(props.editableCols || []))
+function isEditable(c: { colKey: string }): boolean {
+  return editableSet.value.has(c.colKey)
+}
+function draftKeyOf(row: Record<string, any>, colKey: string): string {
+  return `${row?.[props.rowKey] ?? ''}|${colKey}`
+}
+function draftOf(row: Record<string, any>, c: { colKey: string }): string {
+  const k = draftKeyOf(row, c.colKey)
+  if (k in drafts.value) return drafts.value[k]
+  const v = row?.[c.colKey]
+  return v === null || v === undefined ? '' : String(v)
+}
+function onCellFocus(row: Record<string, any>, c: { colKey: string }, el: HTMLInputElement) {
+  drafts.value[draftKeyOf(row, c.colKey)] = el.value
+}
+/** 数字列只允许数字与小数点（负数、字母、符号一律拦掉）。 */
+function onCellInput(row: Record<string, any>, c: { colKey: string }, raw: string) {
+  const isText = c.colKey === '备注'
+  const clean = isText ? raw : raw.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1')
+  drafts.value[draftKeyOf(row, c.colKey)] = clean
+}
+function onCellCommit(row: Record<string, any>, c: { colKey: string }, raw: string) {
+  const k = draftKeyOf(row, c.colKey)
+  const next = String(raw ?? '')
+  const prev = row?.[c.colKey] === null || row?.[c.colKey] === undefined ? '' : String(row[c.colKey])
+  delete drafts.value[k]
+  // 值未变不发请求（避免用户只是点一下也触发保存）
+  if (next === prev) return
+  emit('cell-commit', { key: props.editableKey, row, colKey: c.colKey, value: next })
+}
 
 const DEFAULT_WIDTH = 120
 const bodyRef = ref<HTMLElement | null>(null)
@@ -151,6 +207,9 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* 第 65 轮：弹窗内必须吃满剩余高度，否则数据区 max-height 生效但外层先被裁 */
+  flex: 1 1 auto;
+  height: 100%;
   width: 100%;
   /* 第 64 轮：容器自身永不出现横向滚动条（三段表已按百分比收口） */
   overflow-x: hidden;
@@ -177,7 +236,9 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
 .detail-table-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
+  /* 第 65 轮：显式 auto（原值已是 auto，这里加 !important 防被父级 hidden 覆盖），
+     并保证内容超出时一定出现可见垂直滚动条 */
+  overflow-y: auto !important;
   /* 第 64 轮：横向溢出必须被吞掉（外层容器也设 hidden），否则底部出现横滚轨道 */
   overflow-x: hidden !important;
   /* 滚动条常驻槽位；真实宽度仍以 JS 实测值补 padding（Firefox/Safari 宽度不同） */
@@ -205,6 +266,25 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   text-overflow: ellipsis;
   border-right: 1px solid var(--td-component-stroke);
   border-bottom: 1px solid var(--td-component-stroke);
+}
+/* 第 65 轮：行内编辑输入框 —— 无边框融入单元格，聚焦时高亮 */
+.detail-cell-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: var(--td-radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  outline: none;
+
+  &:hover { border-color: var(--td-component-stroke); }
+  &:focus {
+    border-color: var(--td-brand-color);
+    background: var(--td-bg-color-container);
+  }
 }
 .detail-table th:first-child,
 .detail-table td:first-child { border-left: 1px solid var(--td-component-stroke); }

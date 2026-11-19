@@ -18,7 +18,7 @@ import (
 // 第 61 轮：五胶囊字段契约（与前端 hrDorm.ts 同源）。
 func TestRound61DormFieldContract(t *testing.T) {
 	subs := hrDormSeedSubs()
-	// 第 64 轮字段契约：宿舍 26 / 公租房 30 / 住宿 27 / 资产 16 / 费用 15（月度账单汇总）
+	// 第 65 轮字段契约：宿舍 26 / 公租房 30 / 住宿 27 / 资产 12（删维修 4 字段）/ 费用 15（月度账单汇总）
 	count := map[string]int{}
 	for _, s := range subs {
 		count[s.Group]++
@@ -28,7 +28,7 @@ func TestRound61DormFieldContract(t *testing.T) {
 	require.Equal(t, 26, count[hrDormGroupRoom])
 	require.Equal(t, 30, count[hrDormGroupPublic])
 	require.Equal(t, 27, count[hrDormGroupStay])
-	require.Equal(t, 16, count[hrDormGroupAsset])
+	require.Equal(t, 12, count[hrDormGroupAsset])
 	require.Equal(t, 15, count[hrDormGroupFee])
 
 	// 状态列白名单：每个胶囊只允许自己的状态字段
@@ -38,6 +38,10 @@ func TestRound61DormFieldContract(t *testing.T) {
 	allowed, ok = hrAllowedStatusOf60(hrDormGroupFee)
 	require.True(t, ok)
 	require.Equal(t, []string{"账单状态"}, allowed)
+	// 第 65 轮：资产状态改可编辑下拉，不再是加锁状态列
+	allowed, ok = hrAllowedStatusOf60(hrDormGroupAsset)
+	require.True(t, ok)
+	require.Empty(t, allowed)
 	allowed, ok = hrAllowedStatusOf60(hrDormGroupStay)
 	require.True(t, ok)
 	require.Equal(t, []string{"住宿状态"}, allowed)

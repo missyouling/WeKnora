@@ -168,6 +168,7 @@ export function filterMetersByScopeAndCompany(
   if (!kindList.length) {
     // 用途接口未就绪 / 未落库时的兜底：内置宿舍 = dorm
     if (scope === 'dorm') kindList = [{ value: 'dorm', label: '宿舍' }]
+    // 第 65 轮：public 没有专属用途时返回空，由调用方回退到 dorm（公租房共用宿舍表）
   }
   const wanted = new Set(kindList.map((k) => String(k?.value ?? '').trim()).filter(Boolean))
   if (!wanted.size) return []
