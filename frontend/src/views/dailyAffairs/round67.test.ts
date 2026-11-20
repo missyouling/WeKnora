@@ -164,3 +164,15 @@ test('第67轮：社保记录保存接受自定义字段并写入 custom_data', 
   assert.match(src, /const extra: Record<string, any> = \{\}/)
   assert.match(src, /\.\.\.extra,/)
 })
+
+test('第67轮：社保/公积金列顺序跟随字段配置（只重排不重建）', () => {
+  const src = read('HrManagement.vue')
+  // 骨架列按 subs 顺序重排，勾选列恒第一
+  assert.match(src, /function orderColumnsBySubs\(cols: HrColumn\[\], subs: readonly any\[\]\): HrColumn\[\]/)
+  assert.match(src, /const head = cols\.filter\(\(c\) => c\.colKey === 'row-select'\)/)
+  // 三个入口都要走同一处排序：新增列合并后 / 公积金月度账单
+  assert.match(src, /const merged = extra\.length \? \[\.\.\.fixed, \.\.\.extra\] : fixed\s*\n\s*return orderColumnsBySubs\(merged, subs\)/)
+  assert.match(src, /return orderColumnsBySubs\(hrBillColumnDefs\(\), subsOfTab\('hr-fund'\)\)/)
+  // 配置里没有的列（派生列）不得丢，排在已知列之后
+  assert.match(src, /100000 \+ i/)
+})

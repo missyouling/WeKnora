@@ -1343,7 +1343,10 @@ const currentColumns = computed<HrColumn[]>(() => {
     return withExtraSubs(hrSocialColumnsOf(socialSubView.value), subsOfTab('hr-social'))
   }
   if (activeTab.value === 'hr-dorm') return dormColumns.value
-  if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') return hrBillColumnDefs()
+  if (activeTab.value === 'hr-fund' && fundSubView.value === 'bills') {
+    // 第 67 轮：月度账单列顺序同样跟随字段配置（拖拽排序 → 表头同步）
+    return orderColumnsBySubs(hrBillColumnDefs(), subsOfTab('hr-fund'))
+  }
   if (activeTab.value === 'hr-fund') {
     // 第 54 轮：18 个网厅原生字段为骨架，字段设置里新增/引用的字段追加在后。
     return withExtraSubs(hrFundColumns(), subsOfTab('hr-fund'))
@@ -1363,7 +1366,33 @@ function withExtraSubs(fixed: HrColumn[], subs: readonly any[]): HrColumn[] {
   const extra = hrColumnsFromSubs(subs, []).filter(
     (c) => c.colKey !== 'row-select' && !fixedNames.has(c.colKey),
   )
-  return extra.length ? [...fixed, ...extra] : fixed
+  const merged = extra.length ? [...fixed, ...extra] : fixed
+  return orderColumnsBySubs(merged, subs)
+}
+
+/**
+ * 第 67 轮：列顺序严格跟随字段配置（六同步第 6 条）。
+ *
+ * 花名册 / 劳动合同 / 宿舍的列本来就由 subs 派生，顺序天然同步；
+ * 社保与公积金的列骨架是代码固定的（含金额/枚举渲染器），这里**只重排不重建**：
+ * 按 subs 的 label 顺序排序，配置里没有的列（派生列 / 勾选列）保持相对位置。
+ * 勾选列永远第一，绝不冻结。
+ */
+function orderColumnsBySubs(cols: HrColumn[], subs: readonly any[]): HrColumn[] {
+  const rank = new Map<string, number>()
+  subs.forEach((s: any, i: number) => {
+    if (!s || s.enabled === false) return
+    const label = String(s.label || s.name || '').trim()
+    if (label && !rank.has(label)) rank.set(label, i)
+  })
+  if (!rank.size) return cols
+  const head = cols.filter((c) => c.colKey === 'row-select')
+  const rest = cols.filter((c) => c.colKey !== 'row-select')
+  const sorted = rest
+    .map((c, i) => ({ c, i, r: rank.has(c.colKey) ? rank.get(c.colKey)! : 100000 + i }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c)
+  return [...head, ...sorted]
 }
 const businessColumns = computed(() => currentColumns.value.filter((c) => c.colKey !== 'row-select'))
 /**
