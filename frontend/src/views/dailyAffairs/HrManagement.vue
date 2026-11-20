@@ -607,9 +607,10 @@
       </template>
     </t-dialog>
 
-    <!-- 第 57 轮：月度账单由抽屉改为**大尺寸居中弹窗**（社保 / 公积金统一设计），
-         顶部四标签「个人明细 | 单位明细 | 部门汇总 | 按岗位汇总」，标签下方标准工具栏
-         （左侧搜索/部门/条件险种，右侧打印 + 导出 Excel），表格合计行恒贴底。 -->
+    <!-- 第 57 轮：月度账单由抽屉改为**大尺寸居中弹窗**（社保 / 公积金统一设计）。
+         第 67 轮：社保恢复三标签（个人明细 | 单位明细 | 部门汇总），删除旧岗位汇总标签；
+         公积金固定四标签（个人明细 | 单位明细 | 部门汇总 | 岗位汇总），
+         岗位口径严格取花名册真实「岗位」字段。 -->
     <!-- 第 63 轮：账单明细弹窗加宽到 1480px，配合三段表百分比列宽彻底消除横向滚动条 -->
     <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(96vw, 1480px)"
       placement="center" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
@@ -619,8 +620,8 @@
             <t-radio-button value="personal">个人明细</t-radio-button>
             <t-radio-button value="unit">单位明细</t-radio-button>
             <t-radio-button value="summary">部门汇总</t-radio-button>
-            <!-- 第 66 轮：新增「按岗位汇总」—— 按花名册岗位分组，口径与部门汇总完全一致 -->
-            <t-radio-button value="post">按岗位汇总</t-radio-button>
+            <!-- 第 67 轮：岗位汇总只在公积金弹窗出现（社保没有岗位维度） -->
+            <t-radio-button v-if="billDetailKind === 'fund'" value="post">岗位汇总</t-radio-button>
           </t-radio-group>
         </div>
         <div class="hr-bill-filters">
@@ -646,20 +647,19 @@
             </t-input>
             <span class="hr-bill-count">共 {{ billSummaryRows.length }} 个部门</span>
           </template>
-          <!-- 第 66 轮：按岗位汇总 —— 关键词搜索岗位 + 岗位下拉实时筛选 -->
+          <!-- 第 67 轮：岗位汇总 —— 只保留岗位搜索框 + 岗位计数（实时模糊过滤） -->
           <template v-else>
             <t-input v-model="billPostKeyword" placeholder="搜索岗位" clearable
               class="hr-bill-search" data-hr-bill-post-search>
               <template #prefixIcon><t-icon name="search" size="16px" /></template>
             </t-input>
-            <t-select v-model="billPostFilter" :options="billPostOptions" placeholder="全部岗位"
-              :clearable="false" class="hr-bill-select" data-hr-bill-post-select />
             <span class="hr-bill-count" data-hr-bill-post-count>共 {{ billPostRows.length }} 个岗位</span>
           </template>
           <span class="hr-bill-spacer" />
         </div>
         <!-- 第 61 轮：三段分离式表格（表头 / 滚动数据区 / 合计行各自独立容器）。
-             垂直滚动条只出现在中间数据区，绝不贯穿表头与合计行（图 1 的问题）。 -->
+             垂直滚动条只出现在中间数据区，绝不贯穿表头与合计行（图 1 的问题）。
+             第 67 轮：滚动条宽度恒实测补偿，有/无纵向滚动条两种状态竖线均像素级对齐。 -->
         <div class="hr-bill-table-wrap">
           <DetailScrollTable v-if="billDetailTab === 'summary'" name="bill-summary"
             :columns="billSummaryColumns" :rows="billSummaryRows" :foot="billSummaryFoot"
@@ -842,7 +842,7 @@ import {
 } from './companyScope'
 import { listUtilityMeters, listUtilityKinds } from '@/api/knowledge-base'
 // 第 58 轮：账单人数 / 行序号口径抽成纯函数（可单测，打印导出处共用同一套）
-import { billPeopleCountOf, isAdjustmentRow, siBillPeopleOf } from './hrBill'
+import { billPeopleCountOf, groupBillCents, isAdjustmentRow, siBillPeopleOf } from './hrBill'
 import type { FilterFieldSpec } from './businessFilter'
 
 // ---------------------------------------------------------------------------
@@ -1015,10 +1015,9 @@ const billRows = ref<any[]>([])
 const billKeyword = ref('')
 const billDept = ref('')
 const billScheme = ref('全部')
-/** 第 66 轮：账单弹窗四标签（个人明细 | 单位明细 | 部门汇总 | 按岗位汇总）。
-     社保默认「个人明细」，公积金默认「部门汇总」（与需求一致）。 */
+/** 第 67 轮：账单弹窗标签（社保 3 个：个人明细/单位明细/部门汇总；
+     公积金 4 个：+ 岗位汇总），社保默认「个人明细」，公积金默认「部门汇总」。 */
 const billDetailKind = ref<'fund' | 'social'>('fund')
-// 第 66 轮：4 标签（个人明细 / 单位明细 / 部门汇总 / 按岗位汇总）
 const billDetailTab = ref<'personal' | 'unit' | 'summary' | 'post'>('summary')
 const billDeptKeyword = ref('')
 const SI_BILL_SCHEME_OPTIONS = [
@@ -2253,6 +2252,19 @@ const orderedSubPairs = computed(() => {
  * 控件全部复用 BusinessSplitDetailDrawer 的 dataType / options 分支：
  * 日期 → t-date-picker，内置枚举 → t-select filterable，只读派生 → disabled。
  */
+/**
+ * 第 67 轮：自定义字段（静态契约里没有）的抽屉控件类型 —— 严格按字段配置的
+ * `data_type` 渲染：单行文本 / 多行文本（独占整行）/ 数字 / 日期 / 数组。
+ */
+function hrDrawerTypeOfSub(sub: any): 'text' | 'textarea' | 'number' | 'date' | 'attachment' {
+  const t = String(sub?.data_type || 'text')
+  if (t === 'textarea') return 'textarea'
+  if (t === 'number') return 'number'
+  if (t === 'date') return 'date'
+  if (t === 'attachment') return 'attachment'
+  return 'text'
+}
+
 const drawerGroups = computed(() => {
   // 第 61 轮：宿舍编辑抽屉按当前标签的胶囊字段渲染（枚举/文本域/只读派生列）
   if (activeTab.value === 'hr-dorm' && dormSubView.value !== 'fee') {
@@ -2343,13 +2355,16 @@ const drawerGroups = computed(() => {
     const defOfName = new Map<string, any>()
     for (const d of HR_ROSTER_GROUPS.flatMap((g) => g.fields)) defOfName.set(d.name, d)
     for (const d of HR_RESIGN_FIELDS) defOfName.set(d.name, d)
+    const subOfName = new Map<string, any>()
+    for (const s of subs) subOfName.set(String(s?.name || '').trim(), s)
     const groups: { key: string; label: string; fields: string[] }[] = []
     const seen = new Set<string>()
     for (const sub of subs) {
       const name = String(sub?.name || '').trim()
       if (!name || seen.has(name)) continue
       seen.add(name)
-      const label = resignNames.has(name) ? '离职信息' : (groupOfName.get(name) || '在职信息')
+      const label = resignNames.has(name) ? '离职信息'
+        : (groupOfName.get(name) || '自定义信息')
       let g = groups.find((x) => x.key === label)
       if (!g) { g = { key: label, label, fields: [] }; groups.push(g) }
       g.fields.push(name)
@@ -2359,6 +2374,7 @@ const drawerGroups = computed(() => {
       label: g.label,
       fields: g.fields.map((name) => {
         const def = defOfName.get(name)
+        const sub = subOfName.get(name)
         const col = businessColumns.value.find((x) => x.colKey === name)
         const staticOptions = hrEnumsOf(name)
         const options = def?.dynamic === 'department' ? rosterDeptOptions.value
@@ -2366,9 +2382,10 @@ const drawerGroups = computed(() => {
             : (staticOptions.length ? staticOptions : (def?.options || []))
         return {
           name,
-          label: col?.title || name,
-          dataType: def ? hrDataTypeOf(def) : 'text',
-          readonly: READONLY_DETAIL_FIELDS.has(name) || !!def?.source || def?.type === 'system',
+          label: String(col?.title || sub?.label || name).trim() || name,
+          dataType: def ? hrDataTypeOf(def) : hrDrawerTypeOfSub(sub),
+          readonly: READONLY_DETAIL_FIELDS.has(name) || !!def?.source || def?.type === 'system'
+            || !!sub?.source,
           ...(options.length ? { options } : {}),
         }
       }),
@@ -2377,6 +2394,8 @@ const drawerGroups = computed(() => {
   const mod = activeModule.value
   // 第 58 轮：社保「正常记录 / 异常记录」抽屉按当前胶囊的 16 字段契约渲染。
   // 之前 activeModule 为 null → 抽屉退回 businessColumns 且 data 全空（真机图 6）。
+  // 第 67 轮：契约字段之后追加**用户在字段设置里新增的自定义字段**（六同步），
+  // 否则新增的「工作地点」这类字段永远进不了社保抽屉。
   if (!mod && activeTab.value === 'hr-social'
     && (socialSubView.value === 'normal' || socialSubView.value === 'abnormal')) {
     const fields = socialSubView.value === 'normal' ? HR_SOCI_NORMAL_FIELDS : HR_SOCI_ABNORMAL_FIELDS
@@ -2395,6 +2414,18 @@ const drawerGroups = computed(() => {
           ...(f.options?.length ? { options: f.options } : {}),
         }
       })
+    const known = new Set(fields.map((f) => f.name))
+    for (const sub of subsOfTab('hr-social')) {
+      const nm = String(sub?.name || '').trim()
+      if (!nm || known.has(nm) || sub?.enabled === false) continue
+      known.add(nm)
+      list.push({
+        name: nm,
+        label: String(sub?.label || nm).trim() || nm,
+        dataType: hrDrawerTypeOfSub(sub),
+        readonly: !!sub?.source,
+      })
+    }
     return [{ key: 'record', label: '社保记录', fields: list }]
   }
   if (!mod) return undefined
@@ -2403,10 +2434,20 @@ const drawerGroups = computed(() => {
     : hrModuleFields(mod)
   const defOf = (p: { label: string; key: string }) =>
     defs.find((d) => d.name === p.key) || defs.find((d) => d.name === p.label)
-  let pairs = orderedSubPairs.value.filter((p) => !!defOf(p))
+  const rawSubs = subsOfTab(activeTab.value).filter((s: any) => s && s.enabled !== false)
+  const subOf = (p: { label: string; key: string }) =>
+    rawSubs.find((s: any) => String(s?.name || '').trim() === p.key)
+    || rawSubs.find((s: any) => String(s?.label || '').trim() === p.label)
+  /**
+   * 第 67 轮：**不再按静态契约白名单过滤**。
+   *
+   * 旧实现 `pairs.filter((p) => !!defOf(p))` 把用户新增的自定义字段（契约里没有）
+   * 全部丢掉 —— 字段设置里加了「工作地点」，列表有列、抽屉却没有输入框（六同步断裂）。
+   * 现在 subs 才是唯一真相源；契约只用来补类型 / 枚举 / 只读语义。
+   */
+  let pairs = orderedSubPairs.value.slice()
   // subs 未就绪（首帧 / 接口失败）时回退字段契约顺序，绝不让抽屉空掉
   if (!pairs.length) pairs = defs.map((d) => ({ label: d.name, key: d.name, group: '' }))
-  if (mod !== 'roster') pairs = pairs.filter((p) => !!defOf(p))
   // 第 59 轮：抽屉只取「当前激活胶囊」的字段，并按键名去重。
   // 劳动合同 / 劳务合同两组字段同名，旧实现把两组拼在一起 → 图 3 整套字段重复一遍。
   const wantGroup = mod === 'contract'
@@ -2418,47 +2459,51 @@ const drawerGroups = computed(() => {
   }
   const seenPair = new Set<string>()
   pairs = pairs.filter((p) => {
-    const k = p.label
+    const k = p.key || p.label
     if (seenPair.has(k)) return false
     seenPair.add(k)
     return true
   })
 
-  const groups: { key: string; label: string; fields: string[] }[] = []
+  const groups: { key: string; label: string; fields: typeof pairs }[] = []
   if (mod === 'roster') {
-    // 组顺序 = 该组第一个字段在 subs 里出现的顺序；组内顺序 = subs 顺序
+    // 组顺序 = 该组第一个字段在 subs 里出现的顺序；组内顺序 = subs 顺序。
+    // 未归属固定分组的新增自定义字段统一进「自定义信息」（标题带绿标）。
     for (const p of pairs) {
-      const label = groupLabelOf(p.label) || '在职信息'
+      const label = groupLabelOf(p.key) || groupLabelOf(p.label) || '自定义信息'
       let g = groups.find((x) => x.key === label)
       if (!g) { g = { key: label, label, fields: [] }; groups.push(g) }
-      g.fields.push(p.label)
+      g.fields.push(p)
     }
   } else {
     const want = mod === 'fund'
       ? (fundSubView.value === 'bills' ? HR_FUND_BILL_GROUP : HR_FUND_DETAIL_GROUP)
       : hrModuleGroups(mod)[0]?.key || mod
     const label = hrModuleGroups(mod).find((g) => g.key === want)?.label || want
-    groups.push({ key: want, label, fields: pairs.map((p) => p.label) })
+    groups.push({ key: want, label, fields: pairs })
   }
   return groups.filter((g) => g.fields.length).map((g) => ({
     key: g.key,
     label: g.label,
-    fields: g.fields.map((name: string) => {
-      const c = businessColumns.value.find((x) => x.colKey === name)
-      const pair = pairs.find((p) => p.label === name)
-      const def = pair ? defOf(pair) : defs.find((d) => d.name === name)
+    fields: g.fields.map((p) => {
+      const name = p.key || p.label
+      const def = defOf(p)
+      const sub = subOf(p)
+      const c = businessColumns.value.find((x) => x.colKey === p.label)
+        || businessColumns.value.find((x) => x.colKey === name)
       const staticOptions = hrEnumsOf(name)
       const options = def?.dynamic === 'department' ? rosterDeptOptions.value
         : def?.dynamic === 'unit' ? rosterUnitOptions.value
           : (staticOptions.length ? staticOptions : (def?.options || staticOptions))
       return {
+        // 数据键一律取 subs 的 name（改名只改 label，绝不动数据身份）
         name,
-        label: c?.title || name,
-        // 日期 / 多行文本 / 附件一律按字段契约类型渲染（第 57 轮不再降级成 text）
-        dataType: def ? hrDataTypeOf(def) : (c?.dataType || 'text'),
+        label: String(p.label || c?.title || name).trim() || name,
+        // 日期 / 多行文本 / 数组一律按字段配置的类型渲染（自定义字段同样生效）
+        dataType: def ? hrDataTypeOf(def) : hrDrawerTypeOfSub(sub),
         // 第 55 轮：带 source 的跨表引用字段一律只读，抽屉只允许编辑本页原生字段
         readonly: READONLY_DETAIL_FIELDS.has(name) || def?.type === 'system' || !!def?.source
-          || (mod !== 'roster' && HR_REF_ONLY_FIELDS.has(name)),
+          || !!sub?.source || (mod !== 'roster' && HR_REF_ONLY_FIELDS.has(name)),
         ...(options.length ? { options } : {}),
       }
     }),
@@ -2785,6 +2830,19 @@ async function saveDetail() {
     const d = editForm.value.data || {}
     saving.value = true
     try {
+      /**
+       * 第 67 轮：社保正常/异常记录也支持自定义字段（六同步）。
+       * 契约内的 7 个可编辑列照旧走专用入参；用户在字段设置里新增的字段
+       * 追加为额外键，由后端并入 custom_data（身份维度 / 只读列一律不带）。
+       */
+      const known = new Set(['费款所属期', '缴费基数', '单位缴费比例', '单位应缴金额',
+        '个人缴费比例', '个人应缴金额', '补退类型'])
+      const extra: Record<string, any> = {}
+      for (const f of drawerFields.value) {
+        const nm = String((f as any).name || '')
+        if (!nm || known.has(nm) || (f as any).readonly) continue
+        extra[nm] = d[nm] ?? ''
+      }
       await hrApi.updateSocialRecord(String(id), {
         费款所属期: d['费款所属期'],
         缴费基数: d['缴费基数'],
@@ -2793,6 +2851,7 @@ async function saveDetail() {
         个人缴费比例: d['个人缴费比例'],
         个人应缴金额: d['个人应缴金额'],
         补退类型: d['补退类型'],
+        ...extra,
       })
       MessagePlugin.success('已保存')
       detailVisible.value = false
@@ -3392,7 +3451,7 @@ function resetBillDialog(kind: 'fund' | 'social', title: string) {
 
 async function openBillDetail(row: any) {
   resetBillDialog('fund', `${row?.month_label || row?.账单周期 || ''} 公积金缴存明细`)
-  // 第 66 轮：先拉花名册岗位映射（「按岗位汇总」的分组键），失败不阻断弹窗
+  // 第 67 轮：先拉花名册岗位映射（岗位汇总的分组键），失败不阻断弹窗
   void loadBillPostMap()
   const id = row?.id
   if (!id) return
@@ -3415,7 +3474,7 @@ async function openBillDetail(row: any) {
   } catch (e: any) { MessagePlugin.error(e?.message || '加载账单明细失败') }
 }
 
-/** 第 66 轮：社保月度账单 → 扣款明细弹窗（个人明细 / 单位明细 / 部门汇总 / 按岗位汇总）。 */
+/** 第 67 轮：社保月度账单 → 扣款明细弹窗（个人明细 / 单位明细 / 部门汇总，无岗位维度）。 */
 async function openSIBillDetail(row: any) {
   resetBillDialog('social', `${row?.账单周期 || row?.month_label || ''} 社保扣款明细`)
   void loadBillPostMap()
@@ -3430,10 +3489,14 @@ async function openSIBillDetail(row: any) {
 }
 
 /**
- * 第 66 轮：拉取花名册「岗位」映射（身份证 / 职工账号 / 姓名 三键并存）。
+ * 第 67 轮：拉取花名册「岗位」映射（身份证 / 职工账号 / 姓名 三键并存）。
  *
  * 只取在职+离职全量：账单里可能有已离职人员，漏拉会导致岗位汇总落到
  * 「未设置岗位」，总数虽对但分布失真。
+ *
+ * 岗位取值优先级（第 67 轮修正）：custom_data.岗位 → 顶层「岗位」→ position。
+ * 主列 position 是「普工 / 操作员」这类职务口径，旧实现把它排在 custom_data 之前，
+ * 结果全部人员被压成两三个岗位（真机断言「小拉操作员」等永不出现）。
  */
 let billPostMapInflight: Promise<void> | null = null
 async function loadBillPostMap(): Promise<void> {
@@ -3445,7 +3508,9 @@ async function loadBillPostMap(): Promise<void> {
       const items: any[] = Array.isArray(d.items) ? d.items : (Array.isArray(d) ? d : [])
       const m = new Map<string, string>()
       for (const e of items) {
-        const post = String(e['岗位'] || e.position || e.custom_data?.['岗位'] || '').trim()
+        const post = String(
+          e.custom_data?.['岗位'] || e['岗位'] || e.custom_fields?.['岗位'] || e.position || '',
+        ).trim()
         if (!post) continue
         const idc = String(e.id_number || e['证件号码'] || '').replace(/[^0-9Xx]/g, '').toUpperCase()
         if (idc) m.set(idc, post)
@@ -3464,13 +3529,13 @@ async function loadBillPostMap(): Promise<void> {
   return billPostMapInflight
 }
 
-/** 三标签切换：清空两个关键词，部门与险种条件保留（用户通常按部门逐层看）。 */
+/** 标签切换：清空两个关键词，部门与险种条件保留（用户通常按部门逐层看）。 */
 function onBillDetailTabChange() {
   billKeyword.value = ''
   billDeptKeyword.value = ''
-  // 第 66 轮：岗位筛选也随标签切换重置，避免从「按岗位汇总」带回一个失效的岗位名
+  // 第 67 轮：社保没有岗位标签，切到 post 视为非法态 → 回落到个人明细
+  if (billDetailTab.value === 'post' && billDetailKind.value !== 'fund') billDetailTab.value = 'personal'
   billPostKeyword.value = ''
-  billPostFilter.value = ''
 }
 
 const billFiltered = computed(() => {
@@ -3549,9 +3614,8 @@ const BILL_PF_UNIT_COLUMNS = [
   { colKey: '单位缴存', title: '单位缴存额(元)', width: 150 },
 ]
 /** 部门汇总：人数 / 个人 / 单位 / 合计（社保与公积金同构，岗位汇总同形）。 */
-/** 第 66 轮：按岗位汇总的搜索/筛选状态（与部门汇总互不干扰）。 */
+/** 第 67 轮：岗位汇总的搜索状态（部门汇总/岗位汇总互不干扰）。 */
 const billPostKeyword = ref('')
-const billPostFilter = ref('')
 /** 员工身份证/账号 → 岗位。打开弹窗时从花名册一次性拉取。 */
 const billPostOfPerson = ref<Map<string, string>>(new Map())
 
@@ -3576,11 +3640,11 @@ const billSubjectColumns = computed(() => {
 })
 const billSummaryColumns = computed(() => BILL_SUMMARY_COLUMNS)
 
-/** 第 66 轮：按岗位汇总列（与部门汇总完全同构，仅第二列换成「岗位」）。 */
+/** 第 67 轮：岗位汇总列（与部门汇总完全同构，仅第二列换成「岗位」，宽度比例一致）。 */
 /**
- * 第 66 轮：当前标签页的数据源（打印/导出/表格共用一处，避免三处各写一遍 if）。
+ * 第 67 轮：当前标签页的数据源（打印/导出/表格共用一处，避免三处各写一遍 if）。
  *
- * `key` 用于打印标题与 Excel sheet 名；`label` 是对外文案（部门汇总/按岗位汇总）。
+ * `key` 用于打印标题与 Excel sheet 名；`label` 是对外文案（部门汇总/岗位汇总）。
  */
 function billTabSource(tab = billDetailTab.value) {
   if (tab === 'summary') {
@@ -3588,7 +3652,7 @@ function billTabSource(tab = billDetailTab.value) {
       rows: billSummaryRows.value, foot: billSummaryFoot.value }
   }
   if (tab === 'post') {
-    return { key: 'post', label: '按岗位汇总', columns: billPostColumns.value,
+    return { key: 'post', label: '岗位汇总', columns: billPostColumns.value,
       rows: billPostRows.value, foot: billPostFoot.value }
   }
   const label = tab === 'unit' ? '单位明细' : '个人明细'
@@ -3598,20 +3662,13 @@ function billTabSource(tab = billDetailTab.value) {
 
 const BILL_POST_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
-  { colKey: '岗位', title: '岗位', width: 200 },
+  { colKey: '岗位', title: '岗位', width: 180 },
   { colKey: '人数', title: '人数', width: 100 },
   { colKey: '个人金额', title: '个人金额', width: 170 },
   { colKey: '单位金额', title: '单位金额', width: 170 },
   { colKey: '合计', title: '合计', width: 150 },
 ]
 const billPostColumns = computed(() => BILL_POST_COLUMNS)
-
-/** 花名册岗位字典（覆盖当前弹窗涉及的全部人员，供下拉筛选）。 */
-const billPostOptions = computed(() => {
-  const names = new Set<string>()
-  for (const r of billFiltered.value) names.add(billPostOf(r))
-  return [{ label: '全部岗位', value: '' }, ...[...names].sort().map((v) => ({ label: v, value: v }))]
-})
 
 /** 某条缴存记录对应的岗位（身份证优先 → 职工账号 → 姓名，均取不到归「未设置岗位」）。 */
 function billPostOf(r: any): string {
@@ -3627,39 +3684,28 @@ function billPostOf(r: any): string {
 }
 
 /**
- * 第 66 轮：按岗位汇总。
+ * 第 67 轮：岗位汇总。
  *
  * 口径必须与「部门汇总」逐分一致 —— 同一批缴存记录、同样的分累加、
- * 同样排除补缴行的人数统计。差别只在分组键：部门 → 岗位。
+ * 同样排除补缴行的人数统计；无筛选时合计恒等于部门汇总（74 人 / 45,878.00）。
+ * 排序：人数降序 → 合计金额降序 → 岗位名（中文）升序。
  */
 const billPostRows = computed(() => {
   const kw = billPostKeyword.value.trim().toLowerCase()
-  const pick = billPostFilter.value
   const isSocial = billDetailKind.value === 'social'
-  const m = new Map<string, { 岗位: string; 人数: number; p: number; u: number }>()
-  for (const r of billFiltered.value) {
-    const post = billPostOf(r)
-    const e = m.get(post) || { 岗位: post, 人数: 0, p: 0, u: 0 }
-    if (!isAdjustmentRow(r)) e.人数++
-    if (isSocial) {
-      e.p += siCents(r.个人小计)
-      e.u += siCents(r.单位小计)
-    } else {
-      e.p += siCents(r.个人缴存)
-      e.u += siCents(r.单位缴存)
-    }
-    m.set(post, e)
-  }
-  let keys = Array.from(m.keys()).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
-  if (pick) keys = keys.filter((k) => k === pick)
-  if (kw) keys = keys.filter((k) => k.toLowerCase().includes(kw))
-  return keys.map((k, i) => {
-    const e = m.get(k)!
-    return {
-      id: `post-${k}`, 序号: String(i + 1), 岗位: k, 人数: e.人数,
-      个人金额: siFmt(e.p), 单位金额: siFmt(e.u), 合计: siFmt(e.p + e.u),
-    }
+  // 聚合口径与部门汇总同源（groupBillCents：分累加 + 补缴行不计人 + 人数降序）
+  const groups = groupBillCents(billFiltered.value, {
+    keyOf: (r) => billPostOf(r),
+    personalCentsOf: (r) => siCents(isSocial ? r.个人小计 : r.个人缴存),
+    unitCentsOf: (r) => siCents(isSocial ? r.单位小计 : r.单位缴存),
+    countPerson: (r) => !isAdjustmentRow(r),
   })
+  const list = kw ? groups.filter((e) => e.key.toLowerCase().includes(kw)) : groups
+  return list.map((e, i) => ({
+    id: `post-${e.key}`, 序号: String(i + 1), 岗位: e.key, 人数: e.people,
+    个人金额: siFmt(e.personalCents), 单位金额: siFmt(e.unitCents),
+    合计: siFmt(e.personalCents + e.unitCents),
+  }))
 })
 
 const billPostFoot = computed(() => {
@@ -3779,11 +3825,11 @@ const billSummaryFoot = computed(() => {
 
 /**
  * 第 57 轮：账单打印 —— 严格只打印**当前激活标签页**的数据表
- * （个人明细 / 单位明细 / 部门汇总 / 按岗位汇总），并附带底部合计行。
+ * （个人明细 / 单位明细 / 部门汇总 / 岗位汇总），并附带底部合计行。
  * 100% 复用中台 PrintPreviewDialog + generateCatalogPdf，不新造打印组件。
  */
 async function printBillDetail() {
-  // 第 66 轮：4 标签统一走一处取数（含新增的「按岗位汇总」）
+  // 第 67 轮：标签页统一走一处取数（含公积金新增的「岗位汇总」）
   const src = billTabSource()
   const activeColumns = src.columns
   const activeRows = src.rows
@@ -3818,7 +3864,7 @@ async function printBillDetail() {
  * 动态 import xlsx，避免把 ~490KB 的表格库塞进人事首屏 chunk。
  */
 async function exportBillExcel() {
-  // 第 66 轮：4 标签统一走一处取数（含新增的「按岗位汇总」）
+  // 第 67 轮：标签页统一走一处取数（含公积金新增的「岗位汇总」）
   const src = billTabSource()
   const activeColumns = src.columns
   const activeRows = src.rows

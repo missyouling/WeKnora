@@ -54,3 +54,44 @@ export function subjectRowSeqOf(rows: readonly any[] | null | undefined): string
   if (!rows || !rows.length) return []
   return rows.map((_, i) => String(i + 1))
 }
+
+/** 汇总分组（部门 / 岗位同构）：人数 + 个人 / 单位金额（分）。 */
+export interface BillGroupCents {
+  key: string
+  people: number
+  personalCents: number
+  unitCents: number
+}
+
+/**
+ * 第 67 轮：部门汇总 / 岗位汇总的**同一套**分累加口径。
+ *
+ * 两个视图必须逐分相等（2026-11 公积金：74 人 / 22,939.00 / 22,939.00 / 45,878.00），
+ * 唯一差别是分组键（部门 → 岗位），所以聚合逻辑抽成纯函数，页面只负责投影成表格行。
+ * 排序：人数降序 → 合计金额降序 → 键名（中文）升序。
+ */
+export function groupBillCents(
+  rows: readonly any[] | null | undefined,
+  opts: {
+    keyOf: (row: any) => string
+    personalCentsOf: (row: any) => number
+    unitCentsOf: (row: any) => number
+    /** 是否计入人数（默认全部计入；社保补缴行传 false）。 */
+    countPerson?: (row: any) => boolean
+  },
+): BillGroupCents[] {
+  if (!rows || !rows.length) return []
+  const map = new Map<string, BillGroupCents>()
+  for (const r of rows) {
+    const key = String(opts.keyOf(r) ?? '').trim() || '未分配'
+    const e = map.get(key) || { key, people: 0, personalCents: 0, unitCents: 0 }
+    if (!opts.countPerson || opts.countPerson(r)) e.people++
+    e.personalCents += opts.personalCentsOf(r) || 0
+    e.unitCents += opts.unitCentsOf(r) || 0
+    map.set(key, e)
+  }
+  return [...map.values()].sort((a, b) =>
+    b.people - a.people
+    || (b.personalCents + b.unitCents) - (a.personalCents + a.unitCents)
+    || a.key.localeCompare(b.key, 'zh-Hans-CN'))
+}

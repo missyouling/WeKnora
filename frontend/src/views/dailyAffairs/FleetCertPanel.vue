@@ -387,9 +387,12 @@
                     placeholder="搜索并引用模块内其它列表字段（如 合同状态、手机号码、司龄）"
                     @select="addRefField" />
                 </div>
-                <!-- 第 57 轮：singleCategory 下只保留「搜索并引用」，不再给自由新增字段入口
-                     （手输字段名会造出没有数据来源的空列）。 -->
-                <div v-else-if="!directMode && !props.singleCategory" class="field-config-add">
+                <!-- 第 67 轮：人事模块恢复「自由新增字段」入口 —— 花名册/合同/宿舍的自定义
+                     字段（如「工作地点」）本身就是人工录入列，六同步链路必须能创建它。
+                     人事的 5 个 scope 同时又是「引用分类」，所以这里**与引用选择器并列渲染**
+                     （旧实现是 v-else-if，引用块把自由新增整块吃掉了）。
+                     能耗费用清单（isRefCategory 但非 singleCategory）仍不放开。 -->
+                <div v-if="showFreeFieldAdd" class="field-config-add">
                   <t-input v-model="newFieldName" size="small" placeholder="新增字段名" class="fc-add-input"
                     @enter="addField" />
                   <t-button variant="outline" size="small" @click="addField">添加</t-button>
@@ -827,6 +830,14 @@ const isRefCategory = computed(() => {
   const hasRef = props.refSources.length > 0 || !!props.refSourceScope
   return hasRef && HR_REF_SCOPES.has(String(props.scope || ''))
 })
+/**
+ * 第 67 轮：是否展示「自由新增字段」输入框。
+ *
+ * 人事 5 个列表（singleCategory）必须能新增自定义字段；能耗费用清单这类
+ * 纯引用分类仍只允许「搜索并引用」，避免造出没有数据来源的空列。
+ */
+const showFreeFieldAdd = computed(() => !directMode.value && (props.singleCategory || !isRefCategory.value))
+
 /** 已添加的引用 key（`分类__字段`），传给选择器过滤候选。 */
 const refFieldKeys = computed(() =>
   // 排除键必须与 SourceFieldPicker 的候选 key 同构（含来源分组）：

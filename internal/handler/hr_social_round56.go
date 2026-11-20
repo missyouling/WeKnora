@@ -1078,6 +1078,24 @@ func (h *HRHandler) UpdateSIRecord(c *gin.Context) {
 	row.CustomData["个人应缴金额"] = row.PersonalAmount
 	row.CustomData["应缴合计"] = row.TotalAmount
 	row.CustomData["补退类型"] = row.AdjustType
+	// 第 67 轮：字段设置里新增的自定义字段（如「工作地点」）随抽屉一起保存。
+	// 身份维度与系统派生列一律不接受改写，其余未识别键按字符串并入 custom_data。
+	siRecordLocked := map[string]bool{
+		"id": true, "费款所属期": true, "个人编号": true, "姓名": true, "身份证号": true,
+		"险种类型": true, "记录类型": true, "源文件": true, "应缴合计": true,
+		"缴费基数": true, "单位缴费比例": true, "单位应缴金额": true,
+		"个人缴费比例": true, "个人应缴金额": true, "补退类型": true,
+	}
+	for k, v := range req {
+		if siRecordLocked[k] || v == nil {
+			continue
+		}
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		row.CustomData[key] = strings.TrimSpace(toStringValue(v))
+	}
 	if err := h.db.WithContext(ctx).Save(&row).Error; err != nil {
 		hrFail(c, "保存社保记录失败: "+err.Error())
 		return

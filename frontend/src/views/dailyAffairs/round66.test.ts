@@ -64,27 +64,26 @@ test('第66轮：TenantBilling 用 pdf-lib 合并两份 PDF 成 3 页', () => {
   assert.match(src, /mergeStatementPdfs66\(\[elec, water\]\)/)
 })
 
-test('第66轮：公积金弹窗 4 标签（部门汇总 + 按岗位汇总）', () => {
+test('第66轮：公积金弹窗 4 标签（部门汇总 + 岗位汇总，第 67 轮改名）', () => {
   const src = read('HrManagement.vue')
   assert.match(src, /value="summary">部门汇总</)
-  assert.match(src, /value="post">按岗位汇总</)
+  assert.match(src, /v-if="billDetailKind === 'fund'" value="post">岗位汇总</)
   assert.ok(!/汇总数据/.test(src), '旧文案「汇总数据」必须消失')
   // 打印/导出共用一处取数（含 post 分支）
   assert.match(src, /function billTabSource/)
   assert.match(src, /tab === 'post'/)
-  assert.match(src, /label: '按岗位汇总'/)
+  assert.match(src, /label: '岗位汇总'/)
   // 岗位汇总的金额口径与部门汇总同源
   const postIdx = src.indexOf('const billPostRows')
   const body = src.slice(postIdx, postIdx + 1400)
-  assert.match(body, /siCents\(r\.个人缴存\)/)
-  assert.match(body, /siCents\(r\.单位缴存\)/)
+  assert.match(body, /siCents\(isSocial \? r\.个人小计 : r\.个人缴存\)/)
+  assert.match(body, /siCents\(isSocial \? r\.单位小计 : r\.单位缴存\)/)
   assert.match(body, /isAdjustmentRow\(r\)/)
 })
 
-test('第66轮：岗位下拉/搜索与「共 X 个岗位」', () => {
+test('第66轮：岗位搜索与「共 X 个岗位」', () => {
   const src = read('HrManagement.vue')
   assert.match(src, /data-hr-bill-post-search/)
-  assert.match(src, /data-hr-bill-post-select/)
   assert.match(src, /共 \{\{ billPostRows\.length \}\} 个岗位/)
   // 未匹配到岗位的人归入「未设置岗位」
   assert.match(src, /未设置岗位/)

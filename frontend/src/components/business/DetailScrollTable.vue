@@ -180,26 +180,41 @@ function cellText(row: Record<string, any>, c: { colKey: string }): string {
   return String(v)
 }
 
-/** 只有数据区出现垂直滚动时才补宽；无滚动条时归零。 */
-function syncScrollbar() {
+/**
+ * 第 67 轮：滚动条宽度补偿改为「恒实测」。
+ *
+ * 旧实现只在 scrollHeight > clientHeight 时才补 padding，但数据区同时声明了
+ * CSS 的稳定滚动条槽位（stable gutter）—— 无纵向滚动时槽位仍被预留，数据表比表头/
+ * 合计行窄一个滚动条宽度，竖线整体左移（第 67 轮真机图：7 行部门汇总每列错位
+ * 15px，75 人个人明细反而正确）。现在两端统一：
+ *   · 移除稳定槽位声明，滚动条只在真正溢出时占位；
+ *   · 补偿宽度恒取 `offsetWidth - clientWidth`（无滚动条时天然为 0）。
+ */
+function measure() {
   const el = bodyRef.value
   if (!el) return
-  const overflow = el.scrollHeight > el.clientHeight + 1
-  const w = overflow ? Math.max(0, el.offsetWidth - el.clientWidth) : 0
+  const w = Math.max(0, Math.round(el.offsetWidth - el.clientWidth))
   if (w !== scrollbarWidth.value) scrollbarWidth.value = w
+}
+function syncScrollbar() {
+  nextTick(() => {
+    measure()
+    // 字体/图片等异步布局可能让滚动条在下一帧才出现，补测一次收口
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(measure)
+  })
 }
 
 function onScroll() { /* 表头固定，无需联动；保留钩子便于真机断言滚动事件 */ }
 
 onMounted(() => {
-  nextTick(syncScrollbar)
+  syncScrollbar()
   if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
-    observer = new ResizeObserver(() => syncScrollbar())
+    observer = new ResizeObserver(() => measure())
     observer.observe(bodyRef.value)
   }
 })
 onBeforeUnmount(() => { observer?.disconnect(); observer = null })
-watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () => nextTick(syncScrollbar))
+watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () => syncScrollbar())
 </script>
 
 <style scoped>
@@ -222,15 +237,17 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   box-sizing: border-box;
 }
 /* 表头与合计行绝不滚动；第 64 轮起同步预留滚动条槽位，
-   与数据区的 scrollbar-gutter 同宽，三段列竖线才能像素级对齐 */
+   与数据区滚动条同宽，三段列竖线才能像素级对齐 */
 .detail-table-head,
 .detail-table-foot {
   flex: 0 0 auto;
   overflow: hidden !important;
   overflow-x: hidden !important;
-  /* 第 64 轮：这里**不能**加 scrollbar-gutter —— 表头/合计行本身不滚动，
+  /* 第 67 轮：这里**不能**预留滚动条槽位 —— 表头/合计行本身不滚动，
      预留槽位会让它们的可用宽度比数据区少一个滚动条宽，列竖线错位。
-     滚动条宽度已由 JS 实测后通过 paddingRight 精确补偿（sideStyle）。 */
+     滚动条宽度由 JS 恒实测后通过 paddingRight 精确补偿（sideStyle）。 */
+  /* 三段统一 border-box：padding 计入宽度，表头/数据/合计的表格基准宽度才一致 */
+  box-sizing: border-box;
   background: var(--td-bg-color-secondarycontainer);
 }
 .detail-table-body {
@@ -241,8 +258,10 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   overflow-y: auto !important;
   /* 第 64 轮：横向溢出必须被吞掉（外层容器也设 hidden），否则底部出现横滚轨道 */
   overflow-x: hidden !important;
-  /* 滚动条常驻槽位；真实宽度仍以 JS 实测值补 padding（Firefox/Safari 宽度不同） */
-  scrollbar-gutter: stable;
+  /* 第 67 轮：删除稳定滚动条槽位声明 —— 它会在「无纵向滚动」时
+     也占一个滚动条宽度，而表头/合计行的补偿宽度实测为 0 → 三段列宽基准不同。
+     滚动条宽度统一由 syncScrollbar() 实测后补 padding。 */
+  box-sizing: border-box;
   background: var(--td-bg-color-container);
 }
 /* 第 64 轮：表格恒等于容器宽度，任何视口都不产生横向滚动 */
