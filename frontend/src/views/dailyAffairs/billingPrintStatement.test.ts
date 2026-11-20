@@ -142,7 +142,12 @@ test('概览卡片：打印清单只有浮动栏一条入口，共用 buildState
   assert.equal((statements.match(/meta: statementMeta\(/g) || []).length, 1, '元信息构造只应有一处')
   assert.equal((billing.match(/kpis: statementKpis\(/g) || []).length, 0, '页面不得再自带一份卡片构造')
   const statement = billing.slice(billing.indexOf('const handlePrintStatement'), billing.indexOf('const handlePrintCatalog'))
-  assert.match(statement, /statementBytesOf\(arr, unit, \(\) => buildStatementDoc\(arr, unit\)\)/)
+  // 第 66 轮：费用清单拆成「电费（2 页）+ 水费（1 页）」，统一由 buildStatementBytes66 产出，
+  // 页面仍然只有一条打印入口，不各自拼版式。
+  assert.match(statement, /statementBytesOf\(arr, unit\)/)
+  assert.match(billing, /async function buildStatementBytes66/)
+  assert.match(billing, /buildElecBillingStatementDoc\(ctx, rows, unit\)/)
+  assert.match(billing, /buildWaterBillingStatementDoc\(ctx, rows, unit\)/)
   // 第 18 轮：详情抽屉已下线（行点击不再弹抽屉），抽屉里的「打印」入口随之移除，
   // 打印清单的唯一入口是底部浮动栏。这里反向断言，防止抽屉被悄悄加回来。
   assert.ok(!/printRecord/.test(billing), '抽屉底栏打印入口应随抽屉一起下线')

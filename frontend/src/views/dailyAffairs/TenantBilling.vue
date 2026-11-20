@@ -182,7 +182,11 @@ import {
   listUtilityBillRecords, listSolarBillRecords, listUtilityMeterRecords, listUtilityMeters,
 } from '@/api/knowledge-base'
 import { cellNum, money2, round2 } from './formatNumber'
-import { gasApplicableOf, buildTenantBillingStatementDoc, type TenantStatementCtx } from './energyBillStatements'
+import {
+  gasApplicableOf,
+  buildElecBillingStatementDoc, buildWaterBillingStatementDoc,
+  type TenantStatementCtx,
+} from './energyBillStatements'
 import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
@@ -201,6 +205,8 @@ import {
 } from './billingFieldGroups'
 import { buildRowTips, sourceFieldTip, tenantItemTip, tenantTimedTip } from './tenantBillingTips'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 import EmptyState from '@/components/EmptyState.vue'
 
 // ---- 使用单位(房东/租户) ----
@@ -1961,9 +1967,37 @@ function statementCtx(unit: string, months: string[]): TenantStatementCtx {
   }
 }
 
-const buildStatementDoc = (rows: any[], unit: string) => {
+/**
+ * 第 66 轮：费用清单拆成「电费费用清单（2 页）」+「水费费用清单（1 页）」。
+ *
+ * 生成方式是**两份独立 PDF 再合并**：版式引擎一次只画一套 title/概览/KPI，
+ * 单文档做不到第 3 页换标题。合并用 pdf-lib（项目已有依赖），
+ * 顺序即页码：电费 2 页 → 水费 1 页，总计 3 页。
+ */
+async function buildStatementBytes66(rows: any[], unit: string): Promise<Uint8Array> {
   const months = rows.map((r: any) => r.month).filter(Boolean)
-  return buildTenantBillingStatementDoc(statementCtx(unit, months), rows, unit)
+  const ctx = statementCtx(unit, months)
+  const [elec, water] = await Promise.all([
+    generateStatementPdf({ doc: buildElecBillingStatementDoc(ctx, rows, unit) }),
+    generateStatementPdf({ doc: buildWaterBillingStatementDoc(ctx, rows, unit) }),
+  ])
+  return mergeStatementPdfs66([elec, water])
+}
+
+/** 合并多份 PDF（保留各自页序），失败时退回第一份（电费）避免整单打不出来。 */
+async function mergeStatementPdfs66(parts: Uint8Array[]): Promise<Uint8Array> {
+  try {
+    const { PDFDocument } = await import('pdf-lib')
+    const out = await PDFDocument.create()
+    for (const bytes of parts) {
+      const src = await PDFDocument.load(bytes)
+      const pages = await out.copyPages(src, src.getPageIndices())
+      for (const pg of pages) out.addPage(pg)
+    }
+    return await out.save()
+  } catch {
+    return parts[0]
+  }
 }
 
 const statementCache = new Map<string, Uint8Array>()
@@ -1972,12 +2006,12 @@ const statementKey = (rows: any[], unit: string) =>
 
 /** 同一份内容只算一次；**在途**的那次也要复用，否则预生成与点击会各算一遍。 */
 let statementInflight: { key: string; p: Promise<Uint8Array> } | null = null
-async function statementBytesOf(rows: any[], unit: string, build: () => StatementDoc): Promise<Uint8Array> {
+async function statementBytesOf(rows: any[], unit: string, _build?: () => StatementDoc): Promise<Uint8Array> {
   const key = statementKey(rows, unit)
   const hit = statementCache.get(key)
   if (hit) return hit
   if (statementInflight?.key === key) return statementInflight.p
-  const p = generateStatementPdf({ doc: build() })
+  const p = buildStatementBytes66(rows, unit)
     .then((bytes) => {
       statementCache.set(key, bytes)
       return bytes
@@ -2018,7 +2052,7 @@ watch(selectedKeys, () => {
     const arr = printableRows.value
     if (!arr.length) return
     const unit = (arr[0]?.unit as string) || useUnit.value
-    void statementBytesOf(arr, unit, () => buildStatementDoc(arr, unit)).catch(() => {})
+    void statementBytesOf(arr, unit).catch(() => {})
   }, 0)
 })
 onBeforeUnmount(() => { if (statementPrewarm) clearTimeout(statementPrewarm) })
@@ -2029,8 +2063,8 @@ const handlePrintStatement = async () => {
   statementBusy.value = true
   try {
     const unit = (arr[0]?.unit as string) || useUnit.value
-    const bytes = await statementBytesOf(arr, unit, () => buildStatementDoc(arr, unit))
-    showPrint(`${unit} 费用清单（${arr.length} 条）`, bytes, `${unit}-费用清单.pdf`)
+    const bytes = await statementBytesOf(arr, unit)
+    showPrint(`${unit} 电费/水费费用清单（${arr.length} 条）`, bytes, `${unit}-电费水费费用清单.pdf`)
   } catch (e: any) {
     MessagePlugin.error(e?.message || '生成清单失败')
   } finally {
@@ -2182,6 +2216,7 @@ const fmtPrice = (v: any): string => {
 }
 
 onMounted(() => {
+  installListFootHoistAll()
   // 中文字体是打印链路的固定前置（清单与目录都要内嵌）：进页面就拉，
   // 别等用户点「打印」才开始下载（真机首次点击多花 200~400ms）。
   void loadCatalogFont().catch(() => {})

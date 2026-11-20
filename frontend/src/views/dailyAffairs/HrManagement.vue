@@ -438,6 +438,18 @@
       <template #field-职务>
         <t-input v-model="editForm.data['职务']" placeholder="职务" @change="onDeptOrTitleChange" />
       </template>
+      <!-- 第 66 轮：无固定期限劳动合同 → 合同结束日期必须清空并禁用（灰显不可点）。
+           字段名在两个模块不同：合同模块用「合同结束日期」，花名册用「现合同结束日期」。 -->
+      <template #field-合同结束日期>
+        <t-date-picker v-model="editForm.data['合同结束日期']" value-type="YYYY-MM-DD"
+          format="YYYY-MM-DD" clearable :disabled="contractOpenEnded"
+          placeholder="无固定期限时无需填写" data-hr-contract-end />
+      </template>
+      <template #field-现合同结束日期>
+        <t-date-picker v-model="editForm.data['现合同结束日期']" value-type="YYYY-MM-DD"
+          format="YYYY-MM-DD" clearable :disabled="contractOpenEnded"
+          placeholder="无固定期限时无需填写" data-hr-contract-end />
+      </template>
       <!-- 第 62 轮：宿舍管理抽屉的联动控件（房型→床位、配套多选、员工/房源带出费用项） -->
       <template #field-房型>
         <t-select v-model="editForm.data['房型']" :options="ROOM_TYPE_OPTIONS" placeholder="选择房型"
@@ -530,6 +542,32 @@
       :on-download="downloadSocialTemplate" :on-import="runSocialImport"
       @update:month="(v: string) => socialImportMonth = v"
       @update:visible="(v: boolean) => socialImportVisible = v" @imported="onSocialImported" />
+    <!-- 第 66 轮：社保重复导入确认（明确覆盖范围，取消则零变更） -->
+    <t-dialog v-model:visible="siConflictVisible" header="检测到重复导入" width="520px"
+      placement="center" :close-on-overlay-click="false" data-hr-si-conflict>
+      <div class="si-conflict-body">
+        <p class="si-conflict-lead">
+          检测到 <b>{{ siConflictMonth || '该月份' }}</b> 已导入过相同文件（或已存在以下记录）：
+        </p>
+        <ul class="si-conflict-list">
+          <li v-for="it in siConflictItems" :key="it.label">
+            <span class="si-conflict-label">{{ it.label }}</span>
+            <span class="si-conflict-count">共 {{ it.count }} 条</span>
+          </li>
+        </ul>
+        <p class="si-conflict-tip">
+          继续导入将<b>仅覆盖当前文件对应的「险种 - 缴纳方」记录</b>，
+          不会影响同月其他险种数据。是否确认覆盖？
+        </p>
+      </div>
+      <template #footer>
+        <t-button variant="outline" size="small" data-hr-si-conflict-cancel
+          @click="resolveSiConflict(false)">取消</t-button>
+        <t-button theme="primary" size="small" data-hr-si-conflict-ok
+          @click="resolveSiConflict(true)">确认覆盖</t-button>
+      </template>
+    </t-dialog>
+
     <!-- 第 61 轮：宿舍档案四类导入（中文表头模板 + 拖拽上传） -->
     <StandardImportDialog :visible="dormImportVisible"
       :title="`导入${HR_DORM_GROUP_OF[dormSubView]}`"
@@ -570,7 +608,7 @@
     </t-dialog>
 
     <!-- 第 57 轮：月度账单由抽屉改为**大尺寸居中弹窗**（社保 / 公积金统一设计），
-         顶部三标签「个人明细 | 单位明细 | 汇总数据」，标签下方标准工具栏
+         顶部四标签「个人明细 | 单位明细 | 部门汇总 | 按岗位汇总」，标签下方标准工具栏
          （左侧搜索/部门/条件险种，右侧打印 + 导出 Excel），表格合计行恒贴底。 -->
     <!-- 第 63 轮：账单明细弹窗加宽到 1480px，配合三段表百分比列宽彻底消除横向滚动条 -->
     <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(96vw, 1480px)"
@@ -580,12 +618,14 @@
           <t-radio-group v-model="billDetailTab" size="small" @change="onBillDetailTabChange">
             <t-radio-button value="personal">个人明细</t-radio-button>
             <t-radio-button value="unit">单位明细</t-radio-button>
-            <t-radio-button value="summary">汇总数据</t-radio-button>
+            <t-radio-button value="summary">部门汇总</t-radio-button>
+            <!-- 第 66 轮：新增「按岗位汇总」—— 按花名册岗位分组，口径与部门汇总完全一致 -->
+            <t-radio-button value="post">按岗位汇总</t-radio-button>
           </t-radio-group>
         </div>
         <div class="hr-bill-filters">
           <!-- 个人 / 单位明细：搜索 + 部门 + 险种（无细分险种列的宽表自动隐藏险种筛选） -->
-          <template v-if="billDetailTab !== 'summary'">
+          <template v-if="billDetailTab === 'personal' || billDetailTab === 'unit'">
             <t-input v-model="billKeyword" placeholder="搜索姓名 / 部门"
               clearable class="hr-bill-search" data-hr-bill-search>
               <template #prefixIcon><t-icon name="search" size="16px" /></template>
@@ -598,13 +638,23 @@
             <span class="hr-bill-count">共 {{ billDetailKind === 'social' ? siBillPeople : billFiltered.length }} 人
               · {{ billSubjectRows.length }} 条</span>
           </template>
-          <!-- 汇总数据：只需搜索部门 -->
-          <template v-else>
+          <!-- 部门汇总：只需搜索部门 -->
+          <template v-else-if="billDetailTab === 'summary'">
             <t-input v-model="billDeptKeyword" placeholder="搜索部门" clearable
               class="hr-bill-search" data-hr-bill-dept-search>
               <template #prefixIcon><t-icon name="search" size="16px" /></template>
             </t-input>
             <span class="hr-bill-count">共 {{ billSummaryRows.length }} 个部门</span>
+          </template>
+          <!-- 第 66 轮：按岗位汇总 —— 关键词搜索岗位 + 岗位下拉实时筛选 -->
+          <template v-else>
+            <t-input v-model="billPostKeyword" placeholder="搜索岗位" clearable
+              class="hr-bill-search" data-hr-bill-post-search>
+              <template #prefixIcon><t-icon name="search" size="16px" /></template>
+            </t-input>
+            <t-select v-model="billPostFilter" :options="billPostOptions" placeholder="全部岗位"
+              :clearable="false" class="hr-bill-select" data-hr-bill-post-select />
+            <span class="hr-bill-count" data-hr-bill-post-count>共 {{ billPostRows.length }} 个岗位</span>
           </template>
           <span class="hr-bill-spacer" />
         </div>
@@ -614,6 +664,9 @@
           <DetailScrollTable v-if="billDetailTab === 'summary'" name="bill-summary"
             :columns="billSummaryColumns" :rows="billSummaryRows" :foot="billSummaryFoot"
             row-key="id" data-hr-bill-summary-table />
+          <DetailScrollTable v-else-if="billDetailTab === 'post'" name="bill-post"
+            :columns="billPostColumns" :rows="billPostRows" :foot="billPostFoot"
+            row-key="id" data-hr-bill-post-table />
           <DetailScrollTable v-else name="bill-subject" :columns="billSubjectColumns"
             :rows="billSubjectRows" :foot="billSubjectFoot" row-key="id"
             data-hr-bill-subject-table />
@@ -755,6 +808,8 @@ import { useTableFlatState, flatClassOf } from './useTableFlatState'
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 import './styles/list-summary-footer.css'
 import { generateCatalogPdf } from './useCatalogPdf'
 import { grouped } from './formatNumber'
@@ -960,10 +1015,11 @@ const billRows = ref<any[]>([])
 const billKeyword = ref('')
 const billDept = ref('')
 const billScheme = ref('全部')
-/** 第 57 轮：账单弹窗三标签（个人明细 | 单位明细 | 汇总数据）。
-     社保默认「个人明细」，公积金默认「汇总数据」（与需求一致）。 */
+/** 第 66 轮：账单弹窗四标签（个人明细 | 单位明细 | 部门汇总 | 按岗位汇总）。
+     社保默认「个人明细」，公积金默认「部门汇总」（与需求一致）。 */
 const billDetailKind = ref<'fund' | 'social'>('fund')
-const billDetailTab = ref<'personal' | 'unit' | 'summary'>('summary')
+// 第 66 轮：4 标签（个人明细 / 单位明细 / 部门汇总 / 按岗位汇总）
+const billDetailTab = ref<'personal' | 'unit' | 'summary' | 'post'>('summary')
 const billDeptKeyword = ref('')
 const SI_BILL_SCHEME_OPTIONS = [
   { label: '全部险种', value: '全部' },
@@ -1866,6 +1922,25 @@ async function runSocialImport(files: File[], _mode: string): Promise<number> {
   // 不再透传工具栏筛选值 —— 那会把「看 2026-11」误当成「导入到 2026-11」。
   const picked = String(socialImportMonth.value || '').trim()
   if (picked) fd.append('bill_month', picked)
+  // 第 66 轮：先预检「同月同险种同缴纳方」是否已有数据。
+  // 命中就弹确认框 —— 用户取消则零变更；确认后带 overwrite_scope=slice
+  // 只覆盖当前文件命中的切片，绝不波及同月其它险种。
+  const fdCheck = new FormData()
+  for (const f of files) fdCheck.append('files', f)
+  fdCheck.append('record_type', socialImportKind.value)
+  if (picked) fdCheck.append('bill_month', picked)
+  try {
+    const chk: any = await hrApi.checkSocialImport(fdCheck)
+    const conflicts: any[] = (chk?.data || chk || {}).conflicts || []
+    if (conflicts.length) {
+      const go = await askSiImportConflict(conflicts, picked)
+      if (!go) throw new Error('__cancel__已取消导入')
+      fd.append('overwrite_scope', 'slice')
+    }
+  } catch (e: any) {
+    if (String(e?.message || '').startsWith('__cancel__')) throw e
+    // 预检接口本身失败（旧后端 / 网络）→ 不阻断导入，按原有路径继续
+  }
   const res: any = await hrApi.importSocialRecords(fd)
   const d = res?.data || res || {}
   // 导入成功后切到实际落库月份，用户立刻能看到结果
@@ -1873,6 +1948,30 @@ async function runSocialImport(files: File[], _mode: string): Promise<number> {
   if (written) siMonthFilter.value = written
   await onSocialImported()
   return Number(d.rows || 0)
+}
+
+/**
+ * 第 66 轮：导入冲突确认（Promise 化）。
+ *
+ * 文案必须**点明覆盖范围**：只覆盖当前文件命中的「险种 - 缴纳方」，
+ * 不动同月其它险种 —— 这正是旧实现（整月 DELETE）的反面。
+ */
+const siConflictVisible = ref(false)
+const siConflictItems = ref<Array<{ label: string; count: number }>>([])
+const siConflictMonth = ref('')
+let siConflictResolve: ((ok: boolean) => void) | null = null
+
+function askSiImportConflict(items: Array<{ label: string; count: number }>, month: string): Promise<boolean> {
+  siConflictItems.value = items
+  siConflictMonth.value = month || ''
+  siConflictVisible.value = true
+  return new Promise<boolean>((resolve) => { siConflictResolve = resolve })
+}
+function resolveSiConflict(ok: boolean) {
+  siConflictVisible.value = false
+  const fn = siConflictResolve
+  siConflictResolve = null
+  fn?.(ok)
 }
 
 /** 导入完成后重拉列表与卡片，保持与既有导入路径一致。 */
@@ -2519,6 +2618,64 @@ async function openDetail(row: any) {
 watch(editForm, () => {
   detailDirty.value = JSON.stringify(editForm.value) !== editBaseline.value
 }, { deep: true })
+
+/**
+ * 第 66 轮：合同是否「无固定期限」。
+ *
+ * 判定口径（三者任一命中即视为无固定期限）：
+ *   ① 合同类型 / 现合同类型 含「无固定期限」
+ *   ② 合同期限 / 现合同期限 === 「无固定期限」
+ * 命中后：合同结束日期必须清空 + 日期控件禁用（灰显不可点、不可手输）。
+ */
+const contractOpenEnded = computed(() => {
+  const d = editForm.value?.data || {}
+  const type = String(d['合同类型'] || d['现合同类型'] || '').trim()
+  const term = String(d['合同期限'] || d['现合同期限'] || '').trim()
+  return type.includes('无固定期限') || term === '无固定期限'
+})
+/**
+ * 第 66 轮联动：
+ *   · 合同类型 → 无固定期限劳动合同 时，**同步把合同期限置为「无固定期限」**；
+ *   · 反向：合同类型切回固定期限、且合同期限仍是「无固定期限」时清空期限，
+ *     否则「合同期限=无固定期限」会让结束日期一直保持禁用（真机 4.2 失败的真因）；
+ *   · 命中无固定期限时清空结束日期，避免残留历史脏日期被提交。
+ */
+watch(contractOpenEnded, (on) => {
+  const d = editForm.value?.data
+  if (!d) return
+  const typeKey = d['现合同类型'] !== undefined ? '现合同类型' : '合同类型'
+  const termKey = d['现合同期限'] !== undefined ? '现合同期限' : '合同期限'
+  if (on) {
+    const type = String(d[typeKey] || '').trim()
+    if (type.includes('无固定期限') && String(d[termKey] || '').trim() !== '无固定期限') {
+      d[termKey] = '无固定期限'
+    }
+    if (d['合同结束日期']) d['合同结束日期'] = ''
+    if (d['现合同结束日期']) d['现合同结束日期'] = ''
+    return
+  }
+})
+
+/**
+ * 第 66 轮：反向联动必须直接监听**合同类型字段本身**。
+ *
+ * 如果只在 `contractOpenEnded` 变 false 时清期限，会出现死锁：
+ * 类型切回「固定期限」但期限仍是「无固定期限」→ 派生值仍为 true →
+ * watch 永远拿不到 false → 结束日期一直禁用（真机 4.2 的失败原因）。
+ */
+watch(
+  () => {
+    const d = editForm.value?.data || {}
+    return String(d['现合同类型'] ?? d['合同类型'] ?? '').trim()
+  },
+  (type) => {
+    const d = editForm.value?.data
+    if (!d) return
+    if (type.includes('无固定期限')) return
+    const termKey = d['现合同期限'] !== undefined ? '现合同期限' : '合同期限'
+    if (String(d[termKey] || '').trim() === '无固定期限') d[termKey] = ''
+  },
+)
 
 /** 第 65 轮：提交前强校验（与后端 hrValidateDormData65 同口径）。 */
 const DORM_MONEY_RE65 = /^\d+(\.\d{1,4})?$/
@@ -3235,6 +3392,8 @@ function resetBillDialog(kind: 'fund' | 'social', title: string) {
 
 async function openBillDetail(row: any) {
   resetBillDialog('fund', `${row?.month_label || row?.账单周期 || ''} 公积金缴存明细`)
+  // 第 66 轮：先拉花名册岗位映射（「按岗位汇总」的分组键），失败不阻断弹窗
+  void loadBillPostMap()
   const id = row?.id
   if (!id) return
   try {
@@ -3256,9 +3415,10 @@ async function openBillDetail(row: any) {
   } catch (e: any) { MessagePlugin.error(e?.message || '加载账单明细失败') }
 }
 
-/** 第 57 轮：社保月度账单 → 扣款明细弹窗（个人明细 / 单位明细 / 汇总数据）。 */
+/** 第 66 轮：社保月度账单 → 扣款明细弹窗（个人明细 / 单位明细 / 部门汇总 / 按岗位汇总）。 */
 async function openSIBillDetail(row: any) {
   resetBillDialog('social', `${row?.账单周期 || row?.month_label || ''} 社保扣款明细`)
+  void loadBillPostMap()
   const id = row?.id
   if (!id) return
   try {
@@ -3269,10 +3429,48 @@ async function openSIBillDetail(row: any) {
   } catch (e: any) { MessagePlugin.error(e?.message || '加载社保账单明细失败') }
 }
 
+/**
+ * 第 66 轮：拉取花名册「岗位」映射（身份证 / 职工账号 / 姓名 三键并存）。
+ *
+ * 只取在职+离职全量：账单里可能有已离职人员，漏拉会导致岗位汇总落到
+ * 「未设置岗位」，总数虽对但分布失真。
+ */
+let billPostMapInflight: Promise<void> | null = null
+async function loadBillPostMap(): Promise<void> {
+  if (billPostMapInflight) return billPostMapInflight
+  billPostMapInflight = (async () => {
+    try {
+      const res: any = await hrApi.listRosterEmployees({ page_size: 1000 })
+      const d = res?.data || res || {}
+      const items: any[] = Array.isArray(d.items) ? d.items : (Array.isArray(d) ? d : [])
+      const m = new Map<string, string>()
+      for (const e of items) {
+        const post = String(e['岗位'] || e.position || e.custom_data?.['岗位'] || '').trim()
+        if (!post) continue
+        const idc = String(e.id_number || e['证件号码'] || '').replace(/[^0-9Xx]/g, '').toUpperCase()
+        if (idc) m.set(idc, post)
+        const code = String(e.employee_id || e['工号'] || '').trim()
+        if (code) m.set(code, post)
+        const nm = String(e.name || e['姓名'] || '').trim()
+        if (nm) m.set(nm, post)
+      }
+      billPostOfPerson.value = m
+    } catch {
+      billPostOfPerson.value = new Map()
+    } finally {
+      billPostMapInflight = null
+    }
+  })()
+  return billPostMapInflight
+}
+
 /** 三标签切换：清空两个关键词，部门与险种条件保留（用户通常按部门逐层看）。 */
 function onBillDetailTabChange() {
   billKeyword.value = ''
   billDeptKeyword.value = ''
+  // 第 66 轮：岗位筛选也随标签切换重置，避免从「按岗位汇总」带回一个失效的岗位名
+  billPostKeyword.value = ''
+  billPostFilter.value = ''
 }
 
 const billFiltered = computed(() => {
@@ -3350,7 +3548,13 @@ const BILL_PF_UNIT_COLUMNS = [
   { colKey: '缴存基数', title: '缴存基数(元)', width: 140 },
   { colKey: '单位缴存', title: '单位缴存额(元)', width: 150 },
 ]
-/** 汇总数据：人数 / 个人 / 单位 / 合计（社保与公积金同构）。 */
+/** 部门汇总：人数 / 个人 / 单位 / 合计（社保与公积金同构，岗位汇总同形）。 */
+/** 第 66 轮：按岗位汇总的搜索/筛选状态（与部门汇总互不干扰）。 */
+const billPostKeyword = ref('')
+const billPostFilter = ref('')
+/** 员工身份证/账号 → 岗位。打开弹窗时从花名册一次性拉取。 */
+const billPostOfPerson = ref<Map<string, string>>(new Map())
+
 const BILL_SUMMARY_COLUMNS = [
   { colKey: '序号', title: '序号', width: 76 },
   { colKey: '部门', title: '部门', width: 180 },
@@ -3371,6 +3575,102 @@ const billSubjectColumns = computed(() => {
   return billDetailTab.value === 'unit' ? BILL_SI_UNIT_COLUMNS : BILL_SI_PERSONAL_COLUMNS
 })
 const billSummaryColumns = computed(() => BILL_SUMMARY_COLUMNS)
+
+/** 第 66 轮：按岗位汇总列（与部门汇总完全同构，仅第二列换成「岗位」）。 */
+/**
+ * 第 66 轮：当前标签页的数据源（打印/导出/表格共用一处，避免三处各写一遍 if）。
+ *
+ * `key` 用于打印标题与 Excel sheet 名；`label` 是对外文案（部门汇总/按岗位汇总）。
+ */
+function billTabSource(tab = billDetailTab.value) {
+  if (tab === 'summary') {
+    return { key: 'summary', label: '部门汇总', columns: billSummaryColumns.value,
+      rows: billSummaryRows.value, foot: billSummaryFoot.value }
+  }
+  if (tab === 'post') {
+    return { key: 'post', label: '按岗位汇总', columns: billPostColumns.value,
+      rows: billPostRows.value, foot: billPostFoot.value }
+  }
+  const label = tab === 'unit' ? '单位明细' : '个人明细'
+  return { key: tab, label, columns: billSubjectColumns.value,
+    rows: billSubjectRows.value, foot: billSubjectFoot.value }
+}
+
+const BILL_POST_COLUMNS = [
+  { colKey: '序号', title: '序号', width: 76 },
+  { colKey: '岗位', title: '岗位', width: 200 },
+  { colKey: '人数', title: '人数', width: 100 },
+  { colKey: '个人金额', title: '个人金额', width: 170 },
+  { colKey: '单位金额', title: '单位金额', width: 170 },
+  { colKey: '合计', title: '合计', width: 150 },
+]
+const billPostColumns = computed(() => BILL_POST_COLUMNS)
+
+/** 花名册岗位字典（覆盖当前弹窗涉及的全部人员，供下拉筛选）。 */
+const billPostOptions = computed(() => {
+  const names = new Set<string>()
+  for (const r of billFiltered.value) names.add(billPostOf(r))
+  return [{ label: '全部岗位', value: '' }, ...[...names].sort().map((v) => ({ label: v, value: v }))]
+})
+
+/** 某条缴存记录对应的岗位（身份证优先 → 职工账号 → 姓名，均取不到归「未设置岗位」）。 */
+function billPostOf(r: any): string {
+  const map = billPostOfPerson.value
+  if (!map.size) return '未设置岗位'
+  const idc = String(r.证件号码 || r.identity_number || '').replace(/[^0-9Xx]/g, '').toUpperCase()
+  if (idc && map.has(idc)) return map.get(idc)!
+  const code = String(r.账号 || r.个人编号 || r.person_code || '').trim()
+  if (code && map.has(code)) return map.get(code)!
+  const nm = String(r.姓名 || r.name || '').trim()
+  if (nm && map.has(nm)) return map.get(nm)!
+  return '未设置岗位'
+}
+
+/**
+ * 第 66 轮：按岗位汇总。
+ *
+ * 口径必须与「部门汇总」逐分一致 —— 同一批缴存记录、同样的分累加、
+ * 同样排除补缴行的人数统计。差别只在分组键：部门 → 岗位。
+ */
+const billPostRows = computed(() => {
+  const kw = billPostKeyword.value.trim().toLowerCase()
+  const pick = billPostFilter.value
+  const isSocial = billDetailKind.value === 'social'
+  const m = new Map<string, { 岗位: string; 人数: number; p: number; u: number }>()
+  for (const r of billFiltered.value) {
+    const post = billPostOf(r)
+    const e = m.get(post) || { 岗位: post, 人数: 0, p: 0, u: 0 }
+    if (!isAdjustmentRow(r)) e.人数++
+    if (isSocial) {
+      e.p += siCents(r.个人小计)
+      e.u += siCents(r.单位小计)
+    } else {
+      e.p += siCents(r.个人缴存)
+      e.u += siCents(r.单位缴存)
+    }
+    m.set(post, e)
+  }
+  let keys = Array.from(m.keys()).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  if (pick) keys = keys.filter((k) => k === pick)
+  if (kw) keys = keys.filter((k) => k.toLowerCase().includes(kw))
+  return keys.map((k, i) => {
+    const e = m.get(k)!
+    return {
+      id: `post-${k}`, 序号: String(i + 1), 岗位: k, 人数: e.人数,
+      个人金额: siFmt(e.p), 单位金额: siFmt(e.u), 合计: siFmt(e.p + e.u),
+    }
+  })
+})
+
+const billPostFoot = computed(() => {
+  const rows = billPostRows.value
+  if (!rows.length) return []
+  const p = rows.reduce((n, r) => n + siCents(r.个人金额), 0)
+  const u = rows.reduce((n, r) => n + siCents(r.单位金额), 0)
+  const people = rows.reduce((n, r) => n + (Number(r.人数) || 0), 0)
+  return [{ id: 'foot', 序号: `合计 ${people} 人`, 岗位: '', 人数: people,
+    个人金额: siFmt(p), 单位金额: siFmt(u), 合计: siFmt(p + u) }]
+})
 
 /** 社保人数口径：补缴行只追加金额，不额外计一个人（恒 75 人）。 */
 const siBillPeople = computed(() => siBillPeopleOf(billFiltered.value))
@@ -3409,7 +3709,7 @@ const billSubjectRows = computed(() => {
   })
 })
 
-/** 汇总数据：按当前筛选结果实时聚合（补缴行并入金额但不增加人数）。 */
+/** 部门汇总：按当前筛选结果实时聚合（补缴行并入金额但不增加人数）。 */
 const billSummaryRows = computed(() => {
   const kw = billDeptKeyword.value.trim().toLowerCase()
   const isSocial = billDetailKind.value === 'social'
@@ -3479,14 +3779,15 @@ const billSummaryFoot = computed(() => {
 
 /**
  * 第 57 轮：账单打印 —— 严格只打印**当前激活标签页**的数据表
- * （个人明细 / 单位明细 / 汇总数据），并附带底部合计行。
+ * （个人明细 / 单位明细 / 部门汇总 / 按岗位汇总），并附带底部合计行。
  * 100% 复用中台 PrintPreviewDialog + generateCatalogPdf，不新造打印组件。
  */
 async function printBillDetail() {
-  const isSummary = billDetailTab.value === 'summary'
-  const activeColumns = isSummary ? billSummaryColumns.value : billSubjectColumns.value
-  const activeRows = isSummary ? billSummaryRows.value : billSubjectRows.value
-  const footRows = isSummary ? billSummaryFoot.value : billSubjectFoot.value
+  // 第 66 轮：4 标签统一走一处取数（含新增的「按岗位汇总」）
+  const src = billTabSource()
+  const activeColumns = src.columns
+  const activeRows = src.rows
+  const footRows = src.foot
   if (!activeRows.length) { MessagePlugin.warning('当前无数据可打印'); return }
   printBusy.value = true
   try {
@@ -3500,7 +3801,7 @@ async function printBillDetail() {
     const ym = /(\d{4})-(\d{2})/.exec(String(billDetailTitle.value)) || []
     const monthLabel = ym[1] ? `${ym[1]}年${Number(ym[2])}月账单` : '月度账单'
     const billPrefix = billDetailKind.value === 'social' ? '社保缴费' : '公积金缴存'
-    const title = `${billPrefix}${monthLabel} · ${isSummary ? '汇总数据' : billDetailTab.value === 'unit' ? '单位明细' : '个人明细'}`
+    const title = `${billPrefix}${monthLabel} · ${src.label}`
     billPrintData.value = await generateCatalogPdf({ title, columns, rows })
     if (billPrintUrl.value) URL.revokeObjectURL(billPrintUrl.value)
     billPrintUrl.value = URL.createObjectURL(
@@ -3517,10 +3818,11 @@ async function printBillDetail() {
  * 动态 import xlsx，避免把 ~490KB 的表格库塞进人事首屏 chunk。
  */
 async function exportBillExcel() {
-  const isSummary = billDetailTab.value === 'summary'
-  const activeColumns = isSummary ? billSummaryColumns.value : billSubjectColumns.value
-  const activeRows = isSummary ? billSummaryRows.value : billSubjectRows.value
-  const footRows = isSummary ? billSummaryFoot.value : billSubjectFoot.value
+  // 第 66 轮：4 标签统一走一处取数（含新增的「按岗位汇总」）
+  const src = billTabSource()
+  const activeColumns = src.columns
+  const activeRows = src.rows
+  const footRows = src.foot
   if (!activeRows.length) { MessagePlugin.warning('当前无数据可导出'); return }
   if (exporting.value) return
   exporting.value = true
@@ -3532,7 +3834,7 @@ async function exportBillExcel() {
     const sheet = XLSX.utils.aoa_to_sheet([header, ...body])
     sheet['!cols'] = header.map((h) => ({ wch: Math.max(10, String(h).length * 2 + 4) }))
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, sheet, isSummary ? '汇总数据' : (billDetailTab.value === 'unit' ? '单位明细' : '个人明细'))
+    XLSX.utils.book_append_sheet(wb, sheet, src.label)
     XLSX.writeFile(wb, `${billDetailTitle.value}.xlsx`)
     MessagePlugin.success('已导出 Excel')
   } catch (e: any) { MessagePlugin.error(e?.message || '导出 Excel 失败') }
@@ -4270,6 +4572,7 @@ async function handleRestoreStay() {
 // 生命周期
 // ---------------------------------------------------------------------------
 onMounted(async () => {
+  installListFootHoistAll()
   // 第 53 轮：公司设置弹窗（左下角用户菜单）保存后广播事件，
   // 人事页据此重拉部门/单位下拉、列表与卡片。
   window.addEventListener('hr-org-changed', onOrgChanged)
@@ -4417,6 +4720,19 @@ onUnmounted(() => {
 .hr-table :deep(.t-tag) {
   border: 0 !important;
 }
+/* 第 66 轮：重复导入确认弹窗 */
+.si-conflict-body { display: flex; flex-direction: column; gap: 10px; }
+.si-conflict-lead { margin: 0; color: var(--td-text-color-primary); }
+.si-conflict-list {
+  margin: 0; padding: 10px 12px; list-style: none;
+  background: var(--td-bg-color-secondarycontainer);
+  border-radius: var(--td-radius-default);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.si-conflict-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.si-conflict-label { color: var(--td-text-color-primary); font-weight: 600; }
+.si-conflict-count { color: var(--td-text-color-secondary); }
+.si-conflict-tip { margin: 0; color: var(--td-text-color-secondary); }
 .hr-bill-tabs { display: flex; align-items: center; flex: 0 0 auto; margin-bottom: 2px; }
 .hr-bill-filters { margin-bottom: 14px; }
 .hr-bill-table-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

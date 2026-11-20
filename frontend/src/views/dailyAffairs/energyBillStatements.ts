@@ -814,6 +814,159 @@ export function gasApplicableOf(
 // 4 张 KPI 卡片与元信息里完整给出，末尾再出一张汇总表既重复又会把 PDF 撑到第 3 页。
 // 文档固定为 2 页：第 1 页概览 + 分项细项全表，第 2 页电费/水费（含气费）核算明细。
 
+/**
+ * 第 66 轮：费用清单按「电费 / 水费」拆成两份独立表单。
+ *
+ * 为什么要拆：原先把电、水混在同一份 2 页清单里（KPI 卡片一半电量一半水量、
+ * 概览写着「电水合计应收」），用户拿电费单去对账时会把水费也算进去。
+ * 现在：
+ *   · 电费费用清单 —— 独立标题/概览/电费专属 KPI/电费明细，固定 2 页；
+ *   · 水费费用清单 —— 独立标题/概览/水费专属 KPI/水费明细，独占 1 页。
+ * 两者由 `buildBillingStatementPdfs` 依次排版后合并成一个 3 页 PDF。
+ */
+
+/** 电费专属 KPI：只看电，绝不出现水费数字。 */
+function elecKpisOf(ctx: TenantStatementCtx, rows: any[], unit = ''): Array<{ label: string; value: string; hint?: string }> {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  const indKwh = sum('ind_kwh')
+  const dormKwh = sum('dorm_kwh')
+  const indFee = sum('ind_fee')
+  const dormFee = sum('dorm_fee') + sum('res_fee')
+  if (ctx.ownerView) {
+    return [
+      { label: '本期总电量', value: `${num2(sum('total_kwh'))} kWh` },
+      { label: '本期总电费', value: `${money2(sum('total_fee'))} 元` },
+      { label: '工商业电费', value: `${money2(sum('ind_fee'))} 元`, hint: `居民宿舍 ${money2(sum('dorm_fee') + sum('res_fee'))} 元` },
+      { label: '应收电费合计', value: `${money2(indFee + dormFee)} 元` },
+    ]
+  }
+  const months = Array.from(new Set(rows.map((r: any) => String(r.month || '')).filter(Boolean)))
+  const subMeter = ctx.subMeterKwhOf && months.length
+    ? months.reduce((s, m) => s + (Number(ctx.subMeterKwhOf!(m, unit)) || 0), 0)
+    : 0
+  const diff = round2(indKwh - subMeter)
+  const hasSplit = subMeter > 0
+  const elecHint = hasSplit
+    ? `工业 ${num2(subMeter)} + 差额 ${num2(diff)} + 宿舍 ${num2(dormKwh)}`
+    : `工业 ${num2(indKwh)} + 宿舍 ${num2(dormKwh)}`
+  return [
+    { label: '本期总电量', value: `${num2(indKwh + dormKwh)} 度`, hint: elecHint },
+    { label: '本期总电费', value: `${money2(indFee + dormFee)} 元`, hint: `工业 ${money2(indFee)} + 宿舍 ${money2(dormFee)}` },
+    { label: '工业用电与电费', value: `${num2(indKwh)} 度`, hint: `${money2(indFee)} 元` },
+    { label: '宿舍用电与电费', value: `${num2(dormKwh)} 度`, hint: `${money2(dormFee)} 元` },
+  ]
+}
+
+/** 水费专属 KPI：只看水。 */
+function waterKpisOf(ctx: TenantStatementCtx, rows: any[]): Array<{ label: string; value: string; hint?: string }> {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  const indU = sum('water_ind_usage')
+  const dormU = sum('water_dorm_usage')
+  const indF = sum('water_ind_fee')
+  const dormF = sum('water_dorm_fee') + sum('water_fire_fee')
+  const fireU = sum('water_fire_usage')
+  const base = [
+    { label: '本期总用水量', value: `${num2(indU + dormU)} 吨` },
+    { label: '本期总水费', value: `${money2(indF + dormF)} 元` },
+  ]
+  if (ctx.ownerView) {
+    // 业主视角：星达 = 自来水总表 + 消防总表（并入 2 张卡片，避免概览吃掉整页）
+    return [
+      ...base,
+      {
+        label: '自来水总表',
+        value: `${num2(indU)} 吨`,
+        hint: `${money2(indF)} 元 · 消防 ${num2(fireU)} 吨 / ${money2(sum('water_fire_fee'))} 元`,
+      },
+    ]
+  }
+  // 租户视角：分表 + 宿舍
+  return [
+    ...base,
+    {
+      label: '分表与宿舍',
+      value: `${num2(indU + dormU)} 吨`,
+      hint: `分表 ${money2(indF)} 元 + 宿舍 ${money2(dormF)} 元`,
+    },
+  ]
+}
+
+/** 电费概览元信息：去掉「电水合计应收」与水费口径。 */
+function elecMetaOf(ctx: TenantStatementCtx, rows: any[], unit: string, months: string[], ratio: number) {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  return [
+    { label: '账单周期', value: months.join('、') },
+    { label: '使用单位', value: unit },
+    { label: '计费方式', value: ctx.ownerView ? '业主全厂（不分摊）' : '按用电量分摊比例折算' },
+    { label: '分摊比例', value: ctx.ownerView ? '—' : (ratio > 0 ? `${(ratio * 100).toFixed(2)}%` : '—') },
+    { label: '电费账单户号', value: String(ctx.billOf(months[0])?.item?.account_no || '—') },
+    { label: '本期电费应收合计', value: `${money2(sum('ind_fee') + sum('dorm_fee') + sum('res_fee'))} 元` },
+    { label: '生成时间', value: new Date().toLocaleString('zh-CN', { hour12: false }) },
+  ]
+}
+
+/** 水费概览元信息：只留水费口径。 */
+function waterMetaOf(ctx: TenantStatementCtx, rows: any[], unit: string, months: string[]) {
+  const sum = (k: string) => rows.reduce((s: number, r: any) => s + (Number(r[k]) || 0), 0)
+  // 水费概览只留 4 行：单页容纳「概览 + 全部水表明细」是硬约束
+  return [
+    { label: '账单周期', value: months.join('、') },
+    { label: '使用单位', value: unit },
+    { label: '计费口径', value: ctx.ownerView ? '自来水总表 + 消防总表' : '工业分表 + 宿舍分表' },
+    { label: '本期水费应收合计', value: `${money2(sum('water_ind_fee') + sum('water_dorm_fee') + sum('water_fire_fee'))} 元` },
+  ]
+}
+
+/** 电费费用清单（严格 2 页：概览+分项 → 核算明细）。 */
+export function buildElecBillingStatementDoc(ctx: TenantStatementCtx, rows: any[], unit: string): StatementDoc {
+  const months = rows.map((r: any) => r.month).filter(Boolean)
+  const single = rows.length === 1
+  const ratioList = rows.map((r: any) => ctx.ratioOf(r)).filter((v) => v > 0)
+  const ratio = ratioList.length ? ratioList[0] : 0
+  const tables: StatementTable[] = []
+  rows.forEach((row: any, idx: number) => {
+    const month = String(row.month || '')
+    const prefix = single ? '' : `${month} · `
+    const r = ctx.ownerView ? 1 : ctx.ratioOf(row)
+    // 第 66 轮：电费清单固定 2 页 —— 概览与分项共用第 1 页（不再强制翻页），
+    // 电费核算明细自然落到第 2 页。多月份时每组之间仍分页。
+    tables.push(feeTableOf(ctx, month, r, prefix))
+    tables.push(elecTableOf(ctx, month, unit, prefix))
+    if (idx < rows.length - 1) tables[tables.length - 1].pageBreakAfter = true
+  })
+  return {
+    title: `${unit} 电费费用清单`,
+    subtitle: `${months.join('、')} · 使用单位 ${unit} · ${ctx.ownerView ? '业主全厂口径' : '租户分摊口径'}`,
+    overviewTitle: '一、电费账单概览',
+    meta: elecMetaOf(ctx, rows, unit, months, ratio),
+    kpis: elecKpisOf(ctx, rows, unit),
+    tables,
+  }
+}
+
+/** 水费费用清单（独占 1 页）。 */
+export function buildWaterBillingStatementDoc(ctx: TenantStatementCtx, rows: any[], unit: string): StatementDoc {
+  const months = rows.map((r: any) => r.month).filter(Boolean)
+  const single = rows.length === 1
+  const tables: StatementTable[] = []
+  rows.forEach((row: any) => {
+    const month = String(row.month || '')
+    const prefix = single ? '' : `${month} · `
+    const t = waterTableOf(ctx, month, unit, prefix)
+    // 多月份时每月一张水费表，表间自然分页；单月份只有一张表
+    if (rows.length > 1) t.pageBreakAfter = true
+    tables.push(t)
+  })
+  return {
+    title: `${unit} 水费费用清单`,
+    subtitle: `${months.join('、')} · 使用单位 ${unit} · ${ctx.ownerView ? '业主全厂口径' : '租户分摊口径'}`,
+    overviewTitle: '一、水费账单概览',
+    meta: waterMetaOf(ctx, rows, unit, months),
+    kpis: waterKpisOf(ctx, rows),
+    tables,
+  }
+}
+
 export function buildTenantBillingStatementDoc(ctx: TenantStatementCtx, rows: any[], unit: string): StatementDoc {
   const months = rows.map((r: any) => r.month).filter(Boolean)
   const single = rows.length === 1

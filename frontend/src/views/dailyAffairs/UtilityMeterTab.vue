@@ -211,6 +211,8 @@ import {
 } from '@/api/knowledge-base'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import { useTableHeaderFix } from './useTableHeaderFix'
@@ -1423,6 +1425,7 @@ const fmtUnitPrice = (v: any) => {
 // 列显隐切换）重测，保证展开子表的 colgroup 始终等于主表真实列宽。
 let columnResizeObserver: ResizeObserver | null = null
 onMounted(() => {
+  installListFootHoistAll()
   load()
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)

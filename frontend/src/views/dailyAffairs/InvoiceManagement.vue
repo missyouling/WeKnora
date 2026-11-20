@@ -348,6 +348,8 @@ import { useTableFlatState, flatClassOf } from './useTableFlatState'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import { formatCellDateTime } from './formatDateTime'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import {
@@ -2293,6 +2295,7 @@ const onCategoriesChanged = () => {
 
 // ---- 生命周期 ----
 onMounted(() => {
+  installListFootHoistAll()
   // 路由 query 回填：type / failed 直达状态
   if (typeof route.query.type === 'string' && route.query.type) filterInvoiceType.value = route.query.type
   if (route.query.failed === '1') uploadHistoryVisible.value = true

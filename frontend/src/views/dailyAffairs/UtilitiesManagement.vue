@@ -696,6 +696,8 @@ import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
 import { buildUtilityBillStatementDoc } from './energyBillStatements'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -2385,6 +2387,7 @@ function onEnergyDataChanged() { void loadTabCounts() }
 function onCategoriesChanged() { void loadFieldConfigs() }
 
 onMounted(() => {
+  installListFootHoistAll()
   nextTick(measureTableHeaderFix)
   window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)

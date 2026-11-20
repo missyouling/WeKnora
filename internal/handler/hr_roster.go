@@ -614,6 +614,8 @@ func (h *HRHandler) CreateEmployee(c *gin.Context) {
 	}
 	// 中文表头键（76 字段模板）必须在必填校验之前并入，否则「证件号码」会丢失。
 	hrApplyRosterRaw(&req, raw, nil)
+	// 第 66 轮：无固定期限劳动合同不得残留合同结束日期
+	hrNormalizeContractEndDate66(&req)
 	req.ID = uuid.New().String()
 	req.TenantID = tid
 	req.IDNumber = normalizeIDNumber(req.IDNumber)
@@ -666,6 +668,8 @@ func (h *HRHandler) UpdateEmployee(c *gin.Context) {
 	}
 	// 局部保存时把未提交的 string 主列从存量补回，避免 Save 覆盖成空值。
 	hrFillEmployeeFrom(&req, &existing)
+	// 第 66 轮：无固定期限劳动合同不得残留合同结束日期（前端禁用之外的兜底）
+	hrNormalizeContractEndDate66(&req)
 	if err := h.db.WithContext(ctx).Save(&req).Error; err != nil {
 		hrFail(c, "更新员工失败: "+err.Error())
 		return

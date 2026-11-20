@@ -737,6 +737,8 @@ func (h *HRHandler) registerHRRoutes(r hrRouteRegistrar) {
 	r.DELETE("/hr/social/records/:id", h.DeleteSIRecord)
 	r.POST("/hr/social/records/batch-delete", h.DeleteSIRecordsBatch)
 	r.POST("/hr/social/records/import", h.ImportSIRecords)
+	// 第 66 轮：导入前冲突预检（同月同险种同缴纳方已有数据 → 前端弹确认框）
+	r.POST("/hr/social/records/import-check", h.CheckSIRecordsImport)
 	r.GET("/hr/social/bills", h.ListSIBills)
 	// 第 60 轮：生成账单前置校验（该月正常记录条数 / 是否已有账单），只读
 	r.GET("/hr/social/bills/precheck", h.PrecheckSIBill)

@@ -163,6 +163,60 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
+/* ---- 第 66 轮：合计行搬出纵向滚动容器（全模块统一） ----
+ *
+ * 现状：thead / tbody / tfoot 全在 `.t-table__content`（overflow-y: auto）内部，
+ * 垂直滚动条从表头一路贯到合计行**右侧**，真机上像一条把「合计（共 N 条）」
+ * 切开的黑线。
+ *
+ * 解法（见 listFootHoist.ts）：把 tfoot 的真实节点搬到 `.biz-foot-host`，
+ * 给 content 让出 `--biz-foot-h` 的高度，滚动条自然止于合计行上沿。
+ * 这里只负责几何：content 让位、host 贴底、横向平移由 JS 写入 transform。
+ */
+.biz-page .doc-list-view {
+  --biz-foot-h: 0px;
+}
+.biz-page .doc-list-view .t-table__content {
+  /* 纵向滚动条严格止于合计行上沿：底部留出合计行的高度 */
+  margin-bottom: var(--biz-foot-h);
+}
+/* 原件隐藏：合计行已由 .biz-foot-host 里的克隆体呈现（真节点留给 Vue patch，
+   避免移动节点后下一次数据刷新把合计行整行移除） */
+.biz-page .doc-list-view .t-table__content tfoot.biz-foot-hidden {
+  display: none !important;
+}
+.biz-page .doc-list-view .biz-foot-host {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--biz-foot-h);
+  overflow: hidden;
+  /* 与容器左右边框对齐（边框 1px 已计入 .doc-list-scroll 的 box-sizing） */
+  z-index: 2;
+  background: var(--td-bg-color-container);
+}
+.biz-page .doc-list-view .biz-foot-host > table.biz-foot-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  /* 宽度由 JS 按主表实测宽度写入，保证百分比列宽同一分母 */
+  min-width: 100%;
+  font-size: var(--td-font-size-body-small);
+  will-change: transform;
+}
+.biz-page .doc-list-view .biz-foot-host > table.biz-foot-table td {
+  box-sizing: border-box;
+  padding: 0 8px;
+  height: 40px;
+  border-top: 1px solid var(--td-component-stroke);
+  background: var(--td-bg-color-secondarycontainer);
+  color: var(--td-text-color-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- 列表视图 / 表格 ---- */
 .biz-page .doc-list-view {
   position: relative;

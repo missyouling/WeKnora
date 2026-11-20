@@ -311,6 +311,16 @@ export function importSocialReceipts(formData: FormData): Promise<any> {
   return postUpload(`${BASE}/social/receipts/import`, formData) as Promise<any>
 }
 
+/**
+ * 第 66 轮：社保导入冲突预检。
+ *
+ * 后端按 `(bill_month, record_type, scheme, payer_side)` 切片统计：
+ * 该月同类型下已有数据的切片会出现在 conflicts 里，前端据此弹确认框。
+ */
+export function checkSocialImport(form: FormData): Promise<any> {
+  return postUpload(`${BASE}/social/records/import-check`, form) as Promise<any>
+}
+
 /** 第 65 轮：社保正常/补退记录批量删除（单次请求 + 单条汇总提示）。 */
 export function batchDeleteSocialRecords(ids: string[]): Promise<any> {
   return post(`${BASE}/social/records/batch-delete`, { ids }) as Promise<any>

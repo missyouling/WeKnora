@@ -209,6 +209,8 @@ import EtcPanel from './FleetEtcPanel.vue'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import { useTableHeaderFix } from './useTableHeaderFix'
 import { buildFootRow, footSpanOf, summaryScopeRows } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 import './styles/list-summary-footer.css'
 import { filterRowsByPendingFiles } from './invoicePendingGate'
 import { fleetHistoryFilesOf } from './fleetHistoryStats'
@@ -1286,6 +1288,7 @@ const { headerFixStyle } = useTableHeaderFix()
 const tableMaxHeight = computed(() => '100%')
 
 onMounted(() => {
+  installListFootHoistAll()
   void bootstrap()
   window.addEventListener('fleet-categories-changed', onCatChanged)
 })

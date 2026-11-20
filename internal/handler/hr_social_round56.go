@@ -15,6 +15,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -810,17 +811,32 @@ func (h *HRHandler) GetSIBill(c *gin.Context) {
 
 // hrSIBillTotalsOf 汇总口径：2026-11 以《2026.11社保扣款明细.xlsx》为准；
 // 其它月份按当月正常 + 异常记录逐项累加后 round2。
+/**
+ * 第 66 轮：账单汇总 100% 由「当月有效（未被删除）的正常 + 补退记录」实时算出。
+ *
+ * 旧实现有两处致命缺陷：
+ *  ① `month == 种子月份` 时直接返回**硬编码种子账单** —— 用户把 2026-11 的记录
+ *     改成只剩 75 条工伤（7,443.75），点「生成账单」仍然显示旧的全险种金额；
+ *  ② 缴费基数按**记录行**累加，一个人若有养老/医疗/工伤/失业 4 个险种，
+ *     基数会被加 4 次，`缴费基数合计` 虚高数倍。
+ * 现在：基数按「人去重」取一次，金额按险种侧各自累加，无任何种子兜底。
+ */
 func (h *HRHandler) hrSIBillTotalsOf(ctx context.Context, tid int64, month string) HRSIBill {
-	if month == hrSIBillSeedValue.MonthLabel {
-		return hrSIBillOfSeed(tid, hrSIBillSeedValue)
-	}
 	var records []HRSIRecord
 	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND bill_month = ?", tid, month).Find(&records).Error
 	people := map[string]bool{}
+	// 每个人的缴费基数只取一次（同一人多险种基数相同；取最大值以防个别文件缺基数）
+	baseOf := map[string]float64{}
 	b := HRSIBill{TenantID: tid, MonthLabel: month, BillStatus: "已申报", Source: "generated"}
 	for _, r := range records {
-		people[normalizeIDNumber(r.IDNumber)] = true
-		b.BaseTotal += r.Base
+		pid := normalizeIDNumber(r.IDNumber)
+		if pid == "" {
+			pid = strings.TrimSpace(r.Name)
+		}
+		people[pid] = true
+		if r.Base > baseOf[pid] {
+			baseOf[pid] = r.Base
+		}
 		switch r.Scheme {
 		case "养老保险":
 			b.UnitPension += r.UnitAmount
@@ -838,6 +854,9 @@ func (h *HRHandler) hrSIBillTotalsOf(ctx context.Context, tid int64, month strin
 			b.UnitUnemployment += r.UnitAmount
 			b.PersonalUnemployment += r.PersonalAmount
 		}
+	}
+	for _, v := range baseOf {
+		b.BaseTotal += v
 	}
 	b.Headcount = len(people)
 	b.UnitPension, b.UnitMedical = round2(b.UnitPension), round2(b.UnitMedical)
@@ -925,20 +944,12 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 
 // hrSIBillItemsForMonth 生成账单明细快照：2026-11 直接复用真实扣款明细；
 // 其它月份按 (人, 正常/补缴) 从 hr_si_records 聚合。
+//
+// 第 66 轮：**不再有任何种子快照分支** —— 明细必须与汇总同源（都来自
+// 当月有效记录），否则「汇总 = 7,443.75、明细 = 45,878.00」这种自相矛盾
+// 会直接暴露在弹窗里。
 func (h *HRHandler) hrSIBillItemsForMonth(ctx context.Context, tid int64, month, billID string) []HRSIBillItem {
 	auth := h.hrSIDeptAuthority(ctx, tid)
-	if month == hrSIBillSeedValue.MonthLabel {
-		out := make([]HRSIBillItem, 0, len(hrSIBillItemSeedRows))
-		for _, d := range hrSIBillItemSeedRows {
-			it := hrSIBillItemRowToModel(tid, billID, d)
-			it.Source = "generated"
-			if dd := auth.deptOf(it.IDNumber, it.Name); dd != "" {
-				it.Department = hrSIDeptLabel(dd)
-			}
-			out = append(out, it)
-		}
-		return out
-	}
 	var records []HRSIRecord
 	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND bill_month = ?", tid, month).Find(&records).Error
 	type key struct{ id, kind string }
@@ -956,6 +967,9 @@ func (h *HRHandler) hrSIBillItemsForMonth(ctx context.Context, tid int64, month,
 			}
 			by[k] = it
 			order = append(order, k)
+		} else if r.Base > it.Base {
+			// 同一人多险种：基数只记一次（取最大值，避免缺基数的文件把它抹成 0）
+			it.Base = r.Base
 		}
 		if dd := auth.deptOf(r.IDNumber, r.Name); dd != "" {
 			it.Department = hrSIDeptLabel(dd)
@@ -1209,9 +1223,17 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		explicitMonth = ym
 	}
 	deptByID := h.hrEmployeeDeptMap(ctx, tid)
+	// 第 66 轮：overwrite_scope=slice 表示用户已在前端确认「仅覆盖当前文件切片」。
+	// 未确认时先做冲突预检，命中就返回 409 + 冲突清单（前端弹确认框），
+	// 绝不先删数据再让用户后悔。
+	overwriteSlice := strings.TrimSpace(c.PostForm("overwrite_scope")) == "slice"
 	type aggKey struct{ id, scheme string }
 	by := map[aggKey]*HRSIRecord{}
 	order := []aggKey{}
+	// 本次上传精确命中的 (人|险种) → 缴纳方集合
+	pageSides := map[string]map[string]bool{}
+	// 本次上传的文件切片（month, kind, scheme, part）
+	var slices []hrSISlice66
 	parsed := 0
 	resolvedMonth := explicitMonth
 	for _, fh := range files {
@@ -1222,6 +1244,12 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		meta := hrSIParseFileName(fh.Filename)
 		scheme := hrSISchemeOfFile(fh.Filename)
 		billMonth := hrResolveImportMonth(explicitMonth, meta.YearMonth, time.Now())
+		// 第 66 轮：登记本文件命中的切片（险种 + 缴纳方 + 月份 + 类型）
+		if strings.TrimSpace(scheme) != "" {
+			slices = append(slices, hrSISlice66{
+				Month: billMonth, Kind: kind, Scheme: scheme, Part: meta.Part,
+			})
+		}
 		if resolvedMonth == "" {
 			resolvedMonth = billMonth
 		}
@@ -1251,6 +1279,11 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 			if amount == 0 {
 				amount = p.AmountDue
 			}
+			psk := strings.ToUpper(strings.TrimSpace(p.IDNumber)) + "|" + scheme
+			if pageSides[psk] == nil {
+				pageSides[psk] = map[string]bool{}
+			}
+			pageSides[psk][meta.Part] = true
 			if meta.Part == HRPartPersonal {
 				r.PersonalRate = p.RateText
 				r.PersonalAmount = round2(r.PersonalAmount + amount)
@@ -1281,12 +1314,27 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		}
 		items = append(items, *r)
 	}
-	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if e := tx.Where("tenant_id = ? AND record_type = ? AND source = ?", tid, kind, "import").
-			Delete(&HRSIRecord{}).Error; e != nil {
-			return e
+	// 第 66 轮：冲突预检 —— 该月同类型下已有相同切片的存量数据时，
+	// 未带 overwrite_scope=slice 一律不写库，回传冲突清单让用户确认。
+	if !overwriteSlice {
+		if conflicts := h.hrSICheckConflicts66(ctx, tid, slices); len(conflicts) > 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"code":    "import_conflict",
+				"message": "检测到重复导入，请确认覆盖范围",
+				"data": gin.H{
+					"conflicts": conflicts,
+					"bill_month": resolvedMonth,
+				},
+			})
+			return
 		}
-		return tx.CreateInBatches(items, 50).Error
+	}
+	var stats hrSIImportStats66
+	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var e error
+		stats, e = h.hrSIApplyImport66(ctx, tx, tid, slices, items, pageSides)
+		return e
 	})
 	if err != nil {
 		hrFail(c, "导入社保记录失败: "+err.Error())
@@ -1297,7 +1345,9 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 	// 第 58 轮：劳务人员的空占位记录同步清理
 	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
 	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed,
-		"bill_month": resolvedMonth})
+		"bill_month": resolvedMonth,
+		"created": stats.Created, "updated": stats.Updated, "removed": stats.Removed,
+		"kept": stats.Kept, "schemes": stats.Schemes})
 }
 
 // hrSISeqNum 序号列在 PG 里是字符串，SQL 层 CAST(... AS INTEGER) 遇到

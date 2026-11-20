@@ -446,6 +446,8 @@ import {
 import { generateCatalogPdf, generateStatementPdf, type CatalogColumn } from './useCatalogPdf'
 import { buildSolarBillStatementDoc } from './energyBillStatements'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
@@ -1342,6 +1344,7 @@ const fmtRate6 = (v: any) => {
 }
 
 onMounted(() => {
+  installListFootHoistAll()
   loadKb()
   void loadCategorySubs()
   window.addEventListener('fleet-categories-changed', onCategoriesChanged)

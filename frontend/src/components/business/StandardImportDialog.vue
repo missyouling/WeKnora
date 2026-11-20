@@ -242,7 +242,13 @@ async function doImport() {
     emit('imported', count)
     close()
   } catch (e: any) {
-    MessagePlugin.error(e?.message || '导入失败，请检查文件格式')
+    const msg = String(e?.message || '')
+    // 第 66 轮：用户在冲突确认框点「取消」是正常操作，不该弹红色错误
+    if (msg.startsWith('__cancel__')) {
+      MessagePlugin.info(msg.replace('__cancel__', ''))
+      return
+    }
+    MessagePlugin.error(msg || '导入失败，请检查文件格式')
   } finally {
     importing.value = false
   }

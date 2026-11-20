@@ -330,6 +330,8 @@ import { PDFDocument } from 'pdf-lib'
 import { generateCatalogPdf, type CatalogColumn } from './useCatalogPdf'
 import { colWidthOf, ellipsisOf, cellClassOf, tableScrollOf } from './columnWidth'
 import { buildFootRow, footSpanOf, summaryScopeRows, type SummaryColumn } from './listSummary'
+// 第 66 轮：合计行搬出纵向滚动容器（滚动条不再贯穿合计栏）
+import { installListFootHoistAll } from './listFootHoist'
 // 逐列表尾汇总行样式（TDesign 表尾 td 拿不到 scoped 作用域）
 import './styles/list-summary-footer.css'
 import {
@@ -1973,6 +1975,7 @@ const reloadColumns = async (force = false) => {
   } catch { /* 后端未配置时回退内置默认 */ }
 }
 onMounted(() => {
+  installListFootHoistAll()
   loadKb()
   loadContractCats()
   reloadColumns()
