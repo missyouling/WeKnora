@@ -1326,7 +1326,16 @@ function resetSubGroupSelection() {
 }
 
 function switchSubGroup(key: string) {
-  activeSubGroup.value = tabGroupKey(key)
+  /**
+   * 第 69 轮：只接受真实存在的胶囊键。
+   *
+   * 调用方（initialGroup / 页面联动）传错一个不存在的键时，旧实现直接赋值，
+   * `fieldsVisible` 过滤后就是 0 行 —— 设置抽屉看起来「打开了但一个字段都没有」，
+   * 极难定位。这里静默忽略并保留当前分组。
+   */
+  const target = tabGroupKey(key)
+  if (target && !subGroupTabs.value.some((g) => g.key === target)) return
+  activeSubGroup.value = target
   openSubFieldName.value = ''
   openChildGroup.value = ''
 }

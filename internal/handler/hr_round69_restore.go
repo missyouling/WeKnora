@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // hrIDMaskPrefixSuffix 拆出打码身份证的「前缀 + 后缀」。
@@ -691,11 +692,57 @@ func (h *HRHandler) fillImportDept69(it *HRSIRecord, dept hrSIDeptAuthority) {
 	it.CustomData["部门"] = d
 }
 
+// hrEnsureSocialRecordType69 社保「记录类型」字段自愈（幂等，只补缺）。
+//
+// 为什么需要：它是第 56 轮四胶囊契约里的字段（正常记录/补退记录各一份），
+// 但用户在设置面板里误删后没有任何自愈路径 —— 导入落库与列表都靠它区分
+// 「正常 / 补退」，缺了之后该列从表头、筛选、模板一起消失（六同步整体缺一列）。
+// 只补缺不覆盖：已有该字段（用户改过 label/宽度/顺序）一律不动。
+func (h *HRHandler) hrEnsureSocialRecordType69(ctx context.Context) {
+	var cats []types.FleetCategory
+	if err := h.db.WithContext(ctx).
+		Where("scope = ? AND deleted_at IS NULL", hrScopeSocial).
+		Find(&cats).Error; err != nil {
+		logger.Warnf(ctx, "读取社保字段配置失败: %v", err)
+		return
+	}
+	for i := range cats {
+		changed := false
+		for _, group := range []string{"正常记录", "补退记录"} {
+			has := false
+			for _, sub := range cats[i].Subs {
+				if strings.TrimSpace(sub.Group) == group && strings.TrimSpace(sub.Name) == "记录类型" {
+					has = true
+					break
+				}
+			}
+			if has {
+				continue
+			}
+			cats[i].Subs = append(cats[i].Subs, types.FleetCategorySub{
+				Name: "记录类型", Group: group, GroupLabel: group,
+				Enabled: true, IsDefault: false, DataType: "text", Width: 0,
+			})
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		if err := h.db.WithContext(ctx).Save(&cats[i]).Error; err != nil {
+			logger.Warnf(ctx, "补齐社保「记录类型」字段失败（tenant=%d）: %v", cats[i].TenantID, err)
+			continue
+		}
+		logger.Infof(ctx, "已补齐社保「记录类型」字段（tenant=%d）", cats[i].TenantID)
+	}
+}
+
 // hrRepair69 启动幂等修复：先把星号身份证还原成明文，再回填空部门。
 //
 // 顺序不能反：部门回填依赖完整的 18 位身份证做精确关联，
 // 先还原再回填，一次启动就能把「打码 + 空部门」两条问题一起收敛。
 func (h *HRHandler) hrRepair69(ctx context.Context) {
+	// 字段自愈先跑：后面按 subs 派生的列表/模板都依赖它存在
+	h.hrEnsureSocialRecordType69(ctx)
 	var tids []int64
 	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
 		Distinct().Pluck("tenant_id", &tids).Error; err != nil {

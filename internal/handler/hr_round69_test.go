@@ -238,3 +238,33 @@ func TestRound69DefaultVisibleFalsePersists(t *testing.T) {
 	}
 	require.True(t, found, "司龄 字段必须在落库结果里")
 }
+
+// 社保「记录类型」缺失时自愈补齐，已有则零变更（幂等）。
+func TestRound69EnsureSocialRecordType(t *testing.T) {
+	db := hrRound59DB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&types.FleetCategory{
+		ID: "soc69", TenantID: 1, Scope: hrScopeSocial, Name: "社保管理", Enabled: true,
+		Subs: []types.FleetCategorySub{
+			{Name: "姓名", Enabled: true, Group: "正常记录", DataType: "text"},
+			{Name: "记录类型", Enabled: true, Group: "补退记录", DataType: "text"},
+		},
+	}).Error)
+
+	h := &HRHandler{db: db}
+	h.hrEnsureSocialRecordType69(ctx)
+	h.hrEnsureSocialRecordType69(ctx) // 第二次必须零变更
+
+	var cats []types.FleetCategory
+	require.NoError(t, db.Where("id = ?", "soc69").Find(&cats).Error)
+	require.Len(t, cats, 1)
+	count := map[string]int{}
+	for _, sub := range cats[0].Subs {
+		if sub.Name == "记录类型" {
+			count[sub.Group]++
+		}
+	}
+	require.Equal(t, 1, count["正常记录"], "缺的组必须补上")
+	require.Equal(t, 1, count["补退记录"], "已有的组不得重复追加")
+	require.Len(t, cats[0].Subs, 3)
+}

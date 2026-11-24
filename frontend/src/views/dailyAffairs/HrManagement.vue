@@ -1476,7 +1476,14 @@ const settingsInitialGroup = computed(() => {
   if (activeTab.value === 'hr-roster') {
     return rosterStatusView.value === '离职' ? '离职人员' : '在职人员'
   }
-  if (activeTab.value === 'hr-contract') return contractStatusView.value || ''
+  /**
+   * 劳动合同的胶囊是「劳动合同 / 劳务合同」（按合同**类型**分组），
+   * 与合同状态（正常/到期…）不是一回事 —— 传状态会让 switchSubGroup 落到
+   * 一个不存在的分组上，字段行整片消失（第 69 轮真机 10.1 回归）。
+   */
+  if (activeTab.value === 'hr-contract') {
+    return contractSubView.value === 'service' ? '劳务合同' : '劳动合同'
+  }
   return ''
 })
 const visibleColKeys = ref<string[]>([])
