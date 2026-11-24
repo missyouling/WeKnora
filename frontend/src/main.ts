@@ -7,6 +7,7 @@ import TDesign from "tdesign-vue-next";
 import "tdesign-vue-next/dist/tdesign.css";
 import "@/assets/theme/theme.css";
 import "@/assets/theme/tdesign-overrides.less";
+import "@/assets/theme/toast.less";
 import "@/assets/dropdown-menu.less";
 import "@/components/css/chat-hljs-dark.less";
 import "@/components/css/assistant-page-fill.less";
@@ -19,6 +20,8 @@ import { initTheme } from "@/composables/useTheme";
 import { initFont } from "@/composables/useFont";
 import { installTDesignIconOfflineGuard } from "@/utils/tdesign-icon-offline";
 import { installAutofillGuard } from "@/utils/disable-autofill";
+// 第 69 轮：Toast 统一右下角、分级别时长（不再遮挡顶部 KPI 卡片）
+import { installToastDefaults } from "@/utils/toastDefaults";
 import { useAuthStore } from "@/stores/auth";
 
 // 必须在 Vue 组件挂载之前执行，避免 tdesign-icons 运行时请求 tdesign.gtimg.com
@@ -36,6 +39,8 @@ async function bootstrap() {
   };
 
   app.use(TDesign);
+  // 第 69 轮：Toast 统一右下角（必须在 TDesign 之后，才能覆盖 $message 出口）
+  installToastDefaults(app);
   const pinia = createPinia();
   app.use(pinia);
 

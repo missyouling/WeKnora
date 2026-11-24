@@ -18,8 +18,9 @@
   Slots：title / field-<name>（按字段名覆盖单个控件）/ extra（表单尾部）/ footer-left
 -->
 <template>
+  <!-- 第 69 轮：业务抽屉最小 680px（保证一行两列），可拖到 1400px（三列自适应） -->
   <SettingDrawer v-model:visible="innerVisible" :title="title" :width="drawerWidth" :storage-key="storageKey"
-    hide-footer destroy-on-close class="bsd-drawer">
+    :min-width="minWidth" :max-width="maxWidth" hide-footer destroy-on-close class="bsd-drawer">
     <template #title>
       <slot name="title">
         <span class="detail-title-main">{{ title }}</span>
@@ -40,7 +41,9 @@
            近乎逐行重复（约 90 行），改一处漏一处，是六同步漂移的温床。 -->
       <section v-for="sec in normalizedSections" :key="sec.key" class="bsd-block">
         <div class="bsd-block-title">{{ sec.label }}</div>
-        <div class="bsd-fields" :class="fieldsClass">
+        <!-- 第 69 轮：容器查询锚点（inline-size 容器只能被子孙查询，不能查自己） -->
+        <div class="bsd-fields-wrap">
+          <div class="bsd-fields" :class="fieldsClass">
           <template v-for="f in sec.fields" :key="f.name">
             <t-form-item :label="f.label" label-align="top" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
@@ -103,6 +106,7 @@
               </slot>
             </t-form-item>
           </template>
+          </div>
         </div>
       </section>
 
@@ -219,6 +223,10 @@ const props = withDefaults(defineProps<{
    * 每列输入控件只剩 150px 左右，18 位身份证号与公司全称被截断（线上问题 1 的根因）。
    */
   twoColumn?: boolean
+  /** 第 69 轮：拖拽调宽的下限（px）。业务抽屉一律 680（保证一行两列）。 */
+  minWidth?: number
+  /** 上限（px）：允许拉宽到三列布局。 */
+  maxWidth?: number
 }>(), {
   title: '',
   row: null,
@@ -239,6 +247,8 @@ const props = withDefaults(defineProps<{
   readonly: false,
   showReExtract: false,
   twoColumn: false,
+  minWidth: 680,
+  maxWidth: 1400,
 })
 
 const emit = defineEmits<{
@@ -367,11 +377,29 @@ const FULL_WIDTH_FIELDS = new Set([
   '配套设施', '备注', '户籍地址', '现居住地', '现居住地址', '紧急联系人地址',
   '离职原因', '离职原因说明', '维修说明', '地址', '详细地址',
 ])
+/**
+ * 第 69 轮：字段名是否「长到放不进同行」。
+ *
+ * 同行排布下 label 固定 84px（约 6 个 13px 汉字）。超过 6 字、或带单位括号
+ * （`垃圾处理费(元/套)`、`二次供水费(元/m³)`）的字段名在这一格里必然被截断，
+ * 所以**只让这些字段**切换成上下结构 —— 短标签（工号/姓名/部门）继续同行，
+ * 不再一刀切全部置顶（第 68 轮上下结构把抽屉拉得很长）。
+ */
+const LONG_LABEL_MIN = 7
+const isLongLabel = (f: DetailFieldMeta): boolean => {
+  const label = String(f?.label || f?.name || '').trim()
+  const len = Array.from(label).length
+  if (len >= LONG_LABEL_MIN) return true
+  // 带括号单位的短名（`电梯费(元)` = 6 字）在 84px 里也放不下
+  return /[(（][^)）]{1,10}[)）]/.test(label)
+}
 const fieldClassOf = (f: DetailFieldMeta) => ({
   'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || f.dataType === 'attachment'
     || isLongTextField(f) || f.name === 'fileName'
     || FULL_WIDTH_FIELDS.has(String(f.name || ''))
     || (f as any).dataType === 'multi',
+  // 长字段名（含单位）单独换行；其余短字段保持同行紧凑排布
+  'bsd-field--long-label': isLongLabel(f),
 })
 /** 第 64 轮：两列布局的网格类（CSS 侧只做列定义切换，行距同源）。 */
 const fieldsClass = computed(() => ({ 'bsd-fields--two': props.twoColumn }))
@@ -388,14 +416,15 @@ function close() {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--td-comp-margin-m);
+  gap: var(--td-comp-margin-s);
   min-height: 0;
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   padding: var(--td-comp-margin-m) var(--td-comp-margin-m) 0;
 }
-.bsd-block { margin-bottom: var(--td-comp-margin-s); }
+/* 第 69 轮：分组标题上下间距收紧（14 / 8），去掉整块的大段留白 */
+.bsd-block { margin: 0 0 6px; }
 .bsd-page-badge {
   display: inline-flex;
   align-items: center;
@@ -444,7 +473,8 @@ function close() {
   font-size: 13px;
   font-weight: 600;
   color: var(--td-text-color-primary);
-  margin-bottom: var(--td-comp-margin-s);
+  /* 第 69 轮：上下 14 / 8，与表单 row-gap 10 一起把纵向空隙收到紧凑 */
+  margin: 14px 0 8px;
 
   /* 第 53 轮：分组标题前的绿色竖条（4×14、圆角 2px）。
      与能耗打印预览/原项目小节标题同一视觉语言，颜色走设计令牌，
@@ -458,50 +488,103 @@ function close() {
     background: var(--td-success-color, #00a870);
   }
 }
+/* 第 69 轮：容器查询锚点 + 自适应列数（2 列 / 3 列）。
+   inline-size 容器只能被子孙查询 —— 所以必须多包一层 .bsd-fields-wrap，
+   把 .bsd-fields 自身的列数交给 @container 决定。 */
+.bsd-fields-wrap {
+  container-type: inline-size;
+  min-width: 0;
+}
 .bsd-fields {
   display: grid;
-  /* 自适应列数：抽屉窄（用户拖小/小窗）时自动落成单列，避免标签和输入被截断 */
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px 20px;
-  /* 第 68 轮：dense 让后续的短字段回填到前面留下的空位，
-     单列字段后紧跟整行字段时不再留下半栏空洞。 */
-  grid-auto-flow: dense;
-}
-/* 第 64 轮：固定两列（人事全模块 820px 抽屉）。
-   minmax(0,1fr) 而不是 1fr —— 后者最小宽度是 auto，长 Label 会把列撑破。 */
-.bsd-fields--two {
+  /* 默认 / 窄态：一行两列（抽屉 min-width 680，内容区 ~648 → 每列 ~314） */
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 20px;
-  row-gap: 14px;
+  row-gap: 10px;
+  /* dense：整行字段后面的空位由后续短字段回填，杜绝孤立半行空洞 */
+  grid-auto-flow: dense;
+  align-items: start;
 }
-/* 两列布局下每个表单项允许收缩，控件才有 >=230px 的展示宽度 */
-.bsd-fields--two :deep(.t-form__item) { min-width: 0; }
+/* 拉宽到 1020px 以上：自动扩展为三列（820 默认宽仍是两列，绝不挤压控件） */
+@container (min-width: 1020px) {
+  .bsd-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* 极窄态（用户把抽屉拖到 min-width 以下 / 小窗 <600px）：单列，控件不再被挤 */
+@container (max-width: 600px) {
+  .bsd-fields { grid-template-columns: minmax(0, 1fr); }
+}
+/* 每列允许收缩：minmax(0,1fr) + min-width:0，长内容只截断自己、不撑破栅格 */
+.bsd-fields :deep(.t-form__item) {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  /* 第 69 轮：清掉 TDesign 默认的 margin-bottom:24px（与 row-gap 叠加后行距翻倍） */
+  margin-bottom: 0 !important;
+}
 /**
- * 第 68 轮：字段名置顶紧凑排版。
+ * 第 69 轮：**同行优先**的字段名（label 在左、控件在右，同一水平线）。
  *
- * 上下结构（label 在控件上方、13px 次级深灰、间距 4px），
- * 控件独占所在列 100% 宽度 —— 公司全称 / 18 位身份证 / 带单位的长字段名
- * 在 820px 双列抽屉里也能完整展示，不再被左栏 label 挤成省略号。
+ * 84px 能放下 6 个 13px 汉字（`紧急联系人` / `参保险种` 都不折行）；
+ * 超过 6 字或带单位括号的由 .bsd-field--long-label 切上下结构，见下。
  */
-.bsd-fields :deep(.t-form__item) { display: block; min-width: 0; }
 .bsd-fields :deep(.t-form__label) {
-  display: block;
-  width: auto !important;
-  margin: 0 0 4px;
-  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 84px !important;
+  max-width: 84px;
+  flex: 0 0 84px;
+  margin: 0 !important;
+  padding: 0 !important;
   font-size: 13px;
-  line-height: 18px;
+  line-height: 20px;
   font-weight: 400;
   color: var(--td-text-color-secondary, #4b5563);
   white-space: nowrap;
   overflow: visible;
-  text-align: left;
+  text-align: right;
 }
+.bsd-fields :deep(.t-form__label) > label { cursor: default; }
 .bsd-fields :deep(.t-form__controls) {
+  flex: 1 1 auto;
   margin-left: 0 !important;
   min-width: 0;
 }
 .bsd-fields :deep(.t-form__controls-content) { min-width: 0; }
+/**
+ * 长字段名：单个字段切换上下结构（label 在上、控件在下并独占整列宽）。
+ *
+ * 只影响命中的那一个字段，同组其它短字段仍保持同行 —— 这样
+ * `是否本地首次缴纳社保` / `垃圾处理费(元/套)` 不被截断，
+ * 而 `工号` / `姓名` / `部门` 不会白占半行高度。
+ */
+.bsd-fields :deep(.bsd-field--long-label) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+.bsd-fields :deep(.bsd-field--long-label > .t-form__label) {
+  width: auto !important;
+  max-width: none;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  text-align: left;
+  line-height: 18px;
+}
+/* 极窄态兜底：单列时（每列 <290px）所有字段统一换行，避免控件被压扁 */
+@container (max-width: 600px) {
+  .bsd-fields :deep(.t-form__item) { flex-direction: column; align-items: stretch; gap: 3px; }
+  .bsd-fields :deep(.t-form__label) {
+    width: auto !important;
+    max-width: none;
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    text-align: left;
+    line-height: 18px;
+  }
+}
 /* 对齐红线：左/右两列所有输入控件的左、右边缘必须垂直方向 100% 对齐。
    TDesign 的 t-date-picker / t-select 等带有自身固有宽度（min-width 内联样式），
    在栅格里会撑破列宽，导致「开票日期」比下方的「税率/价税合计」更宽 ——

@@ -1255,15 +1255,39 @@ func hrDormBedsOfType(roomType string) int {
 	return 1
 }
 
-// hrDormEmployeeIndex 在职员工索引（姓名 → 员工）。
+// hrDormEmployeeIndex 花名册索引（姓名 → 员工），**含离职人员**。
+//
+// 第 69 轮：旧实现带 `status <> '离职'`，导致离职员工的住宿/资产/费用记录
+// 关联不到部门、岗位、工号 —— 而他们的档案其实完整保留在花名册里。
+// 现在查全量；同名时优先在职（同名的离职记录不应覆盖在职员工）。
 func (h *HRHandler) hrDormEmployeeIndex(ctx context.Context, tid int64) map[string]HREmployee {
 	out := map[string]HREmployee{}
 	var rows []HREmployee
-	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND (status <> ? OR status = '' OR status IS NULL)", tid, "离职").Find(&rows).Error
+	_ = h.db.WithContext(ctx).Where("tenant_id = ?", tid).Find(&rows).Error
 	for _, e := range rows {
-		out[strings.TrimSpace(e.Name)] = e
+		name := strings.TrimSpace(e.Name)
+		if name == "" {
+			continue
+		}
+		prev, exists := out[name]
+		if !exists {
+			out[name] = e
+			continue
+		}
+		if hrEmployeeResigned(prev) && !hrEmployeeResigned(e) {
+			out[name] = e
+		}
 	}
 	return out
+}
+
+// hrEmployeeResigned 是否为离职状态（兼容「离职 / resigned / inactive」历史值）。
+func hrEmployeeResigned(e HREmployee) bool {
+	switch strings.TrimSpace(e.Status) {
+	case "离职", "resigned", "inactive", "已离职":
+		return true
+	}
+	return false
 }
 
 const hrDormSeed62Key = "hr_dorm_seed_v62"

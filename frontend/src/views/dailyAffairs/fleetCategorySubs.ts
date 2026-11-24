@@ -116,6 +116,16 @@ export interface EditableField {
   group?: string
   /** 分组中文名（展示用；空则按 group 键的字典值显示）。 */
   groupLabel?: string
+  /**
+   * 第 69 轮：跨**视图**引用来源（花名册「离职人员」胶囊里的在职字段）。
+   *
+   * 与 source 的区别：source 是「取值来自另一个分类的字段」，会按 source.field
+   * 取值且面板只读；refSource 表示「同一张员工主档在另一个视图里也有一份配置」，
+   * 取值仍走本字段 name，面板可编辑。仅用于展示来源胶囊 + 导入模板排除。
+   */
+  refSource?: string
+  /** 来源模块键（roster_active / roster_resigned…），供代码判定用。 */
+  sourceModule?: string
 }
 
 /** 后端 subs 条目（读入形态；字段均为 snake_case）。 */
@@ -151,6 +161,10 @@ export interface SubPayload {
   group?: string
   /** 分组中文名。 */
   group_label?: string
+  /** 第 69 轮：跨视图引用来源（展示名，如「在职人员」）。 */
+  ref_source?: string
+  /** 第 69 轮：来源模块键（roster_active）。 */
+  source_module?: string
 }
 
 const SUB_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/
@@ -363,6 +377,16 @@ export function fromSubsPayload(raw: unknown): EditableField[] {
         if (srcLabel) field.source.label = srcLabel
       }
     }
+    /**
+     * 第 69 轮：跨视图引用来源。只认完整的一对（展示名 + 模块键），
+     * 半截数据不渲染来源胶囊（避免出现空胶囊）。
+     */
+    const refSource = String((r as Record<string, unknown>).ref_source ?? (r as Record<string, unknown>).refSource ?? '').trim()
+    const sourceModule = String((r as Record<string, unknown>).source_module ?? (r as Record<string, unknown>).sourceModule ?? '').trim()
+    if (refSource && sourceModule) {
+      field.refSource = refSource
+      field.sourceModule = sourceModule
+    }
     // sub_fields 只在 items 字段上有意义；其他字段携带它属于脏数据，丢弃。
     if (dataType === 'items' && subFields.length) field.subFields = subFields
     out.push(field)
@@ -416,6 +440,11 @@ export function toSubsPayload(fields: readonly EditableField[]): SubPayload[] {
       }
       const srcLabel = String(f.source.label ?? '').trim()
       if (srcLabel) payload.source.label = srcLabel
+    }
+    // 第 69 轮：跨视图引用来源必须原样回写，否则用户保存一次就丢了来源标识
+    if (f.refSource && f.sourceModule) {
+      payload.ref_source = f.refSource
+      payload.source_module = f.sourceModule
     }
     // 业务分组：仅在有值时下发，无 group 的旧分类序列化结果与改造前一致
     const group = String(f.group ?? '').trim()

@@ -25,10 +25,11 @@ import (
 func hrResignMirrorSubs68(subs []types.FleetCategorySub) ([]types.FleetCategorySub, bool) {
 	out := append([]types.FleetCategorySub{}, subs...)
 	resigned := map[string]bool{}
-	for _, s := range out {
-		if strings.TrimSpace(s.Group) == hrRosterGroupResigned {
-			resigned[strings.TrimSpace(s.Name)] = true
+	for i := range out {
+		if strings.TrimSpace(out[i].Group) != hrRosterGroupResigned {
+			continue
 		}
+		resigned[strings.TrimSpace(out[i].Name)] = true
 	}
 	changed := false
 	// 先收集在职侧字段（保持其在职顺序），再统一追加，避免边遍历边 append。
@@ -51,6 +52,11 @@ func hrResignMirrorSubs68(subs []types.FleetCategorySub) ([]types.FleetCategoryS
 		mirror.IsDefault = false
 		// 列宽不继承（离职列表列宽由用户自行决定，避免把在职的宽列带过来）。
 		mirror.Width = 0
+		// 第 69 轮：标记为「跨视图引用」——设置面板显示「在职人员」来源胶囊，
+		// 导入模板自动排除（这些列不是离职表自己的录入列）。
+		mirror.RefSource = hrRosterGroupActive
+		mirror.SourceModule = "roster_active"
+		// 从在职侧继承来的 Source（社保账号等）保持原样，由面板显示原来源。
 		out = append(out, mirror)
 		resigned[name] = true
 		changed = true
@@ -97,6 +103,26 @@ func (h *HRHandler) hrMigrateResignFull68(ctx context.Context) error {
 					changed = true
 				}
 			}
+		}
+		/**
+		 * 第 69 轮：历史合并进来的在职字段可能还没有 ref_source（第 68 轮只搬了
+		 * 字段本身）。这里按「离职组 + 非离职专有 + 不是跨分类取值引用」补齐，
+		 * 幂等：已有值不覆盖，用户改过的来源标识也不会被冲掉。
+		 */
+		for j := range cats[i].Subs {
+			sub := &cats[i].Subs[j]
+			if strings.TrimSpace(sub.Group) != hrRosterGroupResigned {
+				continue
+			}
+			if core[strings.TrimSpace(sub.Name)] || sub.Source != nil {
+				continue
+			}
+			if sub.RefSource == hrRosterGroupActive && sub.SourceModule == "roster_active" {
+				continue
+			}
+			sub.RefSource = hrRosterGroupActive
+			sub.SourceModule = "roster_active"
+			changed = true
 		}
 		next, mirrored := hrResignMirrorSubs68(cats[i].Subs)
 		if mirrored {

@@ -76,15 +76,16 @@ test('第68轮：目录引擎不再写死 A4 横向', () => {
   assert.match(src, /const PORTRAIT_W = 595\.28/)
 })
 
-test('第68轮：抽屉字段名置顶（label-align=top）且不再按左栏宽度排版', () => {
+test('第68轮（第 69 轮已升级为同行优先）：不再按左栏宽度排版', () => {
   const src = read('BusinessSplitDetailDrawer.vue')
   assert.match(src, /label-align="top"/)
   assert.ok(!/label-width="`\$\{labelWidth\}/.test(src), '不得再用左栏 label 宽度')
   assert.match(src, /grid-auto-flow: dense/)
   assert.match(src, /column-gap: 20px/)
-  assert.match(src, /row-gap: 14px/)
+  // 第 69 轮把行距从 14 收到 10、并去掉 label 的下外边距（同行布局）
+  assert.match(src, /row-gap: 10px/)
   assert.match(src, /font-size: 13px/)
-  assert.match(src, /margin: 0 0 4px/)
+  assert.match(src, /margin: 0 !important;/)
   // 全行白名单收紧：普通单行字段不得再跨整行
   const body = src.slice(src.indexOf('const FULL_WIDTH_FIELDS'), src.indexOf('const fieldClassOf'))
   for (const f of ['工作邮箱', '个人邮箱', '服装尺寸', '户口性质', '手机号码']) {

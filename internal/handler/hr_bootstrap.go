@@ -138,6 +138,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	if err := h.hrMigrateDormSubs63(ctx); err != nil {
 		logger.Warnf(ctx, "migrate HR dorm subs v63 failed: %v", err)
 	}
+	// 第 69 轮：星号身份证还原 + 全量花名册（含离职）部门回填。
+	// 两个分支都要跑：幂等、只补空值/只改打码号，不会回滚用户改动。
+	h.hrRepair69(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

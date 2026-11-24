@@ -185,6 +185,15 @@
                       <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
                         @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
                     </div>
+                    <!-- 第 69 轮：跨视图引用（花名册离职胶囊里并入的在职字段）。
+                         名称仍是本视图可编辑的显示名，取值走同一张员工主档，
+                         所以不做只读；只在前面挂一枚绿色「在职人员」来源胶囊。 -->
+                    <div v-else-if="row.fd.refSource" class="fc-name-wrap fc-name-wrap--ref"
+                      :title="`引用自「${row.fd.refSource}」视图的同名字段（数据同源，导入模板自动排除）`">
+                      <span class="fc-ref-badge fc-ref-badge--view" data-fc-ref-source>{{ row.fd.refSource }}</span>
+                      <t-input :model-value="fieldEditOf(row.fd)" size="small" placeholder="显示名称" class="fc-name fc-name--ref"
+                        @update:model-value="(v: string) => setFieldEdit(row.fd, v)" />
+                    </div>
                     <!-- 阻止冒泡只挂在外层 div（原生元素）。绝不能写在 t-input 上：
                          t-input 的 click 首参是 { e } 上下文对象而非原生 MouseEvent，
                          Vue 的 .stop 会调 e.stopPropagation() 直接抛 TypeError（真机控制台）。 -->
@@ -2448,6 +2457,15 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
      min-width: 140px —— 低于这个宽度「账单周期」「计费电量」就会被省略成「账...」「计」，
      用户既看不清也改不了（真机问题 3）。 */
   .fc-name--ref { flex: 1 1 auto; min-width: 140px; }
+  /* 第 69 轮：跨视图引用来源做成圆角胶囊（与分类路径徽标区分开） */
+  .fc-ref-badge--view {
+    max-width: 84px;
+    padding: 0 7px;
+    border-radius: 9px;
+    font-weight: 500;
+    color: var(--td-success-color, #00a870);
+    background: var(--td-success-color-1, #e8f8f2);
+  }
 
   .fc-name-wrap {
     position: relative;

@@ -127,6 +127,16 @@
         <template #batch-actions>
           <!-- display:contents 让按钮仍是 .batch-bar-actions 的直接 flex 项，不额外产生布局层 -->
           <div class="hr-batch-actions" data-hr-batch-bar>
+            <!-- 第 69 轮：月度账单支持勾选后批量重算（按各月当前有效原始记录重建快照） -->
+            <t-popconfirm v-if="toolbarShowGenerateBill" theme="warning"
+              :content="`确定重新生成所选 ${selectedRowKeys.length} 个月份的账单吗？`"
+              :disabled="!selectedRowKeys.length" @confirm="handleRegenerateBills">
+              <t-button theme="default" variant="outline" size="small"
+                :disabled="!selectedRowKeys.length" :loading="billRegenerating" data-hr-regenerate-bills>
+                <template #icon><t-icon name="refresh" size="14px" /></template>
+                重新生成
+              </t-button>
+            </t-popconfirm>
             <t-button theme="default" variant="outline" size="small" :loading="exporting"
               data-hr-export @click="handleExportExcel">
               <template #icon><t-icon name="download" size="14px" /></template>
@@ -358,13 +368,16 @@
                 {{ colValue(row, '房源类型') }}
               </t-tag>
             </template>
-            <!-- 第 68 轮：账单周期 + 「原始记录已变动」橙标（快照不变，需手动重新生成） -->
+            <!-- 第 69 轮：原始记录变动改为周期**前方的小红点**（tooltip 说明）。
+                 旧实现的「原始记录已变动，请重新生成」文字把 2026-11 挤成两行（真机图 4）。 -->
             <template #账单周期="{ row }: any">
               <span v-if="isHeaderContext(row)">账单周期</span>
               <span v-else class="hr-bill-month-cell">
-                {{ colValue(row, '账单周期') }}
-                <span v-if="row?.source_dirty || row?.dirty_warning" class="hr-dirty-flag"
-                  data-hr-bill-dirty-flag>原始记录已变动，请重新生成</span>
+                <t-tooltip v-if="row?.source_dirty || row?.dirty_warning"
+                  content="该月原始记录已变更，请重新生成账单以更新" placement="top">
+                  <span class="dirty-dot" data-hr-bill-dirty-flag aria-label="原始记录已变动" />
+                </t-tooltip>
+                <span class="hr-bill-month-text">{{ colValue(row, '账单周期') }}</span>
               </span>
             </template>
             <template #账单状态="{ row }: any">
@@ -429,7 +442,7 @@
       :page-no="0" :form="editForm" :fields="drawerFields"
       :groups="drawerGroups" :sub-fields="[]"
       :supports-sub-fields="false" :dirty="detailDirty" :saving="saving"
-      width="860px" :two-column="true"
+      width="820px" :two-column="true"
       :data-hr-dorm-company="activeTab === 'hr-dorm' ? dormCurrentCompany : undefined"
       :data-hr-dorm-dept-count="activeTab === 'hr-dorm' ? dormDeptOptionsOf(dormCurrentCompany).length : undefined"
       :data-hr-dorm-meter-count="activeTab === 'hr-dorm' ? dormMeterOptionsOf('electricity').length : undefined"
@@ -521,7 +534,7 @@
          离职管理 / 劳动合同复用 FleetCertPanel 既有的跨表字段搜索引用机制。 -->
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="''" :scope="hrScopeOf(activeTab)"
       :initial-category="initialCategory" :title="settingsTitle"
-      :initial-group="activeTab === 'hr-dorm' ? HR_DORM_GROUP_OF[dormSubView] : ''"
+      :initial-group="settingsInitialGroup"
       fields-tab-label="字段设置"
       :hide-group-tabs="false" :single-category="true"
       :ref-sources="refSources"
@@ -1451,6 +1464,21 @@ const STORAGE_KEY = computed(() => {
     || (activeTab.value === 'hr-dorm' && view === 'fee')) ? 'v4' : 'v3'
   return `weknora-hr-${activeTab.value}-${fundSubView.value}-${socialSubView.value}-${view}-cols-${version}`
 })
+/**
+ * 第 69 轮：设置抽屉打开时默认激活**当前列表所在胶囊**。
+ *
+ * 旧实现只给宿舍传 initialGroup：用户在「离职人员」点设置，抽屉落在「在职人员」，
+ * 改了「司龄」的默认表头其实改的是在职侧 —— 回到离职列表看不到任何变化，
+ * 表现为「关了默认表头、列表还显示，重置也还在」（六同步断层的真实现场）。
+ */
+const settingsInitialGroup = computed(() => {
+  if (activeTab.value === 'hr-dorm') return HR_DORM_GROUP_OF[dormSubView.value]
+  if (activeTab.value === 'hr-roster') {
+    return rosterStatusView.value === '离职' ? '离职人员' : '在职人员'
+  }
+  if (activeTab.value === 'hr-contract') return contractStatusView.value || ''
+  return ''
+})
 const visibleColKeys = ref<string[]>([])
 const visibleCols = computed(() => businessColumns.value.filter((c) => visibleColKeys.value.includes(c.colKey)))
 
@@ -1498,7 +1526,20 @@ function resetColumns() {
   }
   persistColumns()
 }
-function selectAllColumns() { resetColumns() }
+/**
+ * 第 69 轮：「全选」与「重置」是两件事，绝不能再共用一个函数。
+ *
+ * 旧实现 `selectAllColumns()` 直接调 `resetColumns()` —— 点「全选」只是回到
+ * 默认表头，用户以为坏了；反过来也让「重置」的语义被全选污染。
+ * 全选 = 当前视图**所有启用字段**（configKeys.enabled），重置 = 默认表头。
+ */
+function selectAllColumns() {
+  const allKeys = businessColumns.value.map((c) => c.colKey)
+  const enabled = configKeys.value.enabled.length
+    ? new Set(configKeys.value.enabled) : null
+  visibleColKeys.value = enabled ? allKeys.filter((k) => enabled.has(k)) : allKeys
+  persistColumns()
+}
 function onColumnsChange(keys: string[]) { visibleColKeys.value = keys; persistColumns() }
 /** 第 63 轮：存量列配置里的旧字段名 → 新字段名（改名不丢列显隐）。 */
 const LEGACY_COLUMN_ALIAS: Record<string, string> = {
@@ -1524,9 +1565,30 @@ function initColumns() {
     visibleColKeys.value = configKeys.value.defaults.filter((k) => allKeys.includes(k))
     return
   }
-  resetColumns()
+  /**
+   * 第 69 轮：**兜底不得写 localStorage**。
+   *
+   * 字段配置还在路上时，默认集合只能退回静态契约（司龄等字段 defaultHeader=true）。
+   * 旧实现这里调 `resetColumns()`，它在末尾会 `persistColumns()` —— 于是「静态兜底」
+   * 被当成用户选择写进缓存；配置到位后的第二次 initColumns 读到这份缓存，
+   * 用户刚关掉的默认表头就复活了（真机 A2.10：刷新后司龄又出现）。
+   * 兜底只改内存，等配置到位由下面的 watch 用后端值重算。
+   */
+  visibleColKeys.value = allKeys
 }
 watch(STORAGE_KEY, () => { initColumns() })
+/**
+ * 第 69 轮：字段配置到位后重算一次可见列（仅当用户没有手动勾选过）。
+ *
+ * `configKeys.defaults` 从空变成有值的这一刻，才是「后端默认表头」真正可用的时刻；
+ * 没有这个 watch，首屏（配置未到）算出来的静态兜底会一直生效到下次切页。
+ */
+watch(() => configKeys.value.defaults.join('|'), (v) => {
+  if (!v) return
+  if (localStorage.getItem(STORAGE_KEY.value)) return
+  const allKeys = businessColumns.value.map((c) => c.colKey)
+  visibleColKeys.value = configKeys.value.defaults.filter((k) => allKeys.includes(k))
+})
 
 /** 需要彩色 Tag 具名插槽的状态列（colKey 与模板 #<colKey> 一致）。 */
 const STATUS_SLOT_COLUMNS = new Set([
@@ -3003,16 +3065,14 @@ async function onSettingsSaved() {
     }
   } catch { /* 隐私模式下 localStorage 不可写，忽略 */ }
   await loadFieldConfig(activeTab.value)
-  const allKeys = businessColumns.value.map((c) => c.colKey)
-  const isStrict = ['hr-roster', 'hr-resign', 'hr-contract', 'hr-fund', 'hr-dorm'].includes(activeTab.value)
-  if (isStrict) {
-    // 第 55 轮：严格按 defaultHeader === true && enabled !== false 重建表头，
-    // 保存设置后立即同步列表表头与 [☰ 字段] 筛选器（清掉旧 localStorage 污染）。
-    visibleColKeys.value = configKeys.value.defaults.filter((k) => allKeys.includes(k))
-  } else {
-    visibleColKeys.value = allKeys
-  }
-  persistColumns()
+  /**
+   * 第 69 轮：保存后与「重置」走**同一个函数**。
+   *
+   * 之前这里是第二份「按 defaultHeader 重建」的实现，与 resetColumns 各自维护 ——
+   * 任一处漏改就会出现「保存后对了、点重置又回来」的六同步断裂。
+   * 现在基准唯一：后端持久化的 `enabled && is_default`。
+   */
+  resetColumns()
   await loadList(activeTab.value)
 }
 
@@ -3625,6 +3685,63 @@ const billFiltered = computed(() => {
  * 账单是生成瞬间的不可变快照 —— 记录被导入/编辑/删除后账单金额纹丝不动，
  * 用户必须手动重新生成。这里统一文案，避免三处各写一遍。
  */
+/** 第 69 轮：批量重新生成账单的进行态（按钮 loading + 防重复点击）。 */
+const billRegenerating = ref(false)
+
+/** 账单行 → 月份（三个模块的列名不同，统一取 YYYY-MM）。 */
+function billMonthOf(row: any): string {
+  const raw = row?.账单周期 ?? row?.month_label ?? row?.账单月份 ?? row?.month ?? ''
+  const m = String(raw).trim()
+  return /^\d{4}-\d{2}$/.test(m) ? m : ''
+}
+
+/**
+ * 第 69 轮：勾选多个月份 → 依次按各月当前有效原始记录重算并刷新快照。
+ *
+ * 为什么逐个串行而不是 Promise.all：三个模块的生成接口都会在事务里
+ * 「删旧账单 + 建快照」，并发对同一个月重复生成会互相覆盖。
+ * 失败不中断：继续处理其余月份，最后用一条汇总提示告知成功/失败数。
+ */
+async function handleRegenerateBills() {
+  const months = Array.from(new Set(
+    selectedRows.value.map((r: any) => billMonthOf(r)).filter(Boolean),
+  )).sort()
+  if (!months.length) {
+    MessagePlugin.warning('所选行没有可识别的账单月份')
+    return
+  }
+  billRegenerating.value = true
+  const ok: string[] = []
+  const failed: string[] = []
+  try {
+    for (const m of months) {
+      try {
+        if (activeTab.value === 'hr-social') {
+          await hrApi.createSocialBill({ month_label: m, overwrite: true })
+        } else if (activeTab.value === 'hr-fund') {
+          await hrApi.createFundBill({ month_label: m, overwrite: true })
+        } else {
+          await hrApi.generateDormCharges({ month: m, overwrite: true })
+        }
+        ok.push(m)
+      } catch (e: any) {
+        failed.push(`${m}${e?.message ? `（${e.message}）` : ''}`)
+      }
+    }
+  } finally {
+    billRegenerating.value = false
+  }
+  selectedKeys.value = new Set()
+  await loadList(activeTab.value)
+  if (ok.length) {
+    const label = ok.length === 1 ? ok[0] : `${ok[0]} 等 ${ok.length} 个月`
+    MessagePlugin.success(`已重新生成 ${label} 账单`)
+  }
+  if (failed.length) {
+    MessagePlugin.error(`以下月份重新生成失败：${failed.join('、')}`)
+  }
+}
+
 function warnSiBillDirty(d: any): void {
   if (!d?.bill_dirty_warning) return
   const months = Array.isArray(d?.dirty_months) && d.dirty_months.length
@@ -4819,18 +4936,33 @@ onUnmounted(() => {
   height: 100%;
   max-height: none;
   flex: 1 1 auto;
+  /* 第 69 轮：内部溢出一律交给 .detail-table-body，容器自己不产生滚动条 */
+  overflow: hidden;
 }
 /* 第 64 轮：明细弹窗内所有包裹层都不得横向溢出（三段表自身已 box-sizing 收口） */
-/* 第 65 轮：包裹层必须能把高度传下去，否则三段表的数据区拿不到可滚动高度 */
+/**
+ * 第 69 轮：高度链**逐级**闭合，垂直滚动条恢复可用。
+ *
+ * 第 68 轮把弹窗高度钉到 780px 后，这里仍留了两个「自动高度」：
+ *   · wrap 只裁横向（overflow-x:hidden），纵向溢出会直接顶出弹窗；
+ *   · `.detail-table` 是 `flex:1 1 auto` + `height:100%`，basis 取内容高度
+ *     （75 行 ≈ 2700px）且百分比高度在 flex 分配的 auto 高度上解析不出确定值
+ *     → 数据区拿到的是内容高度，`overflow-y:auto` 永远不触发（真机图 6 滚不动）。
+ * 修法：wrap 纵向也裁 + 子项 `flex: 1 1 0`（basis 0，纯按剩余空间分配）+ 去掉百分比高度。
+ */
 .hr-bill-table-wrap {
   flex: 1 1 auto;
   min-height: 0;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.hr-bill-table-wrap > * { flex: 1 1 auto; min-height: 0; }
+.hr-bill-table-wrap > * {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto !important;
+}
 /* 第 63 轮：列表状态 Tag 一律无黑框（浅色底 + 语义色文字） */
 .hr-table :deep(.t-tag) {
   border: 0 !important;
@@ -4850,8 +4982,6 @@ onUnmounted(() => {
 .si-conflict-tip { margin: 0; color: var(--td-text-color-secondary); }
 .hr-bill-tabs { display: flex; align-items: center; flex: 0 0 auto; margin-bottom: 2px; }
 .hr-bill-filters { margin-bottom: 14px; }
-.hr-bill-table-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.hr-bill-table-wrap > * { flex: 1 1 auto; min-height: 0; }
 </style>
 
 <style>
@@ -4869,9 +4999,20 @@ onUnmounted(() => {
 .hr-bill-select { width: 160px; }
 .hr-bill-spacer { flex: 1; }
 .hr-bill-count { color: var(--td-text-color-secondary); font-size: 13px; }
-/* 第 68 轮：账单「原始记录已变动」橙标 + 弹窗顶部提醒条 */
-.hr-bill-month-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-.hr-dirty-flag { color: var(--td-warning-color); font-size: 12px; white-space: nowrap; }
+/* 第 69 轮：账单周期前方的变动小红点（替代挤压成两行的文字标签） */
+.hr-bill-month-cell { display: inline-flex; align-items: center; min-width: 0; }
+.hr-bill-month-text { white-space: nowrap; }
+.dirty-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--td-error-color-6, #d54941);
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+  cursor: help;
+}
 .hr-bill-dirty-bar {
   display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
   padding: 6px 10px; border-radius: var(--td-radius-default);
@@ -4912,7 +5053,20 @@ onUnmounted(() => {
 }
 .hr-bill-dialog .t-dialog__body > .hr-bill-detail { flex: 1 1 auto; min-height: 0; }
 /* 第 61 轮：三段结构自带滚动条槽位，旧的 t-table sticky 规则删除 */
-.hr-bill-detail .detail-table-body::-webkit-scrollbar { width: 8px; height: 8px; }
+/* 第 69 轮：滚动条恒为占位式（不用 overlay），滑块清晰可见、可拖拽 */
+.hr-bill-detail .detail-table-body { scrollbar-width: thin; scrollbar-gutter: auto; }
+.hr-bill-detail .detail-table-body::-webkit-scrollbar { width: 10px; height: 10px; }
+.hr-bill-detail .detail-table-body::-webkit-scrollbar-thumb {
+  background: var(--td-component-border, #d0d5dd);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.hr-bill-detail .detail-table-body::-webkit-scrollbar-thumb:hover {
+  background: var(--td-text-color-placeholder, #a6abb3);
+  background-clip: content-box;
+}
+.hr-bill-detail .detail-table-body::-webkit-scrollbar-track { background: transparent; }
 .hr-bill-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .hr-bill-month-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
 .hr-bill-month-row > span { white-space: nowrap; min-width: 80px; }

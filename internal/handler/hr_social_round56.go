@@ -238,20 +238,35 @@ type hrSIDeptAuthority struct {
 func (h *HRHandler) hrSIDeptAuthority(ctx context.Context, tid int64) hrSIDeptAuthority {
 	out := hrSIDeptAuthority{byID: map[string]string{}, byName: map[string]string{}}
 	var emps []HREmployee
-	if err := h.db.WithContext(ctx).Select("name, id_number, department").
-		Where("tenant_id = ?", tid).Find(&emps).Error; err != nil {
+	// 第 69 轮：查**全量**花名册（含离职人士），并优先取最新入职档案 ——
+	// 离职人员的历史部门仍在档案里，关联时必须能命中，否则账单部门列空白。
+	if err := h.db.WithContext(ctx).Select("name, id_number, department, hire_date").
+		Where("tenant_id = ?", tid).
+		Order("hire_date DESC").Find(&emps).Error; err != nil {
 		return out
 	}
+	nameHits := map[string]map[string]bool{}
 	for _, e := range emps {
 		d := strings.TrimSpace(e.Department)
 		if d == "" {
 			continue
 		}
 		if id := normalizeIDNumber(e.IDNumber); id != "" {
-			out.byID[id] = d
+			if _, ok := out.byID[id]; !ok {
+				out.byID[id] = d
+			}
 		}
 		if n := strings.TrimSpace(e.Name); n != "" {
-			out.byName[n] = d
+			if nameHits[n] == nil {
+				nameHits[n] = map[string]bool{}
+			}
+			nameHits[n][d] = true
+		}
+	}
+	// 同名不同部门不猜（姓名兜底只在唯一时生效）
+	for n, depts := range nameHits {
+		if len(depts) == 1 {
+			out.byName[n] = only(depts)
 		}
 	}
 	return out
@@ -1384,6 +1399,15 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		}
 		items = append(items, *r)
 	}
+	/**
+	 * 第 69 轮：源文件（税务/社保网厅导出）自带 `前6位+********+后4位` 掩码时，
+	 * **落库前**用员工主档 / 回盘表 / 公积金明细还原成 18 位明文。
+	 *
+	 * 不能留到启动迁移：合并键含身份证，带着星号写进去会与同月明文行形成两套键，
+	 * 部门关联与劳务豁免立刻失效。还原不到的保持原样并在响应里回传条数，
+	 * 由用户决定是否补齐花名册档案。
+	 */
+	idsRestored, idsUnmatched := h.hrRestoreImportIDs69(ctx, tid, items)
 	// 第 66 轮：冲突预检 —— 该月同类型下已有相同切片的存量数据时，
 	// 未带 overwrite_scope=slice 一律不写库，回传冲突清单让用户确认。
 	if !overwriteSlice {
@@ -1432,6 +1456,8 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 		"bill_month": resolvedMonth,
 		"created": stats.Created, "updated": stats.Updated, "removed": stats.Removed,
 		"kept": stats.Kept, "schemes": stats.Schemes,
+		// 第 69 轮：星号身份证就地还原的结果（0/0 表示源文件本来就是明文）
+		"ids_restored": idsRestored, "ids_unmatched": idsUnmatched,
 		"bill_dirty_warning": len(dirtyMonths) > 0,
 		"dirty_months":       dirtyMonths,
 		"dirty_month":        strings.Join(dirtyMonths, ",")})

@@ -201,6 +201,17 @@ type FleetCategorySub struct {
 	Group string `json:"group,omitempty"`
 	// GroupLabel 分组中文名（仅用于展示；空则按 group 键的字典值显示）。
 	GroupLabel string `json:"group_label,omitempty"`
+	// RefSource / SourceModule 跨**视图**引用来源（第 69 轮）。
+	//
+	// 与 Source 的区别：Source 表示「取值来自另一个分类的字段」（费用清单/劳动合同的
+	// 花名册引用），取值会走 source.field；RefSource 表示「本字段只是在另一个视图里
+	// 也有一份同名配置」，数据仍是同一张主档（花名册离职胶囊里的在职字段）。
+	//
+	// 为什么不能复用 Source：设置面板按 `sub.Source != nil` 判只读，离职人员
+	// 的在职字段必须可编辑（手机号/地址离职后仍要维护）；而导入模板只需要
+	// 「不出现引用列」，两者用 RefSource 区分。
+	RefSource    string `json:"ref_source,omitempty"`
+	SourceModule string `json:"source_module,omitempty"`
 	// Source 跨分类字段引用（仅「费用清单」）。
 	//
 	// 费用清单是综合汇总列表，自身没有存储：每个字段都是对其它分类（市电账单 /

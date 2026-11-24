@@ -1,0 +1,26 @@
+// 全局 Toast（TDesign Message）视觉收敛：右下角、限宽、紧凑圆角阴影。
+//
+// 位置与时长由 `utils/toastDefaults.ts` 在运行时注入（placement bottom-right /
+// 分级 duration），这里只管「长什么样」——两者合起来才是完整口径。
+//
+// 为什么需要限宽：TDesign 的 message 默认 `white-space: nowrap`，
+// 带月份/人数/文件名的长文案会拉成一条横贯屏幕的横幅，即便在右下角也会
+// 盖住列表右侧的操作列。这里允许换行并钉住 400px 上限。
+.t-message.app-toast {
+  max-width: 400px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  align-items: flex-start;
+}
+
+.t-message.app-toast .t-message__content {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 20px;
+}
+
+/* 多条堆叠时收紧间距，避免糊满屏幕右下角 */
+.t-message__list .t-message.app-toast + .t-message.app-toast {
+  margin-top: 8px;
+}

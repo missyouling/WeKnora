@@ -303,6 +303,8 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 	// 1) 在职员工
 	var emps []HREmployee
 	// 存量花名册 status 有「在职」「active」两种历史值，统一按「非离职」取在职。
+	// 注意：这里限定在职是**扣款对象**口径（离职人员不再产生住宿费用），
+	// 不是「关联花名册」口径 —— 部门/岗位/工号一律查全量（见 deptIdx）。
 	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ? AND (status <> ? OR status = '' OR status IS NULL)", tid, "离职").
 		Order("employee_id asc").Find(&emps).Error; err != nil {
@@ -311,6 +313,9 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 	if len(emps) == 0 {
 		return nil, fmt.Errorf("花名册暂无在职员工")
 	}
+	// 第 69 轮：部门以全量花名册（含离职）为权威兜底 —— 在职员工档案缺部门时，
+	// 同一个人此前作为离职人员的部门也能补上，避免费用表部门列出现空白。
+	deptIdx := h.hrDeptIndex69(ctx, tid)
 	// 2) 住宿记录 + 房源
 	var stays []HRDormRecord
 	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND module = ?", tid, hrDormModuleStay).Find(&stays).Error
@@ -371,6 +376,9 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 			ID: uuid.New().String(), TenantID: tid, MonthLabel: month,
 			EmployeeID: e.EmployeeID, Name: e.Name, Department: e.Department,
 			Ratio: 0, StayDays: 0, BillStatus: "已生成", CreatedAt: now, UpdatedAt: now,
+		}
+		if strings.TrimSpace(row.Department) == "" {
+			row.Department = deptIdx.deptOf(e.IDNumber, e.Name)
 		}
 		if hasStay {
 			roomCode := hrDormStr(stay.CustomData, "宿舍编号/房屋地址")

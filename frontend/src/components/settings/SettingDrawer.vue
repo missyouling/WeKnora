@@ -1,14 +1,25 @@
 <template>
-  <teleport to="body">
-    <div v-if="drawerVisible && resizable && !maximized" class="setting-drawer-resize-handle"
+  <!--
+    第 69 轮：拖拽热区改为**抽屉面板内部**的绝对定位锚点。
+
+    旧实现 teleport 到 body + `position: fixed; right: <推算宽度>`：
+      · `right` 用的是 JS 侧的 drawerWidthPx，而面板实际宽度可能被 CSS
+        （min-width:680px）或 TDesign 的 max-width 改写 —— 两者一旦不等，
+        灰色竖线就漂到表单中间（真机图 2/3）；
+      · 窗口缩放、右侧 assistant 停靠、页面滚动都会让 fixed 坐标失配。
+    挂到 `.t-drawer__content-wrapper`（absolute 面板本身）内部后，
+    `left: 0` 永远等于抽屉左边框，与宽度/滚动/缩放全部无关。
+  -->
+  <teleport v-if="handleHost && drawerVisible && resizable && !maximized" :to="handleHost">
+    <div class="setting-drawer-resize-handle"
       :class="{ 'setting-drawer-resize-handle--active': drawerResizing }"
-      :style="{ right: `${drawerWidthPx}px`, '--setting-drawer-travel': `${drawerWidthPx}px` }"
-      role="separator" aria-orientation="vertical" @mousedown.prevent="onResizeStart">
+      role="separator" aria-orientation="vertical" @mousedown.prevent="onResizeStart"
+      data-setting-drawer-resize>
       <div class="setting-drawer-resize-line" />
     </div>
   </teleport>
   <t-drawer v-model:visible="drawerVisible" v-bind="drawerPassthroughAttrs" :size="effectiveWidth" :z-index="zIndex" placement="right"
-    attach="body" destroy-on-close :footer="!hideFooter"
+    attach="body" destroy-on-close :footer="!hideFooter" :data-setting-drawer-id="drawerDomId"
     :class="drawerClass" @before-close="blurActiveElementBeforeClose">
     <!--
       Custom header. We replace TDesign's default header so we can put a leading
@@ -87,7 +98,7 @@ export const SETTING_DRAWER_HEADER_ACTIONS_ID: InjectionKey<string> = Symbol('se
 </script>
 
 <script setup lang="ts">
-import { ref, computed, provide, useAttrs, useId, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, provide, useAttrs, useId, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 interface Props {
@@ -239,8 +250,37 @@ const persistWidth = (width: number) => {
   }
 }
 
-// ---------- Custom drag-resize (visible handle, same as doc-content) ----------
+// ---------- Custom drag-resize (anchor inside the panel itself) ----------
 const drawerResizing = ref(false)
+/**
+ * 第 69 轮：拖拽热区的挂载点 = 当前抽屉的 `.t-drawer__content-wrapper`。
+ *
+ * 同一页面可能同时存在多个 drawer 实例（详情/设置/预览都关着但 DOM 还在），
+ * 所以按每个 SettingDrawer 实例自己的 id 查找，绝不能取第一个。
+ */
+const drawerDomId = `sd-${Math.random().toString(36).slice(2, 9)}`
+const handleHost = ref<HTMLElement | null>(null)
+let hostTimer: ReturnType<typeof setTimeout> | null = null
+
+const resolveHandleHost = (): HTMLElement | null => {
+  if (typeof document === 'undefined') return null
+  const root = document.querySelector(`[data-setting-drawer-id="${drawerDomId}"]`)
+  if (!root) return null
+  return (root.querySelector('.t-drawer__content-wrapper') as HTMLElement | null) || null
+}
+
+// 打开后再挂：t-drawer 有 v-if 与入场动画，靠 watch + 轮询拿首次可用的面板节点。
+watch(drawerVisible, (open) => {
+  if (hostTimer) { clearTimeout(hostTimer); hostTimer = null }
+  if (!open) { handleHost.value = null; return }
+  let tries = 0
+  const tick = () => {
+    const host = resolveHandleHost()
+    if (host) { handleHost.value = host; return }
+    if (tries++ < 40) hostTimer = setTimeout(tick, 80)
+  }
+  nextTick(tick)
+})
 
 const drawerClass = computed(() => [
   'setting-drawer',
@@ -254,7 +294,15 @@ let resizeStartWidth = 0
 function onResizeStart(e: MouseEvent) {
   drawerResizing.value = true
   resizeStartX = e.clientX
-  resizeStartWidth = drawerWidthPx.value
+  /**
+   * 起始宽度必须取**面板实测宽度**，不能取 drawerWidthPx：
+   * 面板可能被 CSS（min-width / max-width）或 TDesign 改写，
+   * 用 JS 值起步会让第一次 mousemove 直接跳 100+ px。
+   */
+  const panel = handleHost.value || document.querySelector(`[data-setting-drawer-id="${drawerDomId}"] .t-drawer__content-wrapper`)
+  const measured = panel ? Math.round(panel.getBoundingClientRect().width) : 0
+  resizeStartWidth = measured > 0 ? clampWidth(measured) : drawerWidthPx.value
+  if (measured > 0) userWidthPx.value = resizeStartWidth
   document.addEventListener('mousemove', onResizeMove)
   document.addEventListener('mouseup', onResizeEnd)
   document.body.style.cursor = 'col-resize'
@@ -276,6 +324,7 @@ function onResizeEnd() {
 }
 
 function cleanupResize() {
+  if (hostTimer) { clearTimeout(hostTimer); hostTimer = null }
   document.removeEventListener('mousemove', onResizeMove)
   document.removeEventListener('mouseup', onResizeEnd)
   document.body.style.cursor = ''
@@ -591,44 +640,33 @@ const handleCancel = () => {
 }
 
 /* Visible resize handle — teleported to body, aligned with drawer left edge. */
+/**
+ * 第 69 轮：热区贴死抽屉左边框。
+ *
+ * 挂在 `.t-drawer__content-wrapper`（absolute 面板）内部，`left: 0` 就是面板
+ * 左边界 —— 与推算宽度、窗口缩放、右侧停靠、页面滚动全部解耦。
+ * 默认只画一条极淡分隔线，hover / 拖拽时才点亮成品牌色（不再是漂浮的灰竖线）。
+ */
 .setting-drawer-resize-handle {
-  position: fixed;
+  position: absolute;
+  left: 0;
   top: 0;
   bottom: 0;
-  width: 12px;
-  margin-left: -6px;
-  // Its inline right is the drawer width; a docked assistant panel adds to it.
-  margin-right: var(--assistant-dock-width, 0px);
+  width: 6px;
   cursor: col-resize;
-  z-index: 2501;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* The handle is teleported separately from TDesign's sliding panel. Move it
-     along the same path instead of letting it flash at the panel's final left
-     edge while the drawer is still entering from the right. */
-  animation: setting-drawer-resize-handle-in 0.28s cubic-bezier(0.38, 0, 0.24, 1) both;
-}
-
-@keyframes setting-drawer-resize-handle-in {
-  from {
-    transform: translateX(var(--setting-drawer-travel));
-  }
-
-  to {
-    transform: translateX(0);
-  }
 }
 
 .setting-drawer-resize-line {
   width: 2px;
-  height: 48px;
-  border-radius: 1px;
-  background: var(--td-component-border);
-  opacity: 0.55;
+  height: 100%;
+  background: var(--td-component-stroke);
+  opacity: 0.5;
   transition: opacity var(--app-motion-fast) ease, background var(--app-motion-fast) ease;
 }
-
 .setting-drawer-resize-handle:hover .setting-drawer-resize-line,
 .setting-drawer-resize-handle--active .setting-drawer-resize-line {
   opacity: 1;

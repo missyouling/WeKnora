@@ -25,8 +25,9 @@ test('单栏抽屉：不再随预览加宽（无 1180px 分屏逻辑）', () => 
   assert.doesNotMatch(src, /expandedWidth/)
   assert.doesNotMatch(src, /1180px/)
   assert.match(src, /const drawerWidth = computed\(\(\) => props\.width\)/)
-  // 表单栅格自适应列数（窄抽屉落单列）
-  assert.match(src, /repeat\(auto-fit, minmax\(200px, 1fr\)\)/)
+  // 第 69 轮：列数由容器查询决定（默认两列 / ≥1020px 三列 / <600px 单列）
+  assert.match(src, /container-type: inline-size;/)
+  assert.match(src, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
 })
 
 test('单栏抽屉：质量溯源 / 动态字段 / 明细 / 扩展插槽齐全', () => {
