@@ -358,6 +358,15 @@
                 {{ colValue(row, '房源类型') }}
               </t-tag>
             </template>
+            <!-- 第 68 轮：账单周期 + 「原始记录已变动」橙标（快照不变，需手动重新生成） -->
+            <template #账单周期="{ row }: any">
+              <span v-if="isHeaderContext(row)">账单周期</span>
+              <span v-else class="hr-bill-month-cell">
+                {{ colValue(row, '账单周期') }}
+                <span v-if="row?.source_dirty || row?.dirty_warning" class="hr-dirty-flag"
+                  data-hr-bill-dirty-flag>原始记录已变动，请重新生成</span>
+              </span>
+            </template>
             <template #账单状态="{ row }: any">
               <span v-if="isHeaderContext(row)">账单状态</span>
               <t-tag v-else-if="colValue(row, '账单状态')" :theme="billStatusTheme(colValue(row, '账单状态'))"
@@ -420,7 +429,7 @@
       :page-no="0" :form="editForm" :fields="drawerFields"
       :groups="drawerGroups" :sub-fields="[]"
       :supports-sub-fields="false" :dirty="detailDirty" :saving="saving"
-      width="860px" :two-column="true" :label-width-px="hrDrawerLabelWidth"
+      width="860px" :two-column="true"
       :data-hr-dorm-company="activeTab === 'hr-dorm' ? dormCurrentCompany : undefined"
       :data-hr-dorm-dept-count="activeTab === 'hr-dorm' ? dormDeptOptionsOf(dormCurrentCompany).length : undefined"
       :data-hr-dorm-meter-count="activeTab === 'hr-dorm' ? dormMeterOptionsOf('electricity').length : undefined"
@@ -612,9 +621,15 @@
          公积金固定四标签（个人明细 | 单位明细 | 部门汇总 | 岗位汇总），
          岗位口径严格取花名册真实「岗位」字段。 -->
     <!-- 第 63 轮：账单明细弹窗加宽到 1480px，配合三段表百分比列宽彻底消除横向滚动条 -->
-    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(96vw, 1480px)"
+    <!-- 第 68 轮：定宽定高（84/94vw × 82vh）—— 切换标签时弹窗外框几何零跳动 -->
+    <t-dialog v-model:visible="billDetailVisible" :header="billDetailTitle" width="min(94vw, 1360px)"
       placement="center" destroy-on-close class="hr-bill-dialog" data-hr-bill-dialog>
       <div class="hr-bill-detail">
+        <!-- 第 68 轮：该月原始记录在账单生成后被改动 → 顶部橙条提醒（数据仍是快照） -->
+        <div v-if="billDetailKind === 'social' && siBillDirty" class="hr-bill-dirty-bar" data-hr-bill-dirty>
+          <t-icon name="error-circle" size="14px" />
+          <span>原始记录已变动，请重新生成账单后再查看最新数据（当前展示的是生成时的快照）</span>
+        </div>
         <div class="hr-bill-tabs">
           <t-radio-group v-model="billDetailTab" size="small" @change="onBillDetailTabChange">
             <t-radio-button value="personal">个人明细</t-radio-button>
@@ -663,12 +678,12 @@
         <div class="hr-bill-table-wrap">
           <DetailScrollTable v-if="billDetailTab === 'summary'" name="bill-summary"
             :columns="billSummaryColumns" :rows="billSummaryRows" :foot="billSummaryFoot"
-            row-key="id" data-hr-bill-summary-table />
+            row-key="id" :max-body-height="4000" data-hr-bill-summary-table />
           <DetailScrollTable v-else-if="billDetailTab === 'post'" name="bill-post"
             :columns="billPostColumns" :rows="billPostRows" :foot="billPostFoot"
-            row-key="id" data-hr-bill-post-table />
+            row-key="id" :max-body-height="4000" data-hr-bill-post-table />
           <DetailScrollTable v-else name="bill-subject" :columns="billSubjectColumns"
-            :rows="billSubjectRows" :foot="billSubjectFoot" row-key="id"
+            :rows="billSubjectRows" :foot="billSubjectFoot" row-key="id" :max-body-height="4000"
             data-hr-bill-subject-table />
         </div>
       </div>
@@ -692,8 +707,8 @@
     </t-dialog>
 
     <!-- 第 61 轮：宿舍费用分摊明细（个人 / 房间 / 部门三标签，三段分离表格） -->
-    <t-dialog v-model:visible="dormBillVisible" :header="dormBillTitle" width="min(96vw, 1480px)"
-      placement="center" destroy-on-close data-hr-dorm-bill-dialog>
+    <t-dialog v-model:visible="dormBillVisible" :header="dormBillTitle" width="min(94vw, 1360px)"
+      placement="center" destroy-on-close class="hr-bill-dialog" data-hr-dorm-bill-dialog>
       <div class="hr-bill-detail">
         <!-- 第 65 轮：5 标签（删除「按部门汇总」，新增社保/公积金缴存），
              并彻底移除右上角「聚合花名册 / 住宿 / ...」的说明文字。 -->
@@ -723,10 +738,10 @@
           <!-- 扣款明细：其它扣款 / 退款 / 备注 三列行内编辑，失焦即存 -->
           <DetailScrollTable v-if="dormBillTab === 'personal'" :name="`dorm-${dormBillTab}`"
             :columns="dormActiveBill.cols" :rows="dormActiveBill.rows"
-            :foot="dormActiveBill.foot" row-key="id" editable-key="dorm-charge"
+            :foot="dormActiveBill.foot" row-key="id" editable-key="dorm-charge" :max-body-height="4000"
             :editable-cols="DORM_INLINE_EDIT_COLS" @cell-commit="onDormChargeCellCommit" />
           <DetailScrollTable v-else :name="`dorm-${dormBillTab}`" :columns="dormActiveBill.cols"
-            :rows="dormActiveBill.rows" :foot="dormActiveBill.foot" row-key="id" />
+            :rows="dormActiveBill.rows" :foot="dormActiveBill.foot" row-key="id" :max-body-height="4000" />
         </div>
       </div>
       <template #footer>
@@ -1020,6 +1035,8 @@ const billScheme = ref('全部')
 const billDetailKind = ref<'fund' | 'social'>('fund')
 const billDetailTab = ref<'personal' | 'unit' | 'summary' | 'post'>('summary')
 const billDeptKeyword = ref('')
+/** 第 68 轮：当前社保账单是否「原始记录已变动」（快照保持，需手动重新生成）。 */
+const siBillDirty = ref(false)
 const SI_BILL_SCHEME_OPTIONS = [
   { label: '全部险种', value: '全部' },
   { label: '养老', value: '养老' }, { label: '医疗+生育', value: '医疗+生育' },
@@ -1155,16 +1172,6 @@ const kpiCards = computed(() => buildHrKpiCards(kpiCounts.value))
 // ---------------------------------------------------------------------------
 // 列定义 / 列显隐
 // ---------------------------------------------------------------------------
-/** 花名册两个胶囊的原始 subs（在职 48 + 离职 14），离职抽屉要合并渲染。 */
-function rosterAllSubs(): any[] {
-  const cats = fieldConfig.value['hr-roster']
-  const cat = Array.isArray(cats)
-    ? (cats.find((c: any) => String(c?.builtin_key ?? '') === 'hr-roster') || cats[0])
-    : null
-  const subs = Array.isArray(cat?.subs) ? cat.subs : []
-  return subs.length ? subs : (hrFieldSeeds('hr-roster') as any[])
-}
-
 /** 当前 Tab 的字段配置 subs（六同步唯一权威源）。 */
 function subsOfTab(tab: HrTab): any[] {
   const cats = fieldConfig.value[tab]
@@ -1975,6 +1982,7 @@ async function runSocialImport(files: File[], _mode: string): Promise<number> {
   const written = String(d.bill_month || picked || '').trim()
   if (written) siMonthFilter.value = written
   await onSocialImported()
+  warnSiBillDirty(d)
   return Number(d.rows || 0)
 }
 
@@ -2160,7 +2168,6 @@ const editForm = ref<any>({ data: {}, remarkParts: {}, items: [] })
  * 「污水处理费(元/m³)」「二次供水费(元/m³)」这类长标签，需要 126px 才不折行。
  * 两列布局下每列约 340px，126px Label + 24px 间距仍给输入控件留出 ~190px 以上。
  */
-const hrDrawerLabelWidth = computed(() => (activeTab.value === 'hr-dorm' ? 126 : 104))
 /**
  * 最近一次由系统自动生成的工号。
  *
@@ -2375,9 +2382,15 @@ const drawerGroups = computed(() => {
   // 第 63 轮：离职人员抽屉必须渲染**全部分组**（基础/组织/教育/联系/薪酬 + 离职信息），
   // 旧实现 activeModule='resign' 只取 15 个离职字段 → 抽屉只剩「离职信息」一组。
   if (activeTab.value === 'hr-roster' && rosterStatusView.value === '离职') {
-    // 注意：configKeys.enabled 只包含「离职人员」胶囊的 15 个字段，
-    // 用它过滤会把 48 个基础字段全部挡掉（真机只剩离职信息一组）。
-    const subs = rosterAllSubs().filter((x: any) => x && x.enabled !== false)
+    /**
+     * 第 68 轮：离职抽屉改由**「离职人员」胶囊**驱动（`subsOfTab` 已按子视图取组）。
+     *
+     * 旧实现吃 `rosterAllSubs()`（在职 48 + 离职 15 全量），于是：
+     *   · 在职侧启用的字段一定会出现在离职抽屉（无法按需关闭）；
+     *   · 第 68 轮把在职字段并入离职胶囊后，同一字段会渲染两次。
+     * 现在离职胶囊 = 在职全集（默认关闭）+ 离职专有，抽屉严格按它的 enabled 渲染。
+     */
+    const subs = subsOfTab('hr-roster').filter((x: any) => x && x.enabled !== false)
     const resignNames = new Set(HR_RESIGN_FIELDS.map((d) => d.name))
     const groupOfName = new Map<string, string>()
     for (const g of HR_ROSTER_GROUPS) for (const d of g.fields) groupOfName.set(d.name, g.label)
@@ -2872,7 +2885,7 @@ async function saveDetail() {
         if (!nm || known.has(nm) || (f as any).readonly) continue
         extra[nm] = d[nm] ?? ''
       }
-      await hrApi.updateSocialRecord(String(id), {
+      const saved: any = await hrApi.updateSocialRecord(String(id), {
         费款所属期: d['费款所属期'],
         缴费基数: d['缴费基数'],
         单位缴费比例: d['单位缴费比例'],
@@ -2882,6 +2895,7 @@ async function saveDetail() {
         补退类型: d['补退类型'],
         ...extra,
       })
+      warnSiBillDirty(saved?.data || saved || {})
       MessagePlugin.success('已保存')
       detailVisible.value = false
       await Promise.all([loadList('hr-social'), reloadStats()])
@@ -2974,6 +2988,20 @@ const settingsVisible = ref(false)
 async function onSettingsSaved() {
   // 第 62 轮：设置抽屉保存成功后必须立即关闭（用户要求，避免"点了没反应"）
   settingsVisible.value = false
+  /**
+   * 第 68 轮：清掉本 tab **所有子视图**的列显隐缓存。
+   *
+   * `visibleColKeys` 优先读 localStorage：用户把「最高学历」在离职胶囊里设为
+   * 默认表头并保存后，切到离职视图时旧缓存（不含该列）会把新默认表头挡掉 ——
+   * 设置里明明开了、列表却没有（六同步断层）。字段配置变更后一律以配置为准。
+   */
+  try {
+    const prefix = `weknora-hr-${activeTab.value}-`
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(prefix)) localStorage.removeItem(k)
+    }
+  } catch { /* 隐私模式下 localStorage 不可写，忽略 */ }
   await loadFieldConfig(activeTab.value)
   const allKeys = businessColumns.value.map((c) => c.colKey)
   const isStrict = ['hr-roster', 'hr-resign', 'hr-contract', 'hr-fund', 'hr-dorm'].includes(activeTab.value)
@@ -3337,6 +3365,7 @@ async function handleBatchDelete() {
       if (deleted > 0 && deleted === requested) MessagePlugin.success(`已删除 ${deleted} 条记录`)
       else if (deleted > 0) MessagePlugin.warning(`已删除 ${deleted} 条，${requested - deleted} 条未找到`)
       else MessagePlugin.error('删除失败：所选记录均不存在')
+      warnSiBillDirty(d)
       return
     }
     // ② 其余模块保持原有逐条删除（各自都有专属接口）
@@ -3476,6 +3505,7 @@ function resetBillDialog(kind: 'fund' | 'social', title: string) {
   billDept.value = ''
   billScheme.value = '全部'
   billDeptKeyword.value = ''
+  siBillDirty.value = false
 }
 
 async function openBillDetail(row: any) {
@@ -3514,6 +3544,7 @@ async function openSIBillDetail(row: any) {
     const d = res?.data || res || {}
     const items: any[] = Array.isArray(d.items) ? d.items : []
     billRows.value = items.map((x: any, i: number) => ({ ...x, id: x.id || `si-${i}` }))
+    siBillDirty.value = !!(d.bill?.source_dirty ?? d.bill?.dirty_warning)
   } catch (e: any) { MessagePlugin.error(e?.message || '加载社保账单明细失败') }
 }
 
@@ -3588,6 +3619,24 @@ const billFiltered = computed(() => {
 // 第 57 轮：账单三标签弹窗的列表 / 合计 / 部门汇总
 // 金额一律按「分」整数累加，空值留白（绝不显示横线 —），合计行恒贴底。
 // ---------------------------------------------------------------------------
+/**
+ * 第 68 轮：原始记录变更提醒。
+ *
+ * 账单是生成瞬间的不可变快照 —— 记录被导入/编辑/删除后账单金额纹丝不动，
+ * 用户必须手动重新生成。这里统一文案，避免三处各写一遍。
+ */
+function warnSiBillDirty(d: any): void {
+  if (!d?.bill_dirty_warning) return
+  const months = Array.isArray(d?.dirty_months) && d.dirty_months.length
+    ? d.dirty_months.join('、')
+    : String(d?.dirty_month || '').trim()
+  const prefix = months ? `「${months}」` : ''
+  MessagePlugin.warning(
+    `${prefix}原始社保记录已变更，已生成的月度账单保持不变，请前往「月度账单」重新点击「生成账单」以更新账单数据。`,
+    6000,
+  )
+}
+
 function siCents(v: any): number {
   return Math.round(Number(String(v ?? '').replace(/[,，\s]/g, '')) * 100) || 0
 }
@@ -4762,22 +4811,13 @@ onUnmounted(() => {
  * 真机上表现为「只显示 11 行、滚不动」。
  * 现在把高度显式钉到 76vh，并让中间数据区独占剩余空间。
  */
-.hr-bill-dialog :deep(.t-dialog__body) {
-  overflow-x: hidden;
-  /* 弹窗正文交给内部 flex 分配高度，自身不滚动 */
-  overflow-y: hidden;
-  max-height: 76vh;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
 .hr-bill-detail {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
   height: 100%;
-  max-height: 76vh;
+  max-height: none;
   flex: 1 1 auto;
 }
 /* 第 64 轮：明细弹窗内所有包裹层都不得横向溢出（三段表自身已 box-sizing 收口） */
@@ -4823,12 +4863,22 @@ onUnmounted(() => {
 
 <style>
 /* 第 55 轮：月度账单详情抽屉（非 scoped，命中 TDesign 内部节点） */
-.hr-bill-detail { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+.hr-bill-detail { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; max-height: none; }
 .hr-bill-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
 .hr-bill-search { width: 240px; }
 .hr-bill-select { width: 160px; }
 .hr-bill-spacer { flex: 1; }
 .hr-bill-count { color: var(--td-text-color-secondary); font-size: 13px; }
+/* 第 68 轮：账单「原始记录已变动」橙标 + 弹窗顶部提醒条 */
+.hr-bill-month-cell { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.hr-dirty-flag { color: var(--td-warning-color); font-size: 12px; white-space: nowrap; }
+.hr-bill-dirty-bar {
+  display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 6px 10px; border-radius: var(--td-radius-default);
+  background: var(--td-warning-color-1, #fff1e9);
+  color: var(--td-warning-color, #ed7b2f);
+  font-size: 12px; line-height: 18px;
+}
 .hr-bill-summary-title {
   font-size: 13px; font-weight: 600; color: var(--td-text-color-primary);
   padding-left: 8px; border-left: 3px solid var(--td-success-color); flex: 0 0 auto;
@@ -4837,6 +4887,25 @@ onUnmounted(() => {
 .hr-bill-item-table { flex: 1; min-height: 0; }
 /* 第 58 轮：滚动条只占右侧 gutter，绝不覆盖表头/合计行的文字；
    表头 sticky（由 sticky-header 提供），合计行粘底。 */
+/* 第 68 轮：明细弹窗外框定宽定高（非 scoped —— t-dialog 是被 teleport 的组件根，
+   scoped 选择器拿不到它的 data-v）。切换标签时外框几何必须 0px 变动。 */
+.hr-bill-dialog {
+  height: min(82vh, 780px);
+  display: flex;
+  flex-direction: column;
+}
+.hr-bill-dialog .t-dialog__header { flex: 0 0 auto; }
+.hr-bill-dialog .t-dialog__footer { flex: 0 0 auto; }
+.hr-bill-dialog .t-dialog__body {
+  overflow-x: hidden;
+  overflow-y: hidden;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.hr-bill-dialog .t-dialog__body > .hr-bill-detail { flex: 1 1 auto; min-height: 0; }
 /* 第 61 轮：三段结构自带滚动条槽位，旧的 t-table sticky 规则删除 */
 .hr-bill-detail .detail-table-body::-webkit-scrollbar { width: 8px; height: 8px; }
 .hr-bill-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }

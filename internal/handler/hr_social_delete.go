@@ -6,66 +6,11 @@
 package handler
 
 import (
-	"context"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-
-	"github.com/Tencent/WeKnora/internal/logger"
 )
-
-// hrReconcileSIBillQuiet 删除记录后重算当月账单（静默，失败只告警）。
-//
-// 口径：该月仍有正常记录 → 按剩余记录重建账单与明细；一条都不剩 → 直接删账单，
-// 绝不留下「0 人 0 元」的空账单。
-func (h *HRHandler) hrReconcileSIBillQuiet(ctx context.Context, tid int64, month string) {
-	month = strings.TrimSpace(month)
-	if month == "" {
-		return
-	}
-	defer func() { _ = recover() }()
-	var bills []HRSIBill
-	if err := h.db.WithContext(ctx).
-		Where("tenant_id = ? AND month_label = ?", tid, month).Find(&bills).Error; err != nil || len(bills) == 0 {
-		return
-	}
-	normalCount, _, err := h.hrSIRecordCountsOf(ctx, tid, month)
-	if err != nil {
-		return
-	}
-	if normalCount == 0 {
-		for _, b := range bills {
-			_ = h.db.WithContext(ctx).Where("bill_id = ?", b.ID).Delete(&HRSIBillItem{}).Error
-			_ = h.db.WithContext(ctx).Delete(&HRSIBill{}, "tenant_id = ? AND id = ?", tid, b.ID).Error
-		}
-		return
-	}
-	next := h.hrSIBillTotalsOf(ctx, tid, month)
-	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, old := range bills {
-			if e := tx.Where("bill_id = ?", old.ID).Delete(&HRSIBillItem{}).Error; e != nil {
-				return e
-			}
-			if e := tx.Delete(&old).Error; e != nil {
-				return e
-			}
-		}
-		next.ID = uuid.New().String()
-		if e := tx.Create(&next).Error; e != nil {
-			return e
-		}
-		items := h.hrSIBillItemsForMonth(ctx, tid, month, next.ID)
-		if len(items) > 0 {
-			return tx.CreateInBatches(items, 50).Error
-		}
-		return nil
-	})
-	if err != nil {
-		logger.Warnf(ctx, "reconcile SI bill failed month=%s: %v", month, err)
-	}
-}
 
 // DeleteSIRecord DELETE /hr/social/records/:id —— 删除单条正常/补退记录。
 func (h *HRHandler) DeleteSIRecord(c *gin.Context) {
@@ -86,9 +31,18 @@ func (h *HRHandler) DeleteSIRecord(c *gin.Context) {
 		hrFail(c, "删除社保记录失败: "+err.Error())
 		return
 	}
-	// 删除后当月账单人数/金额会失真，同步重算一次（失败不阻断删除）
-	h.hrReconcileSIBillQuiet(ctx, tid, row.BillMonth)
-	hrOK(c, gin.H{"deleted": 1, "id": id})
+	/**
+	 * 第 68 轮：删除记录**绝不重算账单**。
+	 *
+	 * 旧实现删完就调用 hrReconcileSIBillQuiet 重建当月账单 —— 已生成的账单
+	 * 汇总与明细会被悄悄改成「删完之后的数」，用户看到的就是「账单金额突然变空」。
+	 * 新口径：账单是不可变快照，只置 source_dirty 并提示用户手动重新生成。
+	 */
+	dirty := h.hrSIMarkBillDirty68(ctx, tid, row.BillMonth)
+	hrOK(c, gin.H{
+		"deleted": 1, "id": id,
+		"bill_dirty_warning": dirty, "dirty_month": strings.TrimSpace(row.BillMonth),
+	})
 }
 
 // DeleteSIRecordsBatch POST /hr/social/records/batch-delete {ids: []string}
@@ -134,8 +88,18 @@ func (h *HRHandler) DeleteSIRecordsBatch(c *gin.Context) {
 		return
 	}
 	deleted := int(res.RowsAffected)
+	// 第 68 轮：只打脏标记，不重建账单（快照必须保持不变）。
+	dirtyMonths := make([]string, 0, len(months))
 	for m := range months {
-		h.hrReconcileSIBillQuiet(ctx, tid, m)
+		if h.hrSIMarkBillDirty68(ctx, tid, m) {
+			dirtyMonths = append(dirtyMonths, m)
+		}
 	}
-	hrOK(c, gin.H{"deleted": deleted, "requested": len(ids)})
+	sort.Strings(dirtyMonths)
+	hrOK(c, gin.H{
+		"deleted": deleted, "requested": len(ids),
+		"bill_dirty_warning": len(dirtyMonths) > 0,
+		"dirty_months":       dirtyMonths,
+		"dirty_month":        strings.Join(dirtyMonths, ","),
+	})
 }

@@ -42,7 +42,7 @@
         <div class="bsd-block-title">{{ sec.label }}</div>
         <div class="bsd-fields" :class="fieldsClass">
           <template v-for="f in sec.fields" :key="f.name">
-            <t-form-item :label="f.label" :label-width="`${labelWidth}px`" :class="fieldClassOf(f)">
+            <t-form-item :label="f.label" label-align="top" :class="fieldClassOf(f)">
               <slot :name="`field-${f.name}`" :field="f" :form="form">
                 <!-- 只读模式（费用清单等「查看型」抽屉）：所有字段只展示不可改，
                      也不出现保存按钮。费用清单的值是核算结果，编辑只能走「生成/重算」，
@@ -219,8 +219,6 @@ const props = withDefaults(defineProps<{
    * 每列输入控件只剩 150px 左右，18 位身份证号与公司全称被截断（线上问题 1 的根因）。
    */
   twoColumn?: boolean
-  /** 第 64 轮：Label 固定宽度（px）；0 = 按最长标签自适应。 */
-  labelWidthPx?: number
 }>(), {
   title: '',
   row: null,
@@ -241,7 +239,6 @@ const props = withDefaults(defineProps<{
   readonly: false,
   showReExtract: false,
   twoColumn: false,
-  labelWidthPx: 0,
 })
 
 const emit = defineEmits<{
@@ -356,38 +353,19 @@ const isLongTextField = (f: DetailFieldMeta): boolean => {
  */
 const arrayValueOf = (name: string): string[] => normalizeArrayValue(form.value.data?.[name])
 /**
- * 第 63 轮：字段 Label 宽度按「最长标签」自适应（110~168px）。
+ * 第 68 轮：字段 Label 一律置顶（`label-align="top"`），不再按最长标签算左栏宽度。
  *
- * 旧实现固定 110px，宿舍费用项目的「污水处理费(元/m³)」「月费用单价(元/月)」
- * 会被截成省略号。这里按半角宽度估算（CJK 记 2），并给足右侧间距。
+ * 左右排版时短标签（如「岗位」）与输入框之间会留下一大片空白，18 位身份证号
+ * 还会被挤压截断；改为上下结构后，每个控件独占所在栅格列的 100% 宽度。
+ * 原 `labelWidthPx`（左栏宽度）契约已删除 —— 上下结构下它没有意义。
  */
-const labelWidth = computed(() => {
-  if (props.labelWidthPx > 0) {
-    // 第 64 轮：两列布局下标签仍可能超宽（如「是否本地首次缴纳公积金」= 22 半角），
-    // 按最长标签再抬一次，上限放宽到 168px，绝不截断。
-    const halfWidth = (t: string) => Array.from(String(t || ''))
-      .reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 1 : 2), 0)
-    const fields = normalizedSections.value.flatMap((s: any) => s.fields || [])
-    const longest = fields.reduce((n: number, f: any) => Math.max(n, halfWidth(f?.label)), 4)
-    const needed = Math.round(longest * 7.2) + 22
-    // 两列布局：Label 上限 158px。最长标签「是否本地首次缴纳公积金」(22 半角)
-    // 实测需 ~155px 才不折行；860px 抽屉单列 388px，158 + 24 间距仍留 206px 给控件。
-    return Math.max(props.labelWidthPx, Math.min(props.twoColumn ? 158 : 168, needed))
-  }
-  const halfWidth = (t: string) => Array.from(String(t || ''))
-    .reduce((n, ch) => n + (/[\x00-\xff]/.test(ch) ? 1 : 2), 0)
-  const fields = normalizedSections.value.flatMap((s: any) => s.fields || [])
-  const longest = fields.reduce((n: number, f: any) => Math.max(n, halfWidth(f?.label)), 4)
-  // 两列布局下 Label 只占半列，上限收到 126px，避免挤压输入控件
-  const cap = props.twoColumn ? 126 : 168
-  return Math.min(cap, Math.max(110, Math.round(longest * 7.2) + 22))
-})
-
 /** 第 64 轮：长字段/多选/附件/状态说明类一律独占整行。 */
 const FULL_WIDTH_FIELDS = new Set([
-  '配套设施', '备注', '户籍地址', '现居住地', '退宿原因', '地址', '详细地址',
-  '离职原因说明', '维修说明', '紧急联系人地址', '工作邮箱', '现居住地址',
-  '关联电表', '关联水表', '关联气表',
+  // 第 68 轮：收紧到「真正需要整行」的地址 / 多行说明类。
+  // 旧集合把 工作邮箱 / 个人邮箱 / 服装尺寸 / 户口性质 / 手机号码 也塞进整行，
+  // 双列抽屉里每出现一个就留下一个孤立半行（右半栏大片空白）。
+  '配套设施', '备注', '户籍地址', '现居住地', '现居住地址', '紧急联系人地址',
+  '离职原因', '离职原因说明', '维修说明', '地址', '详细地址',
 ])
 const fieldClassOf = (f: DetailFieldMeta) => ({
   'bsd-field--full': isLongType(f) || f.dataType === 'textarea' || f.dataType === 'attachment'
@@ -459,11 +437,6 @@ function close() {
 .bsd-fields :deep(.t-tag) {
   border: 0 !important;
 }
-.bsd-fields :deep(.t-form__label) {
-  white-space: nowrap;
-  padding-right: 8px;
-  overflow: visible;
-}
 .bsd-block-title {
   display: flex;
   align-items: center;
@@ -489,17 +462,46 @@ function close() {
   display: grid;
   /* 自适应列数：抽屉窄（用户拖小/小窗）时自动落成单列，避免标签和输入被截断 */
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0 var(--td-comp-margin-m);
+  gap: 14px 20px;
+  /* 第 68 轮：dense 让后续的短字段回填到前面留下的空位，
+     单列字段后紧跟整行字段时不再留下半栏空洞。 */
+  grid-auto-flow: dense;
 }
 /* 第 64 轮：固定两列（人事全模块 820px 抽屉）。
    minmax(0,1fr) 而不是 1fr —— 后者最小宽度是 auto，长 Label 会把列撑破。 */
 .bsd-fields--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 24px;
+  column-gap: 20px;
   row-gap: 14px;
 }
 /* 两列布局下每个表单项允许收缩，控件才有 >=230px 的展示宽度 */
 .bsd-fields--two :deep(.t-form__item) { min-width: 0; }
+/**
+ * 第 68 轮：字段名置顶紧凑排版。
+ *
+ * 上下结构（label 在控件上方、13px 次级深灰、间距 4px），
+ * 控件独占所在列 100% 宽度 —— 公司全称 / 18 位身份证 / 带单位的长字段名
+ * 在 820px 双列抽屉里也能完整展示，不再被左栏 label 挤成省略号。
+ */
+.bsd-fields :deep(.t-form__item) { display: block; min-width: 0; }
+.bsd-fields :deep(.t-form__label) {
+  display: block;
+  width: auto !important;
+  margin: 0 0 4px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--td-text-color-secondary, #4b5563);
+  white-space: nowrap;
+  overflow: visible;
+  text-align: left;
+}
+.bsd-fields :deep(.t-form__controls) {
+  margin-left: 0 !important;
+  min-width: 0;
+}
+.bsd-fields :deep(.t-form__controls-content) { min-width: 0; }
 /* 对齐红线：左/右两列所有输入控件的左、右边缘必须垂直方向 100% 对齐。
    TDesign 的 t-date-picker / t-select 等带有自身固有宽度（min-width 内联样式），
    在栅格里会撑破列宽，导致「开票日期」比下方的「税率/价税合计」更宽 ——

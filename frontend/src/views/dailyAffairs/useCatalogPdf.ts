@@ -22,10 +22,61 @@ export interface CatalogColumn {
 // 对外保留 loadCatalogFont 名字：9 个页面的 import 不动。
 export const loadCatalogFont = loadSharedFont
 
-// 固定 A4 横向（方向由生成时定死，用户打印时可在系统打印对话框内用缩放适配）
-const PAGE_W = 841.89
-const PAGE_H = 595.28
+// 第 68 轮：方向由 resolvePrintOrientation 智能判定（纵向优先），不再写死横向。
+const A4_PORTRAIT = { w: 595.28, h: 841.89 }
+const A4_LANDSCAPE = { w: 841.89, h: 595.28 }
 const MARGIN = 32
+
+/** 字符宽度（半角单位，CJK 记 2）——与 catalogLayout 的估算口径一致。 */
+function halfWidthOf(text: string): number {
+  return Array.from(String(text ?? ''))
+    .reduce((n, ch) => n + (ch.charCodeAt(0) <= 0xff ? 1 : 2), 0)
+}
+
+/** 单列「紧凑排版下还能读」的最小宽度（mm）：最长词 + 单元格内边距。 */
+export function estimateColumnMinMm(header: string, values: readonly string[]): number {
+  let maxHalf = halfWidthOf(header)
+  for (const v of values) {
+    const h = halfWidthOf(v)
+    if (h > maxHalf) maxHalf = h
+  }
+  // 1.45mm / 半角字符（≈ 8pt 字号 + 左右内边距），下限 10mm 保证表头不断字。
+  return Math.max(10, Math.min(maxHalf * 1.45 + 5, 95))
+}
+
+/** 整表最小宽度（mm）——纵向 A4 内容区 = 210 - 2*10 = 190mm。 */
+export function estimateTotalMinWidthMm(
+  columns: ReadonlyArray<{ label: string; value: (row: any) => string }>,
+  rows: readonly any[],
+): number {
+  let total = 0
+  for (const c of columns) {
+    const sample = rows.slice(0, 50).map((r) => String(c.value(r) ?? ''))
+    total += estimateColumnMinMm(c.label, sample)
+  }
+  return Math.round(total * 10) / 10
+}
+
+export const PORTRAIT_CONTENT_MM = 190
+export const PORTRAIT_MAX_COLUMNS = 10
+
+/**
+ * 第 68 轮：打印方向判定 —— **纵向优先**。
+ *
+ * 旧实现把 A4 横向写死：6 列的部门/岗位汇总被摊在一张横纸上，行高巨大、
+ * 序号列占三分之一宽。新口径：
+ *   · 列数 <= 10 且估算最小总宽 <= 190mm → 纵向（6 列岗位汇总、9 列社保明细）；
+ *   · 字段极多（>= 11 列或 > 190mm，如 15 列全员扣款明细）→ 横向。
+ * 纯函数，便于单测锁死边界。
+ */
+export function resolvePrintOrientation(
+  columns: ReadonlyArray<{ label: string; value: (row: any) => string }>,
+  rows: readonly any[],
+): 'portrait' | 'landscape' {
+  if (!columns.length) return 'portrait'
+  if (columns.length > PORTRAIT_MAX_COLUMNS) return 'landscape'
+  return estimateTotalMinWidthMm(columns, rows) <= PORTRAIT_CONTENT_MM ? 'portrait' : 'landscape'
+}
 const TITLE_SIZE = 15
 const META_SIZE = 9
 // 字号 / 左右内边距 / 列宽全部由 catalogLayout 按列数动态给：
@@ -100,6 +151,13 @@ export async function generateCatalogPdf(opts: {
   const { title, columns, rows } = opts
   if (!columns.length || !rows.length) throw new Error('无可用数据生成目录')
 
+  // 第 68 轮：纵向优先；页面尺寸 / 内容区 / 翻页基线全部由这一次判定驱动，
+  // pdf-lib 的页面方向与预览里的纸张比例因此 100% 一致。
+  const orientation = resolvePrintOrientation(columns, rows)
+  const pageSize = orientation === 'portrait' ? A4_PORTRAIT : A4_LANDSCAPE
+  const PAGE_W = pageSize.w
+  const PAGE_H = pageSize.h
+
   // 页面面板（字体 / 分页 / 页脚 / 游标）统一由 pdfSurface 提供。
   // 两套引擎此前各写一遍「加载字体 → 建文档 → 游标 → 翻页 → 页脚」，
   // 收敛后差异只剩「续页画什么」——目录重画表头行（横向表格跨页后不看表头无法读数）。
@@ -126,11 +184,22 @@ export async function generateCatalogPdf(opts: {
   // 6 位数字放不下被拆行。现在：总宽严格 = avail，列多则自动缩字号/内边距，
   // 数字串绝不拆行。
   const cellTexts: string[][] = rows.map((row) => columns.map((c) => String(c.value(row) ?? '')))
+  /**
+   * 第 68 轮：语义化收窄 —— 序号 / 人数 / 数量 这类极短列不允许吃掉比例宽。
+   * 旧版按「最长内容」分配，6 列表里序号能占到 20%+；这里给它们 7% / 9% 的期望上限，
+   * 剩余空间自动让给名称、岗位、部门等弹性列。
+   */
+  const narrowCap = (label: string): number => {
+    if (/^(序号|序|No\.?)$/i.test(label)) return avail * 0.07
+    if (/^(人数|数量|条数)$/.test(label)) return avail * 0.09
+    return 0
+  }
   const fit = fitColumnWidths({
     avail,
     headers: columns.map((c) => c.label),
     cells: cellTexts,
     measure: (text, size) => font.widthOfTextAtSize(text, size),
+    maxDesired: columns.map((c) => narrowCap(String(c.label || ''))),
   })
   const widths = fit.widths
   const metrics: CatalogMetrics = fit.metrics

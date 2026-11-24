@@ -799,6 +799,17 @@ func (h *HRHandler) hrMigrateRosterRefSubs(ctx context.Context) error {
 	for i := range cats {
 		changed := false
 		for j := range cats[i].Subs {
+			/**
+			 * 第 68 轮：只处理「在职人员」胶囊（group 为空 = 旧数据）。
+			 *
+			 * 离职胶囊现在也镜像了这两个引用字段（默认关闭），旧实现不分组地
+			 * 强制 IsDefault/Enabled = true —— 每次启动都会把用户在离职侧关掉的
+			 * 开关重新打开，六同步的「默认关闭」永远失效。
+			 */
+			g := strings.TrimSpace(cats[i].Subs[j].Group)
+			if g != "" && g != hrRosterGroupActive {
+				continue
+			}
 			src, ok := refs[strings.TrimSpace(cats[i].Subs[j].Name)]
 			if !ok {
 				continue

@@ -2,7 +2,7 @@
   <SettingDrawer
     v-model:visible="drawerVisible"
     :title="title"
-    width="760px"
+    width="min(760px, 95vw)"
     :storage-key="storageKey"
     destroy-on-close
     hide-footer
@@ -206,6 +206,17 @@ onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCateg
 </script>
 
 <style lang="less" scoped>
+/**
+ * 第 68 轮：设置抽屉最窄态下限。
+ *
+ * 字段配置行固定占「拖动 24 + 字段名 120 + 类型 108 + 列宽 58 + 默认 56 +
+ * 启用 60 + 操作 68 + 6×8 间距」≈ 542px；抽屉再窄，「数据类型」就会退化成
+ * 「单行...」。这里把内容区下限钉在 680px（小屏按 95vw 收缩），
+ * 同时禁止横向滚动。
+ */
+.standard-settings-drawer :deep(.t-drawer__body) {
+  overflow-x: hidden;
+}
 .standard-settings-direct {
   height: 100%;
   overflow: auto;
@@ -227,5 +238,19 @@ onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCateg
     overflow: auto;
     padding-top: 16px;
   }
+}
+</style>
+
+<style lang="less">
+/**
+ * 第 68 轮：设置抽屉最窄态下限（**非 scoped** —— t-drawer 是 teleport 出去的组件，
+ * scoped 选择器带的 data-v 命中不到内部节点）。
+ *
+ * 字段配置行固定占「拖动 24 + 字段名 120 + 类型 108 + 列宽 58 + 默认 56 + 启用 60 +
+ * 操作 68 + 6×8 间距」≈ 542px；抽屉再窄，「数据类型」就会退化成「单行...」。
+ */
+.standard-settings-drawer .t-drawer__content-wrapper,
+.standard-settings-drawer.t-drawer__content-wrapper {
+  min-width: min(680px, 95vw);
 }
 </style>

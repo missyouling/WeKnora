@@ -2664,13 +2664,14 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     min-width: 0;
 
     .field-colhead {
-      grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 60px 76px;
-      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 56px 60px 76px; }
+      grid-template-columns: 24px minmax(110px, 1fr) 108px 58px 60px 76px;
+      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 108px 58px 56px 60px 76px; }
     }
     .field-config-row {
-      /* 第 64 轮：名称列弹性收缩（min-width 110px），其余列固定，抽屉再窄也不溢出 */
-      grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 60px 76px;
-      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 96px 56px 56px 60px 76px; }
+      /* 第 68 轮：数据类型列固定 108px（「单行文本 / 多行文本」完整显示，
+         绝不出现「单行...」截断）；名称列弹性收缩（min-width 110px）。 */
+      grid-template-columns: 24px minmax(110px, 1fr) 108px 58px 60px 76px;
+      &.has-width { grid-template-columns: 24px minmax(110px, 1fr) 108px 58px 56px 60px 76px; }
     }
   }
 
@@ -2681,16 +2682,16 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     // 余下 ≥140px 全部留给输入框；抽屉拉宽时这一列继续吃满剩余空间。
     // 末列「操作」：锁标(15px) + ⋮(32px) 必须并排放下，48px 会换行 → 76px。
     // 第 64 轮：末列收到 68px、类型列 84px，总宽再降 14px，保证窄抽屉也不溢出。
-    grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 60px 68px;
+    grid-template-columns: 24px minmax(120px, 1fr) 108px 58px 60px 68px;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     padding: 0 8px;
     box-sizing: border-box;
     font-size: var(--td-font-size-body-small);
     color: var(--td-text-color-secondary);
 
     &.has-width {
-      grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 52px 60px 68px;
+      grid-template-columns: 24px minmax(120px, 1fr) 108px 58px 56px 60px 68px;
     }
     > span { white-space: nowrap; }
     .fc-h-width { text-align: center; }
@@ -2742,17 +2743,18 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
   .field-config-row {
     display: grid;
     // 与 .field-colhead 严格同构（列宽错一格整行就错位）
-    // 第 64 轮：与列头同步收窄（84/56/60/68 + gap 6px），任何抽屉宽度都零横向溢出
-    grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 60px 68px;
+    // 第 68 轮：类型列固定 108px（单行/多行文本完整显示），列宽 58px、gap 8px，
+    // 与列头逐列对齐；名称列 min-width 120px 弹性吃满剩余空间。
+    grid-template-columns: 24px minmax(120px, 1fr) 108px 58px 60px 68px;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     padding: 4px 8px;
     // 第 57 轮：每行严格 40px 单行高度，加锁行绝不允许因图标换行撑高。
     min-height: 40px;
     box-sizing: border-box;
 
     &.has-width {
-      grid-template-columns: 24px minmax(160px, 1fr) 84px 56px 52px 60px 68px;
+      grid-template-columns: 24px minmax(120px, 1fr) 108px 58px 56px 60px 68px;
     }
     .fc-width {
       width: 100%;

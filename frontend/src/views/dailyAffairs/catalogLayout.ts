@@ -116,6 +116,14 @@ export interface FitInput {
   measure: (text: string, size: number) => number
   /** 起始排版参数（默认按列数阶梯选） */
   metrics?: CatalogMetrics
+  /**
+   * 第 68 轮：逐列「期望宽度上限」（pt）。
+   *
+   * 序号 / 人数这类极短列如果按内容给期望宽，6 列表里能占到 20%+；
+   * 传上限后它们停在「下限 + 少量」，剩余空间让给名称/部门等弹性列。
+   * 上限小于下限时以下限为准（绝不把内容压到放不下）。
+   */
+  maxDesired?: number[]
 }
 
 export interface FitResult {
@@ -192,7 +200,11 @@ export function fitColumnWidths(input: FitInput): FitResult {
     break
   }
 
-  desired = Array.from({ length: n }, (_, i) => desiredOf(i, metrics))
+  desired = Array.from({ length: n }, (_, i) => {
+    const d = desiredOf(i, metrics)
+    const cap = Number(input.maxDesired?.[i] || 0)
+    return cap > 0 ? Math.max(mins[i], Math.min(d, cap)) : d
+  })
   const sumMin = mins.reduce((a, b) => a + b, 0)
   const widths = mins.slice()
 
@@ -204,6 +216,33 @@ export function fitColumnWidths(input: FitInput): FitResult {
       for (let i = 0; i < n; i++) widths[i] += (extra * weights[i]) / sumW
     } else {
       for (let i = 0; i < n; i++) widths[i] += extra / n
+    }
+  }
+
+  /**
+   * 第 68 轮：硬上限（序号 7% / 人数 9%）。
+   *
+   * 只在「期望宽度」上做文章不够：当各列 desired 与 min 接近时，剩余空间会
+   * 退化成「均分」，序号照样能吃到 15%。这里在分配完成后把超限列压回上限，
+   * 再把让出来的宽度按期望比例分给未触顶的列，保证 Σwidths === avail。
+   */
+  const caps = input.maxDesired || []
+  const hasCap = caps.some((c) => Number(c) > 0)
+  if (hasCap) {
+    let freed = 0
+    for (let i = 0; i < n; i++) {
+      const cap = Number(caps[i] || 0)
+      if (cap > 0 && widths[i] > cap) {
+        freed += widths[i] - cap
+        widths[i] = cap
+      }
+    }
+    if (freed > 0) {
+      const openIdx = Array.from({ length: n }, (_, i) => i).filter((i) => !(Number(caps[i] || 0) > 0))
+      const pool = openIdx.length ? openIdx : Array.from({ length: n }, (_, i) => i)
+      const weights = pool.map((i) => Math.max(1, desired[i] - widths[i]))
+      const sumW = weights.reduce((a, b) => a + b, 0)
+      pool.forEach((i, k) => { widths[i] += (freed * weights[k]) / sumW })
     }
   }
 

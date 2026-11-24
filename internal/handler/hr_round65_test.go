@@ -90,30 +90,8 @@ func TestRound65DormAdmitCheck(t *testing.T) {
 	require.Contains(t, err.Error(), "找不到房源")
 }
 
-// 第 65 轮：社保记录删除后当月账单同步重算（无记录则删账单）。
-func TestRound65SocialRecordDeleteReconcile(t *testing.T) {
-	db := hrRound59DB(t)
-	ctx := context.Background()
-	require.NoError(t, db.AutoMigrate(&HRSIRecord{}, &HRSIBill{}, &HRSIBillItem{}, &types.SystemSetting{}))
-	h := &HRHandler{db: db}
-
-	require.NoError(t, db.Create(&HRSIRecord{
-		ID: "rec1", TenantID: 1, BillMonth: "2026-12", RecordType: "normal",
-		Name: "张三", IDNumber: "500101199001010011", Period: "2026-12",
-	}).Error)
-	require.NoError(t, db.Create(&HRSIBill{
-		ID: "bill1", TenantID: 1, MonthLabel: "2026-12", Headcount: 1,
-	}).Error)
-
-	// 删除唯一记录 → 账单应被清掉（不留 0 人 0 元空账单）
-	require.NoError(t, db.Where("tenant_id = ? AND id = ?", 1, "rec1").Delete(&HRSIRecord{}).Error)
-	h.hrReconcileSIBillQuiet(ctx, 1, "2026-12")
-
-	var cnt int64
-	require.NoError(t, db.Model(&HRSIBill{}).Where("tenant_id = ? AND month_label = ?", 1, "2026-12").
-		Count(&cnt).Error)
-	require.Equal(t, int64(0), cnt, "无正常记录时必须删除空账单")
-}
+// 第 68 轮起：删除社保记录**不再重算/删除账单**（账单是不可变快照，只打脏标记）。
+// 该契约的回归用例迁移到 hr_round68_test.go 的 TestRound68BillSnapshotImmutable。
 
 // 第 65 轮：资产字段迁移 —— 维修 4 字段清空、资产状态转可编辑 enum。
 func TestRound65AssetFieldMigration(t *testing.T) {

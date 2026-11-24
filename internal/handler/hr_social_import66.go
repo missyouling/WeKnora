@@ -173,8 +173,11 @@ func (h *HRHandler) hrSIApplyImport66(
 	stats.Schemes = len(schemes)
 	// 当前月累计保留（含未触及的其他险种）
 	var kept int64
+	// 第 68 轮：kept 必须同月统计 —— 旧实现只按 record_type 计数，
+	// 会把其它月份的行算进来，用户看到的「保留 N 条」与当月实际不符。
 	_ = tx.Model(&HRSIRecord{}).
-		Where("tenant_id = ? AND record_type = ? AND source = ?", tid, items[0].RecordType, "import").
+		Where("tenant_id = ? AND bill_month = ? AND record_type = ? AND source = ?",
+			tid, items[0].BillMonth, items[0].RecordType, "import").
 		Count(&kept).Error
 	stats.Kept = int(kept)
 	return stats, nil

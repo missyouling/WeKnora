@@ -106,27 +106,29 @@ test('宿舍字段：所属公司/所属部门拆分，双人间派生 2 床', (
 
 test('离职抽屉：渲染花名册全部启用分组 + 离职信息', () => {
   const src = readLocal('HrManagement.vue')
-  assert.match(src, /rosterAllSubs\(\)/)
+  // 第 68 轮：离职抽屉由「离职人员」胶囊驱动（在职字段已并入该胶囊，默认关闭）
+  assert.match(src, /const subs = subsOfTab\('hr-roster'\)\.filter/)
   assert.match(src, /resignNames\.has\(name\) \? '离职信息'/)
   assert.match(src, /HR_ROSTER_GROUPS\.flatMap\(\(g\) => g\.fields\)/)
 })
 
-test('账单弹窗：1480px + 三段表百分比列宽（无横向滚动条）', () => {
+test('账单弹窗：1360px + 三段表百分比列宽（无横向滚动条）', () => {
   const src = readLocal('HrManagement.vue')
-  assert.match(src, /width="min\(96vw, 1480px\)"/)
+  assert.match(src, /width="min\(94vw, 1360px\)"/)
   const table = readLocal('../../components/business/DetailScrollTable.vue')
   assert.match(table, /width: '100%'/)
   assert.match(table, /function pctOf/)
   assert.ok(!/minWidth: '100%'/.test(table), 'minWidth:100% 会让列宽之和超容器时溢出')
 })
 
-test('抽屉：Label 宽度自适应且配套设施独占整行', () => {
+test('抽屉：字段名置顶紧凑排版且长字段独占整行（第 68 轮）', () => {
   const src = readLocal('BusinessSplitDetailDrawer.vue')
-  assert.match(src, /const labelWidth = computed/)
-  assert.match(src, /:label-width="`\$\{labelWidth\}px`"/)
-  // 第 64 轮：长字段白名单化（配套设施仍在其中，且扩展了备注/地址等）
+  // 第 68 轮：label-align=top（不再按左栏宽度自适应）
+  assert.match(src, /label-align="top"/)
+  assert.ok(!/label-width="`\$\{labelWidth\}px`"/.test(src))
+  // 长字段白名单化（保留真正需要整行的地址/说明类）
   assert.match(src, /const FULL_WIDTH_FIELDS = new Set\(\[[\s\S]{0,400}'配套设施'/)
-  assert.match(src, /t-form__label[\s\S]{0,120}white-space: nowrap/)
+  assert.match(src, /t-form__label[\s\S]{0,160}font-size: 13px/)
   // 第 64 轮：状态字段由 Tag 改为纯带色文字，但仍必须无边框
   assert.match(src, /\.bsd-status-text \{[\s\S]{0,200}border: 0 !important/)
 })

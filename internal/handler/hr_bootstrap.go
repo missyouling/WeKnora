@@ -95,6 +95,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 		if err := h.hrRepair58Once(ctx); err != nil {
 			logger.Warnf(ctx, "repair HR field config failed: %v", err)
 		}
+		// 第 68 轮：已在用的租户同样要跑的三项幂等修复（新增字段 / 补快照 / 唯一索引）。
+		// 它们只做「补缺」，绝不清空或回滚用户删除过的字段与数据。
+		h.hrRepair68(ctx)
 	} else {
 		initOK := true
 		step := func(err error, msg string) {

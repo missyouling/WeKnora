@@ -511,7 +511,10 @@ func hrRosterSeedSubs57() []types.FleetCategorySub {
 	for i := range resigned {
 		resigned[i].Group = hrRosterGroupResigned
 	}
-	return hrSubsOfDefsByGroup(append(active, resigned...), true)
+	seeded := hrSubsOfDefsByGroup(append(active, resigned...), true)
+	// 第 68 轮：离职胶囊补齐在职字段全集（新并入的 enabled/is_default = false）。
+	merged, _ := hrResignMirrorSubs68(seeded)
+	return merged
 }
 func hrResignSeedSubs() []types.FleetCategorySub {
 	return hrSubsOfDefs(hrResignFieldDefs())

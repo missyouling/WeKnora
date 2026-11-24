@@ -41,7 +41,7 @@ test('singleCategory：StandardSettingDrawer 透传，人事页按 true 启用',
   assert.match(read('HrManagement.vue'), /:single-category="true"/)
 })
 
-test('加锁行不换行：🔒 与 ⋮ 同处 .fc-op，行高恒 40px，末列 76px', () => {
+test('加锁行不换行：🔒 与 ⋮ 同处 .fc-op，行高恒 40px，列宽按第 68 轮口径', () => {
   const panel = read('FleetCertPanel.vue')
   // 两者必须在同一个 .fc-op 容器内（此前是两个并列元素，⋮ 掉到第二行）
   const opStart = panel.indexOf('<div class="fc-op">')
@@ -53,7 +53,7 @@ test('加锁行不换行：🔒 与 ⋮ 同处 .fc-op，行高恒 40px，末列 
   // 容器自身禁止折行，且行高与末列宽度锁死
   assert.match(panel, /\.fc-op \{[\s\S]*?flex-wrap: nowrap;[\s\S]*?\}/)
   assert.match(panel,
-    /\.field-config-row \{[\s\S]*?grid-template-columns: 24px minmax\(160px, 1fr\) 84px 56px 60px 68px;[\s\S]*?min-height: 40px;/)
+    /\.field-config-row \{[\s\S]*?grid-template-columns: 24px minmax\(120px, 1fr\) 108px 58px 60px 68px;[\s\S]*?min-height: 40px;/)
 })
 
 // ---------------------------------------------------------------------------
@@ -135,10 +135,11 @@ test('工具栏顺序：导入与生成账单都在 after-settings，右侧恒�
   assert.ok(trailing.indexOf('{{ settingsText }}') < trailing.indexOf('<slot name="after-settings" />'))
 })
 
-test('账单明细弹窗宽度 min(96vw, 1480px)，1366 屏不溢出且无横向滚动条', () => {
+test('账单明细弹窗宽度 min(94vw, 1360px)（第 68 轮定宽定高），小屏不溢出', () => {
   const src = read('HrManagement.vue')
-  // 第 63 轮：宽度上调到 1480px（仍受 96vw 约束），配合三段表百分比列宽
-  assert.match(src, /width="min\(96vw, 1480px\)"/)
+  // 第 68 轮：宽度收口到 min(94vw,1360px) + 固定高度 82vh，切换标签零跳动
+  assert.match(src, /width="min\(94vw, 1360px\)"/)
+  assert.match(src, /height: min\(82vh, 780px\)/)
   assert.equal(/width="1200px"/.test(src), false, '固定 1200px 会在 1366 屏横向溢出')
 })
 

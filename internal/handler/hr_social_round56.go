@@ -98,8 +98,15 @@ type HRSIBill struct {
 	PersonalTotal        float64   `json:"personal_total"`
 	GrandTotal           float64   `json:"grand_total"`
 	Source               string    `json:"source"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	// 第 68 轮：账单快照 + 变更标记。
+	// DetailSnapshot = {version, month, generated_at, summary, items, dept_summary}，
+	// 生成时一次固化；列表/明细/导出/打印只读它，绝不回查 hr_si_records。
+	DetailSnapshot map[string]any `gorm:"type:jsonb;serializer:json" json:"detail_snapshot,omitempty"`
+	// SourceDirty = 该月原始记录在账单生成后被增删改，需要用户手动重新生成。
+	SourceDirty bool       `gorm:"not null;default:false" json:"source_dirty"`
+	GeneratedAt *time.Time `json:"generated_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func (HRSIBill) TableName() string { return "hr_si_bills" }
@@ -167,7 +174,11 @@ func hrSIRecordView(r HRSIRecord) map[string]any {
 }
 
 func hrSIBillView(b HRSIBill) map[string]any {
-	return map[string]any{
+	generatedAt := b.CreatedAt
+	if b.GeneratedAt != nil {
+		generatedAt = *b.GeneratedAt
+	}
+	out := map[string]any{
 		"id": b.ID, "month_label": b.MonthLabel, "账单周期": b.MonthLabel,
 		"headcount": b.Headcount, "参保人数": b.Headcount,
 		"缴费基数合计": b.BaseTotal,
@@ -178,8 +189,23 @@ func hrSIBillView(b HRSIBill) map[string]any {
 		"个人大额医疗": b.PersonalBig, "个人失业": b.PersonalUnemployment,
 		"社保个人金额": b.PersonalTotal, "应缴总计": b.GrandTotal,
 		"账单状态": b.BillStatus, "bill_status": b.BillStatus,
-		"生成时间": b.CreatedAt.Format("2006-01-02 15:04:05"),
+		"生成时间": generatedAt.Format("2006-01-02 15:04:05"),
+		// 第 68 轮：原始记录变更标记（列表行橙标 + 明细弹窗顶部提示）。
+		"source_dirty":   b.SourceDirty,
+		"dirty_warning":  b.SourceDirty,
+		"dirty_hint":     hrSIBillDirtyHint68(b.SourceDirty),
+		"generated_at":   generatedAt.Format(time.RFC3339),
+		"snapshot_ready": len(hrSIBillSnapshotItems68(b.DetailSnapshot)) > 0,
 	}
+	return out
+}
+
+// hrSIBillDirtyHint68 列表/弹窗统一文案（空串 = 无需提示）。
+func hrSIBillDirtyHint68(dirty bool) string {
+	if !dirty {
+		return ""
+	}
+	return "原始记录已变动，请重新生成"
 }
 
 func hrSIBillItemView(it HRSIBillItem) map[string]any {
@@ -774,10 +800,28 @@ func (h *HRHandler) GetSIBill(c *gin.Context) {
 		return
 	}
 	var items []HRSIBillItem
-	if err := h.db.WithContext(ctx).Where("bill_id = ?", bill.ID).
-		Order("id ASC").Find(&items).Error; err != nil {
-		hrFail(c, "查询扣款明细失败: "+err.Error())
-		return
+	/**
+	 * 第 68 轮：**快照优先**。
+	 *
+	 * 有 detail_snapshot 时，明细 100% 来自生成瞬间的快照（金额/部门/基数全部冻结），
+	 * 绝不再回查 hr_si_records，也不再用实时部门覆盖 —— 否则「记录改了账单跟着变」。
+	 * 老账单（无快照）才走 hr_si_bill_items + 部门权威的兼容路径。
+	 */
+	if snap := hrSIBillSnapshotItems68(bill.DetailSnapshot); len(snap) > 0 {
+		items = hrSIBillItemsFromSnapshot68(bill.DetailSnapshot)
+	} else {
+		if err := h.db.WithContext(ctx).Where("bill_id = ?", bill.ID).
+			Order("id ASC").Find(&items).Error; err != nil {
+			hrFail(c, "查询扣款明细失败: "+err.Error())
+			return
+		}
+		// 第 57 轮：明细部门同样以花名册为权威，部门汇总必须基于覆盖后的部门聚合。
+		auth := h.hrSIDeptAuthority(ctx, tid)
+		for i := range items {
+			if d := auth.deptOf(items[i].IDNumber, items[i].Name); d != "" {
+				items[i].Department = hrSIDeptLabel(d)
+			}
+		}
 	}
 	// 75 条正常行按序号升序，陈刚补缴行固定在最后。
 	sort.SliceStable(items, func(i, j int) bool {
@@ -786,22 +830,20 @@ func (h *HRHandler) GetSIBill(c *gin.Context) {
 		}
 		return hrSISeqNum(items[i].Sequence) < hrSISeqNum(items[j].Sequence)
 	})
-	// 第 57 轮：明细部门同样以花名册为权威，部门汇总必须基于覆盖后的部门聚合。
-	auth := h.hrSIDeptAuthority(ctx, tid)
-	for i := range items {
-		if d := auth.deptOf(items[i].IDNumber, items[i].Name); d != "" {
-			items[i].Department = hrSIDeptLabel(d)
-		}
-	}
 	out := make([]map[string]any, 0, len(items))
 	depts := map[string]bool{}
 	for _, it := range items {
 		out = append(out, hrSIBillItemView(it))
 		depts[it.Department] = true
 	}
+	// 部门汇总同样从快照读（老账单才现算）。
+	deptSummary := hrSIBillSnapshotDept68(bill.DetailSnapshot)
+	if len(deptSummary) == 0 {
+		deptSummary = hrSIDeptSummaryOf(items)
+	}
 	hrOK(c, gin.H{
 		"bill": hrSIBillView(bill), "items": out,
-		"departments": sortedKeys(depts), "dept_summary": hrSIDeptSummaryOf(items),
+		"departments": sortedKeys(depts), "dept_summary": deptSummary,
 	})
 }
 
@@ -913,6 +955,14 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 		return
 	}
 	next := h.hrSIBillTotalsOf(ctx, tid, month)
+	// 第 68 轮：明细在**事务外**按当月记录一次性算好（读 h.db 而非 tx，
+	// 避免旧实现「在事务里读外面连接」的隐式不一致），随后与汇总一起固化快照。
+	next.ID = uuid.New().String()
+	items := h.hrSIBillItemsForMonth(ctx, tid, month, next.ID)
+	now := time.Now()
+	next.GeneratedAt = &now
+	next.SourceDirty = false
+	next.DetailSnapshot = hrSIBuildSnapshot68(month, next, items)
 	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, old := range existing {
 			if e := tx.Where("bill_id = ?", old.ID).Delete(&HRSIBillItem{}).Error; e != nil {
@@ -922,12 +972,9 @@ func (h *HRHandler) CreateSIBill(c *gin.Context) {
 				return e
 			}
 		}
-		next.ID = uuid.New().String()
 		if e := tx.Create(&next).Error; e != nil {
 			return e
 		}
-		// 明细：当月已有扣款明细则沿用，否则从正常/异常记录按人聚合生成
-		items := h.hrSIBillItemsForMonth(ctx, tid, month, next.ID)
 		if len(items) > 0 {
 			return tx.CreateInBatches(items, 50).Error
 		}
@@ -1100,7 +1147,12 @@ func (h *HRHandler) UpdateSIRecord(c *gin.Context) {
 		hrFail(c, "保存社保记录失败: "+err.Error())
 		return
 	}
-	hrOK(c, hrSIRecordView(row))
+	// 第 68 轮：记录被人工改动 → 该月已生成的账单打脏标记（快照本身不动）。
+	dirty := h.hrSIMarkBillDirty68(ctx, tid, row.BillMonth)
+	out := hrSIRecordView(row)
+	out["bill_dirty_warning"] = dirty
+	out["dirty_month"] = strings.TrimSpace(row.BillMonth)
+	hrOK(c, out)
 }
 
 func (h *HRHandler) DeleteSIBill(c *gin.Context) {
@@ -1362,10 +1414,27 @@ func (h *HRHandler) ImportSIRecords(c *gin.Context) {
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
 	// 第 58 轮：劳务人员的空占位记录同步清理
 	h.hrPurgeLaborServicePlaceholdersQuiet(ctx, tid)
+	// 第 68 轮：本次写入涉及的所有月份，只要已有账单 → 打脏标记。
+	dirtyMonths := make([]string, 0, 2)
+	seenMonth := map[string]bool{}
+	for _, it := range items {
+		m := strings.TrimSpace(it.BillMonth)
+		if m == "" || seenMonth[m] {
+			continue
+		}
+		seenMonth[m] = true
+		if h.hrSIMarkBillDirty68(ctx, tid, m) {
+			dirtyMonths = append(dirtyMonths, m)
+		}
+	}
+	sort.Strings(dirtyMonths)
 	hrOK(c, gin.H{"rows": len(items), "files": len(files), "parsed": parsed,
 		"bill_month": resolvedMonth,
 		"created": stats.Created, "updated": stats.Updated, "removed": stats.Removed,
-		"kept": stats.Kept, "schemes": stats.Schemes})
+		"kept": stats.Kept, "schemes": stats.Schemes,
+		"bill_dirty_warning": len(dirtyMonths) > 0,
+		"dirty_months":       dirtyMonths,
+		"dirty_month":        strings.Join(dirtyMonths, ",")})
 }
 
 // hrSISeqNum 序号列在 PG 里是字符串，SQL 层 CAST(... AS INTEGER) 遇到

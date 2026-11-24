@@ -320,6 +320,9 @@ export function hrSocialColumnsOf(view: string): HrColumn[] {
       }
     }
     if (/参保状态|账单状态/.test(c.colKey)) return { ...c, slot: true }
+    // 第 68 轮：社保月度账单的「账单周期」列要挂「原始记录已变动」橙标，
+    // 必须走具名插槽（TDesign 的 cell 回调不注入 h）。
+    if (view === 'bills' && c.colKey === '账单周期') return { ...c, slot: true }
     // 第 58 轮：补退类型 / 记录类型要用红绿字体渲染，必须走命名插槽。
     if (c.colKey === '补退类型' || c.colKey === '记录类型') return { ...c, slot: true }
     if (/比例/.test(c.colKey)) return { ...c, noSum: true }
