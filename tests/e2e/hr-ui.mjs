@@ -416,6 +416,27 @@ try {
   if (await billRow2.count()) {
     await billRow2.locator("td").nth(1).click();
     await p.waitForTimeout(4200);
+    /**
+     * 第 68 轮：明细弹窗改为**定高**（min(82vh,780px)），数据区吃掉剩余高度
+     * （max-height:4000px），不再固定 380px。这里显式切到「个人明细」并等 75 行
+     * 渲染完，再断言「只有数据区可滚动 + 列宽对齐」。
+     */
+    await p.evaluate(() => {
+      const t = Array.from(document.querySelectorAll("[data-hr-bill-dialog] .hr-bill-tabs .t-radio-button"))
+        .find((x) => (x.innerText || "").trim() === "个人明细");
+      if (t) t.click();
+    });
+    await p.waitForTimeout(1500);
+    for (let i = 0; i < 20; i++) {
+      const n = await p.evaluate(() => {
+        const dlg = Array.from(document.querySelectorAll(".t-dialog")).filter((d) => d.offsetParent !== null)
+          .find((d) => d.querySelector(".detail-table"));
+        return dlg ? Array.from(dlg.querySelectorAll(".detail-table-body tbody tr"))
+          .filter((r) => r.querySelectorAll("td").length > 1).length : 0;
+      });
+      if (n > 20) break;
+      await p.waitForTimeout(600);
+    }
     const table61 = await p.evaluate(() => {
       const dlg = Array.from(document.querySelectorAll(".t-dialog")).filter((d) => d.offsetParent !== null)
         .find((d) => d.querySelector(".detail-table"));
@@ -430,13 +451,20 @@ try {
         has: !!head && !!body && !!foot,
         head: cs(head)?.overflowY, body: cs(body)?.overflowY, foot: cs(foot)?.overflowY,
         max: cs(body)?.maxHeight, scroll: body.scrollHeight > body.clientHeight + 2,
+        rows: dlg.querySelectorAll(".detail-table-body tbody tr").length,
+        bodyH: Math.round(body.getBoundingClientRect().height),
+        bodySH: body.scrollHeight,
+        dlgH: Math.round(dlg.getBoundingClientRect().height),
         aligned: ths.length === tds.length && ths.every((w, i) => Math.abs(w - tds[i]) <= 1),
       };
     });
     R.table61 = table61;
     ok("61.2 明细弹窗仅数据区滚动且列宽对齐",
       !!table61 && table61.has && table61.head === "hidden" && table61.foot === "hidden"
-      && table61.body === "auto" && table61.max === "380px" && table61.scroll && table61.aligned,
+      && table61.body === "auto" && table61.max === "4000px" && table61.aligned
+      // 第 68 轮：定高弹窗里数据区吃满剩余高度；行数少（如部门汇总 7 行）时
+      // 不发生内部滚动是正确表现，只有长表（>20 行）才必须出现滚动条。
+      && (table61.rows <= 20 || table61.scroll),
       JSON.stringify(table61));
     await p.locator(".hr-bill-footer button", { hasText: "关闭" }).first().click();
     await p.waitForTimeout(1200);

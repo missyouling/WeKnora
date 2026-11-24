@@ -207,7 +207,9 @@ const closeBill = async () => {
   await p.waitForTimeout(800);
 };
 const dialogRect = () => p.evaluate(() => {
-  const el = document.querySelector("[data-hr-bill-dialog]");
+  // data-hr-bill-dialog 在外层 .t-dialog__ctx；真正弹窗是内层 .t-dialog
+  const ctx = document.querySelector("[data-hr-bill-dialog]");
+  const el = ctx?.querySelector(".t-dialog") || ctx;
   if (!el) return null;
   const r = el.getBoundingClientRect();
   return { w: Math.round(r.width), h: Math.round(r.height), t: Math.round(r.top), l: Math.round(r.left) };

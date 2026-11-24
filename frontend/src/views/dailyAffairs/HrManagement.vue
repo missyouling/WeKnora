@@ -4889,7 +4889,12 @@ onUnmounted(() => {
    表头 sticky（由 sticky-header 提供），合计行粘底。 */
 /* 第 68 轮：明细弹窗外框定宽定高（非 scoped —— t-dialog 是被 teleport 的组件根，
    scoped 选择器拿不到它的 data-v）。切换标签时外框几何必须 0px 变动。 */
-.hr-bill-dialog {
+/**
+ * 注意：`class` 落在外层 `.t-dialog__ctx`（全屏定位容器），**内层 `.t-dialog`
+ * 才是真正弹窗**。高度必须钉在内层，否则 `.t-dialog` 仍是 height:auto，
+ * 75 行明细会把弹窗撑到 3000px（数据区反而不滚动）。
+ */
+.hr-bill-dialog .t-dialog {
   height: min(82vh, 780px);
   display: flex;
   flex-direction: column;
