@@ -38,6 +38,13 @@ func (h *UtilityHandler) appendPropertyMeters70(
 	}
 
 	add := func(room *HRDormRecord, nameKey, noKey, priceKey, rateKey, unitKey string) {
+		/**
+		 * 第 71 轮：**表号为空一律不追加**。
+		 *
+		 * 417 / 419 这类房源在原能耗库里本就没有水电气表（第 70 轮也没有伪造），
+		 * 若把空表号塞进下拉，用户会看到一个空白可选项、选中后无法挂账。
+		 * 房档补录真实表号后，下一次请求会自动带出（本函数每次实时读档案）。
+		 */
 		no := strings.TrimSpace(hrDormStr(room.CustomData, noKey))
 		if no == "" || seen[strings.ToUpper(no)] {
 			return

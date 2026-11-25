@@ -125,7 +125,10 @@ test('第70轮：12 类标准配套设施齐全', () => {
     assert.ok(HR_DORM_STANDARD_FACILITIES.includes(n), `缺 ${n}`)
   }
   const src = read('HrManagement.vue')
-  assert.match(src, /new Set<string>\(HR_DORM_STANDARD_FACILITIES\)/)
+  // 第 71 轮：改为「空 Set + norm() 逐个入集合」的严格去重（兼容资产台账里的空格变体）
+  assert.match(src, /const names = new Set<string>\(\)/)
+  assert.match(src, /for \(const v of HR_DORM_STANDARD_FACILITIES\)/)
+  assert.match(src, /const norm = \(v: any\) => String\(v \?\? ''\)\.replace\(/)
 })
 
 test('第70轮：表计设置只保留工商业分组 + 底部保存/取消', () => {

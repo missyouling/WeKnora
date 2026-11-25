@@ -332,6 +332,7 @@ type typesUtilityMeterRow struct {
 	MeterKind        string  `gorm:"column:meter_kind"`
 	UseUnit          string  `gorm:"column:use_unit"`
 	OwnerUnit        string  `gorm:"column:owner_unit"`
+	Enabled          bool    `gorm:"column:enabled"`
 }
 
 // ---------------------------------------------------------------------------

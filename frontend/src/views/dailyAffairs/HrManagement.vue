@@ -48,6 +48,11 @@
           <t-radio-button value="bills">月度账单</t-radio-button>
         </t-radio-group>
         <!-- 第 61 轮：宿舍管理五标签（与设置抽屉五胶囊 1:1） -->
+        <!-- 第 71 轮：保持 v-model + @change 的原生语义。
+             曾尝试改成单向 model-value + update 处理器，结果 TDesign 的 RadioGroup
+             在受控模式下不再回写，所有胶囊都卡在首个视图（数据不刷新）—— 已回滚。
+             资产档案「切过去空白」的真因是后端 N+1（485 行 × 全表 occupancy，10s 超时被取消），
+             已在 hr_dorm.go 里用「occupancy 与在住索引各算一次」修掉。 -->
         <t-radio-group v-else v-model="dormSubView" size="small" data-hr-dorm-tabs
           @change="onDormViewChange">
           <t-radio-button v-for="v in HR_DORM_VIEWS" :key="v.key" :value="v.key">{{ v.label }}</t-radio-button>
@@ -1331,10 +1336,27 @@ const dormFacilityValue = computed<string[]>({
 })
 /** 下拉选项 = 资产档案设施 ∪ 当前记录已有设施（后者保证存量值一定回显）。 */
 const dormFacilitySelectOptions = computed(() => {
-  // 第 70 轮：标准 12 类恒在（不依赖资产档案是否已加载），再并资产档案与当前值
-  const names = new Set<string>(HR_DORM_STANDARD_FACILITIES)
-  for (const v of dormFacilityOptions.value) names.add(v)
-  for (const v of dormFacilityValue.value) names.add(v)
+  /**
+   * 第 70 轮：标准 12 类恒在（不依赖资产档案是否已加载），再并资产档案与当前值。
+   *
+   * 第 71 轮：**严格按名称去重**。资产档案是按房间展开的 485 条台账
+   * （同一「衣柜」有 40 条），若不去重下拉会渲染 400+ 个重复项。
+   * 这里统一 trim + 折叠空白后入 Set —— 顺带把「床 」「床」这类空格变体合并掉。
+   */
+  const norm = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
+  const names = new Set<string>()
+  for (const v of HR_DORM_STANDARD_FACILITIES) {
+    const k = norm(v)
+    if (k) names.add(k)
+  }
+  for (const v of dormFacilityOptions.value) {
+    const k = norm(v)
+    if (k) names.add(k)
+  }
+  for (const v of dormFacilityValue.value) {
+    const k = norm(v)
+    if (k) names.add(k)
+  }
   return [...names].map((v) => ({ label: v, value: v }))
 })
 function onDormFacilityChange(v: any) {
@@ -4165,14 +4187,38 @@ async function exportBillExcel() {
 // ---------------------------------------------------------------------------
 /** 五标签切换：与社保四标签同款「先撤表头再一次性成型」。 */
 async function onDormViewChange() {
+  /**
+   * 第 71 轮：逐段容错 —— 任一步失败都不能让整张表消失。
+   *
+   * 旧实现 `await Promise.all([loadFieldConfig, loadList])` + 末尾 `headerReady = true`：
+   * 只要字段配置请求 reject，Promise.all 立刻抛出，`headerReady` 永远停在 false，
+   * 表格整块 v-if 隐藏 —— 表现就是「切到某个标签后列表全空、连合计行都没有，
+   * 控制台还没有报错」（真机切「资产档案」时的现象）。
+   */
   headerReady.value = false
   rows.value = []
   selectedKeys.value = new Set()
   filterState.value = { keyword: '' }
-  initColumns()
-  await Promise.all([loadFieldConfig('hr-dorm'), loadList('hr-dorm')])
-  initColumns()
-  headerReady.value = true
+  try {
+    initColumns()
+    /**
+     * 字段配置**不阻塞列表**：它只影响列名/默认显隐，配置到位后 initColumns 再算一次。
+     *
+     * 旧实现 `await loadFieldConfig(...)` 排在 loadList 之前：配置请求一旦挂起
+     * （弱网/后端慢查询），列表请求永远发不出去 —— 真机表现就是「切到资产档案后
+     * 表格整块空白、连表头都没有，且没有任何报错」。资产档案 485 行最容易触发。
+     */
+    loadFieldConfig('hr-dorm').then(() => initColumns()).catch(() => null)
+    await loadList('hr-dorm')
+    initColumns()
+  } catch (e: any) {
+    // 视图切换失败必须留痕：静默吞掉会表现为「切过去一片空白且无任何线索」
+    console.error('[dorm-view] switch failed:', e)
+    MessagePlugin.error(e?.message || '切换宿舍视图失败')
+  } finally {
+    // 无论成功失败都要放行渲染，空态/错误由列表自身表达
+    headerReady.value = true
+  }
 }
 
 async function downloadDormTemplate(): Promise<Blob> {

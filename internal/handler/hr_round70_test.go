@@ -53,7 +53,7 @@ func TestRound70ManagerClearPersists(t *testing.T) {
 	require.Equal(t, "1", hrDormStr(got[0].CustomData, "舍长手动清空"))
 
 	// 视图不能把首住人填回来
-	view := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, got[0])
+	view := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, got[0], nil, nil)
 	require.Equal(t, "", view["管理员/舍长"], "手动清空后不得被默认首住人覆盖")
 }
 
@@ -79,7 +79,7 @@ func TestRound70ManagerDefaultsToFirstOccupant(t *testing.T) {
 
 	var room HRDormRecord
 	require.NoError(t, db.Where("id = ?", "room71").First(&room).Error)
-	view := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, room)
+	view := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, room, nil, nil)
 	require.Equal(t, "吴英", view["管理员/舍长"], "默认取最早入住者")
 	require.Equal(t, "董友兵", view["成员"], "成员 = 在住人员剔除舍长")
 
@@ -88,7 +88,7 @@ func TestRound70ManagerDefaultsToFirstOccupant(t *testing.T) {
 		Update("custom_data", `{"员工姓名":"吴英","宿舍编号/房屋地址":"宿舍304","入住日期":"2026-09-01","住宿状态":"已退宿"}`).Error)
 	var room2 HRDormRecord
 	require.NoError(t, db.Where("id = ?", "room71").First(&room2).Error)
-	view2 := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, room2)
+	view2 := h.hrDormRecordViewCtx(ctx, 1, hrDormModuleRoom, room2, nil, nil)
 	require.Equal(t, "董友兵", view2["管理员/舍长"], "舍长退宿后顺延")
 	require.Equal(t, "", view2["成员"], "只剩一人且是舍长 → 成员为空")
 }

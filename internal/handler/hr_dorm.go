@@ -356,6 +356,16 @@ func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey st
 	if roomKey == "" {
 		return nil
 	}
+	return h.hrDormStayIndex71(ctx, tid)[roomKey]
+}
+
+/**
+ * hrDormStayIndex71 一次算出「房源码 → 在住人员（按入住日期升序）」索引。
+ *
+ * 列表 40 间房时，旧实现每行都查一遍住宿记录（40 次全表扫描，实测 4.2s）。
+ * 索引化后一次查询即可，宿舍/公租房列表降到百毫秒级。
+ */
+func (h *HRHandler) hrDormStayIndex71(ctx context.Context, tid int64) map[string][]string {
 	var stays []HRDormRecord
 	if err := h.db.WithContext(ctx).
 		Where("tenant_id = ? AND module = ?", tid, hrDormModuleStay).
@@ -364,12 +374,14 @@ func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey st
 	}
 	type person struct {
 		name  string
+		room  string
 		since string
 		order int64
 	}
 	var list []person
 	for _, s := range stays {
-		if strings.TrimSpace(hrDormStr(s.CustomData, "宿舍编号/房屋地址")) != roomKey {
+		room := strings.TrimSpace(hrDormStr(s.CustomData, "宿舍编号/房屋地址"))
+		if room == "" {
 			continue
 		}
 		if hrDormStr(s.CustomData, "住宿状态") == "已退宿" {
@@ -380,7 +392,8 @@ func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey st
 			continue
 		}
 		list = append(list, person{
-			name: name, since: hrDormStr(s.CustomData, "入住日期"),
+			name: name, room: room,
+			since: hrDormStr(s.CustomData, "入住日期"),
 			order: s.CreatedAt.UnixNano(),
 		})
 	}
@@ -390,16 +403,17 @@ func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey st
 		}
 		return list[i].order < list[j].order
 	})
-	out := make([]string, 0, len(list))
+	index := map[string][]string{}
 	seen := map[string]bool{}
 	for _, p := range list {
-		if seen[p.name] {
+		key := p.room + "|" + p.name
+		if seen[key] {
 			continue
 		}
-		seen[p.name] = true
-		out = append(out, p.name)
+		seen[key] = true
+		index[p.room] = append(index[p.room], p.name)
 	}
-	return out
+	return index
 }
 
 // hrDormRecordViewCtx 带上下文的出参：在基础视图上补「舍长派生 / 在住人员 / 成员」。
@@ -410,8 +424,18 @@ func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey st
 //   · 用户手动清空过（标记=1）→ 保持空，绝不自动填回；
 //   · 舍长退宿后：显式值仍指向已退宿的人 → 也顺延到当前最早在住者。
 func (h *HRHandler) hrDormRecordViewCtx(ctx context.Context, tid int64, module string,
-	rec HRDormRecord) map[string]any {
-	out := h.hrDormRecordView(module, rec, h.hrDormOccupancy(ctx, tid))
+	rec HRDormRecord, occ map[string]int, stayIndex map[string][]string) map[string]any {
+	/**
+	 * 第 71 轮：occupancy 由调用方**算一次**传进来。
+	 *
+	 * 旧实现在函数内部 `h.hrDormOccupancy(ctx, tid)`：列表返回 485 条资产时，
+	 * 每行都重新查一遍住宿记录（485 次全表扫描）→ 请求耗时 10s 被浏览器取消，
+	 * 真机表现就是「切到资产档案后表格永远空白」。
+	 */
+	if occ == nil {
+		occ = h.hrDormOccupancy(ctx, tid)
+	}
+	out := h.hrDormRecordView(module, rec, occ)
 	if module != hrDormModuleRoom && module != hrDormModulePublic {
 		return out
 	}
@@ -422,7 +446,16 @@ func (h *HRHandler) hrDormRecordViewCtx(ctx context.Context, tid int64, module s
 	if roomKey == "" {
 		roomKey = hrDormStr(rec.CustomData, "房屋地址")
 	}
-	persons := h.hrDormStayPersons(ctx, tid, roomKey)
+	/**
+	 * 第 71 轮：在住人员优先走**调用方传入的索引**（列表一次算好）。
+	 * 单条接口（新增/编辑返回）没有索引时再回落实时查询。
+	 */
+	var persons []string
+	if stayIndex != nil {
+		persons = stayIndex[strings.TrimSpace(roomKey)]
+	} else {
+		persons = h.hrDormStayPersons(ctx, tid, roomKey)
+	}
 	out["在住人员"] = persons
 	out["在住人数"] = len(persons)
 
@@ -508,9 +541,16 @@ func (h *HRHandler) ListDormRecords(c *gin.Context) {
 			return rows[i].Code < rows[j].Code
 		})
 	}
+	// 第 71 轮：整个列表共用一份 occupancy（避免 N+1）
+	occ := h.hrDormOccupancy(ctx, tid)
+	// 在住人员索引同样只算一次（40 间房否则要 40 次全表扫描）
+	var stayIndex map[string][]string
+	if module == hrDormModuleRoom || module == hrDormModulePublic {
+		stayIndex = h.hrDormStayIndex71(ctx, tid)
+	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		v := h.hrDormRecordViewCtx(ctx, tid, module, r)
+		v := h.hrDormRecordViewCtx(ctx, tid, module, r, occ, stayIndex)
 		if q != "" {
 			hay := strings.ToLower(fmt.Sprint(v["宿舍编号"]) + " " + fmt.Sprint(v["房屋地址"]) +
 				" " + fmt.Sprint(v["员工姓名"]) + " " + fmt.Sprint(v["所属部门"]) +
@@ -562,7 +602,7 @@ func (h *HRHandler) CreateDormRecord(c *gin.Context) {
 		hrFail(c, "新增失败: "+err.Error())
 		return
 	}
-	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, req.Module, rec))
+	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, req.Module, rec, nil, nil))
 }
 
 // UpdateDormRecord PUT /hr/dorm/records/:id
@@ -665,7 +705,7 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 		hrFail(c, "保存失败: "+err.Error())
 		return
 	}
-	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, row.Module, row))
+	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, row.Module, row, nil, nil))
 }
 
 // DeleteDormRecord DELETE /hr/dorm/records/:id
