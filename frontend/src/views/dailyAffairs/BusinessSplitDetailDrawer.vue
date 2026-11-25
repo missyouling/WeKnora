@@ -77,8 +77,10 @@
                 <!-- 第 65 轮：金额 / 小数型字段（押金 / 单价 / 面积 / 资产价值）
                      受控数字控件：只接受数字与小数点，非负、最多 4 位小数。
                      t-input-number 自带非法字符拦截，用户无法输入中文/字母/符号。 -->
+                <!-- 第 70 轮：`decimal-places=4` 会把整数补成 `28.0000`（真机图：面积/押金/单价满屏四个零）。
+                     用 format 去尾零：`28` 就显示 `28`，`2.196` 仍是 `2.196`（单价保留到厘）。 -->
                 <t-input-number v-else-if="f.dataType === 'number'" v-model="form.data[f.name]"
-                  :min="0" :decimal-places="4" :allow-input="false" theme="normal" />
+                  :min="0" :decimal-places="4" :allow-input="false" :format="trimNumberDisplay" theme="normal" />
                 <!-- 第 52 轮：内置枚举字段统一走可搜索下拉（选项由业务字段契约注入） -->
                 <t-select v-else-if="f.options && f.options.length" v-model="form.data[f.name]"
                   clearable filterable placeholder="请选择">
@@ -335,6 +337,20 @@ const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
  * 于是「合同 `到期` 抽屉里是黑字」「回盘表五险状态在抽屉渲染成 disabled 输入框」
  * 这类不一致反复出现。现在名单与映射只有一份。
  */
+/**
+ * 数值显示去尾零（第 70 轮）。
+ *
+ * 后端 `numeric(10,4)` → `28.0000`，TDesign InputNumber 的 `decimal-places=4`
+ * 又会把它格式化成四位小数。这里只处理**显示**：值仍是 number，
+ * 保存精度不变；`2.196` 这类单价保留到厘。
+ */
+function trimNumberDisplay(v: any): string {
+  if (v === '' || v === null || v === undefined) return ''
+  const n = Number(v)
+  if (!Number.isFinite(n)) return String(v ?? '')
+  return String(parseFloat(n.toFixed(4)))
+}
+
 const isStatusField = (f: DetailFieldMeta): boolean =>
   STATUS_TEXT_FIELDS.has(String(f.name || '').trim())
 

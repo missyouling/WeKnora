@@ -280,11 +280,71 @@ func (h *HRHandler) hrDormRecordView(module string, rec HRDormRecord, occ map[st
 	return out
 }
 
-// hrDormStayFeeKeys70 住宿记录可独立覆写的费用项（宿舍 + 公租房全集）。
+/**
+ * 住宿记录可独立覆写的费用项。
+ *
+ * 字段名在库里有**两套写法**：房源档案用带单位的长名（`电费标准(元/度)`），
+ * 而住宿记录的 subs 是历史短名（`电费标准`）。两边都要收，否则用户在住宿记录里
+ * 改的价存不进 `fee_overrides`，核算仍按房源基准算 —— 表现为「改了不生效」。
+ */
 var hrDormStayFeeKeys70 = []string{
+	// 长名（房源档案口径）
 	"宿舍押金(元)", "电费标准(元/度)", "水费单价(元/m³)",
 	"污水处理费(元/m³)", "二次供水费(元/m³)", "垃圾处理费(元/套)", "气费标准(元/m³)",
 	"房屋租金(元/月)", "月费用单价(元/月)", "季度租金(元/季)", "物业费(元/月)",
+	// 短名（住宿记录 subs 口径）
+	"押金金额(元)", "电费标准", "水费单价", "污水处理费", "二次供水费",
+	"垃圾处理费", "气费标准", "房屋租金", "季度租金", "物业费",
+}
+
+/**
+ * hrDormFeeAliases70 费用项别名：同一个费用在不同表里的写法。
+ *
+ * 用于「住宿记录覆写 → 核算取价」的跨键回退：用户在住宿记录里存的是短名，
+ * 房源档案里是长名，`priceOf` 必须两套都试，否则优先级判断失效。
+ */
+var hrDormFeeAliases70 = map[string][]string{
+	"宿舍押金(元)":    {"押金金额(元)"},
+	"电费标准(元/度)":   {"电费标准"},
+	"水费单价(元/m³)":  {"水费单价"},
+	"气费标准(元/m³)":  {"气费标准"},
+	"污水处理费(元/m³)": {"污水处理费"},
+	"二次供水费(元/m³)": {"二次供水费"},
+	"垃圾处理费(元/套)":  {"垃圾处理费"},
+	"房屋租金(元/月)":   {"房屋租金"},
+	"季度租金(元/季)":   {"季度租金"},
+	"物业费(元/月)":    {"物业费"},
+}
+
+/**
+ * hrDormFeeLookup70 在 map 里按「长名 → 短名别名」顺序找第一个非空值。
+ *
+ * 返回 (值, 是否命中)。**0 是合法值**（免费用），所以判空只看「键存在且非空串」。
+ */
+func hrDormFeeLookup70(data map[string]any, key string) (float64, bool) {
+	if data == nil {
+		return 0, false
+	}
+	try := func(k string) (float64, bool) {
+		raw, ok := data[k]
+		if !ok {
+			return 0, false
+		}
+		txt := strings.TrimSpace(fmt.Sprint(raw))
+		if txt == "" || txt == "<nil>" {
+			return 0, false
+		}
+		return hrDormFloat(data, k), true
+	}
+	if v, ok := try(key); ok {
+		return v, true
+	}
+	for _, alias := range hrDormFeeAliases70[key] {
+		if v, ok := try(alias); ok {
+			return v, true
+		}
+	}
+	return 0, false
 }
 
 // hrDormStayPersons 某房源当前在住人员（按「入住日期升序 → 创建时间升序」）。

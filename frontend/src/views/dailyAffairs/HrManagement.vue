@@ -2696,16 +2696,26 @@ watch(
  * 归一在**草稿层**做，落库仍是数值，不影响精度与合计。
  */
 function normalizeDormNumberFields(data: Record<string, any>): void {
-  for (const f of drawerFields.value as any[]) {
-    const name = String(f?.name || '')
-    if (!name) continue
-    if (f.dataType !== 'number' && f.dataType !== 'integer') continue
-    const raw = data[name]
+  /**
+   * 第 70 轮：宿舍/资产数值字段灌入抽屉前归一。
+   *
+   * 后端 `numeric(10,4)` 序列化成 `28.0000` / `1.0000` / `100.0000`，
+   * 直接塞进 `t-input-number` 就原样显示四个零。
+   *
+   * 这里**按字段名判定**而不是查 `drawerFields`：openDetail 时抽屉字段可能还没
+   * 构建完（subs 异步、胶囊还没切），依赖它会让归一时有时无 —— 真机表现为
+   * 「有时 28、有时 28.0000」。字段名规则是稳定的：
+   *   · 单价/倍率类保留到厘（最多 4 位，parseFloat 自动去尾零）；
+   *   · 面积/金额/数量最多 2 位。
+   */
+  const isPrice = (k: string) => /单价|电费标准|气费标准|水费标准|二次供水|污水处理|垃圾处理费|倍率/.test(k)
+  for (const k of Object.keys(data)) {
+    if (!/(面积|押金|金额|单价|标准|租金|物业费|垃圾处理费|二次供水|污水处理|倍率|数量|床位数|可用床位数|价值|分摊比例|度数)/.test(k)) continue
+    const raw = data[k]
     if (raw === '' || raw === null || raw === undefined) continue
     const n = Number(raw)
     if (!Number.isFinite(n)) continue
-    const digits = /单价|电费标准|气费标准|水费标准|二次供水|污水处理|垃圾处理/.test(name) ? 4 : 2
-    data[name] = String(parseFloat(n.toFixed(digits)))
+    data[k] = String(parseFloat(n.toFixed(isPrice(k) ? 4 : 2)))
   }
 }
 
@@ -3308,10 +3318,7 @@ async function onOrgChanged() {
    */
   try {
     const org: any = await hrApi.getOrgUnits()
-    const data: any = org
-    const units = Array.isArray(data?.data) ? data.data
-      : Array.isArray(data?.data?.units) ? data.data.units
-        : Array.isArray(data?.units) ? data.units : []
+    const units = pickOrgUnits(org)
     if (units.length) dormOrgUnits.value = units
   } catch { /* 组织接口抖动不阻断列表刷新 */ }
   // 部门被删/改名后当前筛选可能指向不存在的部门 → 复位到全部
@@ -4572,8 +4579,45 @@ const dormEmployeeNameOptions = computed(() => {
   }))
 })
 // 第 63 轮：所属公司/部门全部来自「单位设置（组织机构）」，不再硬编码
+/**
+ * 第 70 轮：单位接口响应下钻（`{data:{data:[...]}}` / `{data:{units:[...]}}` / 数组 都兼容）。
+ *
+ * 旧实现只解一到两层，遇到 `{data:{success,data:[...]}}`（axios 拦截器再包一层）时
+ * 拿到对象而非数组 → `dormCompanyNames` 为空 → 「所属公司」退化成白底输入框，
+ * 用户能填出任意不存在的公司（真机 6.3）。
+ */
+function pickOrgUnits(res: any): any[] {
+  let v: any = res
+  for (let i = 0; i < 6; i++) {
+    if (Array.isArray(v)) return v
+    if (!v || typeof v !== 'object') break
+    if (Array.isArray((v as any).units)) return (v as any).units
+    if ('data' in v) { v = (v as any).data; continue }
+    if ('items' in v) { v = (v as any).items; continue }
+    break
+  }
+  return []
+}
+
 const dormOrgUnits = ref<any[]>([])
-const dormCompanyNames = computed(() => companyNamesOf(dormOrgUnits.value))
+const dormCompanyNames = computed(() => {
+  const names = companyNamesOf(dormOrgUnits.value)
+  if (names.length) return names
+  /**
+   * 兜底：org 接口抖动/未就绪时，从**已加载的记录**里汇总公司名。
+   *
+   * 这不是硬编码，数据仍来自真实业务表；目的只有一个 —— 「所属公司」必须保持为
+   * 下拉控件，绝不能退化成白底输入框让用户填出不存在的公司（需求 4 ④ / 6 ②）。
+   */
+  const set = new Set<string>()
+  for (const r of rows.value || []) {
+    for (const k of ['所属公司', '租赁单位', '签约公司']) {
+      const v = String((r as any)?.[k] ?? '').trim()
+      if (v) set.add(v)
+    }
+  }
+  return [...set]
+})
 /**
  * 第 64 轮：所属部门 100% 取自「单位设置」当前公司节点下的部门。
  *
@@ -4688,11 +4732,9 @@ async function loadDormHelpers() {
       listUtilityKinds('water').catch(() => null),
       listUtilityKinds('gas').catch(() => null),
     ])
-    const orgData: any = org
-    const units = Array.isArray(orgData?.data) ? orgData.data
-      : Array.isArray(orgData?.data?.units) ? orgData.data.units
-        : Array.isArray(orgData?.units) ? orgData.units : []
-    dormOrgUnits.value = units
+    const units = pickOrgUnits(org)
+    // 空响应不得覆盖已有有效值，否则「所属公司」会退化成文本输入框
+    if (units.length) dormOrgUnits.value = units
     /**
      * 第 64 轮：接口响应是 `{ data: { data: [...] } }` 双层包裹。
      *

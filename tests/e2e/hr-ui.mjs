@@ -477,7 +477,15 @@ try {
   const dormTabs = await p.evaluate(() => Array.from(document.querySelectorAll(".hr-subview-bar .t-radio-button"))
     .map((e) => (e.innerText || "").trim()));
   ok("61.3 宿舍管理五标签", dormTabs.join("/") === "宿舍档案/公租房档案/住宿记录/资产档案/费用信息", dormTabs.join("/"));
-  await tab("公租房档案"); await p.waitForTimeout(5500);
+  await tab("公租房档案");
+  // 第 70 轮：公租房 19 套的加载受字段契约迁移影响会略慢，改为轮询（固定等待会误判成回归）
+  for (let i = 0; i < 40; i++) {
+    const n = await p.evaluate(() => Array.from(document.querySelectorAll(".doc-list-scroll tbody tr"))
+      .filter((r) => r.querySelectorAll("td").length > 3).length);
+    if (n > 0) break;
+    await p.waitForTimeout(1000);
+  }
+  await p.waitForTimeout(1500);
   const pub61 = await p.evaluate(() => ({
     rows: Array.from(document.querySelectorAll(".doc-list-scroll tbody tr")).filter((r) => r.querySelectorAll("td").length > 3).length,
     foot: (document.querySelector(".doc-list-scroll tfoot")?.innerText || "").replace(/\s+/g, " ").trim(),
@@ -489,7 +497,7 @@ try {
     pub61.rows === 19 && /合计（共 19 条）/.test(pub61.foot) && !/485\.55/.test(pub61.foot),
     JSON.stringify(pub61));
   await shot("d61_ci_dorm_public");
-} catch (e) { R.error = String(e).slice(0, 600); }
+} catch (e) { R.error = String(e?.stack || e).slice(0, 800); }
 
 const pass = R.checks.filter((x) => x.pass).length;
 console.log(JSON.stringify(R, null, 1));

@@ -190,11 +190,26 @@ func (h *HRHandler) hrMigrateDormMeters70(ctx context.Context, tid int64) (int, 
 		Where("tenant_id = ? AND module IN ?", tid,
 			[]string{hrDormModuleRoom, hrDormModulePublic}).Find(&rooms).Error
 	byCode := map[string]*HRDormRecord{}
+	byRoomNo := map[string][]*HRDormRecord{}
 	for i := range rooms {
 		r := &rooms[i]
-		byCode[hrDormStr(r.CustomData, "宿舍编号")] = r
-		byCode[hrDormStr(r.CustomData, "房屋地址")] = r
-		byCode[r.Code] = r
+		for _, k := range []string{
+			hrDormStr(r.CustomData, "宿舍编号"),
+			hrDormStr(r.CustomData, "房屋地址"),
+			hrDormStr(r.CustomData, "房间号"),
+			r.Code,
+		} {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			byCode[k] = r
+			// 表计别名常带楼栋前缀（房源「成都宿舍314」↔ 表计「宿舍314」），补一份短名
+			byCode["宿舍"+k] = r
+		}
+		if no := strings.TrimSpace(hrDormStr(r.CustomData, "房间号")); no != "" {
+			byRoomNo[no] = append(byRoomNo[no], r)
+		}
 	}
 	dormHit, publicHit, missed := 0, 0, 0
 	for _, m := range meters {
@@ -207,13 +222,28 @@ func (h *HRHandler) hrMigrateDormMeters70(ctx context.Context, tid int64) (int, 
 		}
 		room := byCode[name]
 		if room == nil {
-			// 持睿 403~418 这类「表计名 ≠ 星达房源名」的，按房间号再试一次
-			for _, no := range hrDorm401To420Rooms70() {
-				if strings.HasSuffix(name, no) {
-					if r := byCode["宿舍"+no]; r != nil {
-						room = r
-						break
-					}
+			/**
+			 * 「表计名 ≠ 房源名」的兜底：取别名里的第一段数字当房间号。
+			 *
+			 * 真机案例：房源 `成都宿舍314` 的宿舍编号是「成都宿舍314」，
+			 * 而能耗表计别名是「宿舍314」—— 字面不等，按名称永远匹配不上。
+			 * 同号多房源时（成都 vs 1 号楼都有 314）只认同名精确键，宁漏不猜。
+			 */
+			digits := ""
+			for _, ch := range name {
+				if ch >= '0' && ch <= '9' {
+					digits += string(ch)
+					continue
+				}
+				if digits != "" {
+					break
+				}
+			}
+			if digits != "" {
+				if cand := byRoomNo[digits]; len(cand) == 1 {
+					room = cand[0]
+				} else if len(cand) > 1 {
+					room = byCode["宿舍"+digits]
 				}
 			}
 		}
@@ -300,6 +330,8 @@ type typesUtilityMeterRow struct {
 	Rate             float64 `gorm:"column:rate"`
 	DefaultUnitPrice float64 `gorm:"column:default_unit_price"`
 	MeterKind        string  `gorm:"column:meter_kind"`
+	UseUnit          string  `gorm:"column:use_unit"`
+	OwnerUnit        string  `gorm:"column:owner_unit"`
 }
 
 // ---------------------------------------------------------------------------
@@ -396,12 +428,14 @@ func (h *HRHandler) hrAlignCompanyNames70(ctx context.Context, tid int64) int {
 	}
 	byKey := map[string]string{}
 	names := map[string]bool{}
+	var unitNames []string
 	for _, u := range units {
 		n := strings.TrimSpace(u.Name)
 		if n == "" {
 			continue
 		}
 		names[n] = true
+		unitNames = append(unitNames, n)
 		byKey[hrCompanyKey70(n)] = n
 	}
 	align := func(v string) (string, bool) {
@@ -409,8 +443,34 @@ func (h *HRHandler) hrAlignCompanyNames70(ctx context.Context, tid int64) int {
 		if v == "" || names[v] {
 			return "", false
 		}
-		if target, ok := byKey[hrCompanyKey70(v)]; ok && target != v {
+		key := hrCompanyKey70(v)
+		if target, ok := byKey[key]; ok && target != v {
 			return target, true
+		}
+		/**
+		 * 简写也要对齐（`持睿汽车` → `持睿汽车部件有限公司`、`重庆星达` → `重庆星达铜业有限公司`）。
+		 *
+		 * 能耗表计里长期存的是人工简写，与单位设置的全名不一致，核算页的「使用单位」
+		 * 就会出现两套写法。判定用「核心词互相包含 + **唯一命中**」：
+		 *   · 命中 0 个 → 不是单位（`两山景苑` 这类场地名），不动；
+		 *   · 命中 ≥2 个 → 有歧义（星达铜业 / 星达物流），宁可不改；
+		 *   · 剩余不足 2 字的核心词（单字）不参与，避免误伤。
+		 */
+		if len([]rune(key)) < 2 {
+			return "", false
+		}
+		var hits []string
+		for _, n := range unitNames {
+			nk := hrCompanyKey70(n)
+			if nk == "" {
+				continue
+			}
+			if strings.Contains(nk, key) || strings.Contains(key, nk) {
+				hits = append(hits, n)
+			}
+		}
+		if len(hits) == 1 && hits[0] != v {
+			return hits[0], true
 		}
 		return "", false
 	}
@@ -461,11 +521,43 @@ func (h *HRHandler) hrAlignCompanyNames70(ctx context.Context, tid int64) int {
 			fixed++
 		}
 	}
+
+	/**
+	 * 能耗表计：使用单位 / 归属单位。
+	 *
+	 * 这是需求点名的场景 —— 库里残留 `重庆持睿汽车部件有限公司`（旧全名）与
+	 * 简写 `持睿汽车` / `重庆星达`，而下拉只认单位设置里的现行全名。
+	 * `align` 只在「归一化后等于某个现行单位、字面不同」时才替换，
+	 * `两山景苑 / 两山秀苑` 这类场地名不会被误改。
+	 */
+	var meterRows []typesUtilityMeterRow
+	_ = h.db.WithContext(ctx).Raw(
+		`SELECT id, use_unit, owner_unit FROM utility_meters WHERE tenant_id = ? AND deleted_at IS NULL`, tid).
+		Scan(&meterRows).Error
+	for _, m := range meterRows {
+		upd := map[string]any{}
+		if target, ok := align(m.UseUnit); ok {
+			upd["use_unit"] = target
+		}
+		if target, ok := align(m.OwnerUnit); ok {
+			upd["owner_unit"] = target
+		}
+		if len(upd) == 0 {
+			continue
+		}
+		if err := h.db.WithContext(ctx).Table("utility_meters").Where("id = ?", m.ID).
+			Updates(upd).Error; err == nil {
+			fixed++
+		}
+	}
 	return fixed
 }
 
 // hrRepair70 第 70 轮启动幂等修复：补房源、补资产、迁表计。
 func (h *HRHandler) hrRepair70(ctx context.Context) {
+	// 字段契约先迁移：表头/筛选/设置抽屉/模板全部由 subs 派生，
+	// 先把「宿舍不挂气表、公租房不挂电表、住宿记录无 ID」落地，再补数据。
+	h.hrEnsureDormFields70(ctx)
 	var tids []int64
 	if err := h.db.WithContext(ctx).Model(&HREmployee{}).
 		Distinct().Pluck("tenant_id", &tids).Error; err != nil {

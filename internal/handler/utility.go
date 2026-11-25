@@ -795,6 +795,9 @@ func (h *UtilityHandler) ListUtilityMeters(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("list meters failed"))
 		return
 	}
+	// [upstream-touch] 第 70 轮：追加房源档案定义的表（宿舍电/水表、公租房水/气表）。
+	// 表计定义权已移交档案，核算侧需要跨模块聚合；只追加同号缺项，不改库、不动历史。
+	meters = h.appendPropertyMeters70(ctx, tenantID, category, meters)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": meters})
 }
 

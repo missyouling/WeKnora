@@ -433,14 +433,14 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 			 * 未单独设置才回落房源档案基准。判定用「键存在且非空」，0 也是合法值。
 			 */
 			priceOf := func(key string) float64 {
-				if stay.CustomData != nil {
-					if raw, ok := stay.CustomData[key]; ok {
-						if s := strings.TrimSpace(fmt.Sprint(raw)); s != "" && s != "<nil>" {
-							return hrDormFloat(stay.CustomData, key)
-						}
-					}
+				// 住宿记录优先（含长短名别名），未单独设置再回落房源档案基准
+				if v, ok := hrDormFeeLookup70(stay.CustomData, key); ok {
+					return v
 				}
-				return hrDormFloat(room.CustomData, key)
+				if v, ok := hrDormFeeLookup70(room.CustomData, key); ok {
+					return v
+				}
+				return 0
 			}
 			waterPrice := priceOf("水费单价(元/m³)")
 			if waterPrice == 0 {
