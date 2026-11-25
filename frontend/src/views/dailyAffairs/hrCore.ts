@@ -11,8 +11,9 @@
  * 页面（HrManagement.vue）只负责把数据喂进来，不在模板里散落字符串判断。
  */
 
+import { statusTagThemeOf } from './hrStatusStyle'
 import { buildFootRow, type SummaryColumn } from './listSummary'
-import { grouped } from './formatNumber'
+import { cellNum, grouped, priceNum } from './formatNumber'
 import { formatCellDateTime } from './formatDateTime'
 import {
   ROSTER_TEMPLATE_HEADERS, ROSTER_DERIVED_FIELDS, EXTRA_RESIGN_FIELDS,
@@ -155,6 +156,11 @@ function normalizeStatus(v: string): string {
   return STATUS_TEXT[s.toLowerCase()] || s
 }
 
+/** 单价类字段：保留到厘（水电气单价、二次供水、污水处理、垃圾处理）。 */
+function isPriceField(name: string): boolean {
+  return /单价|电费标准|气费标准|水费标准|二次供水|污水处理|垃圾处理/.test(String(name || ''))
+}
+
 function col(colKey: string, keys: readonly string[], opts: ColOpts = {}): HrColumn {
   const isStatus = STATUS_COLS.has(colKey)
   // 时间/日期列统一走格式化出口：后端 ISO8601 原串（带 T、微秒、+08:00）
@@ -173,7 +179,20 @@ function col(colKey: string, keys: readonly string[], opts: ColOpts = {}): HrCol
         ? (row: any) => normalizeStatus(pick(row, keys))
         : isDate
           ? (row: any) => formatCellDateTime(colKey, pickRaw(row, keys)) || ''
-          : (row: any) => pick(row, keys),
+          : opts.dataType === 'number'
+            /**
+             * 第 70 轮：数值列统一格式化，禁止把 `numeric(10,4)` 的尾巴带上屏。
+             *
+             * 后端宿舍/资产用 numeric 存面积、押金、单价，JSON 序列化后是
+             * `28.0000` / `1.0000`；旧实现 `String(v)` 原样输出，
+             * 真机列表里满屏 `.0000`。单价保留到厘，其它最多两位并去尾零。
+             */
+            ? (row: any) => {
+              const raw = pickRaw(row, keys)
+              if (raw === undefined) return ''
+              return isPriceField(colKey) ? priceNum(raw) : cellNum(raw)
+            }
+            : (row: any) => pick(row, keys),
   }
 }
 
@@ -591,13 +610,12 @@ export const CONTRACT_STATUS_OPTIONS = [
  * 状态主题：正常=success(绿) / 未签订=warning(橙) / 即将到期=warning(橙) /
  * 到期=danger(红) / 已解除=default(灰)。
  */
+/**
+ * 第 70 轮：合同状态主题委托到全局状态映射（列表 Tag 与抽屉文字同源）。
+ * 旧实现只在这里认 `到期`，抽屉那份 if/else 不认 → 「列表红、抽屉黑」。
+ */
 export function contractStatusTheme(v: unknown): 'success' | 'warning' | 'danger' | 'default' {
-  const s = String(v ?? '').trim()
-  if (s === '正常') return 'success'
-  if (s === '未签订') return 'warning'
-  if (s === '即将到期') return 'warning'
-  if (s === '到期') return 'danger'
-  return 'default'
+  return statusTagThemeOf('合同状态', v)
 }
 
 /**

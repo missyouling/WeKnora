@@ -250,6 +250,10 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   box-sizing: border-box;
   background: var(--td-bg-color-secondarycontainer);
 }
+/* 第 70 轮：合计行比分表头再浅一档（默认 secondarycontainer ≈ #f5f7fa，hover ≈ #f8f9fa） */
+.detail-table-foot {
+  background: var(--td-bg-color-container-hover);
+}
 .detail-table-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -271,6 +275,18 @@ watch(() => [props.rows.length, props.columns.length, props.maxBodyHeight], () =
   width: 100%;
   min-width: 0;
   font-size: var(--td-font-size-body-small);
+}
+/**
+ * 第 70 轮：表头 / 合计行**最后一列不画右边框**。
+ *
+ * 这两段用 `padding-right` 预留滚动条槽位（sideStyle），表格右边界正好落在槽位
+ * 左沿；最后一个单元格的 border-right 与容器右边框之间就多出一根贯穿细线
+ * （真机图：表头与合计行右侧各一条竖线，只有中间数据区没有）。
+ * 槽位区本身只保留纯色背景 + 外框，视觉上与数据区一致。
+ */
+.detail-table-head tr > *:last-child,
+.detail-table-foot tr > *:last-child {
+  border-right: none;
 }
 .detail-table th,
 .detail-table td {

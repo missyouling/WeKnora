@@ -141,6 +141,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 69 轮：星号身份证还原 + 全量花名册（含离职）部门回填。
 	// 两个分支都要跑：幂等、只补空值/只改打码号，不会回滚用户改动。
 	h.hrRepair69(ctx)
+	// 第 70 轮：公司名存量对齐、补 401–420 房源、补 12 类标准资产、回填宿舍/公租房表计。
+	// 全部只补缺/只改空值，绝不触碰历史抄表与核算记录。
+	h.hrRepair70(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

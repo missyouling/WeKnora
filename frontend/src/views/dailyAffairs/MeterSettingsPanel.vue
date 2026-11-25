@@ -241,6 +241,15 @@
         </div>
       </div>
     </t-dialog>
+
+    <!-- 第 70 轮：底部固定操作栏（与「字段定义」Tab 的保存/取消 100% 同款）。
+         表计的新增/编辑/排序/启用全部改为**草稿态**，点「保存」一次性落库。 -->
+    <div class="meter-save-bar" data-meter-save-bar>
+      <t-button theme="default" variant="outline" size="small" @click="cancelAllMeters"
+        data-meter-cancel>取消</t-button>
+      <t-button theme="primary" size="small" :loading="savingAll" @click="saveAllMeters"
+        data-meter-save>保存</t-button>
+    </div>
   </div>
 </template>
 
@@ -264,7 +273,7 @@ import { companyNamesOf, normalizeCompanyName } from './companyScope'
 
 type MeterCategory = 'electricity' | 'water' | 'gas'
 const props = defineProps<{ category: MeterCategory }>()
-const emit = defineEmits<{ (e: 'changed'): void }>()
+const emit = defineEmits<{ (e: 'changed'): void; (e: 'close'): void }>()
 
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
 const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.category === 'electricity' ? '千瓦时' : 'm³'))
@@ -322,7 +331,15 @@ const KIND_BUILTIN = reactive([
 type KindItem = { id?: string; value: string; label: string }
 const customKinds = ref<KindItem[]>([])
 const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])
-const meterKindOptions = computed(() => meterKinds.value.map(k => ({ label: k.label, value: k.value })))
+/**
+ * 第 70 轮：表计设置只管理工商业表计（宿舍/公租房表在房源档案里定义）。
+ * 这里仍保留 dorm 的 label 映射用于展示历史行，但**下拉只给工商业**，
+ * 防止用户在这里新建出「宿舍表」形成两套真相。
+ */
+const meterKindOptions = computed(() =>
+  meterKinds.value
+    .filter((k) => METER_KINDS_IN_SETTINGS70.has(k.value))
+    .map(k => ({ label: k.label, value: k.value })))
 const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || '未分类'
 
 const filteredMeters = computed(() => {
@@ -331,15 +348,27 @@ const filteredMeters = computed(() => {
   return meters.value.filter((m: any) =>
     (m.alias || '').toLowerCase().includes(kw) || (m.meter_no || '').toLowerCase().includes(kw))
 })
+/**
+ * 第 70 轮：水电气表的定义权已移回「宿舍 / 公租房档案」。
+ *
+ * 表计设置**只保留工商业分组**（工业总表 / 分表 / 消防水表 / 食堂气表）——
+ * 宿舍电表、宿舍水表、公租房水表/气表在房源档案里维护，核算侧实时引用。
+ * utility_meters 里的历史记录**不删除**：抄表与费用核算仍按 meter_no 引用它，
+ * 这里只是把它们从设置界面移出（改价去房源档案）。
+ */
+const METER_KINDS_IN_SETTINGS70 = new Set(['production'])
 const meterGroups = computed(() => {
-  const groups = meterKinds.value.map(k => ({ key: k.value, label: k.label, items: [] as any[] }))
+  const groups = meterKinds.value
+    .filter((k) => METER_KINDS_IN_SETTINGS70.has(k.value))
+    .map(k => ({ key: k.value, label: k.label, items: [] as any[] }))
   for (const m of filteredMeters.value) {
+    if (!METER_KINDS_IN_SETTINGS70.has(String(m.meter_kind || ''))) continue
     const g = groups.find(g => g.key === m.meter_kind)
-    ;(g || groups[groups.length - 1]).items.push(m)
+    if (g) g.items.push(m)
   }
   return groups
 })
-const activeMeterGroup = ref<string>('dorm')
+const activeMeterGroup = ref<string>('production')
 const activeGroupItems = computed(() => meterGroups.value.find(g => g.key === activeMeterGroup.value)?.items || [])
 watch(meterGroups, (gs) => {
   if (!gs.find(g => g.key === activeMeterGroup.value)) {
@@ -452,7 +481,7 @@ const nextMeterNo = () => {
 
 const openMeterForm = (m: any) => {
   // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
-  const defaultKind = props.category === 'water' ? 'production' : 'dorm'
+  const defaultKind = 'production'
   // 新增默认类型:电表/气表默认普通;水表类型(总表/分表/消防)由用户按需选择
   const defaultType = props.category === 'water' ? '' : 'normal'
   meterForm.value = m ? {
@@ -541,7 +570,7 @@ const saveMeter = async () => {
         alias: '',
         meter_no: nextMeterNo(),
         meter_type: props.category === 'water' ? '' : 'normal',
-        meter_kind: props.category === 'water' ? 'production' : 'dorm',
+        meter_kind: 'production',
         owner_unit: '',
         rate: '',
         default_unit_price: '',
@@ -569,8 +598,34 @@ const saveMeter = async () => {
  * 旧实现每次拨动就 PUT 一次，用户在配置表计档案时顺手关几个就会连发请求。
  * 现在开关状态随该表计的「保存」按钮一起提交（见 saveMeter）。
  */
+const dirtyEnabled = ref<Set<string>>(new Set())
 const toggleEnabled = (m: any, v: any) => {
   m.enabled = !!v
+  // 第 70 轮：开关只记脏，随底部「保存」统一提交（不再静默自动落库）
+  const next = new Set(dirtyEnabled.value)
+  next.add(String(m.id))
+  dirtyEnabled.value = next
+}
+
+/** 行数据 → 更新接口的完整载荷（后端要求 alias 必填、rate>0）。 */
+function meterPayloadOf(m: any) {
+  return {
+    category: props.category,
+    alias: String(m?.alias || '').trim(),
+    meter_no: m?.meter_no || '',
+    meter_type: m?.meter_type || '',
+    meter_kind: m?.meter_kind || 'production',
+    owner_unit: normalizeCompanyName(m?.owner_unit, companyNames.value),
+    rate: Number(m?.rate) > 0 ? Number(m.rate) : 1,
+    default_unit_price: Number(m?.default_unit_price) || 0,
+    use_unit: normalizeCompanyName(m?.use_unit, companyNames.value),
+    manager: m?.manager || '',
+    contact: m?.contact || '',
+    meter_mode: m?.meter_mode || 'manual',
+    install_date: m?.install_date || '',
+    remark: m?.remark || '',
+    enabled: m?.enabled !== false,
+  }
 }
 
 const deleteMeter = async (m: any) => {
@@ -583,6 +638,51 @@ const deleteMeter = async (m: any) => {
     MessagePlugin.error(e?.message || '删除失败')
   }
 }
+
+const savingAll = ref(false)
+/**
+ * 第 70 轮：抽屉底部「保存」= 一次性提交本面板的全部待存变更。
+ *
+ * 覆盖三类：展开中的编辑表单（含新增）、启用开关、拖拽排序。
+ * 提交后刷新列表、通知父级重算，并关闭抽屉；「取消」直接关闭、丢弃草稿。
+ */
+async function saveAllMeters() {
+  savingAll.value = true
+  try {
+    if (meterFormVisible.value) {
+      await saveMeter()
+    }
+    for (const id of Array.from(dirtyEnabled.value)) {
+      const m = meters.value.find((x: any) => String(x.id) === id)
+      if (!m) continue
+      await updateUtilityMeter(id, meterPayloadOf(m))
+    }
+    dirtyEnabled.value = new Set()
+    if (pendingSortIds.value.length) {
+      try {
+        await sortUtilityMeters(props.category, pendingSortIds.value)
+      } catch { /* 顺序失败不阻断保存 */ }
+      pendingSortIds.value = []
+    }
+    await loadMetersOnly()
+    emit('changed')
+    MessagePlugin.success('已保存')
+    emit('close')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+  } finally {
+    savingAll.value = false
+  }
+}
+
+/** 取消：丢弃草稿（未保存的开关/排序/表单），直接关闭抽屉。 */
+function cancelAllMeters() {
+  dirtyEnabled.value = new Set()
+  pendingSortIds.value = []
+  meterFormVisible.value = false
+  emit('close')
+}
+
 
 // ---- 表计拖动排序（sort_order 持久化） ----
 const meterSortableEl = ref<HTMLElement | null>(null)
@@ -862,4 +962,19 @@ onBeforeUnmount(() => {
 <style>
 /* 删除图标统一口径（16px 灰→红悬停 + 浅红底 + .15s），全系统共用一份 */
 @import './styles/business-delete-btn.css';
+
+/* 第 70 轮：表计设置底部固定操作栏 */
+.meter-save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--td-bg-color-container);
+  border-top: 1px solid var(--td-component-stroke);
+}
 </style>

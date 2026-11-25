@@ -41,6 +41,16 @@ export interface DetailFieldMeta {
    * 替代普通文本框，选项由业务字段契约（hrFieldSchema）注入。
    */
   options?: readonly string[]
+  /**
+   * 第 70 轮：候选可能为空的「下拉型」字段。
+   *
+   * 仅靠 `options.length` 判断渲染会退化成白底输入框 —— 宿舍没有在住人员时的
+   * 「管理员/舍长」、没有可用表计时的关联项，用户会看到一个可自由输入的文本框，
+   * 能填出不存在的人/表。标了 selectLike 的字段即使空也渲染**禁用下拉**。
+   */
+  selectLike?: boolean
+  /** 空候选时的占位文案（默认「暂无可选项」）。 */
+  emptyPlaceholder?: string
 }
 
 /** 详情表单三个核心字段：永远排在最顶部且完整可见 */

@@ -90,8 +90,26 @@ export function cellNum(v: any): string {
   if (v === '' || v == null) return ''
   const n = Number(v)
   if (!Number.isFinite(n)) return ''
-  const r = round2(n)
-  return Number.isInteger(r) ? String(r) : r.toFixed(2)
+  /**
+   * 第 70 轮：去掉尾部无意义零（`45.6000` → `45.6`，`28.0000` → `28`）。
+   *
+   * 金额列另有 `money()` 走 `grouped({fixed:true})` 固定两位；
+   * 这个函数服务于「面积 / 数量 / 押金输入回显」这类需要紧凑展示的列。
+   */
+  return String(parseFloat(round2(n).toFixed(2)))
+}
+
+/**
+ * 水电气单价：最多 4 位有效小数、去尾零、0 显示 `0`。
+ *
+ * 后端列是 `numeric(10,4)`，直接 `String()` 会得到 `1.0000` / `5.0000` / `0.0000`。
+ * 单价必须保留到厘（`2.196`），所以不能复用两位小数的 `cellNum`。
+ */
+export function priceNum(v: any): string {
+  if (v === '' || v === null || v === undefined) return ''
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return String(parseFloat(n.toFixed(4)))
 }
 
 /** 计数 / 合计兜底：空值按 0，整数原样，否则两位小数。 */

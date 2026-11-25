@@ -276,6 +276,13 @@ func hrRunOrgCascade(tx *gorm.DB, tid int64,
 			return affected, err
 		}
 		affected += n
+		// 第 70 轮：单位改名还要级联宿舍/公租房/住宿/资产 + 能耗表计
+		// （花名册与合同视图由上面的 hrCascadeUnitRename 覆盖）
+		m, err := hrSyncBusinessUnitName70(tx, tid, p.Old, p.New)
+		if err != nil {
+			return affected, err
+		}
+		affected += m
 	}
 	for _, p := range hrDeptRenamePairs(oldDepts, newDepts) {
 		n, err := hrCascadeDepartmentRename(tx, tid, p.Old, p.New)

@@ -263,10 +263,158 @@ func (h *HRHandler) hrDormRecordView(module string, rec HRDormRecord, occ map[st
 			out["住宿状态"] = "在住"
 		}
 		out["房源码"] = code
+		/**
+		 * 第 70 轮：该条记录独立保存过的费用项优先回显。
+		 *
+		 * 正常路径下 custom_data 同名键就是最新值；overrides 是「用户单独改过」
+		 * 的权威副本，用于跨版本/换房源后仍能正确回显。
+		 */
+		if ov, ok := rec.CustomData["fee_overrides"].(map[string]any); ok && len(ov) > 0 {
+			for k, v := range ov {
+				out[k] = v
+			}
+		}
 	} else if module == hrDormModuleAsset {
 		out["资产状态"] = rec.Status
 	}
 	return out
+}
+
+// hrDormStayFeeKeys70 住宿记录可独立覆写的费用项（宿舍 + 公租房全集）。
+var hrDormStayFeeKeys70 = []string{
+	"宿舍押金(元)", "电费标准(元/度)", "水费单价(元/m³)",
+	"污水处理费(元/m³)", "二次供水费(元/m³)", "垃圾处理费(元/套)", "气费标准(元/m³)",
+	"房屋租金(元/月)", "月费用单价(元/月)", "季度租金(元/季)", "物业费(元/月)",
+}
+
+// hrDormStayPersons 某房源当前在住人员（按「入住日期升序 → 创建时间升序」）。
+//
+// 第 70 轮：舍长默认值、成员派生、下拉候选都基于这一份顺序 ——
+// 「最早入住的在住人员」= 列表第一项，退宿后自动顺延到下一位。
+func (h *HRHandler) hrDormStayPersons(ctx context.Context, tid int64, roomKey string) []string {
+	roomKey = strings.TrimSpace(roomKey)
+	if roomKey == "" {
+		return nil
+	}
+	var stays []HRDormRecord
+	if err := h.db.WithContext(ctx).
+		Where("tenant_id = ? AND module = ?", tid, hrDormModuleStay).
+		Find(&stays).Error; err != nil {
+		return nil
+	}
+	type person struct {
+		name  string
+		since string
+		order int64
+	}
+	var list []person
+	for _, s := range stays {
+		if strings.TrimSpace(hrDormStr(s.CustomData, "宿舍编号/房屋地址")) != roomKey {
+			continue
+		}
+		if hrDormStr(s.CustomData, "住宿状态") == "已退宿" {
+			continue
+		}
+		name := strings.TrimSpace(hrDormStr(s.CustomData, "员工姓名"))
+		if name == "" {
+			continue
+		}
+		list = append(list, person{
+			name: name, since: hrDormStr(s.CustomData, "入住日期"),
+			order: s.CreatedAt.UnixNano(),
+		})
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].since != list[j].since {
+			return list[i].since < list[j].since
+		}
+		return list[i].order < list[j].order
+	})
+	out := make([]string, 0, len(list))
+	seen := map[string]bool{}
+	for _, p := range list {
+		if seen[p.name] {
+			continue
+		}
+		seen[p.name] = true
+		out = append(out, p.name)
+	}
+	return out
+}
+
+// hrDormRecordViewCtx 带上下文的出参：在基础视图上补「舍长派生 / 在住人员 / 成员」。
+//
+// 舍长口径（第 70 轮）：
+//   · custom_data 有显式「管理员/舍长」→ 用它（用户指定优先）；
+//   · 为空且**没有**「舍长手动清空」标记 → 默认最早入住的在住人员；
+//   · 用户手动清空过（标记=1）→ 保持空，绝不自动填回；
+//   · 舍长退宿后：显式值仍指向已退宿的人 → 也顺延到当前最早在住者。
+func (h *HRHandler) hrDormRecordViewCtx(ctx context.Context, tid int64, module string,
+	rec HRDormRecord) map[string]any {
+	out := h.hrDormRecordView(module, rec, h.hrDormOccupancy(ctx, tid))
+	if module != hrDormModuleRoom && module != hrDormModulePublic {
+		return out
+	}
+	roomKey := rec.Code
+	if roomKey == "" {
+		roomKey = hrDormStr(rec.CustomData, "宿舍编号")
+	}
+	if roomKey == "" {
+		roomKey = hrDormStr(rec.CustomData, "房屋地址")
+	}
+	persons := h.hrDormStayPersons(ctx, tid, roomKey)
+	out["在住人员"] = persons
+	out["在住人数"] = len(persons)
+
+	manager := strings.TrimSpace(hrDormStr(rec.CustomData, "管理员/舍长"))
+	cleared := strings.TrimSpace(hrDormStr(rec.CustomData, "舍长手动清空")) == "1"
+	inRoom := func(name string) bool {
+		for _, p := range persons {
+			if p == name {
+				return true
+			}
+		}
+		return false
+	}
+	if manager != "" && !inRoom(manager) {
+		// 舍长已退宿 / 调宿：顺延到剩余最早入住者（没有剩余则清空）
+		manager = ""
+	}
+	if manager == "" && !cleared && len(persons) > 0 {
+		manager = persons[0]
+	}
+	out["管理员/舍长"] = manager
+
+	others := make([]string, 0, len(persons))
+	for _, p := range persons {
+		if p == manager {
+			continue
+		}
+		others = append(others, p)
+	}
+	out["成员"] = strings.Join(others, "、")
+	return out
+}
+
+// hrDormRoomNoValue 房间号数字值（`宿舍420` → 420），用于自然升序。
+func hrDormRoomNoValue(rec HRDormRecord) int {
+	raw := hrDormStr(rec.CustomData, "房间号")
+	if raw == "" {
+		raw = rec.Code
+	}
+	num := 0
+	found := false
+	for _, ch := range raw {
+		if ch >= '0' && ch <= '9' {
+			num = num*10 + int(ch-'0')
+			found = true
+			continue
+		}
+		if found {
+			break
+		}
+	}
+	return num
 }
 
 // ---------------------------------------------------------------------------
@@ -289,10 +437,20 @@ func (h *HRHandler) ListDormRecords(c *gin.Context) {
 		hrFail(c, "加载宿舍数据失败: "+err.Error())
 		return
 	}
-	occ := h.hrDormOccupancy(ctx, tid)
+	// 第 70 轮：宿舍/公租房档案按房间号**数字值**升序（301→320→401→420），
+	// 绝不因为编辑保存或字典序把 4 楼排到 3 楼前面。
+	if module == hrDormModuleRoom || module == hrDormModulePublic {
+		sort.SliceStable(rows, func(i, j int) bool {
+			vi, vj := hrDormRoomNoValue(rows[i]), hrDormRoomNoValue(rows[j])
+			if vi != vj {
+				return vi < vj
+			}
+			return rows[i].Code < rows[j].Code
+		})
+	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		v := h.hrDormRecordView(module, r, occ)
+		v := h.hrDormRecordViewCtx(ctx, tid, module, r)
 		if q != "" {
 			hay := strings.ToLower(fmt.Sprint(v["宿舍编号"]) + " " + fmt.Sprint(v["房屋地址"]) +
 				" " + fmt.Sprint(v["员工姓名"]) + " " + fmt.Sprint(v["所属部门"]) +
@@ -344,7 +502,7 @@ func (h *HRHandler) CreateDormRecord(c *gin.Context) {
 		hrFail(c, "新增失败: "+err.Error())
 		return
 	}
-	hrOK(c, h.hrDormRecordView(req.Module, rec, h.hrDormOccupancy(ctx, tid)))
+	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, req.Module, rec))
 }
 
 // UpdateDormRecord PUT /hr/dorm/records/:id
@@ -389,6 +547,43 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 			}
 		}
 	}
+	/**
+	 * 第 70 轮：舍长「手动清空」需要被记住。
+	 *
+	 * 派生规则是「空 = 默认最早入住的在住人员」，若不做标记，用户清空后
+	 * 下一次读取又会被自动填回首住人 —— 表现为「清空保存无效」。
+	 * 这里只在**用户显式提交该字段且新值为空、原值非空**时打标记；
+	 * 一旦重新指定舍长就清掉标记，回到「显式值优先」。
+	 */
+	/**
+	 * 第 70 轮：住宿记录的费用项**独立固化**到 `fee_overrides`。
+	 *
+	 * 用户在一条住宿记录里改押金/单价，只影响这一条（房源档案绝不被反写）；
+	 * 账单核算优先按这份覆盖值，未覆盖的项才回落房源基准。
+	 */
+	if row.Module == hrDormModuleStay {
+		overrides := map[string]any{}
+		for _, key := range hrDormStayFeeKeys70 {
+			if raw, ok := merged[key]; ok {
+				overrides[key] = raw
+			}
+		}
+		if len(overrides) > 0 {
+			merged["fee_overrides"] = overrides
+		}
+	}
+	if row.Module == hrDormModuleRoom || row.Module == hrDormModulePublic {
+		if _, submitted := req.Data["管理员/舍长"]; submitted {
+			newMgr := strings.TrimSpace(hrDormStr(merged, "管理员/舍长"))
+			oldMgr := strings.TrimSpace(hrDormStr(row.CustomData, "管理员/舍长"))
+			if newMgr == "" && oldMgr != "" {
+				merged["舍长手动清空"] = "1"
+			}
+			if newMgr != "" {
+				delete(merged, "舍长手动清空")
+			}
+		}
+	}
 	row.CustomData = merged
 	row.Code = hrDormCodeOf(row.Module, merged)
 	row.Name = hrDormNameOf(row.Module, merged)
@@ -410,7 +605,7 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 		hrFail(c, "保存失败: "+err.Error())
 		return
 	}
-	hrOK(c, h.hrDormRecordView(row.Module, row, h.hrDormOccupancy(ctx, tid)))
+	hrOK(c, h.hrDormRecordViewCtx(ctx, tid, row.Module, row))
 }
 
 // DeleteDormRecord DELETE /hr/dorm/records/:id

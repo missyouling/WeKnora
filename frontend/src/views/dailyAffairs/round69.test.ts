@@ -51,7 +51,7 @@ test('第69轮：拖拽热区挂到抽屉面板内、贴左边框（不再 fixed
   assert.match(src, /querySelector\(`\[data-setting-drawer-id="\$\{drawerDomId\}"\]`\)/)
   // 绝对定位 left:0（面板是 absolute，天然是包含块）
   assert.match(src, /\.setting-drawer-resize-handle \{[\s\S]{0,200}position: absolute;/)
-  assert.match(src, /position: absolute;\s*\r?\n\s*left: 0;\s*\r?\n\s*top: 0;\s*\r?\n\s*bottom: 0;\s*\r?\n\s*width: 6px;/)
+  assert.match(src, /position: absolute;\s*\r?\n\s*left: 0;\s*\r?\n\s*top: 0;\s*\r?\n\s*bottom: 0;\s*\r?\n\s*width: 8px;/)
   assert.match(src, /z-index: 20;/)
   // 不再用固定的 right 推算，也不再凭 drawerWidthPx 起步
   assert.ok(!/right: `\$\{drawerWidthPx\}px`/.test(src), '禁止再用推算的 right 值')

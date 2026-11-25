@@ -9,6 +9,7 @@
  * 设置抽屉保持 5 个胶囊，与页面 5 个标签严格 1:1。
  */
 
+import { statusTextClassOf } from './hrStatusStyle'
 import { hrColumnsFromSubs } from './hrCore'
 import type { HrColumn } from './hrCore'
 
@@ -68,43 +69,77 @@ const METERS = [
   '两山景苑5-24-8', '两山景苑5-24-9',
 ]
 
-/** 费用项目分组（宿舍 / 公租房 / 住宿记录三张档案的第二分组）。 */
-const FEE_FIELDS: readonly HrDormField[] = [
-  { name: '关联电表', type: 'enum', options: METERS, subGroup: '费用项目' },
-  { name: '关联水表', type: 'enum', options: METERS, subGroup: '费用项目' },
-  { name: '关联气表', type: 'enum', options: METERS, subGroup: '费用项目' },
-  { name: '宿舍押金(元)', type: 'number', subGroup: '费用项目' },
+/**
+ * 费用项目（第 70 轮重构：水电气表定义权从「能耗表计设置」移回房源档案）。
+ *
+ * 宿舍只认「电 + 水」（员工宿舍没有燃气），公租房只认「水 + 气」（不定义电表）。
+ * 表计的**名称 / 表号 / 倍率 / 单价**都在房源档案里维护，能耗核算按表号实时引用。
+ */
+const DORM_FEE_FIELDS: readonly HrDormField[] = [
+  { name: '宿舍电表名称', type: 'text', subGroup: '费用项目' },
+  { name: '宿舍电表号', type: 'text', subGroup: '费用项目' },
   { name: '电费标准(元/度)', type: 'number', subGroup: '费用项目' },
+  { name: '电表倍率', type: 'number', subGroup: '费用项目' },
+  { name: '宿舍水表名称', type: 'text', subGroup: '费用项目' },
+  { name: '宿舍水表号', type: 'text', subGroup: '费用项目' },
   { name: '水费单价(元/m³)', type: 'number', subGroup: '费用项目' },
-  { name: '垃圾处理费(元/套)', type: 'number', subGroup: '费用项目' },
-  { name: '二次供水费(元/m³)', type: 'number', subGroup: '费用项目' },
-  { name: '污水处理费(元/m³)', type: 'number', subGroup: '费用项目' },
-  { name: '气费标准(元/m³)', type: 'number', subGroup: '费用项目' },
-  { name: '房屋租金(元/月)', type: 'number', subGroup: '费用项目' },
-  { name: '物业费(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '水表倍率', type: 'number', subGroup: '费用项目' },
+  { name: '宿舍押金(元)', type: 'number', subGroup: '费用项目' },
 ]
 
-const PUBLIC_ONLY_PRICING: readonly HrDormField[] = [
-  { name: '月费用单价(元/月)', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '季度租金(元/季)', type: 'number', readonly: true, subGroup: '费用项目' },
-  // 第 65 轮：月份型字段强制月份选择器（禁止手输 53q）
+const PUBLIC_FEE_FIELDS: readonly HrDormField[] = [
+  { name: '公租房水表名称', type: 'text', subGroup: '费用项目' },
+  { name: '公租房水表号', type: 'text', subGroup: '费用项目' },
+  { name: '水费单价(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '污水处理费(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '二次供水费(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '垃圾处理费(元/套)', type: 'number', subGroup: '费用项目' },
+  { name: '水表倍率', type: 'number', subGroup: '费用项目' },
+  { name: '公租房气表名称', type: 'text', subGroup: '费用项目' },
+  { name: '公租房气表号', type: 'text', subGroup: '费用项目' },
+  { name: '气费标准(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '气表倍率', type: 'number', subGroup: '费用项目' },
+  { name: '宿舍押金(元)', type: 'number', subGroup: '费用项目' },
+  { name: '房屋租金(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '月费用单价(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '季度租金(元/季)', type: 'number', subGroup: '费用项目' },
+  { name: '物业费(元/月)', type: 'number', subGroup: '费用项目' },
   { name: '租期起始月份', type: 'month', subGroup: '费用项目' },
   { name: '租期截止月份', type: 'month', subGroup: '费用项目' },
 ]
 
-const STAY_FEE_FIELDS: readonly HrDormField[] = [
+/**
+ * 住宿记录「费用项目」= 目标房源的收费项（第 70 轮：**可编辑**）。
+ *
+ * 用户在这条记录上改的值只落到该记录自身（`fee_overrides`），
+ * 绝不反写房源档案 —— 房源基准值仍是下一笔入住的初始值。
+ * 字段集合按「房源类型」二选一，与房源档案一一对应。
+ */
+const DORM_STAY_FEE_FIELDS: readonly HrDormField[] = [
+  { name: '宿舍押金(元)', type: 'number', subGroup: '费用项目' },
+  { name: '电费标准(元/度)', type: 'number', subGroup: '费用项目' },
+  { name: '水费单价(元/m³)', type: 'number', subGroup: '费用项目' },
+]
+
+const PUBLIC_STAY_FEE_FIELDS: readonly HrDormField[] = [
+  { name: '宿舍押金(元)', type: 'number', subGroup: '费用项目' },
+  { name: '月费用单价(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '房屋租金(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '季度租金(元/季)', type: 'number', subGroup: '费用项目' },
+  { name: '物业费(元/月)', type: 'number', subGroup: '费用项目' },
+  { name: '水费单价(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '污水处理费(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '二次供水费(元/m³)', type: 'number', subGroup: '费用项目' },
+  { name: '垃圾处理费(元/套)', type: 'number', subGroup: '费用项目' },
+  { name: '气费标准(元/m³)', type: 'number', subGroup: '费用项目' },
+]
+
+/** 住宿记录与房源无关的费用项（读表起始度数 / 分摊比例）。 */
+const STAY_BASE_FIELDS: readonly HrDormField[] = [
   { name: '入住时水表度数', type: 'number', subGroup: '费用项目' },
   { name: '入住时电表度数', type: 'number', subGroup: '费用项目' },
   { name: '入住时气表度数', type: 'number', subGroup: '费用项目' },
   { name: '分摊比例', type: 'number', subGroup: '费用项目' },
-  { name: '房屋租金', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '物业费', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '季度租金', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '电费标准', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '水费单价', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '垃圾处理费', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '二次供水费', type: 'number', readonly: true, subGroup: '费用项目' },
-  { name: '气费标准', type: 'number', readonly: true, subGroup: '费用项目' },
 ]
 
 /** 五标签字段契约（顺序 = 表头顺序）。 */
@@ -122,9 +157,11 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
     { name: '所属公司', type: 'enum', width: 190 },
     { name: '所属部门', type: 'enum', width: 110 },
     { name: '管理员/舍长', type: 'text', width: 100 },
+    // 第 70 轮：成员 = 本房源在住人员剔除舍长（只读派生，默认进表头）
+    { name: '成员', type: 'system', readonly: true, width: 140 },
     { name: '宿舍状态', type: 'system', options: ROOM_STATUS, readonly: true, width: 100 },
     { name: '备注', type: 'textarea', width: 140 },
-    ...FEE_FIELDS,
+    ...DORM_FEE_FIELDS,
   ],
   public: [
     { name: '房屋编号', type: 'text', width: 110 },
@@ -139,13 +176,13 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
     { name: '性别限制', type: 'enum', options: ['男', '女', '不限'], width: 90 },
     { name: '配套设施', type: 'multi', width: 160 },
     { name: '管理员/舍长', type: 'text', width: 100 },
+    // 第 70 轮：成员 = 本房源在住人员剔除舍长（只读派生，默认进表头）
+    { name: '成员', type: 'system', readonly: true, width: 140 },
     { name: '宿舍状态', type: 'system', options: ROOM_STATUS, readonly: true, width: 100 },
     { name: '备注', type: 'textarea', width: 140 },
-    ...FEE_FIELDS,
-    ...PUBLIC_ONLY_PRICING,
+    ...PUBLIC_FEE_FIELDS,
   ],
   stay: [
-    { name: '住宿记录ID', type: 'text', readonly: true, width: 110 },
     { name: '员工工号', type: 'text', readonly: true, width: 110 },
     { name: '员工姓名', type: 'text', width: 90 },
     { name: '所属部门', type: 'text', readonly: true, width: 110 },
@@ -160,7 +197,7 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
     { name: '押金金额(元)', type: 'number', width: 110 },
     { name: '退宿原因', type: 'enum', options: ['离职退宿', '个人外住', '调宿退宿', '工作调动', '其他原因'], width: 110 },
     { name: '住宿状态', type: 'system', options: ['在住', '待入住', '已退宿'], readonly: true, width: 90 },
-    ...STAY_FEE_FIELDS,
+    ...STAY_BASE_FIELDS,
   ],
   asset: [
     { name: '资产编号', type: 'text', width: 120 },
@@ -202,9 +239,21 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
   ],
 }
 
+/**
+ * 第 70 轮：宿舍 12 类标准配套（与 `hrSeedDormAssets70` 同源）。
+ *
+ * 配套设施下拉 = 这份标准清单 ∪ 资产档案里出现过的名称 ∪ 当前记录已有值，
+ * 去重展示。即使迁移还没跑，用户也能选到全部 12 类。
+ */
+export const HR_DORM_STANDARD_FACILITIES: readonly string[] = [
+  '晾衣杆', '毛巾杆', '衣柜', '床柜', '床头柜', '空调遥控器',
+  '空调', '电热水器', '床', '床垫', '钥匙', '窗帘',
+]
+
 /** 只读派生列。 */
 export const HR_DORM_DERIVED_FIELDS: ReadonlySet<string> = new Set([
-  '可用床位数', '月费用单价(元/月)', '季度租金(元/季)', '住宿记录ID',
+  // 第 70 轮：`住宿记录ID` 已从字段契约彻底删除（只留内部主键 id 做路由参数）
+  '可用床位数', '月费用单价(元/月)', '季度租金(元/季)', '成员',
   '宿舍状态', '住宿状态', '资产状态', '账单状态', '入住天数', '扣款合计(元)', '补贴合计(元)',
 ])
 
@@ -226,10 +275,23 @@ export function hrDormBedsOfType(roomType: string): number {
   }
 }
 
-/** 编辑抽屉分组：档案 + 费用项目。 */
-export function hrDormDrawerGroups(view: HrDormView): Array<{ key: string; label: string; fields: HrDormField[] }> {  const all = HR_DORM_FIELDS[view] || []
+/**
+ * 编辑抽屉分组：档案 + 费用项目。
+ *
+ * 第 70 轮：住宿记录的费用项**随房源类型变化**（宿舍 3 项 / 公租房 10 项），
+ * 由调用方把当前表单里的「房源类型」传进来；档案本身固定用各自常量。
+ */
+export function hrDormDrawerGroups(
+  view: HrDormView,
+  opts: { roomType?: string } = {},
+): Array<{ key: string; label: string; fields: HrDormField[] }> {
+  const all = [...(HR_DORM_FIELDS[view] || [])]
+  if (view === 'stay') {
+    const isPublic = String(opts.roomType || '').trim() === '公租房'
+    all.push(...(isPublic ? PUBLIC_STAY_FEE_FIELDS : DORM_STAY_FEE_FIELDS))
+  }
   if (view === 'asset' || view === 'fee') {
-    return [{ key: view, label: HR_DORM_GROUP_OF[view], fields: [...all] }]
+    return [{ key: view, label: HR_DORM_GROUP_OF[view], fields: all }]
   }
   const main = all.filter((f) => !f.subGroup)
   const fee = all.filter((f) => f.subGroup === '费用项目')
@@ -269,20 +331,15 @@ export function hrDormStatusTheme(v: string): 'success' | 'warning' | 'danger' |
  * 为什么不再用 Tag：真机上 Tag 的描边被 TDesign 主题渲染成深色方框，
  * 用户反馈「宿舍状态有黑框」。这里统一走文字色，视觉与「参保状态」一致。
  */
-export function hrDormStatusTextClass(v: unknown): string {
-  const s = String(v ?? '').trim()
-  if (!s) return 'is-muted'
-  // 第 65 轮 4 色语义（列表与抽屉统一）：
-  //   满员 → 红 / 部分入住 → 橙 / 空闲 → 绿 / 维修中 → 灰
-  if (/^满员$/.test(s)) return 'is-danger'
-  if (/^维修中$/.test(s)) return 'is-off'
-  if (/^空闲$/.test(s)) return 'is-ok'
-  if (/^部分入住$/.test(s)) return 'is-warn'
-  // 其余（在住/正常/已生成/公司宿舍/公租房等）沿用既有语义
-  if (/在住|正常|已生成|公司宿舍/.test(s)) return 'is-ok'
-  if (/待|损坏|公租房/.test(s)) return 'is-warn'
-  if (/已退宿|报废|作废|停用/.test(s)) return 'is-off'
-  return 'is-muted'
+/**
+ * 宿舍域状态配色（保留旧签名，内部委托到全局唯一映射）。
+ *
+ * 第 70 轮：状态语义只在 `hrStatusStyle.ts` 维护一份 —— 列表、抽屉、打印共用，
+ * 避免「列表满员红、抽屉满员灰」这类漂移。第 3 个参数允许调用方传字段名
+ * （资产状态 / 住宿状态 / 房源类型各自有独立值域）。
+ */
+export function hrDormStatusTextClass(v: unknown, field = '宿舍状态'): string {
+  return statusTextClassOf(field, v)
 }
 
 export function hrDormRoomTypeTheme(v: string): 'success' | 'warning' | 'default' {

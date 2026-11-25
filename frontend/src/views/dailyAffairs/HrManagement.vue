@@ -338,7 +338,7 @@
               <span v-if="isHeaderContext(row)">宿舍状态</span>
               <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
               <span v-else-if="colValue(row, '宿舍状态')"
-                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '宿舍状态'))">
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '宿舍状态'), '宿舍状态')">
                 {{ colValue(row, '宿舍状态') }}
               </span>
               <span v-else></span>
@@ -347,7 +347,7 @@
               <span v-if="isHeaderContext(row)">住宿状态</span>
               <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
               <span v-else-if="colValue(row, '住宿状态')"
-                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '住宿状态'))">
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '住宿状态'), '住宿状态')">
                 {{ colValue(row, '住宿状态') }}
               </span>
               <span v-else></span>
@@ -356,7 +356,7 @@
               <span v-if="isHeaderContext(row)">资产状态</span>
               <!-- 第 64 轮：宿舍/住宿/资产状态改为无边框纯带色文字（绝不出现黑框） -->
               <span v-else-if="colValue(row, '资产状态')"
-                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '资产状态'))">
+                class="hr-plain-status" :class="hrDormStatusTextClass(colValue(row, '资产状态'), '资产状态')">
                 {{ colValue(row, '资产状态') }}
               </span>
               <span v-else></span>
@@ -823,11 +823,13 @@ import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FilePreviewDialog from '@/components/business/FilePreviewDialog.vue'
 import DetailScrollTable from '@/components/business/DetailScrollTable.vue'
+import { statusTagThemeOf } from './hrStatusStyle'
 import {
   HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, hrDormColumns, hrDormModuleOf,
   hrDormStatusTextClass, hrDormRoomTypeTheme,
   hrDormDrawerGroups, hrDormBedsOfType, hrDormFieldsOf,
   HR_DORM_INTEGER_FIELDS, hrDormChargeColumns, HR_DORM_CHARGE_BILL_FIELDS,
+  HR_DORM_STANDARD_FACILITIES,
 } from './hrDorm'
 import type { HrDormView } from './hrDorm'
 import StandardImportDialog from '@/components/business/StandardImportDialog.vue'
@@ -1329,7 +1331,9 @@ const dormFacilityValue = computed<string[]>({
 })
 /** 下拉选项 = 资产档案设施 ∪ 当前记录已有设施（后者保证存量值一定回显）。 */
 const dormFacilitySelectOptions = computed(() => {
-  const names = new Set<string>(dormFacilityOptions.value)
+  // 第 70 轮：标准 12 类恒在（不依赖资产档案是否已加载），再并资产档案与当前值
+  const names = new Set<string>(HR_DORM_STANDARD_FACILITIES)
+  for (const v of dormFacilityOptions.value) names.add(v)
   for (const v of dormFacilityValue.value) names.add(v)
   return [...names].map((v) => ({ label: v, value: v }))
 })
@@ -1701,12 +1705,12 @@ function colValue(row: any, colKey: string): string {
   return c.value?.(row) ?? '—'
 }
 /** 公积金账户状态：正常=success / 封存=warning / 提取销户=default（灰）。 */
+/**
+ * 第 70 轮：列表 Tag 语义与抽屉状态文字共用 `hrStatusStyle.ts` 的同一份映射。
+ * 旧实现每个模块各写一套 if/else，`到期` 在两处颜色不一致。
+ */
 function fundStatusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
-  const s = String(v ?? '').trim()
-  if (s === '正常') return 'success'
-  if (s === '封存' || s === '待补录') return 'warning'
-  if (s === '提取销户') return 'default'
-  return 'default'
+  return statusTagThemeOf('账户状态', v)
 }
 /**
  * 第 57 轮：回盘表五险参保状态用**三色字体**（不是 Tag，避免状态列被 Tag 撑宽）：
@@ -1730,17 +1734,10 @@ function siAdjustTextClass(v: string): string {
 }
 /** 月度账单状态：已申报/已汇缴 = 绿，待申报/待汇缴 = 橙，作废 = 灰。 */
 function billStatusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
-  const s = String(v ?? '').trim()
-  if (/已申报|已汇缴|已完成|正常/.test(s)) return 'success'
-  if (/待申报|待汇缴|待/.test(s)) return 'warning'
-  return 'default'
+  return statusTagThemeOf('账单状态', v)
 }
 function statusTheme(v: string): 'success' | 'warning' | 'danger' | 'default' {
-  const s = String(v ?? '')
-  if (/在职|正常|已缴|生效|已汇总|已完成|正常缴存|active/.test(s)) return 'success'
-  if (/离职|封存|停缴|暂停|过期|异常|作废/.test(s)) return 'danger'
-  if (/待|进行|处理中|未|pending/.test(s)) return 'warning'
-  return 'default'
+  return statusTagThemeOf('', v)
 }
 
 const emptyIcon = 'search-error'
@@ -2370,6 +2367,18 @@ function hrDrawerTypeOfSub(sub: any): 'text' | 'textarea' | 'number' | 'date' | 
   return 'text'
 }
 
+/**
+ * 第 70 轮：当前房源的**在住人员**（管理员下拉的唯一候选）。
+ *
+ * 数据来自列表行上的 `在住人员`（后端按「入住日期升序」派生）。
+ * 新增房源时没有 id/在住人员 → 空数组 → 下拉禁用（绝不退回全员花名册）。
+ */
+const dormRoomOccupants = computed<string[]>(() => {
+  const row: any = detailRow.value || {}
+  const arr = row['在住人员']
+  return Array.isArray(arr) ? arr.map((x: any) => String(x ?? '')).filter(Boolean) : []
+})
+
 const drawerGroups = computed(() => {
   // 第 61 轮：宿舍编辑抽屉按当前标签的胶囊字段渲染（枚举/文本域/只读派生列）
   if (activeTab.value === 'hr-dorm' && dormSubView.value !== 'fee') {
@@ -2385,7 +2394,10 @@ const drawerGroups = computed(() => {
     const group = HR_DORM_GROUP_OF[dormSubView.value]
     const subs = subsOfTab('hr-dorm')
       .filter((x: any) => String(x?.group || '') === group && x?.enabled !== false)
-    const defs = hrDormDrawerGroups(dormSubView.value)
+    // 住宿记录的费用项目随「房源类型」切换（宿舍 3 项 / 公租房 10 项）
+    const defs = hrDormDrawerGroups(dormSubView.value, {
+      roomType: String(editForm.value?.data?.['房源类型'] || '').trim(),
+    })
     const defOf = new Map<string, any>()
     for (const g of defs) for (const f of g.fields) defOf.set(f.name, f)
     const adding = !detailRow.value
@@ -2397,7 +2409,8 @@ const drawerGroups = computed(() => {
       '所属公司': dormCompanyNames.value,
       '租赁单位': dormCompanyNames.value,
       '所属部门': dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value),
-      '管理员/舍长': dormEmployeeNameOptions.value.map((o) => o.value),
+      // 第 70 轮：舍长只能从**本房源在住人员**里选（空则下拉禁用）
+      '管理员/舍长': dormRoomOccupants.value,
       '员工姓名': dormEmployeeNameOptions.value.map((o) => o.value),
       '宿舍编号/房屋地址': dormAvailableRoomOptions.value.map((o) => o.value),
       '所属宿舍': dormRoomSelectOptions.value.map((o) => o.value),
@@ -2435,12 +2448,17 @@ const drawerGroups = computed(() => {
         return base
       })()
       const options = dynOptions[name] || def?.options || []
+      const isOccupantSelect = name === '管理员/舍长'
+      const isMeterSelect = /表$/.test(name) && name.includes('关联')
       const field = {
         name,
         label: String(sub?.label || '').trim() || name,
         dataType,
         readonly: !!def?.readonly,
         ...(options.length ? { options } : {}),
+        // 第 70 轮：候选可能为空的下拉型字段，空态也必须是禁用下拉（不能退化成输入框）
+        ...(isOccupantSelect ? { selectLike: true, emptyPlaceholder: '暂无在住人员' } : {}),
+        ...(isMeterSelect ? { selectLike: true, emptyPlaceholder: '暂无可用表计' } : {}),
       }
       // 归属分组：契约里标了 subGroup='费用项目' 的进第二组，其余进第一组
       const target = def?.subGroup === '费用项目' ? sections[1] : sections[0]
@@ -2668,6 +2686,29 @@ watch(
   () => { if (activeModule.value === 'roster') applyHireDerivation() },
 )
 
+/**
+ * 第 70 轮：宿舍/资产数值字段灌入抽屉前归一。
+ *
+ * 后端 numeric(10,4) 序列化成 `28.0000` / `1.0000` / `100.0000`，直接塞进
+ * `t-input-number` 就会原样显示四个零。这里按字段语义收敛：
+ *   · 单价类保留到厘（最多 4 位，`parseFloat` 自动去尾零）；
+ *   · 面积/金额/数量最多 2 位。
+ * 归一在**草稿层**做，落库仍是数值，不影响精度与合计。
+ */
+function normalizeDormNumberFields(data: Record<string, any>): void {
+  for (const f of drawerFields.value as any[]) {
+    const name = String(f?.name || '')
+    if (!name) continue
+    if (f.dataType !== 'number' && f.dataType !== 'integer') continue
+    const raw = data[name]
+    if (raw === '' || raw === null || raw === undefined) continue
+    const n = Number(raw)
+    if (!Number.isFinite(n)) continue
+    const digits = /单价|电费标准|气费标准|水费标准|二次供水|污水处理|垃圾处理/.test(name) ? 4 : 2
+    data[name] = String(parseFloat(n.toFixed(digits)))
+  }
+}
+
 async function openDetail(row: any) {
   // 第 63 轮：宿舍抽屉立即打开，下拉数据后台加载（await 会被 11 个跨模块请求拖住，
   // 网络抖动时用户点了行要等十几秒才出现抽屉）。
@@ -2755,6 +2796,7 @@ async function openDetail(row: any) {
       data['资产状态'] = data['资产状态'] || '正常'
     }
   }
+  if (activeTab.value === 'hr-dorm') normalizeDormNumberFields(data)
   editForm.value = { data, remarkParts: {}, items: [] }
   // 新会话：清掉上一轮的系统建议值，否则「用户手改过」判定会把新员工的
   // 空工号当成手改值，选部门后不再自动生成。
@@ -2895,6 +2937,15 @@ async function saveDetail() {
       return
     }
     const d = { ...(editForm.value.data || {}) }
+    /**
+     * 第 70 轮：`undefined` 必须在提交前归一成 `''`。
+     *
+     * JSON.stringify 会丢掉 undefined 键 —— 后端按 map 合并，缺键 = 不更新，
+     * 表现为「管理员/舍长清空后保存无效（仍显示原值）」。清空任何下拉都同理。
+     */
+    for (const k of Object.keys(d)) {
+      if (d[k] === undefined || d[k] === null) d[k] = ''
+    }
     // 第 65 轮：「资产状态」已改为可编辑下拉，必须随表单提交（此前在只读黑名单里，
     // 用户改了下拉也存不进去）。其余派生/只读列仍然剔除。
     for (const k of ['可用床位数', '月费用单价(元/月)', '季度租金(元/季)', '在住人数',
@@ -3251,6 +3302,18 @@ function handleResign() {
  */
 async function onOrgChanged() {
   await loadRosterDepts()
+  /**
+   * 第 70 轮：单位改名后必须重拉「单位设置」，否则宿舍/公租房抽屉的
+   * 「所属公司 / 租赁单位」下拉仍是旧缓存（用户改名后打开抽屉看不到新名）。
+   */
+  try {
+    const org: any = await hrApi.getOrgUnits()
+    const data: any = org
+    const units = Array.isArray(data?.data) ? data.data
+      : Array.isArray(data?.data?.units) ? data.data.units
+        : Array.isArray(data?.units) ? data.units : []
+    if (units.length) dormOrgUnits.value = units
+  } catch { /* 组织接口抖动不阻断列表刷新 */ }
   // 部门被删/改名后当前筛选可能指向不存在的部门 → 复位到全部
   if (rosterDeptFilter.value && !rosterDeptOptions.value.includes(rosterDeptFilter.value)) {
     rosterDeptFilter.value = ''

@@ -16,10 +16,10 @@ import { hrColumnsFromSubs } from './hrCore'
 
 const readLocal = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), 'utf8')
 
-test('字段契约：五胶囊列数与第 65 轮需求一致（26/30/27/12/20）', () => {
-  assert.equal(HR_DORM_FIELDS.dorm.length, 26)
-  assert.equal(HR_DORM_FIELDS.public.length, 30)
-  assert.equal(HR_DORM_FIELDS.stay.length, 27)
+test('字段契约：五胶囊列数与第 70 轮需求一致（24/33/18/12/20）', () => {
+  assert.equal(HR_DORM_FIELDS.dorm.length, 24)
+  assert.equal(HR_DORM_FIELDS.public.length, 33)
+  assert.equal(HR_DORM_FIELDS.stay.length, 18)
   // 第 65 轮：资产删维修 4 字段 → 13；费用改月度汇总 15 列
   // 第 65 轮：资产删维修 4 字段 → 12；fee 契约仍是弹窗明细 20 列
   // （主列表月度汇总是独立的 HR_DORM_CHARGE_BILL_FIELDS，15 列）
@@ -32,10 +32,13 @@ test('字段契约：公租房含租期与自动派生，宿舍含房间面积',
   const pub = HR_DORM_FIELDS.public.map((f) => f.name)
   for (const n of ['房屋编号', '房屋地址', '租赁单位', '建筑面积(㎡)',
     '月费用单价(元/月)', '季度租金(元/季)', '租期起始月份', '租期截止月份',
-    '电费标准(元/度)', '水费单价(元/m³)', '垃圾处理费(元/套)', '二次供水费(元/m³)',
+    '公租房水表名称', '公租房水表号', '公租房气表名称', '公租房气表号',
+    '水费单价(元/m³)', '垃圾处理费(元/套)', '二次供水费(元/m³)',
     '污水处理费(元/m³)', '气费标准(元/m³)']) {
     assert.ok(pub.includes(n), `公租房缺字段 ${n}`)
   }
+  // 第 70 轮：公租房不定义电表（电表只在宿舍档案）
+  assert.ok(!pub.some((n) => n.includes('电表') || n === '电费标准(元/度)'), '公租房不应含电表字段')
   const dorm = HR_DORM_FIELDS.dorm.map((f) => f.name)
   assert.ok(dorm.includes('房间面积(㎡)'))
   assert.ok(dorm.includes('所属公司'))

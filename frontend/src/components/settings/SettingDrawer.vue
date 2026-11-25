@@ -15,7 +15,7 @@
       :class="{ 'setting-drawer-resize-handle--active': drawerResizing }"
       role="separator" aria-orientation="vertical" @mousedown.prevent="onResizeStart"
       data-setting-drawer-resize>
-      <div class="setting-drawer-resize-line" />
+      <span class="setting-drawer-resize-grip" aria-hidden="true" />
     </div>
   </teleport>
   <t-drawer v-model:visible="drawerVisible" v-bind="drawerPassthroughAttrs" :size="effectiveWidth" :z-index="zIndex" placement="right"
@@ -647,30 +647,56 @@ const handleCancel = () => {
  * 左边界 —— 与推算宽度、窗口缩放、右侧停靠、页面滚动全部解耦。
  * 默认只画一条极淡分隔线，hover / 拖拽时才点亮成品牌色（不再是漂浮的灰竖线）。
  */
+/**
+ * 第 70 轮：拖拽锚点对齐 WeKnora 原项目（`components/PanelResizeHandle.vue`）。
+ *
+ * 原项目口径 = **透明通高热区 + 垂直居中的圆角短条**：
+ *   · 抽屉左缘没有通顶竖线（业务侧旧实现画了一条 100% 高的灰线，非常扎眼）；
+ *   · 手柄本体只有 6×56px、圆角 3px，平时半透明淡灰，悬停/拖拽才点亮品牌绿；
+ *   · 热区仍是整高 8px，鼠标靠近边缘即可命中（不需要精确压住短条）。
+ * 热区挂在 `.t-drawer__content-wrapper` 内部，`left: 0` 就是面板左边框。
+ */
 .setting-drawer-resize-handle {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 8px;
   cursor: col-resize;
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 短条浮在抽屉外侧一点点，和原项目一致（左侧是遮罩，不会遮挡内容） */
+  --grip-offset: -6px;
 }
-
-.setting-drawer-resize-line {
-  width: 2px;
-  height: 100%;
-  background: var(--td-component-stroke);
+/* 热区中心的可点击范围（原项目用 52×80 的 ::before 桥接短条周围的空隙） */
+.setting-drawer-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 80px;
+  transform: translate(-50%, -50%);
+}
+.setting-drawer-resize-grip {
+  flex-shrink: 0;
+  width: 6px;
+  height: 56px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--td-text-color-secondary) 30%, transparent);
   opacity: 0.5;
-  transition: opacity var(--app-motion-fast) ease, background var(--app-motion-fast) ease;
+  transform: translateX(var(--grip-offset)) scale(0.94);
+  transition: opacity var(--app-motion-fast) ease, transform var(--app-motion-fast) ease,
+    background-color var(--app-motion-fast) ease;
+  pointer-events: none;
 }
-.setting-drawer-resize-handle:hover .setting-drawer-resize-line,
-.setting-drawer-resize-handle--active .setting-drawer-resize-line {
+.setting-drawer-resize-handle:hover .setting-drawer-resize-grip,
+.setting-drawer-resize-handle--active .setting-drawer-resize-grip {
   opacity: 1;
-  background: var(--td-brand-color);
+  transform: translateX(var(--grip-offset)) scale(1);
+  background: var(--td-brand-color, #00a870);
 }
 
 .t-drawer.setting-drawer--resizing .t-drawer__content {

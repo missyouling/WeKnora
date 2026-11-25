@@ -633,7 +633,8 @@
            工具栏严格 3 个按钮，专属面板作为统一设置抽屉的 Tab 内嵌。 -->
       <template #extra-tab>
         <SolarSettingsPanel v-if="activeTab === 'solar'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
-        <MeterSettingsPanel v-else-if="meterCategory" :category="meterCategory" @changed="onSettingsChanged" />
+        <MeterSettingsPanel v-else-if="meterCategory" :category="meterCategory"
+          @changed="onSettingsChanged" @close="settingsVisible = false" />
         <TenantSettingsPanel v-else-if="activeTab === 'billing'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
       </template>
     </StandardSettingDrawer>

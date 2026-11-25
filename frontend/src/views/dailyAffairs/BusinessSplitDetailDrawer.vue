@@ -57,7 +57,7 @@
                 <!-- 第 64 轮：宿舍/住宿/资产/账单/维修状态改**纯带色文字**（无 Tag 外框），
                      抽屉里绝不能出现输入框或描边方框（线上「黑框」问题）。 -->
                 <span v-else-if="isStatusField(f)" class="bsd-status-text"
-                  :class="statusTextClass(form.data[f.name])">
+                  :class="statusTextClassOf(f.name, form.data[f.name])">
                   {{ form.data[f.name] || '—' }}
                 </span>
                 <!-- 只读派生字段（年龄 / 工龄 / 系统状态）：disabled 展示，不参与手填 -->
@@ -84,6 +84,10 @@
                   clearable filterable placeholder="请选择">
                   <t-option v-for="opt in f.options" :key="opt" :label="opt" :value="opt" />
                 </t-select>
+                <!-- 第 70 轮：候选为空时**仍然是禁用下拉**，绝不退化成白底输入框。
+                     场景：宿舍/公租房暂无在住人员时的「管理员/舍长」、暂无可用表计的关联项。 -->
+                <t-select v-else-if="f.selectLike" :model-value="undefined" disabled
+                  :placeholder="f.emptyPlaceholder || '暂无可选项'" />
                 <!-- 多行文本（字段定义里显式选择「多行文本」）：多行编辑区域，
                      支持换行与自动折行，长内容完整录入与展示不截断。
                      用户显式选择的类型优先于下方的字段名兜底。 -->
@@ -177,6 +181,7 @@ import { formatItemCell, itemCellClass } from './businessFormat'
 import { hasSumColumn, totalRowTexts } from './itemTotals'
 import { normalizeArrayValue, type DetailFieldMeta } from './businessDetailForm'
 import { formatCellDateTime } from './formatDateTime'
+import { STATUS_TEXT_FIELDS, statusTextClassOf } from './hrStatusStyle'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -323,30 +328,16 @@ const normalizedSections = computed<{ key: string; label: string; fields: Detail
 })
 const isLongType = (f: DetailFieldMeta) => f.dataType === 'array'
 
-/** 第 55 轮：状态类字段（只读 + 名单命中）用彩色 Tag，不渲染 disabled 输入框。 */
-const BSD_STATUS_FIELDS = new Set([
-  '合同状态', '账户状态', '账单状态', '提取状态', '证照状态', '证件状态',
-  '在职状态', '账期状态', '参保状态', '缴存状态', '记录性质',
-  // 第 64 轮：宿舍五标签的状态列
-  // 第 65 轮：「资产状态」已改为**可编辑 enum**（正常/损坏/报废），必须从只读状态名单移除，
-  // 否则抽屉会把它渲染成纯文字而不是下拉（真机 7.2 失败的真因）。
-  '宿舍状态', '住宿状态', '房源类型',
-])
-function isStatusField(f: DetailFieldMeta): boolean {
-  return BSD_STATUS_FIELDS.has(String(f.name || '').trim())
-}
 /**
- * 第 64 轮：状态纯文字配色类（无边框、无底色）。
- * 绿 = 空闲/在住/正常，橙 = 部分入住/待入住/待维修/满员前的中间态，灰 = 已退宿/停用。
+ * 第 70 轮：状态字段名单与配色统一收口到 `hrStatusStyle.ts`。
+ *
+ * 旧实现这里维护一份白名单 + 一份 `if/else`，列表侧另有 4 个 theme 函数，
+ * 于是「合同 `到期` 抽屉里是黑字」「回盘表五险状态在抽屉渲染成 disabled 输入框」
+ * 这类不一致反复出现。现在名单与映射只有一份。
  */
-function statusTextClass(v: unknown): string {
-  const s = String(v ?? '').trim()
-  if (!s) return 'is-muted'
-  if (/空闲|在住|正常|已生成|已修复|无维修|公司宿舍/.test(s)) return 'is-ok'
-  if (/部分入住|待入住|待维修|维修中|损坏|公租房|待/.test(s)) return 'is-warn'
-  if (/满员|已退宿|报废|作废|停用/.test(s)) return 'is-off'
-  return 'is-muted'
-}
+const isStatusField = (f: DetailFieldMeta): boolean =>
+  STATUS_TEXT_FIELDS.has(String(f.name || '').trim())
+
 // 摘要 / 多行长文本字段：与知识库文档摘要 100% 同源同形（段落文本域）。
 // 按字段名与中文名双路判定，不受 data_type 残留值影响。
 const LONG_TEXT_FIELD_KEYS = new Set(['summary', 'abstract', 'description'])

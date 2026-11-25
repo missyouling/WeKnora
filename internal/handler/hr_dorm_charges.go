@@ -428,22 +428,36 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 			} else {
 				row.Rent = round2(hrDormFloat(room.CustomData, "房屋租金(元/月)") * row.Ratio)
 			}
-			waterPrice := hrDormFloat(room.CustomData, "水费单价(元/m³)")
+			/**
+			 * 第 70 轮：费用项**优先取该条住宿记录的独立值**（用户可单独改价），
+			 * 未单独设置才回落房源档案基准。判定用「键存在且非空」，0 也是合法值。
+			 */
+			priceOf := func(key string) float64 {
+				if stay.CustomData != nil {
+					if raw, ok := stay.CustomData[key]; ok {
+						if s := strings.TrimSpace(fmt.Sprint(raw)); s != "" && s != "<nil>" {
+							return hrDormFloat(stay.CustomData, key)
+						}
+					}
+				}
+				return hrDormFloat(room.CustomData, key)
+			}
+			waterPrice := priceOf("水费单价(元/m³)")
 			if waterPrice == 0 {
 				waterPrice = 3.32
 			}
-			elecPrice := hrDormFloat(room.CustomData, "电费标准(元/度)")
+			elecPrice := priceOf("电费标准(元/度)")
 			if elecPrice == 0 {
 				elecPrice = 1
 			}
-			gasPrice := hrDormFloat(room.CustomData, "气费标准(元/m³)")
+			gasPrice := priceOf("气费标准(元/m³)")
 			if gasPrice == 0 {
 				gasPrice = 2.196
 			}
 			if roomType == "公租房" {
-				sewage := hrDormFloat(room.CustomData, "污水处理费(元/m³)")
-				second := hrDormFloat(room.CustomData, "二次供水费(元/m³)")
-				garbage := hrDormFloat(room.CustomData, "垃圾处理费(元/套)")
+				sewage := priceOf("污水处理费(元/m³)")
+				second := priceOf("二次供水费(元/m³)")
+				garbage := priceOf("垃圾处理费(元/套)")
 				row.Water = round2((rd.WaterTon*(waterPrice+sewage+second) + garbage) * row.Ratio)
 			} else {
 				row.Water = round2(rd.WaterTon * waterPrice * row.Ratio)

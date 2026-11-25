@@ -69,10 +69,11 @@ test('宿舍管理：五标签顺序与设置胶囊 1:1', () => {
   assert.equal(HR_TABS[4].label, '宿舍管理')
 })
 
-test('宿舍字段契约：第 65 轮五胶囊 26/30/27/12/20，状态列各自唯一', () => {
-  assert.equal(HR_DORM_FIELDS.dorm.length, 26)
-  assert.equal(HR_DORM_FIELDS.public.length, 30)
-  assert.equal(HR_DORM_FIELDS.stay.length, 27)
+test('宿舍字段契约：第 70 轮五胶囊 24/33/18/12/20，状态列各自唯一', () => {
+  // 第 70 轮：宿舍加「成员」并拆出宿舍专属费用项（9）、公租房费用项 18、住宿删「住宿记录ID」
+  assert.equal(HR_DORM_FIELDS.dorm.length, 24)
+  assert.equal(HR_DORM_FIELDS.public.length, 33)
+  assert.equal(HR_DORM_FIELDS.stay.length, 18)
   // 第 65 轮：资产删维修 4 字段 → 16-4+1（资产状态保留）=13；费用改月度汇总 15 列
   // 第 65 轮：资产删维修 4 字段 → 12；fee 契约仍是弹窗明细 20 列
   // （主列表月度汇总是独立的 HR_DORM_CHARGE_BILL_FIELDS，15 列）
