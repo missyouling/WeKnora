@@ -12,6 +12,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/gorm"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 func TestRound62BedsAndNormalize(t *testing.T) {
@@ -51,7 +54,9 @@ func TestRound62Identity(t *testing.T) {
 func TestRound62ChargesMatchStayByName(t *testing.T) {
 	db := hrRound59DB(t)
 	ctx := context.Background()
-	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormCharge{}, &HRDormReading{}))
+	// 第 73 轮：费用改读能耗「真实抄表」，测试同步用 utility_meter 构造。
+	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormCharge{},
+		&types.UtilityMeter{}, &types.UtilityMeterRecord{}, &types.UtilityMeterItem{}))
 	h := &HRHandler{db: db}
 
 	require.NoError(t, db.Create(&HREmployee{
@@ -73,10 +78,14 @@ func TestRound62ChargesMatchStayByName(t *testing.T) {
 			"入住时电表度数": 100.0, "入住时水表度数": 10.0,
 		},
 	}).Error)
-	require.NoError(t, db.Create(&HRDormReading{
-		ID: "rd1", TenantID: 1, MonthLabel: "2026-10", RoomCode: "宿舍301",
-		ElecKwh: 73, WaterTon: 5,
-	}).Error)
+	// 房档声明表号，能耗侧才有可引用的真实抄表
+	room := HRDormRecord{}
+	require.NoError(t, db.Where("id = ?", "r1").First(&room).Error)
+	room.CustomData["宿舍电表号"] = "E301"
+	room.CustomData["宿舍水表号"] = "W301"
+	require.NoError(t, db.Model(&room).Select("custom_data").Updates(&room).Error)
+	seedMeter73(t, db, "electricity", "E301", "宿舍301", 10000, 10073, 73, 73)
+	seedMeter73(t, db, "water", "W301", "宿舍301", 10, 15, 5, 25)
 
 	rows, err := h.hrBuildDormCharges(ctx, 1, "2026-10")
 	require.NoError(t, err)
@@ -86,15 +95,16 @@ func TestRound62ChargesMatchStayByName(t *testing.T) {
 	require.Equal(t, "员工宿舍", row.RoomType)
 	require.InDelta(t, 73.0, row.Elec, 0.01)
 	require.InDelta(t, 25.0, row.Water, 0.01)
-	require.InDelta(t, 100.0, row.ElecStart, 0.01, "起度取入住时读数")
-	require.InDelta(t, 173.0, row.ElecEnd, 0.01)
+	require.InDelta(t, 10000.0, row.ElecStart, 0.01, "起度取真实抄表")
+	require.InDelta(t, 10073.0, row.ElecEnd, 0.01)
 }
 
 // 夫妻房配偶分摊比例显式 0：不得回落成 1（否则配偶被重复收全款）。
 func TestRound62SpouseRatioZero(t *testing.T) {
 	db := hrRound59DB(t)
 	ctx := context.Background()
-	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormCharge{}, &HRDormReading{}))
+	require.NoError(t, db.AutoMigrate(&HRDormRecord{}, &HRDormCharge{},
+		&types.UtilityMeter{}, &types.UtilityMeterRecord{}, &types.UtilityMeterItem{}))
 	h := &HRHandler{db: db}
 
 	for _, e := range []HREmployee{
@@ -123,9 +133,11 @@ func TestRound62SpouseRatioZero(t *testing.T) {
 		}).Error)
 		_ = i
 	}
-	require.NoError(t, db.Create(&HRDormReading{
-		ID: "rd1", TenantID: 1, MonthLabel: "2026-10", RoomCode: "宿舍304", ElecKwh: 100,
-	}).Error)
+	room304 := HRDormRecord{}
+	require.NoError(t, db.Where("id = ?", "r1").First(&room304).Error)
+	room304.CustomData["宿舍电表号"] = "E304"
+	require.NoError(t, db.Model(&room304).Select("custom_data").Updates(&room304).Error)
+	seedMeter73(t, db, "electricity", "E304", "宿舍304", 2000, 2100, 100, 100)
 
 	rows, err := h.hrBuildDormCharges(ctx, 1, "2026-10")
 	require.NoError(t, err)
@@ -267,4 +279,27 @@ func TestRound62ContractCompany(t *testing.T) {
 	var emp HREmployee
 	require.NoError(t, db.Where("id = ?", "e1").First(&emp).Error)
 	require.Equal(t, hrContractCompanyName, hrDormStr(emp.CustomData, "签约公司"))
+}
+
+// seedMeter73 造一条能耗真实抄表（电/水/气），供费用核算测试引用。
+func seedMeter73(t *testing.T, db *gorm.DB, category, meterNo, alias string,
+	start, end, usage, amount float64) {
+	t.Helper()
+	id := "m-" + meterNo
+	require.NoError(t, db.Create(&types.UtilityMeter{
+		ID: id, TenantID: 1, Category: category, MeterNo: meterNo, Alias: alias, Enabled: true,
+	}).Error)
+	recID := "rec-" + category
+	var n int64
+	_ = db.Model(&types.UtilityMeterRecord{}).Where("id = ?", recID).Count(&n).Error
+	if n == 0 {
+		require.NoError(t, db.Create(&types.UtilityMeterRecord{
+			ID: recID, TenantID: 1, Category: category, Month: "2026-10",
+		}).Error)
+	}
+	require.NoError(t, db.Create(&types.UtilityMeterItem{
+		ID: "it-" + meterNo, RecordID: recID, MeterID: id,
+		StartReading: start, EndReading: end, Usage: usage, Amount: amount,
+		UnitPrice: 1, Rate: 1,
+	}).Error)
 }

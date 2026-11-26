@@ -591,6 +591,43 @@ func (h *HRHandler) ListDormRecords(c *gin.Context) {
 			return rows[i].Code < rows[j].Code
 		})
 	}
+	/**
+	 * 第 73 轮：五个子标签统一默认升序，且**不随编辑时间漂移**。
+	 *
+	 *   · 住宿记录：宿舍编号（自然序）→ 床位号；
+	 *   · 资产档案：资产编号（ZC-001 → ZC-016）；
+	 * 这两类此前按 `code asc, created_at asc`（固定资产编号是 UUID），
+	 * 编辑任意一行后 updated_at 变化就会「跳位置」。
+	 */
+	if module == hrDormModuleStay {
+		sort.SliceStable(rows, func(i, j int) bool {
+			ri := strings.TrimSpace(hrDormStr(rows[i].CustomData, "宿舍编号/房屋地址"))
+			rj := strings.TrimSpace(hrDormStr(rows[j].CustomData, "宿舍编号/房屋地址"))
+			ni, nj := hrDormRoomNoValue(rows[i]), hrDormRoomNoValue(rows[j])
+			if ni != nj {
+				return ni < nj
+			}
+			if ri != rj {
+				return ri < rj
+			}
+			bi, bj := hrBedIndexValue73(hrDormStr(rows[i].CustomData, "床位号")),
+				hrBedIndexValue73(hrDormStr(rows[j].CustomData, "床位号"))
+			if bi != bj {
+				return bi < bj
+			}
+			return hrDormStr(rows[i].CustomData, "员工姓名") < hrDormStr(rows[j].CustomData, "员工姓名")
+		})
+	}
+	if module == hrDormModuleAsset {
+		sort.SliceStable(rows, func(i, j int) bool {
+			ai := strings.TrimSpace(hrDormStr(rows[i].CustomData, "资产编号"))
+			aj := strings.TrimSpace(hrDormStr(rows[j].CustomData, "资产编号"))
+			if ai != aj {
+				return ai < aj
+			}
+			return hrDormStr(rows[i].CustomData, "资产名称") < hrDormStr(rows[j].CustomData, "资产名称")
+		})
+	}
 	// 第 71 轮：整个列表共用一份 occupancy（避免 N+1）
 	occ := h.hrDormOccupancy(ctx, tid)
 	// 在住人员索引同样只算一次（40 间房否则要 40 次全表扫描）
@@ -601,13 +638,16 @@ func (h *HRHandler) ListDormRecords(c *gin.Context) {
 	items := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
 		v := h.hrDormRecordViewCtx(ctx, tid, module, r, occ, stayIndex)
-		if q != "" {
-			hay := strings.ToLower(fmt.Sprint(v["宿舍编号"]) + " " + fmt.Sprint(v["房屋地址"]) +
-				" " + fmt.Sprint(v["员工姓名"]) + " " + fmt.Sprint(v["所属部门"]) +
-				" " + fmt.Sprint(v["资产编号"]) + " " + fmt.Sprint(v["资产名称/类型"]) + " " + r.Code + " " + r.Name)
-			if !strings.Contains(hay, strings.ToLower(q)) {
-				continue
-			}
+		/**
+		 * 第 73 轮：**全字段**模糊搜索。
+		 *
+		 * 旧实现只拼「宿舍编号/房屋地址/员工姓名/所属部门/资产编号/资产名称」六个值，
+		 * 于是搜「星达铜业」（在 `所属公司`）、「持睿」、「1号楼」（在 `宿舍楼/区域`）、
+		 * 「E001」（在 `宿舍电表号`）全部 0 结果 —— 用户以为搜索坏了。
+		 * 现在直接对出参 map 的全部业务字段（含派生列、自定义字段）做匹配。
+		 */
+		if q != "" && !hrMatchAllFields73(q, v) {
+			continue
 		}
 		items = append(items, v)
 	}

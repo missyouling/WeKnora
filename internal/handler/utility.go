@@ -325,7 +325,13 @@ func (h *UtilityHandler) ListUtilityMeterRecords(c *gin.Context) {
 	_ = h.db.WithContext(ctx).
 		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
 		Order("sort_order ASC, created_at ASC").Find(&meters).Error
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"records": records, "meters": meters}})
+	// 第 73 轮：一并返回该分类的**有数据月份**（倒序），
+	// 供核算页「默认选中最近一个有数据的月份」使用（当前自然月常常还没抄表）。
+	var months []string
+	_ = h.db.WithContext(ctx).Model(&types.UtilityMeterRecord{}).
+		Where("tenant_id = ? AND category = ? AND deleted_at IS NULL", tenantID, category).
+		Distinct("month").Order("month DESC").Pluck("month", &months).Error
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"records": records, "meters": meters, "months": months}})
 }
 
 // CreateUtilityMeterRecord godoc

@@ -150,6 +150,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 72 轮：宿舍状态四态化（维修中→空置）、删住宿度数字段、资产档案收敛为共用字典、
 	// 存量重复床位号幂等重排。全部只动配置与指定脏数据。
 	h.hrRepair72(ctx)
+	// 第 73 轮：能耗历史表名/表号与房源档案对齐（只改展示名，不动任何数值）、
+	// 越界床位号按入住顺序重排。
+	h.hrRepair73(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

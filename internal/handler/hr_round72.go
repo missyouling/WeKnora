@@ -663,6 +663,35 @@ func (h *HRHandler) hrDormValidateBedNo72(
 		Where("tenant_id = ? AND module = ?", tid, hrDormModuleStay).Find(&stays).Error; err != nil {
 		return nil
 	}
+	/**
+	 * 第 73 轮：床位号不得超出房型床位数。
+	 *
+	 * 真机出现过「双人间里有 3号床」：旧校验只看重复，不看上限。
+	 * 这里先按房源档案取床位数，越界直接 400（存量脏数据由
+	 * hrFixBedOverflow73 在启动时按入住顺序重排）。
+	 */
+	var rooms []HRDormRecord
+	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND module IN ?", tid,
+		[]string{hrDormModuleRoom, hrDormModulePublic}).Find(&rooms).Error
+	for i := range rooms {
+		r := &rooms[i]
+		if strings.TrimSpace(r.Code) != room &&
+			strings.TrimSpace(hrDormStr(r.CustomData, "宿舍编号")) != room &&
+			strings.TrimSpace(hrDormStr(r.CustomData, "房屋编号")) != room &&
+			strings.TrimSpace(hrDormStr(r.CustomData, "宿舍编号/房屋地址")) != room {
+			continue
+		}
+		beds := hrDormInt(r.CustomData, "床位数")
+		if beds <= 0 {
+			beds = hrDormBedsOfRoomType72(hrDormStr(r.CustomData, "房型"))
+		}
+		if beds > 0 {
+			if idx := hrBedIndexValue73(bedNo); idx > beds {
+				return fmt.Errorf("「%s」只有 %d 个床位，%s 超出范围", room, beds, bedNo)
+			}
+		}
+		break
+	}
 	for i := range stays {
 		s := &stays[i]
 		if selfID != "" && s.ID == selfID {

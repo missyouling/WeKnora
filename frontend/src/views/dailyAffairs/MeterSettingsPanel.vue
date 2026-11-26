@@ -10,20 +10,13 @@
   -->
   <div class="meter-settings-body">
     <div class="settings-head">
-      <t-button theme="primary" size="small" @click="openMeterForm(null)">
+      <!-- 第 73 轮：工业表计极简化 —— 只保留「新增」。
+           用途管理 / 搜索框 / 「工商业 N」子标签全部移除：
+           表计设置现在只剩工商业一类，搜索由浏览器 Ctrl+F 或核算列表承担。 -->
+      <t-button theme="primary" size="small" @click="openMeterForm(null)" data-meter-add>
         <template #icon><t-icon name="add" /></template>
         新增{{ meterLabel }}
       </t-button>
-      <t-button variant="outline" size="small" @click="kindManageVisible = true">
-        <template #icon><t-icon name="setting" /></template>
-        用途管理
-      </t-button>
-    </div>
-
-    <div v-if="meters.length" class="meter-search">
-      <t-input v-model="panelSearch" placeholder="搜索别名 / 表号" clearable>
-        <template #prefix-icon><t-icon name="search" size="14px" /></template>
-      </t-input>
     </div>
 
     <div v-if="!meters.length && !meterFormVisible" class="meter-empty">
@@ -105,9 +98,7 @@
       </div>
 
       <!-- 分组标签：宿舍 / 工商业 / 自定义用途（仅导航，表格单表渲染保证拖拽稳定） -->
-      <t-tabs v-if="meterGroups.length" v-model="activeMeterGroup" class="meter-settings-tabs">
-        <t-tab-panel v-for="g in meterGroups" :key="g.key" :value="g.key" :label="g.label + ' ' + g.items.length" />
-      </t-tabs>
+      <!-- 第 73 轮：不再有「工商业 N」子标签栏（只剩一类，标签没有信息量） -->
 
       <div v-if="activeGroupItems.length" :ref="setMeterSortableRef" class="meter-table">
         <div class="meter-table-head">
@@ -214,34 +205,8 @@
       </div>
     </div>
 
-    <!-- 用途管理:内置 宿舍/工商业 可改名;公租房及其它自定义可删改增 -->
-    <t-dialog v-model:visible="kindManageVisible" :header="'用途管理(' + meterLabel + ')'" :footer="false" width="480px">
-      <div class="kind-manage-body">
-        <p class="kind-manage-tip">内置用途(宿舍/工商业)驱动分摊计算,可改名不可删除;公租房及其它自定义用途可删除、可修改、可新增,仅分组展示不参与租户核算计算。</p>
-        <div v-for="k in meterKinds" :key="k.value" class="kind-manage-row">
-          <t-input v-model="k.label" size="small" @enter="() => {}">
-            <template #prefix-icon><span class="kind-value-tag">{{ k.value }}</span></template>
-          </t-input>
-          <t-popconfirm v-if="!(k as any).builtin" theme="warning" :content="`确定删除用途「${k.label}」吗？`"
-            :confirm-btn="{ content: '删除', theme: 'danger' }" :cancel-btn="{ content: '取消' }" placement="top"
-            @confirm="removeCustomKind(k.value)">
-            <t-button variant="text" size="small" class="biz-del-btn" @click.stop>
-              <template #icon><t-icon name="delete" size="16px" /></template>
-            </t-button>
-          </t-popconfirm>
-          <span v-else class="kind-builtin-tag">内置</span>
-        </div>
-        <t-button variant="outline" size="small" block @click="addCustomKind">
-          <template #icon><t-icon name="add" /></template>
-          新增用途
-        </t-button>
-        <div class="kind-manage-actions">
-          <t-button variant="outline" size="small" @click="kindManageVisible = false">关闭</t-button>
-          <t-button theme="primary" size="small" :loading="savingKinds" @click="saveKinds">保存</t-button>
-        </div>
-      </div>
-    </t-dialog>
-
+    <!-- 第 73 轮：用途管理整体下线。工业表计只剩「工商业」一类，
+         保留入口却无处可用只会增加误操作面。 -->
     <!-- 第 70 轮：底部固定操作栏（与「字段定义」Tab 的保存/取消 100% 同款）。
          表计的新增/编辑/排序/启用全部改为**草稿态**，点「保存」一次性落库。 -->
     <div class="meter-save-bar" data-meter-save-bar>
@@ -408,7 +373,7 @@ const loadKinds = async () => {
   }
 }
 
-const addCustomKind = async () => {
+const _addCustomKind = async () => {
   const n = customKinds.value.length + 1
   const value = `custom${n}`
   const label = `自定义${n}`
@@ -421,7 +386,7 @@ const addCustomKind = async () => {
     MessagePlugin.error(e?.message || '新增用途失败')
   }
 }
-const removeCustomKind = async (value: string) => {
+const _removeCustomKind = async (value: string) => {
   // 引用检查:有表计正在使用该用途时禁止删除
   const used = meters.value.filter(m => String(m.meter_kind) === value)
   if (used.length) {
@@ -442,7 +407,7 @@ const removeCustomKind = async (value: string) => {
 }
 const savingKinds = ref(false)
 // 保存用途配置：内置用途 upsert 到后端（改名持久化），自定义用途按 id 更新
-const saveKinds = async () => {
+const _saveKinds = async () => {
   savingKinds.value = true
   try {
     for (const k of meterKinds.value) {

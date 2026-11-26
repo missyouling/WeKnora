@@ -116,9 +116,11 @@
             <t-select v-if="dormSubView === 'fee'" v-model="dormMonthFilter"
               :options="dormChargeMonthOptions" placeholder="账单月份" clearable
               class="hr-month-picker" data-hr-dorm-month @change="applyFilter" />
-            <t-select v-if="dormSubView === 'stay'" v-model="dormRoomTypeFilter"
-              :options="DORM_ROOM_TYPE_OPTIONS" placeholder="全部房源" :clearable="false"
-              class="hr-status-select" data-hr-dorm-room-type @change="applyFilter" />
+            <!-- 第 73 轮：住宿记录工具栏改为「住宿状态」筛选（默认在住），
+                 旧的「房源类型」筛选对住宿场景没有意义，且默认会把退宿人员混在一起。 -->
+            <t-select v-if="dormSubView === 'stay'" v-model="dormStayStatusFilter"
+              :options="DORM_STAY_STATUS_OPTIONS" placeholder="住宿状态" :clearable="false"
+              class="hr-status-select" data-hr-dorm-stay-status @change="applyFilter" />
             <t-select v-if="dormSubView === 'dorm' || dormSubView === 'public'"
               v-model="dormStatusFilter" :options="DORM_STATUS_FILTER_OPTIONS" placeholder="全部状态"
               :clearable="false" class="hr-status-select" data-hr-dorm-status @change="applyFilter" />
@@ -142,6 +144,12 @@
                 重新生成
               </t-button>
             </t-popconfirm>
+            <!-- 第 73 轮：资产档案勾选 1 条时才出现「编辑」（入口从行点击迁到此处） -->
+            <t-button v-if="assetSingleSelected" theme="default" variant="outline" size="small"
+              data-hr-asset-edit @click="editSelectedAsset">
+              <template #icon><t-icon name="edit" size="14px" /></template>
+              编辑
+            </t-button>
             <t-button theme="default" variant="outline" size="small" :loading="exporting"
               data-hr-export @click="handleExportExcel">
               <template #icon><t-icon name="download" size="14px" /></template>
@@ -366,12 +374,11 @@
               </span>
               <span v-else></span>
             </template>
+            <!-- 第 73 轮：`房源类型` 是分类而非状态，去掉彩色胶囊改为普通文字。
+                 （语义色只保留给状态类字段：宿舍状态/住宿状态/资产状态/合同状态…） -->
             <template #房源类型="{ row }: any">
               <span v-if="isHeaderContext(row)">房源类型</span>
-              <t-tag v-else-if="colValue(row, '房源类型')" :theme="hrDormRoomTypeTheme(colValue(row, '房源类型'))"
-                variant="light" size="small">
-                {{ colValue(row, '房源类型') }}
-              </t-tag>
+              <span v-else>{{ colValue(row, '房源类型') }}</span>
             </template>
             <!-- 第 69 轮：原始记录变动改为周期**前方的小红点**（tooltip 说明）。
                  旧实现的「原始记录已变动，请重新生成」文字把 2026-11 挤成两行（真机图 4）。 -->
@@ -478,6 +485,17 @@
           placeholder="无固定期限时无需填写" data-hr-contract-end />
       </template>
       <!-- 第 62 轮：宿舍管理抽屉的联动控件（房型→床位、配套多选、员工/房源带出费用项） -->
+      <!-- 第 73 轮：退宿信息只读联动 —— 只有「已退宿」记录才允许在抽屉里修正，
+           在住/新增态置灰。办理退宿走独立弹窗，避免随手填出「在住却有退宿日期」的脏数据。 -->
+      <template #field-退宿日期>
+        <t-date-picker v-model="editForm.data['退宿日期']" value-type="YYYY-MM-DD" format="YYYY-MM-DD"
+          :disabled="!isStayResigned" :clearable="isStayResigned" allow-input
+          data-hr-stay-leave-date />
+      </template>
+      <template #field-退宿原因>
+        <t-select v-model="editForm.data['退宿原因']" :disabled="!isStayResigned" clearable
+          :options="DORM_LEAVE_REASON_OPTIONS" placeholder="请选择退宿原因" data-hr-stay-leave-reason />
+      </template>
       <!-- 第 72 轮：宿舍状态文字后方紧跟「空置」开关（同行紧凑），
            空置期间状态恒为灰色「空置」、可用床位 0，且不可安排入住。 -->
       <template #field-宿舍状态>
@@ -745,11 +763,11 @@
              并彻底移除右上角「聚合花名册 / 住宿 / ...」的说明文字。 -->
         <div class="hr-bill-tabs">
           <t-radio-group v-model="dormBillTab" size="small" data-hr-dorm-bill-tabs>
-            <t-radio-button value="personal">扣款明细</t-radio-button>
             <t-radio-button value="dorm">宿舍费用</t-radio-button>
             <t-radio-button value="public">公租房费用</t-radio-button>
             <t-radio-button value="social">社保缴存</t-radio-button>
             <t-radio-button value="fund">公积金缴存</t-radio-button>
+            <t-radio-button value="personal">扣款明细</t-radio-button>
           </t-radio-group>
         </div>
         <!-- 第 65 轮：标准筛选栏 —— 关键词（姓名/宿舍号）+ 部门，5 标签全部联动 -->
@@ -787,6 +805,39 @@
             打印
           </t-button>
           <t-button theme="primary" size="small" data-hr-dorm-bill-close @click="dormBillVisible = false">
+            关闭
+          </t-button>
+        </div>
+      </template>
+    </t-dialog>
+
+    <!-- 第 73 轮：资产分配明细 —— 点资产行不再直接进编辑，而是看「哪些房源配了它」。
+         口径：每间房都按资产档案的标准数量配置（晾衣杆 2 根 / 每间），
+         因此明细行数量与价值直接透传字典值，底部汇总间数与总量。 -->
+    <t-dialog v-model:visible="assetAllocVisible" :header="assetAllocTitle" width="min(92vw, 1180px)"
+      placement="center" destroy-on-close class="hr-bill-dialog" data-hr-asset-alloc-dialog>
+      <div class="hr-bill-detail">
+        <div class="hr-bill-filters">
+          <t-input v-model="assetAllocKeyword" placeholder="搜索宿舍号 / 部门" clearable
+            class="hr-bill-search" data-hr-asset-alloc-search>
+            <template #prefixIcon><t-icon name="search" size="16px" /></template>
+          </t-input>
+          <span class="hr-bill-spacer" />
+          <span class="hr-bill-count">共 {{ assetAllocFilteredRows.length }} 间房</span>
+        </div>
+        <div class="hr-bill-table-wrap">
+          <DetailScrollTable name="asset-alloc" :columns="ASSET_ALLOC_COLUMNS"
+            :rows="assetAllocFilteredRows" :foot="assetAllocFoot" row-key="id" :max-body-height="4000" />
+        </div>
+      </div>
+      <template #footer>
+        <div class="hr-bill-footer">
+          <t-button theme="default" variant="outline" size="small" :loading="exporting"
+            data-hr-asset-alloc-export @click="exportAssetAlloc">
+            <template #icon><t-icon name="download" size="14px" /></template>
+            导出 Excel
+          </t-button>
+          <t-button theme="primary" size="small" data-hr-asset-alloc-close @click="assetAllocVisible = false">
             关闭
           </t-button>
         </div>
@@ -1257,6 +1308,14 @@ const dormChargeMonths = ref<string[]>([])
 const dormChargeMonthOptions = computed(() =>
   dormChargeMonths.value.map((m) => ({ label: m, value: m })))
 const dormRoomTypeFilter = ref('')
+/** 第 73 轮：住宿状态筛选（进标签默认「在住」）。 */
+const DORM_STAY_STATUS_OPTIONS = [
+  { label: '全部状态', value: '全部状态' },
+  { label: '在住', value: '在住' },
+  { label: '已退宿', value: '已退宿' },
+]
+const dormStayStatusFilter = ref('在住')
+
 const DORM_ROOM_TYPE_OPTIONS = [
   { label: '全部房源', value: '' },
   { label: '公司宿舍', value: '公司宿舍' },
@@ -1522,6 +1581,24 @@ const settingsInitialGroup = computed(() => {
    */
   if (activeTab.value === 'hr-contract') {
     return contractSubView.value === 'service' ? '劳务合同' : '劳动合同'
+  }
+  /**
+   * 第 73 轮：设置抽屉必须**自动定位到当前子标签**（全站统一）。
+   *
+   * 在「社保 -> 补退记录」点设置，抽屉却停在「回盘表」胶囊，用户要自己找；
+   * 这里按当前子视图映射到落库的 group 名（与 fleet_categories.subs 一致）。
+   */
+  if (activeTab.value === 'hr-social') {
+    const map: Record<string, string> = {
+      receipt: '回盘表',
+      normal: '正常记录',
+      abnormal: '补退记录',
+      bills: '月度账单',
+    }
+    return map[socialSubView.value] || ''
+  }
+  if (activeTab.value === 'hr-fund') {
+    return fundSubView.value === 'bills' ? '月度账单' : '职工明细'
   }
   return ''
 })
@@ -1875,8 +1952,9 @@ async function loadList(tab: HrTab) {
           module: hrDormModuleOf(dormSubView.value),
           q: kw,
         }))
-        if (dormSubView.value === 'stay' && dormRoomTypeFilter.value) {
-          items = items.filter((r: any) => String(r.房源类型 || '').trim() === dormRoomTypeFilter.value)
+        if (dormSubView.value === 'stay' && dormStayStatusFilter.value !== '全部状态') {
+          items = items.filter((r: any) =>
+            String(r.住宿状态 || '在住').trim() === dormStayStatusFilter.value)
         }
         if ((dormSubView.value === 'dorm' || dormSubView.value === 'public') && dormStatusFilter.value) {
           items = items.filter((r: any) => String(r.宿舍状态 || '').trim() === dormStatusFilter.value)
@@ -1970,7 +2048,7 @@ async function switchTab(tab: HrTab) {
   dormRoomTypeFilterFee.value = ''
   dormStatusFilter.value = ''
   assetStatusFilter.value = ''
-  dormRoomTypeFilter.value = ''
+  dormStayStatusFilter.value = '在住'
   rosterStatusView.value = '在职'
   siDeptFilter.value = ''
   siSchemeFilter.value = ''
@@ -2773,6 +2851,14 @@ function normalizeDormNumberFields(data: Record<string, any>): void {
 }
 
 async function openDetail(row: any) {
+  /**
+   * 第 73 轮：资产档案行点击 → 「资产分配明细」弹窗（不是编辑抽屉）。
+   * 编辑入口移到勾选 1 条后的浮动栏「编辑」按钮。
+   */
+  if (activeTab.value === 'hr-dorm' && dormSubView.value === 'asset' && row) {
+    openAssetAlloc(row)
+    return
+  }
   // 第 63 轮：宿舍抽屉立即打开，下拉数据后台加载（await 会被 11 个跨模块请求拖住，
   // 网络抖动时用户点了行要等十几秒才出现抽屉）。
   if (activeTab.value === 'hr-dorm') void loadDormHelpers()
@@ -4335,9 +4421,19 @@ const dormNum = (v: any) => {
  * 首列「姓名」给 110px，保证底部「合计 81 人」完整显示（旧值 90px 会截成「合计 8...」）。
  */
 // 列宽与「去员工工号」已在 hrDormChargeColumns 内收口（第 65 轮），页面只做投影
+/** 第 73 轮：表头去掉单位后缀（(元)/(度)/(m³)/(㎡)），列宽按内容给足。 */
+const trimBillTitle = (t: any) => String(t ?? '')
+  .replace(/\s*[（(](元|度|m³|㎡|m2)[）)]/g, '')
+  .trim()
+
 const DORM_PERSONAL_COLUMNS = hrDormChargeColumns()
   .filter((c: any) => c.colKey !== 'row-select')
-  .map((c: any) => ({ colKey: c.colKey, title: c.title, width: c.width || 110 }))
+  .map((c: any) => ({
+    colKey: c.colKey,
+    title: trimBillTitle(c.title),
+    width: c.width || 110,
+    minWidth: c.width || 110,
+  }))
 const DORM_UTIL_COLUMNS = [
   { colKey: '宿舍号', title: '宿舍号', width: 160 },
   { colKey: '姓名', title: '姓名', width: 90 },
@@ -4345,27 +4441,27 @@ const DORM_UTIL_COLUMNS = [
   { colKey: '分摊比例', title: '分摊比例', width: 90, align: 'right' as const },
   { colKey: '电起度', title: '电起度', width: 90, align: 'right' as const },
   { colKey: '电止度', title: '电止度', width: 90, align: 'right' as const },
-  { colKey: '电费', title: '电费(元)', width: 100, align: 'right' as const },
+  { colKey: '电费', title: '电费', width: 100, align: 'right' as const },
   { colKey: '水起度', title: '水起度', width: 90, align: 'right' as const },
   { colKey: '水止度', title: '水止度', width: 90, align: 'right' as const },
-  { colKey: '水费', title: '水费(元)', width: 100, align: 'right' as const },
-  { colKey: '合计', title: '水电合计(元)', width: 120, align: 'right' as const },
+  { colKey: '水费', title: '水费', width: 100, align: 'right' as const },
+  { colKey: '合计', title: '水电合计', width: 120, align: 'right' as const },
 ]
 const DORM_PUBLIC_COLUMNS = [
   { colKey: '宿舍号', title: '房屋', width: 190 },
   { colKey: '姓名', title: '姓名', width: 90 },
-  { colKey: '公租房租(元)', title: '房租(元)', width: 110, align: 'right' as const },
-  { colKey: '水费(元)', title: '水费(元)', width: 100, align: 'right' as const },
-  { colKey: '电费(元)', title: '电费(元)', width: 100, align: 'right' as const },
-  { colKey: '天然气费(元)', title: '天然气费(元)', width: 120, align: 'right' as const },
-  { colKey: '宿舍押金(元)', title: '押金(元)', width: 100, align: 'right' as const },
-  { colKey: '扣款合计(元)', title: '合计(元)', width: 120, align: 'right' as const },
+  { colKey: '公租房租(元)', title: '公租房租', width: 110, align: 'right' as const },
+  { colKey: '水费(元)', title: '水费', width: 100, align: 'right' as const },
+  { colKey: '电费(元)', title: '电费', width: 100, align: 'right' as const },
+  { colKey: '天然气费(元)', title: '天然气费', width: 120, align: 'right' as const },
+  { colKey: '宿舍押金(元)', title: '押金', width: 100, align: 'right' as const },
+  { colKey: '扣款合计(元)', title: '扣款合计', width: 120, align: 'right' as const },
 ]
 /** 第 65 轮：社保缴存标签（复用当月社保账单明细）。 */
 const DORM_SOCIAL_COLUMNS = [
   { colKey: '姓名', title: '姓名', width: 100 },
   { colKey: '所属部门', title: '部门', width: 120 },
-  { colKey: '缴费基数', title: '缴费基数(元)', width: 130, align: 'right' as const },
+  { colKey: '缴费基数', title: '缴费基数', width: 130, align: 'right' as const },
   { colKey: '养老个人', title: '养老(个人)', width: 120, align: 'right' as const },
   { colKey: '医疗个人', title: '医疗(个人)', width: 120, align: 'right' as const },
   { colKey: '大额个人', title: '大额(个人)', width: 120, align: 'right' as const },
@@ -4378,8 +4474,8 @@ const DORM_SOCIAL_COLUMNS = [
 const DORM_FUND_COLUMNS = [
   { colKey: '姓名', title: '姓名', width: 110 },
   { colKey: '所属部门', title: '部门', width: 130 },
-  { colKey: '缴费基数', title: '缴存基数(元)', width: 140, align: 'right' as const },
-  { colKey: '个人缴存', title: '个人缴存(元)', width: 140, align: 'right' as const },
+  { colKey: '缴费基数', title: '缴存基数', width: 140, align: 'right' as const },
+  { colKey: '个人缴存', title: '个人缴存', width: 140, align: 'right' as const },
   { colKey: '单位缴存', title: '单位缴存(元)', width: 140, align: 'right' as const },
   { colKey: '缴存合计', title: '缴存合计(元)', width: 140, align: 'right' as const },
 ]
@@ -4637,6 +4733,109 @@ async function onDormChargeCellCommit(payload: { row: any; colKey: string; value
   }
 }
 
+/**
+ * 第 73 轮：资产分配明细。
+ *
+ * 资产档案是「共用物品字典」，一行代表一类物品的标准配置（数量=每间标配）。
+ * 点行看的是**分配去向**：哪些宿舍/公租房在「配套设施」里选了它。
+ */
+const ASSET_ALLOC_COLUMNS = [
+  { colKey: '宿舍编号', title: '宿舍编号', width: 150 },
+  { colKey: '管理员/舍长', title: '管理员/舍长', width: 110 },
+  { colKey: '所属部门', title: '所属部门', width: 120 },
+  { colKey: '房源类型', title: '房源类型', width: 100 },
+  { colKey: '资产名称', title: '资产名称', width: 110 },
+  { colKey: '数量', title: '数量', width: 80, align: 'right' as const },
+  { colKey: '计量单位', title: '计量单位', width: 90 },
+  { colKey: '资产价值', title: '资产价值', width: 110, align: 'right' as const },
+]
+const assetAllocVisible = ref(false)
+const assetAllocTitle = ref('资产分配明细')
+const assetAllocKeyword = ref('')
+const assetAllocRows = ref<any[]>([])
+const assetAllocFoot = ref<any[]>([])
+
+const assetAllocFilteredRows = computed(() => {
+  const kw = assetAllocKeyword.value.trim().toLowerCase()
+  if (!kw) return assetAllocRows.value
+  return assetAllocRows.value.filter((r: any) =>
+    [r['宿舍编号'], r['所属部门'], r['管理员/舍长']]
+      .map((v) => String(v ?? '').toLowerCase()).some((v) => v.includes(kw)))
+})
+
+function openAssetAlloc(row: any) {
+  const name = String(row?.['资产名称'] || '').trim()
+  const code = String(row?.['资产编号'] || '').trim()
+  const qty = Number(row?.['数量'] || 0)
+  const unit = String(row?.['计量单位'] || '').trim()
+  const value = Number(row?.['资产价值(元)'] ?? row?.['资产价值'] ?? 0)
+  const roomNoOf = (r: any) => String(r['宿舍编号'] || r['房屋编号'] || r.code || '').trim()
+  const list = (dormRoomList.value || [])
+    .filter((r: any) => String(r['配套设施'] || '').split('、').map((x: string) => x.trim()).includes(name))
+    .map((r: any) => {
+      const isPublic = !!String(r['房屋编号'] || '').trim()
+      const roomNo = isPublic
+        ? `${String(r['房屋地址'] || '').trim()}${String(r['房屋编号'] || '').trim()}` || roomNoOf(r)
+        : roomNoOf(r)
+      return {
+        id: String(r.id || roomNo),
+        '宿舍编号': roomNo,
+        '管理员/舍长': String(r['管理员/舍长'] || ''),
+        '所属部门': String(r['所属部门'] || ''),
+        '房源类型': isPublic ? '公租房' : '公司宿舍',
+        '资产名称': name,
+        '数量': String(qty),
+        '计量单位': unit,
+        '资产价值': value ? value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '',
+      }
+    })
+    .sort((a: any, b: any) => {
+      const na = Number(String(a['宿舍编号']).replace(/\D/g, '')) || 0
+      const nb = Number(String(b['宿舍编号']).replace(/\D/g, '')) || 0
+      if (na !== nb) return na - nb
+      return a['宿舍编号'] < b['宿舍编号'] ? -1 : 1
+    })
+  assetAllocRows.value = list
+  const totalQty = qty * list.length
+  const totalValue = value * list.length
+  assetAllocFoot.value = [{
+    id: 'foot',
+    '宿舍编号': `共 ${list.length} 间房`,
+    '数量': totalQty ? String(totalQty) : '',
+    '资产价值': totalValue ? totalValue.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '',
+  }]
+  assetAllocTitle.value = `资产分配明细 · ${name}${code ? ` (${code})` : ''}`
+  assetAllocKeyword.value = ''
+  assetAllocVisible.value = true
+}
+
+async function exportAssetAlloc() {
+  if (!assetAllocRows.value.length) { MessagePlugin.warning('当前无数据可导出'); return }
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const XLSX = await import('xlsx')
+    const header = ASSET_ALLOC_COLUMNS.map((c: any) => c.title)
+    const body = [...assetAllocRows.value, ...assetAllocFoot.value]
+      .map((r: any) => ASSET_ALLOC_COLUMNS.map((c: any) => String(r[c.colKey] ?? '')))
+    const sheet = XLSX.utils.aoa_to_sheet([header, ...body])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, sheet, '资产分配明细')
+    XLSX.writeFile(wb, `${assetAllocTitle.value}.xlsx`)
+    MessagePlugin.success('已导出 Excel')
+  } catch (e: any) { MessagePlugin.error(e?.message || '导出 Excel 失败') } finally { exporting.value = false }
+}
+
+/** 第 73 轮：勾选 1 条资产 → 浮动栏出现「编辑」；多选时隐藏（批量场景没有单条编辑语义）。 */
+const assetSingleSelected = computed(() =>
+  activeTab.value === 'hr-dorm' && dormSubView.value === 'asset' && selectedRowKeys.value.length === 1)
+
+function editSelectedAsset() {
+  const key = selectedRowKeys.value[0]
+  const row = rows.value.find((r: any) => String(r.id) === String(key))
+  if (row) void openDetail(row)
+}
+
 const dormActiveBill = computed(() => {
   const t = dormBillTab.value
   if (t === 'dorm') return { cols: dormUtilColumns, rows: dormUtilRows.value, foot: dormUtilFoot.value, name: '员工宿舍水电分摊' }
@@ -4878,6 +5077,14 @@ const dormBedOptions = computed(() => {
   return all.filter((b) => !used.has(b) || b === cur).map((b) => ({ label: b, value: b }))
 })
 
+/** 第 73 轮：当前住宿记录是否已退宿（决定退宿日期/原因可否编辑）。 */
+const isStayResigned = computed(() => {
+  if (activeTab.value !== 'hr-dorm' || dormSubView.value !== 'stay') return true
+  return String(editForm.value?.data?.['住宿状态'] || '').trim() === '已退宿'
+})
+/** 退宿原因枚举（与 hrDorm 契约保持一致）。 */
+const DORM_LEAVE_REASON_OPTIONS = ['离职退宿', '个人外住', '调宿退宿', '工作调动', '其他原因']
+
 /** 空置开关（抽屉内，紧跟「宿舍状态」文字）。 */
 const dormVacantFlag = computed({
   get: () => {
@@ -4938,10 +5145,29 @@ const dormAvailableRoomOptions = computed(() => {
       if (!empGender || !limit || limit === '不限') return true
       return limit === empGender
     })
-    .map((r) => ({
-      label: `${r['房屋地址'] || r['宿舍编号'] || r.code}（可用 ${r['可用床位数'] ?? 0}）`,
-      value: r['房屋地址'] || r['宿舍编号'] || r.code || '',
-    }))
+    .map((r) => {
+      /**
+       * 第 73 轮：候选值必须是**具体房号**。
+       *
+       * 旧实现优先取 `房屋地址`，而公租房的地址只有小区名（两山景苑 / 两山秀苑），
+       * 于是下拉里出现多行一模一样的「两山景苑（可用 2）」，选中也分不清是哪套。
+       * 现在：宿舍 → `宿舍301`；公租房 → `5-2-6（两山景苑）`。
+       * value 仍保持与住宿记录落库口径一致（公租房 = 小区名+门牌）。
+       */
+      const dormNo = String(r['宿舍编号'] || '').trim()
+      const pubNo = String(r['房屋编号'] || '').trim()
+      const addr = String(r['房屋地址'] || '').trim()
+      const free = r['可用床位数'] ?? 0
+      if (pubNo) {
+        return {
+          label: `${pubNo}（${addr || '公租房'}，可用 ${free}）`,
+          value: `${addr}${pubNo}`,
+        }
+      }
+      const no = dormNo || String(r.code || '').trim()
+      return { label: `${no}（可用 ${free}）`, value: no }
+    })
+    .filter((o) => o.value)
 })
 
 async function loadDormHelpers() {

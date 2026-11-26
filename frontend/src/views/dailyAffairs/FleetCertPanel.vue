@@ -1100,6 +1100,18 @@ function discardPendingEdit(): void {
   addVisible.value = false
   editingId.value = ''
 }
+/**
+ * 第 73 轮：设置抽屉**常驻挂载**（v-show/TDesign 不销毁内容），
+ * 用户从「宿舍档案」切到「资产档案」再点设置时，FleetCertPanel 仍是同一实例，
+ * 只在 setup 时读一次 initialGroup 就会停在旧胶囊。这里补一个 watch。
+ */
+watch(() => props.initialGroup, (v) => {
+  const next = String(v || '').trim()
+  if (!next) return
+  if (!subGroupTabs.value.some((g) => g.key === tabGroupKey(next))) return
+  switchSubGroup(next)
+})
+
 defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit })
 async function commitAdd() {
   const name = addForm.name.trim()

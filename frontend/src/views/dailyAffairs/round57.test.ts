@@ -155,8 +155,9 @@ test('导出 Excel 有 loading 态：工具栏与账单弹窗共用一个 export
   const src = read('HrManagement.vue')
   assert.match(src, /const exporting = ref\(false\)/)
   const loadings = src.match(/:loading="exporting"/g) || []
-  // 第 61 轮：新增宿舍费用分摊弹窗导出 → 3 处共用同一 exporting 锁
-  assert.equal(loadings.length, 3, '批量栏 + 社保/公积金账单弹窗 + 宿舍分摊弹窗')
+  // 第 61 轮：宿舍分摊弹窗导出 → 3 处；第 73 轮新增「资产分配明细」导出 → 4 处，
+  // 全部共用同一个 exporting 锁（防重复点击）。
+  assert.equal(loadings.length, 4, '批量栏 + 社保/公积金账单弹窗 + 宿舍分摊弹窗 + 资产分配明细')
   assert.match(src, /if \(exporting\.value\) return/, '重复点击必须短路')
 })
 

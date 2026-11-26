@@ -278,6 +278,48 @@ func (h *HRHandler) GenerateDormCharges(c *gin.Context) {
 		hrFail(c, err.Error())
 		return
 	}
+	/**
+	 * 覆盖生成前先快照「人工录入」的部分（其它扣款 / 退款 / 备注 / 账单状态）。
+	 *
+	 * 需求明确要求重算不得抹掉用户手填值 —— 这些字段不属于核算结果，
+	 * 只是同一行上的备注性数据。按「工号优先、姓名回退」重新贴回。
+	 */
+	manual := map[string]HRDormCharge{}
+	var old []HRDormCharge
+	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND month_label = ?", tid, month).Find(&old).Error
+	for _, o := range old {
+		if strings.TrimSpace(o.EmployeeID) != "" {
+			manual["id:"+normalizeIDNumber(o.EmployeeID)] = o
+		}
+		if nm := strings.TrimSpace(o.Name); nm != "" {
+			if _, ok := manual["nm:"+nm]; !ok {
+				manual["nm:"+nm] = o
+			}
+		}
+	}
+	for i := range rows {
+		var keep HRDormCharge
+		var ok bool
+		if id := normalizeIDNumber(rows[i].EmployeeID); id != "" {
+			keep, ok = manual["id:"+id]
+		}
+		if !ok {
+			keep, ok = manual["nm:"+strings.TrimSpace(rows[i].Name)]
+		}
+		if !ok {
+			continue
+		}
+		rows[i].Other = keep.Other
+		rows[i].Refund = keep.Refund
+		rows[i].Subsidy = keep.Refund
+		rows[i].Remark = keep.Remark
+		if strings.TrimSpace(keep.BillStatus) != "" {
+			rows[i].BillStatus = keep.BillStatus
+		}
+		// 合计 = 各扣款项 − 退款（退款是冲减项，旧实现漏减）
+		rows[i].Total = round2(rows[i].Deposit + rows[i].Rent + rows[i].Water + rows[i].Elec +
+			rows[i].Gas + rows[i].Social + rows[i].Fund + rows[i].Other - rows[i].Refund)
+	}
 	err = h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if e := tx.Where("tenant_id = ? AND month_label = ?", tid, month).Delete(&HRDormCharge{}).Error; e != nil {
 			return e
@@ -324,18 +366,32 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 		[]string{hrDormModuleRoom, hrDormModulePublic}).Find(&rooms).Error
 	roomOf := map[string]HRDormRecord{}
 	for _, r := range rooms {
-		roomOf[r.Code] = r
-		if addr := hrDormStr(r.CustomData, "房屋地址"); addr != "" {
-			roomOf[addr] = r
+		keys := []string{r.Code,
+			hrDormStr(r.CustomData, "宿舍编号"), hrDormStr(r.CustomData, "房屋编号"),
+			hrDormStr(r.CustomData, "房间号"), hrDormStr(r.CustomData, "房屋地址")}
+		// 公租房：档案是「房屋编号 5-2-6 + 房屋地址 两山景苑」，住宿记录存「两山景苑5-2-6」
+		addr := strings.TrimSpace(hrDormStr(r.CustomData, "房屋地址"))
+		for _, noKey := range []string{"房屋编号", "房间号", "宿舍编号"} {
+			if no := strings.TrimSpace(hrDormStr(r.CustomData, noKey)); addr != "" && no != "" {
+				keys = append(keys, addr+no)
+			}
+		}
+		for _, k := range keys {
+			if k = strings.TrimSpace(k); k != "" {
+				if _, ok := roomOf[k]; !ok {
+					roomOf[k] = r
+				}
+			}
 		}
 	}
-	// 3) 表计读数
-	readings := map[string]HRDormReading{}
-	var rs []HRDormReading
-	_ = h.db.WithContext(ctx).Where("tenant_id = ? AND month_label = ?", tid, month).Find(&rs).Error
-	for _, r := range rs {
-		readings[r.RoomCode] = r
-	}
+	/**
+	 * 3) 真实抄表（电/水/气核算）—— 费用信息的**唯一数据源**。
+	 *
+	 * 旧实现读 `hr_dorm_readings`（住宿记录里的读表），实测是 `0 → 73/86/112`
+	 * 这类占位数据，宿舍费用表整片失真（电费 1,753.00 的假总数就是这么来的）。
+	 * 现在按「房源档案定义的表号」去 `utility_meter_items` 取真实起止度与金额。
+	 */
+	meterIdx := h.hrRealMeterIndex73(ctx, tid, month)
 	// 4) 社保个人扣款（当月有则用当月，否则取最近一个月快照）
 	social := h.hrDormSocialByPerson(ctx, tid, month)
 	fund := h.hrDormFundByPerson(ctx, tid)
@@ -404,10 +460,33 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 					}
 				}
 			}
-			rd := readings[room.Code]
-			if rd.RoomCode == "" {
-				rd = readings[roomCode]
+			/**
+			 * 房间 → 档案定义的表号（唯一真相源）。
+			 *
+			 * 宿舍：宿舍电表号 / 宿舍水表号；公租房：公租房水表号 / 公租房气表号。
+			 * 公租房不定义电表（第 72 轮口径），因此电费恒为 0。
+			 */
+			meterNoOf := func(keys ...string) string {
+				for _, k := range keys {
+					if v := strings.TrimSpace(hrDormStr(room.CustomData, k)); v != "" {
+						return strings.ToLower(v)
+					}
+				}
+				return ""
 			}
+			elecNo := ""
+			waterNo := ""
+			gasNo := ""
+			if roomType == "公租房" {
+				waterNo = meterNoOf("公租房水表号", "宿舍水表号")
+				gasNo = meterNoOf("公租房气表号")
+			} else {
+				elecNo = meterNoOf("宿舍电表号")
+				waterNo = meterNoOf("宿舍水表号")
+			}
+			elecRD := meterIdx["electricity"][elecNo]
+			waterRD := meterIdx["water"][waterNo]
+			gasRD := meterIdx["gas"][gasNo]
 			// 房租：公租房在「租期起始月份」一次性收季度租金，其余月份按月费用单价；
 			// 两条口径都来自档案，分摊比例照乘（对齐 Excel「季度租金 / 月租金」）。
 			if roomType == "公租房" {
@@ -454,22 +533,31 @@ func (h *HRHandler) hrBuildDormCharges(ctx context.Context, tid int64, month str
 			if gasPrice == 0 {
 				gasPrice = 2.196
 			}
-			if roomType == "公租房" {
-				sewage := priceOf("污水处理费(元/m³)")
-				second := priceOf("二次供水费(元/m³)")
-				garbage := priceOf("垃圾处理费(元/套)")
-				row.Water = round2((rd.WaterTon*(waterPrice+sewage+second) + garbage) * row.Ratio)
-			} else {
-				row.Water = round2(rd.WaterTon * waterPrice * row.Ratio)
+			/**
+			 * 金额 = 该表真实金额 × 分摊比例；起止度 = 该表真实示数。
+			 *
+			 * 公租房的水费在核算侧已经把「污水处理费 / 二次供水费 / 垃圾处理费」
+			 * 计入金额（与代收口径一致），这里不再二次加价 —— 否则同一吨水算两遍。
+			 * priceOf 仍保留给「无抄表时的基准提示」，不参与金额计算。
+			 */
+			_ = waterPrice
+			_ = elecPrice
+			_ = gasPrice
+			if waterRD.Found {
+				row.Water = round2(waterRD.Amount * row.Ratio)
+				row.WaterStart = waterRD.Start
+				row.WaterEnd = waterRD.End
 			}
-			row.Elec = round2(rd.ElecKwh * elecPrice * row.Ratio)
-			row.Gas = round2(rd.GasM3 * gasPrice * row.Ratio)
-			row.WaterStart = round2(hrDormFloat(stay.CustomData, "入住时水表度数"))
-			row.ElecStart = round2(hrDormFloat(stay.CustomData, "入住时电表度数"))
-			row.GasStart = round2(hrDormFloat(stay.CustomData, "入住时气表度数"))
-			row.WaterEnd = round2(row.WaterStart + rd.WaterTon)
-			row.ElecEnd = round2(row.ElecStart + rd.ElecKwh)
-			row.GasEnd = round2(row.GasStart + rd.GasM3)
+			if elecRD.Found {
+				row.Elec = round2(elecRD.Amount * row.Ratio)
+				row.ElecStart = elecRD.Start
+				row.ElecEnd = elecRD.End
+			}
+			if gasRD.Found {
+				row.Gas = round2(gasRD.Amount * row.Ratio)
+				row.GasStart = gasRD.Start
+				row.GasEnd = gasRD.End
+			}
 		}
 		row.Social = round2(social[strings.TrimSpace(e.Name)])
 		row.Fund = round2(fund[strings.TrimSpace(e.Name)])

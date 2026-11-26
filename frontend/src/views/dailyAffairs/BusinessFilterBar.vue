@@ -26,7 +26,7 @@
         <!-- 下拉筛选（类型/税率…）：宽度随选项自适应，禁止收缩避免截断 -->
         <div v-if="f.type === 'select'" class="bfs-field">
           <t-select :value="state[f.key]" :options="f.options || []" :placeholder="f.placeholder || '筛选'"
-            :clearable="f.clearable !== false" class="bfs-select"
+            :clearable="f.clearable === true" class="bfs-select"
             @update:value="(v: any) => patch(f, v)">
             <template #prefixIcon><t-icon :name="f.icon || DEFAULT_FILTER_ICONS.select" size="16px" /></template>
           </t-select>
@@ -52,7 +52,7 @@
              月粒度选择器（YYYY-MM），不能套用 date-range 的日粒度区间。 -->
         <div v-else-if="f.type === 'month'" class="bfs-field">
           <t-date-picker :value="state[f.key]" mode="month" format="YYYY-MM" value-type="YYYY-MM"
-            :placeholder="f.placeholder || '账期'" :clearable="f.clearable !== false" allow-input
+            :placeholder="f.placeholder || '账期'" :clearable="f.clearable === true" allow-input
             class="bfs-month" @change="(v: any) => patch(f, v)">
             <template #prefixIcon><t-icon :name="f.icon || DEFAULT_FILTER_ICONS.month" size="16px" /></template>
           </t-date-picker>
@@ -178,13 +178,21 @@ function patchRange(spec: FilterFieldSpec, v: any, idx: 0 | 1) {
 /* 只补筛选控件自身的样式；工具栏布局沿用 BusinessListToolbar */
 .bfs-field { display: flex; align-items: center; gap: 4px; }
 /* 自由输入筛选（分类专属字段）：宽度与下拉一致，不随占位符长短跳动 */
+/**
+ * 第 73 轮：全站工具栏控件尺寸统一（需求 8②）。
+ *   搜索框 220px；常规状态/类型筛选 140px；月份 140px；数字 96px。
+ * 之前各页面各写一套（有的 150、有的 auto），视觉参差。
+ */
+.bfs-field--keyword { width: 220px; }
 .bfs-field--text { width: 150px; }
 .bfs-text { width: 100%; }
 
-.bfs-select { width: auto; flex-shrink: 0; min-width: max-content; }
+.bfs-select { width: 140px; flex-shrink: 0; }
+/* 使用单位 / 部门这类长选项给 190px，避免文字被截断（需求 8②） */
+.bfs-select.is-wide { width: 190px; }
 .bfs-date-range { width: 240px; flex-shrink: 0; }
 /* 账期选择器：与 date-range 同宽，避免两页工具栏像素不对齐 */
-.bfs-month { width: 240px; flex-shrink: 0; }
+.bfs-month { width: 140px; flex-shrink: 0; }
 .bfs-num { width: 96px; flex-shrink: 0; }
 .bfs-range-sep { color: var(--td-text-color-placeholder); }
 </style>

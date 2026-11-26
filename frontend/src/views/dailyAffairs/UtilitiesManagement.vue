@@ -622,7 +622,7 @@
       :row="currentRow" :page-no="Number(currentRow?.item?.page) || 0" :form="billFormWrapper"
       :fields="detailFieldDefs" block-title="账单字段" :quality="detailQuality" :label-of="qualityLabel"
       :saving="billSaving" :storage-key="'weknora-utility-bill-drawer-width'"
-      @save="saveBillDetail" />
+      width="820px" :min-width="680" @save="saveBillDetail" />
 
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
       :initial-category="settingsCategory" :rule-categories="ENERGY_RULE_CATEGORIES"
@@ -1088,9 +1088,9 @@ const ENERGY_RULE_CATEGORIES = ['市电账单', '光伏账单']
 const ENERGY_EXTRA_TAB_LABEL: Record<EnergyTab, string> = {
   electricity: '',
   solar: '光伏设置',
-  'electric-meter': '表计设置',
-  water: '表计设置',
-  gas: '表计设置',
+  'electric-meter': '工业表计',
+  water: '工业表计',
+  gas: '工业表计',
   billing: '清单设置',
 }
 const extraTabLabel = computed(() => ENERGY_EXTRA_TAB_LABEL[activeTab.value] || '')
@@ -2387,8 +2387,33 @@ function onEnergyDataChanged() { void loadTabCounts() }
  */
 function onCategoriesChanged() { void loadFieldConfigs() }
 
+/**
+ * 第 73 轮：核算页默认落在「最近一个有数据的月份」。
+ *
+ * 当前自然月（2026-11）常常还没抄表，旧实现默认空月份 → 列表空白，
+ * 用户以为数据丢了。这里取该介质 `months[0]`（倒序第一个）。
+ */
+const ENERGY_CATEGORY_OF_TAB: Record<string, 'electricity' | 'water' | 'gas'> = {
+  'electric-meter': 'electricity',
+  electricity: 'electricity',
+  water: 'water',
+  gas: 'gas',
+}
+async function ensureLatestMonth() {
+  if (monthFilter.value) return
+  const cat = ENERGY_CATEGORY_OF_TAB[activeTab.value]
+  if (!cat) return
+  try {
+    const res: any = await listUtilityMeterRecords({ category: cat })
+    const d = res?.data || res || {}
+    const months: string[] = Array.isArray(d.months) ? d.months : []
+    if (months.length) monthFilter.value = String(months[0])
+  } catch { /* 静默：保持空月份，列表为空态 */ }
+}
+
 onMounted(() => {
   installListFootHoistAll()
+  void ensureLatestMonth()
   nextTick(measureTableHeaderFix)
   window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)
