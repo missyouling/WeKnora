@@ -367,9 +367,11 @@
       block-title="光伏账单字段" :quality="detailQuality" :label-of="qualityLabel"
       :storage-key="'weknora-solar-detail-drawer-width'" @save="saveDetailFields" />
 
-    <!-- 费用编辑抽屉 -->
-    <t-drawer v-if="feeEditVisible" :visible="true" :header="'编辑费用 · ' + feeEditTitle" size="460px" :footer="false"
-      :close-on-overlay-click="true" @close="feeEditVisible = false"
+    <!-- 费用编辑抽屉（第 74 轮：统一走中台 SettingDrawer 底座，拖拽锚点与
+         知识库文档详情抽屉 1:1，最小宽度 680px） -->
+    <SettingDrawer v-if="feeEditVisible" :visible="true" :title="'编辑费用 · ' + feeEditTitle"
+      width="680px" :min-width="680" hide-footer destroy-on-close
+      storage-key="weknora-solar-fee-edit-width" class="energy-edit-drawer"
       @update:visible="(v: boolean) => (feeEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field">
@@ -396,7 +398,7 @@
           <t-button theme="primary" size="small" @click="saveFeeEdit">保存</t-button>
         </div>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 标签编辑 -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -454,13 +456,15 @@ import TagEditDialog from '@/views/knowledge/components/TagEditDialog.vue'
 import KbTagManageDrawer from '@/views/knowledge/components/KbTagManageDrawer.vue'
 import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
-import { notifyEnergyDataChanged, rowFlattenText, matchAllTokens, billMonthOfItem } from './energyCounters'
+import { notifyEnergyDataChanged, billMonthOfItem } from './energyCounters'
+import { filterRowsByKeyword } from './keywordFilter'
 import {
   useUploadHistoryScope, getUploadHistoryFiles,
 } from '@/composables/useUploadHistoryFiles'
@@ -741,7 +745,8 @@ const displayRows = computed(() => {
     // 解析中/待提取的文件还没有账期，按月筛选时不占位
     all = all.filter((r: any) => r.kind !== 'pending' && billMonthOfItem(r) === month)
   }
-  if (kw) all = all.filter((r: any) => matchAllTokens(`${String(r.fileName || '')} ${rowFlattenText(r)}`.toLowerCase(), kw))
+  // 第 74 轮：全字段关键字筛选统一走共享 helper（含文件名、账单字段与明细）
+  if (kw) all = filterRowsByKeyword(all, kw)
   return all
 })
 

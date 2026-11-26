@@ -224,7 +224,8 @@ import './styles/row-expand-toggle.css'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
-import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged } from './energyCounters'
+import { notifyEnergyDataChanged } from './energyCounters'
+import { filterRowsByKeyword } from './keywordFilter'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
@@ -693,7 +694,9 @@ const applyFilters = () => {
   // 抄表人/使用单位/备注…）拼串匹配，多关键词空格分词取 AND。
   // 旧版把搜索框接在别处、列表根本没按 keyword 过滤（真机：搜"宿舍301"纹丝不动）。
   const kw = String(filters.value.keyword || '').trim()
-  if (kw) list = list.filter(r => matchAllTokens(rowFlattenText(r), kw))
+  // 第 74 轮：全字段关键字筛选统一走共享 helper（递归覆盖表计档案联动字段、
+  // 自定义字段与嵌套明细；「重庆星」「星达」「E301」等任意子串均可命中）。
+  if (kw) list = filterRowsByKeyword(list, kw)
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
   if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
   // 使用单位是表计档案属性：记录本身不带该字段，必须用扁平行上的 use_unit 比对

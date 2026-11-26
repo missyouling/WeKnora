@@ -493,9 +493,11 @@
       </div>
 
 
-    <!-- 电量明细编辑抽屉 -->
-    <t-drawer v-if="meterEditVisible" :visible="true" :header="'编辑电量 · ' + meterEditTitle" :size="'420px'" :footer="false"
-      @close="meterEditVisible = false"
+    <!-- 电量明细编辑抽屉（第 74 轮：统一走中台 SettingDrawer 底座，
+         拖拽锚点与知识库文档详情抽屉 1:1，最小宽度 680px） -->
+    <SettingDrawer v-if="meterEditVisible" :visible="true" :title="'编辑电量 · ' + meterEditTitle"
+      width="680px" :min-width="680" hide-footer destroy-on-close
+      storage-key="weknora-energy-meter-edit-width" class="energy-edit-drawer"
       @update:visible="(v: boolean) => (meterEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field" v-for="f in meterEditFields" :key="f.key">
@@ -507,11 +509,12 @@
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 明细列表通用编辑抽屉（居民电量/容需量/功率因素） -->
-    <t-drawer v-if="detailEditVisible" :visible="true" :header="detailEditTitle" :size="'460px'" :footer="false"
-      :close-on-overlay-click="true" @close="detailEditVisible = false"
+    <SettingDrawer v-if="detailEditVisible" :visible="true" :title="detailEditTitle"
+      width="680px" :min-width="680" hide-footer destroy-on-close
+      storage-key="weknora-energy-detail-edit-width" class="energy-edit-drawer"
       @update:visible="(v: boolean) => (detailEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field" v-for="f in detailEditFields" :key="f.key">
@@ -533,11 +536,12 @@
             @click="detailEditTarget === 'resident' ? saveResidentMeterEdit() : saveEditForm({ closeDetail: true })">保存</t-button>
         </div>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 费用行编辑抽屉 -->
-    <t-drawer v-if="feeItemEditVisible" :visible="true" :header="'编辑费用 · ' + feeItemEditName" :size="'460px'" :footer="false"
-      @close="feeItemEditVisible = false"
+    <SettingDrawer v-if="feeItemEditVisible" :visible="true" :title="'编辑费用 · ' + feeItemEditName"
+      width="680px" :min-width="680" hide-footer destroy-on-close
+      storage-key="weknora-energy-fee-edit-width" class="energy-edit-drawer"
       @update:visible="(v: boolean) => (feeItemEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="edit-field">
@@ -575,11 +579,12 @@
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 静态字段编辑抽屉 -->
-    <t-drawer v-if="staticEditVisible" :visible="true" :header="staticEditTitle" :size="'520px'" :footer="false"
-      @close="staticEditVisible = false"
+    <SettingDrawer v-if="staticEditVisible" :visible="true" :title="staticEditTitle"
+      width="680px" :min-width="680" hide-footer destroy-on-close
+      storage-key="weknora-energy-static-edit-width" class="energy-edit-drawer"
       @update:visible="(v: boolean) => (staticEditVisible = v)">
       <div class="edit-drawer-body">
         <div class="field-grid">
@@ -598,7 +603,7 @@
           <t-button theme="primary" size="small" @click="saveEditForm">保存</t-button>
         </div>
       </div>
-    </t-drawer>
+    </SettingDrawer>
 
     <!-- 标签编辑 -->
     <TagEditDialog v-model:visible="tagDialogVisible" :knowledge-name="tagTargetName" :kb-id="kbId"
@@ -624,20 +629,12 @@
       :saving="billSaving" :storage-key="'weknora-utility-bill-drawer-width'"
       width="820px" :min-width="680" @save="saveBillDetail" />
 
-    <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''" scope="energy"
-      :initial-category="settingsCategory" :rule-categories="ENERGY_RULE_CATEGORIES"
-      :kb-name="'日常事务-电费'" title="设置 · 能耗"
-      :extra-tab-label="extraTabLabel" :extra-tab-value="extraTabValue"
-      storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged">
-      <!-- 专属设置（原工具栏「光伏设置 / 表计配置 / 租户设置」按钮的归宿）：
-           工具栏严格 3 个按钮，专属面板作为统一设置抽屉的 Tab 内嵌。 -->
-      <template #extra-tab>
-        <SolarSettingsPanel v-if="activeTab === 'solar'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
-        <MeterSettingsPanel v-else-if="meterCategory" :category="meterCategory"
-          @changed="onSettingsChanged" @close="settingsVisible = false" />
-        <TenantSettingsPanel v-else-if="activeTab === 'billing'" :kb-id="kbId || ''" @changed="onSettingsChanged" />
-      </template>
-    </StandardSettingDrawer>
+    <!-- 设置抽屉（第 74 轮）：顶层同一行 7 个平级标签，底部唯一一套取消/保存。
+         旧的「字段定义」二级外壳与「表计设置」文案已删除；分类与标签的映射
+         由 energySettingsTabs.ts 唯一定义，打开时按当前子视图自动激活对应标签。 -->
+    <EnergySettingDrawer v-model:visible="settingsVisible" :kb-id="kbId || ''"
+      :initial-tab="settingsTab" :initial-category="settingsCategory"
+      storage-key="weknora-energy-settings-drawer-width" @saved="onSettingsChanged" />
 
     <!-- 上传账单：与发票管理完全同一个 FleetUploadDialog（拖拽/多选/队列进度/重复文件智能恢复），
          分类固定为「市电账单」，提取走账单专用管线（extract-utility-bill）。
@@ -707,11 +704,11 @@ import UtilitiesKbWizard from './UtilitiesKbWizard.vue'
 import UtilityMeterTab from './UtilityMeterTab.vue'
 import SolarManagement from './SolarManagement.vue'
 import TenantBilling from './TenantBilling.vue'
-import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
+import EnergySettingDrawer from './EnergySettingDrawer.vue'
+import { filterRowsByKeyword } from './keywordFilter'
+import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
-import SolarSettingsPanel from './SolarSettingsPanel.vue'
-import MeterSettingsPanel from './MeterSettingsPanel.vue'
-import TenantSettingsPanel from './TenantSettingsPanel.vue'
+import { energyTabOfCategory, type EnergySettingsTab } from './energySettingsTabs'
 import { listFleetCategories } from '@/api/fleet'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
 import type { FilterFieldSpec, FilterState } from './businessFilter'
@@ -1071,41 +1068,12 @@ function onEnergyOpenSettings(e: Event) {
 }
 watch(settingsVisible, (v) => { if (!v) settingsCategoryOverride.value = '' })
 /**
- * 允许配置「提取规则」的分类白名单。
+ * 抽屉要激活的顶层标签（第 74 轮：7 个平级标签，由分类名唯一推导）。
  *
  * 只有市电账单与光伏账单是 AI 从文件里提取的；电费/水费/气费核算与费用清单是
- * 录入 + 公式算出来的计算表，没有可提取的字段，规则页对它们没有意义。
+ * 录入 + 公式算出来的计算表，因此「提取规则」标签只在账单语境下有意义。
  */
-const ENERGY_RULE_CATEGORIES = ['市电账单', '光伏账单']
-
-/**
- * 专属设置 Tab 的标题：与工具栏「设置」按钮的抽屉内页签一一对应。
- *
- * 市电账单没有专属面板（字段定义 + 提取规则已经覆盖它的全部配置），
- * 光伏账单 = 光伏设置、三张核算表 = 表计设置、费用清单 = 清单设置。
- * 这几个面板原本是工具栏上独立的第 4 个按钮，现在作为抽屉 Tab 内嵌。
- */
-const ENERGY_EXTRA_TAB_LABEL: Record<EnergyTab, string> = {
-  electricity: '',
-  solar: '光伏设置',
-  'electric-meter': '工业表计',
-  water: '工业表计',
-  gas: '工业表计',
-  billing: '清单设置',
-}
-const extraTabLabel = computed(() => ENERGY_EXTRA_TAB_LABEL[activeTab.value] || '')
-const extraTabValue = computed(() => {
-  if (activeTab.value === 'solar') return 'solar'
-  if (activeTab.value === 'billing') return 'billing'
-  return 'meter'
-})
-/** 三张核算表的介质（表计设置面板据此切换电表/水表/气表）。 */
-const meterCategory = computed(() => {
-  if (activeTab.value === 'electric-meter') return 'electricity'
-  if (activeTab.value === 'water') return 'water'
-  if (activeTab.value === 'gas') return 'gas'
-  return ''
-})
+const settingsTab = computed<EnergySettingsTab>(() => energyTabOfCategory(settingsCategory.value))
 
 /**
  * 子视图工具栏「设置」→ 打开统一设置抽屉并定位到该分类。
@@ -1320,35 +1288,12 @@ const mapRow = (r: any): Row => {
 // 解析失败 / 提取失败的文件同样不进主列表：它们没有任何业务数据，
 // 异常文件统一在「历史记录 → 异常文件」里展示与重提。
 
-// 行级全字段检索文本：把这条账单里所有可读内容拼成一个大字符串，再做包含匹配。
-//
-// 为什么不用逐列判断：字段是可配置的（用户在「字段定义」里加字段后列表就多一列），
-// 逐列写死会漏；而"搜索全部字段"的语义就是"我看到的值都能搜到"。
-// 覆盖：20 个概况字段 + 费用明细（含类别/名称/时段/电量/标准/电费）+
-// 电量明细 + 标签 + 源文件名 + 提取错误文案。
-function rowSearchText(r: any): string {
-  const parts: string[] = [String(r.fileName || ''), String(r.title || ''), String(r.extractStatus || ''), String(r.extractError || '')]
-  const it = r.item || {}
-  for (const [k, v] of Object.entries(it)) {
-    if (v === null || v === undefined) continue
-    if (k === 'fee_items' || k === 'meter_readings' || k === 'residential_readings' || k === 'gateways') continue
-    if (typeof v === 'object') continue
-    parts.push(String(v))
-  }
-  for (const fd of (it.fee_items || [])) {
-    parts.push(String(fd.category || ''), String(fd.name || ''), String(fd.period || ''), String(fd.fee ?? ''), String(fd.qty ?? ''), String(fd.rate ?? ''))
-  }
-  for (const mr of (it.meter_readings || [])) {
-    parts.push(String(mr.meter_type || ''), String(mr.bill_kwh ?? ''), String(mr.reading_kwh ?? ''))
-  }
-  for (const t of (r.tags || [])) parts.push(String(t))
-  // 归一后的账单周期也要能搜（用户多半按 2026-08 找）
-  parts.push(String(r.bill_period || ''))
-  return parts.join(' ').toLowerCase()
-}
+// 第 74 轮：当前页列表全字段关键字筛选统一走共享 helper（keywordFilter.ts）。
+// 旧实现每个页面各拼一份 haystack，字段覆盖度彼此不一致；
+// helper 递归遍历整行（概况列 / 费用明细 / 电量明细 / 标签 / 自定义字段），
+// 语义 = 「列表上看到的值都能搜到」，且多关键词取 AND。
 
 const displayRows = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
   const month = monthFilter.value
   // 在途文件（解析中/待提取/提取中）**不进列表**：它们没有任何业务数据，
   // 混进来会渲染出一条空壳行（真机：绿色进度条 + 首行「解析中」空白数据），
@@ -1376,13 +1321,7 @@ const displayRows = computed(() => {
     .map((x) => x.r)
   // 月份 = 账单账期（bill_period，YYYY-MM）；解析中的文件没有账期，按月筛选时不占位
   if (month) all = all.filter((r: any) => r.kind !== 'pending' && String(r.bill_period || '').startsWith(month))
-  if (!kw) return all
-  // 多关键词（空格分隔）取 AND：输入「星达 2026-08」能精确收敛
-  const tokens = kw.split(/\s+/).filter(Boolean)
-  return all.filter((r) => {
-    const hay = rowSearchText(r)
-    return tokens.every((t) => hay.includes(t))
-  })
+  return filterRowsByKeyword(all, keyword.value)
 })
 
 const loadFiles = async (reset = false) => {

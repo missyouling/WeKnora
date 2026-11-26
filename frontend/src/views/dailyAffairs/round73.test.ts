@@ -91,7 +91,8 @@ test('第73轮：能耗核算默认最近有数据月份；工业表计极简', 
   const src = read('UtilitiesManagement.vue')
   assert.match(src, /async function ensureLatestMonth\(\)/)
   assert.match(src, /if \(months\.length\) monthFilter\.value = String\(months\[0\]\)/)
-  assert.match(src, /'electric-meter': '工业表计'/)
+  // 第 74 轮：工业表计从「专属 Tab 文案映射」升级为顶层平级标签
+  assert.match(src, /const settingsTab = computed<EnergySettingsTab>/)
   const meter = read('MeterSettingsPanel.vue')
   assert.ok(!/kindManageVisible = true/.test(meter), '工业表计不得再有用途管理入口')
   assert.ok(!/:header="'用途管理/.test(meter), '用途管理弹窗必须删除')

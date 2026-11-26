@@ -14,7 +14,8 @@
     状态契约：`form` 由父级持有并直接传入（对象引用共享，组件写属性即父级生效），
     月份/表计联动仍走父级 watch([form.month, form.meterId])，组件只透传 change 事件。
   -->
-  <SettingDrawer :visible="visible" :title="title" width="654px" hide-footer destroy-on-close
+  <!-- 第 74 轮：宽度下限 680px（与知识库文档详情抽屉同规格的拖拽锚点 + 三列不挤压） -->
+  <SettingDrawer :visible="visible" :title="title" width="680px" :min-width="680" hide-footer destroy-on-close
     class="meter-record-drawer" :storage-key="`weknora-utility-${category}-record-drawer-width`"
     @update:visible="(v: boolean) => emit('update:visible', v)" @cancel="emit('close')">
     <!-- 「系统内已有数据」提示必须整行、且**在网格之外**：

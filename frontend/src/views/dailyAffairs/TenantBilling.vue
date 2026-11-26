@@ -190,7 +190,8 @@ import {
 import { generateCatalogPdf, generateStatementPdf, loadCatalogFont, type CatalogColumn, type StatementDoc } from './useCatalogPdf'
 import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
-import { rowFlattenText, matchAllTokens, notifyEnergyDataChanged, ENERGY_DATA_CHANGED_EVENT } from './energyCounters'
+import { notifyEnergyDataChanged, ENERGY_DATA_CHANGED_EVENT } from './energyCounters'
+import { filterRowsByKeyword } from './keywordFilter'
 import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, timedBreakdownOf, timedBreakdownTotalsOf, type FieldSource, type SourceResolveContext, type TimedAllocation } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
@@ -1720,7 +1721,8 @@ const buildRows = () => {
   let out = filters.value.month ? list.filter(r => r.month === filters.value.month) : list
   // 「搜索全部字段」：行内所有可读值拼串匹配（多关键词空格分词 AND）。
   const kw = String(filters.value.keyword || '').trim()
-  if (kw) out = out.filter((r) => matchAllTokens(rowFlattenText(r), kw))
+  // 第 74 轮：全字段关键字筛选统一走共享 helper（含动态租户列 / 大类汇总 / 分摊子项）
+  if (kw) out = filterRowsByKeyword(out, kw)
   displayRows.value = out
   // 切换使用单位 / 重算后行 id 会变：把已经不存在的展开态清掉，
   // 否则 TDesign 会记着一个不存在的 rowKey（表格显示为「没展开」但状态还在）。

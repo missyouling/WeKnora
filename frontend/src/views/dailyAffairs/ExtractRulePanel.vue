@@ -155,7 +155,7 @@
             </div>
           </div>
 
-          <div class="rule-form-actions">
+          <div v-if="!props.embedded" class="rule-form-actions">
             <t-button variant="outline" size="small" @click="editingName = ''">收起</t-button>
             <t-button theme="primary" size="small" :loading="saving" @click="save">保存</t-button>
           </div>
@@ -178,7 +178,7 @@
         <div class="advanced-actions">
           <t-button variant="outline" size="small" @click="resetPromptTemplate">恢复默认模板</t-button>
           <t-button variant="outline" size="small" @click="advancedEnabled = false">收起</t-button>
-          <t-button theme="primary" size="small" :disabled="!certType" :loading="saving" @click="save">保存</t-button>
+          <t-button v-if="!props.embedded" theme="primary" size="small" :disabled="!certType" :loading="saving" @click="save">保存</t-button>
         </div>
       </div>
     </template>
@@ -226,7 +226,13 @@ const props = withDefaults(defineProps<{
   activeCategory?: string
   /** 面板是否处于激活 Tab：非激活时不跟随 activeCategory 发请求（避免无谓拉取）。 */
   active?: boolean
-}>(), { kbName: '', kbId: '', activeCategory: '', active: true })
+  /**
+   * 第 74 轮：内嵌在统一设置抽屉的「提取规则」平级标签里。
+   * 抽屉底栏只保留唯一一套保存/取消，面板内不再重复出保存按钮；
+   * 点抽屉「保存」时由父级调用本面板 save()。
+   */
+  embedded?: boolean
+}>(), { kbName: '', kbId: '', activeCategory: '', active: true, embedded: false })
 
 const KB_NAME = computed(() => props.kbName || '日常事务-车队')
 const resolvedKbId = ref('')
@@ -1251,7 +1257,7 @@ async function refresh() {
   }
   await loadConfig()
 }
-defineExpose({ refresh, focusCertType })
+defineExpose({ refresh, focusCertType, save })
 
 watch(
   () => props.scope,

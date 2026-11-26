@@ -49,9 +49,10 @@ test('第69轮：拖拽热区挂到抽屉面板内、贴左边框（不再 fixed
   assert.match(src, /<teleport v-if="handleHost && drawerVisible && resizable && !maximized" :to="handleHost">/)
   assert.match(src, /const resolveHandleHost = \(\): HTMLElement \| null/)
   assert.match(src, /querySelector\(`\[data-setting-drawer-id="\$\{drawerDomId\}"\]`\)/)
-  // 绝对定位 left:0（面板是 absolute，天然是包含块）
+  // 绝对定位（面板是 absolute，天然是包含块）。
+  // 第 74 轮起几何与上游知识库文档详情抽屉 1:1：热区 12px、left:-12px（整块落在左缘外）。
   assert.match(src, /\.setting-drawer-resize-handle \{[\s\S]{0,200}position: absolute;/)
-  assert.match(src, /position: absolute;\s*\r?\n\s*left: 0;\s*\r?\n\s*top: 0;\s*\r?\n\s*bottom: 0;\s*\r?\n\s*width: 8px;/)
+  assert.match(src, /position: absolute;\s*\r?\n\s*left: -12px;\s*\r?\n\s*top: 0;\s*\r?\n\s*bottom: 0;\s*\r?\n\s*width: 12px;/)
   assert.match(src, /z-index: 20;/)
   // 不再用固定的 right 推算，也不再凭 drawerWidthPx 起步
   assert.ok(!/right: `\$\{drawerWidthPx\}px`/.test(src), '禁止再用推算的 right 值')

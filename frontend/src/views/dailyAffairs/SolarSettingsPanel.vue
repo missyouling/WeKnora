@@ -49,7 +49,7 @@
       </div>
     </div>
 
-    <div class="ss-save-bar">
+    <div v-if="!embedded" class="ss-save-bar">
       <t-button theme="primary" size="small" @click="saveAccount">保存</t-button>
     </div>
   </div>
@@ -59,7 +59,8 @@
 import { ref, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 
-defineProps<{ kbId?: string }>()
+// 内嵌模式（第 74 轮）：隐藏自带保存栏，保存由抽屉底栏统一提交。
+defineProps<{ kbId?: string; embedded?: boolean }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const ACCOUNT_KEY = 'weknora-solar-account-v1'
@@ -78,6 +79,9 @@ const saveAccount = () => {
   MessagePlugin.success('已保存')
   emit('changed')
 }
+
+// 第 74 轮：抽屉底栏「保存」调用（内嵌模式下不再自带保存按钮）
+defineExpose({ commit: saveAccount })
 </script>
 
 <style lang="less" scoped>

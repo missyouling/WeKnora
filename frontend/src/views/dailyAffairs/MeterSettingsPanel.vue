@@ -209,10 +209,10 @@
          保留入口却无处可用只会增加误操作面。 -->
     <!-- 第 70 轮：底部固定操作栏（与「字段定义」Tab 的保存/取消 100% 同款）。
          表计的新增/编辑/排序/启用全部改为**草稿态**，点「保存」一次性落库。 -->
-    <div class="meter-save-bar" data-meter-save-bar>
-      <t-button theme="default" variant="outline" size="small" @click="cancelAllMeters"
+    <div v-if="!props.embedded" class="meter-save-bar" data-meter-save-bar>
+      <t-button theme="default" variant="outline" size="small" @click="cancelAllMeters(true)"
         data-meter-cancel>取消</t-button>
-      <t-button theme="primary" size="small" :loading="savingAll" @click="saveAllMeters"
+      <t-button theme="primary" size="small" :loading="savingAll" @click="saveAllMeters(true)"
         data-meter-save>保存</t-button>
     </div>
   </div>
@@ -237,7 +237,14 @@ import { getOrgUnits } from './hrApi'
 import { companyNamesOf, normalizeCompanyName } from './companyScope'
 
 type MeterCategory = 'electricity' | 'water' | 'gas'
-const props = defineProps<{ category: MeterCategory }>()
+const props = defineProps<{
+  category: MeterCategory
+  /**
+   * 第 74 轮：内嵌在统一设置抽屉的「工业表计」平级标签里。
+   * 底部唯一的取消/保存由抽屉底栏承担，本面板不再渲染自己的保存栏。
+   */
+  embedded?: boolean
+}>()
 const emit = defineEmits<{ (e: 'changed'): void; (e: 'close'): void }>()
 
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
@@ -611,7 +618,7 @@ const savingAll = ref(false)
  * 覆盖三类：展开中的编辑表单（含新增）、启用开关、拖拽排序。
  * 提交后刷新列表、通知父级重算，并关闭抽屉；「取消」直接关闭、丢弃草稿。
  */
-async function saveAllMeters() {
+async function saveAllMeters(closeAfter = true) {
   savingAll.value = true
   try {
     if (meterFormVisible.value) {
@@ -632,7 +639,7 @@ async function saveAllMeters() {
     await loadMetersOnly()
     emit('changed')
     MessagePlugin.success('已保存')
-    emit('close')
+    if (closeAfter) emit('close')
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -641,12 +648,18 @@ async function saveAllMeters() {
 }
 
 /** 取消：丢弃草稿（未保存的开关/排序/表单），直接关闭抽屉。 */
-function cancelAllMeters() {
+function cancelAllMeters(closeAfter = true) {
   dirtyEnabled.value = new Set()
   pendingSortIds.value = []
   meterFormVisible.value = false
-  emit('close')
+  if (closeAfter) emit('close')
 }
+
+// 第 74 轮：统一设置抽屉底栏「保存 / 取消」驱动本面板（不再自带保存栏）。
+defineExpose({
+  commitAll: () => saveAllMeters(false),
+  discardAll: () => cancelAllMeters(false),
+})
 
 
 // ---- 表计拖动排序（sort_order 持久化） ----

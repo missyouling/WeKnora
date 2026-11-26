@@ -152,10 +152,13 @@ test('第70轮：三段表最后一列不画右边框（消除贯穿细线）', 
 test('第70轮：抽屉拖拽手柄为居中短竖条（对齐原项目，无通顶线）', () => {
   const src = readSrc('src/components/settings/SettingDrawer.vue')
   assert.match(src, /class="setting-drawer-resize-grip"/)
-  assert.match(src, /\.setting-drawer-resize-grip \{[\s\S]{0,200}width: 6px;[\s\S]{0,120}height: 56px;[\s\S]{0,120}border-radius: 3px;/)
-  assert.match(src, /--grip-offset: -6px;/)
-  // 悬停/拖拽点亮品牌绿
-  assert.match(src, /background: var\(--td-brand-color, #00a870\);/)
+  // 第 74 轮：手柄规格改为上游知识库文档详情抽屉的 2×48 / radius 1px
+  assert.match(src, /\.setting-drawer-resize-grip \{[\s\S]{0,200}width: 2px;[\s\S]{0,120}height: 48px;[\s\S]{0,120}border-radius: 1px;/)
+  // 第 74 轮：不再用 --grip-offset 把短条推到面板外，改为热区整体 left:-12px
+  assert.match(src, /left: -12px;/)
+  assert.match(src, /width: 12px;/)
+  // 悬停/拖拽点亮品牌绿（tokens，不写死色值）
+  assert.match(src, /background: var\(--td-brand-color\);/)
   // 不再有通高线
   assert.ok(!/height: 100%;\s*\r?\n\s*background: var\(--td-component-stroke\)/.test(src), '不得保留通顶竖线')
 })

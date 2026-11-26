@@ -598,6 +598,12 @@ const handleCancel = () => {
 .setting-drawer {
   max-width: 100vw;
 
+  /* 第 74 轮：拖拽热区有 12px 落在面板左缘之外（与知识库文档详情抽屉同几何），
+     面板本身绝不能裁掉它 —— 滚动仍由 .t-drawer__content 承担。 */
+  .t-drawer__content-wrapper {
+    overflow: visible;
+  }
+
   .t-drawer__content {
     min-width: 0;
     max-width: 100vw;
@@ -641,62 +647,48 @@ const handleCancel = () => {
 
 /* Visible resize handle — teleported to body, aligned with drawer left edge. */
 /**
- * 第 69 轮：热区贴死抽屉左边框。
+ * 第 74 轮：拖拽锚点与 WeKnora 原项目**知识库文档详情抽屉**
+ * （`components/doc-content.vue` 的 `.doc-drawer-resize-handle`）1:1 对齐。
  *
- * 挂在 `.t-drawer__content-wrapper`（absolute 面板）内部，`left: 0` 就是面板
- * 左边界 —— 与推算宽度、窗口缩放、右侧停靠、页面滚动全部解耦。
- * 默认只画一条极淡分隔线，hover / 拖拽时才点亮成品牌色（不再是漂浮的灰竖线）。
- */
-/**
- * 第 70 轮：拖拽锚点对齐 WeKnora 原项目（`components/PanelResizeHandle.vue`）。
- *
- * 原项目口径 = **透明通高热区 + 垂直居中的圆角短条**：
- *   · 抽屉左缘没有通顶竖线（业务侧旧实现画了一条 100% 高的灰线，非常扎眼）；
- *   · 手柄本体只有 6×56px、圆角 3px，平时半透明淡灰，悬停/拖拽才点亮品牌绿；
- *   · 热区仍是整高 8px，鼠标靠近边缘即可命中（不需要精确压住短条）。
- * 热区挂在 `.t-drawer__content-wrapper` 内部，`left: 0` 就是面板左边框。
+ * 唯一视觉标准源（逐值抄录，禁止再自创）：
+ *   · 热区 12px 宽、`margin-left: -6px` —— 以抽屉左边缘为轴对称居中；
+ *   · 手柄本体 2×48px、`border-radius: 1px`；
+ *   · 常态 `background: var(--td-component-border)` + `opacity: .55`；
+ *   · 悬停 / 拖拽 `opacity: 1` + `background: var(--td-brand-color)`；
+ *   · 无通顶竖线、无双锚点、无外侧漂浮短条。
+ * 热区仍挂在 `.t-drawer__content-wrapper` 内部（absolute），`left: -12px` 让 12px 热区
+ * 完整落在抽屉左缘之外（右边缘与面板左边界重合），与原项目 teleport 版的几何
+ * 逐像素一致（面板左缘偏移 -12、竖线中心 -6），且不受抽屉宽度推算影响。
+ * 为此 content-wrapper 必须 overflow: visible（见下方非 scoped 块）。
  */
 .setting-drawer-resize-handle {
   position: absolute;
-  left: 0;
+  left: -12px;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 12px;
   cursor: col-resize;
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 短条浮在抽屉外侧一点点，和原项目一致（左侧是遮罩，不会遮挡内容） */
-  --grip-offset: -6px;
 }
-/* 热区中心的可点击范围（原项目用 52×80 的 ::before 桥接短条周围的空隙） */
-.setting-drawer-resize-handle::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 52px;
-  height: 80px;
-  transform: translate(-50%, -50%);
-}
+
 .setting-drawer-resize-grip {
   flex-shrink: 0;
-  width: 6px;
-  height: 56px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--td-text-color-secondary) 30%, transparent);
-  opacity: 0.5;
-  transform: translateX(var(--grip-offset)) scale(0.94);
-  transition: opacity var(--app-motion-fast) ease, transform var(--app-motion-fast) ease,
-    background-color var(--app-motion-fast) ease;
+  width: 2px;
+  height: 48px;
+  border-radius: 1px;
+  background: var(--td-component-border);
+  opacity: 0.55;
+  transition: opacity var(--app-motion-fast) ease, background var(--app-motion-fast) ease;
   pointer-events: none;
 }
+
 .setting-drawer-resize-handle:hover .setting-drawer-resize-grip,
 .setting-drawer-resize-handle--active .setting-drawer-resize-grip {
   opacity: 1;
-  transform: translateX(var(--grip-offset)) scale(1);
-  background: var(--td-brand-color, #00a870);
+  background: var(--td-brand-color);
 }
 
 .t-drawer.setting-drawer--resizing .t-drawer__content {

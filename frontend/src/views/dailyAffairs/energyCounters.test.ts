@@ -117,7 +117,9 @@ test('六视图工具栏统一 BusinessFilterBar + 搜索全部字段', () => {
 test('搜索框 220×32 与发票逐像素一致，且支持全字段检索', () => {
   assert.match(toolbar, /\.doc-search-field \{ width: 220px; flex-shrink: 0; \}/, '搜索框必须 220px')
   assert.match(toolbar, /\.doc-search-field :deep\(\.t-input\) \{ height: 32px; \}/, '搜索框必须 32px 高')
-  // 全字段检索：核算/清单都必须用 rowFlattenText + matchAllTokens
-  assert.match(meter, /matchAllTokens\(rowFlattenText\(r\), kw\)/, '核算搜索必须匹配全部字段')
-  assert.match(tenant, /matchAllTokens\(rowFlattenText\(r\), kw\)/, '清单搜索必须匹配全部字段')
+  // 第 74 轮：全字段检索统一走共享 helper（keywordFilter.ts）——
+  // 递归遍历整行（原生列 / custom_data / 明细 / 派生字段），语义与人事各列表一致。
+  assert.match(meter, /filterRowsByKeyword\(list, kw\)/, '核算搜索必须走共享全字段 helper')
+  assert.match(tenant, /filterRowsByKeyword\(out, kw\)/, '清单搜索必须走共享全字段 helper')
+  assert.match(utilities, /filterRowsByKeyword\(all, keyword\.value\)/, '市电账单搜索必须走共享全字段 helper')
 })

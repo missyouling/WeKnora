@@ -640,16 +640,19 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	// 关键词：车牌号在 vehicle_id 上（先按车牌反查），其余字段在 data JSON 里。
 	// 统一用 CAST(data AS TEXT) LIKE，PG 与 sqlite 都能跑，不写方言函数。
 	if keyword != "" {
-		keyword = fleetLikePattern(keyword)
+		// 第 74 轮：与前端共享 helper 同口径 —— 不区分大小写的任意连续子串匹配。
+		// data 是 JSONB（自定义字段都在里面），CAST 成 text 后整段 LIKE，
+		// PG 与 sqlite 都能跑；两侧统一 LOWER 保证「渝a75r1c」也能命中「渝A75R1C」。
+		keyword = fleetLikePattern(strings.ToLower(keyword))
 		var vehicleIDs []string
 		h.db.WithContext(ctx).Model(&types.FleetVehicle{}).
-			Where("tenant_id = ? AND deleted_at IS NULL AND plate_no LIKE ? ESCAPE '\\'", tenantID, keyword).
+			Where("tenant_id = ? AND deleted_at IS NULL AND LOWER(plate_no) LIKE ? ESCAPE '\\'", tenantID, keyword).
 			Pluck("id", &vehicleIDs)
 		if len(vehicleIDs) > 0 {
-			q = q.Where("(CAST(data AS TEXT) LIKE ? ESCAPE '\\' OR vehicle_id IN ? OR remark LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+			q = q.Where("(LOWER(CAST(data AS TEXT)) LIKE ? ESCAPE '\\' OR vehicle_id IN ? OR LOWER(remark) LIKE ? ESCAPE '\\' OR LOWER(file_name) LIKE ? ESCAPE '\\')",
 				keyword, vehicleIDs, keyword, keyword)
 		} else {
-			q = q.Where("(CAST(data AS TEXT) LIKE ? ESCAPE '\\' OR remark LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\')",
+			q = q.Where("(LOWER(CAST(data AS TEXT)) LIKE ? ESCAPE '\\' OR LOWER(remark) LIKE ? ESCAPE '\\' OR LOWER(file_name) LIKE ? ESCAPE '\\')",
 				keyword, keyword, keyword)
 		}
 	}

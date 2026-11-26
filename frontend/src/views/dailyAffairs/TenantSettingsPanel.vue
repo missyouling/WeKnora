@@ -140,7 +140,7 @@
                 class="tenant-picker" placeholder="选择租户" @change="onTenantChange" />
               <t-button variant="outline" size="small" :loading="importing" :disabled="!selectedTenantId"
                 @click="importUtilityFields">导入市电账单字段</t-button>
-              <t-button theme="primary" size="small" :loading="savingItems" :disabled="!selectedTenantId"
+              <t-button v-if="!props.embedded" theme="primary" size="small" :loading="savingItems" :disabled="!selectedTenantId"
                 @click="saveItems(true)">保存</t-button>
             </div>
           </div>
@@ -232,7 +232,15 @@ import {
 import { mergeItemsIntoFields } from './tenantGroupSync'
 import { fromSubsPayload, toSubsPayload } from './fleetCategorySubs'
 
-const props = defineProps<{ tenantId?: string; kbId?: string }>()
+const props = defineProps<{
+  tenantId?: string
+  kbId?: string
+  /**
+   * 第 74 轮：内嵌在统一设置抽屉的「费用清单」平级标签里。
+   * 分摊子项的保存不再单独出按钮，由抽屉底栏统一提交（取消 = 重新拉取丢弃草稿）。
+   */
+  embedded?: boolean
+}>()
 const emit = defineEmits<{ (e: 'changed'): void; (e: 'select', id: string): void }>()
 
 // 分摊子项归属哪个租户：面板内自持选择（设置抽屉不依赖列表当前选中行，
@@ -591,6 +599,22 @@ onMounted(async () => {
   await loadTenants()
   if (!selectedTenantId.value) selectedTenantId.value = tenants.value[0]?.id || ''
   await loadDetail()
+})
+
+// 第 74 轮：统一设置抽屉底栏驱动本面板。
+//   保存 = 提交当前租户的分摊子项（含与费用清单租户分组 subs 的双向同步）；
+//   取消 = 重新拉取详情，丢弃未保存的开关 / 宽度 / 增删。
+defineExpose({
+  commitAll: async () => {
+    if (!props.embedded) return
+    await saveItems(false)
+  },
+  discardAll: async () => {
+    if (!props.embedded) return
+    tenantFormVisible.value = false
+    dirty.value = false
+    await loadDetail()
+  },
 })
 </script>
 

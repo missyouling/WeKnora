@@ -4,7 +4,7 @@
          第 54 轮：单分类直出模式（direct）下整块隐藏 —— 只有一个分类时，
          分组胶囊与「XX字段 1 +」标题全是噪音。
          第 57 轮：singleCategory 同样隐藏整块（人事只有一个分类，分组恒为「默认分组」）。 -->
-    <div v-if="!directMode && !props.singleCategory" class="group-headers">
+    <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="group-headers">
       <div v-for="g in groupList" :key="g.key" class="group-header" :class="{ active: activeGroup === g.key }" @click="activeGroup = g.key">
         <span v-if="renamingKey === g.key" class="group-header__rename-wrap">
           <t-input v-model="renameValue" size="small" @enter="confirmRename(g)" @blur="confirmRename(g)" autofocus />
@@ -31,7 +31,7 @@
     <!-- 证照类型表格（复刻电表配置表格，支持拖拽排序） -->
     <div class="meter-table-wrap">
       <div class="meter-table">
-        <template v-if="!directMode && !props.singleCategory">
+        <template v-if="!directMode && !props.singleCategory && !props.lockCategoryShell">
         <div class="meter-table-head">
           <span class="th-drag"></span>
           <span class="th-name">{{ scopeName(group.scope) }}</span>
@@ -73,8 +73,8 @@
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
           <div v-if="editingId && editingItem" class="meter-form meter-form--inline"
             :class="{ 'is-fleet': isFleetScope }">
-            <div v-if="!directMode && !props.singleCategory" class="meter-form-title">编辑{{ group.label }}</div>
-            <div v-if="!directMode && !props.singleCategory" class="form-grid">
+            <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="meter-form-title">编辑{{ group.label }}</div>
+            <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="form-grid">
               <div class="form-item">
                 <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
                 <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
@@ -92,6 +92,7 @@
             <!-- 字段生成：内嵌在「发票类型」下方、「字段配置」上方，
                  上传样票→识别→勾选→保存字段，直接落库。 -->
             <AiFieldSuggestPanel
+              v-if="!props.lockCategoryShell"
               v-model:visible="aiPanelOpen"
               :kb-id="props.kbId || ''"
               :scope="group.scope"
@@ -106,12 +107,19 @@
               </div>
               <!-- 业务分组切换（仅带 group 的分类显示，如市电账单的 12 个费用分项）。
                    没有 group 的分类（发票/合同/制度/公告）不渲染，视觉与改造前一致。 -->
-              <div v-if="!props.hideGroupTabs && subGroupTabs.length > 1" class="fc-group-tabs">
+              <div v-if="!props.hideGroupTabs && !props.flattenGroups && subGroupTabs.length > 1" class="fc-group-tabs">
                 <span v-for="g in subGroupTabs" :key="g.key" class="fc-group-tab"
                   :class="{ active: activeSubGroup === g.key }" @click="switchSubGroup(g.key)">
                   {{ g.label }}
                   <span class="fc-group-tab__count">{{ g.count }}</span>
                 </span>
+              </div>
+              <!-- 第 74 轮：分组默认折叠态。市电账单有 8 个费用分组、163 个字段，
+                   打开设置抽屉先看到分组胶囊（全部收起），点分组头按需展开 —— 而不是
+                   一次性平铺 163 行把抽屉刷成一片字段海洋。 -->
+              <div v-if="groupsCollapsedHint" class="fc-groups-collapsed" data-fc-groups-collapsed>
+                <t-icon name="chevron-right" size="14px" />
+                <span>字段分组已折叠，点击上方分组查看字段</span>
               </div>
               <div class="field-config-list" :class="{ 'is-compact': isFleetScope }">
                 <div class="field-colhead" :class="{ 'has-width': showWidthCol }">
@@ -408,7 +416,9 @@
                 </div>
               </div>
             </div>
-            <div class="meter-form-actions">
+            <!-- 第 74 轮：能耗设置抽屉的「取消/保存」只在抽屉底部保留唯一一套，
+                 内容区内的行级保存栏在 lockCategoryShell 模式下整块隐藏。 -->
+            <div v-if="!props.lockCategoryShell" class="meter-form-actions">
               <div class="spacer" />
               <t-button variant="outline" size="small" @click="editingId = ''">取消</t-button>
               <t-button theme="primary" size="small" :loading="saving" @click="commitEdit">保存</t-button>
@@ -416,13 +426,13 @@
           </div>
 
         <!-- 空状态：表头始终在顶部，图标与简化说明置于表头下方 -->
-        <div v-if="!directMode && !props.singleCategory && !groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
+        <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell && !groupItems.length && !addVisible" class="panel-empty panel-empty--inline">
           <t-icon name="folder-open" size="26px" class="panel-empty-icon" />
           <span class="panel-empty-text">{{ emptyTextOf(group.scope) }}</span>
         </div>
 
         <!-- 列表末尾内联新增：输入名称后自动追加到列表 -->
-        <div v-if="!directMode && !props.singleCategory && addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
+        <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell && addVisible" class="cert-add-row cert-add-row--editing" @click.stop>
           <span class="cert-add-gap"></span>
           <span class="cert-add-input">
             <t-input ref="addInputRef" v-model="addForm.name" size="small" placeholder="如：车辆购置税完税证明" @enter="commitAdd" />
@@ -432,7 +442,7 @@
             <t-button theme="primary" size="small" :loading="saving" @click="commitAdd">添加</t-button>
           </span>
         </div>
-        <div v-else-if="!directMode && !props.singleCategory" class="cert-add-row" @click="startAdd">
+        <div v-else-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="cert-add-row" @click="startAdd">
           <span class="cert-add-gap"></span>
           <span class="cert-add-name"><t-icon name="add" size="14px" /><span>{{ addRowLabel }}</span></span>
         </div>
@@ -523,6 +533,29 @@ const props = withDefaults(defineProps<{
    * `singleCategory` 走常规样式，只做减法。
    */
   singleCategory?: boolean
+  /**
+   * 第 74 轮：锁定分类外壳（能耗设置抽屉专用）。
+   *
+   * 隐藏「分组胶囊 / 分类表格 / + 新增分类 / 分类名输入 / 样票生成字段入口」，
+   * 只保留当前分类的字段配置列表；分类本身由抽屉的顶层标签唯一定位
+   * （7 个平级标签 = 6 个分类 + 工业表计），不再让用户在抽屉里管理分类表。
+   */
+  lockCategoryShell?: boolean
+  /**
+   * 第 74 轮：分类白名单（按分类名过滤分类表）。
+   * 空 = 不过滤。能耗账单标签只允许 市电账单 / 光伏账单。
+   */
+  categoryScope?: string[]
+  /**
+   * 第 74 轮：字段平铺（忽略 group 分组胶囊，全部字段按 subs 顺序展示）。
+   * 光伏账单：删除「派生字段（不可提取）」「账单概况」两个分组外壳。
+   */
+  flattenGroups?: boolean
+  /**
+   * 第 74 轮：字段分组默认全部折叠。
+   * 打开抽屉时 activeSubGroup 为空、字段列表为空，点分组胶囊才展开该组字段。
+   */
+  collapseGroups?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -533,6 +566,10 @@ const props = withDefaults(defineProps<{
   refSources: () => [],
   direct: false,
   singleCategory: false,
+  lockCategoryShell: false,
+  categoryScope: () => [],
+  flattenGroups: false,
+  collapseGroups: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -778,9 +815,12 @@ const ENERGY_HIDDEN_CATEGORY_NAMES = new Set(['能耗单'])
 function buildItems(g0: any): any[] {
   const scope: string = g0.scope
   const gid: string = g0.groupId || ''
+  // 第 74 轮：分类白名单（能耗设置抽屉每个顶层标签只认自己的分类）
+  const allowed = props.categoryScope || []
   // 仅取归属当前分组的分类（内置分组 group_id 为空；自定义分组按 group_id 过滤）
   const list = (categories.value[scope] || [])
     .filter((c: any) => (c.group_id || '') === gid)
+    .filter((c: any) => !allowed.length || allowed.includes(String(c.name || '').trim()))
     .filter((c: any) => !(scope === 'energy' && ENERGY_TYPE_SEED_KEYS.has(String(c.builtin_key || ''))))
     // 设置分类必须与顶部 6 张业务卡片 1:1：能耗单没有卡片，不进列表
     .filter((c: any) => !(scope === 'energy' && ENERGY_HIDDEN_CATEGORY_NAMES.has(String(c.name || '').trim())))
@@ -797,6 +837,7 @@ function buildItems(g0: any): any[] {
   // 2) 内置未入库兜底（理论上初始化会写入全部内置，这里仅防御）：按内置顺序追加
   if (!gid) {
     (BUILTIN[scope] || []).forEach((b) => {
+      if (allowed.length && !allowed.includes(String(b.name || '').trim())) return
       const found = list.find((c: any) => c.builtin_key === b.name || c.name === b.name)
       if (!found) {
         merged.push({ id: `builtin-${b.name}`, name: b.name, enabled: true, subs: [], builtin: true, fields: certFieldCount(b) })
@@ -806,6 +847,9 @@ function buildItems(g0: any): any[] {
   return merged
 }
 const groupItems = computed(() => buildItems(group.value))
+/** 第 74 轮：分组默认折叠态的提示行（未选中任何分组时展示）。 */
+const groupsCollapsedHint = computed(() =>
+  !!props.collapseGroups && !activeSubGroup.value && subGroupTabs.value.length > 0)
 /**
  * 当前正在编辑的分类。
  *
@@ -980,9 +1024,11 @@ async function load() {
       usedFields.value = new Set()
     })
     autoOpenInitialCategory()
-    // 直出 / 单分类精简模式：分类加载完直接展开唯一分类，
-    // 用户看到的第一屏就是字段列表（第 57 轮 singleCategory 同样适用）。
-    if (directMode.value || props.singleCategory) openCategory(groupItems.value[0])
+    // 直出 / 单分类精简 / 锁分类外壳模式：分类加载完直接展开唯一（或首个）分类，
+    // 用户看到的第一屏就是字段列表（第 57 轮 singleCategory、第 74 轮能耗设置）。
+    if ((directMode.value || props.singleCategory || props.lockCategoryShell) && !editingId.value) {
+      openCategory(groupItems.value[0])
+    }
     // 第 61 轮：打开设置时优先停在调用方指定的胶囊（宿舍五标签六同步）
     if (String(props.initialGroup || '').trim()) switchSubGroup(String(props.initialGroup).trim())
   } catch (e: any) {
@@ -1030,9 +1076,17 @@ watch(() => groupItems.value.length, () => {
  * categories prop 更新（本地回写、父级重拉）都走同一条保护。
  */
 watch(groupItems, (list) => {
-  if (!props.singleCategory) return
+  // 第 74 轮：能耗设置抽屉「锁分类外壳」同样没有分类表可选择 —— 必须常驻展开
+  // 一个真实分类，否则字段区一片空白（切换顶层标签时最容易踩到）。
+  if (!props.singleCategory && !props.lockCategoryShell) return
   const first = list[0]
   if (!first) return
+  if (props.lockCategoryShell && pendingOpenName.value) {
+    if (list.some((it: any) => String(it.name || '').trim() === pendingOpenName.value)) {
+      tryPendingOpen()
+      return
+    }
+  }
   if (editingId.value && list.some((it: any) => it.id === editingId.value)) return
   startEdit(first)
 })
@@ -1112,7 +1166,7 @@ watch(() => props.initialGroup, (v) => {
   switchSubGroup(next)
 })
 
-defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit })
+defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit, openCategoryByName })
 async function commitAdd() {
   const name = addForm.name.trim()
   if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }
@@ -1198,6 +1252,11 @@ const subGroupTabs = computed(() => {
  * 这样字段配置的行数、顺序与列表表头严格一致（六同步）。
  */
 const fieldsVisible = computed(() => {
+  // 第 74 轮：光伏账单平铺 —— 不分 group，直接按 subs 顺序展示全部字段
+  // （需求明确删除「派生字段（不可提取）」「账单概况」两个分组外壳）。
+  if (props.flattenGroups) return fieldsEditable.value
+  // 第 74 轮：分组默认折叠 —— 未选中任何分组时不展示任何字段行。
+  if (props.collapseGroups && !activeSubGroup.value) return []
   // 第 52 轮：花名册字段配置取消胶囊分组后，字段必须按 6 组顺序合并成
   // 单一连续列表 —— 此时 activeSubGroup 强制为空，绝不能再按 group 过滤
   // （否则只显示「字段最多」的那一组，其余 5 组全部消失）。
@@ -1325,6 +1384,15 @@ function resetSubGroupSelection() {
     openSubFieldName.value = ''
     return
   }
+  // 第 74 轮：光伏账单平铺（无分组胶囊）与「分组默认折叠」都停在空分组态。
+  //   · flattenGroups：字段全量平铺，activeSubGroup 不参与过滤；
+  //   · collapseGroups：胶囊条全部收起，点分组头才展开该组。
+  if (props.flattenGroups || props.collapseGroups) {
+    activeSubGroup.value = ''
+    openChildGroup.value = ''
+    openSubFieldName.value = ''
+    return
+  }
   // 直接用胶囊条的口径（费用清单已按归一键合并、默认分组在前），
   // 避免这里再算一遍 listSubGroups 造成「胶囊键与选中键不是同一个」。
   const groups = subGroupTabs.value
@@ -1368,6 +1436,13 @@ function switchSubGroup(key: string) {
    */
   const target = tabGroupKey(key)
   if (target && !subGroupTabs.value.some((g) => g.key === target)) return
+  // 第 74 轮：分组可再次点击收起（默认折叠模式下的反向操作）
+  if (props.collapseGroups && activeSubGroup.value === target) {
+    activeSubGroup.value = ''
+    openSubFieldName.value = ''
+    openChildGroup.value = ''
+    return
+  }
   activeSubGroup.value = target
   openSubFieldName.value = ''
   openChildGroup.value = ''
@@ -1687,6 +1762,30 @@ function openCategory(item: any) {
   if (!item || editingId.value === item.id) return
   startEdit(item)
 }
+
+/**
+ * 第 74 轮：按分类名打开（能耗设置抽屉的顶层标签 / 市电↔光伏二级切换调用）。
+ *
+ * 分类是异步加载的：抽屉刚打开时父级就可能切标签，此时 groupItems 还是空的。
+ * 这里记住待打开的分类名，等分类到位后由 watch(groupItems) 补一次，
+ * 避免「点了光伏账单但字段区还是市电」的静默错位。
+ */
+const pendingOpenName = ref('')
+function tryPendingOpen() {
+  const name = pendingOpenName.value
+  if (!name) return
+  const item = groupItems.value.find((it: any) => String(it.name || '').trim() === name)
+  if (!item) return
+  pendingOpenName.value = ''
+  openCategory(item)
+}
+function openCategoryByName(name: string) {
+  const target = String(name || '').trim()
+  if (!target) return
+  pendingOpenName.value = target
+  tryPendingOpen()
+}
+watch(groupItems, () => tryPendingOpen())
 
 function startEdit(item: any) {
   editForm.name = item.name
@@ -2433,6 +2532,20 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     margin: 2px 0 10px;
     padding: 8px 10px;
     background: var(--td-bg-color-secondarycontainer);
+    border-radius: 6px;
+  }
+
+  /* 第 74 轮：分组默认折叠态的空提示（点击分组胶囊后消失） */
+  .fc-groups-collapsed {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border: 1px dashed var(--td-component-stroke);
     border-radius: 6px;
   }
 

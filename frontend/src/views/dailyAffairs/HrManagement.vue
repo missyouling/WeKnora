@@ -889,6 +889,7 @@ import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.v
 import BusinessEmptyState from './BusinessEmptyState.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import { filterRowsByKeyword } from './keywordFilter'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FilePreviewDialog from '@/components/business/FilePreviewDialog.vue'
 import DetailScrollTable from '@/components/business/DetailScrollTable.vue'
@@ -1889,14 +1890,12 @@ async function loadList(tab: HrTab) {
     if (tab === 'hr-roster') {
       // 第 57 轮：在职 / 离职共用同一个 hr-roster scope，status 由子标签决定
       const res: any = await hrApi.listRosterEmployees({
-        q: kw,
         department: rosterDeptFilter.value || undefined,
         status: rosterStatusView.value,
       })
       items = extractItems(res)
     } else if (tab === 'hr-contract') {
       const res: any = await hrApi.listContracts({
-        q: kw,
         department: rosterDeptFilter.value || undefined,
         contract_status: contractStatusView.value === '全部状态' ? undefined : contractStatusView.value,
       })
@@ -1907,7 +1906,6 @@ async function loadList(tab: HrTab) {
       const v = socialSubView.value
       if (v === 'receipt') {
         items = extractItems(await hrApi.listSocialReceipts({
-          q: kw,
           department: siDeptFilter.value || undefined,
           pension_status: siPensionStatusFilter.value || undefined,
         }))
@@ -1918,7 +1916,7 @@ async function loadList(tab: HrTab) {
           : list
       } else {
         items = extractItems(await hrApi.listSocialRecords({
-          record_type: v, q: kw,
+          record_type: v,
           department: siDeptFilter.value || undefined,
           scheme: siSchemeFilter.value || undefined,
           month: siMonthFilter.value || undefined,
@@ -1936,14 +1934,10 @@ async function loadList(tab: HrTab) {
         const d = res?.data || res || {}
         const months = Array.isArray(d.months) ? d.months : []
         dormChargeMonths.value = months.length ? months : items.map((r: any) => String(r['账单月份'] || ''))
-        if (kw) {
-          items = items.filter((r: any) => String(r['账单月份'] || '').includes(kw))
-        }
         if (!dormMonthFilter.value && d.latest_month) dormMonthFilter.value = String(d.latest_month)
       } else {
         items = extractItems(await hrApi.listDormRecords({
           module: hrDormModuleOf(dormSubView.value),
-          q: kw,
         }))
         if (dormSubView.value === 'stay' && dormStayStatusFilter.value !== '全部状态') {
           items = items.filter((r: any) =>
@@ -1967,6 +1961,16 @@ async function loadList(tab: HrTab) {
       ))
     }
     if (seq !== listRequestSeq) return
+    /**
+     * 第 74 轮：当前页列表「全字段关键字筛选」唯一入口。
+     *
+     * 不再把 q 下推给后端：后端只 LIKE 主列（工号/姓名/部门/岗位），
+     * 「所属公司 / 签约公司 / 司龄 / 状态 / 管理员 / 表号 / 自定义字段」这些
+     * 派生或在 custom_data 里的值时命中不了（真机：搜「重庆星」0 条）。
+     * 人事列表为全量加载（无分页），在内存里按 rowMatchesKeyword 过滤即可，
+     * 且与列表实际展示的字段值 100% 同源。
+     */
+    items = filterRowsByKeyword(items, kw || '')
     // TDesign 的 row-key="id" 是列名，要求每行都有 id 字段。后端三个模块主键都是
     // string id；万一某视图缺 id，用 hrRowKey(row) 补一个，保证 TDesign 的选中键、
     // selectedKeys 与合计行的 hrRowKey 三者口径统一（都等于该行 id）。

@@ -39,15 +39,15 @@ test('工具栏按钮顺序与主按钮样式（字段 → 设置 → 上传账�
   assert.doesNotMatch(src, /historyVisible/, '旧的历史抽屉开关必须移除')
 })
 
-test('搜索为全字段穿透（占位符 + 检索范围）', () => {
+test('搜索为全字段穿透（占位符 + 共享全字段 helper）', () => {
   assert.match(src, /search-placeholder="搜索全部字段"/, '占位符必须是「搜索全部字段」')
-  assert.match(src, /function rowSearchText/, '必须有行级全字段检索文本')
-  for (const key of ['file_name', 'bill_period', 'fee_items', 'tags']) {
-    // 覆盖：文件名 / 账单周期 / 费用明细 / 标签
-    assert.ok(
-      src.includes(key) || src.includes(key.replace('file_name', 'fileName')),
-      `检索范围必须覆盖 ${key}`,
-    )
+  // 第 74 轮：不再本地拼 haystack，统一走 keywordFilter 的递归全字段实现
+  assert.match(src, /filterRowsByKeyword\(all, keyword\.value\)/, '市电账单必须走共享全字段 helper')
+  assert.match(src, /import \{ filterRowsByKeyword \} from '\.\/keywordFilter'/, '必须复用共享 helper')
+  const helper = read('keywordFilter.ts')
+  for (const key of ['fileName', 'bill_period', 'fee_items', 'tags']) {
+    // helper 递归遍历整行对象，天然覆盖文件名 / 账单周期 / 费用明细 / 标签
+    assert.ok(helper.includes('collect(') && helper.includes('Object.entries'), `helper 必须递归覆盖 ${key}`)
   }
 })
 

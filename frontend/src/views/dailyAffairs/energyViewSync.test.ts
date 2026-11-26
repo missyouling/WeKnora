@@ -21,6 +21,9 @@ const meter = read('./UtilityMeterTab.vue')
 const tenant = read('./TenantBilling.vue')
 const solar = read('./SolarManagement.vue')
 const utilities = read('./UtilitiesManagement.vue')
+// 第 74 轮：能耗设置抽屉独立成 EnergySettingDrawer（7 个平级标签）
+const energyDrawer = read('./EnergySettingDrawer.vue')
+const energyTabs = read('./energySettingsTabs.ts')
 const panel = read('./FleetCertPanel.vue')
 const rulePanel = read('./ExtractRulePanel.vue')
 const history = read('./FleetUploadHistoryDrawer.vue')
@@ -174,9 +177,10 @@ test('设置抽屉按分类白名单隐藏「提取规则」Tab', () => {
   assert.match(settingDrawer, /<t-tab-panel v-if="showRulesTab" value="rules"/, '规则 Tab 必须可隐藏')
   assert.match(settingDrawer, /@category-change="onCategoryChange"/, '需要跟随字段定义里选中的分类')
   assert.match(panel, /emit\('category-change'/, 'FleetCertPanel 必须广播当前分类')
-  // 能耗只放行市电/光伏
-  assert.match(utilities, /const ENERGY_RULE_CATEGORIES = \['市电账单', '光伏账单'\]/)
-  assert.match(utilities, /:rule-categories="ENERGY_RULE_CATEGORIES"/)
+  // 第 74 轮：能耗设置抽屉平级化后，提取规则只保留市电/光伏两个分类
+  assert.match(energyTabs, /\{ value: 'rules', label: '提取规则' \}/, '顶层必须有「提取规则」平级标签')
+  assert.match(energyDrawer, /<ExtractRulePanel ref="ruleRef" scope="energy"/, '规则面板必须在抽屉内渲染')
+  assert.match(energyDrawer, /:active-category="billCategory"/, '规则面板必须跟随能耗账单分类')
   assert.match(rulePanel, /ENERGY_EXTRACTABLE_CATEGORIES = \['市电账单', '光伏账单'\]/)
 })
 
@@ -220,10 +224,12 @@ test('光伏 / 核算 / 费用清单 工具栏都有「设置」入口，指向�
   // 页面根部接住 emit，并定位到当前卡片的分类
   assert.match(utilities, /@open-settings="openChildSettings\('/, '页面必须接住子视图的设置请求')
   assert.match(utilities, /settingsCategoryOverride/, '需要按请求的分类定位抽屉')
-  // 专属设置以抽屉 Tab 的形式内嵌，而不是另开弹窗
-  assert.match(utilities, /:extra-tab-label="extraTabLabel"/, '页面必须把专属设置 Tab 交给抽屉')
-  assert.match(settingDrawer, /name="extra-tab"/, '设置抽屉必须支持业务专属 Tab 插槽')
-  assert.match(settingDrawer, /:lazy-load="false"/, '专属 Tab 必须随抽屉一起渲染，否则切 Tab 才挂载会空白')
+  // 第 74 轮：专属设置（工业表计 / 清单设置 / 基本户信息）改为**平级标签**内嵌，
+  // 不再走 StandardSettingDrawer 的 extra-tab 插槽。
+  assert.match(energyDrawer, /<MeterSettingsPanel ref="meterRef"/, '工业表计必须是平级标签内容')
+  assert.match(energyDrawer, /<TenantSettingsPanel ref="tenantRef"/, '清单设置必须内嵌在费用清单标签')
+  assert.match(energyDrawer, /<SolarSettingsPanel ref="solarRef"/, '光伏基本户信息必须内嵌在光伏账单')
+  assert.match(energyDrawer, /ENERGY_SETTINGS_TABS/, '顶层标签必须来自唯一的 energySettingsTabs 定义')
 })
 
 test('分类编辑区块必须渲染在分类表之后（不能在行间展开把后续分类顶出视口）', () => {
