@@ -54,7 +54,14 @@ export interface HrDormField {
 }
 
 const ROOM_TYPES = ['单人间', '双人间', '夫妻房', '四人间', '六人间', '八人间']
-const ROOM_STATUS = ['空闲', '部分入住', '满员', '维修中']
+/**
+ * 第 72 轮：宿舍状态统一四态。
+ *
+ * `维修中` 已废弃（存量由 hrMigrateDormState72 清洗为 `空置`）；
+ * `空置` 是「人为封存、不对外安排入住」的独立语义，由编辑抽屉的开关控制，
+ * 与「空闲（可入住但当前无人）」严格区分。
+ */
+const ROOM_STATUS = ['空闲', '部分入住', '满员', '空置']
 const BEDS = ['1号床', '2号床', '3号床', '4号床', '5号床', '6号床', '7号床', '8号床']
 /**
  * 第 70 轮：原 `METERS` 硬编码表名清单已删除。
@@ -128,11 +135,27 @@ const PUBLIC_STAY_FEE_FIELDS: readonly HrDormField[] = [
   { name: '气费标准(元/m³)', type: 'number', subGroup: '费用项目' },
 ]
 
-/** 住宿记录与房源无关的费用项（读表起始度数 / 分摊比例）。 */
+/**
+ * 住宿记录的费用项（引用房档口径的字段名，全部归「费用项目」组）。
+ *
+ * 名字与「宿舍档案 / 公租房档案」保持一致（长名带单位），保存时落该条记录的
+ * `fee_overrides`，核算优先取记录值、未改回落房档基准。
+ */
+const STAY_FEE_LINK_FIELDS: readonly HrDormField[] = [
+  { name: '电费标准', type: 'number', subGroup: '费用项目' },
+  { name: '水费单价', type: 'number', subGroup: '费用项目' },
+  { name: '气费标准', type: 'number', subGroup: '费用项目' },
+  { name: '房屋租金', type: 'number', subGroup: '费用项目' },
+  { name: '月费用单价', type: 'number', subGroup: '费用项目' },
+  { name: '季度租金', type: 'number', subGroup: '费用项目' },
+  { name: '物业费', type: 'number', subGroup: '费用项目' },
+  { name: '污水处理费', type: 'number', subGroup: '费用项目' },
+  { name: '二次供水费', type: 'number', subGroup: '费用项目' },
+  { name: '垃圾处理费', type: 'number', subGroup: '费用项目' },
+]
+
+/** 住宿记录跨房源通用项：分摊比例。 */
 const STAY_BASE_FIELDS: readonly HrDormField[] = [
-  { name: '入住时水表度数', type: 'number', subGroup: '费用项目' },
-  { name: '入住时电表度数', type: 'number', subGroup: '费用项目' },
-  { name: '入住时气表度数', type: 'number', subGroup: '费用项目' },
   { name: '分摊比例', type: 'number', subGroup: '费用项目' },
 ]
 
@@ -188,9 +211,17 @@ export const HR_DORM_FIELDS: Record<HrDormView, readonly HrDormField[]> = {
     { name: '入住类型', type: 'enum', options: ['新入住', '调宿', '续住'], width: 90 },
     { name: '入住日期', type: 'date', width: 110 },
     { name: '退宿日期', type: 'date', width: 110 },
-    { name: '押金金额(元)', type: 'number', width: 110 },
     { name: '退宿原因', type: 'enum', options: ['离职退宿', '个人外住', '调宿退宿', '工作调动', '其他原因'], width: 110 },
     { name: '住宿状态', type: 'system', options: ['在住', '待入住', '已退宿'], readonly: true, width: 90 },
+    /**
+     * 第 72 轮：所有**费用类**字段统一进「费用项目」分组。
+     *
+     * 旧实现把押金/租金/物业/单价混在「住宿记录」基础信息里，用户改个押金要在
+     * 一堆身份字段里翻。分组只影响抽屉排版，不影响列与保存链路。
+     * 三个「入住时*表度数」字段已彻底删除（六同步：契约/subs/列/筛选/抽屉/模板）。
+     */
+    { name: '押金金额(元)', type: 'number', subGroup: '费用项目', width: 110 },
+    ...STAY_FEE_LINK_FIELDS,
     ...STAY_BASE_FIELDS,
   ],
   asset: [

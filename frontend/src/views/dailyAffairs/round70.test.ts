@@ -99,24 +99,23 @@ test('第70轮：宿舍费用项只含电+水，公租房只含水+气', () => {
   assert.ok(!HR_DORM_FIELDS.stay.some((f) => f.name === '住宿记录ID'))
 })
 
-test('第70轮：住宿记录费用项随房源类型，且全部可编辑', () => {
-  const dormGroups = hrDormDrawerGroups('stay', { roomType: '公司宿舍' })
-  const dormFee = dormGroups.find((g) => g.key === 'fee')?.fields || []
-  assert.deepEqual(dormFee.map((f) => f.name),
-    ['入住时水表度数', '入住时电表度数', '入住时气表度数', '分摊比例',
-      '宿舍押金(元)', '电费标准(元/度)', '水费单价(元/m³)'])
-  assert.ok(dormFee.every((f) => !f.readonly), '住宿记录费用项必须可编辑（独立覆写）')
-
-  const pubGroups = hrDormDrawerGroups('stay', { roomType: '公租房' })
-  const pubFee = pubGroups.find((g) => g.key === 'fee')?.fields || []
-  const pubNames = pubFee.map((f) => f.name)
-  for (const n of ['宿舍押金(元)', '月费用单价(元/月)', '房屋租金(元/月)', '季度租金(元/季)',
-    '物业费(元/月)', '水费单价(元/m³)', '污水处理费(元/m³)', '二次供水费(元/m³)',
-    '垃圾处理费(元/套)', '气费标准(元/m³)']) {
-    assert.ok(pubNames.includes(n), `公租房住宿费缺 ${n}`)
+test('第72轮（第 70 轮已统一口径）：住宿记录费用项全部归「费用项目」且可独立覆写', () => {
+  const groups = hrDormDrawerGroups('stay', { roomType: '公司宿舍' })
+  const fee = groups.find((g) => g.key === 'fee')?.fields || []
+  const names = fee.map((f) => f.name)
+  /**
+   * 第 72 轮：不论宿舍还是公租房，住宿记录都呈现同一份费用项
+   * （短名，与 subs 一致），值落在该条记录的 fee_overrides，绝不反写房源档案。
+   */
+  for (const n of ['押金金额(元)', '电费标准', '水费单价', '气费标准', '房屋租金',
+    '月费用单价', '季度租金', '物业费', '污水处理费', '二次供水费', '垃圾处理费', '分摊比例']) {
+    assert.ok(names.includes(n), `住宿费用项缺 ${n}`)
   }
-  assert.ok(pubFee.every((f) => !f.readonly))
+  assert.ok(fee.every((f) => !f.readonly), '住宿记录费用项必须可编辑（独立覆写）')
+  // 第 72 轮：3 个「入住时*表度数」已彻底删除
+  assert.ok(!names.some((n) => /度数/.test(n)), `度数字段应删除：${names.filter((n) => /度数/.test(n))}`)
 })
+
 
 test('第70轮：12 类标准配套设施齐全', () => {
   assert.equal(HR_DORM_STANDARD_FACILITIES.length, 12)

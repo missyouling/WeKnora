@@ -1,8 +1,9 @@
 // 第 65 轮：入住准入校验（安排入住 / 办理调宿 / 恢复住宿 全链路）。
 //
-// 规则：目标房源状态为「满员」或「维修中」，或可用床位数 <= 0 时一律拒绝。
-// 状态一律实时派生（维修中 = 房源手填宿舍状态，满员 = 床位数 - 在住人数 <= 0），
+// 规则：目标房源状态为「满员」或「空置」，或可用床位数 <= 0 时一律拒绝。
+// 状态一律实时派生（空置 = 房源手填状态 / is_vacant，满员 = 床位数 - 在住人数 <= 0），
 // 绝不读列表上的静态缓存值。
+// 第 72 轮：`维修中` 已废弃（存量清洗为 `空置`），两者都按「不可入住」处理。
 package handler
 
 import (
@@ -25,8 +26,9 @@ func (h *HRHandler) hrDormAdmitCheck(ctx context.Context, tid int64, roomKey, ex
 		return fmt.Errorf("找不到房源「%s」，请先在宿舍档案中补建", roomKey)
 	}
 	manual := strings.TrimSpace(hrDormStr(room.CustomData, "宿舍状态"))
-	if manual == "维修中" {
-		return fmt.Errorf("房源「%s」正在维修中，暂不可安排入住", roomKey)
+	vacant := hrDormBool(room.CustomData, "空置")
+	if vacant || manual == "空置" || manual == "维修中" {
+		return fmt.Errorf("房源「%s」已设为空置，不可安排入住；如需入住请先在宿舍档案中关闭空置", roomKey)
 	}
 	total := hrDormInt(room.CustomData, "床位数")
 	living := h.hrDormRoomStays(ctx, tid, roomKey, true)

@@ -216,8 +216,13 @@ func hrDormRoomStatus(total, used int, manual string) (string, int) {
 	if free < 0 {
 		free = 0
 	}
-	if strings.TrimSpace(manual) == "维修中" {
-		return "维修中", free
+	/**
+	 * 第 72 轮：`空置` 是人为封存 —— 状态恒为「空置」、可用床位恒为 0。
+	 * `维修中` 为历史值（迁移已清洗为「空置」），此处等价处理，避免老数据漏网。
+	 */
+	switch strings.TrimSpace(manual) {
+	case "空置", "维修中":
+		return "空置", 0
 	}
 	switch {
 	case total > 0 && free == 0:
@@ -453,11 +458,56 @@ func (h *HRHandler) hrDormRecordViewCtx(ctx context.Context, tid int64, module s
 	var persons []string
 	if stayIndex != nil {
 		persons = stayIndex[strings.TrimSpace(roomKey)]
+		/**
+		 * 第 72 轮：公租房「房屋编号」是短号（5-2-6）、「房屋地址」是全称
+		 * （两山景苑5-2-6），而住宿记录存的是全称。按 code 查不到时依次回退
+		 * 地址/编号，否则抽屉里「管理员/舍长」与「成员」永远是空的。
+		 */
+		if len(persons) == 0 {
+			alts := []string{
+				hrDormStr(rec.CustomData, "房屋地址"),
+				hrDormStr(rec.CustomData, "宿舍编号"),
+				hrDormStr(rec.CustomData, "房间号"),
+			}
+			/**
+			 * 公租房的「房屋地址」只有小区名（两山景苑），住宿记录里存的是
+			 * 「小区名 + 门牌」（两山景苑5-2-6）—— 拼起来才对得上。
+			 */
+			if addr := strings.TrimSpace(hrDormStr(rec.CustomData, "房屋地址")); addr != "" {
+				for _, noKey := range []string{"房屋编号", "房间号", "宿舍编号"} {
+					if no := strings.TrimSpace(hrDormStr(rec.CustomData, noKey)); no != "" {
+						alts = append(alts, addr+no)
+					}
+				}
+			}
+			for _, alt := range alts {
+				alt = strings.TrimSpace(alt)
+				if alt == "" {
+					continue
+				}
+				if p := stayIndex[alt]; len(p) > 0 {
+					persons = p
+					break
+				}
+			}
+		}
 	} else {
 		persons = h.hrDormStayPersons(ctx, tid, roomKey)
 	}
 	out["在住人员"] = persons
 	out["在住人数"] = len(persons)
+	/**
+	 * 第 72 轮：状态与可用床位一律以**真实在住人数**重算。
+	 *
+	 * `occ` 只按住宿记录里的房源码聚合；公租房房源主键是短号（5-2-6）、
+	 * 住宿记录存全称（两山景苑5-2-6），靠 occ 取不到 → 明明住着人却显示「空闲」。
+	 * persons 已经按多种键回退匹配过，用它重算才是真相。
+	 */
+	total := hrDormInt(rec.CustomData, "床位数")
+	vacantStatus, free := hrDormRoomStatus(total, len(persons), hrDormStr(rec.CustomData, "宿舍状态"))
+	out["可用床位数"] = free
+	out["宿舍状态"] = vacantStatus
+	out["status"] = vacantStatus
 
 	manager := strings.TrimSpace(hrDormStr(rec.CustomData, "管理员/舍长"))
 	cleared := strings.TrimSpace(hrDormStr(rec.CustomData, "舍长手动清空")) == "1"
@@ -586,9 +636,33 @@ func (h *HRHandler) CreateDormRecord(c *gin.Context) {
 		hrFail(c, msg)
 		return
 	}
-	// 第 65 轮：安排入住（新增住宿记录）必须先过准入校验 —— 满员 / 维修中 一律拒绝
+	// 第 65 轮：安排入住（新增住宿记录）必须先过准入校验 —— 满员 / 空置 一律拒绝
 	if req.Module == hrDormModuleStay {
 		if err := h.hrDormAdmitCheck(ctx, tid, hrDormStr(req.Data, "宿舍编号/房屋地址"), ""); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+		// 第 72 轮：同一房源同一床位号不得被两条在住记录占用
+		if err := h.hrDormValidateBedNo72(ctx, tid, "",
+			hrDormStr(req.Data, "宿舍编号/房屋地址"), hrDormStr(req.Data, "床位号")); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+	}
+	// 第 72 轮：资产字典名称唯一（共用物品不允许重复建档）
+	if req.Module == hrDormModuleAsset {
+		if err := h.hrDormValidateAssetName72(ctx, tid, "", req.Data); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+	}
+	// 第 72 轮：房档保存 —— 表计全局查重 + 空置误切拦截 + 防缩容
+	if req.Module == hrDormModuleRoom || req.Module == hrDormModulePublic {
+		if err := h.hrDormValidateMeters72(ctx, tid, req.Module, "", req.Data); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+		if err := h.hrDormValidateRoomMeta72(ctx, tid, "", req.Module, req.Data, req.Data); err != nil {
 			hrFail(c, err.Error())
 			return
 		}
@@ -645,6 +719,31 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 				hrFail(c, err.Error())
 				return
 			}
+		}
+		// 第 72 轮：床位号唯一（排除自身），退宿记录不占用床位
+		if status != "已退宿" {
+			if err := h.hrDormValidateBedNo72(ctx, tid, row.ID, newRoom, hrDormStr(merged, "床位号")); err != nil {
+				hrFail(c, err.Error())
+				return
+			}
+		}
+	}
+	// 第 72 轮：资产字典名称唯一（编辑排除自身）
+	if row.Module == hrDormModuleAsset {
+		if err := h.hrDormValidateAssetName72(ctx, tid, row.ID, merged); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+	}
+	// 第 72 轮：房档保存 —— 表计全局查重 + 空置误切拦截 + 防缩容
+	if row.Module == hrDormModuleRoom || row.Module == hrDormModulePublic {
+		if err := h.hrDormValidateMeters72(ctx, tid, row.Module, row.ID, merged); err != nil {
+			hrFail(c, err.Error())
+			return
+		}
+		if err := h.hrDormValidateRoomMeta72(ctx, tid, row.ID, row.Module, merged, req.Data); err != nil {
+			hrFail(c, err.Error())
+			return
 		}
 	}
 	/**

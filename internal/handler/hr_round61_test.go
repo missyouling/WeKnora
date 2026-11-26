@@ -261,10 +261,16 @@ func TestRound61DormRecordDerived(t *testing.T) {
 	require.Equal(t, 0, view["可用床位数"])
 	require.Equal(t, "满员", view["宿舍状态"])
 
-	// 维修中优先于满员
+	// 空置优先于满员（第 72 轮：维修中已废弃，存量清洗为空置）
+	rec.CustomData["宿舍状态"] = "空置"
+	view = h.hrDormRecordView(hrDormModuleRoom, rec, h.hrDormOccupancy(ctx, 1))
+	require.Equal(t, "空置", view["宿舍状态"])
+	require.Equal(t, 0, view["可用床位数"], "空置房源可用床位恒为 0")
+
+	// 历史数据里的「维修中」按空置处理（不因老值漏网）
 	rec.CustomData["宿舍状态"] = "维修中"
 	view = h.hrDormRecordView(hrDormModuleRoom, rec, h.hrDormOccupancy(ctx, 1))
-	require.Equal(t, "维修中", view["宿舍状态"])
+	require.Equal(t, "空置", view["宿舍状态"])
 
 	// 出参必须是可直接 JSON 序列化的扁平结构（前端按中文列名取值）
 	_, err := json.Marshal(view)

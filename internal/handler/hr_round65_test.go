@@ -74,11 +74,17 @@ func TestRound65DormAdmitCheck(t *testing.T) {
 	// 排除自身后允许（调宿到同一间）
 	require.NoError(t, h.hrDormAdmitCheck(ctx, 1, "宿舍401", "s1"))
 
-	// 维修中
-	mkRoom("r2", "宿舍402", 4, "维修中")
+	// 空置（第 72 轮：维修中已废弃，等价按空置拦截）
+	mkRoom("r2", "宿舍402", 4, "空置")
 	err = h.hrDormAdmitCheck(ctx, 1, "宿舍402", "")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "维修中")
+	require.Contains(t, err.Error(), "空置")
+
+	// 历史数据里的「维修中」同样拒绝入住
+	mkRoom("r2b", "宿舍404", 4, "维修中")
+	err = h.hrDormAdmitCheck(ctx, 1, "宿舍404", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "空置")
 
 	// 空闲可住
 	mkRoom("r3", "宿舍403", 2, "")

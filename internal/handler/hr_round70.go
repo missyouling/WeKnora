@@ -571,7 +571,15 @@ func (h *HRHandler) hrRepair70(ctx context.Context) {
 		}
 		aligned := h.hrAlignCompanyNames70(ctx, tid)
 		rooms := h.hrSeedDorm401To420_70(ctx, tid)
-		assets := h.hrSeedDormAssets70(ctx, tid)
+		/**
+		 * 第 72 轮：**不再按房间展开生成资产**。
+		 *
+		 * 资产档案已重新定位为「宿舍/公租房共用物品字典」（一物一条，~15 条）。
+		 * 旧的 hrSeedDormAssets70 会按 40 间房各生成 12 条（477 条），
+		 * 与 hrConsolidateAssetDict72 形成「每次启动互相覆盖」的死循环。
+		 * 函数本体保留（测试与人工兜底用），启动链路不再调用。
+		 */
+		assets := 0
 		dormMeters, publicMeters, missed := h.hrMigrateDormMeters70(ctx, tid)
 		if aligned > 0 || rooms > 0 || assets > 0 || dormMeters > 0 || publicMeters > 0 {
 			logger.Infof(ctx,

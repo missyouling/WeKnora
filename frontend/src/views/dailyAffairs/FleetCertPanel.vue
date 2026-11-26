@@ -1079,7 +1079,28 @@ function startAdd() {
 // 列表末尾「新增」行文案：registry 声明了 addLabel 的 scope（发票=「新增分类」）优先
 const addLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)
 const addRowLabel = computed(() => getScope(props.scope)?.addLabel || `新增${group.value.label}`)
-defineExpose({ startAdd, addLabel })
+/**
+ * 第 72 轮：给设置抽屉底部的「保存 / 取消」用。
+ *
+ * 字段列表的改动是「逐条落库」的（每行改名/开关/排序都会 commit），
+ * 但**行内新增/编辑表单**是草稿态：不点这行的保存就离开，草稿会丢。
+ * 抽屉底部按钮因此必须先把草稿提交（保存）或明确丢弃（取消），
+ * 而不是直接关抽屉留下「改了没生效」的错觉。
+ */
+async function commitPendingEdit(): Promise<void> {
+  if (addVisible.value) {
+    await commitAdd()
+    return
+  }
+  if (editingId.value) {
+    await commitEdit()
+  }
+}
+function discardPendingEdit(): void {
+  addVisible.value = false
+  editingId.value = ''
+}
+defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit })
 async function commitAdd() {
   const name = addForm.name.trim()
   if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }

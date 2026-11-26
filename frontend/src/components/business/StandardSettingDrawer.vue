@@ -5,8 +5,11 @@
     width="min(760px, 95vw)"
     :storage-key="storageKey"
     destroy-on-close
-    hide-footer
+    cancel-text="取消"
+    confirm-text="保存"
     class="standard-settings-drawer"
+    @cancel="onFooterCancel"
+    @confirm="onFooterConfirm"
   >
     <!-- 第 54 轮：单分类直出。只有一个分类时不再套 Tab 骨架 ——
          打开设置要直接看到「字段名 | 数据类型 | 列宽 | 默认表头 | 启用 | 操作」，
@@ -14,7 +17,7 @@
          第 57 轮：singleCategory 走同一容器，但用常规（能耗同款）样式，
          只隐藏分类表 / 新增分组，不再叠加 direct 的白底紧凑覆盖。 -->
     <div v-if="direct || singleCategory" :class="direct ? 'standard-settings-direct' : 'standard-settings-single'">
-      <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+      <FleetCertPanel ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
       :initial-group="initialGroup"
         :direct="direct" :single-category="singleCategory"
         :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
@@ -23,7 +26,7 @@
     </div>
     <t-tabs v-else v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" :label="fieldsTabLabel">
-        <FleetCertPanel :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
+        <FleetCertPanel ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
       :initial-group="initialGroup"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
           :ref-sources="refSources"
@@ -195,6 +198,33 @@ function goRules(payload?: { certType: string; sampleText?: string; autoSuggest?
   nextTick(() => extractRef.value?.focusCertType?.(payload))
 }
 defineExpose({ goRules })
+
+/** 第 72 轮：设置抽屉底部的「保存 / 取消」都是**关闭抽屉**，区别只在草稿处置。 */
+const panelRef = ref<any>(null)
+
+/**
+ * 保存：先提交行内草稿（新增字段 / 正在编辑的字段），成功后再关抽屉。
+ *
+ * 旧实现把 footer 整个隐藏（`hide-footer`），用户只能在行内点小号「保存」；
+ * 一旦有人点了**行内的「取消」**，视觉上什么都没变（抽屉还在、草稿清掉），
+ * 很容易被当成「点了取消但留了个空壳」。现在抽屉有明确的底部操作栏，
+ * 语义与「字段定义」Tab 一致。
+ */
+async function onFooterConfirm() {
+  try {
+    await panelRef.value?.commitPendingEdit?.()
+  } catch {
+    // 提交失败由面板自己提示（校验错误），抽屉保持打开让用户修正
+    return
+  }
+  emit('update:visible', false)
+}
+
+/** 取消：丢弃行内草稿并关闭抽屉（不改任何已落库的配置）。 */
+function onFooterCancel() {
+  panelRef.value?.discardPendingEdit?.()
+  emit('update:visible', false)
+}
 
 // FleetCertPanel 保存分类/字段后派发全局事件：刷新列表列定义与提取规则面板
 function onCategoriesChanged() {

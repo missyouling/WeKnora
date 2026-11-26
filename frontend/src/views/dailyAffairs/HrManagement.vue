@@ -478,6 +478,18 @@
           placeholder="无固定期限时无需填写" data-hr-contract-end />
       </template>
       <!-- 第 62 轮：宿舍管理抽屉的联动控件（房型→床位、配套多选、员工/房源带出费用项） -->
+      <!-- 第 72 轮：宿舍状态文字后方紧跟「空置」开关（同行紧凑），
+           空置期间状态恒为灰色「空置」、可用床位 0，且不可安排入住。 -->
+      <template #field-宿舍状态>
+        <div class="dorm-state-inline" data-hr-dorm-state-inline>
+          <span class="bsd-status-text" :class="statusTextClassOf('宿舍状态', editForm.data['宿舍状态'])">
+            {{ editForm.data['宿舍状态'] || '' }}
+          </span>
+          <t-switch :value="dormVacantFlag" size="small" data-hr-dorm-vacant
+            @change="onDormVacantChange" />
+          <span class="dorm-vacant-text">空置</span>
+        </div>
+      </template>
       <template #field-房型>
         <t-select v-model="editForm.data['房型']" :options="ROOM_TYPE_OPTIONS" placeholder="选择房型"
           clearable data-hr-dorm-room-type @change="onDormRoomTypeChange" />
@@ -496,7 +508,8 @@
           placeholder="搜索选择员工" data-hr-dorm-employee @change="onStayEmployeeChange" />
       </template>
       <template #field-床位号>
-        <t-select v-model="editForm.data['床位号']" :options="DORM_BED_OPTIONS" placeholder="选择床位"
+        <!-- 第 72 轮：床位池按房源房型动态生成，并排除已被其他在住记录占用的床位 -->
+        <t-select v-model="editForm.data['床位号']" :options="dormBedOptions" placeholder="选择床位"
           data-hr-dorm-bed />
       </template>
       <!-- 第 57 轮：离职证明附件控制条。
@@ -818,7 +831,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import DashboardKpiGroup from '@/components/business/DashboardKpiGroup.vue'
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
@@ -828,7 +841,7 @@ import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FilePreviewDialog from '@/components/business/FilePreviewDialog.vue'
 import DetailScrollTable from '@/components/business/DetailScrollTable.vue'
-import { statusTagThemeOf } from './hrStatusStyle'
+import { statusTagThemeOf, statusTextClassOf } from './hrStatusStyle'
 import {
   HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, hrDormColumns, hrDormModuleOf,
   hrDormStatusTextClass, hrDormRoomTypeTheme,
@@ -1249,7 +1262,6 @@ const DORM_ROOM_TYPE_OPTIONS = [
   { label: '公司宿舍', value: '公司宿舍' },
   { label: '公租房', value: '公租房' },
 ]
-const DORM_BED_OPTIONS = ['1号床', '2号床', '3号床', '4号床', '5号床', '6号床', '7号床', '8号床']
   .map((v) => ({ label: v, value: v }))
 const dormColumns = computed(() => hrDormColumns(dormSubView.value, subsOfTab('hr-dorm')))
 
@@ -1271,12 +1283,13 @@ const dormBillFundRows = ref<any[]>([])
 // 第 64 轮：费用信息主列表已按月汇总，部门/房源类型筛选下移到明细弹窗，这里只保留状态复位
 const dormDeptFilter = ref('')
 const dormRoomTypeFilterFee = ref('')
+// 第 72 轮：四态体系（维修中已废弃，存量清洗为空置）
 const DORM_STATUS_FILTER_OPTIONS = [
   { label: '全部状态', value: '' },
   { label: '空闲', value: '空闲' },
   { label: '部分入住', value: '部分入住' },
   { label: '满员', value: '满员' },
-  { label: '维修中', value: '维修中' },
+  { label: '空置', value: '空置' },
 ]
 const ASSET_STATUS_FILTER_OPTIONS = [
   { label: '全部状态', value: '' },
@@ -2430,7 +2443,14 @@ const drawerGroups = computed(() => {
     const dynOptions: Record<string, string[]> = {
       '所属公司': dormCompanyNames.value,
       '租赁单位': dormCompanyNames.value,
-      '所属部门': dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value),
+      /**
+       * 住宿记录的「所属部门」取**全量部门**：这条记录描述的是员工，员工归属部门
+       * 与房源所属公司不是一回事（真机：宿舍301 住着生产部的吴勇建）。
+       * 房源（宿舍/公租房）仍按所选公司的下属部门级联。
+       */
+      '所属部门': (dormSubView.value === 'stay'
+        ? [...rosterDeptOptions.value]
+        : dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value)),
       // 第 70 轮：舍长只能从**本房源在住人员**里选（空则下拉禁用）
       '管理员/舍长': dormRoomOccupants.value,
       '员工姓名': dormEmployeeNameOptions.value.map((o) => o.value),
@@ -2472,6 +2492,16 @@ const drawerGroups = computed(() => {
       const options = dynOptions[name] || def?.options || []
       const isOccupantSelect = name === '管理员/舍长'
       const isMeterSelect = /表$/.test(name) && name.includes('关联')
+      /**
+       * 第 72 轮：`所属部门` 永远是下拉。
+       *
+       * 公租房的公司字段叫「租赁单位」（不是「所属公司」），旧实现只认后者 →
+       * `dormCurrentCompany` 为空 → 部门候选 0 条 → 抽屉退化成白底输入框
+       * （真机 4.4：明明是枚举却要手打部门名）。现在公司识别已兼容租赁单位，
+       * 并且这里强制 selectLike：候选暂时为空时显示禁用的「请选择部门」，
+       * 而不是让用户自由输入一个不存在的部门。
+       */
+      const isOrgSelect = name === '所属部门' 
       const field = {
         name,
         label: String(sub?.label || '').trim() || name,
@@ -2481,6 +2511,7 @@ const drawerGroups = computed(() => {
         // 第 70 轮：候选可能为空的下拉型字段，空态也必须是禁用下拉（不能退化成输入框）
         ...(isOccupantSelect ? { selectLike: true, emptyPlaceholder: '暂无在住人员' } : {}),
         ...(isMeterSelect ? { selectLike: true, emptyPlaceholder: '暂无可用表计' } : {}),
+        ...(isOrgSelect ? { selectLike: true, emptyPlaceholder: '请选择部门' } : {}),
       }
       // 归属分组：契约里标了 subGroup='费用项目' 的进第二组，其余进第一组
       const target = def?.subGroup === '费用项目' ? sections[1] : sections[0]
@@ -2808,7 +2839,9 @@ async function openDetail(row: any) {
     const subs = subsOfTab('hr-dorm').filter((x: any) => x && x.enabled !== false)
     for (const sub of subs) {
       const nm = String(sub?.label || sub?.name || '').trim()
-      if (!nm || data[nm] !== undefined) continue
+      // 第 72 轮：列取值函数可能返回空串（如住宿记录的「所属部门」列取 row.department），
+      // 旧实现把空串当成「已赋值」直接跳过，抽屉里就永远显示空白。
+      if (!nm || (data[nm] !== undefined && String(data[nm]).trim() !== '')) continue
       const raw = row?.[nm] ?? row?.custom_data?.[nm]
       if (raw === undefined || raw === null) continue
       data[nm] = Array.isArray(raw) ? raw.join('、') : String(raw)
@@ -2828,8 +2861,35 @@ async function openDetail(row: any) {
       data['资产状态'] = data['资产状态'] || '正常'
     }
   }
+  /**
+   * 第 72 轮：宿舍/公租房抽屉打开时做两件事：
+   *   1. 拉一份住宿记录缓存（床位池要排除已占床位）；
+   *   2. 按真实在住人数校准「可用床位 / 宿舍状态」，避免展示上一轮遗留的脏值。
+   */
+  if (activeTab.value === 'hr-dorm' && (dormSubView.value === 'dorm' || dormSubView.value === 'public')) {
+    await ensureDormStayCache().catch(() => null)
+  }
+  /**
+   * 第 72 轮：住宿记录的「所属部门」兜底回显。
+   *
+   * 这一列在列表里取的是 `row.department`（花名册字段），而住宿记录的
+   * custom_data 用的是「所属部门」—— 列取值函数返回空串时抽屉就显示空白，
+   * 用户看到的是一个空输入框（真机 A5.2）。这里按员工姓名回查花名册补上。
+   */
+  if (activeTab.value === 'hr-dorm' && dormSubView.value === 'stay' && row) {
+    if (!String(data['所属部门'] || '').trim()) {
+      const nm = String(data['员工姓名'] || '').trim()
+      const emp = dormEmployeeList.value.find((e: any) => String(e?.name || e?.['姓名'] || '').trim() === nm)
+      const dept = String(emp?.department || emp?.['部门'] || emp?.['所属部门'] || '').trim()
+      if (dept) data['所属部门'] = dept
+    }
+  }
   if (activeTab.value === 'hr-dorm') normalizeDormNumberFields(data)
   editForm.value = { data, remarkParts: {}, items: [] }
+  if (activeTab.value === 'hr-dorm' && (dormSubView.value === 'dorm' || dormSubView.value === 'public')) {
+    // 在住人数来自列表行（detailRow），赋值后立即校准派生字段
+    recalcDormCapacity()
+  }
   // 新会话：清掉上一轮的系统建议值，否则「用户手改过」判定会把新员工的
   // 空工号当成手改值，选部门后不再自动生成。
   lastAutoEmployeeId = ''
@@ -2980,16 +3040,32 @@ async function saveDetail() {
     }
     // 第 65 轮：「资产状态」已改为可编辑下拉，必须随表单提交（此前在只读黑名单里，
     // 用户改了下拉也存不进去）。其余派生/只读列仍然剔除。
+    // 第 72 轮：`宿舍状态` 不再剔除 —— 关闭「空置」时要把它回传成重算后的四态，
+    // 否则后端只能沿用库里的 "空置"，开关永远关不掉。
     for (const k of ['可用床位数', '月费用单价(元/月)', '季度租金(元/季)', '在住人数',
-      '宿舍状态', '住宿状态', '账单状态', '入住天数', '扣款合计(元)', '补贴合计(元)']) {
+      '住宿状态', '账单状态', '入住天数', '扣款合计(元)', '补贴合计(元)']) {
       delete d[k]
     }
     // 第 65 轮：月份字段与金额字段提交前再收敛一次（前端拦截之外的兜底）
     const msg = validateDormDraft65(d)
     if (msg) { MessagePlugin.error(msg); return }
-    // 住宿记录新增：安置未填的 ID / 默认值
+    /**
+     * 第 72 轮：防缩容 —— 床位数不得小于当前在住人数。
+     *
+     * 前端先拦是为了即时反馈（用户改房型就能看到提示），后端
+     * `hrDormValidateCapacity72` 会再做一次同样的校验并返回 400。
+     * `住宿记录ID` 已从字段契约彻底删除，这里不再自动生成。
+     */
+    if (dormSubView.value === 'dorm' || dormSubView.value === 'public') {
+      const beds = Number(d['床位数']) || 0
+      const used = dormActiveStayCount.value
+      if (beds > 0 && used > beds) {
+        MessagePlugin.error(`该房源当前在住 ${used} 人，床位不能缩容为 ${beds} 个；请先办理退宿`)
+        return
+      }
+    }
+    // 住宿记录新增：补默认值
     if (dormSubView.value === 'stay') {
-      if (!String(d['住宿记录ID'] || '').trim()) d['住宿记录ID'] = 'STAY' + Date.now().toString().slice(-6)
       if (!String(d['住宿状态'] || '').trim()) d['住宿状态'] = '在住'
       if (!String(d['入住日期'] || '').trim()) d['入住日期'] = new Date().toISOString().slice(0, 10)
     }
@@ -4677,7 +4753,16 @@ const dormMeters = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ elect
 const dormMeterKinds = ref<{ electricity: any[]; water: any[]; gas: any[] }>({ electricity: [], water: [], gas: [] })
 const dormCurrentCompany = computed(() => {
   const d = editForm.value?.data || {}
-  return normalizeCompanyName(d['所属公司'] || d['所属公司/部门'] || '', dormCompanyNames.value)
+  /**
+   * 第 72 轮：公租房档案的公司字段叫 **`租赁单位`**（不是 `所属公司`）。
+   *
+   * 旧实现只认「所属公司」，于是公租房抽屉的 `dormCurrentCompany` 为空 →
+   * 「所属部门」拿不到候选、退化成白底输入框（真机 4.4 的根因）。
+   */
+  return normalizeCompanyName(
+    d['所属公司'] || d['租赁单位'] || d['所属公司/部门'] || '',
+    dormCompanyNames.value,
+  )
 })
 /** 第 64 轮：表计过滤的自检串（真机断言与排障共用，不进 UI）。 */
 const dormMeterDebugText = computed(() => {
@@ -4707,10 +4792,102 @@ function dormMeterOptionsOf(category: 'electricity' | 'water' | 'gas') {
   // 公租房无专属用途时回退宿舍用途（公租房与宿舍共用同一批水电表）
   return pick('dorm')
 }
+/**
+ * 第 72 轮：员工下拉只显示姓名。
+ *
+ * 旧实现是 `姓名（C020500005）`，选中后住宿记录里就会看到带工号的姓名，
+ * 与列表/打印口径不一致。同名人员极少，必要时用「所属部门」列区分。
+ */
 const dormEmployeeOptions = computed(() => dormEmployeeList.value.map((e) => ({
-  label: `${e.name || e['姓名']}（${e.employee_id || e['工号'] || ''}）`,
-  value: e.name || e['姓名'],
+  label: String(e.name || e['姓名'] || '').trim(),
+  value: String(e.name || e['姓名'] || '').trim(),
 })))
+/**
+ * 第 72 轮：当前房源的**在住人数**（打开抽屉时由后端派生的「在住人数 / 在住人员」）。
+ * 房型切换、空置开关、可用床位重算全部以它为准。
+ */
+const dormActiveStayCount = computed(() => {
+  const row: any = detailRow.value || {}
+  if (typeof row['在住人数'] === 'number') return row['在住人数']
+  const arr = row['在住人员']
+  return Array.isArray(arr) ? arr.length : 0
+})
+
+/** 住宿记录缓存（床位池要排除「已被别人占用的床位」，打开抽屉时按需拉一次）。 */
+const dormStayCache = ref<any[]>([])
+let dormStayCacheAt = 0
+async function ensureDormStayCache() {
+  if (Date.now() - dormStayCacheAt < 20000 && dormStayCache.value.length) return
+  try {
+    const res: any = await hrApi.listDormRecords({ module: 'stay' })
+    dormStayCache.value = extractItems(res)
+    dormStayCacheAt = Date.now()
+  } catch { /* 缓存失败不阻断抽屉打开 */ }
+}
+
+/**
+ * 第 72 轮：切换「租赁单位 / 所属公司」时，把不再匹配的 `所属部门` 清空。
+ *
+ * 部门是单位的从属枚举（星达 8 个部门、持睿 0 个）。旧实现换了公司仍保留
+ * 原部门字符串，保存后就是一条「持睿的人挂在星达的部门下」的脏数据。
+ */
+watch(
+  () => [String(editForm.value?.data?.['所属公司'] || ''), String(editForm.value?.data?.['租赁单位'] || '')].join('|'),
+  (now, prev) => {
+    /**
+     * 只对「宿舍 / 公租房档案」生效。
+     *
+     * 住宿记录没有「所属公司 / 租赁单位」（公司信息挂在房源上），
+     * 这段 watch 在住宿抽屉里会把 employee 的部门当成「不匹配」直接清空
+     * （真机 A5.2：所属部门回显空白）。
+     */
+    if (dormSubView.value !== 'dorm' && dormSubView.value !== 'public') return
+    if (!prev || now === prev) return
+    const d = editForm.value?.data
+    if (!d) return
+    const dept = String(d['所属部门'] || '').trim()
+    if (!dept) return
+    const allowed = dormDeptOptionsOf(dormCurrentCompany.value).map((o) => o.value)
+    if (!allowed.includes(dept)) d['所属部门'] = ''
+  },
+)
+
+/**
+ * 第 72 轮：床位号按**房型床位数**动态生成，并排除其他在住记录已占用的床位。
+ *
+ * 旧实现是静态 8 个选项：单人间也能选到「8号床」，还能两个人都选「1号床」。
+ * 编辑已有记录时保留它当前床位（否则自己会把自己排除掉）。
+ */
+const dormBedOptions = computed(() => {
+  const d = editForm.value?.data || {}
+  const typeBeds = hrDormBedsOfType(String(d['房型'] || ''))
+  const beds = typeBeds > 0 ? typeBeds : (Number(d['床位数']) || 1)
+  const total = Math.max(1, Math.min(8, beds))
+  const all = Array.from({ length: total }, (_, i) => `${i + 1}号床`)
+  const room = String(d['宿舍编号/房屋地址'] || '').trim()
+  const selfId = String((detailRow.value as any)?.id || '')
+  const cur = String(d['床位号'] || '').trim()
+  const used = new Set(
+    (dormStayCache.value || [])
+      .filter((s: any) => String(s['宿舍编号/房屋地址'] || '').trim() === room)
+      .filter((s: any) => String(s['住宿状态'] || '') !== '已退宿')
+      .filter((s: any) => String(s.id || '') !== selfId)
+      .map((s: any) => String(s['床位号'] || '').trim())
+      .filter(Boolean),
+  )
+  return all.filter((b) => !used.has(b) || b === cur).map((b) => ({ label: b, value: b }))
+})
+
+/** 空置开关（抽屉内，紧跟「宿舍状态」文字）。 */
+const dormVacantFlag = computed({
+  get: () => {
+    const d = editForm.value?.data || {}
+    return d['空置'] === true || d['空置'] === 'true' || d['空置'] === '1'
+      || String(d['宿舍状态'] || '').trim() === '空置'
+  },
+  set: () => { /* 只经 onDormVacantChange 写入 */ },
+})
+
 /** 第 65 轮：调宿目标房源同样只能选可住状态的房源。 */
 const dormRoomSelectOptions = computed(() => dormRoomList.value
   .filter(dormRoomAdmittable)
@@ -4734,9 +4911,16 @@ const dormTransferBedOptions = computed(() => {
  * 排除三类：宿舍状态为「满员」「维修中」，或可用床位数 <= 0。
  * 后端 `hrDormAdmitCheck` 同口径兜底，前端过滤只为让用户选不到脏选项。
  */
+/**
+ * 第 72 轮：可安排入住的房源判定。
+ *
+ * 空置（人为封存）与历史「维修中」一律不可入住；满员同样拒绝。
+ * 可用床位为 0 也不可 —— 三者任一命中即过滤。
+ */
 function dormRoomAdmittable(r: any): boolean {
   const status = String(r?.['宿舍状态'] || '').trim()
-  if (status === '满员' || status === '维修中') return false
+  if (status === '满员' || status === '空置' || status === '维修中') return false
+  if (r?.['空置'] === true || r?.['空置'] === 'true') return false
   return Number(r?.['可用床位数'] ?? 1) > 0
 }
 
@@ -4813,8 +4997,16 @@ async function loadDormHelpers() {
       gas: [...builtin.gas, ...arrOf(kGas)],
     }
     dormRoomList.value = [...extractItems(d), ...extractItems(p)]
+    /**
+     * 第 72 轮：配套设施直接读「资产档案」这份共用字典。
+     *
+     * 只取状态为「正常」的物品 —— 报废/损坏的设施不该再出现在新配置的下拉里
+     * （已有记录里的历史值仍会并入，见 dormFacilitySelectOptions）。
+     */
     const names = new Set<string>()
     for (const it of extractItems(a)) {
+      const st = String(it['资产状态'] || '').trim()
+      if (st && st !== '正常') continue
       String(it['资产名称'] || '').split(',').forEach((n: string) => { const v = n.trim(); if (v) names.add(v) })
     }
     dormFacilityOptions.value = [...names]
@@ -4823,10 +5015,56 @@ async function loadDormHelpers() {
 }
 
 /** 房型变化 → 床位数自动设置（只读整数）。 */
+/**
+ * 第 72 轮：房型变更 → 床位数 / 可用床位 / 宿舍状态 **实时联动**。
+ *
+ * 旧实现只改床位数，于是「单人间」还能显示 `可用床位=2`（沿用旧值）。
+ * 可用床位 = max(0, 床位数 − 真实在住人数)；状态按同一口径派生。
+ */
 function onDormRoomTypeChange(v: any) {
   const type = String(v ?? '')
-  editForm.value.data['床位数'] = String(hrDormBedsOfType(type))
-  if (type === '夫妻房') editForm.value.data['性别限制'] = '不限'
+  const d = editForm.value.data
+  const beds = hrDormBedsOfType(type)
+  if (beds > 0) d['床位数'] = String(beds)
+  if (type === '夫妻房') d['性别限制'] = '不限'
+  recalcDormCapacity()
+}
+
+/** 按「当前床位数 − 在住人数」重算可用床位与状态（空置优先）。 */
+function recalcDormCapacity() {
+  const d = editForm.value?.data
+  if (!d) return
+  const beds = Number(d['床位数']) || 0
+  const used = dormActiveStayCount.value
+  const vacant = d['空置'] === true || d['空置'] === 'true' || d['空置'] === '1'
+  if (vacant) {
+    d['可用床位数'] = '0'
+    d['宿舍状态'] = '空置'
+    return
+  }
+  const free = Math.max(0, beds - used)
+  d['可用床位数'] = String(free)
+  if (beds > 0 && free === 0) d['宿舍状态'] = '满员'
+  else if (used > 0) d['宿舍状态'] = '部分入住'
+  else d['宿舍状态'] = '空闲'
+}
+
+/**
+ * 第 72 轮：空置开关。
+ *
+ * 有在住人员时开启 → 直接拒绝并回滚（后端同样校验）；关闭则恢复按在住人数派生的状态。
+ */
+function onDormVacantChange(v: any) {
+  const on = !!v
+  const d = editForm.value.data
+  if (on && dormActiveStayCount.value > 0) {
+    MessagePlugin.warning('该房源当前仍有在住人员，请先办理退宿后再设为空置')
+    d['空置'] = false
+    nextTick(() => recalcDormCapacity())
+    return
+  }
+  d['空置'] = on
+  recalcDormCapacity()
 }
 
 /** 选员工 → 带出工号 / 部门 / 电话 / 紧急联系人（只读）。 */
@@ -5143,6 +5381,26 @@ onUnmounted(() => {
 </style>
 
 <style>
+/* 第 72 轮：宿舍状态文字 + 空置开关同行紧凑展示（抽屉内插槽） */
+.dorm-state-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+.dorm-state-inline .bsd-status-text {
+  font-size: 13px;
+  font-weight: 500;
+}
+.dorm-state-inline .bsd-status-text.is-ok { color: var(--td-success-color, #00a870); }
+.dorm-state-inline .bsd-status-text.is-warn { color: var(--td-warning-color, #e37318); }
+.dorm-state-inline .bsd-status-text.is-danger { color: var(--td-error-color, #d54941); }
+.dorm-state-inline .bsd-status-text.is-off,
+.dorm-state-inline .bsd-status-text.is-muted { color: var(--td-text-color-placeholder, #8c8c8c); }
+.dorm-vacant-text {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
 /* 共享列表样式必须在**非 scoped** 块再引入一次：TDesign 内部的
    .t-table__content / .t-table__body / tfoot 等元素拿不到当前组件的 data-v，
    scoped 版本的选择器命中不到它们（发票 / 车队页同款做法）。 */

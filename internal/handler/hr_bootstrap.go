@@ -147,6 +147,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 71 轮：持睿 11 间宿舍「表房合一」—— 房档表计对齐回原能耗真实表号（E021–E031/W021–W031）。
 	// 幂等、只改宿舍档案 custom_data，不触碰任何历史抄表与核算明细。
 	h.hrRepair71(ctx)
+	// 第 72 轮：宿舍状态四态化（维修中→空置）、删住宿度数字段、资产档案收敛为共用字典、
+	// 存量重复床位号幂等重排。全部只动配置与指定脏数据。
+	h.hrRepair72(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

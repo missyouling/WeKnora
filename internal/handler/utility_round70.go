@@ -85,6 +85,17 @@ func (h *UtilityHandler) appendPropertyMeters70(
 
 	for i := range rooms {
 		room := &rooms[i]
+		/**
+		 * 第 72 轮：空置房源的表计**不再进入新增/录入下拉**。
+		 *
+		 * 注意这是「可用表计源」的过滤，不是删数据：历史抄表与费用清单仍按
+		 * meter_no 原样挂账（红线条），只是不允许再拿空置房去开新账单。
+		 */
+		if hrDormBool(room.CustomData, "空置") ||
+			strings.TrimSpace(hrDormStr(room.CustomData, "宿舍状态")) == "空置" ||
+			strings.TrimSpace(hrDormStr(room.CustomData, "宿舍状态")) == "维修中" {
+			continue
+		}
 		isPublic := room.Module == hrDormModulePublic
 		switch category {
 		case "electricity":
