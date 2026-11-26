@@ -895,7 +895,7 @@ import DetailScrollTable from '@/components/business/DetailScrollTable.vue'
 import { statusTagThemeOf, statusTextClassOf } from './hrStatusStyle'
 import {
   HR_DORM_VIEWS, HR_DORM_FIELDS, HR_DORM_GROUP_OF, hrDormColumns, hrDormModuleOf,
-  hrDormStatusTextClass, hrDormRoomTypeTheme,
+  hrDormStatusTextClass,
   hrDormDrawerGroups, hrDormBedsOfType, hrDormFieldsOf,
   HR_DORM_INTEGER_FIELDS, hrDormChargeColumns, HR_DORM_CHARGE_BILL_FIELDS,
   HR_DORM_STANDARD_FACILITIES,
@@ -1307,7 +1307,6 @@ const dormChargeMonths = ref<string[]>([])
 /** 第 64 轮：费用信息月度账单可选月份（下拉展示，倒序）。 */
 const dormChargeMonthOptions = computed(() =>
   dormChargeMonths.value.map((m) => ({ label: m, value: m })))
-const dormRoomTypeFilter = ref('')
 /** 第 73 轮：住宿状态筛选（进标签默认「在住」）。 */
 const DORM_STAY_STATUS_OPTIONS = [
   { label: '全部状态', value: '全部状态' },
@@ -1316,12 +1315,6 @@ const DORM_STAY_STATUS_OPTIONS = [
 ]
 const dormStayStatusFilter = ref('在住')
 
-const DORM_ROOM_TYPE_OPTIONS = [
-  { label: '全部房源', value: '' },
-  { label: '公司宿舍', value: '公司宿舍' },
-  { label: '公租房', value: '公租房' },
-]
-  .map((v) => ({ label: v, value: v }))
 const dormColumns = computed(() => hrDormColumns(dormSubView.value, subsOfTab('hr-dorm')))
 
 // 费用分摊明细弹窗
