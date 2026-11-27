@@ -413,6 +413,18 @@ try {
   await card("社保管理"); await p.waitForTimeout(6000);
   await tab("月度账单"); await p.waitForTimeout(6000);
   /**
+   * 等列表真正出数据：前面的 8.x 用例改过 hr-roster 分类（PUT + 还原），
+   * 会触发配置重载；CI 上同时跑 quality-gate（编译 + 测试），6 秒固定等待
+   * 常常不够 —— 列表还是 0 行时断言就误判「未找到 2026-11 账单行」。
+   * 这里改成最多等 40 秒（每 2 秒探一次两个候选容器）。
+   */
+  for (let i = 0; i < 20; i++) {
+    const n = await p.evaluate(() => document.querySelectorAll(".doc-list-scroll tbody tr").length
+      + document.querySelectorAll(".hr-bill-table-wrap .detail-table-body tbody tr").length);
+    if (n > 1) break;
+    await p.waitForTimeout(2000);
+  }
+  /**
    * 第 78 轮修正：账单行可能在两个容器之一 —— `.doc-list-scroll`（花名册/宿舍用的
    * 列表）或 `.hr-bill-table-wrap .detail-table-body`（第 68 轮起的社保三段表）。
    *
