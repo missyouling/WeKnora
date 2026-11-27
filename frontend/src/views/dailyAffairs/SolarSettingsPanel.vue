@@ -56,6 +56,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { getUtilityBasicInfo, saveUtilityBasicInfo } from '@/api/knowledge-base'
 
 // 内嵌模式（第 74 轮）：隐藏自带保存栏，保存由抽屉底栏统一提交。
 defineProps<{ kbId?: string; embedded?: boolean }>()
@@ -64,17 +65,67 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 const ACCOUNT_KEY = 'weknora-solar-account-v1'
 const account = ref<Record<string, string>>({})
 
+/**
+ * 第 75 轮：基本户改为**落库**（utility_basic_accounts, category=solar）。
+ *
+ * 旧实现只写 localStorage：换浏览器/清缓存即丢，且与账单概览的"基础信息"脱钩。
+ * 复用中台已有 basic-info 接口，字段映射：
+ *   户号→account_no、户名→account_name、服务单位→supply_unit、并网电压→voltage_level、
+ *   消纳方式→usage_category、发电方式→market_attr、发电地址→address、纳税人类型→meter_no
+ * 同时保留 localStorage 镜像，兼容旧数据与离线回显。
+ */
+function payloadOf(): Record<string, unknown> {
+  const a = account.value
+  return {
+    name: '光伏基本户',
+    account_no: a.account_no || '',
+    account_name: a.account_name || '',
+    supply_unit: a.supply_unit || '',
+    voltage_level: a.voltage_level || '',
+    usage_category: a.consumption_mode || '',
+    market_attr: a.generation_mode || '',
+    address: a.address || '',
+    meter_no: a.taxpayer_type || '',
+  }
+}
+function applyPayload(d: any) {
+  const src = d?.data || d || {}
+  // 后端还没有基本户时返回 {}：保留 localStorage 镜像，绝不清空用户已填内容
+  if (!Object.keys(src).length) return
+  account.value = {
+    ...account.value,
+    account_no: String(src.account_no || ''),
+    account_name: String(src.account_name || ''),
+    supply_unit: String(src.supply_unit || ''),
+    voltage_level: String(src.voltage_level || ''),
+    consumption_mode: String(src.usage_category || ''),
+    generation_mode: String(src.market_attr || ''),
+    address: String(src.address || ''),
+    taxpayer_type: String(src.meter_no || ''),
+  }
+}
 function loadStored() {
   try {
     const acc = localStorage.getItem(ACCOUNT_KEY)
     if (acc) account.value = { ...account.value, ...JSON.parse(acc) }
   } catch { /* ignore */ }
 }
-onMounted(loadStored)
+onMounted(async () => {
+  loadStored()
+  try {
+    applyPayload(await getUtilityBasicInfo('solar'))
+  } catch { /* 后端不可用时保留本地回显 */ }
+})
 
-const saveAccount = () => {
+const saveAccount = async () => {
   try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account.value)) } catch { /* ignore */ }
-  MessagePlugin.success('已保存')
+  try {
+    await saveUtilityBasicInfo('solar', payloadOf())
+    MessagePlugin.success('已保存')
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || '保存失败')
+    throw e
+  }
   emit('changed')
 }
 

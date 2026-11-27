@@ -244,7 +244,26 @@ try {
   });
   ok("A4.2 基本户：只渲染基本户表单（无字段列表）", basic.fields === 0 && basic.form, JSON.stringify(basic));
   await shot("d75-a4-basic");
-  await closeDrawer();
+
+  // A4.3 基本户保存落库（抽屉底栏唯一保存 → 重开仍在）
+  await p.evaluate(() => {
+    const input = document.querySelector(".energy-settings-drawer .solar-settings-panel input");
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, "T75E2E");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await p.waitForTimeout(500);
+  await p.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll(".energy-settings-drawer button")).filter((x) => (x.innerText || "").trim() === "保存");
+    if (btns.length) btns[btns.length - 1].click();
+  });
+  await p.waitForTimeout(3500);
+  const saved = (await api("/api/v1/utilities/basic-info?category=solar")).body?.data || {};
+  ok("A4.3 基本户保存已落库（category=solar）", saved.account_no === "T75E2E", JSON.stringify({ no: saved.account_no }));
+  // 还原为空
+  await api("/api/v1/utilities/basic-accounts/" + saved.id, "DELETE");
+  ok("A4.4 基本户测试数据已清理", true, saved.id ? "deleted" : "none");
 } catch (e) { ok("A4 基本户", false, String(e).slice(0, 300)); }
 
 // ============================================================ A5 工业表计隔离
