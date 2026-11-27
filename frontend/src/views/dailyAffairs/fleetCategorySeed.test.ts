@@ -34,10 +34,11 @@ test('有有效期的归档分类必须含「有效期」类字段（证照状�
   const VALIDITY_FIELD = /有效期|保险止期|质保期止|截止|到期|报废/
   // 例外说明：这两类本身**没有**时间边界，证照状态显示 `—` 是正确行为，
   // 不能为了「让状态有值」而凭空加字段。
-  //   · 一般维修 = 维修工单（一次性事件，不是证照）
+  //   · 一般维修 = 维修结算清单（一次性事件，不是证照）
   //   · 车辆登记证书 = 长期有效的产权凭证（票面只有发证日期）
-  //   · 合格证 = 出厂合格证（票面只有进厂/出厂日期，质保期由用户另填）
-  const NO_VALIDITY = new Set(['一般维修', '车辆登记证书', '合格证'])
+  //   · 二级维护 = 竣工出厂合格证（第 78 轮并入原「合格证」）；质保是「质保里程 +
+  //     质保天数」的额度，不是固定截止日期，无法折算成一个日期字段
+  const NO_VALIDITY = new Set(['一般维修', '车辆登记证书', '二级维护'])
   for (const scope of ['vehicle', 'driver', 'maintain'] as const) {
     for (const c of fleetCategorySeedsOf(scope)) {
       if (NO_VALIDITY.has(c.name)) continue

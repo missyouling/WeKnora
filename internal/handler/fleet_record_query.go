@@ -77,6 +77,9 @@ type fleetRecordListResult struct {
 	Total    int64               `json:"total"`
 	Page     int                 `json:"page"`
 	PageSize int                 `json:"page_size"`
+	// AttachmentCounts record_id → 随单附件数（第 78 轮）。
+	// 列表「附件」列读它，0 或缺失一律渲染空白（严禁 —）。
+	AttachmentCounts map[string]int `json:"attachment_counts,omitempty"`
 }
 
 // FleetRecordStats 当前菜单下各分类的记录数与金额合计（KPI 卡片用）。

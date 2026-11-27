@@ -161,6 +161,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	h.hrRepair76(ctx)
 	// 第 77 轮：宿舍/公租房档案补「表计类型」字段与存量取值、工业表计类型归一工商业。
 	h.hrRepair77(ctx)
+	// 第 78 轮：维保记录收敛（一般维修 / 二级维护，合格证并入二级维护）、
+	// 维修结算清单三段式字段与提取规则、行驶证补「年检日期」。
+	h.hrRepair78(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

@@ -177,28 +177,48 @@ export const FLEET_CATEGORY_SEEDS: Record<string, FleetCategorySeed[]> = {
     },
   ],
   // ---- maintain ----
+  // 第 78 轮：维保记录收敛为 2 个核心业务分类。
+  // 原「合格证」并入「二级维护」（二级维护竣工出厂合格证 + 质量保证卡本就是同一份单据），
+  // 存量「合格证」记录由后端 hrReconfigMaintenance78 平滑映射，零丢失。
   "maintain": [
     {
       name: "一般维修",
       subs: [
-        f("工单号", { def: true, filt: true }), f("车牌号", { def: true, filt: true }),
-        f("维修日期", { def: true }), f("维修项目", { def: true }),
-        f("工时费", { def: true }), f("材料费", { def: true }),
-        f("总费用", { def: true }),
+        // 基本信息（10）
+        f("结算单号", { def: true, filt: true }), f("车牌号", { def: true, filt: true }),
+        f("进厂日期", { dataType: "date" }), f("结算日期", { dataType: "date", def: true }),
+        f("挂账单位", { def: true }), f("里程", { dataType: "number" }),
+        f("车型"), f("车架号"), f("发动机号"),
+        f("维修项目摘要", { def: true }),
+        // 费用汇总（7）
+        f("工时费", { dataType: "amount", def: true }), f("材料费", { dataType: "amount", def: true }),
+        f("管理费", { dataType: "amount" }), f("其它费", { dataType: "amount", def: true }),
+        f("实际应收", { dataType: "amount", def: true }),
+        f("结算方式"), f("接车人"),
+        // 承修单位（6）
+        f("承修单位", { def: true }), f("承修电话"), f("承修地址"),
+        f("开户行"), f("银行账号"), f("操作员"),
       ],
     },
     {
-      name: "合格证",
+      name: "二级维护",
       subs: [
-        f("拖修方"), f("车牌号码", { def: true, filt: true }),
-        f("厂牌型号", { def: true }), f("发动机型号/编号", { def: true }),
-        f("底盘（车身）号", { def: true }), f("维修类别", { def: true }),
-        f("合格证类型"), f("维修合同编号", { def: true }),
-        f("维修档案编号", { def: true }), f("出厂里程表示值", { dataType: "number", def: true }),
-        f("质检员", { def: true }), f("承修方", { def: true }),
-        f("承修方许可证号"), f("进厂日期", { dataType: "date", def: true }),
-        f("出厂日期", { dataType: "date", def: true }), f("接车人", { def: true }),
-        f("接车日期", { dataType: "date", def: true }),
+        // 合格证信息（10）
+        f("合格证编号", { def: true, filt: true }), f("托修方"),
+        f("维修类别", { def: true, filt: true }), f("合格证类型"),
+        f("维修合同编号"), f("维修档案编号"),
+        f("进厂日期", { dataType: "date" }), f("出厂日期", { dataType: "date", def: true }),
+        f("接车日期", { dataType: "date" }), f("托修方接车人"),
+        // 车辆与质保（8）
+        f("车牌号", { def: true, filt: true }), f("厂牌型号"),
+        f("发动机号"), f("车架号"),
+        f("出厂里程", { dataType: "number", def: true }),
+        f("质保里程", { dataType: "number", def: true }),
+        f("质保天数", { dataType: "number", def: true }),
+        f("维修发票号"),
+        // 承修与质检（5）—— 附件是派生只读计数，由 statusFields 注入，不在 subs 里
+        f("承修方", { def: true }), f("承修方许可证号"),
+        f("质量检验员", { def: true }), f("承修方电话"),
       ],
     },
   ],
@@ -293,6 +313,8 @@ export const FLEET_CATEGORY_SEEDS: Record<string, FleetCategorySeed[]> = {
         f("车辆类型", { def: true }), f("使用性质", { def: true }),
         f("注册日期", { def: true }), f("发证日期", { def: true }),
         f("发证机关", { def: true }), f("强制报废日期", { def: true }),
+        // 第 78 轮：年检日期是行驶证合法性的真实边界（证照状态按它判定）
+        f("年检日期", { dataType: "date", def: true }),
         f("证件状态", { def: true, filt: true }), f("备注"),
       ],
     },

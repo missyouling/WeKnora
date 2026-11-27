@@ -1,4 +1,4 @@
-import { get, post, put, del } from '@/utils/request'
+import { get, post, put, del, postUpload } from '@/utils/request'
 
 // ---- 车辆 ----
 export function listFleetVehicles() {
@@ -317,4 +317,49 @@ export function extractFleetDocument(kbId: string, knowledgeId: string, payload:
 /** 发票提取统一入口（证照上传场景复用）。 */
 export function extractBusinessDocument(kbId: string, knowledgeId: string, payload: { scope: string; cert_type?: string }) {
   return post(`/api/v1/knowledge-bases/${kbId}/knowledge/${knowledgeId}/extract-business`, payload, { timeout: 120000 })
+}
+
+// ---- 随单附件袋（第 78 轮，只存不解） ----
+
+/** 附件元数据（不含二进制）。 */
+export interface FleetAttachment {
+  id: string
+  record_id: string
+  file_name: string
+  mime_type: string
+  file_size: number
+  tag: string
+  created_at: string
+}
+
+/** 列出某条记录的全部附件（元数据）。 */
+export function listFleetRecordAttachments(recordId: string) {
+  return get(`/api/v1/fleet/records/${recordId}/attachments`)
+}
+
+/**
+ * 上传随单附件（多文件）。
+ *
+ * 铁律：该接口**只存不解** —— 后端不触发任何 OCR/LLM 解析任务。
+ * 因此这里不走 `uploadKnowledgeFile`（那条链路会创建知识库文件并排队解析）。
+ */
+export function uploadFleetRecordAttachments(recordId: string, files: File[], tag: string) {
+  const formData = new FormData()
+  formData.append('tag', tag)
+  for (const f of files) formData.append('files', f, f.name)
+  return postUpload(`/api/v1/fleet/records/${recordId}/attachments`, formData)
+}
+
+/**
+ * 附件预览地址（**无后缀路由**）。
+ *
+ * 为什么不能拼 `/attachments/${id}.png`：生产 VPS 的边缘 Nginx 会用静态资源正则
+ * 拦掉带图片/PDF 后缀的路径，请求根本到不了后端（第 61 轮离职证明 404 的同一个坑）。
+ */
+export function fleetAttachmentViewUrl(id: string) {
+  return `/api/v1/fleet/attachments/view?id=${encodeURIComponent(id)}`
+}
+
+export function deleteFleetAttachment(id: string) {
+  return del(`/api/v1/fleet/attachments/${id}`)
 }

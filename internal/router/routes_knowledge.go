@@ -601,6 +601,9 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 	// 全部业务逻辑在 internal/handler/hr_*.go，此处只做一次路由绑定，沿用 fl 组的
 	// API-key 与 RBAC 门控，不新增 RouterParams 字段、不改 container 装配。
 	handler.BindHRRoutes(fl)
+	// 第 78 轮：随单附件袋建表（幂等）。必须在路由注册期就跑一次，
+	// 否则「先打开抽屉看附件」这条只读路径会撞上「表不存在」→ 500。
+	handler.EnsureFleetAttachmentSchema()
 	{
 		fl.GET("/vehicles", g.Viewer(), handler.ListFleetVehicles)
 		fl.POST("/vehicles", g.Contributor(), handler.CreateFleetVehicle)
@@ -622,6 +625,13 @@ func RegisterFleetRoutes(r *gin.RouterGroup, handler *handler.FleetHandler, g *r
 		fl.POST("/records", g.Contributor(), handler.CreateFleetRecord)
 		fl.PUT("/records/:id", g.Contributor(), handler.UpdateFleetRecord)
 		fl.DELETE("/records/:id", g.Contributor(), handler.DeleteFleetRecord)
+		// 第 78 轮：随单「非解析附件袋」（只存不解，BYTEA 直存，零解析触发）。
+		// 预览走**无后缀**路由 /fleet/attachments/view?id=... ——
+		// 带 .png/.pdf 后缀的路径会被生产 VPS 边缘 Nginx 的静态正则拦掉（第 61 轮同坑）。
+		fl.GET("/records/:id/attachments", g.Viewer(), handler.ListFleetRecordAttachments)
+		fl.POST("/records/:id/attachments", g.Contributor(), handler.UploadFleetRecordAttachments)
+		fl.GET("/attachments/view", g.Viewer(), handler.ViewFleetAttachment)
+		fl.DELETE("/attachments/:attID", g.Contributor(), handler.DeleteFleetAttachment)
 		fl.GET("/summary", g.Viewer(), handler.GetFleetSummary)
 		fl.GET("/categories", g.Viewer(), handler.ListFleetCategories)
 		fl.POST("/categories", g.Contributor(), handler.CreateFleetCategory)

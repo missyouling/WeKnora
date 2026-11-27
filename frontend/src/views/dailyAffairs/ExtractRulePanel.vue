@@ -2,8 +2,10 @@
   <div ref="rootRef" class="extract-rule-panel" :class="{ 'eq-narrow': narrow }">
     <div class="extract-toolbar">
       <!-- 第 76 轮：能耗 scope 的分类切换从下拉改为方块标签，且标签列表动态
-           读取「能耗账单」的分类配置（新增账单分类后此处自动多一个标签）。 -->
-      <div v-if="isEnergyScope && certTypeOptions.length" class="energy-type-tabs" data-extract-type-tabs>
+           读取「能耗账单」的分类配置（新增账单分类后此处自动多一个标签）。
+           第 78 轮：维保记录（一般维修 / 二级维护）同样用方块标签 —— 只有 2 个分类时
+           下拉是多余的一步点击，平铺标签一眼可见。 -->
+      <div v-if="(isEnergyScope || blockTabScope) && certTypeOptions.length" class="energy-type-tabs" data-extract-type-tabs>
         <t-radio-group :model-value="certType" variant="default-filled" size="small" @change="onCertTypeTabChange">
           <t-radio-button v-for="o in certTypeOptions" :key="o.value" :value="o.value">{{ o.label }}</t-radio-button>
         </t-radio-group>
@@ -641,6 +643,9 @@ const isEnergyScope = computed(() => String(props.scope || '').trim() === 'energ
  * 规则页永远看不到它。现在与设置抽屉共用 energyBillCategoriesOf 一条口径：
  * 排除核算表 / 费用清单 / 能耗单 / 内置能耗类型种子，剩下的就是账单分类。
  */
+/** 用方块标签（而非下拉）切换分类的 scope：能耗 + 维保（第 78 轮）。 */
+const blockTabScope = computed(() => props.scope === 'maintain')
+
 const certTypeOptions = computed<any[]>(() => {
   if (!isFleetScope.value) {
     if (isEnergyScope.value) {
@@ -665,6 +670,27 @@ const certTypeOptions = computed<any[]>(() => {
       }
     })
     return children
+  }
+  // 第 78 轮：维保用方块标签平铺（一般维修 / 二级维护），不走「分组下拉」结构 ——
+  // 分组结构是给车辆档案那种「公司证照 / 司机证照」多组场景用的，
+  // 维保只有 2 个分类，套两层反而多一次点击。
+  if (props.scope === 'maintain') {
+    const arr = (categories.value[props.scope] || []) as any[]
+    const seen = new Set<string>()
+    const flat: { label: string; value: string }[] = []
+    for (const c of arr) {
+      const name = String(c?.name || '').trim()
+      if (!name || c?.enabled === false || seen.has(name)) continue
+      seen.add(name)
+      flat.push({ label: name, value: typeComposite(props.scope, name) })
+    }
+    // 后端还没返回时用前端种子兜底（首屏不空）
+    if (!flat.length) {
+      for (const seed of ['一般维修', '二级维护']) {
+        flat.push({ label: seed, value: typeComposite(props.scope, seed) })
+      }
+    }
+    return flat
   }
   return TYPE_GROUP_META
     .filter((g) => g.scope === props.scope)

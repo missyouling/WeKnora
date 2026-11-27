@@ -123,6 +123,14 @@
               <t-tag :theme="extractStatusOf(row).theme === 'success' ? 'success' : 'default'"
                 variant="light" size="small">{{ extractStatusOf(row).label }}</t-tag>
             </template>
+            <!-- 附件数（第 78 轮）：点击直达详情抽屉的附件区；0 个时显示空白 -->
+            <template #__attach_count="{ row }: any">
+              <button v-if="Number(row?.attach_count || 0) > 0" type="button" class="fleet-attach-cell"
+                :title="`查看 ${row.attach_count} 个随单附件`" @click.stop="openDetail(row)">
+                {{ row.attach_count }} 个附件
+              </button>
+              <span v-else></span>
+            </template>
             <template #empty>
               <!-- 首屏未就绪时不显示「暂无数据」：否则骨架屏期间会先闪一下空态 -->
               <BusinessEmptyState v-if="!tableLoading" compact :icon="emptyIcon"
@@ -153,7 +161,7 @@
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId" :scope="settingsScope"
       :initial-category="activeCategoryName" :title="`${menuLabel}设置`" storage-key="weknora-fleet-settings-width"
       :show-rules="isArchive" :direct="!isArchive" :extra-tab-label="extraTabLabel"
-      :flat-cert-tabs="isArchive && meta.scope === 'vehicle'"
+      :flat-cert-tabs="isArchive && (meta.scope === 'vehicle' || meta.scope === 'maintain')"
       :insurance-tabs="isArchive && activeCategoryName === '保险单'" @saved="onSettingsSaved">
       <template #extra-tab>
         <OilCardPanel v-if="extraTabKind === 'oilcard'" />
@@ -188,6 +196,37 @@
         <div class="bsd-readonly-tag">
           <t-tag :theme="detailExtractTheme" variant="light" size="small">{{ detailExtractLabel }}</t-tag>
         </div>
+      </template>
+
+      <!-- 第 78 轮：一般维修的三张结算明细子表 + 金额钩稽提示（插在表单与附件之间） -->
+      <template #extra>
+        <!-- 金额钩稽差额：醒目橙色，附「按明细重算汇总」一键修正 -->
+        <section v-if="isRepairCategory && amountWarnings.length" class="bsd-block repair-warn"
+          data-repair-warn>
+          <div class="repair-warn__head">
+            <t-icon name="error-circle" size="16px" />
+            <span>金额与明细不一致（{{ amountWarnings.length }} 处）</span>
+            <t-button variant="outline" size="small" data-repair-recalc @click="recalcFromItems">
+              按明细重算汇总
+            </t-button>
+          </div>
+          <ul class="repair-warn__list">
+            <li v-for="(w, i) in amountWarnings" :key="i">
+              {{ w.message }}
+              <span class="repair-warn__diff">差额 {{ w.diff > 0 ? '+' : '' }}{{ w.diff.toFixed(2) }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <section v-if="isRepairCategory" class="bsd-block" data-repair-line-items>
+          <div class="bsd-block-title">结算明细</div>
+          <RepairLineItemsEditor v-model="detailLineItems" />
+        </section>
+
+        <!-- 随单附件袋：只存不解（二级维护 / 一般维修 / 车辆档案都可用） -->
+        <section v-if="attachBagVisible" class="bsd-block" data-attach-section>
+          <FleetAttachmentBag :record-id="detailRow?.id || ''" @changed="onAttachChanged" />
+        </section>
       </template>
     </BusinessSplitDetailDrawer>
 
@@ -224,6 +263,12 @@ import BusinessEmptyState from './BusinessEmptyState.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
 import { INSURANCE_TABS } from './insuranceFields'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
+import RepairLineItemsEditor from './RepairLineItemsEditor.vue'
+import FleetAttachmentBag from './FleetAttachmentBag.vue'
+import {
+  EMPTY_LINE_ITEMS, normalizeLineItems, recalcSummaryFromItems,
+  repairAmountWarnings, repairSummaryOf, type RepairLineItems,
+} from './lineItems'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
 import FleetUploadHistoryDrawer from './FleetUploadHistoryDrawer.vue'
@@ -241,7 +286,7 @@ import {
   buildFleetColumns, buildFleetSummaryColumns, buildFleetSummaryViewColumns, buildArchiveColumns,
   amountFromForm, dateFromForm, resolveDefaultCategoryName, buildFleetKpiCards, fleetEmptyState,
   certStatusOf, certStatusOptions, extractStatusOf, subCategoryMatches, fleetKnowledgeIdOf,
-  CERT_STATUS_KEY, EXTRACT_STATUS_KEY,
+  CERT_STATUS_KEY, EXTRACT_STATUS_KEY, ATTACH_COUNT_KEY, attachCountColumn,
   type FleetColumn,
 } from './fleetColumns'
 import { isStatusFieldName } from './statusFields'
@@ -528,10 +573,28 @@ const archiveSubsScoped = computed(() => {
   const scoped = (activeSubs.value || []).filter((x: any) => String(x?.group || '').startsWith(pref))
   return scoped.length ? scoped : activeSubs.value
 })
+/** 当前分类是否「一般维修」（维修结算清单）——只有它有明细子表与金额钩稽。 */
+const isRepairCategory = computed(() =>
+  meta.value.scope === 'maintain' && activeCategoryName.value === '一般维修')
+
+/** 附件列可见范围：维保两个分类 + 车辆档案（与附件袋同一范围）。 */
+const attachColumnVisible = computed(() =>
+  meta.value.scope === 'maintain' || meta.value.scope === 'vehicle')
+
 const columnDefs = computed<FleetColumn[]>(() => {
   if (isSummaryView.value) return buildFleetSummaryViewColumns(vehicleMap.value)
   if (!isArchive.value) return buildFleetColumns(activeSubs.value, vehicleMap.value)
-  return buildArchiveColumns(archiveSubsScoped.value, vehicleMap.value, todayStr)
+  let cols = buildArchiveColumns(archiveSubsScoped.value, vehicleMap.value, todayStr)
+  // 第 78 轮：一般维修是维修结算清单（一次性事件，不是证照），
+  // 它的「证照状态」永远是空白列 —— 直接不生成，而不是留一列空表头。
+  if (isRepairCategory.value) cols = cols.filter((c) => c.key !== CERT_STATUS_KEY)
+  // 第 78 轮：维保/车辆档案追加「附件」派生列（插在提取状态之前，状态列恒在末尾）
+  if (attachColumnVisible.value) {
+    const at = cols.findIndex((c) => c.key === EXTRACT_STATUS_KEY)
+    if (at < 0) cols.push(attachCountColumn())
+    else cols.splice(at, 0, attachCountColumn())
+  }
+  return cols
 })
 const columnDefsForFilter = computed(() => columnDefs.value.map((c) => ({ key: c.key, label: c.label })))
 
@@ -552,9 +615,9 @@ const tableColumns = computed(() => {
   // 原来勾选列与序号列是 `fixed: 'left'`，横向滚动时它们被钉在左侧并画一条
   // 分割竖线，把后面的业务列文字压掉半截（真机：许可证号只剩「订字5002…」）。
   // 现在全部列（含勾选/序号/状态）一起随横向滚动条滑动，表格是一个整体。
+  // 第 78 轮：删除自增序号列（[复选框] → 第一个业务字段）
   const cols: any[] = [
     { colKey: 'row-select', type: 'multiple', width: 44 },
-    { colKey: 'serial-number', title: '', width: 56 },
   ]
   const vis = visibleCols.value
   vis.forEach((c, i) => {
@@ -572,7 +635,7 @@ const tableColumns = computed(() => {
       // 不能用 `cell: (_h, params) => _h('t-tag', …)`：TDesign 1.19 的 cell
       // 回调不注入 h，`_h` 恒为 undefined → 两列渲染成空白（真机实测
       // 单元格 text 为空、无 .t-tag）。发票页用的是具名插槽，这里对齐它。
-      cell: c.key === CERT_STATUS_KEY || c.key === EXTRACT_STATUS_KEY
+      cell: c.key === CERT_STATUS_KEY || c.key === EXTRACT_STATUS_KEY || c.key === ATTACH_COUNT_KEY
         ? undefined
         : (_h: any, params: any) => c.value(params?.row),
       dataType: c.dataType,
@@ -605,11 +668,14 @@ const filterFields = computed<FilterFieldSpec[]>(() => {
     { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
   ]
   if (!isArchive.value) return out
-  // 证照状态：三个归档菜单都有（生效中 / 即将到期 / 已过期）
-  out.push({
-    key: 'certStatus', type: 'select', placeholder: '证照状态',
-    options: certStatusOptions(), clearable: true,
-  })
+  // 证照状态：三个归档菜单都有（有效 / 即将到期 / 已过期）。
+  // 第 78 轮：一般维修没有证照状态列，筛选框同步隐藏（否则筛了永远 0 条）。
+  if (!isRepairCategory.value) {
+    out.push({
+      key: 'certStatus', type: 'select', placeholder: '证照状态',
+      options: certStatusOptions(), clearable: true,
+    })
+  }
   // 维保记录：额外提供维修日期区间（按时间段查是该菜单最高频的操作）。
   // 车牌号筛选已删除（第 34 轮）：车牌已在「搜索全部字段」里可搜，
   // 单独一个车牌输入框既重复又占位（需求图 7 明确划掉）。
@@ -829,7 +895,10 @@ async function reloadList() {
         totalNum = hit.length
       }
     }
-    rows.value = items
+    // 第 78 轮：把附件数挂到行上（列表「附件」列读 row.attach_count）。
+    // 接口按 record_id 返回稀疏映射，缺失即 0（列渲染空白）。
+    const counts = data.attachment_counts || {}
+    rows.value = items.map((r: any) => ({ ...r, attach_count: Number(counts[r?.id] || 0) }))
     total.value = totalNum
     // 记住本次已渲染的数据源 key：后续同 key 的刷新不再清空（避免竞态抹掉结果）
     lastListKey.value = reqKey
@@ -929,6 +998,36 @@ const drawerFields = computed(() => {
 })
 const drawerSubFields = computed(() => [])
 
+// ---- 第 78 轮：维修结算清单三子表 + 随单附件袋 ----
+/**
+ * 附件袋可见范围：维保两个分类 + 车辆档案（证照扫描件同样需要随单附件）。
+ *
+ * 只在**已保存的记录**上显示：新建态还没有 record_id，附件无处可挂
+ * （后端会以「记录不存在」拒绝，前端提前隐藏避免用户白传）。
+ */
+const attachBagVisible = computed(() =>
+  !!detailRow.value?.id
+  && (meta.value.scope === 'maintain' || meta.value.scope === 'vehicle'))
+
+/** 三子表草稿（与 editForm.data 分离：它要整体序列化进 data.line_items）。 */
+const detailLineItems = ref<RepairLineItems>({ ...EMPTY_LINE_ITEMS })
+
+/** 金额钩稽告警（0 条时不渲染橙色提示区）。 */
+const amountWarnings = computed(() => {
+  if (!isRepairCategory.value) return []
+  return repairAmountWarnings(editForm.value?.data, detailLineItems.value)
+})
+
+/** 「按明细重算汇总」：把三子表汇总写回主表金额字段（管理费不被覆盖）。 */
+function recalcFromItems() {
+  editForm.value.data = recalcSummaryFromItems(editForm.value.data, detailLineItems.value)
+  MessagePlugin.success('已按明细重算汇总')
+}
+
+function onAttachChanged(count: number) {
+  if (detailRow.value) detailRow.value.attach_count = count
+}
+
 // 抽屉里「证照状态」的展示值：按当前编辑中的有效期止实时联动
 // （用户改了有效期止，状态要立刻跟着变，不能只在保存后才更新）。
 const detailCertStatus = computed(() => certStatusOf(editForm.value?.data, todayStr).label || '')
@@ -949,7 +1048,15 @@ const detailExtractTheme = computed(() =>
 
 function openDetail(row: any) {
   detailRow.value = row
-  editForm.value = { data: { ...(row?.data || {}) }, remarkParts: {}, items: [] }
+  const data = { ...(row?.data || {}) }
+  // 第 78 轮：三子表从 data.line_items 读出（历史记录没有该键 → 空三表）
+  detailLineItems.value = normalizeLineItems(data.line_items)
+  // 摘要为空但明细有值时补一次（历史数据可能只存了明细没存摘要）
+  if (!String(data['维修项目摘要'] || '').trim()) {
+    const auto = repairSummaryOf(detailLineItems.value)
+    if (auto) data['维修项目摘要'] = auto
+  }
+  editForm.value = { data, remarkParts: {}, items: [] }
   editBaseline.value = JSON.stringify(editForm.value)
   detailDirty.value = false
   detailVisible.value = true
@@ -957,6 +1064,11 @@ function openDetail(row: any) {
 
 watch(editForm, () => {
   detailDirty.value = JSON.stringify(editForm.value) !== editBaseline.value
+}, { deep: true })
+// 三子表在 editForm 之外独立响应：任一明细改动都要点亮「保存」
+watch(detailLineItems, () => {
+  if (!detailVisible.value) return
+  detailDirty.value = true
 }, { deep: true })
 
 // 从表单里挑出「金额语义」字段，写入通用 amount 列（费用清单汇总与合计行都读它）。
@@ -969,6 +1081,16 @@ async function saveDetail() {
   saving.value = true
   try {
     const data = { ...(editForm.value.data || {}) }
+    // 第 78 轮：三子表随主表一起落库；摘要按明细自动生成（用户手填过则不覆盖）
+    if (isRepairCategory.value) {
+      const items = detailLineItems.value
+      data.line_items = items
+      const hasItems = items.labor_items.length || items.part_items.length || items.extra_items.length
+      if (hasItems) {
+        const auto = repairSummaryOf(items)
+        if (auto && !String(data['维修项目摘要'] || '').trim()) data['维修项目摘要'] = auto
+      }
+    }
     const amount = Number(row?.amount) || amountFromForm(data)
     // 「金额」列必须与通用 amount 一致：列表金额列与底部合计行都读 data['金额']，
     // 只写 amount 列会出现「行内金额显示 —、合计 0.00」的自相矛盾。
@@ -1373,6 +1495,49 @@ const listViewClass = computed(() => flatClassOf(isTableFlat.value))
 </script>
 
 <style lang="less" scoped>
+/* 第 78 轮：附件数列（点击直达详情抽屉附件区） */
+.fleet-attach-cell {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--td-brand-color);
+  font-size: 13px;
+
+  &:hover { text-decoration: underline; }
+}
+
+/* 第 78 轮：金额钩稽差额提示（醒目橙色，与需求「橙色提示」一致） */
+.repair-warn {
+  border: 1px solid var(--td-warning-color-3);
+  background: var(--td-warning-color-1);
+  border-radius: 6px;
+  padding: 10px 12px;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--td-warning-color-7, #b25f10);
+
+    .t-button { margin-left: auto; }
+  }
+  &__list {
+    margin: 6px 0 0;
+    padding-left: 24px;
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+    line-height: 20px;
+  }
+  &__diff {
+    margin-left: 6px;
+    color: var(--td-error-color);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
 /* 中台列表样式（第 31 轮补）：
    发票 / 合同 / 制度 / 奖惩 / 能耗 / 计量 / 账单 8 个页面都 import 了这份 CSS，
    唯独车队页漏了 —— 结果 .doc-list-scroll 没有 flex 与卡片边框、.t-table 没有

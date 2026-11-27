@@ -106,7 +106,8 @@ test('车辆档案设置：横向证照标签 + 保险单子标签仅归属保�
   assert.match(std, /data-cert-flat-tabs/)
   assert.match(std, /certTab === '保险单'/)
   const list = read('FleetRecordList.vue')
-  assert.match(list, /:flat-cert-tabs="isArchive && meta\.scope === 'vehicle'"/)
+  // 第 78 轮：维保记录也用横向平级证照标签
+  assert.match(list, /:flat-cert-tabs="isArchive && \(meta\.scope === 'vehicle' \|\| meta\.scope === 'maintain'\)"/)
   assert.match(list, /data-insurance-list-tabs/)
   assert.match(list, /insuranceKindsOf/)
   const cols = read('fleetColumns.ts')

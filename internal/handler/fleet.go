@@ -691,8 +691,19 @@ func (h *FleetHandler) ListFleetRecords(c *gin.Context) {
 	if items == nil {
 		items = []types.FleetRecord{}
 	}
+	// 第 78 轮：随单附件数（列表「附件」列）。只在维保/车辆档案类菜单查，
+	// 其余菜单没有附件入口，多一次 GROUP BY 纯属浪费。
+	var attachCounts map[string]int
+	if recordType == "maintain-archive" || recordType == "vehicle-archive" {
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			ids = append(ids, it.ID)
+		}
+		attachCounts = h.CountFleetRecordAttachments(ctx, int64(tenantID), ids)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": fleetRecordListResult{
 		Items: items, Total: total, Page: page, PageSize: pageSize,
+		AttachmentCounts: attachCounts,
 	}})
 }
 

@@ -197,9 +197,10 @@ test('列表列定义不得再有 fixed（冻结列会遮住后方业务列文�
   // 先剥注释：说明文字里会提到 `fixed: 'left'` 这种历史写法
   const colCode = cols.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
   assert.ok(!colCode.includes('fixed'), '列定义不得再有 fixed（左/右固定都会遮住后方列）')
-  // 勾选 + 序号是 TDesign 的内置列类型，去掉 fixed 后仍要保留
+  // 勾选是 TDesign 的内置列类型，去掉 fixed 后仍要保留。
+  // 第 78 轮：自增序号列已下线（[复选框] → 第一个业务字段）。
   assert.match(cols, /colKey: 'row-select'/, '复选框列必须保留')
-  assert.match(cols, /colKey: 'serial-number'/, '序号列必须保留')
+  assert.doesNotMatch(cols, /colKey: 'serial-number'/, '序号列必须下线（第 78 轮）')
 })
 
 test('切一级菜单时先同步重置子分类焦点，再拉列表（否则首屏 0 条）', () => {

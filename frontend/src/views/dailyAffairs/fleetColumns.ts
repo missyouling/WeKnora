@@ -533,12 +533,49 @@ export function fleetEmptyState(isArchive: boolean): { description: string; hint
 
 /** 截止日期字段候选链（不同证照类型叫法不同）。 */
 export const CERT_STATUS_FIELDS = [
+  // 第 78 轮：行驶证的合法性边界改为「年检日期」（副页「检验有效期至」），
+  // 优先于强制报废日期 —— 报废日期通常是 10 年后，用它算状态永远是「有效」，
+  // 年检过期才是真实风险。放在链首保证它是行驶证的主要判据。
+  '年检日期',
   '有效期止', '有效期至', '保险止期', '检验有效期止', '质保期止',
   '截止日期', '到期日期', '有效期结束', '保险止期至',
   // 行驶证没有「有效期止」：它的合法性边界就是强制报废日期（票面唯一的时间锚点）。
   // 漏掉它会让整张行驶证列表的「证照状态」恒为 —。
   '强制报废日期', '报废日期',
 ] as const
+
+/** 用「年检日期」判定时使用的中性文案（第 78 轮需求 5.②）。 */
+const INSPECTION_STATUS_LABEL = '有效'
+
+/**
+ * 把行驶证副页的「检验有效期至 YYYY年MM月」归一为该月最后一天 `YYYY-MM-DD`。
+ *
+ * 为什么取月末而不是月初：检验有效期「至 2027年9月」表示整个 9 月都有效，
+ * 9 月 30 日才是真正的失效边界。取月初会让整月提前 30 天变「即将到期」。
+ *
+ * 已是标准 `YYYY-MM-DD` 的原样返回；无法解析返回空串（调用方按「没填」处理）。
+ */
+export function normalizeInspectionMonth(raw: unknown): string {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  // 标准日期直接返回（允许带时间戳，只取日期段）
+  const iso = s.replace(/\//g, '-').replace(/[T\s].*$/, '')
+  const md = iso.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (md) {
+    const dt = parseDateOnly(`${md[1]}-${md[2]}-${md[3]}`)
+    if (!dt) return ''
+    return `${md[1]}-${String(Number(md[2])).padStart(2, '0')}-${String(Number(md[3])).padStart(2, '0')}`
+  }
+  // 年月：2027年9月 / 检验有效期至 2027年9月 / 2027-09
+  const ym = s.match(/(\d{4})\s*(?:年|[-/.])\s*(\d{1,2})\s*月?/)
+  if (!ym) return ''
+  const y = Number(ym[1])
+  const mo = Number(ym[2])
+  if (mo < 1 || mo > 12) return ''
+  // 该月最后一天 = 下月第 0 天
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+  return `${y}-${String(mo).padStart(2, '0')}-${String(last).padStart(2, '0')}`
+}
 
 /** 长期有效的常见写法（不受日期约束，直接算生效中）。 */
 const LONG_TERM_HINTS = ['长期', '永久', '无固定期限', '长期有效', ' indefinite']
@@ -582,6 +619,10 @@ function isLongTerm(raw: unknown): boolean {
  *
  * 多字段同时存在时取**最早**的截止日期：一份证照既有长期有效期又有已过期保险，
  * 真实风险是保险过期，不能因为长期字段就显示生效中。
+ *
+ * 第 78 轮：行驶证以「年检日期」为判据，且成功态文案用「有效」（而非「生效中」）——
+ * 年检是年度检验的结论，说「生效中」不符合证照语义。判据字段是「年检日期」时
+ * 先把 `YYYY年MM月` 归一为该月最后一天，再算剩余天数。
  */
 export function certStatusOf(data: Record<string, any> | undefined, today: string): CertStatus {
   const d = data || {}
@@ -589,30 +630,41 @@ export function certStatusOf(data: Record<string, any> | undefined, today: strin
   if (!todayDate) return EMPTY_STATUS
 
   let earliest: Date | null = null
+  let earliestKey = ''
   let sawLongTerm = false
   for (const key of CERT_STATUS_FIELDS) {
     const raw = d[key]
     if (raw === undefined || raw === null || String(raw).trim() === '') continue
     if (isLongTerm(raw)) { sawLongTerm = true; continue }
-    const dt = parseDateOnly(raw)
+    // 年检日期允许是「2027年9月」这类副页写法，先归一到月末再比较
+    const dt = parseDateOnly(key === '年检日期' ? normalizeInspectionMonth(raw) : raw)
     if (!dt) continue
-    if (!earliest || dt.getTime() < earliest.getTime()) earliest = dt
+    if (!earliest || dt.getTime() < earliest.getTime()) {
+      earliest = dt
+      earliestKey = key
+    }
   }
 
   if (earliest) {
     const days = Math.round((earliest.getTime() - todayDate.getTime()) / 86400000)
     if (days < 0) return { key: 'expired', label: '已过期', theme: 'danger' }
     if (days <= 30) return { key: 'expiring', label: '即将到期', theme: 'warning' }
-    return { key: 'active', label: '生效中', theme: 'success' }
+    const label = earliestKey === '年检日期' ? INSPECTION_STATUS_LABEL : '生效中'
+    return { key: 'active', label, theme: 'success' }
   }
   if (sawLongTerm) return { key: 'active', label: '生效中', theme: 'success' }
   return EMPTY_STATUS
 }
 
-/** 证照状态 → 筛选下拉选项（与列表 Tag 文案同源）。 */
+/**
+ * 证照状态 → 筛选下拉选项（与列表 Tag 文案同源）。
+ *
+ * 第 78 轮：成功态同时给出「有效 / 生效中」两个别名 —— 行驶证列表里看到的是
+ * 「有效」，其它证照是「生效中」，筛选框必须两种叫法都能命中（value 同一个）。
+ */
 export function certStatusOptions(): Array<{ label: string; value: string }> {
   return [
-    { label: '生效中', value: 'active' },
+    { label: '有效', value: 'active' },
     { label: '即将到期', value: 'expiring' },
     { label: '已过期', value: 'expired' },
   ]
@@ -634,6 +686,30 @@ export function normalizeFieldWidth(v: unknown): number {
 export const CERT_STATUS_KEY = '__cert_status'
 /** 提取状态派生列的 key（模板插槽 #__extract_status）。 */
 export const EXTRACT_STATUS_KEY = '__extract_status'
+/** 附件数派生列的 key（第 78 轮，模板插槽 #__attach_count）。 */
+export const ATTACH_COUNT_KEY = '__attach_count'
+
+/**
+ * 随单附件数列（第 78 轮）。
+ *
+ * 需求：列表「附件」列显示已挂附件数量（如「2 个附件」），0 个时显示**空白**。
+ * 数据来自列表接口的 `attachment_counts`（record_id → 数量），前端把它
+ * 挂到每行的 `attach_count` 上，本列只负责格式化。
+ */
+export function attachCountColumn(): FleetColumn {
+  return {
+    key: ATTACH_COUNT_KEY,
+    label: '附件',
+    dataType: 'text',
+    default: true,
+    value: (row: any) => {
+      const n = Number(row?.attach_count || 0)
+      return n > 0 ? `${n} 个附件` : ''
+    },
+    raw: (row: any) => Number(row?.attach_count || 0),
+    minWidth: 90,
+  }
+}
 
 /** 证照状态派生列（三色 Tag 走模板插槽）。 */
 export function certStatusColumn(today: string): FleetColumn {
