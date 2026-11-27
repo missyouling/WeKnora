@@ -16,12 +16,31 @@
          而不是先看到一枚孤零零的「字段设置」Tab。
          第 57 轮：singleCategory 走同一容器，但用常规（能耗同款）样式，
          只隐藏分类表 / 新增分组，不再叠加 direct 的白底紧凑覆盖。 -->
-    <div v-if="direct || singleCategory" :class="direct ? 'standard-settings-direct' : 'standard-settings-single'">
+    <!-- 第 77 轮：车辆档案 —— 顶部横向证照标签（含 提取规则 与 + 新增证照） -->
+    <div v-if="flatCertTabs" class="flat-cert-wrap">
+      <div class="flat-cert-tabs" data-cert-flat-tabs>
+        <t-radio-group v-model="certTab" variant="default-filled" size="small" @change="onCertTabChange">
+          <t-radio-button v-for="n in certNames" :key="n" :value="n">{{ n }}</t-radio-button>
+          <t-radio-button value="__rules__">提取规则</t-radio-button>
+        </t-radio-group>
+        <div class="flat-cert-add">
+          <t-input v-if="addCertVisible" v-model="newCertName" size="small" placeholder="证照名称"
+            class="flat-cert-add-input" @enter="createCert" />
+          <t-button variant="text" size="small" @click="toggleAddCert">{{ addCertVisible ? '取消' : '+ 新增证照' }}</t-button>
+        </div>
+      </div>
+      <ExtractRulePanel v-if="certTab === '__rules__'" ref="extractRef" :scope="scope" :kb-name="kbName"
+        :kb-id="kbId || ''" :active-category="lastCert" :active="true" embedded />
+      <FleetCertPanel v-else ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="certTab"
+        direct show-category-name :insurance-tabs="certTab === '保险单'"
+        :hide-group-tabs="hideGroupTabs" drawer-managed @category-change="onCategoryChange" />
+    </div>
+    <div v-else-if="direct || singleCategory" :class="direct ? 'standard-settings-direct' : 'standard-settings-single'">
       <FleetCertPanel ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
       :initial-group="initialGroup"
         :direct="direct" :single-category="singleCategory"
         :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
-        :ref-sources="refSources" :insurance-tabs="insuranceTabs"
+        :ref-sources="refSources" :insurance-tabs="insuranceTabs" drawer-managed
         @category-change="onCategoryChange" />
     </div>
     <t-tabs v-else v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
@@ -29,7 +48,7 @@
         <FleetCertPanel ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
       :initial-group="initialGroup"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
-          :ref-sources="refSources" :insurance-tabs="insuranceTabs"
+          :ref-sources="refSources" :insurance-tabs="insuranceTabs" drawer-managed
           @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
@@ -53,6 +72,7 @@ import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import FleetCertPanel from '@/views/dailyAffairs/FleetCertPanel.vue'
 import ExtractRulePanel from '@/views/dailyAffairs/ExtractRulePanel.vue'
+import { listFleetCategories, createFleetCategory } from '@/api/fleet'
 
 // 标准设置抽屉（中台统一组件）：
 // 「字段定义 / 提取规则」双 Tab 规范，复刻自 InvoiceSettingsDrawer ——
@@ -100,6 +120,11 @@ const props = withDefaults(defineProps<{
   hideGroupTabs?: boolean
   /** 第 76 轮：保险单字段配置的 3 标签模式（交强险 / 商业险 / 险种类别）。 */
   insuranceTabs?: boolean
+  /**
+   * 第 77 轮：车辆档案设置 —— 顶部横向平级展示「各证照 + 提取规则」。
+   * 取消「字段定义 → 公司证照 二级表格」外壳，点证照名直接切换编辑。
+   */
+  flatCertTabs?: boolean
   /** 跨模块引用候选来源的 scope（如离职/合同引用花名册时传 'hr-roster'）。 */
   refSourceScope?: string
   /** 跨模块引用候选分类名；为空时用来源 scope 下的全部分类。 */
@@ -135,6 +160,7 @@ const props = withDefaults(defineProps<{
   refSources: () => [],
   direct: false,
   singleCategory: false,
+  flatCertTabs: false,
 })
 
 const emit = defineEmits<{
@@ -177,6 +203,7 @@ watch(() => props.extraTabLabel, (label) => {
 watch(() => props.visible, (v) => { if (v) activeTab.value = 'fields' })
 
 function onTabChange(val: string | number) {
+  if (activeTab.value === 'rules') rulesVisited.value = true
   if (val !== 'rules') return
   extractRef.value?.refresh()
   // 跟随「字段定义」里选中的分类：在「光伏账单」的字段页切到提取规则，
@@ -197,6 +224,55 @@ defineExpose({ goRules })
 /** 第 72 轮：设置抽屉底部的「保存 / 取消」都是**关闭抽屉**，区别只在草稿处置。 */
 const panelRef = ref<any>(null)
 
+// ---- 第 77 轮：车辆档案横向证照标签 ----
+const certNames = ref<string[]>([])
+const certTab = ref('')
+/** 最近一次选中的证照（切到「提取规则」时规则面板要停在该证照上）。 */
+const lastCert = ref('')
+const addCertVisible = ref(false)
+const newCertName = ref('')
+
+async function loadCertNames() {
+  if (!props.flatCertTabs) return
+  try {
+    const res: any = await listFleetCategories({ scope: props.scope })
+    const list = (Array.isArray(res?.data) ? res.data : []).filter((c: any) => c && c.enabled !== false)
+    certNames.value = list.map((c: any) => String(c.name || '')).filter(Boolean)
+    const want = String(props.initialCategory || '').trim()
+    if (want && certNames.value.includes(want)) {
+      certTab.value = want
+    } else if (!certNames.value.includes(certTab.value)) {
+      certTab.value = certNames.value[0] || ''
+    }
+    lastCert.value = certTab.value
+  } catch { certNames.value = [] }
+}
+function onCertTabChange(v: any) {
+  const next = String(v || '')
+  if (next && next !== '__rules__') lastCert.value = next
+  if (next === '__rules__') rulesVisited.value = true
+}
+function toggleAddCert() {
+  addCertVisible.value = !addCertVisible.value
+  newCertName.value = ''
+}
+async function createCert() {
+  const name = newCertName.value.trim()
+  if (!name) return
+  if (certNames.value.includes(name)) { addCertVisible.value = false; return }
+  try {
+    await createFleetCategory({ scope: props.scope, name, subs: [], enabled: true })
+    addCertVisible.value = false
+    newCertName.value = ''
+    await loadCertNames()
+    certTab.value = name
+    lastCert.value = name
+    emit('saved')
+  } catch { /* 面板/接口各自提示 */ }
+}
+
+watch(() => props.visible, (v) => { if (v) { certTab.value = ''; lastCert.value = ''; void loadCertNames() } }, { immediate: true })
+
 /**
  * 保存：先提交行内草稿（新增字段 / 正在编辑的字段），成功后再关抽屉。
  *
@@ -207,7 +283,10 @@ const panelRef = ref<any>(null)
  */
 async function onFooterConfirm() {
   try {
-    await panelRef.value?.commitPendingEdit?.()
+    // 第 77 轮：跨标签统一提交 —— 字段草稿 + 已访问过的提取规则草稿一次落库。
+    // 用户在两个标签之间来回配置，点一次「保存」必须全部生效。
+    if (certTab.value !== '__rules__') await panelRef.value?.commitPendingEdit?.()
+    if (rulesVisited.value && (certTab.value === '__rules__' || props.flatCertTabs)) await extractRef.value?.save?.()
   } catch {
     // 提交失败由面板自己提示（校验错误），抽屉保持打开让用户修正
     return
@@ -220,6 +299,9 @@ function onFooterCancel() {
   panelRef.value?.discardPendingEdit?.()
   emit('update:visible', false)
 }
+
+/** 是否访问过「提取规则」标签：没访问过就没有草稿，不触发多余写库。 */
+const rulesVisited = ref(false)
 
 // FleetCertPanel 保存分类/字段后派发全局事件：刷新列表列定义与提取规则面板
 function onCategoriesChanged() {
@@ -239,6 +321,20 @@ onUnmounted(() => window.removeEventListener('fleet-categories-changed', onCateg
  * 「单行...」。这里把内容区下限钉在 680px（小屏按 95vw 收缩），
  * 同时禁止横向滚动。
  */
+/* 第 77 轮：车辆档案横向证照标签（与提取规则平级） */
+.flat-cert-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  min-width: 0;
+
+  :deep(.t-radio-group) { flex-wrap: nowrap; overflow-x: auto; }
+}
+.flat-cert-add { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.flat-cert-add-input { width: 140px; }
+
 .standard-settings-drawer :deep(.t-drawer__body) {
   overflow-x: hidden;
 }

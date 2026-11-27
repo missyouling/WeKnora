@@ -104,7 +104,7 @@ test('正则不再按字段名白名单置灰（置灰只剩「本模块是否�
   const disabled = (panel.match(/:disabled="!regexPatchable\(f\.name\)"/g) || []).length
   assert.ok(disabled >= 2, `行内 + 展开区都应受同一判定控制，实际 ${disabled}`)
   // 必填开关仍走标准键判定（后端校验器认全部标准键）
-  assert.match(panel, /:disabled="!isStdField\(f\.name\)"/)
+  assert.doesNotMatch(panel, /isStdField\(f\.name\)/, '第 77 轮：必填判定已删除')
 })
 
 test('删除「只支持 8 个字段」与「本模块未接入」两处告警条', () => {
@@ -131,7 +131,6 @@ test('规则表去掉行尾展开箭头，整行非控件区仍可展开', () =>
   assert.doesNotMatch(panel, /chevron-down" size="15px" \/><\/span>\s*\n\s*<\/div>/)
   // 行本身仍是展开热区（控件区各自 @click.stop）
   assert.match(panel, /class="rule-table-row"[^>]*@click="toggleEdit\(f\.name\)"/)
-  assert.match(panel, /<span class="rtr-required" @click\.stop>/)
   assert.match(panel, /<span class="rtr-regex" @click\.stop>/)
 })
 

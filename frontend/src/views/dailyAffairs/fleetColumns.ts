@@ -157,12 +157,12 @@ export function buildFleetColumns(
       value: (row: any) => {
         const v = read(row)
         if (v === undefined || v === null || v === '') {
-          // 记录型统一空值文案：'—'（与列表其他模块一致，不显示 "undefined"）
-          return '—'
+          // 第 77 轮：空值一律空白（禁止渲染「—」）
+          return ''
         }
         // 第 46 轮：统一格式化出口，「时间」列保留时分秒、「日期」列只到日，
         // 绝不上屏 2026-11-07T20:12:33.37663+08:00 这类原串。
-        if (dataType === 'date') return formatCellDateTime(label, v) || '—'
+        if (dataType === 'date') return formatCellDateTime(label, v) || ''
         if (dataType === 'number') {
           // 金额语义：千分位 + 两位小数（列表金额必须带千分位，52,015.90 才读得出来）；
           // 其余数量原值，纯整数不补 .00
@@ -183,7 +183,8 @@ export function buildFleetSummaryColumns(cols: readonly FleetColumn[]): SummaryC
   return cols.map((c) => ({
     key: c.key,
     label: c.label,
-    fieldType: c.dataType === 'number' ? (SUM_AMOUNT_HINT.test(c.label) ? 'amount' : 'number') : 'text',
+    fieldType: c.dataType === 'amount' ? 'amount'
+      : c.dataType === 'number' ? (SUM_AMOUNT_HINT.test(c.label) ? 'amount' : 'number') : 'text',
     value: (row: any) => c.raw(row),
   }))
 }
@@ -284,7 +285,7 @@ export function buildFleetSummaryViewColumns(vehicleMap: Map<string, string>): F
     value: (row: any) => {
       if (f.key === 'sub_category') {
         const v = String(row?.sub_category || row?.doc_type || '').trim()
-        return v || '—'
+        return v || ''
       }
       for (const name of f.candidates) {
         if (name === '车牌号' || name === '车牌号码' || name === 'plate_no') {
@@ -297,7 +298,7 @@ export function buildFleetSummaryViewColumns(vehicleMap: Map<string, string>): F
           return String(v).trim()
         }
       }
-      return '—'
+      return ''
     },
     raw: () => 0,
   }))
@@ -641,7 +642,7 @@ export function certStatusColumn(today: string): FleetColumn {
     label: '证照状态',
     dataType: 'text',
     default: true,
-    value: (row: any) => certStatusOf(row?.data, today).label || '—',
+    value: (row: any) => certStatusOf(row?.data, today).label || '',
     raw: () => 0,
     // 需求图 5：表头曾被截断成「证照状」—— 三色 Tag 比纯文本更宽，
     // 必须给足 100px（Tag 四周 padding + 4 个汉字）。

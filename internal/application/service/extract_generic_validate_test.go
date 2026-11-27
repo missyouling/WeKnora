@@ -99,7 +99,12 @@ func TestExtractGenericRequiredFieldPatchedByConfiguredRegex(t *testing.T) {
 	}
 }
 
-func TestExtractGenericRequiredMissingProducesErrorIssue(t *testing.T) {
+// 第 77 轮契约变更：必填开关全局下线。
+//
+// 旧行为：字段标了 Required 且正则补不到时产出 error 级问题（前端红点/阻断提示）。
+// 新行为：Required 不再参与通用校验——补不到就保持空值，不报错、不阻断。
+// 主键类校验（发票号码/金额、车队车牌号等）在各自 handler 层单独做，不受影响。
+func TestExtractGenericRequiredMissingNoLongerBlocks77(t *testing.T) {
 	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
 		{Name: "reg_name", Enabled: true, Required: true, Regex: `制度名称[:：]\s*(\S+)`},
 	}}
@@ -109,30 +114,27 @@ func TestExtractGenericRequiredMissingProducesErrorIssue(t *testing.T) {
 	if len(patches) != 0 {
 		t.Errorf("正则不命中时不应补洞: %+v", patches)
 	}
-	if len(issues) != 1 || issues[0].Field != "reg_name" || issues[0].Severity != issueSeverityError {
-		t.Fatalf("必填缺失应记 1 条 error，实际 %+v", issues)
+	if len(issues) != 0 {
+		t.Fatalf("必填缺失不再产出问题，实际 %+v", issues)
 	}
 }
 
-// 行为变更（2026-10-22）：用户自定义字段不再被整体跳过。
+// 行为变更（2026-10-22 / 第 77 轮再调整）：用户自定义字段不再被整体跳过。
 //
 // 旧行为「强类型结果里没有这个 json 字段 → 跳过避免误报」正是真机事故的根因：
 // 用户在「字段定义」里加了「保证金」并配了规则，模型没提到时系统既不报错、
 // 也不正则补洞，列表与抽屉里那个字段永远为空，用户完全看不出问题在哪。
 //
-// 新契约：记录带 Fields 动态桶（合同/制度/公告/发票提取项都有）时，自定义字段
-// 是**合法落脚点** —— 必填缺失要报出来，配了正则要能补进去。
+// 第 77 轮：必填开关下线后不再报 error，但**自定义字段的落脚点能力必须保留** ——
+// 记录带 Fields 动态桶时，配了正则的自定义字段仍要能补进去（下一个用例锁定）。
 func TestExtractGenericSkipsRequiredForUnknownField(t *testing.T) {
 	cfg := &types.KbExtractConfig{Fields: []types.ExtractFieldConfig{
 		{Name: "车牌号", Enabled: true, Required: true},
 	}}
 	contracts := []ContractExtractionItem{{ContractNo: "HT-1"}}
 	issues, _ := ValidateGenericExtraction(NewGenericRecords(contracts), "渝A12345", cfg)
-	if len(issues) != 1 {
-		t.Fatalf("自定义必填字段缺失应报 1 条 error，实际 %d: %+v", len(issues), issues)
-	}
-	if issues[0].Field != "车牌号" || issues[0].Kind != "missing" {
-		t.Errorf("必填缺失问题异常: %+v", issues[0])
+	if len(issues) != 0 {
+		t.Fatalf("必填缺失不再产出问题，实际 %d: %+v", len(issues), issues)
 	}
 }
 
@@ -169,13 +171,9 @@ func TestExtractGenericSkipsRegexPatchForMultipleRecords(t *testing.T) {
 			t.Errorf("第 %d 条不应被回填: %q", i+1, ct.ContractName)
 		}
 	}
-	if len(issues) != 2 {
-		t.Errorf("两条记录都应各报 1 条必填 error，实际 %d: %+v", len(issues), issues)
-	}
-	for _, it := range issues {
-		if it.Severity != issueSeverityError || it.Kind != "missing" {
-			t.Errorf("必填缺失问题异常: %+v", it)
-		}
+	// 第 77 轮：必填语义下线，多记录补洞失败也不再报问题（保持静默空值）
+	if len(issues) != 0 {
+		t.Errorf("必填语义已下线，不应产出问题，实际 %d: %+v", len(issues), issues)
 	}
 }
 
@@ -336,14 +334,9 @@ func TestExtractGenericFlatMapRecordValidatesAndPatches(t *testing.T) {
 	if len(patches) != 1 || patches[0].Field != "invoiceNo" {
 		t.Fatalf("补洞明细异常: %+v", patches)
 	}
-	var missing []string
-	for _, it := range issues {
-		if it.Severity == issueSeverityError {
-			missing = append(missing, it.Field)
-		}
-	}
-	if len(missing) != 1 || missing[0] != "buyerName" {
-		t.Fatalf("只应为 buyerName 报 error，实际 %v (issues=%+v)", missing, issues)
+	// 第 77 轮：必填语义下线，buyerName 为空不再产出 error
+	if len(issues) != 0 {
+		t.Fatalf("必填语义已下线，不应产出问题，实际 %+v", issues)
 	}
 }
 
@@ -470,7 +463,7 @@ func TestExtractFleetArchiveFieldRulesOnMapView(t *testing.T) {
 		t.Fatalf("补洞成功后不应有问题: %+v", issues)
 	}
 
-	// 场景 2：必填字段既为空、正则也命中不到 → 产出 error（字段名保留中文原文）。
+	// 场景 2：必填字段既为空、正则也命中不到 → 第 77 轮起不再报问题（必填语义下线）。
 	data2 := map[string]any{
 		"车牌号":  "渝C81022",
 		"业户名称": "",
@@ -488,13 +481,8 @@ func TestExtractFleetArchiveFieldRulesOnMapView(t *testing.T) {
 	if len(patches2) != 0 {
 		t.Fatalf("原文没有许可证号，不应补洞: %+v", patches2)
 	}
-	if len(issues2) != 2 {
-		t.Fatalf("两个必填字段为空应产出 2 条问题，实际 %+v", issues2)
-	}
-	for _, is := range issues2 {
-		if is.Severity != issueSeverityError || is.Kind != "missing" {
-			t.Fatalf("问题级别/类型不符: %+v", is)
-		}
+	if len(issues2) != 0 {
+		t.Fatalf("必填语义已下线，不应产出问题，实际 %+v", issues2)
 	}
 
 	// 场景 3：未标必填的空字段不报问题（避免把可选字段变成噪音源）。

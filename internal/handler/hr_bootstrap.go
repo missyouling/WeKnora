@@ -159,6 +159,8 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 76 轮：租户档案迁入公司设置（别名 / 编码 / 分摊方式 / 联系人）、
 	// 车队保险单按交强险 / 商业险 / 险种类别重配字段与提取规则。
 	h.hrRepair76(ctx)
+	// 第 77 轮：宿舍/公租房档案补「表计类型」字段与存量取值、工业表计类型归一工商业。
+	h.hrRepair77(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

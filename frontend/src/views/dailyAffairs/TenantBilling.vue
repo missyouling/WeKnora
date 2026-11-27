@@ -788,10 +788,9 @@ function minColumnWidth(c: ColDef): number {
 }
 
 const tableColumns = computed(() => {
-  // 与发票管理一致：[复选框] → [序号] → 业务列
+  // 第 77 轮：移除自增序号列 —— [复选框] → 第一个业务字段
   const cols: any[] = [
     { colKey: 'row-select', type: 'multiple', width: 46 },
-    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   // 宽度严格跟随「字段定义」：subs.width>0 → clamp(60~400) 精确生效；0 → 自适应。
   // （旧「总和 ≤1500 预算守卫」已删除：24 列宽表一超过阈值就把用户配置的全部

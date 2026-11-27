@@ -336,7 +336,8 @@ const loadDetail = async () => {
       source_mode: it.source_mode || '',
       value_mode: it.value_mode || '',
     }))
-    expandedItemGroup.value = itemsForm.value[0]?.category || ''
+    // 第 77 轮：分摊子项默认全部折叠（公司设置内为手风琴，且避免页面被拉长）
+    expandedItemGroup.value = ''
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载租户详情失败')
   }
@@ -400,6 +401,10 @@ const removeTenant = async (t: any) => {
   }
 }
 
+/**
+ * 第 77 轮：手风琴 —— 展开一组自动折叠其它组。
+ * 分摊子项通常 8~12 组，多组同时展开会把公司设置弹窗拉成一条长页。
+ */
 const toggleItemGroup = (category: string) => {
   expandedItemGroup.value = expandedItemGroup.value === category ? '' : category
 }
@@ -463,7 +468,8 @@ const importUtilityFields = async () => {
       MessagePlugin.info('没有可导入的费用分项（可能尚未提取账单）')
       return
     }
-    expandedItemGroup.value = itemsForm.value[0]?.category || ''
+    // 第 77 轮：分摊子项默认全部折叠（公司设置内为手风琴，且避免页面被拉长）
+    expandedItemGroup.value = ''
     // 只进本地列表：导入本身不落库，用户确认开关后再点「保存」
     dirty.value = true
     MessagePlugin.success(`已导入 ${added} 个市电账单费用分项，请按需开关后点「保存」`)

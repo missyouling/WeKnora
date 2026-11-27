@@ -309,6 +309,8 @@ export function buildRuleFieldsFromSubs(
 export function fieldTypeOfSub(dataType: string): string {
   switch (String(dataType || '').trim()) {
     case 'number': return 'number'
+    // 金额是列表展示类型；提取侧按数字处理（后端 extractTypeOfSubDataType 同口径）
+    case 'amount': return 'number'
     case 'date': return 'date'
     case 'array': return 'array'
     case 'items': return 'items'

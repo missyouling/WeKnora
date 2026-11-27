@@ -73,8 +73,8 @@
           <!-- 行内展开编辑（复刻 meter-form--inline） -->
           <div v-if="editingId && editingItem" class="meter-form meter-form--inline"
             :class="{ 'is-fleet': isFleetScope }">
-            <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="meter-form-title">编辑{{ group.label }}</div>
-            <div v-if="!directMode && !props.singleCategory && !props.lockCategoryShell" class="form-grid">
+            <div v-if="(!directMode || props.showCategoryName) && !props.singleCategory && !props.lockCategoryShell" class="meter-form-title">编辑{{ group.label }}</div>
+            <div v-if="(!directMode || props.showCategoryName) && !props.singleCategory && !props.lockCategoryShell" class="form-grid">
               <div class="form-item">
                 <label>{{ scopeName(group.scope) }} <span class="required">*</span></label>
                 <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
@@ -404,7 +404,7 @@
             </div>
             <!-- 第 74 轮：能耗设置抽屉的「取消/保存」只在抽屉底部保留唯一一套，
                  内容区内的行级保存栏在 lockCategoryShell 模式下整块隐藏。 -->
-            <div v-if="!props.lockCategoryShell" class="meter-form-actions">
+            <div v-if="!props.lockCategoryShell && !props.drawerManaged" class="meter-form-actions">
               <div class="spacer" />
               <t-button variant="outline" size="small" @click="editingId = ''">取消</t-button>
               <t-button theme="primary" size="small" :loading="saving" @click="commitEdit">保存</t-button>
@@ -552,6 +552,14 @@ const props = withDefaults(defineProps<{
    * 保存时把「险种类别」同步进「商业险 / 投保险别」（新增/改名/停用/调序全跟随）。
    */
   insuranceTabs?: boolean
+  /** 直出模式下仍显示「证照名称」输入（车队车辆档案改名用）。 */
+  showCategoryName?: boolean
+  /**
+   * 第 77 轮：由抽屉底栏统一保存。
+   * 打开后隐藏内容区所有内嵌「取消/保存」，只保留抽屉最底部唯一一套。
+   * 行内草稿仍在内存里，切标签不丢；底栏保存时由 commitPendingEdit 统一提交。
+   */
+  drawerManaged?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -567,6 +575,8 @@ const props = withDefaults(defineProps<{
   flattenGroups: false,
   externalGroupTabs: false,
   insuranceTabs: false,
+  showCategoryName: false,
+  drawerManaged: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -857,7 +867,9 @@ const editingItem = computed(() => groupItems.value.find((it: any) => it.id === 
  * 单分类直出：只在「显式开启 direct」且该分组下恰好 1 个分类时生效。
  * 多分类（市电账单 / 光伏 / 费用清单…）与自定义分组仍走原来的表格 + 点击展开。
  */
-const directMode = computed(() => !!props.direct && groupItems.value.length === 1)
+// 第 77 轮：直出模式不再要求「仅 1 个分类」—— 车队车辆档案用横向证照标签
+// 逐个直出，多分类下同样隐藏分类表、只渲染当前证照。
+const directMode = computed(() => !!props.direct)
 /**
  * 是否「只允许引用其它分类字段」的分类（当前仅费用清单）。
  *

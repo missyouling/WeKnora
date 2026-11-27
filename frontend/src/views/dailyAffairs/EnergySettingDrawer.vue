@@ -108,6 +108,8 @@ const billTab = ref<string>('市电账单')
 const billCategories = ref<string[]>([...ENERGY_BILL_CATEGORIES])
 const meterCategory = ref<'electricity' | 'water' | 'gas'>('electricity')
 const saving = ref(false)
+/** 是否打开过「提取规则」：没打开过就没有草稿，统一保存时跳过。 */
+const ruleVisited = ref(false)
 
 /** 费用清单块标签：默认分组 / tenant:<id>（别名来自公司设置） */
 const costTab = ref<string>('default')
@@ -189,29 +191,45 @@ watch(() => [props.initialTab, props.initialCategory], () => { if (props.visible
 onMounted(() => { void loadCostTenants(); void loadBillCategories() })
 
 function onTabChange(val: string | number) {
-  if (val === 'rules') nextTick(() => ruleRef.value?.refresh?.())
+  if (val === 'rules') {
+    ruleVisited.value = true
+    nextTick(() => ruleRef.value?.refresh?.())
+  }
   if (val === 'billing') void loadCostTenants()
 }
 
+/**
+ * 第 77 轮：跨标签统一提交。
+ *
+ * 用户在多个标签间连续配置（先改能耗账单字段 → 切工业表计新增一张气表 →
+ * 再改提取规则）后，点一次底栏「保存」必须全部落库。
+ * 只提交**已挂载**的面板（lazy-load：没打开过的标签没有草稿，也没有实例）。
+ * 任一面板失败时，自动切到该标签并保留抽屉，用户能立即看到错误上下文。
+ */
 async function onConfirm() {
   saving.value = true
   try {
-    const tab = activeTab.value
-    if (tab === 'bill') {
-      await panels.value.bill?.commitPendingEdit?.()
-    } else if (tab === 'rules') {
-      await ruleRef.value?.save?.()
-    } else if (tab === 'meter') {
-      await meterRef.value?.commitAll?.()
-    } else if (tab === 'billing') {
-      await panels.value.billing?.commitPendingEdit?.()
-    } else {
-      await panels.value[tab]?.commitPendingEdit?.()
+    const jobs: Array<{ tab: EnergySettingsTab; run: () => Promise<void> }> = []
+    if (panels.value.bill) jobs.push({ tab: 'bill', run: async () => { await panels.value.bill?.commitPendingEdit?.() } })
+    if (ruleVisited.value) jobs.push({ tab: 'rules', run: async () => { await ruleRef.value?.save?.() } })
+    for (const key of ['electric', 'water', 'gas'] as const) {
+      if (panels.value[key]) jobs.push({ tab: key, run: async () => { await panels.value[key]?.commitPendingEdit?.() } })
+    }
+    if (panels.value.billing) jobs.push({ tab: 'billing', run: async () => { await panels.value.billing?.commitPendingEdit?.() } })
+    if (panels.value.meter || meterRef.value) jobs.push({ tab: 'meter', run: async () => { await meterRef.value?.commitAll?.() } })
+
+    for (const job of jobs) {
+      try {
+        await job.run()
+      } catch (e) {
+        activeTab.value = job.tab
+        throw e
+      }
     }
     emit('saved')
     emit('update:visible', false)
   } catch {
-    // 面板自己提示错误，抽屉保持打开
+    // 面板自己提示错误，抽屉保持打开并已切到失败标签
   } finally {
     saving.value = false
   }

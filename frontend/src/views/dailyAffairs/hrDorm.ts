@@ -508,8 +508,15 @@ export function hrDormColumns(view: HrDormView, subs: readonly any[] | null | un
     width: f.width || 0,
     group,
   }))
-  const scoped = (Array.isArray(subs) ? subs : []).filter(
+  const all = Array.isArray(subs) ? subs : []
+  const scoped = all.filter(
     (s) => s && String(s.group || '').trim() === group && s.enabled !== false,
   )
+  // 第 77 轮：分组为空的启用字段（用户在设置里新增时未落到分组）也必须出现在列表，
+  // 否则「设置里加了字段、列表看不到」，六同步断裂。
+  const orphan = all.filter(
+    (s) => s && s.enabled !== false && String(s.group || '').trim() === '',
+  )
+  if (orphan.length) scoped.push(...orphan)
   return hrColumnsFromSubs(scoped.length ? scoped : mock, hrColumnsFromSubs(mock, []))
 }

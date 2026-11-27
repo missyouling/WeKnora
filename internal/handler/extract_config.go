@@ -367,7 +367,8 @@ func (h *BusinessExtractHandler) alignExtractConfigWithCategory(
 // 归一成 string 会让同一字段在两张表里显示不同类型，六同步断裂。
 func extractTypeOfSubDataType(dataType string) string {
 	switch strings.TrimSpace(dataType) {
-	case "number":
+	case "number", "amount":
+		// 第 77 轮：amount 与 number 同为数值提取类型（列表侧另有金额格式）
 		return "number"
 	case "date":
 		return "date"
@@ -1012,7 +1013,7 @@ func mergeInvoiceRuleFields(cur, draft []types.ExtractFieldConfig, catName strin
 // 多行文本字段，规则面板要显示「多行文本」，不能让它在发票模块里退回「字符串」。
 func invoiceRuleTypeFor(dt string) string {
 	switch strings.TrimSpace(dt) {
-	case "number":
+	case "number", "amount":
 		return "number"
 	case "array", "items":
 		return "array"

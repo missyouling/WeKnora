@@ -807,12 +807,9 @@ const footData = computed(() => {
 })
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
-  // 列结构与发票/合同/制度/通知逐项一致：
-  //   [复选框] → [序号] → 业务列… → 状态 → 标签
-  // 序号列此前缺失，用户没法快速和「第 N 条」对话（反馈问题/对数时很费劲）。
+  // 第 77 轮：移除自增序号列 —— [复选框] → 第一个业务字段 → … → 状态 → 标签
   const cols: any[] = [
     { colKey: 'row-select', type: 'multiple', width: 46 },
-    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
     // 账单周期 / 时间类列关闭 ellipsis 兜底宽度，避免 "2026-09-0..." 截断；

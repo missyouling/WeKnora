@@ -2502,8 +2502,11 @@ const drawerGroups = computed(() => {
      * 现在骨架 = 后端 subs（已启用、已排序），字段定义只用来补类型与枚举。
      */
     const group = HR_DORM_GROUP_OF[dormSubView.value]
+    // 第 77 轮：分组为空的新增自定义字段也要进抽屉（否则设置里保存了、
+    // 打开编辑抽屉却看不到 —— 真机「新增字段未六同步」的根因之一）。
     const subs = subsOfTab('hr-dorm')
-      .filter((x: any) => String(x?.group || '') === group && x?.enabled !== false)
+      .filter((x: any) => x?.enabled !== false
+        && (String(x?.group || '') === group || String(x?.group || '') === ''))
     // 住宿记录的费用项目随「房源类型」切换（宿舍 3 项 / 公租房 10 项）
     const defs = hrDormDrawerGroups(dormSubView.value, {
       roomType: String(editForm.value?.data?.['房源类型'] || '').trim(),
@@ -2936,9 +2939,13 @@ async function openDetail(row: any) {
       data['宿舍楼/区域'] = data['宿舍楼/区域'] || '1号楼'
       data['房型'] = data['房型'] || '双人间'
       data['床位数'] = data['床位数'] || '2'
+      // 第 77 轮：表计类型与房源档案同源（宿舍 = 宿舍）
+      data['表计类型'] = data['表计类型'] || '宿舍'
     } else if (dormSubView.value === 'public') {
       data['所属公司'] = data['所属公司'] || '重庆星达铜业有限公司'
       data['租赁单位'] = data['租赁单位'] || '重庆星达铜业有限公司'
+      // 第 77 轮：公租房表计类型 = 公租房
+      data['表计类型'] = data['表计类型'] || '公租房'
     } else if (dormSubView.value === 'asset') {
       // 第 65 轮：新增资产默认「正常」
       data['资产状态'] = data['资产状态'] || '正常'

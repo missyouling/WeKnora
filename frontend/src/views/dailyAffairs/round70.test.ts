@@ -132,7 +132,8 @@ test('第70轮：12 类标准配套设施齐全', () => {
 
 test('第70轮：表计设置只保留工商业分组 + 底部保存/取消', () => {
   const src = read('MeterSettingsPanel.vue')
-  assert.match(src, /const METER_KINDS_IN_SETTINGS70 = new Set\(\['production'\]\)/)
+  // 第 77 轮：类型值归一为「工商业」（兼容旧 production），集合随之扩展
+  assert.match(src, /const METER_KINDS_IN_SETTINGS70 = new Set\(\['工商业', 'production'\]\)/)
   assert.match(src, /if \(!METER_KINDS_IN_SETTINGS70\.has\(String\(m\.meter_kind \|\| ''\)\)\) continue/)
   assert.match(src, /class="meter-save-bar" data-meter-save-bar/)
   assert.match(src, /data-meter-cancel>取消</)

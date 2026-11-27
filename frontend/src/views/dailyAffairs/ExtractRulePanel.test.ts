@@ -14,19 +14,18 @@ import { getScope } from '../../registry'
 
 const panel = readFileSync(new URL('./ExtractRulePanel.vue', import.meta.url), 'utf8')
 
-test('规则面板：字段表新增「必填」开关列与「正则兜底」输入列', () => {
-  assert.match(panel, /必填/)
+test('规则面板：4 列（字段名称/数据类型/正则兜底/状态），必填列已全局下线', () => {
   assert.match(panel, /正则兜底/)
-  // 必填是开关，直接绑到字段配置的 required
-  assert.match(panel, /v-model="f\.required"/)
+  assert.doesNotMatch(panel, /col-required|rtr-required/, '第 77 轮：必填列与开关全局移除')
+  assert.doesNotMatch(panel, /v-model="f\.required"/)
   // 正则是输入框，绑定 regex
   assert.match(panel, /v-model="f\.regex"/)
-  // 表头与行共用同一套列定义（避免两处漂移）
   assert.match(panel, /rule-table-head/)
+  // 4 列定宽：32 / 16 / 40 / 12
+  assert.match(panel, /minmax\(0, 32fr\) minmax\(0, 16fr\) minmax\(0, 40fr\) minmax\(0, 12fr\)/)
 })
 
 test('正则输入在表格行内不触发展开行（@click.stop）', () => {
-  assert.match(panel, /class="rtr-required"/)
   assert.match(panel, /class="rtr-regex"/)
   const regexBlock = panel.slice(panel.indexOf('class="rtr-regex"'))
   assert.match(regexBlock.slice(0, 600), /@click\.stop/)
@@ -47,10 +46,10 @@ test('内置正则预设可一键填入，且都是 RE2 兼容写法（无环视
   assert.match(panel, /REGEX_PRESETS/)
 })
 
-test('正则置灰判定与必填判定必须分开（required 认全部标准键，regex 只认后端 8 键）', () => {
-  // 必填仍走通用校验器 → isStdField 认全部 22 个标准键
-  assert.match(panel, /:disabled="!isStdField\(f\.name\)"/)
-  // 正则走后端补洞器实际支持集合 → regexPatchable，避免"配了不执行"的静默失效
+test('正则置灰只看「后端补洞器是否支持」（必填判定已删除）', () => {
+  // 第 77 轮：必填开关下线，isStdField 一并移除；正则仍走 regexPatchable，
+  // 避免"配了不执行"的静默失效。
+  assert.doesNotMatch(panel, /isStdField\(/)
   assert.match(panel, /:disabled="!regexPatchable\(f\.name\)"/)
   const disabled = (panel.match(/:disabled="!regexPatchable\(f\.name\)"/g) || []).length
   assert.equal(disabled, 2, '行内与展开区两处正则输入都应置灰')

@@ -775,12 +775,16 @@ func (h *HRHandler) UpdateDormRecord(c *gin.Context) {
 			return
 		}
 	}
-	// 第 72 轮：房档保存 —— 表计全局查重 + 空置误切拦截 + 防缩容
+	// 第 72 轮：房档保存 —— 空置误切拦截 + 防缩容
 	if row.Module == hrDormModuleRoom || row.Module == hrDormModulePublic {
-		if err := h.hrDormValidateMeters72(ctx, tid, row.Module, row.ID, merged); err != nil {
-			hrFail(c, err.Error())
-			return
-		}
+		/**
+		 * 第 77 轮：**修改已有房源不再做表号/表名阻止性查重**。
+		 *
+		 * 需求红线：存量宿舍/公租房改任意字段（水表号、面积、押金…）必须 100% 保存成功。
+		 * 唯一性只在「新增房源」时校验（见 Create 分支）；修改走放通，避免历史脏数据
+		 * 把整条记录锁死。表号变更后的历史抄表展示列由既有级联逻辑同步，
+		 * 起止度数与金额一律不动。
+		 */
 		if err := h.hrDormValidateRoomMeta72(ctx, tid, row.ID, row.Module, merged, req.Data); err != nil {
 			hrFail(c, err.Error())
 			return

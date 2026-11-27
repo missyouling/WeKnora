@@ -64,10 +64,15 @@ test('核算/光伏/账单子组件必须引入共享列表样式', () => {
   }
 })
 
-test('8 个视图的列都以 [复选框] → [序号] 开头', () => {
+test('8 个视图的列都以 [复选框] 开头；第 77 轮起能耗模块不再渲染自增序号列', () => {
+  // 第 77 轮：仅能耗模块（市电/光伏/电费/水费/气费/费用清单）移除序号列；
+  // 发票/合同/制度等其它模块保持原有 [复选框] → [序号] 口径不变。
+  const energyPages = new Set(['Utilities', 'Meter', 'Solar', 'Tenant'])
   for (const [name, src] of Object.entries(pages)) {
-    assert.match(src, /colKey:\s*'row-select'/, `${name} 复选框列缺少 colKey: 'row-select'`)
-    assert.match(src, /colKey:\s*'serial-number'/, `${name} 缺少序号列`)
+    assert.match(src, /colKey: *'row-select'/, `${name} 复选框列缺少 colKey: 'row-select'`)
+    if (energyPages.has(name)) {
+      assert.doesNotMatch(src, /colKey: *'serial-number'/, `${name} 仍有序号列（第 77 轮要求移除）`)
+    }
   }
 })
 

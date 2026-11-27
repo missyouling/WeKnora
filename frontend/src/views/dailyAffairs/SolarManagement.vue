@@ -579,10 +579,9 @@ const footData = computed(() => {
 })
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
-  // 与发票管理一致：[复选框] → [序号] → 业务列
+  // 第 77 轮：移除自增序号列 —— [复选框] → 第一个业务字段
   const cols: any[] = [
     { colKey: 'row-select', type: 'multiple', width: 46 },
-    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
     // subs.width>0 精确固定（clamp 60~400）；0/未配置走内容自适应（与发票同一套 colWidthOf）

@@ -1187,6 +1187,9 @@ func (h *FleetHandler) CreateFleetCategory(c *gin.Context) {
 // 否则列表会按未知类型渲染成空白单元格（且六端各自 fallback 到不同默认值）。
 var fleetSubDataTypes = map[string]bool{
 	"text": true, "textarea": true, "number": true,
+	// 第 77 轮：amount 是独立金额类型（右对齐/千分位/汇总）。
+	// 白名单漏了它会被静默降级成 text —— 真机表现「责任限额的金额显示为单行文本」。
+	"amount": true,
 	"date": true, "array": true, "items": true,
 }
 

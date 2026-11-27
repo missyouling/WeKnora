@@ -30,12 +30,11 @@
       @saved="onTestPanelSaved" />
 
     <div class="rule-table">
-      <!-- 第 76 轮：5 列定宽（24% / 14% / 11% / 39% / 12%）。
-           字段描述列已下线（展开区仍可编辑 desc），把宽度全部让给正则输入。 -->
+      <!-- 第 77 轮：删除「必填」列（全局弃用必填开关与校验），
+           释放的宽度均分给字段名称与正则兜底 —— 4 列 32% / 16% / 40% / 12%。 -->
       <div class="rule-table-head">
         <span class="col-name">字段名称</span>
         <span class="col-type">数据类型</span>
-        <span class="col-required">必填</span>
         <span class="col-regex">正则兜底</span>
         <span class="col-status">状态</span>
       </div>
@@ -46,12 +45,6 @@
             <t-tag v-if="aiFilled.has(f.name)" size="small" variant="light" theme="primary" class="rtr-ai-badge">AI</t-tag>
           </span>
           <span class="rtr-type">{{ typeLabel(f.type || '') }}</span>
-          <!-- 必填：控制该字段为空时是否产出 error 级校验告警 -->
-          <span class="rtr-required" @click.stop>
-            <t-tooltip :content="requiredTip" placement="top">
-              <t-switch v-model="f.required" size="small" :disabled="!isStdField(f.name)" />
-            </t-tooltip>
-          </span>
           <!-- 正则兜底：LLM 漏抽时从原文回填（Go RE2）。行内只做快速填写，完整编辑在展开区 -->
           <span class="rtr-regex" @click.stop>
             <t-tooltip :content="regexTip(f.name)" placement="top">
@@ -83,13 +76,6 @@
             <div class="rule-form-item">
               <label>数据类型</label>
               <t-select v-model="f.type" size="small" :options="typeOptions" />
-            </div>
-            <div class="rule-form-item">
-              <label>必填校验</label>
-              <div class="rule-form-inline">
-                <t-switch v-model="f.required" size="small" :disabled="!isStdField(f.name)" />
-                <span class="rule-form-hint">开启后该字段为空会产出 error 级告警（不影响提取结果落库）</span>
-              </div>
             </div>
             <div class="rule-form-item">
               <label>正则兜底</label>
@@ -197,8 +183,6 @@ import {
   REGEX_PRESETS,
   extractFieldLabel,
   fieldRulesSupported,
-  isDynamicFieldScope,
-  isStandardField,
   isRegexPatchable,
   regexDisabledReason,
   regexSyntaxHint,
@@ -792,24 +776,9 @@ function subsTypeToExtractType(dataType: string): string {
 
 // 字段级规则（必填/正则）是否可用。该模块已接入通用校验 + 字段确实是标准契约键。
 // 自定义扩展中文 key 只进 Prompt，后端补洞器装不下它 —— UI 必须置灰而不是装作能用。
-// 必填开关的可编辑判定。
-//
-// 标准 scope 走字典键；车队档案（kind=archive 且已接入补洞）的字段名由 subs
-// 决定、是中文，isStandardField 永远 false，必须放行非空字段名。
-const isStdField = (name: string) =>
-  fieldRulesSupported(props.scope)
-  && (isStandardField(props.scope, name) || isDynamicFieldScope(props.scope))
-
-// 正则可配判定**独立于**必填判定：必填走通用校验器认的全部 22 个标准键，
-// 正则走后端补洞器实际支持的 8 个 invoiceFieldOrder 键（extract_regex_fallback.go）。
-// 此前二者共用 isStdField，导致用户给 totalAmount 配了正则却不执行（静默失效）。
+// 正则可配判定：走后端补洞器实际支持的 8 个 invoiceFieldOrder 键
+// （extract_regex_fallback.go），与已下线的必填判定无关。
 const regexPatchable = (name: string) => fieldRulesSupported(props.scope) && isRegexPatchable(props.scope, name)
-
-const requiredTip = computed(() =>
-  fieldRulesSupported(props.scope)
-    ? '开启后该字段为空会产出 error 级校验告警'
-    : '本模块暂未接入字段级校验',
-)
 
 function regexTip(name: string): string {
   if (regexPatchable(name)) return '模型未提取到该字段时，用此正则从原文唯一命中回填（Go RE2 语法）'
@@ -1474,7 +1443,7 @@ watch(() => props.activeCategory, (v) => {
   .rule-table-row {
     display: grid;
     /**
-     * 第 76 轮：5 列定宽（24% / 14% / 11% / 39% / 12%）。
+     * 第 77 轮：4 列定宽（32% / 16% / 40% / 12%）—— 必填列下线后宽度回补。
      *
      * 用 fr 权重等价百分比：列宽在扣除 gap 后按权重分配，总和恒为容器宽度，
      * 因此**不会出现横向滚动条**（minmax(0,·) 允许内容压缩而不是撑破容器）。
@@ -1482,7 +1451,7 @@ watch(() => props.activeCategory, (v) => {
      * 字段描述列已下线（展开区仍可编辑），表头因此只剩 5 列且单行不折。
      */
     grid-template-columns:
-      minmax(0, 24fr) minmax(0, 14fr) minmax(0, 11fr) minmax(0, 39fr) minmax(0, 12fr);
+      minmax(0, 32fr) minmax(0, 16fr) minmax(0, 40fr) minmax(0, 12fr);
     align-items: center;
     gap: 8px;
     padding: 7px 12px;
@@ -1521,12 +1490,6 @@ watch(() => props.activeCategory, (v) => {
       &.rtr-disabled { color: var(--td-text-color-placeholder); font-weight: 400; }
     }
     .rtr-type { font-variant-numeric: tabular-nums; }
-    .rtr-required {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      :deep(.t-switch) { margin: 0 auto; }
-    }
     .rtr-regex {
       display: flex;
       align-items: center;

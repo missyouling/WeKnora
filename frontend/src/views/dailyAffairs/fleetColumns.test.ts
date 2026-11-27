@@ -44,7 +44,7 @@ test('buildFleetColumns：车牌号走 vehicle_id 映射，缺映射时回退 da
   const plate = cols[0]
   assert.equal(plate.value({ vehicle_id: 'v1' }), '渝C81022')
   assert.equal(plate.value({ vehicle_id: 'v9', data: { 车牌号: '渝A11111' } }), '渝A11111')
-  assert.equal(plate.value({}), '—')
+  assert.equal(plate.value({}), '')
 })
 
 test('buildFleetColumns：金额两位小数 + 千分位，数量整数不补 .00', () => {
@@ -69,7 +69,7 @@ test('buildFleetColumns：空值统一 —，日期裁到 10 位', () => {
     plateMap,
   )
   assert.equal(cols[0].value({ data: { 通行起始日期: '2026-10-13T00:00:00' } }), '2026-10-13')
-  assert.equal(cols[1].value({}), '—')
+  assert.equal(cols[1].value({}), '')
 })
 
 test('dataTypeOfSub：显式类型优先，缺省按字段名推断', () => {
@@ -182,7 +182,7 @@ test('buildFleetSummaryViewColumns：汇总视图列含证照类型/车牌号/�
   // 子分类列取 sub_category，缺失时退回 doc_type
   assert.equal(cols[0].value({ sub_category: '行驶证' }), '行驶证')
   assert.equal(cols[0].value({ doc_type: '道路运输证' }), '道路运输证')
-  assert.equal(cols[0].value({}), '—')
+  assert.equal(cols[0].value({}), '')
   // 车牌号走 data 优先，其次 vehicle_id 映射
   assert.equal(cols[1].value({ data: { 车牌号: '渝A12345' } }), '渝A12345')
   assert.equal(cols[1].value({ vehicle_id: 'v1' }), '渝C81022')
@@ -191,7 +191,7 @@ test('buildFleetSummaryViewColumns：汇总视图列含证照类型/车牌号/�
   assert.equal(cols[3].value({ data: { 档案编号: 'DA-001' } }), 'DA-001')
   assert.equal(cols[3].value({ data: { 保单号: 'P-001' } }), 'P-001')
   // 全部缺失时统一 —
-  assert.equal(cols[3].value({ data: {} }), '—')
+  assert.equal(cols[3].value({ data: {} }), '')
 })
 
 test('amountFromForm 语义：单价×数量优先于单价，避免把「2升×88.5」记成 88.5', () => {

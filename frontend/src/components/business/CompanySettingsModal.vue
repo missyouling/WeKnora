@@ -20,9 +20,9 @@
     </template>
     <div class="content-wrapper">
       <div class="section-header">
-        <h2>单位与部门</h2>
+        <h2>公司管理</h2>
         <p class="section-description">
-          维护公司主体与下属部门。单位/部门改名会级联更新花名册与劳动合同中的对应字段；调整顺序后点击「保存」统一提交。
+          维护公司主体、下属部门与租户档案。单位/部门改名会级联更新花名册与劳动合同中的对应字段；调整顺序后点击「保存」统一提交。
         </p>
       </div>
       <div class="settings-group">
@@ -48,7 +48,7 @@ const navGroups = computed(() => [
   {
     key: 'company',
     label: '公司设置',
-    items: [{ key: 'units', label: '单位与部门', icon: 'usergroup' }],
+    items: [{ key: 'units', label: '公司管理', icon: 'usergroup' }],
   },
 ])
 

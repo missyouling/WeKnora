@@ -622,36 +622,35 @@ func ValidateGenericExtraction(
 			}
 		}
 
-		// 2) 必填（Enabled && Required）：先正则补洞，补不到才报 error
+		/**
+		 * 2) 正则兜底（第 77 轮：必填开关全局下线）。
+		 *
+		 * 旧实现把「正则补洞」绑在 `f.Required` 上：只有标记必填的字段才会用
+		 * 配置正则从原文回填，且补不到就产出 error 并阻断。现在改为：
+		 *   · **所有启用字段**都可以用配置正则补洞（能力不再依赖必填）；
+		 *   · 补不到时**不再报错**（必填语义已废弃），只是保持空值。
+		 * 核心业务主键校验不受影响（在各自 handler 层）。
+		 */
 		if cfg == nil {
 			continue
 		}
 		for _, f := range cfg.Fields {
-			if !f.Enabled || !f.Required {
+			if !f.Enabled {
 				continue
 			}
 			name := strings.TrimSpace(f.Name)
 			if name == "" {
 				continue
 			}
-			// 强类型结果里没有这个 json 字段（用户配了自定义 key）→ 跳过避免误报；
-			// 扁平 map 沙箱里键缺失就是模型没提取到 → 视同空值参与判定。
 			if !rec.isMapView() && !rec.hasField(name) {
 				continue
 			}
-			// isEmpty 第二返回值为 false 表示"键不存在"：map 视图缺键按空处理，
-			// 先试正则补洞（允许建键回填），补不到才报 error。
 			if empty, ok := rec.isEmpty(name); ok && !empty {
 				continue
 			}
 			if patched := genericRegexPatch(rec, name, f.Regex, text, allowRegexPatch, cfg); patched != nil {
 				patches = append(patches, *patched)
-				continue
 			}
-			issues = append(issues, ExtractFieldIssue{
-				Index: rec.Index, Field: name, Kind: "missing",
-				Detail: "用户配置为必填，但未提取到该字段", Severity: issueSeverityError,
-			})
 		}
 	}
 	if len(issues) == 0 {

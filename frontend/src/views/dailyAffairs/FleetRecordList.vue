@@ -25,8 +25,15 @@
       <!-- 解析/提取进度横幅（与发票同款） -->
       <BusinessParseStatusBar :progress="displayProgress" :pending-files="pendingFiles" />
 
+      <!-- 第 77 轮：保险单卡片的三类切换标签（交强险 / 商业险 / 险种类别） -->
+      <div v-if="insuranceTabsVisible" class="fleet-subview-bar" data-insurance-list-tabs>
+        <t-radio-group v-model="insuranceTab" size="small" @change="onInsuranceTabChange">
+          <t-radio-button v-for="t in INSURANCE_TABS" :key="t" :value="t">{{ t }}</t-radio-button>
+        </t-radio-group>
+      </div>
+
       <!-- ② 筛选工具栏 -->
-      <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
+      <BusinessFilterBar v-if="!insuranceTypeView" v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
         :columns="columnDefsForFilter" :visible-keys="visibleColKeys" :selected-count="selectedKeys.size"
         settings-text="设置" :primary-action="primaryAction" @columns-change="onColumnsChange"
         @reset-columns="resetColumns" @select-all-columns="selectAllColumns" @filter-change="applyFilter"
@@ -68,8 +75,21 @@
         </template>
       </BusinessFilterBar>
 
+      <!-- 险种类别：字段字典列表（7 项标准险种，增删改序在「设置」里维护） -->
+      <div v-if="insuranceTypeView" class="doc-list-scroll">
+        <div class="insurance-type-panel" data-insurance-type-panel>
+          <div class="insurance-type-head"><span>险种名称</span><span>数据类型</span><span>状态</span></div>
+          <div v-for="t in insuranceTypes" :key="t.name" class="insurance-type-row">
+            <span class="it-name">{{ t.label }}</span>
+            <span class="it-type">{{ t.data_type === 'amount' ? '金额' : (t.data_type === 'date' ? '日期' : '单行文本') }}</span>
+            <span class="it-status">{{ t.enabled === false ? '停用' : '启用' }}</span>
+          </div>
+          <div v-if="!insuranceTypes.length" class="insurance-type-empty">暂无险种，请在「设置」中添加</div>
+        </div>
+      </div>
+
       <!-- ③ 列表：与发票管理逐字同构（.doc-list-view + :max-height="100%" + sticky-header） -->
-      <div class="doc-list-scroll">
+      <div v-else class="doc-list-scroll">
         <!-- 表头就绪前只渲染占位块：宁可空着，也不能先用「复选框 + 状态列」
              渲染一帧再蹦业务列（需求 4：第 1 帧必须一次性出现全部列）。 -->
         <div v-if="!headerReady" class="doc-list-view">
@@ -96,7 +116,7 @@
                 :theme="certThemeOf(row)" variant="light" size="small">
                 {{ certStatusOf(row?.data, todayStr).label }}
               </t-tag>
-              <span v-else>—</span>
+              <span v-else></span>
             </template>
             <!-- 提取状态：同为派生值，绿底成功 Tag -->
             <template #__extract_status="{ row }: any">
@@ -133,6 +153,7 @@
     <StandardSettingDrawer v-model:visible="settingsVisible" :kb-id="kbId" :scope="settingsScope"
       :initial-category="activeCategoryName" :title="`${menuLabel}设置`" storage-key="weknora-fleet-settings-width"
       :show-rules="isArchive" :direct="!isArchive" :extra-tab-label="extraTabLabel"
+      :flat-cert-tabs="isArchive && meta.scope === 'vehicle'"
       :insurance-tabs="isArchive && activeCategoryName === '保险单'" @saved="onSettingsSaved">
       <template #extra-tab>
         <OilCardPanel v-if="extraTabKind === 'oilcard'" />
@@ -157,9 +178,9 @@
            渲染分支保持原样）。 -->
       <template #field-__cert_status>
         <div class="bsd-readonly-tag">
-          <t-tag v-if="detailCertStatus && detailCertStatus !== '—'"
+          <t-tag v-if="detailCertStatus"
             :theme="detailCertTheme" variant="light" size="small">{{ detailCertStatus }}</t-tag>
-          <span v-else class="bsd-readonly-empty">—</span>
+          <span v-else class="bsd-readonly-empty"></span>
         </div>
       </template>
       <!-- 提取状态：同为派生值，抽屉里也是只读 Tag（与列表同款） -->
@@ -201,6 +222,7 @@ import BusinessParseStatusBar from '@/components/business/BusinessParseStatusBar
 import StandardSettingDrawer from '@/components/business/StandardSettingDrawer.vue'
 import BusinessEmptyState from './BusinessEmptyState.vue'
 import BusinessFilterBar from './BusinessFilterBar.vue'
+import { INSURANCE_TABS } from './insuranceFields'
 import BusinessSplitDetailDrawer from './BusinessSplitDetailDrawer.vue'
 import PrintPreviewDialog from './PrintPreviewDialog.vue'
 import FleetUploadDialog from './FleetUploadDialog.vue'
@@ -394,6 +416,33 @@ function onKpiCardClick(card: any) {
 // 列表
 // ---------------------------------------------------------------------------
 const rows = ref<any[]>([])
+// ---- 第 77 轮：保险单 3 标签 ----
+const insuranceTab = ref<string>('交强险')
+const insuranceTabsVisible = computed(() => isArchive.value && activeCategoryName.value === '保险单')
+const insuranceTypeView = computed(() => insuranceTabsVisible.value && insuranceTab.value === '险种类别')
+// 切到其它证照时复位到交强险（否则下次进保险单会停在上次选择，列也串）
+watch(activeCategoryName, (v) => {
+  if (v !== '保险单') insuranceTab.value = '交强险'
+})
+const insuranceTypes = computed(() => (activeSubs.value || [])
+  .filter((x: any) => String(x?.group || '').trim() === '险种类别' && x?.enabled !== false)
+  .map((x: any) => ({ name: String(x.name || ''), label: String(x.label || x.name || ''), data_type: x.data_type, enabled: x.enabled })))
+function onInsuranceTabChange() {
+  page.value = 1
+  selectedKeys.value = new Set()
+  initColumns()
+  void reloadList()
+}
+/** 存量保单归属：保单/险种文本里出现哪个险种关键词就归到哪个标签（可同属两类）。 */
+function insuranceKindsOf(r: any): { jq: boolean; sy: boolean } {
+  const d = r?.data || {}
+  const text = [d['保险类型'], d['保单号'], d['险种名称'], d['投保险别'], d['保险公司名称']]
+    .map((v) => String(v ?? '')).join(' ')
+  return {
+    jq: /交强|交通事故责任强制/.test(text),
+    sy: /商业|第三者|车辆损失|车上人员/.test(text),
+  }
+}
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -472,10 +521,17 @@ const certThemeOf = (row: any): 'success' | 'warning' | 'danger' => {
 // 剔除，否则真机上会同时出现「驾驶证状态」与「证照状态」两列（需求图 15）。
 // 判定与排序都收口在 fleetColumns.buildArchiveColumns（含全部历史别名，
 // 且派生列位置跟随「字段定义」里拖出来的顺序 —— 第 44 轮）。
+/** 保险单按当前标签取字段（交强险 / 商业险各自的胶囊组），其它分类原样。 */
+const archiveSubsScoped = computed(() => {
+  if (!insuranceTabsVisible.value || insuranceTab.value === '险种类别') return activeSubs.value
+  const pref = `${insuranceTab.value}/`
+  const scoped = (activeSubs.value || []).filter((x: any) => String(x?.group || '').startsWith(pref))
+  return scoped.length ? scoped : activeSubs.value
+})
 const columnDefs = computed<FleetColumn[]>(() => {
   if (isSummaryView.value) return buildFleetSummaryViewColumns(vehicleMap.value)
   if (!isArchive.value) return buildFleetColumns(activeSubs.value, vehicleMap.value)
-  return buildArchiveColumns(activeSubs.value, vehicleMap.value, todayStr)
+  return buildArchiveColumns(archiveSubsScoped.value, vehicleMap.value, todayStr)
 })
 const columnDefsForFilter = computed(() => columnDefs.value.map((c) => ({ key: c.key, label: c.label })))
 
@@ -484,7 +540,8 @@ const visibleColKeys = ref<string[]>([])
 // （许可证 10 个字段 vs 登记证书 35 个），共用一套会让切分类后列全空。
 const STORAGE_KEY = computed(() => {
   const sub = isSummaryView.value ? '__summary__' : (activeCategoryName.value || meta.value.singleCategory || '__default__')
-  return `weknora-fleet-${meta.value.scope}-${props.recordType}-${sub}-cols-v5`
+  const tail = insuranceTabsVisible.value ? `-${insuranceTab.value}` : ''
+  return `weknora-fleet-${meta.value.scope}-${props.recordType}-${sub}${tail}-cols-v5`
 })
 
 const visibleCols = computed(() => columnDefs.value.filter((c) => visibleColKeys.value.includes(c.key)))
@@ -649,9 +706,15 @@ const gatedRows = computed(() => {
 // 证照状态筛选（派生值，只能前端过滤；筛选期间已把 page_size 拉到 200）
 const activeCertStatus = computed(() => String(filterState.value?.certStatus || '').trim())
 const statusFilteredRows = computed(() => {
+  let list = gatedRows.value
+  // 保险单：按当前标签过滤（存量保单靠险种关键词识别，可同时属于两类）
+  if (insuranceTabsVisible.value && insuranceTab.value !== '险种类别') {
+    const key = insuranceTab.value === '商业险' ? 'sy' : 'jq'
+    list = list.filter((r) => insuranceKindsOf(r)[key])
+  }
   const want = activeCertStatus.value
-  if (!want) return gatedRows.value
-  return gatedRows.value.filter((r) => certStatusOf(r?.data, todayStr).key === want)
+  if (!want) return list
+  return list.filter((r) => certStatusOf(r?.data, todayStr).key === want)
 })
 const pagedRows = computed(() => statusFilteredRows.value)
 
@@ -868,7 +931,7 @@ const drawerSubFields = computed(() => [])
 
 // 抽屉里「证照状态」的展示值：按当前编辑中的有效期止实时联动
 // （用户改了有效期止，状态要立刻跟着变，不能只在保存后才更新）。
-const detailCertStatus = computed(() => certStatusOf(editForm.value?.data, todayStr).label || '—')
+const detailCertStatus = computed(() => certStatusOf(editForm.value?.data, todayStr).label || '')
 /**
  * 抽屉里证照状态 Tag 的主题与文案。
  *
@@ -1326,6 +1389,49 @@ const listViewClass = computed(() => flatClassOf(isTableFlat.value))
   flex: 1;
 }
 .overview-group { flex: 0 0 auto; }
+
+/* 第 77 轮：保险单三类切换（与人事/能耗子标签 100% 同款） */
+.fleet-subview-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 0;
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
+/* 险种类别字典列表 */
+.insurance-type-panel {
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--td-bg-color-container);
+}
+.insurance-type-head,
+.insurance-type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 80px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+}
+.insurance-type-head {
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  border-bottom: 1px solid var(--td-component-stroke);
+  font-weight: 500;
+}
+.insurance-type-row { border-bottom: 1px solid var(--td-component-stroke); }
+.insurance-type-row:last-of-type { border-bottom: none; }
+.insurance-type-row .it-type,
+.insurance-type-row .it-status { color: var(--td-text-color-secondary); }
+.insurance-type-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--td-text-color-placeholder);
+  font-size: 13px;
+}
 .biz-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 
 /* 表格：**完全复刻 InvoiceManagement.vue**，不写任何自定义高度规则。

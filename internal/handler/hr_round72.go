@@ -407,10 +407,19 @@ func (h *HRHandler) hrDormMeterPool72(ctx context.Context, tid int64, selfID str
 			)
 		}
 	}
-	// 工商业表计（表号 + 别名）
+	/**
+	 * 工商业表计（表号 + 别名）。
+	 *
+	 * 第 77 轮：**只查工商业表计**。utility_meters 里仍保留历史上由房源档案
+	 * 迁出的宿舍/公租房表（meter_kind='dorm'/'public' 或旧标签），把它们纳入
+	 * 查重会让「编辑持睿403」撞上它自己的旧表记录 ——
+	 * 真机报错「电表名称 "持睿403" 已被「持睿403」占用」，任何字段都存不进去。
+	 * 房源表的唯一性由上面的房档池（同模块/跨模块）负责。
+	 */
 	var meters []types.UtilityMeter
 	_ = h.db.WithContext(ctx).
-		Where("tenant_id = ? AND deleted_at IS NULL", tid).Find(&meters).Error
+		Where("tenant_id = ? AND deleted_at IS NULL AND meter_kind IN ?", tid,
+			[]string{"工商业", "production"}).Find(&meters).Error
 	for _, m := range meters {
 		kind := "电表"
 		switch strings.TrimSpace(m.Category) {

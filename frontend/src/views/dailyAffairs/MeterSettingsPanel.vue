@@ -43,8 +43,8 @@
             <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" placeholder="选择类型" />
           </div>
           <div class="form-item">
-            <label>用途</label>
-            <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+            <label>表计类型</label>
+            <t-input v-model="meterForm.meter_kind" placeholder="如：工商业" data-meter-kind-input />
           </div>
           <div class="form-item">
             <label>归属单位</label>
@@ -89,9 +89,15 @@
           <label>备注</label>
           <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
         </div>
+        <!-- 第 77 轮：内嵌抽屉时不再有第二套保存/取消，只留「收起」把草稿并回列表 -->
         <div class="meter-form-actions">
-          <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-          <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+          <template v-if="props.embedded">
+            <t-button variant="text" size="small" @click="foldMeterForm">收起</t-button>
+          </template>
+          <template v-else>
+            <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+            <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+          </template>
         </div>
       </div>
 
@@ -100,14 +106,14 @@
 
       <div v-if="activeGroupItems.length" :ref="setMeterSortableRef" class="meter-table">
         <div class="meter-table-head">
-          <span class="meter-drag-th"><t-icon name="move" size="14px" /></span><span>别名</span><span>表号</span><span>类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
+          <span class="meter-drag-th"><t-icon name="move" size="14px" /></span><span>别名</span><span>表号</span><span>表计类型</span><span>倍率</span><span>单价</span><span>归属单位</span><span>状态</span><span>操作</span>
         </div>
         <template v-for="m in activeGroupItems" :key="m.id">
           <div class="meter-table-row" :data-id="m.id" :class="{ editing: meterFormVisible && meterForm.id === m.id }" @click="toggleMeterEdit(m)">
             <span class="meter-drag-handle" title="拖动排序" @click.stop><t-icon name="move" size="14px" /></span>
             <span class="mtr-alias">{{ m.alias }}</span>
             <span class="mtr-mono">{{ m.meter_no || '—' }}</span>
-            <span class="mtr-type">{{ meterTypeLabel(m.meter_type) }} · {{ meterKindLabel(m.meter_kind) }}</span>
+            <span class="mtr-type" :title="meterTypeLabel(m.meter_type)">{{ meterKindLabel(m.meter_kind) }}</span>
             <span class="mtr-mono">{{ fmtNum(m.rate) }}</span>
             <span class="mtr-mono">{{ fmtUnitPrice(m.default_unit_price) }} 元/{{ unitLabel }}</span>
             <span class="mtr-owner">{{ normalizeCompanyName(m.owner_unit, companyNames) || '—' }}</span>
@@ -141,8 +147,8 @@
                 <t-select v-model="meterForm.meter_type" :options="meterTypeOptions" placeholder="选择类型" />
               </div>
               <div class="form-item">
-                <label>用途</label>
-                <t-select v-model="meterForm.meter_kind" :options="meterKindOptions" />
+                <label>表计类型</label>
+                <t-input v-model="meterForm.meter_kind" placeholder="如：工商业" data-meter-kind-input />
               </div>
               <div class="form-item">
                 <label>归属单位</label>
@@ -188,8 +194,13 @@
               <t-textarea v-model="meterForm.remark" :maxlength="500" placeholder="选填" />
             </div>
             <div class="meter-form-actions">
-              <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
-              <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+              <template v-if="props.embedded">
+                <t-button variant="text" size="small" @click="foldMeterForm">收起</t-button>
+              </template>
+              <template v-else>
+                <t-button variant="outline" size="small" @click="meterFormVisible = false">取消</t-button>
+                <t-button theme="primary" size="small" :loading="savingMeter" @click="saveMeter">保存</t-button>
+              </template>
             </div>
           </div>
         </template>
@@ -320,14 +331,10 @@ const customKinds = ref<KindItem[]>([])
 const meterKinds = computed(() => [...KIND_BUILTIN, ...customKinds.value])
 /**
  * 第 70 轮：表计设置只管理工商业表计（宿舍/公租房表在房源档案里定义）。
- * 这里仍保留 dorm 的 label 映射用于展示历史行，但**下拉只给工商业**，
- * 防止用户在这里新建出「宿舍表」形成两套真相。
+ * 第 77 轮：表计类型改为自由文本输入（默认「工商业」），不再用下拉枚举，
+ * 因此这里只保留 label 映射用于展示历史行。
  */
-const meterKindOptions = computed(() =>
-  meterKinds.value
-    .filter((k) => METER_KINDS_IN_SETTINGS70.has(k.value))
-    .map(k => ({ label: k.label, value: k.value })))
-const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || '未分类'
+const meterKindLabel = (k: string) => meterKinds.value.find(o => o.value === k)?.label || String(k || '').trim() || '未分类'
 
 const filteredMeters = computed(() => {
   const kw = panelSearch.value.trim().toLowerCase()
@@ -343,7 +350,7 @@ const filteredMeters = computed(() => {
  * utility_meters 里的历史记录**不删除**：抄表与费用核算仍按 meter_no 引用它，
  * 这里只是把它们从设置界面移出（改价去房源档案）。
  */
-const METER_KINDS_IN_SETTINGS70 = new Set(['production'])
+const METER_KINDS_IN_SETTINGS70 = new Set(['工商业', 'production'])
 const meterGroups = computed(() => {
   const groups = meterKinds.value
     .filter((k) => METER_KINDS_IN_SETTINGS70.has(k.value))
@@ -474,7 +481,7 @@ const nextMeterNo = () => {
 
 const openMeterForm = (m: any) => {
   // 新增默认用途:水表(总表/分表/消防均属工商业)默认工商业;电表/气表默认居民
-  const defaultKind = 'production'
+  const defaultKind = '工商业'
   // 新增默认类型:电表/气表默认普通;水表类型(总表/分表/消防)由用户按需选择
   const defaultType = props.category === 'water' ? '' : 'normal'
   meterForm.value = m ? {
@@ -498,7 +505,7 @@ const openMeterForm = (m: any) => {
     enabled: m.enabled !== false,
   } : {
     id: '', alias: '', meter_no: nextMeterNo(), meter_type: defaultType,
-    meter_kind: defaultKind, owner_unit: '', rate: 1, default_unit_price: 0,
+    meter_kind: defaultKind || '工商业', owner_unit: '', rate: 1, default_unit_price: 0,
     use_unit: '', manager: '', contact: '', meter_mode: 'manual',
     install_date: '', remark: '', enabled: true,
   }
@@ -525,7 +532,7 @@ const saveMeter = async () => {
       alias: meterForm.value.alias.trim(),
       meter_no: meterForm.value.meter_no || '',
       meter_type: meterForm.value.meter_type || '',
-      meter_kind: meterForm.value.meter_kind || 'dorm',
+      meter_kind: String(meterForm.value.meter_kind || '').trim() || '工商业',
       owner_unit: normalizeCompanyName(meterForm.value.owner_unit, companyNames.value),
       rate: Number(meterForm.value.rate) > 0 ? Number(meterForm.value.rate) : 1,
       default_unit_price: Number(meterForm.value.default_unit_price) || 0,
@@ -563,7 +570,7 @@ const saveMeter = async () => {
         alias: '',
         meter_no: nextMeterNo(),
         meter_type: props.category === 'water' ? '' : 'normal',
-        meter_kind: 'production',
+        meter_kind: '工商业',
         owner_unit: '',
         rate: '',
         default_unit_price: '',
@@ -639,12 +646,35 @@ const savingAll = ref(false)
  * 覆盖三类：展开中的编辑表单（含新增）、启用开关、拖拽排序。
  * 提交后刷新列表、通知父级重算，并关闭抽屉；「取消」直接关闭、丢弃草稿。
  */
+/**
+ * 第 77 轮：内嵌模式下「收起」= 把编辑表单并入内存草稿列表，不落库。
+ * 抽屉底栏「保存」时统一创建/更新，切标签不会静默写库。
+ */
+function foldMeterForm(): boolean {
+  const alias = String(meterForm.value?.alias || '').trim()
+  if (!alias) { MessagePlugin.warning('请输入别名'); return false }
+  const copy = { ...meterForm.value, alias }
+  if (copy.id) {
+    const i = meters.value.findIndex((x: any) => String(x.id) === String(copy.id))
+    if (i >= 0) meters.value[i] = { ...meters.value[i], ...copy }
+  } else {
+    // 草稿行：id 为空，保存时走 create；插到列表首位便于用户核对
+    meters.value = [{ ...copy, id: '', category: props.category, _draft: true }, ...meters.value]
+  }
+  sortMetersLocal()
+  meterFormVisible.value = false
+  return true
+}
+
 async function saveAllMeters(closeAfter = true) {
   savingAll.value = true
   try {
-    if (meterFormVisible.value) {
-      await saveMeter()
+    if (meterFormVisible.value && !foldMeterForm()) return
+    // 草稿行（本次新增、尚未落库）先创建
+    for (const draft of meters.value.filter((m: any) => !m.id)) {
+      await createUtilityMeter(meterPayloadOf(draft))
     }
+    meters.value = meters.value.filter((m: any) => !!m.id)
     for (const id of Array.from(dirtyEnabled.value)) {
       const m = meters.value.find((x: any) => String(x.id) === id)
       // 第 75 轮：只提交**本介质**的表计（meters 已按 category 加载；

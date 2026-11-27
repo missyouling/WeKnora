@@ -46,9 +46,10 @@ test('提取规则：能耗 scope 用方块标签而非下拉，且无缓存样�
   assert.match(panel, /energyBillCategoriesOf\(categories\.value\[props\.scope\]/)
   assert.doesNotMatch(panel, /name="ticket"/, '缓存样票按钮必须删除')
   assert.doesNotMatch(panel, /sampleTextCache/, '样票缓存依赖必须删除')
-  // 5 列定宽：24 / 14 / 11 / 39 / 12
-  assert.match(panel, /minmax\(0, 24fr\) minmax\(0, 14fr\) minmax\(0, 11fr\) minmax\(0, 39fr\) minmax\(0, 12fr\)/)
+  // 第 77 轮：4 列定宽 32 / 16 / 40 / 12（必填列下线后宽度回补）
+  assert.match(panel, /minmax\(0, 32fr\) minmax\(0, 16fr\) minmax\(0, 40fr\) minmax\(0, 12fr\)/)
   assert.doesNotMatch(panel, /<span>字段描述<\/span>/, '字段描述列已下线')
+  assert.doesNotMatch(panel, /col-required|rtr-required/, '必填列已下线')
   assert.match(panel, /<span class="adv-label">高级模式<\/span>/, '高级模式文字标签必须保留')
 })
 
@@ -58,7 +59,8 @@ test('公司设置：单位表单含别名 / 租户开关 / 租户编码 / 分�
   assert.match(org, /data-org-alias/, '必须有别名输入框')
   assert.match(org, /data-org-tenant-switch/, '必须有是否为租户开关')
   assert.match(org, /data-org-tenant-no/, '必须有租户编码输入框')
-  assert.match(org, /电费分摊子项/, '必须集成电费分摊子项分组')
+  // 第 77 轮：冗余标题「电费分摊子项」已删除，面板直接跟随单位表单
+  assert.doesNotMatch(org, /电费分摊子项/, '冗余分组标题必须删除（第 77 轮）')
   assert.match(org, /<TenantSettingsPanel[\s\S]{0,160}items-only/, '分摊子项面板必须天然绑定当前单位')
   // 后端：单位表扩展 + 保存同步 billing_tenants
   const units = read('../../../../internal/handler/hr_org_units.go')

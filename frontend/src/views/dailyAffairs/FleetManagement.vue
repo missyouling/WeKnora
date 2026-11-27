@@ -5,14 +5,7 @@
     @dragover.prevent
     @drop.stop.prevent
   >
-    <!-- 顶部 -->
-    <div class="header">
-      <div class="header-title">
-        <h2>车队管理</h2>
-        <p class="header-subtitle">车队档案与台账自动归档</p>
-      </div>
-    </div>
-
+    <!-- 第 77 轮：移除页级标题区，卡片顶部与能耗/人事保持同一紧凑高度 -->
     <!-- 主界面 -->
     <div class="fleet-main">
       <div class="fleet-layout">
@@ -103,7 +96,7 @@ const switchTab = (key: string) => {
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
-  padding: 20px 24px;
+  padding: 12px 24px 16px;
   overflow: hidden;
 
   .header {

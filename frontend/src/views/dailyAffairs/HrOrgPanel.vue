@@ -68,7 +68,7 @@
           <span class="org-form__label">是否为租户</span>
           <div class="org-form__switch">
             <t-switch v-model="activeUnit.is_tenant" data-org-tenant-switch />
-            <span class="org-form__hint">开启后可维护租户档案与电费分摊子项</span>
+            <span class="org-form__hint">开启后可维护租户档案与分摊子项</span>
           </div>
         </div>
         <template v-if="activeUnit.is_tenant">
@@ -123,14 +123,8 @@
         </div>
       </div>
 
-      <!-- 租户专属：电费分摊子项（原「费用清单 → 租户信息 → 分摊子项」整体迁入） -->
+      <!-- 租户专属：分摊子项（第 77 轮删除冗余标题栏，直接展示「分摊子项」面板） -->
       <template v-if="activeUnit.is_tenant">
-        <div class="org-units__head org-units__head--alloc">
-          <span class="org-units__title">电费分摊子项</span>
-          <span class="org-units__sub">
-            {{ activeUnit.alias || activeUnit.name }} · 按比例分摊口径
-          </span>
-        </div>
         <TenantSettingsPanel v-if="activeUnit.billing_tenant_id && kbId" ref="allocRef"
           :tenant-id="activeUnit.billing_tenant_id" :kb-id="kbId" items-only embedded
           @changed="onAllocChanged" />

@@ -344,12 +344,11 @@ const footData = computed(() => {
 })
 const footSpan = computed(() => footSpanOf(summaryColumns.value))
 const tableColumns = computed(() => {
-  // 与发票管理一致：[复选框] → [序号] → 业务列。
+  // 第 77 轮：移除自增序号列 —— [复选框] → 第一个业务字段。
   // colKey 必须写 'row-select'：只写 type:'multiple' 时 TDesign 照样渲染表头，
   // 但 tbody 单元格是空的（列标识对不上），看着像「复选框没渲染」。
   const cols: any[] = [
     { colKey: 'row-select', type: 'multiple', width: 46 },
-    { colKey: 'serial-number', title: '', width: 56, align: 'center' },
   ]
   for (const c of visibleColDefs.value) {
     // subs.width>0 精确固定（clamp 60~400 防误输入）；0/未配置自适应。
@@ -533,9 +532,43 @@ const loading = ref(true)
 const listScrollRef = ref<HTMLElement>()
 const filters = ref<{ keyword?: string; month?: string; kind?: string; useUnit?: string }>({ keyword: '', month: undefined, kind: undefined, useUnit: undefined })
 
-const kindFilterOptions = computed(() => [
-  ...meterKinds.value.map(k => ({ label: k.label, value: k.value })),
-])
+/**
+ * 第 77 轮：表计类型筛选改为**动态取源**。
+ *
+ * 数据源 = 当前介质核算行里真实出现的类型（工业表计的 工商业 / 宿舍表的 宿舍 /
+ * 公租房表的 公租房），不再读 listUtilityKinds 的静态枚举。
+ * 首项固定「全部表计类型」，且不可清空成空白。
+ */
+const KIND_LABEL_FALLBACK: Record<string, string> = {
+  production: '工商业', 工商业: '工商业', dorm: '宿舍', public: '公租房',
+}
+function meterKindLabelOf(v: unknown): string {
+  const k = String(v ?? '').trim()
+  if (!k) return ''
+  return KIND_LABEL_FALLBACK[k] || meterKinds.value.find((x) => x.value === k)?.label || k
+}
+const archiveKinds = computed(() => {
+  // 电/水核算：宿舍档案参与；水/气核算：公租房档案参与
+  const out: string[] = []
+  if (props.category === 'electricity' || props.category === 'water') out.push('宿舍')
+  if (props.category === 'water' || props.category === 'gas') out.push('公租房')
+  return out
+})
+const kindFilterOptions = computed(() => {
+  const labels: string[] = []
+  const seen = new Set<string>()
+  const push = (v: string) => { if (v && !seen.has(v)) { seen.add(v); labels.push(v) } }
+  rows.value.forEach((r: any) => push(meterKindLabelOf(r?.meter_kind)))
+  archiveKinds.value.forEach(push)
+  // 顺序：工商业 → 宿舍 → 公租房 → 其它（与业务认知一致）
+  const order = ['工商业', '宿舍', '公租房']
+  labels.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+  return [{ label: '全部表计类型', value: '' }, ...labels.map((l) => ({ label: l, value: l }))]
+})
+const kindFilterText = (v: unknown) => meterKindLabelOf(v)
 
 /**
  * 第 75 轮：使用单位切换标签的数据源 = **当前卡片全量记录**里真实出现的单位
@@ -753,7 +786,8 @@ const applyFilters = () => {
   // 自定义字段与嵌套明细；「重庆星」「星达」「E301」等任意子串均可命中）。
   if (kw) list = filterRowsByKeyword(list, kw)
   if (filters.value.month) list = list.filter(r => r.month === filters.value.month)
-  if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
+  // 筛选值 = 展示标签（工商业 / 宿舍 / 公租房），空值表示全部
+  if (filters.value.kind) list = list.filter(r => kindFilterText(r.meter_kind) === filters.value.kind)
   // 使用单位是表计档案属性：记录本身不带该字段，必须用扁平行上的 use_unit 比对
   // （旧实现读的是未联动的旧 ref，选「持睿汽车」列表仍是「重庆星达」）。
   // 第 75 轮：全称/简称等价（持睿汽车 ↔ 持睿汽车部件有限公司）

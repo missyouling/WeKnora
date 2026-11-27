@@ -78,8 +78,8 @@ test('账单概况 20 字段 + 序号列 + 共享表格样式', () => {
     'total_amount', 'prev_kwh', 'mom_change', 'avg_price', 'power_factor',
     'due_date', 'industrial_amount', 'residential_amount', 'pf_adjust_amount', 'grand_total',
   ])
-  // 序号列 + 共享样式
-  assert.match(src, /colKey: 'serial-number'/, '必须有序号列')
+  // 第 77 轮：序号列下线（复选框后直接业务字段）+ 共享样式
+  assert.doesNotMatch(src, /colKey: 'serial-number'/, '第 77 轮移除序号列')
   assert.match(src, /colKey: 'row-select'/, '复选框列必须用 TDesign 的 row-select（key 写错会导致单元格空白）')
   assert.match(src, /@import '\.\/styles\/business-list-shared\.css';/, '必须引用四模块共享列表样式')
   for (const cls of ['biz-page', 'biz-main', 'biz-list-view']) {
