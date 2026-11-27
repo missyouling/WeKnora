@@ -412,9 +412,26 @@ try {
   // 61.2 社保月度账单明细：三段分离表，只有数据区可滚动
   await card("社保管理"); await p.waitForTimeout(6000);
   await tab("月度账单"); await p.waitForTimeout(6000);
-  const billRow2 = p.locator(".doc-list-scroll tbody tr").filter({ hasText: "2026-11" }).first();
+  /**
+   * 第 78 轮修正：账单行可能在两个容器之一 —— `.doc-list-scroll`（花名册/宿舍用的
+   * 列表）或 `.hr-bill-table-wrap .detail-table-body`（第 68 轮起的社保三段表）。
+   *
+   * 两个候选必须**每轮重新求值**：切换标签后 `.doc-list-scroll` 是异步挂载的，
+   * 第一轮可能还是 0 行 —— 若此时把 locator 永久切到另一个（它恒为「暂无数据」），
+   * 后面永远命不中（本次踩坑点）。
+   */
+  let billRow2 = p.locator(".doc-list-scroll tbody tr").filter({ hasText: "2026-11" }).first();
+  for (let i = 0; i < 15; i++) {
+    const a = p.locator(".doc-list-scroll tbody tr").filter({ hasText: "2026-11" }).first();
+    const b2 = p.locator(".hr-bill-table-wrap .detail-table-body tbody tr").filter({ hasText: "2026-11" }).first();
+    if (await a.count()) { billRow2 = a; break; }
+    if (await b2.count()) { billRow2 = b2; break; }
+    await p.waitForTimeout(2000);
+  }
   if (await billRow2.count()) {
-    await billRow2.locator("td").nth(1).click();
+    const cell = billRow2.locator("td").nth(1);
+    if (await cell.count()) await cell.click();
+    else await billRow2.click();
     await p.waitForTimeout(4200);
     /**
      * 第 68 轮：明细弹窗改为**定高**（min(82vh,780px)），数据区吃掉剩余高度
