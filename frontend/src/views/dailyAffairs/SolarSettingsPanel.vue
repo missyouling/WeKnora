@@ -10,9 +10,7 @@
     <div class="ss-section">
       <div class="ss-section-head">
         <span class="ss-section-title">基本户信息</span>
-        <span class="ss-state">概览基础信息默认加载</span>
       </div>
-      <div class="ss-hint">配置默认光伏发电户档案信息，保存后账单概览「基础信息」直接加载，无需每次解析。</div>
       <div class="ba-grid">
         <div class="ba-item">
           <label class="ba-label">户号</label>

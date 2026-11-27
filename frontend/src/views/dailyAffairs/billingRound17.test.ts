@@ -21,7 +21,8 @@ test('气费汇总：必须按使用单位过滤（旧实现只按月 → 把全
   const src = read('TenantBilling.vue')
   const fn = src.slice(src.indexOf('const gasOf ='), src.indexOf('const base: Record<string, any>'))
   assert.match(fn, /gasOf = \(unit: string\)/, 'gasOf 必须接收使用单位')
-  assert.match(fn, /String\(r\.use_unit \|\| ''\)\.trim\(\) === unit/, '必须按 use_unit 精确匹配')
+  // 第 75 轮：全称/简称等价匹配（持睿汽车 ↔ 持睿汽车部件有限公司），仍然是「按使用单位过滤」
+  assert.match(fn, /unitMatches\(r\.use_unit, unit\)/, '必须按使用单位匹配（全称/简称等价）')
   assert.ok(!/gasOf\(\)/.test(src), '不得再有无参调用（等于不过滤）')
   // 两个视角各按自己的单位取数
   assert.match(src, /gasOf\(OWNER_UNIT\)/, '业主视角按星达取气表')

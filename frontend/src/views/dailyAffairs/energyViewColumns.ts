@@ -135,14 +135,22 @@ export function applySubsToColumns<T extends EnergyViewCol>(
     if (!hit && opts.restrictToBase) continue
     seen.add(key)
     const label = String(s.label || '').trim()
-    const width = Number(s.width) > 0 ? Math.round(Number(s.width)) : 0
+    /**
+     * 第 75 轮：subs 里的 width 是**权威值，包含 0**。
+     *
+     * 旧实现 `width: width || hit.width`：用户把列宽改成 0（自适应）后，
+     * 0 是 falsy，直接被静态列定义里的 110/140 覆盖 —— 真机表现「改成 0 保存了，
+     * 刷新后还是固定宽」。0 必须原样传给列定义，由 colWidthOf 走按内容估算。
+     */
+    const hasWidth = s.width !== undefined && s.width !== null
+    const width = hasWidth ? Math.max(0, Math.round(Number(s.width) || 0)) : 0
     if (hit) {
       out.push({
         ...hit,
         label: label || hit.label,
         // is_default 以 subs 为权威：用户在「默认表头」里取消勾选后列表必须收起该列
         default: s.is_default === true,
-        width: width || hit.width,
+        width: hasWidth ? width : hit.width,
       })
     } else if (makeExtra) {
       out.push({ ...makeExtra(key, s), label: label || key, default: s.is_default === true, width })

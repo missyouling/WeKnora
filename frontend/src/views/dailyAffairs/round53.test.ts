@@ -123,7 +123,8 @@ test('切使用单位时同步 activeTenantId（否则列分组/子项/tenantNam
   assert.ok(idx > 0)
   const block = src.slice(idx, idx + 700)
   assert.match(block, /activeTenantId\.value = picked\?\.id \|\| ''/, '必须按 useUnit 解析租户 id')
-  assert.match(block, /t\.name \|\| ''\)\.trim\(\) === String\(useUnit\.value/, '按名称匹配')
+  // 第 75 轮：改为单位等价匹配（简称/全称）
+  assert.match(block, /sameCompany\(t\.name, useUnit\.value/, '按单位等价匹配')
 })
 
 test('列派生为空时回落静态列，绝不允许只剩两条收口列', () => {

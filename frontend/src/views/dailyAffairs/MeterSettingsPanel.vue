@@ -626,7 +626,9 @@ async function saveAllMeters(closeAfter = true) {
     }
     for (const id of Array.from(dirtyEnabled.value)) {
       const m = meters.value.find((x: any) => String(x.id) === id)
-      if (!m) continue
+      // 第 75 轮：只提交**本介质**的表计（meters 已按 category 加载；
+      // 再比一次 category 作为双保险，绝不允许电表草稿写进水/气表）。
+      if (!m || String(m.category || props.category) !== String(props.category)) continue
       await updateUtilityMeter(id, meterPayloadOf(m))
     }
     dirtyEnabled.value = new Set()
@@ -703,6 +705,24 @@ const persistMeterSort = () => {
 }
 watch([activeMeterGroup, () => activeGroupItems.value], async () => {
   await nextTick()
+  setTimeout(initMeterSortable, 120)
+})
+
+/**
+ * 第 75 轮：介质切换必须**整块重置**。
+ *
+ * 旧实现没有这个 watch：在「工业表计」里点水表/气表时，面板仍持有电表的
+ * meters 草稿；用户一保存，就把电表 id 连同 water 载荷写回去（三表串写），
+ * 水表/气表列表也一直显示电表的 6 张表。
+ */
+watch(() => props.category, async () => {
+  meterFormVisible.value = false
+  dirtyEnabled.value = new Set()
+  pendingSortIds.value = []
+  meters.value = []
+  await Promise.all([loadMetersOnly(), loadKinds()])
+  await nextTick()
+  if (sortableInst) { sortableInst.destroy(); sortableInst = null }
   setTimeout(initMeterSortable, 120)
 })
 

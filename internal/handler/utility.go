@@ -880,38 +880,66 @@ func (h *UtilityHandler) UpdateUtilityMeter(c *gin.Context) {
 		req.MeterKind = "dorm"
 	}
 	req.MeterType = normalizeMeterType(req.Category, req.MeterType)
-	var cnt int64
-	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
+	var existing types.UtilityMeter
+	if err := h.db.WithContext(ctx).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
-		Count(&cnt).Error; err != nil {
-		logger.Errorf(ctx, "check utility meter failed: %v", err)
-		c.Error(errors.NewInternalServerError("check meter failed"))
-		return
-	}
-	if cnt == 0 {
+		First(&existing).Error; err != nil {
 		c.Error(errors.NewNotFoundError("表计不存在"))
 		return
 	}
+	/**
+	 * 第 75 轮：介质隔离硬门禁。
+	 *
+	 * 前端按 category 分三张列表；一旦请求把 water 载荷打到电表 id 上
+	 * （历史串写 Bug），这里必须拒绝，绝不允许电表被改写成水表。
+	 */
+	if cat := strings.TrimSpace(req.Category); cat != "" && cat != existing.Category {
+		c.Error(errors.NewBadRequestError("表计介质不匹配：该表属于 " + existing.Category))
+		return
+	}
 	now := timeNowUTC()
-	if err := h.db.WithContext(ctx).Model(&types.UtilityMeter{}).
-		Where("id = ? AND tenant_id = ?", id, tenantID).
-		Updates(map[string]interface{}{
-			"alias":              req.Alias,
-			"meter_no":           req.MeterNo,
-			"meter_type":         req.MeterType,
-			"meter_kind":         req.MeterKind,
-			"owner_unit":         req.OwnerUnit,
-			"rate":               req.Rate,
-			"default_unit_price": req.DefaultUnitPrice,
-			"use_unit":           req.UseUnit,
-			"manager":            req.Manager,
-			"contact":            req.Contact,
-			"meter_mode":         req.MeterMode,
-			"install_date":       req.InstallDate,
-			"remark":             req.Remark,
-			"enabled":            req.Enabled,
-			"updated_at":         now,
-		}).Error; err != nil {
+	aliasChanged := strings.TrimSpace(req.Alias) != strings.TrimSpace(existing.Alias)
+	noChanged := strings.TrimSpace(req.MeterNo) != strings.TrimSpace(existing.MeterNo)
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&types.UtilityMeter{}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).
+			Updates(map[string]interface{}{
+				"alias":              req.Alias,
+				"meter_no":           req.MeterNo,
+				"meter_type":         req.MeterType,
+				"meter_kind":         req.MeterKind,
+				"owner_unit":         req.OwnerUnit,
+				"rate":               req.Rate,
+				"default_unit_price": req.DefaultUnitPrice,
+				"use_unit":           req.UseUnit,
+				"manager":            req.Manager,
+				"contact":            req.Contact,
+				"meter_mode":         req.MeterMode,
+				"install_date":       req.InstallDate,
+				"remark":             req.Remark,
+				"enabled":            req.Enabled,
+				"updated_at":         now,
+			}).Error; err != nil {
+			return err
+		}
+		/**
+		 * 第 75 轮：改号 / 改名级联历史抄表。
+		 *
+		 * 抄表明细里存的是 meter_id + meter_name 快照；表号由 join 现取，
+		 * 但表计名称是快照，不改就会在核算历史里继续显示旧名。
+		 * 只更新名称列，起止度数 / 单价 / 金额一律不动（数据安全红线）。
+		 */
+		if aliasChanged {
+			if err := tx.Model(&types.UtilityMeterItem{}).
+				Where("meter_id = ?", id).
+				Update("meter_name", req.Alias).Error; err != nil {
+				return err
+			}
+		}
+		_ = noChanged // 表号无快照列，历史行通过 meter_id join 自动取新号
+		return nil
+	})
+	if err != nil {
 		logger.Errorf(ctx, "update utility meter failed: %v", err)
 		c.Error(errors.NewInternalServerError("update meter failed: " + err.Error()))
 		return

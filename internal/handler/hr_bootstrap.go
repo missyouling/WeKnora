@@ -153,6 +153,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 73 轮：能耗历史表名/表号与房源档案对齐（只改展示名，不动任何数值）、
 	// 越界床位号按入住顺序重排。
 	h.hrRepair73(ctx)
+	// 第 75 轮：工业表计三介质恢复（电 6/水 4/气 1）、宿舍表号错配修号、
+	// 「本期水费」类型改 amount、历史费用清单按单位归一口径重算。
+	h.hrRepair75(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

@@ -475,13 +475,13 @@
           </div>
           </template>
           <template v-else-if="activeTab === 'water'">
-            <UtilityMeterTab ref="meterTabRef" category="water" @open-settings="openChildSettings('水费核算')" />
+            <UtilityMeterTab ref="meterTabRef" category="water" auto-latest-month @open-settings="openChildSettings('水费核算')" />
           </template>
           <template v-else-if="activeTab === 'gas'">
-            <UtilityMeterTab ref="meterTabRef" category="gas" @open-settings="openChildSettings('气费核算')" />
+            <UtilityMeterTab ref="meterTabRef" category="gas" auto-latest-month @open-settings="openChildSettings('气费核算')" />
           </template>
           <template v-else-if="activeTab === 'electric-meter'">
-            <UtilityMeterTab ref="meterTabRef" category="electricity" @open-settings="openChildSettings('电费核算')" />
+            <UtilityMeterTab ref="meterTabRef" category="electricity" auto-latest-month @open-settings="openChildSettings('电费核算')" />
           </template>
           <template v-else-if="activeTab === 'solar'">
             <SolarManagement @open-settings="openChildSettings('光伏账单')" />
@@ -2326,33 +2326,8 @@ function onEnergyDataChanged() { void loadTabCounts() }
  */
 function onCategoriesChanged() { void loadFieldConfigs() }
 
-/**
- * 第 73 轮：核算页默认落在「最近一个有数据的月份」。
- *
- * 当前自然月（2026-11）常常还没抄表，旧实现默认空月份 → 列表空白，
- * 用户以为数据丢了。这里取该介质 `months[0]`（倒序第一个）。
- */
-const ENERGY_CATEGORY_OF_TAB: Record<string, 'electricity' | 'water' | 'gas'> = {
-  'electric-meter': 'electricity',
-  electricity: 'electricity',
-  water: 'water',
-  gas: 'gas',
-}
-async function ensureLatestMonth() {
-  if (monthFilter.value) return
-  const cat = ENERGY_CATEGORY_OF_TAB[activeTab.value]
-  if (!cat) return
-  try {
-    const res: any = await listUtilityMeterRecords({ category: cat })
-    const d = res?.data || res || {}
-    const months: string[] = Array.isArray(d.months) ? d.months : []
-    if (months.length) monthFilter.value = String(months[0])
-  } catch { /* 静默：保持空月份，列表为空态 */ }
-}
-
 onMounted(() => {
   installListFootHoistAll()
-  void ensureLatestMonth()
   nextTick(measureTableHeaderFix)
   window.addEventListener(ENERGY_OPEN_SETTINGS_EVENT, onEnergyOpenSettings)
   window.addEventListener(ENERGY_DATA_CHANGED_EVENT, onEnergyDataChanged)

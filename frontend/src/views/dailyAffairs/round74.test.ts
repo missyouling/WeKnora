@@ -11,7 +11,6 @@ import {
   ENERGY_BILL_CATEGORIES,
   ENERGY_SETTINGS_TABS,
   energyBillCategoryOf,
-  energyCollapsesGroupsByDefault,
   energyFlattensGroups,
   energyTabOfCategory,
 } from './energySettingsTabs'
@@ -102,9 +101,7 @@ test('energyBillCategoryOf：只有市电/光伏属于「能耗账单」的二�
   assert.equal(energyBillCategoryOf('费用清单'), '')
 })
 
-test('光伏账单平铺、市电账单分组默认折叠', () => {
+test('光伏账单平铺（第 75 轮：市电账单取消默认折叠，改回展开首组）', () => {
   assert.equal(energyFlattensGroups('光伏账单'), true)
   assert.equal(energyFlattensGroups('市电账单'), false)
-  assert.equal(energyCollapsesGroupsByDefault('市电账单'), true)
-  assert.equal(energyCollapsesGroupsByDefault('光伏账单'), false)
 })

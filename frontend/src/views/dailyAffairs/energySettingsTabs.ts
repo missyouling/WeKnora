@@ -43,9 +43,16 @@ const CATEGORY_TAB: Record<string, EnergySettingsTab> = {
   表计设置: 'meter',
 }
 
-/** 能耗账单标签内允许出现（且只允许出现）的两个账单分类。 */
+/** 能耗账单标签里可配置字段的两个账单分类。 */
 export const ENERGY_BILL_CATEGORIES = ['市电账单', '光伏账单'] as const
 export type EnergyBillCategory = typeof ENERGY_BILL_CATEGORIES[number]
+
+/**
+ * 「能耗账单」下的子标签（第 75 轮）：市电账单 | 光伏账单 | 基本户。
+ * 基本户不是分类，是光伏发电户档案表单（原「光伏设置」的内容）。
+ */
+export const ENERGY_BILL_SUB_TABS = ['市电账单', '光伏账单', '基本户'] as const
+export type EnergyBillSubTab = typeof ENERGY_BILL_SUB_TABS[number]
 
 /** 7 个标签里承载「字段配置」的那些（其余标签渲染专属面板）。 */
 export const ENERGY_FIELD_TAB_CATEGORY: Partial<Record<EnergySettingsTab, string>> = {
@@ -76,10 +83,4 @@ export function energyBillCategoryOf(category: string): EnergyBillCategory | '' 
  */
 export function energyFlattensGroups(category: string): boolean {
   return String(category || '').trim() === '光伏账单'
-}
-
-/** 字段分组「默认折叠」只作用于分组多的账单分类（市电账单 8 个费用分组）。 */
-export function energyCollapsesGroupsByDefault(category: string): boolean {
-  const name = String(category || '').trim()
-  return name === '市电账单'
 }

@@ -89,8 +89,11 @@ test('第73轮：工具栏筛选默认不可清空 + 统一尺寸', () => {
 
 test('第73轮：能耗核算默认最近有数据月份；工业表计极简', () => {
   const src = read('UtilitiesManagement.vue')
-  assert.match(src, /async function ensureLatestMonth\(\)/)
-  assert.match(src, /if \(months\.length\) monthFilter\.value = String\(months\[0\]\)/)
+  // 第 75 轮：默认最近月份下移到三张核算表自身（市电/光伏/费用清单默认全部月份）
+  const meterTab = read('UtilityMeterTab.vue')
+  assert.match(meterTab, /autoLatestMonth/)
+  assert.match(meterTab, /filters\.value = \{ \.\.\.filters\.value, month: latest \}/)
+  assert.doesNotMatch(src, /ensureLatestMonth/, '市电账单不得再默认筛月份')
   // 第 74 轮：工业表计从「专属 Tab 文案映射」升级为顶层平级标签
   assert.match(src, /const settingsTab = computed<EnergySettingsTab>/)
   const meter = read('MeterSettingsPanel.vue')

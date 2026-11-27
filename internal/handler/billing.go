@@ -1306,13 +1306,14 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 		fl := round2((r.FlatCurr - r.FlatPrev) * rate)
 		vl := round2((r.ValleyCurr - r.ValleyPrev) * rate)
 		owner := strings.TrimSpace(m.OwnerUnit)
+		// 第 75 轮：归属单位统一走全称/简称等价匹配（历史数据里两者混用）
 		switch {
-		case owner == "星达铜业" || owner == "重庆星达" || (owner == "" && (strings.Contains(m.Alias, "星达") || strings.Contains(m.UseUnit, "星达"))):
+		case unitNamesMatch(owner, "重庆星达铜业有限公司") || (owner == "" && (strings.Contains(m.Alias, "星达") || strings.Contains(m.UseUnit, "星达"))):
 			star["deep"] += dp
 			star["peak"] += pk
 			star["flat"] += fl
 			star["valley"] += vl
-		case owner != "" && owner == baseOwner:
+		case owner != "" && unitNamesMatch(owner, baseOwner):
 			sub["deep"] += dp
 			sub["peak"] += pk
 			sub["flat"] += fl
@@ -1345,7 +1346,7 @@ func (h *BillingHandler) loadPeriodKwh(ctx context.Context, tenantID, tenantName
 		}
 		for _, m := range normals {
 			owner := strings.TrimSpace(m.OwnerUnit)
-			isStar := owner == "星达铜业" || owner == "重庆星达" ||
+			isStar := unitNamesMatch(owner, "重庆星达铜业有限公司") ||
 				(owner == "" && (strings.Contains(m.Alias, "星达") || strings.Contains(m.UseUnit, "星达")))
 			if !isStar || m.MeterKind == "dorm" {
 				continue
@@ -1394,7 +1395,7 @@ func (h *BillingHandler) loadSubMeterRows(ctx context.Context, tenantName, month
 	rows := make([]subMeterRow, 0, len(meters))
 	for _, m := range meters {
 		owner := strings.TrimSpace(m.OwnerUnit)
-		if owner != "" && owner != baseOwner {
+		if owner != "" && !unitNamesMatch(owner, baseOwner) {
 			continue
 		}
 		r, ok := itemByMeter[m.ID]
@@ -1544,12 +1545,24 @@ func (h *BillingHandler) loadRefsByUseUnit(ctx context.Context, useUnit string) 
 	if useUnit == "" {
 		return nil
 	}
-	var meters []types.UtilityMeter
+	/**
+	 * 第 75 轮：租户档案是简称（持睿汽车），表计上是工商全称
+	 * （持睿汽车部件有限公司）。旧实现 `use_unit = ?` 精确匹配 → 一条都取不到，
+	 * 费用清单的宿舍电费/宿舍水费/工业水费因此全为 0。
+	 * 这里改为「取全量后在内存按同一家公司匹配」（表计总量级 <200，成本可忽略）。
+	 */
+	var all []types.UtilityMeter
 	if err := h.db.WithContext(ctx).
-		Where("use_unit = ? AND deleted_at IS NULL", useUnit).
-		Find(&meters).Error; err != nil {
+		Where("deleted_at IS NULL").
+		Find(&all).Error; err != nil {
 		logger.Errorf(ctx, "load refs by use unit failed: %v", err)
 		return nil
+	}
+	var meters []types.UtilityMeter
+	for _, m := range all {
+		if unitNamesMatch(m.UseUnit, useUnit) {
+			meters = append(meters, m)
+		}
 	}
 	refs := make([]types.BillingTenantMeterRef, 0, len(meters))
 	for _, m := range meters {

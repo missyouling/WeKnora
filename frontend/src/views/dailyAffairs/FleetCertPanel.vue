@@ -103,23 +103,15 @@
             <div class="field-config">
               <div v-if="!directMode" class="field-config-head">
                 <span class="field-config-title">字段配置</span>
-                <span class="field-config-tip">启用的字段在字段筛选器与列表显示，禁用后隐藏</span>
               </div>
               <!-- 业务分组切换（仅带 group 的分类显示，如市电账单的 12 个费用分项）。
                    没有 group 的分类（发票/合同/制度/公告）不渲染，视觉与改造前一致。 -->
-              <div v-if="!props.hideGroupTabs && !props.flattenGroups && subGroupTabs.length > 1" class="fc-group-tabs">
+              <div v-if="!props.hideGroupTabs && !props.flattenGroups && !props.externalGroupTabs && subGroupTabs.length > 1" class="fc-group-tabs">
                 <span v-for="g in subGroupTabs" :key="g.key" class="fc-group-tab"
                   :class="{ active: activeSubGroup === g.key }" @click="switchSubGroup(g.key)">
                   {{ g.label }}
                   <span class="fc-group-tab__count">{{ g.count }}</span>
                 </span>
-              </div>
-              <!-- 第 74 轮：分组默认折叠态。市电账单有 8 个费用分组、163 个字段，
-                   打开设置抽屉先看到分组胶囊（全部收起），点分组头按需展开 —— 而不是
-                   一次性平铺 163 行把抽屉刷成一片字段海洋。 -->
-              <div v-if="groupsCollapsedHint" class="fc-groups-collapsed" data-fc-groups-collapsed>
-                <t-icon name="chevron-right" size="14px" />
-                <span>字段分组已折叠，点击上方分组查看字段</span>
               </div>
               <div class="field-config-list" :class="{ 'is-compact': isFleetScope }">
                 <div class="field-colhead" :class="{ 'has-width': showWidthCol }">
@@ -141,7 +133,7 @@
                     :class="`fc-origin-block--${row.origin}`">
                     <span class="fc-origin-title">{{ row.title }}</span>
                     <span class="fc-origin-count">{{ row.count }}</span>
-                    <span class="fc-origin-hint">{{ row.hint }}</span>
+                    <span v-if="row.hint" class="fc-origin-hint">{{ row.hint }}</span>
                   </div>
                   <div v-else class="field-config-row"
                     :class="[{ 'has-width': showWidthCol }, { 'fc-dragging': fieldDragName === fieldIdentityOf(row.fd) }, { 'is-locked': isLockedStatus(row.fd) }]"
@@ -552,10 +544,11 @@ const props = withDefaults(defineProps<{
    */
   flattenGroups?: boolean
   /**
-   * 第 74 轮：字段分组默认全部折叠。
-   * 打开抽屉时 activeSubGroup 为空、字段列表为空，点分组胶囊才展开该组字段。
+   * 第 75 轮：由父级渲染分组方块标签，面板内不再重复渲染胶囊条。
+   * 过滤逻辑保持不变（仍有 activeSubGroup），只是把「分组头」交给更上层的
+   * 费用清单设置（租户信息 / 默认分组 / 各租户分组）。
    */
-  collapseGroups?: boolean
+  externalGroupTabs?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -569,7 +562,7 @@ const props = withDefaults(defineProps<{
   lockCategoryShell: false,
   categoryScope: () => [],
   flattenGroups: false,
-  collapseGroups: false,
+  externalGroupTabs: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -847,9 +840,6 @@ function buildItems(g0: any): any[] {
   return merged
 }
 const groupItems = computed(() => buildItems(group.value))
-/** 第 74 轮：分组默认折叠态的提示行（未选中任何分组时展示）。 */
-const groupsCollapsedHint = computed(() =>
-  !!props.collapseGroups && !activeSubGroup.value && subGroupTabs.value.length > 0)
 /**
  * 当前正在编辑的分类。
  *
@@ -1166,7 +1156,7 @@ watch(() => props.initialGroup, (v) => {
   switchSubGroup(next)
 })
 
-defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit, openCategoryByName })
+defineExpose({ startAdd, addLabel, commitPendingEdit, discardPendingEdit, openCategoryByName, switchSubGroup })
 async function commitAdd() {
   const name = addForm.name.trim()
   if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }
@@ -1255,8 +1245,6 @@ const fieldsVisible = computed(() => {
   // 第 74 轮：光伏账单平铺 —— 不分 group，直接按 subs 顺序展示全部字段
   // （需求明确删除「派生字段（不可提取）」「账单概况」两个分组外壳）。
   if (props.flattenGroups) return fieldsEditable.value
-  // 第 74 轮：分组默认折叠 —— 未选中任何分组时不展示任何字段行。
-  if (props.collapseGroups && !activeSubGroup.value) return []
   // 第 52 轮：花名册字段配置取消胶囊分组后，字段必须按 6 组顺序合并成
   // 单一连续列表 —— 此时 activeSubGroup 强制为空，绝不能再按 group 过滤
   // （否则只显示「字段最多」的那一组，其余 5 组全部消失）。
@@ -1331,7 +1319,7 @@ const fieldRows = computed<Array<Record<string, any>>>(() => {
     rows.push({
       kind: 'header', key: 'h-derived', origin: 'derived',
       title: '派生字段', count: derived.length,
-      hint: '由费用清单自身核算得出，不来自账单分项',
+      hint: '',
     })
     derived.forEach((fd, i) => rows.push({ kind: 'field', key: `d-${fd.name}-${i}`, fd }))
   }
@@ -1339,7 +1327,7 @@ const fieldRows = computed<Array<Record<string, any>>>(() => {
     rows.push({
       kind: 'header', key: 'h-items', origin: 'items',
       title: '分摊子项', count: items.length,
-      hint: '来自「清单设置 → 分摊子项」，可在此改宽度/显隐',
+      hint: '',
     })
     items.forEach((fd, i) => rows.push({ kind: 'field', key: `i-${fd.name}-${i}`, fd }))
   }
@@ -1384,10 +1372,8 @@ function resetSubGroupSelection() {
     openSubFieldName.value = ''
     return
   }
-  // 第 74 轮：光伏账单平铺（无分组胶囊）与「分组默认折叠」都停在空分组态。
-  //   · flattenGroups：字段全量平铺，activeSubGroup 不参与过滤；
-  //   · collapseGroups：胶囊条全部收起，点分组头才展开该组。
-  if (props.flattenGroups || props.collapseGroups) {
+  // 第 74 轮：光伏账单字段全量平铺，activeSubGroup 不参与过滤。
+  if (props.flattenGroups) {
     activeSubGroup.value = ''
     openChildGroup.value = ''
     openSubFieldName.value = ''
@@ -1407,10 +1393,6 @@ function resetSubGroupSelection() {
     openSubFieldName.value = ''
     return
   }
-  // 默认停在「字段最多」的分组（通常就是主表），而不是 subs 里第一个字段所属的分组。
-  //
-  // 真机踩过：光伏账单的 subs 第一条是「账单周期」（派生字段），于是默认胶囊落在
-  // 「派生字段（不可提取）」上，20 个字段只露出 6 个示数列，用户以为账单概况丢了。
   // 第 61 轮：带 initialGroup 时优先落到该胶囊（宿舍五标签从哪个标签打开设置就停在哪个胶囊）
   const prefer = String(props.initialGroup || '').trim()
   if (prefer && groups.some((g) => g.key === prefer)) {
@@ -1419,9 +1401,13 @@ function resetSubGroupSelection() {
     openSubFieldName.value = ''
     return
   }
-  activeSubGroup.value = groups.length
-    ? [...groups].sort((a, b) => b.count - a.count)[0].key
-    : ''
+  /**
+   * 第 75 轮：默认展开**第一个**分组（胶囊条顺序 = 字段定义的展示顺序）。
+   *
+   * 旧实现取「字段最多」的分组（为了避开光伏账单首组「派生字段」），
+   * 产品口径改为第一个：市电账单首组就是「账单概况」20 个字段，用户打开即见。
+   */
+  activeSubGroup.value = groups[0]?.key || ''
   openChildGroup.value = ''
   openSubFieldName.value = ''
 }
@@ -1436,13 +1422,6 @@ function switchSubGroup(key: string) {
    */
   const target = tabGroupKey(key)
   if (target && !subGroupTabs.value.some((g) => g.key === target)) return
-  // 第 74 轮：分组可再次点击收起（默认折叠模式下的反向操作）
-  if (props.collapseGroups && activeSubGroup.value === target) {
-    activeSubGroup.value = ''
-    openSubFieldName.value = ''
-    openChildGroup.value = ''
-    return
-  }
   activeSubGroup.value = target
   openSubFieldName.value = ''
   openChildGroup.value = ''
@@ -1680,6 +1659,8 @@ const subDataTypeOptions = [
   { label: '单行文本', value: 'text' },
   { label: '多行文本', value: 'textarea' },
   { label: '数字', value: 'number' },
+  // 第 75 轮：金额是独立展示类型（右对齐 + 千分位 + 汇总），与 number 区分
+  { label: '金额', value: 'amount' },
   { label: '日期', value: 'date' },
 ]
 /**
@@ -1743,6 +1724,8 @@ const dataTypeOptions = [
   { label: '单行文本', value: 'text' },
   { label: '多行文本', value: 'textarea' },
   { label: '数字', value: 'number' },
+  // 第 75 轮：金额是独立展示类型（右对齐 + 千分位 + 汇总），与 number 区分
+  { label: '金额', value: 'amount' },
   { label: '日期', value: 'date' },
   { label: '数组', value: 'array' },
   { label: '明细', value: 'items' },
@@ -2535,19 +2518,6 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
     border-radius: 6px;
   }
 
-  /* 第 74 轮：分组默认折叠态的空提示（点击分组胶囊后消失） */
-  .fc-groups-collapsed {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 0 10px;
-    padding: 10px 12px;
-    font-size: 12px;
-    color: var(--td-text-color-secondary);
-    background: var(--td-bg-color-container);
-    border: 1px dashed var(--td-component-stroke);
-    border-radius: 6px;
-  }
 
   .fc-group-tab {
     display: inline-flex;

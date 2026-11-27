@@ -1,5 +1,12 @@
 <template>
   <div class="utility-meter-tab">
+    <!-- 第 75 轮：动态单位切换标签（与人事管理子标签视觉一致）。
+         仅当当前数据全集存在 ≥2 个使用单位时渲染；只有 1 个单位时整行隐藏。 -->
+    <div v-if="showUnitTags" class="meter-subview-bar" data-unit-switch>
+      <t-radio-group :model-value="filters.useUnit || unitTags[0]?.full" size="small" @change="onUnitTagChange">
+        <t-radio-button v-for="u in unitTags" :key="u.key" :value="u.full">{{ u.label }}</t-radio-button>
+      </t-radio-group>
+    </div>
     <!-- 筛选工具栏：与发票/合同/制度/通知、市电账单完全同一个 BusinessFilterBar
          （搜索全部字段 220px/32px、月份与下拉 32px、gap 8px、右侧 字段→设置→主按钮）。
          旧自写 BusinessListToolbar + 手写下拉已淘汰——那是搜索框占位文案、控件高度
@@ -226,9 +233,13 @@ import type { FilterFieldSpec, FilterState } from './businessFilter'
 import { colWidthOf } from './columnWidth'
 import { notifyEnergyDataChanged } from './energyCounters'
 import { filterRowsByKeyword } from './keywordFilter'
+import { collectUnits, unitMatches } from './unitLabel'
+import { sameCompany } from './companyScope'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
+  /** 第 75 轮：进入页面默认选中「最近有数据的月份」（仅电/水/气三张核算表开启）。 */
+  autoLatestMonth?: boolean
 }>()
 
 // 表头右侧滚动条轨道遮罩的实测值（与发票管理同一套机制）
@@ -525,17 +536,46 @@ const kindFilterOptions = computed(() => [
   ...meterKinds.value.map(k => ({ label: k.label, value: k.value })),
 ])
 
-const useUnitOptions = computed(() => {
-  const set = new Set<string>()
-  meters.value.forEach((m: any) => { if (m.use_unit) set.add(m.use_unit) })
-  return Array.from(set).map(v => ({ label: v, value: v }))
+/**
+ * 第 75 轮：使用单位切换标签的数据源 = **当前卡片全量记录**里真实出现的单位
+ * （不是表计档案，避免「档案里有但本月没抄表」的单位占位）。
+ * 全称/简称按同一家公司归并，标签显示简称（重庆星达 / 持睿汽车）。
+ */
+const unitTags = computed(() => {
+  const list = collectUnits(rows.value.map((r: any) => r.use_unit))
+  // 主单位（重庆星达）恒排第一：默认选中它，与费用清单业主视角一致
+  return [...list].sort((a, b) => (sameCompany(b.full, '重庆星达', []) ? 1 : 0) - (sameCompany(a.full, '重庆星达', []) ? 1 : 0))
+})
+const showUnitTags = computed(() => unitTags.value.length >= 2)
+function onUnitTagChange(v: any) {
+  const full = String(v || '')
+  filters.value = { ...filters.value, useUnit: full || undefined }
+  applyFilters()
+}
+/**
+ * 单位集合变化时校正选中项：只有一个单位 → 清空筛选（该单位本就占满列表）；
+ * 多单位 → 默认第一个（主单位），用户切换后保持。
+ */
+watch(unitTags, (list) => {
+  if (!list.length) {
+    if (filters.value.useUnit) filters.value = { ...filters.value, useUnit: undefined }
+    return
+  }
+  if (list.length < 2) {
+    if (filters.value.useUnit) filters.value = { ...filters.value, useUnit: undefined }
+    return
+  }
+  const cur = String(filters.value.useUnit || '')
+  if (!cur || !list.some((u) => sameCompany(u.full, cur, []))) {
+    filters.value = { ...filters.value, useUnit: list[0].full }
+  }
 })
 // BusinessFilterBar 的扁平筛选态 ↔ 既有 filters ref 双向桥接
 const filterFields = computed<FilterFieldSpec[]>(() => [
   { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
   { key: 'month', type: 'month', placeholder: '月份' },
   { key: 'kind', type: 'select', placeholder: '表计类型', icon: 'file', options: kindFilterOptions.value },
-  { key: 'useUnit', type: 'select', placeholder: '使用单位', icon: 'usergroup', options: useUnitOptions.value },
+  // 第 75 轮：使用单位改为工具栏上方的动态方块标签，不再占筛选下拉位
 ])
 const filterState = computed<FilterState>({
   get: () => ({ keyword: filters.value.keyword || '', month: filters.value.month, kind: filters.value.kind, useUnit: filters.value.useUnit }),
@@ -654,6 +694,15 @@ const load = async () => {
       }
     }
     rows.value = flat
+    /**
+     * 第 75 轮：仅「电费核算 / 水费核算 / 气费核算」默认落在最近有数据的月份。
+     * 市电账单 / 光伏账单 / 费用清单不进这条链路（它们默认展示全部月份）。
+     */
+    if (props.autoLatestMonth && !filters.value.month) {
+      const months: string[] = Array.isArray(recData.months) ? recData.months : []
+      const latest = String(months[0] || [...new Set(flat.map((r) => r.month))].filter(Boolean).sort().reverse()[0] || '')
+      if (latest) filters.value = { ...filters.value, month: latest }
+    }
     // 构建 表计→月份→读数快照 索引（新增记录时上期止度自动填充本期起度）
     //
     // 快照必须带四时段止度：分时电表不使用 start_reading/end_reading，
@@ -701,7 +750,8 @@ const applyFilters = () => {
   if (filters.value.kind) list = list.filter(r => r.meter_kind === filters.value.kind)
   // 使用单位是表计档案属性：记录本身不带该字段，必须用扁平行上的 use_unit 比对
   // （旧实现读的是未联动的旧 ref，选「持睿汽车」列表仍是「重庆星达」）。
-  if (filters.value.useUnit) list = list.filter(r => String(r.use_unit || '').trim() === filters.value.useUnit)
+  // 第 75 轮：全称/简称等价（持睿汽车 ↔ 持睿汽车部件有限公司）
+  if (filters.value.useUnit) list = list.filter(r => unitMatches(r.use_unit, String(filters.value.useUnit)))
   // 同一周期内默认排序:按用途配置顺序(宿舍→公租房→工商业...);跨月保持数据原序
   const order = new Map(meterKinds.value.map((k, i) => [k.value, i]))
   list = [...list].sort((a, b) => {
@@ -2020,6 +2070,15 @@ onBeforeUnmount(() => {
 .meter-search {
   margin-bottom: 12px;
 }
+.meter-subview-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 0;
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
 .meter-settings-body {
   padding: 4px 0 24px;
 }

@@ -5,6 +5,13 @@
          右侧固定 字段 → 设置 → 主操作 三按钮；主操作带 loading/title，
          中台 primaryAction 插槽不带这两个属性，因此放 right-extra
          （BusinessListToolbar 渲染顺序：columns → right-extra → primaryAction）。 -->
+    <!-- 第 75 轮：动态单位切换标签（与人事管理子标签视觉一致）。
+         ≥2 个单位才渲染；只有业主一个单位时整行隐藏。 -->
+    <div v-if="showUnitTags" class="meter-subview-bar" data-unit-switch>
+      <t-radio-group :model-value="useUnit" size="small" @change="onUnitTagChange">
+        <t-radio-button v-for="u in unitTags" :key="u.key" :value="u.full">{{ u.label }}</t-radio-button>
+      </t-radio-group>
+    </div>
     <BusinessFilterBar v-model="filterState" :fields="filterFields" search-placeholder="搜索全部字段"
       :columns="activeColDefs" :visible-keys="visibleKeys" :selected-count="selectedKeys.size"
       hide-batch-bar @columns-change="(v: string[]) => { visibleKeys = v; persistColumns() }"
@@ -91,22 +98,22 @@
                 <tr v-for="d in expandedGroupOfRow(row).rows" :key="d.key">
                   <td class="fg-cell">{{ d.label }}</td>
                   <td class="fg-cell">{{ d.period }}</td>
-                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.meterQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.diffQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.lineLossQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.adjustQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.meterQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.diffQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.lineLossQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ d.breakdown ? fmtKwh(d.breakdown.adjustQty) : '' }}</td>
                   <td class="fg-cell fg-num">{{ d.qty != null ? fmtKwh(d.qty) : fmtMoney(d.raw) }}</td>
-                  <td class="fg-cell fg-num">{{ d.price != null ? d.price : (d.ratio != null ? fmtRatio(d.ratio) : '—') }}</td>
+                  <td class="fg-cell fg-num">{{ d.price != null ? d.price : (d.ratio != null ? fmtRatio(d.ratio) : '') }}</td>
                   <td class="fg-cell">{{ d.method }}</td>
                   <td class="fg-cell fg-num">{{ fmtMoney(d.value) }}</td>
                 </tr>
                 <tr class="fg-total-row">
                   <td class="fg-cell" colspan="2">合计</td>
-                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.meterQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.diffQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.lineLossQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.adjustQty) : '—' }}</td>
-                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.billingQty) : '—' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.meterQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.diffQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.lineLossQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.adjustQty) : '' }}</td>
+                  <td class="fg-cell fg-num">{{ expandedGroupOfRow(row).breakdownTotals ? fmtKwh(expandedGroupOfRow(row).breakdownTotals.billingQty) : '' }}</td>
                   <td class="fg-cell fg-num" colspan="2"></td>
                   <td class="fg-cell fg-num">{{ fmtMoney(expandedGroupOfRow(row).total) }}</td>
                 </tr>
@@ -192,6 +199,8 @@ import { useTableFlatState, flatClassOf } from './useTableFlatState'
 
 import { notifyEnergyDataChanged, ENERGY_DATA_CHANGED_EVENT } from './energyCounters'
 import { filterRowsByKeyword } from './keywordFilter'
+import { collectUnits, unitMatches } from './unitLabel'
+import { sameCompany } from './companyScope'
 import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, timedBreakdownOf, timedBreakdownTotalsOf, type FieldSource, type SourceResolveContext, type TimedAllocation } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
@@ -924,11 +933,15 @@ const resetColumns = () => { visibleKeys.value = activeColDefs.value.filter(c =>
 const loading = ref(false)
 const tenants = ref<any[]>([])
 // activeTenantId 在列存档（colStorageKey）之前已声明，此处不再重复定义
-const useUnitOptions = computed(() => {
-  const units = new Set<string>([OWNER_UNIT])
-  tenants.value.forEach((t: any) => { if (t.name) units.add(t.name) })
-  return Array.from(units).map(v => ({ label: v, value: v }))
-})
+/** 当前数据全集里的使用单位（业主 + 各租户），按同一家公司归并、显示简称。 */
+const unitTags = computed(() => collectUnits([OWNER_UNIT, ...tenants.value.map((t: any) => t.name)]))
+const showUnitTags = computed(() => unitTags.value.length >= 2)
+function onUnitTagChange(v: any) {
+  const full = String(v || '')
+  if (!full || sameCompany(full, useUnit.value, [])) return
+  useUnit.value = full
+  onUseUnitChange()
+}
 const filters = ref<{ keyword?: string; month?: string; useUnit?: string }>({ keyword: '', month: undefined, useUnit: undefined })
 
 // BusinessFilterBar 扁平筛选态 ↔ 既有 ref 双向桥接。
@@ -937,7 +950,7 @@ const filters = ref<{ keyword?: string; month?: string; useUnit?: string }>({ ke
 const filterFields = computed<FilterFieldSpec[]>(() => [
   { key: 'keyword', type: 'keyword', placeholder: '搜索全部字段' },
   { key: 'month', type: 'month', placeholder: '账单月份' },
-  { key: 'useUnit', type: 'select', placeholder: '使用单位', icon: 'usergroup', options: useUnitOptions.value, immediate: true },
+  // 第 75 轮：使用单位改为工具栏上方的动态方块标签
 ])
 const filterState = computed<FilterState>({
   get: () => ({ keyword: filters.value.keyword || '', month: filters.value.month, useUnit: useUnit.value }),
@@ -945,7 +958,7 @@ const filterState = computed<FilterState>({
     filters.value.keyword = String(v?.keyword ?? '')
     filters.value.month = v?.month || undefined
     const unit = String(v?.useUnit ?? '')
-    if (unit && unit !== useUnit.value) {
+    if (unit && !sameCompany(unit, useUnit.value, [])) {
       useUnit.value = unit
       onUseUnitChange()
     } else {
@@ -1202,7 +1215,7 @@ const waterReadingMap = computed(() => {
 const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
     m.enabled !== false && (m.meter_type === 'normal' ? 'sub' : (m.meter_type || 'sub')) === kind &&
-    (owner === '' || m.owner_unit === owner || m.use_unit === owner) &&
+    (owner === '' || unitMatches(m.owner_unit, owner) || unitMatches(m.use_unit, owner)) &&
     // 公租房数据独立存在,不参与任何核算(宿舍侧仅统计 dorm,工业侧剔除 dorm/public)
     (dormOnly ? m.meter_kind === 'dorm' : !['dorm', 'public'].includes(m.meter_kind)),
   )
@@ -1225,7 +1238,7 @@ const waterAgg = (kind: string, owner: string, month: string, dormOnly = false) 
 const tenantWater = (owner: string, month: string, dormOnly = false) => {
   const meters = waterMeters.value.filter((m: any) =>
     m.enabled !== false &&
-    (m.owner_unit === owner || m.use_unit === owner) &&
+    (unitMatches(m.owner_unit, owner) || unitMatches(m.use_unit, owner)) &&
     (dormOnly ? m.meter_kind === 'dorm' : !['dorm', 'public'].includes(m.meter_kind)),
   )
   let usage = 0
@@ -1249,7 +1262,7 @@ const tenantWater = (owner: string, month: string, dormOnly = false) => {
 const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): SourceResolveContext => {
   // 分时电费的两项输入：该租户当月分时表的逐段抄见电量、当月差额电量 ΔQ
   const timedMeters = elecRows.value
-    .filter((r: any) => r.month === month && r.meter_type === 'time' && String(r.use_unit || '').trim() === useUnit.value)
+    .filter((r: any) => r.month === month && r.meter_type === 'time' && unitMatches(r.use_unit, useUnit.value))
     .map((r: any) => ({ name: String(r.meter_alias || ''), usage: r.period_usage || {} }))
   // ΔQ 优先取已生成账单的固话值；未生成时用「星达工业分表合计 − 租户分时表合计」现算，
   // 否则那些月份的差额分摊会凭空少掉（分时电费整体偏低）。
@@ -1257,7 +1270,7 @@ const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): Sour
   // 星达工业分表总电量：已生成账单取固化值，否则现算（与 ratioOfMonth 同口径）
   let starTotal = Number(rec?.total_kwh) || 0
   const starUsage = starTotal > 0 ? starTotal : elecRows.value
-    .filter((r: any) => r.month === month && r.use_unit === OWNER_UNIT && r.meter_type !== 'time' && r.meter_kind !== 'dorm')
+    .filter((r: any) => r.month === month && unitMatches(r.use_unit, OWNER_UNIT) && r.meter_type !== 'time' && r.meter_kind !== 'dorm')
     .reduce((s: number, r: any) => s + (Number(r.usage) || 0), 0)
   if (starTotal <= 0) starTotal = starUsage
   if (!rec) {
@@ -1302,7 +1315,7 @@ const sourceCtxOf = (month: string, bill: any, solarArr: any[], rec?: any): Sour
 const ratioOfMonth = (month: string, bill: any, rec: any): number => {
   const billKwh = Number(bill?.item?.total_kwh) || 0
   const star = Number(rec?.total_kwh) || elecRows.value
-    .filter((r) => r.month === month && r.meter_type === 'time' && r.use_unit === OWNER_UNIT)
+    .filter((r) => r.month === month && r.meter_type === 'time' && unitMatches(r.use_unit, OWNER_UNIT))
     .reduce((sum, r) => sum + (Number(r.usage) || 0), 0)
   if (billKwh > 0 && star > 0) return Math.round((star / billKwh) * 1e8) / 1e8
   return Number(rec?.ratio) || 0
@@ -1331,7 +1344,7 @@ const buildRows = () => {
     const rec = recByMonth.get(month)
     const solarArr = solarByMonth.get(month) || []
     // 宿舍电表(utility 电费页表,按使用单位+表类型宿舍)
-    const elecOf = (unit: string) => elecRows.value.filter(r => r.month === month && r.use_unit === unit && r.meter_kind === 'dorm')
+    const elecOf = (unit: string) => elecRows.value.filter(r => r.month === month && unitMatches(r.use_unit, unit) && r.meter_kind === 'dorm')
     const dormOf = (unit: string) => {
       const arr = elecOf(unit)
       return { kwh: sumBy(arr, 'usage'), fee: Math.round(arr.reduce((s, r) => s + (Number(r.usage) || 0) * (Number(r.unit_price) || 0), 0) * 100) / 100 }
@@ -1345,7 +1358,7 @@ const buildRows = () => {
      * 气费与电/水不同，不是按比例分摊的，只能「谁的表算谁的钱」。
      */
     const gasOf = (unit: string) => gasRows.value.filter((r: any) =>
-      r.month === month && r.meter_kind !== 'public' && String(r.use_unit || '').trim() === unit)
+      r.month === month && r.meter_kind !== 'public' && unitMatches(r.use_unit, unit))
     const base: Record<string, any> = {
       // 主键必须带「使用单位」：同一月份在不同单位下各有一行，
       // 只用 row-${month} 会撞键，勾选一行的勾选态会同时命中同月的所有行。
@@ -1385,10 +1398,13 @@ const buildRows = () => {
       // 「工业电费 / 工业电量」两列（337,818.56 ÷ 442,178 = 0.764），
       // 与租户视角同口径，且工具提示与列表数值自洽。
       const indPrice = indKwh > 0 ? Math.round((indFee / indKwh) * 10000) / 10000 : 0
-      // 星达工业用水量 = 自来水总表 − 星达宿舍 − 持睿宿舍 − 持睿工业
-      const wIndUsage = Math.round((totalMain.usage - wDorm.usage - tDorm.usage - tInd.usage) * 100) / 100
-      // 星达工业水费 = 工业用水量 × 星达自来水总表单价
-      const wIndFee = Math.round((wIndUsage * (totalMain.price || 0)) * 100) / 100
+      /**
+       * 第 75 轮：业主视角的「工业用水量」= 自来水总表 + 消防总表（769 吨），
+       * 与「本期水量」同源；宿舍水量作为内部用水单列，不再从工业里反减。
+       * 旧口径（总表 − 宿舍 − 租户工业）会得出 −238 这类负数（真机）。
+       */
+      const wIndUsage = Math.round((totalMain.usage + wFire.usage) * 100) / 100
+      const wIndFee = Math.round((totalMain.fee + wFire.fee) * 100) / 100
       // 第 51 轮：本期水量/水费（总表 + 消防总表）。总表水量此前未单列，
       // 工业用水量因基数缺失出现 -238 之类的负数，这里给出权威基数。
       const { usage: currWaterUsage, fee: currWaterFee } = waterPeriodTotals(totalMain, wFire)
@@ -1438,9 +1454,9 @@ const buildRows = () => {
           value: v,
           // 核算类是多表汇总，条数写进提示才说得清「这个数是怎么来的」
           rowCount: c.source.category === '电费核算'
-            ? elecRows.value.filter((r: any) => r.month === month && r.use_unit === useUnit.value).length
+            ? elecRows.value.filter((r: any) => r.month === month && unitMatches(r.use_unit, useUnit.value)).length
             : c.source.category === '气费核算'
-              ? gasRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === useUnit.value).length
+              ? gasRows.value.filter((r: any) => r.month === month && unitMatches(r.use_unit, useUnit.value)).length
               : undefined,
         })
       }
@@ -1616,7 +1632,7 @@ const buildRows = () => {
           rows.push({
             key: m.key,
             label: m.label,
-            period: '—',
+            period: '',
             qty: isRetailLoss ? null : (plainQty || null),
             price: isRetailLoss ? null : (isSystemRunning ? plainUnit : (plainUnit || null)),
             raw: isRetailLoss ? lossRaw : Math.round((Number(itemRaw.get(m.key)) || 0) * 100) / 100,
@@ -1691,9 +1707,9 @@ const buildRows = () => {
           month,
           value: v,
           rowCount: c.source.category === '电费核算'
-            ? elecRows.value.filter((r: any) => r.month === month && r.use_unit === useUnit.value).length
+            ? elecRows.value.filter((r: any) => r.month === month && unitMatches(r.use_unit, useUnit.value)).length
             : c.source.category === '气费核算'
-              ? gasRows.value.filter((r: any) => r.month === month && String(r.use_unit || '').trim() === useUnit.value).length
+              ? gasRows.value.filter((r: any) => r.month === month && unitMatches(r.use_unit, useUnit.value)).length
               : undefined,
         })
       }
@@ -1757,7 +1773,7 @@ const onUseUnitChange = () => {
   // 不同步会「切到持睿汽车却仍读第一家租户的 items / 分组」，
   // 表现为表头只剩电费合计 / 水费合计两列（真机 P0）。
   const picked = tenants.value.find(
-    (t: any) => String(t.name || '').trim() === String(useUnit.value || '').trim(),
+    (t: any) => sameCompany(t.name, useUnit.value, []),
   )
   activeTenantId.value = picked?.id || ''
   syncColumnKeys()
@@ -2180,7 +2196,8 @@ const fmtMoney = cellNum
 const fmtKwh = cellNum
 const fmtRatio = (v: any): string => {
   const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n)) return '—'
+  // 第 75 轮：无数据一律空白，不再渲染「—」占位符
+  if (v === '' || v == null || Number.isNaN(n) || n === 0) return ''
   return (n * 100).toFixed(2) + '%'
 }
 const MONEY_KEYS = ['total_fee', 'ind_fee', 'res_fee', 'dorm_fee', 'water_ind_fee', 'water_dorm_fee', 'water_fire_fee', 'gas_fee', 'solar_amount']
@@ -2213,7 +2230,8 @@ const cellText = (key: string, row: any): string => {
 }
 const fmtPrice = (v: any): string => {
   const n = Number(v)
-  if (v === '' || v == null || Number.isNaN(n) || n === 0) return '—'
+  // 第 75 轮：无数据（含 0）显示空白，严禁「—」
+  if (v === '' || v == null || Number.isNaN(n) || n === 0) return ''
   return String(parseFloat(n.toFixed(4)))
 }
 
@@ -2293,6 +2311,15 @@ const listViewClass = computed(() => flatClassOf(isTableFlat.value))
    子组件是挂在 .biz-page 下的（父页面提供），但共享样式是按组件独立 import 的，
    不引入就会退化成 display:block + overflow:visible —— 表格不被限高、
    滚动条落在外层容器上，表现就是「滚动条侵入表头 + 汇总栏被顶到几千像素」。 */
+
+.meter-subview-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 0;
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
 
 .tenant-billing-container {
   display: flex;

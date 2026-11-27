@@ -6,8 +6,8 @@
     工具栏收敛为 3 个按钮后，这部分配置作为统一设置抽屉的「清单设置」Tab 内嵌。
   -->
   <div class="tenant-settings-panel">
-    <t-tabs v-model="settingsTab" class="settings-tabs">
-      <t-tab-panel value="tenant" label="租户信息">
+    <div class="settings-tabs">
+      <div class="settings-section" data-tenant-section="info">
         <div class="settings-panel">
           <div class="panel-head">
             <span class="panel-title">租户档案</span>
@@ -129,9 +129,9 @@
             <div v-if="!tenants.length" class="panel-empty">暂无租户，点击右上角「新增租户」开始配置</div>
           </div>
         </div>
-      </t-tab-panel>
+      </div>
 
-      <t-tab-panel value="items" label="分摊子项">
+      <div class="settings-section settings-section--items" data-tenant-section="items">
         <div class="settings-panel">
           <div class="panel-head">
             <span class="panel-title">分摊子项</span>
@@ -209,8 +209,8 @@
             </div>
           </div>
         </div>
-      </t-tab-panel>
-    </t-tabs>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -247,7 +247,6 @@ const emit = defineEmits<{ (e: 'changed'): void; (e: 'select', id: string): void
 // 否则用户在抽屉里切换租户会连带刷新背后的列表）。
 const selectedTenantId = ref(String(props.tenantId || ''))
 
-const settingsTab = ref('tenant')
 const tenants = ref<any[]>([])
 const allocationOptions = [{ label: '按比例分摊', value: '按比例分摊' }]
 
@@ -620,9 +619,9 @@ defineExpose({
 
 <style lang="less" scoped>
 .tenant-settings-panel { padding: 0 0 16px; }
-.settings-tabs {
-  :deep(.t-tabs__content) { padding-top: 12px; }
-}
+/* 第 75 轮：租户信息 + 分摊子项合并为同一视图（不再二级 Tab） */
+.settings-tabs { display: flex; flex-direction: column; gap: 18px; padding-top: 4px; }
+.settings-section--items { border-top: 1px solid var(--td-component-stroke); padding-top: 14px; }
 .settings-panel { display: flex; flex-direction: column; gap: 12px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .panel-head-actions { display: flex; align-items: center; gap: 8px; }
