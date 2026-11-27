@@ -15,20 +15,39 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/Tencent/WeKnora/internal/logger"
 )
 
 // HROrgUnit 单位（公司）定义。
+//
+// 第 76 轮：单位信息扩展为「公司档案 + 租户档案」二合一。
+//   - Alias 是全局简称唯一真相源（费用清单租户标签、核算列表单位切换标签都读它）；
+//   - IsTenant / TenantNo / AllocationMode / Contact / Phone 承载原
+//     `费用清单 → 租户信息` 的档案字段；
+//   - BillingTenantID 指向 billing_tenants 行，分摊子项仍存在
+//     billing_tenant_items（按 billing_tenant_id 关联），避免搬表造成金额波动。
 type HROrgUnit struct {
-	ID          string    `gorm:"primaryKey" json:"id"`
-	TenantID    int64     `gorm:"index" json:"tenant_id"`
-	Name        string    `gorm:"index" json:"name"`
-	Code        string    `json:"code"`
-	CreditCode  string    `json:"credit_code"`
-	Address     string    `json:"address"`
-	LegalPerson string    `json:"legal_person"`
-	SortOrder   int       `json:"sort_order"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID              string    `gorm:"primaryKey" json:"id"`
+	TenantID        int64     `gorm:"index" json:"tenant_id"`
+	Name            string    `gorm:"index" json:"name"`
+	Alias           string    `json:"alias"`
+	Code            string    `json:"code"`
+	CreditCode      string    `json:"credit_code"`
+	Address         string    `json:"address"`
+	LegalPerson     string    `json:"legal_person"`
+	IsTenant        bool      `json:"is_tenant"`
+	TenantNo        string    `json:"tenant_no"`
+	AllocationMode  string    `json:"allocation_mode"`
+	Contact         string    `json:"contact"`
+	Phone           string    `json:"phone"`
+	LeaseStart      string    `json:"lease_start"`
+	LeaseYears      int       `json:"lease_years"`
+	Remark          string    `gorm:"type:text" json:"remark"`
+	BillingTenantID string    `gorm:"index" json:"billing_tenant_id"`
+	SortOrder       int       `json:"sort_order"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func (HROrgUnit) TableName() string { return "hr_org_units" }
@@ -111,11 +130,13 @@ func (h *HRHandler) hrEnsureOrgUnits(ctx context.Context, tid int64) {
 			code = fmt.Sprintf("%02d", i+1)
 		}
 		credit := ""
+		alias := ""
 		if strings.Contains(name, "星达") {
 			credit = hrDefaultCreditCode
+			alias = "重庆星达"
 		}
 		units = append(units, HROrgUnit{
-			ID: uuid.New().String(), TenantID: tid, Name: name, Code: code,
+			ID: uuid.New().String(), TenantID: tid, Name: name, Alias: alias, Code: code,
 			CreditCode: credit, SortOrder: i + 1,
 		})
 	}
@@ -239,10 +260,22 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 			}
 			unit := HROrgUnit{
 				ID: uid, TenantID: tid, Name: name, Code: code,
-				CreditCode:  strings.TrimSpace(u.CreditCode),
-				Address:     strings.TrimSpace(u.Address),
-				LegalPerson: strings.TrimSpace(u.LegalPerson),
-				SortOrder:   ui + 1,
+				Alias:          strings.TrimSpace(u.Alias),
+				CreditCode:     strings.TrimSpace(u.CreditCode),
+				Address:        strings.TrimSpace(u.Address),
+				LegalPerson:    strings.TrimSpace(u.LegalPerson),
+				IsTenant:       u.IsTenant,
+				TenantNo:       strings.TrimSpace(u.TenantNo),
+				AllocationMode: strings.TrimSpace(u.AllocationMode),
+				Contact:        strings.TrimSpace(u.Contact),
+				Phone:          strings.TrimSpace(u.Phone),
+				LeaseStart:     strings.TrimSpace(u.LeaseStart),
+				LeaseYears:     u.LeaseYears,
+				Remark:         strings.TrimSpace(u.Remark),
+				// 保留原关联（新单位为空）：分摊子项跟着 billing_tenants 走，
+				// 不在保存时重建，避免把租户账单的关联键换掉。
+				BillingTenantID: strings.TrimSpace(u.BillingTenantID),
+				SortOrder:       ui + 1,
 			}
 			if err := tx.Create(&unit).Error; err != nil {
 				return err
@@ -289,6 +322,10 @@ func (h *HRHandler) SaveOrgUnits(c *gin.Context) {
 	merged, _ := h.hrRefreshOrgDepartments(ctx, tid)
 	// 5) 第 58 轮：改名 / 归并结果写回社保与公积金五张表（幂等）
 	h.hrPersistDeptAuthorityQuiet(ctx, tid)
+	// 6) 第 76 轮：租户档案写回 billing_tenants（分摊子项按 billing_tenant_id 关联，不搬表）
+	if err := h.hrSyncOrgTenants76(ctx, tid); err != nil {
+		logger.Warnf(ctx, "sync org tenants to billing failed: %v", err)
+	}
 	hrOK(c, gin.H{"saved": true, "cascaded": affected, "merged": merged})
 }
 

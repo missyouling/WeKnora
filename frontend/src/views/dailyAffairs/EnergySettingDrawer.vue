@@ -11,18 +11,16 @@
     cancel-text="取消" confirm-text="保存" class="energy-settings-drawer"
     @cancel="onCancel" @confirm="onConfirm">
     <t-tabs v-model="activeTab" class="energy-settings-tabs" :lazy-load="true" @change="onTabChange">
-      <!-- ① 能耗账单：市电账单 / 光伏账单 / 基本户 -->
+      <!-- ① 能耗账单：仅保留账单分类子标签（第 76 轮精简） -->
       <t-tab-panel value="bill" label="能耗账单">
         <div class="energy-bill-switch" data-energy-bill-switch>
           <t-radio-group v-model="billTab" variant="default-filled" size="small">
-            <t-radio-button v-for="t in ENERGY_BILL_SUB_TABS" :key="t" :value="t">{{ t }}</t-radio-button>
+            <t-radio-button v-for="t in billCategories" :key="t" :value="t">{{ t }}</t-radio-button>
           </t-radio-group>
         </div>
-        <FleetCertPanel v-if="billTab !== '基本户'" :ref="(el: any) => setPanel('bill', el)"
-          scope="energy" :kb-id="kbId" lock-category-shell :category-scope="[...ENERGY_BILL_CATEGORIES]"
+        <FleetCertPanel :ref="(el: any) => setPanel('bill', el)"
+          scope="energy" :kb-id="kbId" lock-category-shell :category-scope="[...billCategories]"
           :initial-category="billTab" :flatten-groups="billTab === '光伏账单'" />
-        <!-- 基本户：原「光伏设置」的发电户档案，独立成第 3 个子标签 -->
-        <SolarSettingsPanel v-else ref="solarRef" :kb-id="kbId" embedded @changed="onPanelChanged" />
       </t-tab-panel>
 
       <!-- ② 提取规则 -->
@@ -37,34 +35,27 @@
           lock-category-shell :category-scope="[t.category]" :initial-category="t.category" />
       </t-tab-panel>
 
-      <!-- ⑥ 费用清单：租户信息 / 默认分组 / 各租户分组（动态方块标签） -->
+      <!-- ⑥ 费用清单：默认分组 / 各租户分组（第 76 轮精简为两类块标签，
+           租户档案与分摊子项已迁入「公司设置 → 单位与部门」） -->
       <t-tab-panel value="billing" label="费用清单">
         <div class="energy-bill-switch" data-cost-tabs>
           <t-radio-group v-model="costTab" variant="default-filled" size="small">
-            <t-radio-button value="tenant">租户信息</t-radio-button>
             <t-radio-button value="default">默认分组</t-radio-button>
             <t-radio-button v-for="t in costTenants" :key="t.id" :value="`tenant:${t.id}`">
-              {{ unitShortName(t.name) }}
+              {{ t.label }}
             </t-radio-button>
           </t-radio-group>
         </div>
-        <TenantSettingsPanel v-if="costTab === 'tenant'" ref="tenantRef" :kb-id="kbId || ''" embedded
-          @changed="onTenantPanelChanged" />
-        <FleetCertPanel v-else :ref="(el: any) => setPanel('billing', el)" scope="energy" :kb-id="kbId"
+        <FleetCertPanel :ref="(el: any) => setPanel('billing', el)" scope="energy" :kb-id="kbId"
           lock-category-shell external-group-tabs :category-scope="['费用清单']"
           initial-category="费用清单" :initial-group="costTab" />
       </t-tab-panel>
 
       <!-- ⑦ 工业表计：电/水/气三个介质，互不串写 -->
       <t-tab-panel value="meter" label="工业表计">
-        <div class="energy-bill-switch" data-energy-meter-switch>
-          <t-radio-group v-model="meterCategory" variant="default-filled" size="small">
-            <t-radio-button value="electricity">电表</t-radio-button>
-            <t-radio-button value="water">水表</t-radio-button>
-            <t-radio-button value="gas">气表</t-radio-button>
-          </t-radio-group>
-        </div>
-        <MeterSettingsPanel :key="meterCategory" ref="meterRef" :category="meterCategory" embedded
+        <!-- 介质标签与「新增」按钮由面板自己渲染在同一行（左标签、右按钮），
+             抽屉不再单独出标签栏，避免两行错位。 -->
+        <MeterSettingsPanel v-model:category="meterCategory" ref="meterRef" embedded
           @changed="onPanelChanged" />
       </t-tab-panel>
     </t-tabs>
@@ -77,17 +68,14 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import FleetCertPanel from './FleetCertPanel.vue'
 import ExtractRulePanel from './ExtractRulePanel.vue'
 import MeterSettingsPanel from './MeterSettingsPanel.vue'
-import TenantSettingsPanel from './TenantSettingsPanel.vue'
-import SolarSettingsPanel from './SolarSettingsPanel.vue'
 import { listBillingTenants } from '@/api/knowledge-base'
+import { listFleetCategories } from '@/api/fleet'
 import { unitShortName } from './unitLabel'
 import {
   ENERGY_BILL_CATEGORIES,
-  ENERGY_BILL_SUB_TABS,
   ENERGY_SETTINGS_TABS,
-  energyBillCategoryOf,
+  energyBillCategoriesOf,
   energyTabOfCategory,
-  type EnergyBillSubTab,
   type EnergySettingsTab,
 } from './energySettingsTabs'
 
@@ -115,14 +103,15 @@ const drawerVisible = computed({
 })
 
 const activeTab = ref<EnergySettingsTab>('bill')
-/** 能耗账单的子标签：市电账单 / 光伏账单 / 基本户 */
-const billTab = ref<EnergyBillSubTab>('市电账单')
+/** 能耗账单的子标签：市电账单 / 光伏账单（动态，新增账单分类自动追加） */
+const billTab = ref<string>('市电账单')
+const billCategories = ref<string[]>([...ENERGY_BILL_CATEGORIES])
 const meterCategory = ref<'electricity' | 'water' | 'gas'>('electricity')
 const saving = ref(false)
 
-/** 费用清单块标签：租户信息 / 默认分组 / tenant:<id> */
-const costTab = ref<string>('tenant')
-const costTenants = ref<Array<{ id: string; name: string }>>([])
+/** 费用清单块标签：默认分组 / tenant:<id>（别名来自公司设置） */
+const costTab = ref<string>('default')
+const costTenants = ref<Array<{ id: string; name: string; label: string }>>([])
 
 const ENERGY_FIELD_ONLY_TABS = ENERGY_SETTINGS_TABS
   .filter((t) => ['electric', 'water', 'gas'].includes(t.value))
@@ -139,10 +128,22 @@ function setPanel(key: string, el: any) {
 }
 const ruleRef = ref<any>(null)
 const meterRef = ref<any>(null)
-const tenantRef = ref<any>(null)
-const solarRef = ref<any>(null)
 
 const ruleCategory = computed(() => (billTab.value === '光伏账单' ? '光伏账单' : '市电账单'))
+
+/** 动态读取能耗分类，刷新「能耗账单」子标签（新增账单分类自动出现）。 */
+async function loadBillCategories() {
+  try {
+    const res: any = await listFleetCategories({ scope: 'energy' })
+    const list = energyBillCategoriesOf(Array.isArray(res?.data) ? res.data : [])
+    if (list.length) {
+      billCategories.value = list
+      if (!list.includes(billTab.value)) billTab.value = list[0]
+    }
+  } catch {
+    // 后端不可用时保留内置两项，抽屉不至于空标签
+  }
+}
 
 function onPanelChanged() { emit('saved') }
 
@@ -150,18 +151,19 @@ async function loadCostTenants() {
   try {
     const res: any = await listBillingTenants()
     const list = Array.isArray(res?.data) ? res.data : []
-    costTenants.value = list.map((t: any) => ({ id: String(t.id), name: String(t.name || '') }))
+    costTenants.value = list.map((t: any) => ({
+      id: String(t.id),
+      name: String(t.name || ''),
+      // 别名是全局简称唯一真相源（公司设置维护）；缺失时才回退租户名
+      label: String(t.alias || '').trim() || unitShortName(t.name),
+    }))
   } catch { costTenants.value = [] }
-}
-function onTenantPanelChanged() {
-  emit('saved')
-  void loadCostTenants()
 }
 
 /** 打开时定位：分类优先（页面设置按钮只传分类），市电/光伏 → 能耗账单对应子标签。 */
 function syncFromProps() {
   const cat = String(props.initialCategory || '').trim()
-  const bill = energyBillCategoryOf(cat)
+  const bill = billCategories.value.includes(cat) ? cat : ''
   if (bill) {
     billTab.value = bill
     activeTab.value = 'bill'
@@ -171,7 +173,7 @@ function syncFromProps() {
   if (activeTab.value === 'meter') {
     meterCategory.value = cat === '水费核算' ? 'water' : cat === '气费核算' ? 'gas' : 'electricity'
   }
-  if (activeTab.value === 'billing') costTab.value = 'tenant'
+  if (activeTab.value === 'billing') costTab.value = 'default'
 }
 
 watch(() => props.visible, (v) => {
@@ -179,11 +181,12 @@ watch(() => props.visible, (v) => {
   saving.value = false
   syncFromProps()
   void loadCostTenants()
+  void loadBillCategories()
 }, { immediate: true })
 
 watch(() => [props.initialTab, props.initialCategory], () => { if (props.visible) syncFromProps() })
 
-onMounted(() => { void loadCostTenants() })
+onMounted(() => { void loadCostTenants(); void loadBillCategories() })
 
 function onTabChange(val: string | number) {
   if (val === 'rules') nextTick(() => ruleRef.value?.refresh?.())
@@ -195,15 +198,13 @@ async function onConfirm() {
   try {
     const tab = activeTab.value
     if (tab === 'bill') {
-      if (billTab.value === '基本户') await solarRef.value?.commit?.()
-      else await panels.value.bill?.commitPendingEdit?.()
+      await panels.value.bill?.commitPendingEdit?.()
     } else if (tab === 'rules') {
       await ruleRef.value?.save?.()
     } else if (tab === 'meter') {
       await meterRef.value?.commitAll?.()
     } else if (tab === 'billing') {
-      if (costTab.value === 'tenant') await tenantRef.value?.commitAll?.()
-      else await panels.value.billing?.commitPendingEdit?.()
+      await panels.value.billing?.commitPendingEdit?.()
     } else {
       await panels.value[tab]?.commitPendingEdit?.()
     }
@@ -217,7 +218,6 @@ async function onConfirm() {
 }
 
 async function onCancel() {
-  try { await tenantRef.value?.discardAll?.() } catch { /* ignore */ }
   for (const key of Object.keys(panels.value)) {
     try { panels.value[key]?.discardPendingEdit?.() } catch { /* ignore */ }
   }

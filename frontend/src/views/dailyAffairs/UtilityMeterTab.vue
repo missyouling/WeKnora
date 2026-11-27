@@ -235,6 +235,7 @@ import { notifyEnergyDataChanged } from './energyCounters'
 import { filterRowsByKeyword } from './keywordFilter'
 import { collectUnits, unitMatches } from './unitLabel'
 import { sameCompany } from './companyScope'
+import { getOrgUnits } from './hrApi'
 
 const props = defineProps<{
   category: 'water' | 'gas' | 'electricity'
@@ -541,8 +542,13 @@ const kindFilterOptions = computed(() => [
  * （不是表计档案，避免「档案里有但本月没抄表」的单位占位）。
  * 全称/简称按同一家公司归并，标签显示简称（重庆星达 / 持睿汽车）。
  */
+/**
+ * 单位别名（公司设置 → 别名，全局简称唯一真相源）。
+ * 取不到时 collectUnits 会从全称派生核心词，标签仍可读。
+ */
+const orgAliases = ref<string[]>([])
 const unitTags = computed(() => {
-  const list = collectUnits(rows.value.map((r: any) => r.use_unit))
+  const list = collectUnits(rows.value.map((r: any) => r.use_unit), orgAliases.value)
   // 主单位（重庆星达）恒排第一：默认选中它，与费用清单业主视角一致
   return [...list].sort((a, b) => (sameCompany(b.full, '重庆星达', []) ? 1 : 0) - (sameCompany(a.full, '重庆星达', []) ? 1 : 0))
 })
@@ -1478,6 +1484,13 @@ const fmtUnitPrice = (v: any) => {
 // 列显隐切换）重测，保证展开子表的 colgroup 始终等于主表真实列宽。
 let columnResizeObserver: ResizeObserver | null = null
 onMounted(() => {
+  // 别名来自公司设置；失败时不影响列表，只是标签回退核心词。
+  void getOrgUnits().then((res: any) => {
+    const units = res?.data?.units || res?.units || []
+    orgAliases.value = (Array.isArray(units) ? units : [])
+      .map((u: any) => String(u?.alias || '').trim())
+      .filter(Boolean)
+  }).catch(() => {})
   installListFootHoistAll()
   load()
   void loadCategorySubs()

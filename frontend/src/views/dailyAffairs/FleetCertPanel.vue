@@ -80,29 +80,23 @@
                 <!-- AI 图标按钮：与 ⋮ 菜单「字段生成」同一功能，点击展开/再点收起 -->
                 <div class="form-item-inline">
                   <t-input v-model="editForm.name" @enter="commitEdit" />
-                  <t-tooltip :content="aiPanelOpen ? '收起字段生成' : '用样票生成字段'" placement="top">
-                    <t-button class="ai-toggle-btn" :class="{ 'ai-toggle-btn--on': aiPanelOpen }"
-                      variant="outline" shape="square" size="small" @click="toggleAiPanel">
-                      <template #icon><AiSparkIcon size="16px" /></template>
-                    </t-button>
-                  </t-tooltip>
                 </div>
               </div>
             </div>
-            <!-- 字段生成：内嵌在「发票类型」下方、「字段配置」上方，
-                 上传样票→识别→勾选→保存字段，直接落库。 -->
-            <AiFieldSuggestPanel
-              v-if="!props.lockCategoryShell"
-              v-model:visible="aiPanelOpen"
-              :kb-id="props.kbId || ''"
-              :scope="group.scope"
-              :cert-type="editingCertName"
-              @apply="onAiFieldApply"
-            />
+            <!-- 第 76 轮：全局下线「用样票生成字段」（入口、内嵌面板、缓存一次性移除）。
+                 字段仍可在下方逐条新增/编辑，提取规则由「提取规则」标签维护。 -->
             <!-- 字段配置：增删改 + 启用/禁用（同步字段筛选器） -->
             <div class="field-config">
               <div v-if="!directMode" class="field-config-head">
                 <span class="field-config-title">字段配置</span>
+              </div>
+              <!-- 第 76 轮：保险单专属 3 个配置标签（交强险 / 商业险 / 险种类别）。
+                   数据仍是一个「保险单」分类，标签只过滤 subs.group 前缀，
+                   因此记录、列表表头与提取规则完全不受影响。 -->
+              <div v-if="props.insuranceTabs" class="fc-insurance-tabs" data-insurance-tabs>
+                <t-radio-group v-model="fieldTab" variant="default-filled" size="small">
+                  <t-radio-button v-for="t in INSURANCE_TABS" :key="t" :value="t">{{ t }}</t-radio-button>
+                </t-radio-group>
               </div>
               <!-- 业务分组切换（仅带 group 的分类显示，如市电账单的 12 个费用分项）。
                    没有 group 的分类（发票/合同/制度/公告）不渲染，视觉与改造前一致。 -->
@@ -464,6 +458,13 @@ import {
   type EditableField,
   type EditableSubField,
 } from './fleetCategorySubs'
+import {
+  INSURANCE_TABS,
+  insuranceGroupLabel,
+  insuranceTabOfGroup,
+  syncInsuranceCoverageFields,
+  type InsuranceTab,
+} from './insuranceFields'
 import { listSubGroups } from './sixWaySync'
 import { sourcePathText } from './tenantBillingSources'
 import { statusFieldSpecsOf, ensureStatusFields, isLockedStatusField } from './statusFields'
@@ -484,11 +485,7 @@ import {
 } from './billingFieldGroups'
 import { listBillingTenants, getBillingTenant, saveBillingTenantItems } from '@/api/knowledge-base'
 import { applyFieldsToItems, splitFieldsByOrigin } from './tenantGroupSync'
-import AiFieldSuggestPanel from './AiFieldSuggestPanel.vue'
 import SourceFieldPicker from './SourceFieldPicker.vue'
-import AiSparkIcon from './AiSparkIcon.vue'
-import { mergeAiFieldSuggestions } from './aiFieldMerge'
-import { cacheSampleText } from './sampleTextCache'
 
 const props = withDefaults(defineProps<{
   scope?: 'vehicle' | 'driver' | 'maintain' | 'invoice' | 'contract' | 'regulation' | 'award_punish' | 'energy' | 'tire' | 'inspection' | 'fleet-cost' | 'hr-roster' | 'hr-resign' | 'hr-contract' | 'hr-social' | 'hr-fund' | 'hr-dorm' | ''
@@ -549,6 +546,12 @@ const props = withDefaults(defineProps<{
    * 费用清单设置（租户信息 / 默认分组 / 各租户分组）。
    */
   externalGroupTabs?: boolean
+  /**
+   * 第 76 轮：保险单专属配置模式。
+   * 字段配置上方渲染 交强险 | 商业险 | 险种类别 三个标签，按 subs.group 前缀过滤；
+   * 保存时把「险种类别」同步进「商业险 / 投保险别」（新增/改名/停用/调序全跟随）。
+   */
+  insuranceTabs?: boolean
 }>(), {
   scope: 'vehicle',
   kbId: '',
@@ -563,6 +566,7 @@ const props = withDefaults(defineProps<{
   categoryScope: () => [],
   flattenGroups: false,
   externalGroupTabs: false,
+  insuranceTabs: false,
 })
 // 列宽配置仅业务档案 scope 显示（车队 scope 暂不接入列宽消费）
 // 列宽列对所有 scope 开放（第 31 轮）。
@@ -1173,10 +1177,10 @@ async function commitAdd() {
       addVisible.value = false
       MessagePlugin.success('证照类型已创建')
       notifyCategoriesChanged()
-      // 连贯工作流：新建即展开编辑并打开「字段生成」，引导用户上传样票一键配齐字段
+      // 新建后直接展开该分类的编辑区，用户可立即配置字段
       await nextTick()
       const createdItem = groupItems.value.find((it: any) => it.id === record.id)
-      if (createdItem) openAiPanel(createdItem)
+      if (createdItem) toggleEdit(createdItem)
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '创建失败')
@@ -1200,14 +1204,27 @@ const newSubFieldLabel = ref('')
 // `activeSubGroup === ''` 表示「全部」。无 group 的分类（发票/合同/制度/公告）
 // 枚举结果为空 → 胶囊条不渲染 → 行为与改造前完全一致。
 const activeSubGroup = ref('')
+/** 保险单配置标签（仅 props.insuranceTabs 生效） */
+const fieldTab = ref<InsuranceTab>('交强险')
+/** 当前标签可见的字段（其它标签的字段不参与分组/计数/渲染）。 */
+const scopedFields = computed(() => {
+  if (!props.insuranceTabs) return fieldsEditable.value
+  return (fieldsEditable.value as any[]).filter((f) => insuranceTabOfGroup(f?.group) === fieldTab.value)
+})
 const subGroupTabs = computed(() => {
   // `-rows` 是子表行标题（非提取字段），不进字段定义的分组胶囊条
-  const raw = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
+  const all = listSubGroups(fieldsEditable.value as any[], (k: string) => subGroupLabelOf(k))
     // -rows / -periods 是细项集合，挂在「费用组成 / 分时时段」下展开，不单独出胶囊
     .filter((g) => !g.key.endsWith('-rows') && !g.key.endsWith('-periods'))
     // 空键分组（未命名）会渲染成一个只剩计数的空胶囊（如只有一个「1」），
     // 对任何 scope 都是噪音：没有标签就无法表达"这是哪一组"。
     .filter((g) => String(g.key || '').trim() !== '')
+  // 保险单：分组键带标签前缀（交强险/基本信息），按当前标签过滤并去掉前缀展示
+  const raw = props.insuranceTabs
+    ? all
+      .filter((g) => insuranceTabOfGroup(g.key) === fieldTab.value)
+      .map((g) => ({ ...g, label: insuranceGroupLabel(g.key) || g.label }))
+    : all
   if (!isCostList.value) return raw
   // 费用清单：先按归一后的键合并（cols 与 default 是同一个「默认分组」），
   // 分组名以租户档案为准（租户改名后胶囊立即跟随），默认分组恒定排第一。
@@ -1241,10 +1258,20 @@ const subGroupTabs = computed(() => {
  * 成员**不再各自成行**（点「细项 N」胶囊在下方展开，见 .fee-group-members）。
  * 这样字段配置的行数、顺序与列表表头严格一致（六同步）。
  */
+// 切换保险配置标签：重置到该标签下第一个分组（默认展开首组）
+watch(fieldTab, () => {
+  activeSubGroup.value = ''
+  openSubFieldName.value = ''
+  openChildGroup.value = ''
+  resetSubGroupSelection()
+})
+
 const fieldsVisible = computed(() => {
   // 第 74 轮：光伏账单平铺 —— 不分 group，直接按 subs 顺序展示全部字段
   // （需求明确删除「派生字段（不可提取）」「账单概况」两个分组外壳）。
   if (props.flattenGroups) return fieldsEditable.value
+  // 保险单：先按当前配置标签收窄（交强险 / 商业险 / 险种类别），再做分组过滤
+  const source = props.insuranceTabs ? scopedFields.value : (fieldsEditable.value as any[])
   // 第 52 轮：花名册字段配置取消胶囊分组后，字段必须按 6 组顺序合并成
   // 单一连续列表 —— 此时 activeSubGroup 强制为空，绝不能再按 group 过滤
   // （否则只显示「字段最多」的那一组，其余 5 组全部消失）。
@@ -1258,11 +1285,11 @@ const fieldsVisible = computed(() => {
   // 车队 / 能耗保留「文件级状态列每个胶囊都可见」的历史行为。
   const strictStatus = /^hr-/.test(String(group.value.scope || '').trim())
   const list = grouped
-    ? visibleGroupFields(fieldsEditable.value as any[], want, {
+    ? visibleGroupFields(source as any[], want, {
       strictStatus,
       isLocked: (f: any) => isLockedStatus(f),
     }) as EditableField[]
-    : fieldsEditable.value
+    : (source as EditableField[])
   return collapseFeeGroups(list as any[]).map((row: any) => {
     if (row.kind !== 'group') return row.sub
     // 已保存的大类字段直接用原对象（改名/宽度/开关都写回 subs）
@@ -1775,8 +1802,6 @@ function startEdit(item: any) {
   newFieldName.value = ''
   newSubFieldLabel.value = ''
   openSubFieldName.value = ''
-  // 换分类编辑时先收起 AI 面板：它属于"上一行"的上下文
-  aiPanelOpen.value = false
   // 字段来源：已入库 subs（含 sub_fields）优先，否则内置 base+detail 底稿
   const b = (BUILTIN[group.value.scope] || []).find((x: any) => x.name === item.name)
   const raw = Array.isArray(item.subs) && item.subs.length
@@ -1806,7 +1831,6 @@ function startEdit(item: any) {
     fieldsEditable.value = normalizeCostListDefaults(fieldsEditable.value)
   }
   editingId.value = item.id
-  editingCertName.value = item.name
   emit('category-change', String(item.name || ''))
   resetSubGroupSelection()
   loadUsedFields(group.value.scope, item.name)
@@ -1934,10 +1958,12 @@ async function commitEdit() {
   if (!item) { editingId.value = ''; return }
   const name = editForm.name.trim()
   if (!name) { MessagePlugin.warning(namePlaceholderOf(props.scope)); return }
+  // 第 76 轮：保险单保存时先同步「险种类别 → 商业险/投保险别」，再落库。
+  // 同步结果回写编辑态，用户保存后立刻能看到投保险别的新顺序。
+  if (props.insuranceTabs) {
+    fieldsEditable.value = syncInsuranceCoverageFields(fieldsEditable.value as any[]) as any
+  }
   const subs = toSubsPayload(fieldsEditable.value)
-  // 本次保存是否由「智能生成字段」发起（发起时保存后询问是否去配置规则）
-  const aiContext = pendingAiSample.value
-  pendingAiSample.value = ''
   saving.value = true
   try {
     if (item.builtin && item.id.startsWith('builtin-')) {
@@ -1960,8 +1986,7 @@ async function commitEdit() {
       const idx = list.findIndex((c: any) => c.id === item.id)
       // 本地回写同样只改 name/subs，绝不动 enabled（开着的不许因为一次保存变灰）
       if (idx >= 0) list[idx] = { ...list[idx], name, subs, enabled }
-      // AI 保存路径会给出「字段已保存，已为您切换至提取规则」，这里不再叠加第二条
-      if (!aiContext) MessagePlugin.success('已保存')
+      MessagePlugin.success('已保存')
       notifyCategoriesChanged({ name, subs })
       // 反向同步：费用清单的租户分组改了宽度/启用字段 → 回写 billing_tenant_items
       void syncFieldsToTenantItems(item, fieldsEditable.value)
@@ -1976,11 +2001,6 @@ async function commitEdit() {
       await nextTick()
       const target = groupItems.value.find((it: any) => it.id === item.id) || groupItems.value[0]
       if (target) startEdit(target)
-    }
-    // 字段已落库 → 直接切到「提取规则」，只留一条 Toast（不再弹确认框、不再叠加提示）
-    if (aiContext) {
-      goRulesAfterAiSave(name, aiContext)
-      MessagePlugin.success('字段已保存，已为您切换至提取规则')
     }
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
@@ -2031,81 +2051,9 @@ async function syncFieldsToTenantItems(item: any, fields: any[]) {
   }
 }
 
-// ---- 字段生成（内嵌面板，无模态遮罩）----
-// aiPanelOpen 与编辑行绑定：换一行编辑时先收起，避免"看着 A 分类的字段、
-// 其实面板属于 B 分类"的错位。
-const aiPanelOpen = ref(false)
-const editingCertName = ref('')
-const pendingAiSample = ref('')
-
-/** 展开某分类的编辑面板并打开内嵌 AI 生成区（分类行 ⋮ 菜单 / 新建分类后调用）。 */
-function openAiPanel(item: any) {
-  if (!item) return
-  if (editingId.value !== item.id) toggleEdit(item)
-  editingCertName.value = editForm.name.trim()
-  aiPanelOpen.value = true
-  // 等 v-if 渲染出编辑区再滚动，否则滚不到目标
-  nextTick(() => {
-    document.querySelector('.ai-field-panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  })
-}
-
-/** 「发票类型」右侧的 AI 图标按钮：与 ⋮ 菜单里的「字段生成」等价，再点收起。 */
-function toggleAiPanel() {
-  editingCertName.value = editForm.name.trim()
-  aiPanelOpen.value = !aiPanelOpen.value
-  if (aiPanelOpen.value) {
-    nextTick(() => {
-      document.querySelector('.ai-field-panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    })
-  }
-}
-
-/**
- * 「保存字段」= 并入编辑态 + 立刻调后端保存接口落库。
- *
- * 为什么不再让用户点第二次保存：并入只是内存动作，用户看到按钮变成"已并入 N 项"
- * 却还要滚到下面再点「保存」才落库，中途切走就白配了。这里直接衔接 commitEdit。
- * Toast 也只留一条（保存结果），不再叠加"已自动创建父字段 + 已并入 N 项"两条。
- */
-function onAiFieldApply(payload: { standard: any[]; subFields: any[]; custom: any[]; sampleText: string }) {
-  const merged = mergeAiFieldSuggestions(
-    fieldsEditable.value,
-    payload.standard,
-    payload.subFields,
-    payload.custom,
-    payload.subFields.map((s: any) => s.key),
-    // 扩展字段用后端分配的只读 key 作为身份（中文名只是可改的 label）
-    payload.custom.map((c: any) => String(c.key || '').trim() || String(c.name || '').trim()),
-  )
-  fieldsEditable.value = merged.fields
-  resetSubGroupSelection()
-  pendingAiSample.value = payload.sampleText || ''
-  aiPanelOpen.value = false
-  // 明细父字段由 mergeAiFieldSuggestions 静默补建，不再弹提示打断流程
-  if (merged.skipped.length) {
-    MessagePlugin.warning(`${merged.skipped.length} 项未并入：${merged.skipped[0]?.reason || ''}`)
-  }
-  if (!merged.addedCount) {
-    if (!merged.skipped.length) MessagePlugin.warning('没有可并入的新项（可能都已存在）')
-    return
-  }
-  // 并入成功 → 直接落库，用户无需再点一次保存
-  void commitEdit()
-}
-
-// 保存字段后**直接跳到「提取规则」**（不再弹确认框）。
-//
-// 用户口径：字段已落库，下一步必然是配规则，再弹一次"要不要去"纯属多一次点击。
-// 样票文本先写缓存，规则面板挂载时即可带上它做正则唯一命中校验。
-function goRulesAfterAiSave(certType: string, sampleText: string) {
-  if (!certType) return
-  if (sampleText) cacheSampleText(certType, sampleText)
-  emit('ai-guide', { certType, sampleText, autoSuggest: !!sampleText })
-}
+// ---- 第 76 轮：字段生成相关状态与处理已整体移除（用样票生成字段功能下线） ----
 
 const emit = defineEmits<{
-  (e: 'ai-guide', payload: { certType: string; sampleText: string; autoSuggest: boolean }): void
   /**
    * 当前正在编辑的分类变了。
    *
@@ -2155,15 +2103,13 @@ async function removeItem(item: any) {
 // ---- 分类行操作：竖向三点菜单（字段生成 / 复制 / 删除，图标+文字）----
 const itemMenuOptions = (item: any) => {
   const opts: any[] = [
-    { content: '字段生成', value: 'ai', prefixIcon: () => h(AiSparkIcon, { size: '14px' }) },
     { content: '复制', value: 'copy', prefixIcon: () => h(CopyIcon, { size: '14px' }) },
   ]
   if (!item.builtin) opts.push({ content: '删除', value: 'delete', theme: 'error', prefixIcon: () => h(DeleteIcon, { size: '14px' }) })
   return opts
 }
 function onItemMenu(item: any, value: string) {
-  if (value === 'ai') openAiPanel(item)
-  else if (value === 'copy') void duplicateItem(item)
+  if (value === 'copy') void duplicateItem(item)
   else if (value === 'delete') delItemPop.value = item
 }
 const delItemPop = ref<any>(null)
@@ -2504,6 +2450,13 @@ watch(activeGroup, () => { editingId.value = ''; addVisible.value = false })
       font-size: 12px;
       color: var(--td-text-color-placeholder);
     }
+  }
+
+  /* 第 76 轮：保险单 3 个配置标签（交强险 / 商业险 / 险种类别） */
+  .fc-insurance-tabs {
+    display: flex;
+    align-items: center;
+    margin: 2px 0 10px;
   }
 
   /* 业务分组胶囊条（仅带 group 的分类渲染，如市电账单的 21 个费用分项） */

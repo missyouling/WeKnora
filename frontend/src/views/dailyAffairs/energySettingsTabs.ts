@@ -43,15 +43,43 @@ const CATEGORY_TAB: Record<string, EnergySettingsTab> = {
   表计设置: 'meter',
 }
 
-/** 能耗账单标签里可配置字段的两个账单分类。 */
+/** 能耗账单标签里可配置字段的两个账单分类（内置兜底；真实列表见 energyBillCategoriesOf）。 */
 export const ENERGY_BILL_CATEGORIES = ['市电账单', '光伏账单'] as const
 export type EnergyBillCategory = typeof ENERGY_BILL_CATEGORIES[number]
 
+/** 非账单分类：核算表是录入 + 公式计算，费用清单是汇总视图，能耗单走台账管线。 */
+const ENERGY_NON_BILL_CATEGORIES = ['电费核算', '水费核算', '气费核算', '费用清单', '能耗单']
+
 /**
- * 「能耗账单」下的子标签（第 75 轮）：市电账单 | 光伏账单 | 基本户。
- * 基本户不是分类，是光伏发电户档案表单（原「光伏设置」的内容）。
+ * 从能耗分类配置里推导「能耗账单」可配置字段的账单分类（动态、保序）。
+ *
+ * 唯一口径：设置 · 能耗 → 能耗账单 → 子标签、提取规则的分类标签都走它。
+ * 因此后续在能耗账单里新增第三个账单分类时，两处都会自动多一项，
+ * 不需要再改任何硬编码数组（第 76 轮需求①）。
  */
-export const ENERGY_BILL_SUB_TABS = ['市电账单', '光伏账单', '基本户'] as const
+export function energyBillCategoriesOf(categories: readonly any[] | null | undefined): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const c of categories || []) {
+    if (!c || c.enabled === false) continue
+    const name = String(c?.name || '').trim()
+    if (!name || seen.has(name)) continue
+    // 内置能耗类型种子（builtin_key = energy-*）是通用台账口径，不是账单
+    if (String(c?.builtin_key || '').startsWith('energy-')) continue
+    if (ENERGY_NON_BILL_CATEGORIES.includes(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
+
+/**
+ * 「能耗账单」下的子标签（第 76 轮）：市电账单 | 光伏账单。
+ *
+ * 基本户标签已删除：光伏账单自身解析/展示不依赖它（核查结论见交付报告），
+ * 保留只会让抽屉多一个与账单字段无关的表单。
+ */
+export const ENERGY_BILL_SUB_TABS = ['市电账单', '光伏账单'] as const
 export type EnergyBillSubTab = typeof ENERGY_BILL_SUB_TABS[number]
 
 /** 7 个标签里承载「字段配置」的那些（其余标签渲染专属面板）。 */

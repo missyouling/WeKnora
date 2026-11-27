@@ -138,13 +138,13 @@ test('AI 更新行有徽章与高亮', () => {
   assert.match(panelSrc, /editingName\.value = f\.name/, '单字段生成后展开该行')
 })
 
-test('工具栏只剩样票(ticket)与测试(play-circle)两个无边框图标', () => {
-  assert.match(panelSrc, /<t-icon name="ticket" \/>/)
+test('工具栏只剩测试规则(play-circle)一个无边框图标（第 76 轮下线缓存样票）', () => {
   assert.match(panelSrc, /<t-icon name="play-circle" \/>/)
-  // 工具栏不再有 AI 批量图标
+  // 工具栏不再有 AI 批量图标 / 样票缓存图标
   const toolbar = panelSrc.slice(panelSrc.indexOf('<div class="extract-toolbar">'), panelSrc.indexOf('<!-- 测试区锚点'))
   assert.doesNotMatch(toolbar, /AiSparkIcon/)
-  assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 2, '工具栏只应有两个图标按钮')
+  assert.doesNotMatch(toolbar, /name="ticket"/, '缓存样票按钮已全局下线')
+  assert.equal((toolbar.match(/<t-button variant="text"/g) || []).length, 1, '工具栏只应有一个图标按钮')
   assert.match(panelSrc, /shape="square"/, '图标按钮使用方形紧凑形态')
   // 2026-10-18 二轮：整排按钮去描边，hover 只给柔和底色
   assert.doesNotMatch(panelSrc, /<t-button variant="outline" theme="primary" shape="square"/)
@@ -159,11 +159,9 @@ test('测试规则改为内嵌面板（无模态弹窗）', () => {
 
 // ---- 2026-10-18 终轮：工具栏图标语义 + 六同步 ----
 
-test('样票图标改 ticket：缓存存在时常驻绿色，hover 平滑变主题绿', () => {
-  assert.match(panelSrc, /<t-icon name="ticket" \/>/)
-  assert.doesNotMatch(panelSrc, /<t-icon name="refresh" \/>/, '样票不再用 refresh（易被当成刷新按钮）')
-  assert.match(panelSrc, /:class="\{ 'is-hot': sampleTextAvailable \}"/)
-  assert.match(panelSrc, /&\.is-hot \{\s*color: var\(--td-brand-color\);/, '缓存态常驻绿色')
+test('缓存样票已下线：无 ticket 图标、无 sampleTextCache 依赖、hover 仍变主题绿', () => {
+  assert.doesNotMatch(panelSrc, /name="ticket"/, '缓存样票按钮必须删除')
+  assert.doesNotMatch(panelSrc, /sampleTextCache/, '样票缓存模块不得再被引用')
   assert.match(panelSrc, /transition: color 0\.2s ease/)
   assert.match(panelSrc, /&:hover:not\(:disabled\) \{\s*color: var\(--td-brand-color\)/, 'hover 变主题绿')
 })

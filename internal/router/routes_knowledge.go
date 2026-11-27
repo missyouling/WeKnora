@@ -223,7 +223,8 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 				kbDirect.POST("/extract-config/test", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.TestExtractConfig)
 				// 智能配置（纯建议接口，不落库）：建议只在响应里返回，
 				// 落库一律由用户在界面上点「保存」触发既有接口。
-				kbDirect.POST("/extract-config/ai-suggest-fields", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.AISuggestFields)
+				// 第 76 轮：全局下线「用样票生成字段」——接口与前端入口一并移除。
+				// 正常文件上传与规则测试不受影响（下面两条保留）。
 				kbDirect.POST("/extract-config/ai-suggest-rules", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), business.AISuggestRules)
 			}
 		}

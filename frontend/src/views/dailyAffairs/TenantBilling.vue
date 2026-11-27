@@ -201,6 +201,7 @@ import { notifyEnergyDataChanged, ENERGY_DATA_CHANGED_EVENT } from './energyCoun
 import { filterRowsByKeyword } from './keywordFilter'
 import { collectUnits, unitMatches } from './unitLabel'
 import { sameCompany } from './companyScope'
+import { getOrgUnits } from './hrApi'
 import { parseFieldSource, matchBillFeeItems, billRawAmountOf, resolveSourceValue, resolveTenantItemValue, resolveTimedItemFee, timedBreakdownOf, timedBreakdownTotalsOf, type FieldSource, type SourceResolveContext, type TimedAllocation } from './tenantBillingSources'
 import {
   DEFAULT_GROUP_KEY,
@@ -934,7 +935,15 @@ const loading = ref(false)
 const tenants = ref<any[]>([])
 // activeTenantId 在列存档（colStorageKey）之前已声明，此处不再重复定义
 /** 当前数据全集里的使用单位（业主 + 各租户），按同一家公司归并、显示简称。 */
-const unitTags = computed(() => collectUnits([OWNER_UNIT, ...tenants.value.map((t: any) => t.name)]))
+/**
+ * 单位别名（公司设置 → 别名）。租户档案同时返回 org_unit_name（工商全称），
+ * 标签取值用全称、展示用别名，既保证匹配稳定也让标签是可读简称。
+ */
+const orgAliases = ref<string[]>([])
+const unitTags = computed(() => collectUnits(
+  [OWNER_UNIT, ...tenants.value.map((t: any) => String(t.org_unit_name || t.name || ''))],
+  orgAliases.value,
+))
 const showUnitTags = computed(() => unitTags.value.length >= 2)
 function onUnitTagChange(v: any) {
   const full = String(v || '')
@@ -2236,6 +2245,12 @@ const fmtPrice = (v: any): string => {
 }
 
 onMounted(() => {
+  void getOrgUnits().then((res: any) => {
+    const units = res?.data?.units || res?.units || []
+    orgAliases.value = (Array.isArray(units) ? units : [])
+      .map((u: any) => String(u?.alias || '').trim())
+      .filter(Boolean)
+  }).catch(() => {})
   installListFootHoistAll()
   // 中文字体是打印链路的固定前置（清单与目录都要内嵌）：进页面就拉，
   // 别等用户点「打印」才开始下载（真机首次点击多花 200~400ms）。

@@ -156,6 +156,9 @@ func NewHRHandler(db *gorm.DB) *HRHandler {
 	// 第 75 轮：工业表计三介质恢复（电 6/水 4/气 1）、宿舍表号错配修号、
 	// 「本期水费」类型改 amount、历史费用清单按单位归一口径重算。
 	h.hrRepair75(ctx)
+	// 第 76 轮：租户档案迁入公司设置（别名 / 编码 / 分摊方式 / 联系人）、
+	// 车队保险单按交强险 / 商业险 / 险种类别重配字段与提取规则。
+	h.hrRepair76(ctx)
 	if err := h.hrFixDormBuildingAndType63(ctx); err != nil {
 		logger.Warnf(ctx, "fix HR dorm building/type failed: %v", err)
 	}

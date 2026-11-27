@@ -9,19 +9,20 @@
     让外层列表重新拉一次表计（记录表单的「表计」下拉要同步）。
   -->
   <div class="meter-settings-body">
-    <div class="settings-head">
-      <!-- 第 73 轮：工业表计极简化 —— 只保留「新增」。
-           用途管理 / 搜索框 / 「工商业 N」子标签全部移除：
-           表计设置现在只剩工商业一类，搜索由浏览器 Ctrl+F 或核算列表承担。 -->
+    <!-- 第 76 轮：介质标签与「新增」按钮同一行左右两端对齐（按钮在右上角）。
+         介质切换由本面板自持（父级 v-model:category），既保证同一行布局，
+         也让切换时整块重置草稿（三介质互不串写）。 -->
+    <div class="settings-head" data-meter-toolbar>
+      <t-radio-group :model-value="props.category" variant="default-filled" size="small"
+        data-meter-tabs @change="onCategoryChange">
+        <t-radio-button value="electricity">电表</t-radio-button>
+        <t-radio-button value="water">水表</t-radio-button>
+        <t-radio-button value="gas">气表</t-radio-button>
+      </t-radio-group>
       <t-button theme="primary" size="small" @click="openMeterForm(null)" data-meter-add>
         <template #icon><t-icon name="add" /></template>
         新增{{ meterLabel }}
       </t-button>
-    </div>
-
-    <div v-if="!meters.length && !meterFormVisible" class="meter-empty">
-      <t-icon name="setting" size="40px" class="meter-empty-icon" />
-      <span class="meter-empty-text">暂无{{ meterLabel }}，点击新增{{ meterLabel }}开始配置</span>
     </div>
 
     <div class="meter-table-wrap">
@@ -80,11 +81,8 @@
           </div>
           <div class="form-item">
             <label>安装日期</label>
-            <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-          </div>
-          <div class="form-item">
-            <label>启用</label>
-            <t-switch v-model="meterForm.enabled" />
+            <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD"
+              placeholder="选填" clearable style="width: 100%" />
           </div>
         </div>
         <div class="form-item form-item--full">
@@ -181,11 +179,8 @@
               </div>
               <div class="form-item">
                 <label>安装日期</label>
-                <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD" placeholder="选填" clearable />
-              </div>
-              <div class="form-item">
-                <label>启用</label>
-                <t-switch v-model="meterForm.enabled" />
+                <t-date-picker v-model="meterForm.install_date" format="YYYY-MM-DD" value-type="YYYY-MM-DD"
+              placeholder="选填" clearable style="width: 100%" />
               </div>
             </div>
             <div class="form-item form-item--full">
@@ -199,9 +194,15 @@
           </div>
         </template>
       </div>
-      <div v-if="!activeGroupItems.length" class="meter-empty">
+      <!-- 唯一空态：只有「加载完成且确实一条都没有」才渲染。
+           第 76 轮修复：旧实现上方还有一块 !meters.length 的空态，
+           请求中两块同时出现（双图标 + 两段「暂无」），切介质时频繁闪跳。 -->
+      <div v-if="!metersLoading && !activeGroupItems.length" class="meter-empty" data-meter-empty>
         <t-icon name="setting" size="28px" class="meter-empty-icon" />
         <span class="meter-empty-text">暂无{{ meterLabel }}</span>
+      </div>
+      <div v-else-if="metersLoading" class="meter-loading" data-meter-loading>
+        <t-loading size="small" />
       </div>
     </div>
 
@@ -245,7 +246,11 @@ const props = defineProps<{
    */
   embedded?: boolean
 }>()
-const emit = defineEmits<{ (e: 'changed'): void; (e: 'close'): void }>()
+const emit = defineEmits<{
+  (e: 'changed'): void
+  (e: 'close'): void
+  (e: 'update:category', v: MeterCategory): void
+}>()
 
 const meterLabel = computed(() => (props.category === 'water' ? '水表' : props.category === 'electricity' ? '电表' : '气表'))
 const unitLabel = computed(() => (props.category === 'water' ? '吨' : props.category === 'electricity' ? '千瓦时' : 'm³'))
@@ -261,6 +266,16 @@ const fmtUnitPrice = (v: any) => {
 }
 
 const meters = ref<any[]>([])
+/**
+ * 加载态：切介质或首次进入时置 true。
+ * 空态必须等 loading=false 才允许渲染，否则先闪一下「暂无电表」再出数据。
+ */
+const metersLoading = ref(true)
+function onCategoryChange(v: any) {
+  const next = String(v || '') as MeterCategory
+  if (!next || next === props.category) return
+  emit('update:category', next)
+}
 const panelSearch = ref('')
 const savingMeter = ref(false)
 const meterFormVisible = ref(false)
@@ -354,12 +369,16 @@ const sortMetersLocal = () => {
     (a.created_at || '').localeCompare(b.created_at || ''))
 }
 const loadMetersOnly = async () => {
+  // 加载期间不允许渲染任何空态：切介质时先闪「暂无」再出数据正是抖动来源。
+  metersLoading.value = true
   try {
     const res: any = await listUtilityMeters({ category: props.category })
     const mets = res?.data || res || []
     meters.value = Array.isArray(mets) ? mets : []
     sortMetersLocal()
-  } catch { /* ignore */ }
+  } catch { /* ignore */ } finally {
+    metersLoading.value = false
+  }
 }
 
 const loadKinds = async () => {
@@ -376,7 +395,9 @@ const loadKinds = async () => {
       }
     }
   } catch (e) {
-    console.error('load kinds failed', e)
+    // 用途列表是辅助数据：网络抖动时不要打 console.error（会污染真机门禁），
+    // 表格与表计读写不依赖它。
+    console.warn('load kinds failed', e)
   }
 }
 
@@ -749,6 +770,13 @@ onBeforeUnmount(() => {
 
   .meter-empty-icon { color: var(--td-text-color-placeholder); }
   .meter-empty-text { color: var(--td-text-color-secondary); }
+}
+
+.meter-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 0;
 }
 
 .kind-manage-body {

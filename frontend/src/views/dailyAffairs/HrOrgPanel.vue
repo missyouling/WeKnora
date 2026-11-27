@@ -59,6 +59,36 @@
           <span class="org-form__label">法定代表人</span>
           <t-input v-model="activeUnit.legal_person" placeholder="法定代表人姓名" />
         </div>
+        <!-- 第 76 轮：别名是全局简称唯一真相源（费用清单租户标签 / 核算列表单位标签） -->
+        <div class="org-form__row">
+          <span class="org-form__label">别名</span>
+          <t-input v-model="activeUnit.alias" placeholder="如：持睿汽车 / 重庆星达" data-org-alias />
+        </div>
+        <div class="org-form__row">
+          <span class="org-form__label">是否为租户</span>
+          <div class="org-form__switch">
+            <t-switch v-model="activeUnit.is_tenant" data-org-tenant-switch />
+            <span class="org-form__hint">开启后可维护租户档案与电费分摊子项</span>
+          </div>
+        </div>
+        <template v-if="activeUnit.is_tenant">
+          <div class="org-form__row">
+            <span class="org-form__label">租户编码</span>
+            <t-input v-model="activeUnit.tenant_no" placeholder="如：Z001" data-org-tenant-no />
+          </div>
+          <div class="org-form__row">
+            <span class="org-form__label">分摊方式</span>
+            <t-select v-model="activeUnit.allocation_mode" :options="allocationOptions" />
+          </div>
+          <div class="org-form__row">
+            <span class="org-form__label">联系人</span>
+            <t-input v-model="activeUnit.contact" placeholder="单位联系人" />
+          </div>
+          <div class="org-form__row">
+            <span class="org-form__label">联系电话</span>
+            <t-input v-model="activeUnit.phone" placeholder="联系电话" />
+          </div>
+        </template>
       </div>
 
       <div class="org-units__head org-units__head--dept">
@@ -92,6 +122,22 @@
           暂无下属部门（单位可单独保存）
         </div>
       </div>
+
+      <!-- 租户专属：电费分摊子项（原「费用清单 → 租户信息 → 分摊子项」整体迁入） -->
+      <template v-if="activeUnit.is_tenant">
+        <div class="org-units__head org-units__head--alloc">
+          <span class="org-units__title">电费分摊子项</span>
+          <span class="org-units__sub">
+            {{ activeUnit.alias || activeUnit.name }} · 按比例分摊口径
+          </span>
+        </div>
+        <TenantSettingsPanel v-if="activeUnit.billing_tenant_id && kbId" ref="allocRef"
+          :tenant-id="activeUnit.billing_tenant_id" :kb-id="kbId" items-only embedded
+          @changed="onAllocChanged" />
+        <div v-else class="org-depts__empty">
+          保存单位档案后即可配置分摊子项
+        </div>
+      </template>
     </template>
 
     <div class="org-units__footer">
@@ -103,38 +149,76 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { DeleteIcon } from 'tdesign-icons-vue-next'
 import * as hrApi from './hrApi'
+import TenantSettingsPanel from './TenantSettingsPanel.vue'
+import { listKnowledgeBases } from '@/api/knowledge-base'
 
 const props = withDefaults(defineProps<{ visible: boolean }>(), { visible: false })
 const emit = defineEmits<{ (e: 'saved'): void }>()
 
 interface Dept { id?: string; name: string; code: string }
-interface Unit { id?: string; name: string; code: string; credit_code: string; address: string; legal_person: string; departments: Dept[] }
+interface Unit {
+  id?: string
+  name: string
+  alias: string
+  code: string
+  credit_code: string
+  address: string
+  legal_person: string
+  is_tenant: boolean
+  tenant_no: string
+  allocation_mode: string
+  contact: string
+  phone: string
+  billing_tenant_id: string
+  departments: Dept[]
+}
 
 const units = ref<Unit[]>([])
 const activeIndex = ref(0)
 const saving = ref(false)
 const dragIndex = ref(-1)
 const deptDragIndex = ref(-1)
+const allocationOptions = [{ label: '按比例分摊', value: '按比例分摊' }]
+const allocRef = ref<any>(null)
+/** 分摊子项「导入市电账单字段」需要电费知识库；按名称解析一次即可。 */
+const kbId = ref('')
+async function resolveKbId() {
+  if (kbId.value) return
+  try {
+    const res: any = await listKnowledgeBases()
+    const list: any[] = Array.isArray(res?.data) ? res.data : (res?.data?.items || [])
+    kbId.value = String(list.find((k) => String(k?.name || '').includes('电费'))?.id || '')
+  } catch { /* 知识库不可用时只影响导入按钮 */ }
+}
+function onAllocChanged() {
+  // 分摊子项落库后会反向同步「费用清单」租户分组字段，仅提示外层刷新即可
+}
 
 const activeUnit = computed<Unit | null>(() => units.value[activeIndex.value] || null)
 
-watch(() => props.visible, (v) => { if (v) void load() }, { immediate: true })
+watch(() => props.visible, (v) => { if (v) { void load(); void resolveKbId() } }, { immediate: true })
 
 async function load() {
   try {
     const res: any = await hrApi.getOrgUnits()
     const d = res?.data || res || {}
     const list = Array.isArray(d.units) ? d.units : []
+    const keepId = units.value[activeIndex.value]?.id || ''
     units.value = list.map((u: any) => ({
-      id: u.id, name: u.name || '', code: u.code || '', credit_code: u.credit_code || '',
-      address: u.address || '', legal_person: u.legal_person || '',
+      id: u.id, name: u.name || '', alias: u.alias || '', code: u.code || '',
+      credit_code: u.credit_code || '', address: u.address || '', legal_person: u.legal_person || '',
+      is_tenant: !!u.is_tenant, tenant_no: u.tenant_no || '',
+      allocation_mode: u.allocation_mode || '按比例分摊', contact: u.contact || '', phone: u.phone || '',
+      billing_tenant_id: u.billing_tenant_id || '',
       departments: Array.isArray(u.departments) ? u.departments.map((x: any) => ({ id: x.id, name: x.name, code: x.code })) : [],
     }))
-    activeIndex.value = 0
+    // 保存后重载必须停在原单位（否则配置完分摊子项会被弹回第一家公司）
+    const keep = keepId ? units.value.findIndex((u) => u.id === keepId) : -1
+    activeIndex.value = keep >= 0 ? keep : 0
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载单位失败')
     units.value = []
@@ -153,8 +237,9 @@ function toggleUnit(i: number) {
 
 function addUnit() {
   units.value.push({
-    name: '', code: String(units.value.length + 1).padStart(2, '0'),
-    credit_code: '', address: '', legal_person: '', departments: [],
+    name: '', alias: '', code: String(units.value.length + 1).padStart(2, '0'),
+    credit_code: '', address: '', legal_person: '', is_tenant: false, tenant_no: '',
+    allocation_mode: '按比例分摊', contact: '', phone: '', billing_tenant_id: '', departments: [],
   })
   activeIndex.value = units.value.length - 1
 }
@@ -210,15 +295,23 @@ async function save() {
         .filter((u) => String(u.name || '').trim())
         .map((u) => ({
           ...u,
+          alias: String(u.alias || '').trim(),
+          tenant_no: u.is_tenant ? String(u.tenant_no || '').trim() : '',
+          allocation_mode: u.is_tenant ? (u.allocation_mode || '按比例分摊') : '',
+          contact: u.is_tenant ? String(u.contact || '').trim() : '',
+          phone: u.is_tenant ? String(u.phone || '').trim() : '',
           // 部门顺序 = 数组下标，后端按序写 sort_order
           departments: (u.departments || []).filter((d) => String(d.name || '').trim()),
         })),
     })
     // 第 53 轮：面板从「设置抽屉 → 组织机构」迁到左下角「公司设置」弹窗，
     // 提示文案同步成用户可见的入口名，避免出现已经不存在的位置描述。
+    // 单位先落库（新开的租户会拿到 billing_tenant_id），再提交分摊子项草稿
+    await load()
+    await nextTick()
+    await allocRef.value?.commitAll?.()
     MessagePlugin.success('单位与部门已保存')
     emit('saved')
-    await load()
   } catch (e: any) {
     MessagePlugin.error(e?.message || '保存失败')
   } finally {
@@ -294,6 +387,10 @@ async function save() {
 .org-form__row { display: flex; align-items: center; gap: 8px; }
 .org-form__label { flex: 0 0 120px; color: var(--td-text-color-secondary); }
 .org-form__row :deep(.t-input) { flex: 1; min-width: 0; }
+.org-form__switch { display: flex; align-items: center; gap: 10px; }
+.org-form__hint { font-size: 12px; color: var(--td-text-color-placeholder); }
+.org-units__head--alloc { margin-top: 6px; }
+.org-units__sub { font-size: 12px; color: var(--td-text-color-secondary); }
 
 .org-depts {
   border: 1px solid var(--td-component-border);

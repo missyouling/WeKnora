@@ -21,16 +21,16 @@
       :initial-group="initialGroup"
         :direct="direct" :single-category="singleCategory"
         :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
-        :ref-sources="refSources"
-        @ai-guide="onAiGuide" @category-change="onCategoryChange" />
+        :ref-sources="refSources" :insurance-tabs="insuranceTabs"
+        @category-change="onCategoryChange" />
     </div>
     <t-tabs v-else v-model="activeTab" class="standard-settings-tabs" :lazy-load="false" @change="onTabChange">
       <t-tab-panel value="fields" :label="fieldsTabLabel">
         <FleetCertPanel ref="panelRef" :scope="scope" :kb-id="kbId || ''" :initial-category="initialCategory"
       :initial-group="initialGroup"
           :hide-group-tabs="hideGroupTabs" :ref-source-scope="refSourceScope" :ref-categories="refCategories"
-          :ref-sources="refSources"
-          @ai-guide="onAiGuide" @category-change="onCategoryChange" />
+          :ref-sources="refSources" :insurance-tabs="insuranceTabs"
+          @category-change="onCategoryChange" />
       </t-tab-panel>
       <t-tab-panel v-if="showRulesTab" value="rules" label="提取规则">
         <!-- active-category 是「唯一定位源」：规则面板打开时就按字段定义里选中的
@@ -53,7 +53,6 @@ import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import FleetCertPanel from '@/views/dailyAffairs/FleetCertPanel.vue'
 import ExtractRulePanel from '@/views/dailyAffairs/ExtractRulePanel.vue'
-import { cacheSampleText } from '@/views/dailyAffairs/sampleTextCache'
 
 // 标准设置抽屉（中台统一组件）：
 // 「字段定义 / 提取规则」双 Tab 规范，复刻自 InvoiceSettingsDrawer ——
@@ -99,6 +98,8 @@ const props = withDefaults(defineProps<{
    * 底层 group 属性仍保留，供编辑抽屉按 6 组分块展示。
    */
   hideGroupTabs?: boolean
+  /** 第 76 轮：保险单字段配置的 3 标签模式（交强险 / 商业险 / 险种类别）。 */
+  insuranceTabs?: boolean
   /** 跨模块引用候选来源的 scope（如离职/合同引用花名册时传 'hr-roster'）。 */
   refSourceScope?: string
   /** 跨模块引用候选分类名；为空时用来源 scope 下的全部分类。 */
@@ -184,17 +185,11 @@ function onTabChange(val: string | number) {
   if (cur) nextTick(() => extractRef.value?.focusCertType?.({ certType: cur }))
 }
 
-// 「字段定义 → 智能生成字段 → 保存」后由子组件冒泡上来：切到提取规则 Tab、
-// 选中对应分类，并把样票文本交给规则面板触发一键智能生成规则。
-function onAiGuide(payload: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
-  goRules(payload)
-}
-
-// goRules 切到「提取规则」Tab 并聚焦到指定分类（可选立即触发智能生成规则）。
+// goRules 切到「提取规则」Tab 并聚焦到指定分类。
 // 暴露给父组件用：发票页等可在保存后由外部直接驱动这段联动。
-function goRules(payload?: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
+// 第 76 轮：样票缓存链路随「用样票生成字段」一并下线，这里只保留分类定位。
+function goRules(payload?: { certType: string }) {
   activeTab.value = 'rules'
-  if (payload?.sampleText && payload?.certType) cacheSampleText(payload.certType, payload.sampleText)
   nextTick(() => extractRef.value?.focusCertType?.(payload))
 }
 defineExpose({ goRules })

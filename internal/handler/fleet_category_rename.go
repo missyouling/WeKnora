@@ -316,11 +316,46 @@ func (h *FleetHandler) propagateCategoryRename(ctx context.Context, tx *gorm.DB,
 			}
 		}
 	default:
-		// 车队档案：doc_type 关联分类名（vehicle/driver/maintain 等）。
+		/**
+		 * 车队档案：doc_type 与 sub_category 双列都承载分类名。
+		 *
+		 * 第 76 轮真机事故：把「道路运输证」改名后列表瞬间变空。根因是
+		 *   · KPI 卡片与 countFleetCategoryRefs 数的是 doc_type；
+		 *   · 列表查询过滤的是 sub_category；
+		 * 旧实现只改 doc_type，于是「卡片显示 N 条、点开 0 条」，用户看到的就是
+		 * 记录全部丢失。两列必须同一事务一起改。
+		 */
 		if err := tx.WithContext(ctx).Model(&types.FleetRecord{}).
 			Where("deleted_at IS NULL AND doc_type = ?", oldName).
 			Update("doc_type", newName).Error; err != nil {
 			return fmt.Errorf("rename fleet records doc_type: %w", err)
+		}
+		if err := tx.WithContext(ctx).Model(&types.FleetRecord{}).
+			Where("deleted_at IS NULL AND sub_category = ?", oldName).
+			Update("sub_category", newName).Error; err != nil {
+			return fmt.Errorf("rename fleet records sub_category: %w", err)
+		}
+		// 档案行 data 里可能冗余着「证照类型」快照，后续 sub_category 兜底会读它，
+		// 一并改写；只改这一个键，其余业务字段原样保留。
+		var rows []types.FleetRecord
+		if err := tx.WithContext(ctx).
+			Where("deleted_at IS NULL AND (doc_type = ? OR sub_category = ?)", newName, newName).
+			Find(&rows).Error; err != nil {
+			return fmt.Errorf("load fleet records for meta rename: %w", err)
+		}
+		for i := range rows {
+			row := &rows[i]
+			if row.Data == nil {
+				continue
+			}
+			v, ok := row.Data["证照类型"]
+			if !ok || strings.TrimSpace(toStringValue(v)) != oldName {
+				continue
+			}
+			row.Data["证照类型"] = newName
+			if err := tx.WithContext(ctx).Model(row).Select("data").Updates(row).Error; err != nil {
+				return fmt.Errorf("rename fleet record %s data: %w", row.ID, err)
+			}
 		}
 	}
 	// 提取配置按 kb × scope × cert_type 建键，改名必须同步，

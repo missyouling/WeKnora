@@ -2,12 +2,15 @@
   <!--
     清单设置面板（费用清单）：租户档案 + 分摊子项。
 
-    来源：原 TenantBilling 工具栏「租户设置」按钮打开的抽屉。
-    工具栏收敛为 3 个按钮后，这部分配置作为统一设置抽屉的「清单设置」Tab 内嵌。
+    第 76 轮：租户档案与分摊子项整体迁入「公司设置 → 单位与部门」。
+      · 档案（别名/编码/分摊方式/联系人/电话）由 HrOrgPanel 的单位表单承载；
+      · 本组件以 items-only 模式内嵌在单位展开面板里，只渲染分摊子项，
+        天然绑定当前单位（无租户下拉、无跨分类搜索框）；
+      · 设置 · 能耗 → 费用清单 不再渲染「租户信息」标签。
   -->
   <div class="tenant-settings-panel">
     <div class="settings-tabs">
-      <div class="settings-section" data-tenant-section="info">
+      <div v-if="!props.itemsOnly" class="settings-section" data-tenant-section="info">
         <div class="settings-panel">
           <div class="panel-head">
             <span class="panel-title">租户档案</span>
@@ -136,7 +139,7 @@
           <div class="panel-head">
             <span class="panel-title">分摊子项</span>
             <div class="panel-head-actions">
-              <t-select v-if="tenants.length" v-model="selectedTenantId" size="small" :options="tenantOptions"
+              <t-select v-if="!props.itemsOnly && tenants.length" v-model="selectedTenantId" size="small" :options="tenantOptions"
                 class="tenant-picker" placeholder="选择租户" @change="onTenantChange" />
               <t-button variant="outline" size="small" :loading="importing" :disabled="!selectedTenantId"
                 @click="importUtilityFields">导入市电账单字段</t-button>
@@ -146,8 +149,9 @@
           </div>
 
           <!-- 搜索添加：只允许从「除市电账单外」的其它分类检索字段，
-               候选项带 [来源分类] 徽标，避免同名误选。 -->
-          <div class="item-add-row">
+               候选项带 [来源分类] 徽标，避免同名误选。
+               第 76 轮：租户专属面板（items-only）不再需要跨分类检索入口。 -->
+          <div v-if="!props.itemsOnly" class="item-add-row">
             <SourceFieldPicker v-if="selectedTenantId" :exclude="presentItemKeys"
               :only-categories="nonUtilityCategories" @select="addSourceItem" />
             <span class="item-add-tip">从其它分类检索添加；市电账单费用分项请用右上角「导入市电账单字段」</span>
@@ -204,8 +208,7 @@
               </div>
             </div>
             <div v-if="!itemGroups.length" class="item-empty">
-              暂无子项：点击右上角「导入市电账单字段」一键引入全部费用分项，
-              或用上方搜索框从其它分类添加
+              暂无子项：点击右上角「导入市电账单字段」一键引入全部费用分项{{ props.itemsOnly ? '' : '，或用上方搜索框从其它分类添加' }}
             </div>
           </div>
         </div>
@@ -215,7 +218,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   listBillingTenants, createBillingTenant, updateBillingTenant, deleteBillingTenant,
@@ -240,6 +243,8 @@ const props = defineProps<{
    * 分摊子项的保存不再单独出按钮，由抽屉底栏统一提交（取消 = 重新拉取丢弃草稿）。
    */
   embedded?: boolean
+  /** 只渲染分摊子项（嵌入公司设置的单位面板时使用）。 */
+  itemsOnly?: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void; (e: 'select', id: string): void }>()
 
@@ -280,8 +285,12 @@ const nonUtilityCategories = SOURCE_CATEGORIES.filter((c) => c !== '市电账单
 
 const tenantOptions = computed(() => tenants.value.map((t: any) => ({ label: t.name, value: t.id })))
 /** 当前选中租户的名称（用于字段分组的 group_label 与同步后的分组标题）。 */
-const tenantName = computed(() =>
-  String(tenants.value.find((t: any) => String(t.id) === String(selectedTenantId.value))?.name || ''))
+const tenantName = computed(() => {
+  const hit = tenants.value.find((t: any) => String(t.id) === String(selectedTenantId.value))
+  // items-only 模式不拉租户列表：用详情接口返回的 name 兜底，
+  // 否则写回费用清单 subs 的 group_label 会是空串（分组标签变成 uuid）。
+  return String(hit?.name || detail.value?.name || '')
+})
 
 const itemGroups = computed(() => {
   const g: Record<string, any[]> = {}
@@ -595,8 +604,21 @@ const saveItems = async (notify = false) => {
 }
 
 onMounted(async () => {
+  if (props.itemsOnly) {
+    // 单位面板天然绑定当前租户：不再拉租户列表，也不自动挑第一个（否则会把
+    // 别的租户的分摊子项显示到当前单位下）。
+    await loadDetail()
+    return
+  }
   await loadTenants()
   if (!selectedTenantId.value) selectedTenantId.value = tenants.value[0]?.id || ''
+  await loadDetail()
+})
+
+// 单位面板切换租户（换一个单位展开）时按新 tenantId 重载
+watch(() => props.tenantId, async (v) => {
+  if (!props.itemsOnly) return
+  selectedTenantId.value = String(v || '')
   await loadDetail()
 })
 

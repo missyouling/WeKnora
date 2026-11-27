@@ -413,7 +413,7 @@
     <UtilitiesKbWizard v-model:visible="wizardVisible" @created="onKbCreated" />
 
     <!-- 「光伏设置」不再单独开抽屉：已内嵌为统一设置抽屉（StandardSettingDrawer）的
-         「光伏设置」Tab，由 UtilitiesManagement 注入 SolarSettingsPanel。 -->
+         「光伏设置」Tab 已随基本户标签一并下线（第 76 轮）。 -->
 
 
     <!-- 打印预览：全中台统一组件（打印清单 / 打印目录共用） -->

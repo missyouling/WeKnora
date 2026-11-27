@@ -88,11 +88,45 @@ func (h *BillingHandler) ListBillingTenants(c *gin.Context) {
 	type row struct {
 		types.BillingTenant
 		Setting types.BillingTenantSetting `json:"setting"`
+		/**
+		 * 第 76 轮：租户档案已迁入「公司设置 → 单位与部门」。
+		 *
+		 * 这里把单位档案里的别名 / 单位名 / 单位 id 一起返回：
+		 *   · alias 是全局简称唯一真相源（费用清单分组标签、核算列表单位标签都读它）；
+		 *   · org_unit_name 用于回显工商全称，方便用户核对；
+		 *   · billing_tenant_id 仍由本接口返回（既有字段），前端按它读写分摊子项。
+		 * billing_tenants 只保留「核算标识 + 分摊子项容器」职责，档案以公司设置为准。
+		 */
+		Alias       string `json:"alias"`
+		OrgUnitID   string `json:"org_unit_id"`
+		OrgUnitName string `json:"org_unit_name"`
+	}
+	// 一次读全单位档案，避免逐租户查询
+	var units []HROrgUnit
+	_ = h.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Find(&units).Error
+	unitOf := func(t types.BillingTenant) (HROrgUnit, bool) {
+		for _, u := range units {
+			if u.BillingTenantID != "" && u.BillingTenantID == t.ID {
+				return u, true
+			}
+		}
+		for _, u := range units {
+			if unitNamesMatch(u.Name, t.Name) || (u.Alias != "" && unitNamesMatch(u.Alias, t.Name)) {
+				return u, true
+			}
+		}
+		return HROrgUnit{}, false
 	}
 	out := make([]row, 0, len(tenants))
 	for _, t := range tenants {
 		s, _ := settings[t.ID]
-		out = append(out, row{BillingTenant: t, Setting: s})
+		r := row{BillingTenant: t, Setting: s}
+		if u, ok := unitOf(t); ok {
+			r.Alias = strings.TrimSpace(u.Alias)
+			r.OrgUnitID = u.ID
+			r.OrgUnitName = u.Name
+		}
+		out = append(out, r)
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": out})
 }

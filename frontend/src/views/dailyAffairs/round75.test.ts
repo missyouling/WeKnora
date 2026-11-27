@@ -55,12 +55,12 @@ test('单位标签：≤1 个单位隐藏、≥2 个渲染（页面源码契约�
 })
 
 // ---------- ③ 能耗账单三子标签 ----------
-test('能耗账单子标签严格为 市电账单 | 光伏账单 | 基本户', () => {
-  assert.deepEqual([...ENERGY_BILL_SUB_TABS], ['市电账单', '光伏账单', '基本户'])
+test('能耗账单子标签严格为 市电账单 | 光伏账单（第 76 轮删除基本户）', () => {
+  assert.deepEqual([...ENERGY_BILL_SUB_TABS], ['市电账单', '光伏账单'])
   const drawer = read('EnergySettingDrawer.vue')
-  assert.match(drawer, /ENERGY_BILL_SUB_TABS/, '子标签必须来自唯一定义')
-  assert.match(drawer, /billTab !== '基本户'/, '基本户不得再渲染字段面板')
-  assert.match(drawer, /<SolarSettingsPanel[\s\S]{0,80}embedded/, '基本户表单必须内嵌')
+  assert.match(drawer, /billCategories/, '子标签必须由能耗账单分类动态生成')
+  assert.doesNotMatch(drawer, /基本户/, '基本户标签必须删除')
+  assert.doesNotMatch(drawer, /SolarSettingsPanel/, '基本户表单必须删除')
 })
 
 // ---------- ④ 列宽 0 ----------
@@ -87,17 +87,15 @@ test('工业表计：切换介质必须重置草稿并按介质加载', () => {
 })
 
 // ---------- ⑥ 费用清单块标签与空值 ----------
-test('费用清单设置：租户信息 / 默认分组 / 租户分组 三类型块标签', () => {
+test('费用清单设置：默认分组 / 租户分组 两类块标签（第 76 轮删除租户信息）', () => {
   const drawer = read('EnergySettingDrawer.vue')
   assert.match(drawer, /data-cost-tabs/)
-  assert.match(drawer, /<t-radio-button value="tenant">租户信息<\/t-radio-button>/)
+  assert.doesNotMatch(drawer, /租户信息/, '租户信息标签必须删除')
   assert.match(drawer, /<t-radio-button value="default">默认分组<\/t-radio-button>/)
   assert.match(drawer, /v-for="t in costTenants"/)
-  assert.match(drawer, /tenant:\$\{t\.id\}/)
-  const tenantPanel = read('TenantSettingsPanel.vue')
-  assert.doesNotMatch(tenantPanel, /<t-tabs/, '租户信息与分摊子项必须合并为同一视图')
-  assert.match(tenantPanel, /data-tenant-section="info"/)
-  assert.match(tenantPanel, /data-tenant-section="items"/)
+  const orgPanel = read('HrOrgPanel.vue')
+  assert.match(orgPanel, /TenantSettingsPanel/, '公司设置必须内嵌分摊子项面板')
+  assert.match(orgPanel, /items-only/, '单位为天然上下文，不再选租户')
 })
 
 test('费用清单：不再渲染「—」占位，空值为空白', () => {

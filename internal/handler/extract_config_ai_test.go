@@ -37,17 +37,17 @@ func TestExtractAIConfigRoutesRegistered(t *testing.T) {
 		joined.Write(b)
 	}
 	src := joined.String()
-	for _, route := range []string{
-		`/extract-config/ai-suggest-fields`,
-		`/extract-config/ai-suggest-rules`,
-	} {
-		if !strings.Contains(src, route) {
-			t.Fatalf("route %s is not registered", route)
-		}
+	// 第 76 轮：用样票生成字段（ai-suggest-fields）全局下线，路由与前端入口一并移除；
+	// 规则生成（ai-suggest-rules）保留。
+	if !strings.Contains(src, `/extract-config/ai-suggest-rules`) {
+		t.Fatalf("route /extract-config/ai-suggest-rules is not registered")
+	}
+	if strings.Contains(src, `POST("/extract-config/ai-suggest-fields"`) {
+		t.Fatalf("ai-suggest-fields must be removed (第 76 轮下线用样票生成字段)")
 	}
 	// 权限必须与 SaveExtractConfig 同级（OwnedKBOrAdmin + KBAccessWrite），
 	// 不能裸挂在 Viewer 上——建议接口会烧模型 token。
-	for _, handler := range []string{"business.AISuggestFields", "business.AISuggestRules"} {
+	for _, handler := range []string{"business.AISuggestRules"} {
 		idx := strings.Index(src, handler)
 		if idx < 0 {
 			t.Fatalf("handler %s not wired", handler)

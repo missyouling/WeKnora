@@ -1,22 +1,21 @@
 <template>
   <div ref="rootRef" class="extract-rule-panel" :class="{ 'eq-narrow': narrow }">
     <div class="extract-toolbar">
-      <t-select v-if="certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="`选择${getScope(scope)?.uploadTypeLabel || '证照类型'}`" @change="onCertTypeChange" />
+      <!-- 第 76 轮：能耗 scope 的分类切换从下拉改为方块标签，且标签列表动态
+           读取「能耗账单」的分类配置（新增账单分类后此处自动多一个标签）。 -->
+      <div v-if="isEnergyScope && certTypeOptions.length" class="energy-type-tabs" data-extract-type-tabs>
+        <t-radio-group :model-value="certType" variant="default-filled" size="small" @change="onCertTypeTabChange">
+          <t-radio-button v-for="o in certTypeOptions" :key="o.value" :value="o.value">{{ o.label }}</t-radio-button>
+        </t-radio-group>
+      </div>
+      <t-select v-else-if="!isEnergyScope && certTypeOptions.length" v-model="certType" class="cert-type-select" :options="certTypeOptions" :placeholder="`选择${getScope(scope)?.uploadTypeLabel || '证照类型'}`" @change="onCertTypeChange" />
       <span v-else class="cert-type-static">整体提取规则</span>
       <div class="spacer" />
       <!-- 高级模式：左侧文字标签 + 右侧开关（不再用 t-switch 内嵌 label，避免文字随开关漂移） -->
       <span class="adv-label">高级模式</span>
       <t-switch v-model="advancedEnabled" size="medium" class="adv-switch" />
       <!-- 图标按钮一律无边框（variant="text"），hover 仅给柔和底色，避免整排描边按钮抢视线。
-           批量「智能生成规则」已下线：逐字段生成（展开区「生成该字段规则」）反馈更可控。 -->
-      <t-tooltip :content="aiSampleHint" placement="top">
-        <!-- 票据图标：缓存里有样票时**常驻绿色**（is-hot），提示"这次生成能校验唯一命中" -->
-        <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
-          :class="{ 'is-hot': sampleTextAvailable }"
-          :disabled="!certType || !sampleTextAvailable" @click="clearCachedSample">
-          <template #icon><t-icon name="ticket" /></template>
-        </t-button>
-      </t-tooltip>
+           「缓存样票」按钮已在本轮全局下线（用样票生成字段功能一并移除）。 -->
       <t-tooltip content="测试规则（在页面内展开测试区，边改边测）" placement="top">
         <t-button variant="text" shape="square" size="small" class="tb-icon-btn"
           :class="{ 'is-active': testVisible }" :disabled="!certType" @click="toggleTest">
@@ -31,13 +30,14 @@
       @saved="onTestPanelSaved" />
 
     <div class="rule-table">
+      <!-- 第 76 轮：5 列定宽（24% / 14% / 11% / 39% / 12%）。
+           字段描述列已下线（展开区仍可编辑 desc），把宽度全部让给正则输入。 -->
       <div class="rule-table-head">
-        <span>字段名称</span>
-        <span>字段描述</span>
-        <span>数据类型</span>
+        <span class="col-name">字段名称</span>
+        <span class="col-type">数据类型</span>
         <span class="col-required">必填</span>
         <span class="col-regex">正则兜底</span>
-        <span>状态</span>
+        <span class="col-status">状态</span>
       </div>
       <template v-for="(f, i) in fields" :key="f.name + '-' + i">
         <div class="rule-table-row" :class="{ editing: editingName === f.name, 'ai-filled': aiFilled.has(f.name) }" @click="toggleEdit(f.name)">
@@ -45,7 +45,6 @@
             {{ fieldLabel(f.name) }}
             <t-tag v-if="aiFilled.has(f.name)" size="small" variant="light" theme="primary" class="rtr-ai-badge">AI</t-tag>
           </span>
-          <span class="rtr-desc" :title="f.desc || f.name">{{ f.desc || '—' }}</span>
           <span class="rtr-type">{{ typeLabel(f.type || '') }}</span>
           <!-- 必填：控制该字段为空时是否产出 error 级校验告警 -->
           <span class="rtr-required" @click.stop>
@@ -208,8 +207,8 @@ import {
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import ExtractTestPanel from './ExtractTestPanel.vue'
 import AiSparkIcon from './AiSparkIcon.vue'
-import { cacheSampleText, dropSampleText, readSampleText } from './sampleTextCache'
 import { getScope } from '../../registry'
+import { energyBillCategoriesOf } from './energySettingsTabs'
 
 const props = withDefaults(defineProps<{
   scope: string
@@ -649,11 +648,21 @@ function typeComposite(scope: string, name: string) {
   return `${scope}__${name}`
 }
 
-/** 能耗 scope 里允许配置提取规则的分类（其余是计算表，无规则可配）。 */
-const ENERGY_EXTRACTABLE_CATEGORIES = ['市电账单', '光伏账单']
+const isEnergyScope = computed(() => String(props.scope || '').trim() === 'energy')
 
-const certTypeOptions = computed(() => {
+/**
+ * 能耗 scope 的提取规则分类 = 「能耗账单」里可配置字段的账单分类（动态）。
+ *
+ * 之前是硬编码 ['市电账单','光伏账单']，在「能耗账单」里新增第三个账单分类后，
+ * 规则页永远看不到它。现在与设置抽屉共用 energyBillCategoriesOf 一条口径：
+ * 排除核算表 / 费用清单 / 能耗单 / 内置能耗类型种子，剩下的就是账单分类。
+ */
+const certTypeOptions = computed<any[]>(() => {
   if (!isFleetScope.value) {
+    if (isEnergyScope.value) {
+      return energyBillCategoriesOf(categories.value[props.scope] || [])
+        .map((name) => ({ label: name, value: typeComposite(props.scope, name) }))
+    }
     // 非车队 scope：类型 = 分类列表（含新增自定义类型），平铺无分组
     const arr = categories.value[props.scope] || []
     const seen = new Set<string>()
@@ -666,10 +675,6 @@ const certTypeOptions = computed(() => {
       // 「能耗单」走 document 台账管线，页面上没有对应卡片：规则 Tab 与
       // 「字段定义」保持同一份分类清单（设置分类 = 顶部 6 张卡片）。
       if (props.scope === 'energy' && String(c?.name || '').trim() === '能耗单') return
-      // 只有市电账单与光伏账单是 AI 从文件里提取的。电费/水费/气费核算与费用清单
-      // 是录入 + 公式算出来的计算表，字段打的是 group=cols（不进规则面），
-      // 在下拉里露出来只会得到一个空白的规则页。
-      if (props.scope === 'energy' && !ENERGY_EXTRACTABLE_CATEGORIES.includes(String(c?.name || '').trim())) return
       if (c && c.name && c.enabled !== false && !seen.has(c.name)) {
         seen.add(c.name)
         children.push({ label: c.name, value: typeComposite(props.scope, c.name) })
@@ -1021,6 +1026,14 @@ async function loadConfig() {
   }
 }
 
+/** 方块标签切换：与下拉同一条载入链路（先确保分类列表已加载）。 */
+function onCertTypeTabChange(v: any) {
+  const next = String(v || '')
+  if (!next || next === certType.value) return
+  certType.value = next
+  void onCertTypeChange()
+}
+
 async function onCertTypeChange() {
   // 切换分类时清掉上一分类的 AI 填充高亮与展开态：它们属于旧分类的字段清单，
   // 留着会让用户误以为这些行刚被新分类的 AI 改过。
@@ -1124,17 +1137,14 @@ function onTestPanelSaved() {
 const aiFieldBusy = ref('')
 /** 本次被 AI 填充过的字段名（用于徽章/高亮，保存或重新生成时清空）。 */
 const aiFilled = ref<Set<string>>(new Set())
-const sampleTextAvailable = computed(() => !!readSampleText(certTypeName.value))
-const aiSampleHint = computed(() =>
-  sampleTextAvailable.value
-    ? '已缓存该分类的样票文本：生成的正则会做唯一命中校验。点击可清除缓存。'
-    : '尚未缓存样票文本。可先在「字段定义」Tab 用「智能生成字段」上传样票，或直接生成（此时正则无法验证唯一命中，会被全部丢弃）。',
-)
-/** 取当前分类的样票文本（缓存优先，其次调用方传入）。 */
-function resolveSampleText(payload?: { sampleText?: string }) {
-  const sample = String(payload?.sampleText || readSampleText(certTypeName.value) || '')
-  if (payload?.sampleText && certTypeName.value) cacheSampleText(certTypeName.value, sample)
-  return sample
+/**
+ * 第 76 轮：样票缓存链路已全局下线。
+ *
+ * 「用样票生成字段」入口删除后，规则生成不再有样票原文可校验正则唯一命中，
+ * 这里固定传空串：模型仍会产出 desc / rule / required，正则留空由用户自行填写。
+ */
+function resolveSampleText(_payload?: { sampleText?: string }) {
+  return ''
 }
 
 /**
@@ -1212,23 +1222,16 @@ async function generateFieldRule(f: ExtractFieldConfig) {
   }
 }
 
-function clearCachedSample() {
-  if (!certTypeName.value) return
-  dropSampleText(certTypeName.value)
-  MessagePlugin.success('已清除该分类的样票缓存')
-}
-
 /**
  * 被外部（抽屉）调用：切到指定分类。
  *
  * 批量智能生成已下线，这里只负责"选中分类 + 载入规则"；
  * 需要生成时由用户在展开区点「生成该字段规则」（逐字段，反馈可控）。
- * sampleText 仍会先落缓存，供那次单字段生成做正则唯一命中校验。
+ * 样票缓存已下线，payload.sampleText 仅为兼容旧调用签名。
  */
 async function focusCertType(p?: { certType: string; sampleText?: string; autoSuggest?: boolean }) {
   const target = String(p?.certType || '').trim()
   if (!target) return
-  if (p?.sampleText) cacheSampleText(target, p.sampleText)
   // 先确保分类列表已加载，否则 certTypeOptions 里还没有该分类
   await refresh()
   const composite = typeComposite(props.scope, target)
@@ -1375,6 +1378,12 @@ watch(() => props.activeCategory, (v) => {
   .cert-type-select {
     width: 220px;
   }
+  /* 第 76 轮：能耗分类方块标签（与全站一致，不占满行） */
+  .energy-type-tabs {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
   .cert-type-static {
     font-size: 13px;
     font-weight: 500;
@@ -1464,25 +1473,27 @@ watch(() => props.activeCategory, (v) => {
   .rule-table-head,
   .rule-table-row {
     display: grid;
-    /* 字段名 / 描述 / 类型 / 必填 / 正则兜底 / 状态
-       行尾的展开箭头与 AI 图标都已下线：整行非控件区即展开热区，
-       少两列把宽度让给正则输入。 */
-    grid-template-columns: minmax(96px, 1fr) minmax(110px, 1.4fr) 58px 46px minmax(120px, 1.1fr) 46px;
+    /**
+     * 第 76 轮：5 列定宽（24% / 14% / 11% / 39% / 12%）。
+     *
+     * 用 fr 权重等价百分比：列宽在扣除 gap 后按权重分配，总和恒为容器宽度，
+     * 因此**不会出现横向滚动条**（minmax(0,·) 允许内容压缩而不是撑破容器）。
+     * 正则列拿到 39% 的宽度，`(?<=...)` 这类长表达式不再被压成「(?...」。
+     * 字段描述列已下线（展开区仍可编辑），表头因此只剩 5 列且单行不折。
+     */
+    grid-template-columns:
+      minmax(0, 24fr) minmax(0, 14fr) minmax(0, 11fr) minmax(0, 39fr) minmax(0, 12fr);
     align-items: center;
     gap: 8px;
     padding: 7px 12px;
     font-size: 12px;
   }
 
-  /* 窄态：收起字段描述列，把宽度让给正则输入（避免抽屉内水平挤压/错位） */
-  .extract-rule-panel.eq-narrow & {
-    grid-template-columns: minmax(88px, 1fr) 52px 42px minmax(104px, 1.2fr) 42px;
-
-    /* 只隐藏"字段描述"列（行内第 2 格 / 表头第 2 格），必填与正则列必须保留 */
-    .rtr-desc,
-    .rule-table-head > span:nth-child(2) {
-      display: none;
-    }
+  /* 表头单行：任何宽度下都不允许折行（折行会把行高撑成两倍、列错位） */
+  .rule-table-head > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .rule-table-head {
@@ -1508,12 +1519,6 @@ watch(() => props.activeCategory, (v) => {
       text-overflow: ellipsis;
       white-space: nowrap;
       &.rtr-disabled { color: var(--td-text-color-placeholder); font-weight: 400; }
-    }
-    .rtr-desc {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--td-text-color-secondary);
     }
     .rtr-type { font-variant-numeric: tabular-nums; }
     .rtr-required {

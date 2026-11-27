@@ -128,9 +128,8 @@ test('字段定义面板：单行文本 / 多行文本两个选项并存', () =>
   assert.match(panel.slice(mainAt, mainAt + 400), /value: 'textarea'/)
   assert.match(panel.slice(subAt, subAt + 400), /value: 'textarea'/)
 
-  // AI 字段建议面板类型下拉同步（否则 AI 推断出的多行字段落成单行）
-  const ai = read('AiFieldSuggestPanel.vue')
-  assert.match(ai, /value: 'textarea'/)
+  // 第 76 轮：AI 字段建议面板（用样票生成字段）已下线，多行文本只需在
+  // 字段定义与提取规则两侧保持同口径。
 })
 
 test('提取规则面板：多行文本与字段定义同口径', () => {

@@ -1,4 +1,4 @@
-import { get, post, put, del, postUpload } from '@/utils/request'
+import { get, post, put, del } from '@/utils/request'
 
 // ---- 车辆 ----
 export function listFleetVehicles() {
@@ -290,25 +290,8 @@ export interface AiSuggestRulesResult {
   sample_text_used?: boolean
 }
 
-/**
- * 智能字段生成：上传样票（或直传文本），返回字段建议。
- *
- * 用 multipart 而非 JSON：样票可能是扫描 PDF，走 FormData 才能带上二进制。
- * 超时放宽到 180s：内部含解析（含可能的 VLM OCR）+ 一次 LLM 调用。
- */
-export function aiSuggestFields(kbId: string, payload: {
-  scope: string
-  cert_type: string
-  file?: File | null
-  text?: string
-}) {
-  const form = new FormData()
-  form.append('scope', payload.scope)
-  form.append('cert_type', payload.cert_type)
-  if (payload.file) form.append('file', payload.file)
-  if (payload.text) form.append('text', payload.text)
-  return postUpload(`/api/v1/knowledge-bases/${kbId}/extract-config/ai-suggest-fields`, form, undefined, { timeout: 180000 })
-}
+// 第 76 轮：「用样票生成字段」全局下线，aiSuggestFields（ai-suggest-fields）入口移除。
+// 正常文件上传与规则测试不受影响；规则生成仍走下面的 aiSuggestRules。
 
 /**
  * 智能配置规则：按字段清单生成 desc/rule/required/regex + 高级 Prompt 模板。

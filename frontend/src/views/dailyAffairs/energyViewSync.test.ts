@@ -181,7 +181,9 @@ test('设置抽屉按分类白名单隐藏「提取规则」Tab', () => {
   assert.match(energyTabs, /\{ value: 'rules', label: '提取规则' \}/, '顶层必须有「提取规则」平级标签')
   assert.match(energyDrawer, /<ExtractRulePanel ref="ruleRef" scope="energy"/, '规则面板必须在抽屉内渲染')
   assert.match(energyDrawer, /:active-category="ruleCategory"/, '规则面板必须跟随能耗账单分类')
-  assert.match(rulePanel, /ENERGY_EXTRACTABLE_CATEGORIES = \['市电账单', '光伏账单'\]/)
+  // 第 76 轮：分类标签动态读取能耗账单分类（新增账单分类自动出现），不再写死白名单
+  assert.match(rulePanel, /energyBillCategoriesOf\(categories\.value\[props\.scope\]/)
+  assert.match(energyTabs, /export function energyBillCategoriesOf/)
 })
 
 // ---- ⑦ 表头右侧：白底 + 遮罩同色 ----
@@ -227,8 +229,9 @@ test('光伏 / 核算 / 费用清单 工具栏都有「设置」入口，指向�
   // 第 74 轮：专属设置（工业表计 / 清单设置 / 基本户信息）改为**平级标签**内嵌，
   // 不再走 StandardSettingDrawer 的 extra-tab 插槽。
   assert.match(energyDrawer, /<MeterSettingsPanel[\s\S]{0,80}ref="meterRef"/, '工业表计必须是平级标签内容')
-  assert.match(energyDrawer, /<TenantSettingsPanel[\s\S]{0,80}ref="tenantRef"/, '清单设置必须内嵌在费用清单标签')
-  assert.match(energyDrawer, /<SolarSettingsPanel[\s\S]{0,80}ref="solarRef"/, '光伏基本户信息必须内嵌在光伏账单')
+  // 第 76 轮：租户档案 + 分摊子项迁入公司设置，费用清单只剩 默认分组 / 租户分组
+  assert.doesNotMatch(energyDrawer, /TenantSettingsPanel/, '清单设置不得再内嵌租户信息面板')
+  assert.doesNotMatch(energyDrawer, /SolarSettingsPanel/, '基本户标签与表单已删除')
   assert.match(energyDrawer, /ENERGY_SETTINGS_TABS/, '顶层标签必须来自唯一的 energySettingsTabs 定义')
 })
 
