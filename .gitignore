@@ -89,3 +89,6 @@ duckdb.dll
 AGENTS.md
 
 supabase.txt
+
+# graphify 代码图谱产物（本地生成，体积约 500MB）
+graphify-out/

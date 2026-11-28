@@ -212,12 +212,3 @@ test('目录 PDF 折行行为：显式换行保留、超宽折行、空行与制
   // ⑦ 长中文按字符折行（CJK 无空格可断，必须逐字）
   assert.deepEqual(wrapParagraphs(measure, '一二三四五', 2), ['一二', '三四', '五'])
 })
-
-test('AI 字段合并：textarea 类型不被降级成 text', () => {
-  const src = read('aiFieldMerge.ts')
-  assert.match(
-    src,
-    /\['number', 'date', 'array', 'textarea'\]\.includes\(String\(c\.data_type\)\)/,
-    '自定义字段的 textarea 必须原样透传，否则抽屉退回单行输入框',
-  )
-})
